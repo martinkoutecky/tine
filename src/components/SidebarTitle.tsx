@@ -5,10 +5,12 @@
 import { createEffect, onCleanup, type JSX } from "solid-js";
 import { EmojiText } from "../render/emoji";
 import { newResizeObserver } from "../windowRealm";
+import { PageIcon } from "./PageIcon";
+import { Show } from "solid-js";
 
 /** Render an emoji-safe label; horizontal overflow on pointer hover exposes
  * fullTitle (or text). Recheck hovered width/content changes, clear on leave. */
-export function SidebarTitle(props: { text: string; fullTitle?: string }): JSX.Element {
+export function SidebarTitle(props: { text: string; fullTitle?: string; icon?: string; pageName?: string }): JSX.Element {
   let label!: HTMLSpanElement;
   let hovered = false;
   let observer: ResizeObserver | undefined;
@@ -29,5 +31,5 @@ export function SidebarTitle(props: { text: string; fullTitle?: string }): JSX.E
       refresh();
       observer = newResizeObserver(label, refresh) ?? undefined;
       observer?.observe(label);
-    }} onMouseLeave={leave}><EmojiText text={props.text} /></span>;
+    }} onMouseLeave={leave}><Show when={props.icon}><PageIcon value={props.icon!} name={props.pageName ?? ""} />{" "}</Show><EmojiText text={props.text} /></span>;
 }

@@ -1,4 +1,4 @@
-import { createSignal } from "solid-js";
+import { createEffect, createSignal, untrack } from "solid-js";
 import { format_journal_date, parse_journal_format_json } from "./render/wasm/lsdoc_wasm.js";
 import { onAppReturn } from "./windowRealm";
 
@@ -50,14 +50,14 @@ export function appNow(): Date {
   return new Date(Date.now() + zoneSkewMs);
 }
 
-/** Adopt a fresh backend clock sample; re-derives the reactive day key when the
- *  correction changes. */
+/** Adopt a fresh backend clock sample and re-derive the reactive day key. The
+ *  sample is the one periodic clock read (every ten minutes, below), so it also
+ *  bounds how late the day key can lag a resume from sleep or a time-zone
+ *  change that no focus or visibility event announced. O(1). */
 export function setBackendClock(clock: BackendClock): void {
   if (!Number.isFinite(clock.offset_minutes) || !Number.isFinite(clock.unix_ms)) return;
-  const skew = skewFor(clock);
-  if (skew === zoneSkewMs) return;
-  zoneSkewMs = skew;
-  setDayKey(localDayKey());
+  zoneSkewMs = skewFor(clock);
+  resyncDay();
 }
 
 let clockSourceInstalled = false;
@@ -95,27 +95,57 @@ export function localDayRolloverDelay(now = appNow(), marginMs = 25): number {
 
 const [dayKey, setDayKey] = createSignal(localDayKey());
 let dayKeyArmed = false;
+let dayTimer: number | undefined;
 
 /** Test-only override of the reactive day signal until the next clock sync or
  * rollover timer; the real clock is unchanged. */
 export function setCurrentDayKeyForTest(key: number): void { setDayKey(key); }
 
-/** Reactive local day for controls that stay mounted through midnight. O(1),
- * without file I/O. The first browser call synchronizes from the clock and
- * installs one recurring midnight timer plus focus/visibility listeners for
- * the module lifetime; later calls read the signal. There is no disposer. */
+/** Test-only: resynchronize the day signal and re-arm its midnight timer from
+ * the current (possibly fake) clock, as a wake does. */
+export function resyncCurrentDayForTest(): void { currentDayKey(); resyncDay(); }
+
+/** Re-read the local day and re-arm the next-midnight timer from now. Sleep
+ * pauses timers and a zone change moves midnight, so every wake/focus/
+ * visibility return and every backend clock sample comes through here, not
+ * only the timer. O(1); the signal notifies only when the day changed. */
+function resyncDay(): void {
+  setDayKey(localDayKey());
+  if (!dayKeyArmed) return;
+  if (dayTimer !== undefined) window.clearTimeout(dayTimer);
+  dayTimer = window.setTimeout(resyncDay, localDayRolloverDelay());
+}
+
+/** Reactive local day for controls that stay mounted through midnight: the
+ * app's one date-change signal (card hB3Lv8). O(1), without file I/O. The
+ * first browser call synchronizes from the clock and installs one midnight
+ * timer plus focus/visibility listeners for the module lifetime; later calls
+ * read the signal. There is no disposer. */
 export function currentDayKey(): number {
   if (!dayKeyArmed && typeof window !== "undefined") {
     dayKeyArmed = true;
-    setDayKey(localDayKey());
-    const arm = () => {
-      window.setTimeout(() => { setDayKey(localDayKey()); arm(); }, localDayRolloverDelay());
-    };
-    arm();
-    const sync = () => setDayKey(localDayKey());
-    onAppReturn(sync);
+    resyncDay();
+    onAppReturn(resyncDay);
   }
   return dayKey();
+}
+
+/** The day a query view asks its question for, part of its run key (card
+ * hB3Lv8). `day` starts at today; `follow(asOfDay)` moves it to the current day
+ * only when the answer on screen (the backend's `as_of_day`) was resolved for
+ * another day, so a day-relative answer is re-asked once after the date
+ * changes and a date-independent one (no `asOfDay`) never is. A view mounted
+ * after midnight starts at the new day, so it cannot adopt yesterday's cached
+ * answer. Two steps because the run key needs `day` before the answer it
+ * follows exists. Call inside a component; O(1) per change. */
+export function createAnswerDay(): { day: () => number; follow: (asOfDay: () => number | null | undefined) => void } {
+  const [day, setDay] = createSignal(untrack(currentDayKey));
+  const follow = (asOfDay: () => number | null | undefined) => createEffect(() => {
+    const shown = asOfDay();
+    const today = currentDayKey();
+    if (shown != null && shown !== today) setDay(today);
+  });
+  return { day, follow };
 }
 
 export type JournalDateParts = { readonly y: number; readonly m: number; readonly d: number };

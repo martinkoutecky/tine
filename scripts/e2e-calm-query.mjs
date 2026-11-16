@@ -9,8 +9,15 @@ import { openPageByName } from "./lib/e2e-navigation.mjs";
 import { ensureMainWindow } from "./lib/e2e-main-window.mjs";
 
 const out = path.resolve(process.env.OUT ?? "artifacts/queries/native");
-const testedCommit = execFileSync("rtk", ["proxy", "git", "rev-parse", "HEAD"], { encoding: "utf8" }).trim();
+const testedCommit = execFileSync("git", ["rev-parse", "HEAD"], { encoding: "utf8" }).trim();
 const graph = `${out}/graph`;
+// Every run starts from a fresh graph and app state: a previous run's session (last route = the Search view) made
+// startup fail. Only a directory this journey created (marker file, or an older run's graph) is cleared, never an arbitrary OUT.
+const marker = `${out}/.e2e-calm-query`;
+if (fs.existsSync(out) && fs.readdirSync(out).length > 0 && !fs.existsSync(marker) && !fs.existsSync(`${graph}/pages/Queries.md`)) throw new Error(`OUT ${out} is not empty and was not created by this journey; choose an empty directory`);
+for (const dir of [graph, `${out}/xdg`]) fs.rmSync(dir, { recursive: true, force: true });
+fs.mkdirSync(out, { recursive: true });
+fs.writeFileSync(marker, "created by scripts/e2e-calm-query.mjs; graph/ and xdg/ are cleared at every run\n");
 for (const dir of ["pages", "journals", "logseq"]) fs.mkdirSync(`${graph}/${dir}`, { recursive: true });
 for (const dir of ["data", "config", "cache"]) fs.mkdirSync(`${out}/xdg/${dir}`, { recursive: true });
 const date = (offset) => {
@@ -53,6 +60,7 @@ async function session(run, journey) {
       capabilities: { browserName: "wry", "wdio:enforceWebDriverClassic": true, "tauri:options": { application: app } } });
     await ensureMainWindow(browser);
     await browser.$(".ls-block, .page-title").waitForExist({ timeout: 30_000 });
+    await dismissToasts(browser);
     await journey(browser);
     await browser.saveScreenshot(`${out}/accepted-${run}.png`);
     await sleep(1500);
@@ -84,6 +92,19 @@ async function markQuery(browser, title) {
   }, title), { timeout: 20_000, interval: 200, timeoutMsg: `query ${title} absent` });
 }
 const active = '[data-calm-query="active"]';
+// A restart after the journey's own SIGTERM raises the sticky "did not close cleanly" toast
+// (and the first-run Guide toast) at the bottom-right, exactly where the editor's Done button sits.
+// Overlaying it is the toast's job; a user dismisses it, so the journey does too before clicking.
+async function dismissToasts(browser) {
+  await browser.execute(() => document.querySelectorAll(".toast-stack .toast-close").forEach(button => button.click()));
+}
+// Query results mount lazily once their group is visible inside the page scroller. Layout above the
+// query (tables, boards) can still grow after markQuery scrolled to it, which leaves the group just
+// below the fold; a user scrolls on, so waits for results scroll the marked query into view again.
+const showsResults = (browser, test) => browser.waitUntil(async () => {
+  await browser.execute(selector => document.querySelector(selector)?.scrollIntoView({ block: "center" }), active);
+  return browser.execute(test, active);
+}, { timeout: 20_000, timeoutMsg: "query results never appeared in view" });
 // Result actions refuse ("results changed since the query ran") until a graph
 // save has re-run the answer; the query block is aria-busy until then.
 async function resultsCurrent(browser) {
@@ -125,6 +146,7 @@ async function textEdit(browser, text) {
 }
 async function closeEditor(browser) {
   if (await browser.$(`${active} .qc-done`).isExisting()) {
+    await dismissToasts(browser);
     await browser.$(`${active} .qc-done`).click();
     assert.ok(await browser.execute(selector => document.activeElement === document.querySelector(`${selector} .qc-actions > summary`), active),
       "Done returns focus to the query actions");
@@ -145,6 +167,20 @@ await session(1, async browser => {
   await browser.waitUntil(() => browser.execute(selector => !!document.querySelector(`${selector} .query-group`), active),
     { timeout: 15_000, timeoutMsg: "unfolding the query's bullet did not bring its results back" });
   await browser.waitUntil(() => !/Open tasks"\}\}\}\n\s+collapsed:: true/.test(fs.readFileSync(queries, "utf8")), { timeout: 15_000, timeoutMsg: "the bullet unfold was not saved" });
+  phase = "the query's own arrow is the same fold as the bullet (GH #619 Q8)";
+  const arrowToggle = selector => document.querySelector(`${selector} .query-collapse`)?.click();
+  const arrowFolded = selector => document.querySelector(`${selector} .query-collapse`)?.classList.contains("collapsed") ?? null;
+  const bulletFolded = selector => !!document.querySelector(selector).closest(".ls-block").querySelector(":scope > .block-main .bullet-closed");
+  await browser.execute(arrowToggle, active);
+  await browser.waitUntil(() => browser.execute(selector => document.querySelector(`${selector} .query-group`) === null, active),
+    { timeout: 10_000, timeoutMsg: "the query's arrow left its results shown" });
+  await browser.waitUntil(() => /Open tasks"\}\}\}\n\s+collapsed:: true/.test(fs.readFileSync(queries, "utf8")), { timeout: 15_000, timeoutMsg: "the arrow fold was not saved as the bullet's collapsed:: true" });
+  assert.equal(await browser.execute(bulletFolded, active), true, "the bullet shows the fold the arrow made");
+  await browser.execute(hostToggle, active);
+  await browser.waitUntil(() => browser.execute(selector => !!document.querySelector(`${selector} .query-group`), active),
+    { timeout: 15_000, timeoutMsg: "unfolding the bullet did not bring the results back" });
+  assert.equal(await browser.execute(arrowFolded, active), false, "the arrow shows the unfold the bullet made");
+  await browser.waitUntil(() => !/Open tasks"\}\}\}\n\s+collapsed:: true/.test(fs.readFileSync(queries, "utf8")), { timeout: 15_000, timeoutMsg: "the unfold was not saved" });
   phase = "rest, title rename, inline live results";
   // One click on the title starts the rename with the caret in the field
   // (GH #619 c6: WebView2 honoured `autofocus` once per document).
@@ -177,6 +213,19 @@ await session(1, async browser => {
   await action(browser, "Edit");
   await browser.waitUntil(() => browser.execute(selector => !!document.querySelector(`${selector} .qc-panel .qs-sheet`) && !!document.querySelector(`${selector} .query-group`), active), { timeout: 15_000, timeoutMsg: "editor panel or results missing after rename" });
   await closeEditor(browser);
+  // GH #619 (D-20261018-Q619 Q1/Q3): the pencil beside the details menu opens the same editor, and
+  // Done sits at the trailing end under the conditions rather than over their top corner.
+  await browser.$(`${active} .qc-edit`).click();
+  await browser.waitUntil(() => browser.execute(selector => !!document.querySelector(`${selector} .qc-panel .qs-sheet`), active),
+    { timeout: 15_000, timeoutMsg: "the Edit button did not open the inline editor" });
+  const donePlace = await browser.execute(selector => {
+    const panel = document.querySelector(`${selector} .qc-panel`).getBoundingClientRect();
+    const sheet = document.querySelector(`${selector} .qc-panel .qs-sheet`).getBoundingClientRect();
+    const done = document.querySelector(`${selector} .qc-panel .qc-done`).getBoundingClientRect();
+    return { belowSheet: done.top >= sheet.bottom - 1, trailing: panel.right - done.right < 40 };
+  }, active);
+  assert.deepEqual(donePlace, { belowSheet: true, trailing: true }, "Done sits bottom-right of the query editor");
+  await closeEditor(browser);
   await textEdit(browser, "@block and task = 'TODO' and priority = 'A'");
   await browser.waitUntil(() => browser.execute(() => {
     const query = [...document.querySelectorAll(".page-blocks .query-block")].find(block => block.querySelector(".query-title")?.textContent?.trim() === "Calm tasks");
@@ -192,7 +241,7 @@ await session(1, async browser => {
   assert.ok(copy.includes("Tasks") && copy.includes("Child detail kept in copy"), copy);
   assert.ok(!copy.includes("Second journey task"), copy);
   fs.writeFileSync(`${out}/copy-preview.txt`, copy);
-  await browser.execute(() => [...document.querySelectorAll(".export-foot button")].find(button => button.textContent === "Close")?.click());
+  await browser.execute(() => [...document.querySelectorAll(".dialog-actions button")].find(button => button.textContent === "Close")?.click());
   await action(browser, "Collapse all");
   await browser.waitUntil(() => fs.readFileSync(`${graph}/pages/Tasks.md`, "utf8").includes("collapsed:: true"), { timeout: 15_000 });
   await action(browser, "Expand all");
@@ -248,10 +297,10 @@ await session(1, async browser => {
   await markQuery(browser, "Task table"); await closeEditor(browser);
   phase = "planning comparisons through Rust";
   await markQuery(browser, "Planning query");
-  await browser.waitUntil(() => browser.execute(selector => document.querySelector(selector)?.textContent?.includes("Overdue journey task"), active), { timeout: 20_000 });
+  await showsResults(browser, selector => document.querySelector(selector)?.textContent?.includes("Overdue journey task"));
   assert.ok(!await browser.execute(selector => document.querySelector(selector)?.textContent?.includes("Upcoming journey task"), active));
   await textEdit(browser, "@block and scheduled > today");
-  await browser.waitUntil(() => browser.execute(selector => document.querySelector(selector)?.textContent?.includes("Upcoming journey task") && !document.querySelector(selector)?.textContent?.includes("Overdue journey task"), active), { timeout: 20_000 });
+  await showsResults(browser, selector => !!document.querySelector(selector)?.textContent?.includes("Upcoming journey task") && !document.querySelector(selector).textContent.includes("Overdue journey task"));
   await closeEditor(browser);
   phase = "TQL Open in Search and selected copy";
   await action(browser, "Open in Search");
@@ -261,19 +310,51 @@ await session(1, async browser => {
   await browser.execute(() => [...document.querySelectorAll(".query-results-selection button")].find(button => button.textContent === "Copy results")?.click());
   await browser.$(".export-preview").waitForExist({ timeout: 15_000 });
   assert.ok((await browser.$(".export-preview").getValue()).includes("Upcoming journey task"));
-  await browser.execute(() => [...document.querySelectorAll(".export-foot button")].find(button => button.textContent === "Close")?.click());
+  await browser.execute(() => [...document.querySelectorAll(".dialog-actions button")].find(button => button.textContent === "Close")?.click());
   phase = "frozen Search selection skips a changed positional source";
   await browser.execute(() => [...document.querySelectorAll(".query-results-selection button")].find(button => button.textContent === "Select results")?.click());
-  const selectedLocator = await browser.$(".query-workspace .query-result-row").getAttribute("data-inpage-find-surface");
+  // Open in Search now carries the block's own view (List by default, GH #619 Q2), so the result surface is
+  // whichever view-owned element carries the locator (a List button, a Search row, a table row or a board card).
+  const surface = ".query-workspace [data-inpage-find-surface]";
+  const selectedLocator = await browser.$(surface).getAttribute("data-inpage-find-surface");
   const planningPath = `${graph}/pages/Planning.md`;
   fs.writeFileSync(planningPath, "- Unselected insertion\n" + fs.readFileSync(planningPath, "utf8"));
-  await browser.waitUntil(() => browser.execute(previous => {
-    const row = document.querySelector(".query-workspace .query-result-row");
-    return row?.textContent?.includes("Upcoming journey task") && row.getAttribute("data-inpage-find-surface") !== previous;
-  }, selectedLocator), { timeout: 20_000 });
+  const openMovedResult = async () => {
+    const locator = await browser.$(surface).getAttribute("data-inpage-find-surface");
+    await browser.saveScreenshot(`${out}/search-after-insertion.png`);
+    await browser.$(surface).click();
+    await browser.waitUntil(() => browser.execute(() =>
+      document.querySelector(".main-content .zoom-breadcrumb .crumb-page")?.textContent.trim() === "Planning"
+        && !!document.querySelector(".main-content .zoomed-block")), { timeout: 20_000 });
+    const opened = await browser.$(".main-content .zoomed-block").getText();
+    fs.writeFileSync(`${out}/moved-result-navigation.json`, JSON.stringify({ testedCommit, selectedLocator, locator, opened }, null, 2));
+    execFileSync("import", ["-window", "root", `${out}/opened-moved-result.png`], { env });
+    assert.ok(opened.includes("Upcoming journey task"), `moved result opened ${opened}`);
+  };
+  try {
+    await browser.waitUntil(() => browser.execute(previous => {
+      const row = document.querySelector(".query-workspace [data-inpage-find-surface]");
+      return row?.textContent?.includes("Upcoming journey task") && row.getAttribute("data-inpage-find-surface") !== previous;
+    }, selectedLocator), { timeout: 20_000 });
+  } catch (error) {
+    // Preserve the original locator oracle while proving what the stale row
+    // actually opens through the ordinary user path.
+    await openMovedResult();
+    throw error;
+  }
   await browser.execute(() => [...document.querySelectorAll(".query-results-selection button")].find(button => button.textContent === "Copy results")?.click());
-  await browser.waitUntil(() => browser.execute(() => document.body.innerText.includes("1 results changed since the query ran; run it again")), { timeout: 20_000 });
+  try {
+    await browser.waitUntil(() => browser.execute(() => document.body.innerText.includes("1 results changed since the query ran; run it again")), { timeout: 20_000 });
+  } catch (error) {
+    await browser.saveScreenshot(`${out}/frozen-copy-failure.png`);
+    fs.writeFileSync(`${out}/frozen-copy-failure.txt`, await browser.$(".export-preview").getValue());
+    await browser.execute(() => [...document.querySelectorAll(".dialog-actions button")].find(button => button.textContent === "Close")?.click());
+    await openMovedResult();
+    throw error;
+  }
   assert.equal(await browser.$(".export-preview").isExisting(), false);
+  await browser.saveScreenshot(`${out}/frozen-copy-refused.png`);
+  await openMovedResult();
   phase = "All pages backend counts and sort";
   if (!await browser.$(".nav-all-pages-open").isExisting()) {
     await browser.execute(() => [...document.querySelectorAll(".nav-section-header")].find(header => header.textContent?.includes("ALL PAGES"))?.click());
@@ -288,7 +369,7 @@ await session(1, async browser => {
 await session(2, async browser => {
   phase = "persisted query and task after restart, board navigation";
   await openPageByName(browser, "Queries"); await markQuery(browser, "Planning query");
-  await browser.waitUntil(() => browser.execute(selector => document.querySelector(selector)?.textContent?.includes("Upcoming journey task") && !document.querySelector(selector)?.textContent?.includes("Overdue journey task"), active), { timeout: 20_000 });
+  await showsResults(browser, selector => !!document.querySelector(selector)?.textContent?.includes("Upcoming journey task") && !document.querySelector(selector).textContent.includes("Overdue journey task"));
   assert.ok(fs.readFileSync(`${graph}/pages/Tasks.md`, "utf8").includes("DONE [#A] First journey task"));
   phase = "saved planning comparison reopens without changing its answer";
   await action(browser, "Edit");
@@ -298,7 +379,7 @@ await session(2, async browser => {
   assert.equal(await browser.$('[aria-label="Date"]').getValue(), "today");
   await browser.execute(() => document.querySelector(".qs-value-editor .qs-commit")?.click());
   await closeEditor(browser);
-  await browser.waitUntil(() => browser.execute(selector => document.querySelector(selector)?.textContent?.includes("Upcoming journey task") && !document.querySelector(selector)?.textContent?.includes("Overdue journey task"), active), { timeout: 20_000 });
+  await showsResults(browser, selector => !!document.querySelector(selector)?.textContent?.includes("Upcoming journey task") && !document.querySelector(selector).textContent.includes("Overdue journey task"));
   await markQuery(browser, "Task board");
   await browser.$(`${active} .sheet-board-card`).waitForExist({ timeout: 20_000 });
   phase = "board last column access, drag save and genuine click navigation";

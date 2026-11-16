@@ -1,12 +1,13 @@
 import { Rich } from "../i18n/Rich";
 import { msg, render, t } from "../i18n";
+import { DialogActions } from "./DialogActions";
 import { optionsUpdater } from "./primitives";
 import { For, Show, createEffect, createSignal, onCleanup, onMount, type JSX } from "solid-js";
 import { pdfExportPage, closePdfExport } from "../ui";
 import { exportPagePdf, DEFAULT_PRINT_OPTS } from "../print";
 import type { PrintOpts } from "../types";
 import { registerTransientLayer } from "../transientLayers";
-import { activeWindow, listen } from "../windowRealm";
+import { activeWindow, isElementNode, listen } from "../windowRealm";
 
 // Deferred catalog messages; property getters resolve in the consuming computation.
 const UI_MESSAGES = {
@@ -90,7 +91,9 @@ function Dialog(props: { name: string }): JSX.Element {
 
   onMount(() => {
     const onKey = (e: KeyboardEvent) => {
-      if (e.key === "Enter") {
+      // Enter on a focused button activates that button (Cancel must cancel); the
+      // shortcut only applies when focus is elsewhere in the dialog.
+      if (e.key === "Enter" && !(isElementNode(e.target) && e.target.closest("button"))) {
         e.preventDefault();
         doExport();
       }
@@ -157,10 +160,9 @@ function Dialog(props: { name: string }): JSX.Element {
           <Rich message={msg("pdf-export-print-note")} slots={{ strong: children => <b>{children}</b> }} />
         </div>
 
-        <div class="export-foot">
-          <button class="export-btn-secondary" onClick={closePdfExport}>{t("pdf-export-cancel")}</button>
-          <button class="export-btn-primary" onClick={doExport}>{t("pdf-export-export")}</button>
-        </div>
+        <DialogActions
+          cancel={<button class="export-btn-secondary" onClick={closePdfExport}>{t("pdf-export-cancel")}</button>}
+          primary={<button class="export-btn-primary" onClick={doExport}>{t("pdf-export-export")}</button>} />
       </div>
     </div>
   );

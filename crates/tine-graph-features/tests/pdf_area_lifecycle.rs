@@ -6,8 +6,8 @@ use tine_core::pdf::{Highlight, Position, Rect};
 use tine_graph_features::pdf;
 use tine_store::Store;
 
-fn store(root: &Path) -> Store {
-    Store::open(root, Default::default()).unwrap().0
+fn store(root: &Path) -> std::sync::Arc<Store> {
+    std::sync::Arc::new(Store::open(root, Default::default()).unwrap().0)
 }
 
 fn scratch(label: &str) -> PathBuf {
@@ -90,7 +90,7 @@ fn deleted_area_cleanup_waits_for_pair_commit_and_keeps_shared_stamps() {
     .unwrap();
     assert!(pdf::write_highlights(
         &failed_graph,
-        None,
+        &crate::test_host(&failed_graph),
         "paper.pdf",
         "Paper",
         &[],
@@ -118,7 +118,7 @@ fn deleted_area_cleanup_waits_for_pair_commit_and_keeps_shared_stamps() {
     .unwrap();
     pdf::write_highlights(
         &shared_graph,
-        None,
+        &crate::test_host(&shared_graph),
         "paper.pdf",
         "Paper",
         std::slice::from_ref(&keeper),
@@ -145,7 +145,7 @@ fn deleted_area_cleanup_waits_for_pair_commit_and_keeps_shared_stamps() {
     .unwrap();
     pdf::write_highlights(
         &success_graph,
-        None,
+        &crate::test_host(&success_graph),
         "paper.pdf",
         "Paper",
         &[],

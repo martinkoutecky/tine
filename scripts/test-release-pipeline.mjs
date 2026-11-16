@@ -35,6 +35,22 @@ for (const identity of Object.values(IDENTITIES)) {
 }
 const releaseWorkflow = fs.readFileSync(path.join(process.cwd(), ".github/workflows/release.yml"), "utf8");
 const ciWorkflow = fs.readFileSync(path.join(process.cwd(), ".github/workflows/ci.yml"), "utf8");
+// Desktop storage acceptance must execute the app's recovery/retirement
+// boundaries as well as store tests, and use the installed app-data volume.
+const windowsAppTests = ciWorkflow.match(/& \$exe backup::[^\n]*/)?.[0] ?? "";
+const macosAppTests = ciWorkflow.match(/cargo test --no-fail-fast -p tine --lib --features custom-protocol -- backup::[^\n]*/)?.[0] ?? "";
+for (const command of [windowsAppTests, macosAppTests]) {
+  for (const filter of ["root_identity::", "host_retirement::", "flight::tests::storage_report_is_copyable_and_private"]) {
+    assert.ok(command.includes(filter), `desktop app acceptance omits ${filter}: ${command}`);
+  }
+}
+for (const platform of ["Windows", "macOS"]) {
+  const step = ciWorkflow.split(`- name: ${platform} resolved app-data storage acceptance`)[1]?.split(/\n      - /)[0] ?? "";
+  assert.ok(step.includes("TINE_STORAGE_ACCEPT_ROOT"), `${platform} app-data cold recovery has no volume root`);
+  assert.ok(step.includes("TINE_HOST_FS_ROOT"), `${platform} app-data C6 has no volume root`);
+  assert.ok(step.includes("storage_acceptance_tests -- --ignored"), `${platform} omits cold recovery`);
+  assert.ok(step.includes("m3_c6_"), `${platform} omits C6 faults/admission/retry`);
+}
 const uiE2eWorkflow = fs.readFileSync(path.join(process.cwd(), ".github/workflows/ui-e2e.yml"), "utf8");
 const flatpakWorkflow = fs.readFileSync(path.join(process.cwd(), ".github/workflows/flatpak.yml"), "utf8");
 const flatpakMetadataWorkflow = fs.readFileSync(
@@ -86,8 +102,11 @@ assert.match(releaseWorkflow,
   /lane: windows-x86[\s\S]*?--target i686-pc-windows-msvc[\s\S]*?rust-targets: "i686-pc-windows-msvc"[\s\S]*?win-arch: x86[\s\S]*?win-exe-dir: target\/i686-pc-windows-msvc\/release/,
   "GH #275: release.yml must retain the Windows x86 cross-build");
 
-assert.equal(layout.allAssets.length, 29, "release layout must retain its exact 29-asset inventory");
-assert.equal(layout.platformAssets.length, 28, "release layout must retain its exact platform-asset inventory");
+assert.equal(layout.allAssets.length, 30, "release layout includes the generation-1 viewer");
+assert.equal(layout.platformAssets.length, 29, "release assets include the viewer alongside platform bundles");
+assert.deepEqual(layout.lanes["quick-share-viewer-g1"], {
+  assets: ["quick-share-viewer-g1.zip"], platforms: {}, sourceAssets: { "quick-share-viewer-g1.zip": "quick-share-viewer-g1.zip" },
+});
 assert.equal(
   Object.keys(layout.updaterPlatforms).length,
   14,
@@ -122,7 +141,7 @@ assert.doesNotMatch(releaseWorkflow, /check-flatpak-/,
   "release.yml still does not run the manifest-source drift checks (they stay in ci)");
 assert.ok(!Object.keys(layout.updaterPlatforms).some((platform) => /flatpak/i.test(platform)),
   "the updater must not reference the Flatpak");
-// The Flatpak lane builds the identity this tree ships (Beta on og and release/X.Y
+// The Flatpak lane builds the identity this tree ships (Beta on develop and release/X.Y
 // before the stable flip, the released identity after it).
 assert.ok(releaseWorkflow.includes(
   `\n  flatpak:\n    needs: preflight\n    uses: ./.github/workflows/flatpak.yml\n    with:\n      identity: ${SHIP}\n`),
@@ -130,14 +149,14 @@ assert.ok(releaseWorkflow.includes(
 assert.match(releaseWorkflow,
   /\n  stage-flatpak:\n    needs: \[preflight, flatpak\][\s\S]*?release-workflow-inputs\.mjs flatpak-x64[\s\S]*?stage-release-lane\.mjs flatpak-x64[\s\S]*?name: release-flatpak-x64/,
   "the Flatpak bundle must be named by the layout and staged like every other lane");
-assert.match(releaseWorkflow, /assemble:\n    needs: \[preflight, build, android, stage-flatpak\]/,
+assert.match(releaseWorkflow, /assemble:\n    needs: \[preflight, build, android, stage-flatpak, quick-share-viewer\]/,
   "assembly must wait for (and so be blocked by) the Flatpak lane");
 assert.match(flatpakWorkflow, /workflow_call:\n    inputs:\n      identity:/, "flatpak.yml needs an identity input to be callable");
 assert.match(flatpakWorkflow, /derive-flatpak-identity\.mjs --identity "\$FLATPAK_IDENTITY"/,
   "the Flatpak workflow must derive its manifest through the identity-aware script");
 assert.match(
   releaseWorkflow,
-  /name: Verify Linux AppImage update information[\s\S]*?\.\/src-tauri\/\$zsync_name[\s\S]*?readelf --string-dump=\.upd_info "\$appimage"[\s\S]*?gh-releases-zsync\\\|\|zsync\\\|https:\/\/tine\\\.page\/updates\/beta\//,
+  /name: Verify Linux AppImage update information[\s\S]*?\.\/src-tauri\/\$zsync_name[\s\S]*?readelf --string-dump=\.upd_info "\$appimage"[\s\S]*?gh-releases-zsync\\\|'/,
   "release workflow verify step must search src-tauri/ for the .zsync (appimagetool writes it into the build CWD) and fail closed when update information is absent"
 );
 assert.match(
@@ -215,6 +234,41 @@ assert.equal(
 assert.throws(
   () => selectExactCiEvidence("b".repeat(40), [{ run: successfulFullCiRun, jobs: successfulFullCiJobs }]),
   /No successful full CI evidence for exact SHA/
+);
+// A development-purpose run skipped release readiness: it backs only an
+// unpublished build (release.yml passes --allow-development when publish=false).
+const developmentFullCiRun = { ...successfulFullCiRun, display_title: `ci / full / development / ${commit}` };
+assert.throws(
+  () => selectExactCiEvidence(commit, [{ run: developmentFullCiRun, jobs: successfulFullCiJobs }]),
+  /development-purpose CI run/
+);
+assert.equal(
+  selectExactCiEvidence(commit, [{ run: developmentFullCiRun, jobs: successfulFullCiJobs }], { allowDevelopment: true }).run.id,
+  developmentFullCiRun.id
+);
+assert.equal(
+  selectExactCiEvidence(commit, [{ run: { ...successfulFullCiRun, display_title: `ci / full / ${commit}` }, jobs: successfulFullCiJobs }]).run.id,
+  successfulFullCiRun.id
+);
+assert.match(
+  ciWorkflow,
+  /purpose == 'development'[\s\S]*?release readiness not checked[\s\S]*?else\s+npm run check:release-readiness/,
+  "a development-purpose CI run must skip only the release readiness check"
+);
+assert.match(
+  releaseWorkflow,
+  /check-ci-evidence\.mjs \$\{\{ \(github\.event_name == 'workflow_dispatch' && inputs\.publish == false\) && '--allow-development' \|\| '' \}\}/,
+  "release.yml may accept a development-purpose CI run only when it publishes nothing"
+);
+assert.match(
+  releaseWorkflow,
+  /REQUIRE_RELEASE_READINESS: "1"\n[\s\S]*?TINE_PREFLIGHT_DEVELOPMENT: \$\{\{ \(github\.event_name == 'workflow_dispatch' && inputs\.publish == false\) && '1' \|\| '0' \}\}\n\s+run: node scripts\/check-release-preflight\.mjs/,
+  "release.yml may treat the tree as development only when it publishes nothing"
+);
+assert.match(
+  preflight,
+  /developmentTree && !dated \? \[\] : \[\["check-release-readiness\.mjs"\]\]/,
+  "only an undated development version skips release readiness"
 );
 assert.throws(
   () => selectExactCiEvidence(commit, [{
@@ -306,7 +360,7 @@ assert.match(
 );
 assert.match(
   releaseWorkflow,
-  /assemble:\n    needs: \[preflight, build, android, stage-flatpak\]/,
+  /assemble:\n    needs: \[preflight, build, android, stage-flatpak, quick-share-viewer\]/,
   "candidate assembly accidentally waits for advisory Windows scenarios"
 );
 assert.match(releaseWorkflow, /name: Upload Windows E2E evidence[\s\S]*?if: always\(\)/);
@@ -640,3 +694,4 @@ console.log("Release pipeline fixture tests passed (exact-SHA CI gate + release 
 
 await import("./test-release-identity.mjs");
 await import("./test-ios-distribution.mjs");
+await import("./test-quick-share-build-attestation.mjs");

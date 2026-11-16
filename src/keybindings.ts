@@ -1,7 +1,13 @@
 import { shortcutKey } from "./shortcutKey";
+import { installMouseHistory } from "./mouseHistory";
+import { setCurrentPageCollapsed, toggleCurrentPageCollapsed } from "./pageCollapse";
+import { ensureSeenAvailability, markGraphSeenNow, markPageSeenNow, seenAvailable } from "./seen/seenState";
+import { seenStepAvailable, stepSeenChange } from "./seen/stepper";
+import { changeCodeWrapping, codeWrapping } from "./codeDisplay";
 import { openWorkspaceCreation } from "./workspaceCreation";
 import { adjustSidebarWidth } from "./sidebarSizing";
-import { openCssEditor } from "./cssEditor";
+import { openCssEditor, openCssInDefaultApp } from "./cssEditor";
+import { isMac as isMacDesktop, isMobilePlatform } from "./nativeChrome";
 import { openWorkspaceWindow, workspaceWindowsSupported } from "./workspaceWindows";
 import { browserPlatform } from "./browserPlatform";
 // Configurable keyboard shortcuts. Defaults mirror OG Logseq command ids and
@@ -24,6 +30,7 @@ import { dismissTopTransient } from "./transientLayers";
 import { carryDaysBack } from "./carry";
 import {
   openJournals,
+  openAllGraphs,
   openQueryInNewTab,
   openPage,
   goBack,
@@ -42,6 +49,8 @@ import { cutBlocks } from "./cut";
 import { deleteRenderedTextSelection } from "./editor/renderedSelectionDelete";
 import { followLinkUnderCaret, openLinkUnderCaretInSidebar } from "./followLink";
 import { openInPageFind } from "./inpageFind";
+import { toggleCommentMargin } from "./commentMargin";
+import { commentOnPaletteSelection, rememberEditorSelectionForPalette } from "./commentActions";
 import { cellSel, enterGridSelection, handleCellSelectionKey, handleSheetPasteEvent, outlinedGridSelectionId } from "./sheet/selection";
 import { decodeNavIntent } from "./navProtocol";
 import {
@@ -184,6 +193,11 @@ function enterPaneSelectFromFocus() {
   enterPaneSelect(ids.includes(focused) ? focused : ids[0] ?? "main");
 }
 
+function seenRoutedPage(): string | null {
+  const route = paneRouter(focusedPaneId()).route();
+  return route.kind === "page" ? route.name : null;
+}
+
 function firstVisibleBlockInFocusedPane(): string | null {
   const currentRoute = paneRouter(focusedPaneId()).route();
   return currentRoute.kind === "page"
@@ -277,13 +291,19 @@ export function handlePaneSelectKey(e: KeyboardEvent): boolean {
   }
 }
 
+function openSwitcherKeepingSelection(opts: Parameters<typeof openSwitcher>[0]): void {
+  rememberEditorSelectionForPalette();
+  openSwitcher(opts);
+}
+
 // Default command table. Editor command ids mirror OG Logseq where practical.
 const COMMANDS: CommandDef[] = [
+  { id: "ui/toggle-code-block-wrap", binding: "", label: msg("command-ui-toggle-code-block-wrap"), scope: "global", run: () => changeCodeWrapping(!codeWrapping()), global: true },
   { id: "editor/edit-selected-block", binding: "", label: msg("command-editor-edit-selected-block"), scope: "global", run: () => { editSelectedBlock(); }, global: true },
-  { id: "go/search", binding: "mod+k", label: msg("command-go-search"), scope: "global", run: () => openSwitcher({ pluginBlock: pluginFocusedBlock() ?? null }), global: true },
+  { id: "go/search", binding: "mod+k", label: msg("command-go-search"), scope: "global", run: () => openSwitcherKeepingSelection({ pluginBlock: pluginFocusedBlock() ?? null }), global: true },
   { id: "go/search-pages", binding: "", label: msg("command-go-search-pages"), scope: "global", run: () => openSwitcher({ mode: "pages" }), global: true },
   { id: "go/search-content", binding: "", label: msg("command-go-search-content"), scope: "global", run: () => openSwitcher({ mode: "content" }), global: true },
-  { id: "go/search-current-page", binding: "mod+shift+k", label: msg("command-go-search-current-page"), scope: "global", run: () => openSwitcher({ mode: "current-page", pluginBlock: pluginFocusedBlock() ?? null }), global: true },
+  { id: "go/search-current-page", binding: "mod+shift+k", label: msg("command-go-search-current-page"), scope: "global", run: () => openSwitcherKeepingSelection({ mode: "current-page", pluginBlock: pluginFocusedBlock() ?? null }), global: true },
   // GH #633: search for the selected text. Unbound: mod+shift+f is OG's
   // :command/toggle-favorite (config.cljs:493), so the chord is left to the user.
   { id: "go/search-selection", binding: "", label: msg("command-go-search-selection"), scope: "global", run: searchSelectedText, global: true },
@@ -295,7 +315,10 @@ const COMMANDS: CommandDef[] = [
   // textarea itself and is a no-op when nothing is being edited.
   { id: "editor/follow-link", binding: "mod+o", label: msg("command-editor-follow-link"), scope: "global", run: () => { followLinkUnderCaret(); }, global: true },
   { id: "editor/open-link-in-sidebar", binding: "mod+shift+o", label: msg("command-editor-open-link-in-sidebar"), scope: "global", run: () => { openLinkUnderCaretInSidebar(); }, global: true },
-  { id: "command-palette/toggle", binding: "mod+shift+p", label: msg("command-command-palette-toggle"), scope: "global", run: () => openCommandPalette(pluginFocusedBlock() ?? null), global: true },
+  { id: "command-palette/toggle", binding: "mod+shift+p", label: msg("command-command-palette-toggle"), scope: "global", run: () => { rememberEditorSelectionForPalette(); openCommandPalette(pluginFocusedBlock() ?? null); }, global: true },
+  // Margin dialogue (vision §3.7): the palette form of Ctrl/Cmd+R. Opening the
+  // palette blurs the editor, so the selection is remembered as it opens.
+  { id: "comment/on-selection", binding: "", label: msg("command-comment-on-selection"), scope: "global", run: commentOnPaletteSelection, global: true },
   // Toggle the WebKit Web Inspector for theme/CSS debugging (GH #31). The usual
   // Ctrl+Shift+I / F12 / Ctrl+Shift+C are all swallowed by WebKitGTK itself (its
   // built-in inspector keys, handled in the web process below where the app can
@@ -304,15 +327,21 @@ const COMMANDS: CommandDef[] = [
   // mod-chord, so it fires even while editing; remap it in Settings if you like.
   { id: "ui/toggle-devtools", binding: "mod+shift+j", label: msg("command-ui-toggle-devtools"), scope: "global", run: openDevtools, global: true },
   { id: "ui/toggle-custom-css", binding: "", label: msg("command-ui-toggle-custom-css"), scope: "global", run: () => setCustomCssDisabled(!customCssDisabled()), global: true },
+  // "Changed since you last looked" (ADR 0079): offered only once a git read answered for this graph.
+  { id: "seen/mark-page", binding: "", label: msg("command-seen-mark-page"), scope: "global", available: () => { ensureSeenAvailability(); return seenAvailable() === true && seenRoutedPage() !== null; }, run: () => { const name = seenRoutedPage(); if (name) void markPageSeenNow(name); } },
+  { id: "seen/next-change", binding: "", label: msg("command-seen-next-change"), scope: "global", available: () => seenStepAvailable(seenRoutedPage()), run: () => stepSeenChange(seenRoutedPage(), 1) },
+  { id: "seen/previous-change", binding: "", label: msg("command-seen-previous-change"), scope: "global", available: () => seenStepAvailable(seenRoutedPage()), run: () => stepSeenChange(seenRoutedPage(), -1) },
+  { id: "seen/mark-graph", binding: "", label: msg("command-seen-mark-graph"), scope: "global", available: () => { ensureSeenAvailability(); return seenAvailable() === true; }, run: () => void markGraphSeenNow() },
   { id: "go/journals", binding: "g j", label: msg("command-go-journals"), scope: "global", run: openJournals },
+  { id: "go/all-graphs", binding: "g shift+g", label: msg("command-go-all-graphs"), scope: "global", run: openAllGraphs },
   { id: "go/home", binding: "g h", label: msg("command-go-home"), scope: "global", run: goHome },
   { id: "go/journal-next", binding: "g n", label: msg("command-go-journal-next"), scope: "global", run: () => goAdjacentJournal(1) },
   { id: "go/journal-prev", binding: "g p", label: msg("command-go-journal-prev"), scope: "global", run: () => goAdjacentJournal(-1) },
   { id: "go/keyboard-shortcuts", binding: "g s", label: msg("command-go-keyboard-shortcuts"), scope: "global", run: () => openSettings("shortcuts") },
   // Browser-style history nav (per-tab back/forward). Special-cased in the
   // dispatcher so they fire even while editing a block; remappable like any other.
-  { id: "go/backward", binding: "alt+left", label: msg("command-go-backward"), scope: "global", run: goBack, global: true },
-  { id: "go/forward", binding: "alt+right", label: msg("command-go-forward"), scope: "global", run: goForward, global: true },
+  { id: "go/backward", binding: "alt+left", alias: isMac ? "mod+[" : "", label: msg("command-go-backward"), scope: "global", run: goBack, global: true },
+  { id: "go/forward", binding: "alt+right", alias: isMac ? "mod+]" : "", label: msg("command-go-forward"), scope: "global", run: goForward, global: true },
   // mod+w is a mod-chord, so it clears the while-editing guard and reaches the
   // generic dispatch loop below — closes the active tab even mid-edit (like a
   // browser). The last tab can't be closed, so this never quits the app.
@@ -378,9 +407,11 @@ const COMMANDS: CommandDef[] = [
   { id: "ui/toggle-brackets", binding: "mod+c mod+b", label: msg("command-ui-toggle-brackets"), scope: "global", run: () => changeShowBrackets(!showBrackets()), global: true },
   { id: "ui/toggle-left-sidebar", binding: "t l", label: msg("command-ui-toggle-left-sidebar"), scope: "global", run: toggleSidebar },
   { id: "ui/toggle-right-sidebar", binding: "t r", label: msg("command-ui-toggle-right-sidebar"), scope: "global", run: toggleRightSidebar },
-  { id: "ui/open-settings", binding: "t s", label: msg("command-ui-open-settings"), scope: "global", run: openSettings },
+  { id: "ui/open-settings", binding: "t s", alias: "mod+,", label: msg("command-ui-open-settings"), scope: "global", run: openSettings },
   { id: "appearance/edit-custom-css", binding: "", label: msg("command-appearance-edit-custom-css"), scope: "global", run: () => void openCssEditor(false) },
+  { id: "appearance/open-custom-css-default-app", binding: "", label: msg("command-appearance-open-custom-css-default-app"), scope: "global", available: () => !isMobilePlatform, run: () => { if (!isMobilePlatform) void openCssInDefaultApp(false); } },
   { id: "appearance/edit-global-css", binding: "", label: msg("command-appearance-edit-global-css"), scope: "global", run: () => void openCssEditor(true) },
+  { id: "appearance/open-global-css-default-app", binding: "", label: msg("command-appearance-open-global-css-default-app"), scope: "global", available: () => !isMobilePlatform, run: () => { if (!isMobilePlatform) void openCssInDefaultApp(true); } },
   { id: "graph/export-html", binding: "", label: msg("command-graph-export-html"), scope: "global", run: () => openSettings("graph") },
   {
     id: "page/export-pdf",
@@ -395,6 +426,8 @@ const COMMANDS: CommandDef[] = [
   },
   { id: "ui/toggle-wide-mode", binding: "t w", label: msg("command-ui-toggle-wide-mode"), scope: "global", run: toggleWideMode },
   { id: "ui/toggle-document-mode", binding: "t d", label: msg("command-ui-toggle-document-mode"), scope: "global", run: toggleDocumentMode },
+  // GH #845: the comment margin, a view state like wide and document mode (OG binds no "t m").
+  { id: "ui/toggle-comment-margin", binding: "t m", label: msg("command-ui-toggle-comment-margin"), scope: "global", run: toggleCommentMargin },
   { id: "ui/toggle-focus-mode", binding: "t f", label: msg("command-ui-toggle-focus-mode"), scope: "global", run: toggleFocusMode },
   { id: "ui/toggle-dim-blocks", binding: "t b", label: msg("command-ui-toggle-dim-blocks"), scope: "global", run: toggleDimInactiveBlocks },
   // Web KeyboardEvent reports Shift+/ as key "?", so the binding must use the
@@ -433,6 +466,9 @@ const COMMANDS: CommandDef[] = [
   { id: "editor/select-embedding-block", binding: "", label: msg("command-editor-select-embedding-block"), scope: "global", run: () => { dispatchFocusedEditorCommand("editor/select-embedding-block"); }, global: true },
   { id: "editor/collapse-children", binding: "", label: msg("command-editor-collapse-children"), scope: "global", run: () => { setTargetChildrenCollapsed(true); }, global: true },
   { id: "editor/expand-children", binding: "", label: msg("command-editor-expand-children"), scope: "global", run: () => { setTargetChildrenCollapsed(false); }, global: true },
+  { id: "editor/toggle-open-blocks", binding: "t o", label: msg("command-editor-toggle-open-blocks"), scope: "global", run: toggleCurrentPageCollapsed },
+  { id: "editor/collapse-all", binding: "", label: msg("command-editor-collapse-all"), scope: "global", run: () => setCurrentPageCollapsed(true), global: true },
+  { id: "editor/expand-all", binding: "", label: msg("command-editor-expand-all"), scope: "global", run: () => setCurrentPageCollapsed(false), global: true },
   // GH #448: the clipboard's URL or block ref becomes a link around the selection.
   {
     id: "editor/paste-as-link",
@@ -468,6 +504,10 @@ const COMMANDS: CommandDef[] = [
   { id: "editor/strike-through", binding: "mod+shift+s", label: msg("command-editor-strike-through"), scope: "editor" },
   { id: "editor/highlight", binding: "mod+shift+h", label: msg("command-editor-highlight"), scope: "editor" },
   { id: "editor/insert-link", binding: "mod+l", label: msg("command-editor-insert-link"), scope: "editor" },
+  { id: "editor/insert-youtube-timestamp", binding: "mod+shift+y", label: msg("command-editor-insert-youtube-timestamp"), scope: "editor" },
+  // Margin dialogue (vision §3.7): a child comment quoting the selected text.
+  // Consumed in the editor, so it never reaches the webview's reload.
+  { id: "editor/comment", binding: "mod+r", label: msg("command-editor-comment"), scope: "editor" },
   // GH #279: the embed counterpart of builtin Mod+C (copy block ref) — with a
   // text selection the handler declines so the platform's ordinary copy runs.
   { id: "editor/copy-embed", binding: "mod+shift+c", label: msg("command-editor-copy-embed"), scope: "editor" },
@@ -538,10 +578,8 @@ export const BUILTIN_KEYS: BuiltinKeyDef[] = [
     binding: "mod+c",
     label: msg("command-builtin-editor-copy-block-ref"),
   },
-  // GH #513 / #81. OG: `:editor/paste-text-in-one-block-at-point` (mod+shift+v,
-  // handler/paste.cljs editor-on-paste-raw!). Not a remappable command: the key
-  // has to reach the platform's own paste so the clipboard can be read (Block.tsx
-  // keeps a one-shot latch between the keydown and the paste event).
+  // GH #857 / #513 / #81. macOS reads plain text explicitly; other desktop
+  // platforms use the native paste event with the shared one-shot latch.
   {
     id: "builtin/editor/paste-plain",
     scope: "editor",
@@ -1150,35 +1188,15 @@ export function installKeybindings(overrides: Record<string, string> = {}): () =
     if (handleSheetPasteEvent(e)) e.preventDefault();
   };
   type MouseHistoryDirection = "back" | "forward";
-  type MouseHistorySource = "dom" | "native";
-  let lastMouseHistory: { direction: MouseHistoryDirection; source: MouseHistorySource; at: number } | undefined;
-  const navigateMouseHistory = (direction: MouseHistoryDirection, source: MouseHistorySource) => {
-    const now = performance.now();
-    // A platform that exposes both its native command and DOM auxclick must not
-    // advance twice for one physical release. Repeated events from the same
-    // source remain distinct clicks and are never collapsed.
-    if (lastMouseHistory?.direction === direction && lastMouseHistory.source !== source && now - lastMouseHistory.at < 100) {
-      return;
-    }
-    lastMouseHistory = { direction, source, at: now };
+  // Linux/Windows graph webviews intercept native releases; workspace popups
+  // and macOS/iOS/Android use DOM input.
+  // Select one owner, rather than guessing duplicate presses from their timing.
+  const nativeMainHistory = "__TAURI_INTERNALS__" in window && !isMacDesktop && !isMobilePlatform;
+  let mainMouse: ReturnType<typeof installMouseHistory> | undefined;
+  const navigateMouseHistory = (direction: MouseHistoryDirection) => {
     if (direction === "back") goBack();
     else goForward();
   };
-  // Mouse side buttons: X1 (DOM button 3) navigates back, X2 (button 4) forward,
-  // reusing the same history ops as Alt+Left / Alt+Right (GH #156). `auxclick`
-  // fires once per non-primary button release, so a single listener never
-  // double-navigates; preventDefault suppresses any webview built-in nav.
-  // Middle-click (button 1) is left untouched for new-tab handlers.
-  const mouseNav = (e: MouseEvent) => {
-    if (e.button === 3) {
-      e.preventDefault();
-      navigateMouseHistory("back", "dom");
-    } else if (e.button === 4) {
-      e.preventDefault();
-      navigateMouseHistory("forward", "dom");
-    }
-  };
-
   let disposed = false;
   let unlistenNativeMouseHistory = () => {};
   if ("__TAURI_INTERNALS__" in window) {
@@ -1188,9 +1206,9 @@ export function installKeybindings(overrides: Record<string, string> = {}): () =
         const unlisten = await listen<{ direction: MouseHistoryDirection; target: string }>(
           "history-navigate",
           (e) => {
-            if (e.payload?.target !== target) return;
-            if (e.payload.direction === "back" || e.payload.direction === "forward") {
-              navigateMouseHistory(e.payload.direction, "native");
+            if (!nativeMainHistory || e.payload?.target !== target) return;
+            if ((e.payload.direction === "back" || e.payload.direction === "forward") && mainMouse?.acceptNative(e.payload.direction) !== false) {
+              navigateMouseHistory(e.payload.direction);
             }
           },
         );
@@ -1203,20 +1221,24 @@ export function installKeybindings(overrides: Record<string, string> = {}): () =
   // One set of listeners per Tine window (OG-MULTIWINDOW P1): a shortcut typed
   // in a workspace window reaches the same handler, and its window's listeners
   // go away with it.
-  const uninstallWindows = onEachWindow((win) => {
+  const uninstallWindows = onEachWindow((win, id) => {
     win.addEventListener("keydown", handler, true);
     win.addEventListener("paste", pasteHandler, true);
     win.addEventListener("keydown", superTracker, true);
     win.addEventListener("keyup", superTracker, true);
     win.addEventListener("blur", clearSuper);
-    win.addEventListener("auxclick", mouseNav, true);
+    const disposeMouse = installMouseHistory(win, win.document, direction => {
+      if (!nativeMainHistory || id !== MAIN_WINDOW_ID) navigateMouseHistory(direction);
+    });
+    if (id === MAIN_WINDOW_ID) mainMouse = disposeMouse;
     return () => {
       win.removeEventListener("keydown", handler, true);
       win.removeEventListener("paste", pasteHandler, true);
       win.removeEventListener("keydown", superTracker, true);
       win.removeEventListener("keyup", superTracker, true);
       win.removeEventListener("blur", clearSuper);
-      win.removeEventListener("auxclick", mouseNav, true);
+      if (mainMouse === disposeMouse) mainMouse = undefined;
+      disposeMouse();
     };
   });
   return () => {

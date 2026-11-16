@@ -31,12 +31,13 @@ impl Graph {
         let affected = self.affected(guard.as_deref(), spelled);
         let mut memo = Memo::default();
         let mut settled = false;
-        for path in affected {
-            settled |= self.settle(guard.as_mut(), &mut memo, &path);
+        for path in &affected {
+            settled |= self.settle(guard.as_mut(), &mut memo, path);
         }
         // The generation-keyed listings named settled pages as before.
         if settled {
-            self.cache_gen.fetch_add(1, Ordering::Release);
+            let paths: Vec<&Path> = affected.iter().map(PathBuf::as_path).collect();
+            self.move_generation(guard.is_none(), &paths);
         }
         drop(guard);
     }
@@ -316,7 +317,7 @@ impl Graph {
                     }
                 }
             }
-            self.cache_gen.fetch_add(1, Ordering::Release);
+            self.move_generation(guard.is_none(), &[&path]);
             // The memos list the page's earlier name: still valid only when
             // this publication named it as before.
             if !renamed {

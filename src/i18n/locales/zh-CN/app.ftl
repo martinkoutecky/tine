@@ -1,6 +1,9 @@
-app-choose-no-to-review-retry-saving = { app-close-explanation }{ "\u000A" }{ "\u000A" }{ app-close-inventory }{ "\u000A" }{ "\u000A" }选择“否”可检查草稿、重试保存或复制内容。仍要关闭此窗口并丢失这些内容吗？
+app-quit-without-saving-body = { app-close-explanation }{ "\u000A" }{ "\u000A" }{ app-close-inventory }{ "\u000A" }{ "\u000A" }选择“返回”可检查草稿、重试保存或复制内容；或者放弃这些内容并退出。
+app-quit-without-saving-title = { $count ->
+    [0] 不保存就退出吗？
+   *[other] 不保存 { NUMBER($count, useGrouping: 0) } 个页面就退出吗？
+    }
 
-app-unsaved-changes = 未保存的更改
 
 app-couldn-t-save-pending-pdf-changes-the-graph = 无法保存待处理的 PDF 更改。图谱仍保持打开。
 
@@ -27,6 +30,7 @@ app-capture-couldn-t-be-saved-its-text = 无法保存快速记录，文本仍保
 app-tine-was-renamed-under-the-hood-so = Tine 的内部名称已更改，我们已迁移你的设置和备份。少数应用偏好（如快捷键）可能需要重新设置，抱歉给你带来不便！
 
 app-tine-could-not-write-its-usual-application-data = Tine 无法写入通常使用的应用数据文件夹，本次会话的设置和备份将保存在 { $fallbackDirectory }。修复原文件夹的权限后即可恢复正常位置。
+app-drafts-on-volatile-storage = Tine 正将应用数据保存在临时存储或内存存储中。其中未保存的草稿可能无法在重启后保留。请在重启设备前将编辑保存到图谱。
 
 app-quick-capture-could-not-connect-to-this = 快速记录无法连接到此图谱窗口。
 
@@ -74,3 +78,9 @@ app-pane-split-navigation = { $kind ->
 # Helper-return and component-prop interface text (GH #107).
 app-prose-navigation-sidebar = 导航侧边栏
 app-prose-unexpected-failure = 发生意外错误。
+capture-snapshot-saved = 之前的速记已保存 — 已移除未改动的已提交文字，保留了较新的编辑
+capture-title-needs-text = 请添加正文以归档此标题 — 已保留标题
+capture-retry-unconfirmed = 尚未确认保存 — 已保留文字。请重试归档以完成同一次速记。
+capture-previous-graph = 速记可能已进入上一个图谱；尚未确认保存 — 已保留文字。再次速记前，请先检查该图谱。
+capture-start-new = 开始新的速记
+capture-new-request = 已为新的速记保留文字。再次归档前，请移除已保存在上一个图谱中的内容。

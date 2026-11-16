@@ -65,11 +65,11 @@ describe("D07: fences follow the parser's literal ranges, not CommonMark", () =>
   it("```calc reads the parser's source container; visibleBody keeps container lines as content", () => {
     expect(calcSource("```calc\n1 + 1\n```")).toBe("1 + 1");
     expect(calcSource("```calc\n1 + 1")).toBe("1 + 1");
-    expect(visibleBody("```\nfoo:: ghost\nSCHEDULED: <2026-10-01 Thu>\n```\nfoo:: real")).toEqual([
+    expect(visibleBody("```\nfoo:: ghost\nSCHEDULED: <2026-10-01 Thu>\n```\nfoo:: real", "md")).toEqual([
       "```", "foo:: ghost", "SCHEDULED: <2026-10-01 Thu>", "```",
     ]);
     // A four-run opener closed by a three-run: the line after is metadata again.
-    expect(visibleBody("````\nx\n```\nfoo:: real")).toEqual(["````", "x", "```"]);
+    expect(visibleBody("````\nx\n```\nfoo:: real", "md")).toEqual(["````", "x", "```"]);
   });
   it("autocomplete treats a property-shaped line inside a closed container as code", () => {
     const inside = "```\nfoo::";
@@ -93,7 +93,7 @@ describe("D13: one accepted marker/priority answer for readers and writers", () 
     expect(setPriority("TODO [#A] x", "B")).toBe("TODO [#B] x");
     expect(setPriority("TODO [#A] x", null)).toBe("TODO x");
     expect(setPriority("TODO x [#A]", "B")).toBe("TODO [#B] x [#A]");
-    expect(visibleBody("TODO [#A] x")).toEqual(["x"]);
+    expect(visibleBody("TODO [#A] x", "md")).toEqual(["x"]);
   });
 });
 

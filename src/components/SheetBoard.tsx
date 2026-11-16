@@ -12,6 +12,7 @@ import { observeNear, unobserveNear } from "../lazyObserve";
 import { blockPageReadOnly, formatForBlock, formatForPage, readPageProperty, readPageProperties, node as docNode } from "../document";
 import { facetsOf } from "../render/facets";
 import { InlineText } from "../render/inline";
+import { BlockRenderBoundary } from "./BlockRenderBoundary";
 import { editingId, editingOwner } from "../editorController";
 import { SheetCellContext, type SheetCellCtx } from "../sheet/context";
 import {
@@ -44,7 +45,7 @@ import {
 import { parseFields, sheetConfig, type FieldSpec } from "../sheet/config";
 import { formulasOf, mergeFormulas } from "../sheet/formulaFields";
 import { formulaReferenceName, boardCardChips, boardGroupField, boardRowTitle, buildBoardColumns, type BoardColumn as BoardColumnOf } from "../sheet/boardColumns";
-import { fieldIdsForRecords, recordFacets } from "../sheet/tableFields";
+import { fieldIdsForRecords, recordFacets, rowRaw } from "../sheet/tableFields";
 import { createFormulaFilterMemo, formulaRowKey, liveFormulaRowNode, type FormulaEvalRow } from "../sheet/formulaEval";
 import { setBoardGroupBy } from "../sheet/mutations";
 import { graphEpoch } from "../graphSession";
@@ -87,6 +88,7 @@ export function SheetBoard(props: {
   groupBy?: string | null;
   groups?: readonly RefGroup[];
   schemaPage?: string;
+  hostProperties?: readonly [string, string][];
 }): JSX.Element {
   const surfaceId = useContext(SurfaceContext);
   const groupBy = createMemo<FieldId>(() => boardGroupField(props.groupBy));
@@ -126,10 +128,12 @@ export function SheetBoard(props: {
   });
   const [addingTag, setAddingTag] = createSignal(false);
   const [tagInputInvalid, setTagInputInvalid] = createSignal(false);
-  const config = createMemo(() => {
+  const hostProperties = createMemo(() => {
+    if (props.hostProperties) return props.hostProperties;
     const owner = docNode(props.ownerId);
-    return sheetConfig(owner ? facetsOf(owner.raw, formatForBlock(props.ownerId)).properties : []);
+    return owner ? facetsOf(owner.raw, formatForBlock(props.ownerId)).properties : [];
   });
+  const config = createMemo(() => sheetConfig(hostProperties()));
   const schemaFields = createMemo<readonly FieldSpec[]>(() => {
     const own = config().fields;
     if (own.length > 0) return own;
@@ -139,10 +143,7 @@ export function SheetBoard(props: {
     if (!props.schemaPage) return new Map();
     return formulasOf(readPageProperties(props.schemaPage));
   });
-  const blockFormulas = createMemo<ReadonlyMap<string, string>>(() => {
-    const owner = docNode(props.ownerId);
-    return owner ? formulasOf(facetsOf(owner.raw, formatForBlock(props.ownerId)).properties) : new Map();
-  });
+  const blockFormulas = createMemo(() => formulasOf(hostProperties()));
   const formulas = createMemo(() => mergeFormulas(pageFormulas(), blockFormulas()));
 
   const allRows = createMemo<RowRecord[]>(() => sheetSourceRows(props.rowSource, props.ownerId, props.groups));
@@ -874,6 +875,7 @@ function BoardCard(props: {
       <Show
         when={editing()}
         fallback={
+          <BlockRenderBoundary raw={rowRaw(props.row)}>
           <Show
             when={near()}
             fallback={<div class="sheet-board-card-title sheet-cell-defer">{boardRowTitle(props.row)}</div>}
@@ -884,6 +886,7 @@ function BoardCard(props: {
             </div>
             <CardChips row={props.row} groupBy={props.groupBy} onFieldClick={onChipClick} />
           </Show>
+          </BlockRenderBoundary>
         }
       >
         <SheetCellContext.Provider value={cell()}>

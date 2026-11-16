@@ -17,13 +17,8 @@ import { pushToast } from "../toasts";
 // Undo / redo (snapshot-based; typing in one block coalesces to one step)
 // ---------------------------------------------------------------------------
 
-// A page-scoped structural snapshot, or a single-block raw patch (typing).
-// Typing is by far the most frequent op, so it records an O(1) inverse instead
-// of cloning anything. A structural op snapshots ONLY the pages it touches (its
-// nodes + page objects), so the cost is O(edited page), not O(whole working set)
-// — a structural edit no longer slows down as more journal days / sidebar / query
-// pages get loaded. `pages: null` means "all loaded pages" (the safe fallback for
-// an op that can't declare its scope).
+// Typing has an O(1) inverse; structural snapshots cost O(affected pages).
+// `pages: null` means every loaded page.
 interface SnapEntry {
   kind: "snap";
   pages: string[] | null; // affected page names (null = whole working set)
@@ -291,6 +286,11 @@ export function pushUndo(tag: string, affected?: string[], preservedIds?: readon
   redoStack = [];
   lastUndoTag = tag;
   bumpHistory();
+}
+
+export function captureTransferRollback(pages: string[]): () => void {
+  const snapshot = snapEntry(pages);
+  return () => { applyEntry(snapshot); pages.forEach(invalidateUndoForPage); };
 }
 
 /** A held Mod+Up/Down on a selection is one undo step (master 45279b9c9): a

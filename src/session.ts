@@ -6,7 +6,7 @@ import { parseBlockPos, type QueryRoute } from "./routeTypes";
 import { blockPositionRef } from "./document";
 import { bindingOwner, readOwned, writeOwned, type WriteOwner } from "./owned";
 import { dismissToast, pushToastUnique } from "./toasts";
-import { isSinglePaneShell } from "./nativeChrome";
+import { isSinglePaneShell } from "./viewportClass";
 import {
   installSessionPersistence,
   mintPdfViewId,
@@ -24,6 +24,7 @@ import {
   layoutPaneIds,
   layoutRoot,
   layoutWindowIds,
+  mainLayoutEpoch,
   mainRouter,
   paneRouter,
   resetPaneLayoutToSingle,
@@ -115,6 +116,13 @@ function intentToken(): string {
   return JSON.stringify([sessionIntentRevision, ...allPaneIds().map((id) => [id, paneRouter(id).routeIntentRevision()])]);
 }
 
+// Initial layout records zero where an unpositioned view had no scroll offset.
+// Both mean the top; only an actual position change should veto recovery.
+function sessionSnapshotToken(): string {
+  return JSON.stringify(buildPersistedSession(), (key, value) =>
+    key === "scrolls" ? value.map((offset: number | null) => offset ?? 0) : value);
+}
+
 export function setSessionWorkspaceId(id: string | null): void { currentWorkspaceId = id; }
 export function discardWorkspaceRestoreEvidence(): void { restoreEvidence = null; restoredWorkspaceId = null; restoredSessionPresent = null; }
 
@@ -127,14 +135,14 @@ export function discardWorkspaceRestoreEvidence(): void { restoreEvidence = null
 export function prepareWorkspaceRecovery(): (activeId: string, parked: PersistedSession) => PersistedSession {
   const evidence = restoreEvidence;
   restoreEvidence = null;
-  const beforeClear = JSON.stringify(buildPersistedSession());
+  const beforeClear = sessionSnapshotToken();
   const beforeClearIntent = intentToken();
   const intervened = !!evidence && (!evidence.owner() || evidence.snapshot !== beforeClear || evidence.intent !== beforeClearIntent);
   setSessionWorkspaceId(null);
-  const startSnapshot = JSON.stringify(buildPersistedSession());
+  const startSnapshot = sessionSnapshotToken();
   const startIntent = intentToken();
   return (activeId, parked) => {
-    const changed = JSON.stringify(buildPersistedSession()) !== startSnapshot || intentToken() !== startIntent
+    const changed = sessionSnapshotToken() !== startSnapshot || intentToken() !== startIntent
       || intervened;
     const wantsParked = !!evidence && (evidence.present === false || !!evidence.workspaceId && evidence.workspaceId !== activeId);
     if (changed && wantsParked) {
@@ -160,6 +168,7 @@ function validRoute(r: unknown, seenViewIds: Set<string>): Route | null {
   if (o.kind === "journals") return { kind: "journals" };
   if (o.kind === "conflicts") return { kind: "conflicts" };
   if (o.kind === "all-pages") return { kind: "all-pages" };
+  if (o.kind === "all-graphs") return { kind: "all-graphs" };
   if (o.kind === "query") {
     const presentation = normalizeQueryPresentation(o.presentation);
     if (!(typeof o.id === "string" && o.id.length > 0 && o.id.length <= 128
@@ -171,6 +180,7 @@ function validRoute(r: unknown, seenViewIds: Set<string>): Route | null {
     const optional: Partial<QueryRoute> = {};
     const scope = o.pageMatchScope === undefined ? null : normalizeFriendlyPageMatchScope(o.pageMatchScope);
     if (scope) optional.pageMatchScope = scope;
+    if (o.resultKinds === "pages-and-blocks") optional.resultKinds = o.resultKinds;
     for (const key of ["pagePresentation", "blockPresentation"] as const) {
       const value = o[key] === undefined ? null : normalizeQueryPresentation(o[key]);
       if (value) optional[key] = value;
@@ -216,20 +226,50 @@ function validRoute(r: unknown, seenViewIds: Set<string>): Route | null {
   };
 }
 
+/** A saved tab's parent link (GH #704): an index of an EARLIER tab of the same
+ * snapshot, else none. Anything else is device input from another build or a
+ * sync tool and makes the tab a root; it never refuses the session. */
+function savedParentIndex(raw: unknown, index: number): number | undefined {
+  return typeof raw === "number" && Number.isInteger(raw) && raw >= 0 && raw < index ? raw : undefined;
+}
+
+/** Keep the tabs `kept` marks (aligned with the saved array; null = dropped),
+ * re-pointing every parent link at the kept tab's new index. A child of a
+ * dropped tab moves up to the dropped tab's own parent, as a closed parent's
+ * children do; the router re-checks the tree (T1/T2) when it restores. */
+function compactTabs(saved: readonly (Partial<SerializedTab> | null | undefined)[], kept: readonly (SerializedTab | null)[]): SerializedTab[] {
+  const out: SerializedTab[] = [];
+  const newIndex: (number | undefined)[] = [];
+  const effective: (number | undefined)[] = []; // new index a child of saved tab i points at
+  kept.forEach((tab, i) => {
+    const p = savedParentIndex(saved[i]?.parent, i);
+    const parent = p === undefined ? undefined : effective[p];
+    if (tab) {
+      const { parent: _old, collapsed, ...base } = tab;
+      newIndex[i] = out.length;
+      out.push({ ...base, ...(parent !== undefined ? { parent } : {}), ...(collapsed === true ? { collapsed: true as const } : {}) });
+    }
+    effective[i] = newIndex[i] ?? parent;
+  });
+  return out;
+}
+
 function parseSnapshotValue(raw: unknown, seenViewIds: Set<string>): PaneSnapshot | null {
   const s = raw as Partial<PaneSnapshot> | null | undefined;
   if (!s || !Array.isArray(s.tabs)) return null;
-  const tabs: SerializedTab[] = [];
-  for (const t of s.tabs as Partial<SerializedTab>[]) {
-    if (!t || !Array.isArray(t.history) || !t.history.length) continue;
+  const saved = s.tabs as (Partial<SerializedTab> | null | undefined)[];
+  const kept = saved.map((t): SerializedTab | null => {
+    if (!t || !Array.isArray(t.history) || !t.history.length) return null;
     const history = t.history.map((route) => validRoute(route, seenViewIds)).filter((route): route is Route => !!route);
-    if (!history.length) continue;
-    tabs.push({
+    if (!history.length) return null;
+    return {
       history,
       pos: Math.min(Math.max(0, t.pos ?? 0), history.length - 1),
       pinned: !!t.pinned,
-    });
-  }
+      ...(t.collapsed === true ? { collapsed: true as const } : {}),
+    };
+  });
+  const tabs = compactTabs(saved, kept);
   if (!tabs.length) return null;
   return {
     tabs,
@@ -256,10 +296,11 @@ function previousPageRoute(t: SerializedTab): Route | null {
 }
 
 function sanitizeJournals(snapshot: PaneSnapshot, journalsSeen: { value: boolean }): PaneSnapshot | null {
-  const tabs: SerializedTab[] = [];
+  const kept: (SerializedTab | null)[] = [];
   const scrolls: (number | null)[] = [];
   let activeIndex = 0;
   snapshot.tabs.forEach((tab, i) => {
+    kept.push(null);
     const active = currentRoute(tab);
     let next = tab;
     if (active.kind === "journals") {
@@ -273,10 +314,11 @@ function sanitizeJournals(snapshot: PaneSnapshot, journalsSeen: { value: boolean
         journalsSeen.value = true;
       }
     }
-    if (i === snapshot.activeIndex) activeIndex = tabs.length;
-    tabs.push(next);
+    if (i === snapshot.activeIndex) activeIndex = scrolls.length;
+    kept[i] = next;
     scrolls.push(snapshot.scrolls?.[i] ?? null);
   });
+  const tabs = compactTabs(snapshot.tabs, kept);
   if (!tabs.length) return null;
   return { tabs, activeIndex: Math.min(activeIndex, tabs.length - 1), scrolls };
 }
@@ -417,12 +459,88 @@ function parseWindows(raw: unknown, claimed: Set<string>, seenViewIds: Set<strin
   return windows;
 }
 
+/** A single-pane start PRESENTS one saved pane but RETAINS the rest (the other
+ * panes, their tabs and the saved focus, and the saved workspace windows), so
+ * a narrow or touch start never shrinks what the next session writes: the
+ * presentation is temporary, the saved layout is not (D-20261018-W1, review
+ * r1). The presented pane's live tabs replace its saved ones on each write.
+ * The retained layout is released only by the USER acting on the main pane
+ * tree since the restore (`epoch`, see panes.ts mainLayoutEpoch): a split, a
+ * close, a dock, a restore or a reset. Panes the app itself adds (a PDF
+ * companion) do not release it: the live tree then replaces the presented
+ * leaf, so the kept panes are written around it (review r2). */
+type RetainedLayout = {
+  layout: LayoutNode;
+  snapshots: Map<string, PaneSnapshot>;
+  presentedId: string;
+  focusedPaneId: string;
+  windows: ParsedWindow[];
+};
+let retained: (RetainedLayout & { epoch: number }) | null = null;
+
+function serializeParsedLayout(node: LayoutNode, snapshots: Map<string, PaneSnapshot>, live?: { id: string; snapshot: PaneSnapshot }): PersistedLayoutNode {
+  if (node.kind === "pane") {
+    const snapshot = live && live.id === node.paneId ? live.snapshot : snapshots.get(node.paneId);
+    return { kind: "pane", paneId: node.paneId, ...(snapshot ? persistedSnapshot(snapshot) : {}) } as PersistedLayoutNode;
+  }
+  return {
+    kind: "split",
+    dir: node.dir,
+    ratio: node.ratio,
+    children: [serializeParsedLayout(node.children[0], snapshots, live), serializeParsedLayout(node.children[1], snapshots, live)],
+  };
+}
+
+function retainedForWrite(): RetainedLayout | null {
+  if (!retained) return null;
+  const ids = layoutPaneIds(layoutRoot(MAIN_WINDOW_ID));
+  if (retained.epoch !== mainLayoutEpoch() || !ids.includes("main")) { retained = null; return null; }
+  return retained;
+}
+
+/** The retained layout with the live main tree standing where the presented
+ * pane was. Live pane ids are kept unless they collide with a kept pane; the
+ * presented pane keeps its saved id. */
+function serializeRetained(keep: RetainedLayout): PersistedLayoutNode {
+  const live = layoutRoot(MAIN_WINDOW_ID);
+  if (live.kind === "pane") {
+    return serializeParsedLayout(keep.layout, keep.snapshots, { id: keep.presentedId, snapshot: mainRouter().snapshot() });
+  }
+  const taken = new Set(layoutPaneIds(keep.layout));
+  const rename = new Map<string, string>([["main", keep.presentedId]]);
+  let n = 0;
+  for (const id of layoutPaneIds(live)) {
+    if (rename.has(id)) continue;
+    let next = id;
+    while (taken.has(next)) next = `pane-r${n++}`;
+    taken.add(next);
+    rename.set(id, next);
+  }
+  const liveTree = (node: LayoutNode): PersistedLayoutNode =>
+    node.kind === "pane"
+      ? { kind: "pane", paneId: rename.get(node.paneId) ?? node.paneId, ...persistedSnapshot(paneRouter(node.paneId).snapshot()) }
+      : { kind: "split", dir: node.dir, ratio: node.ratio, children: [liveTree(node.children[0]), liveTree(node.children[1])] };
+  const walk = (node: LayoutNode): PersistedLayoutNode =>
+    node.kind === "pane"
+      ? node.paneId === keep.presentedId
+        ? liveTree(live)
+        : serializeParsedLayout(node, keep.snapshots)
+      : { kind: "split", dir: node.dir, ratio: node.ratio, children: [walk(node.children[0]), walk(node.children[1])] };
+  return walk(keep.layout);
+}
+
 export function buildPersistedSession(): PersistedSession {
   const ids = layoutPaneIds(layoutRoot(MAIN_WINDOW_ID));
   const focused = focusedPaneId(MAIN_WINDOW_ID);
   const mirrorId = feedPaneId(MAIN_WINDOW_ID) ?? (ids.includes(focused) ? focused : ids[0]) ?? "main";
   const mirror = persistedSnapshot(paneRouter(mirrorId).snapshot());
-  const windows = persistedWindows();
+  const keep = retainedForWrite();
+  const liveWindows = persistedWindows();
+  const windows = liveWindows.length || !keep ? liveWindows : keep.windows.map((w) => ({
+    layout: serializeParsedLayout(w.layout, w.snapshots),
+    focusedPaneId: w.focusedPaneId,
+    ...(w.geometry ? { geometry: w.geometry } : {}),
+  }));
   return {
     ...mirror,
     ...(currentWorkspaceId ? { workspaceId: currentWorkspaceId } : {}),
@@ -431,8 +549,10 @@ export function buildPersistedSession(): PersistedSession {
     rightSidebarItems: rightSidebar().map(persistedSidebarItem),
     favoritesSectionExpanded: favoritesSectionExpanded(),
     recentSectionExpanded: recentSectionExpanded(),
-    layout: serializeLayout(layoutRoot(MAIN_WINDOW_ID)),
-    focusedPaneId: focused,
+    layout: keep
+      ? serializeRetained(keep)
+      : serializeLayout(layoutRoot(MAIN_WINDOW_ID)),
+    focusedPaneId: keep ? keep.focusedPaneId : focused,
     recentPages: recentPages(),
     ...(windows.length ? { windows } : {}),
   };
@@ -445,6 +565,8 @@ export function parsePersistedSession(raw: string): {
   sidebar: SidebarSessionState;
   recent: RecentItem[];
   windows: ParsedWindow[];
+  /** Set by a single-pane start that presented fewer panes than were saved. */
+  retained?: RetainedLayout;
 } | null {
   try {
     const s = JSON.parse(raw) as PersistedSession;
@@ -480,13 +602,25 @@ export function parsePersistedSession(raw: string): {
           [...snapshots].find(([, snap]) =>
             sameRoute(currentRoute(snap.tabs[snap.activeIndex]), { kind: "journals" })
           )?.[0] ?? [...snapshots.keys()][0];
+        const savedWindows = parseWindows(s.windows, new Set(layoutPaneIds(parsed)), seenViewIds);
         return {
           layout: { kind: "pane", paneId: "main" },
           snapshots: new Map([["main", snapshots.get(feedId)!]]),
           focusedPaneId: "main",
           sidebar,
           recent,
-          windows: [], // the single-pane (phone) shell has no workspace windows
+          windows: [], // the single-pane shell opens no workspace windows now
+          ...(snapshots.size > 1 || savedWindows.length
+            ? {
+                retained: {
+                  layout: parsed,
+                  snapshots,
+                  presentedId: feedId,
+                  focusedPaneId: typeof s.focusedPaneId === "string" && snapshots.has(s.focusedPaneId) ? s.focusedPaneId : feedId,
+                  windows: savedWindows,
+                },
+              }
+            : {}),
         };
       }
     }
@@ -499,6 +633,14 @@ export function parsePersistedSession(raw: string): {
       sidebar,
       recent,
       windows: singlePane ? [] : parseWindows(s.windows, new Set(["main"]), seenViewIds),
+      ...(singlePane
+        ? (() => {
+            const savedWindows = parseWindows(s.windows, new Set(["main"]), seenViewIds);
+            return savedWindows.length
+              ? { retained: { layout: { kind: "pane", paneId: "main" } as LayoutNode, snapshots: new Map([["main", legacy]]), presentedId: "main", focusedPaneId: "main", windows: savedWindows } }
+              : {};
+          })()
+        : {}),
     };
   } catch {
     return null;
@@ -524,6 +666,7 @@ export function applyParsedSession(parsed: NonNullable<ReturnType<typeof parsePe
     restorePaneLayout(parsed.layout, parsed.snapshots, parsed.focusedPaneId);
   }
   windowSession?.open(parsed.windows);
+  retained = parsed.retained ? { ...parsed.retained, epoch: mainLayoutEpoch() } : null;
 }
 
 let sessionSaveFailure: { id: number; message: string } | null = null;
@@ -583,7 +726,8 @@ export function scheduleSessionSave() {
 /** Best-effort load of this graph's saved session; never rejects. Saved tabs,
  * layout, sidebar and recents apply together only while the UI is the pristine
  * one-pane Journals default and no route or session intent changed during the
- * read. A missing file restores legacy recents; invalid or unreadable data
+ * read. Initial layout at scroll zero is unchanged from an unset offset.
+ * A missing file restores legacy recents; invalid or unreadable data
  * leaves the live UI. Load failure, graph change, or a live change skips registry
  * initialization. Otherwise registry initialization may apply its parked active
  * workspace and schedule a save; a refused recovery or registry error shows a
@@ -592,9 +736,9 @@ export function scheduleSessionSave() {
 export async function restoreSession(): Promise<void> {
   const owner = bindingOwner();
   discardWorkspaceRestoreEvidence();
-  const initialSession = JSON.stringify(buildPersistedSession());
+  const initialSession = sessionSnapshotToken();
   const initialIntent = intentToken();
-  const mayApply = () => owner() && JSON.stringify(buildPersistedSession()) === initialSession && intentToken() === initialIntent;
+  const mayApply = () => owner() && sessionSnapshotToken() === initialSession && intentToken() === initialIntent;
   let initializeRegistry = true;
   try {
     let raw: string | null = null;
@@ -631,7 +775,7 @@ export async function restoreSession(): Promise<void> {
     // like the existing session restore; a bad registry must not block the app.
     try {
       if (!initializeRegistry) return;
-      restoreEvidence = { owner, snapshot: JSON.stringify(buildPersistedSession()), intent: intentToken(), present: restoredSessionPresent, workspaceId: restoredWorkspaceId };
+      restoreEvidence = { owner, snapshot: sessionSnapshotToken(), intent: intentToken(), present: restoredSessionPresent, workspaceId: restoredWorkspaceId };
       const { initializeWorkspaces } = await import("./workspaces");
       if (!owner()) return;
       await initializeWorkspaces();

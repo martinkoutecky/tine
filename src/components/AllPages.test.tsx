@@ -30,7 +30,9 @@ const inventory = (): PageInventoryEntry[] => [
 ];
 
 const settle = async () => { for (let i = 0; i < 6; i++) await new Promise((resolve) => setTimeout(resolve, 0)); };
-const rowNames = (host: HTMLElement) => [...host.querySelectorAll(".all-pages-open")].map((el) => el.textContent);
+// EmojiText may draw an emoji as an image; compare the user's logical label.
+const logical = (node: Node): string => node.nodeType === 3 ? node.textContent ?? "" : (node as Element).tagName === "IMG" ? (node as Element).getAttribute("alt") ?? "" : [...node.childNodes].map(logical).join("");
+const rowNames = (host: HTMLElement) => [...host.querySelectorAll(".all-pages-open")].map(logical);
 const column = (host: HTMLElement, label: string) =>
   [...host.querySelectorAll<HTMLElement>(".all-pages-col")].find((el) => el.textContent?.startsWith(label))!;
 

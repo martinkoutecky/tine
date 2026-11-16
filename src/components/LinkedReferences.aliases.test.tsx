@@ -57,6 +57,16 @@ it.each([false, true])("merges the reporter's 8/3/15 example and counts a block 
   s.dispose();
 });
 
+it("names what the count counts in its tooltip, following the filter (GH #755)", async () => {
+  const s = await setup();
+  const title = () => s.root.querySelector(".references-count")!.getAttribute("title");
+  await vi.waitFor(() => expect(title()).toBe("27 blocks on 1 page"));
+  s.root.querySelector<HTMLButtonElement>(".ref-filter-chip")!.click();
+  expect(visible(s.root)).toBe("26");
+  expect(title()).toBe("26 blocks on 1 page");
+  s.dispose();
+});
+
 it("loads alias-named OG filters and writes the canonical name on the next change", async () => {
   const s = await setup('filters:: {"de" true}');
   await vi.waitFor(() => expect(visible(s.root)).toBe("26"));

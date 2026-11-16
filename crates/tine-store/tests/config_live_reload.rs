@@ -101,7 +101,122 @@ fn an_outside_config_edit_is_taken_in_by_the_poll_watcher() {
     live_reload_in(WatchMode::Poll);
 }
 
-/// Byte-identity gate: a config reload discards every parsed page, so a rewrite
+fn cost_fixture() -> (tempfile::TempDir, Store, Subscription) {
+    let dir = tempfile::tempdir().unwrap();
+    std::fs::create_dir_all(dir.path().join("pages")).unwrap();
+    std::fs::create_dir_all(dir.path().join("logseq")).unwrap();
+    std::fs::write(dir.path().join("logseq/config.edn"), "{}\n").unwrap();
+    for n in 0..12 {
+        std::fs::write(
+            dir.path().join(format!("pages/Page{n}.md")),
+            format!("alias:: Alias{n}\n- [[Target]] page {n}\n"),
+        )
+        .unwrap();
+    }
+    let (store, subscription) = open(dir.path(), WatchMode::Notify);
+    (dir, store, subscription)
+}
+
+fn assert_no_page_reparse(store: &Store, label: &str, config_reads: u64) {
+    let view = store.whole_graph().unwrap();
+    assert_eq!(view.corpus().pages.len(), 12);
+    let counts = tine_store::cost_counters::snapshot();
+    // read_config uses the same full-read counter as pages. Own reloads
+    // read that one file here; watcher-thread reads are counted separately.
+    eprintln!(
+        "{label}: full reads={} ({config_reads} config), parses={}, preamble reads={}",
+        counts.full_reads, counts.parses, counts.preamble_reads
+    );
+    assert_eq!(counts.full_reads, config_reads, "audit L1-04: {label}");
+    assert_eq!(counts.parses, 0, "audit L1-04: {label}");
+}
+
+#[test]
+fn settings_only_writes_keep_parsed_pages() {
+    let _integration_guard = crate::integration_lock();
+    let (_dir, store, subscription) = cost_fixture();
+    tine_store::cost_counters::reset();
+    tine_graph_features::config::set_favorites(&store, &["Page0".into()], None).unwrap();
+    assert_no_page_reparse(&store, "favorites toggle + whole graph", 1);
+    assert_eq!(store.config().favorites, ["Page0"]);
+    let change = subscription.recv().unwrap();
+    assert!(change
+        .files
+        .iter()
+        .any(|(id, _, _)| id.as_str() == "logseq/config.edn"));
+
+    tine_store::cost_counters::reset();
+    tine_graph_features::config::set_default_journal_template(&store, Some("Daily")).unwrap();
+    assert_no_page_reparse(&store, "journal template + whole graph", 1);
+    assert_eq!(
+        store.config().default_journal_template.as_deref(),
+        Some("Daily")
+    );
+
+    tine_store::cost_counters::reset();
+    tine_graph_features::config::set_show_brackets(&store, false).unwrap();
+    assert_no_page_reparse(&store, "display setting + whole graph", 1);
+    assert!(!store.config().show_brackets);
+    store.close();
+}
+
+#[test]
+fn outside_settings_keep_parsed_pages_but_build_config_reparses() {
+    let _integration_guard = crate::integration_lock();
+    let (dir, store, subscription) = cost_fixture();
+    tine_store::cost_counters::reset();
+    deliver(
+        dir.path(),
+        "logseq/config.edn",
+        "{:favorites [\"Page1\"]}\n",
+    );
+    assert!(external_change_naming(
+        &subscription,
+        "logseq/config.edn",
+        Duration::from_secs(10)
+    ));
+    assert_no_page_reparse(&store, "external favorites + whole graph", 0);
+    assert_eq!(store.config().favorites, ["Page1"]);
+
+    tine_store::cost_counters::reset();
+    deliver(
+        dir.path(),
+        "logseq/config.edn",
+        "{:hidden [\"pages/Page0.md\"]}\n",
+    );
+    assert!(external_change_naming(
+        &subscription,
+        "logseq/config.edn",
+        Duration::from_secs(10)
+    ));
+    assert_eq!(store.whole_graph().unwrap().corpus().pages.len(), 11);
+    let counts = tine_store::cost_counters::snapshot();
+    eprintln!(
+        "external hidden: page reads={}, parses={}",
+        counts.full_reads, counts.parses
+    );
+    assert!(counts.parses >= 11, "build-key change must rebuild pages");
+    store.close();
+}
+
+#[test]
+fn own_build_config_change_still_reparses_pages() {
+    let _integration_guard = crate::integration_lock();
+    let (_dir, store, _subscription) = cost_fixture();
+    tine_store::cost_counters::reset();
+    tine_graph_features::config::set_journal_page_title_format(&store, "yyyy-MM-dd").unwrap();
+    assert_eq!(store.whole_graph().unwrap().corpus().pages.len(), 12);
+    let counts = tine_store::cost_counters::snapshot();
+    eprintln!(
+        "own journal format: page reads={}, parses={}",
+        counts.full_reads, counts.parses
+    );
+    assert!(counts.full_reads >= 12);
+    assert!(counts.parses >= 12, "build-key change must rebuild pages");
+    store.close();
+}
+
+/// Byte-identity gate: a config reload publishes new state, so a rewrite
 /// of identical bytes (Logseq rewrites config.edn on ordinary UI actions,
 /// Syncthing redelivers it) must publish no configuration change.
 #[test]

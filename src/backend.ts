@@ -1,9 +1,11 @@
 import { t } from "./i18n";
+import { errorFamily } from "./errorFamily";
 // Backend abstraction. In the Tauri app we call Rust via `invoke`. In a plain
 // browser (Vite dev / Playwright screenshots) we fall back to an in-memory mock
 // seeded from a fixture graph, so the whole UI is exercisable without the shell.
 
 import { markCommandSlow } from "./slowBackend";
+import { renderStallSnapshot, clearRenderStalls } from "./renderStalls";
 import { orderedLane } from "./orderedWrites";
 import { REFRESH_READ_COMMANDS, trackRefreshRead } from "./refreshReads";
 import { timingNamesForCommand } from "./focusTiming";
@@ -49,7 +51,7 @@ import type {
   QueryPublicationPlan,
   PublicationReceipt,
 } from "./types";
-import type { GraphFolderPickResult, PreparedGraphFolder, ClipboardFileList, MediaCaptureResult, KnownGraph, InstalledPluginRecord, PluginRegistryCacheLoad, LoadGraphResult, CaptureGraphBindingResult, GraphAccessInspection, TrayStatus } from "./backendTypes";
+import type { GraphFolderPickResult, PreparedGraphFolder, ClipboardFileList, MediaCaptureResult, KnownGraph, InstalledPluginRecord, PluginRegistryCacheLoad, LoadGraphResult, CaptureGraphBindingResult, GraphAccessInspection, TrayStatus, GitAutocommitStatus, GitPolicy, GitSyncStatus } from "./backendTypes";
 import { dbg } from "./debug";
 import type { EditKinds } from "./editKind";
 import { mockBackend } from "./mock";
@@ -57,6 +59,7 @@ import type { SheetExport, SheetInput, SheetScope } from "./sheet/staticExport";
 import { isPublishedExport, publishedBackend } from "./publishedBackend";
 
 import { nativeTineLinks } from "./nativeTineLinks";
+import type { QuickShareCheckOutcome, QuickShareConnectStart, QuickShareConnectStatus, QuickShareCreated, QuickShareDeleteOutcome, QuickShareFound, QuickShareListing, QuickSharePrepared } from "./quickShare/commands";
 import { ASSET_INGRESS_MAX_BYTES, clipboardImageToPng } from "./clipboardImage";
 
 // Encode asset bytes as one base64 string for save_* and Android image-copy
@@ -76,10 +79,10 @@ function bytesToBase64(bytes: Uint8Array): string {
 }
 
 export type { Backend } from "./backendInterface";
-import type { Backend } from "./backendInterface";
+import type { Backend, ConfirmOptions } from "./backendInterface";
 
 
-export type { DebugInfo, DiagnosticReport, DiagnosticFrontendKind, DiscardReason, DiagnosticFrontendFields, GpuEnv, BackupInfo, GraphChange, AssetChangedBatch, GraphConfigChange, CustomCssChange, TrashAssetOutcome, GraphAnswersChange, GraphFolderPickResult, PreparedGraphFolder, ClipboardAssetFile, ClipboardFileList, MediaCaptureResult, KnownGraph, InstalledPluginRecord, PluginRegistryCacheEnvelope, PluginRegistryCacheLoad, LoadGraphResult, CaptureGraphBindingResult, GraphAccessInspection } from "./backendTypes";
+export type { DebugInfo, DiagnosticReport, DiagnosticFrontendKind, DiscardReason, DiagnosticFrontendFields, GpuEnv, BackupInfo, GraphChange, AssetChangedBatch, GraphConfigChange, CustomCssChange, TrashAssetOutcome, GraphAnswersChange, GraphFolderPickResult, PreparedGraphFolder, ClipboardAssetFile, ClipboardFileList, MediaCaptureResult, KnownGraph, InstalledPluginRecord, PluginRegistryCacheEnvelope, PluginRegistryCacheLoad, LoadGraphResult, CaptureGraphBindingResult, GraphAccessInspection, GitAutocommitStatus, GitPolicy, GitSyncStatus, GitRemote } from "./backendTypes";
 import type { DebugInfo, DiagnosticReport, DiagnosticFrontendKind, DiagnosticFrontendFields, GpuEnv, BackupInfo, GraphChange, AssetChangedBatch, GraphConfigChange, CustomCssChange, TrashAssetOutcome, GraphAnswersChange } from "./backendTypes";
 import type { DiskToken, OwedPage, PageMail, PageOperation, PageRefusal, PublishedNeed } from "./document";
 
@@ -89,6 +92,7 @@ export function isTauri(): boolean {
 
 export { QueryPrintRefusedError, queryPrintRefusal } from "./queryPrintRefusal";
 import { queryPrintRefusal } from "./queryPrintRefusal";
+import { dropDisplayedFor } from "./seen/displayed";
 
 /** Commands whose timing would only describe the diagnostics channel. */
 const DIAGNOSTIC_COMMANDS = new Set([
@@ -103,6 +107,11 @@ const TIMED_COMMANDS: ReadonlySet<string> = new Set([
 ]);
 /** A command still running after this long is recorded as `slow`. */
 const SLOW_IPC_MS = 500;
+
+function graphOpenFailure(error: unknown): never {
+  if (errorFamily(error) === "graph-app-owner") throw new Error(t("graph-open-other-app"));
+  throw error;
+}
 
 class TauriBackend implements Backend {
   private invoke!: <T>(cmd: string, args?: Record<string, unknown>) => Promise<T>;
@@ -195,10 +204,18 @@ class TauriBackend implements Backend {
     return this.call<T>(cmd, args, bindingGeneration);
   }
 
-  async loadGraph(path: string) {
-    const result = await this.call<LoadGraphResult>("load_graph", { path });
+  async loadGraph(path: string, options?: { relocatedFrom: string }) {
+    const result = await this.call<LoadGraphResult>("load_graph", { path, relocatedFrom: options?.relocatedFrom }).catch(graphOpenFailure);
     if (result.kind !== "focused_existing") this.bindingGeneration = result.binding_generation;
     return result;
+  }
+  ownerProtectionStatus() { return this.call<import("./ownerProtection").OwnerProtectionIssue | null>("owner_protection_status"); }
+  retryOwnerProtection(repair: boolean) { return this.call<import("./ownerProtection").OwnerProtectionIssue | null>("retry_owner_protection", { repair }); }
+  orphanDrafts() {
+    return this.call<{ id: string; old_root: string | null }[]>("orphan_drafts");
+  }
+  recoverOrphanDrafts(id: string, consumedLastId: number) {
+    return this.call<{ error: string | null; reloaded: { session: number; nextId: number } | null }>("recover_orphan_drafts", { id, consumedLastId });
   }
   inspectGraphAccess(path: string) {
     return this.call<GraphAccessInspection>("inspect_graph_access", { path });
@@ -207,7 +224,7 @@ class TauriBackend implements Backend {
     return this.call<void>("approve_external_assets", { graphRoot, assetsPath });
   }
   openGraphWindow(path: string) {
-    return this.call<LoadGraphResult>("open_graph_window", { path });
+    return this.call<LoadGraphResult>("open_graph_window", { path }).catch(graphOpenFailure);
   }
   readonly tineLinks = nativeTineLinks((cmd, args) => this.call(cmd, args), (cb) => this.on<void>("tine-link-pending", cb));
   startupGraphPath() {
@@ -216,9 +233,13 @@ class TauriBackend implements Backend {
   captureTarget() {
     return this.call<string>("capture_target");
   }
+  captureReceipt(id: string, action: "claim" | "saved" | "release" | "forget" | "status", receiptGeneration: number) {
+    return this.call<"new" | "pending" | "saved" | "missing">("capture_receipt", { id, action, receiptGeneration });
+  }
   async bindCaptureGraph() {
     const result = await this.call<CaptureGraphBindingResult>("capture_graph_binding");
     this.bindingGeneration = result.binding_generation;
+    return result.meta;
   }
   listKnownGraphs() {
     return this.call<KnownGraph[]>("list_known_graphs");
@@ -284,6 +305,10 @@ class TauriBackend implements Backend {
   createGraph(dir: string, name: string) {
     return this.call<{ root: string; display_root: string }>("create_graph", { dir, name });
   }
+  gitCloneGraph(dir: string, url: string) { return this.call<import("./backendTypes").GitCloneResult>("git_clone_graph", { dir, url }); }
+  gitSetupSignIn(url: string, username: string, token: string) { return this.call<void>("git_setup_sign_in", { url, username, token }); }
+  gitInitGraph(remoteUrl?: string) { return this.call<GitAutocommitStatus>("git_init_graph", { remoteUrl: remoteUrl || null }); }
+  gitFinishSetup(remoteUrl: string) { return this.call<GitAutocommitStatus>("git_finish_setup", { remoteUrl }); }
   suggestGraphName(dir: string) { return this.call<string>("suggest_graph_name", { dir }); }
   pageInventory() {
     return this.call<import("./types").PageInventory>("page_inventory");
@@ -294,8 +319,8 @@ class TauriBackend implements Backend {
   pageBacklinkCounts() {
     return this.call<[string, number][]>("page_backlink_counts");
   }
-  journalFeedPage(limit: number, beforeDay: number | null) {
-    return this.call<import("./types").JournalFeedPage>("journal_feed_page", { limit, beforeDay });
+  journalFeedPage(limit: number, beforeDay: number | null, waitForReferences = false, throughDay: number | null = null) {
+    return this.call<import("./types").JournalFeedPage>("journal_feed_page", { limit, beforeDay, waitForReferences, throughDay });
   }
   journalContentDays() {
     return this.call<number[]>("journal_content_days");
@@ -305,6 +330,9 @@ class TauriBackend implements Backend {
   }
   resolvePage(name: string, kind: "journal" | "page") {
     return this.call<import("./types").ResolvedPage>("resolve_page", { name, kind });
+  }
+  pageAliasGroup(name: string) {
+    return this.call<import("./types").AliasGroup>("page_alias_group", { name });
   }
   pageWindowReloaded() {
     return this.call<{ session: number; nextId: number }>("page_window_reloaded");
@@ -342,6 +370,7 @@ class TauriBackend implements Backend {
     return this.call<PageRefusal | null>("page_close", { session, id, key });
   }
   pageDelete(session: number, name: string, kind: PageKind, expectedPath?: string) {
+    dropDisplayedFor({ name }); // the backend drops the page's seen record; a mark on leave would recreate it
     return this.call<PageOperation>("page_delete", { session, name, kind, expectedPath });
   }
   pageWait(session: number, needs: readonly PublishedNeed[], boundMs: number) {
@@ -380,6 +409,12 @@ class TauriBackend implements Backend {
   getUnlinkedRefs(name: string) {
     return this.call<RefGroup[]>("get_unlinked_refs", { name });
   }
+  registerUnlinkedReference(subscription: string, target: string | null, bindingGeneration: number) {
+    return this.call<void>("register_unlinked_reference", { subscription, target }, bindingGeneration);
+  }
+  registerQuerySubscription(subscription: string, request: import("./querySubscription").QuerySubscription | null, bindingGeneration: number) {
+    return this.call<import("./querySubscription").QueryRegistration>("register_query_subscription", { subscription, request }, bindingGeneration);
+  }
   warmDone() {
     return this.call<boolean>("warm_done");
   }
@@ -390,6 +425,8 @@ class TauriBackend implements Backend {
     return this.call<RefGroup[]>("block_referrers", { uuid });
   }
   renamePage(old: string, next: string, _kind: "rename-page", expectedPath?: string, mergeInto?: string, unsavedPaths?: string[]) {
+    dropDisplayedFor({ name: old });
+    if (mergeInto) dropDisplayedFor({ name: mergeInto });
     return this.call<import("./types").RenameDone>("rename_page", { old, new: next, expectedPath, mergeInto, unsavedPaths });
   }
   publishHtml() {
@@ -403,6 +440,49 @@ class TauriBackend implements Backend {
   }
   publishLive(destination: string, name: string, allPages: boolean, sheets: SheetExport[]) {
     return this.call<PublicationReceipt>("publish_live", { destination, name, allPages, sheets });
+  }
+  quickSharePrepare(request: QueryPublicationRequest, shareId?: string) {
+    return this.call<QuickSharePrepared>("quick_share_prepare", { request, shareId });
+  }
+  quickShareCreate(prepareId: string) {
+    return this.call<QuickShareCreated>("quick_share_create", { prepareId });
+  }
+  quickShareDiscard(prepareId: string) {
+    return this.call<void>("quick_share_discard", { prepareId });
+  }
+  quickShareList() {
+    return this.call<QuickShareListing>("quick_share_list");
+  }
+  quickShareTestConnection() {
+    return this.call<import("./quickShare/commands").QuickShareConnectionTest>("quick_share_test_connection");
+  }
+  quickShareCheck(shareId: string) {
+    return this.call<QuickShareCheckOutcome>("quick_share_check", { shareId });
+  }
+  quickShareFind() {
+    return this.call<QuickShareFound[]>("quick_share_find");
+  }
+  quickShareDelete(target: { shareId: string } | { gistId: string }) {
+    return this.call<QuickShareDeleteOutcome>("quick_share_delete", {
+      shareId: "shareId" in target ? target.shareId : null, gistId: "gistId" in target ? target.gistId : null });
+  }
+  quickShareForget(shareId: string) {
+    return this.call<void>("quick_share_forget", { shareId });
+  }
+  quickShareCopyLink(shareId: string) {
+    return this.call<boolean>("quick_share_copy_link", { shareId });
+  }
+  quickShareConnectStart() {
+    return this.call<QuickShareConnectStart>("quick_share_connect_start");
+  }
+  quickShareConnectStatus(attemptId: string) {
+    return this.call<QuickShareConnectStatus>("quick_share_connect_status", { attemptId });
+  }
+  quickShareConnectCancel(attemptId: string) {
+    return this.call<void>("quick_share_connect_cancel", { attemptId });
+  }
+  quickShareDisconnect() {
+    return this.call<void>("quick_share_disconnect");
   }
   sheetExportInputs(pages?: string[], scope?: SheetScope) {
     return this.call<SheetInput[]>("sheet_export_inputs", { pages: pages ?? null, scope: scope ?? null });
@@ -429,6 +509,9 @@ class TauriBackend implements Backend {
   }
   queryRun(query: Query, view: ViewSettings, context?: ExecutionContext) {
     return this.call<QueryResult>("query_run", { query, view, context });
+  }
+  taggedPages(name: string) {
+    return this.call<QueryResult>("tagged_pages", { name });
   }
   queryExplainEmpty(query: Query, view: ViewSettings, context?: ExecutionContext) {
     return this.call<ExplainEmptyResult>("query_explain_empty", { query, view, context });
@@ -467,7 +550,7 @@ class TauriBackend implements Backend {
     return this.call<void>("set_preferred_format", { format });
   }
   setJournalTitleFormat(format: string) {
-    return this.call<void>("set_journal_title_format", { format });
+    return this.call<string[]>("set_journal_title_format", { format });
   }
   setDefaultJournalTemplate(name: string | null) {
     return this.call<void>("set_default_journal_template", { name });
@@ -518,8 +601,8 @@ class TauriBackend implements Backend {
   captureQuickSwitch(query: string, limit: number, transliteration = false) {
     return this.call<PageEntry[]>("capture_quick_switch", { query, limit, transliteration });
   }
-  listTemplates() {
-    return this.call<TemplateDto[]>("list_templates");
+  listTemplates(name?: string) {
+    return this.call<TemplateDto[]>("list_templates", name === undefined ? undefined : { name });
   }
   resolveBlock(uuid: string) {
     return this.call<RefGroup | null>("resolve_block", { uuid });
@@ -535,6 +618,11 @@ class TauriBackend implements Backend {
     // not a JSON number[] — far cheaper for large PDFs/images.
     const buf = await this.call<ArrayBuffer>("read_asset", { name, maxBytes });
     return new Uint8Array(buf);
+  }
+  async pdfAssetSource(name: string, maxBytes: number, bindingGeneration: number) {
+    const info = await this.assetCall<import("./pdfAssetSource").PdfAssetInfo>("stat_asset", { name, maxBytes }, bindingGeneration);
+    return { length: info.length, read: async (begin: number, end: number) => new Uint8Array(
+      await this.assetCall<ArrayBuffer>("read_asset_range", { name, maxBytes, begin, end, version: info.version }, bindingGeneration)) };
   }
   async streamAsset(name: string) {
     const path = await this.call<string>("stream_asset_path", { name });
@@ -583,13 +671,18 @@ class TauriBackend implements Backend {
   readJournalFile(name: string) {
     return this.call<string>("read_journal_file", { name });
   }
-  getPageByPath(path: string) {
-    return this.call<import("./types").PageRead | null>("get_page_by_path", { path });
+  async getPageByPath(path: string, source?: (value: import("./types").PageReadSource | null) => void) {
+    const answer = await this.call<{ page: import("./types").PageRead | null; source: import("./types").PageReadSource | null }>("get_page_by_path", { path });
+    source?.(answer.source);
+    return answer.page;
   }
   mergePages(src: string, dst: string) {
+    dropDisplayedFor({ name: src });
+    dropDisplayedFor({ name: dst });
     return this.call<void>("merge_pages", { src, dst });
   }
   renameFileToPage(path: string, newName: string) {
+    dropDisplayedFor({ path });
     return this.call<void>("rename_file_to_page", { path, newName });
   }
   listSyncConflicts() {
@@ -666,6 +759,13 @@ class TauriBackend implements Backend {
   importAsset(path: string, name: string | undefined, bindingGeneration: number) {
     return this.assetCall<string>("import_asset", { path, name }, bindingGeneration);
   }
+  captureImportAsset(path: string, name: string | undefined, bindingGeneration: number) {
+    return this.assetCall<string>("capture_import_asset", { path, name }, bindingGeneration);
+  }
+  captureSaveAsset(name: string, bytes: Uint8Array, bindingGeneration: number) {
+    if (bytes.byteLength > ASSET_INGRESS_MAX_BYTES) return Promise.reject(new Error("asset exceeds 64 MiB ingress limit"));
+    return this.assetCall<string>("capture_save_asset", { name, bytesB64: bytesToBase64(bytes) }, bindingGeneration);
+  }
   importNativeCapture(path: string, name: string, bindingGeneration: number, graphRoot?: string) {
     return this.assetCall<string>("import_native_capture", { path, name, graphRoot }, bindingGeneration);
   }
@@ -675,9 +775,9 @@ class TauriBackend implements Backend {
   readTextFile(path: string) {
     return this.call<string>("read_text_file", { path });
   }
-  async confirm(message: string, title?: string): Promise<boolean> {
+  async confirm(message: string, options: ConfirmOptions): Promise<boolean> {
     const { ask } = await import("@tauri-apps/plugin-dialog");
-    return ask(message, { title: title ?? t("backend-backend-tine"), kind: "warning" });
+    return ask(message, { title: options.title ?? t("backend-backend-tine"), kind: "warning", okLabel: options.okLabel, cancelLabel: options.cancelLabel });
   }
   async pickFolder(title?: string, defaultPath?: string): Promise<string | null> {
     const { open } = await import("@tauri-apps/plugin-dialog");
@@ -786,6 +886,9 @@ class TauriBackend implements Backend {
     return (await import("@tauri-apps/api/event")).listen<T>(event, (e) => cb(e.payload));
   }
   onGraphChanged(cb: (c: GraphChange) => void) { return this.on("graph-changed", cb); }
+  onOwnerFlushRequest(cb: (request: { id: number; page: string; all?: boolean; binding_generation: number }) => void) { return this.on("owner-flush-request", cb); }
+  onOwnerPageRenamed(cb: (rename: import("./types").OwnerPageRename) => void) { return this.on("owner-page-renamed", cb); }
+  ownerFlushAnswer(id: number, saved: boolean, bindingGeneration: number) { return this.call<void>("owner_flush_answer", { id, saved, bindingGeneration }); }
   onGraphChangedBulk(cb: (bulk: { changes: GraphChange[]; binding_generation?: number; answers?: GraphAnswersChange | null }) => void) { return this.on("graph-changed-bulk", cb); }
   async onGraphWatchStatus(cb: (status: { refused: boolean; message: string; binding_generation?: number }) => void) {
     const [a, b] = await Promise.all([true, false].map((refused) => this.on<{ message: string }>(`graph-watch-${refused ? "refused" : "restored"}`, (p) => cb({ ...p, refused }))));
@@ -797,6 +900,49 @@ class TauriBackend implements Backend {
   onGraphConfigChanged(cb: (change: GraphConfigChange) => void) { return this.on("graph-config-changed", cb); }
   onCustomCssChanged(cb: (change: CustomCssChange) => void) { return this.on("graph-custom-css-changed", cb); }
   editCustomCss() { return this.call<void>("edit_custom_css"); }
+  editGlobalCss() { return this.call<void>("edit_global_css"); }
+  gitAutocommitStatus() {
+    return this.call<GitAutocommitStatus>("git_autocommit_status");
+  }
+  getPageChanges(pageKey: string, path: string, currentText: string) {
+    return this.call<import("./backendTypes").SeenPageChanges>("get_page_changes", { pageKey, path, currentText });
+  }
+  markPageSeen(pageKey: string, path: string) {
+    return this.call<void>("mark_page_seen", { pageKey, path });
+  }
+  markGraphSeen() {
+    return this.call<void>("mark_graph_seen");
+  }
+  forgetSeenPage(pageKey: string, path: string) {
+    return this.call<void>("forget_seen_page", { pageKey, path });
+  }
+  forgetSeenState() {
+    return this.call<void>("forget_seen_state");
+  }
+  setGitAutocommit(policy: GitPolicy, intervalMinutes: number) {
+    return this.call<GitAutocommitStatus>("set_git_autocommit", { policy, intervalMinutes });
+  }
+  gitSyncNow() {
+    return this.call<GitAutocommitStatus>("git_sync_now");
+  }
+  gitDisableLineEndings() {
+    return this.call<GitAutocommitStatus>("git_disable_line_endings");
+  }
+  gitRemoveStaleLock(token: string) {
+    return this.call<GitAutocommitStatus>("git_remove_stale_lock", { token });
+  }
+  gitSyncNotice() {
+    return this.call<GitSyncStatus | null>("git_sync_notice");
+  }
+  gitSignIn(username: string, token: string) {
+    return this.call<GitAutocommitStatus>("git_sign_in", { username, token });
+  }
+  gitSignOut() {
+    return this.call<GitAutocommitStatus>("git_sign_out");
+  }
+  gitAppLifecycle(foreground: boolean) {
+    return this.call<void>("git_app_lifecycle", { foreground });
+  }
   getBackupKeep() {
     return this.call<number>("get_backup_keep");
   }
@@ -821,9 +967,12 @@ class TauriBackend implements Backend {
   listBackups() {
     return this.call<BackupInfo[]>("list_backups");
   }
-  restoreBackup(stamp: string, _kind: "replace-page", consumedLastId: number) {
+  deleteOldBackups(id: string) {
+    return this.call<void>("delete_old_backups", { id });
+  }
+  restoreBackup(id: string, _kind: "replace-page", consumedLastId: number) {
     return this.call<{ error: string | null; reloaded: { session: number; nextId: number } | null }>(
-      "restore_backup", { stamp, consumedLastId });
+      "restore_backup", { id, consumedLastId });
   }
   loadSession() {
     return this.call<string | null>("load_session");
@@ -841,7 +990,7 @@ class TauriBackend implements Backend {
     return this.call<GpuEnv>("gpu_env");
   }
   takeDataHomeFallbackNotice() {
-    return this.call<string | null>("take_data_home_fallback_notice");
+    return this.call<{ relocated_to: string | null; volatile: boolean } | null>("take_data_home_fallback_notice");
   }
   debugInfo() {
     return this.call<DebugInfo>("debug_info");
@@ -850,12 +999,13 @@ class TauriBackend implements Backend {
     return this.call<void>("debug_log", { line });
   }
   diagnosticReport(buildCommit: string, buildTime: string) {
-    return this.call<DiagnosticReport>("diagnostic_report", { buildCommit, buildTime });
+    return this.call<DiagnosticReport>("diagnostic_report", { buildCommit, buildTime, renderer: renderStallSnapshot() });
   }
   saveDiagnosticReport(buildCommit: string, buildTime: string) {
-    return this.call<boolean>("save_diagnostic_report", { buildCommit, buildTime });
+    return this.call<boolean>("save_diagnostic_report", { buildCommit, buildTime, renderer: renderStallSnapshot() });
   }
   clearDiagnostics() {
+    clearRenderStalls();
     return this.call<void>("clear_diagnostics");
   }
   createGraphVerification(operationId: string) { return this.call<GraphVerificationReport>("create_graph_verification", { operationId }); }

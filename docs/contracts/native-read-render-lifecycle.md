@@ -1,0 +1,41 @@
+# Native reads and renderer work ownership
+
+Live block rows and their editors read the live node while it exists. During the
+reactive flush that deletes or merges a block, render facts retain the node
+captured at mount until the owner retires; they must not take down the containing
+page. Both use the shared block node binding. Writes still require a live slot,
+and detached editors cannot write into a replacement node. The retiring-row and
+stale-input cases in `Block.deleteRendered.test.tsx` enforce these lifetimes;
+`Page.windowing.test.tsx` also checks successive structural edits keep the editor,
+later rows and unchanged window shells.
+
+Read-only IPC for assets, opted-in local images, dropped CSV/TSV files,
+journal inspection and sync-conflict diffs runs blocking I/O on the blocking
+pool. Graph reads capture their admitted graph slot before dispatch. Device
+reads retain canonical-path and bound-graph refusals. Byte responses, read
+limits and error tokens are unchanged. `nativeReadWorkers.guard.test.ts`
+ratchets synchronous command additions; the Rust `off_ui_slow_read` test proves
+the shared dispatcher yields while a read waits (L7s4-03).
+
+Quick Capture has no general graph slot. Shared editor imports, scratch edits
+and rendered page links must not start block-reference count reads (including
+the warm-cache probe) or page-inventory reads there. Page/tag completion uses
+the dedicated bounded capture query. `capture.graphReaders.test.tsx` exercises
+the capture entry point with native-equivalent refusals for general reads.
+
+User macro substitution is charged before constructing the substituted string.
+The DOM renderer and Copy/Export rendered-text walker use the same expansion
+budget owner: depth 12, 1000 expansions and 256 KiB of expanded string units
+per top-level tree, cumulatively across siblings. The existing visible
+`macro expansion limit` cue marks refusal. The budget's existing string-length
+accounting is preserved; it is not an encoded file-size limit. Templates remain
+unexpanded until admitted, including export's resolver (L7s8-02, macro half).
+
+A PDF viewer owns one pending pdf.js loading task. Close, owner cancellation
+and load failure destroy it once; cancellation-induced rejection is silent.
+On success, ownership passes to the document proxy and its existing cleanup.
+The render queue and zoom behavior are unchanged (L7s6-01).
+
+Regression proof: `macroExpansionBudget.test.tsx`, `ExportModal.test.tsx`,
+`PdfViewer.annotationLoad.test.tsx` and the native read tests above. No graph
+write path or persisted format changes.

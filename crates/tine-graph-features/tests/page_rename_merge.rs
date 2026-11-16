@@ -285,7 +285,8 @@ fn plain_merge_never_carries_the_source_title_into_the_survivor_header() {
             ("pages/dst.md", "- kept\n"),
         ],
     );
-    pages::merge_pages(&store, None, "pages/src.md", "pages/dst.md").unwrap();
+    let host = crate::test_host(&store);
+    pages::merge_pages(&store, &host, "pages/src.md", "pages/dst.md").unwrap();
     let merged = read(&root, "pages/dst.md");
     assert!(merged.starts_with("note:: kept\n"), "{merged}");
     assert!(merged.contains("- title:: Source"), "{merged}");
@@ -294,6 +295,7 @@ fn plain_merge_never_carries_the_source_title_into_the_survivor_header() {
         graph.resolve("dst", false),
         tine_store::Resolved::Existing { .. }
     ));
+    drop(host);
     drop(store);
     fs::remove_dir_all(root).unwrap();
 }
@@ -470,11 +472,13 @@ fn plain_merge_unites_aliases_like_the_rename_merge() {
             ("pages/dst.md", "alias:: Shared, Kept\n\n- kept\n"),
         ],
     );
-    pages::merge_pages(&store, None, "pages/src.md", "pages/dst.md").unwrap();
+    let host = crate::test_host(&store);
+    pages::merge_pages(&store, &host, "pages/src.md", "pages/dst.md").unwrap();
     assert_eq!(
         read(&root, "pages/dst.md"),
         "alias:: Shared, Kept, Former\n\n- kept\n- moved\n"
     );
+    drop(host);
     drop(store);
     fs::remove_dir_all(root).unwrap();
 }
@@ -490,13 +494,14 @@ fn merge_keeps_edits_held_pages_have_not_indexed() {
         "held",
         &[("pages/src.md", "- moved\n"), ("pages/dst.md", "- kept\n")],
     );
+    let host = crate::test_host(&store);
     store.whole_graph().unwrap();
     for rel in ["pages/src.md", "pages/dst.md"] {
         store.hold_page(&tine_store::PageId::from(rel)).unwrap();
     }
     fs::write(root.join("pages/src.md"), "- moved\n- source edit\n").unwrap();
     fs::write(root.join("pages/dst.md"), "- kept\n- survivor edit\n").unwrap();
-    pages::merge_pages(&store, None, "pages/src.md", "pages/dst.md").unwrap();
+    pages::merge_pages(&store, &host, "pages/src.md", "pages/dst.md").unwrap();
     let merged = read(&root, "pages/dst.md");
     for line in ["- kept", "- survivor edit", "- moved", "- source edit"] {
         assert!(
@@ -504,6 +509,7 @@ fn merge_keeps_edits_held_pages_have_not_indexed() {
             "A-V4b: the merge lost {line:?}:\n{merged}"
         );
     }
+    drop(host);
     drop(store);
     fs::remove_dir_all(root).unwrap();
 }

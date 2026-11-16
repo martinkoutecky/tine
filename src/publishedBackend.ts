@@ -13,20 +13,27 @@
  *  Classification of every method is pinned by `publishedBackend.guard.test.ts`.
  */
 import type { Backend, LoadGraphResult } from "./backend";
+import type { ConfirmOptions } from "./backendInterface";
 import type { ExecutionContext, ParsedQuery, Query, QueryResult, QueryTextDialect, ViewSettings } from "./editor/queryIr";
 import type { BacklinkFilterContext, BacklinkFilterTarget, BlockDto, BlockPreview, MatchEvidence, PageDto, PageEntry, PageRead, QueryExecution, QueryHit, QueryPageScope, RefGroup } from "./types";
 import { previewDtoSubtree } from "./previewProjection";
 import { pageIdentityKey } from "./pageIdentity";
-import { blockRegions } from "./render/parse";
+import { blockRegions, initParser } from "./render/parse";
 import { blockRefsInText } from "./render/pageRefs";
 import { searchSubstringSpans } from "./editor/searchQuery";
+import { blockPickerLeg, mergeBlockPickerLegs } from "./editor/blockPickerMatch";
 import { searchFold } from "./editor/searchFold";
+import { setQuickSharePrefix } from "./publishedPermalink";
+import type { QuickShareListing } from "./quickShare/commands";
 
 type PublishedPage = PageDto & { path: string };
 
 /** `<meta name="tine-published" content="snapshot.json">` in the exported shell. */
 export const PUBLISHED_META_NAME = "tine-published";
 export const PUBLISHED_SNAPSHOT_SCHEMA = 1;
+/** The meta content of a quick share viewer (`/s/1/`): the snapshot is the
+ *  share named by the page's fragment (`quickShare/quickShare.ts`). */
+export const QUICK_SHARE_SNAPSHOT = "quick-share:1";
 /** The reason code every refused query carries (typed-errors contract). */
 export const PUBLISHED_QUERY_REASON = "published_export_static";
 export const PUBLISHED_QUERY_MESSAGE = "This export answers only the queries it was made with.";
@@ -75,6 +82,11 @@ export function publishedSnapshotUrl(doc: Document | undefined = globalThis.docu
 /** Whether this document is a published export (the one presentation flag). */
 export function isPublishedExport(): boolean {
   return publishedSnapshotUrl() !== null;
+}
+
+/** Share mode has a stricter media policy than an author's own published site. */
+export function isQuickShareViewer(): boolean {
+  return publishedSnapshotUrl() === QUICK_SHARE_SNAPSHOT;
 }
 
 let snapshotPromise: Promise<PublishedSnapshot> | null = null;
@@ -128,6 +140,16 @@ export async function readBounded(response: Response, max: number, label: string
 export function loadPublishedSnapshot(url = publishedSnapshotUrl() ?? "snapshot.json"): Promise<PublishedSnapshot> {
   if (!snapshotPromise) {
     snapshotPromise = (async () => {
+      if (url === QUICK_SHARE_SNAPSHOT) {
+        // A quick share viewer: the snapshot comes from the link's gist,
+        // decrypted in the browser; navigation keeps the share prefix.
+        // Admission keys page names with the WASM page identity, so the parser must be up first.
+        await initParser();
+        const { loadQuickShare } = await import("./quickShare/quickShare");
+        const share = await loadQuickShare(globalThis.location?.hash ?? "");
+        setQuickSharePrefix(share.link.prefix);
+        return share.snapshot;
+      }
       const response = await fetch(url, { cache: "no-store" });
       if (!response.ok) throw new Error(`snapshot ${url}: HTTP ${response.status}`);
       // I-22: bound the served bytes before they become a string and an object graph.
@@ -206,7 +228,7 @@ export function viewKey(view: ViewSettings): string {
   return stableJson(out);
 }
 
-/** The host block's `tine.*` properties as `parseQuery` receives them, compared
+/** The host block's `tine.*` and `query-table` properties as `parseQuery` receives them, compared
  *  the way the engine reads them: keys case-insensitively, values trimmed. */
 function propertiesEqual(a: [string, string][], b: [string, string][]): boolean {
   if (a.length !== b.length) return false;
@@ -236,11 +258,26 @@ function firstMappedSpan(text: string, needle: string): { start: number; end: nu
 /** Methods declared optional on `Backend`; a published export leaves them
  *  absent so the browser fallbacks in `backend.ts` take over. */
 const OPTIONAL_METHODS = new Set([
+  "pdfAssetSource", // Native asset IPC only; published PDFs use the browser byte loader.
+  "ownerProtectionStatus",
+  "retryOwnerProtection",
+  // Device-local graph relocation/recovery has no namespace in a published site.
+  "orphanDrafts",
+  "recoverOrphanDrafts",
+  "deleteOldBackups",
   "loadDrafts",
   "storeDraft",
   "retireDraft",
   // GH #181: external Tine links need the native URL handler; a published guide has none.
   "tineLinks",
+  // CLI slice 2: only a native window answers its graph owner's flush requests.
+  "onOwnerFlushRequest",
+  "onOwnerPageRenamed",
+  "ownerFlushAnswer",
+  // GX4 S2/S4: change subscriptions. A snapshot never changes, so readers fall
+  // back to the publication key; refusing them blanked every query and board.
+  "registerUnlinkedReference",
+  "registerQuerySubscription",
 ]);
 
 /** Build the snapshot backend. `load` is awaited lazily by every method. */
@@ -426,6 +463,11 @@ export function publishedBackend(load: () => Promise<PublishedSnapshot> = loadPu
         ? { kind: "existing" as const, id: page.path, others: [] }
         : { kind: "absent" as const, id: "" };
     },
+    // A snapshot carries no alias relation: the page header shows the page's
+    // own declared names, sorted by the snapshot's inventory.
+    async pageAliasGroup() {
+      return { aliases: [], pages: [] };
+    },
     async getPage(name: string, kind: "journal" | "page") {
       const snapshot = await load();
       const page = pageByName(snapshot, name);
@@ -533,7 +575,13 @@ export function publishedBackend(load: () => Promise<PublishedSnapshot> = loadPu
       const snapshot = await load();
       const wanted = literalNeedle(query);
       if (wanted.empty || !wanted.folded) return [];
-      return collect(snapshot, (block) => includesFolded(block.raw, wanted.folded), limit);
+      // OG's `((` search: whole words in any order, then literal pieces in order.
+      const legOf = (block: BlockDto) => blockPickerLeg(searchFold(block.raw), wanted.folded);
+      return mergeBlockPickerLegs(
+        collect(snapshot, (block) => legOf(block) === "words", limit),
+        collect(snapshot, (block) => legOf(block) === "fragments", limit),
+        limit,
+      );
     },
     quickSwitch,
     async captureQuickSwitch(query: string, limit: number, _transliteration = false): Promise<PageEntry[]> {
@@ -648,7 +696,7 @@ export function publishedBackend(load: () => Promise<PublishedSnapshot> = loadPu
       const { writeClipboardTextStrict } = await import("./clipboard");
       await writeClipboardTextStrict(text);
     },
-    async confirm(message: string) {
+    async confirm(message: string, _options: ConfirmOptions) {
       return window.confirm(message);
     },
   };
@@ -738,7 +786,7 @@ export function publishedBackend(load: () => Promise<PublishedSnapshot> = loadPu
     async readLocalImage() {
       return new Uint8Array();
     },
-    async listTemplates() {
+    async listTemplates(_name?: string) {
       return [];
     },
     async guidePages() {
@@ -778,6 +826,17 @@ export function publishedBackend(load: () => Promise<PublishedSnapshot> = loadPu
     async takeDataHomeFallbackNotice() {
       return null;
     },
+    async gitAutocommitStatus() {
+      return { available: false };
+    },
+    async gitSyncNotice() {
+      return null;
+    },
+    async gitAppLifecycle() {},
+    async getPageChanges() {
+      return { available: false, reason: "Git is not available in a published graph.", head_commit: null,
+        baseline_commit: null, current_text_sha256: "", identity_known: false, unattributed: false, blocks: [], removed: [] };
+    },
     async getBackupKeep() {
       return 0;
     },
@@ -806,7 +865,12 @@ export function publishedBackend(load: () => Promise<PublishedSnapshot> = loadPu
     async captureTarget() {
       return "main";
     },
-    async bindCaptureGraph() {},
+    async bindCaptureGraph() {
+      const result = await answered.loadGraph();
+      if (result.kind === "focused_existing") throw new Error("published graph unavailable");
+      return result.meta;
+    },
+    async captureReceipt() { return "pending" as const; },
     async defaultGraphParent() {
       return "";
     },
@@ -876,6 +940,10 @@ export function publishedBackend(load: () => Promise<PublishedSnapshot> = loadPu
     async legacyDraftsFile() {
       return null;
     },
+    // Quick share is a native feature (DESIGN §3.9): a published export reports it off.
+    async quickShareList(): Promise<QuickShareListing> {
+      return { enabled: false, account: null, shares: [], error: null };
+    },
   };
 
   const explicit: Record<string, unknown> = { ...answered, ...constant };
@@ -902,6 +970,7 @@ export const PUBLISHED_ANSWERED_METHODS = [
   "pageModified",
   "pageBacklinkCounts",
   "resolvePage",
+  "pageAliasGroup",
   "loadGraph",
   "inspectGraphAccess",
   "startupGraphPath",
@@ -982,6 +1051,10 @@ export const PUBLISHED_CONSTANT_METHODS = [
   "printQuery",
   "takeIdentifierMigrationNotice",
   "takeDataHomeFallbackNotice",
+  "gitAutocommitStatus",
+  "gitSyncNotice",
+  "gitAppLifecycle",
+  "getPageChanges",
   "getBackupKeep",
   "listBackups",
   "getCaptureEnterFiles",
@@ -996,6 +1069,7 @@ export const PUBLISHED_CONSTANT_METHODS = [
   "openDevtools",
   "captureTarget",
   "bindCaptureGraph",
+  "captureReceipt",
   "defaultGraphParent",
   "conflictInventory",
   "listJournalConflicts",
@@ -1030,12 +1104,14 @@ export const PUBLISHED_CONSTANT_METHODS = [
   "onGraphOpenWaiting",
   "onGraphOpenOwnerWaiting",
   "legacyDraftsFile",
+  "quickShareList",
 ] as const;
 
 /** Refused with `PublishedExportReadOnlyError`: writes, sync, install,
  *  capture, native UI, OS. Pinned here so a new `Backend` method must be
  *  classified deliberately. */
 export const PUBLISHED_REFUSED_METHODS = [
+  "quickShareTestConnection",
   "addDefenderExclusion",
   "savePages",
   "publishLive",
@@ -1067,6 +1143,7 @@ export const PUBLISHED_REFUSED_METHODS = [
   "publishQuery",
   "pagePrintHtml",
   "queryExplainEmpty",
+  "taggedPages",
   "runQuery",
   "exportQuerySubtrees",
   "runAdvancedQuery",
@@ -1085,6 +1162,7 @@ export const PUBLISHED_REFUSED_METHODS = [
   "openPageFile",
   "openGraphFile",
   "editCustomCss",
+  "editGlobalCss",
   "editAssetExternal",
   "trashAsset",
   "emptyAssetTrash",
@@ -1107,6 +1185,8 @@ export const PUBLISHED_REFUSED_METHODS = [
   "trashSyncConflict",
   "saveAsset",
   "importAsset",
+  "captureImportAsset",
+  "captureSaveAsset",
   "importNativeCapture",
   "readTextFile",
   "pickFolder",
@@ -1123,6 +1203,20 @@ export const PUBLISHED_REFUSED_METHODS = [
   "savePdfAreaImage",
   "rollbackPdfAreaImage",
   "setBackupKeep",
+  "setGitAutocommit",
+  "gitInitGraph",
+  "gitFinishSetup",
+  "gitCloneGraph",
+  "gitSetupSignIn",
+  "gitSyncNow",
+  "gitDisableLineEndings",
+  "gitRemoveStaleLock",
+  "gitSignIn",
+  "gitSignOut",
+  "markPageSeen",
+  "markGraphSeen",
+  "forgetSeenPage",
+  "forgetSeenState",
   "setCaptureEnterFiles",
   "setWatchMode",
   "restoreBackup",
@@ -1140,6 +1234,18 @@ export const PUBLISHED_REFUSED_METHODS = [
   "pageSaveNow",
   "pageDraftsRetry",
   "mergeLiveConflict",
+  "quickSharePrepare",
+  "quickShareCreate",
+  "quickShareDiscard",
+  "quickShareCheck",
+  "quickShareFind",
+  "quickShareDelete",
+  "quickShareForget",
+  "quickShareCopyLink",
+  "quickShareConnectStart",
+  "quickShareConnectStatus",
+  "quickShareConnectCancel",
+  "quickShareDisconnect",
 ] as const;
 
 /** Optional `Backend` members a published export leaves absent. */

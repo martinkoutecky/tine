@@ -110,7 +110,7 @@ def command(args, log, env):
     if Path(str(args[0])).name == "quint":
         agents = Path(env.get("TINE_AGENTS", ROOT.parent / "tine-agents"))
         args = ["flock", agents / "og/.tlc.lock", *args]
-    r = subprocess.run(["rtk", "proxy", *map(str, args)], text=True, capture_output=True, env=env)
+    r = subprocess.run([*map(str, args)], text=True, capture_output=True, env=env)
     log.write_text(r.stdout+r.stderr)
     return r
 

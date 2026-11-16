@@ -9,6 +9,12 @@ supplies statistics and the executed view to `SheetTable`; the current view and 
 statistics or a missing aggregate entry displays no total; backend markers
 retain their unavailable explanation.
 
+Journal sections use the same query reading and sheet presentation as their
+source block. The host's complete parsed properties travel to the sheet, including
+its column selection, formulas and saved widths; there is no feed-specific View
+property list. A detached section supplies no Display writer: its totals are text,
+and View changes are made on the sections page. Result blocks remain live and editable.
+
 Property columns offer None, Count, Sum, and Average. Builtin and formula
 columns offer no query aggregate. Changing or removing a column's first entry
 edits it in place through the existing query display writer; other entries,
@@ -27,5 +33,5 @@ that boundary. Export retains the existing sheet vocabulary and formula totals.
 
 I-12 exemplar: `src/sheet/queryTableFooter.ts` formats supplied statistics and
 routes choices through `queryDisplay.apply`; `SheetTable.tsx` supplies the control. Render outcomes are covered by
-`SheetTable.queryFooter.test.tsx` and `staticExport.test.tsx`; the wiring and
+`SheetTable.queryFooter.test.tsx`, `QueryMacro.hostRaw.test.tsx` and `staticExport.test.tsx`; the wiring and
 export boundary are guarded by `src/sheet/ogBSheetGuards.test.ts`.

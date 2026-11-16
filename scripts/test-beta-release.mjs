@@ -43,7 +43,7 @@ for (const tag of ["beta", "latest", "v0.6.987", "0.7.0", undefined]) assert.thr
 assert.equal(updaterAssetUrl("owner/repo", "app.sig", "stable"), "https://github.com/owner/repo/releases/latest/download/app.sig");
 assert.equal(updaterAssetUrl("owner/repo", "app.sig", "beta", "0.7.0-beta.1"), "https://github.com/owner/repo/releases/download/v0.7.0-beta.1/app.sig");
 assert.throws(() => updaterAssetUrl("owner/repo", "app.sig", "beta"));
-assert.equal(appImageUpdateInformation(conf, "owner/repo", "Tine-Beta_0.7.0-beta.1_aarch64.AppImage"), "zsync|https://tine.page/updates/beta/aarch64.AppImage.zsync");
+assert.equal(appImageUpdateInformation(conf, "owner/repo", "Tine-Beta_0.7.0-beta.1_aarch64.AppImage"), "gh-releases-zsync|owner|repo|latest-pre|Tine-Beta_*_aarch64.AppImage.zsync");
 assert.equal(appImageUpdateInformation(stableConf, "owner/repo", "Tine_0.7.0_amd64.AppImage"), "gh-releases-zsync|owner|repo|latest|Tine_*_amd64.AppImage.zsync");
 assert.ok(releaseLayout(conf.version).allAssets.includes(`${IDENTITY.productName.replace(/\s+/g, "-")}_${conf.version}_android-arm64.apk`));
 const workflow = fs.readFileSync(".github/workflows/release.yml", "utf8");
@@ -73,11 +73,11 @@ try {
   const tag = releaseTag(live);
   const wrongTag = "beta";
   const updateInformation = channel === "beta"
-    ? "zsync|https://tine.page/updates/beta/amd64.AppImage.zsync"
+    ? "gh-releases-zsync|owner|repo|latest-pre|Tine-Beta_*.AppImage.zsync"
     : "gh-releases-zsync|owner|repo|latest|Tine_*.AppImage.zsync";
   const otherUpdateInformation = channel === "beta"
-    ? "gh-releases-zsync|owner|repo|beta|Tine_*.AppImage.zsync"
-    : "zsync|https://tine.page/updates/beta/amd64.AppImage.zsync";
+    ? "gh-releases-zsync|owner|repo|latest|Tine_*.AppImage.zsync"
+    : "gh-releases-zsync|owner|repo|latest-pre|Tine-Beta_*.AppImage.zsync";
   const updaterRoute = channel === "beta" ? `/releases/download/v${version}/` : "/releases/latest/download/";
   const commit = "a".repeat(40);
   const input = path.join(temp, "input");
@@ -98,7 +98,12 @@ try {
     const platforms = Object.fromEntries(Object.entries(spec.platforms).map(([platform, [asset, signatureAsset]]) => [platform, { asset, signature: fs.readFileSync(path.join(dir, signatureAsset), "utf8").trim() }]));
     fs.writeFileSync(path.join(dir, "release-fragment.json"), JSON.stringify({ version, commit, channel, lane, assets, platforms }));
   }
-  assembleCandidate({ input, output, version, commit, repository: "owner/repo", channel });
+  // Release notes come from a synthetic changelog: between cuts the live
+  // version has no section yet (D-20261020-BZ7).
+  const notesRoot = path.join(temp, "notes");
+  fs.mkdirSync(notesRoot, { recursive: true });
+  fs.writeFileSync(path.join(notesRoot, "CHANGELOG.md"), `# Changelog\n\n## [${version}] - 2026-01-01\n\n### Fixed\n\n- synthetic\n`);
+  assembleCandidate({ input, output, version, commit, repository: "owner/repo", channel, notesRoot });
   assert.deepEqual(candidateProblems(output, version, channel), []);
   const updater = JSON.parse(fs.readFileSync(path.join(output, "latest.json"), "utf8"));
   for (const entry of Object.values(updater.platforms)) assert.ok(entry.url.includes(updaterRoute), entry.url);

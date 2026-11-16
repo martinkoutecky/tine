@@ -53,6 +53,10 @@ function load(): number {
 
 const [interfaceZoom, setInterfaceZoomSig] = createSignal(load());
 export { interfaceZoom };
+// DOM rects/visualViewport use viewport pixels; CSS positions inside the mobile
+// document use pre-zoom pixels. Native desktop zoom already converts that space.
+const [cssInterfaceZoom, setCssInterfaceZoom] = createSignal(1);
+export { cssInterfaceZoom };
 
 const clamp = (z: number) => Math.min(MAX, Math.max(MIN, Math.round(z * 100) / 100));
 
@@ -60,6 +64,9 @@ const clamp = (z: number) => Math.min(MAX, Math.max(MIN, Math.round(z * 100) / 1
  *  Call once at startup to restore the saved level. */
 export function applyAndroidInterfaceZoom(scale: number): void {
   document.documentElement.style.zoom = scale === 1 ? "" : String(scale);
+  if (scale === 1) document.documentElement.style.removeProperty("--interface-zoom");
+  else document.documentElement.style.setProperty("--interface-zoom", String(scale));
+  setCssInterfaceZoom(scale);
 }
 
 /** Apply stored zoom asynchronously on Tauri: CSS zoom on Android and iOS, native
@@ -78,7 +85,7 @@ export function applyZoom(): void {
       }
       // Clear an Android fallback left behind by an unusual hot-reload before
       // handing scaling back to the native desktop webview implementation.
-      document.documentElement.style.zoom = "";
+      applyAndroidInterfaceZoom(1);
       return getCurrentWebview().setZoom(scale);
     })
     .catch(() => pushToast(msg("zoom-could-not-apply-interface-zoom"), "error"));

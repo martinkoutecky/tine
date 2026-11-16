@@ -67,7 +67,7 @@ describe("clipboard writer facade guard", () => {
   it("keeps every enumerated producer routed through the shared facade", () => {
     const expected: Record<string, RegExp> = {
       "src/components/ExportModal.tsx": /writeClipboardText\(payload\(\)\)/,
-      "src/render/inline.tsx": /writeClipboardText\(props\.text\)/,
+      "src/render/CopyButton.tsx": /writeClipboardText\(props\.text\)/,
       "src/copyImage.ts": /writeClipboardImage\(/,
       "src/sheet/mutations.ts": /copyRich\(text, html\)/,
       "src/components/ContextMenu.tsx": /writeClipboardText\(/,

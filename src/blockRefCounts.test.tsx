@@ -3,7 +3,7 @@ import { backend } from "./backend";
 import { bumpDataRev, bumpGraphEpoch } from "./graphSession";
 import { applyGraphAnswers } from "./graphAnswers";
 import { doc, setDoc } from "./document/model";
-import { deleteBlock, loadFeed, resetStore } from "./document";
+import { deleteBlock, loadFeed, mergeWithNext, resetStore, resolveBlockRef } from "./document";
 import { setToasts, toasts } from "./toasts";
 import { initParser } from "./render/parse";
 
@@ -25,6 +25,26 @@ afterEach(() => {
 });
 
 describe("block reference count refresh (GH #154)", () => {
+  it("F2 merge uses graph counts for an unloaded page's ref and embed without reading referrers", async () => {
+    await initParser();
+    const uuid = "12345678-1234-4234-8234-123456789abc";
+    const getCounts = vi.spyOn(backend(), "getBlockRefCounts").mockResolvedValue({ [uuid]: 2 });
+    const getPage = vi.spyOn(backend(), "getPage");
+    const { captureBlockReferenceCount } = await import("./blockRefCounts");
+    getCounts.mockClear(); // Import may start the previous graph's initial request.
+    bumpGraphEpoch();
+    await captureBlockReferenceCount([uuid]);
+    loadFeed([{ name: "Target", kind: "page", title: "Target", pre_block: null, blocks: [
+      { id: "keep", raw: "one", collapsed: false, children: [] },
+      { id: "gone", raw: `two\nheading:: true\nid:: ${uuid}`, collapsed: false, children: [] },
+    ] }]);
+    expect(mergeWithNext("keep")).toBe(true);
+    expect(doc.byId.keep.raw).toBe(`onetwo\nid:: ${uuid}`);
+    expect(resolveBlockRef({ uuid, page: "Target", pageKind: "page" })).toBe("keep");
+    expect(getCounts).toHaveBeenCalledTimes(1);
+    expect(getPage).not.toHaveBeenCalled();
+    resetStore(); setToasts([]);
+  });
   it.each([0, 2])("cold deletion computes %i references and offers the edit's Undo only when affected", async (count) => {
     await initParser();
     let finish!: (value: Record<string, number>) => void;

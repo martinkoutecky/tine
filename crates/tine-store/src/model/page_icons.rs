@@ -92,12 +92,26 @@ impl IconIndex {
     }
     // Alias rows are applied in (path, alias) order. An alias inherits its
     // owner's icon only from earlier rows; decreasing bounds also stop cycles.
-    fn get(&self, key: &str) -> Option<&String> {
+    fn get(
+        &self,
+        key: &str,
+        pages: &Pages,
+        format: &JournalFormat,
+        name_format: FileNameFormat,
+    ) -> Option<&String> {
         let real_icon = |key: &str| {
-            self.icons
-                .get(key)
-                .and_then(|icons| icons.first())
-                .map(|(_, icon)| icon)
+            let owners = self.real.get(key)?;
+            if owners.len() == 1 {
+                return self.icons.get(key)?.get(owners.first()?.0);
+            }
+            // Slots are allocation order, not claimant precedence. Inspect only
+            // this name's real owners, using the same rule as resolve(). A
+            // winner without an icon does not borrow a losing twin's icon.
+            let (slot, _) = owners
+                .iter()
+                .filter_map(|(slot, _)| pages.get(*slot).map(|(entry, _)| (slot, entry)))
+                .min_by(|(_, a), (_, b)| compare_page_claimants(a, b, format, name_format))?;
+            self.icons.get(key)?.get(slot)
         };
         if let Some(icon) = real_icon(key) {
             return Some(icon);
@@ -132,11 +146,20 @@ impl IconIndex {
 impl ReadSnapshot {
     pub(crate) fn page_icons(&self, names: &[String]) -> HashMap<String, String> {
         let icons = self.icon_index.get().expect("icons built at publication");
+        let format = JournalFormat::new(
+            self.config.journal_file_name_format.as_deref(),
+            self.config.journal_page_title_format.as_deref(),
+        );
         names
             .iter()
             .filter_map(|name| {
                 icons
-                    .get(&tine_core::refs::page_key(name))
+                    .get(
+                        &tine_core::refs::page_key(name),
+                        &self.pages,
+                        &format,
+                        self.config.file_name_format,
+                    )
                     .map(|icon| (name.clone(), icon.clone()))
             })
             .collect()
@@ -147,8 +170,14 @@ impl ReadSnapshot {
 /// O(preblock bytes + AST nodes); no graph scan or I/O.
 pub(super) fn pre_block_icon(entry: &PageEntry, doc: &Document) -> Option<String> {
     let org = Format::from_path(&entry.path) == Format::Org;
-    crate::query::page_properties::page_property_lines(doc.pre_block.as_deref()?, org)
-        .into_iter()
-        .find(|(key, value)| key.eq_ignore_ascii_case("icon") && !value.trim().is_empty())
-        .map(|(_, value)| value)
+    let properties =
+        crate::query::page_properties::page_property_lines(doc.pre_block.as_deref()?, org);
+    include_str!("../../../tine-core/src/page_icon_property.txt")
+        .split_whitespace()
+        .find_map(|property| {
+            properties
+                .iter()
+                .find(|(key, value)| key.eq_ignore_ascii_case(property) && !value.trim().is_empty())
+                .map(|(_, value)| value.clone())
+        })
 }

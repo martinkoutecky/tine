@@ -20,6 +20,7 @@ import fs from "node:fs";
 import path from "node:path";
 import { currentPageTitle, openPageByLink, openPageByName, switcherPageRows } from "./lib/e2e-navigation.mjs";
 import { answerNativeDialog } from "./lib/e2e-native-dialog.mjs";
+import { installAccountHome, assertAppLease } from "./lib/e2e-account-home.mjs";
 
 const TMP = process.env.E2E_TMP_DIR || `/tmp/tine-rename-e2e-${process.pid}`;
 const G = `${TMP}/graph`;
@@ -87,6 +88,7 @@ async function waitForFiles(predicate, message, timeout = 10_000) {
 }
 
 seed();
+const ownerFixture = installAccountHome(TMP, ARTIFACTS);
 dump("BEFORE");
 
 const env = {
@@ -171,6 +173,7 @@ try {
 
   // Wait for first paint (journals feed).
   await browser.$(".ls-block, .page-title").waitForExist({ timeout: 20000 });
+  await assertAppLease(ownerFixture);
 
   // ---- Journey 1: plain rename --------------------------------------------
   // Open Pokus2 by clicking its [[Pokus2]] link in the journal feed.

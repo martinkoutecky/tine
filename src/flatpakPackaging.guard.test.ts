@@ -32,11 +32,17 @@ describe("Flatpak identity derivation", () => {
     try {
       const derived = deriveFlatpak({ root, identity: "release", date: "2026-01-01", version: "1.2.3" });
       const stable = read(`flatpak/${RELEASED}.yml`);
-      const expected =
-        stable.slice(0, stable.indexOf("    sources:")) +
-        "    sources:\n      - type: dir\n        path: ..\n      - cargo-sources.json\n      - node-sources.json\n";
+      const expected = stable.replace(/^      - type: git\n(?:        .*\n)+/m, "      - type: dir\n        path: ..\n");
       expect(Object.keys(derived.files)).toEqual([`flatpak/${RELEASED}.ci.yml`]);
       expect(derived.files[`flatpak/${RELEASED}.ci.yml`]).toBe(expected);
+      // Only the app source changes: every other source the recipe lists (the
+      // vendored cargo/node files, the Emscripten SDK the PDF decoder build needs)
+      // reaches the CI build. The 0.9.0-beta.1 release Flatpak failed when the
+      // derivation dropped the SDK archives.
+      const sources = (text: string) => text.slice(text.indexOf("    sources:")).split("\n").filter((line) => /^      - /.test(line));
+      expect(sources(expected)).toEqual(sources(stable).map((line) => (line === "      - type: git" ? "      - type: dir" : line)));
+      expect(expected).toContain("dest: target/emsdk/upstream");
+      expect(expected).not.toContain("type: git");
       expect(derived.id).toBe(RELEASED);
     } finally {
       fs.rmSync(root, { recursive: true, force: true });

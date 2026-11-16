@@ -14,6 +14,7 @@ import {
   registerTransientLayer,
 } from "../transientLayers";
 import { Block, Editor } from "./Block";
+import { editorIn, editorsIn, type EditorDriver } from "../tests/editorDriver";
 
 beforeAll(() => initParser());
 
@@ -37,36 +38,27 @@ function mountEditor(raw = "before selected after", format: "md" | "org" = "md")
   const mounted = mount(() => (
     <For each={pageByName("Wrap")?.roots ?? []}>{(id) => <Block id={id} />}</For>
   ));
-  return {
-    ...mounted,
-    textarea: mounted.root.querySelector("textarea.block-editor") as HTMLTextAreaElement,
-  };
-}
-
-function keydown(textarea: HTMLTextAreaElement, init: KeyboardEventInit) {
-  const event = new KeyboardEvent("keydown", { bubbles: true, cancelable: true, ...init });
-  textarea.dispatchEvent(event);
-  return event;
+  return { ...mounted, editor: editorIn(mounted.root) };
 }
 
 describe("selection wrapping with Alt-modified literal delimiters (GH #83)", () => {
   it("wraps twice with a literal Alt+[ and opens page completion", async () => {
-    const { textarea, dispose } = mountEditor();
+    const { editor, dispose } = mountEditor();
     try {
-      textarea.setSelectionRange(7, 15);
+      editor.select(7, 15);
 
-      const first = keydown(textarea, { key: "[", code: "BracketLeft", altKey: true });
+      const first = editor.keydown({ key: "[", code: "BracketLeft", altKey: true });
       expect(first.defaultPrevented).toBe(true);
-      expect(textarea.value).toBe("before [selected] after");
+      expect(editor.value()).toBe("before [selected] after");
       await vi.waitFor(() =>
-        expect([textarea.selectionStart, textarea.selectionEnd]).toEqual([8, 16])
+        expect(editor.selection()).toEqual([8, 16])
       );
 
-      const second = keydown(textarea, { key: "[", code: "BracketLeft", altKey: true });
+      const second = editor.keydown({ key: "[", code: "BracketLeft", altKey: true });
       expect(second.defaultPrevented).toBe(true);
-      expect(textarea.value).toBe("before [[selected]] after");
+      expect(editor.value()).toBe("before [[selected]] after");
       await vi.waitFor(() =>
-        expect([textarea.selectionStart, textarea.selectionEnd]).toEqual([17, 17])
+        expect(editor.selection()).toEqual([17, 17])
       );
       await vi.waitFor(() => expect(document.body.querySelector(".autocomplete")).not.toBeNull());
     } finally {
@@ -75,12 +67,12 @@ describe("selection wrapping with Alt-modified literal delimiters (GH #83)", () 
   });
 
   it("does not reinterpret a layout-produced non-delimiter by physical key code", () => {
-    const { textarea, dispose } = mountEditor();
+    const { editor, dispose } = mountEditor();
     try {
-      textarea.setSelectionRange(7, 15);
-      const event = keydown(textarea, { key: "“", code: "BracketLeft", altKey: true });
+      editor.select(7, 15);
+      const event = editor.keydown({ key: "“", code: "BracketLeft", altKey: true });
       expect(event.defaultPrevented).toBe(false);
-      expect(textarea.value).toBe("before selected after");
+      expect(editor.value()).toBe("before selected after");
     } finally {
       dispose();
     }
@@ -88,12 +80,12 @@ describe("selection wrapping with Alt-modified literal delimiters (GH #83)", () 
 
   it("gives an explicit Alt+[ editor binding precedence over incidental wrapping", () => {
     const disposeKeys = installKeybindings({ "editor/bold": "alt+[" });
-    const { textarea, dispose } = mountEditor("selected");
+    const { editor, dispose } = mountEditor("selected");
     try {
-      textarea.setSelectionRange(0, 8);
-      const event = keydown(textarea, { key: "[", code: "BracketLeft", altKey: true });
+      editor.select(0, 8);
+      const event = editor.keydown({ key: "[", code: "BracketLeft", altKey: true });
       expect(event.defaultPrevented).toBe(true);
-      expect(textarea.value).toBe("**selected**");
+      expect(editor.value()).toBe("**selected**");
     } finally {
       dispose();
       disposeKeys();
@@ -103,35 +95,33 @@ describe("selection wrapping with Alt-modified literal delimiters (GH #83)", () 
 
 describe("selection toolbar actions (GH #142)", () => {
   it("toggles page-link and inline-code wrappers while retaining the selection", async () => {
-    const { textarea, root, dispose } = mountEditor("alpha beta");
+    const { editor, root, dispose } = mountEditor("alpha beta");
     try {
-      textarea.setSelectionRange(0, 5);
-      textarea.dispatchEvent(new Event("select", { bubbles: true }));
+      editor.selectByUser(0, 5);
       const pageLink = root.querySelector<HTMLButtonElement>('[data-selection-action="page-link"]');
       const inlineCode = root.querySelector<HTMLButtonElement>('[data-selection-action="inline-code"]');
       expect(pageLink).not.toBeNull();
       expect(inlineCode).not.toBeNull();
 
       pageLink!.click();
-      await vi.waitFor(() => expect(textarea.value).toBe("[[alpha]] beta"));
-      expect([textarea.selectionStart, textarea.selectionEnd]).toEqual([2, 7]);
+      await vi.waitFor(() => expect(editor.value()).toBe("[[alpha]] beta"));
+      expect(editor.selection()).toEqual([2, 7]);
       pageLink!.click();
-      await vi.waitFor(() => expect(textarea.value).toBe("alpha beta"));
-      expect([textarea.selectionStart, textarea.selectionEnd]).toEqual([0, 5]);
+      await vi.waitFor(() => expect(editor.value()).toBe("alpha beta"));
+      expect(editor.selection()).toEqual([0, 5]);
 
       inlineCode!.click();
-      await vi.waitFor(() => expect(textarea.value).toBe("`alpha` beta"));
-      expect([textarea.selectionStart, textarea.selectionEnd]).toEqual([1, 6]);
+      await vi.waitFor(() => expect(editor.value()).toBe("`alpha` beta"));
+      expect(editor.selection()).toEqual([1, 6]);
     } finally {
       dispose();
     }
   });
 
   it("records a toolbar edit as one undoable editor change", async () => {
-    const { textarea, root, dispose } = mountEditor("alpha beta");
+    const { editor, root, dispose } = mountEditor("alpha beta");
     try {
-      textarea.setSelectionRange(0, 5);
-      textarea.dispatchEvent(new Event("select", { bubbles: true }));
+      editor.selectByUser(0, 5);
       root.querySelector<HTMLButtonElement>('[data-selection-action="inline-code"]')!.click();
       await vi.waitFor(() => expect(doc.byId["selection-wrap"].raw).toBe("`alpha` beta"));
       undo();
@@ -151,14 +141,13 @@ describe("selection toolbar actions (GH #142)", () => {
     ["org", "strikethrough", "+"],
     ["org", "highlight", "^^"],
   ] as const)("applies %s %s from the toolbar without wrapping the trailing space", async (format, action, delimiter) => {
-    const { textarea, root, dispose } = mountEditor("before selected after", format);
+    const { editor, root, dispose } = mountEditor("before selected after", format);
     try {
-      textarea.focus();
-      textarea.setSelectionRange(7, 16, "backward");
-      textarea.dispatchEvent(new Event("select", { bubbles: true }));
+      editor.focus();
+      editor.selectByUser(7, 16, "backward");
       root.querySelector<HTMLButtonElement>(`[data-selection-action="${action}"]`)!.click();
-      await vi.waitFor(() => expect(textarea.value).toBe(`before ${delimiter}selected${delimiter} after`));
-      expect([textarea.selectionStart, textarea.selectionEnd, textarea.selectionDirection]).toEqual([
+      await vi.waitFor(() => expect(editor.value()).toBe(`before ${delimiter}selected${delimiter} after`));
+      expect([...editor.selection(), editor.direction()]).toEqual([
         7 + delimiter.length,
         15 + delimiter.length,
         "backward",
@@ -180,14 +169,14 @@ describe("selection formatting keyboard commands (GH #178)", () => {
     ["org", "s", true, "+"],
     ["org", "h", true, "^^"],
   ] as const)("applies %s %s without moving the selected trailing space inside its delimiter", async (format, key, shiftKey, delimiter) => {
-    const { textarea, dispose } = mountEditor("before selected after", format);
+    const { editor, dispose } = mountEditor("before selected after", format);
     try {
-      textarea.focus();
-      textarea.setSelectionRange(7, 16, "backward");
-      const event = keydown(textarea, { key, code: `Key${key.toUpperCase()}`, ctrlKey: true, shiftKey });
+      editor.focus();
+      editor.select(7, 16, "backward");
+      const event = editor.keydown({ key, code: `Key${key.toUpperCase()}`, ctrlKey: true, shiftKey });
       expect(event.defaultPrevented).toBe(true);
-      await vi.waitFor(() => expect(textarea.value).toBe(`before ${delimiter}selected${delimiter} after`));
-      expect([textarea.selectionStart, textarea.selectionEnd, textarea.selectionDirection]).toEqual([
+      await vi.waitFor(() => expect(editor.value()).toBe(`before ${delimiter}selected${delimiter} after`));
+      expect([...editor.selection(), editor.direction()]).toEqual([
         7 + delimiter.length,
         15 + delimiter.length,
         "backward",
@@ -199,15 +188,9 @@ describe("selection formatting keyboard commands (GH #178)", () => {
   });
 });
 
-function openSelectionOverflow(
-  root: ParentNode,
-  textarea: HTMLTextAreaElement,
-  start: number,
-  end: number,
-) {
-  textarea.focus();
-  textarea.setSelectionRange(start, end);
-  textarea.dispatchEvent(new Event("select", { bubbles: true }));
+function openSelectionOverflow(root: ParentNode, editor: EditorDriver, start: number, end: number) {
+  editor.focus();
+  editor.selectByUser(start, end);
   const more = root.querySelector<HTMLButtonElement>('.sel-toolbar-more');
   expect(more).not.toBeNull();
   more!.click();
@@ -228,16 +211,16 @@ describe("selection toolbar overflow transient ownership", () => {
     "owns one %s rung without losing the live editor selection",
     async (reason) => {
       const lower = registerLower(`selection-overflow-lower-${reason}`);
-      const { textarea, root, dispose } = mountEditor("alpha beta gamma");
+      const { editor, root, dispose } = mountEditor("alpha beta gamma");
       try {
-        openSelectionOverflow(root, textarea, 6, 10);
+        openSelectionOverflow(root, editor, 6, 10);
 
         expect(dismissTopTransient(reason)).toBe(true);
         await vi.waitFor(() => expect(root.querySelector('.sel-toolbar-overflow')).toBeNull());
         expect(lower.dismissals()).toBe(0);
-        expect(document.activeElement).toBe(textarea);
-        expect([textarea.selectionStart, textarea.selectionEnd]).toEqual([6, 10]);
-        expect(textarea.value).toBe("alpha beta gamma");
+        expect(document.activeElement).toBe(editor.element);
+        expect(editor.selection()).toEqual([6, 10]);
+        expect(editor.value()).toBe("alpha beta gamma");
         expect(doc.byId["selection-wrap"].raw).toBe("alpha beta gamma");
         expect(editingId()).toBe("selection-wrap");
 
@@ -252,21 +235,19 @@ describe("selection toolbar overflow transient ownership", () => {
 
   it("drops a stale overflow when the selection empties and unregisters on unmount", async () => {
     const lower = registerLower("selection-overflow-cleanup-lower");
-    const { textarea, root, dispose } = mountEditor("alpha beta gamma");
-    openSelectionOverflow(root, textarea, 0, 5);
+    const { editor, root, dispose } = mountEditor("alpha beta gamma");
+    openSelectionOverflow(root, editor, 0, 5);
 
-    textarea.setSelectionRange(5, 5);
-    textarea.dispatchEvent(new Event("select", { bubbles: true }));
+    editor.selectByUser(5, 5);
     await vi.waitFor(() => expect(root.querySelector('.sel-toolbar')).toBeNull());
 
-    textarea.setSelectionRange(6, 10);
-    textarea.dispatchEvent(new Event("select", { bubbles: true }));
+    editor.selectByUser(6, 10);
     await vi.waitFor(() => expect(root.querySelector('.sel-toolbar')).not.toBeNull());
     expect(root.querySelector('.sel-toolbar-overflow')).toBeNull();
     expect(dismissTopTransient("escape")).toBe(true);
     expect(lower.dismissals()).toBe(1);
 
-    openSelectionOverflow(root, textarea, 6, 10);
+    openSelectionOverflow(root, editor, 6, 10);
     dispose();
     expect(dismissTopTransient("back")).toBe(true);
     expect(lower.dismissals()).toBe(2);
@@ -282,23 +263,23 @@ describe("selection toolbar overflow transient ownership", () => {
     const lower = registerLower("selection-overflow-instances-lower");
     const mounted = mount(() => <><Editor id="selection-a" /><Editor id="selection-b" /></>);
     try {
-      const textareas = Array.from(mounted.root.querySelectorAll<HTMLTextAreaElement>("textarea.block-editor"));
+      const editors = editorsIn(mounted.root);
       const wraps = Array.from(mounted.root.querySelectorAll<HTMLElement>(".editor-wrap"));
-      openSelectionOverflow(wraps[0], textareas[0], 0, 5);
-      openSelectionOverflow(wraps[1], textareas[1], 0, 4);
+      openSelectionOverflow(wraps[0], editors[0], 0, 5);
+      openSelectionOverflow(wraps[1], editors[1], 0, 4);
       expect(mounted.root.querySelectorAll('.sel-toolbar-overflow')).toHaveLength(2);
 
       expect(dismissTopTransient("escape")).toBe(true);
       await vi.waitFor(() => expect(mounted.root.querySelectorAll('.sel-toolbar-overflow')).toHaveLength(1));
       expect(lower.dismissals()).toBe(0);
-      expect(document.activeElement).toBe(textareas[1]);
-      expect([textareas[1].selectionStart, textareas[1].selectionEnd]).toEqual([0, 4]);
+      expect(document.activeElement).toBe(editors[1].element);
+      expect(editors[1].selection()).toEqual([0, 4]);
 
       expect(dismissTopTransient("back")).toBe(true);
       await vi.waitFor(() => expect(mounted.root.querySelectorAll('.sel-toolbar-overflow')).toHaveLength(0));
       expect(lower.dismissals()).toBe(0);
-      expect(document.activeElement).toBe(textareas[0]);
-      expect([textareas[0].selectionStart, textareas[0].selectionEnd]).toEqual([0, 5]);
+      expect(document.activeElement).toBe(editors[0].element);
+      expect(editors[0].selection()).toEqual([0, 5]);
 
       expect(dismissTopTransient("escape")).toBe(true);
       expect(lower.dismissals()).toBe(1);
@@ -311,11 +292,15 @@ describe("selection toolbar overflow transient ownership", () => {
 
 // GH #375 (master b5894baba): native WebView selection updates the textarea
 // range without select/mouseup; the toolbar follows selectionchange.
+// Textarea-only quirk: these replace the textarea's selection getters, so they
+// run only when the mounted editor is a textarea (editorDriver rule).
 describe("selected-text toolbar follows native selectionchange (GH #375)", () => {
   it("tracks native selectionchange without a select or mouseup event", () => {
-    const { root, textarea, dispose } = mountEditor();
+    const { root, editor, dispose } = mountEditor();
+    if (editor.kind !== "textarea") return dispose();
+    const textarea = editor.element;
     try {
-      textarea.focus();
+      editor.focus();
       let start = 7;
       let end = 15;
       // Avoid jsdom's synthetic setSelectionRange events.
@@ -332,7 +317,9 @@ describe("selected-text toolbar follows native selectionchange (GH #375)", () =>
   });
 
   it("ignores selection changes owned by another focused control", () => {
-    const { root, textarea, dispose } = mountEditor();
+    const { root, editor, dispose } = mountEditor();
+    if (editor.kind !== "textarea") return dispose();
+    const textarea = editor.element;
     const other = document.createElement("textarea");
     document.body.append(other);
     try {

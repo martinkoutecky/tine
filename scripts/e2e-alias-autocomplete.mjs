@@ -9,7 +9,7 @@ import assert from "node:assert/strict";
 import { createHash } from "node:crypto";
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
-const testedCommit = execFileSync("rtk", ["git", "rev-parse", "HEAD"], { cwd: ROOT, encoding: "utf8" }).trim();
+const testedCommit = execFileSync("git", ["rev-parse", "HEAD"], { cwd: ROOT, encoding: "utf8" }).trim();
 const APP = process.env.TINE_APP || path.join(ROOT, "target/debug/tine");
 const binarySha256 = createHash("sha256").update(fs.readFileSync(APP)).digest("hex");
 const TMP = path.join(ROOT, "artifacts/gh675", String(Date.now()));

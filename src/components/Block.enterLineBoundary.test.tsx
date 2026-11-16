@@ -1,3 +1,4 @@
+import { editorIn, type EditorDriver } from "../tests/editorDriver";
 // GH #361: pressing Enter with the caret at an in-block line boundary splits
 // the block there and consumes the boundary newline, so neither block shows
 // an empty line. Shift+Enter keeps inserting an in-block newline.
@@ -33,16 +34,16 @@ function mountEditor(raw: string, offset: number) {
   const dispose = render(() => (
     <For each={pageByName("Boundary Enter")?.roots ?? []}>{(id) => <Block id={id} />}</For>
   ), root);
-  const editor = root.querySelector<HTMLTextAreaElement>("textarea.block-editor")!;
+  const editor = editorIn(root);
   editor.focus();
-  editor.setSelectionRange(offset, offset);
+  editor.select(offset, offset);
   return { root, editor, dispose };
 }
 
-function pressEnter(editor: HTMLTextAreaElement, shiftKey = false) {
-  editor.dispatchEvent(new KeyboardEvent("keydown", {
+function pressEnter(editor: EditorDriver, shiftKey = false) {
+  editor.keydown({
     key: "Enter", code: "Enter", shiftKey, bubbles: true, cancelable: true,
-  }));
+  });
 }
 
 describe("Enter at an in-block line boundary (GH #361)", () => {
@@ -55,9 +56,9 @@ describe("Enter at an in-block line boundary (GH #361)", () => {
       expect(doc.byId[roots[0]].raw).toBe("line1");
       expect(doc.byId[roots[1]].raw).toBe("line2");
       // The caret lands at the start of the new block's actual text.
-      const nextEditor = root.querySelector<HTMLTextAreaElement>("textarea.block-editor")!;
-      expect(nextEditor.value).toBe("line2");
-      expect(nextEditor.selectionStart).toBe(0);
+      const nextEditor = editorIn(root);
+      expect(nextEditor.value()).toBe("line2");
+      expect(nextEditor.selection()[0]).toBe(0);
     } finally {
       dispose();
     }

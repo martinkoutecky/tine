@@ -346,6 +346,19 @@ pub(crate) fn option_value<'a>(source: &'a str, key: &str) -> Option<&'a str> {
     found
 }
 
+/// Whether OG's top-level-result rule applies to an advanced query's block rows:
+/// `components/query/result.cljs` `get-query-result` runs
+/// `tree/filter-top-level-blocks` only `(get query-m :remove-block-children? true)`.
+/// `get` returns a stored value as written and `cond->` tests its truthiness, so
+/// exactly the literals `false` and `nil` turn the rule off; any other value, an
+/// absent key and a duplicated key (unreadable as a map) keep it on. O(source bytes).
+pub fn removes_block_children(source: &str) -> bool {
+    !matches!(
+        option_value(source, ":remove-block-children?"),
+        Some("false" | "nil")
+    )
+}
+
 /// Whether an authored advanced-query source *declares* the option `key`
 /// (for example `:result-transform`): either as a direct entry of a map form
 /// (`{:query [..] :result-transform (fn ..)}`) or as a top-level keyword
@@ -428,6 +441,12 @@ pub enum BeginQueryMatch {
         query: String,
         #[serde(skip_serializing_if = "Option::is_none")]
         title: Option<String>,
+        /// The map said `:remove-block-children? false` (or `nil`): OG then keeps every matching
+        /// block, children of matching parents included ([`removes_block_children`]). The query
+        /// text above cannot carry it for the simple DSL, so the caller forwards it in the macro's
+        /// trailing options map.
+        #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+        keeps_block_children: bool,
     },
     Unsupported {
         reason: &'static str,
@@ -518,5 +537,9 @@ pub fn inspect_begin_query(payload: &str) -> BeginQueryMatch {
     if let Some(rules) = rules {
         query = format!("{query} :rules {rules}");
     }
-    Supported { query, title }
+    Supported {
+        query,
+        title,
+        keeps_block_children: !removes_block_children(source),
+    }
 }

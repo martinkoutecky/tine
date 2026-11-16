@@ -1,3 +1,4 @@
+import { editorIn } from "../tests/editorDriver";
 import { afterEach, beforeAll, describe, expect, it, vi } from 'vitest';
 import { For } from 'solid-js';
 import { render } from 'solid-js/web';
@@ -30,15 +31,15 @@ describe('independent GH519 selection preservation',()=>{
         dispose=render(()=><For each={pageByName('Probe')?.roots??[]}>{id=><Block id={id}/>}</For>,root);
         root.querySelector('[data-block-id="current"] .block-content')!.dispatchEvent(new MouseEvent('mousedown',{bubbles:true,button:0}));
         document.dispatchEvent(new MouseEvent('mouseup',{bubbles:true,button:0}));
-        const editor=()=>root.querySelector('textarea.block-editor') as HTMLTextAreaElement;
-        await vi.waitFor(()=>expect(document.activeElement).toBe(editor()));
-        editor().setSelectionRange(start,end,direction);
-        editor().dispatchEvent(new KeyboardEvent('keydown',{key:'Tab',code:'Tab',shiftKey:reverse,bubbles:true,cancelable:true}));
+        const editor=()=>editorIn(root);
+        await vi.waitFor(()=>expect(document.activeElement).toBe(editor().element));
+        editor().select(start,end,direction);
+        editor().keydown({key:'Tab',code:'Tab',shiftKey:reverse,bubbles:true,cancelable:true});
         await vi.waitFor(()=>expect(doc.byId.current.parent).toBe(reverse?null:'previous'));
-        await vi.waitFor(()=>expect([editor().selectionStart,editor().selectionEnd]).toEqual([start,end]));
-        if(start!==end)expect(editor().selectionDirection).toBe(direction);
+        await vi.waitFor(()=>expect([editor().selection()[0],editor().selection()[1]]).toEqual([start,end]));
+        if(start!==end)expect(editor().direction()).toBe(direction);
         expect(doc.byId.current.raw).toBe(text);
-        expect(document.activeElement).toBe(editor());
+        expect(document.activeElement).toBe(editor().element);
       });
     }
   }

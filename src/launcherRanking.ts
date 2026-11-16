@@ -1,9 +1,9 @@
 import { createSignal } from "solid-js";
 import { backend } from "./backend";
 import type { ObjectiveMatchClass } from "./types";
-import { writePreference, seedPreference, preferenceRevision, preferenceReadCurrent } from "./preferenceWrites";
+import { writePreference, seedPreference, preferenceChangedElsewhere, preferenceRevision, preferenceReadCurrent } from "./preferenceWrites";
 import { pushToast } from "./toasts";
-import { advanceRevision, latestOwner, readOwned, revisionOwner, writeOwned } from "./owned";
+import { latestOwner, readOwned, revisionOwner, writeOwned } from "./owned";
 import { activeLocale, msg, render } from "./i18n";
 
 const PINYIN_KEY = "pinyin-page-matching";
@@ -16,8 +16,7 @@ function listenForPinyinChanges(): Promise<void> {
       const { listen } = await import("@tauri-apps/api/event");
       await listen<{ origin: string }>(PINYIN_CHANGED, event => {
         if (event.payload.origin === pinyinWindow) return;
-        advanceRevision(pinyinEnabled);
-        void initPinyinMatchingSetting();
+        preferenceChangedElsewhere(pinyinEnabled, () => void initPinyinMatchingSetting());
       });
     } catch { /* Published pages have a single window. */ }
   })();

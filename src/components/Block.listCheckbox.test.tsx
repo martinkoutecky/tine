@@ -6,6 +6,7 @@ import { loadSingle } from "../document/workingSet";
 import { doc } from "../document/model";
 import { endEdit } from "../editorController";
 import { Block } from "./Block";
+import { maybeEditorIn } from "../tests/editorDriver";
 
 beforeAll(() => initParser());
 afterEach(() => { endEdit("page-navigation"); resetStore(); document.body.innerHTML = ""; });
@@ -22,7 +23,7 @@ it.each(["*", "+", "1."])("clicking %s task items toggles only their token witho
       const box = host.querySelectorAll<HTMLElement>(".block-checkbox")[1];
       expect(box).toBeDefined();
       box.dispatchEvent(new MouseEvent("mousedown", { bubbles: true, cancelable: true }));
-      expect(host.querySelector("textarea.block-editor")).toBeNull();
+      expect(maybeEditorIn(host)).toBeNull();
       box.dispatchEvent(new MouseEvent("mouseup", { bubbles: true }));
       box.click();
     };
@@ -49,7 +50,7 @@ it.each([
     box.dispatchEvent(new MouseEvent("mousedown", { bubbles: true, cancelable: true }));
     box.dispatchEvent(new MouseEvent("mouseup", { bubbles: true }));
     box.click();
-    expect(host.querySelector("textarea.block-editor")).toBeNull();
+    expect(maybeEditorIn(host)).toBeNull();
     const token = raw.lastIndexOf("[ ]");
     expect(doc.byId.item.raw).toBe(raw.slice(0, token) + "[x]" + raw.slice(token + 3));
     undo();

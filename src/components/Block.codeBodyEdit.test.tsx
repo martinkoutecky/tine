@@ -1,3 +1,4 @@
+import { maybeEditorIn, type EditorDriver } from "../tests/editorDriver";
 import { afterAll, afterEach, beforeAll, describe, expect, it } from "vitest";
 import { For, type JSX } from "solid-js";
 import { render } from "solid-js/web";
@@ -11,7 +12,7 @@ import type { BlockDto, PageDto } from "../types";
 import { Block } from "./Block";
 
 // GH #412/#413 body-only code editor contract: while the whole visible block
-// is ONE complete code wrapper (markdown fence or org #+BEGIN_SRC/EXAMPLE,
+// is entered INSIDE one complete code wrapper (markdown fence or org #+BEGIN_SRC/EXAMPLE,
 // ```calc excluded, mixed/incomplete excluded), the block editor shows ONLY
 // the payload between the wrapper lines, and commits re-attach the exact raw
 // wrapper bytes. Consequences pinned here:
@@ -49,39 +50,60 @@ function mountPage(raw: string, format: "md" | "org" = "md") {
   const block: BlockDto = { id: `code-${seq}`, raw, collapsed: false, children: [] };
   const page: PageDto = { name, kind: "page", title: name, pre_block: null, blocks: [block], format };
   loadSingle(page);
-  startEditing(block.id, 0);
+  // A code click lands after the opener; block entry at zero edits source (#879).
+  startEditing(block.id, raw.indexOf("\n") + 1);
   const mounted = mount(() => (
     <For each={pageByName(name)?.roots ?? []}>{(id) => <Block id={id} />}</For>
   ));
-  const textarea = mounted.root.querySelector("textarea.block-editor") as HTMLTextAreaElement;
+  const textarea = maybeEditorIn(mounted.root) as EditorDriver;
   return { ...mounted, textarea, blockId: block.id };
 }
 
-function typeText(ta: HTMLTextAreaElement, insert: string) {
-  const caret = ta.selectionStart;
-  const nv = ta.value.slice(0, caret) + insert + ta.value.slice(ta.selectionEnd);
-  ta.value = nv;
-  ta.setSelectionRange(caret + insert.length, caret + insert.length);
+function typeText(ta: EditorDriver, insert: string) {
+  const caret = ta.selection()[0];
+  const nv = ta.value().slice(0, caret) + insert + ta.value().slice(ta.selection()[1]);
+  ta.replaceText(nv);
+  ta.select(caret + insert.length, caret + insert.length);
   const last = insert.at(-1) ?? "";
-  ta.dispatchEvent(new InputEvent("input", {
+  ta.reportInput({
     bubbles: true,
     inputType: "insertText",
     data: last || null,
-  }));
+  });
 }
 
-const modA = (el: HTMLTextAreaElement) =>
-  el.dispatchEvent(new KeyboardEvent("keydown", { key: "a", ctrlKey: true, bubbles: true, cancelable: true }));
+const modA = (el: EditorDriver) =>
+  el.keydown(new KeyboardEvent("keydown", { key: "a", ctrlKey: true, bubbles: true, cancelable: true }));
 
 describe("body-only code editor (GH #412/#413)", () => {
+  it.each([ ["md", "```js\nx\n```"], ["org", "#+BEGIN_SRC js\nx\n#+END_SRC"] ] as const)("Escape reveals editable raw %s source, then exits on the next Escape (GH #865)", async (format, raw) => {
+    const { root, textarea, blockId, dispose } = mountPage(raw, format);
+    try {
+      typeText(textarea, "y");
+      const expected = raw.replace("\nx\n", "\nyx\n");
+      textarea.keydown({ key: "Escape", bubbles: true, cancelable: true });
+      await Promise.resolve();
+      const plain = maybeEditorIn(root)!;
+      expect(plain).not.toBeNull();
+      expect(plain.value()).toBe(expected);
+      expect(editingId()).toBe(blockId);
+      expect(doc.byId[blockId].raw).toBe(expected);
+      plain.select(0, 0);
+      typeText(plain, "intro\n");
+      expect(plain.value()).toBe("intro\n" + expected);
+      expect(doc.byId[blockId].raw).toBe("intro\n" + expected);
+      plain.keydown({ key: "Escape", bubbles: true, cancelable: true });
+      expect(editingId()).toBeNull();
+    } finally { dispose(); }
+  });
   it("shows only the payload of a complete markdown fence, never the fences", () => {
     const { textarea, dispose } = mountPage("```\necho hello\n```");
     try {
-      expect(textarea.value).toBe("echo hello");
-      expect(textarea.value).not.toContain("```");
+      expect(textarea.value()).toBe("echo hello");
+      expect(textarea.value()).not.toContain("```");
       // The code-card presentation itself is unchanged (GH #357 contract).
-      expect(textarea.classList.contains("code-edit")).toBe(true);
-      expect(textarea.getAttribute("wrap")).toBe("off");
+      expect(textarea.element.classList.contains("code-edit")).toBe(true);
+      expect(textarea.element.getAttribute("wrap")).toBe("off");
     } finally {
       dispose();
     }
@@ -91,7 +113,7 @@ describe("body-only code editor (GH #412/#413)", () => {
     const original = "````sh\necho hi\n````";
     const { textarea, blockId, dispose } = mountPage(original);
     try {
-      textarea.setSelectionRange(7, 7);
+      textarea.select(7, 7);
       typeText(textarea, ", world");
       expect(doc.byId[blockId].raw).toBe("````sh\necho hi, world\n````");
     } finally {
@@ -110,8 +132,8 @@ describe("body-only code editor (GH #412/#413)", () => {
   it("shows only the body of an org #+BEGIN_SRC block and keeps org wrapper bytes", () => {
     const { textarea, blockId, dispose } = mountPage("#+BEGIN_SRC python\nx = 1\n#+END_SRC", "org");
     try {
-      expect(textarea.value).toBe("x = 1");
-      textarea.setSelectionRange(0, 0);
+      expect(textarea.value()).toBe("x = 1");
+      textarea.select(0, 0);
       typeText(textarea, "# ");
       expect(doc.byId[blockId].raw).toBe("#+BEGIN_SRC python\n# x = 1\n#+END_SRC");
     } finally {
@@ -122,23 +144,23 @@ describe("body-only code editor (GH #412/#413)", () => {
   it("keeps raw editing for mixed and incomplete wrappers and the calc mode", () => {
     const mixed = mountPage("intro\n```js\nx\n```");
     try {
-      expect(mixed.textarea.value).toContain("```js");
-      expect(mixed.textarea.classList.contains("code-edit")).toBe(false);
+      expect(mixed.textarea.value()).toContain("```js");
+      expect(mixed.textarea.element.classList.contains("code-edit")).toBe(false);
     } finally {
       mixed.dispose();
     }
     const typing = mountPage("```python\nx = 1");
     try {
       // An unclosed fence is still being authored: raw editing, code-card metrics.
-      expect(typing.textarea.value).toContain("```python");
-      expect(typing.textarea.classList.contains("code-edit")).toBe(true);
+      expect(typing.textarea.value()).toContain("```python");
+      expect(typing.textarea.element.classList.contains("code-edit")).toBe(true);
     } finally {
       typing.dispose();
     }
     const calc = mountPage("```calc\n1+1\n```");
     try {
-      expect(calc.textarea.value).toBe("1+1");
-      expect(calc.textarea.classList.contains("code-edit")).toBe(false);
+      expect(calc.textarea.value()).toBe("1+1");
+      expect(calc.textarea.element.classList.contains("code-edit")).toBe(false);
     } finally {
       calc.dispose();
     }
@@ -148,11 +170,11 @@ describe("body-only code editor (GH #412/#413)", () => {
     const holder: BlockDto = { id: "code-holder", raw: "```\necho hello\n```", collapsed: false, children: [child] };
     const name = `CodeSel${seq}`;
     loadSingle({ name, kind: "page", title: name, pre_block: null, blocks: [holder] });
-    startEditing("code-holder", 0);
+    startEditing("code-holder", "```\n".length);
     const m = mount(() => <For each={pageByName(name)?.roots ?? []}>{(id) => <Block id={id} />}</For>);
     try {
-      const ta = m.root.querySelector("textarea.block-editor") as HTMLTextAreaElement;
-      expect(ta.value).toBe("echo hello");
+      const ta = maybeEditorIn(m.root) as EditorDriver;
+      expect(ta.value()).toBe("echo hello");
 
       // Press 1: falls through to the native select-all — which CANNOT reach
       // the fences because they are not part of the edited text at all.
@@ -160,9 +182,9 @@ describe("body-only code editor (GH #412/#413)", () => {
       expect(hasSelection()).toBe(false);
       expect(editingId()).toBe("code-holder");
       // The browser applies select-all: exactly the payload is selected.
-      ta.setSelectionRange(0, ta.value.length);
-      expect(ta.value.slice(ta.selectionStart, ta.selectionEnd)).toBe("echo hello");
-      expect(ta.value.slice(ta.selectionStart, ta.selectionEnd)).not.toContain("```");
+      ta.select(0, ta.value().length);
+      expect(ta.value().slice(ta.selection()[0], ta.selection()[1])).toBe("echo hello");
+      expect(ta.value().slice(ta.selection()[0], ta.selection()[1])).not.toContain("```");
 
       // Press 2: the existing GH #262 escalation selects the block subtree.
       modA(ta);
@@ -177,7 +199,7 @@ describe("body-only code editor (GH #412/#413)", () => {
   it("a multiline paste inside the code view stays literal text inside the wrapper (no outline splintering)", () => {
     const { textarea, blockId, dispose } = mountPage("```py\nx = 1\n```");
     try {
-      textarea.setSelectionRange(5, 5);
+      textarea.select(5, 5);
       const event = new Event("paste", { bubbles: true, cancelable: true });
       Object.defineProperty(event, "clipboardData", {
         value: {
@@ -187,7 +209,7 @@ describe("body-only code editor (GH #412/#413)", () => {
           getData: () => "y = 2\nz = 3",
         },
       });
-      textarea.dispatchEvent(event);
+      textarea.paste(event);
       // One block, literal text, exact wrapper preserved.
       expect(pageByName(`Code${seq}`)!.roots).toEqual([blockId]);
       expect(doc.byId[blockId].raw).toBe("```py\nx = 1y = 2\nz = 3\n```");

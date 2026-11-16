@@ -1,5 +1,183 @@
 use super::*;
 use sha2::{Digest, Sha256};
+fn h_version(h: &Host<ModelFs>, key: &str) -> u64 {
+    h.pages.get(key).map_or(0, |p| p.version)
+}
+
+#[test]
+fn clean_and_conflicted_pages_independently_disable_saving() {
+    let mut h = host();
+    open(&mut h, "a.md");
+    assert_eq!(h.start_save("a.md"), Disposition::Disabled);
+    edit(&mut h, "a.md", "mine");
+    h.fs.external("a.md", text("theirs"), true);
+    assert_eq!(h.observe("a.md"), Disposition::Applied);
+    assert!(h.pages["a.md"].conflict);
+    assert_eq!(h.start_save("a.md"), Disposition::Disabled);
+    assert!(h.job.is_none());
+}
+
+#[test]
+fn gh875_later_delivery_retires_only_exact_buffer_or_saved_base_matches() {
+    for (delivered, conflicted) in [("mine", false), ("A", false), ("mine ", true)] {
+        let mut h = host();
+        open(&mut h, "a.md");
+        edit(&mut h, "a.md", "mine");
+        h.fs.external("a.md", text("theirs"), true);
+        assert_eq!(h.observe("a.md"), Disposition::Applied);
+        assert!(h.pages["a.md"].conflict);
+        h.fs.external("a.md", text(delivered), true);
+        assert_eq!(h.observe("a.md"), Disposition::Applied);
+        assert_eq!(h.pages["a.md"].conflict, conflicted);
+        assert_eq!(h.pages["a.md"].buf, text("mine"));
+    }
+}
+
+#[test]
+fn draft_envelopes_reject_each_invalid_header_record_and_vehicle_name() {
+    fn checksum(bytes: &mut Vec<u8>) {
+        bytes.truncate(bytes.len() - 32);
+        bytes.extend_from_slice(&Sha256::digest(&*bytes));
+    }
+    let record = Record {
+        page: "a.md".into(),
+        wseq: 1,
+        version: 1,
+        base: Base::Known(text("A")),
+        bytes: text("A"),
+    };
+    let encoded = drafts::encode(std::slice::from_ref(&record));
+    assert_eq!(drafts::decode(&encoded).unwrap(), vec![record.clone()]);
+    assert!(drafts::decode(&encoded[..8]).is_err());
+    assert!(drafts::decode(&encoded[..9]).is_err());
+    for index in [0, 8] {
+        let mut bytes = encoded.clone();
+        bytes[index] ^= 1;
+        checksum(&mut bytes);
+        assert!(drafts::decode(&bytes).is_err());
+    }
+    for records in [
+        vec![],
+        vec![Record {
+            wseq: 0,
+            ..record.clone()
+        }],
+        vec![
+            record.clone(),
+            Record {
+                wseq: 2,
+                ..record.clone()
+            },
+        ],
+    ] {
+        assert!(drafts::decode(&drafts::encode(&records)).is_err());
+    }
+    let other = Record {
+        page: "b.md".into(),
+        wseq: 2,
+        ..record.clone()
+    };
+    for (name, records) in [
+        ("alien.draft", vec![record.clone()]),
+        ("p-a.tmp", vec![record.clone()]),
+        ("p-many.draft", vec![record.clone(), other.clone()]),
+    ] {
+        let scan = drafts::scan(vec![(name.into(), drafts::encode(&records))]);
+        assert!(scan.logical.is_empty());
+        assert!(scan.unreadable.contains(name));
+    }
+    assert_eq!(
+        drafts::scan(vec![(
+            "op-a.draft".into(),
+            drafts::encode(&[record, other])
+        )])
+        .logical
+        .len(),
+        2
+    );
+}
+
+#[test]
+fn retirement_selects_only_older_single_page_vehicles_in_order() {
+    let mut files = vec![];
+    for seq in [3, 1, 2] {
+        let record = Record {
+            page: "a.md".into(),
+            wseq: seq,
+            version: seq,
+            base: Base::Unknown,
+            bytes: text("A"),
+        };
+        files.push((format!("p-{seq}.draft"), drafts::encode(&[record])));
+    }
+    let scan = drafts::scan(files);
+    assert_eq!(
+        drafts::older_vehicles(&scan.files, "a.md", Some(2)),
+        vec!["p-1.draft"]
+    );
+    assert_eq!(
+        drafts::older_vehicles(&scan.files, "a.md", None),
+        vec!["p-1.draft", "p-2.draft", "p-3.draft"]
+    );
+    assert!(drafts::older_vehicles(&scan.files, "b.md", None).is_empty());
+}
+
+#[test]
+fn draft_phase_failures_preserve_whether_the_file_step_completed() {
+    for initial in [
+        Stage::Temp,
+        Stage::Rename,
+        Stage::CleanupUnlink,
+        Stage::Unlink,
+    ] {
+        for fault in [Fault::Before, Fault::After] {
+            let mut fs = ModelFs::default();
+            let record = Record {
+                page: "a.md".into(),
+                wseq: 1,
+                version: 1,
+                base: Base::Unknown,
+                bytes: text("A"),
+            };
+            let mut v = Vehicle::write("p-a.draft".into(), &[record]);
+            if initial != Stage::Temp {
+                v.advance(&mut fs);
+            }
+            if matches!(initial, Stage::CleanupUnlink | Stage::Unlink) {
+                v.advance(&mut fs);
+            }
+            if initial == Stage::CleanupUnlink {
+                fs.inject(Phase::DraftSync, [Fault::Before; 3]);
+                for _ in 0..3 {
+                    v.advance(&mut fs);
+                }
+            }
+            if initial == Stage::Unlink {
+                v = Vehicle::remove("p-a.draft".into());
+            }
+            assert_eq!(v.stage, initial);
+            let phase = if initial == Stage::Temp {
+                Phase::DraftTemp
+            } else if initial == Stage::Rename {
+                Phase::DraftRename
+            } else {
+                Phase::DraftUnlink
+            };
+            fs.inject(phase, [fault]);
+            let failures = v.failures;
+            v.advance(&mut fs);
+            let expected = match (initial, fault) {
+                (Stage::Temp, _) | (Stage::Rename, Fault::Before) => Stage::Absent,
+                (Stage::Rename, Fault::After) => Stage::CleanupUnlink,
+                (Stage::CleanupUnlink, Fault::After) => Stage::CleanupSync,
+                (Stage::Unlink, Fault::After) => Stage::UnlinkSync,
+                _ => initial,
+            };
+            assert_eq!(v.stage, expected);
+            assert_eq!(v.failures, failures + 1);
+        }
+    }
+}
 
 #[test]
 fn review_f7_missing_backend_refusal_guards_are_called_directly() {
@@ -13,16 +191,6 @@ fn review_f7_missing_backend_refusal_guards_are_called_directly() {
     h.fs.inject(Phase::Read, [Fault::Before]);
     assert_eq!(h.observe("a.md"), Disposition::Refused);
     assert_eq!(h.pages, pages);
-    assert_eq!(
-        h.reserve(&BTreeSet::from(["unknown.md".into()])),
-        Disposition::Refused
-    );
-    assert_eq!(
-        h.release(&BTreeSet::from(["a.md".into()])),
-        Disposition::Refused
-    );
-    assert!(h.retained.is_empty());
-
     let mut h = host();
     assert_eq!(
         send(
@@ -176,166 +344,122 @@ fn review_f7_missing_backend_refusal_guards_are_called_directly() {
     assert!(h.fs.files.contains_key("draft/p-unknown.draft"));
 }
 
-fn h_version(h: &Host<ModelFs>, key: &str) -> u64 {
-    h.pages.get(key).map_or(0, |p| p.version)
-}
-
 #[test]
-fn clean_and_conflicted_pages_independently_disable_saving() {
+fn switch_checks_job_and_representation_worker_after_confirmation() {
     let mut h = host();
     open(&mut h, "a.md");
-    assert_eq!(h.start_save("a.md"), Disposition::Disabled);
-    edit(&mut h, "a.md", "mine");
-    h.fs.external("a.md", text("theirs"), true);
-    assert_eq!(h.observe("a.md"), Disposition::Applied);
-    assert!(h.pages["a.md"].conflict);
-    assert_eq!(h.start_save("a.md"), Disposition::Disabled);
-    assert!(h.job.is_none());
+    edit(&mut h, "a.md", "dirty");
+    risk(&mut h, "a.md");
+    draft(&mut h, "a.md");
+    assert_eq!(h.switch_ready(h.last_admitted), Disposition::Applied);
+    assert_eq!(h.start_save("a.md"), Disposition::Pending);
+    assert_eq!(h.switch_finish(), Disposition::Waiting);
+
+    let mut h = host();
+    assert_eq!(
+        h.rename_with("a.md", "c.md", &BTreeSet::new(), |bytes, _, _| Ok(
+            bytes.clone()
+        )),
+        Disposition::Pending
+    );
+    for _ in 0..4 {
+        h.advance_draft();
+    }
+    // RENAME-COST L2: an edit's refresh retires the operation vehicle; its
+    // copy of a's record is a representation phase.
+    edit(&mut h, "c.md", "edited");
+    assert_eq!(h.begin_draft("c.md"), Disposition::Pending);
+    for _ in 0..4 {
+        h.advance_draft();
+    }
+    assert!(h.worker.is_some());
+    assert!(h.worker.as_ref().unwrap().application.is_none());
+    assert_eq!(h.switch_ready(h.last_admitted), Disposition::Applied);
+    assert_eq!(h.switch_finish(), Disposition::Waiting);
 }
 
 #[test]
-fn draft_envelopes_reject_each_invalid_header_record_and_vehicle_name() {
-    fn checksum(bytes: &mut Vec<u8>) {
-        bytes.truncate(bytes.len() - 32);
-        bytes.extend_from_slice(&Sha256::digest(&*bytes));
-    }
-    let record = Record {
-        page: "a.md".into(),
-        wseq: 1,
-        version: 1,
-        base: Base::Known(text("A")),
-        bytes: text("A"),
+fn load_observe_and_draft_guard_dispositions_are_independent() {
+    let mut h = host();
+    assert_eq!(h.load("unknown.md"), Disposition::Disabled);
+    assert_eq!(h.observe("a.md"), Disposition::Disabled);
+    assert_eq!(h.load("a.md"), Disposition::Applied);
+    assert_eq!(h.load("a.md"), Disposition::Disabled);
+    h.stop();
+    assert_eq!(h.load("a.md"), Disposition::Disabled);
+    assert_eq!(h.observe("a.md"), Disposition::Disabled);
+    assert_eq!(h.begin_draft("a.md"), Disposition::Waiting);
+
+    let mut h = host();
+    assert_eq!(h.delete("a.md"), Disposition::Pending);
+    assert_eq!(h.load("b.md"), Disposition::Waiting);
+    assert_eq!(h.begin_draft("b.md"), Disposition::Waiting);
+}
+
+#[test]
+fn an_unchanged_dirty_or_busy_referrer_is_left_out_of_a_rename() {
+    let refs = BTreeSet::from(["b.md".into()]);
+    let unchanged = |bytes: &Text, _: &str, _: bool| Ok(bytes.clone());
+    let changes = |bytes: &Text, key: &str, moving: bool| {
+        Ok(if key == "b.md" && !moving {
+            text("B renamed")
+        } else {
+            bytes.clone()
+        })
     };
-    let encoded = drafts::encode(std::slice::from_ref(&record));
-    assert_eq!(drafts::decode(&encoded).unwrap(), vec![record.clone()]);
-    assert!(drafts::decode(&encoded[..8]).is_err());
-    assert!(drafts::decode(&encoded[..9]).is_err());
-    for index in [0, 8] {
-        let mut bytes = encoded.clone();
-        bytes[index] ^= 1;
-        checksum(&mut bytes);
-        assert!(drafts::decode(&bytes).is_err());
-    }
-    for records in [
-        vec![],
-        vec![Record {
-            wseq: 0,
-            ..record.clone()
-        }],
-        vec![
-            record.clone(),
-            Record {
-                wseq: 2,
-                ..record.clone()
-            },
-        ],
-    ] {
-        assert!(drafts::decode(&drafts::encode(&records)).is_err());
-    }
-    let other = Record {
-        page: "b.md".into(),
-        wseq: 2,
-        ..record.clone()
-    };
-    for (name, records) in [
-        ("alien.draft", vec![record.clone()]),
-        ("p-a.tmp", vec![record.clone()]),
-        ("p-many.draft", vec![record.clone(), other.clone()]),
-    ] {
-        let scan = drafts::scan(vec![(name.into(), drafts::encode(&records))]);
-        assert!(scan.logical.is_empty());
-        assert!(scan.unreadable.contains(name));
-    }
-    assert_eq!(
-        drafts::scan(vec![(
-            "op-a.draft".into(),
-            drafts::encode(&[record, other])
-        )])
-        .logical
-        .len(),
-        2
-    );
-}
-
-#[test]
-fn retirement_selects_only_older_single_page_vehicles_in_order() {
-    let mut files = vec![];
-    for seq in [3, 1, 2] {
-        let record = Record {
-            page: "a.md".into(),
-            wseq: seq,
-            version: seq,
-            base: Base::Unknown,
-            bytes: text("A"),
-        };
-        files.push((format!("p-{seq}.draft"), drafts::encode(&[record])));
-    }
-    let scan = drafts::scan(files);
-    assert_eq!(
-        drafts::older_vehicles(&scan.files, "a.md", Some(2)),
-        vec!["p-1.draft"]
-    );
-    assert_eq!(
-        drafts::older_vehicles(&scan.files, "a.md", None),
-        vec!["p-1.draft", "p-2.draft", "p-3.draft"]
-    );
-    assert!(drafts::older_vehicles(&scan.files, "b.md", None).is_empty());
-}
-
-#[test]
-fn draft_phase_failures_preserve_whether_the_file_step_completed() {
-    for initial in [
-        Stage::Temp,
-        Stage::Rename,
-        Stage::CleanupUnlink,
-        Stage::Unlink,
-    ] {
-        for fault in [Fault::Before, Fault::After] {
-            let mut fs = ModelFs::default();
-            let record = Record {
-                page: "a.md".into(),
-                wseq: 1,
-                version: 1,
-                base: Base::Unknown,
-                bytes: text("A"),
-            };
-            let mut v = Vehicle::write("p-a.draft".into(), &[record]);
-            if initial != Stage::Temp {
-                v.advance(&mut fs);
-            }
-            if matches!(initial, Stage::CleanupUnlink | Stage::Unlink) {
-                v.advance(&mut fs);
-            }
-            if initial == Stage::CleanupUnlink {
-                fs.inject(Phase::DraftSync, [Fault::Before; 3]);
-                for _ in 0..3 {
-                    v.advance(&mut fs);
+    for state in ["dirty", "saving"] {
+        let setup = || {
+            let mut h = host();
+            open(&mut h, "b.md");
+            match state {
+                "dirty" => edit(&mut h, "b.md", "B typed"),
+                "saving" => {
+                    edit(&mut h, "b.md", "B typed");
+                    assert_eq!(h.start_save("b.md"), Disposition::Pending);
                 }
+                _ => unreachable!(),
             }
-            if initial == Stage::Unlink {
-                v = Vehicle::remove("p-a.draft".into());
-            }
-            assert_eq!(v.stage, initial);
-            let phase = if initial == Stage::Temp {
-                Phase::DraftTemp
-            } else if initial == Stage::Rename {
-                Phase::DraftRename
-            } else {
-                Phase::DraftUnlink
-            };
-            fs.inject(phase, [fault]);
-            let failures = v.failures;
-            v.advance(&mut fs);
-            let expected = match (initial, fault) {
-                (Stage::Temp, _) | (Stage::Rename, Fault::Before) => Stage::Absent,
-                (Stage::Rename, Fault::After) => Stage::CleanupUnlink,
-                (Stage::CleanupUnlink, Fault::After) => Stage::CleanupSync,
-                (Stage::Unlink, Fault::After) => Stage::UnlinkSync,
-                _ => initial,
-            };
-            assert_eq!(v.stage, expected);
-            assert_eq!(v.failures, failures + 1);
-        }
+            h
+        };
+        let mut h = setup();
+        let page = h.pages["b.md"].clone();
+        let job = h.job.as_ref().map(|job| job.page.clone());
+        assert_eq!(
+            h.rename_with("a.md", "c.md", &refs, unchanged),
+            Disposition::Pending,
+            "{state}"
+        );
+        let operation = &h.worker.as_ref().unwrap().pages;
+        assert_eq!(
+            *operation,
+            BTreeSet::from(["a.md".into(), "c.md".into()]),
+            "{state}"
+        );
+        assert_eq!(h.pages["b.md"], page, "{state}");
+        assert_eq!(h.job.as_ref().map(|job| job.page.clone()), job, "{state}");
+        assert!(!h.logical_drafts().contains_key("b.md"), "{state}");
+        // Absent source, references only: an empty effective set is the
+        // model's disabled step, never an applied operation (the source's
+        // visible load is the model's load step).
+        let mut h = setup();
+        let before = (h.pages["b.md"].clone(), h.fs.files.clone());
+        assert_eq!(
+            h.rename_with("c.md", "a.md", &refs, unchanged),
+            Disposition::Refused,
+            "{state}"
+        );
+        assert!(h.worker.is_none(), "{state}");
+        let after = (h.pages["b.md"].clone(), h.fs.files.clone());
+        assert_eq!(after, before, "{state}");
+        assert!(h.pages.get("c.md").is_none_or(Page::clean), "{state}");
+        // The negative neighbour: the rewrite changes the referrer.
+        let mut h = setup();
+        assert_eq!(
+            h.rename_with("a.md", "c.md", &refs, changes),
+            Disposition::Refused,
+            "{state}"
+        );
+        assert!(h.worker.is_none(), "{state}");
     }
 }
 
@@ -408,49 +532,6 @@ fn refs_only_rerun_excludes_a_held_target_that_references_the_source() {
     drain(&mut h);
     assert_eq!(h.pages["a.md"].buf, text("[[C]]"));
 }
-
-#[test]
-fn switch_checks_job_representation_worker_and_reservation_after_confirmation() {
-    let mut h = host();
-    open(&mut h, "a.md");
-    edit(&mut h, "a.md", "dirty");
-    risk(&mut h, "a.md");
-    draft(&mut h, "a.md");
-    assert_eq!(h.switch_ready(h.last_admitted), Disposition::Applied);
-    assert_eq!(h.start_save("a.md"), Disposition::Pending);
-    assert_eq!(h.switch_finish(), Disposition::Waiting);
-
-    let mut h = host();
-    assert_eq!(
-        h.rename_with("a.md", "c.md", &BTreeSet::new(), |bytes, _, _| Ok(
-            bytes.clone()
-        )),
-        Disposition::Pending
-    );
-    for _ in 0..4 {
-        h.advance_draft();
-    }
-    // RENAME-COST L2: an edit's refresh retires the operation vehicle; its
-    // copy of a's record is a representation phase.
-    edit(&mut h, "c.md", "edited");
-    assert_eq!(h.begin_draft("c.md"), Disposition::Pending);
-    for _ in 0..4 {
-        h.advance_draft();
-    }
-    assert!(h.worker.is_some());
-    assert!(h.worker.as_ref().unwrap().application.is_none());
-    assert_eq!(h.switch_ready(h.last_admitted), Disposition::Applied);
-    assert_eq!(h.switch_finish(), Disposition::Waiting);
-
-    let mut h = host();
-    assert_eq!(
-        h.reserve(&BTreeSet::from(["a.md".into()])),
-        Disposition::Applied
-    );
-    assert_eq!(h.switch_ready(0), Disposition::Applied);
-    assert_eq!(h.switch_finish(), Disposition::Waiting);
-}
-
 #[test]
 fn switch_checks_same_version_base_refresh_and_later_same_bytes() {
     for changed_base in [false, true] {
@@ -608,30 +689,6 @@ fn admission_rejects_each_invalid_envelope_without_custody_changes() {
     assert_eq!(h.admit(Request { id: 2, ..valid }), Disposition::Refused);
     assert!(h.queue.is_empty());
 }
-
-#[test]
-fn load_observe_and_draft_guard_dispositions_are_independent() {
-    let mut h = host();
-    assert_eq!(h.load("unknown.md"), Disposition::Disabled);
-    assert_eq!(h.observe("a.md"), Disposition::Disabled);
-    assert_eq!(h.load("a.md"), Disposition::Applied);
-    assert_eq!(h.load("a.md"), Disposition::Disabled);
-    h.stop();
-    assert_eq!(h.load("a.md"), Disposition::Disabled);
-    assert_eq!(h.observe("a.md"), Disposition::Disabled);
-    assert_eq!(h.begin_draft("a.md"), Disposition::Waiting);
-
-    let mut h = host();
-    let keys = BTreeSet::from(["c.md".into()]);
-    assert_eq!(h.reserve(&keys), Disposition::Applied);
-    assert_eq!(h.load("c.md"), Disposition::Waiting);
-    assert_eq!(h.begin_draft("c.md"), Disposition::Waiting);
-    assert_eq!(h.release(&keys), Disposition::Applied);
-    assert_eq!(h.delete("a.md"), Disposition::Pending);
-    assert_eq!(h.load("b.md"), Disposition::Waiting);
-    assert_eq!(h.begin_draft("b.md"), Disposition::Waiting);
-}
-
 #[test]
 fn dequeue_cannot_overwrite_custody_and_apply_waits_for_later_save() {
     let mut h = host();
@@ -852,28 +909,6 @@ fn a_persistent_trash_collision_fails_the_save_on_the_third() {
     assert!(!h.fs.files.contains_key("graph/a.md"));
     assert_eq!(custody_entries(&h), 0);
 }
-
-#[test]
-fn release_reconciles_fresh_versions_and_failed_reads_keep_reservations() {
-    let mut h = host();
-    open(&mut h, "a.md");
-    let keys = BTreeSet::from(["a.md".into()]);
-    let version = h.version;
-    assert_eq!(h.reserve(&keys), Disposition::Applied);
-    h.fs.external("a.md", text("external"), true);
-    h.fs.inject(Phase::Read, [Fault::Before]);
-    assert_eq!(h.release(&keys), Disposition::Waiting);
-    assert_eq!(h.retained, keys);
-    assert_eq!(h.switch_request(), Disposition::Waiting);
-    assert_eq!(h.release(&keys), Disposition::Applied);
-    assert!(h.retained.is_empty());
-    assert_eq!(h.version, version + 1);
-    assert_eq!(h.pages["a.md"].version, h.version);
-    assert_eq!(h.pages["a.md"].buf, text("external"));
-    assert_eq!(h.delete("a.md"), Disposition::Pending);
-    assert_eq!(h.switch_request(), Disposition::Waiting);
-}
-
 #[test]
 fn switch_confirmation_checks_both_admitted_and_applied_watermarks() {
     let mut h = host();
@@ -930,86 +965,6 @@ fn custody_entries(h: &Host<ModelFs>) -> usize {
         .filter(|k| k.starts_with("draft/trash-custody/"))
         .count()
 }
-
-/// R3a/R5 (A-W1): a caller referrer that is dirty or busy, and whose
-/// buffer the rewrite leaves unchanged, is not part of the rename. The
-/// operation runs over its effective set (the endpoints), and the referrer
-/// keeps its buffer, version, risk, save job and reservation; nothing of it
-/// is drafted or written. A referrer whose bytes the rewrite changes still
-/// refuses while dirty (saving or not) and waits while only busy.
-#[test]
-fn an_unchanged_dirty_or_busy_referrer_is_left_out_of_a_rename() {
-    let refs = BTreeSet::from(["b.md".into()]);
-    let unchanged = |bytes: &Text, _: &str, _: bool| Ok(bytes.clone());
-    let changes = |bytes: &Text, key: &str, moving: bool| {
-        Ok(if key == "b.md" && !moving {
-            text("B renamed")
-        } else {
-            bytes.clone()
-        })
-    };
-    for state in ["dirty", "saving", "reserved"] {
-        let setup = || {
-            let mut h = host();
-            open(&mut h, "b.md");
-            match state {
-                "dirty" => edit(&mut h, "b.md", "B typed"),
-                "saving" => {
-                    edit(&mut h, "b.md", "B typed");
-                    assert_eq!(h.start_save("b.md"), Disposition::Pending);
-                }
-                _ => assert_eq!(h.reserve(&refs), Disposition::Applied),
-            }
-            h
-        };
-        let mut h = setup();
-        let page = h.pages["b.md"].clone();
-        let job = h.job.as_ref().map(|job| job.page.clone());
-        assert_eq!(
-            h.rename_with("a.md", "c.md", &refs, unchanged),
-            Disposition::Pending,
-            "{state}"
-        );
-        let operation = &h.worker.as_ref().unwrap().pages;
-        assert_eq!(
-            *operation,
-            BTreeSet::from(["a.md".into(), "c.md".into()]),
-            "{state}"
-        );
-        assert_eq!(h.pages["b.md"], page, "{state}");
-        assert_eq!(h.job.as_ref().map(|job| job.page.clone()), job, "{state}");
-        assert_eq!(h.retained.contains("b.md"), state == "reserved", "{state}");
-        assert!(!h.logical_drafts().contains_key("b.md"), "{state}");
-        // Absent source, references only: an empty effective set is the
-        // model's disabled step, never an applied operation (the source's
-        // visible load is the model's load step).
-        let mut h = setup();
-        let before = (h.pages["b.md"].clone(), h.fs.files.clone());
-        assert_eq!(
-            h.rename_with("c.md", "a.md", &refs, unchanged),
-            Disposition::Refused,
-            "{state}"
-        );
-        assert!(h.worker.is_none(), "{state}");
-        let after = (h.pages["b.md"].clone(), h.fs.files.clone());
-        assert_eq!(after, before, "{state}");
-        assert!(h.pages.get("c.md").is_none_or(Page::clean), "{state}");
-        // The negative neighbour: the rewrite changes the referrer.
-        let mut h = setup();
-        let expected = if state == "reserved" {
-            Disposition::Waiting
-        } else {
-            Disposition::Refused
-        };
-        assert_eq!(
-            h.rename_with("a.md", "c.md", &refs, changes),
-            expected,
-            "{state}"
-        );
-        assert!(h.worker.is_none(), "{state}");
-    }
-}
-
 /// RO3 (a) review F2: a power cut may lose a deleted page's data only when
 /// another program wrote it unflushed (R-UNFLUSHED). Tine's own saved bytes
 /// survive every cut once custody completed. Fails if `cuts()` lists stable

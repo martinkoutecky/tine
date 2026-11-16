@@ -1,3 +1,4 @@
+import { editorIn, type EditorDriver } from "../tests/editorDriver";
 import { afterEach, beforeAll, describe, expect, it, vi } from "vitest";
 import { For, type JSX } from "solid-js";
 import { render } from "solid-js/web";
@@ -38,9 +39,9 @@ function mountPage(): { root: HTMLDivElement; dispose: () => void } {
   return mount(() => <For each={pageByName("Caret")?.roots ?? []}>{(id) => <Block id={id} />}</For>);
 }
 
-const editor = (root: HTMLElement) => root.querySelector("textarea.block-editor") as HTMLTextAreaElement;
-const key = (el: HTMLTextAreaElement, k: string, init: KeyboardEventInit = {}) =>
-  el.dispatchEvent(new KeyboardEvent("keydown", { key: k, bubbles: true, cancelable: true, ...init }));
+const editor = (root: HTMLElement) => editorIn(root);
+const key = (el: EditorDriver, k: string, init: KeyboardEventInit = {}) =>
+  el.keydown({ key: k, bubbles: true, cancelable: true, ...init });
 
 describe("horizontal boundary navigation and forward merge (GH #213)", () => {
   it("ArrowLeft at block start moves to the end of the previous block", () => {
@@ -50,12 +51,12 @@ describe("horizontal boundary navigation and forward merge (GH #213)", () => {
     const m = mountPage();
     try {
       const ta = editor(m.root);
-      expect(ta.value).toBe("second");
-      ta.setSelectionRange(0, 0);
+      expect(ta.value()).toBe("second");
+      ta.select(0, 0);
       key(ta, "ArrowLeft");
       const ta2 = editor(m.root);
-      expect(ta2.value).toBe("first");
-      expect(ta2.selectionStart).toBe("first".length);
+      expect(ta2.value()).toBe("first");
+      expect(ta2.selection()[0]).toBe("first".length);
     } finally {
       m.dispose();
     }
@@ -68,13 +69,13 @@ describe("horizontal boundary navigation and forward merge (GH #213)", () => {
     const m = mountPage();
     try {
       const ta = editor(m.root);
-      expect(ta.value).toBe("first");
-      ta.setSelectionRange(5, 5);
+      expect(ta.value()).toBe("first");
+      ta.select(5, 5);
       key(ta, "ArrowRight");
       const ta2 = editor(m.root);
-      expect(ta2.value).toBe("second");
-      expect(ta2.selectionStart).toBe(0);
-      expect(ta2.selectionEnd).toBe(0);
+      expect(ta2.value()).toBe("second");
+      expect(ta2.selection()[0]).toBe(0);
+      expect(ta2.selection()[1]).toBe(0);
     } finally {
       m.dispose();
     }
@@ -87,11 +88,11 @@ describe("horizontal boundary navigation and forward merge (GH #213)", () => {
     const m = mountPage();
     try {
       const ta = editor(m.root);
-      ta.setSelectionRange(0, 0);
+      ta.select(0, 0);
       key(ta, "ArrowLeft", { ctrlKey: true });
-      expect(editor(m.root).value).toBe("second");
+      expect(editor(m.root).value()).toBe("second");
       key(ta, "ArrowLeft", { shiftKey: true });
-      expect(editor(m.root).value).toBe("second");
+      expect(editor(m.root).value()).toBe("second");
     } finally {
       m.dispose();
     }
@@ -104,10 +105,10 @@ describe("horizontal boundary navigation and forward merge (GH #213)", () => {
     const m = mountPage();
     try {
       const ta = editor(m.root);
-      ta.setSelectionRange(3, 3);
+      ta.select(3, 3);
       key(ta, "ArrowLeft");
       // No cross-block jump: still editing "second" (caret movement left to the DOM).
-      expect(editor(m.root).value).toBe("second");
+      expect(editor(m.root).value()).toBe("second");
     } finally {
       m.dispose();
     }
@@ -120,16 +121,16 @@ describe("horizontal boundary navigation and forward merge (GH #213)", () => {
     const m = mountPage();
     try {
       const ta = editor(m.root);
-      expect(ta.value).toBe("foo");
-      ta.setSelectionRange(3, 3);
+      expect(ta.value()).toBe("foo");
+      ta.select(3, 3);
       key(ta, "Delete");
       expect(pageByName("Caret")!.roots).toEqual([fooId]);
       expect(doc.byId[fooId].raw).toBe("foobar");
       expect(doc.byId[fooId].children).toHaveLength(1);
       const ta2 = editor(m.root);
-      await vi.waitFor(() => expect(editor(m.root).value).toBe("foobar"));
+      await vi.waitFor(() => expect(editor(m.root).value()).toBe("foobar"));
       expect(ta2).not.toBeNull();
-      expect(editor(m.root).selectionStart).toBe(3);
+      expect(editor(m.root).selection()[0]).toBe(3);
     } finally {
       m.dispose();
     }
@@ -143,13 +144,13 @@ describe("horizontal boundary navigation and forward merge (GH #213)", () => {
     const m = mountPage();
     try {
       const ta = editor(m.root);
-      ta.setSelectionRange(4, 4);
+      ta.select(4, 4);
       key(ta, "Delete");
       expect(pageByName("Caret")!.roots).toEqual([keptId]);
       expect(doc.byId[emptyId]).toBeUndefined();
       expect(doc.byId[keptId].raw).toBe("kept");
-      await vi.waitFor(() => expect(editor(m.root).value).toBe("kept"));
-      expect(editor(m.root).selectionStart).toBe(4);
+      await vi.waitFor(() => expect(editor(m.root).value()).toBe("kept"));
+      expect(editor(m.root).selection()[0]).toBe(4);
     } finally {
       m.dispose();
     }
@@ -162,10 +163,10 @@ describe("horizontal boundary navigation and forward merge (GH #213)", () => {
     const m = mountPage();
     try {
       const ta = editor(m.root);
-      ta.setSelectionRange(3, 3);
+      ta.select(3, 3);
       key(ta, "Delete");
       expect(pageByName("Caret")!.roots).toHaveLength(2);
-      expect(editor(m.root).value).toBe("foo");
+      expect(editor(m.root).value()).toBe("foo");
     } finally {
       m.dispose();
     }
@@ -178,7 +179,7 @@ describe("horizontal boundary navigation and forward merge (GH #213)", () => {
     const m = mountPage();
     try {
       const ta = editor(m.root);
-      ta.setSelectionRange(4, 4);
+      ta.select(4, 4);
       key(ta, "Delete");
       expect(pageByName("Caret")!.roots).toEqual([onlyId]);
       expect(doc.byId[onlyId].raw).toBe("only");
@@ -198,7 +199,7 @@ describe("horizontal boundary navigation and forward merge (GH #213)", () => {
     const m = mountPage();
     try {
       const ta = editor(m.root);
-      ta.setSelectionRange(3, 3);
+      ta.select(3, 3);
       key(ta, "Delete");
       expect(doc.byId[fooId].raw).toBe("foobar");
       expect(doc.byId[barId]).toBeUndefined();

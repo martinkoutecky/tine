@@ -6,6 +6,8 @@
 //! Reconstruct this adapter after a process crash to enumerate actual survivors.
 use super::io::{DraftStatus, ErrorKind, HostIo, IoFailure, IoResult, MoveResult, Phase, Witness};
 use super::Text;
+#[path = "production_guard.rs"]
+mod guard;
 use crate::atomic_file::PreparedWrite;
 use crate::directory_durability::{self as durability, DirectoryWitness};
 use std::collections::BTreeMap;
@@ -14,7 +16,10 @@ use std::io;
 use std::path::{Path, PathBuf};
 
 pub(super) struct ProductionIo {
+    pub(super) store: std::sync::Weak<crate::Store>,
+    creation_rules: BTreeMap<String, guard::Creation>,
     graph: PathBuf,
+    root_binding: std::sync::Arc<crate::root_binding::RootBinding>,
     drafts: PathBuf,
     trash: PathBuf,
     page_temps: BTreeMap<String, PreparedWrite>,
@@ -30,6 +35,10 @@ pub(super) struct ProductionIo {
     paths: BTreeMap<String, PathBuf>,
     /// `HostIo::take_stamp`'s stamps, per page key until taken.
     stamps: BTreeMap<String, crate::watch::Stamp>,
+    /// Publication metadata survives watcher stamp handoff until page_finish:
+    /// the publication read's handle stamps before and after its bytes
+    /// (GH #811). None means that read could not establish an identity.
+    publications: BTreeMap<String, Option<(crate::watch::Stamp, crate::watch::Stamp)>>,
     /// Each page key's current graph-relative spelling (STEP3 §2): a key
     /// resolved through a case alias at registration, or moved by the alias
     /// spelling move (Q4). The one table (B1); the store's held index reads
@@ -41,12 +50,34 @@ pub(super) struct ProductionIo {
     /// The graph whose self-write markers a save sets before its file step
     /// (STEP3 §5): the watcher's echo handling for paths it still owns.
     pub(super) marks: Option<std::sync::Arc<crate::model::Graph>>,
+    /// The graph's storage counters (the host's, set at launch): which
+    /// publication proof an Uncertain page save could not make (GH #811).
+    pub(super) storage_diag: std::sync::Arc<crate::storage_diag::StorageCounters>,
     /// Draft I/O is down (plan v3 §4, B-Q1): every draft effect fails
     /// without touching the filesystem until a re-probe succeeds.
     down: Option<Down>,
     /// Unreadable vehicles launch could not quarantine: left in place, and
     /// every later effect on one but Retry's quarantine fails untouched (§4).
     untouchable: std::collections::BTreeSet<String>,
+    /// The trash directory's ancestors' states (`chain_ids`) as of the last
+    /// `trash_sync` that synced every ancestor durably in this incarnation.
+    /// While they are unchanged the ancestors' entries are durable, so a later
+    /// deletion syncs only the trash directory itself (Martin 2026-10-11
+    /// "redundant post-move ancestor syncs", 2026-10-21 GH3 step 2). Any entry
+    /// change in an ancestor (a recreated directory) syncs the chain again;
+    /// launch's best-effort syncs are not witnesses (REVIEW-2b F2).
+    trash_chain: Option<Vec<ChainId>>,
+    /// Whether custody markers are written to disk. Not on Windows
+    /// (D-20261021-GQ3): after a crash a marker only makes launch redo the
+    /// deletion's trash sync, and directory syncs do no I/O there, so it
+    /// protected nothing; it cost a flush, a write-through move and an unlink
+    /// per deletion. Unit tests keep markers on every platform (the marker
+    /// tests and native conformance read them); `production_tests` turns them
+    /// off explicitly.
+    pub(super) marker_files: bool,
+    /// Markers named but not written (`marker_files` off): their retirement
+    /// has nothing to unlink.
+    pub(super) unwritten: std::collections::BTreeSet<String>,
     #[cfg(any(test, feature = "test-faults"))]
     pub faults: BTreeMap<super::io::Phase, std::collections::VecDeque<io::ErrorKind>>,
     /// Slow every call of the phase by this much: a long operation that
@@ -64,11 +95,31 @@ impl ProductionIo {
     /// Graph/page keys and graph ID are already resolved by the store boundary.
     /// Never fails (B-Q1): a drafts directory that cannot be created or
     /// listed leaves draft I/O down, the census unknown (M1).
+    #[cfg(test)]
     pub(super) fn attach(graph: &Path, app_data: &Path, graph_id: &str, trash: &Path) -> Self {
+        Self::attach_bound(
+            graph,
+            app_data,
+            graph_id,
+            trash,
+            std::sync::Arc::new(crate::root_binding::RootBinding::new(graph)),
+        )
+    }
+
+    pub(super) fn attach_bound(
+        graph: &Path,
+        app_data: &Path,
+        graph_id: &str,
+        trash: &Path,
+        root_binding: std::sync::Arc<crate::root_binding::RootBinding>,
+    ) -> Self {
         let drafts = app_data.join("drafts-v2").join(graph_id);
         let listing = list(&drafts);
         let mut io = Self {
+            store: Default::default(),
+            creation_rules: BTreeMap::new(),
             graph: graph.to_path_buf(),
+            root_binding,
             drafts,
             trash: trash.to_path_buf(),
             page_temps: BTreeMap::new(),
@@ -81,13 +132,18 @@ impl ProductionIo {
             changes: vec![],
             paths: BTreeMap::new(),
             stamps: BTreeMap::new(),
+            publications: BTreeMap::new(),
             spellings: Default::default(),
             quarantines: BTreeMap::new(),
             directories: BTreeMap::new(),
             launch_warnings: vec![],
             marks: None,
+            storage_diag: Default::default(),
             down: None,
             untouchable: Default::default(),
+            trash_chain: None,
+            marker_files: cfg!(test) || !cfg!(windows),
+            unwritten: Default::default(),
             #[cfg(any(test, feature = "test-faults"))]
             faults: ATTACH_FAULTS.with(|faults| faults.take()),
             #[cfg(test)]
@@ -153,6 +209,7 @@ impl ProductionIo {
 
     fn graph_sync(&mut self, phase: super::io::Phase, dir: &Path) -> IoResult<Witness> {
         self.before(phase)?;
+        self.check_path(dir)?;
         #[cfg(feature = "test-faults")]
         crate::cost_counters::fsync();
         durability::sync_directory_witness(dir)
@@ -183,18 +240,37 @@ impl ProductionIo {
     /// The custody directory, created with the strict app-data recipe.
     fn custody(&self) -> io::Result<PathBuf> {
         let dir = self.drafts.join(CUSTODY);
-        durability::create_dir_all_with_sync(&dir, durability::sync_private_directory)?;
+        durability::create_dir_all_with_sync(&dir, |dir| {
+            #[cfg(feature = "test-faults")]
+            crate::cost_counters::fsync();
+            durability::sync_private_directory(dir)
+        })?;
         Ok(dir)
     }
 
     fn graph_directory(&mut self, dir: &Path) -> IoResult<()> {
-        self.directories
-            .entry(dir.to_path_buf())
-            .or_insert_with(|| durability::DirectoryCreation::new(dir))
-            .finish(durability::sync_directory_entry)
-            .map_err(failure)?;
-        self.directories.remove(dir);
-        Ok(())
+        self.check_path(dir)?;
+        if !self.directories.contains_key(dir) {
+            #[cfg(test)]
+            crate::model::assert_checked_target(dir);
+            let creation = durability::DirectoryCreation::new(dir, &self.graph).map_err(failure)?;
+            self.directories.insert(dir.to_path_buf(), creation);
+        }
+        let creation = self.directories.get_mut(dir).unwrap();
+        let result = creation.finish(&self.root_binding, |dir| {
+            // Each created directory's parent sync counts (I-25).
+            #[cfg(feature = "test-faults")]
+            crate::cost_counters::fsync();
+            durability::sync_directory_entry(dir)
+        });
+        // Retain both recorded parent debt and missing-component obligations,
+        // including after a re-plan fails before its first mkdir. These survive
+        // Discard/Close and retries until paid or the graph adapter closes;
+        // no directory handle is held.
+        if result.is_ok() || !creation.has_sync_debt() {
+            self.directories.remove(dir);
+        }
+        result.map_err(failure)
     }
 }
 
@@ -256,6 +332,56 @@ fn chain<'a>(graph: &'a Path, dir: &'a Path) -> impl Iterator<Item = &'a Path> {
         .take_while(move |dir| dir.starts_with(graph))
 }
 
+/// An ancestor's state: device, inode, modification and status-change times.
+/// Adding, removing or renaming an entry in a directory moves both times, so
+/// while every ancestor's state is unchanged, each ancestor's entry for the
+/// next directory down is the one its last sync made durable. An inode number
+/// alone is not enough (a recreated directory can reuse it), nor is mtime
+/// (`rsync -a`, `cp -a`, `tar x` set it back); setting it back moves ctime,
+/// which no tool can set. Only mtime must be settled: a later entry change
+/// moves it off its settled value, and ctime need only catch the restore
+/// (missed only if it lands in the same kernel clock tick, a few ms, as the
+/// directory's previous change).
+type ChainId = (u64, u64, i64, i64, i64, i64);
+
+/// How recent a modification time may be and still witness anything: a change
+/// within the same timestamp tick after the sync would not move it (the
+/// "racy" timestamp rule git uses for its index).
+const SETTLED: std::time::Duration = std::time::Duration::from_secs(2);
+
+/// The states of the trash directory's ancestors (`chain` minus the trash
+/// directory itself, whose own sync always runs). `None` when one cannot be
+/// read, is too recent to trust, or the platform has no inode identity; then
+/// every ancestor is synced (as on Windows, where a directory sync is a no-op).
+fn chain_ids(graph: &Path, dir: &Path) -> Option<Vec<ChainId>> {
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::MetadataExt;
+        let now = std::time::SystemTime::now();
+        chain(graph, dir)
+            .skip(1)
+            .map(|dir| {
+                let meta = fs::metadata(dir).ok()?;
+                let settled = now.duration_since(meta.modified().ok()?).ok()? >= SETTLED;
+                settled.then(|| {
+                    let times = (
+                        meta.mtime(),
+                        meta.mtime_nsec(),
+                        meta.ctime(),
+                        meta.ctime_nsec(),
+                    );
+                    (meta.dev(), meta.ino(), times.0, times.1, times.2, times.3)
+                })
+            })
+            .collect()
+    }
+    #[cfg(not(unix))]
+    {
+        let _ = (graph, dir);
+        None
+    }
+}
+
 /// Unlink; an already absent file is the requested state.
 fn remove_present(path: &Path) -> io::Result<()> {
     match fs::remove_file(path) {
@@ -275,7 +401,14 @@ fn witness(value: DirectoryWitness) -> Witness {
 /// (`trash_move`, K6): any other `AlreadyExists`, such as a file where a
 /// directory is created, is a failure the failure bound counts.
 fn failure(error: io::Error) -> IoFailure {
-    let step = crate::directory_durability::failure_step(&error);
+    let step = if error
+        .get_ref()
+        .is_some_and(|cause| cause.is::<crate::root_binding::GraphRootMoved>())
+    {
+        Some(("GraphRootMoved", None))
+    } else {
+        crate::directory_durability::failure_step(&error)
+    };
     IoFailure {
         kind: ErrorKind::Io,
         completed: false,
@@ -285,20 +418,31 @@ fn failure(error: io::Error) -> IoFailure {
 }
 
 /// Read `path` with the metadata of the read's own handle taken before the
-/// bytes, and their revision (GH #623; `transaction/publication.rs`).
+/// bytes, and their revision (GH #623; `transaction/publication.rs`). The
+/// store's bounded reader: a page over the I-22 parse cap is a read failure,
+/// never an allocation of its whole length (audit L6-02).
 fn read_observed(path: &Path) -> io::Result<(Vec<u8>, Option<crate::watch::Stamp>)> {
-    use std::io::Read;
-    let mut file = fs::File::open(path)?;
-    let stamp = file
-        .metadata()
-        .ok()
-        .and_then(|metadata| crate::watch::stamp_from_metadata(&metadata));
-    let mut bytes = Vec::new();
-    file.read_to_end(&mut bytes)?;
-    #[cfg(feature = "test-faults")]
-    crate::cost_counters::full_read();
+    read_open(&mut fs::File::open(path)?)
+}
+
+fn read_open(input: &mut fs::File) -> io::Result<(Vec<u8>, Option<crate::watch::Stamp>)> {
+    let (bytes, metadata) = crate::model::read_parse_open_file(input)?;
+    let stamp = crate::watch::stamp_from_metadata(&metadata);
     let rev = crate::FileRev::from_bytes(&bytes);
     Ok((bytes, stamp.map(|stamp| stamp.with_rev(Some(rev)))))
+}
+
+/// The publication read: [`read_observed`]'s pre-read stamp, for the
+/// watcher, and the same handle's stamp after the bytes, for the post-sync
+/// check (GH #811). Reading can itself move a file's times: on Android
+/// shared storage with FUSE passthrough the read copies the backing file's
+/// mtime and ctime into the inode, so only the post-read stamp still
+/// describes the file the path holds (storage contract, M3-1).
+fn read_published(path: &Path) -> io::Result<Option<(crate::watch::Stamp, crate::watch::Stamp)>> {
+    let mut input = fs::File::open(path)?;
+    let (_, before) = read_open(&mut input)?;
+    let after = crate::watch::stamp_from_metadata(&input.metadata()?);
+    Ok(before.zip(after))
 }
 
 /// A synced temporary file for `path`. The host's writes and syncs are
@@ -421,6 +565,18 @@ impl HostIo for ProductionIo {
         self.spellings.spell(key, spelling);
     }
 
+    fn folded_keys(&self, key: &str) -> Vec<String> {
+        let spelling = self.spellings.spelling(key);
+        let Some(leaf) = Path::new(&spelling).file_name() else {
+            return Vec::new();
+        };
+        self.spellings
+            .candidates(&crate::model::entry_identity::fold_leaf(leaf), |_| true)
+            .into_iter()
+            .map(|(key, _)| key)
+            .collect()
+    }
+
     fn graph_launch(&mut self, pages: &std::collections::BTreeSet<String>) {
         // Every existing ancestor up to the graph root: an interrupted nested
         // page-directory creation leaves entries no later leaf sync covers.
@@ -431,6 +587,9 @@ impl HostIo for ProductionIo {
         let mut directories = std::collections::BTreeSet::from([self.graph.clone()]);
         for page in pages {
             let path = self.page_path(page);
+            if self.check_path(&path).is_err() {
+                continue;
+            }
             directories.extend(chain(&self.graph, path.parent().unwrap()).map(Path::to_path_buf));
         }
         directories.extend(
@@ -440,6 +599,9 @@ impl HostIo for ProductionIo {
         );
         self.launch_warnings.clear();
         for directory in directories {
+            if self.check_path(&directory).is_err() {
+                continue;
+            }
             if let Err(error) = durability::sync_directory_witness(&directory) {
                 self.launch_warnings.push((directory, error.kind()));
             }
@@ -449,10 +611,12 @@ impl HostIo for ProductionIo {
     fn page_finish(&mut self, page: &str) {
         self.page_temps.remove(page);
         self.creates.remove(page);
+        self.publications.remove(page);
     }
 
     fn read_page(&mut self, page: &str) -> IoResult<Text> {
         self.before(super::io::Phase::Read)?;
+        self.check_path(&self.page_path(page))?;
         match read_observed(&self.page_path(page)) {
             Ok((bytes, stamp)) => {
                 self.creates.insert(page.into(), false);
@@ -469,8 +633,10 @@ impl HostIo for ProductionIo {
 
     fn page_temp(&mut self, page: &str, bytes: &Text) -> IoResult<()> {
         self.before(super::io::Phase::PageTemp)?;
+        self.creation_input(page, bytes);
         let target = self.page_path(page);
         self.graph_directory(target.parent().unwrap())?;
+        self.check_path(&target)?;
         let bytes = bytes.as_deref().ok_or(IoFailure {
             kind: ErrorKind::Io,
             completed: false,
@@ -480,6 +646,8 @@ impl HostIo for ProductionIo {
         if let Some(graph) = &self.marks {
             graph.transaction_note_page(&target, bytes);
         }
+        #[cfg(test)]
+        crate::model::assert_checked_target(&target);
         let prepared = temp(&target, bytes).map_err(failure)?;
         self.page_temps.insert(page.into(), prepared);
         Ok(())
@@ -487,22 +655,29 @@ impl HostIo for ProductionIo {
 
     fn page_rename(&mut self, page: &str) -> IoResult<()> {
         self.before(super::io::Phase::PageRename)?;
+        self.check_path(&self.page_path(page))?;
         let prepared = self.page_temps.remove(page).ok_or(IoFailure {
             kind: ErrorKind::Io,
             completed: false,
             operation: None,
             os_error: None,
         })?;
+        #[cfg(test)]
+        crate::model::assert_checked_target(&self.page_path(page));
         prepared
             .publish(self.creates.get(page).copied().unwrap_or(false))
             .map_err(failure)?;
         // The publication read (GH #623): the bytes now at the path with
         // their handle's stamp, instead of the watcher's open and hash. A
         // failed read leaves the watcher its own stamp.
-        let stamp = read_observed(&self.page_path(page))
+        let path = self.page_path(page);
+        let stamps = self
+            .check_path(&path)
             .ok()
-            .and_then(|(_, s)| s);
-        self.stamp(page, stamp);
+            .and_then(|_| read_published(&path).ok())
+            .flatten();
+        self.stamp(page, stamps.as_ref().map(|(before, _)| before.clone()));
+        self.publications.insert(page.into(), stamps);
         Ok(())
     }
 
@@ -512,10 +687,73 @@ impl HostIo for ProductionIo {
 
     fn page_sync(&mut self, page: &str) -> IoResult<Witness> {
         let path = self.page_path(page);
-        self.graph_sync(super::io::Phase::PageSync, path.parent().unwrap())
+        // Sync acts on the parent, not the page. graph_sync checks that
+        // directory and the root witness once at the actual sync boundary.
+        use crate::storage_diag::UncertainProof;
+        let result = self
+            .graph_sync(super::io::Phase::PageSync, path.parent().unwrap())
+            .map_err(|error| (error, UncertainProof::DirectorySync))
+            .and_then(|witness| {
+                if let Some(published) = self.publications.get(page) {
+                    // One metadata call, no payload read/hash. Parent loss or
+                    // replacement after rename must take the Uncertain path,
+                    // including a platform's tolerated/no-op directory sync.
+                    // The path must still hold the file the publication read
+                    // read, unchanged since that read ended: its post-read
+                    // stamp (GH #811), on the handle whose pre-read stamp has
+                    // the same identity.
+                    let current = crate::watch::stamp_metadata(&path);
+                    // The toast names the failed check (GH #811: it named
+                    // no step, as this failure has no OS error).
+                    let changed = |expected: &crate::watch::Stamp, actual: &crate::watch::Stamp| {
+                        (
+                            "publication check: changed before directory sync",
+                            UncertainProof::PublicationChanged(expected.change_to(actual)),
+                        )
+                    };
+                    let (operation, proof) = match (published, &current) {
+                        (None, _) => (
+                            "publication check: no stamp after rename",
+                            UncertainProof::PublicationUnread,
+                        ),
+                        (Some(_), None) => (
+                            "publication check: no file after directory sync",
+                            UncertainProof::PublicationMissing,
+                        ),
+                        (Some((before, after)), _) if !before.same_identity(after) => {
+                            changed(before, after)
+                        }
+                        (Some((_, after)), Some(actual)) if !after.same_metadata(actual) => {
+                            changed(after, actual)
+                        }
+                        _ => return Ok(witness),
+                    };
+                    return Err((
+                        IoFailure {
+                            kind: ErrorKind::Io,
+                            completed: true,
+                            operation: Some(operation),
+                            os_error: None,
+                        },
+                        proof,
+                    ));
+                }
+                Ok(witness)
+            });
+        match result {
+            Ok(witness) => {
+                self.creation_rules.remove(page);
+                Ok(witness)
+            }
+            Err((error, proof)) => {
+                self.storage_diag.uncertain_proof(proof);
+                Err(error)
+            }
+        }
     }
 
     fn page_twin(&mut self, page: &str) -> IoResult<Option<String>> {
+        self.check_path(&self.page_path(page))?;
         let twin =
             crate::transaction::alternate_extension_twin(&self.page_path(page)).map_err(failure)?;
         Ok(twin.map(|path| {
@@ -528,10 +766,20 @@ impl HostIo for ProductionIo {
         }))
     }
 
+    fn page_owner(
+        &mut self,
+        page: &str,
+        bytes: &Text,
+        source: Option<&str>,
+    ) -> IoResult<Option<String>> {
+        self.creating_owner(page, bytes, source)
+    }
+
     fn trash_move(&mut self, page: &str, payload: &str) -> MoveResult {
         let result = (|| {
             self.before(super::io::Phase::TrashMove)?;
             let source = self.page_path(page);
+            self.check_path(&source)?;
             if !source.try_exists().map_err(failure)? {
                 return Ok(None);
             }
@@ -540,6 +788,10 @@ impl HostIo for ProductionIo {
                 graph.transaction_note_delete(&source);
             }
             let target = self.trash.join(payload);
+            self.check_path(&source)?;
+            self.check_path(&target)?;
+            #[cfg(test)]
+            crate::model::assert_checked_target(&target);
             crate::no_replace::move_file_noreplace(&source, &target).map_err(|error| {
                 let collision = error.kind() == io::ErrorKind::AlreadyExists;
                 IoFailure {
@@ -576,6 +828,7 @@ impl HostIo for ProductionIo {
 
     fn trash_sync(&mut self, _page: &str, payload: &str) -> IoResult<Witness> {
         self.before(super::io::Phase::TrashSync)?;
+        self.check_path(&self.trash.join(payload))?;
         // The recorded basename locates the payload; the trash is never listed.
         // RO3 (a) (Martin 2026-10-11): the payload's data is not synced. Tine's
         // own saves synced it already; another program's unflushed bytes are
@@ -585,7 +838,16 @@ impl HostIo for ProductionIo {
             Err(error) if error.kind() == io::ErrorKind::NotFound => return Ok(Witness::Durable),
             Err(error) => return Err(failure(error)),
         }
-        chain(&self.graph, &self.trash).try_fold(Witness::Durable, |result, dir| {
+        let ids = chain_ids(&self.graph, &self.trash);
+        let witnessed = ids.is_some() && ids == self.trash_chain;
+        // The trash directory itself always: it holds the new payload name.
+        let dirs: Vec<&Path> = if witnessed {
+            chain(&self.graph, &self.trash).take(1).collect()
+        } else {
+            chain(&self.graph, &self.trash).collect()
+        };
+        let result = dirs.into_iter().try_fold(Witness::Durable, |result, dir| {
+            self.check_path(dir)?;
             #[cfg(feature = "test-faults")]
             crate::cost_counters::fsync();
             let synced = durability::sync_directory_witness(dir).map_err(sync_failure)?;
@@ -595,11 +857,19 @@ impl HostIo for ProductionIo {
             } else {
                 result
             })
-        })
+        });
+        if !witnessed && matches!(result, Ok(Witness::Durable)) {
+            self.trash_chain = ids;
+        }
+        result
     }
 
     fn custody_write(&mut self, name: &str, bytes: &[u8]) -> IoResult<()> {
         self.before(super::io::Phase::CustodyWrite)?;
+        if !self.marker_files {
+            self.unwritten.insert(name.to_owned());
+            return Ok(());
+        }
         let dir = self.custody().map_err(failure)?;
         temp(&dir.join(name), bytes)
             .and_then(|prepared| prepared.publish(true))
@@ -613,6 +883,9 @@ impl HostIo for ProductionIo {
 
     fn custody_retire(&mut self, name: &str) -> IoResult<()> {
         self.before(super::io::Phase::CustodyRetire)?;
+        if self.unwritten.remove(name) {
+            return Ok(());
+        }
         let dir = self.drafts.join(CUSTODY);
         remove_present(&dir.join(name)).map_err(failure)?;
         #[cfg(feature = "test-faults")]

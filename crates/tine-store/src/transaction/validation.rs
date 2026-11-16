@@ -1,6 +1,7 @@
 use std::fs::File;
 use std::io::{self, Seek, SeekFrom};
 use std::path::Path;
+use tine_core::model::Format;
 
 use super::io_helpers::{content_refusal, failed};
 use super::{Content, FileId, Refusal, RenameMap, Store, Why};
@@ -14,7 +15,7 @@ pub(crate) fn rewrite(
     #[cfg(feature = "test-faults")]
     crate::cost_counters::transaction_rewrite();
     let text = std::str::from_utf8(old).map_err(|_| Why::Refused(Refusal::Undecodable))?;
-    let is_org = path.extension().and_then(|ext| ext.to_str()) == Some("org");
+    let is_org = Format::from_path(path) == Format::Org;
     let rewritten = tine_core::refs::rename_rewrite(text, is_org, &map.0, name_format);
     refuse_read_only_org(text.as_bytes(), rewritten.as_bytes(), is_org)?;
     Ok(rewritten.into_bytes())
@@ -23,7 +24,7 @@ pub(crate) fn rewrite(
 /// [`rewrite`]'s result `new`, which the rename planner computed from exactly
 /// `old` (GH #623): only the Org round-trip refusal is decided again.
 pub(crate) fn prepared(old: &[u8], new: Vec<u8>, path: &Path) -> Result<Vec<u8>, Why> {
-    let is_org = path.extension().and_then(|ext| ext.to_str()) == Some("org");
+    let is_org = Format::from_path(path) == Format::Org;
     refuse_read_only_org(old, &new, is_org)?;
     Ok(new)
 }
@@ -57,6 +58,10 @@ pub(crate) fn rewrite_move(
     };
     let destination_name = tine_core::model::decode_page_name(stem, name_format);
     let source = std::str::from_utf8(old).map_err(|_| Why::Refused(Refusal::Undecodable))?;
+    #[cfg(test)]
+    if source.contains(crate::model::TEST_TITLE_READ_PANIC_SENTINEL) {
+        panic!("deterministic test sentinel for a rename title-read panic");
+    }
     let Some(title) = tine_core::model::page_title_from_preamble(source, format) else {
         return Ok(rewritten);
     };
@@ -158,6 +163,12 @@ pub(super) fn validate_page_content(file: &FileId, content: &Content) -> Result<
 
 /// Stage raw creation bytes with the same bounds and validation on the
 /// transaction and planning paths.
+/// The page input checks of [`page_content_bytes`] for bytes in memory.
+pub(super) fn page_bytes(file: &FileId, bytes: &[u8]) -> Result<(), Why> {
+    crate::model::validate_parse_bytes_for_path(bytes, Path::new(file.as_str()))
+        .map_err(content_refusal)
+}
+
 pub(super) fn page_content_bytes<'a>(
     file: &FileId,
     content: &'a Content,

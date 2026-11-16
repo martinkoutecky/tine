@@ -1,3 +1,4 @@
+import { editorIn, type EditorDriver } from "../tests/editorDriver";
 import { afterEach, beforeAll, describe, expect, it, vi } from "vitest";
 import { For, type JSX } from "solid-js";
 import { render } from "solid-js/web";
@@ -29,21 +30,21 @@ function page(raw: string): PageDto {
   return { name: "Property authoring", kind: "page", title: "Property authoring", pre_block: null, blocks: [block] };
 }
 
-function inputAt(textarea: HTMLTextAreaElement, value: string, caret = value.length) {
+function inputAt(textarea: EditorDriver, value: string, caret = value.length) {
   textarea.focus();
-  textarea.value = value;
-  textarea.setSelectionRange(caret, caret);
-  textarea.dispatchEvent(new InputEvent("input", {
+  textarea.replaceText(value);
+  textarea.select(caret, caret);
+  textarea.reportInput({
     bubbles: true,
     inputType: "insertText",
     data: value[caret - 1] ?? null,
-  }));
+  });
 }
 
-function enter(textarea: HTMLTextAreaElement) {
-  textarea.dispatchEvent(new KeyboardEvent("keydown", {
+function enter(textarea: EditorDriver) {
+  textarea.keydown({
     key: "Enter", code: "Enter", bubbles: true, cancelable: true,
-  }));
+  });
 }
 
 describe("property name/value autocomplete", () => {
@@ -59,9 +60,9 @@ describe("property name/value autocomplete", () => {
     ));
 
     try {
-      const textarea = root.querySelector("textarea.block-editor") as HTMLTextAreaElement;
+      const textarea = editorIn(root);
       inputAt(textarea, "::", 2);
-      await vi.waitFor(() => expect(textarea.selectionStart).toBe(0));
+      await vi.waitFor(() => expect(textarea.selection()[0]).toBe(0));
       await vi.waitFor(() => expect(document.body.querySelector(".autocomplete .ac-label")?.textContent).toBe("alpha"));
 
       inputAt(textarea, "alp::", 3);
@@ -72,11 +73,11 @@ describe("property name/value autocomplete", () => {
       inputAt(textarea, "alpha::", 5);
       await vi.waitFor(() => expect(document.body.querySelector(".autocomplete .ac-label")?.textContent).toBe("alpha"));
       enter(textarea);
-      await vi.waitFor(() => expect(textarea.value).toBe("alpha:: "));
+      await vi.waitFor(() => expect(textarea.value()).toBe("alpha:: "));
       await vi.waitFor(() => expect(document.body.querySelector(".autocomplete .ac-label")?.textContent).toBe("one"));
 
       enter(textarea);
-      await vi.waitFor(() => expect(textarea.value).toBe("alpha:: one"));
+      await vi.waitFor(() => expect(textarea.value()).toBe("alpha:: one"));
       inputAt(textarea, "alpha:: one,", "alpha:: one,".length);
       await vi.waitFor(() => expect(document.body.querySelector(".autocomplete .ac-label")?.textContent).toBe("two"));
       expect(document.body.textContent).not.toContain("one");
@@ -94,7 +95,7 @@ describe("property name/value autocomplete", () => {
     ));
 
     try {
-      const textarea = root.querySelector("textarea.block-editor") as HTMLTextAreaElement;
+      const textarea = editorIn(root);
       inputAt(textarea, "alpha::", "alpha::".length);
       await vi.waitFor(() => expect(document.body.querySelector(".autocomplete .ac-label")?.textContent).toBe("alpha"));
       inputAt(textarea, "alpha:: ", "alpha:: ".length);
@@ -118,14 +119,14 @@ describe("property name/value autocomplete", () => {
     ));
 
     try {
-      const textarea = root.querySelector("textarea.block-editor") as HTMLTextAreaElement;
+      const textarea = editorIn(root);
       inputAt(textarea, "prefix\nalpha:: suffix", "prefix\nalpha::".length);
       await vi.waitFor(() => expect(document.body.querySelector(".autocomplete .ac-label")?.textContent).toBe("alpha"));
       expect(facets).toHaveBeenCalledWith(true);
 
       enter(textarea);
-      await vi.waitFor(() => expect(textarea.value).toBe("prefix\nalpha::  suffix"));
-      expect(textarea.selectionStart).toBe("prefix\nalpha:: ".length);
+      await vi.waitFor(() => expect(textarea.value()).toBe("prefix\nalpha::  suffix"));
+      expect(textarea.selection()[0]).toBe("prefix\nalpha:: ".length);
       await vi.waitFor(() => expect(document.body.querySelector(".autocomplete .ac-label")?.textContent).toBe("one"));
 
       enter(textarea);
@@ -144,12 +145,12 @@ describe("property name/value autocomplete", () => {
     ));
 
     try {
-      const textarea = root.querySelector("textarea.block-editor") as HTMLTextAreaElement;
-      inputAt(textarea, textarea.value, "ordinary prose ::".length);
+      const textarea = editorIn(root);
+      inputAt(textarea, textarea.value(), "ordinary prose ::".length);
       await new Promise((resolve) => setTimeout(resolve, 120));
       expect(document.body.querySelector(".autocomplete")).toBeNull();
 
-      inputAt(textarea, textarea.value, textarea.value.length);
+      inputAt(textarea, textarea.value(), textarea.value().length);
       await new Promise((resolve) => setTimeout(resolve, 120));
       expect(document.body.querySelector(".autocomplete")).toBeNull();
       expect(facets).not.toHaveBeenCalled();
@@ -170,7 +171,7 @@ describe("property name/value autocomplete", () => {
     ));
 
     try {
-      const textarea = root.querySelector("textarea.block-editor") as HTMLTextAreaElement;
+      const textarea = editorIn(root);
       inputAt(textarea, "alp::", 3);
       await vi.waitFor(() => expect(facets).toHaveBeenCalled());
       await new Promise((resolve) => setTimeout(resolve, 60));
@@ -178,7 +179,7 @@ describe("property name/value autocomplete", () => {
       expect(document.body.querySelector(".toast")).toBeNull();
       expect(document.body.querySelector(".autocomplete .ac-item")).toBeNull();
       // The typed text is untouched and still editable.
-      expect(textarea.value).toBe("alp::");
+      expect(textarea.value()).toBe("alp::");
     } finally {
       window.removeEventListener("unhandledrejection", onRejection);
       dispose();

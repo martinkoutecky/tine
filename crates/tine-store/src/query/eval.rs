@@ -193,6 +193,12 @@ fn planning_text<'a>(
 pub(crate) struct EvalCache {
     atoms: RefCell<AtomSlots>,
     likes: RefCell<HashMap<String, Rc<LikePattern>>>,
+    /// The journal spellings a reference name is read in ([`reference_day`]),
+    /// compiled once per execution: the configuration is fixed for it.
+    reference_format: OnceCell<tine_core::date::JournalFormat>,
+    /// Reference name -> the journal day it denotes, for the digit-bearing
+    /// names only (every other name is no day without a parse).
+    reference_days: RefCell<HashMap<String, Option<i64>>>,
 }
 
 /// Indexed by `format == Org`, then source key, then value; looked up by
@@ -222,6 +228,27 @@ impl EvalCache {
         atoms
     }
 
+    /// The journal day reference `name` denotes, read as [`reference_day`]
+    /// reads it, each distinct digit-bearing name parsed once per execution
+    /// (at most [`Self::MAX_ENTRIES`] retained; the rest are re-parsed).
+    pub(crate) fn reference_day(&self, name: &str, config: &ParseConfig) -> Option<i64> {
+        if !name.bytes().any(|byte| byte.is_ascii_digit()) {
+            return None;
+        }
+        if let Some(day) = self.reference_days.borrow().get(name) {
+            return *day;
+        }
+        let format = self.reference_format.get_or_init(|| {
+            tine_core::date::JournalFormat::new(config.journal_page_title_format.as_deref(), None)
+        });
+        let day = reference_day(name, format);
+        let mut days = self.reference_days.borrow_mut();
+        if days.len() < Self::MAX_ENTRIES {
+            days.insert(name.to_owned(), day);
+        }
+        day
+    }
+
     /// `haystack LIKE pattern` (both already folded), compiling each distinct
     /// pattern once per execution: O(pattern) to fold and look up, then
     /// [`LikePattern::matches`]' linear scan.
@@ -243,7 +270,6 @@ impl EvalCache {
 /// evaluation's one `today` (relative date literals stay unresolved in the IR).
 pub(crate) struct EvalCtx<'a> {
     hierarchy: OnceCell<hierarchy::Hierarchy<'a>>,
-    journal_format: OnceCell<tine_core::date::JournalFormat>,
     /// The page's journal-day ordinal (`yyyymmdd`), or `None` for named pages.
     pub(crate) journal: Option<i64>,
     pub(crate) is_journal: bool,
@@ -268,6 +294,14 @@ pub(crate) struct EvalCtx<'a> {
     /// Every page key some page's `tags::` names: the graph-wide answer behind
     /// `used_as_tag` (OG `(all-page-tags)`). Empty unless the plan reads it.
     pub(crate) tag_targets: &'a HashSet<String>,
+    /// This execution's `links` / `linked_by` / `near` answers (graph-wide,
+    /// computed before any row; empty unless the plan reads links).
+    pub(crate) links: &'a super::link_graph::LinkAnswers,
+    /// This row's link-table node when the caller already knows it (every
+    /// row evaluated while building a link answer, and the only way to reach
+    /// a page without a file, which has no key in the table's page index).
+    /// `None`: look the node up by `page_key`.
+    pub(crate) link_node: Option<u32>,
     pub(crate) cache: &'a EvalCache,
 }
 
@@ -285,11 +319,11 @@ impl<'a> EvalCtx<'a> {
         config: &'a ParseConfig,
         registry: &'a Registry,
         tag_targets: &'a HashSet<String>,
+        links: &'a super::link_graph::LinkAnswers,
         cache: &'a EvalCache,
     ) -> Self {
         EvalCtx {
             hierarchy: OnceCell::new(),
-            journal_format: OnceCell::new(),
             journal,
             is_journal: kind == PageKind::Journal,
             page_name: name,
@@ -303,8 +337,16 @@ impl<'a> EvalCtx<'a> {
             config,
             registry,
             tag_targets,
+            links,
+            link_node: None,
             cache,
         }
+    }
+
+    /// The same row, known to be link-table node `node`.
+    pub(crate) fn with_link_node(mut self, node: u32) -> Self {
+        self.link_node = Some(node);
+        self
     }
 }
 
@@ -446,9 +488,11 @@ fn eval_block_leaf(
                     Quant::None => !hit,
                 }
             }
-            // `blocks` is a page-row relation; a block-anchored walk never sees it.
-            Rel::Blocks => false,
+            // Page-row relations; a block-anchored walk never sees them.
+            Rel::Blocks | Rel::Links | Rel::LinkedBy => false,
         },
+        // A page condition: reached from a block row only through `page(…)`.
+        Leaf::Near { .. } => false,
     }
 }
 
@@ -502,9 +546,14 @@ pub(crate) fn eval_page(filter: &Filter, ctx: &EvalCtx) -> bool {
                 }
                 _ => false,
             },
+            Leaf::Near { .. } => ctx.links.near(leaf, ctx.link_node, &ctx.page_key),
             Leaf::Rel { rel, quant, pred } => match rel {
                 Rel::Props => eval_props(*quant, pred, ctx.page_props, ctx),
                 Rel::Blocks => eval_page_blocks(*quant, pred, ctx),
+                Rel::Links | Rel::LinkedBy => {
+                    ctx.links
+                        .related(leaf, *rel, *quant, ctx.link_node, &ctx.page_key)
+                }
                 // A `page` hop from a page row is the row itself (og.rs
                 // `rebase_to_page`; the TQL printer collapses it the same way).
                 // The builder's page conditions carry it at `@page` (GH #619 c6).
@@ -552,7 +601,78 @@ fn quantify<T>(
     }
 }
 
-/// Direct page references also expose OG's derived journal metadata.
+/// The journal day a referenced page NAME denotes: OG graph-parser
+/// `block.cljs::page-name->map` gives a referenced journal its day even before
+/// a journal file exists. `format` puts the configured TITLE first, followed by
+/// OG's safe defaults (`JournalFormat::new(title, None)`): a custom FILENAME
+/// format must not turn an ordinary page reference into a journal reference.
+///
+/// Every accepted spelling has a numeric year and day (`Format::parse` reads
+/// both as ASCII digits), so a name without a digit is never a day. That is
+/// what lets a page with no digit-bearing reference be skipped unparsed
+/// (`Plan::skips`), task markers and priorities included.
+pub(crate) fn reference_day(name: &str, format: &tine_core::date::JournalFormat) -> Option<i64> {
+    if !name.bytes().any(|byte| byte.is_ascii_digit()) {
+        return None;
+    }
+    format.parse(name).map(|date| date.ordinal_key())
+}
+
+/// One `journal` / `day` comparison of a reference element whose name denotes
+/// `day` (`None`: not a journal day). The one answer for a reference's date
+/// facts, shared by the walk and the page narrowing.
+fn reference_date_leaf(
+    attr: Attr,
+    op: CmpOp,
+    value: &Value,
+    day: Option<i64>,
+    today: JournalDate,
+) -> bool {
+    match attr {
+        Attr::Journal => match value {
+            Value::Bool { value } => match op {
+                CmpOp::Eq => day.is_some() == *value,
+                CmpOp::NotEq => day.is_some() != *value,
+                _ => false,
+            },
+            _ => false,
+        },
+        _ => eval_day(op, value, day, today),
+    }
+}
+
+/// `pred` over a reference known only by the day its name denotes: `Some`
+/// when every leaf of `pred` is a `journal` / `day` comparison (the answer
+/// then cannot depend on anything else), `None` when some leaf reads the name.
+pub(crate) fn reference_date_pred(
+    pred: &Filter,
+    day: Option<i64>,
+    today: JournalDate,
+) -> Option<bool> {
+    match pred {
+        Filter::True => Some(true),
+        Filter::False => Some(false),
+        Filter::And { items } => items.iter().try_fold(true, |all, item| {
+            Some(reference_date_pred(item, day, today)? && all)
+        }),
+        Filter::Or { items } => items.iter().try_fold(false, |any, item| {
+            Some(reference_date_pred(item, day, today)? || any)
+        }),
+        Filter::Not { inner } => reference_date_pred(inner, day, today).map(|hit| !hit),
+        Filter::Leaf {
+            leaf:
+                Leaf::Attr {
+                    attr: attr @ (Attr::Journal | Attr::Day),
+                    op,
+                    value,
+                },
+        } => Some(reference_date_leaf(*attr, *op, value, day, today)),
+        _ => None,
+    }
+}
+
+/// Direct page references also expose OG's derived journal metadata. Reads
+/// the existing direct-ref projection; never scans the graph per block.
 fn eval_direct_ref(pred: &Filter, name: &str, ctx: &EvalCtx) -> bool {
     match pred {
         Filter::And { items } => items.iter().all(|item| eval_direct_ref(item, name, ctx)),
@@ -561,45 +681,17 @@ fn eval_direct_ref(pred: &Filter, name: &str, ctx: &EvalCtx) -> bool {
         Filter::Leaf {
             leaf:
                 Leaf::Attr {
-                    attr: Attr::Journal | Attr::Day,
+                    attr: attr @ (Attr::Journal | Attr::Day),
                     op,
                     value,
                 },
-        } => {
-            // OG graph-parser/block.cljs::page-name->map gives referenced
-            // journals a day even before a journal file exists. Read the
-            // existing direct-ref projection; never scan the graph per block.
-            // Put the configured TITLE first in JournalFormat's parse list,
-            // followed by OG's safe defaults. A custom filename format must
-            // not turn an ordinary page reference into a journal reference.
-            let format = ctx.journal_format.get_or_init(|| {
-                tine_core::date::JournalFormat::new(
-                    ctx.config.journal_page_title_format.as_deref(),
-                    None,
-                )
-            });
-            let day = format.parse(name).map(|date| date.ordinal_key());
-            if matches!(
-                pred,
-                Filter::Leaf {
-                    leaf: Leaf::Attr {
-                        attr: Attr::Journal,
-                        ..
-                    }
-                }
-            ) {
-                match value {
-                    Value::Bool { value } => match op {
-                        CmpOp::Eq => day.is_some() == *value,
-                        CmpOp::NotEq => day.is_some() != *value,
-                        _ => false,
-                    },
-                    _ => false,
-                }
-            } else {
-                eval_day(*op, value, day, ctx.today)
-            }
-        }
+        } => reference_date_leaf(
+            *attr,
+            *op,
+            value,
+            ctx.cache.reference_day(name, ctx.config),
+            ctx.today,
+        ),
         _ => eval_name_element(pred, name),
     }
 }

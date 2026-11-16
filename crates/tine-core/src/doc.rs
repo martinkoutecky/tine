@@ -298,6 +298,11 @@ impl Clone for DocBlock {
     }
 }
 
+/// Test-only: a block whose raw text contains this panics in
+/// [`DocBlock::projection`] (feature `test-faults`, never in a shipped build).
+#[cfg(feature = "test-faults")]
+pub const TEST_PROJECTION_PANIC_SENTINEL: &str = "__TINE_TEST_PROJECTION_PANIC__";
+
 impl DocBlock {
     pub fn new(raw: impl Into<String>) -> Self {
         DocBlock {
@@ -344,18 +349,24 @@ impl DocBlock {
     /// [`Self::set_raw`] clears this cache when the body changes.
     pub fn projection(&self) -> &BlockProjection {
         self.proj.get_or_init(|| {
+            // Test-only fault: a block projection (the lsdoc parse every index
+            // reads) that panics, for the load's one-bad-file isolation tests.
+            #[cfg(feature = "test-faults")]
+            if self.raw.contains(TEST_PROJECTION_PANIC_SENTINEL) {
+                panic!("deterministic test sentinel for a block projection panic");
+            }
             // ONE lsdoc parse of the block body yields every header facet (marker,
             // heading level, properties, scheduled/deadline) AND the visible text —
             // so `doc.rs`, the TS `blockView`, and lsdoc can no longer disagree
             // about a block's grammar.
-            // ONE lsdoc parse yields BOTH the block AST (facets/visible) AND the refs
-            // (`block_refs`/`block_priority` used to parse the same block a 2nd time —
-            // audit P1). `proj.refs` is a cheap walk over the already-built blocks.
+            // ONE lsdoc parse yields AST, facets and refs; region ownership also
+            // recovers an author swallowed by a final quote (GH #895).
             let proj = crate::render::parse_projection(&self.raw, self.is_org);
-            let (marker, priority, heading_level, properties) = header_facets(&proj.blocks);
+            let (marker, priority, heading_level, mut properties) = header_facets(&proj.blocks);
             let (scheduled, deadline) = planning_dates(&proj.blocks, &self.raw);
             let tags = tags_from_blocks(&proj.blocks);
             let regions = crate::block_regions::from_blocks(&self.raw, self.is_org, &proj.blocks);
+            crate::block_regions::extend_author_facet(&mut properties, &regions);
             let visible = regions
                 .apply(&self.raw, self.is_org, crate::block_regions::Edit::Visible)
                 .expect("parsed regions");
@@ -365,6 +376,7 @@ impl DocBlock {
                 &self.raw,
                 self.is_org,
                 &proj.blocks,
+                &regions,
                 self.property_ref_config
                     .as_deref()
                     .unwrap_or_else(|| crate::query::atom::ParseConfig::default_ref()),
@@ -381,10 +393,24 @@ impl DocBlock {
                 refs_page.sort();
                 refs_page.dedup();
             }
-            let refs_norm = refs_page
+            // OG `with-page-refs` also puts the block's marker and priority in its
+            // refs, so `[[A]]` / `[[TODO]]` queries find them. They stay out of
+            // `refs_page`, the virtual-page list behind `[[` autocomplete: Tine
+            // does not offer a page per marker or priority letter.
+            let mut refs_norm: Vec<String> = refs_page
                 .iter()
                 .map(|r| crate::refs::normalize(r))
                 .collect();
+            for r in reference_source
+                .explicit
+                .iter()
+                .filter(|r| r.rule == "explicit_task_marker" || r.rule == "explicit_priority")
+            {
+                let key = crate::refs::normalize(&r.name);
+                if !refs_norm.contains(&key) {
+                    refs_norm.push(key);
+                }
+            }
             let mut plain_ranges = reference_source.plain_ranges;
             plain_ranges.shrink_to_fit();
             let mut extra = ProjectionExtra {
@@ -1376,7 +1402,9 @@ mod projection_tests {
         assert!(plain.projection().extra.is_none());
         let rich = DocBlock::new("TODO [[Page]] #tag\nkey:: v");
         assert!(rich.projection().extra.is_some());
-        assert_eq!(rich.projection().refs_norm().len(), 2);
+        // page, tag, and (OG `with-page-refs`) the task marker's page "todo".
+        assert_eq!(rich.projection().refs_norm().len(), 3);
+        assert_eq!(rich.projection().refs_page().len(), 2);
         assert_eq!(rich.marker(), Some("TODO"));
     }
 

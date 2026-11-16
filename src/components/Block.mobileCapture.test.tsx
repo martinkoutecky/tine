@@ -1,3 +1,4 @@
+import { maybeEditorIn, type EditorDriver } from "../tests/editorDriver";
 // GH #493 research fixture: the stale-editor-token branch of mobile photo
 // capture. The reporter's toast is exactly reportStaleAsset() ("The asset was
 // saved, but it was not inserted because the graph or block changed."), so the
@@ -101,10 +102,10 @@ function startCaptureWithPickerUp(handles: CaptureHandles): ReturnType<typeof mo
   const mounted = mount(() => (
     <For each={pageByName("Assets")?.roots ?? []}>{(bid) => <Block id={bid} />}</For>
   ));
-  const textarea = mounted.root.querySelector("textarea") as HTMLTextAreaElement;
+  const textarea = maybeEditorIn(mounted.root) as EditorDriver;
   // Focusing registers the focused-editor command bridge the mobile keyboard
   // toolbar dispatches through (Block.tsx onFocus -> registerFocusedEditorBridge).
-  textarea.focus();
+  textarea.element.focus();
   expect(dispatchFocusedEditorCommand("editor/capture-photo")).toBe(true);
   return mounted;
 }
@@ -127,8 +128,8 @@ describe("mobile photo capture editor-token staleness (GH #493)", () => {
       // hasFocus() together with the blur event (the desktop ordering), so the
       // Android ordering is pinned explicitly here.
       const hasFocus = vi.spyOn(document, "hasFocus").mockReturnValue(true);
-      const textarea = document.querySelector("textarea") as HTMLTextAreaElement;
-      textarea.blur();
+      const textarea = maybeEditorIn(document) as EditorDriver;
+      textarea.element.blur();
       hasFocus.mockRestore();
 
       // The user picked a file; the app resumed and Rust imported it.
@@ -201,8 +202,8 @@ describe("mobile photo capture editor-token staleness (GH #493)", () => {
       // The desktop shape of the same interruption: the OS file dialog takes the
       // window focus, so the editor's blur-preserving branch keeps edit mode.
       const hasFocus = vi.spyOn(document, "hasFocus").mockReturnValue(false);
-      const textarea = document.querySelector("textarea") as HTMLTextAreaElement;
-      textarea.blur();
+      const textarea = maybeEditorIn(document) as EditorDriver;
+      textarea.element.blur();
       hasFocus.mockRestore();
 
       handles.pickedPhoto({ status: "ok", path: NATIVE_CACHE_TOKEN, ext: "jpg" });
@@ -256,13 +257,13 @@ describe("mobile voice memo stopped from another editor", () => {
     startEditing(a, 0);
     const mounted = mount(() => <For each={pageByName("Memo")?.roots ?? []}>{(bid) => <Block id={bid} />}</For>);
     try {
-      (mounted.root.querySelector("textarea") as HTMLTextAreaElement).focus();
+      (maybeEditorIn(mounted.root) as EditorDriver).element.focus();
       expect(dispatchFocusedEditorCommand("editor/voice-memo")).toBe(true);
       await settle();
       expect(isRecordingAudio()).toBe(true);
       startEditing(b, 0);
       await settle();
-      (mounted.root.querySelector("textarea") as HTMLTextAreaElement).focus();
+      (maybeEditorIn(mounted.root) as EditorDriver).element.focus();
       expect(dispatchFocusedEditorCommand("editor/voice-memo")).toBe(true);
       await settle();
       expect(isRecordingAudio()).toBe(false);
@@ -291,7 +292,7 @@ describe("mobile voice memo stopped after a graph switch", () => {
     const first = mount(() => <For each={pageByName("Memo")?.roots ?? []}>{(bid) => <Block id={bid} />}</For>);
     let second: ReturnType<typeof mount> | null = null;
     try {
-      (first.root.querySelector("textarea") as HTMLTextAreaElement).focus();
+      (maybeEditorIn(first.root) as EditorDriver).element.focus();
       expect(dispatchFocusedEditorCommand("editor/voice-memo")).toBe(true);
       await settle();
       expect(isRecordingAudio()).toBe(true);
@@ -304,7 +305,7 @@ describe("mobile voice memo stopped after a graph switch", () => {
       startEditing(b, 0);
       second = mount(() => <For each={pageByName("Other")?.roots ?? []}>{(bid) => <Block id={bid} />}</For>);
       await settle();
-      (second.root.querySelector("textarea") as HTMLTextAreaElement).focus();
+      (maybeEditorIn(second.root) as EditorDriver).element.focus();
       expect(dispatchFocusedEditorCommand("editor/voice-memo")).toBe(true);
       await settle();
       expect(isRecordingAudio()).toBe(false);

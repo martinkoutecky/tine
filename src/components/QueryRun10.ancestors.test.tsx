@@ -26,7 +26,7 @@ async function openAncestor(which: string) {
   const root = document.createElement('div'); document.body.append(root);
   dispose = render(() => <><LiveRefGroup page="Source" kind="page" path="pages/Source.md" blocks={blocks} surface="query" showBreadcrumb eager /><DatePicker /></>, root);
   await Promise.resolve();
-  const crumb = root.querySelector<HTMLButtonElement>('button.ref-crumb');
+  const crumb = root.querySelector<HTMLElement>('[role="button"].ref-crumb');
   expect(crumb).not.toBeNull();
   crumb!.click();
   await Promise.resolve();

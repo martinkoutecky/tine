@@ -18,74 +18,11 @@ pub use signature::{BlockSignature, ReferenceFilter};
 pub const ENGINE_VERSION: &str = "reference-evidence/v1";
 const MAX_OCCURRENCES_PER_BLOCK: usize = 64;
 
-// Exact OG 1.0.0 property-page exclusions from
-// `logseq.graph-parser.property/editable-built-in-properties` at 6e7afa8eb.
-// Keep source spellings here; `property_key_norm` supplies Tine's canonical
-// property identity (including underscore -> dash).
-const OG_EDITABLE_BUILT_IN_PROPERTIES: &[&str] = &[
-    "title",
-    "icon",
-    "template",
-    "template-including-parent",
-    "public",
-    "filters",
-    "exclude-from-graph-view",
-    "logseq.query/nlp-date",
-    "macro",
-    "filetags",
-    "alias",
-    "aliases",
-    "tags",
-    "logseq.color",
-    "logseq.table.version",
-    "logseq.table.compact",
-    "logseq.table.headers",
-    "logseq.table.hover",
-    "logseq.table.borders",
-    "logseq.table.stripes",
-    "logseq.table.max-width",
-];
-
-// Exact base set from `hidden-built-in-properties`, plus the only registered
-// extension set in that revision (`frontend.extensions.srs`).
-const OG_HIDDEN_BUILT_IN_PROPERTIES: &[&str] = &[
-    "id",
-    "custom-id",
-    "background-color",
-    "background_color",
-    "heading",
-    "collapsed",
-    "created-at",
-    "updated-at",
-    "last-modified-at",
-    "created_at",
-    "last_modified_at",
-    "query-table",
-    "query-properties",
-    "query-sort-by",
-    "query-sort-desc",
-    "ls-type",
-    "hl-type",
-    "hl-page",
-    "hl-stamp",
-    "hl-color",
-    "logseq.macro-name",
-    "logseq.macro-arguments",
-    "logseq.order-list-type",
-    "logseq.tldraw.page",
-    "logseq.tldraw.shape",
-    "todo",
-    "doing",
-    "now",
-    "later",
-    "done",
-    "card-last-interval",
-    "card-repeats",
-    "card-last-reviewed",
-    "card-next-schedule",
-    "card-ease-factor",
-    "card-last-score",
-];
+// This small module also compiles into lsdoc-wasm; keep one built-in answer.
+mod og_built_in;
+pub use og_built_in::is_og_built_in_property;
+#[cfg(test)]
+use og_built_in::{OG_EDITABLE_BUILT_IN_PROPERTIES, OG_HIDDEN_BUILT_IN_PROPERTIES};
 
 /// One parser-recognized page reference and its source span.
 #[deny(missing_docs)]
@@ -114,6 +51,7 @@ pub mod reference_rule {
         "explicit_embed",
         "explicit_property_key",
         "explicit_task_marker",
+        "explicit_priority",
         "implicit_linkable_property",
     ];
     pub fn serialize<S: Serializer>(value: &&'static str, s: S) -> Result<S::Ok, S::Error> {
@@ -398,13 +336,10 @@ fn walk_list_item(
     }
 }
 
-fn property_key_eligible(key: &str) -> bool {
-    let key = crate::doc::property_key_norm(key);
-    !key.is_empty()
-        && !OG_EDITABLE_BUILT_IN_PROPERTIES
-            .iter()
-            .chain(OG_HIDDEN_BUILT_IN_PROPERTIES)
-            .any(|built_in| crate::doc::property_key_norm(built_in) == key)
+/// Whether a normalized property key names a page (OG: every nonempty key
+/// except built-ins). Reuses the same cached union as query-table discovery.
+fn property_key_eligible(norm: &str) -> bool {
+    !norm.is_empty() && !og_built_in::is_normalized_og_built_in_property(norm)
 }
 
 fn project_property_key(
@@ -413,10 +348,11 @@ fn project_property_key(
     key_range: Range<usize>,
     raw_len: usize,
 ) {
-    if property_key_eligible(key) {
+    let norm = crate::doc::property_key_norm(key);
+    if property_key_eligible(&norm) {
         push_explicit_range(
             projection,
-            crate::doc::property_key_norm(key),
+            norm,
             key_range,
             raw_len,
             "explicit_property_key",
@@ -672,51 +608,79 @@ pub fn project(raw: &str, is_org: bool, blocks: &[Block]) -> ReferenceSourceProj
         raw,
         is_org,
         blocks,
+        &crate::block_regions::from_blocks(raw, is_org, blocks),
         crate::query::atom::ParseConfig::default_ref(),
     )
 }
 
 /// Shared evidence projection using the graph's linkable-property policy.
+/// `regions` is `block_regions::from_blocks(raw, is_org, blocks)`, which the
+/// caller has already computed for the same block (GJ5 S3: not twice).
 pub fn project_with_config(
     raw: &str,
     is_org: bool,
     blocks: &[Block],
+    regions: &crate::block_regions::BlockRegions,
     config: &crate::query::atom::ParseConfig,
 ) -> ReferenceSourceProjection {
     let mut projection = ReferenceSourceProjection::default();
     let mapper = SpanMapper::block(raw);
     walk_blocks(blocks, mapper, raw, is_org, &mut projection);
-    // OG 0.10.9 graph-parser/block.cljs `with-page-refs` includes the BLOCK's
-    // marker, not task-looking headings nested in its body. The first parser
-    // header owns that marker, just as it owns the DTO's task facet.
+    // OG graph-parser/block.cljs `with-page-refs` (0.10.9 and 1.0.0) concatenates
+    // `[marker priority]` into the BLOCK's refs, not task-looking headings
+    // nested in its body. The first parser header owns both, just as it owns the
+    // DTO's task and priority facets. A priority `[#A]` references the page "A"
+    // (OG lowercases to `:block/name "a"`), as TODO references the page "todo".
     if let Some(
         Block::Heading {
-            marker: Some(marker),
+            marker,
+            priority,
             span: Some(span),
             ..
         }
         | Block::Bullet {
-            marker: Some(marker),
+            marker,
+            priority,
             span: Some(span),
             ..
         },
     ) = blocks.first()
     {
-        if let Some(range) = mapper.map(&Span(span.0.max(mapper.prefix), span.1), raw.len()) {
-            let header = raw[range.clone()].lines().next().unwrap_or_default();
-            if let Some(offset) = header.find(marker) {
-                let start = range.start + offset;
-                push_explicit_range(
-                    &mut projection,
-                    marker.to_owned(),
-                    start..start + marker.len(),
-                    raw.len(),
-                    "explicit_task_marker",
-                );
+        if marker.is_some() || priority.is_some() {
+            if let Some(range) = mapper.map(&Span(span.0.max(mapper.prefix), span.1), raw.len()) {
+                let header = raw[range.clone()].lines().next().unwrap_or_default();
+                let mut after_marker = 0;
+                if let Some(marker) = marker {
+                    if let Some(offset) = header.find(marker.as_str()) {
+                        let start = range.start + offset;
+                        push_explicit_range(
+                            &mut projection,
+                            marker.to_owned(),
+                            start..start + marker.len(),
+                            raw.len(),
+                            "explicit_task_marker",
+                        );
+                        after_marker = offset + marker.len();
+                    }
+                }
+                if let Some(priority) = priority {
+                    // The parser's accepted header token is `[#P]`; it follows
+                    // the marker, so search from there.
+                    let token = format!("[#{priority}]");
+                    if let Some(offset) = header[after_marker..].find(&token) {
+                        let start = range.start + after_marker + offset;
+                        push_explicit_range(
+                            &mut projection,
+                            priority.to_owned(),
+                            start..start + token.len(),
+                            raw.len(),
+                            "explicit_priority",
+                        );
+                    }
+                }
             }
         }
     }
-    let regions = crate::block_regions::from_blocks(raw, is_org, blocks);
     for property in regions.properties.iter().filter(|p| p.applicable) {
         let key = &property.key;
         let key_range = property.key_range.0..property.key_range.1;
@@ -841,22 +805,47 @@ pub fn occurrence_constructions() -> usize {
     OCCURRENCE_CONSTRUCTIONS.with(std::cell::Cell::get)
 }
 
+/// What an explicit reference reaches: page keys (its own and its namespace
+/// prefixes), or, for an enabled property-key page, every page one of whose
+/// names folds to the same property key.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ReferenceTarget<'a> {
+    /// A normalized page key (`refs::page_key`).
+    PageKey(&'a str),
+    /// A property-key fold (`doc::property_key_norm`) of a page name.
+    PropertyKey(&'a str),
+}
+
+/// Visit every target `reference` reaches until `visit` returns true; returns
+/// whether it did. The ONE rule behind the Linked References panel's match
+/// test and the `links` / `linked_by` link table (I-12).
+pub fn visit_reference_targets(
+    reference: &ProjectedPageRef,
+    config: &crate::config::Config,
+    mut visit: impl FnMut(ReferenceTarget<'_>) -> bool,
+) -> bool {
+    if reference.rule == "explicit_property_key" {
+        return config.property_page_key_enabled(&reference.name)
+            && visit(ReferenceTarget::PropertyKey(
+                &crate::doc::property_key_norm(&reference.name),
+            ));
+    }
+    let key = refs::page_key(&reference.name);
+    let found = refs::namespace_refs(&key).any(|key| visit(ReferenceTarget::PageKey(key)));
+    found
+}
+
 fn projected_reference_matches(
     reference: &ProjectedPageRef,
     names_norm: &[String],
     config: &crate::config::Config,
 ) -> bool {
-    if reference.rule == "explicit_property_key" {
-        return config.property_page_key_enabled(&reference.name)
-            && names_norm.iter().any(|name| {
-                crate::doc::property_key_norm(name)
-                    == crate::doc::property_key_norm(&reference.name)
-            });
-    }
-    let key = refs::page_key(&reference.name);
-    let matched =
-        refs::namespace_refs(&key).any(|reference| names_norm.iter().any(|name| name == reference));
-    matched
+    visit_reference_targets(reference, config, |target| match target {
+        ReferenceTarget::PropertyKey(folded) => names_norm
+            .iter()
+            .any(|name| crate::doc::property_key_norm(name) == folded),
+        ReferenceTarget::PageKey(key) => names_norm.iter().any(|name| name == key),
+    })
 }
 
 /// The page names of one query, with the plain-text matcher's per-name folding
@@ -1153,6 +1142,39 @@ mod tests {
     }
 
     #[test]
+    fn priority_reference_belongs_to_the_blocks_own_header() {
+        // OG graph-parser `with-page-refs`: `[marker priority]` join the refs.
+        for raw in ["[#A] call Alice", "TODO [#A] call Alice", "## [#A] heading"] {
+            let own = evidence(raw, &["A"]);
+            let hit = own
+                .iter()
+                .find(|hit| hit.kind == ReferenceKind::Explicit)
+                .unwrap_or_else(|| panic!("{raw}: no explicit hit"));
+            assert_eq!(hit.rule, "explicit_priority");
+            let start = raw.find("[#A]").unwrap();
+            assert_eq!((hit.span.start, hit.span.end), (start, start + 4));
+        }
+        // Page identity folds case: a lowercase `[#a]` (accepted by the parser,
+        // like OG's mldoc) names the same page "A".
+        assert!(evidence("TODO [#a] x", &["A"])
+            .iter()
+            .any(|hit| hit.kind == ReferenceKind::Explicit));
+        // Not a priority: mid-text, inline code, a nested heading, after the title.
+        for raw in [
+            "see [#A] later",
+            "`[#A] code`",
+            "ordinary body\n# [#A] secondary heading",
+            "TODO task [#A] later",
+        ] {
+            let got = evidence(raw, &["A"]);
+            assert!(
+                got.iter().all(|hit| hit.kind != ReferenceKind::Explicit),
+                "{raw}: {got:?}"
+            );
+        }
+    }
+
+    #[test]
     fn unicode_boundaries_and_properties_use_parser_ranges() {
         let got = evidence("note:: Target\nŽTargetX Target", &["Target"]);
         let plains = got
@@ -1217,6 +1239,83 @@ mod tests {
                     .all(|reference| reference.rule != "explicit_property_key"),
                 "built-in key projected: {built_in}: {:?}",
                 projected.explicit
+            );
+        }
+    }
+
+    #[test]
+    fn og_built_in_predicate_normalizes_and_includes_registered_srs_keys() {
+        for key in OG_EDITABLE_BUILT_IN_PROPERTIES
+            .iter()
+            .chain(OG_HIDDEN_BUILT_IN_PROPERTIES)
+        {
+            for spelling in [
+                key.to_string(),
+                format!(" {} ", key.to_uppercase()),
+                key.replace('-', "_"),
+            ] {
+                assert!(is_og_built_in_property(&spelling), "{spelling:?}");
+                assert_eq!(
+                    is_og_built_in_property(&spelling),
+                    !property_key_eligible(&crate::doc::property_key_norm(&spelling)),
+                );
+            }
+        }
+        assert!(is_og_built_in_property(" Card Ease_Factor "));
+        for key in ["", " ", "owner", "card-ease-factor-custom", "tine.custom"] {
+            assert!(!is_og_built_in_property(key), "{key:?}");
+        }
+    }
+
+    #[test]
+    fn property_key_eligibility_matches_normalizing_every_built_in_per_call() {
+        // GJ5 S2: the once-normalized built-in set answers exactly what the
+        // former per-call normalization of every built-in answered.
+        let reference = |key: &str| {
+            let key = crate::doc::property_key_norm(key);
+            !key.is_empty()
+                && !OG_EDITABLE_BUILT_IN_PROPERTIES
+                    .iter()
+                    .chain(OG_HIDDEN_BUILT_IN_PROPERTIES)
+                    .any(|built_in| crate::doc::property_key_norm(built_in) == key)
+        };
+        let mut keys: Vec<String> = [
+            "",
+            " ",
+            "status",
+            "Status",
+            "done_at",
+            "TITLE",
+            " Template_Including_Parent ",
+            "background color",
+            "Background_Color",
+            "logseq.table.version",
+            "card_last_score",
+            "custom",
+            "ÜBER",
+            "a b_c",
+            "id",
+            "ID",
+            "created_at",
+            "heading ",
+        ]
+        .iter()
+        .map(|key| key.to_string())
+        .collect();
+        for built_in in OG_EDITABLE_BUILT_IN_PROPERTIES
+            .iter()
+            .chain(OG_HIDDEN_BUILT_IN_PROPERTIES)
+        {
+            keys.push(built_in.to_string());
+            keys.push(built_in.to_uppercase());
+            keys.push(built_in.replace('-', "_"));
+            keys.push(format!("{built_in}x"));
+        }
+        for key in keys {
+            assert_eq!(
+                property_key_eligible(&crate::doc::property_key_norm(&key)),
+                reference(&key),
+                "{key:?}"
             );
         }
     }

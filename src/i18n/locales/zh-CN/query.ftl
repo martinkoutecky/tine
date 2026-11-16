@@ -571,7 +571,6 @@ query-query-result-parts-page-results-grouped = 已分组的页面结果
 
 query-query-result-parts-no-value = 无值
 
-query-query-result-parts-clear-grouping = 清除分组
 
 query-query-result-parts-a-row-with-several-tags-appears-in-every-matching-group = 一行若有多个标签，会出现在每个匹配的分组中，因此分组计数之和可能大于结果数。
 
@@ -914,3 +913,10 @@ query-prose-aggregate-unavailable = 不可用（{ $reason ->
        *[non_numeric] 非数值
     }）
 query-prose-formula-statistics-notice = 暂不支持按公式精确统计，当前显示总体统计。
+query-export-dialog-left-out = { $count ->
+   *[other] 有 { $count } 个选中的页面未包含：
+}
+query-export-dialog-left-out-private = 已标记 public:: false
+query-export-dialog-left-out-exports-page = 导出页面永远不会被导出
+query-export-dialog-selects-host-page = 其中包含查询所在的页面。
+query-export-dialog-include-query-text = 包含查询文本（读者能看到查询本身，而不仅是页面）

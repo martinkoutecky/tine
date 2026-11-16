@@ -1,7 +1,10 @@
+import { PageIcon } from "./PageIcon";
 import { t } from "../i18n";
-import { For, Show, createMemo, createResource, createSignal, type JSX } from "solid-js";
+import { For, Show, createComputed, createMemo, createSignal, type JSX } from "solid-js";
+import { ReferenceDisclosure } from "./ReferenceDisclosure";
+import { sectionOverride, setSectionOverride } from "../referenceSectionState";
 import { pageIdentityKey } from "../pageIdentity";
-import { backend } from "../backend";
+import { pageIcon } from "../pageIconBatch";
 import { openPage, openPageInNewTab } from "../router";
 import { openRouteInOtherPane } from "../panes";
 import { internalLinkAuxClick, internalLinkDest, internalLinkMouseDown } from "../linkGesture";
@@ -11,7 +14,6 @@ import { EmojiText } from "../render/emoji";
 import { SidebarTitle } from "./SidebarTitle";
 import type { PageKind } from "../types";
 import { shouldOpenTextContextMenu } from "../contextMenuPolicy";
-import { readOr } from "../resourceRead";
 
 // Namespace hierarchy for a page named `a/b/c`: a clickable breadcrumb of the
 // ancestor namespaces (shown above the title) and a list of direct child pages
@@ -24,6 +26,7 @@ import { readOr } from "../resourceRead";
  *  handler from also firing. */
 function nsLink(name: string, after?: () => void, stop = false) {
   return {
+    "data-ref": pageIdentityKey(name),
     onMouseDown: internalLinkMouseDown,
     onClick: (e: MouseEvent) => {
       if (stop) e.stopPropagation();
@@ -109,7 +112,7 @@ function NsNodeView(props: {
     <div class="ns-node">
       <div class="ns-node-row" style={{ "padding-left": `${props.depth * 12}px` }}>
         <Show when={has()} fallback={<span class="ns-node-spacer" />}>
-          <span class="ns-node-toggle" onClick={() => setOpen(!open())}>{open() ? "▾" : "▸"}</span>
+          <ReferenceDisclosure class="ns-node-toggle" collapsed={!open()} onClick={() => setOpen(!open())} />
         </Show>
         <span
           class="ns-node-label"
@@ -173,14 +176,14 @@ export function namespaceRows(nodes: NsNode[]): { node: NsNode; depth: number }[
   return rows;
 }
 
-function NsMacroNode(props: { node: NsNode; depth: number; icons: Record<string, string> }): JSX.Element {
+function NsMacroNode(props: { node: NsNode; depth: number }): JSX.Element {
   return (
     <div class="ns-macro-node">
       <div class="ns-macro-row" style={{ "padding-left": `${props.depth * 18}px` }}>
         <span class="ns-bullet" />
-        <Show when={props.icons[props.node.full]}>
+        <Show when={pageIcon(props.node.full)}>
           <span class="page-icon">
-            <EmojiText text={props.icons[props.node.full]} />
+            <PageIcon value={pageIcon(props.node.full)} name={props.node.full} />
           </span>
         </Show>
         <a class="page-ref" {...nsLink(props.node.full, undefined, true)}>
@@ -195,23 +198,15 @@ function NsMacroNode(props: { node: NsNode; depth: number; icons: Record<string,
  *  page showing its `icon::` (like OG's namespace macro). */
 export function NamespaceMacro(props: { root: string }): JSX.Element {
   // The descendant tree is a pure CPU derivation off the shared page-name
-  // inventory (src/pages.ts). Only the per-page icon lookup stays an IPC, keyed on the
-  // resulting `fulls` set (so it refetches when the page set changes, not per nav).
+  // inventory (src/pages.ts). Icons use the shared reactive batched lookup,
+  // including unsaved loaded-page edits and publications for unloaded pages.
   const treeData = createMemo(() => {
     const prefix = `${pageIdentityKey(props.root)}/`;
     const names = allPageNames().filter((n) => pageIdentityKey(n).startsWith(prefix));
     const tree = buildNamespaceTree(names);
-    const fulls = namespaceRows(tree).map(row => row.node.full);
-    return { tree, fulls };
+    return { tree };
   });
-  const [iconsResource] = createResource(
-    () => treeData().fulls,
-    (fulls) =>
-      fulls.length ? backend().pageIcons(fulls) : Promise.resolve({} as Record<string, string>)
-  );
-  // Namespace rows without their icons still navigate; the tree is the feature.
-  const icons = () => readOr(iconsResource, undefined, "namespace page icons");
-  const iconOf = (full: string) => (icons() ?? {})[full];
+  const iconOf = pageIcon;
   return (
     <Show
       when={treeData().tree.length > 0}
@@ -227,7 +222,7 @@ export function NamespaceMacro(props: { root: string }): JSX.Element {
               <span class="ns-macro-label">{t("namespace-macro-label")}</span>
               <Show when={iconOf(root.full)}>
                 <span class="page-icon">
-                  <EmojiText text={iconOf(root.full)!} />
+                  <PageIcon value={iconOf(root.full)!} name={root.full} />
                 </span>
               </Show>
               <a class="page-ref" {...nsLink(root.full, undefined, true)}>
@@ -236,7 +231,7 @@ export function NamespaceMacro(props: { root: string }): JSX.Element {
             </div>
             <div class="ns-macro-tree">
               <For each={namespaceRows(root.children)}>
-                {(row) => <NsMacroNode node={row.node} depth={row.depth} icons={icons() ?? {}} />}
+                {(row) => <NsMacroNode node={row.node} depth={row.depth} />}
               </For>
             </div>
           </div>
@@ -286,10 +281,21 @@ export function NamespaceHierarchy(props: { name: string }): JSX.Element {
   // pure CPU scan over the shared page-name inventory (src/pages.ts): recomputes
   // on nav, but with zero IPC and no whole-graph deserialize per nav.
   const rows = createMemo(() => namespaceHierarchyRows(allPageNames(), props.name));
+  const [collapsed, setCollapsed] = createSignal(false);
+  createComputed(() => setCollapsed(sectionOverride("hierarchy", props.name) ?? false));
+  const toggle = () => {
+    const next = !collapsed();
+    setSectionOverride("hierarchy", props.name, next);
+    setCollapsed(next);
+  };
   return (
     <Show when={rows().length > 0}>
       <div class="page-hierarchy">
-        <div class="references-header">{t("namespace-hierarchy")}</div>
+        <button type="button" class="references-header hierarchy-toggle" aria-expanded={!collapsed()} onClick={toggle}>
+          <ReferenceDisclosure collapsed={collapsed()} />
+          {t("namespace-hierarchy")}
+        </button>
+        <Show when={!collapsed()}>
         <ul class="ns-hierarchy">
           <For each={rows()}>
             {(segs) => (
@@ -321,6 +327,7 @@ export function NamespaceHierarchy(props: { name: string }): JSX.Element {
             )}
           </For>
         </ul>
+        </Show>
       </div>
     </Show>
   );

@@ -56,10 +56,30 @@ const MAGIC: &[u8; 8] = b"TINECKPT";
 /// candidate indexes and cached backlinks; old disposable caches rebuild.
 /// 15 (GH #699): parser-token extraction separates stored page tag facets and
 /// aliases; older combined names in derived indexes and answers must rebuild.
-pub(crate) const FORMAT: u32 = 15;
+/// 16 (card BqlaU, D-20261018-M2 Q6): a header priority `[#A]` joins the explicit
+/// reference projection, and the marker and priority join `refs_norm`, so cached
+/// projections, candidate indexes and backlink/query answers rebuild.
+/// 17 (card yzhAbnbE): a memoized plan carries `top_level_only`, and an
+/// advanced query with `:remove-block-children? false` now lists every match; its
+/// memo key (the unchanged source text) held the top-level-only answer.
+/// 18 (store fresh parity): live duplicate-day journal strays no longer
+/// contribute query/backlink rows. Discard older disposable indexes that may
+/// contain those rows; the serialized shape and graph files are unchanged.
+/// 19 (HB4 / HI1): exact block owners, serialized in load-time runtime-id
+/// space by the idle writer and decoded directly on warm launch. Page-grouped
+/// binary runtime UUIDs keep this one development format bump compact.
+/// 20 (GH #741 F2): a bare marker title followed by a LOGBOOK drawer now parses
+/// as a task, so its projection, task facets and task query answers change for
+/// unchanged graph files; older disposable caches rebuild.
+/// 21 (REG-BARE-TASK-HIDDEN-ROWS): a bare marker title followed only by
+/// property, planning or LOGBOOK rows parses as a task, so task facets and task
+/// query answers change for unchanged graph files; older caches rebuild.
+/// 22 (REG-BARE-TASK-HIDDEN-ROWS review r6): block regions carry lsdoc's
+/// headline end where it is not the first line's end (`headline_end`).
+pub(crate) const FORMAT: u32 = 22;
 /// The lsdoc release tine-core parses with (`crates/tine-core/Cargo.toml`;
 /// `checkpoint_tests::the_parser_tag_matches_the_lsdoc_pin` keeps them equal).
-pub(crate) const PARSER: &str = "lsdoc v0.5.10";
+pub(crate) const PARSER: &str = "lsdoc v0.5.11";
 /// Quiet time after the last dirtying publication before a checkpoint.
 pub(crate) const IDLE: Duration = Duration::from_secs(60);
 /// Least time between two checkpoint writes (Martin, 2026-10-02): at most 12
@@ -98,7 +118,9 @@ struct Body<P> {
 }
 
 /// Why a checkpoint was not loaded; every one falls back to the initial build.
-/// Closed tokens for diagnostics.
+/// Closed tokens for diagnostics. The first ten are about the file; the rest
+/// are launch races: something reached the graph before the install, under
+/// the writer, and serving the checkpoint would hide it.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) enum Fallback {
     Missing,
@@ -110,23 +132,49 @@ pub(crate) enum Fallback {
     Length,
     Checksum,
     Decode,
-    Raced,
+    /// The load ended (closed, failed) before the install.
+    NotLoading,
+    /// Another path published the first generation.
+    Published,
+    /// A publication waits for the first view (`first_view.rs`): an own
+    /// save during launch, or rows a page hold retired.
+    Deferred,
+    /// Another path built the page cache (an on-demand build).
+    CacheBuilt,
+    /// A page was held (a page host opened it) before the install (R2).
+    PageHeld,
 }
 
+/// Prefix of the one line a launch that tried the checkpoint prints when it
+/// declines it; the rest is the closed token.
+const DECLINED: &str = "tine launch checkpoint declined: ";
+/// The line a launch served from its checkpoint prints.
+const SERVED: &str = "tine launch checkpoint served";
+
 impl Fallback {
-    pub(crate) fn token(self) -> &'static str {
+    /// The line a launch that declined for this reason prints (one per
+    /// launch, `diag_line`; a closed token, I-5).
+    fn line(self) -> &'static str {
         match self {
-            Self::Missing => "missing",
-            Self::Unreadable => "unreadable",
-            Self::Format => "format",
-            Self::Parser => "parser",
-            Self::Root => "root",
-            Self::Config => "config",
-            Self::Length => "length",
-            Self::Checksum => "checksum",
-            Self::Decode => "decode",
-            Self::Raced => "raced",
+            Self::Missing => "tine launch checkpoint declined: missing",
+            Self::Unreadable => "tine launch checkpoint declined: unreadable",
+            Self::Format => "tine launch checkpoint declined: format",
+            Self::Parser => "tine launch checkpoint declined: parser",
+            Self::Root => "tine launch checkpoint declined: root",
+            Self::Config => "tine launch checkpoint declined: config",
+            Self::Length => "tine launch checkpoint declined: length",
+            Self::Checksum => "tine launch checkpoint declined: checksum",
+            Self::Decode => "tine launch checkpoint declined: decode",
+            Self::NotLoading => "tine launch checkpoint declined: not_loading",
+            Self::Published => "tine launch checkpoint declined: published",
+            Self::Deferred => "tine launch checkpoint declined: deferred",
+            Self::CacheBuilt => "tine launch checkpoint declined: cache_built",
+            Self::PageHeld => "tine launch checkpoint declined: page_held",
         }
+    }
+
+    pub(crate) fn token(self) -> &'static str {
+        &self.line()[DECLINED.len()..]
     }
 }
 
@@ -204,6 +252,7 @@ pub(crate) fn config_key(config: &tine_core::config::Config) -> [u8; 32] {
         macros: _,
         enable_timetracking: _,
         show_brackets: _,
+        enable_journals: _,
         doc_mode_enter_for_new_block: _,
         logical_outdenting: _,
         logbook: _,
@@ -302,14 +351,81 @@ fn encode(
     Ok((file, raw_len))
 }
 
+/// Body bytes decoded between two looks at whether the launch still wants
+/// the checkpoint (`launch_from`'s race check, a few uncontended lock
+/// reads). The body decode is most of a load: 0.3 to 0.6 s of 0.4 to 0.75 s
+/// for the 160 MB body of a 10k-page graph (12 cores), against 0.12 s to
+/// read, check and decompress the file. A race stops it within a few
+/// milliseconds; the looks cost about 3% of the decode.
+/// Tests look every 64 bytes, so their small bodies are stopped mid-decode.
+const LOOK_EVERY: usize = if cfg!(test) { 64 } else { 1 << 20 };
+
+/// The body's postcard source: the file's bytes, ending the decode once
+/// `stop` names a reason to decline (card hB0p3s), which it records in
+/// `stopped`.
+struct Stoppable<'de, 's> {
+    bytes: postcard::de_flavors::Slice<'de>,
+    left: usize,
+    stop: &'s dyn Fn() -> Option<Fallback>,
+    stopped: &'s std::cell::Cell<Option<Fallback>>,
+}
+
+impl Stoppable<'_, '_> {
+    fn spend(&mut self, bytes: usize) -> postcard::Result<()> {
+        if let Some(left) = self.left.checked_sub(bytes) {
+            self.left = left;
+            return Ok(());
+        }
+        self.left = LOOK_EVERY;
+        match (self.stop)() {
+            Some(reason) => {
+                self.stopped.set(Some(reason));
+                Err(postcard::Error::DeserializeUnexpectedEnd)
+            }
+            None => Ok(()),
+        }
+    }
+}
+
+impl<'de, 's: 'de> postcard::de_flavors::Flavor<'de> for Stoppable<'de, 's> {
+    type Remainder = &'de [u8];
+    type Source = &'de [u8];
+
+    // Single bytes (varints, tags) are not counted: a check per byte cost
+    // about 15% of the decode. Text is most of a body, so taken runs alone
+    // bring a look about every `LOOK_EVERY` bytes.
+    fn pop(&mut self) -> postcard::Result<u8> {
+        self.bytes.pop()
+    }
+
+    fn size_hint(&self) -> Option<usize> {
+        self.bytes.size_hint()
+    }
+
+    fn try_take_n(&mut self, count: usize) -> postcard::Result<&'de [u8]> {
+        self.spend(count)?;
+        self.bytes.try_take_n(count)
+    }
+
+    fn finalize(self) -> postcard::Result<&'de [u8]> {
+        self.bytes.finalize()
+    }
+}
+
 /// Validate and decode a checkpoint file's bytes for `root` under the config
 /// key `config_key`. Every check names what it defends: a torn or
 /// truncated write (crash, power loss: length, checksum), a disk error (a
 /// flipped byte: checksum, decode), another Tine build (format, parser), a
 /// moved or different graph (root), or a config edited while Tine was closed
 /// in a setting the build reads (config: the generation was built under other
-/// settings).
-fn decode(bytes: &[u8], root: &Path, config_key: &[u8; 32]) -> Result<Body<PagesIn>, Fallback> {
+/// settings). The decode stops, returning its reason, as soon as `stop`
+/// names one (the launch would decline the result anyway).
+fn decode(
+    bytes: &[u8],
+    root: &Path,
+    config_key: &[u8; 32],
+    stop: &dyn Fn() -> Option<Fallback>,
+) -> Result<Body<PagesIn>, Fallback> {
     // Probed with `get`: a truncated file (torn write) is a fallback, never
     // a panic.
     let word = |at: usize| {
@@ -347,7 +463,17 @@ fn decode(bytes: &[u8], root: &Path, config_key: &[u8; 32]) -> Result<Body<Pages
     if raw.len() as u64 != header.raw_len {
         return Err(Fallback::Length);
     }
-    postcard::from_bytes(&raw).map_err(|_| Fallback::Decode)
+    let stopped = std::cell::Cell::new(stop());
+    if let Some(reason) = stopped.get() {
+        return Err(reason);
+    }
+    let mut body = postcard::Deserializer::from_flavor(Stoppable {
+        bytes: postcard::de_flavors::Slice::new(&raw),
+        left: LOOK_EVERY,
+        stop,
+        stopped: &stopped,
+    });
+    Body::deserialize(&mut body).map_err(|_| stopped.get().unwrap_or(Fallback::Decode))
 }
 
 /// What the load worker installs from a checkpoint.
@@ -356,9 +482,15 @@ pub(crate) struct Loaded {
     pub(crate) file_bytes: u64,
 }
 
-/// Read and validate the checkpoint at `path` (one read of one file). No lock
-/// is held; nothing is installed.
-pub(crate) fn load(path: &Path, root: &Path, config_key: &[u8; 32]) -> Result<Loaded, Fallback> {
+/// Read and validate the checkpoint at `path` (one read of one file),
+/// stopping as soon as `stop` names a reason (see [`decode`]). No lock is
+/// held; nothing is installed.
+pub(crate) fn load(
+    path: &Path,
+    root: &Path,
+    config_key: &[u8; 32],
+    stop: &dyn Fn() -> Option<Fallback>,
+) -> Result<Loaded, Fallback> {
     let bytes = match fs::read(path) {
         Ok(bytes) => bytes,
         Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
@@ -366,7 +498,27 @@ pub(crate) fn load(path: &Path, root: &Path, config_key: &[u8; 32]) -> Result<Lo
         }
         Err(_) => return Err(Fallback::Unreadable),
     };
-    let body = decode(&bytes, root, config_key)?;
+    let body = decode(&bytes, root, config_key, stop)?;
+    // GH #905: a cache can retain a claimant/list row after its watcher
+    // baseline forgot that path (including checkpoints from older builds).
+    // The stat diff cannot remove such a ghost: neither side names the missing
+    // file. Decline the disposable cache whole, before serving any of it.
+    let observed: HashSet<_> = body.stamps.iter().map(|(path, _)| path.as_path()).collect();
+    let entry_observed = |entry: &PageEntry| {
+        entry
+            .rel_path
+            .as_ref()
+            .is_none_or(|id| observed.contains(root.join(id.as_str()).as_path()))
+    };
+    if !body.graph.paths_observed(entry_observed)
+        || !body.claimants.values().flatten().all(entry_observed)
+        || !body
+            .name_by_path
+            .iter()
+            .all(|(path, _)| observed.contains(path.as_path()))
+    {
+        return Err(Fallback::Decode);
+    }
     Ok(Loaded {
         body,
         file_bytes: bytes.len() as u64,
@@ -374,18 +526,36 @@ pub(crate) fn load(path: &Path, root: &Path, config_key: &[u8; 32]) -> Result<Lo
 }
 
 impl ChangeFeed {
+    /// Why a launch checkpoint not yet installed would be declined now, or
+    /// None: the install's own race checks, in its order. The load worker
+    /// asks before and while it decodes (card hB0p3s), without the writer,
+    /// so a race costs no decode; the install asks again under the writer,
+    /// and `Graph::install_checkpoint_rows` asks the last two again under
+    /// the cache lock, atomically with the install.
+    pub(crate) fn launch_race(&self) -> Option<Fallback> {
+        if self.snapshot.read().unwrap().is_some() {
+            return Some(Fallback::Published);
+        }
+        if self.deferred_any() {
+            return Some(Fallback::Deferred);
+        }
+        self.graph.checkpoint_race()
+    }
+
     /// Install a loaded checkpoint as this feed's first generation (rev 1,
     /// an `Origin::External` publication with no file tuples), and its page
-    /// cache in the graph. Returns the watcher baseline it carries, or
-    /// `None` when another path filled the cache or published first (an
-    /// on-demand build during launch): the launch then completes cold.
+    /// cache in the graph. Returns the watcher baseline it carries, or why
+    /// not: another path filled the cache or published first (an on-demand
+    /// build during launch), a page is held, or a publication waits for the
+    /// first view (an own save during launch, `first_view.rs`); the launch
+    /// then completes cold.
     /// Caller holds the store writer.
     pub(crate) fn install_checkpoint(
         &self,
         loaded: Loaded,
-    ) -> Option<crate::model::LaunchObservations> {
-        if self.snapshot.read().unwrap().is_some() {
-            return None;
+    ) -> Result<crate::model::LaunchObservations, Fallback> {
+        if let Some(reason) = self.launch_race() {
+            return Err(reason);
         }
         let Body {
             graph,
@@ -394,6 +564,30 @@ impl ChangeFeed {
             stamps,
             racy,
         } = loaded.body;
+        // `PageEntry::path` is not serialized: rebuild each claimant's under
+        // this root, as `checkpoint_install` does for the rows and the list.
+        // An empty path never matches the incremental update's
+        // `candidate.path != path`, so the stale claimant outlived every
+        // edit and the journal reconcile read `""` (ENOENT) as unreadable.
+        let root = &self.graph.root;
+        let claimants = Arc::new(
+            claimants
+                .iter()
+                .map(|(key, entries)| {
+                    let entries = entries
+                        .iter()
+                        .cloned()
+                        .map(|mut entry| {
+                            if entry.rel_path.is_some() {
+                                entry.path = root.join(entry.rel_path_str());
+                            }
+                            entry
+                        })
+                        .collect();
+                    (key.clone(), entries)
+                })
+                .collect(),
+        );
         let config = self.config.read().unwrap().clone();
         let (evaluator, list) = self
             .graph
@@ -416,7 +610,9 @@ impl ChangeFeed {
             folds_only: false,
         };
         // The first publication carries every answer, as a cold one does.
-        snapshot.answers = snapshot.answer_changes(None, &[], true);
+        let (inventory, counts) = snapshot.answer_changes(None, &[], true);
+        let summary = snapshot.change_summary(None, &[], true, inventory, None, &[], &[]);
+        snapshot.answers = (inventory, counts, summary);
         let change = Change {
             graph_rev: snapshot.rev,
             origin: Origin::External,
@@ -430,7 +626,7 @@ impl ChangeFeed {
             state.queue.push_back(change);
             self.ready.notify_all();
         }
-        Some(crate::model::LaunchObservations {
+        Ok(crate::model::LaunchObservations {
             stamps: stamps.into_iter().collect(),
             racy: racy.into_iter().collect(),
             announce: Vec::new(),
@@ -585,7 +781,7 @@ impl Signal {
     }
 
     pub(crate) fn stop(&self) {
-        self.state.lock().unwrap().stop = true;
+        self.state.lock().unwrap_or_else(|e| e.into_inner()).stop = true;
         self.wake.notify_all();
     }
 
@@ -667,27 +863,43 @@ pub(crate) fn launch_from(
     // file against the same revision, so a checkpoint loaded under it is
     // reconciled as if it had been built under it.
     let key = config_key(&changes.config.read().unwrap().config);
-    let loaded = match self::load(path, &graph.root, &key) {
-        Ok(loaded) => loaded,
-        Err(reason) => {
-            graph
-                .diag
-                .checkpoint_load(reason.token(), began.elapsed(), 0);
-            return false;
+    let declined = |reason: Fallback, bytes| {
+        graph
+            .diag
+            .checkpoint_load(reason.token(), began.elapsed(), bytes);
+        tine_core::diag_line::diagnostic_line(reason.line());
+        false
+    };
+    // A race (a page held, a publication deferred or published, the store
+    // closed) declines the checkpoint whenever it comes before the install;
+    // asked before the read and while decoding, it also stops the decode,
+    // so a race costs no more than a cold launch (card hB0p3s).
+    let race = || {
+        // The status guard drops with the condition: no lock is nested.
+        if matches!(*load.status.lock().unwrap(), LoadStatus::Loading) {
+            changes.launch_race()
+        } else {
+            Some(Fallback::NotLoading)
         }
+    };
+    if let Some(reason) = race() {
+        return declined(reason, 0);
+    }
+    let loaded = match self::load(path, &graph.root, &key, &race) {
+        Ok(loaded) => loaded,
+        Err(reason) => return declined(reason, 0),
     };
     let bytes = loaded.file_bytes;
     let _writer = writer.lock().unwrap();
     if !matches!(*load.status.lock().unwrap(), LoadStatus::Loading) {
-        return false;
+        return declined(Fallback::NotLoading, bytes);
     }
-    let Some(observed) = changes.install_checkpoint(loaded) else {
-        graph
-            .diag
-            .checkpoint_load(Fallback::Raced.token(), began.elapsed(), bytes);
-        return false;
+    let observed = match changes.install_checkpoint(loaded) {
+        Ok(observed) => observed,
+        Err(reason) => return declined(reason, bytes),
     };
     graph.diag.checkpoint_load("loaded", began.elapsed(), bytes);
+    tine_core::diag_line::diagnostic_line(SERVED);
     if let Some(signal) = changes.checkpoint.get() {
         signal.loaded(lazy_marks(changes));
     }
@@ -705,19 +917,24 @@ pub(crate) fn launch_from(
     watch.install_launch_baseline(observed);
     let found = watch.launch_diff().unwrap_or_default();
     let publish_began = Instant::now();
-    changes.publish_with(
-        Origin::External,
-        found.files,
-        found.config_changed,
-        found.pages,
-        || {
-            let mut status = load.status.lock().unwrap();
-            if matches!(*status, LoadStatus::Loading) {
-                *status = LoadStatus::Ready;
-            }
-        },
-    );
-    graph.diag.ready(publish_began);
+    // The cold load's containment backstop (`first_view`).
+    let published = super::first_view::contain_index_publication(graph, load, || {
+        changes.publish_with(
+            Origin::External,
+            found.files,
+            found.config_changed,
+            found.pages,
+            || {
+                let mut status = load.status.lock().unwrap();
+                if matches!(*status, LoadStatus::Loading) {
+                    *status = LoadStatus::Ready;
+                }
+            },
+        );
+    });
+    if published {
+        graph.diag.ready(publish_began);
+    }
     load.ready.notify_all();
     let _ = wake.send(());
     true

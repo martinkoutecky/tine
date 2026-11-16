@@ -104,6 +104,43 @@ pub(crate) fn read_verb(target: Target, verb: &str, args: Value) -> i32 {
     }
 }
 
+/// Run one write verb. Only `busy` (the owner yielding, never admitted) and
+/// an owner that cannot be reached yet are asked again; a connection lost
+/// after the request was sent is `uncertain` (PROTOCOL §2.3), never resent.
+pub(crate) fn write_verb(target: Target, verb: &str, mut args: Value) -> i32 {
+    // Carry the client's environment to an already-running owner. Keep explicit
+    // values intact so the owner reports a refusal through its normal path.
+    if args.get("author").is_some_and(Value::is_null) {
+        args["author"] =
+            serde_json::json!(super::write::author_name(None).expect("default author"));
+    }
+    let root = match graph_root(target.graph) {
+        Ok(root) => root,
+        Err(message) => {
+            eprintln!("tine: {message}");
+            return EXIT_USAGE;
+        }
+    };
+    let deadline = Instant::now() + RETRY_FOR;
+    loop {
+        let result = client::connect(&root)
+            .map_err(Failure::Reach)
+            .and_then(|mut conn| conn.call(verb, args.clone()));
+        let retry = matches!(&result, Err(Failure::Owner(body)) if body.code == "busy");
+        if retry && Instant::now() < deadline {
+            std::thread::sleep(Duration::from_millis(200));
+            continue;
+        }
+        return match result {
+            Ok(ok) => {
+                print(&ok, target.json);
+                0
+            }
+            Err(failure) => report_failure(failure, target.json, "uncertain"),
+        };
+    }
+}
+
 /// Print a failed call the one way and return its exit code.
 /// `lost_as` names a lost connection: `owner-start` for a read (it was
 /// asked again until the deadline), `uncertain` for a request that may have
@@ -170,7 +207,7 @@ pub(super) fn serve_exit(result: Result<(), super::serve::ServeFailure>) -> i32 
 }
 
 /// `--graph`, else `$TINE_GRAPH`, else the graph around the working
-/// directory (the nearest ancestor with a `logseq/` folder).
+/// directory (`graph_around`).
 fn graph_root(explicit: Option<PathBuf>) -> Result<PathBuf, String> {
     let chosen = explicit
         .or_else(|| {
@@ -180,12 +217,21 @@ fn graph_root(explicit: Option<PathBuf>) -> Result<PathBuf, String> {
         })
         .or_else(|| {
             let cwd = std::env::current_dir().ok()?;
-            cwd.ancestors()
-                .find(|dir| dir.join("logseq").is_dir())
-                .map(Path::to_path_buf)
+            graph_around(&cwd)
         })
         .ok_or("no graph: pass --graph, set TINE_GRAPH, or run inside a graph folder")?;
     crate::state::canonical_graph_root(&chosen.display().to_string())
+}
+
+/// The nearest ancestor of `dir` (itself included) holding `logseq/config.edn`,
+/// the file Logseq writes into every graph. A bare `logseq/` folder is not
+/// enough (GH #908): run from `~` with the graph at `~/logseq`, that rule
+/// took `~` for the graph, so `logseq/logseq/bak` escaped the backup
+/// exclusions and journals lost their journal identity.
+pub(crate) fn graph_around(dir: &Path) -> Option<PathBuf> {
+    dir.ancestors()
+        .find(|dir| dir.join("logseq").join("config.edn").is_file())
+        .map(Path::to_path_buf)
 }
 
 /// The error on stderr: one line with the stable discriminator
@@ -270,7 +316,7 @@ fn nodes(n: u64) -> String {
 }
 
 /// The compact outline (spec A3): each block line starts with its address
-/// (and its `[author:: NAME]` when it has one), `1.2` = the second child of
+/// (and its `[tine.author:: NAME]` when it has one), `1.2` = the second child of
 /// the first top-level block; continuation and property lines are indented
 /// under it. Everything the payload discloses is said here too (`cli-output.md`
 /// "Disclosure fields"): the human text never reads more complete than the
@@ -302,6 +348,147 @@ pub(super) fn render(ok: &Value, out: &mut String) {
                     out,
                     "... {} omitted (the preview is bounded at {PREVIEW_NODES} nodes and a byte cap)",
                     nodes(omitted)
+                );
+            }
+        }
+        "written" => {
+            let _ = writeln!(out, "written {} rev {}", text(ok, "name"), text(ok, "rev"));
+            for handle in list(ok, "blocks") {
+                let _ = writeln!(out, "{}", handle.as_str().unwrap_or(""));
+            }
+            let more = count(ok, "more");
+            if more > 0 {
+                let _ = writeln!(out, "... and {more} more blocks");
+            }
+            git_line(ok, out);
+        }
+        "ref" | "embed" => {
+            let _ = writeln!(out, "{}", text(ok, "text"));
+            git_line(ok, out);
+        }
+        "page-deleted" => {
+            let _ = writeln!(
+                out,
+                "deleted page {} (breaks {} references)",
+                text(ok, "name"),
+                count(ok, "broken_refs")
+            );
+            git_line(ok, out);
+        }
+        "page-renamed" => {
+            let _ = writeln!(
+                out,
+                "{} {} -> {}",
+                text(&ok["report"], "outcome"),
+                text(ok, "old"),
+                text(ok, "name")
+            );
+            for path in list(&ok["report"], "skipped_conflicted_referrers") {
+                let _ = writeln!(
+                    out,
+                    "skipped conflicted referrer: {}",
+                    path.as_str().unwrap_or("")
+                );
+            }
+        }
+        "run-commits" => {
+            for commit in list(ok, "commits") {
+                let who = if commit["agent"].as_bool() == Some(true) {
+                    "agent"
+                } else {
+                    "yours"
+                };
+                let _ = writeln!(
+                    out,
+                    "{} {who:5} {}",
+                    short(text(commit, "commit")),
+                    text(commit, "subject")
+                );
+            }
+        }
+        "run" => {
+            let _ = writeln!(out, "{}", text(ok, "run"));
+        }
+        "run-end" => match ok["squashed"].as_str() {
+            Some(commit) => {
+                let _ = writeln!(
+                    out,
+                    "squashed {} commits into {}",
+                    count(ok, "commits"),
+                    short(commit)
+                );
+            }
+            None => {
+                let _ = writeln!(
+                    out,
+                    "kept {} commits as they are: {}",
+                    count(ok, "commits"),
+                    text(ok, "kept_because")
+                );
+            }
+        },
+        "run-revert" => {
+            for page in list(ok, "pages") {
+                if let Some(error) = page["error"].as_str() {
+                    let _ = writeln!(
+                        out,
+                        "not reverted {} ({error}): {}",
+                        text(page, "page"),
+                        text(page, "message")
+                    );
+                    continue;
+                }
+                let verb = if page["reverted"].as_bool() == Some(true) {
+                    "reverted"
+                } else {
+                    "unchanged"
+                };
+                let _ = writeln!(out, "{verb} {}", text(page, "page"));
+                for kept in list(page, "kept") {
+                    let what = if text(kept, "reason") == "unclear" {
+                        "not brought back (unclear whether you removed it)"
+                    } else {
+                        "kept your text"
+                    };
+                    let _ = writeln!(
+                        out,
+                        "  {what} ({}): {}",
+                        text(kept, "reason"),
+                        first_line(text(kept, "text"))
+                    );
+                }
+                git_line(page, out);
+            }
+            if let Some(again) = ok["revert_run"].as_str() {
+                let _ = writeln!(out, "undo this revert: tine run revert {again}");
+            }
+        }
+        "deleted" => {
+            let broken = count(ok, "broken_refs");
+            let _ = writeln!(
+                out,
+                "deleted {} (breaks {broken} reference{})",
+                text(ok, "deleted"),
+                if broken == 1 { "" } else { "s" }
+            );
+            let _ = writeln!(out, "{} rev {}", text(ok, "name"), text(ok, "rev"));
+            git_line(ok, out);
+            let _ = writeln!(
+                out,
+                "{}",
+                crate::i18n_shell::shell_text("en", "shell-cli-delete-removed")
+            );
+            let removed = text(ok, "removed_text");
+            out.push_str(removed);
+            if !removed.ends_with('\n') {
+                out.push('\n');
+            }
+            let omitted = count(ok, "removed_text_omitted_bytes");
+            if omitted > 0 {
+                let _ = writeln!(
+                    out,
+                    "{} {omitted}",
+                    crate::i18n_shell::shell_text("en", "shell-cli-delete-truncated")
                 );
             }
         }
@@ -401,6 +588,48 @@ pub(super) fn render(ok: &Value, out: &mut String) {
     }
 }
 
+/// A run write's commit, or why it has none (CLI slice 3).
+fn git_line(ok: &Value, out: &mut String) {
+    use std::fmt::Write;
+    let git = &ok["git"];
+    if !git.is_object() {
+        return;
+    }
+    if git["committed"].as_bool() == Some(true) {
+        let snapshot = git["snapshot"]
+            .as_str()
+            .map(|s| format!(" (your edits first: {})", short(s)))
+            .unwrap_or_default();
+        let _ = writeln!(out, "committed {}{snapshot}", short(text(git, "commit")));
+        match git["index"].as_str() {
+            Some("staged-kept") => {
+                let _ = writeln!(
+                    out,
+                    "note: you had other changes to this file staged; they stay staged"
+                );
+            }
+            Some("busy") => {
+                let _ = writeln!(
+                    out,
+                    "warning: the git index was busy; `git status` may show the file changed"
+                );
+            }
+            _ => {}
+        }
+    } else {
+        let _ = writeln!(
+            out,
+            "warning: saved but not committed ({}): {}",
+            text(git, "error"),
+            text(git, "message")
+        );
+    }
+}
+
+fn short(commit: &str) -> &str {
+    commit.get(..10).unwrap_or(commit)
+}
+
 /// D-18's on-query cue (`query.og_hint`): which bare heads add no condition,
 /// whether nothing is left, and the explicit forms to write instead.
 fn og_hint(hint: &Value, out: &mut String) {
@@ -473,7 +702,7 @@ fn block_properties(block: &Value) -> Vec<(String, String)> {
 }
 
 fn is_author_key(key: &str) -> bool {
-    tine_core::doc::property_key_norm(key) == "author"
+    tine_core::doc::property_key_norm(key) == tine_core::tine_keys::AUTHOR
 }
 
 /// What the DocBlock projection says a block body's properties are, for
@@ -484,12 +713,12 @@ fn projected_properties(raw: &str, org: bool) -> Vec<(String, String)> {
     block.properties()
 }
 
-/// A block's `author::` and its other lines. Whether the block has an author
+/// A block's `tine.author::` and its other lines. Whether the block has an author
 /// is the projection's answer (`properties` in the payload, which treats a
 /// `key::` line inside a code fence as content), never a scan of the lines.
 /// The line shown beside the address is not repeated below it: it is the
 /// candidate author line whose removal leaves exactly the projection's other
-/// properties, so a literal `author::` line (in a fence, or a look-alike with
+/// properties, so a literal `tine.author::` line (in a fence, or a look-alike with
 /// the same value) stays.
 fn split_author<'a>(
     raw: &'a str,
@@ -533,7 +762,7 @@ fn author_value(line: &str) -> Option<&str> {
     if let Some((key, value)) = tine_core::property_line::parse_property_line(line) {
         return is_author_key(key).then_some(value);
     }
-    // Org drawer: `:author: value`.
+    // Org drawer: `:tine.author: value`.
     let rest = line.trim().strip_prefix(':')?;
     let (key, value) = rest.split_once(':')?;
     (is_author_key(key) && value.starts_with(' ')).then(|| value.trim())
@@ -542,14 +771,19 @@ fn author_value(line: &str) -> Option<&str> {
 fn outline(blocks: &[Value], prefix: &str, depth: usize, out: &mut String) {
     use std::fmt::Write;
     for (index, block) in blocks.iter().enumerate() {
-        let address = format!("{prefix}{}", index + 1);
+        // A page read carries each block's handle (`pos~fp`); other
+        // outlines (previews, result groups) print positions only.
+        let address = match block.get("handle").and_then(Value::as_str) {
+            Some(handle) => handle.to_string(),
+            None => format!("{prefix}{}", index + 1),
+        };
         let indent = "  ".repeat(depth);
         let (author, lines) = split_author(text(block, "raw"), &block_properties(block));
         let mut lines = lines.into_iter();
         let head = lines.next().unwrap_or("");
         match author {
             Some(author) => {
-                let _ = writeln!(out, "{indent}{address} [author:: {author}] {head}");
+                let _ = writeln!(out, "{indent}{address} [tine.author:: {author}] {head}");
             }
             None => {
                 let _ = writeln!(out, "{indent}{address} {head}");
@@ -561,7 +795,7 @@ fn outline(blocks: &[Value], prefix: &str, depth: usize, out: &mut String) {
         }
         outline(
             list(block, "children"),
-            &format!("{address}."),
+            &format!("{prefix}{}.", index + 1),
             depth + 1,
             out,
         );

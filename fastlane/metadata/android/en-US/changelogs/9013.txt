@@ -1,0 +1,1 @@
+Thirteenth Tine 0.9 Beta. Mouse back and forward buttons no longer drop history steps when pressed repeatedly on Windows. After you leave a page, Backspace and Delete no longer remove blocks that were selected there. A block moved between pages right after opening a graph stays put and shows a save error if the move cannot be saved.

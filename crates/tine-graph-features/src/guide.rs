@@ -54,49 +54,44 @@ pub fn create_demo_graph(
     Store::create_graph(parent, name, &seed)
 }
 
-/// A retained writer (STEP3 §7, A-K2): a page the host holds as a fileless
-/// draft is saved first, so the Guide meets it as an existing page and skips it.
+/// An asset Guide file: no page (`Store::as_page`), so its own guarded
+/// transaction with no host fence. `false` when it already exists.
+fn create_asset_if_absent(tx: tine_store::Transaction<'_>) -> io::Result<bool> {
+    let outcome = tx.commit();
+    match &outcome {
+        TxOutcome::Committed { .. } => Ok(true),
+        TxOutcome::NotCommitted {
+            why: Why::Conflict { .. } | Why::Refused(tine_store::Refusal::Twin { .. }),
+            ..
+        } => Ok(false),
+        TxOutcome::NotCommitted {
+            why: Why::Failed(error),
+            ..
+        } if error.kind == io::ErrorKind::IsADirectory => Ok(false),
+        _ => tx_error(outcome).map(|_| true),
+    }
+}
+
+/// A Guide page is one host operation (STEP3 §7, A-K2): a page the host
+/// holds as a fileless draft is saved first, so the Guide meets it as an
+/// existing page and skips it. An asset is [`create_asset_if_absent`].
 fn create_if_absent(
     store: &Store,
-    host: Option<&PageHost>,
+    host: &PageHost,
     area: Area,
     rel: &str,
     bytes: &[u8],
 ) -> io::Result<bool> {
     let id = store.file_id(area, rel).map_err(store_error)?;
+    let Some(page) = store.as_page(&id) else {
+        let mut tx = store.transaction(None);
+        tx.create(&id, Content::Bytes(bytes.to_vec()));
+        return create_asset_if_absent(tx);
+    };
     let transaction = || {
-        let mut tx = if area == Area::Pages {
-            store.transaction(Some(tine_store::EditKind::ReplacePage))
-        } else {
-            store.transaction(None)
-        };
+        let mut tx = store.page_plan(Some(tine_store::EditKind::ReplacePage));
         tx.create(&id, Content::Bytes(bytes.to_vec()));
         tx
-    };
-    let (Some(running), Some(page)) = (host, store.as_page(&id)) else {
-        // No host, or an asset: the transaction under the retained-writer route, as before P3.
-        let discover = || Ok(crate::retained::pages(store, [&id]));
-        return crate::retained::reserved(
-            host,
-            Input::Flush,
-            discover,
-            crate::retained::unsaved,
-            |_| {
-                let outcome = transaction().commit();
-                match &outcome {
-                    TxOutcome::Committed { .. } => Ok(true),
-                    TxOutcome::NotCommitted {
-                        why: Why::Conflict { .. } | Why::Refused(tine_store::Refusal::Twin { .. }),
-                        ..
-                    } => Ok(false),
-                    TxOutcome::NotCommitted {
-                        why: Why::Failed(error),
-                        ..
-                    } if error.kind == io::ErrorKind::IsADirectory => Ok(false),
-                    _ => tx_error(outcome).map(|_| true),
-                }
-            },
-        );
     };
     let mut created = false;
     let plan = || match transaction().plan() {
@@ -115,7 +110,7 @@ fn create_if_absent(
         Err(why) => Err(crate::why_error(why)),
     };
     crate::retained::operation(
-        running,
+        host,
         Input::Flush,
         std::slice::from_ref(&page),
         "copying the Guide",
@@ -130,7 +125,7 @@ fn create_if_absent(
 /// (sorted) order. Each file commits independently; an existing page or asset is skipped.
 pub fn copy_guide_into_graph(
     store: &Store,
-    host: Option<&PageHost>,
+    host: &PageHost,
     title: &str,
 ) -> io::Result<GuideCopyResult> {
     let Some(viewed) = GUIDE_TEMPLATES

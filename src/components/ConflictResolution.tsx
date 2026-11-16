@@ -20,7 +20,7 @@ import { msg, t, type Msg } from "../i18n";
 // through `resolve_sync_conflict` / `resolve_vcs_marker_conflict`: one tine-store
 // transaction guarded by the diff's `base_rev`, which stages the replaced bytes
 // (the copy, or the marker file) in the recoverable trash in the same commit.
-import { Show, For, createEffect, createMemo, createResource, createSignal, onCleanup, onMount, type JSX } from "solid-js";
+import { Show, For, createEffect, createMemo, createResource, createSignal, onCleanup, onMount, untrack, type JSX } from "solid-js";
 import { backend } from "../backend";
 import { errorFamily } from "../errorFamily";
 import { bindingOwner, graphOwner, readOwned, writeOwned, type Owned } from "../owned";
@@ -36,13 +36,14 @@ import {
   collectRows,
   countSuggestions,
   humanizeSideLabel,
+  noLossDecision,
   seedSuggestedExceptArtifact,
   seedSuggestedOrNoLoss,
   visibleDiffRows,
 } from "./DiffRows";
 import type { ConflictObject, MergeDecision, PageDto, SyncConflictDiff } from "../types";
-import { listen, newIntersectionObserver, newResizeObserver } from "../windowRealm";
-import { pageConflictToResolve } from "../liveConflicts";
+import { listen, newIntersectionObserver, newResizeObserver, windowOf } from "../windowRealm";
+import { claimConflictReview, conflictReviewRequest, pageConflictToResolve } from "../liveConflicts";
 import { conflictForPage } from "../conflictQueue";
 
 function errorDetail(error: unknown): string {
@@ -104,6 +105,9 @@ async function readDiff(c: ConflictObject, alive: () => boolean): Promise<DiffRe
     return { diff: null, error: errorDetail(e) };
   }
 }
+
+/** How long a banner's Review waits for its page's resolver to mount. */
+const REVIEW_REQUEST_FRESH_MS = 10_000;
 
 /** The conflict panel of one page: the conflict `pageConflictToResolve` names
  *  (the page's own save conflict before a queued artifact, GH #800), one
@@ -198,6 +202,22 @@ export function PageConflictResolution(props: { conflict: ConflictObject }): JSX
     }
   });
 
+  // GH #858: the banner's Review brings this panel into view: the docked bar
+  // unrolls its sheet (the reading position stays), otherwise the panel
+  // scrolls to the top of the pane. A request is answered once, and only
+  // while fresh, so a later visit to the page does not jump.
+  createEffect(() => {
+    const request = conflictReviewRequest();
+    if (!request || request.path !== conflict().page_path) return;
+    if (Date.now() - request.at > REVIEW_REQUEST_FRESH_MS || !claimConflictReview(request)) return;
+    if (untrack(docked)) {
+      setExpanded(true);
+      return;
+    }
+    const panel = root;
+    if (panel) windowOf(panel).requestAnimationFrame(() => panel.scrollIntoView({ block: "start" }));
+  });
+
   // A live conflict re-reviews when a newer refused save observed another disk
   // revision; every source re-reviews after a refused Apply.
   const [readResource, { refetch }] = createResource(
@@ -230,7 +250,9 @@ export function PageConflictResolution(props: { conflict: ConflictObject }): JSX
   const setDecision = (id: string, d: MergeDecision) => setDecisions((m) => ({ ...m, [id]: d }));
   const setAll = (d: MergeDecision) => {
     const next: Record<string, MergeDecision> = {};
-    for (const { id } of pending()) next[id] = d;
+    // GH #901: a one-sided row has no "both" button; keeping both there means
+    // keeping the block, so the active choice stays visible.
+    for (const { id, kind } of pending()) next[id] = d === "both" ? noLossDecision(kind) : d;
     setDecisions(next);
     setPreChoice(d === "mine" || d === "theirs" ? d : "union");
   };
@@ -249,6 +271,35 @@ export function PageConflictResolution(props: { conflict: ConflictObject }): JSX
     el?.scrollIntoView({ block: "center" });
     el?.classList.add("page-conflict-row-focus");
     window.setTimeout(() => el?.classList.remove("page-conflict-row-focus"), 900);
+  };
+
+  // GH #875: an identical copy holds nothing to decide; the native side trashes
+  // byte-identical ones itself, and this discards one that differs only where
+  // the comparison cannot see (recoverable trash, like the overview's Discard).
+  const discardIdenticalCopy = async () => {
+    const c = conflict();
+    const copy = c.source === "sync-copy" ? c.sides.find((s) => s.role === "theirs")?.path ?? null : null;
+    if (!copy || busy()) return;
+    const { id } = c;
+    const owner = bindingOwner(() => mounted);
+    const name = copy.split("/").pop() ?? copy;
+    setBusy(true);
+    try {
+      const result = await writeOwned(owner, backend().trashSyncConflict(copy, "delete-page"));
+      if (result.kind === "stale" || !owner()) return;
+      settleArtifactConflict(id);
+      pushToast(msg("conflict-overview-discarded", { name }), "success");
+      void refreshSyncConflicts();
+    } catch (e) {
+      if (!owner()) return;
+      if (errorFamily(e) === "conflict-copy-gone") {
+        settleArtifactConflict(id);
+        pushToast(msg("conflict-resolution-copy-gone"), "info");
+        void refreshSyncConflicts();
+      } else pushToast(msg("conflict-overview-couldn-t-discard-it", { error: String(errorDetail(e)) }), "error");
+    } finally {
+      if (owner()) setBusy(false);
+    }
   };
 
   const apply = async () => {
@@ -379,7 +430,8 @@ export function PageConflictResolution(props: { conflict: ConflictObject }): JSX
   const trashDayFile = async (name: string) => {
     const owner = bindingOwner(() => mounted);
     const confirmed = await readOwned(owner, backend().confirm(
-      t("conflict-resolution-trash-confirmation", { name })
+      t("conflict-resolution-trash-confirmation", { name }),
+      { okLabel: t("confirm-move-to-trash"), cancelLabel: t("confirm-cancel") },
     ));
     if (confirmed.kind === "stale" || !owner() || !confirmed.value) return;
     await reconcileFile(() => writeOwned(bindingOwner(() => mounted), backend().trashJournalFile(name, "delete-page")), msg("conflict-resolution-file-trashed", { name }));
@@ -443,7 +495,9 @@ export function PageConflictResolution(props: { conflict: ConflictObject }): JSX
           <Show
             when={!d().blocks_identical || d().pre_differs}
             fallback={
-              <div class="page-conflict-empty">{t("conflict-resolution-the-two-versions-are-identical-nothing-to-decide")}<Show when={conflict().source === "sync-copy"}>{t("conflict-resolution-the-copy-is-safe-to-discard-from-the")}</Show>
+              <div class="page-conflict-empty">{t("conflict-resolution-the-two-versions-are-identical-nothing-to-decide")}<Show when={conflict().source === "sync-copy"}>{t("conflict-resolution-the-copy-holds-nothing-the-page-lacks")}{" "}
+                  <button class="settings-btn page-conflict-discard-copy" disabled={busy()} onClick={() => void discardIdenticalCopy()}>{t("confirm-discard-copy")}</button>
+                </Show>
                 <Show when={conflict().source === "duplicate-journal"}>{t("conflict-resolution-the-other-file-is-safe-to-trash-above")}</Show>
                 <Show when={conflict().source === "live-save"}>
                   {t("conflict-resolution-use-disk-version-above-loses-nothing")}
@@ -454,7 +508,7 @@ export function PageConflictResolution(props: { conflict: ConflictObject }): JSX
             <div class="sync-merge-toolbar">
               <span class="settings-hint">
                 <Show
-                  when={suggestedCount()}
+                  when={suggestedCount() || diffValue()?.three_way}
                   fallback={<>{t("conflict-resolution-nothing-was-pre-selected-no-common-version-is")}</>}
                 >
                   {t("conflict-resolution-suggested-summary", { suggested: String(suggestedCount()), total: String(pending().length) })}</Show>

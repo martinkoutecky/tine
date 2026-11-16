@@ -12,12 +12,15 @@ import { registerTransientLayer } from "../transientLayers";
 import { queryAllWindows } from "../windowRealm";
 import { platformKind } from "../platform";
 import { readOr } from "../resourceRead";
+import { CloneGraphDialog } from "./CloneGraphDialog";
+import { APP_IOS_DISPLAY_NAME } from "../appIdentity";
 
 /** First-run onboarding. Shown (as a full-cover layer) when the app starts with
  *  no graph configured: choose to open an existing Logseq graph, or create a new
  *  one that comes pre-loaded with a short guided demo. */
 export function Welcome(props: { onClose?: () => void } = {}): JSX.Element {
   const [busy, setBusy] = createSignal<null | "open" | "create">(null);
+  const [cloning, setCloning] = createSignal(false);
   // iOS opens graphs only inside the app's own containers (master 027b5ae15).
   const [platform] = createResource(platformKind);
   const ios = () => readOr(platform, undefined, "welcome-platform") === "ios";
@@ -93,8 +96,9 @@ export function Welcome(props: { onClose?: () => void } = {}): JSX.Element {
         </Show>
 
         <div class="welcome-actions">
+          <button class="welcome-choice" disabled={!!busy()} onClick={() => setCloning(true)}>{t("git-clone-label")}</button>
           <Show when={ios()}>
-            <p class="welcome-busy">{t("welcome-on-iphone-and-ipad-graphs-can-live")}</p>
+            <p class="welcome-busy">{t("welcome-on-iphone-and-ipad-graphs-can-live", { app: APP_IOS_DISPLAY_NAME })}</p>
           </Show>
           <button
             class="welcome-choice"
@@ -131,6 +135,7 @@ export function Welcome(props: { onClose?: () => void } = {}): JSX.Element {
 
         <p class="welcome-foot">{t("welcome-free-open-source-your-notes")}</p>
       </div>
+      <Show when={cloning()}><CloneGraphDialog onClose={() => setCloning(false)} onOpened={() => props.onClose?.()} /></Show>
     </div>
   );
 }

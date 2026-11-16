@@ -1,0 +1,68 @@
+import { createSignal } from "solid-js";
+import { backend } from "./backend";
+import { loadPreference, seedPreference, writePreference } from "./preferenceWrites";
+
+// "Your name" (margin dialogue, D-20261017-LD1): the name a comment or reply you
+// write carries as `tine.author::`, so a graph shared through git shows who wrote
+// what. A device preference in tine-settings.json (generic app_string backend),
+// never in the graph. Unset: no `tine.author::` is written and your own comments
+// render as "you", as before. A comment whose `tine.author::` equals the name is
+// yours and renders as "you" too.
+
+const KEY = "comment_author_name";
+const MAX_LENGTH = 80;
+
+const [nameSig, setNameSig] = createSignal("");
+// False until the device settings have answered, so "no name yet" is not mistaken
+// for "no name set" (commentNamePrompt.ts asks only once this is true).
+const [loadedSig, setLoadedSig] = createSignal(false);
+
+/** Reactive: whether the name has been read from the device settings. */
+export const commentNameLoaded = loadedSig;
+
+/** Reactive: the configured name, `""` when unset. */
+export const commentAuthorName = nameSig;
+
+/** A name as it is stored and written: one line, single spaces, trimmed, at most
+ * 80 characters. Pure. */
+export function normalizeAuthorName(value: string): string {
+  return value.replace(/\s+/g, " ").trim().slice(0, MAX_LENGTH).trim();
+}
+
+/** True when `author` (a block's `tine.author::` value) is the configured name, compared
+ * ignoring case. False when no name is set. Reactive. */
+export function isOwnAuthor(author: string): boolean {
+  const own = nameSig();
+  return own !== "" && normalizeAuthorName(author).toLowerCase() === own.toLowerCase();
+}
+
+/** How many author tints the stylesheet defines (`.author-tint-0` …, comments.css). */
+export const AUTHOR_TINTS = 8;
+
+/** The tint of a comment written by `author` (someone other than you): stable for
+ * a name across sessions and devices, ignoring case and spacing, so each person in
+ * a shared graph keeps one colour. Pure. */
+export function authorTint(author: string): number {
+  let h = 0;
+  for (const ch of normalizeAuthorName(author).toLowerCase()) h = (h * 31 + ch.codePointAt(0)!) >>> 0;
+  return h % AUTHOR_TINTS;
+}
+
+/** Apply now and persist; a failed save rolls back and toasts (writePreference). */
+export function setCommentAuthorName(value: string): void {
+  setLoadedSig(true);
+  writePreference(nameSig, setNameSig, normalizeAuthorName(value), (next) => backend().setAppString(KEY, next), "comment author name");
+}
+
+/** Load the name at startup; a read failure toasts and leaves it unset. */
+export function initCommentIdentity(): void {
+  loadPreference(nameSig, (v) => { setNameSig(v); setLoadedSig(true); }, () => backend().getAppString(KEY, ""), (v) => normalizeAuthorName(v), "comment author name");
+}
+
+/** Test seam: set the name without persisting. */
+export function resetCommentAuthorNameForTests(value = "", loaded = true): void {
+  setNameSig(value);
+  setLoadedSig(loaded);
+  seedPreference(nameSig);
+}
+

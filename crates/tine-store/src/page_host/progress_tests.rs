@@ -1854,7 +1854,10 @@ fn rename_cost_failing_draft_writes_do_not_abort_a_saving_stop() {
     let mut h = super::lazy_operation_group();
     saved(&mut h, "c.md");
     let mut p = Progress::new(h, ManualClock(Cell::new(0)));
-    p.host.fs.inject(Phase::DraftTemp, [Fault::Before; 10_000]);
+    // Keep the long fault script on the heap, including while inject moves it.
+    p.host
+        .fs
+        .inject(Phase::DraftTemp, vec![Fault::Before; 10_000]);
     begin_stop(&mut p, false);
     for n in 1..=200 {
         if state(&p) != StopState::Waiting {

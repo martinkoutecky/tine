@@ -1,0 +1,105 @@
+{
+  "schemaVersion": 1,
+  "version": "0.9.0-beta.13",
+  "baseTag": "v0.9.0-beta.12",
+  "focusedAudit": {
+    "required": false,
+    "reason": "A Beta release; no exact-tree release audit was run for this Beta; explicit deferral, not certification."
+  },
+  "items": [
+    {
+      "section": "Fixed",
+      "text": "Mouse back and forward buttons no longer drop history steps when pressed repeatedly on Windows (#948).",
+      "userVisible": true,
+      "regressions": [
+        "UI-GH948-MOUSE-HISTORY-PRESSES"
+      ],
+      "regressionEvidence": {
+        "status": "current",
+        "reason": "Catalog coverage: UI-GH948-MOUSE-HISTORY-PRESSES. Fail-before: proven. Gated on develop and release/0.9 (Linux native journeys).",
+        "refs": [
+          "src/keybindings.test.ts",
+          "src/mouseHistory.test.ts",
+          "src/guideSweepNav.test.ts",
+          "scripts/e2e-sweep-nav.mjs"
+        ]
+      },
+      "docs": {
+        "status": "not-applicable",
+        "reason": "A bug fix or Beta change: no documented behaviour changes beyond the Guide pages updated in the same change.",
+        "refs": []
+      },
+      "website": {
+        "status": "not-applicable",
+        "reason": "website/ follows stable, regenerated at the stable cut (D-20261019-G1).",
+        "refs": []
+      },
+      "blog": {
+        "status": "not-applicable",
+        "reason": "A Beta release: notes live in CHANGELOG.md and the GitHub prerelease; no blog entry for Beta builds.",
+        "refs": []
+      }
+    },
+    {
+      "section": "Fixed",
+      "text": "After you leave a page, Backspace and Delete no longer remove blocks that were selected on that page (internal: UI-BETA13-HIDDEN-PAGE-DELETE).",
+      "userVisible": true,
+      "regressions": [
+        "UI-BETA13-HIDDEN-PAGE-DELETE"
+      ],
+      "regressionEvidence": {
+        "status": "current",
+        "reason": "Catalog coverage: UI-BETA13-HIDDEN-PAGE-DELETE. Fail-before: proven. Gated on develop and release/0.9 (Linux native journeys).",
+        "refs": [
+          "src/components/Page.routeSelection.test.tsx",
+          "scripts/e2e-shift-click-selection.mjs"
+        ]
+      },
+      "docs": {
+        "status": "not-applicable",
+        "reason": "A bug fix or Beta change: no documented behaviour changes beyond the Guide pages updated in the same change.",
+        "refs": []
+      },
+      "website": {
+        "status": "not-applicable",
+        "reason": "website/ follows stable, regenerated at the stable cut (D-20261019-G1).",
+        "refs": []
+      },
+      "blog": {
+        "status": "not-applicable",
+        "reason": "A Beta release: notes live in CHANGELOG.md and the GitHub prerelease; no blog entry for Beta builds.",
+        "refs": []
+      }
+    },
+    {
+      "section": "Fixed",
+      "text": "A block moved between pages right after opening a graph now stays in its original page and shows a save error if the move cannot be saved, instead of appearing to move successfully (internal: REG-L2-14-TRANSFER-NO-HOST).",
+      "userVisible": true,
+      "regressions": [
+        "REG-L2-14-TRANSFER-NO-HOST"
+      ],
+      "regressionEvidence": {
+        "status": "current",
+        "reason": "Catalog coverage: REG-L2-14-TRANSFER-NO-HOST. Fail-before: Proven on beta.12 d9a5bf05f. Gated on develop and release/0.9 (Linux native journeys).",
+        "refs": [
+          "src/document/host/transferNoHost.test.ts"
+        ]
+      },
+      "docs": {
+        "status": "not-applicable",
+        "reason": "A bug fix or Beta change: no documented behaviour changes beyond the Guide pages updated in the same change.",
+        "refs": []
+      },
+      "website": {
+        "status": "not-applicable",
+        "reason": "website/ follows stable, regenerated at the stable cut (D-20261019-G1).",
+        "refs": []
+      },
+      "blog": {
+        "status": "not-applicable",
+        "reason": "A Beta release: notes live in CHANGELOG.md and the GitHub prerelease; no blog entry for Beta builds.",
+        "refs": []
+      }
+    }
+  ]
+}

@@ -52,6 +52,10 @@ settings-search-document-mode = 文档模式
 
 settings-search-hide-bullets-prose = 隐藏 项目符号 正文
 
+settings-search-comment-margin = 显示/隐藏评论
+
+settings-search-comment-threads-hide-show = 评论 评论串 隐藏 显示
+
 settings-search-document-mode-enter-creates-a-new-block = 文档模式下 Enter 新建块
 
 settings-search-enter-shift-enter-internal-newline-config = Enter Shift Enter 块内 换行 配置
@@ -211,5 +215,11 @@ settings-search-key-bindings-commands-remap = 按键 绑定 命令 重新绑定
 settings-search-about = 关于
 
 settings-search-version-licenses-updates = 版本 许可证 更新
-
+settings-search-your-name = 你的名字
+settings-search-comment-author-name-margin-reply = 批注 作者 名字 页边 回复 身份
+settings-search-quick-share-account = 快速分享：连接或断开用于分享链接的 GitHub
+settings-search-quick-share-shares = 在此设备上创建的快速分享链接：复制、检查、删除、忘记
+settings-search-quick-share-find = 快速分享：列出你 GitHub 账号中的 Tine 分享
 settings-search-phone-tablet-top-bar-bottom-row-back-forward-search-sidebar = 手机 平板 安卓 顶栏 底部 单手 后退 前进 搜索 侧边栏
+
+settings-search-search-tab-results-open-in-new-tab-this-tab = 搜索 标签页 结果 点击 打开 新标签页 当前标签页 原地 后台 窗格 侧边栏

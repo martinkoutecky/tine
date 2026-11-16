@@ -1,5 +1,6 @@
-import { documentOf, requestFrame } from "../windowRealm";
+import { documentOf, requestFrame, windowOf } from "../windowRealm";
 import { textareaCaretLeft, textareaCaretRow } from "./caretRows";
+import { cssInterfaceZoom } from "../zoom";
 
 /** GH #745. The one rule for where the view goes when the caret lands in a
  * block editor (Enter split, Backspace/Delete merge, paste, indent/outdent,
@@ -14,6 +15,18 @@ const MARGIN = 8;
  * (`StickyAncestor`: depth * 30 from the scroller top). */
 const PIN = 30;
 
+/** Android's interface zoom is CSS `zoom` on the document root (`zoom.ts`): rects
+ * are in viewport pixels, while the pin and margin sizes here, computed-style
+ * lengths, mirror rows, client* and scrollTop are pre-zoom CSS pixels. Every CSS
+ * length is multiplied by this before it meets a rect, and every viewport delta
+ * divided by it before it meets scrollTop. 1 everywhere else (desktop zooms
+ * natively, which already converts). GH #783: unscaled, at zoom 1.25 the visible
+ * top stopped 7px above the painted pins and a line was left under them. */
+function zoom(): number {
+  const z = cssInterfaceZoom();
+  return z > 0 ? z : 1;
+}
+
 /** Viewport y below which the sticky parent pins above `editor` end. A pin is
  * shown when its ancestor's own row lies wholly above the pin's slot, the very
  * rule `StickyAncestor` feeds its IntersectionObserver; that is read here from
@@ -24,10 +37,12 @@ function pinnedBottom(editor: HTMLElement, scroller: HTMLElement): number {
   for (let el = editor.closest(".ls-block")?.parentElement ?? null; el && el !== scroller; el = el.parentElement) {
     if (el.hasAttribute("data-sticky-parent")) parents.push(el);
   }
-  const viewTop = scroller.getBoundingClientRect().top + scroller.clientTop;
+  const z = zoom();
+  const viewTop = scroller.getBoundingClientRect().top + scroller.clientTop * z;
+  const reserved = parseFloat(windowOf(scroller).getComputedStyle(scroller).getPropertyValue("--seen-header-height")) || 0;
   let bottom = 0;
   parents.forEach((ancestor, i) => {
-    const slotBottom = viewTop + (parents.length - i) * PIN; // the outermost ancestor pins at the top
+    const slotBottom = viewTop + (reserved + (parents.length - i) * PIN) * z; // outermost pins below the notice
     const row = ancestor.querySelector(":scope > .block-main");
     if (row && row.getBoundingClientRect().bottom <= slotBottom) bottom = Math.max(bottom, slotBottom);
   });
@@ -49,26 +64,82 @@ export function revealCaretColumn(ref: HTMLTextAreaElement | undefined, offset: 
   else if (x > ref.scrollLeft + ref.clientWidth - margin) ref.scrollLeft = x - ref.clientWidth + margin;
 }
 
+/** Where the caret row of the focused `editor` is, in viewport pixels, and the
+ * top edge the view must keep it below (scroller top, its scroll-padding, the
+ * sticky pins, the margin). Null without layout, an unfocused editor, or no scroller. */
+export function caretViewRow(editor: HTMLTextAreaElement, scroller: HTMLElement | null): { top: number; bottom: number; visibleTop: number; visibleBottom: number } | null {
+  if (!scroller || !editor.isConnected || !scroller.contains(editor) || documentOf(editor).activeElement !== editor) return null;
+  const caret = editor.selectionDirection === "backward" ? editor.selectionStart : editor.selectionEnd;
+  const row = textareaCaretRow(editor, caret ?? 0);
+  if (!row) return null;
+  const z = zoom();
+  const box = editor.getBoundingClientRect();
+  const view = scroller.getBoundingClientRect();
+  const top = box.top + (editor.clientTop + row.top - editor.scrollTop) * z;
+  const bottom = box.top + (editor.clientTop + row.bottom - editor.scrollTop) * z;
+  const reservedTop = parseFloat(windowOf(scroller).getComputedStyle(scroller).scrollPaddingTop) || 0;
+  const visibleTop = Math.max(view.top + (scroller.clientTop + reservedTop) * z, pinnedBottom(editor, scroller)) + MARGIN * z;
+  const visibleBottom = view.top + (scroller.clientTop + scroller.clientHeight - MARGIN) * z;
+  return { top, bottom, visibleTop, visibleBottom };
+}
+
 /** Scroll `scroller` the minimum that shows the caret row of the focused
  * `editor`. Returns whether it scrolled. O(editor text) for one row
  * measurement; a no-op without layout, an unfocused editor, or no scroller. */
-export function revealCaret(editor: HTMLTextAreaElement, scroller: HTMLElement | null): boolean {
-  if (!scroller || !editor.isConnected || !scroller.contains(editor) || documentOf(editor).activeElement !== editor) return false;
-  const caret = editor.selectionDirection === "backward" ? editor.selectionStart : editor.selectionEnd;
-  const row = textareaCaretRow(editor, caret ?? 0);
-  if (!row) return false;
-  const box = editor.getBoundingClientRect();
-  const view = scroller.getBoundingClientRect();
-  const top = box.top + editor.clientTop + row.top - editor.scrollTop;
-  const bottom = box.top + editor.clientTop + row.bottom - editor.scrollTop;
-  const visibleTop = Math.max(view.top + scroller.clientTop, pinnedBottom(editor, scroller)) + MARGIN;
-  const visibleBottom = view.top + scroller.clientTop + scroller.clientHeight - MARGIN;
+export function revealCaret(editor: HTMLTextAreaElement, scroller: HTMLElement | null, viewport?: { top: number; bottom: number }): boolean {
+  const g = caretViewRow(editor, scroller);
+  if (!g || !scroller) return false;
+  const top = Math.max(g.visibleTop, viewport ? viewport.top + MARGIN * zoom() : -Infinity);
+  const bottom = Math.min(g.visibleBottom, viewport ? viewport.bottom - MARGIN * zoom() : Infinity);
   let delta = 0;
-  if (top < visibleTop) delta = top - visibleTop;
-  else if (bottom > visibleBottom) delta = bottom - visibleBottom;
+  if (g.top < top) delta = g.top - top;
+  else if (g.bottom > bottom) delta = g.bottom - bottom;
   if (Math.abs(delta) <= 0.5) return false;
-  scroller.scrollTop += delta;
+  scroller.scrollTop += delta / zoom();
   return true;
+}
+
+/** The downward part of the keyboard caret rule, used when the toolbar appears
+ * or editing changes the caret. The keyboard's settled watcher also repairs a
+ * caret above the view. Neither path anchors the editor's bottom: that hid the
+ * children of short parents and could carry a tall block's caret off the top. */
+export function scrollToClearToolbar(editor: HTMLTextAreaElement, scroller: HTMLElement | null, toolbarTop: number): number {
+  return Math.max(0, keyboardCaretOffset(editor, scroller, {
+    top: windowOf(editor).visualViewport?.offsetTop ?? 0,
+    bottom: toolbarTop,
+  }));
+}
+
+/** Where the keyboard puts the edited line back when something has moved it out
+ * of view or too close to the toolbar (GH #783, comment 14). Leave three body
+ * lines below the caret so following content, including a short parent's
+ * children, remains visible. This is the reported 0.7.4 placement; that tag's
+ * toolbar code itself only cleared the editor by 8px and allowed native focus
+ * scrolling. Use the same explicit caret anchor for toolbar/input and late
+ * resize/focus/scroll repairs. A row already above this band stays put. Pins
+ * take priority over the gap when space is tight, and the browser clamps at
+ * either end of the page. `band` is in viewport pixels; scrollTop is in CSS
+ * pixels under Android interface zoom. Returns whether it scrolled. */
+export function revealCaretAboveKeyboard(editor: HTMLTextAreaElement, scroller: HTMLElement | null, band: { top: number; bottom: number }): boolean {
+  const delta = keyboardCaretOffset(editor, scroller, band);
+  if (!scroller || Math.abs(delta) <= 0.5) return false;
+  scroller.scrollTop += delta / zoom();
+  return true;
+}
+
+/** The viewport-pixel scroll `revealCaretAboveKeyboard` makes; 0 while the caret
+ * row is visible above the three-line band, or without layout. */
+export function keyboardCaretOffset(editor: HTMLTextAreaElement, scroller: HTMLElement | null, band: { top: number; bottom: number }): number {
+  const g = caretViewRow(editor, scroller);
+  if (!g) return 0;
+  const top = Math.max(g.visibleTop, band.top + MARGIN * zoom());
+  const height = g.bottom - g.top;
+  // The ordinary body token follows typography settings even in heading/code
+  // editors. Without that stylesheet, the measured caret row is the fallback.
+  const bodyLine = parseFloat(windowOf(editor).getComputedStyle(editor).getPropertyValue("--ls-block-line-height")) * zoom() || height;
+  const bottom = Math.min(g.visibleBottom, band.bottom - MARGIN * zoom(), Math.max(top + height, band.bottom - 3 * bodyLine));
+  if (g.top >= top && g.bottom <= bottom) return 0;
+  return g.bottom - bottom;
 }
 
 /** Reveal the caret once the layout around the freshly focused editor has
@@ -78,21 +149,62 @@ export function revealCaret(editor: HTMLTextAreaElement, scroller: HTMLElement |
  * settled layout never had. The signature (editor top, scrollTop, scrollHeight)
  * must repeat for `stableFrames` consecutive animation frames before the one
  * reveal; after `maxFrames` frames it reveals anyway, so the caret is never
- * left off screen. Any wheel/touch/pointer/key input on the scroller, a blur,
- * or the returned `cancel()` ends it: the user and any other focus owner always
- * win. */
-export function revealCaretSettled(editor: HTMLTextAreaElement, scroller: HTMLElement | null, stableFrames = 2, maxFrames = 40): () => void {
+ * left off screen. The reveal does not end the watch: for `lateMs` more, an
+ * image that finishes loading (`load`/`error`, which do not bubble but can be
+ * captured) above the caret - an asset-cache miss decoded after the frame cap
+ * - moves the editor again, so the caret is re-checked one frame after each and
+ * brought back if it left the view. Any wheel/touch/pointer/key input on the
+ * scroller, a blur, or the returned `cancel()` ends it: the user and any other
+ * focus owner always win. */
+export function revealCaretSettled(editor: HTMLTextAreaElement, scroller: HTMLElement | null, stableFrames = 2, maxFrames = 40, lateMs = 10_000, watch: {
+  /** Keyboard resizing and WebView focus scrolling can finish in separate turns.
+   * Follow their scroll events after the initial reveal; user input still wins.
+   * With lateMs=Infinity this is event-driven until cancelled, never polling. */
+  scroll?: boolean;
+  /** Replaces the minimum reveal (the keyboard's low placement, GH #783). */
+  reveal?: () => boolean;
+} = {}): () => void {
   if (!scroller) return () => {};
   let stopped = false;
   let cancelFrame: (() => void) | undefined;
+  let lateTimer: number | undefined;
+  let lateFrame: (() => void) | undefined;
   const gestures = ["wheel", "touchstart", "pointerdown", "keydown"] as const;
+  const late = watch.scroll ? ["load", "error", "scroll"] : ["load", "error"];
+  const win = windowOf(editor);
+  const vv = watch.scroll ? win.visualViewport : null;
+  const reveal = watch.reveal ?? (() => revealCaret(editor, scroller));
   const userInput = () => stop();
   function stop() {
     if (stopped) return;
     stopped = true;
     cancelFrame?.();
+    lateFrame?.();
+    if (lateTimer !== undefined) windowOf(editor).clearTimeout(lateTimer);
     for (const type of gestures) scroller!.removeEventListener(type, userInput, true);
+    for (const type of late) scroller!.removeEventListener(type, onLate, true);
+    vv?.removeEventListener("scroll", onLate);
+    if (watch.scroll) win.removeEventListener("scroll", onLate);
+    editor.removeEventListener("blur", stop);
   }
+  function onLate() {
+    if (stopped || lateFrame) return;
+    lateFrame = requestFrame(editor, () => {
+      lateFrame = undefined;
+      if (stopped) return;
+      if (!editor.isConnected || documentOf(editor).activeElement !== editor) return stop();
+      reveal();
+    });
+  }
+  function follow() {
+    cancelFrame = undefined;
+    if (stopped || lateMs <= 0) return stop();
+    for (const type of late) scroller!.addEventListener(type, onLate, { passive: true, capture: true });
+    vv?.addEventListener("scroll", onLate, { passive: true });
+    if (watch.scroll) win.addEventListener("scroll", onLate, { passive: true });
+    if (Number.isFinite(lateMs)) lateTimer = windowOf(editor).setTimeout(stop, lateMs);
+  }
+  editor.addEventListener("blur", stop);
   for (const type of gestures) scroller.addEventListener(type, userInput, { passive: true, capture: true });
   const signature = () => `${editor.getBoundingClientRect().top}|${scroller.scrollTop}|${scroller.scrollHeight}`;
   let last = signature();
@@ -105,8 +217,8 @@ export function revealCaretSettled(editor: HTMLTextAreaElement, scroller: HTMLEl
     same = now === last ? same + 1 : 0;
     last = now;
     if (same >= stableFrames || ++frames >= maxFrames) {
-      revealCaret(editor, scroller);
-      return stop();
+      reveal();
+      return follow();
     }
     cancelFrame = requestFrame(editor, tick);
   };

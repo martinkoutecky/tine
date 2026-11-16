@@ -1,4 +1,5 @@
 import { msg, render, t } from "../i18n";
+import { DialogActions } from "./DialogActions";
 import { For, Show, createEffect, createMemo, createSignal, createUniqueId, onCleanup, onMount, type JSX } from "solid-js";
 import { closeFormulaEditor, formulaEditor, type FormulaEditorHome, type FormulaEditorTarget } from "../ui";
 import { blockPageReadOnly, pageByName, setBlockProperty, setPageProperty, node as docNode } from "../document";
@@ -449,12 +450,11 @@ function FormulaEditorPopup(props: { target: FormulaEditorTarget }): JSX.Element
             </For>
           </div>
         </Show>
-        <div class="formula-editor-actions">
-          <button type="button" class="formula-editor-btn" onClick={closeFormulaEditor}>
-            {t("formula-cancel")}</button>
-          <button type="submit" class="formula-editor-btn primary" disabled={!canSave()}>
-            {t("formula-save")}</button>
-        </div>
+        <DialogActions
+          cancel={<button type="button" class="formula-editor-btn" onClick={closeFormulaEditor}>
+            {t("formula-cancel")}</button>}
+          primary={<button type="submit" class="formula-editor-btn primary" disabled={!canSave()}>
+            {t("formula-save")}</button>} />
       </form>
     </div>
   );

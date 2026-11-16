@@ -1,4 +1,5 @@
 import { t } from "../i18n";
+import { PropertyKey, visiblePageProperties } from "../render/PropertyKey";
 /** Page half of a friendly-search result. It receives already bounded and
  * ordered hits from graph search, renders O(returned rows), and only navigates.
  * The caller supplies the route operation; no file write or lookup occurs here. */
@@ -60,6 +61,10 @@ export function QueryPageResults(props: {
   onOpen: (hit: QueryPageHit) => void;
   /** Optional shared result gestures, supplied by the workspace owning navigation. */
   actions?: (hit: QueryPageHit) => JSX.ButtonHTMLAttributes<HTMLButtonElement>;
+  /** GH #619 item 8: list and search rows show the page's own properties as text under the
+   *  title. Only for rows the query engine answered, whose `row` carries every property; a
+   *  friendly-search row is hydrated for display columns only. */
+  showProperties?: boolean;
 }): JSX.Element {
   const link = (hit: QueryPageHit) => <button
     type="button"
@@ -67,6 +72,13 @@ export function QueryPageResults(props: {
     data-inpage-find-surface={props.surfaceId(hit)}
     {...(props.actions?.(hit) ?? { onClick: () => props.onOpen(hit) })}
   ><QueryPageResultContent hit={hit} /></button>;
+  const properties = (hit: QueryPageHit) => <Show when={props.showProperties && (hit.row?.properties.length ?? 0) > 0}>
+    <span class="query-page-props" data-selectable="text">
+      <For each={visiblePageProperties(hit.row!.properties)}>{([key, val]) => (
+        <span class="query-page-prop"><span class="query-page-prop-key"><PropertyKey name={key} />:</span> {val}</span>
+      )}</For>
+    </span>
+  </Show>;
   // Group adjacent rows so authored sort order remains authoritative.
   const boardGroups = createMemo(() => {
     const field = props.view?.group_by;
@@ -79,6 +91,15 @@ export function QueryPageResults(props: {
     }
     return groups;
   });
+  const boardKeys = createMemo(() => {
+    const occurrences = new Map<string, number>();
+    return boardGroups().map(([value]) => {
+      const occurrence = occurrences.get(value) ?? 0;
+      occurrences.set(value, occurrence + 1);
+      return JSON.stringify([value, occurrence]);
+    });
+  });
+  const boardByKey = createMemo(() => new Map(boardKeys().map((key, index) => [key, boardGroups()[index]])));
   return <Switch>
     <Match when={props.presentation === "table"}>
       <div class="query-results-table-wrap"><table class="query-results-table">
@@ -93,22 +114,24 @@ export function QueryPageResults(props: {
     </Match>
     <Match when={props.presentation === "board"}>
       <div class="query-results-board" aria-label={t("query-page-results-page-results-grouped")}>
-        <For each={boardGroups()}>{([value, hits]) => <section class="query-board-column" aria-label={value || t("query-page-results-no-value")}>
-          <h4>{value || t("query-page-results-no-value")}<span class="query-board-count">{hits.length}</span></h4>
-          <div role="list" aria-label={t("query-page-results-page-results")}><For each={hits}>{(hit) =>
+        <For each={boardKeys()}>{(key) => {
+          const group = () => boardByKey().get(key)!;
+          return <section class="query-board-column" aria-label={group()[0] || t("query-page-results-no-value")}>
+          <h4>{group()[0] || t("query-page-results-no-value")}<span class="query-board-count">{group()[1].length}</span></h4>
+          <div role="list" aria-label={t("query-page-results-page-results")}><For each={group()[1]}>{(hit) =>
             <div role="listitem" class="query-board-card" data-page-key={pageHitKey(hit)}>{link(hit)}</div>
           }</For></div>
-        </section>}</For>
+        </section>; }}</For>
       </div>
     </Match>
     <Match when={props.presentation === "list"}>
       <ul class="query-results-list" aria-label={t("query-page-results-page-results")}>
-        <For each={props.hits}>{(hit) => <li data-page-key={pageHitKey(hit)}>{link(hit)}</li>}</For>
+        <For each={props.hits}>{(hit) => <li data-page-key={pageHitKey(hit)}>{link(hit)}{properties(hit)}</li>}</For>
       </ul>
     </Match>
     <Match when={props.presentation === "search"}>
       <div class="query-results-search" role="list" aria-label={t("query-page-results-page-results")}>
-        <For each={props.hits}>{(hit) => <div role="listitem" data-page-key={pageHitKey(hit)}>{link(hit)}</div>}</For>
+        <For each={props.hits}>{(hit) => <div role="listitem" data-page-key={pageHitKey(hit)}>{link(hit)}{properties(hit)}</div>}</For>
       </div>
     </Match>
   </Switch>;

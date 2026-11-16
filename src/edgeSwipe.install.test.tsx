@@ -48,11 +48,40 @@ describe("installEdgeSwipe on the DOM", () => {
     expect(surface.style.transform).toBe("translateX(60px)");
     touch("touchmove", 5 + 150, 100, document.body, 300);
     touch("touchend", 5 + 150, 100, document.body, 300);
-    expect(deps.back).toHaveBeenCalledOnce();
+    // GH #501: like the native iOS back swipe, the page first slides fully
+    // off to the right; Back swaps it only once it is gone.
+    expect(surface.style.transform).toBe("translateX(400px)");
+    expect(deps.back).not.toHaveBeenCalled();
     vi.advanceTimersByTime(300);
+    expect(deps.back).toHaveBeenCalledOnce();
     expect(surface.style.transform).toBe("");
     uninstall();
     vi.useRealTimers();
+  });
+
+  it("iOS: a touch during the slide-off runs the pending Back at once (GH #501)", () => {
+    vi.useFakeTimers();
+    const { surface, deps, uninstall } = setup("ios");
+    touch("touchstart", 5, 100);
+    touch("touchmove", 5 + 150, 100, document.body, 300);
+    touch("touchend", 5 + 150, 100, document.body, 300);
+    expect(deps.back).not.toHaveBeenCalled();
+    touch("touchstart", 200, 300, document.body, 350);
+    expect(deps.back).toHaveBeenCalledOnce();
+    expect(surface.style.transform).toBe("");
+    vi.advanceTimersByTime(300);
+    expect(deps.back).toHaveBeenCalledOnce();
+    uninstall();
+    vi.useRealTimers();
+  });
+
+  it("iOS: a committed swipe with no surface goes back immediately", () => {
+    const { deps, uninstall } = setup("ios", { surface: () => null });
+    touch("touchstart", 5, 100);
+    touch("touchmove", 5 + 150, 100, document.body, 300);
+    touch("touchend", 5 + 150, 100, document.body, 300);
+    expect(deps.back).toHaveBeenCalledOnce();
+    uninstall();
   });
 
   it("iOS: releasing under the threshold snaps back without going back", () => {

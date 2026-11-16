@@ -8,6 +8,10 @@ icon:: 📂
 	- 3. On desktop, from the command line, `tine /path/to/graph` (or `tine open /path/to/graph`, or `TINE_GRAPH=/path/to/graph`) opens a graph directly.
 	- 4. What you should see: the same pages and journals Logseq finds. Existing Markdown and Org pages may be at the graph root or in nested folders, not only under `pages/` and `journals/`.
 	- If the graph you used last time cannot be opened at launch — the folder moved, a drive is unplugged, a file is unreadable — the Welcome screen says so in a card that names the graph and the reason, with **Try again** and **Copy details** buttons. Nothing was changed on disk; you can also open another graph from the same screen.
+- ## Switch graphs from the keyboard
+	- Press **g Shift+G** (g, then Shift+G), or run **All graphs** from the command palette. This page lists the same remembered graphs as the sidebar graph menu.
+	- Use **Up/Down** to choose a graph, **Home/End** to reach the first or last, and **Enter** to open it in this window. On desktop, **Shift+Enter** opens it in a new window. **Tab** reaches each graph's actions, including **Remove from this list**, which leaves its files untouched, plus **Open graph…** and **New graph…**.
+	- What you should see: after Enter, the sidebar shows the chosen graph's name and its pages replace the previous graph's pages.
 - ## Create a new graph
 	- Choose **Create a new graph** on Welcome, or **New graph…** in the sidebar graph menu. Choose its parent folder on desktop or iOS; Android uses its default graph location.
 	- Enter a **Graph name**. Tine suggests the first unused name: `notes`, `notes-2`, `notes-3`, and so on. The graph is always a child folder of that name, even when the parent is empty. Cancel creates nothing.

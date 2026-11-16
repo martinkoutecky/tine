@@ -13,16 +13,18 @@ import { FloatingPortal } from "./FloatingPortal";
 import { MobileDrawerPanel, dismissDrawerAndRestore } from "./MobileDrawerShell";
 import { openPageTarget, openPageAtBlock, openPageTargetInNewTab, openInNewTab } from "../router";
 import { InlineText } from "../render/inline";
-import { visibleBody } from "../render/block";
+import { aliasNamesOf, visibleBody } from "../render/block";
 import { nearestAncestors } from "../render/blockTrail";
 import { openRouteInOtherPane } from "../panes";
 import { internalLinkAuxClick, internalLinkDest, internalLinkMouseDown } from "../linkGesture";
 import { EmojiText } from "../render/emoji";
-import { pageIconPrefix } from "../pageIconBatch";
+import { pageIcon } from "../pageIconBatch";
+import { PageIcon } from "./PageIcon";
 import { backend } from "../backend";
-import { emptyPage, ensurePageLoaded, pageByName, pageLoadRefusalMessage, resolveBlockRef, settleBlockRef, whenPageReplaceable, formatForBlock, blockRef, blockPositionRef, node as docNode } from "../document";
+import { emptyPage, ensurePageLoaded, pageByName, readPageProperties, pageLoadRefusalMessage, resolveBlockRef, settleBlockRef, whenPageReplaceable, formatForBlock, blockRef, blockPositionRef, node as docNode } from "../document";
 import { Block, OutlineScopeContext, SurfaceContext } from "./Block";
 import { TaggedPages } from "./TaggedPages";
+import { AliasGroupHeader } from "./AliasGroup";
 import { LinkedReferences } from "./LinkedReferences";
 import { PageTypingTarget } from "./Page";
 import { UnlinkedReferences } from "./UnlinkedReferences";
@@ -427,13 +429,20 @@ function PageItem(props: {
           else openPageTarget(target);
         }} onAuxClick={(e) => internalLinkAuxClick(e, () =>
           openPageTargetInNewTab({ name: props.item.name, pageKind: props.item.pageKind, path: props.item.path }))}>
-          <EmojiText text={pageIconPrefix(props.item.name) + props.item.name} />
+          <Show when={pageIcon(props.item.name)}>{icon => <><PageIcon value={icon()} name={props.item.name} />{" "}</>}</Show><EmojiText text={props.item.name} />
         </a>
         <ItemActions index={props.row.index} surfaceKey={props.surfaceKey} page={props.item} collapsed={props.collapsed} onClose={props.onClose} />
       </div>
       <Show when={!props.collapsed}>
         <Show when={page()} fallback={<div id={bodyId} class="rs-item-body rs-item-loading">{loadError() ?? ""}</div>}>
           <div id={bodyId} class="rs-item-body">
+            {/* The page's alias group, as in the main pane's header (AL2). The
+                sidebar keeps its properties block, so a click here edits nothing. */}
+            <AliasGroupHeader
+              name={page()!.name}
+              declared={aliasNamesOf(readPageProperties(page()!.name), page()!.format)}
+              inGraph={!page()!.guide}
+            />
             <BlockList ids={page()!.roots} />
             {/* The same producer the main pane uses: a page opened only here still
                 gets its phantom empty bullet and a trailing target (GH #483). */}
@@ -540,7 +549,7 @@ function BlockItem(props: {
                   <span class="crumb-sep">›</span>
                   <a class="rs-crumb" onMouseDown={internalLinkMouseDown} onClick={(e) => openCrumb(aid, e)}
                     onAuxClick={(e) => internalLinkAuxClick(e, () => openCrumb(aid, e))}>
-                    <InlineText text={visibleBody(docNode(aid)?.raw ?? "")[0] || "…"} format={formatForBlock(aid)} />
+                    <InlineText text={visibleBody(docNode(aid)?.raw ?? "", formatForBlock(aid))[0] || "…"} format={formatForBlock(aid)} />
                   </a>
                 </>
               )}

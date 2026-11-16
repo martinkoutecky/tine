@@ -1,3 +1,5 @@
+@import "./math.css";
+
 * {
   box-sizing: border-box;
 }
@@ -31,11 +33,14 @@ body {
      padding, putting every bullet 2px above the middle of its own first line. A
      typography preset retunes the token, not three rules. Integer px, not a
      unitless ratio: see `.block-content`. */
-  --ls-block-line-height: 26px;
+  --ls-block-line-height: var(--tine-typography-line-height, 26px);
   --ls-block-content-pad-y: 2px;
   /* Width of the sidebar's drag-to-resize strip, and of the gutter the sidebar
      reserves so that strip never lands on top of the scrollbar (GH #435). */
   --sidebar-resizer-width: 7px;
+  /* Mobile CSS zoom scales vh/vw lengths but not the viewport itself. Fixed
+     surfaces divide those lengths by --interface-zoom; native desktop uses 1. */
+  --interface-zoom: 1;
   /* One named owner for system-inset gutters (GH #205). Browser/iOS surfaces
      use CSS env() values. MainActivity already sizes Android's WebView inside
      the native insets, so main.tsx selects `native-viewport` before render and
@@ -63,7 +68,7 @@ html[data-system-insets="native-viewport"] {
 }
 
 #root {
-  height: 100vh;
+  height: 100%;
 }
 
 ::selection {
@@ -75,7 +80,9 @@ html[data-system-insets="native-viewport"] {
 
 .app-container {
   display: flex;
-  height: 100vh;
+  /* The root's percentage height already accounts for CSS interface zoom.
+     100vh scales a second time on mobile and pushes bottom chrome offscreen. */
+  height: 100%;
   overflow: hidden;
   /* Terminate every pane/sidebar/drawer chain at the common shell. Keeping the
      rule here (rather than on every nested scroller) preserves normal chaining
@@ -84,7 +91,7 @@ html[data-system-insets="native-viewport"] {
   /* Keep the app shell out from under the system bars on edge-to-edge mobile
      (Android targetSdk 36 forces this): without it the topbar's sidebar/settings
      buttons sit behind the status bar and can't be tapped. All four insets are
-     0 on desktop, so this is a no-op there. box-sizing keeps 100vh honest. */
+     0 on desktop, so this is a no-op there. box-sizing includes the gutters. */
   box-sizing: border-box;
   padding: var(--system-inset-top) var(--system-inset-right)
     var(--system-inset-bottom) var(--system-inset-left);
@@ -271,9 +278,9 @@ html[data-system-insets="native-viewport"] {
   z-index: 90;
   width: min(
     var(--mobile-drawer-width, 320px),
-    calc(100vw - 44px - var(--system-inset-left) - var(--system-inset-right))
+    calc(100% - 44px - var(--system-inset-left) - var(--system-inset-right))
   ) !important;
-  max-width: calc(100vw - 44px - var(--system-inset-left) - var(--system-inset-right));
+  max-width: calc(100% - 44px - var(--system-inset-left) - var(--system-inset-right));
   flex: none !important;
   box-shadow: 0 8px 30px rgba(0, 0, 0, .28);
 }
@@ -337,6 +344,7 @@ html[data-system-insets="native-viewport"] {
   min-width: 0;
 }
 .workspace-switcher-btn {
+  font: inherit;
   display: flex;
   align-items: center;
   gap: 5px;
@@ -372,7 +380,7 @@ html[data-system-insets="native-viewport"] {
   white-space: nowrap;
   font-size: 12px;
 }
-.workspace-switcher-caret { flex: none; font-size: 9px; opacity: .7; }
+.workspace-switcher-caret { opacity: .7; }
 .workspace-switcher-compact .workspace-switcher-btn {
   gap: 3px;
   padding-inline: 5px;
@@ -384,8 +392,8 @@ html[data-system-insets="native-viewport"] {
   top: calc(100% + 5px);
   left: 0;
   min-width: 220px;
-  max-width: min(420px, calc(100vw - 24px));
-  max-height: min(440px, calc(100vh - 72px));
+  max-width: min(420px, calc(calc(100vw / var(--interface-zoom, 1)) - 24px));
+  max-height: min(440px, calc(calc(100vh / var(--interface-zoom, 1)) - 72px));
   overflow-y: auto;
   padding: 5px;
   border: 1px solid var(--border-color);
@@ -612,7 +620,7 @@ html[data-system-insets="native-viewport"] {
 .tab-overview {
   position: fixed;
   z-index: 80;
-  max-height: min(420px, calc(100vh - 80px));
+  max-height: min(420px, calc(calc(100vh / var(--interface-zoom, 1)) - 80px));
   padding: 5px;
   overflow-y: auto;
   border: 1px solid var(--border-color);
@@ -1174,6 +1182,7 @@ html[data-system-insets="native-viewport"] {
   margin-top: 4px;
 }
 .graph-switch-btn {
+  font: inherit;
   display: flex;
   align-items: center;
   gap: 6px;
@@ -1203,7 +1212,6 @@ html[data-system-insets="native-viewport"] {
   white-space: nowrap;
 }
 .graph-switch-caret {
-  font-size: 9px;
   opacity: 0.7;
 }
 .graph-switch-backdrop {
@@ -1308,6 +1316,7 @@ html[data-system-insets="native-viewport"] {
   border: 0;
   background: transparent;
   font: inherit;
+  font-size: 11px;
   text-align: left;
   cursor: pointer;
   user-select: none;
@@ -1315,15 +1324,14 @@ html[data-system-insets="native-viewport"] {
 .nav-section-toggle:hover {
   color: var(--text-secondary);
 }
-.nav-all-pages-open { width: 100%; text-align: left; background: transparent; border: 0; font: inherit; cursor: pointer; }
+/* GH #704: `font: inherit` resets the size; keep the section headings' 11px. */
+.nav-all-pages-open { width: 100%; text-align: left; background: transparent; border: 0; font: inherit; font-size: 11px; cursor: pointer; }
 .nav-all-pages-open:hover, .nav-all-pages-open.active { color: var(--text-primary); background: var(--bg-tertiary); }
-.nav-toggle-caret {
-  display: inline-block;
-  transition: transform 0.1s ease;
-  font-size: 9px;
-}
-.nav-toggle-caret.open {
-  transform: rotate(90deg);
+.nav-toggle-caret,
+.graph-switch-caret,
+.workspace-switcher-caret {
+  flex: none;
+  margin-right: 0;
 }
 .nav-section-count {
   margin-left: auto;
@@ -1416,6 +1424,22 @@ html[data-system-insets="native-viewport"] {
   vertical-align: -0.04em;
 }
 
+/* Title-row hover reveals (carry buttons, star, share, actions, tag-table toggle) fade by
+   transitioning this registered custom property, with `opacity: var(--reveal, 0)` on the
+   element. A transition on `opacity` itself is an accelerated (compositor) animation; on
+   WebKitGTK with GPU compositing (DMABUF) the frame that ends such an animation is
+   presented wrongly (controls flashed back to full opacity for a frame after the fade-out;
+   gone with TINE_GPU=0; will-change: opacity did not cure it on the reporter's GPU).
+   A custom-property transition runs on the main thread and the element is repainted every
+   frame, so no compositor animation or layer is involved. Where @property is unsupported
+   the value flips at once (no fade, no flicker). The reveal rules set `--reveal: 1`, never
+   `opacity`. Guard: src/styles/titleRowReveal.test.ts. */
+@property --reveal {
+  syntax: "<number>";
+  inherits: false;
+  initial-value: 0;
+}
+
 .fav-star {
   background: none;
   border: none;
@@ -1424,8 +1448,8 @@ html[data-system-insets="native-viewport"] {
   display: flex;
   align-items: center;
   color: var(--text-muted);
-  opacity: 0;
-  transition: opacity 0.1s;
+  opacity: var(--reveal, 0);
+  transition: --reveal 0.1s;
 }
 .star-icon {
   width: 18px;
@@ -1434,7 +1458,40 @@ html[data-system-insets="native-viewport"] {
 
 .page-title-row:hover .fav-star,
 .fav-star.active {
-  opacity: 1;
+  --reveal: 1;
+}
+
+/* The title's Share button: the star's hover pair, visible without hover on coarse pointers. */
+.page-share-btn {
+  background: none;
+  border: none;
+  cursor: pointer;
+  padding: 2px;
+  display: flex;
+  align-items: center;
+  color: var(--text-muted);
+  opacity: var(--reveal, 0);
+  transition: --reveal 0.1s;
+}
+.share-icon {
+  width: 18px;
+  height: 18px;
+}
+.page-title-row:hover .page-share-btn,
+.page-share-btn:focus-visible {
+  --reveal: 1;
+}
+.page-share-btn:hover,
+.page-share-btn:focus-visible {
+  color: var(--text-primary);
+}
+@media (pointer: coarse) {
+  .page-share-btn {
+    min-width: 36px;
+    min-height: 36px;
+    justify-content: center;
+    --reveal: 1;
+  }
 }
 
 .page-actions-trigger {
@@ -1448,8 +1505,8 @@ html[data-system-insets="native-viewport"] {
   align-items: center;
   justify-content: center;
   color: var(--text-muted);
-  opacity: 0;
-  transition: opacity 0.1s;
+  opacity: var(--reveal, 0);
+  transition: --reveal 0.1s;
   font: inherit;
   font-size: 20px;
   line-height: 1;
@@ -1459,7 +1516,7 @@ html[data-system-insets="native-viewport"] {
 .page-title-row:hover .page-actions-trigger,
 .page-actions-trigger:focus-visible,
 .page-actions-trigger[aria-expanded="true"] {
-  opacity: 1;
+  --reveal: 1;
 }
 .page-actions-trigger:hover,
 .page-actions-trigger:focus-visible {
@@ -1469,7 +1526,7 @@ html[data-system-insets="native-viewport"] {
   .page-actions-trigger {
     min-width: 36px;
     min-height: 36px;
-    opacity: 1;
+    --reveal: 1;
   }
 }
 .tag-table-toggle {
@@ -1480,14 +1537,14 @@ html[data-system-insets="native-viewport"] {
   color: var(--text-secondary);
   font-size: 12px;
   cursor: pointer;
-  opacity: 0;
-  transition: opacity 0.1s, background 0.1s, color 0.1s;
+  opacity: var(--reveal, 0);
+  transition: --reveal 0.1s, background 0.1s, color 0.1s;
   -webkit-user-select: none;
   user-select: none;
 }
 .page-title-row:hover .tag-table-toggle,
 .tag-table-toggle.active {
-  opacity: 1;
+  --reveal: 1;
 }
 .tag-table-toggle:hover,
 .tag-table-toggle.active {
@@ -1523,7 +1580,7 @@ html[data-system-insets="native-viewport"] {
 .page-props-panel {
   position: fixed;
   width: 320px;
-  max-height: calc(100vh - 16px);
+  max-height: calc(calc(100vh / var(--interface-zoom, 1)) - 16px);
   overflow-y: auto;
   background: var(--bg-primary);
   border: 1px solid var(--border-color);
@@ -1599,16 +1656,47 @@ html[data-system-insets="native-viewport"] {
   background: var(--bg-tertiary);
 }
 
+/* Share dialog: the settings shell without the left navigation, sized to its content. */
+.settings-modal.share-dialog {
+  width: 640px;
+  height: auto;
+  max-height: calc(82vh / var(--interface-zoom, 1));
+  outline: none;
+}
+.share-dialog .settings-pane-head { flex: 0 0 auto; }
+.share-choices { display: grid; gap: 4px; margin: 4px 0 8px; }
+.share-choice {
+  display: grid;
+  grid-template-columns: auto 1fr;
+  column-gap: 8px;
+  align-items: baseline;
+  padding: 5px 4px;
+  font-size: 14px;
+  cursor: pointer;
+}
+.share-choice .settings-hint { grid-column: 2; }
+.share-choice.disabled { opacity: 0.55; cursor: default; }
+.share-choice-label { color: var(--text-primary); }
+.share-query { display: grid; gap: 8px; margin: 4px 0 8px; }
+.share-review { display: grid; gap: 6px; font-size: 13px; }
+.share-pages { max-height: 160px; overflow-y: auto; margin: 0; padding-left: 20px; }
+.share-pages small { color: var(--text-muted); }
+.share-save-note, .share-existing { margin: 6px 0 0; }
+.share-foot { flex: 0 0 auto; padding: 12px 20px; border-top: 1px solid var(--border-color); }
+.share-dialog .query-export-refused { color: var(--tine-danger-color, var(--palette-danger)); overflow-wrap: anywhere; }
+
 /* Copy / export modal */
 .modal-overlay.graph-name-overlay { z-index: 9100; } /* Above first-run Welcome. */
 .export-modal.graph-name-prompt { width: min(420px, 100%); box-sizing: border-box; overflow-y: auto; }
 .graph-name-field { display: flex; flex-direction: column; gap: 8px; padding: 16px; }
 .graph-name-field input { width: 100%; box-sizing: border-box; font: inherit; padding: 8px; }
+.comment-name-prompt-body, .comment-name-prompt-scope { margin: 0; padding: 12px 16px 0; line-height: 1.45; }
+.comment-name-prompt-scope { padding-top: 0; opacity: 0.8; font-size: 0.9em; }
 .graph-name-error { padding: 0 16px; color: var(--tine-danger-color, var(--palette-danger)); overflow-wrap: anywhere; }
 .export-modal {
   width: 620px;
-  max-width: 94vw;
-  max-height: 80vh;
+  max-width: calc(94vw / var(--interface-zoom, 1));
+  max-height: calc(80vh / var(--interface-zoom, 1));
   display: flex;
   flex-direction: column;
   background: var(--bg-primary);
@@ -1694,9 +1782,30 @@ html[data-system-insets="native-viewport"] {
   opacity: 0.45;
   cursor: default;
 }
-.export-foot {
+.dialog-actions {
   display: flex;
+  flex-wrap: wrap;
+  align-items: center;
   justify-content: flex-end;
+  gap: 8px;
+}
+/* Auxiliary actions sit at the leading end; the Cancel/primary pair stays
+   trailing. Never reorder with `order`/`row-reverse`: DOM order is visual order. */
+.dialog-actions-aux {
+  display: inline-flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-right: auto;
+}
+.dialog-actions-aux:empty {
+  display: none;
+}
+/* Cancel + the primary action never separate: when the row is too narrow for
+   everything, the auxiliary group wraps above this one (D-20261018-UI1). */
+.dialog-actions-main {
+  display: inline-flex;
+  flex-wrap: nowrap;
+  align-items: center;
   gap: 8px;
 }
 .export-btn-secondary,
@@ -1730,7 +1839,7 @@ html[data-system-insets="native-viewport"] {
 /* PDF export dialog: a note between the options and the buttons explaining the
    next step (the OS print dialog). */
 .pdf-export-modal {
-  width: min(440px, 92vw);
+  width: min(440px, calc(92vw / var(--interface-zoom, 1)));
 }
 .pdf-export-note {
   font-size: 12px;
@@ -1784,7 +1893,7 @@ html[data-system-insets="native-viewport"] {
   box-sizing: border-box;
   /* Shared by Settings, Copy/Export, Print to PDF and the query workspace, so
      the system-inset gutter belongs here rather than on any one of them. */
-  padding: calc(var(--overlay-inset-top) + 12vh)
+  padding: calc(var(--overlay-inset-top) + calc(12vh / var(--interface-zoom, 1)))
     calc(var(--overlay-inset-right) + 8px)
     calc(var(--overlay-inset-bottom) + 8px)
     calc(var(--overlay-inset-left) + 8px);
@@ -1792,8 +1901,8 @@ html[data-system-insets="native-viewport"] {
 }
 .settings-modal {
   width: 840px;
-  max-width: 94vw;
-  height: 70vh;
+  max-width: calc(94vw / var(--interface-zoom, 1));
+  height: calc(70vh / var(--interface-zoom, 1));
   max-height: 640px;
   background: var(--bg-primary);
   border: 1px solid var(--border-color);
@@ -1866,7 +1975,7 @@ html[data-system-insets="native-viewport"] {
 }
 .settings-search-input {
   margin-left: auto;
-  width: min(260px, 40vw);
+  width: min(260px, calc(40vw / var(--interface-zoom, 1)));
   border: 1px solid var(--border-color);
   border-radius: 7px;
   background: var(--bg-secondary);
@@ -1996,6 +2105,11 @@ html[data-system-insets="native-viewport"] {
   margin-top: 5px;
   line-height: 1.5;
   max-width: 62ch;
+}
+/* The "today's sections live on page X" note under the Agenda window setting (GH #808). */
+.settings-sections-note {
+  margin-top: 4px;
+  overflow-wrap: anywhere;
 }
 .plugin-safety-row {
   display: flex;
@@ -2575,10 +2689,12 @@ html[data-system-insets="native-viewport"] {
 .sync-merge-preblock select {
   margin: 0 4px;
 }
-/* Carry-over action buttons, right-aligned next to a journal title. */
+/* Carry-over action buttons, right-aligned next to a journal title. Like the other
+   title-row hover reveals (star, share, actions, tag table) they fade in 0.1s through
+   --reveal (see @property --reveal above), never through a transition on `opacity`. */
 .page-carry-actions {
-  opacity: 0;
-  transition: opacity 0.1s;
+  opacity: var(--reveal, 0);
+  transition: --reveal 0.1s;
   display: flex;
   gap: 8px;
   flex-wrap: wrap;
@@ -2599,11 +2715,11 @@ html[data-system-insets="native-viewport"] {
 }
 .page-title-row:hover .page-carry-actions,
 .page-title-row:focus-within .page-carry-actions {
-  opacity: 1;
+  --reveal: 1;
 }
 @media (hover: none) {
   .page-carry-actions {
-    opacity: 1;
+    --reveal: 1;
   }
 }
 .carry-btn:hover {
@@ -2639,7 +2755,8 @@ html[data-system-insets="native-viewport"] {
     gap: 4px;
     min-width: 0;
   }
-  .page-title-row:has(.page-carry-actions) .fav-star {
+  .page-title-row:has(.page-carry-actions) .fav-star,
+  .page-title-row:has(.page-carry-actions) .page-share-btn {
     display: none;
   }
   .carry-btn {
@@ -2697,6 +2814,8 @@ html[data-system-insets="native-viewport"] {
     max-height: none;
     flex-direction: column;
   }
+  /* The share dialog's own two-class rule sizes it to its content on larger screens; a phone gets the full sheet. */
+  .settings-modal.share-dialog { width: 100%; max-width: none; height: 100%; max-height: none; }
   .settings-nav {
     width: auto;
     flex: 0 0 auto;
@@ -3007,7 +3126,8 @@ html[data-system-insets="native-viewport"] {
 .ctx-item {
   padding: 6px 12px;
   border-radius: 5px;
-  font-size: 13px;
+  font: inherit;
+  font-size: 14px;
   cursor: pointer;
   color: var(--text-primary);
 }
@@ -3039,7 +3159,6 @@ html[data-system-insets="native-viewport"] {
   border: 0;
   background: transparent;
   text-align: left;
-  font: inherit;
 }
 
 .ctx-page-item:focus-visible {
@@ -3284,7 +3403,9 @@ html[data-system-insets="native-viewport"] {
   opacity: 0.7;
 }
 
-/* "aka" chips — a page's aliases (other names that link here), read-only. */
+/* The page header's alias group (AliasGroup.tsx): "Also called" chips are the
+   names with no page of their own; the second row lists the group's other real
+   pages as ordinary links, so names and pages read differently. */
 .page-aliases {
   display: flex;
   flex-wrap: wrap;
@@ -3298,6 +3419,9 @@ html[data-system-insets="native-viewport"] {
   letter-spacing: 0.04em;
   color: var(--text-muted);
 }
+.alias-group-page {
+  font-size: 13px;
+}
 .alias-chip {
   font-size: 12.5px;
   padding: 1px 8px;
@@ -3308,8 +3432,6 @@ html[data-system-insets="native-viewport"] {
 }
 
 .prop-row {
-  display: flex;
-  gap: 8px;
   padding: 1px 0;
 }
 
@@ -3319,7 +3441,7 @@ html[data-system-insets="native-viewport"] {
 }
 
 .page-loading {
-  height: 50vh;
+  height: calc(50vh / var(--interface-zoom, 1));
 }
 
 .conflict-stack {
@@ -3357,10 +3479,6 @@ html[data-system-insets="native-viewport"] {
 }
 .conflict-btn:hover {
   background: var(--bg-tertiary);
-}
-.conflict-btn.keep {
-  border-color: var(--marker-todo, #e5484d);
-  color: var(--marker-todo, #e5484d);
 }
 
 .page-load-error {
@@ -3724,15 +3842,14 @@ html[data-system-insets="native-viewport"] {
   border-left-color: var(--guide-hover);
 }
 
-/* Host-owned rendering for the plugin `thread-lines` decoration. The guest can
-   request this known visual vocabulary but cannot inject CSS or DOM. */
+/* Host-owned `thread-lines` rendering; the guest cannot inject CSS or DOM. */
 .plugin-thread-lines {
   --thread-bullet-x: 26px;
   --thread-active-color: var(--thread-color, var(--ls-link-text-color));
   --thread-normal-color: color-mix(in srgb, var(--guide-color) 82%, transparent);
 }
 .plugin-thread-lines-standard { --thread-normal-color: var(--guide-color); }
-.plugin-thread-lines > .block-children-container > .block-children {
+.ls-block.plugin-thread-lines:not(.plugin-thread-lines-active) > .block-children-container > .block-children {
   border-left-color: transparent;
 }
 :is(.plugin-thread-lines > .block-children-container > .block-children, .plugin-thread-lines > .block-children-container > .block-children > .outline-list > .outline-window) > .ls-block {
@@ -3757,9 +3874,9 @@ html[data-system-insets="native-viewport"] {
   content: "";
   position: absolute;
   left: calc(var(--thread-bullet-x) - 1px - var(--ls-block-indent) - var(--thread-width, 1px) / 2);
-  top: 0;
+  top: -1px; /* Overlap separately rasterized border ends at fractional DPR (GH #129). */
   width: calc(var(--ls-block-indent) + 1px + var(--thread-width, 1px) / 2);
-  height: calc(var(--thread-bullet-y) + var(--thread-width, 1px) / 2);
+  height: calc(1px + var(--thread-bullet-y) + var(--thread-width, 1px) / 2);
   box-sizing: border-box;
   border-left: var(--thread-width, 1px) solid var(--thread-incoming-color);
   border-bottom: var(--thread-width, 1px) solid var(--thread-elbow-color);
@@ -3768,14 +3885,12 @@ html[data-system-insets="native-viewport"] {
   z-index: 1;
 }
 
-/* Active mode follows the focused branch using only host-owned focus state. It
-   does not reveal block contents to the guest or let the guest select DOM. */
+/* Active elbows follow host-owned focus; ordinary guide borders stay visible. */
 :is(.plugin-thread-lines-active > .block-children-container > .block-children, .plugin-thread-lines-active > .block-children-container > .block-children > .outline-list > .outline-window) > .ls-block:not(:focus-within) > .block-main::before {
   display: none;
 }
 
-/* The remaining connectors are the edited block's ancestry; emphasize them in
-   the active color, as the ported Logseq plugin does (GH #614). */
+/* Emphasize the edited block's ancestry as the Logseq plugin does (GH #614). */
 .plugin-thread-lines > .block-main {
   position: relative;
   --thread-bullet-y: calc(1px + (var(--ls-block-line-height) + 2 * var(--ls-block-content-pad-y)) / 2);
@@ -3783,8 +3898,7 @@ html[data-system-insets="native-viewport"] {
 .plugin-thread-lines > .block-main.bullet-h1 { --thread-bullet-y: calc(1px + 1.36em); }
 .plugin-thread-lines > .block-main.bullet-h2 { --thread-bullet-y: calc(1px + 1.12em); }
 .plugin-thread-lines > .block-main.bullet-h3 { --thread-bullet-y: calc(1px + .96em); }
-/* Start beneath the parent bullet, then span preceding siblings. Stop at the
-   focused child's elbow, so unrelated guides retain their normal appearance. */
+/* Start beneath the parent bullet and span preceding siblings to the active elbow. */
 .plugin-thread-lines:not(.collapsed) > .block-main::after {
   content: "";
   position: absolute;
@@ -3806,6 +3920,11 @@ html[data-system-insets="native-viewport"] {
   border-left: var(--thread-width, 1px) solid var(--thread-normal-color);
   pointer-events: none;
 }
+/* An elbow ends the path at the final sibling; a straight continuation through
+   that row would cross the curve and extend into its descendants (GH #129). */
+:is(.plugin-thread-lines > .block-children-container > .block-children, .plugin-thread-lines > .block-children-container > .block-children > .outline-list > .outline-window:last-child) > .ls-block:last-child::after {
+  display: none;
+}
 :is(.plugin-thread-lines > .block-children-container > .block-children, .plugin-thread-lines > .block-children-container > .block-children > .outline-list > .outline-window) > .ls-block:has(~ .ls-block:focus-within)::after {
   border-left-color: var(--thread-active-color);
 }
@@ -3817,8 +3936,7 @@ html[data-system-insets="native-viewport"] {
 :is(.plugin-thread-lines-active > .block-children-container > .block-children, .plugin-thread-lines-active > .block-children-container > .block-children > .outline-list > .outline-window) > .ls-block:has(~ .ls-block:focus-within)::after {
   display: block;
 }
-/* Shell windowing groups siblings in separate wrappers. Carry the vertical
-   path across preceding windows and their unmounted height placeholders. */
+/* Carry the vertical path across preceding windows and unmounted placeholders. */
 .plugin-thread-lines > .block-children-container > .block-children > .outline-list > .outline-window {
   position: relative;
 }
@@ -4038,6 +4156,7 @@ html[data-system-insets="native-viewport"] {
   z-index: 95;
   transform: translateY(-100%);
   display: flex;
+  flex-wrap: wrap;
   align-items: stretch;
   gap: 5px;
   padding: 6px 6px;
@@ -4046,6 +4165,43 @@ html[data-system-insets="native-viewport"] {
   border-bottom: 1px solid color-mix(in srgb, var(--border-color) 60%, transparent);
   box-shadow: 0 -8px 24px rgba(15, 23, 42, 0.18);
   pointer-events: auto;
+}
+
+/* GH #598: the App's navigation group, pinned at the leading end outside the
+   scrolling strip (so it never scrolls away), with a hairline before the strip. */
+.mobile-keyboard-toolbar-nav {
+  flex: 0 1 auto;
+  min-width: 0;
+  max-width: 100%;
+  overflow-x: auto;
+  display: flex;
+  align-items: center;
+  padding-right: 4px;
+  border-right: 1px solid color-mix(in srgb, var(--border-color) 82%, transparent);
+}
+.mobile-keyboard-toolbar-nav .navigation-actions {
+  display: flex;
+  width: max-content;
+  gap: 2px;
+}
+.mobile-keyboard-toolbar-nav .icon-btn {
+  width: 36px;
+  height: 44px;
+  align-items: center;
+  justify-content: center;
+  padding: 0;
+  color: var(--text-primary);
+  touch-action: manipulation;
+  -webkit-tap-highlight-color: transparent;
+}
+.mobile-keyboard-toolbar-nav .nav-icon {
+  width: 22px;
+  height: 22px;
+  flex: 0 0 22px;
+  color: inherit;
+}
+.mobile-keyboard-toolbar-nav .icon-btn:active {
+  background: var(--bg-tertiary);
 }
 
 /* GH #751: while the editing dock (z-index 95) is shown, these body-level
@@ -4067,8 +4223,10 @@ html[data-mobile-editing-dock] .app-container[data-mobile-drawer-mode="true"] :i
 }
 
 .mobile-keyboard-toolbar-strip {
-  min-width: 0;
-  flex: 1 1 auto;
+  /* Keep one action and Hide reachable even when zoom makes the navigation
+     group take its own row. Both groups retain horizontal touch scrolling. */
+  min-width: 40px;
+  flex: 1 1 40px;
   display: flex;
   gap: 2px;
   overflow-x: auto;
@@ -4480,7 +4638,7 @@ mark {
 .peek-popup {
   position: fixed;
   z-index: 50;
-  width: min(600px, calc(100vw - 16px));
+  width: min(600px, calc(calc(100vw / var(--interface-zoom, 1)) - 16px));
   max-height: 600px;
   overflow-y: auto;
   background: var(--bg-primary);
@@ -4499,8 +4657,12 @@ mark {
   color: var(--text-primary);
 }
 .peek-popup-title {
-  padding: 2px 4px 7px;
-  margin-bottom: 2px;
+  position: sticky;
+  top: -8px;
+  z-index: 1;
+  background: var(--bg-primary);
+  padding: 10px 12px 7px;
+  margin: -8px -8px 2px;
   border-bottom: 1px solid var(--border-color);
 }
 .peek-popup-title-name {
@@ -4586,15 +4748,12 @@ mark {
   margin: 2px 0;
 }
 
-.math-display {
-  display: block;
-  margin: 6px 0;
-  text-align: center;
-}
-
 .inline-image {
   max-width: 100%;
   border-radius: 4px;
+  /* GH #836: the wrapper's `line-height: 0` is inherited by the alt text a browser draws in place of a
+     file that will not load, which clipped it. A loaded image ignores its own line-height. */
+  line-height: 1.5;
 }
 
 /* Drag-to-resize wrapper: the grip sits in the image's bottom-right corner and
@@ -4806,7 +4965,7 @@ mark {
     calc(var(--overlay-inset-left) + 24px);
 }
 .audio-panel {
-  width: 90vw;
+  width: calc(90vw / var(--interface-zoom, 1));
   max-width: 1100px;
   background: var(--bg-primary);
   border: 1px solid var(--border-color);
@@ -4957,7 +5116,7 @@ body.file-drop-active::after {
   z-index: 60;
   display: none;
   width: max-content;
-  max-width: min(680px, calc(100vw - 48px));
+  max-width: min(680px, calc(calc(100vw / var(--interface-zoom, 1)) - 48px));
   padding: 8px;
   border: 1px solid var(--border-color);
   border-radius: 6px;
@@ -5028,7 +5187,7 @@ body.file-drop-active::after {
   z-index: 60;
 }
 .date-picker {
-  max-height: calc(100dvh - 8px);
+  max-height: calc(calc(100dvh / var(--interface-zoom, 1)) - 8px);
   overflow-y: auto;
   position: fixed;
   /* Wide enough that the longest header title — the scheduled/deadline picker's
@@ -5128,6 +5287,13 @@ body.file-drop-active::after {
   font-weight: 700;
   color: var(--accent, #10b981);
   opacity: 1;
+  /* Today has no button (D-20261018-UI1); the cell is the way to it, so the
+     mark must stay visible whether or not the cell is also selected. */
+  box-shadow: inset 0 0 0 1px var(--accent, #10b981);
+}
+.dp-cell.today.selected {
+  color: var(--on-accent, #fff);
+  box-shadow: inset 0 0 0 2px var(--bg-primary, #fff);
 }
 .dp-cell.selected {
   background: var(--accent, #10b981);
@@ -5144,9 +5310,14 @@ body.file-drop-active::after {
   visibility: hidden;
 }
 .dp-foot {
-  display: flex;
   gap: 6px;
   margin-top: 8px;
+}
+.dp-foot .dialog-actions-aux,
+.dp-foot .dialog-actions-main {
+  flex: 1;
+  margin-right: 0;
+  gap: 6px;
 }
 .dp-btn {
   flex: 1;
@@ -5255,7 +5426,7 @@ body.file-drop-active::after {
 .formula-editor {
   position: fixed;
   width: 440px;
-  max-width: calc(100vw - 8px);
+  max-width: calc(calc(100vw / var(--interface-zoom, 1)) - 8px);
   display: flex;
   flex-direction: column;
   gap: 8px;
@@ -5432,11 +5603,6 @@ body.file-drop-active::after {
   color: var(--marker-todo);
   font-size: 11px;
 }
-.formula-editor-actions {
-  display: flex;
-  justify-content: flex-end;
-  gap: 8px;
-}
 .formula-editor-btn {
   border: 1px solid var(--border-color);
   border-radius: 5px;
@@ -5520,6 +5686,20 @@ body.file-drop-active::after {
   overflow-x: auto;
   width: var(--table-bleed-width, 100%);
   margin: 1rem 0 1rem calc(-1 * var(--table-bleed-shift, 0px));
+}
+/* GH #909: a table bled left over the ancestors' outline guides (z-index 1)
+   paints above them on an opaque pane background, so no guide runs through
+   its header or rows. The selection tint stays layered on top of it. */
+.md-table-wrap[data-bleed] {
+  position: relative;
+  z-index: 2;
+  background: var(--table-bleed-tint, linear-gradient(transparent, transparent)), var(--bg-primary);
+}
+.right-sidebar .md-table-wrap[data-bleed] {
+  background: var(--table-bleed-tint, linear-gradient(transparent, transparent)), var(--bg-secondary);
+}
+.block-main.selected .md-table-wrap[data-bleed] {
+  --table-bleed-tint: linear-gradient(var(--block-select-bg), var(--block-select-bg));
 }
 .md-table-wrap > .md-table {
   width: max-content;
@@ -5761,7 +5941,45 @@ body.file-drop-active::after {
 }
 .sheet-nested-line {
   margin-top: 3px;
+  /* One fixed step per level: the lines nest in the DOM, so the indent compounds by itself. The thread
+     line sits under the parent's bullet, as on a page. */
+  margin-left: 7px;
+  padding-left: 8px;
   border-left: 1px solid color-mix(in srgb, var(--border-color) 75%, transparent);
+}
+/* A block in a cell is drawn by the page's own body renderer (Rendered); the cell sets the type scale. */
+.sheet-cell-line {
+  display: flex;
+  align-items: flex-start;
+}
+.sheet-cell-line > .sheet-cell-body {
+  flex: 1 1 auto;
+  min-width: 0;
+}
+.sheet-nested-bullet {
+  flex: 0 0 auto;
+  margin: 2px 6px 0 0;
+}
+.sheet-cell-body .block-content {
+  padding: 0;
+  min-height: 1.45em;
+  line-height: inherit;
+  cursor: inherit;
+}
+/* A Table title shows the block as the page draws it, clamped to about five lines so a long block keeps a
+   bounded row height (the full block opens with the result). */
+.sheet-title-body {
+  max-height: 7.5em;
+  overflow: hidden;
+  min-width: 0;
+}
+.sheet-title-body > * {
+  margin-top: 0;
+  margin-bottom: 0;
+}
+.sheet-title-body ul,
+.sheet-title-body ol {
+  padding-left: 1.4em;
 }
 .sheet-cell .sheet-grid,
 .sheet-cell .sheet-table {
@@ -6354,8 +6572,8 @@ body.file-drop-active::after {
 .lightbox-overlay > img.lightbox-img {
   width: auto;
   height: auto;
-  max-width: 92vw;
-  max-height: 92vh;
+  max-width: calc(92vw / var(--interface-zoom, 1));
+  max-height: calc(92vh / var(--interface-zoom, 1));
   object-fit: contain;
   border-radius: 6px;
   box-shadow: 0 10px 40px rgba(0, 0, 0, 0.5);
@@ -6652,7 +6870,6 @@ ol.md-list { list-style: decimal; }
   width: 14px;
   text-align: center;
   color: var(--text-muted);
-  font-size: 10px;
   flex: 0 0 auto;
 }
 .ns-node-label {
@@ -6786,8 +7003,9 @@ img.emoji {
 /* ---------------------------------------------------------- references */
 
 .linked-references {
-  margin-top: 40px;
-  padding-top: 12px;
+  /* UI-LP-FIX F7: the trailing-block target above already adds 30px of air. */
+  margin-top: 16px;
+  padding-top: 8px;
 }
 
 .references-header {
@@ -6804,6 +7022,15 @@ img.emoji {
 
 .references-header > button { margin-left: 0; }
 .references-header > button:first-of-type { margin-left: auto; }
+.references-header > .reference-bulk-controls ~ button:first-of-type { margin-left: 0; }
+
+.hierarchy-toggle {
+  background: none;
+  border: 0;
+  padding: 0;
+  cursor: pointer;
+  font-family: inherit;
+}
 
 .reference-export-toggle {
   width: 26px;
@@ -6825,6 +7052,7 @@ img.emoji {
 .peek-popup-title { display: flex; align-items: center; gap: 12px; }
 .peek-source-title { color: inherit; font: inherit; text-align: left; }
 .peek-open-source { margin-left: auto; color: var(--link-color); white-space: nowrap; }
+.peek-ref-edit, .peek-ref-remove { color: var(--link-color); white-space: nowrap; }
 .peek-page-actions { flex-shrink: 0; min-width: 36px; min-height: 36px; border-radius: 4px; }
 .peek-page-actions:hover, .peek-page-actions:focus-visible { background: var(--bg-tertiary); }
 .peek-page-properties { padding: 8px 16px; color: var(--text-secondary); }
@@ -6849,7 +7077,7 @@ img.emoji {
 .ref-export-list {
   flex: 1 1 auto;
   min-height: 120px;
-  max-height: 46vh;
+  max-height: calc(46vh / var(--interface-zoom, 1));
   overflow-y: auto;
   padding: 8px 10px;
   border: 1px solid var(--border-color);
@@ -6977,6 +7205,12 @@ img.emoji {
   line-height: 18px;
 }
 
+.references-count-stale {
+  display: inline-flex;
+  color: var(--text-muted);
+  opacity: 0.6;
+}
+
 .reference-group {
   margin-bottom: 14px;
   background: var(--bg-secondary);
@@ -7024,7 +7258,7 @@ img.emoji {
   display: flex;
   justify-content: flex-end;
   gap: 6px;
-  margin: -2px 0 8px;
+  margin: 0 0 0 auto;
 }
 
 .reference-bulk-controls button,
@@ -7156,14 +7390,19 @@ img.emoji {
    the sidebar. */
 .block-refs-count {
   float: right;
-  margin-left: 8px;
-  padding: 0 6px;
+  box-sizing: border-box;
+  /* Same pill and same line as .margin-marker (GH #843): centered on the first line. */
+  margin: calc((var(--ls-block-line-height) - 18px) / 2) 0 0 8px;
+  min-width: 20px;
+  height: 18px;
+  padding: 0 5px;
   font-size: 11px;
   font-weight: 600;
-  line-height: 16px;
+  line-height: 18px;
+  text-align: center;
   color: var(--text-muted);
   background: var(--bg-tertiary);
-  border-radius: 7px;
+  border-radius: 9px;
   cursor: pointer;
   user-select: none;
 }
@@ -7182,6 +7421,8 @@ img.emoji {
   padding: 4px 0 4px 12px;
 }
 .block-references-header {
+  display: flex;
+  align-items: center;
   font-size: 12px;
   font-weight: 600;
   color: var(--text-muted);
@@ -7620,12 +7861,67 @@ img.emoji {
 }
 
 .embed-block {
+  position: relative;
   background: var(--tine-embed-bg, var(--bg-secondary));
   border-radius: 4px;
   border-left: 3px solid var(--border-color);
   padding-left: 12px;
   margin: 2px 0;
 }
+
+/* GH #417: Edit link / Open source / Remove for one embed, above its top-right
+   corner so the controls do not cover the embedded content (the reporter's ask;
+   the right sidebar is the exception below). Hidden by transparency, not
+   display, so Tab still reaches them. Desktop: on hover
+   (a nested embed shows only its own). Touch has no hover: while a block inside
+   the embed is being edited. */
+.embed-actions {
+  display: flex;
+  opacity: 0;
+  pointer-events: none;
+  position: absolute;
+  right: 0;
+  bottom: 100%;
+  z-index: 3;
+  gap: 2px;
+  padding: 2px;
+  border: 1px solid var(--border-color);
+  border-radius: 6px;
+  background: var(--bg-primary);
+  box-shadow: 0 1px 4px rgba(0, 0, 0, 0.12);
+  font-size: 12px;
+  line-height: 1.4;
+  white-space: nowrap;
+}
+.embed-actions button {
+  padding: 1px 8px;
+  border: 0;
+  border-radius: 4px;
+  background: transparent;
+  color: var(--text-secondary);
+  font: inherit;
+  cursor: pointer;
+}
+.embed-actions button:hover,
+.embed-actions button:focus-visible {
+  background: var(--bg-tertiary);
+  color: var(--text-primary);
+}
+/* In the right sidebar a card's header (with its ⋯ and ✕) sits directly above
+   the first block, so above-the-corner would cover ✕: sit inside the corner. */
+.right-sidebar .embed-actions { bottom: auto; top: 2px; right: 2px; }
+@media (hover: hover) {
+  .embed-block:hover > .embed-actions { opacity: 1; pointer-events: auto; }
+  .embed-block:has(.embed-block:hover) > .embed-actions { opacity: 0; pointer-events: none; }
+}
+@media (hover: none) {
+  .embed-block:focus-within > .embed-actions { opacity: 1; pointer-events: auto; }
+  .embed-block:has(.embed-block:focus-within) > .embed-actions { opacity: 0; pointer-events: none; }
+  .embed-actions button { padding: 6px 12px; }
+}
+/* Keyboard: the buttons stay in the Tab order while transparent, and the
+   toolbar shows while one of them has focus, whatever the pointer does. */
+.embed-block > .embed-actions:focus-within { opacity: 1; pointer-events: auto; }
 
 /* Style knob "Embedded blocks" = accent line and dot only (src/styleKnobs.ts,
    class on <html>): the shade goes, the accent bullet and guide stay. It sits
@@ -7634,12 +7930,13 @@ html.tine-embed-shading-accent .embed-block {
   background: none;
 }
 
-/* A whole-block block embed is visually the referenced outline, not an empty
-   parent followed by another root. Block.tsx removes only the macro host's
-   controls; the referenced root keeps its real interactive bullet, collapse
-   toggle, zoom/sidebar actions, and editor surface. Removing the wrapper inset
-   puts that surviving bullet on the ordinary outline column. Its descendant
-   guide is slightly heavier to identify the embedded boundary without a box. */
+/* D-20261030-EMB (0.8): a whole-block block embed is visually the referenced
+   outline, not an empty parent followed by another root. Block.tsx removes only
+   the macro host's controls; the referenced root keeps its real interactive
+   bullet (standing for the host), collapse toggle, zoom/sidebar actions, and
+   editor surface. Removing the wrapper inset puts that surviving bullet on the
+   ordinary outline column. Its descendant guide is slightly heavier to identify
+   the embedded boundary without a box. */
 .block-embed-host > .block-main > .block-content-wrapper > .macro-host {
   padding: 0;
 }
@@ -7673,7 +7970,7 @@ html.tine-embed-shading-accent .embed-block {
 }
 .embed-page-header {
   display: flex;
-  align-items: center;
+  align-items: flex-start;
   gap: 6px;
   min-height: calc(var(--ls-block-line-height) + 2 * var(--ls-block-content-pad-y));
 }
@@ -7681,6 +7978,8 @@ html.tine-embed-shading-accent .embed-block {
   flex: none;
   width: 14px;
   height: 14px;
+  /* GH #770: center on the first line, including when the page link wraps. */
+  margin-top: calc((var(--ls-block-line-height) - 14px) / 2);
   fill: currentColor;
   color: var(--text-muted);
 }
@@ -7792,7 +8091,7 @@ html.tine-embed-shading-accent .embed-block {
   align-items: flex-start;
   justify-content: center;
   box-sizing: border-box;
-  padding: calc(var(--overlay-inset-top) + 12vh)
+  padding: calc(var(--overlay-inset-top) + calc(12vh / var(--interface-zoom, 1)))
     calc(var(--overlay-inset-right) + 8px)
     calc(var(--overlay-inset-bottom) + 8px)
     calc(var(--overlay-inset-left) + 8px);
@@ -7801,7 +8100,7 @@ html.tine-embed-shading-accent .embed-block {
 
 .switcher {
   width: 560px;
-  max-width: 90vw;
+  max-width: calc(90vw / var(--interface-zoom, 1));
   background: var(--bg-primary);
   border: 1px solid var(--border-color);
   border-radius: 12px;
@@ -7821,7 +8120,7 @@ html.tine-embed-shading-accent .embed-block {
 }
 
 .switcher-results {
-  max-height: 50vh;
+  max-height: calc(50vh / var(--interface-zoom, 1));
   overflow-y: auto;
   padding: 6px;
 }
@@ -8151,7 +8450,7 @@ html.tine-embed-shading-accent .embed-block {
   /* GH #521: a stored wide width on a smaller window can never swallow the main
      pane or its own resize handle (same bounds as sidebarSizing.rightSidebarMaxWidth;
      drawer mode sets its own max-width above). */
-  max-width: min(70vw, calc(100vw - 360px));
+  max-width: min(calc(70vw / var(--interface-zoom, 1)), calc(calc(100vw / var(--interface-zoom, 1)) - 360px));
   flex: 0 0 auto;
   border-left: 1px solid var(--border-color);
   background: var(--bg-secondary);
@@ -8515,7 +8814,7 @@ html.tine-embed-shading-accent .embed-block {
   max-width: 100%;
   min-width: 0;
   margin: 0 auto;
-  padding: 26px clamp(16px, 3vw, 34px) 48px;
+  padding: 26px clamp(16px, calc(3vw / var(--interface-zoom, 1)), 34px) 48px;
   box-sizing: border-box;
   color: var(--text-primary);
 }
@@ -8736,8 +9035,22 @@ html.tine-embed-shading-accent .embed-block {
   border: 0;
   background: transparent;
 }
-.query-grouping-clear {
-  margin-left: 8px;
+/* GH #619 item 8: the page's properties under its title (GH #753 linked keys). */
+.query-page-props {
+  grid-column: 1 / -1;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 2px 14px;
+  padding: 0 10px 6px;
+  font-size: 12.5px;
+  color: var(--text-secondary);
+  overflow-wrap: anywhere;
+  user-select: text;
+  -webkit-user-select: text;
+  cursor: text;
+}
+.query-page-prop-key {
+  color: var(--text-muted);
 }
 .query-results-list .query-page-props-edit,
 .query-page-props-edit {
@@ -8805,25 +9118,7 @@ html.tine-embed-shading-accent .embed-block {
   border-radius: 9px;
   background: var(--bg-secondary);
 }
-.query-board-column h2 {
-  display: flex;
-  justify-content: space-between;
-  gap: 8px;
-  margin: 0 0 8px;
-  font-size: 13px;
-}
-.query-board-count {
-  color: var(--text-muted);
-  font-weight: 400;
-}
-.query-board-card {
-  display: block;
-  width: 100%;
-  margin-top: 5px;
-  padding: 8px;
-  overflow-wrap: anywhere;
-  text-align: left;
-}
+/* board column heading, count and cards: query.css (F3/F4) */
 
 .query-advanced-overlay {
   align-items: center;
@@ -8831,7 +9126,7 @@ html.tine-embed-shading-accent .embed-block {
 }
 .query-advanced-modal {
   width: min(720px, 100%);
-  max-height: min(720px, 88vh);
+  max-height: min(720px, calc(88vh / var(--interface-zoom, 1)));
   overflow: auto;
   box-sizing: border-box;
   padding: 18px;
@@ -8924,3 +9219,19 @@ html.tine-embed-shading-accent .embed-block {
     gap: 2px;
   }
 }
+.root-recovery-notice { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; padding: 10px 16px; border-bottom: 1px solid var(--border-color); }
+.root-recovery-notice > span { min-width: 0; overflow-wrap: anywhere; }
+.owner-protection-notice { position: relative; flex-shrink: 0; max-height: calc(30vh / var(--interface-zoom, 1)); overflow: auto; padding: 6px 16px; background: var(--background-secondary); }
+.owner-protection-title { flex: 1 1 auto; font-weight: 500; }
+.owner-protection-explanation { min-width: 0; margin-top: 8px; }
+.owner-protection-explanation p { margin: 4px 0; }
+.owner-protection-notice code, .owner-protection-notice pre { white-space: pre-wrap; overflow-wrap: anywhere; user-select: text; }
+.owner-protection-notice details { min-width: 0; }
+.owner-protection-notice details[open] { flex-basis: 100%; }
+.owner-protection-notice summary { cursor: pointer; }
+/* Git sync's fixes (Settings → Graph → Git and its notice): the git command on its own line, wrapped and selectable. */
+.git-sync-fixes { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; margin-top: 4px; }
+.git-sync-fixes code { flex-basis: 100%; white-space: pre-wrap; overflow-wrap: anywhere; user-select: text; }
+.owner-protection-error { flex-basis: 100%; margin: 0; }
+.settings-backup-origin { display: block; color: var(--text-muted); font-size: 12px; overflow-wrap: anywhere; }
+.settings-backup-actions { display: flex; flex-wrap: wrap; justify-content: flex-end; gap: 8px; }

@@ -537,11 +537,15 @@ fn decorate(html: &str, ctx: &Ctx, depth: u8) -> String {
                 let page = unescape(page);
                 if publish_page_allowed(ctx, &page) {
                     out.push_str(&format!(
-                        "<a class=\"ref\" href=\"{}.html\">",
-                        page_slug(ctx, &page)
+                        "<a class=\"ref\" href=\"{}.html\" data-ref=\"{}\">",
+                        page_slug(ctx, &page),
+                        esc_attr(&tine_core::refs::page_key(&page))
                     ));
                 } else {
-                    out.push_str("<span class=\"ref ref-outside\">");
+                    out.push_str(&format!(
+                        "<span class=\"ref ref-outside\" data-ref=\"{}\">",
+                        esc_attr(&tine_core::refs::page_key(&page))
+                    ));
                     inert_link_closures += 1;
                 }
                 strip_brackets = true;
@@ -553,11 +557,15 @@ fn decorate(html: &str, ctx: &Ctx, depth: u8) -> String {
                 let page = unescape(page);
                 if publish_page_allowed(ctx, &page) {
                     out.push_str(&format!(
-                        "<a class=\"tag\" href=\"{}.html\">",
-                        page_slug(ctx, &page)
+                        "<a class=\"tag\" href=\"{}.html\" data-ref=\"{}\">",
+                        page_slug(ctx, &page),
+                        esc_attr(&tine_core::refs::page_key(&page))
                     ));
                 } else {
-                    out.push_str("<span class=\"tag tag-outside\">");
+                    out.push_str(&format!(
+                        "<span class=\"tag tag-outside\" data-ref=\"{}\">",
+                        esc_attr(&tine_core::refs::page_key(&page))
+                    ));
                     inert_link_closures += 1;
                 }
                 continue;
@@ -838,6 +846,8 @@ fn body_blocks(raw: &str, org: bool) -> Vec<Block> {
 struct BeginQuery {
     title: Option<String>,
     query: String,
+    /// `:remove-block-children? false` in the BEGIN_QUERY map (GH #651).
+    keeps_block_children: bool,
 }
 
 enum BeginQueryInspection {
@@ -929,9 +939,15 @@ fn inspect_begin_query(raw: &str, blocks: &[Block]) -> Option<BeginQueryInspecti
         return Some(BeginQueryInspection::Unsupported);
     }
     Some(match tine_core::query_edn::inspect_begin_query(payload) {
-        tine_core::query_edn::BeginQueryMatch::Supported { title, query } => {
-            BeginQueryInspection::Supported(BeginQuery { title, query })
-        }
+        tine_core::query_edn::BeginQueryMatch::Supported {
+            title,
+            query,
+            keeps_block_children,
+        } => BeginQueryInspection::Supported(BeginQuery {
+            title,
+            query,
+            keeps_block_children,
+        }),
         tine_core::query_edn::BeginQueryMatch::Unsupported { .. } => {
             BeginQueryInspection::Unsupported
         }
@@ -1163,7 +1179,6 @@ fn expand_macro(name: &str, args: &[String], ctx: &Ctx, depth: u8) -> String {
     }
 }
 
-/// Run a `{{query …}}` against the graph and render its results as a bordered block.
 fn render_query(graph: &RenderGraph<'_>, src: &str, tql: bool, ctx: &Ctx, depth: u8) -> String {
     render_query_with_title(graph, src, None, tql, ctx, depth)
 }
@@ -1210,11 +1225,8 @@ fn render_query_with_title(
     } else {
         graph.query_bounded(src, dialect, ctx.current_page)
     };
-    if bounded.exceeded {
-        return format!(
-            "<div class=\"query query-too-large\">Query has {} matches; narrow it before publishing.</div>",
-            bounded.total
-        );
+    if let Some(html) = bounded.notice_html() {
+        return html;
     }
     // Keep query rows inside this export's physical owner-page set.
     let pre_filter_total: usize = bounded.total;
@@ -1242,8 +1254,9 @@ fn render_query_with_title(
         render_query_groups(graph, &groups, &mut out, ctx, depth);
         for page in &pages {
             out.push_str(&format!(
-                "<li><a class=\"ref\" href=\"{}.html\">{}</a></li>",
+                "<li><a class=\"ref\" href=\"{}.html\" data-ref=\"{}\">{}</a></li>",
                 esc(&page_slug(ctx, &page.name)),
+                esc_attr(&tine_core::refs::page_key(&page.name)),
                 esc(&page.name)
             ));
         }
@@ -1378,8 +1391,9 @@ fn render_namespace(graph: &RenderGraph<'_>, ns: &str, ctx: &Ctx) -> String {
     );
     for c in &children {
         out.push_str(&format!(
-            "<li><a class=\"ref\" href=\"{}.html\">{}</a></li>",
+            "<li><a class=\"ref\" href=\"{}.html\" data-ref=\"{}\">{}</a></li>",
             page_slug(ctx, c),
+            esc_attr(&tine_core::refs::page_key(c)),
             esc(c)
         ));
     }
@@ -1402,8 +1416,9 @@ fn publish_file_allowed(ctx: &Ctx, page: &str, path: &str) -> bool {
 
 fn render_page_embed_doc(page: &str, doc: &doc::Document, ctx: &Ctx, depth: u8) -> String {
     let mut out = format!(
-        "<div class=\"embed page-embed\"><a class=\"embed-title ref\" href=\"{}.html\">{}</a><ul>",
+        "<div class=\"embed page-embed\"><a class=\"embed-title ref\" href=\"{}.html\" data-ref=\"{}\">{}</a><ul>",
         page_slug(ctx, page),
+        esc_attr(&tine_core::refs::page_key(page)),
         esc(page)
     );
     for b in &doc.roots {
@@ -1488,7 +1503,12 @@ fn render_block(
     // authored IDs. Emitting the `<li id>` and the search-index entry in the SAME place
     // keeps the HTML anchor and the index in lock-step.
     let anchor = anchors.get(b);
-    let class = if ord.marker().is_some() {
+    let view_fold = ctx.pages.is_some() && !b.children.is_empty();
+    let class = if view_fold && ord.marker().is_some() {
+        " class=\"outline-parent ol-item\""
+    } else if view_fold {
+        " class=\"outline-parent\""
+    } else if ord.marker().is_some() {
         " class=\"ol-item\""
     } else {
         ""
@@ -1510,7 +1530,20 @@ fn render_block(
     // canonical render_html; a `# heading` block is wrapped in `<span class="heading-text
     // h{n}">` by render_html itself, so the export markup matches the app) → trailer facets
     // (SCHEDULED/DEADLINE, block properties). Macros in the body are expanded via `ctx`.
-    out.push_str(if b.marker() == Some("DONE") {
+    // Static parents disclose from their own row. Leaves and print keep the
+    // original markup; every static child stays in the document and index.
+    if view_fold {
+        out.push_str(if b.collapsed() {
+            "<details class=\"outline-fold\">"
+        } else {
+            "<details class=\"outline-fold\" open>"
+        });
+    }
+    out.push_str(if view_fold && b.marker() == Some("DONE") {
+        "<summary class=\"b done\">"
+    } else if view_fold {
+        "<summary class=\"b\">"
+    } else if b.marker() == Some("DONE") {
         "<div class=\"b done\">"
     } else {
         "<div class=\"b\">"
@@ -1522,9 +1555,16 @@ fn render_block(
     match &begin_query {
         Some(BeginQueryInspection::Supported(begin)) => {
             if let Some(graph) = ctx.graph {
+                // The live view forwards the option in the macro's trailing options map
+                // (BeginQuery.tsx); the export builds the same macro text.
+                let query = if begin.keeps_block_children {
+                    format!("{} {{:remove-block-children? false}}", begin.query)
+                } else {
+                    begin.query.clone()
+                };
                 out.push_str(&render_query_with_title(
                     graph,
-                    &begin.query,
+                    &query,
                     begin.title.as_deref(),
                     false,
                     ctx,
@@ -1562,7 +1602,7 @@ fn render_block(
             }
         }
     }
-    out.push_str("</div>");
+    out.push_str(if view_fold { "</summary>" } else { "</div>" });
     // A sheet owner's `tine.*` view configuration is chrome (it drove the layout
     // above), not a property chip; every other block keeps all its properties.
     let mut props = b.properties();
@@ -1598,7 +1638,9 @@ fn render_block(
     // A collapsed block hides its children on screen; the print export expands them
     // by default (a PDF usually wants the whole page), but the dialog can keep them
     // folded to match what's visible.
-    if opts.expand_collapsed || !b.collapsed() {
+    // Static pages keep every child in the HTML and let readers disclose it
+    // without a script. Print retains its expand/omit policy.
+    if view_fold || opts.expand_collapsed || !b.collapsed() {
         let mut emit = render_sheets::Emit {
             ctx,
             slug,
@@ -1630,6 +1672,9 @@ fn render_block(
             }
             out.push_str("</ul>");
         }
+    }
+    if view_fold {
+        out.push_str("</details>");
     }
     out.push_str("</li>");
 }
@@ -1700,6 +1745,7 @@ fn shell(title: &str, main: &str, home_href: &str) -> String {
 <a class=\"home pages-link\" href=\"pages.html\">All pages</a>\
 <input id=\"tine-search\" type=\"search\" placeholder=\"Search\u{2026}\" autocomplete=\"off\" spellcheck=\"false\">\
 <div id=\"tine-results\" hidden></div>\
+<button class=\"pages-toggle\" type=\"button\" aria-expanded=\"false\" aria-controls=\"tine-pages\">Pages</button>\
 <nav id=\"tine-pages\"></nav>\
 </aside><main>{main}</main>\
 <script src=\"search-index.js\"></script><script src=\"fuse.min.js\"></script><script src=\"app.js\"></script><script defer src=\"enhance.js\"></script>\
@@ -1937,7 +1983,7 @@ const APP_JS: &str = r#"(function () {
   var blocks = window.__tineBlocks || [];
 
   function esc(s) {
-    return String(s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+    return String(s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
   }
   function basename(p) {
     var parts = String(p).split('/');
@@ -1955,7 +2001,7 @@ const APP_JS: &str = r#"(function () {
     var lis = items.map(function (p) {
       var file = p.slug + '.html';
       var cls = basename(file) === here ? ' class="active"' : '';
-      return '<li><a href="' + file + '"' + cls + '>' + esc(p.title) + '</a></li>';
+      return '<li><a href="' + file + '" data-ref="' + esc(p.ref) + '"' + cls + '>' + esc(p.title) + '</a></li>';
     }).join('');
     return '<div class="sec"><h3>' + esc(title) + '</h3><ul>' + lis + '</ul></div>';
   }
@@ -2037,6 +2083,16 @@ const APP_JS: &str = r#"(function () {
     });
   }
 
+  // ---- narrow screens: the page list folds behind a toggle (style.css) ----
+  var sidebar = nav && nav.parentNode;
+  var toggle = sidebar && sidebar.querySelector('.pages-toggle');
+  if (toggle) {
+    toggle.addEventListener('click', function () {
+      var open = sidebar.classList.toggle('pages-open');
+      toggle.setAttribute('aria-expanded', open ? 'true' : 'false');
+    });
+  }
+
   renderPages();
 })();
 "#;
@@ -2062,12 +2118,55 @@ impl PageSelection {
     }
 
     pub(crate) fn includes(self, page: &CorpusPage) -> bool {
+        if page_is_exports_page(page) && !matches!(self, Self::Preselected) {
+            return false;
+        }
         match (self, page_public_flag(page)) {
             (Self::Preselected, _) => true,
             (_, Some(flag)) => flag,
             (selection, None) => matches!(selection, Self::AllButOptedOut),
         }
     }
+}
+
+/// Why a page selected by a query or a share is still left out of the
+/// published output (SHARE-DIALOG §1–2, D-20261017-SD1). Every export path
+/// asks here; the live site's `Marked`/`AllButOptedOut` selection applies the
+/// same two rules through `PageSelection::includes`.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub enum LeftOut {
+    /// `public:: false`: privacy settings apply on every export run (vision §4.3).
+    Private,
+    /// The exports page (`tine.exports:: true`) holds export definitions and is
+    /// never exported, even when a query selects it.
+    ExportsPage,
+}
+
+pub fn export_left_out(page: &CorpusPage) -> Option<LeftOut> {
+    if page_is_exports_page(page) {
+        Some(LeftOut::ExportsPage)
+    } else if page_public_flag(page) == Some(false) {
+        Some(LeftOut::Private)
+    } else {
+        None
+    }
+}
+
+/// The exports page's marker, `tine.exports:: true` (Org `#+tine.exports:
+/// true`; the stable `tine/exports` spelling through the one alias table),
+/// read from the parser's page properties like `public`.
+pub(crate) fn page_is_exports_page(page: &CorpusPage) -> bool {
+    let org = Format::from_path(page.id.as_str().as_ref()) == Format::Org;
+    let Some(pre) = page.document.pre_block.as_deref() else {
+        return false;
+    };
+    let regions = tine_core::block_regions::parse_document(pre, org);
+    let found = regions.page_properties().any(|property| {
+        tine_core::tine_keys::canonical_key(&property.key) == tine_core::tine_keys::EXPORTS_MARKER
+            && property.value == "true"
+    });
+    found
 }
 
 /// A page's `public` property: Markdown `public:: v` or Org `#+public: v` / head
@@ -2261,13 +2360,15 @@ pub(crate) fn publish_graph(
             ""
         };
         index_list.push_str(&format!(
-            "<li><a class=\"ref\" href=\"{}\">{}</a>{}</li>",
+            "<li><a class=\"ref\" href=\"{}\" data-ref=\"{}\">{}</a>{}</li>",
             file,
+            esc_attr(&tine_core::refs::page_key(name)),
             esc(name),
             tag
         ));
         sidebar_pages.push(json!({
             "title": *name,
+            "ref": tine_core::refs::page_key(name),
             "slug": slug,
             "journal": journal,
             "favorite": favorites.contains(*name),
@@ -2342,6 +2443,18 @@ mod tests {
     }
 
     #[test]
+    fn static_references_expose_normalized_css_names() {
+        let h = render_body(
+            "#AI-Note [[Parent/Elias]] [writer]([[Other/Page]])",
+            &no_refs(),
+        );
+        assert!(h.contains("data-ref=\"ai-note\""), "{h}");
+        assert!(h.contains("data-ref=\"parent/elias\""), "{h}");
+        assert!(h.contains("data-ref=\"other/page\""), "{h}");
+        assert!(!h.contains("data-ref=\"writer\""), "{h}");
+    }
+
+    #[test]
     fn slugify() {
         assert_eq!(slug("Foo Bar"), "foo-bar");
         assert_eq!(slug("n-fold IP"), "n-fold-ip");
@@ -2400,13 +2513,13 @@ mod tests {
         let h = render_body("see [[Foo Bar]] and **bold** and `x` and #tag", &no_refs());
         // page ref → `.html` link, brackets dropped (the decorator); #tag → page link.
         assert!(
-            h.contains("<a class=\"ref\" href=\"foo-bar.html\">Foo Bar</a>"),
+            h.contains("<a class=\"ref\" href=\"foo-bar.html\" data-ref=\"foo bar\">Foo Bar</a>"),
             "{h}"
         );
         assert!(h.contains("<strong>bold</strong>"), "{h}");
         assert!(h.contains("class=\"inline-code\">x</code>"), "{h}");
         assert!(
-            h.contains("<a class=\"tag\" href=\"tag.html\">#tag</a>"),
+            h.contains("<a class=\"tag\" href=\"tag.html\" data-ref=\"tag\">#tag</a>"),
             "{h}"
         );
     }

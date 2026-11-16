@@ -1,9 +1,10 @@
+import { maybeEditorIn } from "../tests/editorDriver";
 import { afterEach, expect, it, vi } from "vitest";
 import { render } from "solid-js/web";
 import { createSignal } from "solid-js";
 import { CollapseSurfaceContext, type CollapseSurfaceApi } from "./Block";
 import { backend } from "../backend";
-import { extendSelectionTo, node, pageByName, resetStore, selectedIds, selectBlock, outdentBlock } from "../document";
+import { extendSelectionTo, node, pageByName, resetStore, selectedIds, selectBlock, outdentBlock, splitBlock, deleteBlock } from "../document";
 import { editingId, endEdit, startEditing } from "../editorController";
 import { mainPaneRouter, resetTabsToJournals } from "../router";
 import { resetNearObserverForTests } from "../lazyObserve";
@@ -12,6 +13,7 @@ import { openInPageFind, setInPageFindQuery, inPageFindMatches, closeInPageFind 
 import { installKeybindings } from "../keybindings";
 import { PageView } from "./Page";
 import * as blockIdentity from "../blockIdentity";
+import * as documentApi from "../document";
 import { setDoc } from "../document/model";
 
 class WindowObserver {
@@ -68,13 +70,13 @@ it.each([400, 1500])("GH #248: typing in a zoomed block does not read identities
     mainPaneRouter.focusBlock("window-0");
     await vi.waitFor(() => expect(host.querySelector(".zoomed-page")).not.toBeNull());
     startEditing("window-0", 0);
-    await vi.waitFor(() => expect(host.querySelector("textarea.block-editor")).not.toBeNull());
+    await vi.waitFor(() => expect(maybeEditorIn(host)).not.toBeNull());
     const identityReads = vi.spyOn(blockIdentity, "existingBlockId");
     // Exercise the shared raw-write boundary used by input and ID stamping.
     for (const suffix of ["x", "xy", "x", ""]) {
       identityReads.mockClear();
       setDoc("byId", "window-0", "raw", `Row 0 unique content${suffix}`);
-      expect(host.querySelector(".zoomed-page textarea.block-editor")).not.toBeNull();
+      expect(maybeEditorIn(host.querySelector<HTMLElement>(".zoomed-page")!)).not.toBeNull();
       expect(identityReads.mock.calls.length).toBeLessThan(30);
     }
   } finally { dispose(); }
@@ -87,6 +89,18 @@ it("GH #623: the routed 2,000-block page mounts bounded shells, including its fi
     expect(host.querySelectorAll(".ls-block").length).toBeLessThan(100);
     expect(node("window-1999")?.raw).toBe("Row 1999 unique content");
     expect(host.querySelector('[data-block-id="window-1999"]')).toBeNull();
+  } finally { dispose(); }
+});
+
+it.each([false, true])("BIGLOAD-090: opening a 2,000-block page (read-only: %s) asks read-only per page, not per block", async readOnly => {
+  // Window sizing and height estimates walk every block of the page; the
+  // read-only fold choice belongs to the page, so a pass asks it once.
+  const readOnlyAsks = vi.spyOn(documentApi, "blockPageReadOnly");
+  if (readOnly) readOnlyAsks.mockReturnValue(true);
+  const { host, dispose } = await mount(2000, true);
+  try {
+    expect(host.querySelector('[data-block-id="window-0"]')).not.toBeNull();
+    expect(readOnlyAsks.mock.calls.length).toBeLessThan(400);
   } finally { dispose(); }
 });
 
@@ -109,11 +123,16 @@ it("occurrence-local collapse compacts large outline geometry without changing t
   };
   const { host, dispose } = await mount(2000, false, true, collapse);
   try {
-    expect(host.querySelectorAll('[data-outline-window] > [aria-hidden="true"]').length).toBeGreaterThan(0);
+    const reserved = () => [...host.querySelectorAll<HTMLElement>('[data-outline-window] > [aria-hidden="true"]')]
+      .reduce((sum, spacer) => sum + parseFloat(spacer.style.height), 0);
+    const expanded = reserved();
+    expect(expanded).toBeGreaterThan(0);
     collapse.setMany(pageByName("Window")!.roots, true);
-    expect(host.querySelectorAll(".ls-block")).toHaveLength(50);
+    // Folding keeps the list windowed (GH #795); what must compact is the space it reserves.
+    expect(reserved()).toBeLessThan(expanded / 10);
     expect(host.querySelector('[data-block-id="window-0"]')).toBeNull();
-    expect(host.querySelectorAll('[data-outline-window] > [aria-hidden="true"]')).toHaveLength(0);
+    revealOutlineBlock("branch-49", host);
+    expect(host.querySelector('[data-block-id="branch-49"]')).not.toBeNull();
     expect(node("branch-0")?.collapsed).toBe(false);
     collapse.setMany(pageByName("Window")!.roots, false);
     revealOutlineBlock("window-1999", host);
@@ -127,7 +146,7 @@ it("click-to-edit retains the clicked instance when editor state changes the pag
   try {
     const content = host.querySelector<HTMLElement>('[data-block-id="window-0"] .block-content-wrapper')!;
     content.dispatchEvent(new MouseEvent("mousedown", { bubbles: true, cancelable: true, button: 0 }));
-    await vi.waitFor(() => expect(host.querySelector('[data-block-id="window-0"] textarea.block-editor')).not.toBeNull());
+    await vi.waitFor(() => expect(maybeEditorIn(host.querySelector<HTMLElement>('[data-block-id="window-0"]')!)).not.toBeNull());
     expect(editingId()).toBe("window-0");
   } finally { dispose(); }
 });
@@ -142,11 +161,64 @@ it("GH #745: outdenting a distant child retains previously visited windows above
     WindowObserver.set(firstWindow, false);
     const spacer = firstWindow.firstElementChild;
     startEditing("window-1000", 4);
-    await vi.waitFor(() => expect(host.querySelector('[data-block-id="window-1000"] textarea')).not.toBeNull());
+    await vi.waitFor(() => expect(maybeEditorIn(host.querySelector<HTMLElement>('[data-block-id="window-1000"]')!)).not.toBeNull());
     outdentBlock("window-1000", 4);
     expect(node("window-1000")?.parent).toBeNull();
     expect(firstWindow.isConnected).toBe(true);
     expect(firstWindow.firstElementChild).toBe(spacer);
+  } finally { dispose(); }
+});
+
+it("GH #745: a structural edit inside a window keeps its other blocks, and the windows after it, mounted", async () => {
+  const { host, dispose } = await mount(2000);
+  try {
+    // 24-row windows: window-0 .. window-23 share the first window; row 5 lives in it.
+    const mountedRows = () => Array.from({ length: 30 }, (_, i) => host.querySelector(`[data-block-id="window-${i}"]`));
+    const windowsOf = () => Array.from(host.querySelectorAll("[data-outline-window]"));
+    for (const w of windowsOf()) WindowObserver.set(w, true);
+    const rows = mountedRows();
+    expect(rows.every(Boolean)).toBe(true);
+    const windowsBefore = windowsOf();
+    expect(windowsBefore.length).toBeGreaterThan(3);
+    // Enter in the middle of a full window grows it past GROUP; it must neither
+    // remount its other blocks nor shift every later window's boundary.
+    splitBlock("window-5", 4);
+    const after = mountedRows();
+    expect(after.filter((el, i) => el !== rows[i]).length).toBe(0);
+    const windowsAfter = windowsOf();
+    expect(windowsAfter.length).toBe(windowsBefore.length);
+    windowsBefore.forEach((w, i) => expect(windowsAfter[i]).toBe(w));
+    // A merge back is as quiet.
+    deleteBlock("window-6");
+    expect(mountedRows()[3]).toBe(rows[3]);
+    expect(windowsOf()[0]).toBe(windowsBefore[0]);
+  } finally { dispose(); }
+});
+
+it("GH #745: successive structural edits retain the editor, window shells and later rows", async () => {
+  const { host, dispose } = await mount(400);
+  try {
+    const windows = [...host.querySelectorAll("[data-outline-window]")];
+    for (const window of windows) WindowObserver.set(window, true);
+    for (const [row, at, key] of [[115, 8, "Enter"], [112, 0, "Enter"], [118, 0, "Backspace"], [104, -1, "Delete"]] as const) {
+      endEdit("page-navigation");
+      const id = `window-${row}`;
+      startEditing(id, at < 0 ? node(id)!.raw.length : at);
+      await vi.waitFor(() => expect(maybeEditorIn(host)?.blockId).toBe(id));
+      const editor = maybeEditorIn(host)!;
+      editor.focus();
+      editor.select(at < 0 ? editor.value().length : at);
+      editor.keydown({ key, bubbles: true, cancelable: true });
+      expect(host.querySelector(".region-failure")).toBeNull();
+      expect(maybeEditorIn(host)).not.toBeNull();
+      await vi.waitFor(() => expect(maybeEditorIn(host)?.element).toBe(document.activeElement));
+      expect(windows.filter(window => !window.isConnected)).toHaveLength(0);
+      expect(host.querySelector('[data-block-id="window-110"]')).not.toBeNull();
+    }
+    expect(node("window-105")).toBeUndefined();
+    expect(host.querySelector('[data-block-id="window-105"]')).toBeNull();
+    expect(node("window-104")?.raw).toContain("Row 105 unique content");
+    expect(maybeEditorIn(host)?.blockId).toBe("window-104");
   } finally { dispose(); }
 });
 
@@ -160,16 +232,34 @@ it("revealing an already-visible row does not pin its window after scrolling awa
   } finally { dispose(); }
 });
 
+it("an offscreen window updates its spacer after a multiline edit and still reveals the edited text", async () => {
+  const { host, dispose } = await mount();
+  try {
+    revealOutlineBlock("window-1000", host);
+    const shell = host.querySelector('[data-block-id="window-1000"]')!.closest<HTMLElement>("[data-outline-window]")!;
+    WindowObserver.set(shell, true);
+    WindowObserver.set(shell, false);
+    const spacerHeight = () => parseFloat(shell.querySelector<HTMLElement>('[aria-hidden="true"]')!.style.height);
+    const before = spacerHeight();
+    const text = Array.from({ length: 30 }, (_, i) => `Updated line ${i}`).join("\n");
+    setDoc("byId", "window-1000", "raw", text);
+    expect(spacerHeight()).toBeGreaterThan(before);
+    expect(host.querySelector('[data-block-id="window-1000"]')).toBeNull();
+    expect(revealOutlineBlock("window-1000", host)).toBe(true);
+    expect(host.querySelector('[data-block-id="window-1000"]')?.textContent).toContain("Updated line 29");
+  } finally { dispose(); }
+});
+
 it("model edit intent mounts an unrendered destination and keeps its caret alive outside the window", async () => {
   const { host, dispose } = await mount();
   try {
     startEditing("window-1000", 4);
-    await vi.waitFor(() => expect(host.querySelector('[data-block-id="window-1000"] textarea')).not.toBeNull());
-    const editor = host.querySelector<HTMLTextAreaElement>('[data-block-id="window-1000"] textarea')!;
-    expect(editor.selectionStart).toBe(4);
-    const window = editor.closest<HTMLElement>("[data-outline-window]")!;
+    await vi.waitFor(() => expect(maybeEditorIn(host.querySelector<HTMLElement>('[data-block-id="window-1000"]')!)).not.toBeNull());
+    const editor = maybeEditorIn(host.querySelector<HTMLElement>('[data-block-id="window-1000"]')!)!;
+    expect(editor.selection()[0]).toBe(4);
+    const window = editor.element.closest<HTMLElement>("[data-outline-window]")!;
     WindowObserver.set(window, false);
-    expect(editor.isConnected).toBe(true);
+    expect(editor.element.isConnected).toBe(true);
     expect(editingId()).toBe("window-1000");
     endEdit("page-navigation");
   } finally { dispose(); }
@@ -252,13 +342,13 @@ it.each(["ArrowDown", "ArrowUp", "Enter", "Backspace", "Tab"])("%s keeps the liv
   try {
     const source = key === "ArrowUp" || key === "Backspace" || key === "Tab" ? "window-23" : "window-22";
     startEditing(source, key === "Backspace" || key === "ArrowUp" ? 0 : node(source)!.raw.length);
-    await vi.waitFor(() => expect(host.querySelector("textarea.block-editor")).not.toBeNull());
-    const textarea = host.querySelector<HTMLTextAreaElement>("textarea.block-editor")!;
-    textarea.dispatchEvent(new KeyboardEvent("keydown", { key, code: key, bubbles: true, cancelable: true }));
+    await vi.waitFor(() => expect(maybeEditorIn(host)).not.toBeNull());
+    const textarea = maybeEditorIn(host)!;
+    textarea.keydown(new KeyboardEvent("keydown", { key, code: key, bubbles: true, cancelable: true }));
     await vi.waitFor(() => {
       const current = editingId();
       expect(current).not.toBeNull();
-      expect(host.querySelector(`[data-block-id="${current}"] textarea.block-editor`)).not.toBeNull();
+      expect(maybeEditorIn(host.querySelector<HTMLElement>(`[data-block-id="${current}"]`)!)).not.toBeNull();
       if (key === "ArrowDown") expect(current).toBe("window-23");
       if (key === "ArrowUp" || key === "Backspace") expect(current).toBe("window-22");
       if (key === "Enter") { expect(current).not.toBe(source); expect(pageByName("Window")!.roots).toHaveLength(2001); }

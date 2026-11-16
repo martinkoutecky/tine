@@ -54,7 +54,7 @@ for (const run of runs) {
   candidates.push({ run, jobs });
 }
 
-const evidence = selectExactCiEvidence(sha, candidates);
+const evidence = selectExactCiEvidence(sha, candidates, { allowDevelopment: process.argv.includes("--allow-development") });
 console.log(
   `Exact-SHA full CI evidence OK: ${sha} via run ${evidence.run.id}`
     + `${evidence.run.html_url ? ` (${evidence.run.html_url})` : ""}.`

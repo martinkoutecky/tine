@@ -34,16 +34,19 @@ pub(crate) enum Diag {
     QueryFailed,
     /// The Store failed on a page read in a way no code names.
     StoreFailed,
+    /// A write's plan failed on an I/O error, or planned no bytes.
+    WriteFailed,
 }
 
 impl Diag {
     #[cfg(test)]
-    pub(crate) const ALL: [Diag; 5] = [
+    pub(crate) const ALL: [Diag; 6] = [
         Diag::GraphLoad,
         Diag::Encode,
         Diag::ReadFailed,
         Diag::QueryFailed,
         Diag::StoreFailed,
+        Diag::WriteFailed,
     ];
 
     /// The id in the error message, the owner's log and the contract.
@@ -54,6 +57,7 @@ impl Diag {
             Self::ReadFailed => "cli-read-failed",
             Self::QueryFailed => "cli-query-failed",
             Self::StoreFailed => "cli-store-failed",
+            Self::WriteFailed => "cli-write-failed",
         }
     }
 }
@@ -65,13 +69,13 @@ pub(crate) fn answer_verb(slot: &GraphSlot, request: &Request) -> Result<Value, 
         "page.show" => {
             let PageArgs { name } = parse(args)?;
             let graph = whole_graph(slot)?;
-            page(slot, resolve_page(&graph, &name)?, "page")
+            page_answer(slot, resolve_page(&graph, &name)?, "page")
         }
         "journal" => {
             let JournalArgs { date } = parse(args)?;
             let day = journal_day(slot, date.as_deref())?;
             let id = slot.store.journal_id(Day(day.ordinal_key()));
-            page(slot, id, "journal")
+            page_answer(slot, id, "journal")
         }
         "block.show" => {
             let BlockArgs { uuid, max_nodes } = parse(args)?;
@@ -79,7 +83,17 @@ pub(crate) fn answer_verb(slot: &GraphSlot, request: &Request) -> Result<Value, 
             let graph = whole_graph(slot)?;
             let max_nodes = max_nodes.unwrap_or(PREVIEW_NODES).clamp(1, PREVIEW_NODES);
             match graph.preview_block(&uuid, max_nodes) {
-                Ok(Some(preview)) => Ok(ok("block", json!({ "block": preview }))),
+                Ok(Some(preview)) => {
+                    let page = resolve_page(&graph, &preview.group.page)?;
+                    // One host read gives the content, positions and
+                    // fingerprints together (review 6); the store preview is
+                    // the fallback, positions only, when the page is busy.
+                    let block = match host_preview(slot, &page, &preview.group, &uuid, max_nodes)? {
+                        Some(block) => block,
+                        None => to_value(&preview)?,
+                    };
+                    Ok(ok("block", json!({ "block": block })))
+                }
                 Ok(None) => Err(not_found(format!("no block has id:: {uuid}"))),
                 Err(error) => Err(read_failed(
                     Diag::ReadFailed,
@@ -158,11 +172,13 @@ pub(crate) fn answer_verb(slot: &GraphSlot, request: &Request) -> Result<Value, 
                 }));
                 return Err(body);
             }
+            let run = slot.begin_query_run();
             let result = crate::query_ir::run(
                 &graph,
                 &parsed.query,
                 &parsed.view,
                 &tine_core::query::ir::ExecutionContext::none(),
+                run.cancel(),
             )
             .map_err(|e| read_failed(Diag::QueryFailed, e))?;
             let mut payload = to_value(&result)?;
@@ -199,12 +215,56 @@ pub(crate) fn answer_verb(slot: &GraphSlot, request: &Request) -> Result<Value, 
                 json!({ "namespace": namespace, "pages": pages }),
             ))
         }
+        "block.edit" => in_run(slot, args, "tine edit", || {
+            super::write::edit_block(slot, args)
+        }),
+        "block.prop" => in_run(slot, args, "tine prop", || {
+            super::write::prop_block(slot, args)
+        }),
+        "block.move" => in_run(slot, args, "tine move", || {
+            super::write::move_block(slot, args)
+        }),
+        "block.delete" => in_run(slot, args, "tine delete", || {
+            super::write::delete_block(slot, args)
+        }),
+        "block.add" => in_run(slot, args, "tine add", || super::add::add_block(slot, args)),
+        "page.create" => in_run(slot, args, "tine page create", || {
+            super::pages::create_named_page(slot, args)
+        }),
+        "page.rename" => super::pages::rename_named_page(slot, args),
+        "page.delete" => in_run(slot, args, "tine page delete", || {
+            super::pages::delete_named_page(slot, args)
+        }),
+        "ref" | "embed" => in_run(slot, args, "tine block id", || {
+            super::pages::block_reference(slot, args, request.verb == "embed")
+        }),
+        "run.begin" => super::git_run::run_begin(slot),
+        "run.show" => super::git_run::run_show(slot, args),
+        "run.end" => super::git_run::serialized(|| super::git_run::run_end(slot, args)),
+        "run.revert" => super::git_run::serialized(|| super::git_run::run_revert(slot, args)),
         other => Err(ErrorBody::new(
             "unknown-verb",
             format!("this owner does not know `{other}`; it may be an older Tine"),
             false,
         )),
     }
+}
+
+/// A write verb, committed to git when its arguments name a run.
+fn in_run(
+    slot: &GraphSlot,
+    args: &Value,
+    subject: &str,
+    verb: impl FnOnce() -> Result<Value, ErrorBody>,
+) -> Result<Value, ErrorBody> {
+    let Some(run) = super::git_run::run_of(args)? else {
+        return verb();
+    };
+    // The save and its commits as one step, in save order (CL1).
+    super::git_run::serialized(|| {
+        super::git_run::check_repository(slot)?;
+        super::write::in_run(Some(run), subject, verb)
+    })
 }
 
 #[derive(Deserialize)]
@@ -254,7 +314,7 @@ struct PagesArgs {
     namespace: Option<String>,
 }
 
-fn parse<T: serde::de::DeserializeOwned>(args: &Value) -> Result<T, ErrorBody> {
+pub(super) fn parse<T: serde::de::DeserializeOwned>(args: &Value) -> Result<T, ErrorBody> {
     super::wire::read_object(args.clone()).map_err(|e| ErrorBody::new("bad-args", e, false))
 }
 
@@ -309,14 +369,14 @@ fn read_failed(diag: Diag, message: String) -> ErrorBody {
     }
 }
 
-fn whole_graph(slot: &GraphSlot) -> Result<WholeGraph, ErrorBody> {
+pub(super) fn whole_graph(slot: &GraphSlot) -> Result<WholeGraph, ErrorBody> {
     slot.store
         .whole_graph()
         .map_err(|e| internal(Diag::GraphLoad, format!("graph load failed: {e:?}")))
 }
 
 /// A persisted `id::` value (A2): runtime block ids change every open.
-fn check_uuid(uuid: &str) -> Result<(), ErrorBody> {
+pub(super) fn check_uuid(uuid: &str) -> Result<(), ErrorBody> {
     let groups: Vec<&str> = uuid.split('-').collect();
     let shaped = groups.iter().map(|g| g.len()).eq([8, 4, 4, 4, 12])
         && groups
@@ -333,9 +393,10 @@ fn check_uuid(uuid: &str) -> Result<(), ErrorBody> {
     }
 }
 
-/// The page a name names, as the app resolves it: a file claimant, else a
-/// sole alias owner, else a journal title.
-fn resolve_page(graph: &WholeGraph, name: &str) -> Result<PageId, ErrorBody> {
+/// The page a name names for a read, as the app resolves it: the owning file
+/// claimant (twins answer their owner), else a sole alias owner, else a
+/// journal title. Writes use [`resolve_write_page`].
+pub(super) fn resolve_page(graph: &WholeGraph, name: &str) -> Result<PageId, ErrorBody> {
     match graph.resolve(name, false) {
         Resolved::Existing { id, .. } => return Ok(id),
         Resolved::Alias { mut owners } if owners.len() == 1 => return Ok(owners.remove(0)),
@@ -359,9 +420,87 @@ fn resolve_page(graph: &WholeGraph, name: &str) -> Result<PageId, ErrorBody> {
     }
 }
 
+/// The page a write names (CLI-DUPNAME, D-20261103-CMA): unlike a read's
+/// preferred claimant, a write never chooses among twins. Several files
+/// claiming `name` (or several pages declaring it as an alias) refuse
+/// `ambiguous`, naming every file, and nothing is written. In-scope threat:
+/// sync delivery or an external editor leaving two files that claim one name
+/// (a sync conflict copy, a case twin, a `title::` collision); writing the
+/// owner silently edits one twin while the agent never learns of the other.
+/// `None`: nothing claims the name. The claimants are the store's answer
+/// (`Resolved::Existing { id, others }`), never a second computation.
+pub(super) fn write_claimant(graph: &WholeGraph, name: &str) -> Result<Option<PageId>, ErrorBody> {
+    let claimants = |resolved| match resolved {
+        Resolved::Existing { id, mut others } => {
+            others.insert(0, id);
+            (others, false)
+        }
+        Resolved::Alias { owners } => (owners, true),
+        Resolved::Absent { .. } => (Vec::new(), false),
+    };
+    let (mut candidates, mut alias) = claimants(graph.resolve(name, false));
+    if candidates.is_empty() {
+        (candidates, alias) = claimants(graph.resolve(name, true));
+    }
+    if candidates.len() > 1 {
+        return Err(several_claimants(name, &candidates, alias));
+    }
+    Ok(candidates.pop())
+}
+
+/// [`write_claimant`] for a write that needs an existing page.
+pub(super) fn resolve_write_page(graph: &WholeGraph, name: &str) -> Result<PageId, ErrorBody> {
+    write_claimant(graph, name)?.ok_or_else(|| not_found(format!("no page is named `{name}`")))
+}
+
+/// The journal file a write to `day` lands in; a day several files claim
+/// (a Markdown and an Org file, a sync conflict copy) refuses as a page name
+/// does ([`write_claimant`]).
+pub(super) fn journal_write_page(
+    slot: &GraphSlot,
+    graph: &WholeGraph,
+    day: JournalDate,
+) -> Result<PageId, ErrorBody> {
+    let config = slot.store.config();
+    let title = JournalFormat::new(
+        config.journal_file_name_format.as_deref(),
+        config.journal_page_title_format.as_deref(),
+    )
+    .title(day);
+    if let Resolved::Existing { id, mut others } = graph.resolve(&title, true) {
+        if !others.is_empty() {
+            others.insert(0, id);
+            return Err(several_claimants(&title, &others, false));
+        }
+    }
+    Ok(slot.store.journal_id(Day(day.ordinal_key())))
+}
+
+/// The refusal of a write whose page name several files (or alias owners)
+/// claim: every file in the message and in `detail.candidates`.
+fn several_claimants(name: &str, candidates: &[PageId], alias: bool) -> ErrorBody {
+    let files = candidates.iter().map(PageId::as_str).collect::<Vec<_>>();
+    let message = if alias {
+        format!(
+            "`{name}` is an alias of {} pages ({}); name one of them; nothing changed",
+            files.len(),
+            files.join(", ")
+        )
+    } else {
+        format!(
+            "{} files claim the page `{name}` ({}); resolve the duplicate in the app (merge them, or rename or remove one file), then retry; nothing changed",
+            files.len(),
+            files.join(", ")
+        )
+    };
+    let mut body = ErrorBody::new("ambiguous", message, false);
+    body.detail = Some(json!({ "admitted": false, "candidates": files }));
+    body
+}
+
 /// The journal day `date` names: today when absent, else `YYYY-MM-DD` (or
 /// `YYYY_MM_DD`), else a title in the graph's journal format.
-fn journal_day(slot: &GraphSlot, date: Option<&str>) -> Result<JournalDate, ErrorBody> {
+pub(super) fn journal_day(slot: &GraphSlot, date: Option<&str>) -> Result<JournalDate, ErrorBody> {
     let Some(date) = date.map(str::trim) else {
         return Ok(JournalDate::today());
     };
@@ -387,7 +526,107 @@ fn journal_day(slot: &GraphSlot, date: Option<&str>) -> Result<JournalDate, Erro
 }
 
 /// Page `id` as the page host sees it: a held page's buffer, else its file.
-fn page(slot: &GraphSlot, id: PageId, kind: &str) -> Result<Value, ErrorBody> {
+/// The byte bound of a preview, as the store's (`PREVIEW_MAX_BYTES`).
+const PREVIEW_BYTES: usize = (32 << 20) - 4 * 1024;
+
+/// `block show` from the host's read of the block's page: the subtree as the
+/// host holds it, bounded like the store's preview (`max_nodes`, then the
+/// byte bound, in outline order), with the handles a page read prints:
+/// page-absolute positions and fingerprints of that same text (design §2), so
+/// a handle it prints resolves to the block it shows or is `stale`. The page
+/// is named as `indexed` names it, the name that resolved to `page`, never the
+/// name the bytes now declare: a `title::` changed since indexing would route
+/// a printed handle to another file (review 7). `None` when the host cannot
+/// read the page now or no longer holds the id there.
+fn host_preview(
+    slot: &GraphSlot,
+    page: &PageId,
+    indexed: &tine_core::model::RefGroup,
+    uuid: &str,
+    max_nodes: usize,
+) -> Result<Option<Value>, ErrorBody> {
+    let Ok(Ok(read)) = crate::page_commands::with_host(slot, |host| host.read(page)) else {
+        return Ok(None);
+    };
+    let Some(parsed) = read
+        .bytes
+        .and_then(|bytes| slot.store.page_of(&read.page, &bytes).ok())
+    else {
+        return Ok(None);
+    };
+    let handle = super::write::Handle::Uuid(uuid.to_ascii_lowercase());
+    let Ok(path) = super::write::resolve_on(&parsed.doc, page, &handle, uuid, false) else {
+        return Ok(None);
+    };
+    let Some(root) = super::write::block_at(&parsed.doc.blocks, &path) else {
+        return Ok(None);
+    };
+    let total = node_count(root);
+    let mut nodes = max_nodes;
+    let mut bytes = PREVIEW_BYTES;
+    let blocks: Vec<_> = bounded(root, &mut nodes, &mut bytes).into_iter().collect();
+    let emitted = max_nodes - nodes;
+    let preview = tine_core::model::BlockPreview {
+        group: tine_core::model::RefGroup {
+            page: indexed.page.clone(),
+            kind: indexed.kind,
+            blocks,
+            evidence: Vec::new(),
+        },
+        truncated: total - emitted,
+    };
+    let mut value = to_value(&preview)?;
+    let org = parsed.doc.format == tine_core::model::Format::Org;
+    let at = super::write::position(&path);
+    if let Some(root) = value["group"]["blocks"]
+        .get_mut(0)
+        .and_then(Value::as_object_mut)
+    {
+        let fp =
+            super::write::fingerprint(root.get("raw").and_then(Value::as_str).unwrap_or(""), org);
+        root.insert("handle".into(), json!(format!("{at}~{fp}")));
+        if let Some(children) = root.get_mut("children") {
+            super::write::annotate_handles(children, org, &format!("{at}."));
+        }
+    }
+    Ok(Some(value))
+}
+
+fn node_count(block: &tine_core::model::BlockDto) -> usize {
+    1 + block.children.iter().map(node_count).sum::<usize>()
+}
+
+/// `block` and its descendants in outline order until a bound is reached,
+/// each node charged as the store's projector charges it (id, text,
+/// properties, tags, breadcrumb, overhead; review 7).
+fn bounded(
+    block: &tine_core::model::BlockDto,
+    nodes: &mut usize,
+    bytes: &mut usize,
+) -> Option<tine_core::model::BlockDto> {
+    if *nodes == 0 || block.raw.len().saturating_add(block.id.len()) > *bytes {
+        return None;
+    }
+    let mut kept = tine_core::model::BlockDto {
+        children: Vec::new(),
+        ..block.clone()
+    };
+    let cost = tine_core::model::block_dto_estimated_bytes(&kept);
+    if cost > *bytes {
+        return None;
+    }
+    *nodes -= 1;
+    *bytes -= cost;
+    for child in &block.children {
+        match bounded(child, nodes, bytes) {
+            Some(child) => kept.children.push(child),
+            None => break,
+        }
+    }
+    Some(kept)
+}
+
+fn page_answer(slot: &GraphSlot, id: PageId, kind: &str) -> Result<Value, ErrorBody> {
     // The host lock is held for the read only (A-K3: nothing under it takes it again).
     let read = crate::page_commands::with_host(slot, |host| host.read(&id))
         .map_err(|_| busy())?
@@ -405,6 +644,16 @@ fn page(slot: &GraphSlot, id: PageId, kind: &str) -> Result<Value, ErrorBody> {
     let revision = read
         .revision
         .map(|(incarnation, version)| json!({ "incarnation": incarnation, "version": version }));
+    let mut blocks = to_value(&parsed.doc.blocks)?;
+    super::write::annotate_handles(
+        &mut blocks,
+        parsed.doc.format == tine_core::model::Format::Org,
+        "",
+    );
+    let mut doc = to_value(&parsed.doc)?;
+    if let Some(fields) = doc.as_object_mut() {
+        fields.insert("blocks".into(), blocks);
+    }
     Ok(ok(
         kind,
         json!({
@@ -413,7 +662,7 @@ fn page(slot: &GraphSlot, id: PageId, kind: &str) -> Result<Value, ErrorBody> {
             "revision": revision,
             "read_only": parsed.read_only,
             "text": String::from_utf8_lossy(&bytes),
-            "page": parsed.doc,
+            "page": doc,
         }),
     ))
 }
@@ -425,7 +674,7 @@ fn store_failed(error: StoreError) -> ErrorBody {
             format!("the page is {len} bytes, over the {limit}-byte parse limit"),
             true,
         ),
-        StoreError::NotFound => not_found("the page does not exist"),
+        StoreError::NotFound(_) => not_found("the page does not exist"),
         StoreError::Closed => busy(),
         other => internal(Diag::StoreFailed, format!("{other:?}")),
     }

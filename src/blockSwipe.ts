@@ -262,8 +262,9 @@ export function swipeDisabledByTags(
 }
 
 export interface BlockSwipeDeps {
-  /** Which touch platform this is (null: swipes are not installed). */
-  platform: "ios" | "android" | null;
+  /** Whether a touch input exists (inputCapability.ts `touchGestures()`);
+   *  false: swipes are not installed. */
+  enabled: boolean;
   /** The user's tag opt-out verdict for this row, asked at touchstart. */
   disabledByTags?(row: Element): boolean;
   editing(): boolean;
@@ -284,7 +285,7 @@ export interface BlockSwipeDeps {
  *  until armed). Release, cancellation and cleanup remove all feedback.
  *  Attachment/frame work is O(1); cueAllowed's cost belongs to the caller. */
 export function attachBlockSwipe(row: HTMLElement, deps: BlockSwipeDeps): () => void {
-  if (!deps.platform) return () => {};
+  if (!deps.enabled) return () => {};
   const doc = row.ownerDocument;
   let committedAt = -Infinity;
   let allowed: Partial<Record<BlockSwipeAction, boolean>> = {};

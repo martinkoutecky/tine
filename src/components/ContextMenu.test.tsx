@@ -3,11 +3,12 @@ import { render } from "solid-js/web";
 import type { JSX } from "solid-js";
 import { ContextMenu, deletePageMenuLabel, pageMenuAvailability } from "./ContextMenu";
 import { initParser } from "../render/parse";
-import { blockProperty, pageByName, readPageProperty, resetStore } from "../document";
+import { blockProperty, pageByName, readPageProperty, resetStore, setPageProperty } from "../document";
 import { editingId, endEdit } from "../editorController";
 import { type Node as StoreNode } from "../document/model";
 import { doc, setDoc } from "../document/model";
 import { closeContextMenu, closeExportModal, closePageProps, exportModal, openContextMenu, openPageContextMenu, pagePropsPanel } from "../ui";
+import { closeShareDialog, shareTarget } from "../shareState";
 import { clearTransientLayersForTest, dismissTopTransient } from "../transientLayers";
 import { backend } from "../backend";
 import { clearClipboardPayload, peekClipboardPayload } from "../clipboard";
@@ -17,6 +18,7 @@ import { Toasts } from "./Toasts";
 import { bindTestHost } from "../document/host/wiring.test.support";
 import { conflictedInHost, openAsLoaded } from "./hostConflict.test.support";
 import { reloadPage } from "../document/workingSet";
+import { noteSeenAnswer, resetSeenForTests } from "../seen/seenState";
 
 describe("PageMenu page-kind availability", () => {
   it("keeps rename page-only but exposes delete for pages and journals", () => {
@@ -206,7 +208,7 @@ describe("BlockMenu — convert an outline into a grid (Show children as →)", 
     dispose();
   });
 
-  it.each(["md", "org"] as const)("sets short text and removes a page icon from the menu through the %s property writer", async (format) => {
+  it.each(["md", "org"] as const)("sets short text in tine.icon and removes a page icon from the menu through the %s property writer", async (format) => {
     load();
     setDoc("pages", 0, "format", format);
     const dispose = mount(() => <ContextMenu />);
@@ -219,10 +221,42 @@ describe("BlockMenu — convert an outline into a grid (Show children as →)", 
       input.value = "AB";
       input.dispatchEvent(new Event("input", { bubbles: true }));
       input.dispatchEvent(new KeyboardEvent("keydown", { key: "Enter", bubbles: true }));
-      expect(readPageProperty("P", "icon")).toBe("AB");
-      expect(pageByName("P")?.preBlock).toContain(format === "org" ? "#+icon: AB" : "icon:: AB");
+      expect(readPageProperty("P", "tine.icon")).toBe("AB");
+      expect(readPageProperty("P", "icon")).toBeNull();
+      expect(pageByName("P")?.preBlock).toContain(format === "org" ? "#+tine.icon: AB" : "tine.icon:: AB");
       openPageContextMenu(10, 10, "P", "page", true);
       document.querySelector<HTMLButtonElement>('[data-page-action-id="remove-page-icon"]')!.click();
+      expect(readPageProperty("P", "tine.icon")).toBeNull();
+      expect(readPageProperty("P", "icon")).toBeNull();
+    } finally { dispose(); }
+  });
+
+  // D-20261018-IC1: `icon::` is the OG-visible fallback. A page that already has only `icon::` is edited
+  // in place (one property, still shown by OG); Remove clears both so a shadowed fallback cannot return.
+  it("edits a legacy icon:: in place and removes both icon properties", async () => {
+    load();
+    reloadPage({ name: "P", title: "P", kind: "page", id: pageByName("P")!.id, pre_block: "icon:: 🏁",
+      blocks: [{ id: "legacy", raw: "Body", collapsed: false, children: [] }] });
+    const dispose = mount(() => <ContextMenu />);
+    try {
+      const set = (value: string) => {
+        openPageContextMenu(10, 10, "P", "page", true);
+        document.querySelector<HTMLButtonElement>('[data-page-action-id="set-page-icon"]')!.click();
+        const input = document.querySelector<HTMLInputElement>('[data-page-icon-input]')!;
+        input.value = value;
+        input.dispatchEvent(new Event("input", { bubbles: true }));
+        input.dispatchEvent(new KeyboardEvent("keydown", { key: "Enter", bubbles: true }));
+      };
+      set("AB");
+      expect(readPageProperty("P", "icon")).toBe("AB");
+      expect(readPageProperty("P", "tine.icon")).toBeNull();
+      setPageProperty("P", "tine.icon", "CD");
+      set("EF");
+      expect(readPageProperty("P", "tine.icon")).toBe("EF");
+      expect(readPageProperty("P", "icon")).toBe("AB");
+      openPageContextMenu(10, 10, "P", "page", true);
+      document.querySelector<HTMLButtonElement>('[data-page-action-id="remove-page-icon"]')!.click();
+      expect(readPageProperty("P", "tine.icon")).toBeNull();
       expect(readPageProperty("P", "icon")).toBeNull();
     } finally { dispose(); }
   });
@@ -462,6 +496,7 @@ describe("BlockMenu — convert an outline into a grid (Show children as →)", 
       "favorite-toggle",
       "copy-as", "copy-page-ref", "copy-link",
       "copy-export",
+      "share",
       "export-pdf",
       "show-in-folder",
       "open-default-app",
@@ -599,7 +634,7 @@ describe("BlockMenu — convert an outline into a grid (Show children as →)", 
     openPageContextMenu(10, 10, "P", "page", true);
     expect(ids()).toEqual([
       "open", "open-sidebar", "open-new-tab", "favorite-toggle",
-      "copy-as", "copy-page-ref", "copy-link", "copy-export", "export-pdf",
+      "copy-as", "copy-page-ref", "copy-link", "copy-export", "share", "export-pdf",
       "show-in-folder", "open-default-app",
     ]);
     closeContextMenu();
@@ -611,11 +646,30 @@ describe("BlockMenu — convert an outline into a grid (Show children as →)", 
     openPageContextMenu(10, 10, "2000-01-01", "journal", true);
     expect(ids()).toEqual([
       "open", "open-sidebar", "open-new-tab", "favorite-toggle",
-      "copy-as", "copy-page-ref", "copy-link", "copy-export", "export-pdf",
+      "copy-as", "copy-page-ref", "copy-link", "copy-export", "share", "export-pdf",
       "show-in-folder", "open-default-app", "page-properties",
       "set-page-icon",
       "carry-unfinished", "delete-journal",
     ]);
+    dispose();
+  });
+
+  it("offers Mark page seen only where a git read answered and the page has a file (ADR 0079)", async () => {
+    load();
+    setDoc("pages", 0, "id", "pages/P.md");
+    const mark = vi.spyOn(backend(), "markPageSeen").mockResolvedValue(undefined);
+    const dispose = mount(() => <ContextMenu />);
+    const item = () => document.querySelector<HTMLElement>('[data-page-action-id="seen-mark"]');
+    resetSeenForTests();
+    openPageContextMenu(10, 10, "P", "page", true);
+    expect(item()).toBeNull();
+    closeContextMenu();
+    noteSeenAnswer(true);
+    openPageContextMenu(10, 10, "P", "page", true);
+    expect(item()?.textContent?.trim()).toBe("Mark page seen");
+    item()!.click();
+    await vi.waitFor(() => expect(mark).toHaveBeenCalledWith("p", "pages/P.md"));
+    resetSeenForTests();
     dispose();
   });
 
@@ -629,6 +683,16 @@ describe("BlockMenu — convert an outline into a grid (Show children as →)", 
     document.querySelector<HTMLButtonElement>('[data-page-action-id="copy-export"]')!.click();
 
     expect(exportModal()).toEqual({ ids: ["parent", "leaf"] });
+    dispose();
+  });
+
+  it("opens the share dialog for the page from the page menu", () => {
+    load();
+    const dispose = mount(() => <ContextMenu />);
+    openPageContextMenu(10, 10, "P", "page", true);
+    document.querySelector<HTMLButtonElement>('[data-page-action-id="share"]')!.click();
+    expect(shareTarget()).toEqual({ page: "P" });
+    closeShareDialog();
     dispose();
   });
 

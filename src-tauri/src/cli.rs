@@ -76,7 +76,7 @@ enum Command {
     },
     /// Show which process owns the graph and what it is doing.
     Status(ReadArgs),
-    /// Read pages.
+    /// Read, create, rename or delete pages.
     Page {
         #[command(subcommand)]
         action: PageAction,
@@ -102,6 +102,20 @@ enum Command {
         block: bool,
         #[command(flatten)]
         read: ReadArgs,
+    },
+    /// Print ((uuid)), durably assigning the block an id when needed.
+    Ref {
+        #[arg(value_name = "BLOCK")]
+        handle: String,
+        #[command(flatten)]
+        write: WriteArgs,
+    },
+    /// Print {{embed ((uuid))}}, ensuring a durable block id first.
+    Embed {
+        #[arg(value_name = "BLOCK")]
+        handle: String,
+        #[command(flatten)]
+        write: WriteArgs,
     },
     /// Search page names and block text, as the app's search does.
     Search {
@@ -133,10 +147,230 @@ enum Command {
         #[command(flatten)]
         read: ReadArgs,
     },
+    /// Replace a block's text. Its properties (id::, status::, tine.author::) and
+    /// children are kept; a property named in the new text replaces the kept one.
+    Edit {
+        /// The block: its id:: UUID, or PAGE/POS~FP as a read prints it.
+        #[arg(value_name = "BLOCK")]
+        handle: String,
+        /// The new text; `-` reads it from standard input.
+        #[arg(value_name = "TEXT", allow_hyphen_values = true)]
+        text: String,
+        #[command(flatten)]
+        write: WriteArgs,
+    },
+    /// Insert a page fragment, attributing every new block to its author.
+    Add {
+        /// Markdown or Org page fragment; `-` reads standard input.
+        #[arg(value_name = "CONTENT", allow_hyphen_values = true)]
+        content: String,
+        #[command(flatten)]
+        place: AddPlace,
+        #[command(flatten)]
+        write: WriteArgs,
+    },
+    #[command(about = crate::i18n_shell::shell_text("en", "shell-cli-delete-help"))]
+    Delete {
+        #[arg(value_name = "BLOCK")]
+        handle: String,
+        #[arg(long, visible_alias = "force", help = crate::i18n_shell::shell_text("en", "shell-cli-delete-confirm-help"))]
+        yes: bool,
+        #[command(flatten)]
+        write: WriteArgs,
+    },
+    /// Move a block, with its children, under, after or before another block
+    /// on the same page.
+    Move {
+        #[arg(value_name = "BLOCK")]
+        handle: String,
+        #[command(flatten)]
+        place: MovePlace,
+        #[command(flatten)]
+        write: WriteArgs,
+    },
+    /// Set or remove one property of a block.
+    Prop {
+        #[command(subcommand)]
+        action: PropAction,
+    },
+    /// Group writes into a git run: each write made with `--run ID` is
+    /// committed (after a snapshot of your own pending edits), and the run can
+    /// be squashed or reverted as one.
+    Run {
+        #[command(subcommand)]
+        action: RunAction,
+    },
+}
+
+#[derive(Debug, Subcommand)]
+enum RunAction {
+    /// Check the graph's git repository and print a new run id.
+    Begin {
+        #[command(flatten)]
+        read: ReadArgs,
+    },
+    /// List the run's commits.
+    Show {
+        #[arg(value_name = "RUN", env = "TINE_RUN")]
+        run: String,
+        #[command(flatten)]
+        read: ReadArgs,
+    },
+    /// Squash the run into one commit when none of it is pushed, branched
+    /// or interleaved with other commits; otherwise leave it as it is.
+    End {
+        #[arg(value_name = "RUN", env = "TINE_RUN")]
+        run: String,
+        /// Subject of the squashed commit.
+        #[arg(long, short = 'm', value_name = "MESSAGE")]
+        message: Option<String>,
+        #[command(flatten)]
+        read: ReadArgs,
+    },
+    /// Undo the run's edits, newest first. A block you changed since keeps
+    /// your text and is listed.
+    Revert {
+        #[arg(value_name = "RUN", env = "TINE_RUN")]
+        run: String,
+        /// Name on the revert commits (default: TINE_AUTHOR, else agent).
+        #[arg(long)]
+        author: Option<String>,
+        #[command(flatten)]
+        read: ReadArgs,
+    },
+}
+
+#[derive(Debug, Subcommand)]
+enum PropAction {
+    /// Set KEY to VALUE on the block.
+    Set {
+        #[arg(value_name = "BLOCK")]
+        handle: String,
+        #[arg(value_name = "KEY")]
+        key: String,
+        #[arg(value_name = "VALUE", allow_hyphen_values = true)]
+        value: String,
+        #[command(flatten)]
+        write: WriteArgs,
+    },
+    /// Remove KEY from the block.
+    Remove {
+        #[arg(value_name = "BLOCK")]
+        handle: String,
+        #[arg(value_name = "KEY")]
+        key: String,
+        #[command(flatten)]
+        write: WriteArgs,
+    },
+}
+
+/// Where `tine move` puts the block: exactly one of the three.
+#[derive(Debug, Args)]
+#[group(required = true, multiple = false)]
+struct MovePlace {
+    /// As the last child of TARGET.
+    #[arg(long, value_name = "TARGET")]
+    under: Option<String>,
+    /// Right after TARGET, as its next sibling.
+    #[arg(long, value_name = "TARGET")]
+    after: Option<String>,
+    /// Right before TARGET, as its previous sibling.
+    #[arg(long, value_name = "TARGET")]
+    before: Option<String>,
+}
+
+#[derive(Debug, Args)]
+#[group(required = true, multiple = false)]
+struct AddPlace {
+    /// Append as the last child of BLOCK.
+    #[arg(long, value_name = "BLOCK")]
+    under: Option<String>,
+    /// Insert as the next sibling of BLOCK.
+    #[arg(long, value_name = "BLOCK")]
+    after: Option<String>,
+    /// Insert as the previous sibling of BLOCK.
+    #[arg(long, value_name = "BLOCK")]
+    before: Option<String>,
+    /// Append to PAGE, creating it when absent.
+    #[arg(long, value_name = "PAGE")]
+    page: Option<String>,
+    /// Append to a journal, creating it when absent: `--journal` is today,
+    /// `--journal=DATE` another day.
+    #[arg(long, value_name = "DATE", num_args = 0..=1, require_equals = true, default_missing_value = "today")]
+    journal: Option<String>,
+}
+
+/// Which graph a write asks, its optional page guard, and how it prints.
+#[derive(Debug, Args)]
+struct WriteArgs {
+    #[command(flatten)]
+    read: ReadArgs,
+    /// Write only if the page is still at this rev (as `page show` prints it);
+    /// required for a bare PAGE/POS without a fingerprint.
+    #[arg(long, value_name = "REV")]
+    rev: Option<String>,
+    /// Commit this write to the graph's git repository as part of RUN (from
+    /// `tine run begin`).
+    #[arg(long, value_name = "RUN", env = "TINE_RUN")]
+    run: Option<String>,
+    /// Author on created blocks and on the run's commits (default: TINE_AUTHOR,
+    /// else agent; blank environment values count as unset). With
+    /// `edit`, the flag (not the variable) also sets the block's tine.author::.
+    #[arg(long)]
+    author: Option<String>,
+}
+
+impl WriteArgs {
+    /// The verb's arguments plus `rev`, `run` and `author`.
+    fn args(&self, mut fields: serde_json::Value) -> serde_json::Value {
+        if let Some(object) = fields.as_object_mut() {
+            object.insert("rev".into(), serde_json::json!(self.rev));
+            object.insert("run".into(), serde_json::json!(self.run));
+            object.insert("author".into(), serde_json::json!(self.author));
+        }
+        fields
+    }
+}
+
+/// Rename is graph-wide; the single-page revision/run options cannot guard it.
+#[derive(Debug, Args)]
+struct RenameOptions {
+    #[command(flatten)]
+    read: ReadArgs,
+    /// Unsupported for graph-wide rename; supplying this option refuses without changes.
+    #[arg(long, value_name = "REV")]
+    rev: Option<String>,
+    /// Unsupported for graph-wide rename; supplying this option (or a nonempty
+    /// TINE_RUN) refuses without changes. End/unset the run before renaming.
+    #[arg(long, value_name = "RUN", env = "TINE_RUN")]
+    run: Option<String>,
 }
 
 #[derive(Debug, Subcommand)]
 enum PageAction {
+    /// Create an empty page; refuse an existing page or alias.
+    Create {
+        name: String,
+        #[command(flatten)]
+        write: WriteArgs,
+    },
+    /// Rename a page and rewrite references, as the app does. An existing
+    /// destination refuses; merges require confirmation in the app.
+    Rename {
+        old: String,
+        new: String,
+        #[command(flatten)]
+        write: RenameOptions,
+    },
+    /// Delete a page to graph trash and report broken references.
+    Delete {
+        name: String,
+        /// Confirm deletion without an interactive prompt.
+        #[arg(long, visible_alias = "force")]
+        yes: bool,
+        #[command(flatten)]
+        write: WriteArgs,
+    },
     /// Show a page's outline (the text a window shows, unsaved edits included).
     Show {
         #[arg(value_name = "PAGE")]
@@ -353,6 +587,24 @@ fn doctor(path: &Path) -> Result<(), String> {
     Err("graph checks found problems".into())
 }
 
+/// Whether `tine edit` was given `--author` itself. An agent's session-wide
+/// `TINE_AUTHOR` names its commits; it must not stamp every block it edits, or
+/// overwrite the `tine.author::` a person's block already has (#840).
+fn edit_author_is_a_flag<I, T>(argv: I) -> bool
+where
+    I: IntoIterator<Item = T>,
+    T: Into<std::ffi::OsString> + Clone,
+{
+    use clap::CommandFactory;
+    Cli::command()
+        .try_get_matches_from(argv)
+        .is_ok_and(|parsed| {
+            parsed.subcommand_matches("edit").is_some_and(|edit| {
+                edit.value_source("author") == Some(clap::parser::ValueSource::CommandLine)
+            })
+        })
+}
+
 /// Handle non-GUI desktop commands before Tauri starts. `None` continues into
 /// the ordinary GUI; `Some(code)` exits after printing the result or error.
 pub(crate) fn dispatch() -> Option<i32> {
@@ -381,9 +633,17 @@ pub(crate) fn dispatch() -> Option<i32> {
             | Command::Block { .. }
             | Command::Journal { .. }
             | Command::Refs { .. }
+            | Command::Ref { .. }
+            | Command::Embed { .. }
             | Command::Search { .. }
             | Command::Query { .. }
-            | Command::Pages { .. }),
+            | Command::Pages { .. }
+            | Command::Edit { .. }
+            | Command::Prop { .. }
+            | Command::Move { .. }
+            | Command::Delete { .. }
+            | Command::Add { .. }
+            | Command::Run { .. }),
         ) => return Some(read_command(command)),
         Some(Command::Export { format }) => export(format).map(|receipt| {
             terminal_stdout(format_args!(
@@ -404,7 +664,7 @@ pub(crate) fn dispatch() -> Option<i32> {
 
 /// A read command: one request to the graph's owner (CLI PROTOCOL §5).
 fn read_command(command: Command) -> i32 {
-    use crate::owner::terminal::read_verb;
+    use crate::owner::terminal::{read_verb, write_verb};
     use serde_json::json;
     match command {
         Command::Status(args) => read_verb(args.target(), "owner.status", json!(null)),
@@ -414,6 +674,32 @@ fn read_command(command: Command) -> i32 {
         Command::Block {
             action: BlockAction::Show { uuid, read: args },
         } => read_verb(args.target(), "block.show", json!({ "uuid": uuid })),
+        Command::Page {
+            action: PageAction::Create { name, write },
+        } => {
+            let args = write.args(json!({"name":name}));
+            write_verb(write.read.target(), "page.create", args)
+        }
+        Command::Page {
+            action: PageAction::Rename { old, new, write },
+        } => {
+            let args = json!({"old":old,"new":new,"rev":write.rev,"run":write.run});
+            write_verb(write.read.target(), "page.rename", args)
+        }
+        Command::Page {
+            action: PageAction::Delete { name, yes, write },
+        } => {
+            let args = write.args(json!({"name":name,"yes":yes}));
+            write_verb(write.read.target(), "page.delete", args)
+        }
+        Command::Ref { handle, write } => {
+            let args = write.args(json!({"handle":handle}));
+            write_verb(write.read.target(), "ref", args)
+        }
+        Command::Embed { handle, write } => {
+            let args = write.args(json!({"handle":handle}));
+            write_verb(write.read.target(), "embed", args)
+        }
         Command::Journal { date, read: args } => {
             read_verb(args.target(), "journal", json!({ "date": date }))
         }
@@ -445,6 +731,103 @@ fn read_command(command: Command) -> i32 {
             namespace,
             read: args,
         } => read_verb(args.target(), "pages", json!({ "namespace": namespace })),
+        Command::Edit {
+            handle,
+            text,
+            write,
+        } => {
+            let text = if text == "-" {
+                let mut buffer = String::new();
+                if let Err(error) =
+                    std::io::Read::read_to_string(&mut std::io::stdin(), &mut buffer)
+                {
+                    eprintln!("tine: could not read the text from standard input: {error}");
+                    return 2;
+                }
+                buffer.trim_end_matches(['\n', '\r']).to_string()
+            } else {
+                text
+            };
+            let mut args = write.args(json!({ "handle": handle, "text": text }));
+            if edit_author_is_a_flag(std::env::args_os()) {
+                args["author_property"] = json!(write.author);
+            }
+            write_verb(write.read.target(), "block.edit", args)
+        }
+        Command::Add {
+            content,
+            place,
+            write,
+        } => {
+            let content = if content == "-" {
+                let mut text = String::new();
+                if let Err(error) = std::io::Read::read_to_string(&mut std::io::stdin(), &mut text)
+                {
+                    eprintln!("tine: could not read content from standard input: {error}");
+                    return 2;
+                }
+                text
+            } else {
+                content
+            };
+            let args = write.args(json!({
+                "content": content, "under": place.under, "after": place.after,
+                "before": place.before, "page": place.page, "journal": place.journal,
+            }));
+            write_verb(write.read.target(), "block.add", args)
+        }
+        Command::Delete { handle, yes, write } => {
+            let args = write.args(json!({ "handle": handle, "yes": yes }));
+            write_verb(write.read.target(), "block.delete", args)
+        }
+        Command::Move {
+            handle,
+            place,
+            write,
+        } => {
+            let (at, to) = match (place.under, place.after, place.before) {
+                (Some(to), _, _) => ("under", to),
+                (_, Some(to), _) => ("after", to),
+                (_, _, Some(to)) => ("before", to),
+                _ => return 2,
+            };
+            let args = write.args(json!({ "handle": handle, "to": to, "at": at }));
+            write_verb(write.read.target(), "block.move", args)
+        }
+        Command::Prop {
+            action:
+                PropAction::Set {
+                    handle,
+                    key,
+                    value,
+                    write,
+                },
+        } => {
+            let args = write.args(json!({ "handle": handle, "key": key, "value": value }));
+            write_verb(write.read.target(), "block.prop", args)
+        }
+        Command::Prop {
+            action: PropAction::Remove { handle, key, write },
+        } => {
+            let args = write.args(json!({ "handle": handle, "key": key, "value": null }));
+            write_verb(write.read.target(), "block.prop", args)
+        }
+        Command::Run { action } => match action {
+            RunAction::Begin { read } => write_verb(read.target(), "run.begin", json!({})),
+            RunAction::Show { run, read } => {
+                read_verb(read.target(), "run.show", json!({ "run": run }))
+            }
+            RunAction::End { run, message, read } => write_verb(
+                read.target(),
+                "run.end",
+                json!({ "run": run, "message": message }),
+            ),
+            RunAction::Revert { run, author, read } => write_verb(
+                read.target(),
+                "run.revert",
+                json!({ "run": run, "author": author }),
+            ),
+        },
         _ => 2,
     }
 }
@@ -499,9 +882,17 @@ fn prepare_console_if_needed(argv: &[OsString]) {
                 | "block"
                 | "journal"
                 | "refs"
+                | "ref"
+                | "embed"
                 | "search"
                 | "query"
                 | "pages"
+                | "add"
+                | "edit"
+                | "prop"
+                | "move"
+                | "delete"
+                | "run"
                 | "-h"
                 | "--help"
                 | "-v"
@@ -529,6 +920,74 @@ mod tests {
 
     fn argv(parts: &[&str]) -> Vec<String> {
         parts.iter().map(|part| (*part).to_owned()).collect()
+    }
+
+    #[test]
+    fn gh840_only_the_flag_sets_author_on_edit() {
+        assert!(edit_author_is_a_flag([
+            "tine",
+            "edit",
+            "A/1~abcdef",
+            "x",
+            "--author",
+            "Ada"
+        ]));
+        assert!(!edit_author_is_a_flag(["tine", "edit", "A/1~abcdef", "x"]));
+        assert!(!edit_author_is_a_flag([
+            "tine", "add", "--page", "P", "--author", "Ada", "x"
+        ]));
+    }
+
+    #[test]
+    fn cli_delete_confirmation_flags_parse() {
+        for flag in ["--yes", "--force"] {
+            let matches = Cli::command()
+                .try_get_matches_from(["tine", "delete", "a/1~abcdef", flag])
+                .unwrap();
+            assert_eq!(matches.subcommand().unwrap().1.get_flag("yes"), true);
+        }
+        Cli::try_parse_from(["tine", "delete", "a/1~abcdef"]).unwrap();
+    }
+
+    #[test]
+    fn page_verbs_and_reference_helpers_parse_as_terminal_writes() {
+        for form in [
+            vec!["tine", "page", "create", "A/B"],
+            vec!["tine", "page", "rename", "A", "a"],
+            vec!["tine", "page", "delete", "A", "--yes", "--rev", "revision"],
+            vec!["tine", "page", "delete", "A", "--force"],
+            vec!["tine", "ref", "A/1~abcdef", "--json"],
+            vec!["tine", "embed", "A/1~abcdef", "--author", "Ada"],
+        ] {
+            Cli::try_parse_from(&form).unwrap();
+            assert_eq!(
+                launch_request(&argv(&form), Path::new("/")),
+                LaunchRequest::Focus
+            );
+        }
+        assert!(Cli::try_parse_from(["tine", "page", "rename", "A"]).is_err());
+        assert!(Cli::try_parse_from(["tine", "ref"]).is_err());
+    }
+
+    #[test]
+    fn rename_help_discloses_unsupported_revision_and_run_options() {
+        let mut command = Cli::command();
+        let rename = command
+            .find_subcommand_mut("page")
+            .unwrap()
+            .find_subcommand_mut("rename")
+            .unwrap();
+        for option in ["rev", "run"] {
+            let help = rename
+                .get_arguments()
+                .find(|arg| arg.get_id() == option)
+                .unwrap()
+                .get_help()
+                .unwrap()
+                .to_string();
+            assert!(help.contains("Unsupported for graph-wide rename"));
+            assert!(help.contains("refuses without changes"));
+        }
     }
 
     #[test]
@@ -589,6 +1048,50 @@ mod tests {
                 "{form:?}"
             );
         }
+    }
+
+    #[test]
+    fn add_accepts_each_target_and_stdin_and_rejects_multiple_targets() {
+        for form in [
+            vec!["tine", "add", "--under", "P/1~abcdef", "-"],
+            vec!["tine", "add", "--after", "P/1~abcdef", "- root"],
+            vec!["tine", "add", "--before", "P/1~abcdef", "text"],
+            vec!["tine", "add", "--page", "P", "--author", "Ada", "text"],
+            vec!["tine", "add", "--journal=2026-10-18", "text"],
+            vec!["tine", "add", "text", "--journal"],
+            vec!["tine", "add", "--journal", "text"],
+        ] {
+            assert!(
+                matches!(
+                    Cli::try_parse_from(&form).unwrap().command,
+                    Some(Command::Add { .. })
+                ),
+                "{form:?}"
+            );
+        }
+        assert!(Cli::try_parse_from([
+            "tine",
+            "add",
+            "--under",
+            "P/1~abcdef",
+            "--page",
+            "P",
+            "text"
+        ])
+        .is_err());
+        assert!(Cli::try_parse_from(["tine", "add", "text"]).is_err());
+        let Some(Command::Add { content, place, .. }) =
+            Cli::try_parse_from(["tine", "add", "--journal", "text"])
+                .unwrap()
+                .command
+        else {
+            panic!("add");
+        };
+        assert_eq!(content, "text");
+        assert_eq!(place.journal.as_deref(), Some("today"));
+        assert!(Cli::try_parse_from(["tine", "add", "--journal"]).is_err());
+        // A date without `=` is content, never a silently re-read date.
+        assert!(Cli::try_parse_from(["tine", "add", "--journal", "2026-10-18", "text"]).is_err());
     }
 
     #[test]
@@ -738,6 +1241,20 @@ mod tests {
             ("tine-status.1", include_str!("../../docs/tine-status.1")),
             ("tine-page.1", include_str!("../../docs/tine-page.1")),
             (
+                "tine-page-create.1",
+                include_str!("../../docs/tine-page-create.1"),
+            ),
+            (
+                "tine-page-rename.1",
+                include_str!("../../docs/tine-page-rename.1"),
+            ),
+            (
+                "tine-page-delete.1",
+                include_str!("../../docs/tine-page-delete.1"),
+            ),
+            ("tine-ref.1", include_str!("../../docs/tine-ref.1")),
+            ("tine-embed.1", include_str!("../../docs/tine-embed.1")),
+            (
                 "tine-page-show.1",
                 include_str!("../../docs/tine-page-show.1"),
             ),
@@ -751,6 +1268,33 @@ mod tests {
             ("tine-refs.1", include_str!("../../docs/tine-refs.1")),
             ("tine-search.1", include_str!("../../docs/tine-search.1")),
             ("tine-query.1", include_str!("../../docs/tine-query.1")),
+            ("tine-edit.1", include_str!("../../docs/tine-edit.1")),
+            ("tine-delete.1", include_str!("../../docs/tine-delete.1")),
+            ("tine-add.1", include_str!("../../docs/tine-add.1")),
+            ("tine-move.1", include_str!("../../docs/tine-move.1")),
+            ("tine-prop.1", include_str!("../../docs/tine-prop.1")),
+            (
+                "tine-prop-set.1",
+                include_str!("../../docs/tine-prop-set.1"),
+            ),
+            (
+                "tine-prop-remove.1",
+                include_str!("../../docs/tine-prop-remove.1"),
+            ),
+            ("tine-run.1", include_str!("../../docs/tine-run.1")),
+            (
+                "tine-run-begin.1",
+                include_str!("../../docs/tine-run-begin.1"),
+            ),
+            (
+                "tine-run-show.1",
+                include_str!("../../docs/tine-run-show.1"),
+            ),
+            ("tine-run-end.1", include_str!("../../docs/tine-run-end.1")),
+            (
+                "tine-run-revert.1",
+                include_str!("../../docs/tine-run-revert.1"),
+            ),
         ];
         if std::env::var_os("TINE_UPDATE_MAN_PAGE").is_some() {
             clap_mangen::generate_to(

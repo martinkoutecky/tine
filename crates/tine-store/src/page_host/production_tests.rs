@@ -10,12 +10,18 @@ use std::fs;
 use std::io;
 use std::path::{Path, PathBuf};
 
+#[path = "production_guard_tests.rs"]
+mod guard_tests;
+#[path = "storage_acceptance_tests.rs"]
+mod storage_acceptance_tests;
+
 struct Fixture {
-    root: tempfile::TempDir,
     graph: PathBuf,
     app: PathBuf,
     trash: PathBuf,
     host: Host<ProductionIo>,
+    // Drop native handles before removing the sandbox, including on Windows.
+    root: tempfile::TempDir,
 }
 
 impl Fixture {
@@ -25,6 +31,13 @@ impl Fixture {
         } else {
             tempfile::tempdir().unwrap()
         };
+        Self::in_empty_root(root)
+    }
+
+    /// Only initialize a fresh directory owned by this fixture.
+    fn in_empty_root(root: tempfile::TempDir) -> Self {
+        assert!(fs::symlink_metadata(root.path()).unwrap().is_dir());
+        assert_eq!(fs::read_dir(root.path()).unwrap().count(), 0);
         let graph = root.path().join("graph");
         let app = root.path().join("app");
         let trash = graph.join("logseq/.tine-trash/pages");
@@ -43,7 +56,7 @@ impl Fixture {
             graph,
             app,
             trash,
-            host: Host::new(io, locks),
+            host: shared_counters(Host::new(io, locks)),
         }
     }
 
@@ -118,6 +131,295 @@ impl Fixture {
         ));
         self.drain();
     }
+
+    /// End all host/adapter custody before enumerating survivors in a new host.
+    fn cold_reopen(self) -> Self {
+        let Self {
+            graph,
+            app,
+            trash,
+            host,
+            root,
+        } = self;
+        drop(host);
+        let io = ProductionIo::attach(&graph, &app, "test-graph", &trash);
+        let locks = ["a.md", "b.md", "c.md"]
+            .into_iter()
+            .map(|key| (key.into(), Arc::new(Mutex::new(()))))
+            .collect();
+        let mut host = shared_counters(Host::new(io, locks));
+        host.stop();
+        assert!(matches!(
+            host.launch(),
+            Disposition::Applied | Disposition::Pending
+        ));
+        let mut reopened = Self {
+            graph,
+            app,
+            trash,
+            host,
+            root,
+        };
+        reopened.drain();
+        reopened
+    }
+}
+
+/// One storage counter set for the host and its adapter, as `binding_launch`
+/// installs the graph's.
+fn shared_counters(mut host: Host<ProductionIo>) -> Host<ProductionIo> {
+    host.fs.storage_diag = host.storage_diag.clone();
+    host
+}
+
+#[test]
+fn storage_diagnostics_count_outcomes_and_recovery() {
+    let mut f = Fixture::new();
+    f.edit("a.md", "private page content");
+    assert_eq!(f.save("a.md"), Outcome::Published);
+    f.edit("a.md", "private unsaved content");
+    f.host
+        .fs
+        .faults
+        .insert(Phase::PageSync, [io::ErrorKind::Other].into());
+    assert_eq!(f.save("a.md"), Outcome::Uncertain);
+    draft_after_failed_save(&mut f, "a.md");
+    let report = f.host.storage_diag.snapshot();
+    assert_eq!(
+        report["pageSaves"],
+        serde_json::json!({
+            "published": 1, "uncertain": 1, "failedOrRefused": 1,
+            "uncertainProof": {
+                "directorySync": 1, "publicationUnread": 0, "publicationMissing": 0,
+                "publicationChanged": 0,
+                "changedFields": {
+                    "modified": 0, "size": 0, "identityDevice": 0, "identityFile": 0,
+                    "changeTime": 0
+                },
+                "lastChange": null
+            }
+        })
+    );
+    assert_eq!(report["draftsWritten"], 1);
+    assert_eq!(report["draftsRecovered"], 0);
+    f.restart();
+    assert_eq!(f.host.storage_diag.snapshot()["draftsRecovered"], 1);
+    let text = report.to_string();
+    assert!(!text.contains("a.md"));
+    assert!(!text.contains("private"));
+    assert!(!text.contains(f.graph.to_str().unwrap()));
+}
+
+/// Run `page`'s save up to its directory sync, call `between`, then finish
+/// it: this save's outcome and the failed step its notice names.
+fn save_around_directory_sync(
+    f: &mut Fixture,
+    page: &str,
+    between: impl FnOnce(&Path),
+) -> (Outcome, Option<&'static str>) {
+    assert_eq!(f.host.start_save(page), Disposition::Pending);
+    let start = f.host.events.len();
+    while f.host.job.as_ref().unwrap().phase != SavePhase::DirectorySync {
+        f.host.advance_save();
+    }
+    between(&f.graph.join(page));
+    f.host.advance_save();
+    assert!(f.host.job.is_none());
+    f.host.events[start..]
+        .iter()
+        .find_map(|event| match event {
+            Event::SaveOutcome { outcome, cause, .. } => {
+                Some((*outcome, cause.and_then(|cause| cause.operation)))
+            }
+            _ => None,
+        })
+        .unwrap()
+}
+
+/// GH #811: an Android 16 phone's saves all ended Uncertain and the toast
+/// named no step, as the M3-1 publication check has no OS error. Each failed
+/// check is named in the notice and counted by kind in the diagnostics; a
+/// change records which stamp fields differ, never their values.
+/// Scenario: sync delivery replaces the page between rename and sync.
+#[test]
+fn an_uncertain_save_names_the_failed_publication_check() {
+    let mut f = Fixture::new();
+    f.edit("a.md", "mine");
+    let (outcome, step) = save_around_directory_sync(&mut f, "a.md", |path| {
+        let delivered = path.with_file_name(".syncthing.a.md.tmp");
+        fs::write(&delivered, b"delivered, longer").unwrap();
+        fs::rename(&delivered, path).unwrap();
+    });
+    assert_eq!(outcome, Outcome::Uncertain);
+    assert_eq!(
+        step,
+        Some("publication check: changed before directory sync")
+    );
+    let proof = &f.host.storage_diag.snapshot()["pageSaves"]["uncertainProof"];
+    assert_eq!(proof["publicationChanged"], 1);
+    assert_eq!(proof["changedFields"]["size"], 1);
+    assert_eq!(proof["lastChange"]["sizeDelta"], 13);
+    #[cfg(unix)]
+    assert_eq!(proof["changedFields"]["identityFile"], 1);
+    assert_eq!(proof["changedFields"]["identityDevice"], 0);
+
+    f.edit("b.md", "mine too");
+    let (outcome, step) =
+        save_around_directory_sync(&mut f, "b.md", |path| fs::remove_file(path).unwrap());
+    assert_eq!(outcome, Outcome::Uncertain);
+    assert_eq!(
+        step,
+        Some("publication check: no file after directory sync")
+    );
+    let report = f.host.storage_diag.snapshot();
+    let proof = &report["pageSaves"]["uncertainProof"];
+    assert_eq!(proof["publicationMissing"], 1);
+    assert_eq!(proof["publicationChanged"], 1);
+    assert_eq!(report["pageSaves"]["uncertain"], 2);
+    let text = report.to_string();
+    assert!(!text.contains("a.md") && !text.contains("mine"));
+}
+
+/// Step a save of `page` to its rename and run `during` inside the
+/// publication read: after its handle's pre-read metadata, before its bytes.
+fn save_with_publication_read(
+    f: &mut Fixture,
+    page: &str,
+    during: impl FnOnce(&Path) + 'static,
+) -> (Outcome, Option<&'static str>) {
+    assert_eq!(f.host.start_save(page), Disposition::Pending);
+    let start = f.host.events.len();
+    while f.host.job.as_ref().unwrap().phase != SavePhase::Rename {
+        f.host.advance_save();
+    }
+    let path = f.graph.join(page);
+    crate::model::READ_PARSE_BYTES_HOOK.with(|hook| {
+        *hook.borrow_mut() = Some(Box::new(move || during(&path)));
+    });
+    for _ in 0..8 {
+        if f.host.job.is_none() {
+            break;
+        }
+        f.host.advance_save();
+    }
+    assert!(f.host.job.is_none());
+    assert!(
+        crate::model::READ_PARSE_BYTES_HOOK.with(|hook| hook.borrow().is_none()),
+        "the publication read ran the disturbance"
+    );
+    f.host.events[start..]
+        .iter()
+        .find_map(|event| match event {
+            Event::SaveOutcome { outcome, cause, .. } => {
+                Some((*outcome, cause.and_then(|cause| cause.operation)))
+            }
+            _ => None,
+        })
+        .unwrap()
+}
+
+/// Move `path`'s modification time a minute on, bytes untouched (its change
+/// time moves with it).
+fn touch_times(path: &Path) {
+    let modified = fs::metadata(path).unwrap().modified().unwrap();
+    fs::OpenOptions::new()
+        .write(true)
+        .open(path)
+        .unwrap()
+        .set_times(fs::FileTimes::new().set_modified(modified + std::time::Duration::from_secs(60)))
+        .unwrap();
+}
+
+/// GH #811 root cause: on Android shared storage with MediaProvider's FUSE
+/// passthrough, the publication read itself copies the backing file's times
+/// into the inode (a rename over a page leaves the replaced file's mtime on
+/// the new one). Every replacement then failed the M3-1 check against the
+/// stamp taken before the read, and its retry replaced again, so every save
+/// of an existing page ended Uncertain. The check now compares the path with
+/// the same handle's stamp after the read.
+/// Scenario: the backing volume moves a file's times as it is read.
+#[test]
+fn gh811_times_that_move_during_the_publication_read_still_publish() {
+    let mut f = Fixture::new();
+    f.edit("a.md", "mine");
+    let (outcome, step) = save_with_publication_read(&mut f, "a.md", touch_times);
+    assert_eq!((outcome, step), (Outcome::Published, None));
+    assert!(f.host.pages["a.md"].clean());
+    assert_eq!(fs::read(f.graph.join("a.md")).unwrap(), b"mine");
+    let proof = &f.host.storage_diag.snapshot()["pageSaves"]["uncertainProof"];
+    assert_eq!(proof["publicationChanged"], 0);
+    // The watcher keeps the stamp taken before the bytes (GH #623): it
+    // describes those bytes, the later one may not.
+    let stamp = f.host.fs.take_stamp("a.md").unwrap();
+    assert_eq!(stamp.rev(), Some(&crate::FileRev::from_bytes(b"mine")));
+    assert!(!stamp.same_metadata(&crate::watch::stamp_metadata(&f.graph.join("a.md")).unwrap()));
+}
+
+/// The post-read stamp is no looser for a replacement: a sync client renames
+/// its copy over the page while the publication read still reads the old
+/// file, and the path then names another file.
+/// Scenario: sync delivery replaces the page during the publication read.
+#[test]
+fn gh811_a_replacement_during_the_publication_read_stays_uncertain() {
+    let mut f = Fixture::new();
+    f.edit("a.md", "mine");
+    let (outcome, step) = save_with_publication_read(&mut f, "a.md", |path| {
+        let delivered = path.with_file_name(".syncthing.a.md.tmp");
+        fs::write(&delivered, b"theirs").unwrap();
+        fs::rename(&delivered, path).unwrap();
+    });
+    assert_eq!(outcome, Outcome::Uncertain);
+    assert_eq!(
+        step,
+        Some("publication check: changed before directory sync")
+    );
+    let proof = &f.host.storage_diag.snapshot()["pageSaves"]["uncertainProof"];
+    assert_eq!(proof["publicationChanged"], 1);
+    #[cfg(unix)]
+    assert_eq!(proof["changedFields"]["identityFile"], 1);
+    assert!(f.host.pages["a.md"].risk);
+}
+
+/// An in-place write that lands during the publication read changes the
+/// bytes read back: the watcher's stamp carries their revision, not the
+/// save's, so its own-write check (`note_own`) reconciles the page as an
+/// external change instead of adopting it.
+/// Scenario: an external editor rewrites the page in place during the read.
+#[test]
+fn gh811_an_in_place_write_during_the_publication_read_reaches_the_watcher() {
+    let mut f = Fixture::new();
+    f.edit("a.md", "mine");
+    let (outcome, _) = save_with_publication_read(&mut f, "a.md", |path| {
+        use std::io::Write;
+        let mut file = fs::OpenOptions::new().write(true).open(path).unwrap();
+        file.write_all(b"MINE").unwrap();
+        file.sync_all().unwrap();
+    });
+    assert_eq!(outcome, Outcome::Published, "the save's bytes landed first");
+    let stamp = f.host.fs.take_stamp("a.md").unwrap();
+    assert_eq!(stamp.rev(), Some(&crate::FileRev::from_bytes(b"MINE")));
+    assert_ne!(stamp.rev(), Some(&crate::FileRev::from_bytes(b"mine")));
+}
+
+#[test]
+fn storage_diagnostics_count_base_revision_refusal_once() {
+    let mut f = Fixture::new();
+    f.edit("a.md", "my unsaved edits");
+    fs::write(f.graph.join("a.md"), b"external change").unwrap();
+    assert_eq!(f.host.start_save("a.md"), Disposition::Pending);
+    f.host.advance_save();
+    f.host.advance_save();
+    assert!(f.host.job.is_none());
+    assert!(f.host.pages["a.md"].conflict);
+    assert_eq!(
+        f.host.storage_diag.snapshot()["pageSaves"]["failedOrRefused"],
+        1
+    );
+    assert_eq!(f.host.start_save("a.md"), Disposition::Disabled);
+    assert_eq!(
+        f.host.storage_diag.snapshot()["pageSaves"]["failedOrRefused"],
+        1
+    );
 }
 
 #[test]
@@ -131,6 +433,77 @@ fn replace_and_create_publish_through_the_real_host() {
     assert_eq!(f.save("c.md"), Outcome::Published);
     assert_eq!(fs::read(f.graph.join("c.md")).unwrap(), b"created");
     assert!(f.host.fs.draft_files(true).is_empty());
+}
+
+#[cfg(unix)]
+#[test]
+fn m3_partial_replan_refusal_retains_root_sync_until_restoration() {
+    let mut f = Fixture::new();
+    f.host.fs.spell("c.md", "new/deep/c.md");
+    f.edit("c.md", "- retained input\n");
+    crate::directory_durability::take_synced_directories();
+
+    // Create new, then move it before deep's parent check: root sync is owed.
+    let root = f.graph.clone();
+    crate::directory_durability::BEFORE_CREATE_CHECK.with(|hook| {
+        *hook.borrow_mut() = Some(Box::new(move || {
+            crate::directory_durability::BEFORE_CREATE_CHECK.with(|hook| {
+                *hook.borrow_mut() = Some(Box::new(move || {
+                    fs::rename(root.join("new"), root.join("old-new")).unwrap();
+                }));
+            });
+        }));
+    });
+    assert_ne!(f.save("c.md"), Outcome::Published);
+    assert!(f.host.pages["c.md"].risk);
+    assert!(crate::directory_durability::take_synced_directories().is_empty());
+
+    // The re-plan has only missing components. Refuse an outside substitution
+    // before its first mkdir can record parent debt; custody must still survive.
+    let outside = f.root.path().join("outside");
+    fs::create_dir(&outside).unwrap();
+    let root = f.graph.clone();
+    let link_to = outside.clone();
+    crate::directory_durability::BEFORE_CREATE_CHECK.with(|hook| {
+        *hook.borrow_mut() = Some(Box::new(move || {
+            std::os::unix::fs::symlink(link_to, root.join("new")).unwrap();
+        }));
+    });
+    assert_ne!(f.save("c.md"), Outcome::Published);
+    assert!(f.host.pages["c.md"].risk);
+    assert!(crate::directory_durability::take_synced_directories().is_empty());
+    assert!(!outside.join("deep").exists());
+
+    // End interference, restore the first created ancestor, and retry through
+    // the same host and original root binding, without reopening the graph.
+    fs::remove_file(f.graph.join("new")).unwrap();
+    fs::rename(f.graph.join("old-new"), f.graph.join("new")).unwrap();
+    let outcome = f.save("c.md");
+    let synced = crate::directory_durability::take_synced_directories();
+    eprintln!(
+        "restored host: outcome={outcome:?}; clean={}; risk={}; synced={synced:?}",
+        f.host.pages["c.md"].clean(),
+        f.host.pages["c.md"].risk
+    );
+    assert_eq!(outcome, Outcome::Published);
+    assert!(f.host.pages["c.md"].clean());
+    assert!(!f.host.pages["c.md"].risk);
+    assert_eq!(
+        fs::read(f.graph.join("new/deep/c.md")).unwrap(),
+        b"- retained input\n"
+    );
+    assert!(
+        synced.contains(&f.graph),
+        "published without ever paying original root debt"
+    );
+    assert_eq!(
+        synced,
+        [
+            f.graph.clone(),
+            f.graph.join("new"),
+            f.graph.join("new/deep")
+        ]
+    );
 }
 
 #[test]
@@ -154,6 +527,34 @@ fn real_page_read_error_is_not_absence_and_cannot_publish_over_it() {
     assert!(!f.host.pages.contains_key("c.md"));
     assert!(f.graph.join("c.md").is_dir());
     assert_eq!(f.host.start_save("c.md"), Disposition::Disabled);
+}
+
+/// Audit L6-02: the host reads pages through the store's 64 MiB parse cap.
+/// An external replacement past it fails the read (the save cannot publish
+/// over it) instead of allocating the whole file; the typed text stays.
+#[test]
+fn a_page_replaced_past_the_parse_cap_is_a_read_failure_and_keeps_the_typing() {
+    let mut f = Fixture::new();
+    f.edit("a.md", "mine");
+    let huge = fs::OpenOptions::new()
+        .write(true)
+        .open(f.graph.join("a.md"))
+        .unwrap();
+    huge.set_len(crate::PARSE_INPUT_MAX_BYTES + 1).unwrap();
+    drop(huge);
+    assert!(f.host.fs.read_page("a.md").is_err());
+    assert_ne!(f.save("a.md"), Outcome::Published);
+    assert_eq!(
+        fs::metadata(f.graph.join("a.md")).unwrap().len(),
+        crate::PARSE_INPUT_MAX_BYTES + 1
+    );
+    let page = &f.host.pages["a.md"];
+    assert_eq!(page.buf.as_deref(), Some(&b"mine"[..]));
+    assert!(page
+        .obs
+        .as_ref()
+        .and_then(|obs| obs.as_ref())
+        .is_none_or(|obs| obs.len() as u64 <= crate::PARSE_INPUT_MAX_BYTES));
 }
 
 #[test]
@@ -319,7 +720,6 @@ fn graph_unsupported_is_distinct_and_does_not_refuse_betas_tolerated_set() {
         io::ErrorKind::Unsupported,
         io::ErrorKind::InvalidInput,
         io::ErrorKind::PermissionDenied,
-        io::ErrorKind::NotFound,
     ] {
         let mut f = Fixture::new();
         crate::directory_durability::SYNC_ERROR.with(|error| error.set(Some(kind)));
@@ -334,6 +734,26 @@ fn graph_unsupported_is_distinct_and_does_not_refuse_betas_tolerated_set() {
         assert!(f.host.pages["a.md"].clean());
         assert_eq!(fs::read(f.graph.join("a.md")).unwrap(), b"mine");
     }
+}
+
+#[test]
+fn missing_directory_sync_is_an_uncertain_save_not_unsupported() {
+    let mut f = Fixture::new();
+    f.edit("a.md", "mine");
+    assert_eq!(f.host.start_save("a.md"), Disposition::Pending);
+    for _ in 0..3 {
+        f.host.advance_save();
+    }
+    crate::directory_durability::SYNC_ERROR.with(|error| error.set(Some(io::ErrorKind::NotFound)));
+    f.host.advance_save();
+    assert!(f.host.pages["a.md"].risk);
+    assert!(f.host.events.iter().any(|event| matches!(
+        event,
+        Event::SaveOutcome {
+            outcome: Outcome::Uncertain,
+            ..
+        }
+    )));
 }
 
 #[test]
@@ -1730,8 +2150,10 @@ fn an_old_spelling_draft_and_custody_marker_recover_through_the_entry_spelling()
 /// old-spelling draft does not recover a separate `Foo.md` after a crash.
 /// On a folding volume no distinct `foo.md` can exist: the target reads as
 /// the source's own entry, so the two-key rename refuses and writes nothing
-/// (a case-only move there is the single-key alias respell, tested by
-/// `a_request_queued_before_a_spelling_move_applies_to_the_same_page_after_it`).
+/// (a case-only move there is the driver's single-key spelling command;
+/// binding tests `a_folded_move_operation_keeps_its_key_and_rewrites_referrers`
+/// and `a_spelling_move_with_pending_input_is_refused_and_preserves_input_and_spelling`
+/// cover its success and pending-input refusal).
 #[test]
 fn a_case_only_rename_to_a_distinct_entry_is_a_two_key_host_rename() {
     let mut f = Fixture::new();
@@ -1766,43 +2188,6 @@ fn a_case_only_rename_to_a_distinct_entry_is_a_two_key_host_rename() {
     assert_eq!(spelled(&f.graph, "foo.md"), ["foo.md"]);
     assert!(trash_holds(&f, b"edited"));
 }
-
-/// STEP3 §2: a request queued before the alias spelling move applies to the
-/// same page after it, and the page's I/O follows the new spelling. The
-/// move is case-only, so on a folding volume it is the alias respell; on
-/// every volume the listed spelling must actually change.
-#[test]
-fn a_request_queued_before_a_spelling_move_applies_to_the_same_page_after_it() {
-    let mut f = Fixture::new();
-    f.send("a.md", RequestKind::Open);
-    let version = f.host.pages["a.md"].version;
-    let request = Request {
-        id: f.host.last_admitted + 1,
-        generation: f.host.generation,
-        page: "a.md".into(),
-        kind: RequestKind::Submit {
-            bytes: text("typed"),
-            version,
-            resolve: None,
-        },
-    };
-    assert_eq!(f.host.admit(request), Disposition::Applied);
-    // The retained writer: reserve, move the entry, respell, release.
-    let keys = BTreeSet::from(["a.md".to_string()]);
-    assert_eq!(f.host.reserve(&keys), Disposition::Applied);
-    fs::rename(f.graph.join("a.md"), f.graph.join("A.md")).unwrap();
-    f.host.respell("a.md", "A.md", Arc::new(Mutex::new(())));
-    assert_eq!(f.host.release(&keys), Disposition::Applied);
-    let page = &f.host.pages["a.md"];
-    assert!(!page.conflict && page.buf == text("A"), "{page:?}");
-    assert_eq!(f.host.dequeue(), Disposition::Pending);
-    assert_eq!(f.host.apply_request(), Disposition::Applied);
-    assert_eq!(f.host.pages["a.md"].buf, text("typed"));
-    assert_eq!(f.save("a.md"), Outcome::Published);
-    assert_eq!(fs::read(f.graph.join("A.md")).unwrap(), b"typed");
-    assert_eq!(spelled(&f.graph, "a.md"), ["A.md"]);
-}
-
 fn twin_events(f: &Fixture) -> Vec<String> {
     f.host
         .events
@@ -2255,4 +2640,120 @@ fn gh685_unreadable_os_ancestor_keeps_drafts_on() {
         "GH #685: crash recovery must stay on"
     );
     assert!(app.join("drafts-v2/g").is_dir());
+}
+
+/// Backdate every trash ancestor's modification time past `SETTLED`, each to
+/// a distinct time so a later entry change always moves it.
+#[cfg(all(feature = "test-faults", unix))] // the witness is Unix-only; Windows cannot open a directory as a file
+fn settle(f: &Fixture) {
+    use std::sync::atomic::{AtomicU64, Ordering};
+    static AGE: AtomicU64 = AtomicU64::new(3_600);
+    for dir in chain(f).iter().skip(1) {
+        let age = AGE.fetch_add(1, Ordering::Relaxed);
+        let time = std::time::SystemTime::now() - std::time::Duration::from_secs(age);
+        fs::File::open(dir).unwrap().set_modified(time).unwrap();
+    }
+}
+
+/// GH3 step 2 (Martin 2026-10-11 "redundant post-move ancestor syncs"): once a
+/// deletion has synced every trash ancestor durably in this incarnation, later
+/// deletions sync only the trash directory. A failed chain sync, a recreated
+/// chain directory and a relaunch each sync the whole chain again.
+#[cfg(all(feature = "test-faults", unix))]
+#[test]
+fn trash_ancestors_are_synced_once_per_incarnation() {
+    use crate::directory_durability::{take_synced_directories, SYNC_ERROR};
+    let f = &mut Fixture::new();
+    for name in ["p1", "p2", "p3", "p4", "p5"] {
+        fs::write(f.trash.join(name), name).unwrap();
+    }
+    let whole = chain(f);
+    assert_eq!(whole.len(), 4, "{whole:?}");
+    // A sync the filesystem does not offer witnesses nothing either.
+    settle(f);
+    take_synced_directories();
+    SYNC_ERROR.with(|error| error.set(Some(io::ErrorKind::InvalidInput)));
+    assert_eq!(f.host.fs.trash_sync("a.md", "p1"), Ok(Witness::Unsupported));
+    assert_eq!(take_synced_directories(), whole);
+    assert_eq!(f.host.fs.trash_sync("a.md", "p1"), Ok(Witness::Durable));
+    assert_eq!(
+        take_synced_directories(),
+        whole,
+        "Unsupported recorded a witness"
+    );
+    // Start over with fresh times.
+    fs::File::open(&whole[1])
+        .unwrap()
+        .set_modified(std::time::SystemTime::now())
+        .unwrap();
+    // Fresh modification times witness nothing (a same-tick change is invisible).
+    take_synced_directories();
+    assert_eq!(f.host.fs.trash_sync("a.md", "p1"), Ok(Witness::Durable));
+    assert_eq!(take_synced_directories(), whole);
+    assert_eq!(f.host.fs.trash_sync("a.md", "p1"), Ok(Witness::Durable));
+    assert_eq!(take_synced_directories(), whole);
+    settle(f);
+    // A failed ancestor sync witnesses nothing.
+    take_synced_directories();
+    SYNC_ERROR.with(|error| error.set(Some(io::ErrorKind::Other)));
+    assert!(f.host.fs.trash_sync("a.md", "p1").is_err());
+    take_synced_directories();
+    assert_eq!(f.host.fs.trash_sync("a.md", "p1"), Ok(Witness::Durable));
+    assert_eq!(take_synced_directories(), whole);
+    assert_eq!(f.host.fs.trash_sync("b.md", "p2"), Ok(Witness::Durable));
+    assert_eq!(take_synced_directories(), vec![f.trash.clone()]);
+    // A tool that sets an ancestor's time back (`rsync -a`, `cp -a`) moves its
+    // status-change time (on the kernel's coarse clock: wait out one tick so
+    // the restore does not share the last change's).
+    std::thread::sleep(std::time::Duration::from_millis(20));
+    let parent = fs::File::open(&whole[1]).unwrap();
+    parent
+        .set_modified(parent.metadata().unwrap().modified().unwrap())
+        .unwrap();
+    assert_eq!(f.host.fs.trash_sync("b.md", "p2"), Ok(Witness::Durable));
+    assert_eq!(take_synced_directories(), whole);
+    assert_eq!(f.host.fs.trash_sync("b.md", "p2"), Ok(Witness::Durable));
+    assert_eq!(take_synced_directories(), vec![f.trash.clone()]);
+    // Another program recreates the trash directory: a new entry to make durable.
+    fs::remove_dir_all(&f.trash).unwrap();
+    fs::create_dir(&f.trash).unwrap();
+    fs::write(f.trash.join("p3"), "p3").unwrap();
+    settle(f); // even with every time settled, the parent's time moved
+    assert_eq!(f.host.fs.trash_sync("a.md", "p3"), Ok(Witness::Durable));
+    assert_eq!(take_synced_directories(), chain(f));
+    assert_eq!(f.host.fs.trash_sync("a.md", "p3"), Ok(Witness::Durable));
+    assert_eq!(take_synced_directories(), vec![f.trash.clone()]);
+    // A new incarnation trusts no earlier witness.
+    relaunch(f);
+    fs::write(f.trash.join("p4"), "p4").unwrap();
+    take_synced_directories();
+    assert_eq!(f.host.fs.trash_sync("a.md", "p4"), Ok(Witness::Durable));
+    assert_eq!(take_synced_directories(), chain(f));
+}
+
+/// D-20261021-GQ3: with marker files off (the Windows setting) a deletion
+/// writes and unlinks no custody marker, and still publishes with the payload
+/// in the trash.
+#[test]
+fn without_marker_files_a_deletion_leaves_no_custody_file() {
+    let mut f = Fixture::new();
+    f.host.fs.marker_files = false;
+    f.send("a.md", RequestKind::Open);
+    assert_eq!(f.host.delete("a.md"), Disposition::Pending);
+    f.drain();
+    reset_syncs();
+    assert_eq!(f.host.start_save("a.md"), Disposition::Pending);
+    f.host.advance_save(); // guard
+    f.host.advance_save(); // marker (named, not written)
+    assert_eq!(markers(&mut f), 0);
+    f.host.advance_save(); // move
+    assert!(!f.graph.join("a.md").exists());
+    assert_eq!(markers(&mut f), 0);
+    while f.host.job.is_some() {
+        f.host.advance_save();
+    }
+    assert_eq!(syncs(), 0, "no marker temp fsync");
+    assert_eq!(markers(&mut f), 0);
+    assert!(f.host.fs.unwritten.is_empty(), "retired");
+    assert!(trash_holds(&f, b"A"));
 }

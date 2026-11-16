@@ -90,7 +90,8 @@ export function installDiskHost(host: TestHost, disk: FakeDisk, options: DiskHos
       state.version = ++version;
       if (stale) state.conflict = true;
       else {
-        try { state.rev = disk.write(key, dto, kinds); state.conflict = false; } catch { state.failed = true; state.owed = { dto, kinds }; }
+        // A newer text that reached the file supersedes what a failed write still owed.
+        try { state.rev = disk.write(key, dto, kinds); state.conflict = false; state.failed = false; state.owed = undefined; } catch { state.failed = true; state.owed = { dto, kinds }; }
       }
       took(id, key, state);
       return null;

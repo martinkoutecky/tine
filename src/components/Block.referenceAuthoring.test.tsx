@@ -1,3 +1,4 @@
+import { maybeEditorIn, type EditorDriver } from "../tests/editorDriver";
 import { afterEach, beforeAll, describe, expect, it, vi } from "vitest";
 import { For, type JSX } from "solid-js";
 import { render } from "solid-js/web";
@@ -38,25 +39,25 @@ function page(raw: string): PageDto {
   return { name: "Reference authoring", kind: "page", title: "Reference authoring", pre_block: null, blocks: [block] };
 }
 
-function update(textarea: HTMLTextAreaElement) {
-  textarea.focus();
-  textarea.setSelectionRange(textarea.value.length, textarea.value.length);
-  textarea.dispatchEvent(new InputEvent("input", { bubbles: true, inputType: "insertText", data: textarea.value.at(-1) }));
+function update(textarea: EditorDriver) {
+  textarea.element.focus();
+  textarea.select(textarea.value().length, textarea.value().length);
+  textarea.reportInput({ bubbles: true, inputType: "insertText", data: textarea.value().at(-1) });
 }
 
-function inputAt(textarea: HTMLTextAreaElement, value: string, caret: number) {
-  textarea.focus();
-  textarea.value = value;
-  textarea.setSelectionRange(caret, caret);
-  textarea.dispatchEvent(new InputEvent("input", { bubbles: true, inputType: "insertText", data: value[caret - 1] ?? null }));
+function inputAt(textarea: EditorDriver, value: string, caret: number) {
+  textarea.element.focus();
+  textarea.replaceText(value);
+  textarea.select(caret, caret);
+  textarea.reportInput({ bubbles: true, inputType: "insertText", data: value[caret - 1] ?? null });
 }
 
 function entry(name: string): PageEntry {
   return { name, kind: "page", date_key: null, path: `pages/${name}.md` };
 }
 
-function accept(textarea: HTMLTextAreaElement, key: "Enter" | "Tab" = "Enter") {
-  textarea.dispatchEvent(new KeyboardEvent("keydown", { key, code: key, bubbles: true, cancelable: true }));
+function accept(textarea: EditorDriver, key: "Enter" | "Tab" = "Enter") {
+  textarea.keydown(new KeyboardEvent("keydown", { key, code: key, bubbles: true, cancelable: true }));
 }
 
 describe("reference authoring", () => {
@@ -70,7 +71,7 @@ describe("reference authoring", () => {
     startEditing("reference-authoring", 0);
     const { root, dispose } = mount(() => <For each={pageByName("Reference authoring")?.roots ?? []}>{id => <Block id={id} />}</For>);
     try {
-      const textarea = root.querySelector("textarea.block-editor") as HTMLTextAreaElement;
+      const textarea = maybeEditorIn(root) as EditorDriver;
       inputAt(textarea, "[[beijing", 9);
       const labels = () => [...document.querySelectorAll(".autocomplete .ac-label")].map(row => row.textContent);
       await vi.waitFor(() => expect(labels()).toContain("北京"));
@@ -95,7 +96,7 @@ describe("reference authoring", () => {
     startEditing("reference-authoring", 0);
     const { root, dispose } = mount(() => <For each={pageByName("Reference authoring")?.roots ?? []}>{id => <Block id={id} />}</For>);
     try {
-      const textarea = root.querySelector("textarea.block-editor") as HTMLTextAreaElement;
+      const textarea = maybeEditorIn(root) as EditorDriver;
       inputAt(textarea, "[[bj", 4);
       await vi.waitFor(() => expect(finish).toBeTypeOf("function"));
       const editor = lookup.mock.calls.find(call => call[0] === "bj")![2]!;
@@ -118,13 +119,13 @@ describe("reference authoring", () => {
     startEditing("reference-authoring", 0);
     const { root, dispose } = mount(() => <For each={pageByName("Reference authoring")?.roots ?? []}>{(id) => <Block id={id} />}</For>);
     try {
-      const textarea = root.querySelector("textarea.block-editor") as HTMLTextAreaElement;
+      const textarea = maybeEditorIn(root) as EditorDriver;
       inputAt(textarea, kind === "page" ? "[[Fz]]" : "#Fz", kind === "page" ? 4 : 3);
       const expected = kind === "page" ? 'Create "Fz"' : "Create #Fz";
       await vi.waitFor(() => expect(document.body.querySelector(".autocomplete .ac-label")?.textContent).toBe(expected));
       expect(quickSwitch).toHaveBeenLastCalledWith("Fz", 100, { pageName: "Reference authoring", blockId: "reference-authoring", originalRaw: "" }, false);
       accept(textarea);
-      expect(textarea.value.trim()).toBe(kind === "page" ? "[[Fz]]" : "#Fz");
+      expect(textarea.value().trim()).toBe(kind === "page" ? "[[Fz]]" : "#Fz");
     } finally { dispose(); }
   });
 
@@ -144,7 +145,7 @@ describe("reference authoring", () => {
     startEditing("reference-authoring", input.length);
     const { root, dispose } = mount(() => <For each={pageByName("Reference authoring")?.roots ?? []}>{(id) => <Block id={id} />}</For>);
     try {
-      const textarea = root.querySelector("textarea.block-editor") as HTMLTextAreaElement;
+      const textarea = maybeEditorIn(root) as EditorDriver;
       inputAt(textarea, input, input.length);
       const labels = () => [...document.body.querySelectorAll(".autocomplete .ac-label")].map((row) => row.textContent);
       const prefix = kind === "tag" ? "#" : "";
@@ -161,12 +162,12 @@ describe("reference authoring", () => {
       } finally { await setActiveLocale("en"); }
       if (kind === "tag") {
         const index = labels().indexOf(`${prefix}TineOutline`);
-        for (let i = 0; i < index; i++) textarea.dispatchEvent(new KeyboardEvent("keydown", { key: "ArrowDown", code: "ArrowDown", bubbles: true, cancelable: true }));
+        for (let i = 0; i < index; i++) textarea.keydown(new KeyboardEvent("keydown", { key: "ArrowDown", code: "ArrowDown", bubbles: true, cancelable: true }));
         accept(textarea);
       } else {
         row.dispatchEvent(new MouseEvent("mousedown", { bubbles: true, cancelable: true }));
       }
-      await vi.waitFor(() => expect(textarea.value.trim()).toBe(kind === "page" ? "[[TineOutline]]" : "#TineOutline"));
+      await vi.waitFor(() => expect(textarea.value().trim()).toBe(kind === "page" ? "[[TineOutline]]" : "#TineOutline"));
     } finally {
       dispose();
     }
@@ -209,13 +210,13 @@ describe("reference authoring", () => {
       <For each={pageByName("Reference authoring")?.roots ?? []}>{(id) => <Block id={id} />}</For>
     ));
     try {
-      const textarea = root.querySelector("textarea.block-editor") as HTMLTextAreaElement;
+      const textarea = maybeEditorIn(root) as EditorDriver;
       update(textarea);
       await vi.waitFor(() => expect(document.body.querySelector(".autocomplete .ac-label")?.textContent).toBe("Page reference"));
       accept(textarea);
       await vi.waitFor(() => expect(doc.byId["reference-authoring"].raw).toBe("[[]]"));
-      expect(textarea.selectionStart).toBe(2);
-      expect(textarea.selectionEnd).toBe(2);
+      expect(textarea.selection()[0]).toBe(2);
+      expect(textarea.selection()[1]).toBe(2);
       expect(document.body.querySelector(".autocomplete")).toBeNull();
     } finally {
       dispose();
@@ -230,7 +231,7 @@ describe("reference authoring", () => {
       <For each={pageByName("Reference authoring")?.roots ?? []}>{(id) => <Block id={id} />}</For>
     ));
     try {
-      const textarea = root.querySelector("textarea.block-editor") as HTMLTextAreaElement;
+      const textarea = maybeEditorIn(root) as EditorDriver;
       inputAt(textarea, "[[P]]", 3);
       await vi.waitFor(() => expect(document.body.querySelector(".autocomplete .ac-label")?.textContent).toBe("Parity Target"));
       expect(quickSwitch).toHaveBeenLastCalledWith("P", 100, { pageName: "Reference authoring", blockId: "reference-authoring", originalRaw: "[[P]]" }, false);
@@ -242,7 +243,7 @@ describe("reference authoring", () => {
       accept(textarea);
 
       await vi.waitFor(() => expect(doc.byId["reference-authoring"].raw).toBe("[[Parity Target]] "));
-      expect(textarea.value).toBe("[[Parity Target]] ");
+      expect(textarea.value()).toBe("[[Parity Target]] ");
       expect(document.body.querySelector(".autocomplete")).toBeNull();
     } finally {
       dispose();
@@ -261,7 +262,7 @@ describe("reference authoring", () => {
       <For each={pageByName("Reference authoring")?.roots ?? []}>{(id) => <Block id={id} />}</For>
     ));
     try {
-      const textarea = root.querySelector("textarea.block-editor") as HTMLTextAreaElement;
+      const textarea = maybeEditorIn(root) as EditorDriver;
       inputAt(textarea, "[[小明]]", 4);
       await vi.waitFor(() => expect(
         [...document.body.querySelectorAll(".autocomplete .ac-label")].map((row) => row.textContent),
@@ -285,13 +286,35 @@ describe("reference authoring", () => {
       <For each={pageByName("Reference authoring")?.roots ?? []}>{(id) => <Block id={id} />}</For>
     ));
     try {
-      const textarea = root.querySelector("textarea.block-editor") as HTMLTextAreaElement;
+      const textarea = maybeEditorIn(root) as EditorDriver;
       inputAt(textarea, "((needle))", 8);
       await vi.waitFor(() => expect(search).toHaveBeenCalled());
       expect(search).toHaveBeenLastCalledWith("needle", 20, "block-picker");
     } finally {
       dispose();
     }
+  });
+
+  it("never offers the edited block or its ancestors as a (( target (OG get-matched-blocks)", async () => {
+    // Once autosaved, the edited block always matches its own `((query`; picking
+    // it, or a block containing it, makes a reference cycle.
+    const hit = (id: string, raw: string): BlockDto => ({ id, raw, collapsed: false, children: [] });
+    vi.spyOn(backend(), "search").mockResolvedValue([{
+      page: "Reference authoring", kind: "page", evidence: [],
+      blocks: [hit("outer", "outer zebracorn"), hit("reference-authoring", "((zebracorn"), hit("target", "pick me zebracorn")],
+    }]);
+    const child: BlockDto = { id: "reference-authoring", raw: "((zebracorn", collapsed: false, children: [] };
+    loadSingle({ name: "Reference authoring", kind: "page", title: "Reference authoring", pre_block: null,
+      blocks: [{ id: "outer", raw: "outer zebracorn", collapsed: false, children: [child] }, hit("target", "pick me zebracorn")] });
+    startEditing("reference-authoring", 11);
+    const { root, dispose } = mount(() => <For each={pageByName("Reference authoring")?.roots ?? []}>{(id) => <Block id={id} />}</For>);
+    try {
+      const editor = maybeEditorIn(root) as EditorDriver;
+      inputAt(editor, "((zebracorn", 11);
+      await vi.waitFor(() => expect(document.body.querySelector(".autocomplete .ac-label")).not.toBeNull());
+      const labels = [...document.body.querySelectorAll(".autocomplete .ac-label")].map((label) => label.textContent);
+      expect(labels).toEqual(["pick me zebracorn"]);
+    } finally { dispose(); }
   });
 
   // An id-less target gets a fresh random UUID, never its runtime locator, even
@@ -327,7 +350,7 @@ describe("reference authoring", () => {
       <For each={pageByName("Reference authoring")?.roots ?? []}>{(id) => <Block id={id} />}</For>
     ));
     try {
-      const textarea = root.querySelector("textarea.block-editor") as HTMLTextAreaElement;
+      const textarea = maybeEditorIn(root) as EditorDriver;
       inputAt(textarea, "((test", 6);
       await vi.waitFor(() => expect(document.body.querySelector(".autocomplete .ac-label")?.textContent).toBe("test"));
       accept(textarea);
@@ -364,7 +387,7 @@ describe("reference authoring", () => {
     startEditing("reference-authoring", typed.length);
     const { root, dispose } = mount(() => <For each={pageByName("Reference authoring")?.roots ?? []}>{(id) => <Block id={id} />}</For>);
     try {
-      const textarea = root.querySelector("textarea.block-editor") as HTMLTextAreaElement;
+      const textarea = maybeEditorIn(root) as EditorDriver;
       inputAt(textarea, typed, typed.length);
       await vi.waitFor(() => expect(document.body.querySelector(".autocomplete .ac-label")?.textContent).toBe("test"));
       accept(textarea);
@@ -395,7 +418,7 @@ describe("reference authoring", () => {
     startEditing("reference-authoring", 8);
     const { root, dispose } = mount(() => <For each={pageByName("Reference authoring")?.roots ?? []}>{(id) => <Block id={id} />}</For>);
     try {
-      const textarea = root.querySelector("textarea.block-editor") as HTMLTextAreaElement;
+      const textarea = maybeEditorIn(root) as EditorDriver;
       inputAt(textarea, "((picked", 8);
       await vi.waitFor(() => expect(document.body.querySelector(".autocomplete .ac-label")?.textContent).toBe("picked"));
       accept(textarea);
@@ -437,7 +460,7 @@ describe("reference authoring", () => {
       <For each={pageByName("Reference authoring")?.roots ?? []}>{(id) => <Block id={id} />}</For>
     ));
     try {
-      const textarea = root.querySelector("textarea.block-editor") as HTMLTextAreaElement;
+      const textarea = maybeEditorIn(root) as EditorDriver;
       inputAt(textarea, "((test", 6);
       await vi.waitFor(() => expect(document.body.querySelector(".autocomplete .ac-label")?.textContent).toBe("test"));
       accept(textarea);
@@ -468,7 +491,7 @@ describe("reference authoring", () => {
       <For each={pageByName("Reference authoring")?.roots ?? []}>{(id) => <Block id={id} />}</For>
     ));
     try {
-      const textarea = root.querySelector("textarea.block-editor") as HTMLTextAreaElement;
+      const textarea = maybeEditorIn(root) as EditorDriver;
       inputAt(textarea, "((test", 6);
       await vi.waitFor(() => expect(document.body.querySelector(".autocomplete .ac-label")?.textContent).toBe("test"));
       accept(textarea);
@@ -493,7 +516,7 @@ describe("reference authoring", () => {
       <For each={pageByName("Reference authoring")?.roots ?? []}>{(id) => <Block id={id} />}</For>
     ));
     try {
-      const textarea = root.querySelector("textarea.block-editor") as HTMLTextAreaElement;
+      const textarea = maybeEditorIn(root) as EditorDriver;
       inputAt(textarea, "[[P]]", 3);
       await vi.waitFor(() => expect(pending.map((request) => request.query)).toEqual(["P"]));
 
@@ -531,7 +554,7 @@ describe("reference authoring", () => {
       <For each={pageByName("Reference authoring")?.roots ?? []}>{(id) => <Block id={id} />}</For>
     ));
     try {
-      const textarea = root.querySelector("textarea.block-editor") as HTMLTextAreaElement;
+      const textarea = maybeEditorIn(root) as EditorDriver;
       inputAt(textarea, "[[Tin]]", 5);
       const rowFor = (label: string) => [...document.body.querySelectorAll(".autocomplete .ac-label")]
         .find((row) => row.textContent === label)?.parentElement;
@@ -540,7 +563,7 @@ describe("reference authoring", () => {
       // An ordinary page carries no alias badge.
       expect(rowFor("Tinsel")?.querySelector(".ac-sub")).toBeNull();
       (rowFor("Tine greet") as HTMLElement).dispatchEvent(new MouseEvent("mousedown", { bubbles: true, cancelable: true }));
-      await vi.waitFor(() => expect(textarea.value.trim()).toBe("[[Tine greet]]"));
+      await vi.waitFor(() => expect(textarea.value().trim()).toBe("[[Tine greet]]"));
     } finally {
       dispose();
     }

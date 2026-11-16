@@ -41,25 +41,36 @@ jobs:
   # (a manual-update download; the updater manifest never references it).
   preflight:
     runs-on: ubuntu-22.04
+    outputs:
+      quick_share_viewer_g1_ready: ${{ steps.viewer-ready.outputs.quick_share_viewer_g1_ready }}
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
         with:
           fetch-depth: 0
       - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
         with:
-          node-version: 20
+          node-version: 22
           cache: npm
       - name: Require exact-SHA full CI evidence
         env:
           GH_TOKEN: ${{ github.token }}
           CI_EVIDENCE_SHA: ${{ github.sha }}
           CI_EVIDENCE_REPOSITORY: ${{ github.repository }}
-        run: node scripts/check-ci-evidence.mjs
+        # A development-purpose CI run (no release metadata check) only
+        # satisfies a build that publishes nothing.
+        run: node scripts/check-ci-evidence.mjs ${{ (github.event_name == 'workflow_dispatch' && inputs.publish == false) && '--allow-development' || '' }}
       - uses: dtolnay/rust-toolchain@b725eda525362e7cf34af9a7243cac1e3f01a7ec # stable
       - uses: swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
         with:
           workspaces: ". -> target"
       - run: npm ci
+      - run: npx playwright install --with-deps chromium
+      - name: Verify the deployed quick share viewer before enabling the writer
+        id: viewer-ready
+        # A missing or incompatible viewer leaves the writer disabled (the output
+        # stays empty); it never blocks an ordinary release.
+        continue-on-error: true
+        run: node scripts/check-release-readiness.mjs --quick-share-only
       - name: Require updater signing key
         env:
           SIGNING_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
@@ -71,6 +82,9 @@ jobs:
       - name: Version, Android code, tag, and changelog agree
         env:
           REQUIRE_RELEASE_READINESS: "1"
+          # An unpublished build of the development line (develop carries the next
+          # version, undated) may skip only the release-metadata checks.
+          TINE_PREFLIGHT_DEVELOPMENT: ${{ (github.event_name == 'workflow_dispatch' && inputs.publish == false) && '1' || '0' }}
         run: node scripts/check-release-preflight.mjs
       - name: lsdoc WASM pin is current
         run: node scripts/check-wasm-pin.mjs
@@ -85,6 +99,8 @@ jobs:
   # they upload immutable workflow artifacts for the assembler/publisher below.
   build:
     needs: preflight
+    env:
+      TINE_QUICK_SHARE_VIEWER_G1_READY: ${{ needs.preflight.outputs.quick_share_viewer_g1_ready }}
     strategy:
       fail-fast: false
       max-parallel: 6
@@ -149,9 +165,13 @@ jobs:
             build-essential curl wget file libssl-dev libxdo-dev \
             webkit2gtk-driver xvfb xauth xdotool openbox x11-utils weston zsync faketime
 
+      - uses: emscripten-core/setup-emsdk@6ab9eb1bda2574c4ddb79809fc9247783eaf9021 # v14
+        with:
+          version: 4.0.20
+
       - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
         with:
-          node-version: 20
+          node-version: 22
           cache: npm
 
       - uses: dtolnay/rust-toolchain@b725eda525362e7cf34af9a7243cac1e3f01a7ec # stable
@@ -376,9 +396,8 @@ jobs:
             echo "::error::AppImage or update metadata is not staged beside the bundle"
             exit 1
           fi
-          # Stable reads GitHub's latest release (gh-releases-zsync); Beta reads
-          # zsync|https://tine.page/updates/beta/<arch>.AppImage.zsync
-          if ! readelf --string-dump=.upd_info "$appimage" | grep -Eq 'gh-releases-zsync\||zsync\|https://tine\.page/updates/beta/'; then
+          # Stable reads GitHub's latest release, Beta its latest prerelease.
+          if ! readelf --string-dump=.upd_info "$appimage" | grep -Eq 'gh-releases-zsync\|'; then
             echo "::error::AppImage is missing embedded update information"
             exit 1
           fi
@@ -522,7 +541,7 @@ jobs:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
       - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
         with:
-          node-version: 20
+          node-version: 22
           cache: npm
       - uses: dtolnay/rust-toolchain@b725eda525362e7cf34af9a7243cac1e3f01a7ec # stable
       - run: npm ci
@@ -586,8 +605,8 @@ jobs:
           retention-days: 14
 
   # The Flatpak bundle builds concurrently from the same offline manifest the
-  # dedicated "Flatpak build test" workflow uses, packaged under the Beta
-  # identity so it installs beside a stable Tine Flatpak. A build failure fails
+  # dedicated "Flatpak build test" workflow uses, packaged under the identity
+  # the tree ships (a Beta installs beside a stable Tine Flatpak). A build failure fails
   # this job, which blocks assembly like any other platform. The identity is the
   # one the tree ships (src-tauri/app-identity.json); flipping the switch to the
   # released identity makes the derivation refuse until this line follows it
@@ -607,7 +626,7 @@ jobs:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
       - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
         with:
-          node-version: 20
+          node-version: 22
       - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
         with:
           name: tine-flatpak-x86_64
@@ -642,6 +661,8 @@ jobs:
   #       ANDROID_KEY_PASSWORD       key password
   android:
     needs: preflight
+    env:
+      TINE_QUICK_SHARE_VIEWER_G1_READY: ${{ needs.preflight.outputs.quick_share_viewer_g1_ready }}
     runs-on: ubuntu-22.04
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
@@ -664,10 +685,14 @@ jobs:
           distribution: temurin
           java-version: "17"
 
+      - uses: emscripten-core/setup-emsdk@6ab9eb1bda2574c4ddb79809fc9247783eaf9021 # v14
+        with:
+          version: 4.0.20
+
       - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
         if: steps.sign.outputs.enabled == 'true'
         with:
-          node-version: 20
+          node-version: 22
           cache: npm
 
       # Pinned to match the F-Droid build recipe EXACTLY (metadata/page.tine.app.yml
@@ -834,8 +859,33 @@ jobs:
   # Merge immutable lane artifacts and generate latest.json exactly once. Manual
   # dispatch stops after uploading this verified candidate and never touches a
   # GitHub Release.
+  quick-share-viewer:
+    needs: preflight
+    runs-on: ubuntu-22.04
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+      - run: npx playwright install --with-deps chromium
+      - name: Build the release's generation 1 viewer
+        run: |
+          export VIEWER_BUILT_FROM="v$(node -p 'require("./package.json").version')"
+          node scripts/build-quick-share-viewer.mjs
+          cp artifacts/quick-share-viewer/quick-share-viewer-g1.zip .
+          node scripts/stage-release-lane.mjs quick-share-viewer-g1 release-candidate "${{ github.sha }}"
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: release-quick-share-viewer-g1
+          path: release-candidate/quick-share-viewer-g1
+          if-no-files-found: error
+          retention-days: 3
+          compression-level: 0
+
   assemble:
-    needs: [preflight, build, android, stage-flatpak]
+    needs: [preflight, build, android, stage-flatpak, quick-share-viewer]
     runs-on: ubuntu-22.04
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0

@@ -9,6 +9,7 @@ import { adoptResults, captureResultsTicket } from "../queryResultsEpoch";
 import type { BlockDto, PageDto, RefGroup } from "../types";
 import { QueryGroups } from "./QueryGroup";
 import { LiveRefGroup } from "./LiveRefGroup";
+import { mainPaneRouter, route } from "../router";
 
 // GH #619 item 1 (OG parity): block.cljs `custom-query-results` groups a page's
 // matches by :block/parent, so `A -> TODO One, TODO Two` shows A once.
@@ -117,10 +118,17 @@ describe("query results group matches by parent (GH #619 item 1)", () => {
     adoptResults(rows, captureResultsTicket());
     const after = mount(() => <LiveRefGroup page="Tasks" kind="page" path="pages/Tasks.md" blocks={rows} surface="query" showBreadcrumb eager />);
     try {
-      await expect.poll(() => after.root.querySelector("button.ref-crumb strong")?.textContent).toBe("Queue");
+      await expect.poll(() => after.root.querySelector('[role="button"].ref-crumb strong')?.textContent).toBe("Queue");
       const crumb = after.root.querySelector(".ref-breadcrumb")!;
       expect(crumb.textContent).not.toContain("**");
       expect(crumb.querySelector(".page-ref")?.textContent).toContain("Work");
+      mainPaneRouter.openPage("Tasks", "page");
+      (crumb.querySelector(".page-ref") as HTMLElement).click();
+      expect(route()).toMatchObject({ name: "Work", kind: "page" });
+      expect(after.root.querySelector('[data-block-id="queue"]')).toBeNull();
+      const ancestor = crumb.querySelector<HTMLElement>('[role="button"].ref-crumb')!;
+      ancestor.dispatchEvent(new KeyboardEvent("keydown", { key: "Enter", bubbles: true, cancelable: true }));
+      await expect.poll(() => after.root.querySelector('[data-block-id="queue"]')).not.toBeNull();
     } finally { after.dispose(); }
   });
 });

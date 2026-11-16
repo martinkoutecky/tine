@@ -7,6 +7,7 @@
 
 import { createEffect, createRoot, createSignal, on, untrack } from "solid-js";
 import { backend } from "../../backend";
+import { captureTransferRollback } from "../history";
 import { benchEvent } from "../../benchEvents";
 import { captureBinding, clearOnBindingInvalidated } from "../../binding";
 import type { ClipboardSourcePage } from "../../clipboard";
@@ -15,8 +16,10 @@ import type { EditKind, EditKinds } from "../../editKind";
 import { editingId } from "../../editorController";
 import { pagePropertyEntries } from "../../editor/properties";
 import { errorFamily } from "../../errorFamily";
-import { bindingOwner, readOwned, writeOwned } from "../../owned";
+import { bindingOwner, ownedWhen, readOwned, readOwnedResource, writeOwned } from "../../owned";
 import { bumpDataRev, bumpPageInventoryRev } from "../../graphSession";
+import { installChangeKeyPublicationHold } from "../../changeKeys";
+import { noteQueryInput } from "../../querySubscription";
 import { dismissToast, pushToast } from "../../toasts";
 import { msg, renderEnglish, type UiText } from "../../i18n";
 import type { BlockDto, MergeDecision, PageDto, PageKind } from "../../types";
@@ -24,13 +27,15 @@ import { openUnsavedRecovery } from "../../unsavedRecovery";
 import { assetWritesStarted, pendingAssetWrites } from "../assetWrites";
 import { aliasDraftBlocks, appendAliasDraft, emptyPage, pageToDto, replaceLandedAliasDraft } from "../convert";
 import { isBlockMoving } from "../edits/moves";
-import { adoptFoldedPageHeader, pageWritable } from "../edits/properties";
+import { adoptFoldedPageHeader, pageWritable, reportInvalidPageHeaderOnExit } from "../edits/properties";
 import { graphRewriteFrozen } from "../graphRewriteState";
 import { pageInstanceGeneration, rekeyPageInstance } from "../instance";
 import { doc, pageByName, setPageId } from "../model";
 import { draftPinned, ensurePageLoaded, forgetPage, installPageContent, rekeyPageIdentityByPath, reportPageLoadRefusal } from "../workingSet";
+import { applyOwnerPageRename } from "../graphRewrite";
 import { HostClient, reviewedDiskToken, type BaselineRev, type DocumentPort, type HostCutSource } from "./client";
-import { runSequence, type SequenceStep } from "./planner";
+import { runSequence } from "./planner";
+import { planSteps } from "./transferPlan";
 import type { DiskToken, HostPort, MailNotice, PageMail, PageOperation, PageRefusal } from "./protocol";
 import { settle, unpublishedAfterDrain } from "./settle";
 import { beginResultsChange, installResultsPendingGate, resetResultsEpoch } from "../../queryResultsEpoch";
@@ -85,6 +90,10 @@ const failed = (error: unknown): PageRefusal => ({ reason: "failed", message: St
  * saves on its own cadence, and the barrier's next `page_wait` on the same
  * bridge reports the failure as a failed barrier. */
 function ignoreSaveHintFailure(_error: unknown): void {}
+
+// A lost flush answer is harmless: the owner stops waiting and refuses the
+// command-line write as `page-busy`; nothing is written.
+function ignoreLostFlushAnswer(_error: unknown): void {}
 
 function hostPort(): HostPort {
   const b = backend();
@@ -173,11 +182,12 @@ function admittedText(key: string, dto: PageDto): void {
 
 /** Bind this window to the graph's page host (after a graph load). A second
  * call for the same binding (a restore relaunched the host) rebinds. */
-export async function bindHost(): Promise<void> {
+export async function bindHost(options: { refreshLoaded?: boolean } = {}): Promise<void> {
   listen();
   watch();
   if (client && bound) {
     await client.rebind();
+    if (options.refreshLoaded) await refreshLoadedHostPages(client);
     hostChanged();
     return;
   }
@@ -196,7 +206,20 @@ export async function bindHost(): Promise<void> {
   bound = true;
   for (const [name, kinds] of early) if (pageByName(name) && kinds.length) next.noteEdit(name, [kinds[0], ...kinds.slice(1)]);
   early.clear();
+  if (options.refreshLoaded) await refreshLoadedHostPages(next);
   hostChanged();
+}
+
+/** After explicit draft adoption, loaded view-only pages also need the new
+ * host's text, including conflicts not yet on disk. Temporarily acquire each
+ * graph page and await its Open answer, without a publication/conflict barrier.
+ * Input was flushed and frozen before the native saved-stop/relaunch. Cost is
+ * one Open/Close per loaded graph page, only on this explicit recovery action. */
+async function refreshLoadedHostPages(c: HostClient): Promise<void> {
+  const names = doc.pages.filter(page => !page.guide && !page.readOnly).map(page => page.name);
+  const releases = names.map(name => c.acquire(name));
+  try { await c.drain(names); }
+  finally { for (const release of releases) release(); }
 }
 
 // The binding's page client and its baseline/tombstone state end with the
@@ -324,7 +347,7 @@ function bumpAfterRefreshRound(c: HostClient): void {
     clearTimeout(hold);
     queuedBump = null;
     if (client !== c) return;
-    bumpDataRev();
+    bumpDataRev(true);
     setHostRevision(value => value + 1);
     if (inventoryPending) { inventoryPending = false; bumpPageInventoryRev(); }
   };
@@ -337,6 +360,7 @@ function bumpAfterRefreshRound(c: HostClient): void {
 export function pendingDataRevision(): boolean {
   return dataTimer !== null || dataWaits > 0 || queuedBump !== null;
 }
+installChangeKeyPublicationHold(pendingDataRevision);
 
 // ------------------------------------------------------------------ state view
 
@@ -484,7 +508,9 @@ function reportProblems(c: HostClient | null, names: string[]): void {
   for (const name of names) {
     const refusal = c!.refusal(name);
     const notice = c!.notice(name);
-    const text = (refusal && !(typeof refusal === "object" ? SILENT.has(refusal.reason) : SILENT.has(refusal))
+    const text = (notice?.operation === "GraphRootMoved"
+      ? notice.draftError ? msg("root-moved-draft-error") : msg("root-moved-notice") : null)
+      ?? (refusal && !(typeof refusal === "object" ? SILENT.has(refusal.reason) : SILENT.has(refusal))
       ? refusalMessage(name, refusal) : null)
       ?? (notice?.twin ? msg("document-save-twin", { name, existing: notice.twin }) : null)
       ?? (notice?.saveError ? msg("document-save-retrying", { name, step: saveStep(notice) }) : null)
@@ -512,6 +538,7 @@ function reportProblems(c: HostClient | null, names: string[]): void {
 export function markDirty(name: string, kinds: EditKind | EditKinds): void {
   const page = pageByName(name);
   if (!page || page.readOnly || page.guide || deletedPages.has(name)) return;
+  noteQueryInput();
   const c = host();
   if (!c) {
     const pending = early.get(name) ?? [];
@@ -603,10 +630,18 @@ export function pageFrozen(name: string): boolean {
 }
 
 export function refuseConflictedMove(pages: Iterable<string>): boolean {
-  const blocked = [...pages].find(isConflicted);
-  if (!blocked) return false;
-  pushToast(msg("document-wiring-resolve-the-conflict-on-first", { value1: blocked }), "error");
-  return true;
+  for (const name of pages) {
+    if (isConflicted(name)) {
+      pushToast(msg("document-wiring-resolve-the-conflict-on-first", { value1: name }), "error");
+      return true;
+    }
+    if (host() && !pageToDto(name)) {
+      const header = pageByName(name)?.roots[0];
+      if (header) reportInvalidPageHeaderOnExit(header);
+      return true;
+    }
+  }
+  return false;
 }
 
 // ------------------------------------------------------------------ barriers
@@ -781,15 +816,28 @@ export function isCreateConflict(error: unknown): boolean {
 
 // ------------------------------------------------------------------ deletion (§12, D4)
 
-/** Delete the page's file through the host: its own input is sent and
- * published first (the host refuses a delete over unsaved input). The host
+const DELETE_DRAIN_TIMEOUT_MS = 5_000;
+
+async function drainForDelete(c: HostClient, name: string): Promise<boolean> {
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  try {
+    return await Promise.race([
+      c.drain([name]).then(() => true),
+      new Promise<boolean>(resolve => { timer = setTimeout(() => resolve(false), DELETE_DRAIN_TIMEOUT_MS); }),
+    ]);
+  } finally { clearTimeout(timer); }
+}
+
+/** Delete through the host: ordinary input is published first; conflicted
+ * input stays until Applied, with a native recovery copy before admission. The host
  * waits for the deletion to publish (Finding B), so only `applied` means the
  * file is gone; `pending`, `uncertain` and `superseded` keep the page and say
  * why. The backend's identity checks reject a twin or a stale `path`; the
  * rejection reaches the caller, which logs it and can report it (I-9). */
 export async function deletePageOnDisk(name: string, kind: PageKind, path?: string, reportFailure?: (reason: UiText) => void): Promise<boolean> {
   const c = host();
-  if (!c || !await settle(c, [name], { noConflict: true })) {
+  const conflicted = !!c?.conflicted(name);
+  if (!c || (!conflicted && !await settle(c, [name], { noConflict: true }))) {
     const reason = c ? msg("delete-reason-unsaved", { name }) : msg("delete-reason-no-host");
     if (reportFailure) reportFailure(reason);
     else if (c && host() === c) pushToast(reason, "error");
@@ -801,6 +849,16 @@ export async function deletePageOnDisk(name: string, kind: PageKind, path?: stri
   const finish = beginResultsChange();
   let operation: PageOperation;
   try {
+    // Freeze input before draining. A conflict cannot publish, but every local
+    // submit must be answered before the native boundary snapshots its buffer.
+    const drained = (!conflicted || await drainForDelete(c, name)) && !c.retired && !c.busy(name);
+    if (!drained || host() !== c || !owner()) {
+      if (host() === c) untombstone(name);
+      const reason = msg("delete-reason-unsaved", { name });
+      if (reportFailure) reportFailure(reason);
+      else if (host() === c) pushToast(msg("delete-reason-unsaved", { name }), "error");
+      return false;
+    }
     // A stale delete command deleted nothing the window can count on.
     const remove = () => writeOwned(owner, backend().pageDelete(c.session, name, kind, path))
       .then((done) => done.kind === "current" ? done.value : "refused" as const);
@@ -811,7 +869,10 @@ export async function deletePageOnDisk(name: string, kind: PageKind, path?: stri
     if (host() === c) untombstone(name);
     throw error;
   } finally { finish(); }
-  if (operation === "applied") return true;
+  if (operation === "applied") {
+    if (conflicted && host() === c) await c.discard(name);
+    return true;
+  }
   if (host() === c) untombstone(name);
   const why = {
     waiting: msg("delete-reason-waiting", { name }),
@@ -828,11 +889,14 @@ export async function deletePageOnDisk(name: string, kind: PageKind, path?: stri
 // ------------------------------------------------------------------ transfers (§8)
 
 type TransferEdge = readonly [source: string, destination: string];
+const transferRollbacks = new WeakMap<ReadonlyMap<string, PageDto>, () => void>();
 
 /** The texts of `names` right before a multi-page edit (next to its undo snapshot). */
 export function capturePages(names: Iterable<string>): Map<string, PageDto> {
   const before = new Map<string, PageDto>();
-  for (const name of new Set(names)) {
+  const pages = [...new Set(names)];
+  transferRollbacks.set(before, captureTransferRollback(pages));
+  for (const name of pages) {
     const dto = pageToDto(name);
     if (dto) before.set(name, dto);
   }
@@ -857,11 +921,25 @@ export function persistTransfer(before: ReadonlyMap<string, PageDto>, kinds: Edi
   const endpoints = [...new Set(moves.flat())];
   const after = new Map(endpoints.map((name) => [name, pageToDto(name)] as const));
   const c = host();
-  const plain = !c || [...after.values()].some((dto) => !dto);
-  for (const name of before.keys()) if (plain || !after.has(name)) markDirty(name, kinds);
-  if (plain || !endpoints.length) return Promise.resolve(true);
+  // No page host (startup before the bind finishes, or a failed bind): a block
+  // moving between pages needs the host's planned sequence, so the move is
+  // refused and restored like an endpoint the host cannot take (L2-14). Edits
+  // with no block moving between pages stay ordinary dirty pages, noted and
+  // saved at bind like any edit made before it.
+  const cannotRun = c ? edges.some(([a, b]) => !before.has(a) || !before.has(b)) || [...after.values()].some(dto => !dto)
+    : endpoints.length > 0;
+  if (cannotRun) {
+    const rollback = transferRollbacks.get(before);
+    if (rollback) rollback();
+    else for (const [name, dto] of before) installPageContent(name, dto);
+    // Selection edits and undo/redo also reach this boundary without preflight.
+    if (!refuseConflictedMove(new Set(edges.flat()))) pushToast(msg("document-transfer-rolled-back"), "error");
+    return Promise.resolve(false);
+  }
+  for (const name of before.keys()) if (!c || !after.has(name)) markDirty(name, kinds);
+  if (!c || !endpoints.length) return Promise.resolve(true);
   const list: EditKinds = typeof kinds === "string" ? [kinds] : kinds;
-  return transfer(c!, endpoints, before, after as Map<string, PageDto>, moves, list);
+  return transfer(c, endpoints, before, after as Map<string, PageDto>, moves, list);
 }
 
 async function transfer(c: HostClient, endpoints: string[], before: ReadonlyMap<string, PageDto>,
@@ -905,54 +983,6 @@ async function transfer(c: HostClient, endpoints: string[], before: ReadonlyMap<
 function sameText(a: PageDto, b: PageDto): boolean {
   const shape = (blocks: BlockDto[]): unknown => blocks.map((block) => [block.id, block.raw, block.collapsed, shape(block.children)]);
   return a.pre_block === b.pre_block && JSON.stringify(shape(a.blocks)) === JSON.stringify(shape(b.blocks));
-}
-
-function idsOf(blocks: readonly BlockDto[], into = new Set<string>()): Set<string> {
-  for (const block of blocks) {
-    into.add(block.id);
-    idsOf(block.children, into);
-  }
-  return into;
-}
-
-/** The maximal subtrees of `blocks` whose root came from `from`. */
-function unitsFrom(blocks: readonly BlockDto[], from: Set<string>, into: BlockDto[] = []): BlockDto[] {
-  for (const block of blocks) {
-    if (from.has(block.id)) into.push(block);
-    else unitsFrom(block.children, from, into);
-  }
-  return into;
-}
-
-function without(blocks: readonly BlockDto[], ids: Set<string>): BlockDto[] {
-  return blocks.filter((block) => !ids.has(block.id))
-    .map((block) => ({ ...block, children: without(block.children, ids) }));
-}
-
-/** Step i moves its edge's blocks: every page's text is the edit's result minus
- * the blocks later steps bring in, plus the blocks later steps take out
- * (appended at the end: a transitional state a crash between steps can leave).
- * Null when the edges do not partition the moved blocks (nothing is sent). */
-function planSteps(endpoints: string[], before: ReadonlyMap<string, PageDto>, after: ReadonlyMap<string, PageDto>,
-  moves: readonly TransferEdge[]): SequenceStep[] | null {
-  const units = moves.map(([source, destination]) => unitsFrom(after.get(destination)!.blocks, idsOf(before.get(source)!.blocks)));
-  const textAt = (name: string, done: number): PageDto => {
-    const arriving = new Set<string>();
-    const leaving: BlockDto[] = [];
-    moves.forEach(([source, destination], j) => {
-      if (j < done) return;
-      if (destination === name) for (const unit of units[j]) arriving.add(unit.id);
-      if (source === name) leaving.push(...units[j]);
-    });
-    const dto = after.get(name)!;
-    return { ...dto, blocks: [...without(dto.blocks, arriving), ...leaving] };
-  };
-  const census = (done: number) => endpoints.flatMap((name) => [...idsOf(textAt(name, done).blocks)]).sort().join("\u0000");
-  const whole = census(moves.length);
-  for (let done = 0; done < moves.length; done += 1) if (census(done) !== whole) return null;
-  return moves.map(([source, destination], i) => ({
-    source, receiver: destination, sourceDto: textAt(source, i + 1), receiverDto: textAt(destination, i + 1),
-  }));
 }
 
 // ------------------------------------------------------------------ alias drafts (§8)
@@ -1023,4 +1053,51 @@ async function landAliasDraft(c: HostClient, name: string, ownerPath: string): P
   } finally {
     release();
   }
+}
+
+// The command line's writes through this graph's owner (CLI slice 2,
+// `src-tauri/src/owner/window.rs`). Before a write reads a page, the owner
+// asks the window to save the text typed on it: the host only sees input the
+// window has submitted, and typing is debounced. The window runs its page
+// barrier and answers whether that text is saved.
+
+/** Answer the owner's flush requests for the graph this window is bound to; a
+ *  stale binding's request gets no answer (the owner then refuses the write). */
+export function subscribeOwnerFlush(): () => void {
+  let alive = true;
+  let unsub = () => {};
+  let unsubRename = () => {};
+  const subscribeRename = backend().onOwnerPageRenamed;
+  if (subscribeRename) void readOwnedResource(ownedWhen(() => alive), subscribeRename.call(backend(), (rename) => {
+    if (rename.binding_generation !== captureBinding().backendGeneration) return;
+    void applyOwnerPageRename(rename).catch((error) => pushToast(msg("graph-rewrite-rename-failed", { error: String(error) }), "error"));
+  }), (stop) => stop()).then((result) => { if (result.kind === "current") unsubRename = result.value; });
+  const subscribe = backend().onOwnerFlushRequest;
+  if (!subscribe) return () => { alive = false; unsubRename(); };
+  void readOwnedResource(
+    ownedWhen(() => alive),
+    subscribe.call(backend(), (request) => {
+      if (request.binding_generation !== captureBinding().backendGeneration) return;
+      void answerOwnerFlush(request.id, request.page, request.binding_generation, request.all);
+    }),
+    (stop) => stop(),
+  ).then((result) => { if (result.kind === "current") unsub = result.value; });
+  return () => { alive = false; unsub(); unsubRename(); };
+}
+
+async function answerOwnerFlush(id: number, page: string, generation: number, all = false): Promise<void> {
+  let saved: boolean;
+  try {
+    saved = all ? await flushAll() : await flushPage(page);
+  } catch {
+    saved = false; // a failed barrier is unsaved text, never success
+  }
+  // Text a component holds outside the document (an IME composition, a
+  // title or sheet-cell edit) is not saved by the barrier (review 5 R2).
+  if (all ? doc.pages.some((p) => draftPinned(p.name)) : draftPinned(page)) saved = false;
+  // A rebinding during the barrier leaves the request with no answer: the
+  // owner it came from refuses its write (review 5 R3).
+  if (generation !== captureBinding().backendGeneration) return;
+  const answer = backend().ownerFlushAnswer?.(id, saved, generation);
+  if (answer) void readOwned(bindingOwner(), answer).catch(ignoreLostFlushAnswer);
 }

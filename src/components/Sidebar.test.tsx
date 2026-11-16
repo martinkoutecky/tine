@@ -1,12 +1,58 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { render } from "solid-js/web";
 import { backend } from "../backend";
-import { setFavorites, setRecentPages } from "../ui";
+import { applySidebarSession, rightSidebar, setFavorites, setRecentPages } from "../ui";
 import { setToasts, toasts, toUiText } from "../toasts";
 import { renderEnglish } from "../i18n";
 import { GraphSwitcher, Sidebar } from "./Sidebar";
-import { openJournals, route } from "../router";
+import { mainPaneRouter, openJournals, resetTabsToJournals, route } from "../router";
+import { appNow, journalTitle } from "../journal";
+import { runGlobalCommand } from "../keybindings";
 import { readFileSync } from "node:fs";
+
+it("GH #740: Shift-click the top-left Journals entry keeps the main page and opens today in the right sidebar", () => {
+  mainPaneRouter.openPage("Project", "page", { inPlace: true });
+  const before = route();
+  const completed = vi.fn();
+  const root = document.body.appendChild(document.createElement("div"));
+  const dispose = render(() => <Sidebar onActiveNavigationComplete={completed} />, root);
+  try {
+    const journals = [...root.querySelectorAll<HTMLElement>(".nav-item")].find(el => el.textContent === "Journals")!;
+    journals.dispatchEvent(new MouseEvent("click", { bubbles: true, shiftKey: true }));
+    expect(rightSidebar()).toContainEqual(expect.objectContaining({ kind: "page", name: journalTitle(appNow()), pageKind: "journal" }));
+    expect(route()).toEqual(before);
+    expect(completed).not.toHaveBeenCalled();
+
+    // A plain click/tap still completes active navigation (closing the mobile drawer).
+    journals.click();
+    expect(route()).toMatchObject({ kind: "journals" });
+    expect(completed).toHaveBeenCalledOnce();
+
+    mainPaneRouter.openPage("Project", "page", { inPlace: true });
+    expect(runGlobalCommand("go/journals")).toBe(true);
+    expect(route()).toMatchObject({ kind: "journals" });
+  } finally { dispose(); }
+});
+
+it("GH #761: sidebar sections and graph switcher share SVG disclosures that follow folding", () => {
+  setFavorites([{ name: "Tine", kind: "page" }]);
+  setRecentPages([{ name: "Tine", kind: "page" }]);
+  const host = document.body.appendChild(document.createElement("div"));
+  const dispose = render(() => <Sidebar />, host);
+  try {
+    const controls = [...host.querySelectorAll<HTMLElement>(".nav-section-toggle")];
+    expect(controls.length).toBeGreaterThanOrEqual(2);
+    for (const control of controls) {
+      const caret = control.querySelector(".nav-toggle-caret")!;
+      expect(caret.querySelector("svg")).not.toBeNull();
+      const collapsed = caret.classList.contains("collapsed");
+      control.click();
+      expect(caret.classList.contains("collapsed")).toBe(!collapsed);
+      control.click();
+    }
+    expect(host.querySelector(".graph-switch-caret svg")).not.toBeNull();
+  } finally { dispose(); }
+});
 
 it("GH #335: All pages opens the full view directly", () => {
   openJournals();
@@ -23,6 +69,8 @@ it("GH #335: All pages opens the full view directly", () => {
 });
 
 afterEach(() => {
+  applySidebarSession({ right: false, items: [] });
+  resetTabsToJournals();
   setFavorites([]);
   setRecentPages([]);
   setToasts([]);

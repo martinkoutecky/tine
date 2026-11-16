@@ -135,7 +135,7 @@ fn a_delete_outside_the_graph_refuses_without_writes() {
     let deleted = host.delete(
         session,
         &PageId::from(format!("../{name}").as_str()),
-        b"- outside\n",
+        Some(&b"- outside\n"[..]),
     );
     let kept = fs::read(&outside);
     let _ = fs::remove_file(&outside);

@@ -365,3 +365,33 @@ fn an_edited_block_keeps_its_untouched_whitespace_only_lines() {
     });
     assert_eq!(edited, "- a\n\n  b");
 }
+
+#[test]
+fn a_mixed_ending_page_keeps_each_untouched_terminator() {
+    let _integration_guard = crate::integration_lock();
+    // GH #110 fidelity gate: once the only CRLF line is deleted, the kept LF
+    // lines were rewritten to CRLF (the whole-page convention was applied to
+    // retained bytes that carried no `\r`).
+    let deleted = saved("- a\r\n- b\n- c\n", EditKind::DeleteBlocks, |doc| {
+        doc.blocks.remove(0);
+    });
+    assert_eq!(deleted, "- b\n- c\n");
+    // A rendered line still takes the file's convention.
+    let edited = saved("- a\r\n- b\n", EditKind::SaveBlock, |doc| {
+        doc.blocks[0].raw = "A".into();
+    });
+    assert_eq!(edited, "- A\r\n- b\n");
+}
+
+#[test]
+fn form_feed_layout_keeps_its_bytes() {
+    let _integration_guard = crate::integration_lock();
+    // GH #110 fidelity gate: lsdoc reads a form feed as layout whitespace, so
+    // `\f- b` is a child of `a`; retention did not, declined, and the whole
+    // page was re-serialized (`\f` became a tab) for an edit to `c`.
+    let source = "- a\n\x0c- b\n- c\n";
+    let edited = saved(source, EditKind::SaveBlock, |doc| {
+        doc.blocks[1].raw = "c!".into();
+    });
+    assert_eq!(edited, "- a\n\x0c- b\n- c!\n");
+}

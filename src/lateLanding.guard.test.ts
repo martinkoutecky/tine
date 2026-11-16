@@ -53,6 +53,7 @@ const EXEMPT: Record<string, string> = {
   "src/document/host/wiring.ts#hostPort.owed": "the page-host client owns every reply: it drops one whose session is not current (client.ts session checks); host/client.test.ts",
   "src/document/host/wiring.ts#applyLiveResolution": "the review ticket owns the read-only merge: submitReviewed drops it when the session, page instance, edit or version moved; host/client.test.ts",
   "src/gpu.ts#warnIfSoftwareRendering": "one-time device-wide best-effort probe has no graph or view owner",
+  "src/quickShareGate.ts#primeQuickShareGate": "the quick share gate is a build constant; one session-wide read has no graph or view owner",
   "src/plugins/manager.ts#install": "process-wide install writes and applies its returned record independent of graph navigation; plugins/manager.test.ts",
   "src/plugins/registry.ts#verifiedIndex": "pure process-wide signature check; callers own any UI publication; plugins/registry.test.ts",
 };
@@ -100,6 +101,7 @@ const EXEMPT_CALLS: Record<string, string[]> = {
   "src/document/host/wiring.ts#hostPort.owed": ["pageOwed", "pageOwed"], // .then and .catch
   "src/document/host/wiring.ts#applyLiveResolution": ["mergeLiveConflict"],
   "src/gpu.ts#warnIfSoftwareRendering": ["gpuEnv"],
+  "src/quickShareGate.ts#primeQuickShareGate": ["quickShareList", "quickShareList"],
   "src/plugins/manager.ts#install": ["installPlugin"],
   "src/plugins/registry.ts#verifiedIndex": ["verifyPluginRegistry"],
 };
@@ -112,6 +114,9 @@ const BOUNDARIES = new Set(["readOwned", "readOwnedResource", "writeOwned", "ser
 // Durable backend operations are classified by interface verb, including names
 // such as rename and paste that a write-prefix expression cannot recognize.
 const DURABLE_BACKEND_METHODS = new Set([
+  "gitCloneGraph", "gitInitGraph", "gitSetupSignIn", "gitFinishSetup",
+  "markPageSeen", "markGraphSeen", "forgetSeenPage", "forgetSeenState",
+  "retryOwnerProtection",
   "approveExternalAssets", "forgetKnownGraph", "installPlugin", "uninstallPlugin", "setPluginEnabled",
   "storePluginRegistryCache", "setSystemBarAppearance", "createGraph", "copyGuideIntoGraph",
   // The page host's writes: each takes or drops page text, a delete, or makes a save due.
@@ -119,52 +124,65 @@ const DURABLE_BACKEND_METHODS = new Set([
   "setGuideAnnounced", "renamePage", "publishHtml", "publishQuery", "publishLive", "setFavorites",
   "setPreferredWorkflow", "setDefaultHome", "setTimetrackingEnabled", "setShowBrackets", "setDocModeEnterForNewBlock",
   "setLogicalOutdenting", "setPreferredFormat", "setJournalTitleFormat", "setDefaultJournalTemplate",
-  "setStartOfWeek", "editAssetExternal", "editCustomCss", "trashAsset", "emptyAssetTrash", "trashJournalFile",
+  "setStartOfWeek", "editAssetExternal", "editCustomCss", "editGlobalCss", "trashAsset", "emptyAssetTrash", "trashJournalFile",
   "applyJournalFilenameMigrations",
   "mergePages", "renameFileToPage", "resolveSyncConflict", "resolveVcsMarkerConflict", "resolveDuplicateJournalDay", "trashSyncConflict", "saveAsset",
-  "importAsset", "importNativeCapture", "writeText", "writeRich", "copyImageToClipboard", "copyAssetFileToClipboard",
+  "importAsset", "captureImportAsset", "captureSaveAsset", "importNativeCapture", "writeText", "writeRich", "copyImageToClipboard", "copyAssetFileToClipboard",
   "writeHighlights", "savePdfAreaImage", "rollbackPdfAreaImage",
-  "setBackupKeep", "setCaptureEnterFiles", "setWatchMode", "restoreBackup",
+  "setBackupKeep", "setGitAutocommit", "gitSyncNow", "gitDisableLineEndings", "gitRemoveStaleLock", "gitSignIn", "gitSignOut", "gitAppLifecycle", "setCaptureEnterFiles", "setWatchMode", "restoreBackup", "recoverOrphanDrafts", "deleteOldBackups",
   "saveSession", "saveWorkspaces", "setSmoothScroll", "setAppBool", "setAppString", "applySpellcheck", "setUiLocale",
   "debugLog", "diagnosticFrontendEvent", "diagnosticTimingEvent", "clearDiagnostics", "saveDiagnosticReport", "diagnosticSessionActive",
   "saveGraphVerificationReport", "addDefenderExclusion", "dismissDefenderHint",
+  // Quick share: a create uploads and records a share; Check records a found
+  // gist; Delete, Forget and Disconnect rewrite app data; Connect starts the
+  // flow that stores the account; Copy link writes the clipboard.
+  "quickShareCreate", "quickShareCheck", "quickShareDelete", "quickShareForget", "quickShareDisconnect",
+  "quickShareConnectStart", "quickShareCopyLink",
 ]);
 // All remaining Backend methods are reads, resource subscriptions, dialogs,
 // transient OS controls, or graph-binding controls. Adding a method requires
 // an explicit durable/non-durable decision in the census test below.
 const NON_DURABLE_BACKEND_METHODS = new Set([
+  "getPageChanges",
+  "ownerProtectionStatus",
+  "onOwnerPageRenamed",
   "createGraphVerification", "cancelGraphVerification", "onGraphVerificationProgress",
   "graphBindingGeneration", "inspectGraphAccess", "loadGraph", "openGraphWindow", "startupGraphPath",
-  "captureTarget", "bindCaptureGraph", "listKnownGraphs", "revealKnownGraph", "appPlatform", "listInstalledPlugins",
+  "captureTarget", "bindCaptureGraph", "captureReceipt", "listKnownGraphs", "revealKnownGraph", "appPlatform", "listInstalledPlugins",
   "readPluginEntry", "verifyPluginRegistry", "loadPluginRegistryCache", "defaultGraphParent", "suggestGraphName",
   "closeGraphWindow", "trayApply", "openDevtools", "pageInventory", "pageModified", "pageBacklinkCounts", "journalFeedPage", "journalContentDays",
-  "getPage", "resolvePage",
+  "getPage", "resolvePage", "pageAliasGroup",
   // The page host's reads and controls: opening a page takes custody and writes
   // nothing; the mail and graph-open events, the publication barrier and debt
   // queries, the draft I/O re-probe, the v1 drafts path, the read-only merge.
   "pageWindowReloaded", "pageOpen", "pageWait", "pageOwed", "onPageMail", "onGraphOpenWaiting", "onGraphOpenOwnerWaiting", "pageDraftsRetry",
   "legacyDraftsFile", "mergeLiveConflict", "guidePages", "getBacklinks",
-  "getBacklinkFilterContext", "getUnlinkedRefs", "warmDone", "getBlockRefCounts", "getBlockReferrers",
+  "getBacklinkFilterContext", "getUnlinkedRefs", "registerUnlinkedReference", "registerQuerySubscription", "warmDone", "getBlockRefCounts", "getBlockReferrers",
   "pagePrintHtml", "sheetExportInputs", "exportQuerySubtrees", "parseQuery", "printQuery", "queryOgExpressible", "queryRegistry",
-  "queryRun", "queryExplainEmpty", "queryFacets", "publishQueryPlan", "pageIcons",
+  "queryRun", "taggedPages", "queryExplainEmpty", "queryFacets", "publishQueryPlan", "pageIcons",
   "readCustomCss", "openExternal", "openAsset", "openGraphFile", "openPageFile", "detectMediaEditor", "listOrphanAssets",
   "assetTrashStats", "listJournalConflicts", "listJournalFilenameMigrations", "readJournalFile", "getPageByPath", "listSyncConflicts",
   "syncConflictDiff", "duplicateJournalDiff", "conflictInventory", "vcsMarkerConflictDiff", "liveConflictDiff", "onConflictsChanged", "search", "runGraphSearch", "quickSwitch", "captureQuickSwitch",
-  "listTemplates", "resolveBlock", "resolveBlocks", "previewBlock", "readAsset", "streamAsset",
+  "listTemplates", "resolveBlock", "resolveBlocks", "previewBlock", "readAsset", "pdfAssetSource", "streamAsset",
   "readLocalImage", "readClipboardImage", "clipboardFiles", "readTextFile", "confirm", "pickFolder", "readCssFile", "saveCssFile", "revealExport",
   // prepareGraphFolder: iOS container check + iCloud download before a graph
   // bind; it writes no graph data (master 027b5ae15).
   "pickGraphFolder", "prepareGraphFolder", "pickFile", "capturePhoto", "startRecording", "stopRecording", "cancelRecording",
-  "openPdf", "readHighlights", "onGraphChanged", "onGraphChangedBulk", "onGraphWatchStatus", "onGraphRescanComplete", "rescanGraphNow", "onGraphConfigChanged", "onCustomCssChanged", "onAssetChanged", "getBackupKeep", "getCaptureEnterFiles", "getLinkFirstMatch",
-  "getWatchMode", "listBackups", "loadSession", "loadWorkspaces", "localClock", "gpuEnv", "getSmoothScroll",
+  "openPdf", "readHighlights", "onGraphChanged", "onGraphChangedBulk", "onGraphWatchStatus", "onGraphRescanComplete", "rescanGraphNow", "onGraphConfigChanged", "onCustomCssChanged", "onAssetChanged", "onOwnerFlushRequest", "ownerFlushAnswer", "getBackupKeep", "gitAutocommitStatus", "gitSyncNotice", "getCaptureEnterFiles", "getLinkFirstMatch",
+  "getWatchMode", "listBackups", "orphanDrafts", "loadSession", "loadWorkspaces", "localClock", "gpuEnv", "getSmoothScroll",
   "getAppBool", "getAppString", "listSpellcheckDictionaries", "debugInfo",
   "diagnosticReport", "defenderHint", "appArchitecture", "watcherLatencyRecent", "takeDataHomeFallbackNotice",
+  // Quick share reads and in-memory controls: prepare keeps a payload in memory,
+  // discard and cancel drop one.
+  "quickShareList", "quickSharePrepare", "quickShareDiscard", "quickShareFind", "quickShareConnectStatus",
+  "quickShareConnectCancel", "quickShareTestConnection",
 ]);
 // These helpers receive Owner from audited constructor call sites. Arbitrary
 // Owner parameters do not prove provenance to this syntax scan.
 const OWNER_PARAM_HELPERS = new Set([
   "src/App.tsx#installMobileExternalLinkHandler",
   "src/carry.ts#ensureLoaded",
+  "src/capture.tsx#Capture.refreshCaptureConfig", // both callers pass their latestOwner show/submit token
   "src/components/ExportModal.tsx#warmMacro",
   "src/components/ExportModal.tsx#warmQueryMacros",
   "src/document/workingSet.ts#admitPageFile",

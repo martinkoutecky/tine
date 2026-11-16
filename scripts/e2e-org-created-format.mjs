@@ -90,9 +90,8 @@ try {
   });
   check(opened, "the fresh block did not open Tine's context menu");
   await browser.$(".ctx-menu").waitForExist({ timeout: 5000 });
-  const copyAs = await browser.$(".ctx-menu [role=menuitem][aria-haspopup=menu]");
-  await copyAs.moveTo();
-  const copyRef = await browser.$('//*[@role="menuitem" and normalize-space(.)="Copy block ref"]');
+  // A top-level row of the block menu, as in OG (GH #725).
+  const copyRef = await browser.$('//*[contains(@class,"ctx-menu")]//*[contains(@class,"ctx-item") and normalize-space(.)="Copy block ref"]');
   await copyRef.waitForDisplayed({ timeout: 5000 });
   await copyRef.click();
   const saved = await waitForFileText(file, (text) => /:id:\s*[0-9a-f-]{36}/i.test(text) || /id::\s*[0-9a-f-]{36}/i.test(text));

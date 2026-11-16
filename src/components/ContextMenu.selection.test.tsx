@@ -79,9 +79,10 @@ describe("selection context menu (GH #591)", () => {
   });
   it.each(["Copy block ref", "Copy block embed"])("%s publishes all selected references after their IDs are saved", async (action) => {
     load(); open();
-    const submenu = [...document.querySelectorAll(".ctx-submenu")].find(el => el.textContent?.startsWith("Copy as"));
-    expect(submenu).toBeDefined();
-    expect(submenu!.textContent).toContain(`${action}s`);
+    // Top-level rows, as in OG's selection menu (GH #725), not behind a submenu.
+    const row = [...document.querySelectorAll<HTMLElement>(".ctx-item")].find(el => el.textContent?.trim() === `${action}s`);
+    expect(row).toBeDefined();
+    expect(row!.closest(".ctx-submenu-menu")).toBeNull();
     click(action);
     await vi.waitFor(() => expect(backend().writeText).toHaveBeenCalledTimes(1));
     const text = vi.mocked(backend().writeText).mock.calls[0][0];

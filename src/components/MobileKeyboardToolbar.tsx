@@ -1,9 +1,12 @@
 import { msg, t, render, type Msg } from "../i18n";
-import { For, Show, createEffect, createSignal, onCleanup, onMount, type JSX } from "solid-js";
+import { For, Show, createEffect, createSignal, onCleanup, untrack, type Component, type JSX } from "solid-js";
+import { Dynamic } from "solid-js/web";
 import { dispatchFocusedEditorCommand, blurFocusedEditor, focusedEditorCommandBridge, type MobileEditorCommandId } from "../editorCommandBridge";
 import { runGlobalCommand } from "../keybindings";
-import { isMobilePlatform } from "../nativeChrome";
+import { touchPrimary } from "../inputCapability";
 import { isRecordingAudio } from "../mediaCapture";
+import { revealCaretAboveKeyboard, revealCaretSettled, scrollToClearToolbar } from "../editor/caretReveal";
+import { cssInterfaceZoom } from "../zoom";
 
 type ToolbarIcon =
   | "outdent"
@@ -47,7 +50,6 @@ const KEYBOARD_GAP_THRESHOLD = 48;
 /** Dispatched on window by Android's MainActivity with `detail: true|false`
  *  whenever the soft keyboard's visibility changes (GH #716). */
 export const NATIVE_IME_EVENT = "tine-ime";
-const EDITOR_TOOLBAR_MARGIN = 8;
 
 function activeEditorHasFocus(): boolean {
   const el = document.activeElement;
@@ -59,21 +61,28 @@ function viewportKeyboardTop(): number {
   return vv ? vv.height + vv.offsetTop : window.innerHeight;
 }
 
-/** Scroll the focused block editor's nearest scroller (or the window) just enough
- *  that the editor's bottom sits 8px above `toolbarTop` (GH #384). Returns true
- *  only when it scrolled; a non-editor focus or an already-visible editor is a
- *  no-op returning false. O(1) layout reads. */
+function toolbarRevealTop(toolbarTop: number): number {
+  const formatting = document.querySelector<HTMLElement>("[data-mobile-selection-toolbar]")?.getBoundingClientRect();
+  return formatting && formatting.height > 0 ? Math.min(toolbarTop, formatting.top) : toolbarTop;
+}
+
+/** Leave three body lines below a low caret (GH #783), measured from the docked
+ * formatting row when shown (GH #375). The shared caret rule protects the
+ * visible top, including sticky parents, independently of the block's height.
+ * A non-editor focus, unmeasurable row or caret already above the band is a
+ * no-op. One caret-row measurement, O(editor text). */
 export function revealFocusedEditorAboveToolbar(toolbarTop: number): boolean {
   const editor = document.activeElement;
   if (!(editor instanceof HTMLTextAreaElement) || !editor.classList.contains("block-editor")) {
     return false;
   }
-  const overlap = editor.getBoundingClientRect().bottom + EDITOR_TOOLBAR_MARGIN - toolbarTop;
-  if (overlap <= 0) return false;
+  const top = toolbarRevealTop(toolbarTop);
   const scroller = editor.closest<HTMLElement>(
     ".main-content, .right-sidebar, .left-sidebar-scroll",
   );
-  if (scroller) scroller.scrollTop += overlap;
+  const overlap = scrollToClearToolbar(editor, scroller, top);
+  if (overlap <= 0) return false;
+  if (scroller) scroller.scrollTop += overlap / cssInterfaceZoom();
   else window.scrollBy({ top: overlap });
   return true;
 }
@@ -113,7 +122,15 @@ function Icon(props: { name: ToolbarIcon }): JSX.Element {
   }
 }
 
-export function MobileKeyboardToolbar(): JSX.Element {
+export interface MobileKeyboardToolbarProps {
+  /** The App's Sidebar / Search / Back / Forward group, shown at the toolbar's
+   *  leading end when "Navigation buttons at the bottom" is on (GH #598,
+   *  D-20261019-N2). The toolbar only hosts it: a tap ends the edit through the
+   *  editor's normal blur save, then runs the group's own handler. */
+  navigation?: Component;
+}
+
+export function MobileKeyboardToolbar(props: MobileKeyboardToolbarProps = {}): JSX.Element {
   let toolbarRef: HTMLDivElement | undefined;
   const [dockTop, setDockTop] = createSignal(typeof window !== "undefined" ? window.innerHeight : 0);
   const [keyboardVisible, setKeyboardVisible] = createSignal(false);
@@ -140,8 +157,13 @@ export function MobileKeyboardToolbar(): JSX.Element {
     setFocusedFallback(focused && !keyboardSeen);
   };
 
-  onMount(() => {
-    if (!isMobilePlatform) return;
+  // The dock belongs to a touch-first device (D-20261018-W1: input capability,
+  // not the OS name); the listeners follow `touchPrimary()` if it flips.
+  createEffect(() => {
+    if (!touchPrimary()) return;
+    untrack(attachViewportListeners);
+  });
+  function attachViewportListeners() {
     const vv = window.visualViewport;
     const scheduleEditorReveal = () => {
       if (revealFrame) return;
@@ -156,7 +178,43 @@ export function MobileKeyboardToolbar(): JSX.Element {
       updateDock();
       scheduleEditorReveal();
     };
-    const updateAfterFocusChange = () => setTimeout(updateViewport, 0);
+    // GH #783: the toolbar rule above only ever scrolls DOWN, and the mount-time
+    // caret reveal runs before the keyboard has resized the view. If anything moves
+    // the page while the view shrinks, the tapped line could stay above the top with
+    // nothing to bring it back. Two unchanged frames can precede the WebView's
+    // final focus scroll (GH #783). Follow that scroll too,
+    // until keyboard close, focus loss or deliberate user input, with minimum
+    // corrections and no animation-frame polling after the initial settle.
+    let settleCaret: (() => void) | undefined;
+    const keepCaretAfterResize = () => {
+      settleCaret?.();
+      settleCaret = undefined;
+      // Only while the keyboard is up: closing it (Back) leaves the editor focused,
+      // and the page must stay wherever the reader has scrolled it.
+      if (!untrack(keyboardVisible)) return;
+      const editor = document.activeElement;
+      if (!(editor instanceof HTMLTextAreaElement) || !editor.classList.contains("block-editor")) return;
+      const scroller = editor.closest<HTMLElement>(".main-content, .right-sidebar, .left-sidebar-scroll");
+      // Use the same three-body-line clearance as toolbar/input reveals, while
+      // retaining late WebView scroll/focus repairs (GH #783).
+      if (scroller) settleCaret = revealCaretSettled(editor, scroller, 2, 40, Infinity, {
+        scroll: true,
+        reveal: () => revealCaretAboveKeyboard(editor, scroller, {
+          top: window.visualViewport?.offsetTop ?? 0,
+          bottom: toolbarRef ? toolbarRevealTop(toolbarRef.getBoundingClientRect().top) : viewportKeyboardTop(),
+        }),
+      });
+    };
+    const updateAfterResize = () => {
+      updateViewport();
+      keepCaretAfterResize();
+    };
+    let focusTimer: ReturnType<typeof setTimeout> | undefined;
+    const updateAfterFocusChange = () => {
+      clearTimeout(focusTimer);
+      // Focus can arrive after the last resize when an editor remounts.
+      focusTimer = setTimeout(updateAfterResize, 0);
+    };
     const revealAfterEditorInput = (event: Event) => {
       if (event.target instanceof HTMLTextAreaElement && event.target.classList.contains("block-editor")) {
         scheduleEditorReveal();
@@ -164,31 +222,33 @@ export function MobileKeyboardToolbar(): JSX.Element {
     };
     const updateFromNativeIme = (event: Event) => {
       nativeIme = (event as CustomEvent<unknown>).detail === true;
-      updateViewport();
+      updateAfterResize();
     };
     updateDock();
     window.addEventListener(NATIVE_IME_EVENT, updateFromNativeIme);
-    vv?.addEventListener("resize", updateViewport);
+    vv?.addEventListener("resize", updateAfterResize);
     vv?.addEventListener("scroll", updateViewport);
-    window.addEventListener("resize", updateViewport);
+    window.addEventListener("resize", updateAfterResize);
     window.addEventListener("focusin", updateAfterFocusChange);
     window.addEventListener("focusout", updateAfterFocusChange);
     document.addEventListener("input", revealAfterEditorInput, true);
     onCleanup(() => {
       window.removeEventListener(NATIVE_IME_EVENT, updateFromNativeIme);
-      vv?.removeEventListener("resize", updateViewport);
+      vv?.removeEventListener("resize", updateAfterResize);
       vv?.removeEventListener("scroll", updateViewport);
-      window.removeEventListener("resize", updateViewport);
+      window.removeEventListener("resize", updateAfterResize);
       window.removeEventListener("focusin", updateAfterFocusChange);
       window.removeEventListener("focusout", updateAfterFocusChange);
       document.removeEventListener("input", revealAfterEditorInput, true);
       if (revealFrame) cancelAnimationFrame(revealFrame);
+      clearTimeout(focusTimer);
+      settleCaret?.();
     });
-  });
+  }
 
   createEffect(() => {
     focusedEditorCommandBridge();
-    if (isMobilePlatform) queueMicrotask(updateDock);
+    if (touchPrimary()) queueMicrotask(updateDock);
   });
 
   // GH #336: the hide button's pointerdown blurs the editor, which drops the
@@ -217,8 +277,9 @@ export function MobileKeyboardToolbar(): JSX.Element {
   // overlapping. Re-runs when the dock position or visibility changes; measures
   // the real rendered box (robust to whatever the keyboard does to the viewport).
   createEffect(() => {
-    const shown = isMobilePlatform && visible();
+    const shown = touchPrimary() && visible();
     dockTop(); // re-measure when the keyboard/dock moves
+    cssInterfaceZoom(); // zoom can move the dock without resizing the viewport
     const root = typeof document !== "undefined" ? document.documentElement : null;
     if (!root) return;
     // The editing dock replaces the bottom navigation row while it is up.
@@ -232,7 +293,7 @@ export function MobileKeyboardToolbar(): JSX.Element {
       // resize); measuring it now would publish a lift from a 0 top (GH #716).
       if (!toolbarRef || !visible()) return;
       const top = toolbarRef.getBoundingClientRect().top;
-      const lift = Math.max(0, window.innerHeight - top) + 8;
+      const lift = Math.max(0, window.innerHeight - top) / cssInterfaceZoom() + 8;
       root.style.setProperty("--mobile-kb-toolbar-lift", `${lift}px`);
       revealFocusedEditorAboveToolbar(top);
     });
@@ -248,7 +309,7 @@ export function MobileKeyboardToolbar(): JSX.Element {
     // The viewport grows while the keyboard closes. Keep the button under the
     // active pointer until its trailing click is consumed; otherwise a mounted
     // toolbar can still move away and expose the note before pointer-up.
-    top: `calc(${Math.max(0, hideGestureDockTop() ?? dockTop())}px - var(--system-inset-bottom))`,
+    top: `calc(${Math.max(0, hideGestureDockTop() ?? dockTop()) / cssInterfaceZoom()}px - var(--system-inset-bottom))`,
   });
   const keepEditorFocus = (e: Event) => e.preventDefault();
 
@@ -258,8 +319,11 @@ export function MobileKeyboardToolbar(): JSX.Element {
   // primary pointerdown starts a new gesture; keyboard/AT clicks have detail 0.
   // No elapsed-time window may suppress an independent second activation.
   let completedPointer: number | null = null;
-  onMount(() => {
-    if (!isMobilePlatform) return;
+  createEffect(() => {
+    if (!touchPrimary()) return;
+    untrack(attachCompletedPointerGuard);
+  });
+  function attachCompletedPointerGuard() {
     const beginPointer = (e: PointerEvent) => {
       if (e.isPrimary) completedPointer = null;
     };
@@ -277,7 +341,7 @@ export function MobileKeyboardToolbar(): JSX.Element {
       document.removeEventListener("pointerdown", beginPointer, true);
       document.removeEventListener("click", consumeClick, true);
     });
-  });
+  }
 
   // Pointer-up remains the primary activation path: iOS WebKit can omit the
   // compatibility click after our focus-preserving canceled pointerdown (#434).
@@ -338,11 +402,54 @@ export function MobileKeyboardToolbar(): JSX.Element {
   // that handler and borrows only the completion half of tapActivation.
   const hideTap = tapActivation(endHideGesture);
 
+  // GH #598: the navigation group is the App's own buttons (their onClick is the
+  // action), so activation is delegated: take the tap like tapActivation does
+  // (pointer-up first, the trailing click swallowed), then click the button. The
+  // capture-phase click listener below ends the edit BEFORE that handler runs, for
+  // every route in (tap, keyboard, assistive technology): blur is the editor's
+  // normal save path, so the text is committed before the page changes.
+  let navPointer: number | null = null;
+  const navButtonOf = (e: Event): HTMLButtonElement | null => {
+    const button = (e.target as Element | null)?.closest?.("button");
+    return button && !button.disabled ? button : null;
+  };
+  const navTap = {
+    onPointerDown(e: PointerEvent) {
+      const button = navButtonOf(e);
+      if (!button) return;
+      e.preventDefault(); // keep the editor focused until the tap completes
+      if (!e.isPrimary || e.button !== 0) return;
+      navPointer = e.pointerId;
+      button.setPointerCapture?.(e.pointerId);
+    },
+    onPointerUp(e: PointerEvent) {
+      const button = navButtonOf(e);
+      if (!button || navPointer !== e.pointerId) return;
+      navPointer = null;
+      completedPointer = e.pointerId;
+      const box = button.getBoundingClientRect();
+      const off =
+        (box.width > 0 || box.height > 0) &&
+        (e.clientX < box.left || e.clientX > box.right || e.clientY < box.top || e.clientY > box.bottom);
+      if (!off) button.click();
+    },
+    onPointerCancel(e: PointerEvent) {
+      if (navPointer === e.pointerId) navPointer = null;
+    },
+  };
+  const endEditBeforeNavigation = (e: MouseEvent) => {
+    if (navButtonOf(e)) blurFocusedEditor();
+  };
+  const navRef = (el: HTMLDivElement) => {
+    el.addEventListener("click", endEditBeforeNavigation, true);
+    onCleanup(() => el.removeEventListener("click", endEditBeforeNavigation, true));
+  };
+
   return (
     // The toolbar belongs to the mobile shell, not a particular editor DOM node.
     // Preserve its buttons and horizontal scroll through bridge handoffs; only
     // its visibility follows focus/keyboard state.
-    <Show when={isMobilePlatform}>
+    <Show when={touchPrimary()}>
       <div
         ref={toolbarRef}
         class="mobile-keyboard-toolbar"
@@ -352,6 +459,18 @@ export function MobileKeyboardToolbar(): JSX.Element {
         hidden={!visible()}
         style={{ ...style(), display: visible() ? undefined : "none" }}
       >
+        <Show when={props.navigation && visible()}>
+          <div
+            ref={navRef}
+            class="mobile-keyboard-toolbar-nav"
+            onPointerDown={navTap.onPointerDown}
+            onPointerUp={navTap.onPointerUp}
+            onPointerCancel={navTap.onPointerCancel}
+            onMouseDown={keepEditorFocus}
+          >
+            <Dynamic component={props.navigation} />
+          </div>
+        </Show>
         <div class="mobile-keyboard-toolbar-strip" data-lenis-prevent>
           <For each={ACTIONS}>
             {(action) => {

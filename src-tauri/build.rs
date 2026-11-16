@@ -13,6 +13,23 @@ fn main() {
     let shipped = &switch["identities"][ship];
     let release = &switch["identities"]["release"];
     let conf = read("tauri.conf.json");
+    let icon_directory = shipped["iconDirectory"].as_str().expect("iconDirectory");
+    let expected_icons: Vec<String> = [
+        "32x32.png",
+        "128x128.png",
+        "128x128@2x.png",
+        "icon.icns",
+        "icon.ico",
+    ]
+    .iter()
+    .map(|name| format!("{icon_directory}/{name}"))
+    .collect();
+    assert_eq!(
+        conf["bundle"]["icon"],
+        serde_json::json!(expected_icons),
+        "bundle icons disagree with the identity switch"
+    );
+    println!("cargo:rustc-env=TINE_ICON_DIRECTORY={icon_directory}");
     let android = std::env::var("CARGO_CFG_TARGET_OS").as_deref() == Ok("android");
     if android {
         // Google Play requires 16 KB page-size support for apps targeting

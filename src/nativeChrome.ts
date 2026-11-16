@@ -19,8 +19,9 @@ import { browserPlatform } from "./browserPlatform";
 //
 // The capture mini-window is deliberately frameless and ignores this preference.
 
-import { createSignal } from "solid-js";
+import { createEffect, createRoot, createSignal } from "solid-js";
 import { backend } from "./backend";
+import { touchGestures } from "./inputCapability";
 import { advanceRevision, currentRevision, ownedWhen, readOwned, revisionOwner, serializeDurable } from "./owned";
 
 export const KEY_NATIVE_FRAME = "native_window_frame";
@@ -32,11 +33,6 @@ declare global {
   // Set by Tauri before frontend code runs (src-tauri/src/lib.rs), from the
   // build's own `app_platform()`. See platformKind below.
   var __TINE_PLATFORM__: "android" | "ios" | "desktop" | undefined;
-  // E2E-only (src-tauri/src/lib.rs, TINE_E2E_TOUCH_GESTURES): makes the touch
-  // gesture layer (edge swipe, block swipe, image viewer) behave as on that
-  // OS in a desktop WebKitGTK process. It changes nothing else: layout,
-  // keyboard chrome and platform branches still see a desktop.
-  var __TINE_E2E_TOUCH_GESTURES__: "android" | "ios" | undefined;
 }
 
 export type PlatformKind = "android" | "ios" | "desktop";
@@ -67,8 +63,10 @@ function detectPlatformKind(): PlatformKind {
  *  Evaluated once at module load; O(1). */
 export const platformKind: PlatformKind = detectPlatformKind();
 
-/** Android or iOS: a mobile OS that owns the window and drives touch input.
- *  True on iPad too; ask `isSinglePaneShell()` for phone-shaped layout. */
+/** Android or iOS: a mobile OS that owns the window. Identity, not layout and
+ *  not input: UI features ask `viewportClass.ts` (room) and `inputCapability.ts`
+ *  (pointer) instead (D-20261018-W1). The importers that remain are listed with
+ *  a reason in `src/PLATFORM_IDENTITY.txt`, pinned by platformIdentity.guard.test.ts. */
 export const isMobilePlatform: boolean = platformKind !== "desktop";
 
 /** Whether this build can show a folder in the system file manager. The native
@@ -80,27 +78,34 @@ export function canRevealInFileManager(): boolean {
   return platformKind === "desktop";
 }
 
-/** Which touch OS the gesture layer (edge swipe, block swipe, image viewer)
- *  should behave as: the real mobile platform, or - only in the native E2E
+/** Which OS's back-gesture model the edge swipe follows (iOS edge-swipe Back,
+ *  Android SafeBack): the real mobile platform, or - only in the native E2E
  *  harness - the platform named by TINE_E2E_TOUCH_GESTURES. Null on desktop.
- *  Read at call time so a test can set the global. O(1). */
+ *  Whether touch gestures exist at all is `touchGestures()`
+ *  (inputCapability.ts). Read at call time so a test can set the global. O(1). */
 export function touchGesturePlatform(): "android" | "ios" | null {
   if (platformKind !== "desktop") return platformKind;
   const forced = typeof globalThis !== "undefined" ? globalThis.__TINE_E2E_TOUCH_GESTURES__ : undefined;
   return forced === "android" || forced === "ios" ? forced : null;
 }
 
-/** Stamp the resolved platform on <html> so CSS can ask the same question the
- *  TypeScript does. Styling that depends on touch input — suppressing the
- *  native long-press selection under Tine's own long-press menu, GH #452 —
- *  has no other way to reach it, and must not guess from a media query. */
-export function installPlatformAttribute(): void {
-  if (typeof document === "undefined") return;
-  document.documentElement.setAttribute("data-platform", platformKind);
-  const touch = touchGesturePlatform();
-  // CSS for the gesture layer (touch-action on block rows) keys on this, which
-  // also covers the E2E override that data-platform deliberately ignores.
-  if (touch) document.documentElement.setAttribute("data-touch-gestures", touch);
+/** Stamp the touch-gesture layer on <html> so CSS (touch-action on block
+ *  rows, swipe feedback) can key on it. The value is the OS whose back-gesture
+ *  model applies, or "touch" on a desktop-class device with a touch screen.
+ *  CSS never asks which platform this is (D-20261018-W1): the former
+ *  `data-platform` attribute is gone. The stamp follows the input capability
+ *  (set when a touch input appears, removed when it goes away), so CSS and the
+ *  swipe wiring agree. Returns the stop function. */
+export function installPlatformAttribute(): () => void {
+  if (typeof document === "undefined") return () => {};
+  const root = document.documentElement;
+  return createRoot((dispose) => {
+    createEffect(() => {
+      if (touchGestures()) root.setAttribute("data-touch-gestures", touchGesturePlatform() ?? "touch");
+      else root.removeAttribute("data-touch-gestures");
+    });
+    return dispose;
+  });
 }
 
 // macOS detection: WKWebView's UA contains "Macintosh"/"Mac OS X". navigator.platform
@@ -110,24 +115,6 @@ export const isMac: boolean =
   platformKind === "desktop" &&
   typeof navigator !== "undefined" &&
   browserPlatform(navigator.userAgent ?? "", navigator.platform ?? "").macDesktop;
-
-/** Tablet-or-larger: the shorter viewport edge has room for two documents
- *  side by side. iPad mini portrait is 744pt across; every iPhone in either
- *  orientation is at most 430pt. Reads the current viewport; O(1). */
-export function isTabletViewport(
-  width = typeof window === "undefined" ? 0 : window.innerWidth,
-  height = typeof window === "undefined" ? 0 : window.innerHeight,
-): boolean {
-  return Math.min(width, height) >= 700;
-}
-
-/** Does this device present the single-pane mobile shell (no split panes,
- *  PDFs open in place, no restored multi-pane layout)? A mobile OS on a
- *  phone-shaped viewport. Split panes need screen room and a precise pointer,
- *  which a tablet has, so an iPad keeps them (GH #446). O(1). */
-export function isSinglePaneShell(): boolean {
-  return isMobilePlatform && !isTabletViewport();
-}
 
 // Linux/Windows user preference: use the OS-native window frame instead of our
 // custom frameless chrome.

@@ -9,6 +9,11 @@ const backupBackend = vi.hoisted(() => ({
   getBackupKeep: vi.fn(),
   listBackups: vi.fn(),
   setBackupKeep: vi.fn(),
+  confirm: vi.fn(async (_message: string, _options: unknown) => false),
+  restoreBackup: vi.fn(),
+  deleteOldBackups: vi.fn(),
+  // Settings reads the quick share gate on mount (the Sharing tab); off here.
+  quickShareList: vi.fn(async () => ({ enabled: false, account: null, shares: [], error: null })),
 }));
 
 vi.mock("../backend", async (importOriginal) => {
@@ -38,6 +43,29 @@ afterEach(() => {
 });
 
 describe("Backups settings", () => {
+  it("names the old graph location before restore or deletion and requires confirmation", async () => {
+    backupBackend.getBackupKeep.mockResolvedValue(12);
+    backupBackend.listBackups.mockResolvedValue([{ id:"old:notes-key:zip:2026-07-22_12-00-00", stamp:"2026-07-22_12-00-00",files:1,status:"ok",old_root:"/old/notes" }]);
+    const root = document.createElement("div"); document.body.append(root);
+    const dispose = render(() => <Settings />,root);
+    openSettings("backups");
+    await vi.waitFor(() => expect(root.textContent).toContain("Made when the graph was at /old/notes"));
+    expect(root.textContent).toContain("moved or unavailable");
+    const button = (text: string) => [...root.querySelectorAll("button")].find(b=>b.textContent === text)!;
+    button("Restore").click();
+    await vi.waitFor(() => expect(backupBackend.confirm).toHaveBeenCalled());
+    expect(backupBackend.confirm.mock.calls.at(-1)?.[0]).toContain("Made when the graph was at /old/notes");
+    expect(backupBackend.confirm.mock.calls.at(-1)?.[0]).toContain("disconnected drive");
+    expect(backupBackend.restoreBackup).not.toHaveBeenCalled();
+    await tick();
+    button("Delete backups from this location").click();
+    await vi.waitFor(() => expect(backupBackend.confirm.mock.calls).toHaveLength(2));
+    expect(backupBackend.confirm.mock.calls.at(-1)?.[0]).toContain("/old/notes");
+    expect(backupBackend.confirm.mock.calls.at(-1)?.[0]).toContain("only backups");
+    expect(backupBackend.confirm.mock.calls.at(-1)?.[0]).toContain("disconnected drive");
+    expect(backupBackend.deleteOldBackups).not.toHaveBeenCalled();
+    dispose();
+  });
   it("reports a retention write failure after the graph changes", async () => {
     backupBackend.getBackupKeep.mockResolvedValue(12);
     backupBackend.listBackups.mockResolvedValue([]);
@@ -65,7 +93,7 @@ describe("Backups settings", () => {
     backupBackend.getBackupKeep.mockResolvedValue(12);
     backupBackend.listBackups
       .mockImplementationOnce(() => new Promise((_, reject) => { rejectList = reject; }))
-      .mockResolvedValueOnce([{ stamp: "2026-07-22_12-00-00", files: 1 }]);
+      .mockResolvedValueOnce([{ id: "zip:2026-07-22_12-00-00", stamp: "2026-07-22_12-00-00", files: 1, status: "ok" }]);
 
     const root = document.createElement("div");
     document.body.append(root);
@@ -98,6 +126,29 @@ describe("Backups settings", () => {
     expect(keep.disabled).toBe(false);
     const restore = [...root.querySelectorAll("button")].find((button) => button.textContent?.trim() === "Restore") as HTMLButtonElement;
     expect(restore.disabled).toBe(false);
+    dispose();
+  });
+  it("labels damaged and unsupported backups and offers no restore for them", async () => {
+    backupBackend.getBackupKeep.mockResolvedValue(12);
+    backupBackend.listBackups.mockResolvedValue([
+      { id: "zip:2026-07-22_12-00-02", stamp: "2026-07-22_12-00-02", files: 3, status: "unsupported" },
+      { id: "zip:2026-07-22_12-00-01", stamp: "2026-07-22_12-00-01", files: 2, status: "damaged" },
+      { id: "dir:2026-07-22_12-00-00", stamp: "2026-07-22_12-00-00", files: 1, status: "ok" },
+    ]);
+    const root = document.createElement("div");
+    document.body.append(root);
+    const dispose = render(() => <Settings />, root);
+    openSettings("backups");
+    await tick();
+    await tick();
+
+    const rows = [...root.querySelectorAll(".settings-backup-row")];
+    expect(rows.map((row) => row.querySelector(".settings-backup-files")?.textContent?.trim())).toEqual([
+      "3 files · Made by a newer Tine",
+      "2 files · Damaged",
+      "1 files",
+    ]);
+    expect(rows.map((row) => (row.querySelector("button") as HTMLButtonElement).disabled)).toEqual([true, true, false]);
     dispose();
   });
 });

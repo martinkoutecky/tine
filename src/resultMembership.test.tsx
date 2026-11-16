@@ -34,6 +34,42 @@ function deferred<T>() {
 }
 const turn = () => new Promise((done) => setTimeout(done, 0));
 
+it.each([true, false])("GH #944: a deferred replacement keeps the previous answer (expanded: %s)", async expanded => {
+  const { installResultsPendingGate, resultTicket, resultsTicketCurrent } = await import("./queryResultsEpoch");
+  let publishing = false;
+  installResultsPendingGate(() => publishing, "own-work");
+  const [revision, setRevision] = createSignal(0);
+  const pending = deferred<string[] | undefined>();
+  const load = vi.fn<(source: string) => Promise<string[] | undefined>>()
+    .mockResolvedValueOnce(["task"]).mockReturnValueOnce(pending.promise).mockResolvedValue([]);
+  let answer!: ReturnType<typeof createMembershipResource<string, string[] | undefined>>[0];
+  const root = document.createElement("div"); document.body.append(root);
+  disposals.push(render(() => {
+    [answer] = createMembershipResource(() => `Target:${revision()}`, () => "Target", load,
+      () => false, () => expanded, true, revision);
+    return <div>{answer()?.join(",")}</div>;
+  }, root));
+  try {
+    await turn();
+    const original = answer()!;
+    expect(root.textContent).toBe("task");
+    setRevision(1); await turn();
+    // Expanded reads lose adoption permission while publication is pending;
+    // collapsed reads can instead be deferred by the subscription's ready().
+    publishing = true;
+    pending.resolve(expanded ? [] : undefined); await turn();
+    expect(root.textContent).toBe("task");
+    expect(answer()).toBe(original);
+    expect(resultsTicketCurrent(resultTicket(original))).toBe(false);
+    expect(load).toHaveBeenCalledTimes(2);
+    publishing = false;
+    setRevision(2);
+    await turn();
+    expect(root.textContent).toBe("");
+    expect(load).toHaveBeenCalledTimes(3);
+  } finally { publishing = false; }
+});
+
 it("I-20 / GH #659: a read started before editing cannot remove or move the editor", async () => {
   const pending = deferred<string[]>();
   const load = vi.fn().mockResolvedValueOnce(["first", "task", "last"]).mockReturnValueOnce(pending.promise).mockResolvedValue([]);
@@ -115,4 +151,32 @@ it("D-10: a suppressed (collapsed) guarded read is not rerun by structural resul
   setExpanded(true); await turn();
   beginResultsChange()(); await turn();
   expect(load).toHaveBeenCalledTimes(3);
+});
+
+it("GH #907: a precise reader reuses an unrelated epoch but never renews a coalesced stale answer's action ticket", async () => {
+  const { beginResultsChange, resultTicket, resultsTicketCurrent } = await import("./queryResultsEpoch");
+  const [revision, setRevision] = createSignal(0);
+  const [current, setCurrent] = createSignal(true);
+  const load = vi.fn(async () => ({ rows: [{ id: "task", raw: "TODO original" }] }));
+  let answer!: ReturnType<typeof createMembershipResource<string, Awaited<ReturnType<typeof load>>>>[0];
+  const root = document.createElement("div"); document.body.append(root);
+  disposals.push(render(() => {
+    [answer] = createMembershipResource(() => "Target", () => "Target", load,
+      () => false, () => true, true, revision, { current });
+    return <div>{answer()?.rows[0].raw}</div>;
+  }, root));
+  await turn();
+  const original = answer()!;
+  expect(resultsTicketCurrent(resultTicket(original.rows[0]))).toBe(true);
+  beginResultsChange()(); await turn();
+  expect(load).toHaveBeenCalledTimes(1);
+  expect(answer()).toBe(original);
+  expect(resultsTicketCurrent(resultTicket(original.rows[0]))).toBe(true);
+  setCurrent(false);
+  beginResultsChange()(); await turn();
+  expect(load).toHaveBeenCalledTimes(1);
+  expect(resultsTicketCurrent(resultTicket(original.rows[0]))).toBe(false);
+  setCurrent(true); setRevision(1); await turn();
+  expect(load).toHaveBeenCalledTimes(2);
+  expect(resultsTicketCurrent(resultTicket(answer()!.rows[0]))).toBe(true);
 });

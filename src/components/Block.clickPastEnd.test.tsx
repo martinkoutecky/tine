@@ -1,3 +1,4 @@
+import { editorIn, maybeEditorIn } from "../tests/editorDriver";
 // GH #465 (master b7cde3129, 82ea9af33, 401951955): a click in the run-out past
 // the last glyph puts the caret at the end of the block, even when the span map
 // answers a plausible interior offset (before an invisible closing `*`).
@@ -21,8 +22,9 @@ afterEach(() => {
 });
 
 describe("click past the last glyph (GH #465)", () => {
-  it("places the caret at the end of a block ending in italic text", async () => {
-    const raw = "*some text in italics.*";
+  it.each(["", "\n:LOGBOOK:\nCLOCK: [2026-10-21 Wed 08:54:45]\n:END:"])("places the caret at the visible end, including a hidden LOGBOOK (%s)", async (drawer) => {
+    const visible = "*some text in italics.*";
+    const raw = visible + drawer;
     loadSingle({ name: "Past end", kind: "page", title: "Past end", pre_block: null, blocks: [
       { id: "italic", raw, collapsed: false, children: [] },
     ] });
@@ -45,9 +47,10 @@ describe("click past the last glyph (GH #465)", () => {
       };
       content.dispatchEvent(new MouseEvent("mousedown", { bubbles: true, button: 0, clientX: 300, clientY: 22 }));
       document.dispatchEvent(new MouseEvent("mouseup", { bubbles: true, button: 0, clientX: 300, clientY: 22 }));
-      await vi.waitFor(() => expect(root.querySelector("textarea.block-editor")).not.toBeNull());
-      const editor = root.querySelector<HTMLTextAreaElement>("textarea.block-editor")!;
-      await vi.waitFor(() => expect(editor.selectionStart).toBe(raw.length));
+      await vi.waitFor(() => expect(maybeEditorIn(root)).not.toBeNull());
+      const editor = editorIn(root);
+      expect(editor.value()).toBe(visible);
+      await vi.waitFor(() => expect(editor.selection()[0]).toBe(visible.length));
     } finally {
       dispose();
     }

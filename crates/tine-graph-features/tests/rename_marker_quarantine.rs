@@ -6,7 +6,7 @@ use std::fs;
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicU64, Ordering};
 use tine_graph_features::pages::{self, RenameOutcome};
-use tine_store::{PageId, RenameMap, Store, TitleRebind, TxOutcome};
+use tine_store::{PageId, RenameMap, Store, TitleRebind};
 
 /// Renames are the page host's (STEP3 §7): each runs through a host started
 /// for it under its own app data, as the app's graph binding runs one.
@@ -129,7 +129,7 @@ fn the_store_refuses_a_reference_rewrite_inside_a_marker_bearing_file() {
     let (root, store) = graph("backstop", &[("pages/Conflicted.md", CONFLICTED)]);
     let id = PageId::from("pages/Conflicted.md");
     let (_, rev) = store.read(&id.file(), None).unwrap();
-    let mut tx = store.transaction(Some(tine_store::EditKind::RenamePage));
+    let mut tx = store.page_plan(Some(tine_store::EditKind::RenamePage));
     tx.rewrite_refs(
         &id,
         rev,
@@ -137,7 +137,7 @@ fn the_store_refuses_a_reference_rewrite_inside_a_marker_bearing_file() {
         &RenameMap(vec![("alpha".into(), "Beta".into())]),
         TitleRebind::Keep,
     );
-    assert!(matches!(tx.commit(), TxOutcome::NotCommitted { .. }));
+    assert!(tx.plan().is_err());
     assert_eq!(
         fs::read_to_string(root.join("pages/Conflicted.md")).unwrap(),
         CONFLICTED

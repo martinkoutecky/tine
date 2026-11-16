@@ -1,3 +1,4 @@
+import { maybeEditorIn } from "../tests/editorDriver";
 import { afterEach, beforeAll, describe, expect, it, vi } from "vitest";
 import { render } from "solid-js/web";
 import type { JSX } from "solid-js";
@@ -65,27 +66,30 @@ describe("batch 11e page identity and journal continuity", () => {
     const first = journalDto(today, "Visible today");
     const second = journalDto(older, "Move me");
     vi.spyOn(backend(), "journalFeedPage").mockResolvedValue(feedResponse([first, second]));
+    await bindTestHost(); // the cross-day transfer needs a storage host (L2-14)
     const mounted = mount(() => <PageView />);
     try {
       const id = second.blocks[0].id;
       await vi.waitFor(() => expect(mounted.root.querySelector(`[data-block-id="${id}"]`)).not.toBeNull());
       startEditing(id, 2);
-      await vi.waitFor(() => expect(mounted.root.querySelector<HTMLTextAreaElement>(`[data-block-id="${id}"] textarea`)).not.toBeNull());
-      const editor = mounted.root.querySelector<HTMLTextAreaElement>(`[data-block-id="${id}"] textarea`)!;
-      editor.focus();
-      editor.setSelectionRange(2, 5, "forward");
-      editor.dispatchEvent(new KeyboardEvent("keydown", { key: "ArrowUp", code: "ArrowUp", altKey: true, shiftKey: true, bubbles: true, cancelable: true }));
+      await vi.waitFor(() => expect(maybeEditorIn(mounted.root.querySelector<HTMLElement>(`[data-block-id="${id}"]`)!)).not.toBeNull());
+      const editor = maybeEditorIn(mounted.root.querySelector<HTMLElement>(`[data-block-id="${id}"]`)!)!;
+      editor.element.focus();
+      editor.select(2, 5, "forward");
+      editor.keydown(new KeyboardEvent("keydown", { key: "ArrowUp", code: "ArrowUp", altKey: true, shiftKey: true, bubbles: true, cancelable: true }));
       await vi.waitFor(() => expect(doc.byId[id].page).toBe(today));
       await vi.waitFor(() => {
-        const moved = mounted.root.querySelector<HTMLTextAreaElement>(`[data-block-id="${id}"] textarea`)!;
-        expect(moved.value).toBe("Move me");
-        expect(document.activeElement).toBe(moved);
-        expect([moved.selectionStart, moved.selectionEnd, moved.selectionDirection]).toEqual([2, 5, "forward"]);
+        const moved = maybeEditorIn(mounted.root.querySelector<HTMLElement>(`[data-block-id="${id}"]`)!)!;
+        expect(moved.value()).toBe("Move me");
+        expect(document.activeElement).toBe(moved?.element);
+        expect([moved.selection()[0], moved.selection()[1], moved.direction()]).toEqual([2, 5, "forward"]);
       });
     } finally { mounted.dispose(); uninstallKeys(); vi.unstubAllGlobals(); }
   });
 
-  it("keeps the old feed and surfaces a template read failure before retrying", async () => {
+  // GH #811: a failed template step no longer withholds the feed; it is
+  // surfaced and retried while the journals are shown without it.
+  it("shows the feed, surfaces a template read failure and retries the template", async () => {
     setGraphMeta({ root: "/tmp/template-read-failure", default_journal_template: "Daily" } as GraphMeta);
     setDoc({ byId: { old: node("old", "Old feed", "Yesterday") }, pages: [page("Yesterday", "journal", ["old"])], feed: ["Yesterday"] });
     const failure = new Error("template page unreadable");
@@ -94,12 +98,13 @@ describe("batch 11e page identity and journal continuity", () => {
     const feedRead = vi.spyOn(backend(), "journalFeedPage").mockResolvedValue(feedResponse([journalDto("Today", "New feed")]));
     const owner = { graphEpoch: graphEpoch(), isLive: () => true };
     await reloadJournalsFeedFromStart(owner);
-    expect(feedNames()).toContain("Yesterday");
-    expect(feedRead).not.toHaveBeenCalled();
-    expect(toasts().some((toast) => toast.kind === "error" && toast.message.includes("journal feed"))).toBe(true);
+    expect(feedRead).toHaveBeenCalledTimes(1);
+    expect(feedNames()).toContain("Today");
+    expect(toasts().some((toast) => toast.kind === "error"
+      && toast.message.includes("Couldn't add the journal template") && toast.message.includes("template page unreadable"))).toBe(true);
     await reloadJournalsFeedFromStart(owner);
     expect(dayRead).toHaveBeenCalledTimes(2);
-    expect(feedRead).toHaveBeenCalledTimes(1);
+    expect(feedRead).toHaveBeenCalledTimes(2);
     expect(feedNames()).toContain("Today");
   });
 

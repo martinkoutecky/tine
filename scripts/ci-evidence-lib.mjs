@@ -21,7 +21,14 @@ function normalizedSha(value) {
   return typeof value === "string" ? value.trim().toLowerCase() : "";
 }
 
-export function ciEvidenceProblems(expectedSha, candidate) {
+// ci.yml marks a `purpose=development` dispatch in its run name; such a run
+// skipped the release-metadata check, so it only backs a build that publishes
+// nothing (release.yml passes --allow-development only when publish=false).
+export function isDevelopmentCiRun(run) {
+  return typeof run?.display_title === "string" && / \/ development \/ /.test(run.display_title);
+}
+
+export function ciEvidenceProblems(expectedSha, candidate, { allowDevelopment = false } = {}) {
   const problems = [];
   const run = candidate?.run ?? {};
   const jobs = Array.isArray(candidate?.jobs) ? candidate.jobs : [];
@@ -38,6 +45,9 @@ export function ciEvidenceProblems(expectedSha, candidate) {
   }
   if (run.status !== "completed") problems.push(`run status is ${run.status ?? "missing"}, not completed`);
   if (run.conclusion !== "success") problems.push(`run conclusion is ${run.conclusion ?? "missing"}, not success`);
+  if (!allowDevelopment && isDevelopmentCiRun(run)) {
+    problems.push("run is a development-purpose CI run, which skipped release readiness; it cannot back a publish");
+  }
 
   const conclusions = new Map(jobs.map((job) => [job.name, job.conclusion]));
   for (const name of REQUIRED_FULL_CI_JOBS) {
@@ -48,10 +58,10 @@ export function ciEvidenceProblems(expectedSha, candidate) {
   return problems;
 }
 
-export function selectExactCiEvidence(expectedSha, candidates) {
+export function selectExactCiEvidence(expectedSha, candidates, options = {}) {
   const inspected = [];
   for (const candidate of candidates) {
-    const problems = ciEvidenceProblems(expectedSha, candidate);
+    const problems = ciEvidenceProblems(expectedSha, candidate, options);
     if (problems.length === 0) return candidate;
     inspected.push({ id: candidate?.run?.id ?? "unknown", problems });
   }

@@ -19,6 +19,16 @@ may tag, publish, comment, and close issues.
 4. Regenerate the canonical Guide/demo site and prove the checked-in
    `website/demo/` output, bundled Guide pages, links, block references, and
    assets are current.
+   At each **stable cut on master**, after the version bump and Guide/site
+   regeneration, review `website/compare/rows.json` against its Guide/test
+   evidence and refresh each competitor source and `checked` date. Drop
+   unverifiable rows or leave competitor cells unknown. Run
+   `npm run compare:build`, `node scripts/build-compare-page.mjs --update-fixture`,
+   `npm run test:compare`, and `npm run compare:check`; include the generated
+   `website/compare.html` and test fixture in the stable-cut diff. The strict
+   published-page check must pass before publishing. Development's
+   `npm run docs:build` generates only a comparison preview under
+   `artifacts/compare-page/`; it does not update the published comparison.
 5. Run the complete Linux release E2E catalog (`npm run e2e:linux:release`)
    against the production-protocol candidate binary. Retain screenshots, DOM,
    console/backend logs, graph diff, JUnit, and JSON on failure. See
@@ -36,7 +46,15 @@ may tag, publish, comment, and close issues.
    not permission to weaken the budget. Also run `npm run bench:startup` against
    the immutable v0.7.2 native binary, retain its timing JSON and early-frame
    sequence, and inspect those frames for new blank, intermediate, or corrupt
-   paints before shipping.
+   paints before shipping. Then run the PDF viewer gate on the same idle Linux
+   machine (Xvfb, tauri-driver, WebKitWebDriver, xdotool; about 20 minutes, no
+   builds meanwhile):
+   `node scripts/perf-pdf/gate.mjs --base <base binary> --candidate <candidate binary> --out <evidence dir>`.
+   The base is the newest published release, stable or Beta, that carries the
+   PDF probe (D-20261021-PV4). Retain `report.md`, `report.json` and `raw/`.
+   Exit 1 (a regression beyond the measured run-to-run spread) is a
+   stop/consult decision; exit 4 means the base has no probe, so pick a newer
+   base. See `docs/pdf-perf-harness.md`.
 9. Push the frozen exact candidate, manually dispatch `ci.yml` with
    `scope=full`, and require all four full jobs to succeed on that SHA. Record
    the Actions URL and confirm it with `scripts/check-ci-evidence.mjs`. PR or
@@ -47,6 +65,13 @@ may tag, publish, comment, and close issues.
     exact commit's platform builds, Linux E2E, Android, real offline Flatpak job,
     and candidate assembly pass. The tag-triggered workflow enforces the same
     CI evidence before it rebuilds/publishes release artifacts.
+    For quick share, require the log line `Quick share viewer-first gate passed`
+    from release preflight and from each separately dispatched iOS TestFlight
+    or Microsoft Store build. Those workflows pass the check's output into
+    their native builds; a green job alone is insufficient because viewer
+    failure permits packaging with sharing disabled. Flatpak remains disabled
+    pending a decision on carrying the attestation into its offline manifest;
+    do not count its build success as quick share evidence.
 11. After publication, inventory the real assets and prepare issue-specific
    reporter follow-ups. Comment/closure authority remains in the canonical
    agent agreement.

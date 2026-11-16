@@ -39,9 +39,16 @@ impl Graph {
     /// cache. The page is named and parsed from its file: a build leaves a
     /// held page out, and its row is its owner's (`install_built`, (G)).
     pub(super) fn parse_page_entry_isolated(&self, mut e: PageEntry) -> PageParseResult {
-        let content = read_parse_input(&e.path).map_err(|error| {
-            PageParseFailure::Unreadable(e.rel_path_str().to_owned(), error.to_string())
-        })?;
+        let content = match read_parse_input(&e.path) {
+            Ok(content) => content,
+            Err(error) => {
+                return PageParseFailure::unreadable(
+                    e.rel_path_str().to_owned(),
+                    error,
+                    "Tine unreadable file producer=on-demand-build",
+                )
+            }
+        };
         if let Ok(name) = self.name_from(&e, &content) {
             e.name = name;
         }
@@ -59,7 +66,30 @@ pub(super) fn parse_page_content(e: &PageEntry, content: &str) -> (Document, Dis
     assign_doc_runtime_ids(&mut doc.roots, e.rel_path_str());
     // A 408-byte DocBlock makes unused doubling capacity costly at 10k pages.
     shrink_blocks(&mut doc.roots);
+    prime_projections(&doc);
     (doc, rev)
+}
+
+/// Run every lsdoc parse the page's later stages read, inside the one-page
+/// isolation (`isolate_page_parse`): each block's projection (cached on the
+/// block, so the initial capture's projection pass then finds it built) and
+/// the page-property block's. A parser panic then names this one file as
+/// unreadable instead of escaping from a graph-wide index build, where it
+/// would stop the whole load (one bad file must never stop the graph load).
+/// Cost: the block projections move here from the capture's parallel pass
+/// (no new work); the page-property block is one extra parse of the
+/// pre-block's property lines, O(pre-block bytes), for pages that have one.
+pub(super) fn prime_projections(doc: &Document) {
+    fn walk(blocks: &[DocBlock]) {
+        for block in blocks {
+            block.projection();
+            walk(&block.children);
+        }
+    }
+    if let Some(block) = tine_core::page_properties::document_page_property_block(doc) {
+        block.projection();
+    }
+    walk(&doc.roots);
 }
 
 fn shrink_blocks(blocks: &mut Vec<DocBlock>) {
@@ -83,7 +113,7 @@ pub(super) fn isolate_page_parse(
                 .or_else(|| payload.downcast_ref::<String>().map(String::as_str))
                 .unwrap_or("unknown panic payload");
             tine_core::diag_line::diagnostic_line(
-                "Tine search index skipped a page after parse/projection panic",
+                "Tine search index skipped a page after parse/projection panic producer=page-parse",
             );
             Err(PageParseFailure::Panic(
                 e.rel_path_str().to_owned(),

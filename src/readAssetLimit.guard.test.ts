@@ -16,7 +16,7 @@ const RULE = "L-1: read_asset must require a caller cap and never reach Store::r
 describe("read_asset size boundary (L-1)", () => {
   it("requires the IPC cap and forwards it to the sole feature asset read", () => {
     const commands = source("src-tauri/src/commands.rs");
-    const command = commands.match(/pub\(crate\) fn read_asset\([\s\S]*?\n\}/)?.[0];
+  const command = commands.match(/pub\(crate\) (?:async )?fn read_asset\([\s\S]*?\n\}/)?.[0];
     expect(command, RULE).toMatch(/max_bytes:\s*u64\b/);
     expect(command, RULE).toContain("tine_graph_features::assets::read_asset(&slot.store, &name, max_bytes)");
     expect(command, RULE).not.toMatch(/\.read\(/);

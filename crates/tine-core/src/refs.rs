@@ -365,7 +365,9 @@ pub fn rename_tags_property(raw: &str, from: &str, to: &str, is_org: bool) -> St
 
 /// The one reference rewrite a page rename applies to a file's text:
 /// `renames`' links, tags and embeds ([`rename_refs_multi`]), then bare
-/// `tags::` values ([`rename_tags_property_multi`]). Keys are raw old names,
+/// `tags::` values ([`rename_tags_property_multi`]), then the page selectors of
+/// export definition blocks, which name a page inside a query and so are no
+/// reference ([`crate::export_definition`]). Keys are raw old names,
 /// normalized here; values are display names. The store's rename steps and the
 /// rename planner both call this, so they cannot disagree on whether a rename
 /// changes a file. Pure, O(text).
@@ -379,11 +381,12 @@ pub fn rename_rewrite(
         .iter()
         .map(|(from, to)| (normalize(from), to.clone()))
         .collect();
-    rename_tags_property_multi(
+    let renamed = rename_tags_property_multi(
         &rename_refs_multi(text, &renames, is_org, file_name_format),
         &renames,
         is_org,
-    )
+    );
+    crate::export_definition::rename_selectors(&renamed, is_org, &renames).unwrap_or(renamed)
 }
 
 /// Multi-target `rename_tags_property`: rewrite bare `tags::` values that
@@ -794,6 +797,28 @@ mod tests {
         assert_eq!(
             rename_tags_property(raw, "Old", "New", false),
             "tags:: New\n```\ntags:: Old\n```\n"
+        );
+    }
+}
+#[cfg(test)]
+mod tql_near_seed_rename_tests {
+    /// docs/contracts/tql-links-near.md "Renames": a bracketed seed inside a
+    /// `near(...)` follows a rename through the ordinary reference rewrite.
+    #[test]
+    fn a_rename_rewrites_bracketed_near_seeds() {
+        let raw = "- {{tine-query @page and near(name in ([[Project]], [[Notes]]), 2)}}\n";
+        let renames: std::collections::HashMap<String, String> =
+            [("project".to_string(), "Project archive".to_string())]
+                .into_iter()
+                .collect();
+        assert_eq!(
+            super::rename_refs_multi(
+                raw,
+                &renames,
+                false,
+                crate::config::FileNameFormat::TripleLowbar
+            ),
+            "- {{tine-query @page and near(name in ([[Project archive]], [[Notes]]), 2)}}\n"
         );
     }
 }

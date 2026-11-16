@@ -22,6 +22,18 @@ function dtoIndex(page: PageDto): Map<string, BlockDto[]> {
   visit(page.blocks); dtoIndexes.set(page, index); return index;
 }
 
+const mountedSynthetic = new WeakMap<BlockDto, number | null>();
+/** Whether a synthetic result row (a page's properties or the prose before its
+ * first block, which have no live node of their own) is live. The rule is
+ * resolveResultRow's "mount" rule: live when its ticket is actionable, then kept
+ * while the source page instance is unchanged, so a structural edit's epoch
+ * move does not drop it; a page replacement does. */
+export function syntheticResultRowLive(dto: BlockDto, page: string): boolean {
+  const instance = pageInstanceGeneration(page);
+  if (resultsTicketActionable(resultTicket(dto))) { mountedSynthetic.set(dto, instance); return true; }
+  return mountedSynthetic.has(dto) && mountedSynthetic.get(dto) === instance;
+}
+
 /** I-12: the only result -> live-node boundary. An already promoted node is
  * a live object, retained while its editor has ordinary unpublished input.
  * New promotions and actions require settled provenance; structural changes
@@ -96,8 +108,9 @@ export function captureResultDraft(row: ResultRow): () => ReadonlyNode | null {
   const source = resolveResultRow(row);
   const page = pageByName(row.page);
   const binding = captureBinding();
+  const instance = pageInstanceGeneration(row.page);
   return () => source && bindingCurrent(binding) && resultsActionable()
-    && pageByName(row.page) === page && node(source.id) === source ? source : null;
+    && pageByName(row.page) === page && node(source.id) === source && pageInstanceGeneration(row.page) === instance ? source : null;
 }
 
 /** A query result surface's deferred-control target: `resultWriteTarget` for a
@@ -128,9 +141,10 @@ export function resultWriteTarget(row: ResultRow): () => string | null {
   const binding = captureBinding();
   const sourceAtOpen = !opening.dto ? resolveResultRow(opening) : null;
   const pageAtOpen = !opening.dto ? pageByName(opening.page) : null;
+  const instance = pageInstanceGeneration(opening.page);
   return () => {
     let source = bindingCurrent(binding) ? resolveResultRow(opening) : null;
-    if (!opening.dto && (source !== sourceAtOpen || pageByName(opening.page) !== pageAtOpen)) source = null;
+    if (!opening.dto && (source !== sourceAtOpen || pageByName(opening.page) !== pageAtOpen || pageInstanceGeneration(opening.page) !== instance)) source = null;
     if (!source) noticeChangedResults(1);
     return source?.id ?? null;
   };

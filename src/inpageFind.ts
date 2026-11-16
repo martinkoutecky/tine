@@ -1,6 +1,7 @@
 import { revealOutlineBlock } from "./outlineViewport";
+import { revealFindSheetBlock } from "./sheet/find";
 import { batch, createMemo, createRoot, createSignal } from "solid-js";
-import { mainPages, pageByName, revealNode, resolveBlockRef, node as docNode } from "./document";
+import { mainPages, pageByName, feedNames, revealNode, resolveBlockRef, node as docNode } from "./document";
 import { renderedBlockText, type RenderedTextOptions } from "./render/renderedText";
 import { renderedBlocks } from "./lazyObserve";
 import type { Format } from "./types";
@@ -32,6 +33,18 @@ const FIND_HIGHLIGHT = "tine-find";
 const FIND_ACTIVE_HIGHLIGHT = "tine-find-active";
 const RENDERED_TEXT_CACHE_LIMIT = 4096;
 const HIGHLIGHT_BLOCK_CHUNK_SIZE = 40;
+const FIND_BLOCK_SELECTOR = ".ls-block[data-block-id],.sheet-cell[data-block-id]:not(.sheet-field-cell)";
+
+function findBlockTextRoot(element: HTMLElement): HTMLElement | null {
+  return element.querySelector<HTMLElement>(element.matches(".sheet-title-cell") ? ".sheet-cell-body" : ".block-content");
+}
+
+// A structural memo can run before Solid removes a retired day's DOM. The
+// loaded-page lookup owns membership, including for its displayed query rows.
+function isLoadedFindSurface(element: HTMLElement): boolean {
+  const day = element.closest<HTMLElement>("[data-feed-day]")?.dataset.feedDay;
+  return day === undefined || !!pageByName(day);
+}
 
 interface RenderedTextCacheEntry {
   raw: string;
@@ -115,13 +128,20 @@ export const inPageFindActiveIndex = state.activeIndex;
 export const inPageFindFocusRequest = state.focusRequest;
 export const inPageFindPaneId = state.paneId;
 
+/** Count shared retired days once, even when several visible panes show Journals.
+ * Find walks loaded roots only and never reads an unloaded day. */
+export function inPageFindRetiredDays(): number {
+  if (!layoutPaneIds(visibleLayoutNode()).some(id => paneRouter(id).route().kind === "journals")) return 0;
+  return feedNames().reduce((count, name) => count + (pageByName(name) ? 0 : 1), 0);
+}
+
 export function inPageFindPreservesEditorBlur(): boolean {
   return state.preserveEditorBlur();
 }
 
 /** Non-overlapping original UTF-16 ranges using the caller's graph fold policy.
- * Empty query has no matches. The mapped substring scan costs O(text × query)
- * plus deduplication across candidate spans. */
+ * Empty query has no matches. The mapped substring scan costs O(text × query),
+ * with constant-time deduplication per candidate span. */
 export function findTextOccurrences(text: string, query: string, removeAccents: boolean): { start: number; end: number }[] {
   if (!query) return [];
   const out: { start: number; end: number }[] = [];
@@ -168,19 +188,40 @@ function currentMatchesFor(query: string): InPageFindMatch[] {
   const removeAccents = searchRemoveAccents();
   state.surfaceRevision();
   const out: InPageFindMatch[] = [];
-  const scannedSurfaces = new Set<string>();
+  const scopesById = new Map<string, ReturnType<typeof findScopes>>();
   for (const scope of findScopes()) {
+    const scopes = scopesById.get(scope.id);
+    if (scopes) scopes.push(scope);
+    else scopesById.set(scope.id, [scope]);
+  }
+  for (const [scopeId, scopes] of scopesById) {
     const start = out.length;
-    appendOutlineMatches(scope.roots, docNode, q, scope.format, removeAccents, out);
-    for (let i = start; i < out.length; i++) out[i].scopeId = scope.id;
-    const element = findScopeElement(scope.id);
-    if (!element || scannedSurfaces.has(scope.id)) continue;
-    scannedSurfaces.add(scope.id);
+    // Journal days share a pane: count all its outlines before supplementing DOM.
+    for (const scope of scopes) {
+      appendOutlineMatches(scope.roots, docNode, q, scope.format, removeAccents, out);
+    }
+    for (let i = start; i < out.length; i++) out[i].scopeId = scopeId;
+    const element = findScopeElement(scopeId);
+    if (!element) continue;
+    // Embeds and query tables can display blocks outside the page's own tree.
+    // Keep the outline walk (including unmounted descendants), then add each
+    // displayed block once. Sheet cells share the block identity, not a second
+    // synthetic surface that would double the count.
+    const counted = new Set(out.slice(start).map((match) => match.blockId));
+    for (const block of element.querySelectorAll<HTMLElement>(FIND_BLOCK_SELECTOR)) {
+      const id = block.dataset.blockId;
+      const root = findBlockTextRoot(block);
+      if (!id || !root || root.matches(".macro-host") || counted.has(id) || !isLoadedFindSurface(block) || block.closest("[data-inpage-find-surface]")) continue;
+      counted.add(id);
+      findTextOccurrences(searchableTextForRoot(root), q, removeAccents).forEach((match, ordinalInBlock) => {
+        out.push({ blockId: id, scopeId, ordinalInBlock, ...match });
+      });
+    }
     for (const surface of element.querySelectorAll<HTMLElement>("[data-inpage-find-surface]")) {
       const surfaceId = surface.dataset.inpageFindSurface;
-      if (!surfaceId) continue;
+      if (!surfaceId || !isLoadedFindSurface(surface)) continue;
       findTextOccurrences(searchableTextForRoot(surface), q, removeAccents).forEach((match, ordinalInBlock) => {
-        out.push({ blockId: `surface:${surfaceId}`, scopeId: scope.id, surfaceId, ordinalInBlock, ...match });
+        out.push({ blockId: `surface:${surfaceId}`, scopeId, surfaceId, ordinalInBlock, ...match });
       });
     }
   }
@@ -335,7 +376,7 @@ function expandAncestorsForFind(blockId: string) {
 
 function blockSelector(id: string): string {
   const esc = typeof CSS !== "undefined" && CSS.escape ? CSS.escape(id) : id.replace(/"/g, '\\"');
-  return `.ls-block[data-block-id="${esc}"]`;
+  return `.ls-block[data-block-id="${esc}"],.sheet-cell[data-block-id="${esc}"]:not(.sheet-field-cell)`;
 }
 
 function paneSelector(id: string): string {
@@ -423,15 +464,21 @@ export async function revealInPageFindMatch(match: InPageFindMatch): Promise<boo
     return false;
   }
   const node = docNode(match.blockId);
-  if (!node) return false;
-  renderedBlocks.add(match.blockId);
-  expandAncestorsForFind(match.blockId);
+  if (!node && !inPageFindBlockElement(match.blockId, scopeId)) return false;
+  if (node) {
+    renderedBlocks.add(match.blockId);
+    expandAncestorsForFind(match.blockId);
+  }
   for (let i = 0; i < 20; i++) {
     await animationFrame();
     if (!current()) return false;
     revealOutlineBlock(match.blockId, findScopeElement(scopeId));
+    revealFindSheetBlock(match.blockId, findScopeElement(scopeId)!);
     const el = inPageFindBlockElement(match.blockId, scopeId);
     if (el) {
+      // A sheet may scroll on both axes, while precise occurrence centering
+      // below only adjusts the vertical scroll position.
+      if (el.matches(".sheet-cell")) el.scrollIntoView({ block: "center", inline: "center" });
       if (!centerInPageFindOccurrence(el, match.ordinalInBlock)) {
         el.scrollIntoView({ block: "center", behavior: "smooth" });
       }
@@ -462,7 +509,7 @@ function nearestVerticalScroller(el: HTMLElement): HTMLElement | null {
  * precise rect can be resolved (e.g. the block is in edit mode; jsdom) so the
  * caller falls back to the coarse block scroll. */
 function centerInPageFindOccurrence(blockEl: HTMLElement, ordinalInBlock: number): boolean {
-  const root = blockEl.querySelector(".block-content") as HTMLElement | null;
+  const root = findBlockTextRoot(blockEl);
   const query = state.query().trim();
   if (!root || !query) return false;
   const range = textRanges(root, query)[ordinalInBlock];
@@ -634,7 +681,7 @@ function visibleFindElements(selector: string): HTMLElement[] {
   });
 }
 function visibleFindBlockElements(): HTMLElement[] {
-  return visibleFindElements(".ls-block[data-block-id]").filter((el) => !!el.querySelector(".block-content"));
+  return visibleFindElements(FIND_BLOCK_SELECTOR).filter((el) => !!findBlockTextRoot(el));
 }
 function visibleFindSurfaceElements(): HTMLElement[] {
   return visibleFindElements("[data-inpage-find-surface]");
@@ -736,7 +783,7 @@ async function refreshInPageFindHighlightsChunked(
     if (!blockId) continue;
     const blockMatches = matchesByBlock.get(elementMatchKey(block, blockId));
     if (!blockMatches?.length) continue;
-    const root = block?.querySelector(".block-content") as HTMLElement | null;
+    const root = findBlockTextRoot(block);
     if (!root) continue;
     const blockRanges = textRanges(root, query);
     for (const m of blockMatches) {

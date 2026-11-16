@@ -19,7 +19,7 @@ html[data-theme-content-typography="editorial-serif"] .page-section {
   font-family: var(--tine-content-font, "Iowan Old Style", "Palatino Linotype", "Book Antiqua", Palatino,
     Georgia, serif);
   font-size: var(--tine-font-size, 19px);
-  --ls-block-line-height: 30px;
+  --ls-block-line-height: var(--tine-typography-line-height, 30px);
 }
 
 html[data-theme-journal-header="editorial"] .journal-title {

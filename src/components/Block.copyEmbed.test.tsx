@@ -1,3 +1,4 @@
+import { editorIn, type EditorDriver } from "../tests/editorDriver";
 // GH #279: Mod+Shift+C copies `{{embed ((uuid))}}` for the current block,
 // mirroring the builtin Mod+C block-ref copy. With a live text selection the
 // handler must decline (no preventDefault, no clipboard write) so the
@@ -44,10 +45,8 @@ function mountEditing() {
   ));
 }
 
-function chord(ta: HTMLTextAreaElement, init: KeyboardEventInit): KeyboardEvent {
-  const event = new KeyboardEvent("keydown", { key: "c", bubbles: true, cancelable: true, ...init });
-  ta.dispatchEvent(event);
-  return event;
+function chord(ta: EditorDriver, init: KeyboardEventInit): KeyboardEvent {
+  return ta.keydown({ key: "c", bubbles: true, cancelable: true, ...init });
 }
 
 let disposeKeys: (() => void) | null = null;
@@ -78,8 +77,8 @@ describe("copy block embed command (GH #279)", () => {
     const writeText = vi.spyOn(backend(), "writeText").mockResolvedValue(undefined);
     const { root, dispose } = mountEditing();
     try {
-      const ta = root.querySelector("textarea.block-editor") as HTMLTextAreaElement;
-      ta.setSelectionRange(2, 2);
+      const ta = editorIn(root);
+      ta.select(2, 2);
       const event = chord(ta, { ctrlKey: true, shiftKey: true });
       await vi.waitFor(() => expect(writeText).toHaveBeenCalled());
 
@@ -94,8 +93,8 @@ describe("copy block embed command (GH #279)", () => {
     const writeText = vi.spyOn(backend(), "writeText").mockResolvedValue(undefined);
     const { root, dispose } = mountEditing();
     try {
-      const ta = root.querySelector("textarea.block-editor") as HTMLTextAreaElement;
-      ta.setSelectionRange(1, 4); // a live selection — ordinary copy must win
+      const ta = editorIn(root);
+      ta.select(1, 4); // a live selection — ordinary copy must win
       const event = chord(ta, { ctrlKey: true, shiftKey: true });
       // Let any (wrongly scheduled) handler promise settle before asserting.
       await Promise.resolve();
@@ -112,8 +111,8 @@ describe("copy block embed command (GH #279)", () => {
     const writeText = vi.spyOn(backend(), "writeText").mockResolvedValue(undefined);
     const { root, dispose } = mountEditing();
     try {
-      const ta = root.querySelector("textarea.block-editor") as HTMLTextAreaElement;
-      ta.setSelectionRange(2, 2);
+      const ta = editorIn(root);
+      ta.select(2, 2);
       const event = chord(ta, { ctrlKey: true });
       await vi.waitFor(() => expect(writeText).toHaveBeenCalled());
 

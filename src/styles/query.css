@@ -480,7 +480,9 @@
   text-decoration: underline;
 }
 .qs-group {
-  border-left: 2px solid var(--border-color);
+  /* GH #619 c6 (Q4): a group is told apart by a heavier rail, a ruled heading and a divider from its
+     siblings, not by more indentation. */
+  border-left: 3px solid var(--text-muted);
   padding-left: 8px;
   margin-left: 2px;
   display: flex;
@@ -491,12 +493,29 @@
   display: flex;
   align-items: center;
   gap: 4px;
+  padding-bottom: 3px;
+  border-bottom: 1px solid var(--border-color);
+}
+.qs-root-op {
+  color: var(--text-secondary);
+  font-size: 12px;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  padding: 1px 4px;
+}
+/* A divider wherever a group meets a sibling (another group or a loose condition). */
+.qs-rows > .qs-listitem:has(> .qs-group) + *,
+.qs-rows > * + .qs-listitem:has(> .qs-group) {
+  margin-top: 4px;
+  padding-top: 6px;
+  border-top: 1px solid var(--border-color);
 }
 .qs-group-op {
   border: none;
   background: transparent;
-  color: var(--text-muted);
-  font-size: 11px;
+  color: var(--text-secondary);
+  font-size: 12px;
   font-weight: 700;
   letter-spacing: 0.04em;
   text-transform: uppercase;
@@ -773,7 +792,7 @@
     /* One system token, never `env()` at the call site (mobileSafeArea). */
     padding: 12px 14px calc(12px + var(--overlay-inset-bottom));
     /* A bottom sheet is expected to scroll; menus inside it scroll with it. */
-    max-height: 70vh;
+    max-height: calc(70vh / var(--interface-zoom, 1));
     overflow-y: auto;
   }
   .qs-menu {
@@ -851,6 +870,14 @@
   flex-wrap: wrap;
   gap: 8px;
 }
+/* GH #619 c6 (UI1): Save at the trailing end, its dismiss just left of it. */
+.query-text-pane-actions {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  margin-left: auto;
+}
+.query-text-pane-actions .qb-commit { margin-top: 0; }
 .query-text-pane-error {
   color: var(--tine-danger-color, var(--palette-danger));
   font-size: 12px;
@@ -960,7 +987,7 @@
 .query-result-section-header h3 { margin: 0; }
 .query-result-section-header .qd-root { margin-left: auto; }
 .qd-trigger { border: 1px solid var(--border-color, #777); border-radius: 6px; padding: .25rem .55rem; background: transparent; color: inherit; }
-.qd-panel { position: relative; z-index: 4; max-height: min(65vh, 34rem); overflow: auto; padding: .75rem; border: 1px solid var(--border-color, #777); border-radius: 8px; background: var(--bg-primary, #222); box-shadow: 0 8px 24px #0004; min-width: min(32rem, 90vw); }
+.qd-panel { position: relative; z-index: 4; max-height: min(calc(65vh / var(--interface-zoom, 1)), 34rem); overflow: auto; padding: .75rem; border: 1px solid var(--border-color, #777); border-radius: 8px; background: var(--bg-primary, #222); box-shadow: 0 8px 24px #0004; min-width: min(32rem, calc(90vw / var(--interface-zoom, 1))); }
 .qd-panel section { margin: .4rem 0 .8rem; border-bottom: 1px solid var(--border-color, #777); padding-bottom: .5rem; }
 .qd-panel h4 { font-size: .85rem; margin: 0 0 .3rem; }
 .qd-panel button { margin: .12rem; }
@@ -1006,3 +1033,51 @@
 .qs-live-diagnostics { color: var(--color-warning, #c80); }
 .qs-live-rows { list-style: none; margin: 0; padding: 0; max-height: 14em; overflow-y: auto; display: flex; flex-direction: column; gap: 2px; }
 .qs-live-row { display: flex; gap: 6px; align-items: baseline; font-size: 0.9em; user-select: text; }
+
+/* F3/F4/F11 (D-20261028-UILP): page links in query boards and tables read as links; the
+   board column heading keeps its count apart from the label (the heading is an h4: the
+   old `.query-board-column h2` rule never matched, so the count touched the name). */
+.query-page-link {
+  display: inline;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  color: var(--link-color);
+  font: inherit;
+  text-align: left;
+  white-space: normal;
+  overflow-wrap: break-word;
+  cursor: pointer;
+}
+.query-page-link:hover,
+.query-page-link:focus-visible { text-decoration: underline; }
+.query-board-heading,
+.query-board-column > h2,
+.query-board-column > h4 {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 10px;
+  margin: 0 0 6px;
+  font-size: 13px;
+}
+.query-board-label { min-width: 0; overflow-wrap: anywhere; }
+.query-board-count { flex: none; color: var(--text-muted); font-weight: 400; font-variant-numeric: tabular-nums; }
+.query-board-card {
+  display: block;
+  width: 100%;
+  font-size: 14px;
+  line-height: 1.4;
+  box-sizing: border-box;
+  margin-top: 4px;
+  padding: 4px 8px;
+  border: 1px solid var(--border-color);
+  border-radius: 6px;
+  background: var(--bg-primary);
+  overflow-wrap: anywhere;
+  text-align: left;
+}
+/* F5: the group breakdown folds behind its "Grouped by" line. */
+.query-summary-details { margin: 2px 0 6px; }
+.query-summary-details > summary { cursor: pointer; margin: 0; }
+.query-summary-details[open] > summary { margin-bottom: 4px; }

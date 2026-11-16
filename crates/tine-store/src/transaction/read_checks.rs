@@ -1,6 +1,6 @@
 //! Read-dependent safety checks at the Store writer boundary.
 use super::*;
-impl Transaction<'_> {
+impl PagePlan<'_> {
     // Initial parsing can need the writer; wait before commit acquires it.
     pub(super) fn await_reference_publication(&self) {
         if self.steps.iter().any(|step| {
@@ -75,7 +75,7 @@ impl Transaction<'_> {
         Ok(())
     }
 }
-impl Transaction<'_> {
+impl PagePlan<'_> {
     /// Stage-2 test injections for `file`, then its path.
     pub(super) fn stage2_faults(
         &self,

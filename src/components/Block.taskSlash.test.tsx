@@ -1,3 +1,4 @@
+import { editorIn, type EditorDriver } from "../tests/editorDriver";
 import { afterEach, beforeAll, describe, expect, it, vi } from "vitest";
 import { For, type JSX } from "solid-js";
 import { render } from "solid-js/web";
@@ -39,15 +40,15 @@ function taskPage(raw: string, format: "md" | "org" = "md"): PageDto {
   };
 }
 
-function inputAt(textarea: HTMLTextAreaElement, value: string, caret: number) {
+function inputAt(textarea: EditorDriver, value: string, caret: number) {
   textarea.focus();
-  textarea.value = value;
-  textarea.setSelectionRange(caret, caret);
-  textarea.dispatchEvent(new InputEvent("input", {
+  textarea.replaceText(value);
+  textarea.select(caret, caret);
+  textarea.reportInput({
     bubbles: true,
     inputType: "insertText",
     data: value[caret - 1] ?? null,
-  }));
+  });
 }
 
 function choose(label: string) {
@@ -64,7 +65,7 @@ async function openAndChoose(raw: string, label: string, format: "md" | "org" = 
   const { root, dispose } = mount(() => (
     <For each={pageByName("Task slash")?.roots ?? []}>{(id) => <Block id={id} />}</For>
   ));
-  const textarea = root.querySelector("textarea.block-editor") as HTMLTextAreaElement;
+  const textarea = editorIn(root);
   inputAt(textarea, raw, caret);
   await vi.waitFor(() => expect([...document.body.querySelectorAll(".autocomplete .ac-label")]
     .some((element) => element.textContent === label)).toBe(true));
@@ -73,6 +74,20 @@ async function openAndChoose(raw: string, label: string, format: "md" | "org" = 
 }
 
 describe("task-state slash commands (GH #225)", () => {
+  it("finds Table from committed Chinese slash input and inserts its literal syntax (GH #107)", async () => {
+    await setActiveLocale("zh-CN");
+    loadSingle(taskPage("/表"));
+    startEditing("task-slash-host", 2);
+    const { root, dispose } = mount(() => <Block id="task-slash-host" />);
+    try {
+      inputAt(editorIn(root), "/表", 2);
+      const table = COMMANDS.find(command => command.matchLabel === "Table")!;
+      await vi.waitFor(() => expect([...document.querySelectorAll(".autocomplete .ac-label")]
+        .map(el => el.textContent)).toContain(table.label));
+      choose(table.label);
+      await vi.waitFor(() => expect(doc.byId["task-slash-host"].raw).toBe("tine.view:: table"));
+    } finally { dispose(); }
+  });
   it("shows English slash keywords with Chinese glosses and keeps marker insertion literal (GH #107)", async () => {
     const english = COMMANDS.map((command) => command.matchLabel ?? command.label);
     const ranking = filterCommands("TODO").map((command) => command.matchTieOrder);
@@ -81,7 +96,7 @@ describe("task-state slash commands (GH #225)", () => {
     startEditing("task-slash-host", 1);
     const { root, dispose } = mount(() => <Block id="task-slash-host" />);
     try {
-      const textarea = root.querySelector("textarea.block-editor") as HTMLTextAreaElement;
+      const textarea = editorIn(root);
       inputAt(textarea, "/", 1);
       await vi.waitFor(() => expect(document.querySelectorAll(".autocomplete .ac-label").length).toBe(COMMANDS.length));
       const labels = [...document.querySelectorAll(".autocomplete .ac-label")].map((el) => el.textContent!);
@@ -106,9 +121,9 @@ describe("task-state slash commands (GH #225)", () => {
         "owner:: Martin",
       ]));
       await vi.waitFor(() => expect([
-        textarea.selectionStart,
-        textarea.selectionEnd,
-      ]).toEqual([textarea.value.length, textarea.value.length]));
+        textarea.selection()[0],
+        textarea.selection()[1],
+      ]).toEqual([textarea.value().length, textarea.value().length]));
     } finally {
       dispose();
     }

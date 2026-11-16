@@ -1,18 +1,32 @@
 import { beforeAll, beforeEach, describe, expect, it } from "vitest";
 import { initParser } from "../render/parse";
 import { setGraphMeta } from "../graphSession";
-import { beginPageHeaderEdit, moveBlock, resetStore } from "./index";
+import { beginPageHeaderEdit, moveBlock, resetStore, setRaw } from "./index";
 import { loadSingle } from "./workingSet";
 import { pageToDto } from "./convert";
 import { doc } from "./model";
-import { readPageProperty, setPageProperty, setBlockProperty } from "./edits/properties";
+import { readPageProperty, setPageProperty, setBlockProperty, setSchedule } from "./edits/properties";
 import { rawWithBlockId, existingBlockId } from "./edits/identity";
-import { joinProps } from "../editor/properties";
+import { BUILTIN_HIDE, joinProps, splitProps } from "../editor/properties";
 
 beforeAll(() => initParser());
 beforeEach(() => { resetStore(); setGraphMeta(null); });
 
 describe("property mutation across page formats", () => {
+  it.each(["card-repeats", "hl-page", "created-at", "custom-id", "secret"])("keeps a cleared first block's %s out of the page header", key => {
+    setGraphMeta({ block_hidden_properties: ["secret"] } as Parameters<typeof setGraphMeta>[0]);
+    const raw = `Question\n${key}:: opaque  `;
+    loadSingle({ name: "Test", kind: "page", title: "Test", pre_block: null, blocks: [{ id: "first", raw, collapsed: false, children: [] }], format: "md" });
+    const parts = splitProps(raw, BUILTIN_HIDE);
+    setRaw("first", joinProps("", parts.hidden, "md", raw));
+    const saved = pageToDto("Test")!;
+    expect(saved.pre_block).toBeNull();
+    expect(saved.blocks).toHaveLength(1);
+    expect(saved.blocks[0].raw).toContain(`${key}:: opaque  `);
+    loadSingle(saved);
+    expect(pageToDto("Test")).toEqual(saved);
+  });
+
   it("writes an Org block's own drawer before body drawer lookalikes", () => {
     const raw = "* Heading\nSCHEDULED: <2026-09-28 Mon>\nBody\n:PROPERTIES:\n:id: body-id\n:END:";
     const own = "* Heading\nSCHEDULED: <2026-09-28 Mon>\n:PROPERTIES:\n:id: own-id\n:END:\nBody\n:PROPERTIES:\n:id: body-id\n:END:";
@@ -40,6 +54,17 @@ describe("property mutation across page formats", () => {
     expect(pageToDto("Test")?.pre_block).toBe("#+TITLE: Book");
   });
 
+  it("puts a property and a schedule before a titleless Markdown block's opening logbook", () => {
+    // OG frontend.util.property/insert-property prepends when has-title? is false.
+    const logbook = ":LOGBOOK:\nCLOCK: [2026-10-01 Wed 10:00]--[2026-10-01 Wed 10:05] =>  00:05:00\n:END:";
+    loadSingle({ name: "Test", kind: "page", title: "Test", pre_block: null, blocks: [{ id: "lb", raw: logbook, collapsed: false, children: [] }], format: "md" });
+    setBlockProperty("lb", "owner", "me");
+    expect(doc.byId.lb.raw).toBe(`owner:: me\n${logbook}`);
+    resetStore();
+    loadSingle({ name: "Test", kind: "page", title: "Test", pre_block: null, blocks: [{ id: "lb", raw: logbook, collapsed: false, children: [] }], format: "md" });
+    setSchedule("lb", "scheduled", { y: 2026, m: 9, d: 3 }); // m is 0-based
+    expect(doc.byId.lb.raw).toBe(`SCHEDULED: <2026-10-03 Sat>\n${logbook}`);
+  });
   it("replaces and removes a Unicode Markdown block key in place", () => {
     loadSingle({ name: "Test", kind: "page", title: "Test", pre_block: null, blocks: [{ id: "body", raw: "Body\nklíč:: old\ntags:: x", collapsed: false, children: [] }], format: "md" });
     setBlockProperty("body", "klíč", "new");

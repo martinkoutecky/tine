@@ -8,7 +8,9 @@
  *   - It is decided ONCE, at touchstart, by what that swipe would do:
  *       iOS, Back has something to pop (a transient layer, an open drawer, or
  *       a router entry)  -> BACK: the page follows the finger and the swipe
- *                           commits on release past a threshold, else snaps back.
+ *                           commits on release past a threshold (the page slides
+ *                           fully off to the right, then Back runs; GH #501),
+ *                           else snaps back.
  *       otherwise, when the left drawer exists (drawer mode) -> DRAWER: opens as
  *                           soon as the finger has travelled DRAWER_OPEN_PX.
  *       otherwise        -> nothing.
@@ -33,6 +35,8 @@ export const DRAWER_OPEN_PX = 40;
 /** Back commits past this fraction of the viewport width, with a floor. */
 export const BACK_COMMIT_FRACTION = 0.3;
 export const BACK_COMMIT_MIN_PX = 64;
+/** A committed Back slides the page fully off over this long (GH #501). */
+export const BACK_SLIDE_OUT_MS = 180;
 /** ...or on a flick: fast and at least this far. */
 export const BACK_FLICK_MIN_PX = 32;
 export const BACK_FLICK_VELOCITY = 0.5; // px per ms
@@ -163,6 +167,10 @@ export function installEdgeSwipe(deps: EdgeSwipeInstallDeps): () => void {
   const platform = deps.platform;
   const viewportWidth = deps.viewportWidth ?? (() => window.innerWidth);
   let snapTimer: ReturnType<typeof setTimeout> | null = null;
+  // A committed Back waits for its slide-off (GH #501); `skipBack` swallows the
+  // recognizer's immediate back() call that follows settle().
+  let pendingBack = false;
+  let skipBack = false;
 
   const clearSurface = (surface: HTMLElement | null) => {
     if (!surface) return;
@@ -171,13 +179,25 @@ export function installEdgeSwipe(deps: EdgeSwipeInstallDeps): () => void {
     surface.style.willChange = "";
   };
 
+  /** Run a Back whose slide-off is still in flight, now. */
+  const flushBack = () => {
+    if (!pendingBack) return;
+    pendingBack = false;
+    if (snapTimer) { clearTimeout(snapTimer); snapTimer = null; }
+    deps.back();
+    clearSurface(deps.surface());
+  };
+
   const swipe = createEdgeSwipe({
     platform,
     backAvailable: deps.backAvailable,
     drawerOpenable: deps.drawerOpenable,
     viewportWidth,
     openDrawer: deps.openDrawer,
-    back: deps.back,
+    back: () => {
+      if (skipBack) { skipBack = false; return; }
+      deps.back();
+    },
     progress(dx) {
       const surface = deps.surface();
       if (!surface) return;
@@ -186,19 +206,28 @@ export function installEdgeSwipe(deps: EdgeSwipeInstallDeps): () => void {
       surface.style.willChange = "transform";
       surface.style.transform = `translateX(${Math.round(dx)}px)`;
     },
-    settle(committed, dx) {
+    settle(committed) {
       const surface = deps.surface();
       if (!surface) return;
-      // Snap back: ease the page home. Commit: Back (called right after this)
-      // swaps the page; the new page eases in from where the finger left it.
+      if (committed) {
+        // Like the native iOS back swipe (GH #501): the page slides fully off
+        // to the right, and only then does Back swap it.
+        surface.style.transition = `transform ${BACK_SLIDE_OUT_MS}ms ease-out`;
+        surface.style.transform = `translateX(${Math.round(viewportWidth())}px)`;
+        pendingBack = true;
+        skipBack = true;
+        snapTimer = setTimeout(flushBack, BACK_SLIDE_OUT_MS + 20);
+        return;
+      }
+      // Snap back: ease the page home.
       surface.style.transition = "transform 160ms ease-out";
-      surface.style.transform = committed ? `translateX(${Math.round(dx)}px)` : "translateX(0px)";
-      if (committed) requestAnimationFrame(() => { surface.style.transform = "translateX(0px)"; });
+      surface.style.transform = "translateX(0px)";
       snapTimer = setTimeout(() => { snapTimer = null; clearSurface(surface); }, 200);
     },
   });
 
   const onStart = (event: TouchEvent) => {
+    flushBack();
     if (event.touches.length !== 1) { swipe.cancel(); return; }
     const target = event.target as Element | null;
     if (target?.closest?.(EDGE_SWIPE_IGNORE_SELECTOR)) return;
@@ -234,6 +263,7 @@ export function installEdgeSwipe(deps: EdgeSwipeInstallDeps): () => void {
     doc.removeEventListener("touchend", onEnd, { capture: true });
     doc.removeEventListener("touchcancel", onCancel, { capture: true });
     if (snapTimer) clearTimeout(snapTimer);
+    pendingBack = false;
     clearSurface(deps.surface());
   };
 }

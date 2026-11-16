@@ -10,8 +10,8 @@ export const PDF_THEME_KEY = "ls-pdf-viewer-theme";
 /** Destroying a viewer document only releases transient pdf.js resources.
  * A rejection cannot affect graph content; browser teardown reclaims them. */
 function ignorePdfDestroyFailure(_error: unknown): void {}
-/** Release a retired pdf.js document; rejection has no graph side effects. */
-export function discardPdfDocument(doc: pdfjs.PDFDocumentProxy): void { void doc.destroy().then(undefined, ignorePdfDestroyFailure); }
+/** Release a retired pdf.js document/loading task; rejection has no graph side effects. */
+export function discardPdfDocument(doc: Pick<pdfjs.PDFDocumentProxy, "destroy">): void { void doc.destroy().then(undefined, ignorePdfDestroyFailure); }
 
 /** Read the local reader theme, falling back to light if storage is unavailable. */
 export function storedPdfTheme(): PdfTheme {
@@ -34,6 +34,7 @@ export function isPdfPageRef(value: unknown): value is { num: number; gen: numbe
 // Resource ceilings are deliberately generous for books, scanned documents, and
 // architectural drawings, but bounded below the point where pdf.js/WebView canvas
 // allocations can take down the whole application.
+export { renderPdfPage } from "./pdfRenderTask";
 export const MAX_PDF_BYTES = 256 * 1024 * 1024;
 export const MAX_PDF_PAGES = 5000;
 export const MAX_PAGE_DIMENSION = 14_400; // PDF points: 200 inches at 72 dpi.

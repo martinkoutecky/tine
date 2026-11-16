@@ -130,6 +130,129 @@ fn record_fixed_event(event: &'static str, fields: Map<String, Value>) {
     DIRTY.store(true, Ordering::Release);
 }
 
+/// GH #809: closed-vocabulary milestones, with a process-local open number.
+/// The top-level elapsedMs remains the recorder clock; openElapsedMs is time
+/// since prepare (native) or launch (frontend), never a wall clock or label.
+/// (`step`, not `stage`: host_slot_guard_tests reads a passed name as a call.)
+pub(crate) fn record_workspace_open(
+    sequence: u64,
+    step: &'static str,
+    open_elapsed_ms: u64,
+    facts: Map<String, Value>,
+) {
+    record_fixed_event(
+        "workspace.open",
+        workspace_open_fields(sequence, step, open_elapsed_ms, facts),
+    );
+}
+
+fn workspace_open_fields(
+    sequence: u64,
+    step: &'static str,
+    open_elapsed_ms: u64,
+    facts: Map<String, Value>,
+) -> Map<String, Value> {
+    let mut fields = Map::new();
+    fields.insert("sequence".into(), json!(sequence));
+    fields.insert("stage".into(), json!(step));
+    fields.insert("openElapsedMs".into(), json!(open_elapsed_ms));
+    fields.extend(facts);
+    fields
+}
+
+/// Only numeric display facts; unknown or implausible values become null.
+pub(crate) fn workspace_display_fields(
+    logical: Option<(f64, f64)>,
+    monitor_count: Option<usize>,
+    target_scale: Option<f64>,
+    physical: Option<(u32, u32)>,
+) -> Map<String, Value> {
+    let mut fields = Map::new();
+    let logical = logical.filter(|(w, h)| {
+        w.is_finite() && h.is_finite() && *w >= 1.0 && *h >= 1.0 && *w <= 16_384.0 && *h <= 16_384.0
+    });
+    fields.insert(
+        "logicalWidth".into(),
+        json!(logical.map(|v| v.0.round() as u32)),
+    );
+    fields.insert(
+        "logicalHeight".into(),
+        json!(logical.map(|v| v.1.round() as u32)),
+    );
+    fields.insert(
+        "monitorCount".into(),
+        json!(monitor_count.filter(|n| *n <= 64)),
+    );
+    fields.insert(
+        "targetScaleMilli".into(),
+        json!(target_scale
+            .filter(|s| s.is_finite() && *s >= 0.1 && *s <= 16.0)
+            .map(|s| (s * 1000.0).round() as u32)),
+    );
+    let physical = physical.filter(|(w, h)| *w > 0 && *h > 0 && *w <= 262_144 && *h <= 262_144);
+    fields.insert("physicalWidth".into(), json!(physical.map(|v| v.0)));
+    fields.insert("physicalHeight".into(), json!(physical.map(|v| v.1)));
+    fields
+}
+
+#[derive(Clone, Copy, Debug, serde::Deserialize)]
+#[serde(rename_all = "kebab-case")]
+pub(crate) enum WorkspaceFrontendStage {
+    PrepareDone,
+    OpenCalled,
+    OpenReturned,
+    DocumentReady,
+    BootstrapDone,
+    FocusCalled,
+    FocusDone,
+    Failed,
+}
+
+impl WorkspaceFrontendStage {
+    fn token(self) -> &'static str {
+        match self {
+            Self::PrepareDone => "frontend.prepare-done",
+            Self::OpenCalled => "frontend.open-called",
+            Self::OpenReturned => "frontend.open-returned",
+            Self::DocumentReady => "frontend.document-ready",
+            Self::BootstrapDone => "frontend.bootstrap-done",
+            Self::FocusCalled => "frontend.focus-called",
+            Self::FocusDone => "frontend.focus-done",
+            Self::Failed => "frontend.failed",
+        }
+    }
+}
+
+/// Async so logging can reach the recorder even while the native loop is
+/// blocked constructing a webview. No frontend string enters the recorder.
+#[tauri::command]
+pub(crate) async fn diagnostic_workspace_open(
+    sequence: u64,
+    stage: WorkspaceFrontendStage,
+    open_elapsed_ms: u64,
+) {
+    record_workspace_open(sequence, stage.token(), open_elapsed_ms, Map::new());
+}
+
+pub(crate) fn record_main_thread_stall(threshold_ms: u64, delay_ms: u64, recovered: bool) {
+    record_fixed_event(
+        "runtime.main_thread_stall",
+        main_thread_stall_fields(threshold_ms, delay_ms, recovered),
+    );
+}
+
+fn main_thread_stall_fields(
+    threshold_ms: u64,
+    delay_ms: u64,
+    recovered: bool,
+) -> Map<String, Value> {
+    let mut fields = Map::new();
+    fields.insert("thresholdMs".into(), json!(threshold_ms));
+    fields.insert("delayMs".into(), json!(delay_ms));
+    fields.insert("recovered".into(), json!(recovered));
+    fields
+}
+
 /// Start the recorder's clock and record which build this run is: fixed tokens
 /// only, so a report can tell an x86 session from an x64 one (GH #594). Call
 /// once, first thing in `run()`.
@@ -348,8 +471,9 @@ pub(crate) fn record_watch_refused(refused: bool) {
 }
 
 /// Commands whose own timing would only describe the recorder.
-const SELF_COMMANDS: [&str; 9] = [
+const SELF_COMMANDS: [&str; 10] = [
     "diagnostic_timing_event",
+    "diagnostic_workspace_open",
     "diagnostic_ipc_event",
     "diagnostic_frontend_event",
     "diagnostic_report",
@@ -459,17 +583,11 @@ const UPDATER_CAUSES: [&str; 7] = [
     "unknown",
 ];
 
-/// Record one frontend event. Accepted kinds and their fields:
-/// `uncaught_error`/`unhandled_rejection`/`heartbeat_delay` (`frontend.health`:
-/// line, column, delay), `updater_failure` (`updater.failure`: stage and cause
-/// from closed lists), `updater_manual_only` (`updater.manual_only`: a build
-/// that updates manually by policy, not a failure — GH #594) and
-/// `close_discarded_unsaved` (`runtime.close_discarded_unsaved`: reason
-/// `failed`/`still-saving` and a page count — GH #540) and `error_toast`
-/// (`frontend.error_toast`: that an error toast was shown; never its text,
-/// which may name pages — the opt-in debug log has it). Any other kind, or a
-/// token outside its list, drops the event.
-/// `journal_feed` records only an allowlisted publication-stage reason.
+mod editor_focus;
+mod page_open;
+
+/// Record closed frontend health, updater, close, toast, journal-feed,
+/// page-refusal and editor-focus facts. Free text never enters these event fields.
 #[tauri::command]
 #[allow(clippy::too_many_arguments)]
 pub(crate) fn diagnostic_frontend_event(
@@ -483,7 +601,17 @@ pub(crate) fn diagnostic_frontend_event(
     pages: Option<u64>,
     journal_feed_reason: Option<String>,
     journal_feed_cause: Option<String>,
+    page_open: Option<page_open::Refusal>,
+    editor_focus: Option<editor_focus::Missed>,
 ) {
+    if kind == "page_open_refused" {
+        page_open::record(page_open);
+        return;
+    }
+    if kind == "editor_focus_missed" {
+        editor_focus::record(editor_focus);
+        return;
+    }
     if kind == "journal_feed" {
         if let Some(fields) = journal_feed_event_fields(
             journal_feed_reason.as_deref(),
@@ -717,6 +845,22 @@ fn build_diagnostic_report(
     }
 }
 
+fn graph_diagnostics(store: &tine_store::Store) -> Value {
+    let mut report = store.diagnostics();
+    // No launch-by-launch container path is persisted. The remembered graph
+    // can predate the previous launch (e.g. a launch that never opened a graph),
+    // so expose that useful comparison separately without claiming more.
+    report["storage"]["iosAppContainerPathChangedSincePreviousLaunch"] =
+        json!(if std::env::consts::OS == "ios" {
+            "unknown"
+        } else {
+            "not-applicable"
+        });
+    report["storage"]["iosAppContainerComparedWithLastRememberedGraph"] =
+        json!(crate::root_identity::container_change());
+    report
+}
+
 /// Launch timings and graph-shape statistics of every open graph (GH #623):
 /// reporters cannot share a graph, so the dump carries the numbers that
 /// diagnose its performance instead. Statistics only, built by
@@ -734,7 +878,7 @@ async fn collect_graph_diagnostics(app: &tauri::AppHandle) -> (Option<usize>, Ve
     let graphs = tauri::async_runtime::spawn_blocking(move || {
         slots
             .iter()
-            .map(|(_, slot)| slot.store.diagnostics())
+            .map(|(_, slot)| graph_diagnostics(&slot.store))
             .collect::<Vec<_>>()
     })
     .await
@@ -750,20 +894,101 @@ async fn probe_defender() -> crate::defender::Realtime {
         .unwrap_or(crate::defender::Realtime::Unknown)
 }
 
-/// Build the report: app version, build commit/time (dropped unless they are a
-/// hex commit and an ISO timestamp), OS/arch, privacy flags, the number of open
-/// graph bindings, per-graph launch timings and shape statistics, and every
-/// retained event of this run. Never fails; an unreadable graph registry is
+/// Memory-only renderer samples supplied at export, never persisted as events.
+#[derive(serde::Deserialize, serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+pub(crate) struct RendererStalls {
+    threshold_ms: u32,
+    capacity: u32,
+    supported: Vec<RendererObserver>,
+    stalls: Vec<RendererStall>,
+}
+
+#[derive(serde::Deserialize, serde::Serialize)]
+#[serde(rename_all = "kebab-case")]
+enum RendererObserver {
+    LongAnimationFrame,
+    Event,
+}
+
+#[derive(serde::Deserialize, serde::Serialize)]
+#[serde(rename_all = "kebab-case")]
+enum RendererStallKind {
+    Frame,
+    KeyFrame,
+    Loaf,
+    Event,
+}
+
+#[derive(serde::Deserialize, serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+struct RendererStall {
+    kind: RendererStallKind,
+    start_time: f64,
+    duration: f64,
+    blocking_duration: Option<f64>,
+    scripts: Option<Vec<RendererScript>>,
+}
+
+#[derive(serde::Deserialize, serde::Serialize)]
+struct RendererScript {
+    source: Option<String>,
+    position: Option<u64>,
+    duration: f64,
+}
+
+// Export-only addition: never enters the persisted flight recorder.
+fn with_renderer(
+    mut report: DiagnosticReport,
+    renderer: Option<RendererStalls>,
+) -> DiagnosticReport {
+    if let Some(mut renderer) = renderer {
+        renderer.capacity = 32;
+        renderer.threshold_ms = 100;
+        renderer.supported.truncate(2);
+        renderer.stalls.truncate(32);
+        for stall in &mut renderer.stalls {
+            if let Some(scripts) = &mut stall.scripts {
+                scripts.truncate(8);
+                for script in scripts {
+                    if script.source.as_ref().is_some_and(|s| {
+                        s.len() > 120
+                            || !s.ends_with(".js")
+                            || !s
+                                .bytes()
+                                .all(|b| b.is_ascii_alphanumeric() || b"-_.".contains(&b))
+                    }) {
+                        script.source = None;
+                    }
+                }
+            }
+        }
+        if let Ok(mut value) = serde_json::from_str::<Value>(&report.text) {
+            value["renderer"] = json!(renderer);
+            if let Ok(text) = serde_json::to_string_pretty(&value) {
+                report.text = text;
+            }
+        }
+    }
+    report
+}
+
+/// Build the report: validated build metadata, graph statistics, retained
+/// events, and the bounded renderer snapshot. An unreadable graph registry is
 /// reported as a flag.
 #[tauri::command]
 pub(crate) async fn diagnostic_report(
     app: tauri::AppHandle,
     build_commit: String,
     build_time: String,
+    renderer: Option<RendererStalls>,
 ) -> DiagnosticReport {
     let (graph_bindings, graphs) = collect_graph_diagnostics(&app).await;
     let defender = probe_defender().await;
-    build_diagnostic_report(graph_bindings, graphs, build_commit, build_time, defender)
+    with_renderer(
+        build_diagnostic_report(graph_bindings, graphs, build_commit, build_time, defender),
+        renderer,
+    )
 }
 
 /// Save a freshly built report where the user chooses (desktop save dialog).
@@ -773,11 +998,14 @@ pub(crate) async fn save_diagnostic_report(
     app: tauri::AppHandle,
     build_commit: String,
     build_time: String,
+    renderer: Option<RendererStalls>,
 ) -> Result<bool, String> {
     let (graph_bindings, graphs) = collect_graph_diagnostics(&app).await;
     let defender = probe_defender().await;
-    let report =
-        build_diagnostic_report(graph_bindings, graphs, build_commit, build_time, defender);
+    let report = with_renderer(
+        build_diagnostic_report(graph_bindings, graphs, build_commit, build_time, defender),
+        renderer,
+    );
     #[cfg(desktop)]
     {
         use tauri_plugin_dialog::DialogExt as _;
@@ -836,6 +1064,120 @@ pub(crate) async fn clear_diagnostics() {
 mod tests {
     use super::*;
 
+    #[test]
+    fn workspace_open_event_has_only_the_fixed_stage_sequence_and_clocks() {
+        for token in [
+            "prepare-done",
+            "open-called",
+            "open-returned",
+            "document-ready",
+            "bootstrap-done",
+            "focus-called",
+            "focus-done",
+            "failed",
+        ] {
+            let stage: WorkspaceFrontendStage = serde_json::from_value(json!(token)).unwrap();
+            let line = encode(
+                "workspace.open",
+                workspace_open_fields(7, stage.token(), 42, Map::new()),
+            )
+            .unwrap();
+            let value: Value = serde_json::from_str(&line).unwrap();
+            assert_eq!(value.as_object().unwrap().len(), 6);
+            assert_eq!(value["event"], "workspace.open");
+            assert_eq!(value["sequence"], 7);
+            assert_eq!(value["stage"], format!("frontend.{token}"));
+            assert_eq!(value["openElapsedMs"], 42);
+            assert_eq!(value["schemaVersion"], 1);
+            assert!(value["elapsedMs"].is_u64());
+        }
+        for private in ["/private/graph", "Secret page", "native.build-returned", ""] {
+            assert!(serde_json::from_value::<WorkspaceFrontendStage>(json!(private)).is_err());
+        }
+    }
+
+    #[test]
+    fn workspace_display_facts_are_numeric_bounded_and_unknown_is_null() {
+        let fields =
+            workspace_display_fields(Some((900.0, 760.0)), Some(6), Some(1.5), Some((1350, 1140)));
+        assert_eq!(
+            json!(fields),
+            json!({"logicalWidth":900,"logicalHeight":760,
+            "monitorCount":6,"targetScaleMilli":1500,"physicalWidth":1350,"physicalHeight":1140})
+        );
+        let line = encode(
+            "workspace.open",
+            workspace_open_fields(8, "native.prepared", 12, fields),
+        )
+        .unwrap();
+        assert_eq!(
+            serde_json::from_str::<Value>(&line).unwrap()["monitorCount"],
+            6
+        );
+        for fields in [
+            workspace_display_fields(None, None, None, None),
+            workspace_display_fields(
+                Some((f64::NAN, 760.0)),
+                Some(65),
+                Some(f64::INFINITY),
+                Some((0, 1140)),
+            ),
+            workspace_display_fields(
+                Some((16_385.0, 760.0)),
+                Some(65),
+                Some(17.0),
+                Some((262_145, 1140)),
+            ),
+        ] {
+            assert!(fields.values().all(Value::is_null));
+        }
+    }
+
+    #[test]
+    fn main_thread_stall_event_has_a_fixed_numeric_shape() {
+        for recovered in [false, true] {
+            let line = encode(
+                "runtime.main_thread_stall",
+                main_thread_stall_fields(2000, 2100, recovered),
+            )
+            .unwrap();
+            let value: Value = serde_json::from_str(&line).unwrap();
+            assert_eq!(value.as_object().unwrap().len(), 6);
+            assert_eq!(value["thresholdMs"], 2000);
+            assert_eq!(value["delayMs"], 2100);
+            assert_eq!(value["recovered"], recovered);
+            assert_eq!(value["event"], "runtime.main_thread_stall");
+        }
+    }
+
+    #[test]
+    fn renderer_export_bounds_samples_and_redacts_script_paths() {
+        let sample = json!({"kind":"loaf", "startTime":1, "duration":200,
+            "scripts": (0..12).map(|_| json!({"source":"/private/graph.js", "duration":100})).collect::<Vec<_>>()});
+        let renderer = serde_json::from_value(json!({"thresholdMs":0,"capacity":999,
+            "supported":["event"],"stalls":vec![sample; 100]}))
+        .unwrap();
+        let report = with_renderer(
+            DiagnosticReport {
+                text: "{}".into(),
+                suggested_file_name: "test.json".into(),
+            },
+            Some(renderer),
+        );
+        let value: Value = serde_json::from_str(&report.text).unwrap();
+        assert_eq!(value["renderer"]["stalls"].as_array().unwrap().len(), 32);
+        assert_eq!(
+            value["renderer"]["stalls"][0]["scripts"]
+                .as_array()
+                .unwrap()
+                .len(),
+            8
+        );
+        assert_eq!(value["renderer"]["capacity"], 32);
+        assert!(!report.text.contains("private"));
+        assert!(!report.text.contains("graph.js"));
+    }
+
     fn production() -> &'static str {
         include_str!("flight.rs")
             .split("#[cfg(test)]")
@@ -879,6 +1221,59 @@ mod tests {
         assert_eq!(parsed["runtime"]["retainedAcrossRuns"], false);
         assert!(!report.text.contains("/home/"), "{}", report.text);
         assert!(!report.text.contains("secret"), "{}", report.text);
+    }
+
+    #[test]
+    fn storage_report_is_copyable_and_private() {
+        let dir = tempfile::tempdir().unwrap();
+        let secret = "Secret SB2 medical page";
+        std::fs::create_dir(dir.path().join("pages")).unwrap();
+        std::fs::write(
+            dir.path().join("pages").join(format!("{secret}.md")),
+            "- private note body",
+        )
+        .unwrap();
+        let store = tine_store::Store::open(dir.path(), Default::default())
+            .unwrap()
+            .0;
+        let _ = store.whole_graph();
+        store.record_draft_namespace_adoption(tine_store::DraftAdoptionReason::UserRecovery);
+        let report = build_diagnostic_report(
+            Some(1),
+            vec![graph_diagnostics(&store)],
+            String::new(),
+            String::new(),
+            crate::defender::Realtime::NotApplicable,
+        );
+        let parsed: Value = serde_json::from_str(&report.text).unwrap();
+        let storage = &parsed["graphs"][0]["storage"];
+        assert_eq!(storage["pageSaves"]["uncertain"], 0);
+        assert_eq!(storage["draftNamespaceAdoptions"]["userRecovery"], 1);
+        assert_eq!(storage["backendClass"], "unclassified");
+        assert_eq!(
+            storage["iosAppContainerComparedWithLastRememberedGraph"],
+            crate::root_identity::container_change()
+        );
+        assert_eq!(
+            storage["iosAppContainerPathChangedSincePreviousLaunch"],
+            if std::env::consts::OS == "ios" {
+                "unknown"
+            } else {
+                "not-applicable"
+            }
+        );
+        assert!(!report.text.contains(secret));
+        assert!(!report.text.contains("private note body"));
+        assert!(!report.text.contains(dir.path().to_str().unwrap()));
+        store.close();
+        let reopened = tine_store::Store::open(dir.path(), Default::default())
+            .unwrap()
+            .0;
+        assert_eq!(
+            reopened.diagnostics()["storage"]["draftNamespaceAdoptions"]["userRecovery"],
+            1
+        );
+        reopened.close();
     }
 
     #[test]

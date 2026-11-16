@@ -1,3 +1,4 @@
+import { maybeEditorIn } from "../tests/editorDriver";
 import { afterEach, beforeAll, describe, expect, it, vi } from "vitest";
 import { render } from "solid-js/web";
 import { backend } from "../backend";
@@ -324,12 +325,12 @@ describe("right sidebar collection disclosures", () => {
       content.dispatchEvent(new MouseEvent("mouseup", { bubbles: true, button: 0 }));
       content.click();
       const editor = await vi.waitFor(() => {
-        const found = root.querySelector<HTMLTextAreaElement>(".rs-item-body textarea.block-editor");
+        const found = maybeEditorIn(root.querySelector(".rs-item-body")!);
         expect(found).not.toBeNull();
         return found!;
       });
-      editor.value = "Committed before collapse";
-      editor.dispatchEvent(new InputEvent("input", { bubbles: true, inputType: "insertText" }));
+      editor.replaceText("Committed before collapse");
+      editor.reportInput({ bubbles: true, inputType: "insertText" });
       expect(editingId()).toBe("sidebar-root");
 
       root.querySelector<HTMLButtonElement>("[data-right-sidebar-item-toggle]")!.click();

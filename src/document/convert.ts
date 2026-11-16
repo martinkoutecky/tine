@@ -1,8 +1,12 @@
 import { type BlockDto, type Format, type PageDto, type RefGroup } from "../types";
 import { Node, FeedPage, DocState, doc, freshId } from "./model";
-import { seedFacets, facetsFromDto } from "../render/facets";
+import { facetsFromDto } from "../render/facets";
+import { acquireSeededFacets } from "../render/seededFacets";
 import { trimBlockTrailingSpace } from "../editor/format";
-import { BLOCK_SCOPED_PROPERTY_KEYS, canonicalPageHeaderDraft, isPropertiesOnly } from "../editor/properties";
+import { BLOCK_SCOPED_PROPERTY_KEYS, canonicalPageHeaderDraft, hides, isPropertiesOnly } from "../editor/properties";
+import { commentEditorHide } from "../editor/commentProperties";
+import { blockRegions } from "../render/parse";
+import { utf8ByteLength } from "../render/spans";
 import { journalTitle, appNow } from "../journal";
 import { pageHeaderDraftProblem, rawWithCollapsed } from "./edits/properties";
 import { existingBlockId, orgRawWithProperty } from "./edits/identity";
@@ -68,14 +72,20 @@ export function switcherPage(name: string): PageDto {
  *  line in an Org file is visible body text that is never read back (GH #25).
  *  `format` is the extension of the id the backend resolved for the new page. */
 export function queryWorkspacePage(name: string, query: string, properties: ReadonlyArray<readonly [string, string]>, format: Format): PageDto {
-  const raw = properties.reduce(
-    (text, [key, value]) => (format === "org" ? orgRawWithProperty(text, key, value) : `${text}\n${key}:: ${value}`), query);
+  const raw = queryBlockRaw(query, properties, format);
   return { name, kind: "page", title: name, pre_block: null, format, blocks: [{ id: "", raw, collapsed: false, children: [] }] };
+}
+
+/** A query block's raw text with its `key:: value` properties, written where the page's FORMAT keeps them
+ *  (the one spelling for a saved workspace and for a definition appended to the exports page). */
+export function queryBlockRaw(query: string, properties: ReadonlyArray<readonly [string, string]>, format: Format): string {
+  return properties.reduce(
+    (text, [key, value]) => (format === "org" ? orgRawWithProperty(text, key, value) : `${text}\n${key}:: ${value}`), query);
 }
 
 /** The Favorites arrangement page (family 22), written whole through
  *  `createPage`. `marker` is the verbatim pre-block text (the caller picks
- *  `tine/favorites:: true` or, in Org, `#+tine/favorites: true`). Collapse
+ *  `tine.favorites:: true` or, in Org, `#+tine.favorites: true`). Collapse
  *  persists in the raw in the page's own format (`collapsed:: true` / an Org
  *  `:PROPERTIES:` drawer), since the save path writes raw only. */
 export function favoritesArrangementPage(name: string, marker: string, blocks: BlockDto[], format: Format): PageDto {
@@ -92,6 +102,14 @@ export function favoritesArrangementBlocks(blocks: readonly BlockDto[], format: 
  * caller supplies the marker in the graph's preferred format and seeded blocks. */
 export function journalSectionsPage(name: string, marker: string, blocks: BlockDto[]): PageDto {
   return { name, kind: "page", title: name, pre_block: marker, blocks };
+}
+
+/** The exports page (docs/contracts/export-definitions.md): an ordinary page, published through createPage, whose
+ * pre-block is the marker in the graph's format and whose one block is the `overview` query listing every definition.
+ * `format` is carried on the DTO because the host keeps the created page as given: without it the page is loaded
+ * as Markdown and a definition appended before the next disk read would be spelled for the wrong format. */
+export function exportsPage(name: string, marker: string, overview: string, format: Format): PageDto {
+  return { name, kind: "page", title: name, pre_block: marker, format, blocks: [{ id: "", raw: overview, collapsed: false, children: [] }] };
 }
 
 export function appendAliasDraft(owner: PageDto, draft: PageDto): PageDto {
@@ -126,12 +144,12 @@ function flatten(
   parent: string | null,
   pageName: string,
   byId: Record<string, Node>,
-  format: Format
+  format: Format,
+  retain = false
 ): string[] {
   return dtos.map((d) => {
     // Seed the header-facet cache from the backend (one Rust lsdoc parse, shipped) so
     // the rendered chip reads off the DTO — zero frontend parse on load (M1 / P1).
-    seedFacets(d.raw, format, facetsFromDto(d));
     // Cross-page id:: collision guard: if another LOADED page already owns this
     // id (two files share a persisted `id::` — copy-pasted raw, or a sync hiccup),
     // give this block a fresh store key instead of overwriting the other page's
@@ -144,7 +162,17 @@ function flatten(
     // they would all collapse into one node.
     const existing = d.id ? byId[d.id] : undefined;
     const key = !d.id ? freshId() : existing && existing.page !== pageName ? `dup~${crypto.randomUUID()}` : d.id;
-    const childIds = flatten(d.children, key, pageName, byId, format);
+    const childIds = flatten(d.children, key, pageName, byId, format, retain);
+    // Same structural key, same loaded block: leave its live object alone.
+    // Changed blocks still get a new object, retiring deferred editor actions.
+    if (retain && existing && existing.page === pageName && existing.raw === d.raw
+      && existing.collapsed === d.collapsed && existing.parent === parent
+      && !existing.originatedFromPageHeader) {
+      if (existing.loadedRaw !== d.raw) existing.loadedRaw = d.raw;
+      if (!sameKeys(existing.children, childIds)) existing.children = childIds;
+      return key;
+    }
+    acquireSeededFacets(d.raw, format, facetsFromDto(d), () => doc.byId[key]);
     byId[key] = {
       id: key,
       raw: d.raw,
@@ -158,8 +186,10 @@ function flatten(
   });
 }
 
-export function toFeedPage(dto: PageDto & { id?: string }, byId: Record<string, Node>): FeedPage {
-  const roots = flatten(dto.blocks, null, dto.name, byId, dto.format ?? "md");
+const sameKeys = (a: readonly string[], b: readonly string[]): boolean => a.length === b.length && a.every((id, i) => id === b[i]);
+
+export function toFeedPage(dto: PageDto & { id?: string }, byId: Record<string, Node>, retain = false): FeedPage {
+  const roots = flatten(dto.blocks, null, dto.name, byId, dto.format ?? "md", retain);
   return {
     name: dto.name,
     kind: dto.kind,
@@ -171,6 +201,23 @@ export function toFeedPage(dto: PageDto & { id?: string }, byId: Record<string, 
     guide: dto.guide ?? false,
     id: dto.id,
   };
+}
+
+/** Reload the same physical page without replacing its mounted outline owner.
+ * Only changed nodes are replaced; vanished keys are removed after the new tree
+ * exists. Runtime keys remain the backend's current structural identities.
+ * O(old + new page blocks), no I/O and no changes to save/conflict admission. */
+export function reconcileLoadedPage(dto: PageDto & { id?: string }, state: DocState): void {
+  const page = state.pages.find(p => p.name === dto.name)!;
+  const old = new Set<string>();
+  const collect = (id: string) => { old.add(id); state.byId[id]?.children.forEach(collect); };
+  page.roots.forEach(collect);
+  const next = toFeedPage(dto, state.byId, page.format === (dto.format ?? "md"));
+  const keep = (id: string) => { old.delete(id); state.byId[id].children.forEach(keep); };
+  next.roots.forEach(keep);
+  for (const id of old) delete state.byId[id];
+  if (sameKeys(page.roots, next.roots)) next.roots = page.roots;
+  Object.assign(page, next);
 }
 
 function removeNodeSubtree(s: DocState, id: string) {
@@ -196,7 +243,18 @@ function toDto(id: string): BlockDto {
   const n = doc.byId[id];
   // Only an edited block gets OG's trailing-space trim. Loaded siblings must
   // retain their exact raw bytes when another block on the page is saved.
-  const raw = n.loadedRaw === n.raw ? n.raw : trimBlockTrailingSpace(n.raw);
+  let raw = n.loadedRaw === n.raw ? n.raw : trimBlockTrailingSpace(n.raw);
+  if (raw !== n.raw) {
+    // Convenience spaces belong to editor text. A final hidden property line
+    // is preserved user data, including its trailing bytes. Ask the same
+    // parser and hide policy as the editor, only when trimming changed bytes.
+    const end = utf8ByteLength(n.raw);
+    const format = doc.pages.find((page) => page.name === n.page)?.format ?? "md";
+    const own = blockRegions(n.raw, format).properties.filter((p) => p.primary);
+    const properties = own.map((p): [string, string] => [p.key, p.value]);
+    const hide = commentEditorHide(n, properties, format, (parent) => doc.byId[parent]);
+    if (own.some((p) => p.line[1] === end && hides(hide, p.key, properties))) raw = n.raw;
+  }
   return { id: n.id, raw, collapsed: n.collapsed, children: n.children.map(toDto) };
 }
 

@@ -42,8 +42,8 @@ fn duplicate_day(label: &str) -> PathBuf {
     root
 }
 
-fn open(root: &Path) -> Store {
-    Store::open(root, Default::default()).unwrap().0
+fn open(root: &Path) -> std::sync::Arc<Store> {
+    std::sync::Arc::new(Store::open(root, Default::default()).unwrap().0)
 }
 
 fn day(queue: &[ConflictObject]) -> Option<&ConflictObject> {
@@ -103,6 +103,7 @@ fn resolving_keep_both_folds_the_stray_in_trashes_it_and_leaves_the_queue() {
     let _integration_guard = crate::integration_lock();
     let root = duplicate_day("resolve");
     let store = open(&root);
+    let host = crate::test_host(&store);
     let queue = ConflictQueue::default();
     assert!(day(&queue.inventory(&store).unwrap().queue).is_some());
     let diff = conflicts::duplicate_journal_diff(&store, KEEPER, STRAY)
@@ -113,7 +114,7 @@ fn resolving_keep_both_folds_the_stray_in_trashes_it_and_leaves_the_queue() {
     keep_both(&diff.rows, &mut decisions);
     conflicts::resolve_duplicate_journal_day(
         &store,
-        None,
+        &host,
         KEEPER,
         STRAY,
         &decisions,
@@ -150,6 +151,7 @@ fn resolving_keep_both_folds_the_stray_in_trashes_it_and_leaves_the_queue() {
         .unwrap();
     assert!(day(&queue.inventory(&store).unwrap().queue).is_none());
     assert!(day(&conflicts::conflict_inventory(&open(&root)).unwrap().queue).is_none());
+    drop(host);
     let _ = fs::remove_dir_all(&root);
 }
 
@@ -159,11 +161,12 @@ fn resolving_refuses_files_of_different_days_and_a_non_canonical_target() {
     let root = duplicate_day("guard");
     fs::write(root.join("journals/2026_06_24.md"), "- other day\n").unwrap();
     let store = open(&root);
+    let host = crate::test_host(&store);
     let other = "journals/2026_06_24.md";
     let refuse = |canonical: &str, stray: &str| {
         conflicts::resolve_duplicate_journal_day(
             &store,
-            None,
+            &host,
             canonical,
             stray,
             &HashMap::new(),
@@ -191,6 +194,7 @@ fn resolving_refuses_files_of_different_days_and_a_non_canonical_target() {
         "- shared line\n- only in canonical\n"
     );
     assert!(root.join(STRAY).exists());
+    drop(host);
     let _ = fs::remove_dir_all(&root);
 }
 
@@ -199,6 +203,7 @@ fn a_stale_review_writes_nothing() {
     let _integration_guard = crate::integration_lock();
     let root = duplicate_day("stale");
     let store = open(&root);
+    let host = crate::test_host(&store);
     let diff = conflicts::duplicate_journal_diff(&store, KEEPER, STRAY)
         .unwrap()
         .unwrap();
@@ -211,7 +216,7 @@ fn a_stale_review_writes_nothing() {
     keep_both(&diff.rows, &mut decisions);
     let error = conflicts::resolve_duplicate_journal_day(
         &store,
-        None,
+        &host,
         KEEPER,
         STRAY,
         &decisions,
@@ -226,6 +231,7 @@ fn a_stale_review_writes_nothing() {
         "- shared line\n- only in canonical\n"
     );
     assert!(root.join(STRAY).exists());
+    drop(host);
     let _ = fs::remove_dir_all(&root);
 }
 
@@ -236,6 +242,7 @@ fn a_cross_format_day_lists_its_files_offers_no_rows_and_refuses_a_fold() {
     fs::write(root.join(KEEPER), "- markdown\n").unwrap();
     fs::write(root.join("journals/Friday, 26-06-2026.org"), "* org\n").unwrap();
     let store = open(&root);
+    let host = crate::test_host(&store);
     let queue = conflicts::conflict_inventory(&store).unwrap().queue;
     let object = day(&queue).expect("still a queue object");
     assert_eq!(object.sides.len(), 2, "both files are listed");
@@ -249,7 +256,7 @@ fn a_cross_format_day_lists_its_files_offers_no_rows_and_refuses_a_fold() {
         .is_none());
     let error = conflicts::resolve_duplicate_journal_day(
         &store,
-        None,
+        &host,
         KEEPER,
         org,
         &HashMap::new(),
@@ -260,6 +267,7 @@ fn a_cross_format_day_lists_its_files_offers_no_rows_and_refuses_a_fold() {
     .unwrap_err();
     assert_eq!(error.kind(), io::ErrorKind::InvalidInput);
     assert!(root.join(org).exists());
+    drop(host);
     let _ = fs::remove_dir_all(&root);
 }
 

@@ -4,7 +4,8 @@
 //!
 //! Semantics are master's (walk + results, production comparison mode):
 //! - block rows: OG top-level roots per page (a match whose immediate parent
-//!   matched is dropped), base order journal day newest first (non-journal pages
+//!   matched is dropped, unless an advanced query sets
+//!   `:remove-block-children? false`), base order journal day newest first (non-journal pages
 //!   last), then page name, kind rank and physical path, document order within a
 //!   page;
 //! - `sort-by` is global over single blocks, re-coalescing adjacent same-page
@@ -45,10 +46,17 @@ use tine_core::refs;
 
 use super::eval::{self, CompiledLeaves, EvalCache, EvalCtx};
 use super::index::{atom_format, PageFacts, QueryIndex};
+use super::link_graph::{LinkAnswers, LinkGraph, VirtualNode};
 use super::{result_dto, shallow_dto_estimated_bytes, BoundedGroups, ConstructionBudget};
 
 #[path = "exec_candidates.rs"]
 mod candidates;
+
+#[path = "exec_sample.rs"]
+mod sample;
+#[cfg(test)]
+pub(crate) use sample::pin_sample_seed;
+use sample::take_random_subset;
 
 #[cfg(test)]
 #[path = "exec_scope_tests.rs"]
@@ -63,6 +71,10 @@ pub(crate) struct Plan {
     /// queries). A `@page` query the legacy bridge lists block-wise answers
     /// with the page's outline blocks, as before.
     page_property_rows: bool,
+    /// Whether a block row whose immediate parent also matched is absorbed
+    /// (OG `tree/filter-top-level-blocks`). False only for an advanced query
+    /// with `:remove-block-children? false`.
+    top_level_only: bool,
     filter: Filter,
     compiled: CompiledLeaves,
     track: bool,
@@ -80,6 +92,7 @@ pub(crate) struct Plan {
 pub(crate) struct PlanCheckpointParts<'a> {
     pub(crate) anchor: Anchor,
     pub(crate) page_property_rows: bool,
+    pub(crate) top_level_only: bool,
     pub(crate) filter: &'a Filter,
     pub(crate) track: bool,
     pub(crate) today: JournalDate,
@@ -89,6 +102,30 @@ pub(crate) struct PlanCheckpointParts<'a> {
 }
 
 impl Plan {
+    /// The shared page-edit predicate for memo eviction and mounted readers.
+    /// Global inputs retain their precise registry/tag checks; link plans have
+    /// no sound page-local test and deliberately invalidate on every edit.
+    pub(crate) fn touches_edit(
+        &self,
+        entry: &PageEntry,
+        before: &Document,
+        after: &Document,
+        old_facts: &PageFacts,
+        new_facts: &PageFacts,
+        config: &ParseConfig,
+    ) -> bool {
+        // Both before/after tests use the current instant. Neither can prove
+        // that a row matched when a mounted answer was computed earlier. The
+        // memo never retains these answers; readers must likewise invalidate
+        // on every publication rather than trust current-time rejection.
+        self.reads_clock()
+            || self.reads_links()
+            || self.registry().is_some() && old_facts.registry_rows_differ(new_facts)
+            || self.reads_tag_targets() && old_facts.tags() != new_facts.tags()
+            || self.touches(entry, before, old_facts, config)
+            || self.touches(entry, after, new_facts, config)
+    }
+
     pub(super) fn estimated_bytes(&self) -> usize {
         super::memo::retained::serialized_bytes(&self.filter)
             .saturating_add(self.compiled.estimated_bytes())
@@ -110,7 +147,7 @@ impl Plan {
     /// milliseconds (`resolve_timestamp_token`); every other date token is
     /// anchored at the day's midnight. The memo files answers per day, so a
     /// clock-reading answer must not be retained (checkpoint-5 L02 B3).
-    pub(super) fn reads_clock(&self) -> bool {
+    pub(crate) fn reads_clock(&self) -> bool {
         fn is_now(value: &tine_core::query::ir::Value) -> bool {
             use tine_core::query::ir::Value;
             match value {
@@ -121,7 +158,7 @@ impl Plan {
         }
         self.filter.any_leaf(&mut |leaf| match leaf {
             Leaf::Attr { value, .. } => is_now(value),
-            Leaf::Rel { .. } => false,
+            Leaf::Rel { .. } | Leaf::Near { .. } => false,
         })
     }
 
@@ -157,6 +194,7 @@ impl Plan {
         Plan {
             anchor,
             page_property_rows: query.anchor == Anchor::Block,
+            top_level_only: query.removes_block_children(),
             compiled: CompiledLeaves::for_query(&filter),
             track: eval::uses_path_refs(&filter),
             filter,
@@ -177,6 +215,7 @@ impl Plan {
         let Plan {
             anchor,
             page_property_rows,
+            top_level_only,
             filter,
             compiled: _,
             track,
@@ -188,6 +227,7 @@ impl Plan {
         PlanCheckpointParts {
             anchor: *anchor,
             page_property_rows: *page_property_rows,
+            top_level_only: *top_level_only,
             filter,
             track: *track,
             today: *today,
@@ -203,6 +243,7 @@ impl Plan {
         let PlanCheckpointParts {
             anchor,
             page_property_rows,
+            top_level_only,
             filter,
             track,
             today,
@@ -213,6 +254,7 @@ impl Plan {
         Plan {
             anchor,
             page_property_rows,
+            top_level_only,
             compiled: CompiledLeaves::for_query(filter),
             track,
             filter: filter.clone(),
@@ -231,6 +273,13 @@ impl Plan {
         self.tag_targets.is_some()
     }
 
+    /// Whether the answer reads the link table (`links`, `linked_by`,
+    /// `near`): it then depends on every page's references, so ANY edit can
+    /// change a page it never touched, and the memo drops it on every edit.
+    pub(crate) fn reads_links(&self) -> bool {
+        self.filter.reads_links()
+    }
+
     pub(crate) fn registry(&self) -> Option<&Arc<Registry>> {
         self.registry.as_ref()
     }
@@ -242,6 +291,7 @@ impl Plan {
         facts: &'a PageFacts,
         config: &'a ParseConfig,
         atoms: &'a EvalCache,
+        links: &'a LinkAnswers,
     ) -> EvalCtx<'a> {
         EvalCtx::new(
             &entry.name,
@@ -255,12 +305,151 @@ impl Plan {
             config,
             self.registry.as_deref().unwrap_or(Registry::none()),
             self.tag_targets.as_deref().unwrap_or(empty_tag_targets()),
+            links,
             atoms,
         )
     }
 
+    /// The row of a linked-to page without a file (contract: name, journal
+    /// day when the name is a date, no properties, no blocks).
+    fn virtual_ctx<'a>(
+        &'a self,
+        node: &'a VirtualNode,
+        config: &'a ParseConfig,
+        atoms: &'a EvalCache,
+        links: &'a LinkAnswers,
+    ) -> EvalCtx<'a> {
+        EvalCtx::new(
+            &node.name,
+            if node.journal_day.is_some() {
+                PageKind::Journal
+            } else {
+                PageKind::Page
+            },
+            node.journal_day,
+            &[],
+            &[],
+            tine_core::query::atom::AtomFormat::Markdown,
+            self.today,
+            &self.compiled,
+            config,
+            self.registry.as_deref().unwrap_or(Registry::none()),
+            self.tag_targets.as_deref().unwrap_or(empty_tag_targets()),
+            links,
+            atoms,
+        )
+    }
+
+    /// One bit per link-table node: whether `pred` holds of that page. A
+    /// physical node holds when any file of its name does. `None` once
+    /// `cancelled` reports true (checked once per page).
+    #[allow(clippy::too_many_arguments)]
+    fn node_set(
+        &self,
+        pred: &Filter,
+        table: &LinkGraph,
+        candidates: &candidates::Candidates<'_>,
+        config: &ParseConfig,
+        atoms: &EvalCache,
+        links: &LinkAnswers,
+        cancelled: &dyn Fn() -> bool,
+    ) -> Option<Vec<bool>> {
+        let mut set = vec![false; table.node_count()];
+        for (entry, doc) in candidates.all_pages() {
+            if cancelled() {
+                return None;
+            }
+            let Some(node) = table.node(&refs::normalize(&entry.name)) else {
+                continue;
+            };
+            if set[node as usize] {
+                continue;
+            }
+            let facts = candidates.facts(entry, doc);
+            set[node as usize] = eval::eval_page(
+                pred,
+                &self
+                    .ctx(entry, doc, &facts, config, atoms, links)
+                    .with_link_node(node),
+            );
+        }
+        for (at, node) in table.virtuals().iter().enumerate() {
+            if at.is_multiple_of(super::link_graph::CHECK_EVERY) && cancelled() {
+                return None;
+            }
+            let id = (table.physical() + at) as u32;
+            set[id as usize] = eval::eval_page(
+                pred,
+                &self
+                    .virtual_ctx(node, config, atoms, links)
+                    .with_link_node(id),
+            );
+        }
+        Some(set)
+    }
+
+    /// Every link leaf's answer, innermost first (an element or seed condition
+    /// may itself read links). Empty, and free, for a plan that reads none.
+    /// `None` once `cancelled` reports true: the table build, every element
+    /// and seed condition and every `near` search check it cooperatively.
+    fn link_answers(
+        &self,
+        graph: &ReadSnapshot,
+        candidates: &candidates::Candidates<'_>,
+        config: &ParseConfig,
+        atoms: &EvalCache,
+        cancelled: &dyn Fn() -> bool,
+    ) -> Option<LinkAnswers> {
+        if !self.reads_links() {
+            return Some(LinkAnswers::default());
+        }
+        fn post_order<'f>(filter: &'f Filter, out: &mut Vec<&'f Leaf>) {
+            match filter {
+                Filter::And { items } | Filter::Or { items } => {
+                    items.iter().for_each(|item| post_order(item, out))
+                }
+                Filter::Not { inner } | Filter::Off { inner } => post_order(inner, out),
+                Filter::Leaf { leaf } => match leaf {
+                    Leaf::Rel { rel, pred, .. } => {
+                        post_order(pred, out);
+                        if matches!(rel, Rel::Links | Rel::LinkedBy) {
+                            out.push(leaf);
+                        }
+                    }
+                    Leaf::Near { seeds, .. } => {
+                        post_order(seeds, out);
+                        out.push(leaf);
+                    }
+                    Leaf::Attr { .. } => {}
+                },
+                Filter::True | Filter::False | Filter::Raw { .. } => {}
+            }
+        }
+        let table = graph.link_graph(cancelled)?;
+        let mut answers = LinkAnswers::new(Arc::clone(&table));
+        let mut leaves = Vec::new();
+        post_order(&self.filter, &mut leaves);
+        for leaf in leaves {
+            let set = match leaf {
+                Leaf::Rel { pred, .. } => {
+                    self.node_set(pred, &table, candidates, config, atoms, &answers, cancelled)?
+                }
+                Leaf::Near { seeds, k, dir } => {
+                    let seeds = self.node_set(
+                        seeds, &table, candidates, config, atoms, &answers, cancelled,
+                    )?;
+                    table.ball(&seeds, *k, *dir, cancelled)?
+                }
+                Leaf::Attr { .. } => continue,
+            };
+            answers.insert(leaf, set);
+        }
+        Some(answers)
+    }
+
     /// The block rows of one page: every matching block whose immediate parent
-    /// did not match (OG `tree/filter-top-level-blocks`), in document order.
+    /// did not match (OG `tree/filter-top-level-blocks`; every matching block
+    /// when the query sets `:remove-block-children? false`), in document order.
     /// The header page-property block comes first: OG stores it as the page's
     /// first block (`:block/pre-block? true`, `:block/properties` of the page
     /// header), so `property`, `page`, `between`, page-ref and full-text
@@ -283,6 +472,7 @@ impl Plan {
             }
         }
         struct Roots<'a, 'o, 'c, 'data> {
+            top_level_only: bool,
             filter: &'c Filter,
             ctx: &'c EvalCtx<'data>,
             matched: Vec<bool>,
@@ -291,7 +481,7 @@ impl Plan {
         impl<'a> PathRefVisitor<'a, DocBlock> for Roots<'a, '_, '_, '_> {
             fn enter(&mut self, block: &'a DocBlock, ancestors: &PathRefCounts) {
                 let hit = eval::eval_block(self.filter, block, ancestors, self.ctx);
-                if hit && !self.matched.last().copied().unwrap_or(false) {
+                if hit && !(self.top_level_only && self.matched.last().copied().unwrap_or(false)) {
                     self.out.push(Hit::Block(block));
                 }
                 self.matched.push(hit);
@@ -301,6 +491,7 @@ impl Plan {
             }
         }
         let mut visitor = Roots {
+            top_level_only: self.top_level_only,
             filter: &self.filter,
             ctx,
             matched: vec![false],
@@ -319,7 +510,8 @@ impl Plan {
         facts: &PageFacts,
         config: &ParseConfig,
     ) -> bool {
-        if self.skips(entry, facts) {
+        let atoms = EvalCache::default();
+        if self.skips(entry, facts, config, &atoms) {
             return false;
         }
         #[cfg(feature = "test-faults")]
@@ -332,8 +524,7 @@ impl Plan {
             }
             count(&doc.roots);
         }
-        let atoms = EvalCache::default();
-        let ctx = self.ctx(entry, doc, facts, config, &atoms);
+        let ctx = self.ctx(entry, doc, facts, config, &atoms, LinkAnswers::none());
         match self.anchor {
             Anchor::Page => eval::eval_page(&self.filter, &ctx),
             Anchor::Block => {
@@ -345,10 +536,31 @@ impl Plan {
     }
 
     /// Candidate narrowing: a block-anchored filter that REQUIRES one of a set
-    /// of page refs can skip every page that references none of them.
-    fn skips(&self, entry: &PageEntry, facts: &PageFacts) -> bool {
+    /// of page refs can skip every page that references none of them, and one
+    /// that requires a block's own reference to a journal day in a window
+    /// (`any(direct_refs, day > today)`, card BhkrU) can skip every page none
+    /// of whose references denotes such a day. Both read only the page's
+    /// reference set ([`PageFacts::refs`]); the day test parses only
+    /// digit-bearing names, once per name per execution (`cache`).
+    fn skips(
+        &self,
+        entry: &PageEntry,
+        facts: &PageFacts,
+        config: &ParseConfig,
+        cache: &EvalCache,
+    ) -> bool {
         self.anchor == Anchor::Block
-            && required_refs(&self.filter).is_some_and(|names| !facts.may_reference(entry, &names))
+            && (required_refs(&self.filter)
+                .is_some_and(|names| !facts.may_reference(entry, &names))
+                || required_reference_days(&self.filter).is_some_and(|preds| {
+                    !facts.refs().iter().any(|name| {
+                        let day = cache.reference_day(name, config);
+                        day.is_some()
+                            && preds.iter().any(|pred| {
+                                eval::reference_date_pred(pred, day, self.today) == Some(true)
+                            })
+                    })
+                }))
     }
 }
 
@@ -413,6 +625,34 @@ fn required_refs(filter: &Filter) -> Option<Vec<String>> {
     }
 }
 
+/// Day conditions one of which some reference AUTHORED ON every matching block
+/// must satisfy: `any(direct_refs, P)` where `P` reads only `journal` / `day`
+/// and is false for a reference that is no journal day. Such a reference's
+/// name has a digit ([`eval::reference_day`]), so it is in the page's
+/// reference set; markers and priorities, which the walk adds to
+/// `direct_refs`, never are. `None` when the filter requires no such day.
+fn required_reference_days(filter: &Filter) -> Option<Vec<&Filter>> {
+    match filter {
+        Filter::Leaf {
+            leaf:
+                Leaf::Rel {
+                    rel: Rel::DirectRefs,
+                    quant: Quant::Any,
+                    pred,
+                },
+            // A reference that is no day answers the same on every day.
+        } => (eval::reference_date_pred(pred, None, JournalDate::today()) == Some(false))
+            .then(|| vec![pred.as_ref()]),
+        Filter::And { items } => items.iter().find_map(required_reference_days),
+        Filter::Or { items } if !items.is_empty() => items
+            .iter()
+            .map(required_reference_days)
+            .collect::<Option<Vec<_>>>()
+            .map(|sets| sets.concat()),
+        _ => None,
+    }
+}
+
 /// Reorder every `and` so its cheapest conjuncts run first. Evaluation is pure
 /// and short-circuiting, so this changes cost, never truth.
 fn cheapest_first(filter: Filter) -> Filter {
@@ -447,7 +687,10 @@ fn cost(filter: &Filter) -> u8 {
                 ..
             } => 4,
             Leaf::Attr { .. } => 0,
+            // Read from the precomputed table: O(own links) per row.
+            Leaf::Near { .. } => 1,
             Leaf::Rel { rel, .. } => match rel {
+                Rel::Links | Rel::LinkedBy => 2,
                 Rel::Refs | Rel::DirectRefs | Rel::Tags => 1,
                 Rel::Page => 2,
                 Rel::Props => 3,
@@ -456,76 +699,6 @@ fn cost(filter: &Filter) -> u8 {
         },
         _ => 0,
     }
-}
-
-thread_local! {
-    /// A test's pinned `sample` seed (see [`pin_sample_seed`]); `None` draws a
-    /// fresh seed per execution, as OG's `shuffle` does.
-    static SAMPLE_SEED: std::cell::Cell<Option<u64>> = const { std::cell::Cell::new(None) };
-}
-
-/// Pin the seed every `sample` on THIS thread draws from, until the guard
-/// drops. A seed is the only randomness in query execution, so a test that
-/// pins it gets a reproducible subset.
-#[cfg(test)]
-pub(crate) fn pin_sample_seed(seed: u64) -> SampleSeedGuard {
-    SAMPLE_SEED.with(|cell| cell.set(Some(seed)));
-    SampleSeedGuard
-}
-
-#[cfg(test)]
-pub(crate) struct SampleSeedGuard;
-
-#[cfg(test)]
-impl Drop for SampleSeedGuard {
-    fn drop(&mut self) {
-        SAMPLE_SEED.with(|cell| cell.set(None));
-    }
-}
-
-fn fresh_sample_seed() -> u64 {
-    if let Some(seed) = SAMPLE_SEED.with(|cell| cell.get()) {
-        return seed;
-    }
-    static DRAWS: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
-    let nanos = std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .map_or(0, |elapsed| elapsed.as_nanos() as u64);
-    nanos
-        ^ DRAWS
-            .fetch_add(0x9E37_79B9_7F4A_7C15, std::sync::atomic::Ordering::Relaxed)
-            .rotate_left(17)
-}
-
-/// Keep a uniformly random subset of `items` of at most `n` elements, in their
-/// current relative order (a partial Fisher-Yates over the indices, splitmix64
-/// as the generator). Cost O(len).
-fn take_random_subset<T>(items: &mut Vec<T>, n: usize) {
-    if items.len() <= n {
-        return;
-    }
-    let mut state = fresh_sample_seed();
-    let mut next = move || {
-        state = state.wrapping_add(0x9E37_79B9_7F4A_7C15);
-        let mut z = state;
-        z = (z ^ (z >> 30)).wrapping_mul(0xBF58_476D_1CE4_E5B9);
-        z = (z ^ (z >> 27)).wrapping_mul(0x94D0_49BB_1331_11EB);
-        z ^ (z >> 31)
-    };
-    let mut order: Vec<usize> = (0..items.len()).collect();
-    for at in 0..n {
-        let pick = at + (next() % (order.len() - at) as u64) as usize;
-        order.swap(at, pick);
-    }
-    let mut keep = vec![false; items.len()];
-    for &index in &order[..n] {
-        keep[index] = true;
-    }
-    let mut index = 0;
-    items.retain(|_| {
-        index += 1;
-        keep[index - 1]
-    });
 }
 
 /// The recency axis (Unix seconds): a journal by the day it represents, any
@@ -700,6 +873,23 @@ pub(crate) fn execute(
     view: &ViewSettings,
     bounds: Bounds,
 ) -> Result<QueryResult, StatisticsResourceLimit> {
+    execute_cancellable(graph, plan, query, view, bounds, &|| false)
+        .map(|result| result.expect("never cancelled"))
+}
+
+/// [`execute`], stopping cooperatively once `cancelled` reports true: `Ok(None)`
+/// carries no partial result. The row scan checks it once per candidate page,
+/// and the link work (`links`, `linked_by`, `near`: table build, element and
+/// seed conditions, searches) at least once per page and per 1024 references
+/// or nodes.
+pub(crate) fn execute_cancellable(
+    graph: &ReadSnapshot,
+    plan: &Plan,
+    query: &Query,
+    view: &ViewSettings,
+    bounds: Bounds,
+    cancelled: &dyn Fn() -> bool,
+) -> Result<Option<QueryResult>, StatisticsResourceLimit> {
     let mut result = QueryResult {
         rows: match plan.anchor {
             Anchor::Block => QueryRows::Block { groups: Vec::new() },
@@ -715,13 +905,14 @@ pub(crate) fn execute(
         matched_total: (plan.anchor == Anchor::Page).then_some(0),
         statistics: None,
         exceeded: false,
+        as_of_day: None,
     };
     // §3.5: an invalid query returns nothing plus its diagnostics. A filter
     // that is constantly false (OG's nil query: `{{query }}`, or one whose
     // every clause is a dropped bare `(task)` / `(priority)`, D-18) can match
     // nothing either, so it answers without visiting a page.
     if query.is_invalid() || plan.filter == Filter::False {
-        return Ok(result);
+        return Ok(Some(result));
     }
     let wants_recency = view
         .sort
@@ -737,21 +928,30 @@ pub(crate) fn execute(
         .collect();
     let sample = view.sample.map(|n| n as usize);
     let mut fold = StatisticsFold::new(view, bounds.max_bytes)?;
+    let mut stopped = false;
     graph.with_pages(|pages| -> Result<(), StatisticsResourceLimit> {
         let candidates = candidates::Candidates::new(graph, pages, plan);
         let config = candidates.config();
         let atoms = EvalCache::default();
+        let Some(links) = plan.link_answers(graph, &candidates, config, &atoms, cancelled) else {
+            stopped = true;
+            return Ok(());
+        };
         match plan.anchor {
             Anchor::Block => {
                 let mut groups: Vec<(&PageEntry, Arc<PageFacts>, Vec<Hit>)> = Vec::new();
                 for (entry, doc) in candidates.pages() {
+                    if cancelled() {
+                        stopped = true;
+                        return Ok(());
+                    }
                     let facts = candidates.facts(entry, doc);
-                    if plan.skips(entry, &facts) {
+                    if plan.skips(entry, &facts, config, &atoms) {
                         continue;
                     }
                     let mut hits = Vec::new();
                     plan.block_hits(
-                        &plan.ctx(entry, doc, &facts, config, &atoms),
+                        &plan.ctx(entry, doc, &facts, config, &atoms, &links),
                         doc,
                         &facts,
                         &mut hits,
@@ -863,9 +1063,15 @@ pub(crate) fn execute(
             Anchor::Page => {
                 let mut matches: Vec<(&PageEntry, Arc<PageFacts>)> = Vec::new();
                 for (entry, doc) in candidates.pages() {
+                    if cancelled() {
+                        stopped = true;
+                        return Ok(());
+                    }
                     let facts = candidates.facts(entry, doc);
-                    if eval::eval_page(&plan.filter, &plan.ctx(entry, doc, &facts, config, &atoms))
-                    {
+                    if eval::eval_page(
+                        &plan.filter,
+                        &plan.ctx(entry, doc, &facts, config, &atoms, &links),
+                    ) {
                         matches.push((entry, facts));
                     }
                 }
@@ -962,24 +1168,32 @@ pub(crate) fn execute(
         }
         Ok(())
     })?;
+    if stopped {
+        return Ok(None);
+    }
     result.statistics = fold.map(StatisticsFold::finish);
-    Ok(result)
+    Ok(Some(result))
 }
 
 /// Count the rows a plan matches, constructing nothing (explain-empty's probe).
-fn count(graph: &ReadSnapshot, plan: &Plan) -> usize {
+/// `None` once `cancelled` stops its link work.
+fn count(graph: &ReadSnapshot, plan: &Plan, cancelled: &dyn Fn() -> bool) -> Option<usize> {
     graph.with_pages(|pages| {
         let candidates = candidates::Candidates::new(graph, pages, plan);
         let config = candidates.config();
         let atoms = EvalCache::default();
+        let links = plan.link_answers(graph, &candidates, config, &atoms, cancelled)?;
         let mut count = 0usize;
         let mut hits = Vec::new();
         for (entry, doc) in candidates.pages() {
+            if cancelled() {
+                return None;
+            }
             let facts = candidates.facts(entry, doc);
-            if plan.skips(entry, &facts) {
+            if plan.skips(entry, &facts, config, &atoms) {
                 continue;
             }
-            let ctx = plan.ctx(entry, doc, &facts, config, &atoms);
+            let ctx = plan.ctx(entry, doc, &facts, config, &atoms, &links);
             match plan.anchor {
                 Anchor::Page => count += usize::from(eval::eval_page(&plan.filter, &ctx)),
                 Anchor::Block => {
@@ -989,7 +1203,7 @@ fn count(graph: &ReadSnapshot, plan: &Plan) -> usize {
                 }
             }
         }
-        count
+        Some(count)
     })
 }
 
@@ -1011,31 +1225,68 @@ pub(crate) fn plan(
     )
 }
 
-/// [`crate::WholeGraph::query_ir`]'s body: the one IR front door over a snapshot.
+/// [`crate::WholeGraph::query_ir`]'s body: the one IR front door over a
+/// snapshot, stopping cooperatively once `cancelled` reports true (`Ok(None)`:
+/// no partial answer, nothing served from or stored into the memo).
 pub(crate) fn query_ir(
     graph: &crate::model::ReadSnapshot,
     request: crate::IrRequest<'_>,
-) -> Result<crate::IrAnswer, StatisticsResourceLimit> {
-    query_ir_on_day(graph, request, tine_core::date::JournalDate::today())
+    cancelled: &dyn Fn() -> bool,
+) -> Result<Option<crate::IrAnswer>, StatisticsResourceLimit> {
+    let began = (matches!(&request, crate::IrRequest::Run { .. })
+        && crate::bench_events::enabled())
+    .then(std::time::Instant::now);
+    let answer = query_ir_on_day_cancellable(
+        graph,
+        request,
+        tine_core::date::JournalDate::today(),
+        cancelled,
+    );
+    if let Some(began) = began {
+        crate::bench_events::mark(
+            "query_run_us",
+            began.elapsed().as_micros().try_into().unwrap_or(u64::MAX),
+        );
+    }
+    answer
 }
 
 /// Same production entry body, with the sampled day explicit for conformance.
+#[cfg(any(test, feature = "test-faults"))]
 pub(crate) fn query_ir_on_day(
     graph: &crate::model::ReadSnapshot,
     request: crate::IrRequest<'_>,
     today: tine_core::date::JournalDate,
 ) -> Result<crate::IrAnswer, StatisticsResourceLimit> {
+    query_ir_on_day_cancellable(graph, request, today, &|| false)
+        .map(|answer| answer.expect("never cancelled"))
+}
+
+fn query_ir_on_day_cancellable(
+    graph: &crate::model::ReadSnapshot,
+    request: crate::IrRequest<'_>,
+    today: tine_core::date::JournalDate,
+    cancelled: &dyn Fn() -> bool,
+) -> Result<Option<crate::IrAnswer>, StatisticsResourceLimit> {
     use crate::query::memo::Answer;
+    let tagged_pages;
+    let default_view = ViewSettings::default();
+    let no_context = tine_core::query::ir::ExecutionContext::none();
     let (query, view, context) = match request {
+        crate::IrRequest::TaggedPages { name } => {
+            tagged_pages = crate::query::tagged_pages_query(graph, name);
+            (&tagged_pages, &default_view, &no_context)
+        }
         crate::IrRequest::Registry => {
             let index = graph.query_index();
             let registry = graph.with_pages(|pages| index.registry(pages));
-            return Ok(crate::IrAnswer::Registry(registry));
+            return Ok(Some(crate::IrAnswer::Registry(registry)));
         }
         crate::IrRequest::ExplainEmpty { query, context } => {
             let resolved = tine_core::query::resolve_for_execution(query, context, today);
-            let answer = explain_empty(graph, &resolved);
-            return Ok(crate::IrAnswer::ExplainEmpty(answer));
+            return Ok(
+                explain_empty(graph, &resolved, cancelled).map(crate::IrAnswer::ExplainEmpty)
+            );
         }
         crate::IrRequest::Run {
             query,
@@ -1049,53 +1300,82 @@ pub(crate) fn query_ir_on_day(
         serde_json::to_string(&(resolved.query(), resolved.report())).unwrap_or_default(),
         serde_json::to_string(view).unwrap_or_default(),
     );
-    let answer = graph.query_answer(key, today, || {
+    let Some(answer) = graph.query_answer_cancellable(key, today, cancelled, || {
         let bounds = tine_core::query::ir::Bounds {
             max_rows: crate::store::RESULT_BRIDGE_MAX_ROWS,
             max_bytes: crate::store::RESULT_BRIDGE_MAX_BYTES,
         };
-        let (result, plan) = run_resolved(graph, &resolved, view, bounds);
-        (Answer::Result(result.map(Arc::new)), Some(plan))
-    });
+        let (result, plan) = run_resolved_cancellable(graph, &resolved, view, bounds, cancelled);
+        let result = match result {
+            Ok(None) => return None,
+            Ok(Some(result)) => Ok(Arc::new(result)),
+            Err(limit) => Err(limit),
+        };
+        Some((Answer::Result(result), Some(plan)))
+    }) else {
+        return Ok(None);
+    };
+    // The day stamp is per call, outside the memo: a memo entry is filed
+    // under its own day already, and the checkpoint keeps no extra bytes.
+    let as_of_day = resolved
+        .reads_today()
+        .then(|| resolved.today().ordinal_key());
     match answer {
-        Answer::Result(result) => {
-            result.map(|result| crate::IrAnswer::Result(Box::new(result.as_ref().clone())))
-        }
+        Answer::Result(result) => result.map(|result| {
+            let mut result = result.as_ref().clone();
+            result.as_of_day = as_of_day;
+            Some(crate::IrAnswer::Result(Box::new(result)))
+        }),
         _ => unreachable!("R keys hold IR results"),
     }
 }
 
 /// `query_run`'s evaluation (SPEC §7.1): the resolved tree under the
 /// statistics-execution view, with the binding's report attached afterwards.
-pub(crate) fn run_resolved(
+/// `None` inside the result once `cancelled` stopped it.
+fn run_resolved_cancellable(
     graph: &ReadSnapshot,
     resolved: &ResolvedQuery,
     view: &ViewSettings,
     bounds: Bounds,
-) -> (Result<QueryResult, StatisticsResourceLimit>, Arc<Plan>) {
+    cancelled: &dyn Fn() -> bool,
+) -> (
+    Result<Option<QueryResult>, StatisticsResourceLimit>,
+    Arc<Plan>,
+) {
     let view = statistics_execution_view(resolved.query(), view);
     let plan = Arc::new(plan(graph, resolved.query(), resolved.today(), false));
-    let result = execute(graph, &plan, resolved.query(), &view, bounds).map(|mut result| {
-        result.report = resolved.report().clone();
-        result
-    });
+    let result = execute_cancellable(graph, &plan, resolved.query(), &view, bounds, cancelled).map(
+        |result| {
+            result.map(|mut result| {
+                result.report = resolved.report().clone();
+                result
+            })
+        },
+    );
     (result, plan)
 }
 
 /// `query_explain_empty` (SPEC §7.1, N19): one count per probe of the plan.
-pub(crate) fn explain_empty(graph: &ReadSnapshot, resolved: &ResolvedQuery) -> ExplainEmptyResult {
+pub(crate) fn explain_empty(
+    graph: &ReadSnapshot,
+    resolved: &ResolvedQuery,
+    cancelled: &dyn Fn() -> bool,
+) -> Option<ExplainEmptyResult> {
     let explain = explain_empty_plan(resolved);
     let counts: Vec<usize> = explain
         .probes
         .iter()
         .map(|probe| {
             let plan = plan(graph, probe, resolved.today(), false);
-            count(graph, &plan)
+            count(graph, &plan, cancelled)
         })
-        .collect();
-    explain
-        .answer(resolved, &counts)
-        .expect("one count per probe, by construction")
+        .collect::<Option<_>>()?;
+    Some(
+        explain
+            .answer(resolved, &counts)
+            .expect("one count per probe, by construction"),
+    )
 }
 
 /// The legacy block-group bridge for one resolved query (`run_query`, the

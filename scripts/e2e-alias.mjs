@@ -1,7 +1,10 @@
 // Real-app regression for GH #62/#86/#138/#139. A first bullet becomes syntactically a
 // page-property block as soon as the second ':' in `alias::` is typed. The page
 // must not hide/unmount its textarea at that intermediate point.
-import { spawn } from "node:child_process";
+// D-20261019-AL2 (card hB9Zjw): the header then tells the alias group's names with
+// no file of their own from its other real pages, in the main pane and the right
+// sidebar, and each link opens the right page.
+import { spawn, spawnSync } from "node:child_process";
 import { remote } from "webdriverio";
 import { setTimeout as sleep } from "node:timers/promises";
 import fs from "node:fs";
@@ -15,11 +18,15 @@ const DRIVER_PORT = Number(process.env.E2E_DRIVER_PORT || 4484);
 const NATIVE_PORT = Number(process.env.E2E_NATIVE_PORT || 4485);
 const TMP = "/tmp/tine-alias-e2e";
 const GRAPH = `${TMP}/graph`;
+const ARTIFACTS = process.env.E2E_ARTIFACT_DIR || TMP;
 
 fs.rmSync(TMP, { recursive: true, force: true });
+fs.mkdirSync(ARTIFACTS, { recursive: true });
 for (const dir of ["pages", "journals", "logseq"]) fs.mkdirSync(`${GRAPH}/${dir}`, { recursive: true });
 for (const dir of ["data", "config", "cache"]) fs.mkdirSync(`${TMP}/xdg/${dir}`, { recursive: true });
 fs.writeFileSync(`${GRAPH}/pages/Books.md`, "- \n");
+// Library declares Books (a real page) and a fileless name: one alias group.
+fs.writeFileSync(`${GRAPH}/pages/Library.md`, "alias:: Reading room, Books\n\n- Library notes\n");
 const now = new Date();
 const journal = `${now.getFullYear()}_${String(now.getMonth() + 1).padStart(2, "0")}_${String(now.getDate()).padStart(2, "0")}`;
 fs.writeFileSync(`${GRAPH}/journals/${journal}.md`, "- Open [[Books]]\n- A singular #book reference\n");
@@ -29,6 +36,19 @@ const env = {
   TINE_GRAPH: GRAPH,
   XDG_DATA_HOME: `${TMP}/xdg/data`, XDG_CONFIG_HOME: `${TMP}/xdg/config`, XDG_CACHE_HOME: `${TMP}/xdg/cache`,
   WEBKIT_DISABLE_DMABUF_RENDERER: "1", WEBKIT_DISABLE_COMPOSITING_MODE: "1", LIBGL_ALWAYS_SOFTWARE: "1", GDK_BACKEND: "x11",
+};
+// WebKit's screenshot endpoint can hang at 1920x1080 while the semantic
+// journey is healthy. Capture the X11 display outside WebDriver, with a bound;
+// an optional artifact must not prevent the remaining navigation assertions.
+const screenshot = (name) => {
+  const result = spawnSync("import", ["-window", "root", path.join(ARTIFACTS, name)], {
+    env, timeout: 10_000, encoding: "utf8",
+  });
+  if (result.error || result.status !== 0) {
+    const warning = String(result.error || result.stderr || `exit ${result.status}`);
+    fs.writeFileSync(path.join(ARTIFACTS, `${name}.warning.txt`), warning);
+    console.warn(`WARN screenshot artifact ${name}: ${warning}`);
+  }
 };
 const log = fs.openSync(`${TMP}/tauri-driver.log`, "w");
 const td = spawn(TD, ["--port", String(DRIVER_PORT), "--native-port", String(NATIVE_PORT), "--native-driver", process.env.WEBKIT_DRIVER || "/usr/bin/WebKitWebDriver"], {
@@ -89,7 +109,8 @@ try {
   });
   const propertyLinks = await browser.execute(() => [...document.querySelectorAll(".prop-row")]
     .find((row) => row.querySelector(".prop-key")?.textContent === "tags")
-    ?.querySelectorAll(".page-ref").length ?? 0);
+    ?.querySelectorAll(".prop-value .page-ref").length ?? 0);
+  // The key links to its own page too (GH #753); count the value links.
   if (propertyLinks !== 2) throw new Error(`tags property did not expose two page links: ${propertyLinks}`);
   await browser.$("h1.page-title").click();
   await browser.waitUntil(() => fs.readFileSync(`${GRAPH}/pages/Books.md`, "utf8").startsWith("alias:: book\n"), {
@@ -113,7 +134,37 @@ try {
   if (!(await browser.$(".page-aliases").getText()).includes("book")) {
     throw new Error("reopened page did not parse the authored header as metadata");
   }
-  console.log("PASS: first-bullet properties stay in one editor, persist unbulleted, and reopen as page metadata");
+  console.log("first-bullet properties stay in one editor, persist unbulleted, and reopen as page metadata");
+
+  const row = (scope, attr) => browser.execute((scopeSel, attrSel) =>
+    [...document.querySelectorAll(`${scopeSel} [${attrSel}] a.page-ref`)].map((a) => a.textContent.trim()), scope, attr);
+  const expectRows = async (scope, names, pages, what) => {
+    await browser.waitUntil(async () =>
+      JSON.stringify(await row(scope, "data-alias-names")) === JSON.stringify(names)
+      && JSON.stringify(await row(scope, "data-alias-group-pages")) === JSON.stringify(pages), {
+      timeout: 10_000,
+      timeoutMsg: `${what}: expected names ${JSON.stringify(names)} and pages ${JSON.stringify(pages)}, saw ${JSON.stringify(await row(scope, "data-alias-names"))} / ${JSON.stringify(await row(scope, "data-alias-group-pages"))}`,
+    });
+  };
+  const click = (scope, attr, text, shiftKey = false) => browser.execute((scopeSel, attrSel, label, shift) =>
+    [...document.querySelectorAll(`${scopeSel} [${attrSel}] a.page-ref`)].find((a) => a.textContent.trim() === label)
+      ?.dispatchEvent(new MouseEvent("click", { bubbles: true, cancelable: true, button: 0, shiftKey: shift })), scope, attr, text, shiftKey);
+  const MAIN = ".page-section";
+  await expectRows(MAIN, ["book", "Reading room"], ["Library"], "Books header");
+  screenshot("alias-group-books.png");
+  await click(MAIN, "data-alias-group-pages", "Library");
+  await browser.waitUntil(async () => (await browser.$("h1.page-title").getText()) === "Library", {
+    timeout: 10_000, timeoutMsg: "a related page did not open its own file",
+  });
+  await expectRows(MAIN, ["book", "Reading room"], ["Books"], "Library header");
+  await click(MAIN, "data-alias-names", "book");
+  await browser.waitUntil(async () => (await browser.$("h1.page-title").getText()) === "Books", {
+    timeout: 10_000, timeoutMsg: "a fileless name did not open the page declaring it",
+  });
+  await click(MAIN, "data-alias-group-pages", "Library", true);
+  await expectRows(".rs-item-body", ["book", "Reading room"], ["Books"], "Library in the right sidebar");
+  screenshot("alias-group-sidebar.png");
+  console.log("PASS: first-bullet properties persist; alias group rows tell names from real pages and navigate (main + sidebar)");
 } finally {
   try { await browser?.deleteSession(); } catch {}
   try { process.kill(-td.pid, "SIGKILL"); } catch {}

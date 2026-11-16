@@ -55,10 +55,17 @@ pub enum FaultPoint {
     AbortAfterMoveRename,
     /// Abort immediately before a move attempts its atomic rename.
     AbortBeforeMoveRename,
+    /// Abort after the atomic entry move, before syncing its directories.
+    AbortBeforeMoveSync,
     /// Model an already-exists refusal with destination resolving to source.
     CaseMoveAliasRefusal,
     /// Model a folded-alias rename succeeding without changing its spelling.
     CaseMoveAliasNoop,
+    /// Fail the second half of a case move through its temporary entry (GS1).
+    CaseMoveTemporaryIo,
+    /// Abort with the page at its temporary entry, between the two halves of
+    /// a case move (GS1); requires `test-faults`.
+    AbortBetweenCaseMoveSteps,
     /// Abort the process after a rewritten move has copied the old bytes to
     /// trash and published new destination bytes; requires `test-faults`.
     AbortAfterMoveRewrite,
@@ -93,8 +100,11 @@ pub(crate) enum FaultPoint {
     AbortAfterStep(usize),
     AbortAfterMoveRename,
     AbortBeforeMoveRename,
+    AbortBeforeMoveSync,
     CaseMoveAliasRefusal,
     CaseMoveAliasNoop,
+    CaseMoveTemporaryIo,
+    AbortBetweenCaseMoveSteps,
     AbortAfterMoveRewrite,
     MoveAfterTrashCopyIo,
     AbortAfterMarkerStage,

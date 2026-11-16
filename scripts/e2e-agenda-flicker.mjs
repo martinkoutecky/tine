@@ -11,7 +11,7 @@ import { ensureMainWindow } from "./lib/e2e-main-window.mjs";
 
 ensurePrivateSessionBus();
 const out = path.resolve(process.env.OUT ?? `artifacts/agenda-flicker-617/native-${Date.now()}`);
-const commit = execFileSync("rtk", ["proxy", "git", "rev-parse", "HEAD"], { encoding: "utf8" }).trim();
+const commit = execFileSync("git", ["rev-parse", "HEAD"], { encoding: "utf8" }).trim();
 const alpha = `${out}/alpha`, beta = `${out}/beta`;
 const today = new Date();
 const iso = [today.getFullYear(), String(today.getMonth() + 1).padStart(2, "0"), String(today.getDate()).padStart(2, "0")].join("-");

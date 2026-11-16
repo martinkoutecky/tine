@@ -9,7 +9,7 @@
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import { createEffect, createRoot, on } from "solid-js";
 import { backend } from "../../backend";
-import { dataRev } from "../../graphSession";
+import { dataRev } from "../../dataRevision";
 import { refreshReadsInFlight, trackRefreshRead } from "../../refreshReads";
 import type { PageDto } from "../../types";
 import { resetStore, setRaw } from "../index";

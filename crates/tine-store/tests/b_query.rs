@@ -52,11 +52,15 @@ fn b_query_cross_row_atom_uniqueness_and_prefix_matching_reach_the_store() {
     );
     let query = Query::new(Anchor::Block, filter, Source::Builder);
     let result = graph
-        .query_ir(IrRequest::Run {
-            query: &query,
-            view: &ViewSettings::default(),
-            context: &ExecutionContext::default(),
-        })
+        .query_ir(
+            IrRequest::Run {
+                query: &query,
+                view: &ViewSettings::default(),
+                context: &ExecutionContext::default(),
+            },
+            &tine_store::Cancel::default(),
+        )
+        .map(|answer| answer.expect("never cancelled"))
         .unwrap();
     let IrAnswer::Result(result) = result else {
         panic!("result rows")
@@ -70,11 +74,15 @@ fn b_query_cross_row_atom_uniqueness_and_prefix_matching_reach_the_store() {
         tine_core::date::JournalDate::today(),
     );
     let result = graph
-        .query_ir(IrRequest::Run {
-            query: &query,
-            view: &view,
-            context: &ExecutionContext::default(),
-        })
+        .query_ir(
+            IrRequest::Run {
+                query: &query,
+                view: &view,
+                context: &ExecutionContext::default(),
+            },
+            &tine_store::Cancel::default(),
+        )
+        .map(|answer| answer.expect("never cancelled"))
         .unwrap();
     let IrAnswer::Result(result) = result else {
         panic!("result rows")

@@ -3,11 +3,15 @@ import { msg } from "./i18n";
  * one callback per signal for revisions, seeds, startup reads and writes; never
  * share it across signals. Reads land only for the captured revision. Writes
  * apply now and persist sequentially; failed latest writes roll back and every
- * write failure toasts. O(1) frontend work plus backend read/write latency. */
+ * write failure toasts. Another window's change re-reads once pending writes
+ * settle. O(1) frontend work plus backend read/write latency. */
 import { pushToast } from "./toasts";
 import { advanceRevision, currentRevision, revisionOwner, readOwned } from "./owned";
 
-type State<T> = { committed: T; pending: number; queue: Promise<void> };
+/** `reconcile`: another window's change arrived while writes were pending, so
+ * neither their outcome nor the rollback value says what the file now holds;
+ * re-read once they settle (GH #151 re-review F2). */
+type State<T> = { committed: T; pending: number; queue: Promise<void>; reconcile?: () => void };
 const states = new WeakMap<Function, State<unknown>>();
 
 /** Apply now and queue persistence by read-callback identity. The callback is
@@ -38,9 +42,25 @@ export function writePreference<T>(
       if (onFailure) onFailure();
       else pushToast(msg("preference-writes-could-not-save", { label: String(label) }), "error");
     } finally {
-      state.pending--;
+      if (--state.pending === 0 && state.reconcile) {
+        const reload = state.reconcile;
+        state.reconcile = undefined;
+        reload();
+      }
     }
   });
+}
+
+/** Another window persisted this preference. Retire in-flight reads and the
+ * rollback of pending writes, then run `reload` (a read through this module's
+ * owners) now, or once this window's pending writes settle: the last write to
+ * reach the file is unknown here, so only a read after them says what it holds.
+ * O(1); `reload` runs at most once per settle. */
+export function preferenceChangedElsewhere<T>(read: () => T, reload: () => void): void {
+  advanceRevision(read);
+  const state = states.get(read) as State<T> | undefined;
+  if (state && state.pending > 0) state.reconcile = reload;
+  else reload();
 }
 
 /** Capture a stable callback's revision before a startup read, without calling

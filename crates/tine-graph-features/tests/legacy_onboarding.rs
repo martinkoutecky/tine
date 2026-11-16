@@ -23,8 +23,8 @@ fn scratch(label: &str) -> PathBuf {
     dir
 }
 
-fn open(dir: &Path) -> Store {
-    Store::open(dir, Default::default()).unwrap().0
+fn open(dir: &Path) -> std::sync::Arc<Store> {
+    std::sync::Arc::new(Store::open(dir, Default::default()).unwrap().0)
 }
 
 fn page_id(store: &Store, name: &str) -> PageId {
@@ -148,7 +148,7 @@ fn guide_explains_favorites_groups_nesting_and_page_storage() {
         .expect("tips guide is bundled");
     assert!(tips.markdown.contains("+ New group"));
     assert!(tips.markdown.contains("to any depth"));
-    assert!(tips.markdown.contains("tine/favorites:: true"));
+    assert!(tips.markdown.contains("tine.favorites:: true"));
     assert!(tips.markdown.contains("config.edn :favorites"));
 }
 
@@ -184,6 +184,77 @@ fn guide_explains_following_the_link_at_the_caret() {
         .find(|page| page.title == "Features/Quick capture")
         .expect("capture guide is bundled");
     assert!(capture.markdown.contains("**File capture** button"));
+}
+
+#[test]
+fn guide_explains_margin_comments() {
+    // Margin dialogue slice 1 (vision 2026-10 §3.7): Ctrl/Cmd+R comments on a
+    // selection as a `tine.quote::` child; a stale quote is kept, never dropped.
+    let tips = bundled_guide_pages()
+        .into_iter()
+        .find(|page| page.title == "Features/Tips & shortcuts")
+        .expect("tips guide is bundled");
+    assert!(tips.markdown.contains("## Comment on a passage — Ctrl+R"));
+    for workflow in [
+        "selection toolbar's **Comment** button",
+        "Comment and reply editors hide every `tine.*` property",
+        "speech bubble at the right edge",
+        "click its **Reply…** box at the bottom",
+        "**Shift+Enter** adds a line",
+        "**Escape** or **Cancel** discards the draft",
+        "empty reply creates no block and does not save the page",
+        "short quote inside that same thread",
+        "deletes that comment and its replies",
+        "**Ctrl/Cmd+Z** restores them together",
+    ] {
+        assert!(
+            tips.markdown.contains(workflow),
+            "missing comment workflow: {workflow}"
+        );
+    }
+    assert!(tips
+        .markdown
+        .contains("select a few words and press **Ctrl/Cmd+R**"));
+    assert!(tips
+        .markdown
+        .contains("an ordinary child bullet carrying a `tine.quote::` property"));
+    assert!(tips
+        .markdown
+        .contains("**Comment on selection** in the command palette"));
+    assert!(tips
+        .markdown
+        .contains("right-clicking words you have selected in a block's text"));
+    assert!(tips
+        .markdown
+        .contains("struck through with **quoted text changed**"));
+    assert!(tips
+        .markdown
+        .contains("A bullet with a `tine.author::` property"));
+    // Comment identity (D-20261017-LD1): the "Your name" setting.
+    assert!(tips.markdown.contains("**Settings > Editor > Your name**"));
+    assert!(tips
+        .markdown
+        .contains("saved with `tine.author:: <your name>`"));
+    // tine#841: the one-time question in a git graph, and what Skip does.
+    assert!(tips.markdown.contains("In a graph that is under git, the first comment or reply you write without a name asks **How should your comments be signed?** once"));
+    assert!(tips
+        .markdown
+        .contains("**Skip** writes the comment without it and Tine does not ask again"));
+    // GH #891: comments are annotations; the name chip opens the block menu.
+    assert!(tips.markdown.contains("Comments cannot be dragged"));
+    assert!(tips
+        .markdown
+        .contains("Right-click the name chip (long-press on a phone) for the block menu"));
+    // Slice 2: the margin column on wide windows, and where it does not apply.
+    assert!(tips
+        .markdown
+        .contains("shows threads in a column on the right"));
+    assert!(tips
+        .markdown
+        .contains("**Enter** in a comment's text adds a reply under the thread root"));
+    assert!(tips
+        .markdown
+        .contains("in the sidebar or in an embed, comments stay in the outline"));
 }
 
 #[test]
@@ -288,7 +359,8 @@ fn copy_guide_into_graph_writes_whole_lowercase_namespace_and_assets() {
     let dir = scratch("whole");
     fs::create_dir_all(dir.join("pages")).unwrap();
     let store = open(&dir);
-    let copied = guide::copy_guide_into_graph(&store, None, "Features/Sheets").unwrap();
+    let host = crate::test_host(&store);
+    let copied = guide::copy_guide_into_graph(&store, &host, "Features/Sheets").unwrap();
     assert_eq!(copied.name, "tine-guide/Features/Sheets");
     assert!(copied.created);
     assert_eq!(copied.created_pages.len(), GUIDE_TEMPLATES.len());
@@ -328,7 +400,8 @@ fn recopy_guide_skips_existing_pages_without_clobbering_user_edits() {
     let dir = scratch("recopy");
     fs::create_dir_all(dir.join("pages")).unwrap();
     let store = open(&dir);
-    guide::copy_guide_into_graph(&store, None, "Tine Guide").unwrap();
+    let host = crate::test_host(&store);
+    guide::copy_guide_into_graph(&store, &host, "Tine Guide").unwrap();
     let edited = guide_copy_page_name("Features/Sheets");
     let edited_path = store
         .path_for_os_handoff(&page_id(&store, &edited).file(), false)
@@ -345,7 +418,7 @@ fn recopy_guide_skips_existing_pages_without_clobbering_user_edits() {
             (name, fs::read_to_string(path).unwrap())
         })
         .collect();
-    let existing = guide::copy_guide_into_graph(&store, None, "Features/Sheets").unwrap();
+    let existing = guide::copy_guide_into_graph(&store, &host, "Features/Sheets").unwrap();
     assert_eq!(existing.name, edited);
     assert!(!existing.created);
     assert!(existing.created_pages.is_empty());
@@ -375,9 +448,10 @@ fn copy_guide_rejects_pages_directory_symlink_swap() {
     let outside = scratch("pages-outside");
     fs::create_dir_all(dir.join("pages")).unwrap();
     let store = open(&dir);
+    let host = crate::test_host(&store);
     fs::remove_dir(dir.join("pages")).unwrap();
     symlink(&outside, dir.join("pages")).unwrap();
-    assert!(guide::copy_guide_into_graph(&store, None, "Tine Guide").is_err());
+    assert!(guide::copy_guide_into_graph(&store, &host, "Tine Guide").is_err());
     assert_eq!(fs::read_dir(&outside).unwrap().count(), 0);
 }
 
@@ -391,9 +465,10 @@ fn copy_guide_rejects_assets_directory_symlink_swap() {
     fs::create_dir_all(dir.join("pages")).unwrap();
     fs::create_dir_all(dir.join("assets")).unwrap();
     let store = open(&dir);
+    let host = crate::test_host(&store);
     fs::remove_dir(dir.join("assets")).unwrap();
     symlink(&outside, dir.join("assets")).unwrap();
-    assert!(guide::copy_guide_into_graph(&store, None, "Tine Guide").is_err());
+    assert!(guide::copy_guide_into_graph(&store, &host, "Tine Guide").is_err());
     assert_eq!(fs::read_dir(&outside).unwrap().count(), 0);
 }
 

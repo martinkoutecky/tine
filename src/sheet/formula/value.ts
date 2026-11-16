@@ -65,6 +65,16 @@ export function dateValueFromDate(date: Date, includeTime: boolean): FormulaDate
   );
 }
 
+/** The evaluator's calendar frame for the clock. Formula dates are zone-less
+ *  calendar values held as UTC fields (`dateToUtcDate`, `dateValueFromDate`), but
+ *  the app clock is an instant whose LOCAL getters carry the user's wall clock
+ *  (`appNow()`, src/journal.ts). This returns the Date whose UTC fields equal
+ *  that wall clock, so `today()`, `now()` and `.relative()` read the user's
+ *  calendar day. The one conversion, applied where the clock enters `evaluate`. */
+export function wallClockAsCalendarDate(instant: Date): Date {
+  return new Date(instant.getTime() - instant.getTimezoneOffset() * 60_000);
+}
+
 export function dateToUtcDate(value: FormulaDateValue): Date {
   const time = value.value.time;
   const hour = time ? Number(time.slice(0, 2)) : 0;

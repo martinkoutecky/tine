@@ -13,7 +13,7 @@ pub(super) struct FilePublication {
     pub(super) observations: crate::store::PublishedObservations,
 }
 
-impl Transaction<'_> {
+impl PagePlan<'_> {
     #[allow(clippy::too_many_arguments)]
     pub(super) fn publish_final_files(
         &self,

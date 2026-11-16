@@ -1,3 +1,4 @@
+import { maybeEditorIn } from "./tests/editorDriver";
 // OG-MULTIWINDOW P4: a workspace window is disposed exactly once whichever door
 // closes it, ends an edit typed in it, asks the save engine to flush, forgets
 // its pane tree and destroys its native window. An iframe stands in for the
@@ -93,6 +94,27 @@ async function openReady(name = "Alpha"): Promise<{ id: string; win: Realm }> {
 }
 
 describe("workspace window lifecycle (P4)", () => {
+  it("dispatches fixed milestones before open and focus, sharing only the native counter", async () => {
+    const stages = () => native.calls.filter(c => c.cmd === "diagnostic_workspace_open")
+      .map(c => c.args as { sequence: number; stage: string; openElapsedMs: number });
+    const originalOpen = vi.mocked(mainWindow.open).getMockImplementation()!;
+    vi.mocked(mainWindow.open).mockImplementation((...args) => {
+      expect(stages().map(s => s.stage)).toEqual(["prepare-done", "open-called"]);
+      const popup = originalOpen(...args) as Realm;
+      popup.focus = () => expect(stages().at(-1)?.stage).toBe("focus-called");
+      return popup;
+    });
+    await openReady("PRIVATE PAGE TITLE");
+    await vi.waitFor(() => expect(stages().at(-1)?.stage).toBe("focus-done"));
+    expect(stages().map(s => s.stage)).toEqual(["prepare-done", "open-called", "open-returned",
+      "document-ready", "bootstrap-done", "focus-called", "focus-done"]);
+    for (const event of stages()) {
+      expect(event).toEqual({ sequence: 1, stage: expect.any(String), openElapsedMs: expect.any(Number) });
+      expect(event.openElapsedMs).toBeGreaterThanOrEqual(0);
+    }
+    expect(JSON.stringify(stages())).not.toMatch(/PRIVATE|ws-main/);
+  });
+
   it("installs the pane tree synchronously, then opens, mirrors styles and renders the shell", async () => {
     const style = document.createElement("style");
     style.textContent = ".probe{color:red}";
@@ -115,12 +137,12 @@ describe("workspace window lifecycle (P4)", () => {
 
   it("disposes exactly once whichever doors race, and ends an edit typed in the window", async () => {
     const { id, win } = await openReady();
-    const editor = win.document.querySelector<HTMLTextAreaElement>("textarea.block-editor")!;
-    editor.focus();
+    const editor = maybeEditorIn(win.document)!;
+    editor.element.focus();
     startEditing("block-1", 0);
     expect(editingId()).toBe("block-1");
     const blurred = vi.fn();
-    editor.addEventListener("blur", blurred);
+    editor.element.addEventListener("blur", blurred);
     // Its last pane closing is the user's door.
     const paneId = layoutPaneIds(layoutRoot(id))[0];
     expect(closePane(paneId)).toBe(true);
@@ -211,8 +233,8 @@ describe("workspace window lifecycle (P4)", () => {
   it("a title-bar close lets input already on its way land before the edit ends", async () => {
     const { win } = await openReady();
     await vi.waitFor(() => expect(native.closeRequested).toBeTruthy());
-    const editor = win.document.querySelector<HTMLTextAreaElement>("textarea.block-editor")!;
-    editor.focus();
+    const editor = maybeEditorIn(win.document)!;
+    editor.element.focus();
     startEditing("block-1", 0);
     native.closeRequested!({ payload: "ws-main-1" });
     native.closeRequested!({ payload: "ws-main-1" }); // a repeated request is ignored
@@ -220,7 +242,7 @@ describe("workspace window lifecycle (P4)", () => {
     await new Promise((resolve) => setTimeout(resolve, 60));
     expect(workspaceWindowCount()).toBe(1);
     expect(editingId()).toBe("block-1");
-    editor.dispatchEvent(new Event("input", { bubbles: true }));
+    editor.reportInput({ bubbles: true }, "plain");
     await new Promise((resolve) => setTimeout(resolve, 100));
     expect(workspaceWindowCount()).toBe(1);
     await vi.waitFor(() => expect(workspaceWindowCount()).toBe(0));

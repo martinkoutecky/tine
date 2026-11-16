@@ -1,3 +1,4 @@
+import { maybeEditorIn, type EditorDriver } from "../tests/editorDriver";
 import { afterEach, beforeAll, describe, expect, it, vi } from "vitest";
 import { For, type JSX } from "solid-js";
 import { render } from "solid-js/web";
@@ -12,6 +13,7 @@ import { setToasts, toasts } from "../toasts";
 import type { BlockDto, Format, PageDto } from "../types";
 import { Block } from "./Block";
 import * as mediaEditorSettings from "../mediaEditorSettings";
+import { SheetCellContext } from "../sheet/context";
 
 beforeAll(async () => {
   await initParser();
@@ -74,6 +76,172 @@ async function settle() {
   for (let i = 0; i < 6; i++) await tick();
 }
 
+function uriPasteEvent(uri: string, text = "", html = "", extraTypes: string[] = []): Event {
+  const event = new Event("paste", { bubbles: true, cancelable: true });
+  Object.defineProperty(event, "clipboardData", { value: {
+    getData: (type: string) => ({ "text/uri-list": uri, "text/plain": text, "text/html": html })[type] ?? "",
+    items: [],
+    types: ["text/uri-list", ...extraTypes],
+  } });
+  return event;
+}
+
+describe("GH #813 web URI paste", () => {
+  it.each(["md", "org"] as const)("keeps ordinary HTML link insertion in %s", async (format) => {
+    loadSingle(page("URI", [blk("uri", "before after")], { format }));
+    startEditing("uri", 7);
+    const native = vi.spyOn(backend(), "clipboardFiles").mockRejectedValue(new Error("no files"));
+    const { root, dispose } = mount(() => <Block id="uri" />);
+    try {
+      const editor = maybeEditorIn(root)!;
+      editor.select(7, 7);
+      editor.paste(uriPasteEvent("https://tine.page\r\n", "https://tine.page", '<a href="https://tine.page">Tine</a>'));
+      await settle();
+      expect(doc.byId.uri.raw).toBe(format === "md" ? "before [Tine](https://tine.page)after" : "before [[https://tine.page][Tine]]after");
+      expect(native).not.toHaveBeenCalled();
+      expect(toasts().filter((toast) => toast.kind === "error")).toEqual([]);
+    } finally { dispose(); }
+  });
+
+  it("wraps selected text with a web URL instead of importing a file", async () => {
+    loadSingle(page("URI", [blk("uri", "Tine")]));
+    startEditing("uri", 0);
+    const native = vi.spyOn(backend(), "clipboardFiles").mockRejectedValue(new Error("no files"));
+    const { root, dispose } = mount(() => <Block id="uri" />);
+    try {
+      const editor = maybeEditorIn(root)!;
+      editor.select(0, 4);
+      editor.paste(uriPasteEvent("https://tine.page", "https://tine.page"));
+      await settle();
+      expect(doc.byId.uri.raw).toBe("[Tine](https://tine.page)");
+      expect(native).not.toHaveBeenCalled();
+    } finally { dispose(); }
+  });
+
+  it("inserts uri-list-only web URLs and strips comments and CRLF", async () => {
+    loadSingle(page("URI", [blk("uri", "before after")]));
+    startEditing("uri", 7);
+    const native = vi.spyOn(backend(), "clipboardFiles");
+    const { root, dispose } = mount(() => <Block id="uri" />);
+    try {
+      const editor = maybeEditorIn(root)!;
+      editor.select(7, 7);
+      editor.paste(uriPasteEvent("# source\r\nhttps://tine.page\r\n\r\n"));
+      await settle();
+      expect(doc.byId.uri.raw).toBe("before https://tine.pageafter");
+      expect(native).not.toHaveBeenCalled();
+    } finally { dispose(); }
+  });
+
+  it.each(["code", "sheet"])("keeps multiple URI-only web URLs literal in a %s editor", async (surface) => {
+    loadSingle(page("URI", [blk("uri", surface === "code" ? "```text\nkeep\n```" : "keep")]));
+    startEditing("uri", surface === "code" ? "```text\n".length : 0);
+    const native = vi.spyOn(backend(), "clipboardFiles");
+    const { root, dispose } = mount(() => <SheetCellContext.Provider value={surface === "sheet" ? { gridId: "grid", row: 0, col: 0 } : null}><Block id="uri" /></SheetCellContext.Provider>);
+    try {
+      const editor = maybeEditorIn(root)!;
+      editor.select(0, 4);
+      editor.paste(uriPasteEvent("# copied links\r\nhttps://tine.page\r\nhttps://example.org\r\n"));
+      await settle();
+      const urls = "https://tine.page\nhttps://example.org";
+      expect(doc.byId.uri.raw).toBe(surface === "code" ? "```text\n" + urls + "\n```" : urls);
+      expect(native).not.toHaveBeenCalled();
+    } finally { dispose(); }
+  });
+
+  it.each(["empty", "unavailable"])("recovers usable text when a Files sentinel's native read is %s", async (result) => {
+    loadSingle(page("URI", [blk("uri", "before after")]));
+    startEditing("uri", 7);
+    const native = vi.spyOn(backend(), "clipboardFiles");
+    if (result === "empty") native.mockResolvedValue({ files: [], skipped: 0, truncated: false });
+    else native.mockRejectedValue(new Error("no files"));
+    const { root, dispose } = mount(() => <Block id="uri" />);
+    try {
+      const editor = maybeEditorIn(root)!;
+      editor.select(7, 7);
+      const event = uriPasteEvent("https://tine.page", "https://tine.page", "", ["Files"]);
+      editor.paste(event);
+      expect(event.defaultPrevented).toBe(true);
+      await settle();
+      expect(doc.byId.uri.raw).toBe("before https://tine.pageafter");
+      expect(native).toHaveBeenCalledOnce();
+      expect(toasts().filter((toast) => toast.kind === "error")).toEqual([]);
+    } finally { dispose(); }
+  });
+
+  it("prefers real native files even when a Files payload also offers a web URL", async () => {
+    loadSingle(page("URI", [blk("uri", "")]));
+    startEditing("uri", 0);
+    vi.spyOn(backend(), "clipboardFiles").mockResolvedValue({ files: [{ path: "/tmp/report.pdf", name: "report.pdf", size: 3 }], skipped: 0, truncated: false });
+    vi.spyOn(backend(), "importAsset").mockResolvedValue("report.pdf");
+    const { root, dispose } = mount(() => <Block id="uri" />);
+    try {
+      maybeEditorIn(root)!.paste(uriPasteEvent("https://tine.page", "https://tine.page", "", ["Files"]));
+      await settle();
+      expect(doc.byId.uri.raw).toBe("![report.pdf](../assets/report.pdf)");
+    } finally { dispose(); }
+  });
+
+  it("recovers HTML formatting after an empty native read", async () => {
+    loadSingle(page("URI", [blk("uri", "")]));
+    startEditing("uri", 0);
+    vi.spyOn(backend(), "clipboardFiles").mockResolvedValue({ files: [], skipped: 0, truncated: false });
+    const { root, dispose } = mount(() => <Block id="uri" />);
+    try {
+      maybeEditorIn(root)!.paste(uriPasteEvent("https://tine.page", "Tine", '<a href="https://tine.page">Tine</a>', ["Files"]));
+      await settle();
+      expect(doc.byId.uri.raw).toBe("[Tine](https://tine.page)");
+    } finally { dispose(); }
+  });
+
+  it("does not land delayed text recovery after the user changes the editor", async () => {
+    loadSingle(page("URI", [blk("uri", "keep")]));
+    startEditing("uri", 4);
+    let finishRead!: (value: { files: []; skipped: number; truncated: boolean }) => void;
+    vi.spyOn(backend(), "clipboardFiles").mockImplementation(() => new Promise((resolve) => { finishRead = resolve; }));
+    const { root, dispose } = mount(() => <Block id="uri" />);
+    try {
+      const editor = maybeEditorIn(root)!;
+      editor.paste(uriPasteEvent("https://tine.page", "https://tine.page", "", ["Files"]));
+      editor.type(" typing");
+      finishRead({ files: [], skipped: 0, truncated: false });
+      await settle();
+      expect(doc.byId.uri.raw).toBe("keep typing");
+    } finally { dispose(); }
+  });
+
+  it.each(["file:///Users/me/report.pdf", "https://tine.page\r\nfile:///tmp/report.pdf", "C:\\Users\\me\\report.pdf"])("keeps local and mixed URI lists on asset import: %s", async (uri) => {
+    loadSingle(page("URI", [blk("uri", "")]));
+    startEditing("uri", 0);
+    vi.spyOn(backend(), "clipboardFiles").mockResolvedValue({ files: [{ path: "/tmp/report.pdf", name: "report.pdf", size: 3 }], skipped: 0, truncated: false });
+    vi.spyOn(backend(), "importAsset").mockResolvedValue("report.pdf");
+    const { root, dispose } = mount(() => <Block id="uri" />);
+    try {
+      const event = uriPasteEvent(uri, uri);
+      maybeEditorIn(root)!.paste(event);
+      expect(event.defaultPrevented).toBe(true);
+      await settle();
+      expect(doc.byId.uri.raw).toBe("![report.pdf](../assets/report.pdf)");
+    } finally { dispose(); }
+  });
+
+  it.each(["local", "gnome", "skipped", "truncated", "file-object"])("does not recover text when there is file evidence: %s", async (evidence) => {
+    loadSingle(page("URI", [blk("uri", "keep")]));
+    startEditing("uri", 4);
+    vi.spyOn(backend(), "clipboardFiles").mockResolvedValue({ files: [], skipped: evidence === "skipped" ? 1 : 0, truncated: evidence === "truncated" });
+    const { root, dispose } = mount(() => <Block id="uri" />);
+    try {
+      const event = evidence === "file-object"
+        ? filePasteEvent([{ name: "folder", type: "", size: 0, arrayBuffer: async () => new ArrayBuffer(0) } as File], "https://tine.page")
+        : uriPasteEvent(evidence === "local" ? "file:///tmp/report.pdf" : "https://tine.page", "https://tine.page", "", ["Files", ...(evidence === "gnome" ? ["x-special/gnome-copied-files"] : [])]);
+      maybeEditorIn(root)!.paste(event);
+      expect(event.defaultPrevented).toBe(true);
+      await settle();
+      expect(doc.byId.uri.raw).toBe("keep");
+    } finally { dispose(); }
+  });
+});
+
 describe("asset paste durability", () => {
   it("binds a picked upload to the graph selected before the picker", async () => {
     loadSingle(page("Assets", [blk("picked-switch", "")]));
@@ -91,7 +259,7 @@ describe("asset paste durability", () => {
     });
     const { root, dispose } = mount(() => <Block id="picked-switch" />);
     try {
-      root.querySelector("textarea")!.focus();
+      maybeEditorIn(root)!.element.focus();
       expect(dispatchFocusedEditorCommand("editor/upload-asset")).toBe(true);
       generation = 2;
       finishPick("/tmp/picked.png");
@@ -117,7 +285,7 @@ describe("asset paste durability", () => {
     });
     const { root, dispose } = mount(() => <Block id="capture-switch" />);
     try {
-      root.querySelector("textarea")!.focus();
+      maybeEditorIn(root)!.element.focus();
       expect(dispatchFocusedEditorCommand("editor/capture-photo")).toBe(true);
       generation = 2;
       finishCapture({ status: "ok", path: "/cache/tine_photo_1.jpg", ext: "jpg" });
@@ -143,7 +311,7 @@ describe("asset paste durability", () => {
     });
     const { root, dispose } = mount(() => <Block id="clipboard-switch" />);
     try {
-      root.querySelector("textarea")!.dispatchEvent(filePasteEvent([
+      maybeEditorIn(root)!.paste(filePasteEvent([
         new File(["x"], "clip.pdf", { type: "application/pdf" }),
       ]));
       generation = 2;
@@ -172,7 +340,7 @@ describe("asset paste durability", () => {
     });
     const { root, dispose } = mount(() => <Block id="bytes-switch" />);
     try {
-      root.querySelector("textarea")!.dispatchEvent(filePasteEvent([file]));
+      maybeEditorIn(root)!.paste(filePasteEvent([file]));
       await vi.waitFor(() => expect(arrayBuffer).toHaveBeenCalledOnce());
       generation = 2;
       finishBytes(new Uint8Array([1]).buffer);
@@ -198,11 +366,11 @@ describe("asset paste durability", () => {
     });
     const { root, dispose } = mount(() => <Block id="drawio-switch" />);
     try {
-      const textarea = root.querySelector("textarea")! as HTMLTextAreaElement;
-      textarea.focus();
-      textarea.value = "/drawio";
-      textarea.setSelectionRange(7, 7);
-      textarea.dispatchEvent(new InputEvent("input", { bubbles: true, inputType: "insertText", data: "o" }));
+      const textarea = maybeEditorIn(root)! as EditorDriver;
+      textarea.element.focus();
+      textarea.replaceText("/drawio");
+      textarea.select(7, 7);
+      textarea.reportInput({ bubbles: true, inputType: "insertText", data: "o" });
       await vi.waitFor(() => expect([...document.querySelectorAll(".autocomplete .ac-label")].map((x) => x.textContent)).toContain("Draw.io diagram"));
       const item = [...document.querySelectorAll<HTMLElement>(".autocomplete .ac-item")]
         .find((x) => x.querySelector(".ac-label")?.textContent === "Draw.io diagram")!;
@@ -230,11 +398,11 @@ describe("asset paste durability", () => {
     ));
 
     try {
-      const textarea = root.querySelector("textarea") as HTMLTextAreaElement | null;
+      const textarea = maybeEditorIn(root) as EditorDriver | null;
       expect(textarea).not.toBeNull();
-      textarea!.focus();
-      textarea!.setSelectionRange(0, 0);
-      textarea!.dispatchEvent(imagePasteEvent(new File([new Uint8Array([1, 2, 3])], "paste.png", { type: "image/png" })));
+      textarea!.element.focus();
+      textarea!.select(0, 0);
+      textarea!.paste(imagePasteEvent(new File([new Uint8Array([1, 2, 3])], "paste.png", { type: "image/png" })));
 
       await settle();
 
@@ -263,8 +431,8 @@ describe("asset paste durability", () => {
       <For each={pageByName("Assets")?.roots ?? []}>{(bid) => <Block id={bid} />}</For>
     ));
     try {
-      const textarea = root.querySelector("textarea")! as HTMLTextAreaElement;
-      textarea.dispatchEvent(imagePasteEvent(new File([new Uint8Array([1])], "paste.png", { type: "image/png" })));
+      const textarea = maybeEditorIn(root)! as EditorDriver;
+      textarea.paste(imagePasteEvent(new File([new Uint8Array([1])], "paste.png", { type: "image/png" })));
       await settle();
       expect(backend().saveAsset).toHaveBeenCalledOnce();
       expect(doc.byId[id].raw).toBe("");
@@ -294,7 +462,7 @@ describe("asset paste durability", () => {
       <For each={pageByName("Assets")?.roots ?? []}>{(bid) => <Block id={bid} />}</For>
     ));
     try {
-      root.querySelector("textarea")!.dispatchEvent(imagePasteEvent(
+      maybeEditorIn(root)!.paste(imagePasteEvent(
         new File([new Uint8Array([1])], "paste.png", { type: "image/png" })
       ));
       await settle();
@@ -326,8 +494,8 @@ describe("asset paste durability", () => {
       <For each={pageByName("Assets")?.roots ?? []}>{(bid) => <Block id={bid} />}</For>
     ));
     try {
-      const textarea = root.querySelector("textarea")! as HTMLTextAreaElement;
-      textarea.focus();
+      const textarea = maybeEditorIn(root)! as EditorDriver;
+      textarea.element.focus();
       expect(dispatchFocusedEditorCommand("editor/upload-asset")).toBe(true);
       await settle();
       expect(backend().importAsset).toHaveBeenCalledOnce();
@@ -365,8 +533,8 @@ describe("asset paste durability", () => {
       <For each={pageByName("Assets")?.roots ?? []}>{(bid) => <Block id={bid} />}</For>
     ));
     try {
-      const textarea = root.querySelector("textarea")! as HTMLTextAreaElement;
-      textarea.dispatchEvent(imagePasteEvent(new File([new Uint8Array([1, 2, 3])], "image.png", { type: "image/png" })));
+      const textarea = maybeEditorIn(root)! as EditorDriver;
+      textarea.paste(imagePasteEvent(new File([new Uint8Array([1, 2, 3])], "image.png", { type: "image/png" })));
       await settle();
 
       // The native reader sees a pseudo path, then the event image bytes win and
@@ -399,8 +567,8 @@ describe("asset paste durability", () => {
       <For each={pageByName("Assets")?.roots ?? []}>{(bid) => <Block id={bid} />}</For>
     ));
     try {
-      const textarea = root.querySelector("textarea")! as HTMLTextAreaElement;
-      textarea.dispatchEvent(imagePasteEvent(huge));
+      const textarea = maybeEditorIn(root)! as EditorDriver;
+      textarea.paste(imagePasteEvent(huge));
       await settle();
       expect(arrayBuffer).not.toHaveBeenCalled();
       expect(nativeImage).not.toHaveBeenCalled();
@@ -423,7 +591,7 @@ describe("asset paste durability", () => {
     try {
       const file = new File([], "image.png", { type: "image/png" });
       if (kind === "unreadable") Object.defineProperty(file, "arrayBuffer", { value: () => Promise.reject(new Error("URI unavailable in WebView")) });
-      root.querySelector("textarea")!.dispatchEvent(imagePasteEvent(file));
+      maybeEditorIn(root)!.paste(imagePasteEvent(file));
       await settle();
       await vi.waitFor(() => expect(doc.byId[id].raw).toBe("![](../assets/uri.png)"));
       expect(toasts().some((toast) => toast.message.startsWith("Skipped "))).toBe(false);
@@ -440,7 +608,7 @@ describe("asset paste durability", () => {
     const save = vi.spyOn(backend(), "saveAsset");
     const { root, dispose } = mount(() => <For each={pageByName("Assets")?.roots ?? []}>{(bid) => <Block id={bid} />}</For>);
     try {
-      root.querySelector("textarea")!.dispatchEvent(imagePasteEvent(new File([], "image.png", { type: "image/png" })));
+      maybeEditorIn(root)!.paste(imagePasteEvent(new File([], "image.png", { type: "image/png" })));
       await vi.waitFor(() => expect(read).toHaveBeenCalledOnce());
       startEditing(second, 0);
       finish(new Uint8Array([1, 2, 3]));
@@ -461,7 +629,7 @@ describe("asset paste durability", () => {
     vi.stubGlobal("URL", { ...URL, createObjectURL: vi.fn(() => "blob:asset"), revokeObjectURL: vi.fn() });
     const { root, dispose } = mount(() => <For each={pageByName("Assets")?.roots ?? []}>{(bid) => <Block id={bid} />}</For>);
     try {
-      root.querySelector("textarea")!.dispatchEvent(filePasteEvent([new File([], "image.png")]));
+      maybeEditorIn(root)!.paste(filePasteEvent([new File([], "image.png")]));
       await vi.waitFor(() => expect(doc.byId[id].raw).toBe("![](../assets/untyped-uri.png)"));
       expect(toasts().some((toast) => toast.message.startsWith("Skipped "))).toBe(false);
     } finally { dispose(); }
@@ -487,8 +655,8 @@ describe("asset paste durability", () => {
       <For each={pageByName("Assets")?.roots ?? []}>{(bid) => <Block id={bid} />}</For>
     ));
     try {
-      const textarea = root.querySelector("textarea")! as HTMLTextAreaElement;
-      textarea.dispatchEvent(filePasteEvent([
+      const textarea = maybeEditorIn(root)! as EditorDriver;
+      textarea.paste(filePasteEvent([
         new File([new Uint8Array([1])], "photo.png", { type: "image/png" }),
         new File([new Uint8Array([2])], "report.pdf", { type: "application/pdf" }),
       ]));
@@ -518,8 +686,8 @@ describe("asset paste durability", () => {
       <For each={pageByName("Nested assets")?.roots ?? []}>{(bid) => <Block id={bid} />}</For>
     ));
     try {
-      const textarea = root.querySelector("textarea")! as HTMLTextAreaElement;
-      textarea.dispatchEvent(filePasteEvent([
+      const textarea = maybeEditorIn(root)! as EditorDriver;
+      textarea.paste(filePasteEvent([
         new File([new Uint8Array([1])], "Research paper.pdf", { type: "application/pdf" }),
       ]));
       await settle();
@@ -550,8 +718,8 @@ describe("asset paste durability", () => {
       <For each={pageByName("Org assets")?.roots ?? []}>{(bid) => <Block id={bid} />}</For>
     ));
     try {
-      const textarea = root.querySelector("textarea")! as HTMLTextAreaElement;
-      textarea.dispatchEvent(filePasteEvent([
+      const textarea = maybeEditorIn(root)! as EditorDriver;
+      textarea.paste(filePasteEvent([
         new File([new Uint8Array([1])], "Paper.pdf", { type: "application/pdf" }),
       ]));
       await settle();
@@ -577,9 +745,9 @@ describe("asset paste durability", () => {
       <For each={pageByName("Assets")?.roots ?? []}>{(bid) => <Block id={bid} />}</For>
     ));
     try {
-      const textarea = root.querySelector("textarea")! as HTMLTextAreaElement;
+      const textarea = maybeEditorIn(root)! as EditorDriver;
       const event = filePasteEvent([], "C:\\Users\\me\\report.pdf");
-      textarea.dispatchEvent(event);
+      textarea.paste(event);
       await settle();
 
       expect(event.defaultPrevented).toBe(true);
@@ -603,8 +771,8 @@ describe("asset paste durability", () => {
       <For each={pageByName("Assets")?.roots ?? []}>{(bid) => <Block id={bid} />}</For>
     ));
     try {
-      const textarea = root.querySelector("textarea")! as HTMLTextAreaElement;
-      textarea.dispatchEvent(filePasteEvent([new File([new Uint8Array([1, 2, 3])], "notes.pdf", { type })]));
+      const textarea = maybeEditorIn(root)! as EditorDriver;
+      textarea.paste(filePasteEvent([new File([new Uint8Array([1, 2, 3])], "notes.pdf", { type })]));
       await settle();
 
       expect(backend().saveAsset).toHaveBeenCalledOnce();
@@ -627,8 +795,8 @@ describe("asset paste durability", () => {
       <For each={pageByName("Assets")?.roots ?? []}>{(bid) => <Block id={bid} />}</For>
     ));
     try {
-      const textarea = root.querySelector("textarea")! as HTMLTextAreaElement;
-      textarea.dispatchEvent(filePasteEvent([huge]));
+      const textarea = maybeEditorIn(root)! as EditorDriver;
+      textarea.paste(filePasteEvent([huge]));
       await settle();
 
       expect(arrayBuffer).not.toHaveBeenCalled();

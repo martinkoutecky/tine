@@ -92,6 +92,40 @@ export function textareaCaretPoints(ta: HTMLTextAreaElement): Array<{ x: number;
   }
 }
 
+/** The viewport-space vertical extent of the visual line holding caret `offset`
+ *  in a <textarea>: where an anchored popup should hang so it sits against the
+ *  caret's own line, not against the bottom of a tall multi-line editor (GH #737).
+ *  Cost: one mirror build, O(value length) layout; no graph or disk access.
+ *  Returns null when layout is unavailable (jsdom) so callers fall back to the
+ *  textarea's box. */
+export function textareaCaretLineRect(ta: HTMLTextAreaElement, offset: number): { top: number; bottom: number } | null {
+  if (typeof document === "undefined") return null;
+  const box = ta.getBoundingClientRect();
+  if (!ta.offsetHeight || !box.height) return null;
+  const div = buildMirror(ta);
+  bodyOf(ta).appendChild(div); // measure in the textarea's own window (P1)
+  try {
+    const at = Math.min(Math.max(0, offset), ta.value.length);
+    div.appendChild(document.createTextNode(ta.value.slice(0, at)));
+    const span = document.createElement("span");
+    // The glyph at the caret sits on the caret's row; a zero-width marker at
+    // end-of-text gives the final row without forcing a wrap.
+    span.textContent = ta.value.slice(at, at + 1) || "\u200b";
+    div.appendChild(span);
+    div.appendChild(document.createTextNode(ta.value.slice(at + 1)));
+    if (!div.offsetHeight) return null;
+    const lineHeight = parseFloat(getComputedStyle(ta).lineHeight) || span.offsetHeight;
+    if (!(lineHeight > 0)) return null;
+    // CSS zoom / transforms make rect units differ from layout units.
+    const scale = box.height / ta.offsetHeight;
+    const top = box.top + (ta.clientTop + span.offsetTop - ta.scrollTop) * scale;
+    const clampedTop = Math.min(Math.max(top, box.top), box.bottom);
+    return { top: clampedTop, bottom: Math.min(clampedTop + lineHeight * scale, box.bottom) };
+  } finally {
+    div.remove();
+  }
+}
+
 function camelToKebab(s: string): string {
   return s.replace(/[A-Z]/g, (m) => "-" + m.toLowerCase());
 }

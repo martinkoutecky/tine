@@ -1,5 +1,5 @@
 import { msg } from "./i18n";
-import { collapseCommandSurface } from "./collapseCommandSurface";
+import { collapseCommandRow, queryResultFolds, type CommandCollapseSurface } from "./collapseCommandSurface";
 /** Block navigation for sidebar, tab and pane actions. Opening a block never
  * writes the graph: OG stamps an `id::` only when a reference is created (copy
  * ref/embed, `((` autocomplete), so these actions hand the live ref straight to
@@ -17,12 +17,15 @@ import {
   pasteClipboardPayload,
   selectedIds,
   setCollapsed,
+  storedFold,
   withUndoUnit,
   node as docNode,
 } from "./document";
-import { openInNewTab } from "./router";
-import { openBlockInSidebar, openSwitcher } from "./ui";
+import { openInNewTab, openPage, openPageAtBlock, zoomToBlock } from "./router";
+import { openBlockInSidebar, openPageInSidebar, openSwitcher } from "./ui";
 import { focusedPaneId, openRouteInOtherPane, paneRouter } from "./panes";
+import { refClickZoom } from "./copySettings";
+import type { InternalLinkDest } from "./linkGesture";
 import { editingId, editingSurface, startEditing } from "./editorController";
 import { graphMeta } from "./graphSession";
 import { pushToast } from "./toasts";
@@ -39,6 +42,30 @@ export function openDurableBlock(id: string, destination: "sidebar" | "tab" | "p
     const route = { kind: "page" as const, name: ref.page, pageKind: ref.pageKind, block: ref.uuid, ...(ref.path ? { path: ref.path } : {}) };
     if (destination === "pane") openRouteInOtherPane(route);
     else openInNewTab(route);
+  }
+}
+
+/** Open what a reference or embed points at (a block, or a whole page when
+ *  `uuid` is absent) at the shared link destination (linkGesture.ts): sidebar,
+ *  background tab, the other pane, or here. Here, a block opens in place in its
+ *  page, or zoomed in with Settings → ref-click-zoom (OG). Synchronous: no save. */
+export function openRefTarget(
+  target: { page: string; pageKind: "journal" | "page"; uuid?: string; path?: string },
+  dest: InternalLinkDest,
+  fromPane: string,
+): void {
+  const at = target.path ? { path: target.path } : {};
+  const route = { kind: "page" as const, name: target.page, pageKind: target.pageKind, ...(target.uuid ? { block: target.uuid } : {}), ...at };
+  if (dest === "background") openInNewTab(route);
+  else if (dest === "pane") openRouteInOtherPane(route, fromPane);
+  else if (!target.uuid) {
+    if (dest === "sidebar") openPageInSidebar(target.page, target.pageKind, target.path);
+    else openPage(target.page, target.pageKind);
+  } else {
+    const block = { name: target.page, pageKind: target.pageKind, block: target.uuid, ...at };
+    if (dest === "sidebar") openBlockInSidebar({ uuid: target.uuid, page: target.page, pageKind: target.pageKind, ...at });
+    else if (refClickZoom()) zoomToBlock(block);
+    else openPageAtBlock(block);
   }
 }
 
@@ -129,7 +156,9 @@ export function insertChildIntoTarget(): string | null {
 
 /** GH #525 / #696: collapse immediate children; expand the first level with
  *  folded non-leaves, starting at the immediate children. The target opens so
- *  the result shows. Without a target, start at the page's top-level blocks. */
+ *  the result shows. Without a target, start at the page's top-level blocks.
+ *  GH #792: a query block's children are its result rows (and any outline
+ *  children); the rows fold through their group's local surface, never the file. */
 export function setTargetChildrenCollapsed(collapsed: boolean): boolean {
   let parents: string[] = commandTargetIds();
   let pageRoots: string[] | null = null;
@@ -139,16 +168,37 @@ export function setTargetChildrenCollapsed(collapsed: boolean): boolean {
     if (!pageRoots) return false;
     parents = [];
   }
-  const surface = parents.length ? collapseCommandSurface(parents[0]) : undefined;
+  const row = parents.length ? collapseCommandRow(parents[0]) : undefined;
+  const surface = row?.surface;
+  // A selected whole-block embed host folds its visible root row (D-20261030-EMB).
+  if (row) parents = parents.map((id, i) => i === 0 ? row.id : id);
+  // Result rows answer to the group that shows them, and so do their descendants.
+  const rowSurface = new Map<string, CommandCollapseSurface>();
+  const surfaceOf = (id: string): CommandCollapseSurface | undefined => rowSurface.get(id) ?? surface;
   const isCollapsed = (id: string) => {
-    const stored = docNode(id)?.collapsed ?? false;
-    return surface?.collapsed(id, stored) ?? stored;
+    const stored = storedFold(id); // `collapsed::`, else a query's authored `:collapsed? true`
+    return surfaceOf(id)?.collapsed(id, stored) ?? stored;
   };
   const folded = (id: string) => {
     const n = docNode(id);
     return !!n && blockHasFoldableBody(id) && isCollapsed(id);
   };
-  const children = (ids: string[]) => ids.flatMap((id) => docNode(id)?.children ?? []);
+  const children = (ids: string[]) => {
+    const out = new Set<string>();
+    for (const id of ids) {
+      const own = rowSurface.get(id);
+      for (const child of docNode(id)?.children ?? []) {
+        if (own && !rowSurface.has(child)) rowSurface.set(child, own);
+        out.add(child);
+      }
+      for (const group of queryResultFolds(id)) for (const result of group.roots()) {
+        if (!docNode(result)) continue;
+        if (!rowSurface.has(result)) rowSurface.set(result, group.surface);
+        out.add(result);
+      }
+    }
+    return [...out];
+  };
   // GH #696: one level includes the targets themselves. Collapse folds the
   // children first and the targets once no child is left open; it never opens
   // a target. Expand opens a folded target alone before reaching its children.
@@ -168,22 +218,26 @@ export function setTargetChildrenCollapsed(collapsed: boolean): boolean {
     // never stop the search; all changes still use the existing undo/save path.
     while (level.length && !level.some(folded)) level = children(level);
   }
-  const pages = [...new Set([...opened, ...level].map((id) => docNode(id)?.page).filter((p): p is string => !!p))];
+  const touched = [...opened, ...level];
+  const pages = [...new Set(touched.map((id) => docNode(id)?.page).filter((p): p is string => !!p))];
   if (!pages.length) return false;
   const apply = () => {
     const setFold = (id: string, value: boolean) => {
       if (!blockHasFoldableBody(id) || isCollapsed(id) === value) return;
-      if (surface) surface.toggle(id, isCollapsed(id));
+      const own = surfaceOf(id);
+      if (own) own.toggle(id, isCollapsed(id));
       else setCollapsed(id, value);
     };
     for (const id of opened) setFold(id, false);
     for (const id of level) setFold(id, collapsed);
   };
   // Occurrence toggles own their persistence: an embed root saves its HOST
-  // property (with its own undo), descendants only change local presentation.
+  // property (with its own undo); below it a block embed saves the source's
+  // folds (D-20261030-EMB) and other surfaces change local presentation only.
   // A source-page undo snapshot would suppress and then lose that host undo.
-  if (surface) apply();
-  else withUndoUnit(collapsed ? "collapse-children" : "expand-children", pages, apply);
+  const written = [...new Set(touched.filter((id) => !surfaceOf(id)).map((id) => docNode(id)?.page).filter((p): p is string => !!p))];
+  if (!written.length) apply();
+  else withUndoUnit(collapsed ? "collapse-children" : "expand-children", written, apply);
   return true;
 }
 

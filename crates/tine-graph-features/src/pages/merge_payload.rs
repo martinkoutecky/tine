@@ -74,8 +74,32 @@ mod header_property_tests {
     }
 }
 
+/// Where a page's header is, by the store's alias answer
+/// (`tine_store::query::page_header_text`, I-12): the pre-block, else a
+/// properties-only first root, else none.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(super) enum HeaderAt {
+    PreBlock,
+    FirstRoot,
+}
+
+pub(super) fn header_of(page: &PageDto) -> Option<(HeaderAt, &str)> {
+    let first = page.blocks.first().map(|block| block.raw.as_str());
+    let text = tine_store::query::page_header_text(page.pre_block.as_deref(), first)?;
+    Some(if page.pre_block.is_some() {
+        (HeaderAt::PreBlock, text)
+    } else {
+        (HeaderAt::FirstRoot, text)
+    })
+}
+
 /// The survivor's new header (when it changes) and the blocks `source` adds,
-/// with `renames` applied to the source.
+/// with `renames` applied to the source. Both headers are found where the
+/// store's alias answer reads them ([`header_of`]): a source header written as
+/// its first bullet joins the survivor's header like a pre-block (its child
+/// blocks, if any, move as top-level blocks), and the caller writes the new
+/// header back where the survivor's was, so a survivor whose header is its
+/// first bullet keeps it (REG-CM-MERGE-LOSES-ALIASES).
 pub(super) fn payload(
     survivor: &PageDto,
     source: &PageDto,
@@ -89,11 +113,20 @@ pub(super) fn payload(
     }
     let mut new_header = None;
     let mut blocks = Vec::new();
-    if let Some(pre) = source.pre_block.as_deref() {
-        let mut header: Vec<(String, Option<(String, String)>)> = survivor
-            .pre_block
-            .as_deref()
-            .map(|kept| {
+    let mut header_children = Vec::new();
+    let source_header = match header_of(&source) {
+        Some((HeaderAt::PreBlock, text)) => Some(text.to_owned()),
+        Some((HeaderAt::FirstRoot, text)) => {
+            let text = text.to_owned();
+            let first = source.blocks.remove(0);
+            header_children = first.children;
+            Some(text)
+        }
+        None => None,
+    };
+    if let Some(pre) = source_header.as_deref() {
+        let mut header: Vec<(String, Option<(String, String)>)> = header_of(survivor)
+            .map(|(_, kept)| {
                 header_lines(kept, org)
                     .into_iter()
                     .map(|(line, property)| (line.to_owned(), property))
@@ -118,7 +151,7 @@ pub(super) fn payload(
             match clash {
                 Some(_) if equal => {}
                 None if key != "title" => header.push((line.to_owned(), Some((key, value)))),
-                Some(at) if key == "alias" => {
+                Some(at) if tine_store::query::is_alias_key(&key) => {
                     let kept_value = header[at]
                         .1
                         .as_ref()
@@ -161,6 +194,7 @@ pub(super) fn payload(
             });
         }
     }
+    blocks.extend(header_children);
     blocks.extend(source.blocks);
     (new_header, blocks)
 }

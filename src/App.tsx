@@ -6,10 +6,12 @@ import { resizeSidebar, commitSidebarWidth } from "./sidebarSizing";
 import { Match, Show, Suspense, Switch, createEffect, createSignal, lazy, on, onCleanup, onMount, type JSX } from "solid-js";
 import { Sidebar } from "./components/Sidebar";
 import { JournalsIcon } from "./components/JournalsIcon";
+import { ShareIcon } from "./components/ShareIcon";
 import { PageView, reloadJournalsFeedFromStart, type JournalsFeedOwner } from "./components/Page";
 import { QueryWorkspace } from "./components/QueryWorkspace";
 import { ConflictOverview } from "./components/ConflictOverview";
 import { AllPages } from "./components/AllPages";
+import { AllGraphs } from "./components/AllGraphs";
 // pdf.js (~hundreds of KB) is heavy and most sessions never open a PDF — load
 // the viewer only when one is opened.
 const KeyedPdfViewer = lazy(() =>
@@ -27,6 +29,7 @@ import { subscribeAssetChanges } from "./assetRefresh";
 import { initConflictPolicy } from "./conflictPolicy";
 import { RightSidebar } from "./components/RightSidebar";
 import { MobileKeyboardToolbar } from "./components/MobileKeyboardToolbar";
+import { RenderedSelectionToolbar } from "./components/RenderedSelectionToolbar";
 import {
   DrawerBackground,
   MobileDrawerController,
@@ -44,29 +47,38 @@ import { scheduleAutomaticUpdateCheck, setUpdateExitGuard } from "./update";
 import { flushCssEditor } from "./cssEditor";
 import { WelcomeLayer } from "./components/Welcome";
 import { FailureBoundary } from "./components/FailureBoundary";
-import { goBack, goForward, canGoBack, canGoForward, flushSession, openJournals, openPage, sameRoute, type PaneRouter, type PdfRoute, type QueryRoute } from "./router";
+import { goBack, goForward, canGoBack, canGoForward, flushSession, openPage, route, sameRoute, type PaneRouter, type PdfRoute, type QueryRoute } from "./router";
+import { openJournalsFromClick } from "./journalsNavigation";
 import { theme, toggleTheme, sidebarOpen, toggleSidebar, rightSidebarOpen, toggleRightSidebar, openSwitcher, sidebarWidth, openSettings, welcomeOpen, closeWelcome, shortcutOverrides, wideMode, documentMode, focusMode, dimInactiveBlocks, exitFocusMode, installPaneTracker, refreshSyncConflicts, graphTransitioning, setGraphTransitioning, activeDrawer, completeActiveLeftNavigation, dismissMobileDrawer, setLeftSidebarOpen } from "./ui";
+import { openShareDialog } from "./shareState";
 import { graphMeta, firstLoadDone, setFirstLoadDone, graphEpoch, setStartupOpenFailure } from "./graphSession";
 import { applyGraphChange, installAliasDraftRouteHandler, installExternalChangeUiHandler } from "./document";
 
 installAliasDraftRouteHandler((name, kind) => openPage(name, kind));
 import { pushToast } from "./toasts";
+import { RootRecoveryNotice } from "./components/RootRecoveryNotice";
+import { OwnerProtectionNotice } from "./components/OwnerProtectionNotice";
+import { GitSyncNotice } from "./components/GitSyncNotice";
 import { mobileDrawerMode, restoreDrawerFocus } from "./mobileDrawers";
 import { dismissTopTransient, topTransientLayer } from "./transientLayers";
 import { applyZoom, installInterfaceZoomKeys, installInterfaceZoomWheel } from "./zoom";
-import { flushAll, appendToTodayJournal, captureToPage, unsavedDrafts, unsavedPageCount } from "./document";
-import type { QuickCaptureAck, QuickCaptureRequest } from "./quickCaptureAck";
+import { flushAll, subscribeOwnerFlush, unsavedDrafts, unsavedPageCount, pageByName } from "./document";
+import { installQuickCaptureReceiver } from "./quickCaptureReceiver";
+export { installQuickCaptureReceiver } from "./quickCaptureReceiver";
 import { backend, isTauri } from "./backend";
 import { isPublishedExport, loadPublishedSnapshot } from "./publishedBackend";
 import { openPublishedPermalink, publishedPermalinkForWorkspace, replacePublishedPermalink } from "./publishedPermalink";
 import { maybeShowDefenderHint } from "./defenderHint";
-import { bindingOwner, graphOwner, latestOwner, ownedWhen, readOwned, readOwnedResource, writeOwned, type Owned, type Owner, type WriteOwner } from "./owned";
+import { maybeShowGitIgnoreNotice } from "./gitIgnoreNotice";
+import { bindingOwner, graphOwner, latestOwner, ownedWhen, readOwned, readOwnedResource, writeOwned, type Owned, type Owner } from "./owned";
 import { parserFailed } from "./render/parse";
 import { warnIfSoftwareRendering } from "./gpu";
 import { initSmoothScroll } from "./smoothScroll";
 import { initCopySettings } from "./copySettings";
 import { initRefCompletionSettings } from "./refCompletionSettings";
 import { initNavSettings, mobileNavigationAtBottom } from "./navSettings";
+import { initCommentIdentity } from "./commentIdentity";
+import { initCommentNamePrompt, probeGraphGit } from "./commentNamePrompt";
 import { initLocalFileSettings } from "./localFileSettings";
 import { initAssetSettings } from "./assetSettings";
 import { initMediaEditorSettings } from "./mediaEditorSettings";
@@ -75,6 +87,8 @@ import { initLinkDefault } from "./editor/linkDefault";
 import { initDebug, dbg, recordDiagnostic, recordSessionActive } from "./debug";
 import { WindowControls, ResizeGrips, installWindowChrome, maximized } from "./components/WindowChrome";
 import { initNativeChrome, isMac, isMobilePlatform, osDrawsWindowControls, touchGesturePlatform } from "./nativeChrome";
+import { touchPrimary } from "./inputCapability";
+import { pdfTakesOverPane, tabStripFits } from "./viewportClass";
 import {
   PaneContext,
   closePane,
@@ -85,6 +99,7 @@ import {
   layoutRoot,
   visibleLayoutNode,
   paneRouter,
+  openPdf,
   openPdfNotes,
   layoutPaneIds,
   allPaneIds,
@@ -98,6 +113,7 @@ import { createAndroidRootCloseCoordinator, exitAndroidActivity, installAndroidB
 import { appBackAvailable, dispatchAppBack } from "./appBack";
 import { installEdgeSwipe } from "./edgeSwipe";
 import { createSafeCloseCoordinator } from "./safeClose";
+import { leaveAllSeenPages } from "./seen/seenState";
 import { openUnsavedRecovery } from "./unsavedRecovery";
 import { UnsavedRecovery } from "./components/UnsavedRecovery";
 import { currentPdfOwnership, drainPdfWork } from "./pdfOwnership";
@@ -105,6 +121,7 @@ import { hlsPageName } from "./pdf";
 import type { InvalidRoute } from "./routeTypes";
 import { installBackgroundFlush } from "./backgroundFlush";
 import { installSessionActivity } from "./sessionActivity";
+import { gitLifecycleEdge } from "./gitLifecycle";
 import { initSettingsLayout } from "./settingsLayout";
 import { initCodeDisplay } from "./codeDisplay";
 import { initStickyParents } from "./stickyParents";
@@ -131,18 +148,19 @@ export const safeClose = createSafeCloseCoordinator({
     const pagesSaved = await flushAll();
     return cssSaved && pagesSaved;
   },
-  // GH #540: name the pages at risk; "No" opens the recovery panel.
+  // GH #540: name the pages at risk; "Go back" opens the recovery panel (D-20261018-UI2c).
   confirmDiscard: (reason) => {
     const inventory = unsavedDrafts().map((p) => `• ${p.name} — ${p.state}`).join("\n");
     return backend().confirm(
-      t("app-choose-no-to-review-retry-saving", { reason, inventory: inventory || "empty" }),
-      t("app-unsaved-changes"),
+      t("app-quit-without-saving-body", { reason, inventory: inventory || "empty" }),
+      { title: t("app-quit-without-saving-title", { count: unsavedDrafts().length }), okLabel: t("confirm-discard-and-quit"), cancelLabel: t("confirm-go-back") },
     );
   },
   onDiscardDeclined: openUnsavedRecovery,
   recordDiscard: (reason) => recordDiagnostic("close_discarded_unsaved", { closeReason: reason, pages: unsavedPageCount() }),
   // The page host keeps a crash-recovery copy of every page it took and has
   // not saved; the close only persists the session layout.
+  markPagesSeen: leaveAllSeenPages,
   flushSession,
   setTransition: setGraphTransitioning,
   notifyPdfFailure: () => {
@@ -309,6 +327,9 @@ function PaneContent(props: { router: PaneRouter }): JSX.Element {
       <Match when={props.router.route().kind === "all-pages"}>
         <AllPages router={props.router} />
       </Match>
+      <Match when={props.router.route().kind === "all-graphs"}>
+        <AllGraphs />
+      </Match>
     </Switch>
   );
 }
@@ -375,7 +396,7 @@ function PaneRouteBody(props: { paneId: string; router: PaneRouter; scrollerClas
       <Show when={route().kind === "invalid" ? route() as InvalidRoute : null} fallback={
         <PaneScroller paneId={props.paneId} router={props.router} class={props.scrollerClass}
           identifyPane={!props.scrollerClass}>
-          <FailureBoundary region="This page">
+          <FailureBoundary region="This page" resetKey={route()}>
             <PaneContent router={props.router} />
           </FailureBoundary>
         </PaneScroller>
@@ -386,7 +407,7 @@ function PaneRouteBody(props: { paneId: string; router: PaneRouter; scrollerClas
         </div>}
       </Show>
     }>
-      {(pdf) => <div class="pdf-pane pdf-route-pane" classList={{ "pdf-pane-mobile": isMobilePlatform }}
+      {(pdf) => <div class="pdf-pane pdf-route-pane" classList={{ "pdf-pane-mobile": pdfTakesOverPane(), "pdf-pane-touch": touchPrimary() }}
         data-pane-id={props.scrollerClass ? undefined : props.paneId} data-pdf-view-id={pdf().viewId}>
         <FailureBoundary region="This PDF"><Suspense fallback={<div class="pdf-loading" />}>
           <KeyedPdfViewer route={() => props.router.route() as PdfRoute} owner={currentPdfOwnership}
@@ -396,7 +417,12 @@ function PaneRouteBody(props: { paneId: string; router: PaneRouter; scrollerClas
               const current = props.router.route();
               if (current.kind === "pdf") openPdfNotes(props.paneId, hlsPageName(current.filename), block);
             }}
-            onViewState={(state) => props.router.updateActivePdfViewState(state)} />
+            onViewState={(state) => props.router.updateActivePdfViewState(state)}
+            onAnotherView={(state) => {
+              const current = props.router.route();
+              if (current.kind === "pdf") openPdf(current.filename, current.label, state.page, undefined,
+                { anotherView: true, sourcePaneId: props.paneId, scale: state.scale });
+            }} />
         </Suspense></FailureBoundary>
       </div>}
     </Show>
@@ -551,109 +577,37 @@ export async function installMobileExternalLinkHandler(owner: Owner = ownedWhen(
   return () => mainWindow.document.removeEventListener("click", onClick, true);
 }
 
-/** Install the graph window's capture receiver. Each request is deduplicated
- * by id (100 completed ids retained); writes use the document capture door.
- * Work is O(captured blocks + destination page). Transport setup failures reject;
- * Requests must carry the native capture-show binding generation; stale or
- * missing generations acknowledge false. The surface owner covers registration
- * and callbacks; writes capture graphOwner before starting. Save failure
- * acknowledges false and preserves the sender's scratch. Dispose
- * the returned listener when the app surface retires. */
-export async function installQuickCaptureReceiver(live: WriteOwner = ownedWhen(() => true)): Promise<() => void> {
-  const owner = ownedWhen(live);
-  const inFlight = new Map<string, Promise<boolean>>();
-  const completed = new Map<string, boolean>();
-  const completedOrder: string[] = [];
-  const rememberCompleted = (id: string, ok: boolean) => {
-    completed.set(id, ok);
-    completedOrder.push(id);
-    while (completedOrder.length > 100) {
-      const old = completedOrder.shift();
-      if (old) completed.delete(old);
-    }
-  };
-  const { emitTo, listen } = await import("@tauri-apps/api/event");
-  const { getCurrentWindow } = await import("@tauri-apps/api/window");
-  const windowLabel = getCurrentWindow().label;
-  const ack = (id: string | undefined, ok: boolean) => {
-    if (id) void emitTo("capture", "quick-capture-ack", { id, ok } satisfies QuickCaptureAck);
-  };
-  if (!owner()) return () => {};
-  const registration = await readOwnedResource(owner, listen<QuickCaptureRequest & { bindingGeneration: number }>("quick-capture", async (e) => {
-    // WebKitGTK currently exposes targeted Tauri events to every graph
-    // listener in this process. Treat the payload label as the authority so
-    // only the selected graph can ever perform the write.
-    if (!owner() || e.payload?.target !== windowLabel) return;
-    const id = e.payload?.id;
-    if (id && completed.has(id)) {
-      ack(id, completed.get(id) ?? false);
-      return;
-    }
-    const existing = id ? inFlight.get(id) : undefined;
-    if (existing) {
-      ack(id, await existing);
-      return;
-    }
-    if (!Number.isSafeInteger(e.payload.bindingGeneration) || e.payload.bindingGeneration <= 0
-        || e.payload.bindingGeneration !== backend().graphBindingGeneration()) {
-      ack(id, false);
-      return;
-    }
-    const saveOwner = bindingOwner(owner);
-    const text = e.payload?.text ?? "";
-    if (!text.trim()) {
-      ack(id, false);
-      return;
-    }
-    // A title routes the capture to a NEW (or existing) page; empty → today.
-    const title = (e.payload?.title ?? "").trim();
-    const save = async () => {
-      let ok = false;
-      try {
-        const result = await writeOwned(saveOwner, title ? captureToPage(title, text) : appendToTodayJournal(text));
-        ok = result.kind === "current" && result.value;
-      } catch {
-        ok = false;
-      }
-      if (saveOwner()) {
-        if (!ok) pushToast(msg("app-capture-couldn-t-be-saved-its-text"), "error");
-        else if (title) pushToast(msg("app-captured-to", { title }), "info");
-        else pushToast(msg("app-captured-to-today-s-journal"), "info");
-      }
-      return ok;
-    };
-    const promise = save();
-    if (id) inFlight.set(id, promise);
-    const ok = await promise;
-    if (id) {
-      inFlight.delete(id);
-      rememberCompleted(id, ok);
-    }
-    ack(id, ok);
-  }), (unlisten) => unlisten());
-  return registration.kind === "current" ? registration.value : () => {};
-}
-
 export function App(): JSX.Element {
   // Every graph window mounts App and owns its own page-host client. Split panes
   // share it; the capture mini-window owns only an unsaved scratch page.
+  const flushEverything = async () => {
+    const [pagesSaved, cssSaved] = await Promise.all([flushAll(), flushCssEditor()]);
+    return pagesSaved && cssSaved;
+  };
   onMount(() => onCleanup(installBackgroundFlush({
     endEdit: () => endEdit("graph-switch"),
-    flushAll: async () => {
-      const [pagesSaved, cssSaved] = await Promise.all([flushAll(), flushCssEditor()]);
-      return pagesSaved && cssSaved;
-    },
+    flushAll: flushEverything,
     closeInFlight: safeClose.inFlight,
   })));
   // GH #426: on mobile an OS reap of a hidden app is not an unclean exit.
+  // ADR 0078 slice 3: the same edges commit and sync git graphs.
   onMount(() => onCleanup(installSessionActivity({
     isMobile: isMobilePlatform,
-    setActive: (active) => void recordSessionActive(active),
+    setActive: (active) => {
+      void recordSessionActive(active);
+      void gitLifecycleEdge(active, flushEverything);
+    },
   })));
   let openCalendarJump = () => {};
+  // The page the focused pane shows, when it is one the user can share (not the bundled Guide).
+  const sharePage = (): string | null => {
+    const current = route();
+    return current.kind === "page" && !pageByName(current.name)?.guide ? current.name : null;
+  };
   const topbarActions = {
     calendar: () => openCalendarJump(),
-    journals: () => openJournals(),
+    journals: openJournalsFromClick,
+    share: () => { const page = sharePage(); if (page) openShareDialog({ page }); },
     theme: () => toggleTheme(),
     rightSidebar: (trigger?: HTMLElement | null) => toggleRightSidebar(trigger),
     back: () => goBack(),
@@ -828,11 +782,16 @@ export function App(): JSX.Element {
     try {
       const result = await readOwned(ownedWhen(() => alive), backend().takeDataHomeFallbackNotice());
       if (result.kind === "stale" || !result.value) return;
-      pushToast(
-        msg("app-tine-could-not-write-its-usual-application-data", { fallbackDirectory: result.value }),
-        "warn",
-        { sticky: true },
-      );
+      if (result.value.relocated_to) {
+        pushToast(
+          msg("app-tine-could-not-write-its-usual-application-data", { fallbackDirectory: result.value.relocated_to }),
+          "warn",
+          { sticky: true },
+        );
+      }
+      if (result.value.volatile) {
+        pushToast(msg("app-drafts-on-volatile-storage"), "warn", { sticky: true });
+      }
     } catch {
       dbg("data-home notice unavailable");
     }
@@ -844,6 +803,12 @@ export function App(): JSX.Element {
     if (root) void maybeShowDefenderHint();
   }));
 
+  // D-20261026-GI: once, tell the user that git autocommit added `.syncthing.*`
+  // to the graph's .gitignore (Settings → Git shows the same line).
+  createEffect(on(() => graphMeta()?.root, (root) => {
+    if (root) void maybeShowGitIgnoreNotice(root);
+  }));
+
   // The updater owns preference loading, automatic scheduling and cancellation.
   onMount(() => onCleanup(scheduleAutomaticUpdateCheck()));
 
@@ -853,6 +818,12 @@ export function App(): JSX.Element {
   onMount(() => void initCopySettings());
   onMount(() => void initRefCompletionSettings());
   onMount(() => void initNavSettings());
+  onMount(() => { initCommentIdentity(); initCommentNamePrompt(); });
+  // tine#841: learn once per opened graph whether it sits in git, so the first
+  // margin comment can ask for "Your name" without waiting for the answer.
+  createEffect(on(() => graphMeta()?.root, (root) => {
+    if (root) probeGraphGit();
+  }));
   onMount(() => void initSettingsLayout());
   onMount(() => { void initContentWidths(); void initCodeDisplay(); void initStickyParents(); });
   // Load the local-file images opt-in (Settings → Editing). Default off.
@@ -898,6 +869,7 @@ export function App(): JSX.Element {
   onMount(() => {
     onCleanup(subscribeWatcherFreshness());
     onCleanup(subscribeAssetChanges());
+    onCleanup(subscribeOwnerFlush());
     installReloadOnFocus();
     void initConflictPolicy();
   });
@@ -1096,7 +1068,7 @@ export function App(): JSX.Element {
   // One shared group: the title bar by default (desktop, phone, tablet; GH #716),
   // or, on a mobile app that turned on "Navigation buttons at the bottom", a row
   // below the document (GH #598). Exactly one of the two is mounted.
-  const navigationAtBottom = () => isMobilePlatform && mobileNavigationAtBottom();
+  const navigationAtBottom = () => touchPrimary() && mobileNavigationAtBottom();
   const NavigationActions = () => (
     <div class="navigation-actions topbar-left">
       <button
@@ -1224,6 +1196,7 @@ export function App(): JSX.Element {
         </MobileDrawerPanel>
       </Show>
       <DrawerBackground class="main-container" blockedBy="left">
+        <FailureBoundary region="Graph recovery"><RootRecoveryNotice /></FailureBoundary>
         {/* In focus mode the topbar is hidden; this thin strip at the very top
             reveals it on hover (CSS adjacency), so controls are reachable. */}
         <DrawerBackground blockedBy="right">
@@ -1241,10 +1214,12 @@ export function App(): JSX.Element {
           <Show when={!sidebarOpen() && !isPublishedExport()}>
             <FailureBoundary region="The workspace switcher"><WorkspaceSwitcher compact /></FailureBoundary>
           </Show>
-          {/* The tab strip is a desktop feature; on a phone it only crowds the
-              single-row toolbar (and its pill clips). Hide it there, keeping a
-              flex spacer so the right-side icons stay pinned to the edge. */}
-          <Show when={!isMobilePlatform && !layoutHasMultiplePanes(layoutRoot(MAIN_WINDOW_ID))} fallback={<div class="topbar-spacer" data-tauri-drag-region />}>
+          {/* The tab strip shows whenever the top bar has room for it, on any
+              platform (D-20261018-W1); in a drawer-width window (< 640 px) it
+              would only crowd the single-row toolbar, so the sidebar's Tabs
+              section is the way to switch there. A flex spacer keeps the
+              right-side icons pinned to the edge. */}
+          <Show when={tabStripFits() && !layoutHasMultiplePanes(layoutRoot(MAIN_WINDOW_ID))} fallback={<div class="topbar-spacer" data-tauri-drag-region />}>
             {/* Keyed on the SOLE pane's id: after closing panes the survivor
                 need not be "main", and TabBar freezes its router at mount. */}
             <Show when={firstPaneId(layoutRoot(MAIN_WINDOW_ID)) ?? "main"} keyed>
@@ -1256,6 +1231,12 @@ export function App(): JSX.Element {
             <button class="icon-btn topbar-optional-action" title={t("app-journals")} data-pane-focus-neutral onClick={topbarActions.journals}>
               <JournalsIcon />
             </button>
+            <Show when={!isPublishedExport()}>
+              <button class="icon-btn topbar-optional-action topbar-share" title={sharePage() ? t("share-topbar-title") : t("share-dialog-no-page")}
+                aria-label={t("share-topbar-title")} data-pane-focus-neutral disabled={!sharePage()} onClick={topbarActions.share}>
+                <ShareIcon />
+              </button>
+            </Show>
             <button class="icon-btn topbar-optional-action" title={t("app-toggle-theme-t-t")} onClick={topbarActions.theme}>
               <Show
                 when={theme() === "light"}
@@ -1293,6 +1274,8 @@ export function App(): JSX.Element {
             <FailureBoundary region="The toolbar menu"><TopbarOverflowMenu
               onCalendar={topbarActions.calendar}
               onJournals={topbarActions.journals}
+              onShare={isPublishedExport() ? undefined : topbarActions.share}
+              canShare={() => !!sharePage()}
               onToggleTheme={topbarActions.theme}
               onToggleRightSidebar={topbarActions.rightSidebar}
               onBack={topbarActions.back}
@@ -1321,6 +1304,8 @@ export function App(): JSX.Element {
             </Show>
           </div>
         </header>
+        <FailureBoundary region="Single-writer protection"><OwnerProtectionNotice /></FailureBoundary>
+        <FailureBoundary region="The git sync notice"><GitSyncNotice /></FailureBoundary>
         <FailureBoundary region="The conflict notice"><ConflictBar /></FailureBoundary>
         <Show when={refreshingFromDisk()}><div class="focus-refresh-status" role="status" aria-live="polite">{t("app-refreshing-changes-from-disk")}</div>
         </Show>
@@ -1359,7 +1344,16 @@ export function App(): JSX.Element {
       <WindowOverlays
         windowId={MAIN_WINDOW_ID}
         deepLink={<FailureBoundary region="The graph chooser"><DeepLinkGraphChoice /></FailureBoundary>}
-        keyboardToolbar={<FailureBoundary region="The keyboard toolbar"><MobileKeyboardToolbar /></FailureBoundary>}
+        keyboardToolbar={<>
+          {/* GH #751: the editing dock stays usable above an open drawer, so it is not
+              drawer-background; the rendered-selection toolbar still is. "Navigation
+              buttons at the bottom" on: the keyboard hides that row, so the editing
+              toolbar carries the same group at its leading end (GH #598). */}
+          <FailureBoundary region="The keyboard toolbar"><MobileKeyboardToolbar navigation={navigationAtBottom() ? NavigationActions : undefined} /></FailureBoundary>
+          <DrawerBackground class="drawer-floating-background" blockedBy="any">
+            <FailureBoundary region="The selection toolbar"><RenderedSelectionToolbar /></FailureBoundary>
+          </DrawerBackground>
+        </>}
         recovery={<FailureBoundary region="Unsaved recovery"><UnsavedRecovery /></FailureBoundary>}
         // First-run onboarding covers the (empty) app when no graph is configured;
         // it renders before Toasts so a "couldn't create graph" toast shows on top.

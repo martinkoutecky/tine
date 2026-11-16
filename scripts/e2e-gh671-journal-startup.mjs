@@ -1,13 +1,30 @@
 // GH #671: reporter template, fresh/existing journal, routed page and feed.
 // GH671_TEMPLATE_FILE may supply a real templates.md; a synthetic one is the default.
+import "./lib/e2e-auto-account-home.mjs";
 import { execFileSync, spawn } from "node:child_process";
 import fs from "node:fs";
+import net from "node:net";
 import path from "node:path";
 import { remote } from "webdriverio";
 import { openJournals, openPageByName } from "./lib/e2e-navigation.mjs";
 
+// The driver is spawned just before the first WebDriver request; under load it is not yet listening
+// and the session request is refused (ECONNREFUSED). Wait for the port, never a fixed delay.
+async function driverListening(port, timeoutMs = 30_000) {
+  const deadline = Date.now() + timeoutMs;
+  for (;;) {
+    const open = await new Promise((resolve) => {
+      const socket = net.connect({ host: "127.0.0.1", port }, () => { socket.destroy(); resolve(true); });
+      socket.once("error", () => resolve(false));
+    });
+    if (open) return;
+    if (Date.now() > deadline) throw new Error(`tauri-driver never listened on ${port}`);
+    await new Promise((done) => setTimeout(done, 100));
+  }
+}
+
 const ROOT = path.resolve(import.meta.dirname, "..");
-const testedBase = execFileSync("rtk", ["proxy", "git", "rev-parse", "HEAD"], { cwd: ROOT, encoding: "utf8" }).trim();
+const testedBase = execFileSync("git", ["rev-parse", "HEAD"], { cwd: ROOT, encoding: "utf8" }).trim();
 const ARTIFACTS = path.resolve(process.env.E2E_ARTIFACT_DIR || path.join(ROOT, "artifacts/gh671"));
 const APP = process.env.TINE_APP || path.join(ROOT, "target/debug/tine");
 // Default: a synthetic template with the report's shape (page alias, a
@@ -56,6 +73,7 @@ for (const mode of ["fresh", "existing", "no-template"]) {
     if (error) throw new Error("Journals route displayed a load error");
   }
   try {
+    await driverListening(PORT);
     browser = await connect();
     await observe();
     const title = await browser.$("h1.page-title").getText();

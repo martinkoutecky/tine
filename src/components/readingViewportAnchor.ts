@@ -1,0 +1,106 @@
+import { newResizeObserver, onEachWindow } from "../windowRealm";
+
+/** Hold existing viewport content through changes to a reading surface.
+ * Like editor/scrollAnchor, a gesture or another focus/scroll owner releases
+ * it. ResizeObserver restores displacement before paint; release also runs
+ * when its pane/graph retires. One observer per live anchor. */
+export const readingScrollerSelector = ".main-content, .right-sidebar";
+const owners = new WeakMap<HTMLElement, () => void>();
+const touchScrolling = new WeakSet<HTMLElement>();
+
+// A fling may already be running when capture is requested. Observe its
+// lifetime before capture, in every workspace window. scrollend is definitive;
+// older WebKit falls back to a quiet period after the last momentum scroll.
+onEachWindow(win => {
+  const doc = win.document;
+  if (!doc?.addEventListener) return;
+  let scroller: HTMLElement | null = null;
+  let held = false;
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  const clear = () => {
+    clearTimeout(timer);
+    if (scroller) touchScrolling.delete(scroller);
+    scroller = null;
+    held = false;
+  };
+  const settle = () => {
+    clearTimeout(timer);
+    if (!held) timer = setTimeout(clear, 200);
+  };
+  const start = (event: Event) => {
+    clear();
+    scroller = (event.target as Element)?.closest?.<HTMLElement>(readingScrollerSelector) ?? null;
+    if (scroller) { held = true; touchScrolling.add(scroller); }
+  };
+  const end = () => { held = false; settle(); };
+  const scroll = (event: Event) => { if (event.target === scroller) settle(); };
+  const scrollend = (event: Event) => { if (event.target === scroller && !held) clear(); };
+  const listeners = { touchstart: start, touchend: end, touchcancel: end, scroll, scrollend };
+  for (const [type, listener] of Object.entries(listeners)) doc.addEventListener(type, listener, { passive: true, capture: true });
+  return () => {
+    clear();
+    for (const [type, listener] of Object.entries(listeners)) doc.removeEventListener(type, listener, true);
+  };
+});
+
+export function captureReadingViewport(root: HTMLElement, scroller = root.closest<HTMLElement>(readingScrollerSelector)) {
+  if (!scroller) return;
+  owners.get(scroller)?.();
+  if (touchScrolling.has(scroller)) return;
+  const focused = root.ownerDocument.activeElement;
+  const viewport = scroller.getBoundingClientRect();
+  // Prefer a block starting in view: the tail of a clipped code card can
+  // intersect the viewport while its stationary top is offscreen. Holding
+  // that top lets its own reflow push the visible reading row away. Outline
+  // parents include children; descend the intersecting branch as a fallback
+  // when no block starts in view (for example, a tall card fills the pane).
+  let reading: HTMLElement | undefined;
+  for (const el of root.querySelectorAll<HTMLElement>("[data-block-id], h1.journal-title")) {
+    const rect = el.getBoundingClientRect();
+    if (rect.bottom <= viewport.top) continue;
+    // Document order: once a block starts below the viewport, none later starts in it.
+    if (reading && rect.top >= viewport.bottom) break;
+    if (!reading || reading.contains(el)) reading = el;
+    if (rect.top >= viewport.top && rect.top < viewport.bottom) { reading = el; break; }
+  }
+  const anchor = focused && focused !== root && root.contains(focused) ? focused : reading;
+  if (!anchor) return;
+  const before = anchor.getBoundingClientRect().top;
+  let scroll = scroller.scrollTop;
+  let previousMaximum = Math.max(0, scroller.scrollHeight - scroller.clientHeight);
+  let released = false;
+  const gestures = ["wheel", "touchstart", "touchmove", "pointerdown", "keydown"] as const;
+  const continuingDrag = (event: PointerEvent) => { if (event.buttons) release(); };
+  const release = () => {
+    released = true;
+    observer?.disconnect();
+    for (const event of gestures) scroller.removeEventListener(event, release, true);
+    root.ownerDocument.removeEventListener("pointermove", continuingDrag, true);
+    root.ownerDocument.removeEventListener("focusin", release, true);
+    if (owners.get(scroller) === release) owners.delete(scroller);
+  };
+  const restore = () => {
+    if (released) return;
+    // Shrinking wrapped content can make the previous scrollTop exceed the
+    // new range. Browsers clamp it during layout, before we can compensate;
+    // that clamp is part of this reflow, not another scroll owner. Gestures
+    // still release immediately, and all other scroll changes retire us.
+    const maximum = Math.max(0, scroller.scrollHeight - scroller.clientHeight);
+    const clamped = maximum < previousMaximum && scroll > maximum && Math.abs(scroller.scrollTop - maximum) <= 0.5;
+    if (!root.isConnected || !anchor.isConnected || (scroller.scrollTop !== scroll && !clamped) || anchor.ownerDocument.activeElement !== focused) { release(); return; }
+    const displacement = anchor.getBoundingClientRect().top - before;
+    if (Math.abs(displacement) > 0.5) scroller.scrollTop += displacement;
+    scroll = scroller.scrollTop;
+    previousMaximum = maximum;
+  };
+  const observer = newResizeObserver(root, restore);
+  observer?.observe(root);
+  // A scroller's border box stays fixed while its content grows. Observe its
+  // content boxes as well when it is itself the reading root (wrap preference).
+  if (root === scroller) for (const child of root.children) observer?.observe(child);
+  for (const event of gestures) scroller.addEventListener(event, release, { passive: true, capture: true });
+  root.ownerDocument.addEventListener("pointermove", continuingDrag, { passive: true, capture: true });
+  root.ownerDocument.addEventListener("focusin", release, true);
+  owners.set(scroller, release);
+  return { restore, release };
+}

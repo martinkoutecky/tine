@@ -1,0 +1,139 @@
+// Margin dialogue, slice 2 (vision §3.7 "Layout"): the model side of the
+// comment column — which blocks are drawn there, how threads stack, and where
+// the arrow keys lead when part of the outline sits beside it.
+import { afterEach, beforeAll, describe, expect, it } from "vitest";
+import { initParser, blockRegions } from "./render/parse";
+import { resetStore } from "./document";
+import { loadSingle } from "./document/workingSet";
+import { pageByName } from "./document/model";
+import type { BlockDto } from "./types";
+import { isCommentId, marginColumnWidth, marginNext, marginPrev, MARGIN_COLUMN_MAX, MARGIN_COLUMN_MIN, pageHasComment, stackThreads, threadRootOf } from "./margin";
+import { commentsFirst, nextVisible, prevVisible } from "./document";
+
+function block(id: string, raw: string, children: BlockDto[] = []): BlockDto {
+  const properties = blockRegions(raw, "md").properties.filter((p) => p.primary).map((p): [string, string] => [p.key, p.value]);
+  return { id, raw, collapsed: false, children, ...(properties.length ? { properties } : {}) };
+}
+
+function load(blocks: BlockDto[]): void {
+  loadSingle({ name: "M", kind: "page", title: "M", pre_block: null, blocks });
+}
+
+beforeAll(async () => {
+  await initParser();
+});
+afterEach(() => resetStore());
+
+describe("stacking threads in the margin", () => {
+  it("keeps each thread at its anchor while there is room", () => {
+    expect(stackThreads([{ anchor: 0, height: 40 }, { anchor: 100, height: 40 }], 8)).toEqual([0, 100]);
+  });
+
+  it("pins a focused thread to its anchor and cascades neighbors in both directions", () => {
+    expect(stackThreads([
+      { anchor: 100, height: 50 }, { anchor: 110, height: 30 }, { anchor: 120, height: 20 },
+    ], 8, 1)).toEqual([52, 110, 148]);
+  });
+
+  it("pushes an overlapping thread below the previous one, never overlapping", () => {
+    const items = [{ anchor: 10, height: 50 }, { anchor: 20, height: 30 }, { anchor: 30, height: 10 }, { anchor: 200, height: 5 }];
+    const tops = stackThreads(items, 8);
+    expect(tops).toEqual([10, 68, 106, 200]);
+    for (let i = 1; i < items.length; i++) expect(tops[i]).toBeGreaterThanOrEqual(tops[i - 1] + items[i - 1].height + 8);
+    tops.forEach((top, i) => expect(top).toBeGreaterThanOrEqual(items[i].anchor));
+  });
+});
+
+describe("the column's width (MARGIN-WIDTH, Martin 2026-10-31)", () => {
+  it("takes the pane's spare width beside the reading column, between the two bounds", () => {
+    expect(marginColumnWidth(1000, 810)).toBe(MARGIN_COLUMN_MIN);
+    expect(marginColumnWidth(1200, 810)).toBe(1200 - 810 - 32 - 16);
+    expect(marginColumnWidth(1600, 810)).toBe(MARGIN_COLUMN_MAX);
+  });
+
+  it("stays at the narrow end in wide mode or with an unknown reading width", () => {
+    expect(marginColumnWidth(2400, null)).toBe(MARGIN_COLUMN_MIN);
+  });
+});
+
+describe("inline comments sit right under their block (MARGIN-POS, GH #110)", () => {
+  const ellis = () => [
+    block("p", "123 needs a source", [
+      block("a", "456"),
+      block("b", "789"),
+      block("c", "abc", [block("d", "def")]),
+      block("k", "Which source?\ntine.quote:: needs a source", [block("kr", "This one.\ntine.author:: claude")]),
+    ]),
+    block("after", "next"),
+  ];
+
+  it("orders a block's comments before its other children, each group as stored", () => {
+    load(ellis());
+    expect(commentsFirst(["a", "b", "c", "k"])).toEqual(["k", "a", "b", "c"]);
+    const plain = ["a", "b", "c"];
+    expect(commentsFirst(plain)).toBe(plain);
+  });
+
+  it("body arrow order skips inline threads while thread navigation remains available (GH #891)", () => {
+    load(ellis());
+    const order: string[] = [];
+    for (let at: string | null = "p"; at !== null; at = nextVisible(at)) order.push(at);
+    expect(order).toEqual(["p", "a", "b", "c", "d", "after"]);
+    expect(prevVisible("a")).toBe("p");
+    expect(nextVisible("k")).toBe("kr");
+    expect(prevVisible("k")).toBe("p");
+  });
+});
+
+describe("which blocks belong in the margin", () => {
+  it("finds comments anywhere on the page and nothing on a page without them", () => {
+    load([block("p", "plain"), block("q", "parent", [block("r", "reply-less child")])]);
+    expect(pageHasComment(pageByName("M")!.roots, "md")).toBe(false);
+    resetStore();
+    load([block("p", "plain"), block("q", "parent text", [block("c", "a comment\ntine.quote:: parent")])]);
+    expect(pageHasComment(pageByName("M")!.roots, "md")).toBe(true);
+    expect(isCommentId("c", "md")).toBe(true);
+    expect(isCommentId("q", "md")).toBe(false);
+  });
+
+  it("a top-level tine.quote:: is not a comment; a reply belongs to its comment's thread", () => {
+    load([
+      block("top", "a root\ntine.quote:: something"),
+      block("p", "parent text", [block("c", "comment\ntine.quote:: parent", [block("r", "reply", [block("rr", "deeper")])])]),
+    ]);
+    expect(pageHasComment(["top"], "md")).toBe(false);
+    expect(threadRootOf("rr", "md")).toBe("c");
+    expect(threadRootOf("c", "md")).toBe("c");
+    expect(threadRootOf("p", "md")).toBeNull();
+  });
+});
+
+describe("arrow keys with comments in the margin", () => {
+  const outline = () => load([
+    block("p", "parent text here", [
+      block("kid", "an ordinary child"),
+      block("c1", "first comment\ntine.quote:: parent", [block("r1", "reply")]),
+      block("c2", "second comment\ntine.quote:: text"),
+    ]),
+    block("after", "the next block"),
+  ]);
+
+  it("the main column steps over threads in both directions", () => {
+    outline();
+    const main = { thread: null, format: "md" as const };
+    expect(marginNext("kid", null, main)).toBe("after");
+    expect(marginPrev("after", null, main)).toBe("kid");
+    expect(marginNext("p", null, main)).toBe("kid");
+  });
+
+  it("a thread's top returns to the commented block and its end leads to the block after it", () => {
+    outline();
+    const t1 = { thread: { root: "c1", parent: "p" }, format: "md" as const };
+    expect(marginPrev("c1", null, t1)).toBe("p");
+    expect(marginNext("c1", null, t1)).toBe("r1");
+    expect(marginPrev("r1", null, t1)).toBe("c1");
+    expect(marginNext("r1", null, t1)).toBe("kid");
+    const t2 = { thread: { root: "c2", parent: "p" }, format: "md" as const };
+    expect(marginNext("c2", null, t2)).toBe("kid");
+  });
+});

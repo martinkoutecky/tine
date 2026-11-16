@@ -1,15 +1,18 @@
 //! Module map: debug startup logging; state graph lock; watcher external changes;
 //! graph open/create/warm cache; backup snapshots; settings/session prefs;
 //! spellcheck WebKit integration; platform OS bridges; commands thin IPC.
-
 #[cfg(target_os = "android")]
 mod android_clipboard;
 mod android_folder_picker;
 mod android_media;
+#[cfg(target_os = "android")]
+mod android_quick_share_tls;
 mod android_safe_back;
 mod android_system_bars;
 mod app_identity;
 mod backup;
+mod capture_asset;
+mod capture_receipts;
 mod capture_target;
 #[cfg(desktop)]
 mod cli;
@@ -27,10 +30,15 @@ mod device_io;
 mod drafts;
 #[cfg(test)]
 mod edit_kind_guard_tests;
+mod file_lock;
 mod flight;
 mod flight_store;
+mod git_settings;
+mod git_setup;
 mod graph;
 mod graph_verification;
+#[cfg(test)]
+mod host_off_refusal_tests;
 mod host_retirement;
 #[cfg(test)]
 mod host_slot_guard_tests;
@@ -39,16 +47,19 @@ mod i18n_shell;
 mod ios_folder_picker;
 #[cfg(target_os = "linux")]
 mod linux_gpu;
+mod linux_inline_preedit;
 #[cfg(target_os = "linux")]
 mod linux_window_identity;
 #[cfg(test)]
 mod load_wait_guard_tests;
+mod main_thread_liveness;
 mod media_protocol;
 mod migrate_identifier;
 #[cfg(any(target_os = "android", target_os = "ios"))]
 mod native_integrations;
 mod native_mouse_history;
 mod owner;
+mod owner_protection;
 mod page_backlinks;
 mod page_commands;
 mod pdf_crop_rollback;
@@ -59,9 +70,12 @@ mod portable;
 mod query_export;
 #[path = "commands/query_ir.rs"]
 mod query_ir;
+mod quick_share;
 #[cfg(any(target_os = "linux", target_os = "macos"))]
 mod quit_signal;
+mod root_identity;
 mod search_workspace;
+mod seen;
 mod settings;
 mod share_inbox;
 mod spellcheck;
@@ -71,11 +85,13 @@ mod startup_window_order_tests;
 mod state;
 mod tray;
 mod watcher;
+#[cfg(any(target_os = "windows", test))]
+#[cfg_attr(not(target_os = "windows"), allow(dead_code))]
+mod webview2_args;
 mod workspace_windows;
 mod youtube_identity;
-use css_files::{read_css_file, save_css_file};
-
-use backup::{get_backup_keep, list_backups, restore_backup, set_backup_keep};
+use backup::{delete_old_backups, get_backup_keep, list_backups, restore_backup, set_backup_keep};
+use capture_asset::{capture_import_asset, capture_save_asset};
 use commands::{
     apply_journal_filename_migrations, asset_trash_stats, block_ref_counts, block_referrers,
     capture_quick_switch, close_graph_window, copy_guide_into_graph, detect_media_editor,
@@ -84,20 +100,22 @@ use commands::{
     guide_pages, import_asset, import_native_capture, journal_content_days, journal_feed_page,
     list_journal_conflicts, list_journal_filename_migrations, list_orphan_assets, list_templates,
     load_workspaces, merge_pages, open_asset, open_graph_file, open_page_file, open_pdf,
-    page_icons, page_inventory, page_modified, page_print_html, preview_block, publish_html,
-    query_facets, quick_switch, read_asset, read_custom_css, read_highlights, read_journal_file,
-    read_local_image, read_text_file, rename_file_to_page, rename_page, resolve_block,
-    resolve_blocks, resolve_page, run_graph_search, save_asset, save_pdf_area_image,
-    save_workspaces, search, set_default_journal_template, set_doc_mode_enter_for_new_block,
-    set_guide_announced, set_journal_title_format, set_logical_outdenting, set_preferred_format,
-    set_preferred_workflow, set_show_brackets, set_start_of_week, set_timetracking_enabled,
-    stream_asset_path, tine_open_devtools, trash_asset, trash_journal_file, write_highlights,
+    page_alias_group, page_icons, page_inventory, page_modified, page_print_html, preview_block,
+    publish_html, query_facets, quick_switch, read_asset, read_asset_range, read_custom_css,
+    read_highlights, read_journal_file, read_local_image, read_text_file,
+    register_unlinked_reference, rename_file_to_page, rename_page, resolve_block, resolve_blocks,
+    resolve_page, run_graph_search, save_asset, save_pdf_area_image, save_workspaces, search,
+    set_default_journal_template, set_doc_mode_enter_for_new_block, set_guide_announced,
+    set_journal_title_format, set_logical_outdenting, set_preferred_format, set_preferred_workflow,
+    set_show_brackets, set_start_of_week, set_timetracking_enabled, stat_asset, stream_asset_path,
+    tine_open_devtools, trash_asset, trash_journal_file, write_highlights,
 };
 use concord::{
     conflict_inventory, duplicate_journal_diff, list_sync_conflicts, live_conflict_diff,
     merge_live_conflict, resolve_duplicate_journal_day, resolve_sync_conflict,
     resolve_vcs_marker_conflict, sync_conflict_diff, trash_sync_conflict, vcs_marker_conflict_diff,
 };
+use css_files::{edit_global_css, read_css_file, save_css_file};
 use debug::{
     debug_header, debug_info, debug_init, debug_log, diag, diag_private, install_panic_logger,
 };
@@ -118,6 +136,7 @@ use plugins::{
 use query_export::{publish_live, publish_query, publish_query_plan, sheet_export_inputs};
 use query_ir::{
     query_explain_empty, query_og_expressible, query_parse, query_print, query_registry, query_run,
+    register_query_subscription, tagged_pages,
 };
 use settings::{
     forget_known_graph, get_app_bool, get_app_string, get_capture_enter_files,
@@ -161,6 +180,20 @@ fn e2e_touch_gestures_platform() -> Option<&'static str> {
     }
 }
 
+/// Which windows `tauri-plugin-window-state` saves and restores: `main` and
+/// `graph-N`. Not `capture` (centered on demand), not `main` in the forced
+/// mobile-drawer e2e mode, and never a workspace popup (`ws-*`). Tine places
+/// each popup itself (`workspace_windows::place`, from the geometry its session
+/// keeps). And a popup is built on the main thread inside Wry's new-window
+/// handler, where Tauri runs the plugin's restore while it holds its plugin-store
+/// lock: on Windows the restore's `SetWindowPos` delivers `Moved`/`Resized` at
+/// once, the event handler locks that store again, and Tine freezes (GH #809).
+fn window_state_tracks(label: &str, deny_main: bool) -> bool {
+    label != "capture"
+        && !(deny_main && label == "main")
+        && workspace_windows::opener_of(label).is_none()
+}
+
 fn apply_mobile_drawer_e2e_window_policy(
     windows: &mut [tauri::utils::config::WindowConfig],
     force: bool,
@@ -176,59 +209,6 @@ fn apply_mobile_drawer_e2e_window_policy(
     } else {
         false
     }
-}
-
-// Wry normally supplies these arguments itself. Once a window config provides
-// `additional_browser_args`, it replaces that default rather than extending it.
-#[cfg(any(target_os = "windows", test))]
-const WRY_WINDOWS_DEFAULT_BROWSER_ARGS: &str =
-    "--disable-features=msWebOOUI,msPdfOOUI,msSmartScreenProtection";
-
-#[cfg(any(target_os = "windows", test))]
-fn merged_windows_webdriver_args(
-    configured: Option<&str>,
-    automation_enabled: bool,
-    inherited: Option<&str>,
-) -> Option<String> {
-    let inherited = inherited.map(str::trim).filter(|value| !value.is_empty())?;
-    if !automation_enabled {
-        return None;
-    }
-    Some(format!(
-        "{} {inherited}",
-        configured.unwrap_or(WRY_WINDOWS_DEFAULT_BROWSER_ARGS)
-    ))
-}
-
-#[cfg(any(target_os = "windows", test))]
-fn apply_windows_webdriver_window_policy(
-    windows: &mut [tauri::utils::config::WindowConfig],
-    automation_enabled: bool,
-    inherited: Option<&str>,
-) -> usize {
-    let mut changed = 0;
-    for window in windows {
-        if let Some(arguments) = merged_windows_webdriver_args(
-            window.additional_browser_args.as_deref(),
-            automation_enabled,
-            inherited,
-        ) {
-            window.additional_browser_args = Some(arguments);
-            changed += 1;
-        }
-    }
-    changed
-}
-
-#[cfg(target_os = "windows")]
-pub(crate) fn windows_webdriver_args_from_env(configured: Option<&str>) -> Option<String> {
-    merged_windows_webdriver_args(
-        configured,
-        std::env::var("TAURI_WEBVIEW_AUTOMATION").as_deref() == Ok("true"),
-        std::env::var("WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS")
-            .ok()
-            .as_deref(),
-    )
 }
 
 /// Xlib's thread mode is process-global and must be selected before the first
@@ -703,16 +683,9 @@ pub fn run() {
     // GH #719: a portable Windows instance keeps every app directory, and so
     // the WebView2 user data, in `tine-data` beside the exe (portable.rs).
     portable::apply(context.config_mut());
+    // GH #804: every Windows window gets wry's defaults plus sRGB (webview2_args.rs).
     #[cfg(target_os = "windows")]
-    {
-        let automation_enabled = std::env::var("TAURI_WEBVIEW_AUTOMATION").as_deref() == Ok("true");
-        let inherited = std::env::var("WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS").ok();
-        apply_windows_webdriver_window_policy(
-            &mut context.config_mut().app.windows,
-            automation_enabled,
-            inherited.as_deref(),
-        );
-    }
+    webview2_args::apply_to_config_windows(&mut context.config_mut().app.windows);
     let deny_main_window_state_restore = apply_mobile_drawer_e2e_window_policy(
         &mut context.config_mut().app.windows,
         force_mobile_drawers,
@@ -739,6 +712,9 @@ pub fn run() {
         .register_uri_scheme_protocol("tine-media", |ctx, request| {
             media_protocol::respond(ctx, request)
         });
+    // The ignored Linux hang journey runs the real app from a libtest thread.
+    #[cfg(all(test, target_os = "linux"))]
+    let builder = builder.any_thread();
 
     // The frontend's platform identity. It cannot be derived from the WebView's
     // user agent: iPadOS 13+ serves a desktop-class `Macintosh; Intel Mac OS X`
@@ -820,7 +796,7 @@ pub fn run() {
         // Remember window size/position/maximized across launches (Wayland
         // compositors don't restore this per-app). Exclude FULLSCREEN so it
         // doesn't conflict with focus mode, which is intentionally not persisted.
-        // The capture window is centered on demand, so keep it off the denylist.
+        // `window_state_tracks` names the windows it manages (GH #809).
         .plugin(
             tauri_plugin_window_state::Builder::default()
                 .with_state_flags(
@@ -828,10 +804,8 @@ pub fn run() {
                         | tauri_plugin_window_state::StateFlags::POSITION
                         | tauri_plugin_window_state::StateFlags::MAXIMIZED,
                 )
-                .with_denylist(if deny_main_window_state_restore {
-                    &["capture", "main"]
-                } else {
-                    &["capture"]
+                .with_filter(move |label| {
+                    window_state_tracks(label, deny_main_window_state_restore)
                 })
                 .build(),
         );
@@ -840,6 +814,10 @@ pub fn run() {
     #[cfg(desktop)]
     let builder = builder.manage(tray::TrayState::default());
 
+    // Bootstrap Android's process-wide platform verifier before the WebView can
+    // invoke any quick-share command. Linux/macOS/Windows/iOS need no JNI hook.
+    #[cfg(target_os = "android")]
+    let builder = builder.plugin(android_quick_share_tls::init());
     #[cfg(target_os = "android")]
     let builder = builder.plugin(android_folder_picker::init());
     #[cfg(target_os = "android")]
@@ -870,6 +848,7 @@ pub fn run() {
     #[cfg(any(mobile, target_os = "windows"))]
     let builder = builder.plugin(tauri_plugin_opener::init());
 
+    let builder = linux_inline_preedit::configure(builder);
     builder
         .plugin(tauri_plugin_clipboard_manager::init())
         .plugin(tauri_plugin_dialog::init())
@@ -918,6 +897,7 @@ pub fn run() {
         .manage(workspace_windows::Pending::default())
         .manage(workspace_windows::CloseRequests::default())
         .manage(graph::StartupGraph::default())
+        .manage(capture_receipts::CaptureReceipts::default())
         .manage(deep_links::PendingLinks::default())
         .manage(AppState {
             graphs: RwLock::new(state::GraphRegistry::default()),
@@ -928,13 +908,20 @@ pub fn run() {
             next_window: AtomicU64::new(1),
         })
         .setup(move |app| {
+            root_identity::capture_container_change(app.handle());
             // After the single-instance plugin: a forwarded second launch has
             // already exited and cannot rotate the primary's diagnostics.
             // Tauri's app-data path is the sandbox-private home on mobile too.
             if let Ok(dir) = app.path().app_data_dir() {
+                data_home::classify_at_launch(&dir);
+                settings::note_app_data(&dir);
                 flight::persist_init(dir.join("diagnostics"));
             }
+            main_thread_liveness::start(app.handle());
             diag("setup() begin");
+            if let Err(error) = css_files::install_global_css_watcher(app.handle()) {
+                debug::diag_private("global-css-watch", error);
+            }
             // The persisted Spotlight index may hold a graph this launch never binds.
             spotlight::launched(app.handle());
             #[cfg(target_os = "linux")]
@@ -1006,6 +993,11 @@ pub fn run() {
             data_home::take_data_home_fallback_notice,
             migrate_identifier::take_identifier_migration_notice,
             load_graph,
+            root_identity::orphan_drafts,
+            owner_protection::owner_protection_status,
+            owner_protection::retry_owner_protection,
+            root_identity::recover_orphan_drafts,
+            delete_old_backups,
             inspect_graph_access,
             approve_external_assets,
             deep_links::graph_link_identity,
@@ -1020,6 +1012,7 @@ pub fn run() {
             workspace_windows::workspace_window_destroy,
             startup_graph_path,
             capture_target,
+            capture_receipts::capture_receipt,
             capture_graph_binding,
             capture_frontend_ready,
             create_graph,
@@ -1047,11 +1040,14 @@ pub fn run() {
             cancel_graph_verification,
             save_graph_verification_report,
             resolve_page,
+            page_alias_group,
             guide_pages,
             copy_guide_into_graph,
             get_backlink_filter_context,
             get_backlinks,
             get_unlinked_refs,
+            register_unlinked_reference,
+            register_query_subscription,
             warm_done,
             block_ref_counts,
             block_referrers,
@@ -1059,6 +1055,20 @@ pub fn run() {
             publish_html,
             publish_query_plan,
             publish_query,
+            quick_share::quick_share_prepare,
+            quick_share::quick_share_create,
+            quick_share::quick_share_discard,
+            quick_share::quick_share_list,
+            quick_share::quick_share_test_connection,
+            quick_share::quick_share_check,
+            quick_share::quick_share_find,
+            quick_share::quick_share_delete,
+            quick_share::quick_share_forget,
+            quick_share::quick_share_copy_link,
+            quick_share::quick_share_connect_start,
+            quick_share::quick_share_connect_status,
+            quick_share::quick_share_connect_cancel,
+            quick_share::quick_share_disconnect,
             publish_live,
             sheet_export_inputs,
             page_print_html,
@@ -1072,6 +1082,7 @@ pub fn run() {
             query_registry,
             query_run,
             query_explain_empty,
+            tagged_pages,
             page_icons,
             set_favorites,
             set_default_home,
@@ -1087,6 +1098,7 @@ pub fn run() {
             set_start_of_week,
             read_custom_css,
             read_css_file,
+            edit_global_css,
             save_css_file,
             commands::reveal_export,
             edit_custom_css,
@@ -1126,6 +1138,8 @@ pub fn run() {
             search,
             quick_switch,
             capture_quick_switch,
+            capture_import_asset,
+            capture_save_asset,
             list_templates,
             journal_content_days,
             resolve_block,
@@ -1133,6 +1147,8 @@ pub fn run() {
             preview_block,
             read_asset,
             stream_asset_path,
+            stat_asset,
+            read_asset_range,
             read_local_image,
             read_text_file,
             import_asset,
@@ -1156,6 +1172,7 @@ pub fn run() {
             restore_backup,
             page_commands::page_window_reloaded,
             page_commands::page_open,
+            page_commands::owner_flush_answer,
             page_commands::page_submit,
             page_commands::page_move,
             page_commands::page_discard,
@@ -1201,13 +1218,32 @@ pub fn run() {
             flight::diagnostic_report,
             flight::diagnostic_session_active,
             flight::diagnostic_timing_event,
+            flight::diagnostic_workspace_open,
             flight::save_diagnostic_report,
             defender::defender_hint,
             defender::dismiss_defender_hint,
             defender::add_defender_exclusion,
             close_graph_window,
             tine_open_devtools,
-            tray::tray_apply
+            tray::tray_apply,
+            git_settings::git_autocommit_status,
+            git_setup::git_clone_graph,
+            git_setup::git_init_graph,
+            git_setup::git_finish_setup,
+            git_setup::git_setup_sign_in,
+            git_settings::set_git_autocommit,
+            git_settings::git_sync_now,
+            git_settings::git_disable_line_endings,
+            git_settings::git_remove_stale_lock,
+            git_settings::git_sync_notice,
+            git_settings::git_sign_in,
+            git_settings::git_sign_out,
+            git_settings::git_app_lifecycle,
+            seen::get_page_changes,
+            seen::mark_page_seen,
+            seen::mark_graph_seen,
+            seen::forget_seen_page,
+            seen::forget_seen_state
         ])
         .build(context)
         .expect("error while building tauri application")
@@ -1223,6 +1259,8 @@ pub fn run() {
                 // Queued Concord base-ledger updates get one bounded drain
                 // (`EXIT_DRAIN_BUDGET`); the ledger is never a save authority.
                 concord_ledger::drain_all_for_exit(&app.state::<AppState>());
+                // Git graphs get one bounded autocommit (ADR 0078, G9).
+                git_settings::exiting();
                 // `App::run` never returns, so the orderly end of a run is
                 // here: clear the unclean-exit marker (master d9763603).
                 flight::mark_clean_shutdown();
@@ -1240,11 +1278,56 @@ pub fn run() {
 }
 
 #[cfg(test)]
+mod window_state_policy_tests {
+    use super::window_state_tracks;
+    use crate::workspace_windows::popup_label;
+
+    // GH #809: a popup restored by the plugin from inside Tauri's
+    // window-created hook freezes Tine on Windows. Every popup label the
+    // producer can make, for either opener kind and either e2e mode, is out.
+    #[test]
+    fn workspace_popups_never_reach_the_plugin_restore() {
+        for deny_main in [false, true] {
+            for opener in ["main", "graph-1", "graph-12"] {
+                for n in [1, 2, 9, 10, 4096] {
+                    let label = popup_label(opener, n);
+                    assert!(!window_state_tracks(&label, deny_main), "{label}");
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn graph_windows_keep_their_geometry_and_capture_never_has_one() {
+        for deny_main in [false, true] {
+            assert!(window_state_tracks("graph-1", deny_main));
+            assert!(window_state_tracks("graph-12", deny_main));
+            assert!(!window_state_tracks("capture", deny_main));
+        }
+        assert!(window_state_tracks("main", false));
+        assert!(!window_state_tracks("main", true));
+    }
+
+    // The plugin learns its windows only from `window_state_tracks`: a
+    // label list beside it would be a second answer that misses popups.
+    #[test]
+    fn the_plugin_is_configured_only_by_the_policy() {
+        let source = include_str!("lib.rs");
+        let builder = source
+            .split("tauri_plugin_window_state::Builder::default()")
+            .nth(1)
+            .and_then(|rest| rest.split(".build()").next())
+            .expect("window-state plugin builder");
+        assert!(builder.contains(".with_filter("), "{builder}");
+        assert!(builder.contains("window_state_tracks("), "{builder}");
+        assert!(!builder.contains(".with_denylist("), "{builder}");
+        assert!(!builder.contains(".skip_initial_state("), "{builder}");
+    }
+}
+
+#[cfg(test)]
 mod mobile_drawer_policy_tests {
-    use super::{
-        apply_mobile_drawer_e2e_window_policy, apply_windows_webdriver_window_policy,
-        merged_windows_webdriver_args, WRY_WINDOWS_DEFAULT_BROWSER_ARGS,
-    };
+    use super::apply_mobile_drawer_e2e_window_policy;
 
     #[test]
     fn production_policy_does_not_mutate_the_real_window_config() {
@@ -1294,53 +1377,6 @@ mod mobile_drawer_policy_tests {
             windows.iter().find(|window| window.label == "neighbor"),
             Some(&neighbor)
         );
-    }
-
-    #[test]
-    fn webdriver_arguments_are_inert_without_explicit_automation() {
-        assert_eq!(
-            merged_windows_webdriver_args(None, false, Some("--remote-debugging-port=9222")),
-            None
-        );
-        assert_eq!(merged_windows_webdriver_args(None, true, Some("  ")), None);
-    }
-
-    #[test]
-    fn webdriver_arguments_preserve_wry_defaults_and_configured_values() {
-        assert_eq!(
-            merged_windows_webdriver_args(None, true, Some("--remote-debugging-port=9222")),
-            Some(format!(
-                "{WRY_WINDOWS_DEFAULT_BROWSER_ARGS} --remote-debugging-port=9222"
-            ))
-        );
-        assert_eq!(
-            merged_windows_webdriver_args(
-                Some("--disable-gpu"),
-                true,
-                Some("--remote-debugging-port=9222")
-            ),
-            Some("--disable-gpu --remote-debugging-port=9222".into())
-        );
-    }
-
-    #[test]
-    fn webdriver_policy_updates_every_configured_window_only_in_automation() {
-        let mut context: tauri::Context<tauri::Wry> = tauri::generate_context!();
-        let windows = &mut context.config_mut().app.windows;
-        assert!(windows.len() >= 2);
-        let window_count = windows.len();
-        assert_eq!(
-            apply_windows_webdriver_window_policy(
-                windows,
-                true,
-                Some("--remote-debugging-port=9222")
-            ),
-            window_count
-        );
-        assert!(windows.iter().all(|window| window
-            .additional_browser_args
-            .as_deref()
-            .is_some_and(|args| args.contains("--remote-debugging-port=9222"))));
     }
 }
 
@@ -1524,7 +1560,7 @@ mod platform_lifecycle_guard_tests {
         );
         assert!(
             windows_lines.contains(
-                &"reqwest = { version = \"0.13\", default-features = false, features = [\"system-proxy\"] }"
+                &"reqwest = { version = \"0.13\", default-features = false, features = [\"native-tls\", \"system-proxy\"] }"
             ),
             "GH #241: the Windows updater must follow the system proxy via reqwest's system-proxy feature"
         );

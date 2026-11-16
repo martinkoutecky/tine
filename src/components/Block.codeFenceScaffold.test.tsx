@@ -1,3 +1,4 @@
+import { editorIn, type EditorDriver } from "../tests/editorDriver";
 import { afterEach, beforeAll, describe, expect, it, vi } from "vitest";
 import { For, type JSX } from "solid-js";
 import { render } from "solid-js/web";
@@ -51,20 +52,18 @@ function mountEditor(raw: string) {
   return {
     ...mounted,
     blockId: block.id,
-    textarea: mounted.root.querySelector("textarea.block-editor") as HTMLTextAreaElement,
+    textarea: editorIn(mounted.root),
   };
 }
 
 /** Simulate one keystroke: the browser inserts the char, then onInput runs. */
-function typeChar(ta: HTMLTextAreaElement, ch: string) {
-  const caret = ta.selectionStart;
-  ta.value = ta.value.slice(0, caret) + ch + ta.value.slice(caret);
-  ta.setSelectionRange(caret + 1, caret + 1);
-  ta.dispatchEvent(new InputEvent("input", { bubbles: true, inputType: "insertText", data: ch }));
+function typeChar(ta: EditorDriver, ch: string) {
+  const caret = ta.selection()[0];
+  ta.input(ta.value().slice(0, caret) + ch + ta.value().slice(caret), caret + 1, { inputType: "insertText", data: ch });
 }
 
-function key(ta: HTMLTextAreaElement, k: string) {
-  ta.dispatchEvent(new KeyboardEvent("keydown", { key: k, bubbles: true, cancelable: true }));
+function key(ta: EditorDriver, k: string) {
+  ta.keydown({ key: k, bubbles: true, cancelable: true });
 }
 
 const pickerItems = () => [...document.body.querySelectorAll(".autocomplete .ac-item")];
@@ -76,7 +75,7 @@ describe("triple-backtick code fence scaffold (GH #413)", () => {
     try {
       typeChar(textarea, "`");
       // A single backtick still auto-pairs (unchanged generic behavior).
-      expect(textarea.value).toBe("``");
+      expect(textarea.value()).toBe("``");
       typeChar(textarea, "`");
       typeChar(textarea, "`");
       // The scaffold replaces the third-backtick pairing: no fourth backtick,
@@ -88,9 +87,9 @@ describe("triple-backtick code fence scaffold (GH #413)", () => {
       await vi.waitFor(() => expect(pickerItems().length).toBeGreaterThan(0));
       key(textarea, "Escape");
       await vi.waitFor(() => {
-        expect(textarea.value).not.toContain("```");
-        expect(textarea.selectionStart).toBe(0);
-        expect(textarea.selectionEnd).toBe(0);
+        expect(textarea.value()).not.toContain("```");
+        expect(textarea.selection()[0]).toBe(0);
+        expect(textarea.selection()[1]).toBe(0);
       });
       expect(doc.byId[blockId].raw).toBe("```\n\n```");
     } finally {
@@ -118,15 +117,15 @@ describe("triple-backtick code fence scaffold (GH #413)", () => {
     const { textarea, blockId, dispose } = mountEditor("");
     try {
       typeChar(textarea, "`");
-      expect(textarea.value).toBe("`"); // no pairing with the toggle off
+      expect(textarea.value()).toBe("`"); // no pairing with the toggle off
       typeChar(textarea, "`");
       typeChar(textarea, "`");
       expect(doc.byId[blockId].raw).toBe("```\n\n```");
       await vi.waitFor(() => expect(pickerItems().length).toBeGreaterThan(0));
       key(textarea, "Escape");
       await vi.waitFor(() => {
-        expect(textarea.value).not.toContain("```");
-        expect(textarea.selectionStart).toBe(0);
+        expect(textarea.value()).not.toContain("```");
+        expect(textarea.selection()[0]).toBe(0);
       });
     } finally {
       dispose();
@@ -140,8 +139,8 @@ describe("typed code fence language (GH #507)", () => {
     try {
       for (const ch of "```") typeChar(textarea, ch);
       await vi.waitFor(() => expect(pickerItems().length).toBeGreaterThan(0));
-      expect(textarea.value).toBe("```\n\n```");
-      expect(textarea.selectionStart).toBe(3);
+      expect(textarea.value()).toBe("```\n\n```");
+      expect(textarea.selection()[0]).toBe(3);
     } finally {
       dispose();
     }
@@ -159,8 +158,8 @@ describe("typed code fence language (GH #507)", () => {
       const python = pickerItems().find((item) => item.querySelector(".ac-label")?.textContent === "Python")!;
       python.dispatchEvent(new MouseEvent("mousedown", { bubbles: true, cancelable: true }));
       await vi.waitFor(() => expect(doc.byId[blockId].raw).toBe("```python\n\n```"));
-      expect(textarea.value).not.toContain("```");
-      expect(textarea.selectionStart).toBe(0);
+      expect(textarea.value()).not.toContain("```");
+      expect(textarea.selection()[0]).toBe(0);
     } finally {
       dispose();
     }

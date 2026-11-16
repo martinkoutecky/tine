@@ -1,6 +1,6 @@
 import { msg } from "../../i18n";
 import { type Format } from "../../types";
-import { splitProps, HIDE_ALL, HIDE_ID, joinProps, BUILTIN_HIDE } from "../../editor/properties";
+import { splitProps, HIDE_ALL, HIDE_ID, joinProps, BUILTIN_HIDE, splitLogbook, isEditorEmpty } from "../../editor/properties";
 import { type ClipboardBlock, type ClipboardPayloadSlot, consumeCutGrant } from "../../clipboard";
 import { doc, Node, formatForPage, freshId, setDoc, hasLoadedIdentityCollision, loadedIdentityCollisions } from "../model";
 import { graphTransitioning } from "../../ui";
@@ -18,6 +18,7 @@ import { pushToast } from "../../toasts";
 import { blockRegions } from "../../render/parse";
 import type { OutlineNode } from "../../editor/outline";
 import { offsetInLiteral } from "../../editor/inlineLiteral";
+import { threadRootOf } from "../commentThreads";
 
 const ID_LOOKUP_CHUNK_SIZE = 128;
 
@@ -114,13 +115,14 @@ function clipboardRawForTarget(
   // splitProps/joinProps classify metadata but deliberately do not translate
   // syntax. Map the ordered key/value stream explicitly so every property keeps
   // its relative order across Markdown `key:: value` and Org drawer forms.
-  const visible = splitProps(block.raw, HIDE_ALL, block.sourceFormat).visible;
+  const parts = splitProps(block.raw, HIDE_ALL, block.sourceFormat);
+  const drawers = splitLogbook(parts.hidden, "md").drawers;
   const properties = clipboardProperties(block.raw, block.sourceFormat)
     .filter((property) => preserveIds || property.key.toLowerCase() !== "id");
   const translated = properties.map(({ key, value }) =>
     targetFormat === "org" ? `:${key}: ${value}` : `${key}:: ${value}`
   ).join("\n");
-  return joinProps(visible, translated, targetFormat);
+  return joinProps(parts.visible, [translated, drawers].filter(Boolean).join("\n"), targetFormat);
 }
 
 function clipboardCollapsed(block: ClipboardBlock): boolean {
@@ -184,7 +186,7 @@ function insertClipboardBlocksSync(
   warnCopy: boolean,
 ): string | null {
   const target = doc.byId[targetId];
-  if (!blocks.length || !target || !blockWritable(targetId)) return null;
+  if (!blocks.length || !target || !blockWritable(targetId) || threadRootOf(targetId) !== null) return null;
   // Same shared ceiling as every other outline inserter (I-22): a deeper page
   // would be refused by save/page admission after the edit appeared to land.
   if (!outlineFits(targetId, blocks)) {
@@ -208,9 +210,8 @@ function insertClipboardBlocksSync(
       children: block.children.map(prepare),
     };
   });
-  const visible = splitProps(target.raw, BUILTIN_HIDE, targetFormat).visible;
   const replaceHost = target.children.length === 0
-    && visible.trim() === ""
+    && isEditorEmpty(target.raw, BUILTIN_HIDE, targetFormat)
     && existingBlockId(target.raw, targetFormat) === null
     && !liveDocReferences(targetId);
   const parent = target.parent;

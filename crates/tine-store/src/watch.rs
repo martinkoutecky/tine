@@ -23,9 +23,11 @@ mod test_drain;
 use runtime::run;
 pub(crate) use runtime::RACY_FOLLOW_UP;
 mod stamp;
-pub(crate) use stamp::{stamp_from_metadata, stamp_metadata, RACY_WINDOW};
 #[cfg(test)]
-use stamp::{STAMPS_BY_PATH, STAMP_HASHES};
+pub(crate) use stamp::STAMPS_BY_PATH;
+#[cfg(test)]
+use stamp::STAMP_HASHES;
+pub(crate) use stamp::{stamp_from_metadata, stamp_metadata, RACY_WINDOW};
 
 pub(crate) use launch::{Baseline, Deferred};
 
@@ -100,6 +102,13 @@ pub(crate) struct Stamp {
 
 pub(crate) type RestoreBaseline = HashMap<PathBuf, Stamp>;
 
+/// A settled read refusal, valid only for this exact metadata observation.
+/// Kept in memory: changing or replacing the file makes it eligible again.
+struct ReadRefusal {
+    stamp: Stamp,
+    reason: String,
+}
+
 fn stamp(path: &Path) -> Option<Stamp> {
     let mut value = stamp_metadata(path)?;
     #[cfg(test)]
@@ -108,8 +117,68 @@ fn stamp(path: &Path) -> Option<Stamp> {
     Some(value)
 }
 
-/// Where a reconcile sends the keys of held paths that changed on disk.
-pub(crate) type Forward = Box<dyn Fn(Vec<String>) + Send + Sync>;
+/// Where a reconcile sends the keys of held paths that changed on disk, and
+/// a held page's read (`Store::page`) the key of one whose file moved since
+/// its owner's last indexed observation, with where to say once that
+/// observation is indexed, found unchanged or failed (A-H1).
+pub(crate) type Forward = Box<dyn Fn(Vec<String>, Option<Observed>) + Send + Sync>;
+
+/// Told when a forwarded observation settled: its publication indexed, or
+/// nothing to publish (`Ok`), or the owner's read failed (that error).
+pub(crate) type Observed = Sender<std::io::Result<()>>;
+
+/// The read error an owner's failed observation answers (A-H1): its OS
+/// error when it has one, else one naming the failed operation.
+pub(crate) fn observation_failed(
+    os_error: Option<i32>,
+    operation: Option<&'static str>,
+) -> std::io::Error {
+    os_error.map_or_else(
+        || std::io::Error::other(operation.unwrap_or("page read failed")),
+        std::io::Error::from_raw_os_error,
+    )
+}
+
+/// How long a held page's read waits for its forwarded observation (A-H1),
+/// and the page host's `OPERATION_WAIT`, which is defined as this.
+pub(crate) const OBSERVED_WAIT: Duration = Duration::from_secs(10);
+
+thread_local! {
+    /// Set on the thread that runs forwarded observations (the page host's
+    /// driver): a read waiting for one must never run there.
+    static OBSERVER: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
+}
+
+/// Mark the calling thread as the one that runs forwarded observations.
+pub(crate) fn mark_observer_thread() {
+    OBSERVER.with(|observer| observer.set(true));
+}
+
+/// Whether the calling thread runs forwarded observations.
+pub(crate) fn on_observer_thread() -> bool {
+    OBSERVER.with(std::cell::Cell::get)
+}
+
+/// The file facts of one watcher snapshot (`Core::file_facts`).
+fn snapshot_file_facts(snapshot: &HashMap<PathBuf, Stamp>) -> FileFacts {
+    let mut facts = FileFacts {
+        lens: Vec::with_capacity(snapshot.len()),
+        ..FileFacts::default()
+    };
+    for (path, value) in snapshot.iter() {
+        // A retry baseline (`retry_baseline`) holds u64::MAX, not a size.
+        if value.len != u64::MAX {
+            facts.lens.push(value.len);
+        }
+        facts.conflict_named += u64::from(tine_core::model::path_is_sync_conflict(path));
+        let stem_nfc = path
+            .file_stem()
+            .and_then(|stem| stem.to_str())
+            .is_none_or(unicode_normalization::is_nfc);
+        facts.non_nfc_named += u64::from(!stem_nfc);
+    }
+    facts
+}
 
 fn retry_baseline(now: &mut HashMap<PathBuf, Stamp>, path: &Path, before: Option<&Stamp>) {
     if let Some(old) = before {
@@ -149,6 +218,30 @@ fn directory_identity(path: &Path) -> Option<u128> {
     }
 }
 
+fn record_walk_error(
+    unreadable: &mut HashMap<PathBuf, String>,
+    path: PathBuf,
+    error: std::io::Error,
+) {
+    if let Some(error) =
+        crate::model::unreadable_error(error, "Tine unreadable file producer=watch-listing")
+    {
+        unreadable.insert(path, error.to_string());
+    }
+}
+
+#[cfg(test)]
+#[test]
+fn a_watch_listing_read_of_a_vanished_file_is_not_unreadable() {
+    let mut errors = HashMap::new();
+    record_walk_error(
+        &mut errors,
+        PathBuf::from("journals/gone.md"),
+        std::io::ErrorKind::NotFound.into(),
+    );
+    assert!(errors.is_empty(), "{errors:?}");
+}
+
 fn collect_dir(
     root: &Path,
     dir: &Path,
@@ -163,7 +256,7 @@ fn collect_dir(
             Ok(entries) => entries,
             Err(error) if error.kind() == std::io::ErrorKind::NotFound => continue,
             Err(error) => {
-                unreadable.insert(directory, error.to_string());
+                record_walk_error(unreadable, directory, error);
                 continue;
             }
         };
@@ -171,7 +264,7 @@ fn collect_dir(
             let entry = match entry {
                 Ok(entry) => entry,
                 Err(error) => {
-                    unreadable.insert(directory.clone(), error.to_string());
+                    record_walk_error(unreadable, directory.clone(), error);
                     continue;
                 }
             };
@@ -179,7 +272,7 @@ fn collect_dir(
             let kind = match entry.file_type() {
                 Ok(kind) => kind,
                 Err(error) => {
-                    unreadable.insert(path, error.to_string());
+                    record_walk_error(unreadable, path, error);
                     continue;
                 }
             };
@@ -462,6 +555,7 @@ pub(crate) struct Core {
     #[cfg(test)]
     full_walk_pause: Mutex<Option<crate::store::TestPause>>,
     unreadable_dirs: Mutex<HashMap<PathBuf, String>>,
+    read_refusals: Mutex<HashMap<PathBuf, ReadRefusal>>,
     closed: AtomicBool,
     #[cfg(test)]
     pub(crate) recovery_reconcile_pause: Mutex<Option<crate::store::TestPause>>,
@@ -478,6 +572,12 @@ pub(crate) struct Core {
     /// Event-driven batches that took the full stat diff (GH #623 tests).
     #[cfg(test)]
     pub(crate) event_full_diffs: std::sync::atomic::AtomicUsize,
+    /// Files `announce_written_since_open` considered, and the duplicate
+    /// checks it made for them (GJ5 S8).
+    #[cfg(test)]
+    pub(crate) announce_candidates: std::sync::atomic::AtomicUsize,
+    #[cfg(test)]
+    pub(crate) announce_dedup_probes: std::sync::atomic::AtomicUsize,
     /// Drop every OS notification: a watch that installs but never reports
     /// (a network or FUSE mount a sync service writes to).
     #[cfg(test)]
@@ -488,6 +588,20 @@ pub(crate) struct Core {
 }
 
 impl Core {
+    /// Reconcile the paths an external writer raced an own write on. The
+    /// caller holds the writer.
+    pub(crate) fn reconcile_raced(&self, paths: &HashSet<PathBuf>) {
+        if !paths.is_empty() {
+            let _ = self.reconcile_locked(Some(paths), true, false, DiffTrigger::WatchEvent);
+            let mut snapshot = self.snapshot.lock().unwrap();
+            for path in paths {
+                if !self.tracks_in_snapshot(path) {
+                    snapshot.remove(path);
+                }
+            }
+        }
+    }
+
     /// Record the live-notification state on the change feed, which tells
     /// its subscriber (see `ChangeFeed::set_watch_refusal`).
     fn set_refusal(&self, now: Option<String>, restored: bool) {
@@ -543,21 +657,7 @@ impl Core {
     /// File lengths and name facts from the baseline: the shape statistics
     /// need no extra file reads. Numbers only; no path leaves this function.
     pub(crate) fn file_facts(&self) -> FileFacts {
-        let snapshot = self.snapshot.lock().unwrap();
-        let mut facts = FileFacts {
-            lens: Vec::with_capacity(snapshot.len()),
-            ..FileFacts::default()
-        };
-        for (path, value) in snapshot.iter() {
-            facts.lens.push(value.len);
-            facts.conflict_named += u64::from(tine_core::model::path_is_sync_conflict(path));
-            let stem_nfc = path
-                .file_stem()
-                .and_then(|stem| stem.to_str())
-                .is_none_or(unicode_normalization::is_nfc);
-            facts.non_nfc_named += u64::from(!stem_nfc);
-        }
-        facts
+        snapshot_file_facts(&self.snapshot.lock().unwrap())
     }
     fn file_id(&self, path: &Path) -> Option<FileId> {
         if let Ok(rel) = path.strip_prefix(&self.graph.assets_path()) {
@@ -736,6 +836,7 @@ impl Core {
                 raced.insert(path);
                 continue;
             }
+            self.graph.note_unsettled_read(&path, None);
             if tracked {
                 if let Some(value) = current.clone() {
                     snapshot.insert(path.clone(), value);
@@ -821,6 +922,7 @@ impl WatchHandle {
             #[cfg(test)]
             full_walk_pause: Mutex::new(None),
             unreadable_dirs: Mutex::new(HashMap::new()),
+            read_refusals: Mutex::new(HashMap::new()),
             closed: AtomicBool::new(false),
             #[cfg(test)]
             recovery_reconcile_pause: Mutex::new(None),
@@ -836,6 +938,10 @@ impl WatchHandle {
             force_mismatched_rev_once: AtomicBool::new(false),
             #[cfg(test)]
             event_full_diffs: std::sync::atomic::AtomicUsize::new(0),
+            #[cfg(test)]
+            announce_candidates: std::sync::atomic::AtomicUsize::new(0),
+            #[cfg(test)]
+            announce_dedup_probes: std::sync::atomic::AtomicUsize::new(0),
             #[cfg(test)]
             deaf: AtomicBool::new(false),
             #[cfg(feature = "test-faults")]
@@ -904,13 +1010,29 @@ impl WatchHandle {
                     *status = LoadStatus::Failed(format!("{error:?}"));
                     return Err(error);
                 }
-                self.core.changes.publish_with(
-                    Origin::External,
-                    Vec::new(),
-                    false,
-                    Vec::new(),
-                    || *self.core.load.status.lock().unwrap() = LoadStatus::Ready,
+                // The recovery publication rebuilds every index: the same
+                // containment as the first publication, so an index-stage
+                // panic the load already failed on fails this retry too
+                // instead of poisoning the writer (the window refreshes on
+                // every focus).
+                let published = crate::store::contain_index_publication(
+                    &self.core.graph,
+                    &self.core.load,
+                    || {
+                        self.core.changes.publish_with(
+                            Origin::External,
+                            Vec::new(),
+                            false,
+                            Vec::new(),
+                            || *self.core.load.status.lock().unwrap() = LoadStatus::Ready,
+                        );
+                    },
                 );
+                if !published {
+                    return Err(LoadError::Failed {
+                        reason: "graph publication stopped: an index build panicked".into(),
+                    });
+                }
                 self.core.load.ready.notify_all();
                 let _ = self.wake.send(());
                 // A stylesheet edited while the load was failed was never seen.
@@ -946,6 +1068,24 @@ impl WatchHandle {
         raced
     }
 
+    /// A held page's owner read `id` and found the bytes it already holds
+    /// (A-H1): that read's pre-read `stamp` becomes the file's observation,
+    /// as an unchanged publication's does, so a later read trusts it (and
+    /// an own save's racy stamp settles once read outside the window).
+    /// Only when the watcher's entry already carries the revision of those
+    /// bytes: otherwise the entry stays and the next read asks again.
+    /// Returns the paths that raced. The caller holds the writer.
+    pub(crate) fn note_confirmed(&self, id: FileId, stamp: Stamp) -> HashSet<PathBuf> {
+        let path = self.core.path_for_id(&id);
+        let snapshot = self.core.snapshot.lock().unwrap();
+        let indexed = snapshot.get(&path).and_then(|old| old.rev.clone());
+        drop(snapshot);
+        if indexed.is_none() || indexed != stamp.rev {
+            return HashSet::new();
+        }
+        self.note_own_observed(&[(id.clone(), indexed)], &HashMap::from([(id, stamp)]))
+    }
+
     /// The transaction's final bytes for this path are now the asset baseline,
     /// also when it was rolled back and published nothing (no external echo).
     pub(crate) fn settle_asset(&self, path: &Path) {
@@ -962,6 +1102,53 @@ impl WatchHandle {
     ) {
         self.core.graph.attach_spellings(spellings);
         *self.core.forward.lock().unwrap() = Some(forward);
+    }
+
+    /// Whether `now` (None: no file) shows `path` unchanged since the
+    /// watcher's last observation of it, which for a held page is its
+    /// owner's last indexed one (`note_own`; a forward leaves a retry
+    /// baseline): no file on either side, or [`reconcile::unchanged`]. One
+    /// map lookup. The caller holds the writer.
+    pub(crate) fn unchanged_since_observed(&self, path: &Path, now: Option<&Stamp>) -> bool {
+        let snapshot = self.core.snapshot.lock().unwrap();
+        match (snapshot.get(path), now) {
+            (None, None) => true,
+            (Some(old), Some(new)) => {
+                let racy = self.core.racy.lock().unwrap().contains(path);
+                reconcile::unchanged(old, new, racy, false)
+            }
+            _ => false,
+        }
+    }
+
+    /// Make `path`'s current metadata the owner's last observation, `racy`
+    /// or not: what a rewrite in the observation's time granule leaves on a
+    /// platform with coarse change times (GH #863 D2 tests).
+    #[cfg(test)]
+    pub(crate) fn forge_unchanged_observation_for_tests(&self, path: &Path, racy: bool) {
+        let metadata = fs::symlink_metadata(path).unwrap();
+        let mut stamp = stamp_from_metadata(&metadata).unwrap();
+        let mut snapshot = self.core.snapshot.lock().unwrap();
+        stamp.rev = snapshot.get(path).and_then(|old| old.rev.clone());
+        snapshot.insert(path.to_path_buf(), stamp);
+        let mut set = self.core.racy.lock().unwrap();
+        if racy {
+            set.insert(path.to_path_buf());
+        } else {
+            set.remove(path);
+        }
+    }
+
+    /// Ask held `key`'s owner to observe its file, as a reconcile's forward
+    /// does, telling `done` once that observation settled ([`Observed`]).
+    /// False when no owner is attached. The caller holds the writer.
+    pub(crate) fn forward_observed(&self, key: String, done: Observed) -> bool {
+        let forward = self.core.forward.lock().unwrap();
+        let Some(forward) = forward.as_ref() else {
+            return false;
+        };
+        forward(vec![key], Some(done));
+        true
     }
 
     /// Hand `key`'s index to its owner (STEP3 §5). The caller holds the
@@ -1040,21 +1227,11 @@ impl WatchHandle {
     }
 
     pub(crate) fn reconcile_raced(&self, paths: &HashSet<PathBuf>) {
-        if !paths.is_empty() {
-            let _ = self
-                .core
-                .reconcile_locked(Some(paths), true, false, DiffTrigger::WatchEvent);
-            let mut snapshot = self.core.snapshot.lock().unwrap();
-            for path in paths {
-                if !self.core.tracks_in_snapshot(path) {
-                    snapshot.remove(path);
-                }
-            }
-        }
+        self.core.reconcile_raced(paths);
     }
 
     /// Join the background watcher while keeping explicit refresh available.
-    #[cfg(test)]
+    #[cfg(any(test, feature = "test-faults"))]
     pub(crate) fn stop_background_for_test(&self) {
         self.stop();
         self.core.closed.store(false, Ordering::Release);
@@ -1063,7 +1240,7 @@ impl WatchHandle {
     pub(crate) fn stop(&self) {
         if !self.core.closed.swap(true, Ordering::AcqRel) {
             let _ = self.wake.send(());
-            if let Some(thread) = self.thread.lock().unwrap().take() {
+            if let Some(thread) = self.thread.lock().unwrap_or_else(|e| e.into_inner()).take() {
                 let _ = thread.join();
             }
         }
@@ -1342,6 +1519,98 @@ mod tests {
                 ("assets/pic.png", ChangeKind::Modified, true),
                 ("assets/sub/new.png", ChangeKind::Created, true),
             ]
+        );
+        store.close();
+        fs::remove_dir_all(root).unwrap();
+        true
+    }
+
+    /// REG-LOAD-FLAKY-DRAIN-BEFORE-INSTALL (REVIEW-3b-P2b-2 N3): a drain
+    /// requested while the watch is still being installed (a loaded host
+    /// starts the watcher thread late) wrote its sentinel before the root was
+    /// registered, so no notification of it ever came and the drain waited out
+    /// its deadline: `n3_*` saw "the fresh host settles" fail under load. The
+    /// installed watch adopts a sentinel already in the root, and answers it
+    /// only after a full diff that began after it, so every write made before
+    /// the request is reconciled first.
+    #[test]
+    fn a_drain_requested_before_the_watch_is_installed_is_answered() {
+        judged_despite_os_refusals(drain_before_install_attempt);
+    }
+
+    fn drain_before_install_attempt() -> bool {
+        let root = fs::canonicalize(temp_root("drain-before-install")).unwrap();
+        fs::write(root.join("pages/a.md"), "- a\n").unwrap();
+        let (store, _, _) = Store::open(
+            &root,
+            OpenOptions {
+                watch: WatchMode::Poll,
+                ..OpenOptions::default()
+            },
+        )
+        .unwrap();
+        store.whole_graph().unwrap();
+        let subscription = store.subscribe();
+        let statuses = Arc::new(Mutex::new(Vec::new()));
+        let sink = Arc::clone(&statuses);
+        subscription.observe_watch_status(move |status| {
+            sink.lock().unwrap().push(status);
+        });
+        let pause: crate::store::TestPause =
+            Arc::new((Mutex::new((false, false)), std::sync::Condvar::new()));
+        *store.watch.core.before_install_pause.lock().unwrap() = Some(Arc::clone(&pause));
+        store.watch.set_mode(WatchMode::Notify);
+        let (gate, ready) = &*pause;
+        let state = gate.lock().unwrap();
+        let (state, timeout) = ready
+            .wait_timeout_while(state, Duration::from_secs(10), |state| !state.0)
+            .unwrap();
+        assert!(
+            !timeout.timed_out(),
+            "watch installation did not reach the barrier"
+        );
+        drop(state);
+        // A write the drain must cover, made before the root is registered.
+        fs::write(root.join("pages/a.md"), "- before install\n").unwrap();
+        let drained = std::thread::scope(|scope| {
+            let watch = &store.watch;
+            let drain = scope.spawn(move || watch.drained_for_tests(Duration::from_secs(10)));
+            let deadline = Instant::now() + Duration::from_secs(10);
+            while !fs::read_dir(&root).unwrap().any(|entry| {
+                entry
+                    .unwrap()
+                    .file_name()
+                    .to_string_lossy()
+                    .starts_with(".tine-watch-drain-")
+            }) {
+                assert!(
+                    Instant::now() < deadline,
+                    "the drain never wrote its sentinel"
+                );
+                std::thread::sleep(Duration::from_millis(5));
+            }
+            *store.watch.core.before_install_pause.lock().unwrap() = None;
+            gate.lock().unwrap().1 = true;
+            ready.notify_all();
+            drain.join().unwrap()
+        });
+        let statuses = statuses.lock().unwrap().clone();
+        if os_refused(&statuses) {
+            // A refused watch polls, and a poll cycle answers every drain:
+            // only a registered watch can judge the gap.
+            store.close();
+            fs::remove_dir_all(root).unwrap();
+            return false;
+        }
+        assert!(
+            drained,
+            "N3: a drain requested before the watch was installed was never answered"
+        );
+        let id = PageId::from("pages/a.md");
+        assert_eq!(
+            store.page(&id).unwrap().doc.blocks[0].raw,
+            "before install",
+            "N3: the drain was answered before the write it covers was reconciled"
         );
         store.close();
         fs::remove_dir_all(root).unwrap();
@@ -1823,6 +2092,33 @@ mod tests {
         fs::remove_dir_all(root).unwrap();
     }
 
+    /// GJ5 S8: a launch right after a bulk write (a fresh clone, unzip,
+    /// restore or sync batch) announces every file written since open with
+    /// one duplicate check each, not one per file already announced (the
+    /// former scan was quadratic: 13,000 such files cost 1.5 s).
+    #[test]
+    fn announcing_files_written_since_open_is_linear() {
+        let root = temp_root("announce-linear");
+        fs::create_dir_all(root.join("pages")).unwrap();
+        const FILES: usize = 400;
+        for i in 0..FILES {
+            fs::write(root.join(format!("pages/P{i}.md")), format!("- page {i}\n")).unwrap();
+        }
+        let store = Store::open(&root, OpenOptions::default()).unwrap().0;
+        store.whole_graph().unwrap();
+        let core = store.watch.core_for_load();
+        let candidates = core.announce_candidates.load(Ordering::Relaxed);
+        let probes = core.announce_dedup_probes.load(Ordering::Relaxed);
+        // The files were written just before open, inside the racy window.
+        assert!(candidates >= FILES / 2, "only {candidates} files announced");
+        assert!(
+            probes <= candidates,
+            "{probes} duplicate checks for {candidates} announced files"
+        );
+        store.close();
+        fs::remove_dir_all(root).unwrap();
+    }
+
     /// GH #623, at the real watcher: a page save through the store is followed
     /// by no full stat diff of the graph.
     #[cfg(any(target_os = "linux", target_os = "windows"))]
@@ -1850,14 +2146,17 @@ mod tests {
             let read = store.page(&id).unwrap();
             let mut doc = read.doc;
             doc.blocks[0].raw = format!("edit {round}");
-            let mut tx = store.transaction(Some(crate::EditKind::ReplacePage));
+            let mut tx = store.page_plan(Some(crate::EditKind::ReplacePage));
             tx.save_page(
                 &[crate::EditKind::ReplacePage],
                 &id,
                 crate::SaveBase::Existing(read.rev),
                 &doc,
             );
-            assert!(matches!(tx.commit(), crate::TxOutcome::Committed { .. }));
+            assert!(matches!(
+                tx.commit_internal(),
+                crate::TxOutcome::Committed { .. }
+            ));
             std::thread::sleep(Duration::from_millis(600));
         }
         assert_eq!(
@@ -1904,6 +2203,14 @@ mod tests {
         let writer = store.writer.lock().unwrap();
         let core = store.watch.core_for_load();
         fs::write(&path, "- new content\n").unwrap();
+        // A persistent failure is announced only after the existing racy
+        // observation window. Fresh delivery failures are covered separately.
+        fs::File::options()
+            .write(true)
+            .open(&path)
+            .unwrap()
+            .set_modified(SystemTime::now() - Duration::from_secs(3600))
+            .unwrap();
         store
             .graph
             .fail_sync_read_once
@@ -2016,6 +2323,44 @@ mod tests {
                 "the release kept the owner's row over a change it forwarded"
             );
         }
+        store.close();
+        drop(store);
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    /// A path whose last observation failed keeps a retry baseline with
+    /// `len == u64::MAX`. The diagnostics dump summed it as a file size: two
+    /// such paths overflowed (a panic in debug builds, a wrapped `fileBytes`
+    /// in release ones). Seen as a flaky GH #811 sync-client test.
+    #[test]
+    fn diagnostics_skip_retry_baselines_in_file_sizes() {
+        let root = fs::canonicalize(temp_root("retry-diag")).unwrap();
+        fs::write(root.join("pages/a.md"), "- a\n").unwrap();
+        fs::write(root.join("pages/b.md"), "- bb\n").unwrap();
+        fs::write(root.join("pages/c.md"), "- ccc\n").unwrap();
+        let (store, _, _) = Store::open(
+            &root,
+            OpenOptions {
+                watch: WatchMode::Poll,
+                ..OpenOptions::default()
+            },
+        )
+        .unwrap();
+        store.whole_graph().unwrap();
+        // A copy: the live Poll watcher would rescan a retry baseline back
+        // to its real stamp before a loaded machine reached the assertion.
+        let mut snapshot = store.watch.core.snapshot.lock().unwrap().clone();
+        assert!(snapshot.len() >= 3, "the scan saw the pages");
+        for name in ["pages/a.md", "pages/b.md"] {
+            let path = root.join(name);
+            let before = snapshot.get(&path).cloned();
+            assert!(before.is_some(), "{name} is in the snapshot");
+            retry_baseline(&mut snapshot, &path, before.as_ref());
+        }
+        let mut lens = snapshot_file_facts(&snapshot).lens;
+        let bytes = crate::model::shape_stats::quantiles(&mut lens);
+        assert_eq!(bytes["max"].as_u64(), Some(6), "{bytes}");
+        assert_eq!(bytes["sum"].as_u64(), Some(6), "{bytes}");
         store.close();
         drop(store);
         fs::remove_dir_all(root).unwrap();

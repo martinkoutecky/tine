@@ -7,12 +7,21 @@ use io::Phase;
 use model_fs::{Fault, ModelFs};
 use serde_json::{json, Value};
 
+#[path = "conformance_creation.rs"]
+mod creation;
 #[path = "native_conformance_tests.rs"]
 mod native_conformance;
+#[path = "native_environment_tests.rs"]
+mod native_environment_tests;
+#[cfg(windows)]
+pub(super) use native_environment_tests::junction;
 
 /// Test physical environment; the native implementation independently checks
 /// the real paths after every production I/O phase. Power stays ModelFs-only.
 trait ConformanceIo: HostIo {
+    fn inject_env(&mut self, _phase: Phase, _k: usize, _step: model_fs::EnvStep) {
+        panic!("environment syscall replay is ModelFs-only until M3");
+    }
     fn native_create_refinement() -> bool {
         false
     }
@@ -28,6 +37,9 @@ trait ConformanceIo: HostIo {
 }
 
 impl ConformanceIo for ModelFs {
+    fn inject_env(&mut self, phase: Phase, k: usize, step: model_fs::EnvStep) {
+        self.inject_env(phase, k, step);
+    }
     fn fresh(profile: &str, count: usize) -> Self {
         let mut fs = Self {
             weak_graph: matches!(profile, "weak" | "all"),
@@ -105,20 +117,48 @@ struct Driver<F: ConformanceIo = ModelFs> {
     barriers: usize,
     actions: usize,
     twin_failures: usize,
+    owner_failures: usize,
     occupied_refusals: usize,
     queued_refusals: usize,
     effective_renames: usize,
     save_kind_refinements: usize,
     refinement_schedule: bool,
     twin_suffix: bool,
+    /// Scripted actions accepted as no-mutation stutters, by why the refined
+    /// oracle disabled them (`Driver::continuation`, F4), and action name.
+    stutters: BTreeMap<String, usize>,
+    /// Negative control: the next refusal of this action mutates a component.
+    refusal_mutant: Option<(&'static str, RefusalMutant)>,
+    /// Set when replay must end this trace at a lifecycle divergence.
+    truncated: Option<String>,
     stepped: bool,
     prepare_operations: bool,
     effect: Option<(String, Vec<Value>, u64, u64)>,
+    whole_retires: usize,
     /// Trash keys whose custody a save escaped (R-STORAGE-ERROR).
     escaped: BTreeMap<String, i64>,
     /// The next saveFail lands after this many system calls of its HostIo
     /// call instead of before the call (REVIEW-2b-r2 R1).
     cut: Option<usize>,
+}
+
+/// Everything a refusal must leave untouched.
+struct Untouched {
+    state: Value,
+    files: BTreeMap<String, Arc<[u8]>>,
+    stable: BTreeMap<String, Arc<[u8]>>,
+    version: u64,
+    versions: BTreeMap<(u64, u64), i64>,
+}
+
+/// The component a deliberately mutating refusal changes (negative control).
+#[derive(Clone, Copy, Debug)]
+enum RefusalMutant {
+    State,
+    Files,
+    Stable,
+    Version,
+    Versions,
 }
 
 impl Clone for Driver<ModelFs> {
@@ -153,15 +193,20 @@ impl<F: ConformanceIo> Driver<F> {
             barriers: 0,
             actions: 0,
             twin_failures: 0,
+            owner_failures: 0,
             occupied_refusals: 0,
             queued_refusals: 0,
             effective_renames: 0,
             save_kind_refinements: 0,
             refinement_schedule: false,
             twin_suffix: false,
+            stutters: BTreeMap::new(),
+            refusal_mutant: None,
+            truncated: None,
             stepped: false,
             prepare_operations: false,
             effect: None,
+            whole_retires: 0,
             escaped: BTreeMap::new(),
             cut: None,
         }
@@ -171,6 +216,7 @@ impl<F: ConformanceIo> Driver<F> {
         let h = &self.host;
         Some(Self {
             host: Host {
+                storage_diag: Arc::new(Default::default()),
                 custody: h.custody.clone(),
                 retire: h.retire.clone(),
                 custody_errors: h.custody_errors.clone(),
@@ -196,7 +242,6 @@ impl<F: ConformanceIo> Driver<F> {
                 events: h.events.clone(),
                 job: h.job.clone(),
                 worker: h.worker.clone(),
-                retained: h.retained.clone(),
                 order: h.order.clone(),
                 version: h.version,
                 wseq: h.wseq,
@@ -209,6 +254,7 @@ impl<F: ConformanceIo> Driver<F> {
                 alive: h.alive,
                 #[cfg(test)]
                 test: Default::default(),
+                paused_for_tests: BTreeSet::new(),
             },
             oracle: self.oracle.clone(),
             windows: self.windows.clone(),
@@ -222,15 +268,20 @@ impl<F: ConformanceIo> Driver<F> {
             barriers: self.barriers,
             actions: self.actions,
             twin_failures: self.twin_failures,
+            owner_failures: self.owner_failures,
             occupied_refusals: self.occupied_refusals,
             queued_refusals: self.queued_refusals,
             effective_renames: self.effective_renames,
             save_kind_refinements: self.save_kind_refinements,
             refinement_schedule: self.refinement_schedule,
             twin_suffix: self.twin_suffix,
+            stutters: self.stutters.clone(),
+            refusal_mutant: self.refusal_mutant,
+            truncated: self.truncated.clone(),
             stepped: self.stepped,
             prepare_operations: self.prepare_operations,
             effect: self.effect.clone(),
+            whole_retires: self.whole_retires,
             escaped: self.escaped.clone(),
             cut: self.cut,
         })
@@ -431,9 +482,9 @@ impl<F: ConformanceIo> Driver<F> {
                 "phase":match j.phase { SavePhase::Custody|SavePhase::Temp|SavePhase::Check=>1,
                     SavePhase::Marker|SavePhase::Rename=>2,SavePhase::TrashSync|SavePhase::DirectorySync=>3 },"ep":j.epoch})
         );
-        let disk = |files: &BTreeMap<String, Arc<[u8]>>| -> Vec<_> {
+        let disk = |durable| -> Vec<_> {
             (0..self.windows.len())
-                .map(|p| label(&files.get(&format!("graph/{}", key(p))).cloned()))
+                .map(|p| label(&self.host.fs.physical().alpha(&key(p), durable)))
                 .collect()
         };
         let trash = |files| self.trash_labels(files);
@@ -441,7 +492,12 @@ impl<F: ConformanceIo> Driver<F> {
             .host
             .order
             .view()
-            .map(|(dst, src, versions, open)| {
+            .map(|(moves, versions, open)| {
+                // The model's gate is one move (storage-s35 `Gate`); the
+                // scheduler drives no operation with more (S2-DESIGN Q1).
+                let [(dst, src)] = moves else {
+                    panic!("a conformance gate with {} moves", moves.len())
+                };
                 let vers: Vec<_> = (0..self.windows.len())
                     .map(|p| versions.get(&key(p)).map_or(NONE, |v| self.version(*v)))
                     .collect();
@@ -449,8 +505,8 @@ impl<F: ConformanceIo> Driver<F> {
                 json!({"dst":index(dst),"src":index(src),"vers":vers,"open":open})
             })
             .collect();
-        json!({"alive":self.host.alive,"claimed":self.claims(),"gates":gates,"disk":disk(&self.host.fs.physical().files),
-            "stable":disk(&self.host.fs.physical().stable),"drafts":records,"pages":pages,
+        json!({"alive":self.host.alive,"claimed":self.claims(),"gates":gates,"disk":disk(false),
+            "stable":disk(true),"drafts":records,"pages":pages,
             "mb":mail,"up":up,"job":job,"w":self.windows,
             "trash":trash(&self.host.fs.physical().files),"trashStable":trash(&self.host.fs.physical().stable)})
     }
@@ -496,8 +552,110 @@ impl<F: ConformanceIo> Driver<F> {
         }
     }
 
+    /// Why a scripted action the oracle disables may still replay as a
+    /// stutter in which Host refuses and changes nothing (F4). Only a random
+    /// trace (`refinement_schedule`) whose oracle already took a declared
+    /// alternative qualifies: its script was generated for the unrefined
+    /// successor, so a later action can be disabled in the refined one (a
+    /// twin saveFail leaves the page dirty and unpublished, so the script's
+    /// later delete of it is Unsaved). Before any alternative the oracle
+    /// equals the Quint trace (`page_state::tests`), so there a disabled
+    /// action fails replay. Callers accept only listed action kinds, after
+    /// the host's own refusal and `assert_untouched`.
+    fn continuation(&self) -> Option<&'static str> {
+        if !self.refinement_schedule {
+            None
+        } else if self.queued_refusals > 0 || self.occupied_refusals > 0 {
+            Some("refusal-continuation")
+        } else if self.twin_failures > 0 || self.owner_failures > 0 {
+            Some("twin-continuation")
+        } else {
+            None
+        }
+    }
+
+    fn accept_stutter(&mut self, kind: &str, name: &str) -> bool {
+        *self.stutters.entry(format!("{kind}/{name}")).or_default() += 1;
+        self.actions += 1;
+        true
+    }
+
+    fn untouched(&self) -> Untouched {
+        Untouched {
+            state: self.abstract_state(),
+            files: self.host.fs.physical().files.clone(),
+            stable: self.host.fs.physical().stable.clone(),
+            version: self.host.version,
+            versions: self.versions.clone(),
+        }
+    }
+
+    fn assert_untouched(&self, before: &Untouched, context: &str) {
+        assert_eq!(
+            self.abstract_state(),
+            before.state,
+            "{context}: refusal changed host state"
+        );
+        let physical = self.host.fs.physical();
+        assert_eq!(
+            physical.files, before.files,
+            "{context}: refusal changed files"
+        );
+        assert_eq!(
+            physical.stable, before.stable,
+            "{context}: refusal changed stable files"
+        );
+        assert_eq!(
+            self.host.version, before.version,
+            "{context}: refusal changed the host version"
+        );
+        assert_eq!(
+            self.versions, before.versions,
+            "{context}: refusal changed recorded versions"
+        );
+    }
+
+    /// Negative control (F4): the armed action's refusal changes one
+    /// component anyway, as a host that refused but still wrote would.
+    fn mutate_refusal(&mut self, name: &str) {
+        let Some((_, mutant)) = self.refusal_mutant.filter(|(armed, _)| *armed == name) else {
+            return;
+        };
+        self.refusal_mutant = None;
+        let mark = || Arc::from(&b"mutant"[..]);
+        match mutant {
+            RefusalMutant::State => {
+                let page = self.host.pages.values_mut().next().expect("a held page");
+                page.risk = !page.risk;
+            }
+            RefusalMutant::Files => {
+                self.host
+                    .fs
+                    .physical_mut()
+                    .files
+                    .insert("mutant".into(), mark());
+            }
+            RefusalMutant::Stable => {
+                self.host
+                    .fs
+                    .physical_mut()
+                    .stable
+                    .insert("mutant".into(), mark());
+            }
+            RefusalMutant::Version => self.host.version += 1,
+            RefusalMutant::Versions => {
+                self.versions.insert((u64::MAX, u64::MAX), 0);
+            }
+        }
+    }
+
     fn compare(&mut self, context: &str) {
         let actual = self.abstract_state();
+        self.compare_projection(&actual, context);
+    }
+
+    fn compare_projection(&mut self, actual: &Value, context: &str) {
+        self.host.fs.physical().assert_no_escapes();
         let expected = self.oracle.state();
         for (name, value) in actual.as_object().unwrap() {
             if matches!(name.as_str(), "trash" | "trashStable") {
@@ -549,8 +707,9 @@ impl<F: ConformanceIo> Driver<F> {
     /// The binding registers a key when the window opens it or an operation
     /// names it (STEP3 §2), in trace order, not key order.
     fn register(&mut self, p: usize) {
+        let spelling = self.host.fs.spelling(&key(p));
         self.host
-            .register(key(p), &key(p), Arc::new(Mutex::new(())));
+            .register(key(p), &spelling, Arc::new(Mutex::new(())));
     }
 
     /// A process fault ends the binding: the next one registers afresh,
@@ -665,9 +824,17 @@ impl<F: ConformanceIo> Driver<F> {
         }
         let root = tempfile::tempdir().unwrap();
         native_conformance::write_pages(self.host.fs.physical(), &root.path().join("pages"));
-        let store = crate::Store::open(root.path(), Default::default())
-            .unwrap()
-            .0;
+        // This immutable projection needs the initial load and real binding
+        // predicate, with no notification watcher or its shutdown wait.
+        let store = crate::Store::open(
+            root.path(),
+            crate::OpenOptions {
+                watch: crate::WatchMode::Poll,
+                ..Default::default()
+            },
+        )
+        .unwrap()
+        .0;
         let refusal = binding::creation_refusal(&store, &creations);
         store.close();
         refusal
@@ -760,9 +927,11 @@ impl<F: ConformanceIo> Driver<F> {
             .iter()
             .map(|(&p, &t)| (key(p), (text(t), text(plan[&p]))))
             .collect();
-        let ends = (dst != NONE).then(|| (key(dst as usize), key(src as usize)));
-        let moved = ends.as_ref().map(|(d, s)| (d.as_str(), s.as_str()));
-        match self.host.apply(&effects, moved) {
+        let moves: Vec<_> = (dst != NONE)
+            .then(|| (key(dst as usize), key(src as usize)))
+            .into_iter()
+            .collect();
+        match self.host.apply(&effects, &moves) {
             Disposition::Refused | Disposition::Disabled => Err(ApplyRefusal::Changed),
             Disposition::Waiting => Err(ApplyRefusal::Busy),
             disposition => Ok(disposition),
@@ -971,6 +1140,8 @@ impl<F: ConformanceIo> Driver<F> {
     }
 }
 
+#[path = "conformance_environment_tests.rs"]
+mod environment_tests;
 #[path = "scheduler.rs"]
 mod scheduler;
 #[path = "conformance_step.rs"]

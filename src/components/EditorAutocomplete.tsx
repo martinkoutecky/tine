@@ -20,7 +20,7 @@ export function EditorAutocomplete<T extends { label: string; sub?: string }>(pr
     queueMicrotask(() => list?.querySelector(".ac-item.active")?.scrollIntoView({ block: "nearest" }));
   });
   return <FloatingPortal>
-    <div class="autocomplete" ref={(element) => { list = element; props.listRef(element); }} data-lenis-prevent style={props.style}>
+    <div class="autocomplete" ref={(element) => { list = element; props.listRef(element); }} data-pane-focus-neutral data-lenis-prevent style={props.style}>
       <Show when={props.blockState === "pending"}><div class="ac-item" role="status">{t("editor-autocomplete-searching")}</div></Show>
       <Show when={props.blockState === "error"}>
         <div class="ac-item" role="alert">{t("editor-autocomplete-couldn-t-load-blocks")}<button type="button"

@@ -7,7 +7,7 @@ import { remote } from "webdriverio";
 import { ensureMainWindow } from "./lib/e2e-main-window.mjs";
 
 const root = path.resolve(import.meta.dirname, "..");
-const testedCommit = execFileSync("rtk", ["proxy", "git", "rev-parse", "HEAD"], { cwd: root, encoding: "utf8" }).trim();
+const testedCommit = execFileSync("git", ["rev-parse", "HEAD"], { cwd: root, encoding: "utf8" }).trim();
 const selectionProofs = [];
 const out = process.env.E2E_ARTIFACT_DIR ?? path.join(root, "artifacts/sw-r2-residue/native");
 fs.mkdirSync(out, { recursive: true });
@@ -126,7 +126,7 @@ try {
   fs.writeFileSync(path.join(out, "result.json"), JSON.stringify({ outcome: "pass", testedCommit, graph, savedId, selectionProofs }, null, 2));
 } catch (error) {
   if (browser) { try { fs.writeFileSync(path.join(out, "failure-dom.html"), await browser.execute(() => document.documentElement.outerHTML)); } catch {} }
-  try { execFileSync("rtk", ["proxy", "import", "-window", "root", path.join(out, "failure.png")]); } catch {}
+  try { execFileSync("import", ["-window", "root", path.join(out, "failure.png")]); } catch {}
   fs.writeFileSync(path.join(out, "result.json"), JSON.stringify({ outcome: "fail", testedCommit, classification: "ambiguous", expected: stage, observed: String(error), graph, selectionProofs }, null, 2));
   throw error;
 } finally {

@@ -15,11 +15,12 @@
  *   know the listeners. */
 import { createSignal } from "solid-js";
 import { captureBinding, bindingCurrent } from "../binding";
-import { blockExternalId, blockWritable, clearSelection, ensureBlockId, extendSelectionTo, insertOutlineAfter, insertOutlineBefore, insertOutlineChildren, moveBlocksRelative, selectBlock, selectedIds, node as docNode, type OutlineScope } from "../document";
+import { blockExternalId, blockWritable, clearSelection, ensureBlockId, extendSelectionTo, hasSelection, selectionScope, insertOutlineAfter, insertOutlineBefore, insertOutlineChildren, moveBlocksRelative, selectBlock, selectedIds, node as docNode, type OutlineScope } from "../document";
 import { msg } from "../i18n";
 import { pushToast } from "../toasts";
-import { endEdit, startEditing } from "../editorController";
+import { editingId, endEdit, startEditing } from "../editorController";
 import { dropSelection, setDragSelectionSuppressed } from "../dragSelectionGuard";
+import { EDGE_ZONE_PX, PRESS_ZONE_PX, scrollHome, startEdgeAutoscroll, type EdgeAutoscroll } from "../edgeAutoscroll";
 import { codeFences } from "../editor/fences";
 import { codeBodyProjection } from "../editor/codeFence";
 import { blockDropPosition, type BlockDropPosition } from "../editor/blockDrag";
@@ -27,42 +28,8 @@ import { textareaCaretPoints } from "../editor/caretRows";
 import { BUILTIN_HIDE, splitProps } from "../editor/properties";
 import { clickBeyondRenderedEnd, codeCardOffsetFromRange, editorOffsetFromRenderedRange } from "../render/spans";
 import { documentOf, isElementTag } from "../windowRealm";
-
-// A single document listener routes native selection to its rendered owner.
-// Long journal feeds must not run one handler per block on every handle move.
-const renderedSelectionOwners = new WeakMap<Document, {
-  roots: Map<HTMLElement, () => void>;
-  listener: () => void;
-}>();
-
-export function registerRenderedSelection(root: HTMLElement, transfer: () => void): () => void {
-  const doc = root.ownerDocument;
-  let owners = renderedSelectionOwners.get(doc);
-  if (!owners) {
-    const roots = new Map<HTMLElement, () => void>();
-    const listener = () => {
-      const selection = doc.getSelection();
-      if (!selection || selection.isCollapsed || selection.rangeCount !== 1) return;
-      const node = selection.getRangeAt(0).startContainer;
-      const element = node.nodeType === 1 ? node as Element : node.parentElement;
-      const owner = element?.closest<HTMLElement>(".block-content");
-      if (owner) roots.get(owner)?.();
-    };
-    owners = { roots, listener };
-    renderedSelectionOwners.set(doc, owners);
-    doc.addEventListener("selectionchange", listener);
-  }
-  const registry = owners;
-  registry.roots.set(root, transfer);
-  return () => {
-    registry.roots.delete(root);
-    if (registry.roots.size === 0) {
-      doc.removeEventListener("selectionchange", registry.listener);
-      renderedSelectionOwners.delete(doc);
-    }
-  };
-}
-
+import { rowHostOf, rowPositionOf } from "./block/embedRowHost";
+import { threadRootOf } from "../document";
 
 // Pointer-based drag reorder (HTML5 DnD is unreliable in WebKitGTK).
 const [dragId, setDragId] = createSignal<string | null>(null);
@@ -79,12 +46,32 @@ export function bulletDragMoved(): boolean {
 export { dragId, dropInd };
 
 export function beginDrag(id: string, e: MouseEvent) {
+  if (threadRootOf(id) !== null) return;
   const binding = captureBinding(), startX = e.clientX;
   const startY = e.clientY;
   // The drag's own window: listeners and hit tests follow the pointer's document.
   const doc = documentOf(e);
   let capturedIds: string[] | null = null;
+  const home = scrollHome(e.target);
+  // Edge autoscroll (GH #731): the pointer-driven drag gets no native DnD scroll.
+  let autoscroll: EdgeAutoscroll | null = null;
   dragMoved = false;
+  // The drop indicator under a hit point: the pointer's, or the one the
+  // autoscroll reports after it scrolled the content under a still pointer.
+  const track = (x: number, y: number) => {
+    const el = (doc.elementFromPoint(x, y) as HTMLElement | null)?.closest(".ls-block") as HTMLElement | null;
+    const tid = el?.dataset.blockId;
+    if (tid && threadRootOf(tid) === null) {
+      const main = el!.querySelector(".block-main")!.getBoundingClientRect();
+      const position = blockDropPosition(x, y, el!.getBoundingClientRect(), main);
+      // A whole-block embed's root row sits where its host does: a drop beside
+      // it lands beside the host; a child drop joins the source's children.
+      const host = position === "child" ? null : rowHostOf(el);
+      setDropInd({ id: host?.id ?? tid, position });
+    } else {
+      setDropInd(null);
+    }
+  };
   const onMove = (ev: MouseEvent) => {
     if (!dragMoved && Math.hypot(ev.clientX - startX, ev.clientY - startY) < 4) return;
     if (!dragMoved) {
@@ -98,26 +85,23 @@ export function beginDrag(id: string, e: MouseEvent) {
       // selection drag from the bullet and paints every block the pointer
       // crosses blue (GH #424, macOS; Chromium does not do this).
       setDragSelectionSuppressed(true, doc);
+      autoscroll = startEdgeAutoscroll(doc, (x, y) => {
+        dropSelection(doc);
+        track(x, y);
+      }, home);
     }
     // WebKit can re-anchor a selection mid-drag; the class alone is not enough.
     dropSelection(doc);
-    const el = (doc.elementFromPoint(ev.clientX, ev.clientY) as HTMLElement | null)?.closest(
-      ".ls-block"
-    ) as HTMLElement | null;
-    const tid = el?.dataset.blockId;
-    if (tid) {
-      const main = el!.querySelector(".block-main")!.getBoundingClientRect();
-      setDropInd({
-        id: tid,
-        position: blockDropPosition(ev.clientX, ev.clientY, el!.getBoundingClientRect(), main),
-      });
-    } else {
-      setDropInd(null);
-    }
+    // Past the window with no scroller to push on, keep the raw pointer: a drop
+    // outside the window still cancels, as with OG's native drag.
+    const hit = autoscroll?.update(ev.clientX, ev.clientY);
+    if (hit?.edge) track(hit.x, hit.y);
+    else track(ev.clientX, ev.clientY);
   };
   const onUp = (ev: MouseEvent) => {
     doc.removeEventListener("mousemove", onMove);
     doc.removeEventListener("mouseup", onUp);
+    autoscroll?.stop();
     setDragSelectionSuppressed(false);
     const ind = dropInd();
     if (bindingCurrent(binding) && dragMoved && ind && docNode(ind.id)) {
@@ -183,16 +167,13 @@ interface EditGesture {
   startX: number;
   startY: number;
   escalated: boolean;
-  outlineScope: OutlineScope | null;
   /** Caret stops of the mounted textarea, measured lazily on the first in-block
    *  drag move (undefined = not yet measured, null = no layout available). */
   caretPoints: Array<{ x: number; y: number }> | null | undefined;
 }
 
-function blockIdAtPoint(doc: Document, x: number, y: number): string | null {
-  const el = doc.elementFromPoint(x, y);
-  const row = el?.closest?.(".ls-block");
-  return row?.getAttribute("data-block-id") ?? null;
+function rowAtPoint(doc: Document, x: number, y: number): Element | null {
+  return doc.elementFromPoint(x, y)?.closest?.(".ls-block") ?? null;
 }
 
 export function beginEditGesture(
@@ -202,6 +183,32 @@ export function beginEditGesture(
   owner: string | null,
   outlineScope: OutlineScope | null,
 ): void {
+  // A selection over a whole-block embed's root row selects its host, and never
+  // extends from there into the source rows inside it (D-20261030-EMB).
+  const startRow = (e.target as Element | null)?.closest?.(".ls-block");
+  const startHost = rowHostOf(startRow);
+  const anchor = startHost ?? { id: blockId, scope: outlineScope };
+  if (e.shiftKey) {
+    const editing = editingId();
+    if (!editing && !hasSelection()) return;
+    // OG block.cljs block-content-on-mouse-down: suppress native text
+    // selection, leave editing and highlight the complete block range (#924).
+    e.preventDefault();
+    dropSelection(e);
+    if (editing) {
+      // The editing row's own outline (an embed's rows sit in the embed's scope),
+      // so a click outside that outline cannot extend across it.
+      const row = documentOf(e).activeElement?.closest(".ls-block");
+      const from = rowPositionOf(row) ?? { id: editing, scope: outlineScope };
+      selectBlock(from.id, from.scope);
+    }
+    // Never across an outline boundary: an unscoped selection must not run into an
+    // embed's rows (it would take the source parent with it), nor out of one.
+    if (selectionScope() !== anchor.scope) return;
+    extendSelectionTo(anchor.id, anchor.scope);
+    return;
+  }
+  const home = scrollHome(e.target); // before the press re-renders its target
   clearSelection(); // a plain gesture replaces any active block selection (shift-click returns before this)
   const g: EditGesture = {
     blockId,
@@ -210,7 +217,6 @@ export function beginEditGesture(
     startX: e.clientX,
     startY: e.clientY,
     escalated: false,
-    outlineScope,
     caretPoints: undefined,
   };
   // The old rendered target is replaced synchronously. Prevent its native
@@ -220,13 +226,17 @@ export function beginEditGesture(
   startEditing(g.blockId, g.offset, g.owner);
   // The gesture's own window: listeners and hit tests follow the pointer's document.
   const doc = documentOf(e);
-  const onMove = (ev: MouseEvent) => {
-    const moved =
-      Math.abs(ev.clientX - g.startX) > DRAG_THRESHOLD_PX || Math.abs(ev.clientY - g.startY) > DRAG_THRESHOLD_PX;
-    if (!moved) return;
-    const over = blockIdAtPoint(doc, ev.clientX, ev.clientY);
+  // Edge autoscroll (GH #731): this press was preventDefault-ed, so there is no
+  // native selection to scroll the page. `step` runs at the pointer's hit
+  // point, or at the one the autoscroll reports after it scrolled the content
+  // under a still pointer.
+  let autoscroll: EdgeAutoscroll | null = null;
+  const step = (px: number, py: number) => {
+    const row = rowAtPoint(doc, px, py);
+    const over = row?.getAttribute("data-block-id") ?? null;
+    const overSelection = startHost && row !== startRow && startRow?.contains(row) ? null : rowHostOf(row)?.id ?? over;
     if (g.escalated) {
-      if (over) extendSelectionTo(over, g.outlineScope);
+      if (overSelection) extendSelectionTo(overSelection, anchor.scope);
       return;
     }
     if (over === g.blockId) {
@@ -242,8 +252,8 @@ export function beginEditGesture(
         const points = g.caretPoints;
         if (points?.length) {
           const rect = active.getBoundingClientRect();
-          const x = ev.clientX - rect.left + active.scrollLeft;
-          const y = ev.clientY - rect.top + active.scrollTop;
+          const x = px - rect.left + active.scrollLeft;
+          const y = py - rect.top + active.scrollTop;
           const lineHeight = parseFloat(getComputedStyle(active).lineHeight) || 26;
           let best = 0;
           let bestScore = Infinity;
@@ -265,19 +275,30 @@ export function beginEditGesture(
       }
       return;
     }
-    if (over && over !== g.blockId) {
+    if (over && over !== g.blockId && overSelection) {
       // Crossed into another block: escalate to block selection for the rest of
       // the gesture (never de-escalate — flipping modes mid-drag is jarring).
       g.escalated = true;
       endEdit("select-block");
       doc.getSelection()?.removeAllRanges();
-      selectBlock(g.blockId, g.outlineScope);
-      extendSelectionTo(over, g.outlineScope);
+      selectBlock(anchor.id, anchor.scope);
+      extendSelectionTo(overSelection!, anchor.scope);
     }
+  };
+  const onMove = (ev: MouseEvent) => {
+    const moved =
+      Math.abs(ev.clientX - g.startX) > DRAG_THRESHOLD_PX || Math.abs(ev.clientY - g.startY) > DRAG_THRESHOLD_PX;
+    if (!moved) return;
+    autoscroll ??= startEdgeAutoscroll(doc, step, home);
+    // A press that may still be a click or an in-block selection only scrolls
+    // when pushed against the edge; once it is a block selection, the full zone.
+    const hit = autoscroll.update(ev.clientX, ev.clientY, undefined, g.escalated ? EDGE_ZONE_PX : PRESS_ZONE_PX);
+    step(hit.x, hit.y);
   };
   const onUp = (ev: MouseEvent) => {
     doc.removeEventListener("mousemove", onMove, true);
     doc.removeEventListener("mouseup", onUp, true);
+    autoscroll?.stop();
     if (g.escalated) return; // block selection stands
   };
   doc.addEventListener("mousemove", onMove, true);

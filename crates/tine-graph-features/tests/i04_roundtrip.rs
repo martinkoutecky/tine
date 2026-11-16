@@ -17,8 +17,10 @@ fn merge_source_preamble_survives_in_lsdoc_tree() {
     )
     .unwrap();
     fs::write(root.join("pages/dst.md"), b"alias:: Destination\n- kept\n").unwrap();
-    let store = Store::open(&root, Default::default()).unwrap().0;
-    pages::merge_pages(&store, None, "pages/src.md", "pages/dst.md").unwrap();
+    let store = std::sync::Arc::new(Store::open(&root, Default::default()).unwrap().0);
+    let host = crate::test_host(&store);
+    pages::merge_pages(&store, &host, "pages/src.md", "pages/dst.md").unwrap();
+    drop(host);
     let bytes = fs::read_to_string(root.join("pages/dst.md")).unwrap();
     let projection = lsdoc::parse_format(&bytes, "md");
     let tree = serde_json::to_string(&projection).unwrap();
@@ -101,15 +103,13 @@ fn save_and_restore_emit_parseable_page_trees() {
 
     let snapshot = root.join("snapshot.md");
     fs::write(&snapshot, b"title:: Restored\n- restored body [[Saved]]\n").unwrap();
-    let source = fs::File::open(&snapshot).unwrap();
     store
         .restore(
             tine_store::EditKind::ReplacePage,
             vec![RestoreFile {
                 area: Area::Pages,
                 rel: "Restored.md".into(),
-                len: source.metadata().unwrap().len(),
-                source,
+                bytes: fs::read(&snapshot).unwrap(),
             }],
             None,
         )

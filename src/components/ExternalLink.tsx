@@ -37,7 +37,7 @@ export async function openOutboundLink(dest: string, graphScoped = true): Promis
     if (scheme && !DIRECT_SCHEMES.has(scheme)) {
       const answer = await readOwned(owner, backend().confirm(
         t("links-open-custom-scheme-confirm", { scheme, url: dest }),
-        t("links-open-custom-scheme-title", { scheme }),
+        { title: t("links-open-custom-scheme-title", { scheme }), okLabel: t("confirm-open-link"), cancelLabel: t("confirm-cancel") },
       ));
       if (answer.kind === "stale" || !answer.value) return;
       await readOwned(owner, backend().openExternal(dest, scheme));

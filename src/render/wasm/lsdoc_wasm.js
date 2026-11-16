@@ -1,6 +1,18 @@
 /* @ts-self-types="./lsdoc_wasm.d.ts" */
 
 /**
+ * Parser-boundary negative-only prefilter; true still needs drawer ownership.
+ * @param {string} raw
+ * @returns {boolean}
+ */
+function __tine_raw_block_may_have_logbook(raw) {
+    const ptr0 = passStringToWasm0(raw, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+    const len0 = WASM_VECTOR_LEN;
+    const ret = wasm.block_may_have_logbook(ptr0, len0);
+    return ret !== 0;
+}
+
+/**
  * Native group-field grammar: O(value bytes), no I/O; invalid tokens return null.
  * @param {string} value
  * @returns {string | undefined}
@@ -9,6 +21,26 @@ function __tine_raw_canonical_group_field(value) {
     const ptr0 = passStringToWasm0(value, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
     const len0 = WASM_VECTOR_LEN;
     const ret = wasm.canonical_group_field(ptr0, len0);
+    let v2;
+    if (ret[0] !== 0) {
+        v2 = getStringFromWasm0(ret[0], ret[1]).slice();
+        wasm.__wbindgen_free(ret[0], ret[1] * 1, 1);
+    }
+    return v2;
+}
+
+/**
+ * The same own-property discriminator that editor_text uses to hide comment metadata.
+ * @param {string} properties
+ * @returns {string | undefined}
+ */
+function __tine_raw_comment_quote(properties) {
+    const ptr0 = passStringToWasm0(properties, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+    const len0 = WASM_VECTOR_LEN;
+    const ret = wasm.comment_quote(ptr0, len0);
+    if (ret[3]) {
+        throw takeFromExternrefTable0(ret[2]);
+    }
     let v2;
     if (ret[0] !== 0) {
         v2 = getStringFromWasm0(ret[0], ret[1]).slice();
@@ -89,34 +121,40 @@ function __tine_raw_editor_offset_of_raw(raw, is_org, regions, policy, raw_utf16
 }
 
 /**
- * Editor text plus hidden lines back to raw (`editor_text::join_with`); the
- * regions are the window's cached ones for exactly `visible` (read for Org).
+ * Editor text plus hidden lines back to raw (`editor_text::join_with`), with
+ * optional exact source for metadata-preserving text-only edits.
  * @param {string} visible
  * @param {string} hidden
  * @param {boolean} is_org
  * @param {any} visible_regions
+ * @param {string | null} [source]
+ * @param {string | null} [policy]
  * @returns {string}
  */
-function __tine_raw_editor_text_join(visible, hidden, is_org, visible_regions) {
-    let deferred4_0;
-    let deferred4_1;
+function __tine_raw_editor_text_join(visible, hidden, is_org, visible_regions, source, policy) {
+    let deferred6_0;
+    let deferred6_1;
     try {
         const ptr0 = passStringToWasm0(visible, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
         const len0 = WASM_VECTOR_LEN;
         const ptr1 = passStringToWasm0(hidden, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
         const len1 = WASM_VECTOR_LEN;
-        const ret = wasm.editor_text_join(ptr0, len0, ptr1, len1, is_org, visible_regions);
-        var ptr3 = ret[0];
-        var len3 = ret[1];
+        var ptr2 = isLikeNone(source) ? 0 : passStringToWasm0(source, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+        var len2 = WASM_VECTOR_LEN;
+        var ptr3 = isLikeNone(policy) ? 0 : passStringToWasm0(policy, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+        var len3 = WASM_VECTOR_LEN;
+        const ret = wasm.editor_text_join(ptr0, len0, ptr1, len1, is_org, visible_regions, ptr2, len2, ptr3, len3);
+        var ptr5 = ret[0];
+        var len5 = ret[1];
         if (ret[3]) {
-            ptr3 = 0; len3 = 0;
+            ptr5 = 0; len5 = 0;
             throw takeFromExternrefTable0(ret[2]);
         }
-        deferred4_0 = ptr3;
-        deferred4_1 = len3;
-        return getStringFromWasm0(ptr3, len3);
+        deferred6_0 = ptr5;
+        deferred6_1 = len5;
+        return getStringFromWasm0(ptr5, len5);
     } finally {
-        wasm.__wbindgen_free(deferred4_0, deferred4_1, 1);
+        wasm.__wbindgen_free(deferred6_0, deferred6_1, 1);
     }
 }
 
@@ -224,14 +262,17 @@ function __tine_raw_header_tokens_json(raw, is_org) {
  * Whether hide `policy` hides property `key` (`HidePolicy::hides`).
  * @param {string} policy
  * @param {string} key
+ * @param {string} properties
  * @returns {boolean}
  */
-function __tine_raw_hide_policy_hides(policy, key) {
+function __tine_raw_hide_policy_hides(policy, key, properties) {
     const ptr0 = passStringToWasm0(policy, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
     const len0 = WASM_VECTOR_LEN;
     const ptr1 = passStringToWasm0(key, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
     const len1 = WASM_VECTOR_LEN;
-    const ret = wasm.hide_policy_hides(ptr0, len0, ptr1, len1);
+    const ptr2 = passStringToWasm0(properties, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+    const len2 = WASM_VECTOR_LEN;
+    const ret = wasm.hide_policy_hides(ptr0, len0, ptr1, len1, ptr2, len2);
     if (ret[2]) {
         throw takeFromExternrefTable0(ret[1]);
     }
@@ -240,6 +281,18 @@ function __tine_raw_hide_policy_hides(policy, key) {
 
 function __tine_raw_install_panic_hook() {
     wasm.install_panic_hook();
+}
+
+/**
+ * OG built-ins excluded from default query-table property columns.
+ * @param {string} key
+ * @returns {boolean}
+ */
+function __tine_raw_is_og_built_in_property(key) {
+    const ptr0 = passStringToWasm0(key, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+    const len0 = WASM_VECTOR_LEN;
+    const ret = wasm.is_og_built_in_property(ptr0, len0);
+    return ret !== 0;
 }
 
 /**
@@ -259,14 +312,15 @@ function __tine_raw_is_query_macro_name(name) {
  * answerer the static export also asks). O(key bytes + hidden keys), no I/O.
  * @param {string} key
  * @param {string[]} user_hidden
+ * @param {boolean} pre_block
  * @returns {boolean}
  */
-function __tine_raw_is_render_hidden_prop(key, user_hidden) {
+function __tine_raw_is_render_hidden_prop(key, user_hidden, pre_block) {
     const ptr0 = passStringToWasm0(key, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
     const len0 = WASM_VECTOR_LEN;
     const ptr1 = passArrayJsValueToWasm0(user_hidden, wasm.__wbindgen_malloc);
     const len1 = WASM_VECTOR_LEN;
-    const ret = wasm.is_render_hidden_prop(ptr0, len0, ptr1, len1);
+    const ret = wasm.is_render_hidden_prop(ptr0, len0, ptr1, len1, pre_block);
     return ret !== 0;
 }
 
@@ -306,28 +360,25 @@ function __tine_raw_linkable_property_names(value, is_org) {
 /**
  * @param {string} raw
  * @param {boolean} is_org
- * @param {string} old_marker
- * @param {string} new_marker
+ * @param {string} old_raw
  * @param {boolean} enabled
  * @param {boolean} with_seconds
  * @returns {string}
  */
-function __tine_raw_logbook_apply_marker_transition(raw, is_org, old_marker, new_marker, enabled, with_seconds) {
-    let deferred4_0;
-    let deferred4_1;
+function __tine_raw_logbook_apply_marker_transition(raw, is_org, old_raw, enabled, with_seconds) {
+    let deferred3_0;
+    let deferred3_1;
     try {
         const ptr0 = passStringToWasm0(raw, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
         const len0 = WASM_VECTOR_LEN;
-        const ptr1 = passStringToWasm0(old_marker, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+        const ptr1 = passStringToWasm0(old_raw, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
         const len1 = WASM_VECTOR_LEN;
-        const ptr2 = passStringToWasm0(new_marker, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
-        const len2 = WASM_VECTOR_LEN;
-        const ret = wasm.logbook_apply_marker_transition(ptr0, len0, is_org, ptr1, len1, ptr2, len2, enabled, with_seconds);
-        deferred4_0 = ret[0];
-        deferred4_1 = ret[1];
+        const ret = wasm.logbook_apply_marker_transition(ptr0, len0, is_org, ptr1, len1, enabled, with_seconds);
+        deferred3_0 = ret[0];
+        deferred3_1 = ret[1];
         return getStringFromWasm0(ret[0], ret[1]);
     } finally {
-        wasm.__wbindgen_free(deferred4_0, deferred4_1, 1);
+        wasm.__wbindgen_free(deferred3_0, deferred3_1, 1);
     }
 }
 
@@ -394,11 +445,6 @@ function __tine_raw_logbook_info_json(raw, is_org) {
 }
 
 /**
- * The lsdoc git tag this wasm was built against (set by `build:wasm` via the
- * `LSDOC_TAG` env, read from tine-core's Cargo.toml — the single source of truth).
- * Surfaced to the frontend for diagnostics; the hard stale-wasm guard lives in the
- * build:wasm script (it refuses to build if this crate's pin ≠ tine-core's pin).
- * See docs/wasm-parse-plan.md §7D.
  * @returns {string}
  */
 function __tine_raw_lsdoc_tag() {
@@ -530,6 +576,26 @@ function __tine_raw_outline_reads_json(verb) {
         return getStringFromWasm0(ptr2, len2);
     } finally {
         wasm.__wbindgen_free(deferred3_0, deferred3_1, 1);
+    }
+}
+
+/**
+ * The native file-format answer, including mixed-case Org extensions.
+ * @param {string} path
+ * @returns {string}
+ */
+function __tine_raw_page_file_format(path) {
+    let deferred2_0;
+    let deferred2_1;
+    try {
+        const ptr0 = passStringToWasm0(path, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+        const len0 = WASM_VECTOR_LEN;
+        const ret = wasm.page_file_format(ptr0, len0);
+        deferred2_0 = ret[0];
+        deferred2_1 = ret[1];
+        return getStringFromWasm0(ret[0], ret[1]);
+    } finally {
+        wasm.__wbindgen_free(deferred2_0, deferred2_1, 1);
     }
 }
 
@@ -862,6 +928,39 @@ function __tine_raw_reference_target_name(kind, value, label, org, filename_cand
 }
 
 /**
+ * The lsdoc git tag this wasm was built against (set by `build:wasm` via the
+ * `LSDOC_TAG` env, read from tine-core's Cargo.toml — the single source of truth).
+ * Surfaced to the frontend for diagnostics; the hard stale-wasm guard lives in the
+ * build:wasm script (it refuses to build if this crate's pin ≠ tine-core's pin).
+ * See docs/wasm-parse-plan.md §7D.
+ * What removing blocks does to block references (`tine_outline::removal_refs`):
+ * `blocks` is a JSON array of `[raw, isOrg]`. Returns `{targets, removed_with}`.
+ * @param {string} blocks
+ * @param {boolean} with_content
+ * @returns {string}
+ */
+function __tine_raw_removal_refs_json(blocks, with_content) {
+    let deferred3_0;
+    let deferred3_1;
+    try {
+        const ptr0 = passStringToWasm0(blocks, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+        const len0 = WASM_VECTOR_LEN;
+        const ret = wasm.removal_refs_json(ptr0, len0, with_content);
+        var ptr2 = ret[0];
+        var len2 = ret[1];
+        if (ret[3]) {
+            ptr2 = 0; len2 = 0;
+            throw takeFromExternrefTable0(ret[2]);
+        }
+        deferred3_0 = ptr2;
+        deferred3_1 = len2;
+        return getStringFromWasm0(ptr2, len2);
+    } finally {
+        wasm.__wbindgen_free(deferred3_0, deferred3_1, 1);
+    }
+}
+
+/**
  * Render one de-bulleted block body to lsdoc's CANONICAL HTML skeleton (M3 render
  * contract — `lsdoc::render_html`): structural tags + classes + `data-*` hooks, no
  * ref/asset/math/macro resolution. Re-bullets EXACTLY like `parse_block_json` so the
@@ -1030,6 +1129,25 @@ function __tine_raw_task_checkbox_state(marker) {
     const ret = wasm.task_checkbox_state(ptr0, len0);
     return ret === 0xFFFFFF ? undefined : ret !== 0;
 }
+
+/**
+ * Tine's legacy property-key spellings, `[[legacy, canonical], …]` as JSON:
+ * the ONE alias table (`tine_outline::tine_keys`, D-20261102-PNS), so the
+ * window reads the stable `tine/…` markers exactly as the backend does.
+ * @returns {string}
+ */
+function __tine_raw_tine_key_aliases() {
+    let deferred1_0;
+    let deferred1_1;
+    try {
+        const ret = wasm.tine_key_aliases();
+        deferred1_0 = ret[0];
+        deferred1_1 = ret[1];
+        return getStringFromWasm0(ret[0], ret[1]);
+    } finally {
+        wasm.__wbindgen_free(deferred1_0, deferred1_1, 1);
+    }
+}
 function __wbg_get_imports() {
     const import0 = {
         __proto__: null,
@@ -1037,6 +1155,14 @@ function __wbg_get_imports() {
             const v = arg0;
             const ret = typeof(v) === 'boolean' ? v : undefined;
             return isLikeNone(ret) ? 0xFFFFFF : ret ? 1 : 0;
+        },
+        __wbg___wbindgen_is_null_ea9085d691f535d3: function(arg0) {
+            const ret = arg0 === null;
+            return ret;
+        },
+        __wbg___wbindgen_is_undefined_c05833b95a3cf397: function(arg0) {
+            const ret = arg0 === undefined;
+            return ret;
         },
         __wbg___wbindgen_number_get_394265ed1e1b84ee: function(arg0, arg1) {
             const obj = arg1;
@@ -1367,8 +1493,7 @@ export function __tineReinstantiate() {
   return __wbg_finalize_init(instance, wasmModule);
 }
 
-// Tine trap isolation: see scripts/build-wasm.mjs. One guarded export per wasm-bindgen export.
-function __tineGuard(name, raw) {
+function __tineGuard(name, raw) { // Tine trap isolation: one guarded export per wasm-bindgen export.
   return function (...args) {
     try {
       return raw.apply(this, args);
@@ -1384,7 +1509,9 @@ function __tineGuard(name, raw) {
     }
   };
 }
+export const block_may_have_logbook = __tineGuard("block_may_have_logbook", __tine_raw_block_may_have_logbook);
 export const canonical_group_field = __tineGuard("canonical_group_field", __tine_raw_canonical_group_field);
+export const comment_quote = __tineGuard("comment_quote", __tine_raw_comment_quote);
 export const decode_page_name = __tineGuard("decode_page_name", __tine_raw_decode_page_name);
 export const edit_block_regions_json = __tineGuard("edit_block_regions_json", __tine_raw_edit_block_regions_json);
 export const editor_offset_of_raw = __tineGuard("editor_offset_of_raw", __tine_raw_editor_offset_of_raw);
@@ -1395,6 +1522,7 @@ export const format_journal_date = __tineGuard("format_journal_date", __tine_raw
 export const header_tokens_json = __tineGuard("header_tokens_json", __tine_raw_header_tokens_json);
 export const hide_policy_hides = __tineGuard("hide_policy_hides", __tine_raw_hide_policy_hides);
 export const install_panic_hook = __tineGuard("install_panic_hook", __tine_raw_install_panic_hook);
+export const is_og_built_in_property = __tineGuard("is_og_built_in_property", __tine_raw_is_og_built_in_property);
 export const is_query_macro_name = __tineGuard("is_query_macro_name", __tine_raw_is_query_macro_name);
 export const is_render_hidden_prop = __tineGuard("is_render_hidden_prop", __tine_raw_is_render_hidden_prop);
 export const last_panic = __tineGuard("last_panic", __tine_raw_last_panic);
@@ -1410,6 +1538,7 @@ export const ordered_list_glyph = __tineGuard("ordered_list_glyph", __tine_raw_o
 export const outline_apply_json = __tineGuard("outline_apply_json", __tine_raw_outline_apply_json);
 export const outline_max_depth = __tineGuard("outline_max_depth", __tine_raw_outline_max_depth);
 export const outline_reads_json = __tineGuard("outline_reads_json", __tine_raw_outline_reads_json);
+export const page_file_format = __tineGuard("page_file_format", __tine_raw_page_file_format);
 export const page_header_json = __tineGuard("page_header_json", __tine_raw_page_header_json);
 export const page_identity_key = __tineGuard("page_identity_key", __tine_raw_page_identity_key);
 export const page_regions_json = __tineGuard("page_regions_json", __tine_raw_page_regions_json);
@@ -1425,6 +1554,7 @@ export const query_macro_extents_json = __tineGuard("query_macro_extents_json", 
 export const query_macro_is_tql = __tineGuard("query_macro_is_tql", __tine_raw_query_macro_is_tql);
 export const raw_byte_of_editor = __tineGuard("raw_byte_of_editor", __tine_raw_raw_byte_of_editor);
 export const reference_target_name = __tineGuard("reference_target_name", __tine_raw_reference_target_name);
+export const removal_refs_json = __tineGuard("removal_refs_json", __tine_raw_removal_refs_json);
 export const render_block_html = __tineGuard("render_block_html", __tine_raw_render_block_html);
 export const search_fold = __tineGuard("search_fold", __tine_raw_search_fold);
 export const search_matches = __tineGuard("search_matches", __tine_raw_search_matches);
@@ -1433,3 +1563,4 @@ export const search_spans_json = __tineGuard("search_spans_json", __tine_raw_sea
 export const search_substring_spans_json = __tineGuard("search_substring_spans_json", __tine_raw_search_substring_spans_json);
 export const split_linkable_property = __tineGuard("split_linkable_property", __tine_raw_split_linkable_property);
 export const task_checkbox_state = __tineGuard("task_checkbox_state", __tine_raw_task_checkbox_state);
+export const tine_key_aliases = __tineGuard("tine_key_aliases", __tine_raw_tine_key_aliases);

@@ -125,6 +125,40 @@ fn clock_out_with_regions(
         .expect("CLOCK edit on parsed block")
 }
 
+/// Apply a typed edit using the previous buffer's task state (GH #741, L3-07).
+/// OG's `with-timetracking` takes that state from the saved block. Here the
+/// parser reads the whole previous raw first, then its title line for a bare
+/// marker followed by metadata. Both CLI and WASM use this boundary.
+pub fn apply_edit_transition_at(
+    old_raw: &str,
+    raw: &str,
+    format: LogbookFormat,
+    enabled: bool,
+    with_seconds: bool,
+    now: TimestampParts,
+) -> String {
+    if !enabled {
+        return raw.to_string();
+    }
+    let org = format == LogbookFormat::Org;
+    let marker = |text: &str| crate::block_regions::header_tokens(text, org).marker;
+    let old = marker(old_raw).or_else(|| {
+        old_raw
+            .split_once('\n')
+            .and_then(|(title, _)| marker(title))
+    });
+    let new = marker(raw);
+    apply_marker_transition_at(
+        raw,
+        format,
+        old.as_deref(),
+        new.as_deref(),
+        enabled,
+        with_seconds,
+        now,
+    )
+}
+
 pub fn apply_marker_transition_at(
     raw: &str,
     format: LogbookFormat,
@@ -470,6 +504,23 @@ mod tests {
             hour,
             minute,
             second,
+        }
+    }
+
+    #[test]
+    fn gh741_bare_task_with_history_clocks_out() {
+        for format in [LogbookFormat::Markdown, LogbookFormat::Org] {
+            let old = "DOING\n:LOGBOOK:\nCLOCK: [2026-06-25 Thu 09:00:00]\n:END:";
+            let next = old.replacen("DOING", "DONE", 1);
+            let closed = apply_edit_transition_at(
+                old,
+                &next,
+                format,
+                true,
+                true,
+                ts(2026, 6, 25, 10, 2, 3, 4),
+            );
+            assert_eq!(closed, "DONE\n:LOGBOOK:\nCLOCK: [2026-06-25 Thu 09:00:00]--[2026-06-25 Thu 10:02:03] =>  01:02:03\n:END:");
         }
     }
 

@@ -65,17 +65,10 @@ fn mixed_code_editor_outputs_preserve_bytes_and_reparse() {
             };
             let parsed = parse(&saved);
             let mut expected_tree = parse(&before);
-            let old_body = if field("format") == "org" {
-                disk(field("body"))
-            } else {
-                field("body").to_owned()
-            };
-            let new_body = if field("format") == "org" {
-                disk(field("replacement"))
-            } else {
-                field("replacement").to_owned()
-            };
-            let edited = expected_tree.roots[1].raw().replace(&old_body, &new_body);
+            // Both models are LF-canonical: a block's text never carries `\r`.
+            let edited = expected_tree.roots[1]
+                .raw()
+                .replace(field("body"), field("replacement"));
             expected_tree.roots[1].set_raw(edited);
             assert_eq!(
                 parsed, expected_tree,

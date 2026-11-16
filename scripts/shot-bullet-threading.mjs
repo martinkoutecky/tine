@@ -51,7 +51,7 @@ try {
         const box = row.getBoundingClientRect();
         return { elbow: line.borderBottomColor, width: line.borderBottomWidth, display: line.display,
           vertical: vertical.borderLeftColor, unrelated: unrelated.borderBottomColor, unrelatedDisplay: unrelated.display,
-          endpointY: box.top + parseFloat(line.height), bulletY: dot.top + dot.height / 2,
+          endpointY: box.top + parseFloat(line.top) + parseFloat(line.height), bulletY: dot.top + dot.height / 2,
           bulletColor: getComputedStyle(bullet).backgroundColor };
       });
       observations.push({ theme, config, ...state });

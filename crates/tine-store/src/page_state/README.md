@@ -82,9 +82,9 @@ Regenerate the 194 scenarios, four profile oracles, 38 model-mutant oracles and
 three-path random traces from the repository root:
 
 ```sh
-rtk proxy python3 -B scripts/s2/generate.py /path/to/og/merged --scenario-source /path/to/og/merged/scenarios-s35.inc --quint /path/to/og/model/tools/node_modules/.bin/quint
-rtk proxy python3 -B scripts/s2/witnesses.py /path/to/og/merged --quint /path/to/og/model/tools/node_modules/.bin/quint
-rtk proxy bash -c 'source scripts/env.sh; export CARGO_BUILD_JOBS=4 CARGO_INCREMENTAL=0 LANG=C.UTF-8 CARGO_TARGET_DIR=$PWD/target S3_TRACE_FIXTURE=$PWD/scratch/s3/traces.json; rtk cargo test -p tine-store'
+python3 -B scripts/s2/generate.py /path/to/og/merged --scenario-source /path/to/og/merged/scenarios-s35.inc --quint /path/to/og/model/tools/node_modules/.bin/quint
+python3 -B scripts/s2/witnesses.py /path/to/og/merged --quint /path/to/og/model/tools/node_modules/.bin/quint
+bash -c 'source scripts/env.sh; export CARGO_BUILD_JOBS=4 CARGO_INCREMENTAL=0 LANG=C.UTF-8 CARGO_TARGET_DIR=$PWD/target S3_TRACE_FIXTURE=$PWD/scratch/s3/traces.json; cargo test -p tine-store'
 ```
 
 The generator checks both pinned source hashes, expands intermediate assertions,
@@ -119,8 +119,8 @@ bounds; they use the same lossless delta encoding, never extra transition guards
 Regenerate supporting reachability samples:
 
 ```sh
-rtk proxy python3 -B scripts/s2/equivalence.py /path/to/og/merged --samples 4096 --steps 80 --output scratch/s3/equivalence-core
-rtk proxy python3 -B scripts/s2/equivalence.py /path/to/og/merged --only saveBaseSeenOrRead --samples 4096 --steps 80 --output scratch/s3/equivalence-g
+python3 -B scripts/s2/equivalence.py /path/to/og/merged --samples 4096 --steps 80 --output scratch/s3/equivalence-core
+python3 -B scripts/s2/equivalence.py /path/to/og/merged --only saveBaseSeenOrRead --samples 4096 --steps 80 --output scratch/s3/equivalence-g
 ```
 
 Samples support explicit constructor/transition arguments; they are not exhaustive
@@ -130,11 +130,11 @@ Run the Rust port sweeps (an isolated scratch crate uses byte-identical source,
 tests and fixtures, avoiding unrelated integration-test linking):
 
 ```sh
-rtk proxy uv --cache-dir scratch/s3/uv-cache venv scratch/s3/python
-rtk proxy uv --cache-dir scratch/s3/uv-cache pip install --python scratch/s3/python/bin/python tree-sitter==0.26.0 tree-sitter-rust==0.24.2
-rtk proxy bash -c 'source scripts/env.sh; export CARGO_BUILD_JOBS=4 CARGO_INCREMENTAL=0 LANG=C.UTF-8 CARGO_TARGET_DIR=$PWD/target; rtk proxy scratch/s3/python/bin/python -B scripts/s2/hand_mutations.py --run --output scratch/s3/hand-final --allow-equivalents scripts/s2/equivalents.json'
-rtk proxy bash -c 'source scripts/env.sh; export CARGO_BUILD_JOBS=4 CARGO_INCREMENTAL=0 LANG=C.UTF-8 CARGO_TARGET_DIR=$PWD/target; rtk proxy python3 -B scripts/s2/cargo_mutations.py --output scratch/s3/cargo-final'
-rtk proxy python3 -B scripts/s2/mutation_report.py
+uv --cache-dir scratch/s3/uv-cache venv scratch/s3/python
+uv --cache-dir scratch/s3/uv-cache pip install --python scratch/s3/python/bin/python tree-sitter==0.26.0 tree-sitter-rust==0.24.2
+bash -c 'source scripts/env.sh; export CARGO_BUILD_JOBS=4 CARGO_INCREMENTAL=0 LANG=C.UTF-8 CARGO_TARGET_DIR=$PWD/target; scratch/s3/python/bin/python -B scripts/s2/hand_mutations.py --run --output scratch/s3/hand-final --allow-equivalents scripts/s2/equivalents.json'
+bash -c 'source scripts/env.sh; export CARGO_BUILD_JOBS=4 CARGO_INCREMENTAL=0 LANG=C.UTF-8 CARGO_TARGET_DIR=$PWD/target; python3 -B scripts/s2/cargo_mutations.py --output scratch/s3/cargo-final'
+python3 -B scripts/s2/mutation_report.py
 ```
 
 The hand sweep drops each operand of every &&/|| chain, preserving nested groups

@@ -1,3 +1,4 @@
+import { createEffect, onCleanup, untrack } from "solid-js";
 import { attachBlockSwipe, swipeDisabledByTags, type BlockSwipeAction } from "../blockSwipe";
 import { graphMeta } from "../graphSession";
 import { pageIdentityKey } from "../pageIdentity";
@@ -5,14 +6,31 @@ import { pageRefsInText } from "../render/pageRefs";
 import { canIndentBlock, childIds, pageRoots, nextVisible, clearSelection, indentSelection, node as docNode, outdentSelection, pageByName, selectBlock } from "../document";
 import type { OutlineScope } from "../document";
 import { dispatchFocusedEditorCommand, focusedEditorCommandBridge } from "../editorCommandBridge";
-import { touchGesturePlatform } from "../nativeChrome";
+import { touchGestures } from "../inputCapability";
 import { openContextMenu } from "../ui";
+import { threadRootOf } from "../document";
 
 export interface BlockRowSwipeDeps {
+  /** The block the row's position belongs to: a whole-block embed's root row
+   *  stands for its host (D-20261030-EMB). */
   id: string;
+  /** The block whose editor this row mounts, when it differs from `id`. */
+  editorId?: string;
   scope: OutlineScope | null | undefined;
   editing(): boolean;
   readOnly(): boolean;
+}
+
+/** The block-row swipe for the current owner, following the input capability:
+ *  attached while a touch input exists, detached (every listener and any cue
+ *  removed) when it goes away, re-attached when it returns (D-20261018-W1: a
+ *  touch laptop or convertible changes mode while the row stays mounted). One
+ *  computation per row, as the former mount-time wiring was. */
+export function followBlockSwipe(row: HTMLElement, deps: BlockRowSwipeDeps): void {
+  createEffect(() => {
+    if (!touchGestures()) return;
+    untrack(() => onCleanup(wireBlockSwipe(row, deps)));
+  });
 }
 
 /** Runs a block-row swipe through the commands the keyboard and the selection
@@ -28,10 +46,10 @@ export interface BlockRowSwipeDeps {
  *  the kernel's indent verb (canIndentBlock) for indent, parent/scope-root for
  *  outdent. The first revealed indent cue costs O(page blocks + visible scope);
  *  cached for that gesture.
- *  Returns the cleanup; a no-op off touch platforms. */
+ *  Returns the cleanup; a no-op without a touch input. */
 export function wireBlockSwipe(row: HTMLElement, deps: BlockRowSwipeDeps): () => void {
   return attachBlockSwipe(row, {
-    platform: touchGesturePlatform(),
+    enabled: touchGestures(),
     // OG `:mobile :gestures/disabled-in-block-with-tags`, read at touchstart so
     // a config edit applies to the next touch. Refs come from the one lsdoc
     // parse of each ancestor block (never a regex over raw text).
@@ -50,8 +68,9 @@ export function wireBlockSwipe(row: HTMLElement, deps: BlockRowSwipeDeps): () =>
       if (deps.readOnly()) return false;
       const block = docNode(deps.id);
       if (!block || pageByName(block.page)?.guide) return false;
-      if (deps.editing() && focusedEditorCommandBridge()?.blockId !== deps.id) return false;
+      if (deps.editing() && focusedEditorCommandBridge()?.blockId !== (deps.editorId ?? deps.id)) return false;
       if (action === "actions") return true;
+      if (threadRootOf(deps.id) !== null) return false;
       if (action === "outdent") return block.parent !== null && deps.scope?.forceExpandedRoot !== block.parent;
       const siblings = block.parent === null ? pageRoots(block.page) : childIds(block.parent);
       const index = siblings.indexOf(deps.id);
@@ -61,7 +80,7 @@ export function wireBlockSwipe(row: HTMLElement, deps: BlockRowSwipeDeps): () =>
     run(action: BlockSwipeAction, x: number, y: number) {
       if (deps.readOnly()) return;
       if (deps.editing()) {
-        if (focusedEditorCommandBridge()?.blockId !== deps.id) return;
+        if (focusedEditorCommandBridge()?.blockId !== (deps.editorId ?? deps.id)) return;
         if (action === "indent") dispatchFocusedEditorCommand("editor/indent");
         else if (action === "outdent") dispatchFocusedEditorCommand("editor/outdent");
         // The action menu from an editing row opens on the same block; the

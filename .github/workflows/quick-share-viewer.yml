@@ -5,7 +5,7 @@ on:
       ref:
         description: Commit or ref to build for the first viewer trial (no tag or release created)
         required: true
-        default: og
+        default: develop
         type: string
 permissions:
   contents: read
@@ -18,7 +18,7 @@ jobs:
           ref: ${{ inputs.ref || github.sha }}
       - uses: actions/setup-node@v4
         with:
-          node-version: 20
+          node-version: 22
           cache: npm
       - uses: dtolnay/rust-toolchain@1.96.0
       - uses: swatinem/rust-cache@v2

@@ -46,6 +46,9 @@ export function installSessionActivity(deps: SessionActivityDeps): () => void {
   add("visibilitychange", onVisibility);
   for (const event of HIDE_EVENTS) add(event, onHide);
   for (const event of SHOW_EVENTS) add(event, onShow);
+  // Hidden before the app mounted (switched away during a cold start): no
+  // edge will come, so report the state now; git must not sync while away.
+  if (isHidden()) set(false);
   return () => {
     remove("visibilitychange", onVisibility);
     for (const event of HIDE_EVENTS) remove(event, onHide);

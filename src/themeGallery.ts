@@ -13,18 +13,23 @@ export const THEME_GALLERY_STYLE_ID = "tine-theme";
 /** Pre-composition single-id key; read only when no composition is stored. */
 const LEGACY_KEY = "theme.gallery";
 /** Persisted `{ style, colors }` JSON (master 670cf75bb): the presentation
- * source and the palette source are chosen independently. */
+ * source and the palette source are chosen independently. API 0.3 adds a third,
+ * independent source, `typography` (GH #760); it is written only when chosen, so
+ * a composition without typography is byte-identical to before. */
 const COMPOSITION_KEY = "theme.composition.v1";
 
-type ThemeComposition = { style: string; colors: string };
+type ThemeComposition = { style: string; colors: string; typography: string };
 
-const [composition, setComposition] = createSignal<ThemeComposition>({ style: "", colors: "" });
+const EMPTY: ThemeComposition = { style: "", colors: "", typography: "" };
+const [composition, setComposition] = createSignal<ThemeComposition>(EMPTY);
 const [selectedPresentation, setSelectedPresentation] = createSignal<ThemePresentation>({});
 
 /** Theme whose API 0.2 presentation is active ("" = Tine's default). */
 export const selectedThemeStyle = () => composition().style;
 /** Theme whose color tokens are active ("" = Tine's default palette). */
 export const selectedThemeColors = () => composition().colors;
+/** Installed theme whose API 0.3 fonts and line height are active ("" = Tine's own). */
+export const selectedThemeTypography = () => composition().typography;
 /** The active host-owned presentation presets (ADR 0059). */
 export const selectedThemePresentation = selectedPresentation;
 /** The single selected theme as the Settings gallery shows it: its colors. */
@@ -95,63 +100,89 @@ function themeById(id: string) {
 
 /** Bundled, installed and non-revoked ids only; a style source must also
  * declare a presentation. Anything else resolves to "" (Tine's default). */
-function resolveComposition(style: string, colors: string): ThemeComposition {
+function resolveComposition(style: string, colors: string, typography: string): ThemeComposition {
   const styleTheme = themeById(style);
   const hasPresentation = !!styleTheme && "manifest" in styleTheme
     && Object.keys(styleTheme.manifest.presentation ?? {}).length > 0;
-  return { style: hasPresentation ? styleTheme.id : "", colors: themeById(colors)?.id ?? "" };
+  const typographyTheme = themeById(typography);
+  const hasTypography = !!typographyTheme && "manifest" in typographyTheme && typographyTheme.typographyCss !== "";
+  return {
+    style: hasPresentation ? styleTheme.id : "",
+    colors: themeById(colors)?.id ?? "",
+    typography: hasTypography ? typographyTheme.id : "",
+  };
+}
+
+/** The composition as stored: `typography` only when one is chosen. */
+function encodeComposition(value: ThemeComposition): string {
+  const { typography, ...rest } = value;
+  return JSON.stringify(typography ? value : rest);
 }
 
 function applyCompositionLocally(next: ThemeComposition): void {
-  const resolved = resolveComposition(next.style, next.colors);
+  const resolved = resolveComposition(next.style, next.colors, next.typography);
   setComposition(resolved);
   const styleTheme = themeById(resolved.style);
   applyPresentation(styleTheme && "manifest" in styleTheme ? styleTheme.manifest.presentation ?? {} : {});
   const el = ensureThemeStyle();
-  if (el) el.textContent = themeById(resolved.colors)?.css ?? "";
+  if (el) {
+    // Typography is host-generated CSS from a validated manifest (src/themes/typography.ts),
+    // placed in the same element so custom.css, which follows it, keeps the last word.
+    const typographyTheme = themeById(resolved.typography);
+    const typographyCss = typographyTheme && "typographyCss" in typographyTheme ? typographyTheme.typographyCss : "";
+    el.textContent = [themeById(resolved.colors)?.css ?? "", typographyCss].filter(Boolean).join("\n\n");
+  }
 }
 
 /** Apply a composition now and persist it through the device preference
  * path; a failed latest write rolls back and toasts. O(theme lookup + CSS). */
-function selectComposition(style: string, colors: string): void {
-  writePreference(composition, applyCompositionLocally, resolveComposition(style, colors),
-    (next) => backend().setAppString(COMPOSITION_KEY, JSON.stringify(next)), "gallery theme");
+function selectComposition(style: string, colors: string, typography: string): void {
+  writePreference(composition, applyCompositionLocally, resolveComposition(style, colors, typography),
+    (next) => backend().setAppString(COMPOSITION_KEY, encodeComposition(next)), "gallery theme");
 }
 
 /** Compatibility preset: one theme's presentation (if any) and colors together.
- * Unknown or revoked ids select Tine's default. */
+ * Unknown or revoked ids select Tine's default. Typography is its own choice
+ * and stays as it was. */
 export function applyTheme(id: string): void {
-  selectComposition(id, id);
+  selectComposition(id, id, selectedThemeTypography());
 }
 
 /** Change only the presentation source, keeping the palette. */
 export function applyThemeStyle(id: string): void {
-  selectComposition(id, selectedThemeColors());
+  selectComposition(id, selectedThemeColors(), selectedThemeTypography());
 }
 
 /** Change only the palette source, keeping the presentation. */
 export function applyThemeColors(id: string): void {
-  selectComposition(selectedThemeStyle(), id);
+  selectComposition(selectedThemeStyle(), id, selectedThemeTypography());
+}
+
+/** Change only the typography source (API 0.3 fonts and line height), keeping
+ * the palette and presentation. "" returns to Tine's own typography. */
+export function applyThemeTypography(id: string): void {
+  selectComposition(selectedThemeStyle(), selectedThemeColors(), id);
 }
 
 /** Drop `id` from whichever roles it fills (e.g. before uninstalling it). */
 export function clearThemeSelection(id: string): void {
-  const { style, colors } = composition();
-  selectComposition(style === id ? "" : style, colors === id ? "" : colors);
+  const { style, colors, typography } = composition();
+  selectComposition(style === id ? "" : style, colors === id ? "" : colors, typography === id ? "" : typography);
 }
 
 /** Re-resolve the current selection after revocations or package changes. */
 export function reapplyThemeSelection(): void {
-  const { style, colors } = composition();
-  selectComposition(style, colors);
+  const { style, colors, typography } = composition();
+  selectComposition(style, colors, typography);
 }
 
 function decodeComposition(text: string): ThemeComposition | null {
   try {
     const value: unknown = JSON.parse(text);
     if (!value || typeof value !== "object" || Array.isArray(value)) return null;
-    const { style, colors } = value as Record<string, unknown>;
-    return typeof style === "string" && typeof colors === "string" ? { style, colors } : null;
+    const { style, colors, typography } = value as Record<string, unknown>;
+    if (typeof style !== "string" || typeof colors !== "string") return null;
+    return { style, colors, typography: typeof typography === "string" ? typography : "" };
   } catch {
     return null;
   }
@@ -165,7 +196,7 @@ export async function initThemeGallery(): Promise<void> {
   const revision = preferenceRevision(composition);
   // Current while no selection has advanced the revision or is still pending.
   const owner = revisionOwner(composition, revision, () => preferenceReadCurrent(composition, revision));
-  let stored: ThemeComposition = { style: "", colors: "" };
+  let stored: ThemeComposition = EMPTY;
   try {
     const composed = await readOwned(owner, backend().getAppString(COMPOSITION_KEY, ""));
     if (composed.kind === "stale") return;
@@ -174,7 +205,7 @@ export async function initThemeGallery(): Promise<void> {
     else {
       const legacy = await readOwned(owner, backend().getAppString(LEGACY_KEY, ""));
       if (legacy.kind === "stale") return;
-      stored = { style: legacy.value, colors: legacy.value };
+      stored = { style: legacy.value, colors: legacy.value, typography: "" };
     }
   } catch {
     pushToast(msg("theme-gallery-could-not-load-gallery-theme"), "error");

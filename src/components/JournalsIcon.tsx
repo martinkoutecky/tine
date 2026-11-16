@@ -9,3 +9,13 @@ export function JournalsIcon() {
     </svg>
   );
 }
+
+/** The home glyph of the sidebar entry that replaces Journals when the graph
+ *  turns journals off (OG `home-nav`, icon "home"). */
+export function HomeIcon() {
+  return (
+    <svg viewBox="0 0 24 24" class="nav-icon" aria-hidden="true">
+      <path d="M4 11.2 12 4l8 7.2V20h-5.5v-5.5h-5V20H4z" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linejoin="round" />
+    </svg>
+  );
+}

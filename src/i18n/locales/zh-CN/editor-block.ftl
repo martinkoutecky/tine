@@ -3,6 +3,7 @@ editor-block-click-to-zoom-shift-click-sidebar-ctrl-cmd-click-or-middle-click-ne
 editor-block-open-block-references-shift-click-sidebar = 打开块引用（Shift 点击 → 侧边栏）
 
 editor-block-couldn-t-load-templates = 无法加载模板：{ $detail }
+editor-block-edit-refused = 无法安全地应用此编辑。请修改编辑器中的文字后继续，或使用此消息上的“复制”保留输入的文字。{ $detail }
 
 editor-block-create = 创建“{ $name }”
 
@@ -85,3 +86,4 @@ editor-block-pasted-outline-was-refused = 粘贴的大纲被拒绝
 editor-block-copy-result = 复制结果
 
 editor-block-more-formatting = 更多格式
+editor-block-selection-formatting = 设置所选文本格式

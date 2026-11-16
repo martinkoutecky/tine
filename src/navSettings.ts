@@ -14,9 +14,29 @@ const KEY_QUERY_TEXT_OPEN = "query_text_open";
 
 const KEY_MOBILE_NAV_BOTTOM = "mobile_navigation_at_bottom";
 
+const KEY_SEARCH_OPENS_HERE = "search_results_open_in_this_tab";
+
 const [reuseTabs, setReuseTabsSig] = createSignal(true);
 const [queryTextOpenSig, setQueryTextOpenSig] = createSignal(false);
 const [mobileNavBottom, setMobileNavBottomSig] = createSignal(false);
+const [searchOpensHere, setSearchOpensHereSig] = createSignal(false);
+
+/** Reactive: a plain click or Enter on a Search-tab result navigates the Search
+ *  tab itself (GH #796) instead of opening a new tab beside it (GH #416, the
+ *  default). Modifier and middle-click destinations are the shared link contract
+ *  either way. Device-local, survives a restart. */
+export const searchResultsOpenInThisTab = searchOpensHere;
+
+/** Apply now and queue a device-local write; failure rolls back and toasts. O(1) plus backend write. */
+export function setSearchResultsOpenInThisTab(on: boolean): void {
+  writePreference(searchOpensHere, setSearchOpensHereSig, on, (next) => backend().setAppBool(KEY_SEARCH_OPENS_HERE, next), "search results preference");
+}
+
+/** Test seam: set the destination without persisting. */
+export function resetSearchResultsOpenInThisTabForTests(on = false): void {
+  setSearchOpensHereSig(on);
+  seedPreference(searchOpensHere);
+}
 
 /** Reactive: on a phone or tablet app, Sidebar / Search / Back / Forward sit in a
  *  bottom row (GH #598) instead of the top bar (GH #716). Default off, device-local,
@@ -63,6 +83,7 @@ export function setNavReuseTabs(on: boolean): void {
 export async function initNavSettings(): Promise<void> {
   loadPreference(queryTextOpenSig, setQueryTextOpenSig, () => backend().getAppBool(KEY_QUERY_TEXT_OPEN, false), (v) => v, "query text preference");
   loadPreference(mobileNavBottom, setMobileNavBottomSig, () => backend().getAppBool(KEY_MOBILE_NAV_BOTTOM, false), (v) => v, "navigation buttons preference");
+  loadPreference(searchOpensHere, setSearchOpensHereSig, () => backend().getAppBool(KEY_SEARCH_OPENS_HERE, false), (v) => v, "search results preference");
   const revision = preferenceRevision(reuseTabs);
   try {
     const value = await backend().getAppBool(KEY_REUSE_TABS, true);

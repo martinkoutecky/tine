@@ -10,6 +10,49 @@ mod tests {
     use super::*;
 
     #[test]
+    fn static_child_folds_keep_authored_state_and_all_content() {
+        let dir = tempfile::tempdir().unwrap();
+        fs::create_dir_all(dir.path().join("pages")).unwrap();
+        fs::write(
+            dir.path().join("pages/Folds.md"),
+            "- Folded [Jump](#b2) [[Folds]]\n  collapsed:: true\n  - Hidden child\n- Open\n  - Visible child\n",
+        )
+        .unwrap();
+        let store = Store::open(dir.path(), Default::default()).unwrap().0;
+        let whole = store.whole_graph().unwrap();
+        let corpus = whole.corpus();
+        let graph = RenderGraph::new(&corpus, &whole, &store, None);
+        let mut files = HashMap::<String, String>::new();
+        publish_graph(
+            &graph,
+            PageSelection::AllButOptedOut,
+            &[],
+            &mut |name, bytes| {
+                if let Ok(dir) = std::env::var("TINE_VIEW_FOLD_STATIC_DIR") {
+                    fs::create_dir_all(&dir)?;
+                    fs::write(std::path::Path::new(&dir).join(name), bytes)?;
+                }
+                files.insert(name.to_owned(), String::from_utf8(bytes.to_vec()).unwrap());
+                Ok(())
+            },
+        )
+        .unwrap();
+        let html = &files["folds.html"];
+        assert!(html.contains("<details class=\"outline-fold\"><summary class=\"b\">"));
+        assert!(html.contains(
+            "<details class=\"outline-fold\" open><summary class=\"b\">Open</summary><ul>"
+        ));
+        assert!(!html.contains(">Children<"));
+        assert_eq!(html.matches("class=\"outline-fold\"").count(), 2);
+        assert!(html.contains("<li id=\"b1\"><div class=\"b\">Hidden child</div></li>"));
+        assert!(html.contains("href=\"#b2\""));
+        assert!(html.contains("href=\"folds.html\""));
+        assert!(html.contains("Hidden child"));
+        assert!(html.contains("Visible child"));
+        assert!(files["search-index.js"].contains("Hidden child"));
+    }
+
+    #[test]
     fn current_page_query_map_preserves_source_and_cache_owner() {
         let dir = tempfile::tempdir().unwrap();
         fs::create_dir_all(dir.path().join("pages")).unwrap();

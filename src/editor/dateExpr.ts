@@ -43,7 +43,7 @@ function addMonths(d: Date, n: number): Date {
 }
 
 /** The largest relative offset, in years (the same span in days, weeks and
- *  months): `MAX_DATE_OFFSET_YEARS` in advanced_patterns.rs. */
+ *  months): `MAX_DATE_OFFSET_YEARS` in date_token.rs. */
 const MAX_OFFSET_YEARS = 10_000;
 const UNITS_PER_YEAR = { d: 366, w: 53, m: 12, y: 1 } as const;
 

@@ -11,6 +11,7 @@ import {
   untrack,
   type JSX,
 } from "solid-js";
+import { DialogActions } from "./DialogActions";
 import { FloatingPortal } from "./FloatingPortal";
 import { placeSheetTop } from "./popoverFit";
 import { backend } from "../backend";
@@ -42,7 +43,8 @@ import {
 } from "./QuerySheet";
 import { sharedQueryResult } from "../queryResultCache";
 import { graphOwner, ownedWhen, readOwned } from "../owned";
-import { dataRev, graphEpoch, graphMeta } from "../graphSession";
+import { graphEpoch, graphMeta } from "../graphSession";
+import { createQuerySubscription } from "../querySubscription";
 import { queryBuilderAutoOpen, setQueryBuilderAutoOpen } from "../ui";
 import { queryTextOpen, setQueryTextOpen as rememberTextOpen } from "../navSettings";
 import { dismissOnOutsidePointer, registerTransientLayer } from "../transientLayers";
@@ -130,6 +132,9 @@ function QueryTextPane(props: {
   notice?: () => JSX.Element;
   /** The registry's keys, for the honest "what vocabulary exists" hint an unknown identifier gets. */
   vocabulary?: () => string[];
+  /** Inline panels only: close the panel. It sits just left of Save, as Cancel while the draft holds
+   *  unsaved text (leaving discards it) and as Done once nothing is pending. */
+  dismiss?: () => void;
 }): JSX.Element {
   const [draft, setDraft] = createSignal<string | null>(null);
   const [error, setError] = createSignal<string | null>(null);
@@ -313,13 +318,21 @@ function QueryTextPane(props: {
         <Show when={pending() && !error()}>
           <span class="query-text-pane-pending">{t("query-query-builder-checking")}</span>
         </Show>
-        <button
-          type="button"
-          class="qb-commit query-text-pane-save"
-          disabled={!savable()}
-          onClick={() => { const q = good(); if (q) props.onCommit(q); }}
-        >
-          {t("query-query-builder-save-query-text")}</button>
+        <DialogActions
+          class="query-text-pane-actions"
+          cancel={<Show when={props.dismiss}>
+            {(dismiss) => (
+              <button type="button" class="qc-done query-text-pane-dismiss" onClick={() => dismiss()()}>
+                {draft() !== null ? t("query-calm-cancel") : t("query-calm-done")}</button>
+            )}
+          </Show>}
+          primary={<button
+            type="button"
+            class="qb-commit query-text-pane-save"
+            disabled={!savable()}
+            onClick={() => { const q = good(); if (q) props.onCommit(q); }}
+          >
+            {t("query-query-builder-save-query-text")}</button>} />
       </div>
       {/* The structured half of §4.3.2: the kind, the span, the parser's own
           alternatives, and whether the diagnostic is inside an `off` subtree. */}
@@ -415,11 +428,12 @@ export function resetQueryRegistryRevisionForTests(): void {
 }
 
 /** **One registry read, however many surfaces ask for it** (D-14, I-12): every open builder keys the same
- * `sharedQueryResult` entry by graph scope, data revision and declaration revision. */
+ * `sharedQueryResult` entry by graph scope, registry key and declaration revision. */
 export function createQueryRegistryAccess(active: () => boolean): RegistryAccess {
+  const subscription = createQuerySubscription(() => active() ? { kind: "registry" } : undefined);
   const registryScope = () => `${graphMeta()?.root ?? ""}\0${graphEpoch()}`;
   const registryKey = () =>
-    active() ? `${dataRev()}\0${declarationRevision()}` : undefined;
+    active() ? `${subscription.revision()}\0${declarationRevision()}` : undefined;
   const [registrySnapshot] = createResource(
     () => {
       const key = registryKey();
@@ -427,9 +441,10 @@ export function createQueryRegistryAccess(active: () => boolean): RegistryAccess
     },
     async (request): Promise<RegistryRead | undefined> => {
       try {
+        if (!await subscription.ready()) return undefined;
         const landed = await readOwned(
           graphOwner(),
-          sharedQueryResult(request.scope, `query-registry\0${request.key}`, () => backend().queryRegistry()),
+          sharedQueryResult(request.scope, `query-registry\0${request.key}\0${subscription.publication()}`, () => backend().queryRegistry()),
         );
         if (landed.kind === "stale") return undefined;
         return { scope: request.scope, key: request.key, snapshot: landed.value, failure: null };
@@ -506,7 +521,8 @@ export function QueryBuilder(props: {
   /** The workspace's permanently expanded sheet (§7.2). */
   sheetAlwaysOpen?: boolean;
   inline?: boolean;
-  openRequest?: () => { n: number; tab: "filter" | "display" | "text" } | null;
+  /** `close` shuts the inline editor (the gear's second click, GH #850); otherwise opens `tab`. */
+  openRequest?: () => { n: number; tab: "filter" | "display" | "text"; close?: boolean } | null;
   /** The live result count, rendered beside the sentence (§7.2). */
   total?: JSX.Element;
   /** The pane's text no longer parses, so the rows on screen are the LAST reading that ran. */
@@ -552,11 +568,16 @@ export function QueryBuilder(props: {
   createEffect(() => {
     const request = props.openRequest?.();
     if (!request) return;
+    if (request.close) { if (untrack(open)) closeInline(); return; }
     setTab(request.tab);
     setOpen(true);
     if (props.inline) queueMicrotask(() => {
-      if (open()) (request.tab === "text" ? inlinePanel?.querySelector<HTMLElement>("textarea")
-        : inlinePanel?.querySelector<HTMLElement>(".qc-done"))?.focus();
+      if (!open()) return;
+      // Done sits at the panel's end (GH #619 c6), so opening lands on the first control, not on it.
+      const first = [...(inlinePanel?.querySelectorAll<HTMLElement>("button, input, select, textarea") ?? [])]
+        .find((element) => !(element as HTMLButtonElement).disabled && !element.classList.contains("qc-done"));
+      (request.tab === "text" ? inlinePanel?.querySelector<HTMLElement>("textarea")
+        : first ?? inlinePanel?.querySelector<HTMLElement>(".qc-done"))?.focus();
     });
   });
   // The text pane is mounted only while its toggle is on (default off, remembered).
@@ -886,6 +907,7 @@ export function QueryBuilder(props: {
           dialect={props.paneDialect ?? "tql"}
           visible={sheetOpen}
           vocabulary={vocabulary}
+          dismiss={props.inline ? closeInline : undefined}
           notice={props.notice}
           handle={setPaneHandle}
           onParsed={(parsed) => setPaneQuery(carryForward(parsed))}
@@ -964,8 +986,14 @@ export function QueryBuilder(props: {
           <Show when={props.inline && open()}>
             <div ref={inlinePanel} class="qc-panel" onClick={stop} onMouseDown={(event) => event.stopPropagation()}
               onKeyDown={(event) => { event.stopPropagation(); if (event.key === "Escape") { event.preventDefault(); closeInline(); } }}>
-              <button type="button" class="qc-done" onClick={closeInline}>{t("query-calm-done")}</button>
               <Show when={tab() === "filter"} fallback={footer()}>{sheet()}</Show>
+              {/* GH #619 c6 (D-20261018-Q619, UI1): Done sits bottom-right under the conditions. The text
+                  tab keeps Save and its dismiss together in the pane, at the same trailing end. */}
+              <Show when={tab() !== "text"}>
+                <div class="qc-panel-actions">
+                  <button type="button" class="qc-done" onClick={closeInline}>{t("query-calm-done")}</button>
+                </div>
+              </Show>
             </div>
           </Show>
           <Show when={!props.inline && open() && !props.sheetAlwaysOpen && rect() !== null}>

@@ -21,7 +21,7 @@ pub(crate) fn with_host<T>(
 ) -> Result<T, String> {
     match &*slot.host.read().unwrap_or_else(|e| e.into_inner()) {
         PageHostSlot::Running(host) => Ok(work(host)),
-        PageHostSlot::Off => Err("no page host runs for this graph".into()),
+        PageHostSlot::Off => Err(crate::state::NO_PAGE_HOST.into()),
         PageHostSlot::Revoked => Err(crate::state::STALE_BINDING.into()),
     }
 }
@@ -174,21 +174,35 @@ pub(crate) async fn page_delete(
     name: String,
     kind: tine_core::model::PageKind,
     expected_path: Option<String>,
+    app: tauri::AppHandle,
     ctx: GraphContext<'_>,
 ) -> Result<PageOperation, String> {
     let slot = slot_for_context(&ctx)?;
     off_ui(move || {
-        with_host(&slot, |host| {
-            tine_graph_features::pages::delete_page_expected(
-                &slot.store,
-                host,
-                session,
-                &name,
-                kind,
-                expected_path.as_deref(),
-            )
-            .map_err(|error| error.to_string())
-        })?
+        crate::git_settings::around(
+            &slot.root_key,
+            || format!("Delete page \"{name}\""),
+            || {
+                with_host(&slot, |host| {
+                    tine_graph_features::pages::delete_page_expected(
+                        &slot.store,
+                        host,
+                        session,
+                        &name,
+                        kind,
+                        expected_path.as_deref(),
+                    )
+                    .map_err(|error| error.to_string())
+                })?
+            },
+        )
+        .inspect(|operation| {
+            // A refused or waiting delete changed nothing.
+            if !matches!(operation, PageOperation::Refused | PageOperation::Waiting) {
+                let path: Vec<&str> = expected_path.as_deref().into_iter().collect();
+                crate::seen::page_gone(&app, &slot, Some(&name), &path);
+            }
+        })
     })
     .await
 }
@@ -288,4 +302,21 @@ pub(crate) fn bench_event(ev: String, t: f64) {
     if ev == "unfreeze" {
         tine_store::bench_events::unfreeze(t);
     }
+}
+
+/// The window's answer to an `owner-flush-request`. Only the window bound to
+/// this graph (and this binding) can answer it; it runs no owner verb
+/// (CLI PROTOCOL §6: no Tauri command reaches the owner endpoint).
+#[tauri::command]
+pub(crate) fn owner_flush_answer(
+    id: u64,
+    saved: bool,
+    binding_generation: u64,
+    state: crate::state::GraphContext<'_>,
+) -> Result<(), String> {
+    let slot = crate::state::slot_for_context(&state)?;
+    if let Some(window) = slot.window.get() {
+        window.answer_flush(id, saved, binding_generation);
+    }
+    Ok(())
 }

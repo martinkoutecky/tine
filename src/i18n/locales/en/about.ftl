@@ -20,6 +20,8 @@ about-check-for-updates = Check for updates
 about-check-for-updates-automatically = Check for updates automatically
 about-applies-to-this-device-manual-checks-remain = Applies to this device. Manual checks remain available when turned off.
 about-updates-arrive-through-your-app-s-distribution-channel = Updates arrive through your app's distribution channel.
+# $packager is the distribution's own name (a compile-time setting), not translated.
+about-packaged-by-update-there = This copy of { $product } is packaged by { $packager }. Update it there.
 about-releases = Releases
 about-built = Built { $buildStamp }
 about-website = Website

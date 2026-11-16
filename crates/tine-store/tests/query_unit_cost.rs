@@ -1,8 +1,8 @@
 //! I-25 unit-cost probe for the query index and answer memo (og 14 Q2 G3):
 //! work and allocated bytes per 1-block and 60-block page edit, on a small and
 //! a 10k-page graph, with a warmed property registry and a populated memo.
-//! The query side of an edit (index patch, registry carry, memo carry,
-//! re-answering warmed queries) must not grow with the graph.
+//! Save allocations and the query side of an edit (index patch, registry carry,
+//! memo carry, re-answering warmed queries) must not grow with the graph.
 use std::alloc::{GlobalAlloc, Layout, System};
 use std::fs;
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
@@ -16,34 +16,73 @@ use tine_store::{
     IrAnswer, IrRequest, PageId, QueryDialect, SaveBase, SaveOutcome, Store, WholeGraph,
 };
 
-/// Counts bytes allocated while `COUNTING` is set (process-wide).
+/// Counts bytes allocated while `COUNTING` is set, process-wide except the
+/// watcher thread: its settlement of an earlier write lands in a measured
+/// window whenever that window opens about 200 ms after the write (its
+/// debounce), as on a loaded host. That is the watcher's cost, billed apart
+/// from the edit (K5, as `watcher_reads`), and it made the bounds below
+/// flaky (GH #715 lane: 82-101 kB in one measured save on a 10k graph).
 struct Counting;
 static COUNTING: AtomicBool = AtomicBool::new(false);
 static ALLOCATED: AtomicU64 = AtomicU64::new(0);
+static WATCHER_ALLOCATED: AtomicU64 = AtomicU64::new(0);
+
+fn note(bytes: u64) {
+    if cost_counters::on_watcher() {
+        WATCHER_ALLOCATED.fetch_add(bytes, Ordering::Relaxed);
+    } else {
+        ALLOCATED.fetch_add(bytes, Ordering::Relaxed);
+        note_own(bytes);
+    }
+}
 
 unsafe impl GlobalAlloc for Counting {
     unsafe fn alloc(&self, layout: Layout) -> *mut u8 {
         super::og_p10_journal_scan_cost::count();
         if COUNTING.load(Ordering::Relaxed) {
-            ALLOCATED.fetch_add(layout.size() as u64, Ordering::Relaxed);
-            note_own(layout.size() as u64);
+            note(layout.size() as u64);
         }
+        peak_note(layout.size() as i64);
         unsafe { System.alloc(layout) }
     }
     unsafe fn dealloc(&self, ptr: *mut u8, layout: Layout) {
+        peak_note(-(layout.size() as i64));
         unsafe { System.dealloc(ptr, layout) }
     }
     unsafe fn realloc(&self, ptr: *mut u8, layout: Layout, new_size: usize) -> *mut u8 {
         super::og_p10_journal_scan_cost::count();
         if COUNTING.load(Ordering::Relaxed) {
-            ALLOCATED.fetch_add(
-                new_size.saturating_sub(layout.size()) as u64,
-                Ordering::Relaxed,
-            );
-            note_own(new_size.saturating_sub(layout.size()) as u64);
+            note(new_size.saturating_sub(layout.size()) as u64);
         }
+        peak_note(new_size as i64 - layout.size() as i64);
         unsafe { System.realloc(ptr, layout, new_size) }
     }
+}
+
+// Peak live heap of ONE thread over a closure (`peak_heap_of`): what the
+// thread allocates minus what it frees, from the closure's start. Other
+// threads (parallel tests, the watcher) are not counted, so the bound is
+// stable under a loaded test binary.
+thread_local! {
+    static PEAK_METER: std::cell::Cell<Option<(i64, i64)>> = const { std::cell::Cell::new(None) };
+}
+
+fn peak_note(delta: i64) {
+    let _ = PEAK_METER.try_with(|meter| {
+        if let Some((live, peak)) = meter.get() {
+            let live = live + delta;
+            meter.set(Some((live, peak.max(live))));
+        }
+    });
+}
+
+/// `f`'s answer and the peak additional live heap, in bytes, that this thread
+/// held while running it (the reviewer's probe, per thread).
+pub(crate) fn peak_heap_of<T>(f: impl FnOnce() -> T) -> (T, i64) {
+    PEAK_METER.with(|meter| meter.set(Some((0, 0))));
+    let out = f();
+    let peak = PEAK_METER.with(|meter| meter.take().map_or(0, |(_, peak)| peak));
+    (out, peak)
 }
 
 #[global_allocator]
@@ -68,6 +107,7 @@ static CASE_LOCK: Mutex<()> = Mutex::new(());
 fn measure<T>(f: impl FnOnce() -> T) -> (T, u64, Counts) {
     cost_counters::reset();
     ALLOCATED.store(0, Ordering::Relaxed);
+    WATCHER_ALLOCATED.store(0, Ordering::Relaxed);
     COUNTING.store(true, Ordering::Relaxed);
     let out = f();
     COUNTING.store(false, Ordering::Relaxed);
@@ -87,7 +127,10 @@ const QUERIES: &[&str] = &[
 ];
 
 fn warm(graph: &WholeGraph, memo: bool) {
-    match graph.query_ir(IrRequest::Registry) {
+    match graph
+        .query_ir(IrRequest::Registry, &tine_store::Cancel::default())
+        .map(|answer| answer.expect("never cancelled"))
+    {
         Ok(IrAnswer::Registry(_)) => {}
         _ => panic!("registry"),
     }
@@ -105,7 +148,10 @@ fn warm(graph: &WholeGraph, memo: bool) {
 /// registry) and warmed queries whose answers are page-sized, so the bytes
 /// measured are the edit's, not a graph-sized answer's copy to the caller.
 fn after_edit(graph: &WholeGraph) {
-    match graph.query_ir(IrRequest::Registry) {
+    match graph
+        .query_ir(IrRequest::Registry, &tine_store::Cancel::default())
+        .map(|answer| answer.expect("never cancelled"))
+    {
         Ok(IrAnswer::Registry(_)) => {}
         _ => panic!("registry"),
     }
@@ -117,11 +163,17 @@ fn after_edit(graph: &WholeGraph) {
 }
 
 fn run(graph: &WholeGraph, query: &tine_core::query::ir::Query, view: &ViewSettings) {
-    match graph.query_ir(IrRequest::Run {
-        query,
-        view,
-        context: &ExecutionContext::none(),
-    }) {
+    match graph
+        .query_ir(
+            IrRequest::Run {
+                query,
+                view,
+                context: &ExecutionContext::none(),
+            },
+            &tine_store::Cancel::default(),
+        )
+        .map(|answer| answer.expect("never cancelled"))
+    {
         Ok(IrAnswer::Result(_)) => {}
         other => panic!("{other:?}"),
     }
@@ -134,6 +186,8 @@ struct Probe {
     save: Counts,
     query_bytes: u64,
     query: Counts,
+    /// Watcher-thread bytes in both windows (reported, not bounded).
+    watcher_bytes: u64,
 }
 
 fn probe(pages: usize, blocks: usize, memo: bool) -> Probe {
@@ -181,11 +235,16 @@ fn probe_edit(pages: usize, blocks: usize, memo: bool, edits: [&str; 2]) -> Prob
                 &doc,
             )
         });
+        let save_watcher_bytes = WATCHER_ALLOCATED.load(Ordering::Relaxed);
         assert!(matches!(outcome, SaveOutcome::Saved(_)), "{outcome:?}");
         let graph = store.whole_graph().unwrap();
         let ((), query_bytes, query) = measure(|| after_edit(&graph));
+        let watcher_bytes = save_watcher_bytes + WATCHER_ALLOCATED.load(Ordering::Relaxed);
         if text == edits[1] {
-            let rare_row = match graph.query_ir(IrRequest::Registry) {
+            let rare_row = match graph
+                .query_ir(IrRequest::Registry, &tine_store::Cancel::default())
+                .map(|answer| answer.expect("never cancelled"))
+            {
                 Ok(IrAnswer::Registry(registry)) => registry.row("rare").is_some(),
                 _ => panic!("registry"),
             };
@@ -197,6 +256,7 @@ fn probe_edit(pages: usize, blocks: usize, memo: bool, edits: [&str; 2]) -> Prob
                 save,
                 query_bytes,
                 query,
+                watcher_bytes,
             };
         }
     }
@@ -224,10 +284,11 @@ fn a_query_side_edit_cost_does_not_grow_with_the_graph() {
         ] {
             eprintln!(
                 "I-25 query unit cost: blocks={blocks} pages={pages} memo={memo} save_bytes={} \
-                 query_bytes={} facts_copies={} facts_derived={} carry_block_probes={} \
-                 memo_page_probes={}",
+                 query_bytes={} watcher_bytes={} facts_copies={} facts_derived={} \
+                 carry_block_probes={} memo_page_probes={}",
                 p.save_bytes,
                 p.query_bytes,
+                p.watcher_bytes,
                 p.save.query_facts_copies + p.query.query_facts_copies,
                 p.save.query_facts_derived + p.query.query_facts_derived,
                 p.save.query_carry_block_probes + p.query.query_carry_block_probes,
@@ -252,14 +313,26 @@ fn a_query_side_edit_cost_does_not_grow_with_the_graph() {
         );
         // A populated memo is carried across the edit by changed-page work
         // only: on a 10k graph it may add at most a small constant to the
-        // save's bytes over a registry-only warm (the rest of the save's
-        // bytes are the snapshot publication, which this lane does not own).
+        // save's bytes over a registry-only warm. Keep this comparison too:
+        // graph-independent memo overhead on both graph sizes would cancel
+        // out of the growth check below.
         assert!(
             large.save_bytes <= bare.save_bytes + 64 * 1024,
             "I-25: carrying the query memo across one edit cost {} bytes on a 10k graph \
              (memo) vs {} (registry only); exemplar query/memo.rs Entry::pages",
             large.save_bytes,
             bare.save_bytes
+        );
+        // Shared save work also has to stay bounded: comparing two 10k
+        // probes alone misses a graph-sized allocation common to both.
+        // Measured 20 -> 10k growth is about 1.1 KiB for both page sizes;
+        // 64 KiB allows fixed noise while rejecting even 16 bytes per page.
+        // Count helper threads too; only watcher work is billed separately.
+        assert!(
+            large.save_bytes <= small.save_bytes + 64 * 1024,
+            "I-25: save-side bytes per edit grew with the graph: {} (20 pages) → {} (10k pages)",
+            small.save_bytes,
+            large.save_bytes
         );
         // Bytes on the query side follow the edited page, not the graph: the
         // 10k graph may cost at most a small constant more than 20 pages.
@@ -462,6 +535,6 @@ fn a_save_that_moves_no_alias_does_not_copy_the_alias_list() {
     assert!(
         with <= without + 256 * 1024,
         "I-25: a save carrying a 10k-alias list allocated {with} bytes vs {without} without \
-         aliases; exemplar model.rs carry_alias_list_from (Arc, not clone)"
+         aliases; exemplar model.rs alias_relation_after (Arc, not clone)"
     );
 }

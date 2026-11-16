@@ -11,9 +11,16 @@ import {
 } from "../transientLayers";
 import { makePdfRoute, type PdfRoute } from "../router";
 
-vi.mock("../nativeChrome", async (importOriginal) => ({
-  ...(await importOriginal<typeof import("../nativeChrome")>()),
-  isMobilePlatform: true,
+// A phone: a finger is the primary input and the shell is single-pane (the PDF takeover).
+vi.mock("../inputCapability", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("../inputCapability")>()),
+  touchPrimary: () => true,
+  touchCapable: () => true,
+}));
+vi.mock("../viewportClass", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("../viewportClass")>()),
+  isSinglePaneShell: () => true,
+  pdfTakesOverPane: () => true,
 }));
 
 const getDocumentMock = vi.hoisted(() => vi.fn());
@@ -32,7 +39,7 @@ vi.mock("pdfjs-dist", () => ({
   },
 }));
 
-vi.mock("pdfjs-dist/build/pdf.worker.min.mjs?url", () => ({
+vi.mock("pdfjs-dist/legacy/build/pdf.worker.min.mjs?url", () => ({
   default: "pdf.worker.test.js",
 }));
 
@@ -58,6 +65,7 @@ function documentWithOnePage() {
       getViewport: vi.fn(({ scale }: { scale: number }) => ({ width: 612 * scale, height: 792 * scale })),
       getTextContent: vi.fn().mockResolvedValue({ items: [] }),
       render: vi.fn().mockReturnValue({ promise: Promise.resolve(), cancel: vi.fn() }),
+      cleanup: vi.fn(() => true),
     }),
     getOutline: vi.fn().mockResolvedValue([]),
     getDestination: vi.fn().mockResolvedValue(null),
@@ -162,7 +170,7 @@ describe("mobile PDF pane transient ownership", () => {
         }),
         removeAllRanges: vi.fn(),
       } as unknown as Selection);
-      span.dispatchEvent(new Event("touchend", { bubbles: true }));
+      span.dispatchEvent(new TouchEvent("touchend", { bubbles: true, touches: [] }));
       await flush();
       expect(host.querySelectorAll(".pdf-color-swatch")).toHaveLength(5);
     } finally { dispose(); }

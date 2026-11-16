@@ -1,4 +1,5 @@
 import { TableWrap } from "./TableWrap";
+import { PropertyKey, visiblePageProperties } from "../render/PropertyKey";
 import { t, msg, render } from "../i18n";
 import { Rich } from "../i18n/Rich";
 import { For, Match, Show, Switch, createMemo, type JSX } from "solid-js";
@@ -27,7 +28,7 @@ export type QueryView = ViewKind;
 
 /** A page-anchored answer (K16): pages, not degenerate empty block groups.
  *  Table columns come off the rows' own page properties via `query_run`, never
- *  a name-only row. Search/List show titles and a one-click properties editor;
+ *  a name-only row. Search/List show titles, the page's properties as text and a pencil editor;
  *  columns only affect Table. Cost O(returned rows and displayed cells). */
 export function QueryPageRows(props: { rows: PageRow[]; view: QueryView; groupBy?: string; columns?: string[] }): JSX.Element {
   const target = (row: PageRow) => ({ name: row.name, pageKind: row.kind, path: row.path });
@@ -65,8 +66,18 @@ export function QueryPageRows(props: { rows: PageRow[]; view: QueryView; groupBy
       {row.name}
     </button>
   );
-  // Search/List use master's title-only page rows; the existing pencil keeps
-  // the full properties one click away through the guarded page editor.
+  // GH #619 item 8 (D-20261018-Q619): Search/List page rows show the page's
+  // properties under the title; keys share the page-header navigation;
+  // the pencil edits them through the guarded page editor.
+  const propertyStrip = (row: PageRow) => (
+    <Show when={row.properties.length > 0}>
+      <span class="query-page-props" data-selectable="text">
+        <For each={visiblePageProperties(row.properties)}>{([key, val]) => (
+          <span class="query-page-prop"><span class="query-page-prop-key"><PropertyKey name={key} />:</span> {val}</span>
+        )}</For>
+      </span>
+    </Show>
+  );
   const propertyEditor = (row: PageRow) => (
     <button
       type="button"
@@ -84,7 +95,7 @@ export function QueryPageRows(props: { rows: PageRow[]; view: QueryView; groupBy
     <Switch
       fallback={
         <ul class="query-results-list" aria-label={t("query-query-result-parts-page-results")}>
-          <For each={props.rows}>{(row) => <li>{link(row)}{propertyEditor(row)}</li>}</For>
+          <For each={props.rows}>{(row) => <li>{link(row)}{propertyEditor(row)}{propertyStrip(row)}</li>}</For>
         </ul>
       }
     >
@@ -110,7 +121,7 @@ export function QueryPageRows(props: { rows: PageRow[]; view: QueryView; groupBy
         <div class="query-results-board" aria-label={t("query-query-result-parts-page-results-grouped")}>
           <For each={board()}>{([key, rows]) => (
             <section class="query-board-column" aria-label={key || t("query-query-result-parts-no-value")}>
-              <h4>{key || t("query-query-result-parts-no-value")}<span class="query-board-count">{rows.length}</span></h4>
+              <h4 class="query-board-heading"><span class="query-board-label">{key || t("query-query-result-parts-no-value")}</span><span class="query-board-count">{rows.length}</span></h4>
               <For each={rows}>{(row) => <div class="query-board-card">{link(row)}</div>}</For>
             </section>
           )}</For>
@@ -124,8 +135,8 @@ export function QueryPageRows(props: { rows: PageRow[]; view: QueryView; groupBy
  *  answerer (I-12) instead of a frontend fold over the returned rows. An absent
  *  answer is never a numeric zero. Grouping is named; a sole missing-value
  *  group shows overall totals instead of a table. O(returned statistic cells);
- *  the host supplies a clear action only on writable surfaces. */
-export function QueryStatisticsSummary(props: { statistics: QueryStatistics; onClearGrouping?: () => void }): JSX.Element {
+ *  grouping is changed in the Display menu, not here. */
+export function QueryStatisticsSummary(props: { statistics: QueryStatistics }): JSX.Element {
   const stop = (e: MouseEvent) => e.stopPropagation();
   const summary = createMemo(() => querySummary({ statistics: props.statistics })!);
   const groupLabel = () => {
@@ -136,14 +147,13 @@ export function QueryStatisticsSummary(props: { statistics: QueryStatistics; onC
     const groups = summary().groups;
     return groups?.length && !(groups.length === 1 && groups[0].key === null) ? groups : null;
   });
+  // F5: a group breakdown is secondary to the results below it (a board column
+  // already shows its own count), so it folds behind its "Grouped by" line.
   return (
     <>
-      <Show when={props.statistics.group_by}>
+      <Show when={props.statistics.group_by && !breakdown()}>
         <div class="query-summary" onClick={stop}>
           <span class="qs-label">{t("query-grouped-by", { field: groupLabel() ?? "" })}</span>
-          <Show when={props.onClearGrouping}>
-            <button type="button" class="query-grouping-clear" aria-label={t("query-query-result-parts-clear-grouping")} onClick={() => props.onClearGrouping?.()}>{t("query-query-sheet-parts-clear")}</button>
-          </Show>
         </div>
       </Show>
       <Show when={summary().notice}>
@@ -166,7 +176,8 @@ export function QueryStatisticsSummary(props: { statistics: QueryStatistics; onC
         }
       >
         {(groups) => (
-          <>
+          <details class="query-summary-details">
+            <summary class="query-summary qs-label" onClick={stop}>{t("query-grouped-by", { field: groupLabel() ?? "" })}</summary>
             <TableWrap><table class="md-table query-summary-table" onClick={stop}>
               <thead>
                 <tr>
@@ -192,7 +203,7 @@ export function QueryStatisticsSummary(props: { statistics: QueryStatistics; onC
               <p class="query-summary-note" onClick={stop}>
                 {t("query-query-result-parts-a-row-with-several-tags-appears-in-every-matching-group")}</p>
             </Show>
-          </>
+          </details>
         )}
       </Show>
     </>

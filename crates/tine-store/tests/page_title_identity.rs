@@ -24,15 +24,53 @@ fn path_saved_under_another_case_opens_disk_spelling() {
     fs::create_dir_all(root.join("pages")).unwrap();
     fs::create_dir_all(root.join("journals")).unwrap();
     fs::write(root.join("pages/contents.md"), "- body\n").unwrap();
-    // A same-directory link simulates a case-insensitive volume's alias
-    // lookup on Linux: canonicalize returns the file's actual disk spelling.
-    symlink("contents.md", root.join("pages/Contents.md")).unwrap();
+    // Use the real alias on a folding volume. A same-directory link models
+    // that lookup on a sensitive volume such as Linux's usual temp volume.
+    if !root.join("pages/Contents.md").exists() {
+        symlink("contents.md", root.join("pages/Contents.md")).unwrap();
+    }
     let store = Store::open(&root, Default::default()).unwrap().0;
     let read = store.page(&PageId::from("pages/Contents.md")).unwrap();
     assert_eq!(read.id.as_str(), "pages/contents.md");
     assert_eq!(read.doc.name, "contents");
     drop(store);
     fs::remove_dir_all(root).unwrap();
+}
+
+// Linux/Android model the resolver with a link when needed; macOS/iOS use
+// their native alias when available. Windows normalization moves are witnessed
+// by og_gh609_case_rename and transaction::move_file::spelling_tests.
+#[cfg(all(
+    not(target_os = "windows"),
+    any(
+        target_os = "linux",
+        target_os = "android",
+        target_os = "macos",
+        target_os = "ios"
+    )
+))]
+#[test]
+fn normalization_alias_opens_only_the_listed_disk_spelling() {
+    let _integration_guard = crate::integration_lock();
+    let dir = tempfile::tempdir().unwrap();
+    fs::create_dir(dir.path().join("pages")).unwrap();
+    let listed = "pages/cafe\u{301}.md";
+    let alias = "pages/CAFÉ.md";
+    fs::write(dir.path().join(listed), "title:: café\n- body\n").unwrap();
+    if !dir.path().join(alias).exists() {
+        std::os::unix::fs::symlink("cafe\u{301}.md", dir.path().join(alias)).unwrap();
+    }
+    let store = Store::open(dir.path(), Default::default()).unwrap().0;
+    store.whole_graph().unwrap();
+    let read = store.page(&PageId::from(alias)).unwrap();
+    assert_eq!(read.id.as_str(), listed);
+    let Resolved::Existing { id, others } = store.whole_graph().unwrap().resolve("café", false)
+    else {
+        panic!("the listed page must resolve");
+    };
+    assert_eq!(id.as_str(), listed);
+    assert!(others.is_empty(), "a resolver alias must not become a twin");
+    store.close();
 }
 
 #[cfg(unix)]

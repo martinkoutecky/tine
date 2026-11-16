@@ -28,7 +28,7 @@ const log = fs.openSync(path.join(TMP, "driver.log"), "w");
 const driver = spawn(DRIVER, ["--port", String(port), "--native-port", String(port + 1), "--native-driver", process.env.WEBKIT_DRIVER || "/usr/bin/WebKitWebDriver"], { env, stdio: ["ignore", log, log], detached: true });
 let browser;
 let stage = "startup";
-const testedBase = process.env.TINE_TESTED_BASE || "release/0.8 batch/fix-beta7 (gh729 backport of og 007cbc245)";
+const testedBase = "og 9a7896ec3 + gh729 working diff";
 const connect = () => remote({ hostname: "127.0.0.1", port, path: "/", logLevel: "error", connectionRetryCount: 2, connectionRetryTimeout: 30_000,
   capabilities: { browserName: "wry", "wdio:enforceWebDriverClassic": true, "tauri:options": { application: APP } } });
 async function typeSlash(query) {

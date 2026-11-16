@@ -1,6 +1,7 @@
 import { focusOnMount } from "../focusOnMount";
 import { t, msg, render, type Msg } from "../i18n";
 import { Rich } from "../i18n/Rich";
+import { DialogActions } from "./DialogActions";
 import { isLeafLike } from "../editor/queryIr";
 // The query sheet's parts: the resting sentence, the node model, the row
 // controls, value editors, the anchor line and the add-condition flow (SPEC
@@ -1042,14 +1043,14 @@ export function AnchorPromptPanel(props: { prompt: AnchorPrompt }): JSX.Element 
       <p class="qs-anchor-prompt-text">
         <Rich message={msg("query-anchor-switch", { anchor: props.prompt.anchor, count: props.prompt.count, total: props.prompt.total, names: props.prompt.names.join(", "), hasNames: props.prompt.names.length ? 1 : 0 })} />
       </p>
-      <div class="qs-anchor-prompt-actions">
-        <button type="button" class="qs-commit" onClick={() => props.prompt.onRemove()}>
-          {t("query-query-sheet-parts-remove-them")}</button>
-        <button type="button" class="qs-conn" onClick={() => props.prompt.onKeep()}>
-          {t("query-query-sheet-parts-keep-anyway")}</button>
-        <button type="button" class="qs-conn" onClick={() => props.prompt.onCancel()}>
-          {t("query-query-sheet-parts-cancel")}</button>
-      </div>
+      <DialogActions
+        class="qs-anchor-prompt-actions"
+        aux={<button type="button" class="qs-conn" onClick={() => props.prompt.onKeep()}>
+          {t("query-query-sheet-parts-keep-anyway")}</button>}
+        cancel={<button type="button" class="qs-conn" onClick={() => props.prompt.onCancel()}>
+          {t("query-query-sheet-parts-cancel")}</button>}
+        primary={<button type="button" class="qs-commit" onClick={() => props.prompt.onRemove()}>
+          {t("query-query-sheet-parts-remove-them")}</button>} />
     </div>
   );
 }

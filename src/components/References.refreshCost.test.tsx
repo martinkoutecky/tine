@@ -8,7 +8,7 @@ import { bumpDataRev } from "../graphSession";
 import { UnlinkedReferences } from "./UnlinkedReferences";
 import { LinkedReferences } from "./LinkedReferences";
 
-// UI-GH746-REFERENCE-REFRESH-COST: after each save the reference sections read
+// UI-GH746-REFERENCE-REFRESH-COST: after each relevant save expanded sections read
 // their answer again. That refresh must not rebuild the filter index nobody
 // uses, flash "Loading", or remount rows whose content did not change.
 const folds = vi.hoisted(() => ({ count: 0 }));
@@ -52,6 +52,9 @@ it("refreshes unlinked and linked references without building the unused filter 
   const { root, dispose } = mount(() => <><LinkedReferences name="Target" /><UnlinkedReferences name="Target" /></>);
   try {
     await vi.waitFor(() => expect(root.querySelector(".linked-references")).not.toBeNull());
+    await vi.waitFor(() => expect(root.querySelector(".unlinked-references .references-count")?.textContent).toBe("40"));
+    root.querySelector<HTMLElement>(".unlinked-references .references-header")!.click();
+    await tick();
     folds.count = 0;
     for (let save = 0; save < 3; save++) {
       bumpDataRev();

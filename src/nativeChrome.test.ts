@@ -53,20 +53,6 @@ describe("platform identity (GH #446)", () => {
     expect(m.platformKind).toBe("android");
     expect(m.isMobilePlatform).toBe(true);
   });
-
-  it("keeps the split-pane shell on a tablet and the single-pane shell on a phone", async () => {
-    const m = await loadPlatform("ios", IPAD_DESKTOP_CLASS_UA);
-    expect(m.isTabletViewport(820, 1180)).toBe(true); // iPad portrait
-    expect(m.isTabletViewport(1180, 820)).toBe(true); // iPad landscape
-    expect(m.isTabletViewport(744, 1133)).toBe(true); // iPad mini portrait
-    expect(m.isTabletViewport(430, 932)).toBe(false); // iPhone portrait
-    expect(m.isTabletViewport(932, 430)).toBe(false); // iPhone landscape
-  });
-
-  it("never claims a single-pane shell on desktop", async () => {
-    const m = await loadPlatform("desktop", "Mozilla/5.0 (X11; Linux x86_64)");
-    expect(m.isSinglePaneShell()).toBe(false);
-  });
 });
 
 describe("native window frame preference", () => {

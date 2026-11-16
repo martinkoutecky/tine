@@ -19,18 +19,117 @@
 //! **Refusal.** If no candidate is writable, the launch prints one sentence
 //! naming the failure family and exits 1 (scenario: disk error / a filesystem
 //! the user cannot write — docs/storage-contract.md, `src-tauri::data_home`).
-//! Desktop Linux only: Android/iOS use sandboxed app dirs and no report exists
-//! for Windows/macOS. Cost: one unnamed temporary file per launch, released
-//! at once; nothing persisted.
+//! Relocation is desktop Linux only. All five targets classify the resolved
+//! app-data store at setup and warn about detected volatile storage. Linux and
+//! Android use statfs magic; Apple recognizes memory filesystem names, Windows
+//! recognizes RAM drives, and all detect temporary/runtime paths. RAM disk
+//! images presenting as ordinary filesystems and probe errors remain unverified.
+//! Cost: one unnamed temporary file for the Linux writability probe plus one
+//! metadata filesystem probe per launch; nothing persisted by classification.
 
 #[cfg(all(desktop, target_os = "linux"))]
 use crate::debug::{diag, diag_private};
-#[cfg(all(desktop, target_os = "linux"))]
 use std::path::{Path, PathBuf};
 use std::sync::Mutex;
 
 /// The fallback data home iff this launch relocated; taken once by the command.
 static RELOCATED_TO: Mutex<Option<String>> = Mutex::new(None);
+static VOLATILE: Mutex<bool> = Mutex::new(false);
+
+#[derive(Debug, PartialEq, Eq, serde::Serialize)]
+pub(crate) struct DataHomeNotice {
+    relocated_to: Option<String>,
+    volatile: bool,
+}
+
+/// Classify the actual Tauri app-data location, including ordinary launches
+/// with XDG_DATA_HOME on tmpfs. This is advisory and never gates graph open.
+/// A negative probe is unverified storage, not proof of crash durability.
+pub(crate) fn classify_at_launch(dir: &Path) {
+    let runtime = std::env::var_os("XDG_RUNTIME_DIR").filter(|value| !value.is_empty());
+    *VOLATILE.lock().unwrap_or_else(|p| p.into_inner()) = volatile_location(
+        dir,
+        &std::env::temp_dir(),
+        runtime.as_deref().map(Path::new),
+        volatile_filesystem,
+    );
+}
+
+fn volatile_location(
+    dir: &Path,
+    temp: &Path,
+    runtime: Option<&Path>,
+    probe: impl FnOnce(&Path) -> std::io::Result<bool>,
+) -> bool {
+    // Setup may run before the app-specific directory is created. Resolve
+    // existing ancestors so a new app folder inherits its real mount's policy.
+    let resolve = |path: &Path| {
+        path.ancestors()
+            .find_map(|ancestor| {
+                std::fs::canonicalize(ancestor)
+                    .ok()
+                    .map(|resolved| resolved.join(path.strip_prefix(ancestor).expect("ancestor")))
+            })
+            .unwrap_or_else(|| path.to_path_buf())
+    };
+    let dir = resolve(dir);
+    dir.starts_with(resolve(temp))
+        || runtime.is_some_and(|runtime| dir.starts_with(resolve(runtime)))
+        || probe(dir.ancestors().find(|path| path.is_dir()).unwrap_or(&dir)).unwrap_or(false)
+}
+
+#[cfg(any(target_os = "linux", target_os = "android"))]
+fn volatile_filesystem(dir: &Path) -> std::io::Result<bool> {
+    use std::os::unix::ffi::OsStrExt;
+    let path = std::ffi::CString::new(dir.as_os_str().as_bytes())?;
+    let mut info = std::mem::MaybeUninit::<libc::statfs>::uninit();
+    if unsafe { libc::statfs(path.as_ptr(), info.as_mut_ptr()) } != 0 {
+        return Err(std::io::Error::last_os_error());
+    }
+    Ok(volatile_magic(unsafe { info.assume_init() }.f_type as u64))
+}
+
+#[cfg(any(target_os = "linux", target_os = "android", test))]
+fn volatile_magic(magic: u64) -> bool {
+    // Linux/Android TMPFS_MAGIC and RAMFS_MAGIC, respectively.
+    matches!(magic as u32, 0x0102_1994 | 0x8584_58f6)
+}
+
+#[cfg(any(target_os = "macos", target_os = "ios"))]
+fn volatile_filesystem(dir: &Path) -> std::io::Result<bool> {
+    use std::os::unix::ffi::OsStrExt;
+    let path = std::ffi::CString::new(dir.as_os_str().as_bytes())?;
+    let mut info = std::mem::MaybeUninit::<libc::statfs>::uninit();
+    if unsafe { libc::statfs(path.as_ptr(), info.as_mut_ptr()) } != 0 {
+        return Err(std::io::Error::last_os_error());
+    }
+    let info = unsafe { info.assume_init() };
+    let name = unsafe { std::ffi::CStr::from_ptr(info.f_fstypename.as_ptr()) };
+    Ok(matches!(name.to_bytes(), b"tmpfs" | b"ramfs" | b"mfs"))
+}
+
+#[cfg(target_os = "windows")]
+fn volatile_filesystem(dir: &Path) -> std::io::Result<bool> {
+    use std::os::windows::ffi::OsStrExt;
+    use windows_sys::Win32::Storage::FileSystem::{GetDriveTypeW, GetVolumePathNameW};
+    let path: Vec<u16> = dir.as_os_str().encode_wide().chain(Some(0)).collect();
+    let mut volume = vec![0u16; 32768];
+    if unsafe { GetVolumePathNameW(path.as_ptr(), volume.as_mut_ptr(), volume.len() as u32) } == 0 {
+        return Err(std::io::Error::last_os_error());
+    }
+    // DRIVE_RAMDISK. Other drive types (including APFS-backed RAM images on
+    // Apple) cannot establish persistence; no positive guarantee is inferred.
+    Ok(unsafe { GetDriveTypeW(volume.as_ptr()) } == 6)
+}
+
+#[cfg(not(any(
+    target_os = "linux",
+    target_os = "android",
+    target_os = "macos",
+    target_os = "ios",
+    target_os = "windows"
+)))]
+compile_error!("app-data durability classification needs an explicit platform policy");
 
 /// Can files be created under `base` the way Tauri and WebKitGTK are about to?
 /// `create_dir_all` alone succeeds on an existing directory nobody may write,
@@ -129,14 +228,18 @@ fn fatal_no_data_home_message(kind: std::io::ErrorKind) -> String {
 #[cfg(not(all(desktop, target_os = "linux")))]
 pub(crate) fn ensure_usable(_identifier: &str) {}
 
-/// Command: the fallback data home ONCE if this launch relocated, then `None`
-/// (so a webview reload does not re-toast). `None` on every ordinary launch.
+/// Command: relocation and detected volatile storage ONCE per launch.
 #[tauri::command]
-pub(crate) fn take_data_home_fallback_notice() -> Option<String> {
-    RELOCATED_TO
+pub(crate) fn take_data_home_fallback_notice() -> Option<DataHomeNotice> {
+    let relocated_to = RELOCATED_TO
         .lock()
         .unwrap_or_else(|poison| poison.into_inner())
-        .take()
+        .take();
+    let volatile = std::mem::take(&mut *VOLATILE.lock().unwrap_or_else(|p| p.into_inner()));
+    (relocated_to.is_some() || volatile).then_some(DataHomeNotice {
+        relocated_to,
+        volatile,
+    })
 }
 
 #[cfg(all(test, desktop, target_os = "linux"))]
@@ -202,10 +305,84 @@ mod tests {
     #[test]
     fn the_notice_is_delivered_once() {
         *RELOCATED_TO.lock().unwrap() = Some("/tmp/example".to_string());
+        *VOLATILE.lock().unwrap() = true;
         assert_eq!(
             take_data_home_fallback_notice(),
-            Some("/tmp/example".to_string())
+            Some(DataHomeNotice {
+                relocated_to: Some("/tmp/example".to_string()),
+                volatile: true
+            })
         );
         assert_eq!(take_data_home_fallback_notice(), None);
+    }
+}
+
+#[cfg(test)]
+mod durability_tests {
+    use super::*;
+
+    #[test]
+    fn sb1_data_home_classifies_memory_and_temporary_storage_without_refusing() {
+        assert!(volatile_magic(0x0102_1994));
+        assert!(volatile_magic(0x8584_58f6));
+        assert!(!volatile_magic(0xef53));
+        let dir = tempfile::tempdir().unwrap();
+        let data = dir.path().join("app-data");
+        let temp = dir.path().join("temp");
+        let runtime = dir.path().join("runtime");
+        assert!(volatile_location(&data, &temp, None, |_| Ok(true)));
+        assert!(!volatile_location(&data, &temp, None, |_| Ok(false)));
+        // A failed probe never blocks opening; it establishes no guarantee.
+        assert!(!volatile_location(&data, &temp, None, |_| Err(
+            std::io::ErrorKind::PermissionDenied.into()
+        )));
+        assert!(volatile_location(&temp.join("data"), &temp, None, |_| Ok(
+            false
+        )));
+        assert!(volatile_location(
+            &runtime.join("data"),
+            &temp,
+            Some(&runtime),
+            |_| Ok(false)
+        ));
+    }
+
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn sb1_data_home_real_tmpfs_probe() {
+        let shm = Path::new("/dev/shm");
+        if !shm.is_dir() || !volatile_filesystem(shm).unwrap() {
+            eprintln!(
+                "no /dev/shm tmpfs available; fake-statfs classification is covered separately"
+            );
+            return;
+        }
+        assert!(volatile_location(
+            shm,
+            Path::new("/not-the-temp-directory"),
+            None,
+            volatile_filesystem
+        ));
+        let unborn = shm.join(format!("tine-sb1-not-created-{}", uuid::Uuid::new_v4()));
+        assert!(!unborn.exists());
+        assert!(volatile_location(
+            &unborn,
+            Path::new("/not-the-temp-directory"),
+            None,
+            volatile_filesystem
+        ));
+    }
+
+    #[test]
+    fn sb1_data_home_platform_policy_names_all_shipped_targets() {
+        let source = include_str!("data_home.rs");
+        let production = &source[..source.find("#[cfg(test)]\nmod durability_tests").unwrap()];
+        for target in ["linux", "android", "macos", "ios", "windows"] {
+            assert!(production.contains(&format!("target_os = \"{target}\"")));
+        }
+        assert!(production.contains("libc::statfs("));
+        assert!(production.contains("GetDriveTypeW("));
+        assert!(production.contains("f_fstypename"));
+        assert!(include_str!("lib.rs").contains("data_home::classify_at_launch(&dir)"));
     }
 }

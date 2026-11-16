@@ -1,7 +1,7 @@
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
-use tine_store::{Area, LoadError, OpenOptions, Refusal, Store, TxOutcome, Why};
+use crate::{Area, LoadError, OpenOptions, Refusal, Store, TxOutcome, Why};
 
 struct Fixture(PathBuf);
 
@@ -15,7 +15,7 @@ impl Fixture {
         ));
         std::fs::create_dir_all(root.join("pages")).unwrap();
         std::fs::create_dir_all(root.join("journals")).unwrap();
-        Self(root)
+        Self(std::fs::canonicalize(root).unwrap())
     }
 
     fn root(&self) -> &Path {
@@ -49,7 +49,7 @@ fn compare_checked_open(root: &Path, approved: Option<&Path>, expected_error: Op
 
 #[test]
 fn checked_open_matches_legacy_layout_and_consent() {
-    let _integration_guard = crate::integration_lock();
+    let _integration_guard = crate::test_transactions::integration_lock();
     let ordinary = Fixture::new("ordinary");
     std::fs::write(ordinary.root().join("pages/A.md"), "- hello\n").unwrap();
     compare_checked_open(ordinary.root(), None, None);
@@ -63,11 +63,11 @@ fn checked_open_matches_legacy_layout_and_consent() {
     std::fs::write(&file_path, "file").unwrap();
     assert!(matches!(
         Store::inspect(&file_path),
-        Err(tine_store::OpenError::NotAFolder(_))
+        Err(crate::OpenError::NotAFolder(_))
     ));
     assert!(matches!(
         Store::open(&file_path, OpenOptions::default()),
-        Err(tine_store::OpenError::NotAFolder(_))
+        Err(crate::OpenError::NotAFolder(_))
     ));
 
     #[cfg(unix)]
@@ -120,7 +120,7 @@ fn checked_open_matches_legacy_layout_and_consent() {
 
 #[test]
 fn inspection_does_not_write() {
-    let _integration_guard = crate::integration_lock();
+    let _integration_guard = crate::test_transactions::integration_lock();
     let fixture = Fixture::new("inspect");
     let before: Vec<_> = std::fs::read_dir(fixture.root())
         .unwrap()
@@ -142,7 +142,7 @@ fn inspection_does_not_write() {
 #[cfg(unix)]
 #[test]
 fn external_assets_consent_compares_live_canonical_target() {
-    let _integration_guard = crate::integration_lock();
+    let _integration_guard = crate::test_transactions::integration_lock();
     let graph = Fixture::new("consent-graph");
     let first = Fixture::new("consent-first");
     let second = Fixture::new("consent-second");
@@ -159,7 +159,7 @@ fn external_assets_consent_compares_live_canonical_target() {
 
 #[test]
 fn unreadable_config_reports_problem_without_changing_legacy_defaults() {
-    let _integration_guard = crate::integration_lock();
+    let _integration_guard = crate::test_transactions::integration_lock();
     let fixture = Fixture::new("bad-config");
     std::fs::create_dir_all(fixture.root().join("logseq")).unwrap();
     std::fs::write(fixture.root().join("logseq/config.edn"), [0xff]).unwrap();
@@ -176,7 +176,7 @@ fn unreadable_config_reports_problem_without_changing_legacy_defaults() {
 
 #[test]
 fn close_releases_load_waiter_and_refuses_commit() {
-    let _integration_guard = crate::integration_lock();
+    let _integration_guard = crate::test_transactions::integration_lock();
     let fixture = Fixture::new("close-loading");
     for i in 0..1200 {
         std::fs::write(fixture.root().join(format!("pages/{i}.md")), "- load\n").unwrap();
@@ -195,10 +195,10 @@ fn close_releases_load_waiter_and_refuses_commit() {
     store.close();
     assert!(matches!(waiting.join().unwrap(), Err(LoadError::Closed)));
     let id = store.file_id(Area::Pages, "AfterClose.md").unwrap();
-    let mut tx = store.transaction(Some(tine_store::EditKind::ReplacePage));
-    tx.create(&id, tine_store::Content::Bytes(b"- forbidden\n".to_vec()));
+    let mut tx = store.page_plan(Some(crate::EditKind::ReplacePage));
+    tx.create(&id, crate::Content::Bytes(b"- forbidden\n".to_vec()));
     assert!(matches!(
-        tx.commit(),
+        tx.commit_internal(),
         TxOutcome::NotCommitted {
             why: Why::Refused(Refusal::Closed),
             ..
@@ -209,14 +209,14 @@ fn close_releases_load_waiter_and_refuses_commit() {
 
 #[test]
 fn whole_graph_taken_before_close_keeps_answering() {
-    let _integration_guard = crate::integration_lock();
+    let _integration_guard = crate::test_transactions::integration_lock();
     let fixture = Fixture::new("old-view");
     std::fs::write(fixture.root().join("pages/A.md"), "- hello\n").unwrap();
     let (store, _, _) = Store::open(fixture.root(), OpenOptions::default()).unwrap();
     let view = store.whole_graph().unwrap();
     store.close();
     assert!(view
-        .inventory(tine_store::InventoryScope::All)
+        .inventory(crate::InventoryScope::All)
         .0
         .iter()
         .any(|entry| entry.name == "A"));
@@ -225,37 +225,37 @@ fn whole_graph_taken_before_close_keeps_answering() {
 
 #[test]
 fn same_root_scan_keeps_old_commands_open() {
-    let _integration_guard = crate::integration_lock();
+    let _integration_guard = crate::test_transactions::integration_lock();
     let fixture = Fixture::new("scan-load");
     std::fs::write(fixture.root().join("pages/A.md"), "- before\n").unwrap();
     let (store, _, _) = Store::open(fixture.root(), OpenOptions::default()).unwrap();
-    store.refresh(tine_store::Depth::Stamps).unwrap();
+    store.refresh(crate::Depth::Stamps).unwrap();
     assert!(store.whole_graph().is_ok());
     let id = store.file_id(Area::Pages, "AfterCancel.md").unwrap();
-    let mut tx = store.transaction(Some(tine_store::EditKind::ReplacePage));
-    tx.create(&id, tine_store::Content::Bytes(b"- after\n".to_vec()));
-    assert!(matches!(tx.commit(), TxOutcome::Committed { .. }));
+    let mut tx = store.page_plan(Some(crate::EditKind::ReplacePage));
+    tx.create(&id, crate::Content::Bytes(b"- after\n".to_vec()));
+    assert!(matches!(tx.commit_internal(), TxOutcome::Committed { .. }));
     store.close();
 }
 
 #[test]
 fn journal_identity_stays_available_after_close_without_disk() {
-    let _integration_guard = crate::integration_lock();
+    let _integration_guard = crate::test_transactions::integration_lock();
     let fixture = Fixture::new("closed-journal-id");
     std::fs::write(fixture.root().join("journals/2026_09_25.md"), "- one\n").unwrap();
     let (store, _, _) = Store::open(fixture.root(), OpenOptions::default()).unwrap();
     let added = store.file_id(Area::Journals, "2026_09_26.md").unwrap();
-    let mut tx = store.transaction(Some(tine_store::EditKind::ReplacePage));
-    tx.create(&added, tine_store::Content::Bytes(b"- two\n".to_vec()));
-    assert!(matches!(tx.commit(), TxOutcome::Committed { .. }));
+    let mut tx = store.page_plan(Some(crate::EditKind::ReplacePage));
+    tx.create(&added, crate::Content::Bytes(b"- two\n".to_vec()));
+    assert!(matches!(tx.commit_internal(), TxOutcome::Committed { .. }));
     store.close();
     std::fs::remove_dir_all(fixture.root().join("journals")).unwrap();
     assert_eq!(
-        store.journal_id(tine_store::Day(20260925)).as_str(),
+        store.journal_id(crate::Day(20260925)).as_str(),
         "journals/2026_09_25.md"
     );
     assert_eq!(
-        store.journal_id(tine_store::Day(20260926)).as_str(),
+        store.journal_id(crate::Day(20260926)).as_str(),
         "journals/2026_09_26.md"
     );
 }

@@ -126,6 +126,12 @@ tab-bar-show-all-tabs = 显示所有标签页
 
 tab-bar-open-tabs = 已打开的标签页
 
+tab-bar-move-out-of-group = 移出分组
+
+tab-bar-expand-group = 展开
+
+tab-bar-collapse-group = 折叠
+
 tab-bar-reorder = 调整 { $title } 的顺序
 
 tab-bar-drag-to-reorder-alt-up-down-moves-the = 拖动调整顺序；Alt+Up/Down 移动聚焦的标签页
@@ -141,6 +147,8 @@ topbar-overflow-menu-more-toolbar-actions = 更多工具栏操作
 topbar-overflow-menu-calendar = 日历
 
 topbar-overflow-menu-journals = 日记
+
+topbar-overflow-menu-share = 分享此页面
 
 topbar-overflow-menu-toggle-theme = 切换主题
 

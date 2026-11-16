@@ -8,6 +8,7 @@ pub(crate) struct JournalFeedPage {
     next_before_day: Option<i64>,
     done: bool,
     as_of_day: i64,
+    references_pending: bool,
     #[serde(skip_serializing_if = "Vec::is_empty")]
     unreadable: Vec<String>,
 }
@@ -24,21 +25,30 @@ fn feed_wire(read: tine_graph_features::journals::FeedRead) -> PageWire {
 pub(crate) async fn journal_feed_page(
     limit: usize,
     before_day: Option<i64>,
+    wait_for_references: Option<bool>,
+    through_day: Option<i64>,
     state: GraphContext<'_>,
 ) -> Result<JournalFeedPage, String> {
     let slot = slot_for_context(&state)?;
     tauri::async_runtime::spawn_blocking(move || {
-        let feed = tine_graph_features::journals::feed_page(&slot.store, limit, before_day)
-            .map_err(|error| {
-                crate::flight::journal_feed_io_failure(error.kind());
-                error.to_string()
-            })?;
+        let feed = tine_graph_features::journals::feed_page_through(
+            &slot.store,
+            limit,
+            before_day,
+            through_day,
+            wait_for_references.unwrap_or(false),
+        )
+        .map_err(|error| {
+            crate::flight::journal_feed_io_failure(error.kind());
+            error.to_string()
+        })?;
         Ok(JournalFeedPage {
             pages: feed.pages.into_iter().map(feed_wire).collect(),
             upcoming: feed.upcoming.into_iter().map(feed_wire).collect(),
             next_before_day: feed.next_before_day,
             done: feed.done,
             as_of_day: feed.as_of_day,
+            references_pending: feed.references_pending,
             unreadable: feed.unreadable,
         })
     })

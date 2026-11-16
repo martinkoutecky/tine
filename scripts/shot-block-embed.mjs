@@ -1,6 +1,7 @@
-// Visual regression for GH #88: a whole-block `{{embed ((uuid))}}` presents the
-// referenced root as the one interactive root bullet, with a heavier descendant
-// guide instead of an extra host bullet or enclosing box.
+// Visual regression for GH #88: a whole-block `{{embed ((uuid))}}` presents ONE
+// bullet, the embedded root's, at the host's place (D-20261030-EMB restores 0.8's
+// single-root rule after beta.1's GH #726 host bullet), with a heavier source
+// descendant guide.
 // Usage: npm run build && node scripts/shot-block-embed.mjs
 import { chromium } from "playwright";
 import { spawn } from "node:child_process";
@@ -8,7 +9,7 @@ import { mkdirSync } from "node:fs";
 import { setTimeout as sleep } from "node:timers/promises";
 
 const PORT = 5206;
-const OUT = "screenshots/block-embed-accent";
+const OUT = process.env.E2E_ARTIFACT_DIR || "artifacts/gh726-embeds/block-embed-accent";
 const CASES = [
   { name: "default-light", theme: "", mode: "light" },
   { name: "default-dark", theme: "", mode: "dark" },
@@ -93,10 +94,10 @@ try {
   }
 
   if (bulletCount !== 3) {
-    // One root + child + grandchild. The removed host bullet would make four.
+    // Source root (standing for the host), child and grandchild.
     throw new Error(`expected 3 outline bullets, got ${bulletCount}`);
   }
-  if (hostControlCount !== 0) throw new Error(`macro host still has ${hostControlCount} control column(s)`);
+  if (hostControlCount !== 0) throw new Error(`macro host has ${hostControlCount} control column(s)`);
   if (embeddedBulletCount !== 3) throw new Error(`embedded outline has ${embeddedBulletCount} bullets`);
   if (guideWidth !== "2px") throw new Error(`expected a 2px embedded-root guide, got ${guideWidth}`);
   if (rootToggleCount < 1) {

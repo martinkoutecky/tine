@@ -60,6 +60,19 @@ pub(crate) fn names_nothing(error: &io::Error) -> bool {
     )
 }
 
+// GH #811: the mtime reset after a replacing rename on Android is best
+// effort; its outcomes are counted process-wide, for the storage
+// diagnostics (`androidMtimeReset`, D-20261031-MTIME). Kept here, not in
+// `storage_diag`, because the app crate also includes this file.
+#[cfg(target_os = "android")]
+#[allow(dead_code)]
+pub(crate) static ANDROID_MTIME_RESET_SUCCEEDED: std::sync::atomic::AtomicU64 =
+    std::sync::atomic::AtomicU64::new(0);
+#[cfg(target_os = "android")]
+#[allow(dead_code)]
+pub(crate) static ANDROID_MTIME_RESET_FAILED: std::sync::atomic::AtomicU64 =
+    std::sync::atomic::AtomicU64::new(0);
+
 /// `path`'s mtime without opening it (utimensat, the atime untouched): one
 /// FUSE SETATTR on Android shared storage, and no open there.
 #[cfg(target_os = "android")]
@@ -158,9 +171,15 @@ pub(crate) fn rename_replace(src: &Path, dst: &Path) -> io::Result<()> {
         #[cfg(target_os = "android")]
         {
             // The rename has landed; failing here would report a published
-            // file as unwritten. A failure leaves MediaProvider's mtime
-            // (best effort, D-20261031-MTIME).
-            let _ = modified.and_then(|modified| set_modified_at(dst, modified));
+            // file as unwritten. A failure leaves MediaProvider's mtime and
+            // is counted in the storage diagnostics (D-20261031-MTIME).
+            let reset = modified.and_then(|modified| set_modified_at(dst, modified));
+            let counter = if reset.is_ok() {
+                &ANDROID_MTIME_RESET_SUCCEEDED
+            } else {
+                &ANDROID_MTIME_RESET_FAILED
+            };
+            counter.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
         }
         Ok(())
     }
@@ -295,6 +314,58 @@ pub(crate) fn atomic_write_new(path: &Path, bytes: &[u8]) -> io::Result<()> {
         super::no_replace::move_file_noreplace(&tmp, path)?;
         super::directory_durability::sync_directory_entry(dir)?;
         Ok(())
+    })();
+    if res.is_err() {
+        let _ = fs::remove_file(&tmp);
+    }
+    res
+}
+
+/// [`atomic_write_with_check`] without a check, for a file that holds secrets
+/// (quick share's account token and share keys): the temporary is created
+/// owner-only (mode 0600 at creation, not a later chmod) on the Unix-family
+/// targets and keeps that mode through fsync and rename; on Windows it
+/// inherits the per-user app-data ACL. An unknown target refuses rather than
+/// write a secret with default permissions. Only the app's `device_io` calls it.
+#[allow(dead_code)]
+pub(crate) fn atomic_write_private(path: &Path, bytes: &[u8]) -> io::Result<()> {
+    let dir = path.parent().unwrap_or_else(|| Path::new("."));
+    let tmp = temp_path(
+        path,
+        WRITE_TMP_SEQ.fetch_add(1, Ordering::Relaxed),
+        ".private",
+    );
+    let mut options = fs::OpenOptions::new();
+    options.write(true).create_new(true);
+    #[cfg(any(
+        target_os = "linux",
+        target_os = "android",
+        target_os = "macos",
+        target_os = "ios"
+    ))]
+    {
+        use std::os::unix::fs::OpenOptionsExt;
+        options.mode(0o600);
+    }
+    #[cfg(not(any(
+        target_os = "linux",
+        target_os = "android",
+        target_os = "macos",
+        target_os = "ios",
+        target_os = "windows"
+    )))]
+    return Err(io::Error::new(
+        io::ErrorKind::Unsupported,
+        "private files are unavailable on this target",
+    ));
+    #[allow(unreachable_code)]
+    let res = (|| {
+        let mut file = options.open(&tmp).map_err(at("create temporary file"))?;
+        file.write_all(bytes).map_err(at("write temporary file"))?;
+        sync_file_handle(&file).map_err(at("fsync temporary file"))?;
+        drop(file);
+        rename_replace(&tmp, path).map_err(at("rename temporary file over target"))?;
+        super::directory_durability::sync_directory_entry(dir)
     })();
     if res.is_err() {
         let _ = fs::remove_file(&tmp);
@@ -459,27 +530,6 @@ mod tests {
                 eprintln!("UNC admin share unavailable: {unc}");
             }
         }
-    }
-
-    /// GH #811: a replacing rename leaves the destination with the source's
-    /// mtime, not the replaced file's. On Android shared storage this runs the
-    /// mtime reset (MediaProvider keeps the replaced file's mtime otherwise).
-    #[test]
-    fn a_replacing_rename_keeps_the_sources_mtime() {
-        let root = tempfile::tempdir().unwrap();
-        let (src, dst) = (root.path().join("src.md"), root.path().join("dst.md"));
-        fs::write(&dst, b"old").unwrap();
-        fs::write(&src, b"new").unwrap();
-        let old = std::time::SystemTime::UNIX_EPOCH + std::time::Duration::from_secs(1_000_000_000);
-        fs::File::options()
-            .write(true)
-            .open(&dst)
-            .unwrap()
-            .set_modified(old)
-            .unwrap();
-        let modified = fs::metadata(&src).unwrap().modified().unwrap();
-        rename_replace(&src, &dst).unwrap();
-        assert_eq!(fs::metadata(&dst).unwrap().modified().unwrap(), modified);
     }
 
     #[test]

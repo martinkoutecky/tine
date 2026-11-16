@@ -3,6 +3,7 @@ import { render } from "solid-js/web";
 import { backend } from "../backend";
 import * as reload from "../reloadOnFocus";
 import { DIAGNOSTIC_PREVIEW_LIMIT, DiagnosticsTab, diagnosticReportPreview } from "./DiagnosticsTab";
+import { refreshEverything, setRefreshEverything } from "../changeKeys";
 
 async function flush() {
   for (let i = 0; i < 12; i += 1) await Promise.resolve();
@@ -15,6 +16,17 @@ function button(host: HTMLElement, label: string): HTMLButtonElement {
 }
 
 describe("Help & diagnostics (GH #343)", () => {
+  it("offers the session-only full refresh control", () => {
+    setRefreshEverything(false);
+    const host = document.createElement("div"); document.body.append(host);
+    const dispose = render(() => <DiagnosticsTab />, host);
+    try {
+      const label = [...host.querySelectorAll("label")].find(label => label.textContent?.includes("Refresh everything on every save"))!;
+      const checkbox = label.querySelector<HTMLInputElement>("input")!;
+      checkbox.click(); expect(refreshEverything()).toBe(true);
+      checkbox.click(); expect(refreshEverything()).toBe(false);
+    } finally { setRefreshEverything(false); dispose(); }
+  });
   afterEach(() => { vi.restoreAllMocks(); document.body.innerHTML = ""; });
 
   it("creates a reviewable report, copies the complete text, and clears recorded events", async () => {

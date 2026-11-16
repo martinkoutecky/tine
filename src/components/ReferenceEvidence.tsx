@@ -163,9 +163,10 @@ export function ReferenceExcerptBlocks(props: {
             onContextMenu={(event) => {
               // The block's own context menu, once its page is loaded (the row
               // is a bounded excerpt until then and has no runtime block).
-              if (!docNode(block.id) || !shouldOpenBlockContextMenu(event.target)) return;
+              const id = resolveBlockRef({ uuid: blockDtoExternalId(block), page: props.page, pageKind: props.kind, ...(props.path ? { path: props.path } : {}) });
+              if (!id || !shouldOpenBlockContextMenu(event.target)) return;
               event.preventDefault();
-              openContextMenu(event.clientX, event.clientY, block.id);
+              openContextMenu(event.clientX, event.clientY, id);
             }}
           >
             {/* GH #556 item 7: the bullet is the block-level way into the source

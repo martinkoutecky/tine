@@ -2,6 +2,7 @@ import { msg } from "../i18n";
 import { createSignal } from "solid-js";
 import { backend } from "../backend";
 import { parseThemeManifest, themeManifestCss, themeVersionKey, type ThemeManifest } from "./manifest";
+import { typographyCss } from "./typography";
 import { pushToast } from "../toasts";
 
 const STORAGE_KEY = "theme.packages.v1";
@@ -12,6 +13,8 @@ export interface InstalledTheme {
   key: string;
   manifest: ThemeManifest;
   css: string;
+  /** Host-generated CSS for the package's API 0.3 typography ("" when it has none). */
+  typographyCss: string;
 }
 
 const [installedThemes, setInstalledThemes] = createSignal<InstalledTheme[]>([]);
@@ -55,7 +58,7 @@ function parseStoredThemes(text: string): StoredThemes {
 function managed(manifests: ThemeManifest[]): InstalledTheme[] {
   return manifests.map((manifest) => {
     const key = themeVersionKey(manifest);
-    return { id: key, key, manifest, css: themeManifestCss(manifest) };
+    return { id: key, key, manifest, css: themeManifestCss(manifest), typographyCss: typographyCss(manifest.typography) };
   });
 }
 

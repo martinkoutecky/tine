@@ -437,10 +437,10 @@ async function nativeClickSelector(selector, id, text) {
         const style = getComputedStyle(element);
         // Inline references and links can wrap. Their union rectangle may
         // contain only whitespace; use a fragment that receives the pointer.
-        const point = [...element.getClientRects()].map((fragment) => ({
-          x: fragment.left + fragment.width / 2,
-          y: fragment.top + fragment.height / 2,
-        })).find(({ x, y }) => {
+        const point = [...element.getClientRects()].flatMap((fragment) =>
+          [[0.5, 0.5], [0.25, 0.25], [0.75, 0.25], [0.25, 0.75], [0.75, 0.75]]
+            .map(([fx, fy]) => ({ x: fragment.left + fragment.width * fx,
+              y: fragment.top + fragment.height * fy }))).find(({ x, y }) => {
           const hit = document.elementFromPoint(x, y);
           return hit && (hit === element || element.contains(hit));
         });
@@ -472,6 +472,7 @@ async function nativeClickSelector(selector, id, text) {
     throw new Error(`native pointer target was ${state}: ${selector} ${text ?? ""}; ${JSON.stringify(target.candidates)}`.trim());
   }
   await nativeClickAt(target.point, id);
+  return target;
 }
 
 // Reader tools remain available through the overflow menu in narrow panes.
@@ -796,6 +797,72 @@ async function uploadOnCurrentPage(source, stored, expectedMarkup, receiptKey) {
   });
 }
 
+// WebKitGTK's desktop driver supplies mouse actions. DOM touch events exercise
+// the real viewer/layout/queue, but do not claim to prove OS gesture arbitration.
+async function provePdfTouchPinch() {
+  const measurement = await browser.execute(async () => {
+    const scroll = document.querySelector(".pdf-scroll");
+    const page = document.querySelector(".pdf-page");
+    const view = scroll.getBoundingClientRect(), rect = page.getBoundingClientRect();
+    const x = (Math.max(view.left, rect.left) + Math.min(view.right, rect.right)) / 2;
+    const y = (Math.max(view.top, rect.top) + Math.min(view.bottom, rect.bottom)) / 2;
+    const fx = (x - rect.left) / rect.width, fy = (y - rect.top) / rect.height;
+    const baseScale = Number(scroll.style.getPropertyValue("--scale-factor"));
+    const viewportScale = window.visualViewport?.scale;
+    const events = [];
+    const previousProbe = globalThis.__tinePdfProbe;
+    globalThis.__tinePdfProbe = (event) => events.push(event);
+    const frame = () => new Promise((resolve) => requestAnimationFrame(resolve));
+    const touch = (type, distance) => {
+      const event = new Event(type, { bubbles: true, cancelable: true });
+      Object.defineProperty(event, "touches", { value: distance == null ? [] : [
+        { identifier: 1, clientX: x - distance / 2, clientY: y },
+        { identifier: 2, clientX: x + distance / 2, clientY: y },
+      ] });
+      scroll.dispatchEvent(event);
+      return event.defaultPrevented;
+    };
+    try {
+      const claimed = touch("touchstart", 80);
+      touch("touchmove", 100);
+      await frame();
+      const preview = { transform: page.style.transform,
+        scale: Number(scroll.style.getPropertyValue("--scale-factor")),
+        rasters: events.filter((event) => event.type === "render-start").length };
+      const release = performance.now();
+      touch("touchend", null);
+      await frame();
+      const after = page.getBoundingClientRect();
+      const result = {
+        input: "synthetic DOM touches in native WebKitGTK", claimed, preview, baseScale,
+        committedScale: Number(scroll.style.getPropertyValue("--scale-factor")),
+        firstFrameMs: performance.now() - release,
+        anchorDriftPx: Math.hypot(after.left + fx * after.width - x, after.top + fy * after.height - y),
+        zoomCommits: events.filter((event) => event.type === "zoom-input").length,
+        canvasVisible: !!page.querySelector("canvas") && after.width > 0,
+        selectionMenu: !!document.querySelector(".pdf-color-menu"),
+        viewportScaleBefore: viewportScale, viewportScaleAfter: window.visualViewport?.scale,
+      };
+      // Restore the fixture's scale so the existing navigation proofs retain
+      // their domain preconditions. This second gesture is measured separately.
+      await new Promise((resolve) => setTimeout(resolve, 300));
+      touch("touchstart", 100);
+      touch("touchmove", 80);
+      touch("touchend", null);
+      await new Promise((resolve) => setTimeout(resolve, 450));
+      return result;
+    } finally { globalThis.__tinePdfProbe = previousProbe; }
+  });
+  fs.writeFileSync(path.join(ARTIFACTS, "pdf-pinch-measurement.json"), `${JSON.stringify(measurement, null, 2)}\n`);
+  if (!measurement.claimed || !measurement.preview.transform || measurement.preview.scale !== measurement.baseScale
+    || measurement.preview.rasters !== 0 || measurement.committedScale <= measurement.baseScale
+    || measurement.zoomCommits !== 1 || !measurement.canvasVisible || measurement.selectionMenu
+    || measurement.viewportScaleBefore !== measurement.viewportScaleAfter || !Number.isFinite(measurement.anchorDriftPx)) {
+    throw new Error(`PDF touch pinch did not preserve its content anchor and commit once: ${JSON.stringify(measurement)}`);
+  }
+  console.log(`PDF pinch: ${JSON.stringify(measurement)}`);
+}
+
 async function proveNativeUploadsThemesAndHighlights() {
   // Exercise the deterministic outline before GTK creates any transient dialog
   // surfaces. It is a normal graph asset, not a backend shortcut.
@@ -828,6 +895,25 @@ async function proveNativeUploadsThemesAndHighlights() {
   try { await browser.saveScreenshot(path.join(ARTIFACTS, "pdf-theme-dark-colour-proof.png")); } catch {}
   await browser.keys(["Escape"]);
   await browser.$(".pdf-settings-menu").waitForExist({ reverse: true, timeout: 5_000 });
+  // UI-PDF-DARK-TILES: past 300% the reader draws high-resolution tiles over
+  // the page canvas. In the dark theme they must be inverted like the page,
+  // or the page turns light on zoom (Martin 2026-10-21).
+  for (let i = 0; i < 30; i++) {
+    const zoom = Number((await browser.$(".pdf-zoom-level").getText()).replace("%", ""));
+    if (zoom > 320) break;
+    await nativeClickSelector('button[title="Zoom in"]', `pdf-dark-tiles-zoom-${i}`);
+  }
+  await browser.waitUntil(() => browser.execute(() =>
+    document.querySelectorAll(".pdf-page .pdf-tile-layer canvas").length > 0), {
+    timeout: 15_000,
+    timeoutMsg: "zooming past 300% drew no high-resolution tiles",
+  });
+  const darkTiles = await browser.execute(() => [...document.querySelectorAll(".pdf-page .pdf-tile-layer")]
+    .map((layer) => getComputedStyle(layer).filter));
+  if (!darkTiles.length || darkTiles.some((filter) => !/invert\(1\)/.test(filter))) {
+    throw new Error(`dark PDF theme left high-zoom tiles un-inverted: ${JSON.stringify(darkTiles)}`);
+  }
+  try { await browser.saveScreenshot(path.join(ARTIFACTS, "pdf-dark-tiles.png")); } catch {}
 
   // This is deliberately stronger than the later PdfViewer remount check: end
   // the WebDriver session and the actual app/driver process tree, then start a
@@ -1193,6 +1279,21 @@ try {
   await ensureMainWindow(browser);
   await browser.$(".ls-block").waitForExist({ timeout: 30_000 });
   const pdfLink = browser.$(".pdf-link");
+  // A visible scan can conceal a multi-second JS fallback. Exercise the actual
+  // bundled decoder against the shipped WebView's WASM feature set (PDFJS5).
+  literalReceipt.decoder = await browser.execute(async () => {
+    const url = new URL("./pdfjs/wasm/openjpeg.wasm", document.baseURI).href;
+    const bytes = await new Promise((resolve, reject) => {
+      const xhr = new XMLHttpRequest();
+      xhr.open("GET", url); xhr.responseType = "arraybuffer";
+      xhr.onload = () => xhr.status === 200 || xhr.status === 0
+        ? resolve(xhr.response) : reject(new Error(`Decoder asset: HTTP ${xhr.status}`));
+      xhr.onerror = () => reject(new Error("Decoder asset could not be loaded"));
+      xhr.send();
+    });
+    return { url, bytes: bytes.byteLength, valid: WebAssembly.validate(bytes) };
+  });
+  if (!literalReceipt.decoder.valid) throw new Error("Bundled JPEG 2000 decoder is incompatible with this WebView; scans would use the slow JS fallback");
   try {
     await pdfLink.waitForExist({ timeout: 20_000 });
   } catch (error) {
@@ -1225,6 +1326,10 @@ try {
   await browser.$(".pdf-hl").waitForExist({ timeout: 10_000 });
   const restoredZoom = await browser.$(".pdf-zoom-level").getText();
   if (restoredZoom !== "175%") throw new Error(`PDF scale was not restored from :extra: ${restoredZoom}`);
+  await provePdfTouchPinch();
+  if (process.env.TINE_PDF_PINCH_ONLY === "1") {
+    console.log("PASS: PDF pinch preview, single zoom commit and native layout measurements (synthetic touches)");
+  } else {
   if (fs.readFileSync(sidecar, "utf8") !== originalSidecar) {
     throw new Error("opening the PDF rewrote an existing Logseq sidecar before a user change");
   }
@@ -1257,8 +1362,8 @@ try {
       top: highlight.style.top,
       width: highlight.style.width,
       height: highlight.style.height,
-      leftRatio: parseFloat(highlight.style.left) / parseFloat(page.style.width),
-      widthRatio: parseFloat(highlight.style.width) / parseFloat(page.style.width),
+      leftRatio: parseFloat(highlight.style.left) / page.offsetWidth,
+      widthRatio: parseFloat(highlight.style.width) / page.offsetWidth,
     } : null;
   });
   if (!geometry || Object.values(geometry).some((value) => !value || String(value).includes("NaN"))) {
@@ -1354,6 +1459,19 @@ try {
   // Escape closes Find while leaving the viewer mounted.
   await browser.$('button[title="Find in document (Ctrl+F)"]').click();
   await browser.$(".pdf-find-bar").waitForExist({ timeout: 5000 });
+  // PDF-09 item 7: exercise the real pdf.js text extraction/selection after
+  // the major upgrade, in addition to the transient-owner checks below.
+  const findSidecarBefore = fs.readFileSync(sidecar, "utf8");
+  await browser.$(".pdf-find-input").setValue("viewer");
+  await browser.waitUntil(() => browser.execute(() =>
+    window.getSelection()?.toString().toLowerCase() === "viewer"
+      && /1.*1/.test(document.querySelector(".pdf-find-count")?.textContent ?? "")), {
+    timeout: 10_000,
+    timeoutMsg: "PDF Find did not locate and select the fixture's text",
+  });
+  if (fs.readFileSync(sidecar, "utf8") !== findSidecarBefore) throw new Error("PDF Find changed annotation bytes");
+  await browser.$(".pdf-find-input").clearValue();
+  await browser.waitUntil(() => browser.execute(() => !window.getSelection()?.toString()), { timeout: 5000 });
   const transientSidecarBefore = fs.readFileSync(sidecar, "utf8");
   const transientViewBefore = await browser.execute(() => ({
     filename: document.querySelector(".pdf-viewer")?.getAttribute("data-pdf-filename"),
@@ -1526,6 +1644,23 @@ try {
     check();
   }, highlightId, waitMs, holdMs);
 
+  // Opt-in stress repetition keeps the same assertions and real input path.
+  // Return to A between rounds so every round also exercises B's cold mount.
+  const scrollRounds = Number(process.env.TINE_PDF_SCROLL_ROUNDS || 1);
+  if (!Number.isSafeInteger(scrollRounds) || scrollRounds < 1) {
+    throw new Error("TINE_PDF_SCROLL_ROUNDS must be a positive integer");
+  }
+  let secondViewerElementId;
+  for (let round = 1; round <= scrollRounds; round++) {
+  if (round > 1) {
+    const links = await browser.$$(".pdf-link");
+    await links[0].click();
+    await browser.waitUntil(() => browser.execute(() =>
+      document.querySelector(".pdf-viewer")?.getAttribute("data-pdf-filename") === "logseq-sample.pdf" &&
+      document.querySelector(".pdf-viewer")?.getAttribute("data-pdf-ready") === "true"), {
+      timeout: 10_000, timeoutMsg: "PDF scroll repetition did not return to A",
+    });
+  }
   const firstSecondRef = browser.$(`[data-block-ref="${SECOND_FIRST_ID}"]`);
   await firstSecondRef.waitForExist({ timeout: 10_000 });
   await browser.waitUntil(() => browser.execute((highlightId) =>
@@ -1570,20 +1705,65 @@ try {
   if (coldOpenLeftView) {
     throw new Error(`a backlink into a PDF that was not open yet did not scroll to its exact highlight: ${JSON.stringify(coldOpenLeftView)}`);
   }
-  const secondViewerElementId = (await browser.$(".pdf-viewer")).elementId;
+  secondViewerElementId = (await browser.$(".pdf-viewer")).elementId;
   const secondZoom = await browser.$(".pdf-zoom-level").getText();
   if (secondZoom !== "125%") throw new Error(`second PDF inherited the first PDF scale: ${secondZoom}`);
   if (fs.readFileSync(secondSidecar, "utf8") !== originalSecondSidecar) {
     throw new Error("switching from PDF A wrote A's pending state or baseline into PDF B");
   }
 
-  await nativeClickSelector(`[data-block-ref="${SECOND_SECOND_ID}"]`, "second-pdf-second-highlight");
-  await browser.waitUntil(() => browser.execute((highlightId) =>
-    document.querySelector(".pdf-viewer")?.getAttribute("data-pdf-highlight-target") === highlightId &&
-    document.querySelector(".pdf-hl-target")?.getAttribute("data-highlight-id") === highlightId, SECOND_SECOND_ID), {
-    timeout: 10_000,
-    timeoutMsg: "a same-PDF block reference did not scroll to its exact second highlight",
+  // GH #735: a reference's hover preview opens after OG's 1000 ms dwell, below the
+  // reference, so over the next line. The WebDriver click above left the pointer
+  // resting on the first reference; on a slower runner its preview opened after the
+  // native click below was aimed and before it was dispatched, and the click opened
+  // the preview's source page instead (PDF-LOGSEQ-HOSTED). A user moves off the
+  // reference before aiming at the next one: do the same, and let any preview close.
+  const parking = await browser.execute(() => {
+    const rect = document.querySelector(".pdf-zoom-level")?.getBoundingClientRect();
+    return rect && rect.width > 0 ? { x: rect.left + rect.width / 2, y: rect.top + rect.height / 2 } : null;
   });
+  if (!parking) throw new Error("the PDF zoom level is not visible to park the pointer on");
+  try {
+    await browser.performActions([{
+      type: "pointer",
+      id: "second-pdf-park",
+      parameters: { pointerType: "mouse" },
+      actions: [{ type: "pointerMove", duration: 0, origin: "viewport", x: Math.round(parking.x), y: Math.round(parking.y) }],
+    }]);
+  } finally {
+    await browser.releaseActions();
+  }
+  await browser.waitUntil(() => browser.execute(() => !document.querySelector(".peek-popup")), {
+    timeout: 5_000,
+    timeoutMsg: "the first reference's hover preview stayed open after the pointer left it",
+  });
+  const sameTargetClick = await nativeClickSelector(`[data-block-ref="${SECOND_SECOND_ID}"]`, "second-pdf-second-highlight");
+  try {
+    await browser.waitUntil(() => browser.execute((highlightId) =>
+      document.querySelector(".pdf-viewer")?.getAttribute("data-pdf-highlight-target") === highlightId &&
+      document.querySelector(".pdf-hl-target")?.getAttribute("data-highlight-id") === highlightId, SECOND_SECOND_ID), {
+      timeout: 10_000,
+      timeoutMsg: "a same-PDF block reference did not scroll to its exact second highlight",
+    });
+  } catch (error) {
+    const diagnostic = await browser.execute((point) => {
+      const viewer = document.querySelector(".pdf-viewer");
+      const hit = document.elementFromPoint(point.x, point.y);
+      return {
+        target: viewer?.getAttribute("data-pdf-highlight-target"),
+        ready: viewer?.getAttribute("data-pdf-ready"),
+        scrollTop: document.querySelector(".pdf-scroll")?.scrollTop,
+        highlights: [...document.querySelectorAll(".pdf-hl")].map((element) => ({
+          id: element.getAttribute("data-highlight-id"), target: element.classList.contains("pdf-hl-target"),
+          top: Math.round(element.getBoundingClientRect().top),
+        })),
+        hitNow: hit && { className: String(hit.className).slice(0, 60), text: hit.textContent?.slice(0, 60) },
+        peek: !!document.querySelector(".peek-popup"),
+        pageTitle: document.querySelector("main .page-title")?.textContent?.slice(0, 60),
+      };
+    }, sameTargetClick.point);
+    throw new Error(`${error.message}: ${JSON.stringify({ click: sameTargetClick, ...diagnostic })}`, { cause: error });
+  }
   if ((await browser.$(".pdf-viewer")).elementId !== secondViewerElementId) {
     throw new Error("same-PDF highlight navigation remounted the PDF resource");
   }
@@ -1645,6 +1825,8 @@ try {
   await browser.waitUntil(async () => await browser.$(".pdf-page-input").getValue() === "1", {
     timeout: 10_000, timeoutMsg: "GH #672: repeating the same backlink did not navigate again",
   });
+  console.log(`PASS: PDF reference scroll round ${round}/${scrollRounds}`);
+  }
 
   // OG direct-link parity: reopening the already-current resource without a
   // page/highlight intent is a no-op, not an implicit jump to page 1. The exact
@@ -1726,6 +1908,18 @@ try {
   // running this additional native desktop workflow only on Linux.
   if (process.platform === "linux") await proveNativeUploadsThemesAndHighlights();
   console.log(`PASS: Logseq PDFs keep asset identity separate from exact highlight navigation, with bounded resources, restored view state, OG-compatible notes, correct geometry, and compatible write-back on ${process.platform}`);
+  }
+} catch (error) {
+  const capsule = { app: APP, appSha256: literalReceipt.appSha256,
+    journey: process.env.TINE_PDF_PINCH_ONLY === "1" ? "PDF touchscreen pinch" : "PDF compatibility",
+    expected: "fixture PDF opens and user actions update the reader", error: String(error) };
+  try {
+    capsule.observed = await browser.execute(() => ({ href: location.href,
+      text: document.body.innerText.slice(0, 4000) }));
+    await browser.saveScreenshot(path.join(ARTIFACTS, "pdf-failure.png"));
+  } catch {}
+  fs.writeFileSync(path.join(ARTIFACTS, "pdf-failure.json"), `${JSON.stringify(capsule, null, 2)}\n`);
+  throw error;
 } finally {
   try { await browser?.deleteSession(); } catch {}
   killDriverTree();

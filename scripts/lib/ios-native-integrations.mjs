@@ -5,11 +5,11 @@
 // to the generated `project.yml` before xcodegen, so it survives regeneration.
 //
 // Paths are relative to src-tauri/gen/apple, where project.yml lives.
-import { IDENTITIES } from "./app-identity.mjs";
+import { IDENTITY, iosIdentity } from "./app-identity.mjs";
 
-export const APP_GROUP = `group.${IDENTITIES.release.identifier}`;
+export const APP_GROUP = iosIdentity().appGroup;
 export const SHARE_EXTENSION_TARGET = "TineShareExtension";
-export const SHARE_EXTENSION_IDENTIFIER = `${IDENTITIES.release.identifier}.ShareExtension`;
+export const SHARE_EXTENSION_IDENTIFIER = iosIdentity().shareExtensionIdentifier;
 const SOURCES = "../../ios-app";
 const SWIFT_VERSION = '"5.0"';
 
@@ -36,7 +36,7 @@ function appVersions(project) {
  * `{ identity, teamId, extensionProfileUuid }` for the App Store export.
  * Idempotent.
  */
-export function addNativeIntegrations(project, signing) {
+export function addNativeIntegrations(project, signing, identity = IDENTITY) {
   if (project.includes(`  ${SHARE_EXTENSION_TARGET}:`)) return project;
   const lines = project.split("\n");
   const topLevel = lines.filter((line) => /^[A-Za-z]/.test(line));
@@ -69,7 +69,7 @@ export function addNativeIntegrations(project, signing) {
 
   const { short, build } = appVersions(project);
   const settings = [
-    `        PRODUCT_BUNDLE_IDENTIFIER: ${SHARE_EXTENSION_IDENTIFIER}`,
+    `        PRODUCT_BUNDLE_IDENTIFIER: ${iosIdentity(identity).shareExtensionIdentifier}`,
     `        PRODUCT_NAME: ${SHARE_EXTENSION_TARGET}`,
     `        INFOPLIST_FILE: ${SOURCES}/ShareExtension/Info.plist`,
     `        CODE_SIGN_ENTITLEMENTS: ${SOURCES}/ShareExtension/TineShareExtension.entitlements`,

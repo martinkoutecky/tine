@@ -37,6 +37,17 @@ export function retireGraphCssEditor(): void {
 }
 clearOnBindingInvalidated(retireGraphCssEditor);
 
+/** Desktop handoff for the two fixed CSS paths. Native code owns creation and
+ * path selection; opener errors always reach the existing error toast. */
+export async function openCssInDefaultApp(global: boolean): Promise<void> {
+  const owner = ownedWhen(global ? () => true : bindingOwner());
+  try {
+    await writeOwned(owner, global ? backend().editGlobalCss() : backend().editCustomCss());
+  } catch (error) {
+    pushToast(t("css-open-failed", { error: String(error) }), "error");
+  }
+}
+
 /** One editor for the two fixed files. Opening another file first saves the
  * current buffer; a conflict retains the current editor and its user's text. */
 export async function openCssEditor(global: boolean): Promise<void> {
@@ -121,12 +132,44 @@ export async function closeCssEditor(): Promise<void> {
   setSession(null);
 }
 
+/** True while the buffer differs from what the file last held. */
+export function cssEditorDirty(): boolean {
+  const current = session();
+  return !!current && cssEditorText() !== current.saved;
+}
+
+/** An outside click (D-20261018-UI2b): closes only when nothing is unsaved,
+ * otherwise does nothing; a stray click never saves, discards or asks. */
+export async function closeCssEditorOnOutsideClick(): Promise<void> {
+  if (cssEditorDirty()) return;
+  await closeCssEditor();
+}
+
+/** Cancel (and Esc): closes without saving. With unsaved edits it asks first,
+ * and discarding also drops the crash-recovery draft, so the next open shows the
+ * file as it is. */
+export async function cancelCssEditor(): Promise<void> {
+  const current = session();
+  if (!current || cssEditorBusy()) return;
+  if (cssEditorDirty()) {
+    const owner = ownedWhen(current.owner);
+    const answer = await readOwned(owner, backend().confirm(t("css-discard-confirm"),
+      { title: t("css-editor-title"), okLabel: t("confirm-discard-changes"), cancelLabel: t("confirm-keep-editing") }));
+    if (answer.kind !== "current" || !answer.value) return;
+    if (session() !== current || cssEditorBusy()) return;
+    await keepDraft(current, current.saved);
+  }
+  ++opening;
+  setSession(null);
+}
+
 export async function reloadCssEditor(): Promise<void> {
   const current = session();
   if (!current || cssEditorBusy()) return;
   const owner = ownedWhen(current.owner);
   if (cssEditorText() !== current.saved) {
-    const answer = await readOwned(owner, backend().confirm(t("css-reload-confirm"), t("css-editor-title")));
+    const answer = await readOwned(owner, backend().confirm(t("css-reload-confirm"),
+      { title: t("css-editor-title"), okLabel: t("confirm-discard-and-reload"), cancelLabel: t("confirm-keep-editing") }));
     if (answer.kind !== "current" || !answer.value) return;
   }
   setCssEditorBusy(true);

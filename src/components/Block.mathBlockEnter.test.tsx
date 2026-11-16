@@ -1,3 +1,4 @@
+import { editorIn } from "../tests/editorDriver";
 import { describe, expect, it } from "vitest";
 import { For } from "solid-js";
 import { pageByName, undo } from "../document";
@@ -5,7 +6,7 @@ import { loadSingle } from "../document/workingSet";
 import { doc } from "../document/model";
 import { startEditing } from "../editorController";
 import { Block } from "./Block";
-import { installBlockEditorLifecycle, mount, blk, page, pressEnter } from "../tests/blockEditorTestkit";
+import { installBlockEditorLifecycle, mount, blk, page, pressEditorEnter } from "../tests/blockEditorTestkit";
 
 installBlockEditorLifecycle();
 
@@ -16,7 +17,7 @@ function editing(name: string, raw: string) {
   const { root, dispose } = mount(() => (
     <For each={pageByName(name)?.roots ?? []}>{(bid) => <Block id={bid} />}</For>
   ));
-  const ta = root.querySelector("textarea") as HTMLTextAreaElement;
+  const ta = editorIn(root);
   return { id, ta, dispose };
 }
 
@@ -27,10 +28,19 @@ function editing(name: string, raw: string) {
 // (frontend/util/thingatpt.cljs `admonition&src-at-point`) knows only ``` and
 // `#+BEGIN_`, so OG splits the bullet and breaks the environment too.
 describe("Enter inside a $$ display-math environment", () => {
+  it.each(["$$fdfdfdf$$", "$$fdfdfdf$$\ndddddfafafafd", "intro\n$$fdfdfdf$$", "$$\nx\n$$"])("creates the next block after completed standalone math: %s (GH #862)", raw => {
+    const { id, ta, dispose } = editing("Closed math", raw);
+    try {
+      pressEditorEnter(ta, ta.value().length);
+      expect(pageByName("Closed math")!.roots).toHaveLength(2);
+      expect(doc.byId[id].raw).toBe(raw);
+      expect(doc.byId[pageByName("Closed math")!.roots[1]].raw).toBe("");
+    } finally { dispose(); }
+  });
   it("inserts a newline and does NOT split the block", () => {
     const { id, ta, dispose } = editing("Math", "$$\ntest\n$$");
     try {
-      pressEnter(ta, ta.value.indexOf("test") + "test".length);
+      pressEditorEnter(ta, ta.value().indexOf("test") + "test".length);
       expect(pageByName("Math")!.roots).toEqual([id]);
       expect(doc.byId[id].raw).toBe("$$\ntest\n\n$$");
     } finally {
@@ -41,7 +51,7 @@ describe("Enter inside a $$ display-math environment", () => {
   it("continues a freshly typed opening $$ in the same block", () => {
     const { id, ta, dispose } = editing("Math open", "$$");
     try {
-      pressEnter(ta, ta.value.length);
+      pressEditorEnter(ta, ta.value().length);
       expect(pageByName("Math open")!.roots).toEqual([id]);
       expect(doc.byId[id].raw).toBe("$$\n");
     } finally {
@@ -54,7 +64,7 @@ describe("Enter inside a $$ display-math environment", () => {
     // gesture for "next bullet". The environment is closed, so it must split.
     const { ta, dispose } = editing("Inline math", "energy is $$E = mc^2$$");
     try {
-      pressEnter(ta, ta.value.length);
+      pressEditorEnter(ta, ta.value().length);
       expect(pageByName("Inline math")!.roots).toHaveLength(2);
     } finally {
       dispose();
@@ -64,7 +74,7 @@ describe("Enter inside a $$ display-math environment", () => {
   it("splits normally when the caret is before the opening $$", () => {
     const { ta, dispose } = editing("Before math", "intro $$\nx\n$$");
     try {
-      pressEnter(ta, "intro".length);
+      pressEditorEnter(ta, "intro".length);
       expect(pageByName("Before math")!.roots).toHaveLength(2);
     } finally {
       dispose();
@@ -76,7 +86,7 @@ describe("Enter inside a $$ display-math environment", () => {
     // ordinary fence rule (stay in the block) is what applies here.
     const { id, ta, dispose } = editing("Fenced dollars", "```sh\necho $$\n```");
     try {
-      pressEnter(ta, ta.value.indexOf("echo $$") + "echo $$".length);
+      pressEditorEnter(ta, ta.value().indexOf("echo $$") + "echo $$".length);
       expect(pageByName("Fenced dollars")!.roots).toEqual([id]);
       expect(doc.byId[id].raw).toBe("```sh\necho $$\n\n```");
     } finally {
@@ -90,7 +100,7 @@ describe("Double Enter exits a trailing $$ environment", () => {
     const original = "$$\ntest\n\n$$";
     const { id, ta, dispose } = editing("Math exit", original);
     try {
-      pressEnter(ta, ta.value.indexOf("\n\n") + 1);
+      pressEditorEnter(ta, ta.value().indexOf("\n\n") + 1);
       expect(pageByName("Math exit")!.roots).toHaveLength(2);
       expect(doc.byId[id].raw).toBe("$$\ntest\n$$");
       expect(doc.byId[pageByName("Math exit")!.roots[1]].raw).toBe("");

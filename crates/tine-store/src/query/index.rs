@@ -184,6 +184,12 @@ impl PageFacts {
             .any(|name| *name == own || self.refs.binary_search(name).is_ok())
     }
 
+    /// Every normalized reference name of the page's blocks (namespace
+    /// prefixes included), sorted and de-duplicated.
+    pub(crate) fn refs(&self) -> &[String] {
+        &self.refs
+    }
+
     /// The page's own `key:: value` properties, in source order and spelling.
     pub(crate) fn properties(&self) -> &[(String, String)] {
         &self.properties

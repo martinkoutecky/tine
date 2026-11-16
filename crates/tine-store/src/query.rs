@@ -21,6 +21,7 @@ use tine_core::refs;
 mod eval;
 pub(crate) mod exec;
 pub(crate) mod index;
+pub(crate) mod link_graph;
 pub(crate) mod memo;
 pub(crate) mod page_properties;
 #[cfg(test)]
@@ -381,26 +382,43 @@ pub(crate) fn document_aliases(doc: &Document) -> Vec<String> {
     aliases
 }
 
+/// The text a page's own properties, aliases included, are read from: the
+/// pre-block when the page has one, else a properties-only FIRST root (the
+/// page-properties block in OG, written back as a pre-block on save there;
+/// GH #62), else none. The one header rule of the alias answer
+/// ([`document_alias_spellings`]); a merge reads both pages' aliases and
+/// writes the united header through it (REG-CM-MERGE-LOSES-ALIASES).
+pub fn page_header_text<'a>(
+    pre_block: Option<&'a str>,
+    first_root: Option<&'a str>,
+) -> Option<&'a str> {
+    match pre_block {
+        Some(pre) => Some(pre),
+        None => first_root.filter(|raw| is_properties_only(raw)),
+    }
+}
+
+/// True for a page-header property key that declares aliases: `alias` and
+/// `aliases`, in any case. OG reads only `alias::` as an alias
+/// (`graph_parser/extract.cljc`, `(:alias properties)`) and `aliases::` only as
+/// a reference-valued key; Tine and the conceptual model read both (named OG
+/// difference, D-20261018-M2, K-Q1 2026-11-03). The alias answer and the merge
+/// both ask this.
+pub fn is_alias_key(key: &str) -> bool {
+    let key = property_key_norm(key);
+    key == "alias" || key == "aliases"
+}
+
 /// Authored spellings for display/insertion. Identity consumers use
 /// `document_aliases` or `page_key`; case-only edits must refresh this projection.
 pub(crate) fn document_alias_spellings(doc: &Document) -> Vec<String> {
-    let alias_text: Option<&str> = match &doc.pre_block {
-        Some(pre) => Some(pre.as_str()),
-        // No pre-block: a properties-only FIRST block is the page-properties
-        // block in OG (it gets written back as a pre-block on save there).
-        None => doc
-            .roots
-            .first()
-            .filter(|b| is_properties_only(b.raw()))
-            .map(|b| b.raw()),
-    };
+    let alias_text = page_header_text(doc.pre_block.as_deref(), doc.roots.first().map(|b| b.raw()));
     let Some(text) = alias_text else {
         return Vec::new();
     };
     let mut aliases = Vec::new();
     for (k, v) in page_property_lines(text, page_document_is_org(doc)) {
-        let key = property_key_norm(&k);
-        if key == "alias" || key == "aliases" {
+        if is_alias_key(&k) {
             let trimmed = v.trim();
             if trimmed.len() >= 2 && trimmed.starts_with('"') && trimmed.ends_with('"') {
                 continue;
@@ -434,46 +452,8 @@ fn sorted_alias_owners(
 mod page_names;
 pub(crate) use page_names::{real_page_names, RealPageNames};
 
-/// The alias relation of one generation, indexed once: normalized name to its
-/// alias-adjacent normalized names, and to the spellings it was written with.
-/// A component walk then costs O(component), not O(every alias in the graph)
-/// (I-25); a save that moves no alias carries the whole value by `Arc`.
-#[derive(Default)]
-pub(crate) struct AliasEdges {
-    neighbors: std::collections::HashMap<String, Vec<String>>,
-    originals: std::collections::HashMap<String, Vec<String>>,
-}
-
-impl AliasEdges {
-    pub(crate) fn new(aliases: &[(String, String)]) -> Self {
-        let mut edges = Self::default();
-        for (alias, owner) in aliases {
-            let alias_norm = refs::page_key(alias);
-            let owner_norm = refs::page_key(owner);
-            edges
-                .neighbors
-                .entry(alias_norm.clone())
-                .or_default()
-                .push(owner_norm.clone());
-            edges
-                .neighbors
-                .entry(owner_norm.clone())
-                .or_default()
-                .push(alias_norm.clone());
-            edges
-                .originals
-                .entry(alias_norm)
-                .or_default()
-                .push(alias.clone());
-            edges
-                .originals
-                .entry(owner_norm)
-                .or_default()
-                .push(owner.clone());
-        }
-        edges
-    }
-}
+mod alias_relation;
+pub(crate) use alias_relation::{AliasEdges, AliasRelation, AliasRow};
 
 /// Resolve a requested page/alias to its canonical display name, the complete
 /// alias-connected component, and the real page to exclude as self. The
@@ -484,6 +464,15 @@ fn equivalent_page_names(
     edges: &AliasEdges,
     target: &str,
 ) -> (String, Vec<String>, String) {
+    equivalent_page_names_with(real_pages, edges, target, |_| Vec::new())
+}
+
+fn equivalent_page_names_with(
+    real_pages: &RealPageNames,
+    edges: &AliasEdges,
+    target: &str,
+    widen: impl Fn(&str) -> Vec<String>,
+) -> (String, Vec<String>, String) {
     let target_norm = refs::page_key(target);
     let mut component = std::collections::BTreeSet::new();
     let mut pending = vec![target_norm.clone()];
@@ -491,9 +480,8 @@ fn equivalent_page_names(
         if !component.insert(name.clone()) {
             continue;
         }
-        if let Some(adjacent) = edges.neighbors.get(&name) {
-            pending.extend(adjacent.iter().cloned());
-        }
+        pending.extend(edges.neighbors(&name).cloned());
+        pending.extend(widen(&name));
     }
 
     let canonical = component
@@ -508,8 +496,7 @@ fn equivalent_page_names(
                 .chain(
                     component
                         .iter()
-                        .filter_map(|name| edges.originals.get(name))
-                        .flatten()
+                        .flat_map(|name| edges.originals(name))
                         .map(String::as_str),
                 )
                 .min()
@@ -527,28 +514,48 @@ fn graph_equivalent_page_names(
     graph: &ReadSnapshot,
     target: &str,
 ) -> (String, Vec<String>, String) {
-    let mut resolved = equivalent_page_names(&real_page_names(graph), &graph.alias_edges(), target);
     let format = journal_format(graph.config());
+    graph_equivalent_page_names_with(
+        &real_page_names(graph),
+        &graph.alias_edges(),
+        &format,
+        target,
+        |day| {
+            // O(journals) name parses, only for a date-shaped target.
+            graph
+                .page_list_arc()
+                .iter()
+                .find(|entry| {
+                    entry.kind == PageKind::Journal && format.parse(&entry.name) == Some(day)
+                })
+                .map(|entry| entry.name.clone())
+        },
+    )
+}
+
+/// [`graph_equivalent_page_names`] with its graph reads supplied: the real
+/// page names, the alias relation, the journal format and the FIRST journal
+/// page (page-list order) of a day. The link table resolves every page through
+/// this one body with a precomputed day lookup, so the Linked References panel
+/// and `links` / `linked_by` cannot drift (I-12).
+pub(crate) fn graph_equivalent_page_names_with(
+    real_pages: &RealPageNames,
+    edges: &AliasEdges,
+    format: &JournalFormat,
+    target: &str,
+    journal_for_day: impl FnOnce(JournalDate) -> Option<String>,
+) -> (String, Vec<String>, String) {
+    let mut resolved = equivalent_page_names(real_pages, edges, target);
     let Some(target_day) = format.parse(target) else {
         return resolved;
     };
-    // O(journals) name parses, only for a date-shaped target.
-    let pages = graph.page_list_arc();
-    let Some(journal) = pages.iter().find(|entry| {
-        entry.kind == PageKind::Journal && format.parse(&entry.name) == Some(target_day)
-    }) else {
+    let Some(journal_name) = journal_for_day(target_day) else {
         // A date with no real page is an editable virtual journal. Keep real
         // ordinary pages and aliases intact; only fileless dates share spellings.
-        if real_page_names(graph)
-            .get(&refs::page_key(&resolved.0))
-            .is_none()
-        {
+        if real_pages.get(&refs::page_key(&resolved.0)).is_none() {
             let title = format.title(target_day);
-            let spellings = journal_spelling_keys(&format, target_day, &title);
-            if spellings
-                .iter()
-                .any(|name| real_page_names(graph).get(name).is_some())
-            {
+            let spellings = journal_spelling_keys(format, target_day, &title);
+            if spellings.iter().any(|name| real_pages.get(name).is_some()) {
                 return resolved;
             }
             resolved.1.extend(spellings);
@@ -561,11 +568,11 @@ fn graph_equivalent_page_names(
     };
     resolved
         .1
-        .extend(journal_spelling_keys(&format, target_day, &journal.name));
+        .extend(journal_spelling_keys(format, target_day, &journal_name));
     resolved.1.sort();
     resolved.1.dedup();
-    resolved.0 = journal.name.clone();
-    resolved.2 = journal.name.clone();
+    resolved.0 = journal_name.clone();
+    resolved.2 = journal_name;
     resolved
 }
 
@@ -608,6 +615,36 @@ fn widen_for_journal_day(names_norm: &mut Vec<String>, format: &JournalFormat, t
         names_norm.sort();
         names_norm.dedup();
     }
+}
+
+fn invalidation_page_names(
+    real_pages: &RealPageNames,
+    aliases: &AliasEdges,
+    journal: &JournalFormat,
+    target: &str,
+) -> (String, Vec<String>) {
+    let (canonical, mut names, _) = equivalent_page_names(real_pages, aliases, target);
+    widen_for_journal_day(&mut names, journal, target);
+    (canonical, names)
+}
+
+/// The same conservative closure as scoped backlink/unlinked invalidation.
+/// Unlike query-time canonical journal selection, this never scans journals.
+pub(crate) fn reference_invalidation_names(graph: &ReadSnapshot, target: &str) -> Vec<String> {
+    let journal = journal_format(graph.config());
+    // Include aliases of day spellings, and day spellings reached via aliases.
+    // This uses the same component traversal, visiting each key once.
+    equivalent_page_names_with(
+        &real_page_names(graph),
+        &graph.alias_edges(),
+        target,
+        |name| {
+            let mut names = Vec::new();
+            widen_for_journal_day(&mut names, &journal, name);
+            names
+        },
+    )
+    .1
 }
 
 fn page_property_block(entry: &PageEntry, pre: &str) -> Option<DocBlock> {
@@ -654,29 +691,64 @@ pub(crate) fn document_explicit_reference_names(
     doc: &Document,
     config: &tine_core::config::Config,
 ) -> Vec<String> {
-    fn collect(blocks: &[DocBlock], names: &mut Vec<String>) {
+    explicit_reference_names_where(entry, doc, config, &|_| true, true)
+}
+
+/// Publication uses the same parser/policy projection, selecting changed
+/// blocks and their ancestors rather than sending every target on the page.
+pub(crate) fn changed_explicit_reference_names(
+    entry: &PageEntry,
+    doc: &Document,
+    config: &tine_core::config::Config,
+    changed: &std::collections::BTreeSet<String>,
+    header_changed: bool,
+) -> Vec<String> {
+    explicit_reference_names_where(
+        entry,
+        doc,
+        config,
+        &|block| changed.contains(&block.uuid),
+        header_changed,
+    )
+}
+
+fn explicit_reference_names_where(
+    entry: &PageEntry,
+    doc: &Document,
+    config: &tine_core::config::Config,
+    accept: &dyn Fn(&DocBlock) -> bool,
+    include_header: bool,
+) -> Vec<String> {
+    fn collect(blocks: &[DocBlock], names: &mut Vec<String>, accept: &dyn Fn(&DocBlock) -> bool) {
         for block in blocks {
-            names.extend(
-                block
-                    .projection()
-                    .reference_source()
-                    .explicit
-                    .iter()
-                    .flat_map(|reference| refs::namespace_refs(&reference.name))
-                    .map(refs::page_key),
-            );
-            collect(&block.children, names);
+            if accept(block) {
+                names.extend(
+                    block
+                        .projection()
+                        .reference_source()
+                        .explicit
+                        .iter()
+                        .flat_map(|reference| refs::namespace_refs(&reference.name))
+                        .map(refs::page_key),
+                );
+            }
+            collect(&block.children, names, accept);
         }
     }
 
     let mut names = Vec::new();
-    if let Some(block) = doc.pre_block.as_deref().and_then(|pre| {
-        page_property_block_with_config(
-            entry,
-            pre,
-            &tine_core::query::atom::ParseConfig::from_config(config),
-        )
-    }) {
+    if let Some(block) = doc
+        .pre_block
+        .as_deref()
+        .filter(|_| include_header)
+        .and_then(|pre| {
+            page_property_block_with_config(
+                entry,
+                pre,
+                &tine_core::query::atom::ParseConfig::from_config(config),
+            )
+        })
+    {
         names.extend(
             block
                 .projection()
@@ -687,7 +759,7 @@ pub(crate) fn document_explicit_reference_names(
                 .map(refs::page_key),
         );
     }
-    collect(&doc.roots, &mut names);
+    collect(&doc.roots, &mut names, accept);
     names.sort_unstable();
     names.dedup();
     names
@@ -921,6 +993,40 @@ pub(crate) fn backlinks_bounded(
         max_rows,
         max_bytes,
     )
+}
+
+/// GH #715 (Martin 2026-10-17): the "Pages tagged with" section's query.
+/// A page is listed when its `tags::` names any member of the alias component
+/// Linked References use (`target` itself included). The page itself is no
+/// exception: like OG `get-tag-pages`, a page that tags itself (by any name of
+/// the group) is listed, so every name of the group gives the same rows.
+/// `(page-tags …)` macros stay literal; this is the section only. Cost:
+/// O(component) to build; one memoized page scan per generation to run.
+pub(crate) fn tagged_pages_query(
+    graph: &ReadSnapshot,
+    target: &str,
+) -> tine_core::query::ir::Query {
+    use tine_core::query::ir::{Anchor, Query, Source};
+    let (_, names_norm, _) = graph_equivalent_page_names(graph, target);
+    let filter = tine_core::query::og::page_tags_filter(names_norm);
+    Query::new(Anchor::Page, filter, Source::Builder)
+}
+
+/// The other names of `target`'s alias group (D-20261019-AL1/AL2) as (page
+/// key, the least spelling an `alias::` declared it with, else the key);
+/// `target` itself is not one. The group is the alias component Linked
+/// References use, without the journal-day spellings. Cost: O(component log
+/// P), with the generation's real-name table.
+pub(crate) fn alias_group_members(graph: &ReadSnapshot, target: &str) -> Vec<(String, String)> {
+    let real = real_page_names(graph);
+    let edges = graph.alias_edges();
+    let (_, component, _) = equivalent_page_names(&real, &edges, target);
+    let own = refs::page_key(target);
+    component
+        .into_iter()
+        .filter(|key| *key != own)
+        .map(|key| (key.clone(), graph.alias_spelling(&key).unwrap_or(key)))
+        .collect()
 }
 
 const BACKLINK_FILTER_MAX_BYTES: usize = 16 * 1024 * 1024;
@@ -1263,8 +1369,7 @@ pub(crate) fn page_affects_backlinks(
     doc: &Document,
     config: &tine_core::config::Config,
 ) -> bool {
-    let (canonical, mut names_norm, _) = equivalent_page_names(real_pages, aliases, target);
-    widen_for_journal_day(&mut names_norm, journal, target);
+    let (canonical, names_norm) = invalidation_page_names(real_pages, aliases, journal, target);
     // Invalidation shares the live graph's property-reference policy with reads.
     let needles = tine_core::reference_evidence::ReferenceNeedles::new(&names_norm);
     if doc.pre_block.as_deref().is_some_and(|pre| {
@@ -1309,8 +1414,7 @@ pub(crate) fn page_affects_unlinked(
     doc: &Document,
     config: &tine_core::config::Config,
 ) -> bool {
-    let (canonical, mut names_norm, _) = equivalent_page_names(real_pages, aliases, target);
-    widen_for_journal_day(&mut names_norm, journal, target);
+    let (canonical, names_norm) = invalidation_page_names(real_pages, aliases, journal, target);
     let needles = tine_core::reference_evidence::ReferenceNeedles::new(&names_norm);
     if doc.pre_block.as_deref().is_some_and(|pre| {
         page_property_block_with_config(
@@ -1368,6 +1472,98 @@ pub(crate) fn page_affects_block_referrers(uuid: &str, doc: &Document) -> bool {
     hit
 }
 
+/// Publication's bounded subset of the same parser-owned plain occurrence
+/// predicate as unlinked reads. Ancestors are selected too: displayed subtrees
+/// can change underneath a retained mention. Names/exclusions share the readers'
+/// owners, without the query-time journal source selection scan.
+pub(crate) fn changed_page_affects_unlinked(
+    graph: &ReadSnapshot,
+    target: &str,
+    entry: &PageEntry,
+    blocks: &[&DocBlock],
+    header: Option<&DocBlock>,
+) -> bool {
+    let real = real_page_names(graph);
+    let aliases = graph.alias_edges();
+    let config = graph.config();
+    let (_, _, self_page) =
+        graph_equivalent_page_names_with(&real, &aliases, &journal_format(config), target, |day| {
+            graph.reference_journal_name(day)
+        });
+    if refs::ReferenceSourceExclusions::new(&self_page, config.favorites_page.as_deref())
+        .excludes_name(&entry.name)
+    {
+        return false;
+    }
+    let names = reference_invalidation_names(graph, target);
+    let needles = tine_core::reference_evidence::ReferenceNeedles::new(&names);
+    if header
+        .is_some_and(|block| block_has_reference(block, &needles, ReferenceKind::Plain, config))
+    {
+        return true;
+    }
+    blocks
+        .iter()
+        .any(|block| block_has_reference(block, &needles, ReferenceKind::Plain, config))
+}
+
+/// Select once per edited page side, outside the registered-target loop.
+pub(crate) fn changed_reference_source_blocks<'a>(
+    entry: &PageEntry,
+    doc: &'a Document,
+    config: &tine_core::config::Config,
+    changed: &std::collections::BTreeSet<String>,
+    header_changed: bool,
+) -> (Option<DocBlock>, Vec<&'a DocBlock>) {
+    fn select<'a>(
+        roots: &'a [DocBlock],
+        changed: &std::collections::BTreeSet<String>,
+        out: &mut Vec<&'a DocBlock>,
+    ) {
+        for block in roots {
+            if changed.contains(&block.uuid) {
+                out.push(block);
+            }
+            select(&block.children, changed, out);
+        }
+    }
+    let mut blocks = Vec::new();
+    select(&doc.roots, changed, &mut blocks);
+    let header = doc
+        .pre_block
+        .as_deref()
+        .filter(|_| header_changed)
+        .and_then(|pre| {
+            page_property_block_with_config(
+                entry,
+                pre,
+                &tine_core::query::atom::ParseConfig::from_config(config),
+            )
+        });
+    (header, blocks)
+}
+
+/// Incoming block-referrer answers also change when referrer text changes but
+/// its target set does not. Emit the union of old/new selected projections.
+pub(crate) fn changed_block_reference_targets(
+    doc: &Document,
+    changed: &std::collections::BTreeSet<String>,
+    header_changed: bool,
+) -> Vec<String> {
+    let mut targets = Vec::new();
+    if header_changed {
+        if let Some(block) = document_page_property_block(doc) {
+            targets.extend(block.projection().block_refs().iter().cloned());
+        }
+    }
+    walk(&doc.roots, &mut |block| {
+        if changed.contains(&block.uuid) {
+            targets.extend(block.projection().block_refs().iter().cloned());
+        }
+    });
+    targets
+}
+
 pub(crate) fn rejected_advanced_query(reason: &str) -> AdvancedResult {
     AdvancedResult {
         groups: Vec::new(),
@@ -1404,7 +1600,8 @@ pub(crate) fn run_advanced_query_bounded(
     exec::run_advanced_query_bounded(graph, query_src, max_rows, max_bytes).0
 }
 
-/// Literal fuzzy full-text autocomplete for the `((` block picker, grouped by
+/// Literal-fragment full-text autocomplete for the `((` block picker (OG's
+/// `LIKE '%a%b%'`: pieces in order, no scattered letters), grouped by
 /// page and capped at `limit` total blocks. Ctrl-K uses `run_graph_search*` and
 /// retains the shared search dialect through `QueryPlan::friendly*`.
 #[cfg(test)]
@@ -1445,109 +1642,23 @@ pub(crate) fn search_cancellable_result(
 }
 
 /// Scan all graph blocks for templates and return insertion DTOs; do not insert.
-/// Include roots unless template-including-parent is false; strip id properties
-/// and included roots' template property. A page's property header (the
-/// document pre-block) counts as a block, first, as OG's `get-all-templates`
-/// matches any entity whose `:block/properties` has `:template`, the
-/// pre-block included (GH discussion #729); it has no children, so with
-/// `template-including-parent:: false` it inserts nothing, as in OG. The header
-/// is projected only when its text can hold the key. O(graph blocks plus
-/// copied subtrees).
+/// Each block's answer is `tine_core::template::template_of`, the one shared
+/// with the file-scoped daily-template lookup. O(graph blocks plus copied subtrees).
 pub(crate) fn templates(graph: &ReadSnapshot) -> Vec<TemplateDto> {
     graph.with_pages(|pages| {
         let mut out: Vec<TemplateDto> = Vec::new();
         for (entry, doc) in pages {
-            let mut each = |b: &DocBlock| {
-                let Some(name) = b.property("template") else {
-                    return;
-                };
-                if name.is_empty() {
-                    return;
-                }
-                let include_parent =
-                    b.property("template-including-parent").as_deref() != Some("false");
-                let blocks = if include_parent {
-                    vec![template_dto(b, true)]
-                } else {
-                    b.children.iter().map(|c| template_dto(c, false)).collect()
-                };
+            tine_core::template::templates_in_document(doc, &mut |name, blocks| {
                 out.push(TemplateDto {
                     name,
                     blocks,
                     page: entry.name.clone(),
                     kind: entry.kind,
                 });
-            };
-            // A property key folds to `template` only by ASCII lowercasing.
-            let header_may_define = doc.pre_block.as_deref().is_some_and(|pre| {
-                pre.as_bytes()
-                    .windows(b"template".len())
-                    .any(|w| w.eq_ignore_ascii_case(b"template"))
             });
-            if header_may_define {
-                if let Some(header) = document_page_property_block(doc) {
-                    each(&header);
-                }
-            }
-            walk(&doc.roots, &mut |b| each(b));
         }
         out
     })
-}
-
-/// Convert a template block subtree to a DTO, dropping `id::` (so inserted
-/// copies get fresh ids) and, at the root, the `template*` properties.
-fn template_dto(b: &DocBlock, strip_template: bool) -> BlockDto {
-    let raw = b
-        .projection()
-        .regions
-        .apply(
-            b.raw(),
-            b.is_org(),
-            tine_core::block_regions::Edit::StripCopy {
-                template: strip_template,
-            },
-        )
-        .expect("parsed template");
-    BlockDto {
-        id: String::new(),
-        raw,
-        collapsed: b.collapsed(),
-        children: b.children.iter().map(|c| template_dto(c, false)).collect(),
-        breadcrumb: Vec::new(),
-        ..Default::default()
-    }
-}
-
-#[cfg(test)]
-#[test]
-fn template_copy_drops_markdown_and_org_ids_regardless_of_case() {
-    let block = DocBlock::new("body\nID:: md-id\n:PROPERTIES:\n:Id: org-id\n:END:\nkeep:: yes");
-    let copied = template_dto(&block, false);
-    assert_eq!(copied.raw, "body\n:PROPERTIES:\n:END:\nkeep:: yes");
-}
-
-#[cfg(test)]
-#[test]
-fn template_copy_preserves_collapsed_state() {
-    for (raw, expected) in [
-        ("section\ncollapsed:: true", true),
-        ("section\ncollapsed:: false", false),
-        ("section", false),
-        ("section\n:PROPERTIES:\n:collapsed: true\n:END:", true),
-        ("```\ncollapsed:: true\n```", false),
-    ] {
-        let mut block = DocBlock::new(raw);
-        block.set_org(raw.contains(":PROPERTIES:"));
-        block
-            .children
-            .push(DocBlock::new("nested\ncollapsed:: true"));
-        let copied = template_dto(&block, false);
-        assert_eq!(copied.collapsed, expected, "{raw}");
-        assert_eq!(copied.raw, raw);
-        assert!(copied.children[0].collapsed);
-        assert!(copied.id.is_empty());
-    }
 }
 
 /// Distinct property keys (each with its sorted distinct values) used across the
@@ -1664,7 +1775,9 @@ const OG_AUTOCOMPLETE_HIDDEN_PROPS: &[&str] = &[
 /// Collect visible keys and distinct nonempty values from page preblocks and
 /// blocks. Limits charge both keys and values plus estimated bytes. Return sorted
 /// facets and a flag when the next distinct item cannot fit; stop at first
-/// excess. Otherwise may scan all graph blocks. No disk read.
+/// excess. Otherwise may scan all graph blocks. No disk read. Values are the
+/// strings OG's value autocomplete offers (`property_value_completions`): a
+/// multi-ref value contributes its individual refs, not the joined text.
 pub(crate) fn autocomplete_property_facets_bounded(
     graph: &ReadSnapshot,
     max_items: usize,
@@ -1683,6 +1796,7 @@ pub(crate) fn autocomplete_property_facets_bounded(
                 .map(|key| property_key_norm(key.trim_start_matches(':'))),
         )
         .collect();
+    let parse_config = tine_core::query::atom::ParseConfig::from_config(graph.config());
     let mut items = 0usize;
     let mut bytes = 0usize;
     let exceeded = std::cell::Cell::new(false);
@@ -1720,9 +1834,28 @@ pub(crate) fn autocomplete_property_facets_bounded(
             map.entry(key).or_default().insert(value.to_string());
         };
 
-        for (_entry, doc) in pages {
+        // OG `get-property-values`: a value holding several page refs offers
+        // each ref, never the joined string (GH #737). The parser decides.
+        let mut offer_value = |entry: &PageEntry, key: String, value: String| {
+            if hidden.contains(&property_key_norm(&key)) {
+                return;
+            }
+            for completion in tine_core::query::atom::property_value_completions(
+                &key,
+                &value,
+                index::atom_format(entry),
+                &parse_config,
+            ) {
+                offer(key.clone(), completion);
+                if exceeded.get() {
+                    return;
+                }
+            }
+        };
+
+        for (entry, doc) in pages {
             for (key, value) in page_facets(doc).0 {
-                offer(key, value);
+                offer_value(entry, key, value);
                 if exceeded.get() {
                     break;
                 }
@@ -1732,7 +1865,7 @@ pub(crate) fn autocomplete_property_facets_bounded(
             }
             if !walk_until(&doc.roots, &mut |block| {
                 for (key, value) in block.properties() {
-                    offer(key, value);
+                    offer_value(entry, key, value);
                     if exceeded.get() {
                         return false;
                     }
@@ -1855,14 +1988,15 @@ pub(crate) fn quick_switch_for_editor(
     crate::query_plan::page_hits_to_entries(plan.execute(graph, || false).hits)
 }
 
-/// Resolve many `((uuid))` block references in a single graph pass — the real
-/// batch behind `Graph::resolve_blocks` (a page full of refs/embeds is one IPC,
-/// and now one scan rather than U independent `resolve_block` calls, each of which
-/// could whole-graph-scan on a hint miss). Hinted ids are grouped by page and each
-/// hinted page is walked ONCE for all of its ids; whatever a hint missed (stale or
-/// absent) falls back to a SINGLE whole-graph scan. Match semantics + first-block-
-/// wins ordering are identical to `resolve_block`. Output is positional and
-/// per-input (duplicate input uuids each get their own `Some(..)`/`None`).
+/// Resolve many `((uuid))` block references — the batch behind
+/// `Graph::resolve_blocks` (a page full of refs/embeds is one IPC). Each id's
+/// answering page comes from the exact block index (`block_owner_page`): an
+/// id no page holds is `None` without a walk, and each answering page is
+/// walked once for all of its ids (I-13: cost is O(ids + the answering
+/// pages' blocks), independent of page count). First-block-wins ordering is
+/// the full scan's: the first page in page order, then walk order. Output is
+/// positional and per-input (duplicate input uuids each get their own
+/// `Some(..)`/`None`).
 #[cfg(test)]
 pub(crate) fn resolve_blocks(graph: &ReadSnapshot, uuids: &[String]) -> Vec<Option<RefGroup>> {
     resolve_blocks_bounded(graph, uuids, usize::MAX, usize::MAX).0
@@ -1874,57 +2008,23 @@ pub(crate) fn resolve_blocks_bounded(
     max_rows: usize,
     max_bytes: usize,
 ) -> (Vec<Option<RefGroup>>, bool, usize) {
-    use std::collections::{HashMap, HashSet};
-    // Distinct requested ids (a page often refs the same uuid repeatedly).
-    let distinct: HashSet<&str> = uuids.iter().map(String::as_str).collect();
-    if distinct.is_empty() {
-        return (uuids.iter().map(|_| None).collect(), false, 0);
-    }
-    // Bucket each distinct id under its page hint (O(1) per id off the cached
-    // uuid index); unhinted ids go straight to the whole-graph fallback.
-    let mut by_page: HashMap<String, Vec<&str>> = HashMap::new();
-    let mut unhinted: Vec<&str> = Vec::new();
-    for &id in &distinct {
-        match graph.block_page_hint(id) {
-            Some(page) => by_page.entry(page).or_default().push(id),
-            None => unhinted.push(id),
+    use std::collections::{BTreeMap, HashMap, HashSet};
+    type Want<'a> = (&'a (PageEntry, std::sync::Arc<Document>), HashSet<&'a str>);
+    let mut by_page: BTreeMap<usize, Want<'_>> = BTreeMap::new();
+    for id in uuids {
+        if let Some((slot, page)) = graph.block_owner_page(id) {
+            by_page
+                .entry(slot)
+                .or_insert_with(|| (page, HashSet::new()))
+                .1
+                .insert(id.as_str());
         }
     }
-
     let mut resolved: HashMap<&str, RefGroup> = HashMap::new();
     let mut resolved_budget = ConstructionBudget::new(max_rows, max_bytes);
-    graph.with_pages(|pages| {
-        let mut page_by_name: HashMap<&str, (&PageEntry, &std::sync::Arc<Document>)> =
-            HashMap::with_capacity(pages.len());
-        for (entry, doc) in pages {
-            page_by_name
-                .entry(entry.name.as_str())
-                .or_insert((entry, doc));
-        }
-        // 1) Each hinted page: ONE walk resolving all of its hinted ids.
-        for (page, ids) in &by_page {
-            if let Some(&(entry, doc)) = page_by_name.get(page.as_str()) {
-                let want: HashSet<&str> = ids.iter().copied().collect();
-                resolve_ids_in_page(entry, doc, &want, &mut resolved, &mut resolved_budget);
-            }
-        }
-        // 2) Remaining ids (no hint, or the hinted page didn't actually hold the
-        //    block) get ONE whole-graph scan — never one-scan-per-id.
-        let mut remaining: HashSet<&str> = unhinted.into_iter().collect();
-        for &id in &distinct {
-            if !resolved.contains_key(id) {
-                remaining.insert(id);
-            }
-        }
-        if !remaining.is_empty() {
-            for (entry, doc) in pages {
-                if resolved.len() == distinct.len() {
-                    break; // everything found
-                }
-                resolve_ids_in_page(entry, doc, &remaining, &mut resolved, &mut resolved_budget);
-            }
-        }
-    });
+    for ((entry, doc), want) in by_page.values() {
+        resolve_ids_in_page(entry, doc, want, &mut resolved, &mut resolved_budget);
+    }
 
     let mut output_budget = ConstructionBudget::new(max_rows, max_bytes);
     let output = uuids
@@ -2197,56 +2297,63 @@ pub(crate) fn preview_block_with_budget(
 ) -> Option<BlockPreview> {
     let max_nodes = max_nodes.max(1);
     let max_bytes = max_bytes.max(1);
-    let hint = graph.block_page_hint(uuid);
-    graph.with_pages(|pages| {
-        let find_in = |entry: &PageEntry, doc: &Document| -> Option<BlockPreview> {
-            let mut found: Option<&DocBlock> = None;
-            walk(&doc.roots, &mut |block| {
-                if found.is_none()
-                    && (block.uuid == uuid || block.property("id").as_deref() == Some(uuid))
-                {
-                    found = Some(block);
-                }
-            });
-            found.map(|block| {
-                let total = subtree_node_count(block);
-                let mut remaining_nodes = max_nodes;
-                let mut remaining_bytes = max_bytes;
-                let blocks =
-                    block_to_bounded_dto(block, &mut remaining_nodes, &mut remaining_bytes)
-                        .into_iter()
-                        .collect::<Vec<_>>();
-                let emitted = max_nodes - remaining_nodes;
-                BlockPreview {
-                    group: RefGroup {
-                        page: entry.name.clone(),
-                        kind: entry.kind,
-                        blocks,
-                        evidence: Vec::new(),
-                    },
-                    truncated: total.saturating_sub(emitted),
-                }
-            })
-        };
-        if let Some(hint) = &hint {
-            if let Some((entry, doc)) = pages.iter().find(|(entry, _)| &entry.name == hint) {
-                if let Some(preview) = find_in(entry, doc) {
-                    return Some(preview);
-                }
-            }
+    // The exact block index names the answering page (see `resolve_blocks`).
+    let (_, (entry, doc)) = graph.block_owner_page(uuid)?;
+    touch_page();
+    let mut found: Option<&DocBlock> = None;
+    walk(&doc.roots, &mut |block| {
+        if found.is_none() && (block.uuid == uuid || block.property("id").as_deref() == Some(uuid))
+        {
+            found = Some(block);
         }
-        for (entry, doc) in pages {
-            if let Some(preview) = find_in(entry, doc) {
-                return Some(preview);
-            }
-        }
-        None
+    });
+    let block = found?;
+    let total = subtree_node_count(block);
+    let mut remaining_nodes = max_nodes;
+    let mut remaining_bytes = max_bytes;
+    let blocks = block_to_bounded_dto(block, &mut remaining_nodes, &mut remaining_bytes)
+        .into_iter()
+        .collect::<Vec<_>>();
+    let emitted = max_nodes - remaining_nodes;
+    Some(BlockPreview {
+        group: RefGroup {
+            page: entry.name.clone(),
+            kind: entry.kind,
+            blocks,
+            evidence: Vec::new(),
+        },
+        truncated: total.saturating_sub(emitted),
     })
 }
 
-/// Walk `doc` once, resolving any block whose uuid (or persisted `id::`) is a
-/// still-unresolved id in `want`. First block in walk order wins per id (matches
-/// `resolve_block`).
+/// The pages holding a block whose persisted `id::` is `uuid`, in page
+/// order, compared case-insensitively, stopping at the second: a writer needs to know the id names exactly
+/// one block's page. A writer's check, so it walks every page itself rather
+/// than trust the block-id index (O(B), one in-memory pass; no cache).
+pub(crate) fn block_pages(graph: &ReadSnapshot, uuid: &str) -> Vec<String> {
+    graph.with_pages(|pages| {
+        let mut found = Vec::new();
+        for (entry, doc) in pages.iter() {
+            let mut here = false;
+            walk(&doc.roots, &mut |block| {
+                // The persisted `id::` only: a runtime uuid is not a handle.
+                here |= block
+                    .property("id")
+                    .is_some_and(|id| id.trim().eq_ignore_ascii_case(uuid));
+            });
+            if here {
+                found.push(entry.name.clone());
+                if found.len() == 2 {
+                    break;
+                }
+            }
+        }
+        found
+    })
+}
+
+/// Walk `doc` once, resolving every still-unresolved id in `want` that is a
+/// block's uuid or persisted `id::`. First block in walk order wins per id.
 fn resolve_ids_in_page<'a>(
     entry: &PageEntry,
     doc: &Document,
@@ -2254,37 +2361,53 @@ fn resolve_ids_in_page<'a>(
     resolved: &mut std::collections::HashMap<&'a str, RefGroup>,
     budget: &mut ConstructionBudget,
 ) {
+    touch_page();
     walk(&doc.roots, &mut |b| {
-        // A block's identity is its uuid OR its persisted `id::`; check both
-        // against the wanted set with O(1) lookups (no per-id rescan).
-        let hit: Option<&'a str> = want
-            .get(b.uuid.as_str())
-            .copied()
-            .filter(|id| !resolved.contains_key(id))
-            .or_else(|| {
-                b.property("id")
-                    .and_then(|id| want.get(id.as_str()).copied())
-                    .filter(|id| !resolved.contains_key(id))
-            });
-        if let Some(id) = hit {
+        // A block's identity is its uuid AND its persisted `id::`: one block
+        // can answer two requested ids. O(1) lookups, no per-id rescan.
+        let property = b.property("id");
+        for key in [Some(b.uuid.as_str()), property.as_deref()]
+            .into_iter()
+            .flatten()
+        {
+            let Some(&id) = want.get(key) else {
+                continue;
+            };
+            if resolved.contains_key(id) {
+                continue;
+            }
             if budget.closed() {
                 budget.deny_match();
                 return;
             }
             if budget.admit_estimated(&entry.name, shallow_dto_estimated_bytes(b, &[])) {
-                let dto = result_dto(b);
                 resolved.insert(
                     id,
                     RefGroup {
                         page: entry.name.clone(),
                         kind: entry.kind,
-                        blocks: vec![dto],
+                        blocks: vec![result_dto(b)],
                         evidence: Vec::new(),
                     },
                 );
             }
         }
     });
+}
+
+#[cfg(test)]
+thread_local! {
+    static RESOLVE_PAGES_TOUCHED: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
+}
+
+#[cfg(test)]
+pub(crate) fn resolve_pages_touched() -> usize {
+    RESOLVE_PAGES_TOUCHED.with(std::cell::Cell::get)
+}
+
+fn touch_page() {
+    #[cfg(test)]
+    RESOLVE_PAGES_TOUCHED.with(|count| count.set(count.get() + 1));
 }
 
 #[cfg(test)]
@@ -2392,115 +2515,6 @@ mod tests {
             .to_ascii_lowercase()
             .contains("template::"));
         let _ = std::fs::remove_dir_all(dir);
-    }
-
-    fn header_templates(name: &str, files: &[(&str, &str)]) -> Vec<(String, Vec<BlockDto>)> {
-        let dir = std::env::temp_dir().join(format!("tine-{name}-{}", std::process::id()));
-        let _ = std::fs::remove_dir_all(&dir);
-        std::fs::create_dir_all(dir.join("pages")).unwrap();
-        for (path, text) in files {
-            std::fs::write(dir.join(path), text).unwrap();
-        }
-        let mut found: Vec<_> = templates(&test_snapshot(&dir))
-            .into_iter()
-            .map(|t| (t.name, t.blocks))
-            .collect();
-        found.sort_by(|a, b| a.0.cmp(&b.0));
-        let _ = std::fs::remove_dir_all(dir);
-        found
-    }
-
-    fn raws(blocks: &[BlockDto]) -> Vec<&str> {
-        blocks.iter().map(|b| b.raw.as_str()).collect()
-    }
-
-    /// GH discussion #729 (OG parity): a `template::` in a page's property
-    /// header (the leading properties block of a Markdown page, the `#+KEY:` /
-    /// head-drawer header of an Org page) defines a template, as OG's
-    /// `get-all-templates` matches any entity with `:block/properties
-    /// :template`, the page's pre-block included. Only the header is inserted.
-    #[test]
-    fn a_page_property_header_template_is_listed() {
-        let found = header_templates(
-            "gh729-header",
-            &[
-                // The report's header, verbatim, and a block template below it.
-                (
-                    "pages/Usual note.md",
-                    "tags::  \nlink:: \ncreate-date:: <% today %>\ntemplate:: Usual note\n\n- row\n  template:: In a block\n",
-                ),
-                (
-                    "pages/With rows.md",
-                    "template:: Page with rows\nicon:: x\n\n- first row\n- second row\n",
-                ),
-                (
-                    "pages/Parentless.md",
-                    "template:: No parent\ntemplate-including-parent:: false\n\n- row\n",
-                ),
-                (
-                    "pages/Org header.org",
-                    "#+TITLE: Org header\n#+TEMPLATE: Org page template\n\n* Row\n",
-                ),
-                (
-                    "pages/Org drawer.org",
-                    ":PROPERTIES:\n:template: Org drawer template\n:END:\n\n* Row\n",
-                ),
-                // Only parser-owned property lines of the header count: not an
-                // empty value, another key's value, prose, or a fenced line.
-                ("pages/Empty.md", "template::\n\n- row\n"),
-                ("pages/Value.md", "status:: template\n"),
-                ("pages/Prose.md", "intro with template:: Prose\n\n- row\n"),
-                ("pages/Fenced.md", "```\ntemplate:: Fenced\n```\n\n- row\n"),
-            ],
-        );
-        let names: Vec<&str> = found.iter().map(|(n, _)| n.as_str()).collect();
-        assert_eq!(
-            names,
-            [
-                "In a block",
-                "No parent",
-                "Org drawer template",
-                "Org page template",
-                "Page with rows",
-                "Usual note"
-            ]
-        );
-        let blocks = |name: &str| &found.iter().find(|(n, _)| n == name).unwrap().1;
-        // The header block, `template::` stripped; `<% today %>` is left for
-        // the insertion step (the frontend expands it).
-        assert_eq!(
-            raws(blocks("Usual note")),
-            ["tags:: \nlink:: \ncreate-date:: <% today %>"]
-        );
-        assert_eq!(raws(blocks("In a block")), ["row"]);
-        // The header has no children: the page's rows are not inserted, and
-        // `template-including-parent:: false` leaves nothing (OG drops the
-        // only block of the one-block tree).
-        assert_eq!(raws(blocks("Page with rows")), ["icon:: x"]);
-        assert!(blocks("Page with rows")[0].children.is_empty());
-        assert!(blocks("No parent").is_empty());
-        assert_eq!(
-            raws(blocks("Org page template")),
-            [":PROPERTIES:\n:title: Org header\n:END:"]
-        );
-        assert_eq!(raws(blocks("Org drawer template")), [""]);
-    }
-
-    /// The bulleted forms of the same report already worked; they stay pinned.
-    #[test]
-    fn a_bulleted_first_block_with_an_empty_property_line_is_a_template() {
-        let found = header_templates(
-            "gh729-bullets",
-            &[
-                ("pages/Bullet.md", "- tags::  \n  template:: Bulleted\n"),
-                (
-                    "pages/Empty first.md",
-                    "- hello\n  tags::  \n  template:: Empty first\n  - child\n",
-                ),
-            ],
-        );
-        let names: Vec<&str> = found.iter().map(|(n, _)| n.as_str()).collect();
-        assert_eq!(names, ["Bulleted", "Empty first"]);
     }
 
     fn test_snapshot(dir: &std::path::Path) -> std::sync::Arc<crate::model::ReadSnapshot> {
@@ -2789,12 +2803,14 @@ mod tests {
 
     #[test]
     fn content_terms_unescape_and_match_canonical_unicode() {
-        // `\"`/`\\` inside a quoted term are unescaped; any other backslash is
-        // literal, so `"C:\tmp"` stays `C:\tmp`.
+        // Quoted terms are EDN strings: `\"`/`\\` unescape, and so do EDN's other
+        // escapes such as `\t`.
         assert!(selects("\"foo \\\"bar\\\"\"", "note: foo \"bar\" baz"));
         assert!(!selects("\"foo \\\"bar\\\"\"", "note: foo bar baz"));
         assert!(selects("\"a\\\\b\"", "x a\\b y"));
-        assert!(selects("\"C:\\tmp\"", "open C:\\tmp now"));
+        // EDN (OG's cljs reader): `\t` is TAB, so `"C:\tmp"` is `C:<TAB>mp` (audit RN-B).
+        assert!(selects("\"C:\\tmp\"", "open C:\tmp now"));
+        assert!(!selects("\"C:\\tmp\"", "open C:\\tmp now"));
         assert!(selects("\"quick brown\"", "the quick brown fox"));
         assert!(!selects("\"slow\"", "the quick brown fox"));
         // D4 (2026-10-04): canonical composition only; no accent or case fold.
@@ -2874,28 +2890,20 @@ mod tests {
     }
 
     #[test]
-    fn advanced_exact_page_property_pair_matches_page_property_predicate() {
+    fn advanced_own_entity_property_map_pair_refuses_visibly() {
         let source = r#"[:find (pull ?p [*])
                          :where
                          [?p :block/properties ?props]
                          [(get ?props :class)]]"#;
         let with = one_page("Classy", None, "class:: yes\n\n- body\n");
         let without = one_page("Plain", None, "other:: yes\n\n- body\n");
-        let result = run_advanced_query(&with, source);
-        assert!(result.supported, "{:?}", result.ignored);
-        assert_eq!(
-            result
-                .groups
-                .iter()
-                .map(|g| g.page.as_str())
-                .collect::<Vec<_>>(),
-            run_query(&with, "(page-property :class)")
-                .iter()
-                .map(|g| g.page.as_str())
-                .collect::<Vec<_>>()
-        );
-        assert!(!result.groups.is_empty());
-        assert!(run_advanced_query(&without, source).groups.is_empty());
+        // Audit RN-B (L7s1-02, D-18): OG also matches the property block itself, so
+        // the old page-only lowering was a guessed answer; it is now refused visibly.
+        for graph in [&with, &without] {
+            let result = run_advanced_query(graph, source);
+            assert!(!result.supported);
+            assert!(result.groups.is_empty());
+        }
     }
 
     #[test]
@@ -3530,6 +3538,54 @@ mod tests {
                     .sum::<usize>()
                 <= 3
         );
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn gh737_autocomplete_values_split_page_ref_sets_and_keep_plain_text_whole() {
+        use std::fs;
+
+        let dir = std::env::temp_dir().join(format!(
+            "tine-gh737-autocomplete-values-{}",
+            std::process::id()
+        ));
+        let _ = fs::remove_dir_all(&dir);
+        fs::create_dir_all(dir.join("pages")).unwrap();
+        fs::create_dir_all(dir.join("journals")).unwrap();
+        fs::create_dir_all(dir.join("logseq")).unwrap();
+        fs::write(dir.join("logseq/config.edn"), "{}").unwrap();
+        // OG `get-property-values` (db/model.cljs:1422-1443): a value with two
+        // or more page refs contributes each ref (as `[[x]]`, `#x` or bare);
+        // a single ref and every plain value stay whole.
+        fs::write(
+            dir.join("pages/Refs.md"),
+            "tags:: [[Header B]], [[Header A]]\n\n- first\n  tags:: [[Beta]], [[Alpha]]\n  note:: plain, with commas\n  related:: [[One]] and [[Two]]\n  solo:: [[Solo]]\n  hashes:: #x #y\n  authors:: Ann, Bob\n  quoted:: \"[[Q1]], [[Q2]]\"\n- second\n  tags:: [[Alpha]]\n  tags2:: red\n- third\n  alias:: red, green\n",
+        )
+        .unwrap();
+
+        let graph = test_snapshot(&dir);
+        let (facets, exceeded) =
+            autocomplete_property_facets_bounded(&graph, usize::MAX, usize::MAX);
+        assert!(!exceeded);
+        let values = |key: &str| -> Vec<String> {
+            facets
+                .iter()
+                .find(|(candidate, _)| candidate == key)
+                .map(|(_, values)| values.clone())
+                .unwrap_or_default()
+        };
+        assert_eq!(
+            values("tags"),
+            ["[[Alpha]]", "[[Beta]]", "[[Header A]]", "[[Header B]]"],
+            "page-ref sets are offered as their individual values, never as `[[a]], [[b]]`"
+        );
+        assert_eq!(values("note"), ["plain, with commas"]);
+        assert_eq!(values("related"), ["[[One]]", "[[Two]]"]);
+        assert_eq!(values("solo"), ["[[Solo]]"]);
+        assert_eq!(values("hashes"), ["#x", "#y"]);
+        assert_eq!(values("authors"), ["Ann, Bob"]);
+        assert_eq!(values("quoted"), ["\"[[Q1]], [[Q2]]\""]);
+        assert_eq!(values("alias"), ["green", "red"]);
         let _ = fs::remove_dir_all(&dir);
     }
 
@@ -4480,6 +4536,34 @@ mod tests {
     }
 
     #[test]
+    fn priority_markers_link_to_the_priority_page_like_og() {
+        use std::fs;
+        let dir =
+            std::env::temp_dir().join(format!("tine-priority-backlinks-{}", std::process::id()));
+        let _ = fs::remove_dir_all(&dir);
+        fs::create_dir_all(dir.join("pages")).unwrap();
+        fs::write(
+            dir.join("pages/Source.md"),
+            "- [#A] call Alice\n- TODO [#A] call Bob\n- [#B] mid\n- see [#A] later\n- `[#A] code`\n- ordinary A word\n",
+        )
+        .unwrap();
+        let graph = test_snapshot(&dir);
+        let a = backlinks(&graph, "A");
+        assert_eq!(a.len(), 1);
+        let raws: Vec<&str> = a[0].blocks.iter().map(|b| b.raw.as_str()).collect();
+        assert_eq!(raws, ["[#A] call Alice", "TODO [#A] call Bob"]);
+        // Page identity is case-insensitive: "a" is the same page.
+        assert_eq!(backlinks(&graph, "a")[0].blocks.len(), 2);
+        assert_eq!(backlinks(&graph, "B")[0].blocks[0].raw, "[#B] mid");
+        // The plain word "A" is an unlinked mention, never the priority block.
+        assert!(!unlinked_refs(&graph, "A")
+            .iter()
+            .flat_map(|g| &g.blocks)
+            .any(|b| b.raw.contains("[#")));
+        fs::remove_dir_all(dir).unwrap();
+    }
+
+    #[test]
     fn disabled_property_pages_suppress_only_key_membership() {
         use std::fs;
 
@@ -5094,13 +5178,13 @@ mod region_template_regression {
         let raw = "Task\ntemplate:: Example\nid:: real\n```\nid:: literal\ntemplate:: literal\n```";
         let b = tine_core::doc::DocBlock::new(raw);
         assert_eq!(
-            super::template_dto(&b, true).raw,
+            tine_core::template::template_copy(&b, true).raw,
             "Task\n```\nid:: literal\ntemplate:: literal\n```"
         );
         let mut b = tine_core::doc::DocBlock::new(
             "Task\n:PROPERTIES:\n:template: Example\n:id: real\n:END:",
         );
         b.set_org(true);
-        assert_eq!(super::template_dto(&b, true).raw, "Task");
+        assert_eq!(tine_core::template::template_copy(&b, true).raw, "Task");
     }
 }

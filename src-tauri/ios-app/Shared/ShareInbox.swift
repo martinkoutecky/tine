@@ -27,6 +27,8 @@ enum ShareInbox {
 
   /// Must match share_inbox.rs (`MAX_RESOURCES`).
   static let maxResources = 32
+  /// Exact encoded item.json bytes; shared with the reader (ADR 0073).
+  static let maxItemBytes = 1024 * 1024
   /// The largest file one share may carry (as on Android, ShareIntake.kt).
   static let maxResourceBytes = 64 * 1024 * 1024
 
@@ -35,6 +37,7 @@ enum ShareInbox {
     case empty
     case tooMany(Int)
     case tooLarge(String)
+    case envelopeTooLarge
     case io(String, Int32)
     var errorDescription: String? {
       switch self {
@@ -43,6 +46,7 @@ enum ShareInbox {
       case .tooMany(let count):
         return "Tine saves at most \(ShareInbox.maxResources) files from one share; this one had \(count)."
       case .tooLarge(let name): return "\(name) is larger than 64 MiB."
+      case .envelopeTooLarge: return "The shared text and file descriptions exceed 1 MiB. Nothing was saved."
       case .io(let what, let code): return "\(what) failed: \(String(cString: strerror(code)))"
       }
     }
@@ -154,6 +158,7 @@ enum ShareInbox {
       if let title = title { item["title"] = title }
       if let url = url { item["url"] = url }
       let json = try JSONSerialization.data(withJSONObject: item)
+      if json.count > maxItemBytes { throw Failure.envelopeTooLarge }
       try writeSynced(json, to: tmp.appendingPathComponent("item.json"))
       try syncDirectory(tmp)
       let target = root.appendingPathComponent(id, isDirectory: true)

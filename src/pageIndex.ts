@@ -4,6 +4,7 @@ import { backend } from "./backend";
 import { graphOwner, latestOwner, readOwned } from "./owned";
 import { graphEpoch, pageInventoryRev } from "./graphSession";
 import { pageIdentityKey } from "./ui";
+import { journalTitle, parseJournalTitle } from "./journal";
 import type { PageEntry, PageInventory, PageInventoryEntry, PageKind, ResolvedPage } from "./types";
 
 // The frontend's ONE name answerer: the latest `page_inventory` result, keyed by
@@ -38,6 +39,20 @@ let queued = false;
 let inFlight: string | null = null;
 let again = false;
 const refreshScope = {};
+// False in a WebView the backend grants no graph-wide read (Quick Capture).
+let inventoryGranted = true;
+
+/** The Quick Capture WebView has no graph slot: the backend grants it only
+ *  narrow capture-scoped commands (src-tauri `state.rs`), so `page_inventory`
+ *  is refused there by design. Its entry point calls this before rendering:
+ *  the index then never reads, and every name lookup answers as before the
+ *  first load (`undefined`, the name unchanged, no names), which callers
+ *  already handle. Capture completion uses `capture_quick_switch` instead.
+ *  Without it, typing `[[` in Quick Capture raised "Couldn't refresh the page
+ *  list" (UI-CAPTURE-NO-PAGE-INVENTORY). */
+export function withoutPageInventory(): void {
+  inventoryGranted = false;
+}
 
 function build(inventory: PageInventory, rev: bigint): Held {
   const pages = new Map<string, PageInventoryEntry>();
@@ -60,6 +75,7 @@ function build(inventory: PageInventory, rev: bigint): Held {
 /** Fetch the inventory now and keep it unless a newer one is already held or
  *  the graph was rebound meanwhile. */
 export async function refreshPageIndex(): Promise<void> {
+  if (!inventoryGranted) return;
   const requested = generation;
   const owner = latestOwner(refreshScope, "inventory", graphOwner(() => requested === generation));
   let inventory: PageInventory;
@@ -123,7 +139,7 @@ export function installPageIndex(): void {
 function ensureInstalled() {
   if (installed) return installed;
   installed = createRoot(() => {
-    createEffect(on([graphEpoch, pageInventoryRev], () => scheduleRefresh()));
+    if (inventoryGranted) createEffect(on([graphEpoch, pageInventoryRev], () => scheduleRefresh()));
     const allPages = createMemo(() => {
       const current = held();
       if (!current) return undefined;
@@ -176,6 +192,16 @@ export function resolvedTarget(name: string, kind: PageKind = "page"): ResolvedP
   return (kind === "journal" ? current?.journals : current?.pages)?.get(pageIdentityKey(name))?.target;
 }
 
+/** Date-shaped links prefer a journal file for the day, then a real ordinary
+ *  page of this name. This is navigation only: file identity stays unchanged.
+ *  Before inventory arrives the backend applies the same fallback. O(1), no IPC. */
+export function linkPageKind(name: string): PageKind {
+  const date = parseJournalTitle(name);
+  if (!date) return "page";
+  if (resolvedTarget(journalTitle(date), "journal")?.kind === "existing") return "journal";
+  return resolvedTarget(name, "page")?.kind === "existing" ? "page" : "journal";
+}
+
 /** The page name navigation opens for `name`: the file's own name for
  *  `existing`, the first owner's name for `alias`, else `name` unchanged. */
 export function navigationName(name: string): string {
@@ -183,6 +209,12 @@ export function navigationName(name: string): string {
   if (!target || target.kind === "absent") return name;
   const id = target.kind === "existing" ? target.id : target.owners[0];
   return held()?.nameById.get(id) ?? name;
+}
+
+/** Physical owner's display name, using the inventory's existing identity map. */
+export function pageNameForPath(path: string): string | undefined {
+  ensureInstalled();
+  return held()?.nameById.get(path);
 }
 
 /** Every physical page and journal file (`undefined` until the first load). */

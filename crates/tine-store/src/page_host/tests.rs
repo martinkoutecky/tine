@@ -87,6 +87,57 @@ pub(super) fn host() -> Host<ModelFs> {
     Host::new(fs, locks)
 }
 
+#[test]
+fn l9_root_faults_preserve_admitted_input_in_device_drafts() {
+    for fault in [Fault::RootGone(0), Fault::RootReplaced(0)] {
+        for phase in [
+            Phase::Read,
+            Phase::PageTemp,
+            Phase::PageRename,
+            Phase::PageSync,
+        ] {
+            let mut h = host();
+            open(&mut h, "a.md");
+            edit(&mut h, "a.md", "input after move");
+            h.fs.inject(phase, [fault]);
+            assert_eq!(h.start_save("a.md"), Disposition::Pending);
+            for _ in 0..12 {
+                if h.job.is_none() {
+                    break;
+                }
+                h.advance_save();
+            }
+            assert!(!h.pages["a.md"].clean(), "{phase:?}/{fault:?}");
+            draft(&mut h, "a.md");
+            assert_eq!(
+                drafts::scan(h.fs.draft_files(true)).logical["a.md"].bytes,
+                text("input after move")
+            );
+            assert!(
+                !h.fs.files.keys().any(|key| key.starts_with("graph/")),
+                "no publication under a detached epoch"
+            );
+        }
+    }
+}
+
+#[test]
+fn l9_root_faults_between_trash_syscalls_never_create_a_replacement_tree() {
+    for offset in 0..8 {
+        for fault in [Fault::RootGone(offset), Fault::RootReplaced(offset)] {
+            let mut fs = ModelFs::default();
+            fs.external("a.md", text("original"), true);
+            fs.inject(Phase::TrashMove, [fault]);
+            let moved = fs.trash_move("a.md", "payload");
+            assert!(moved.result.is_err(), "{offset}/{fault:?}");
+            assert_eq!(moved.result.unwrap_err().operation, Some("GraphRootMoved"));
+            assert!(!fs.files.keys().any(|key| key.starts_with("dir/")
+                || key.starts_with("graph/")
+                || key.starts_with("trash/")));
+        }
+    }
+}
+
 pub(super) fn send(host: &mut Host<ModelFs>, key: &str, kind: RequestKind) -> Disposition {
     let request = Request {
         id: host.last_admitted + 1,
@@ -841,23 +892,12 @@ fn weak_graph_does_not_weaken_app_data_and_power_reverts_only_unsynced_names() {
     assert_eq!(h.pages["a.md"].buf, text("mine"));
     assert_eq!(h.fs.files["graph/a.md"].as_ref(), b"A");
 }
-
-#[test]
-fn retained_reservation_blocks_save_and_reconciles_undo_or_publication() {
-    let mut h = host();
-    open(&mut h, "a.md");
-    let keys = BTreeSet::from(["a.md".into()]);
-    assert_eq!(h.reserve(&keys), Disposition::Applied);
-    assert_eq!(h.start_save("a.md"), Disposition::Waiting);
-    h.fs.external("a.md", text("transaction"), true);
-    assert_eq!(h.release(&keys), Disposition::Applied);
-    assert_eq!(h.pages["a.md"].buf, text("transaction"));
-}
-
 /// The production files that name the page host surface: the census
 /// writers (STEP3 §7), the binding's host slot, restore and retirement, the
-/// page commands, and the graph-window binding that starts the host and
-/// answers `load_graph` (step 3b P1, P2b).
+/// page commands, the graph-window binding that starts the host and
+/// answers `load_graph` (step 3b P1, P2b), and the CLI owner's write path,
+/// which submits one planned page operation through the same host as the
+/// app's commands (CLI slice 2, SLICE2-DESIGN §1).
 const CENSUS_CALL_SITES: &[&str] = &[
     "crates/tine-graph-features/src/retained.rs",
     "crates/tine-graph-features/src/pages.rs",
@@ -871,6 +911,10 @@ const CENSUS_CALL_SITES: &[&str] = &[
     "src-tauri/src/host_retirement.rs",
     "src-tauri/src/page_commands.rs",
     "src-tauri/src/graph.rs",
+    "src-tauri/src/owner/write.rs",
+    "src-tauri/src/owner/pages.rs",
+    // ADR 0078: audited HostOps, already in write_sites.toml.
+    "src-tauri/src/owner/git_pull.rs",
 ];
 
 /// Production `PageHost::start(` lines the census below saw.
@@ -934,14 +978,19 @@ fn host_and_oracle_stay_private_one_path_starts_a_host_and_runtime_has_no_filesy
     let root = option_env!("TINE_HOST_REPO_ROOT")
         .map(std::path::PathBuf::from)
         .unwrap_or_else(|| std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../.."));
-    /// Whether `parent` declares the sibling `file` as a module, under
-    /// `#[cfg(test)]` when `gated`.
+    /// A `#[cfg(test)]` gate, alone or narrowed (`#[cfg(all(test, desktop))]`
+    /// keeps a desktop-only test module out of the mobile test builds).
+    fn test_gate(line: &str) -> bool {
+        line == "#[cfg(test)]" || (line.starts_with("#[cfg(all(test, ") && line.ends_with("))]"))
+    }
+    /// Whether `parent` declares the sibling `file` as a module, under a test
+    /// gate when `gated`.
     fn declares(parent: &str, file: &str, gated: bool) -> bool {
         let stem = file.trim_end_matches(".rs");
         let lines: Vec<_> = parent.lines().collect();
         lines.iter().enumerate().any(|(i, line)| {
             let named = *line == format!("mod {stem};") || *line == format!("#[path = \"{file}\"]");
-            named && (!gated || (i > 0 && lines[i - 1] == "#[cfg(test)]"))
+            named && (!gated || (i > 0 && test_gate(lines[i - 1])))
         })
     }
     /// `in_test`: `dir` is a directory module declared under `#[cfg(test)]`
@@ -997,7 +1046,7 @@ fn host_and_oracle_stay_private_one_path_starts_a_host_and_runtime_has_no_filesy
                 if line.trim_start().starts_with("//") {
                     continue;
                 }
-                if *line == "#[cfg(test)]"
+                if test_gate(line)
                     && lines
                         .get(i + 1)
                         .is_some_and(|next| next.starts_with("mod ") && next.ends_with('{'))
@@ -1046,7 +1095,6 @@ fn host_and_oracle_stay_private_one_path_starts_a_host_and_runtime_has_no_filesy
                     "PageRefusal",
                     "Reloaded",
                     "RenameRefusal",
-                    "Reservation",
                     "StopMode",
                     "StopState",
                     "Stopped",
@@ -1100,6 +1148,7 @@ fn host_and_oracle_stay_private_one_path_starts_a_host_and_runtime_has_no_filesy
     let runtime = [
         ("mod.rs", include_str!("mod.rs")),
         ("binding.rs", include_str!("binding.rs")),
+        ("binding_delete.rs", include_str!("binding_delete.rs")),
         ("binding_bridge.rs", include_str!("binding_bridge.rs")),
         ("binding_retained.rs", include_str!("binding_retained.rs")),
         (
@@ -1109,6 +1158,7 @@ fn host_and_oracle_stay_private_one_path_starts_a_host_and_runtime_has_no_filesy
         ("binding_apply.rs", include_str!("binding_apply.rs")),
         ("binding_launch.rs", include_str!("binding_launch.rs")),
         ("binding_read.rs", include_str!("binding_read.rs")),
+        ("binding_spelling.rs", include_str!("binding_spelling.rs")),
         ("draft_worker.rs", include_str!("draft_worker.rs")),
         ("drafts.rs", include_str!("drafts.rs")),
         ("driver.rs", include_str!("driver.rs")),
@@ -1119,10 +1169,10 @@ fn host_and_oracle_stay_private_one_path_starts_a_host_and_runtime_has_no_filesy
         ("operations.rs", include_str!("operations.rs")),
         ("order.rs", include_str!("order.rs")),
         ("progress.rs", include_str!("progress.rs")),
+        ("production_guard.rs", include_str!("production_guard.rs")),
         ("save.rs", include_str!("save.rs")),
     ];
-    // Every runtime file is scanned: a file split out of a scanned one must
-    // join this list. Any other file here is the adapter, or a module
+    // Every runtime file joins this scan; other files are the adapter or a module
     // declared under `#[cfg(test)]` or inside such a module.
     let dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("src/page_host");
     let mut test_only: BTreeSet<String> = BTreeSet::new();
@@ -1348,10 +1398,6 @@ fn rename_cost_retire_keeps_its_pages_busy_and_relaunch_preserves_owed() {
     for key in ["a.md", "b.md", "c.md"] {
         assert!(h.busy(key));
         assert_eq!(h.observe(key), Disposition::Waiting);
-        assert_eq!(
-            h.reserve(&BTreeSet::from([key.into()])),
-            Disposition::Waiting
-        );
     }
     drain(&mut h);
     assert!(h.fs.draft_files(true).is_empty());

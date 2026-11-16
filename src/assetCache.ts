@@ -1,3 +1,4 @@
+import { createSignal } from "solid-js";
 import { createStore, reconcile } from "solid-js/store";
 import { backend } from "./backend";
 import { dbg } from "./debug";
@@ -6,6 +7,7 @@ import { graphOwner } from "./owned";
 import { clearOnBindingInvalidated } from "./binding";
 import { reportUiFailure } from "./uiFailure";
 import { mime_from_path } from "./render/wasm/lsdoc_wasm";
+import { isStaticIconImage } from "./staticImage";
 
 // Cache of graph-asset blob URLs keyed by path relative to `assets/`. Without it
 // every <img> mount (re-render, scroll back into view, or a second reference to
@@ -17,6 +19,10 @@ import { mime_from_path } from "./render/wasm/lsdoc_wasm";
 // same asset share one read. Bound both count and retained backing bytes: Blob
 // URLs keep their Blob alive even after every image unmounts.
 interface CacheEntry {
+  icon?: boolean;
+  /** The read limit this entry's IPC read was issued with. */
+  maxBytes: number;
+  staticIcon?: boolean;
   url?: string;
   failure?: ErrorFamily;
   promise: Promise<string>;
@@ -25,7 +31,7 @@ interface CacheEntry {
   evicted: boolean;
   cleanupQueued?: boolean;
 }
-export interface BlobLease { url: string; release: () => void; failure?: ErrorFamily }
+export interface BlobLease { url: string; release: () => void; failure?: ErrorFamily; staticIcon?: boolean }
 const cache = new Map<string, CacheEntry>();
 // Entries evicted from the retained LRU while still displayed remain keyed here
 // (but do not count toward the idle cache cap), so a repeated reference shares
@@ -41,6 +47,9 @@ export function assetNameForBlobUrl(url: string): string | undefined {
 const MAX_CACHE_ENTRIES = 128;
 const MAX_CACHE_BYTES = 128 * 1024 * 1024;
 const MAX_IMAGE_BYTES = 32 * 1024 * 1024;
+const MAX_ICON_BYTES = 1024 * 1024;
+const [iconVersion, setIconVersion] = createSignal(0);
+export const iconAssetVersion = iconVersion;
 let cacheBytes = 0;
 const MAX_ACTIVE_READS = 2;
 let activeReads = 0;
@@ -115,7 +124,7 @@ function prune(protectedKey: string) {
  * that the placeholder already shows, so they are logged only. */
 type ReadKind = "graph" | "device";
 
-function cachedBlob(key: string, read: () => Promise<Uint8Array>, typePath: string, kind: ReadKind): CacheEntry {
+function cachedBlob(key: string, read: () => Promise<Uint8Array>, typePath: string, kind: ReadKind, maxBytes = MAX_IMAGE_BYTES): CacheEntry {
   const hit = cache.get(key);
   if (hit) {
     touch(key, hit);
@@ -123,7 +132,7 @@ function cachedBlob(key: string, read: () => Promise<Uint8Array>, typePath: stri
   }
   const live = liveEntries.get(key);
   if (live) return live;
-  const entry: CacheEntry = { promise: Promise.resolve(""), bytes: 0, leases: 0, evicted: false };
+  const entry: CacheEntry = { promise: Promise.resolve(""), bytes: 0, leases: 0, evicted: false, maxBytes };
   const owner = graphOwner();
   // Publish identity before starting the limiter: its first two tasks begin
   // synchronously, and must see themselves in the cache.
@@ -135,6 +144,14 @@ function cachedBlob(key: string, read: () => Promise<Uint8Array>, typePath: stri
       // not start an IPC allocation for a URL nobody is waiting to cache.
       if (cache.get(key) !== entry) return "";
       const bytes = await read();
+      entry.staticIcon = isStaticIconImage(bytes);
+      if (bytes.byteLength > maxBytes) {
+        entry.failure = "asset-too-large";
+        // Leave the cache like a thrown refusal does, so a caller with a larger
+        // allowance reads afresh instead of inheriting this refusal.
+        if (cache.get(key) === entry) cache.delete(key);
+        return "";
+      }
       if (!bytes.length) {
         entry.failure = "unknown";
         return "";
@@ -151,7 +168,7 @@ function cachedBlob(key: string, read: () => Promise<Uint8Array>, typePath: stri
     } catch (error) {
       entry.failure = errorFamily(error);
       if (cache.get(key) === entry) cache.delete(key);
-      if (kind === "graph" && errorFamily(error) !== "not-found" && owner()) reportUiFailure("asset-read", error);
+      if (kind === "graph" && errorFamily(error) !== "not-found" && !(maxBytes === MAX_ICON_BYTES && errorFamily(error) === "asset-too-large") && owner()) reportUiFailure("asset-read", error);
       else dbg(`asset read failed (${kind}) ${key}: ${String(error)}`);
       return "";
     }
@@ -188,7 +205,7 @@ async function acquire(entry: CacheEntry): Promise<BlobLease> {
   const release = retain(entry);
   const url = await entry.promise;
   if (!url) release();
-  return { url, release, ...(entry.failure ? { failure: entry.failure } : {}) };
+  return { url, release, staticIcon: entry.staticIcon, ...(entry.failure ? { failure: entry.failure } : {}) };
 }
 
 /** Lease an already loaded graph asset synchronously, before a remounted
@@ -198,13 +215,42 @@ export function acquireCachedAssetBlob(rel: string): BlobLease | undefined {
   const entry = cache.get(rel) ?? liveEntries.get(rel);
   if (!entry?.url) return;
   if (cache.get(rel) === entry) touch(rel, entry);
-  return { url: entry.url, release: retain(entry) };
+  return { url: entry.url, release: retain(entry), staticIcon: entry.staticIcon };
 }
 
 /** A blob URL for the asset at `rel` (relative to `assets/`), reading it over IPC
  *  at most once per open graph. Resolves to "" if the asset is missing/unreadable. */
-export function acquireAssetBlob(rel: string): Promise<BlobLease> {
-  return acquire(cachedBlob(rel, () => backend().readAsset(rel, MAX_IMAGE_BYTES), rel, "graph"));
+export async function acquireAssetBlob(rel: string): Promise<BlobLease> {
+  const read = () => cachedBlob(rel, () => backend().readAsset(rel, MAX_IMAGE_BYTES), rel, "graph");
+  const entry = read();
+  const lease = await acquire(entry);
+  // A pending icon read (1 MiB limit) may have been joined; its refusal must
+  // not cost a block image its own larger allowance. The failed entry has left
+  // the cache, so this issues a fresh full-limit read.
+  if (lease.failure === "asset-too-large" && entry.maxBytes < MAX_IMAGE_BYTES) return acquire(read());
+  return lease;
+}
+
+/** Icons share the exact same entry/Blob as block images. Enforce the smaller
+ * budget both at IPC (before allocation) and on pre-existing/pending entries. */
+export async function acquireIconAssetBlob(rel: string): Promise<BlobLease> {
+  const entry = cachedBlob(rel, () => backend().readAsset(rel, MAX_ICON_BYTES), rel, "graph", MAX_ICON_BYTES);
+  entry.icon = true;
+  const lease = await acquire(entry);
+  if (entry.bytes > MAX_ICON_BYTES) {
+    lease.release();
+    return { url: "", release: () => {}, failure: "asset-too-large" };
+  }
+  return lease;
+}
+
+/** Asset identities can have symlink/case aliases. There are few icon images:
+ * invalidate all of them on any assets event, then share their next reads. */
+export function refreshIconAssets(): void {
+  for (const [key, entry] of [...cache, ...liveEntries]) {
+    if (entry.icon) invalidateAsset(key);
+  }
+  setIconVersion(version => version + 1);
 }
 
 /** A blob URL for an image at an ABSOLUTE local `path` outside the graph, read over
@@ -241,6 +287,8 @@ export function seedAssetBlob(rel: string, bytes: Uint8Array): string {
     return url;
   }
   const entry: CacheEntry = {
+    maxBytes: MAX_IMAGE_BYTES,
+    staticIcon: isStaticIconImage(bytes),
     url,
     promise: Promise.resolve(url),
     bytes: bytes.byteLength,
@@ -293,5 +341,6 @@ export function invalidateAsset(rel: string): void {
  *  from disk. Use after an external editor overwrote the asset. */
 export function refreshAsset(rel: string): void {
   invalidateAsset(rel);
+  refreshIconAssets();
   setVersions(rel, (versions[rel] ?? 0) + 1);
 }

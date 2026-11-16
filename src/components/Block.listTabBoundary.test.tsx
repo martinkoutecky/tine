@@ -1,3 +1,4 @@
+import { editorIn, type EditorDriver } from "../tests/editorDriver";
 import { afterEach, beforeAll, beforeEach, expect, it } from "vitest";
 import { For } from "solid-js";
 import { render } from "solid-js/web";
@@ -23,18 +24,18 @@ function mount(raw: string, nested = false, format: "md" | "org" = "md") {
   const root = document.createElement("div");
   document.body.appendChild(root);
   const dispose = render(() => <For each={pageByName("Lists")!.roots}>{id => <Block id={id} />}</For>, root);
-  const editor = root.querySelector<HTMLTextAreaElement>("textarea.block-editor")!;
-  editor.setSelectionRange(raw.length, raw.length);
+  const editor = editorIn(root);
+  editor.select(raw.length, raw.length);
   return { editor, dispose };
 }
-function tab(editor: HTMLTextAreaElement, shiftKey = false) {
-  editor.dispatchEvent(new KeyboardEvent("keydown", { key: "Tab", shiftKey, bubbles: true, cancelable: true }));
+function tab(editor: EditorDriver, shiftKey = false) {
+  editor.keydown({ key: "Tab", shiftKey, bubbles: true, cancelable: true });
 }
 
 it.each(["+ milk", "- milk", "* milk", "1. milk", "+ milk\nsecond line"])("Tab reparents first-line %j without changing its text (GH #632)", raw => {
   const { editor, dispose } = mount(raw);
   try {
-    editor.setSelectionRange(3, 3);
+    editor.select(3, 3);
     tab(editor);
     expect(doc.byId.item.parent).toBe("previous");
     expect(doc.byId.item.raw).toBe(raw);
@@ -61,6 +62,6 @@ it("Org first-line lists retain their existing in-block nudge", () => {
 it("literal list text in a fence remains an outline Tab", () => {
   const raw = "```\n+ milk\n```";
   const { editor, dispose } = mount(raw);
-  try { editor.setSelectionRange(7, 7); tab(editor); expect(doc.byId.item.parent).toBe("previous"); expect(doc.byId.item.raw).toBe(raw); }
+  try { editor.select(7, 7); tab(editor); expect(doc.byId.item.parent).toBe("previous"); expect(doc.byId.item.raw).toBe(raw); }
   finally { dispose(); }
 });

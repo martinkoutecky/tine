@@ -3,18 +3,20 @@ import type { PageDto } from "../../types";
 import { ordered_list_glyph } from "../../render/wasm/lsdoc_wasm.js";
 import { scheduleParts, planningTimestamp } from "../../editor/repeat";
 import { blockRegions, editBlock, parserReady } from "../../render/parse";
-import { bumpCollapseEpochs, doc, formatForBlock, pageByName, setDoc, freshId, type Node, type ReadonlyFeedPage } from "../model";
+import { bumpCollapseEpochs, doc, formatForBlock, pageByName, setDoc, freshId, writeRaw, type Node, type ReadonlyFeedPage } from "../model";
 import { facetsOf } from "../../render/facets";
 import { propertyKeyNorm } from "../../render/block";
 import { pushUndo } from "../history";
 import { orgRawWithProperty } from "./identity";
 import { markDirty, noteTitleIdentityIntent, pageFrozen } from "../host/wiring";
-import { canonicalPageHeaderDraft, withoutLeadingBlankLines, isPropertiesOnly, splitPagePreamble, isPageHeaderPropertiesOnly, pageHeaderBadLine, splitProps, joinProps, BUILTIN_HIDE, hideKeys, pagePropertyEntries, pagePartsWithProperty } from "../../editor/properties";
+import { canonicalPageHeaderDraft, withoutLeadingBlankLines, isPropertiesOnly, splitPagePreamble, isPageHeaderPropertiesOnly, pageHeaderBadLine, splitProps, joinProps, BUILTIN_HIDE, hideKeys, pagePropertyEntries, pagePartsWithProperty, isEditorEmpty } from "../../editor/properties";
 import { produce } from "solid-js/store";
 import { type Format } from "../../types";
 import { graphRewriteFrozen } from "../graphRewriteState";
 import { dismissToast, pushToast, toasts } from "../../toasts";
 import { clearOnBindingInvalidated } from "../../binding";
+import { blockHasFoldableBody, blockHasPageEmbed } from "./blocks";
+import { queryOptionFolds, storedFold } from "./queryFoldOption";
 
 /** Pure Markdown property rewrite for one compound store mutation. It scans only
  * the canonical head (title — or, when the first line is itself a property, no
@@ -167,7 +169,7 @@ export function setPageProperty(pageName: string, key: string, value: string | n
       if (node.originatedFromPageHeader && next[i] === "" && node.children.length === 0) {
         if (s.pages[idx].roots[0] === part.id) s.pages[idx].roots.shift();
         delete s.byId[part.id];
-      } else node.raw = next[i];
+      } else writeRaw(s, part.id, next[i]);
     });
   }));
   markDirty(pageName, "save-block");
@@ -413,7 +415,7 @@ export function toggleOwnNumberedList(id: string): boolean {
  * `src/main/frontend/handler/editor.cljs:2498-2502` (6e7afa8eb). */
 export function stopOwnNumberedListOnEmptyEnter(id: string, visibleText: string): boolean {
   const node = doc.byId[id];
-  if (!node || visibleText.trim() !== "" || !isOrdered(id) || isOrdered(node.parent)) return false;
+  if (!node || visibleText.trim() !== "" || !isEditorEmpty(node.raw, BUILTIN_HIDE, formatForBlock(id)) || !isOrdered(id) || isOrdered(node.parent)) return false;
   return removeOwnNumberedList(id);
 }
 /** The ordered-list label for a block whose `logseq.order-list-type` is `number`
@@ -612,16 +614,44 @@ export function expandAncestors(id: string): boolean {
 
 /** Collapse or expand a block and its entire descendant subtree. */
 export function setCollapsedDeep(id: string, collapsed: boolean) {
-  if (!blockWritable(id)) return;
-  pushUndo("collapse-all", [doc.byId[id].page]);
-  const walk = (bid: string) => {
-    const n = doc.byId[bid];
-    if (!n) return;
-    if (n.children.length) writeCollapsed(bid, collapsed);
-    n.children.forEach(walk);
-  };
-  walk(id);
-  markDirty(doc.byId[id].page, "save-block");
+  setCollapsedTrees([id], collapsed);
+}
+
+/** Bulk page/subtree fold: one snapshot, one reactive transaction and one dirty
+ * notification per affected page, irrespective of block count (GH #785).
+ * An omitted value follows OG toggle-open!: any fold => expand all. */
+export function setCollapsedTrees(roots: readonly string[], collapsed?: boolean) {
+  const seen = new Set<string>();
+  const foldable: string[] = [];
+  const stack = [...roots];
+  while (stack.length) {
+    const id = stack.pop()!;
+    const n = doc.byId[id];
+    if (!n || seen.has(id) || !blockWritable(id)) continue;
+    seen.add(id);
+    stack.push(...n.children);
+    if (blockHasFoldableBody(id)) foldable.push(id);
+  }
+  const value = collapsed ?? !foldable.some(id => storedFold(id));
+  const changes = foldable.filter(id => storedFold(id) !== value).map(id => {
+    const n = doc.byId[id];
+    // Query/page-embed defaults require an explicit false, like a single fold.
+    const raw = blockHasPageEmbed(id) || queryOptionFolds(id)
+      ? editBlock(n.raw, formatForBlock(id), { kind: "property", key: "collapsed", value: String(value) })
+      : rawWithCollapsed(n.raw, value, formatForBlock(id));
+    return { id, raw, page: n.page };
+  });
+  if (!changes.length) return;
+  const pages = [...new Set(changes.map(change => change.page))];
+  pushUndo("collapse-all", pages);
+  setDoc(produce(state => {
+    for (const change of changes) {
+      state.byId[change.id].collapsed = value;
+      writeRaw(state, change.id, change.raw);
+    }
+  }));
+  bumpCollapseEpochs(changes.map(change => change.id));
+  for (const page of pages) markDirty(page, "save-block");
 }
 
 /** Every descendant that can itself be folded, including descendants hidden by
@@ -648,10 +678,18 @@ export function collapsibleDescendantIds(id: string): string[] {
 export function setCollapsedDescendants(id: string, collapsed: boolean) {
   const root = doc.byId[id];
   if (!root || !blockWritable(id)) return;
-  const changes = collapsibleDescendantIds(id)
+  setCollapsedBlocks(collapsibleDescendantIds(id), collapsed);
+}
+
+/** `setCollapsedDescendants` for a given list of blocks on one page (a block
+ *  embed's rows, D-20261030-EMB): one snapshot, one store transaction. */
+export function setCollapsedBlocks(ids: readonly string[], collapsed: boolean) {
+  const page = ids.length ? doc.byId[ids[0]]?.page : undefined;
+  if (!page) return;
+  const changes = ids
     .map((childId) => {
       const child = doc.byId[childId];
-      if (!child || child.collapsed === collapsed) return null;
+      if (!child || child.page !== page || !blockWritable(childId) || child.collapsed === collapsed) return null;
       return {
         id: childId,
         raw: rawWithCollapsed(child.raw, collapsed, formatForBlock(childId)),
@@ -659,17 +697,17 @@ export function setCollapsedDescendants(id: string, collapsed: boolean) {
     })
     .filter((change): change is { id: string; raw: string } => change !== null);
   if (!changes.length) return;
-  pushUndo("collapse-descendants", [root.page]);
+  pushUndo("collapse-descendants", [page]);
   setDoc(
     produce((state) => {
       for (const change of changes) {
         const child = state.byId[change.id];
         if (!child) continue;
         child.collapsed = collapsed;
-        child.raw = change.raw;
+        writeRaw(state, change.id, change.raw);
       }
     })
   );
   bumpCollapseEpochs(changes.map((change) => change.id));
-  markDirty(root.page, "save-block");
+  markDirty(page, "save-block");
 }

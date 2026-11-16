@@ -7,13 +7,13 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
-// og (the beta channel): the public demo at website/demo is master's and is
-// published from master only (Martin, 2026-10-03). og never regenerates or
-// checks it; this script builds og's Guide site into the untracked
-// target/guide/demo for og's own publish journeys
+// develop (the development line): the public demo at website/demo is master's and is
+// published from master only (Martin, 2026-10-03). develop never regenerates or
+// checks it; this script builds develop's Guide site into the untracked
+// target/guide/demo for develop's own publish journeys
 // (e2e-og-published-guide, check-publish-outline-geometry).
 if (process.argv.includes("--check")) {
-  console.error("build-guide-demo --check: website/demo follows master on og; there is nothing to check here.");
+  console.error("build-guide-demo --check: website/demo follows master on develop; there is nothing to check here.");
   process.exit(1);
 }
 const checkedIn = path.join(root, "target/guide/demo");

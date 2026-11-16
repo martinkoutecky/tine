@@ -15,7 +15,6 @@
 //! This is a directory module (`output_tests/mod.rs`) because
 //! `owner_tests::the_endpoint_has_no_webview_or_plugin_door` counts the `.rs`
 //! files directly under `owner/`.
-#![cfg(unix)]
 
 use std::collections::{BTreeMap, BTreeSet};
 use std::path::PathBuf;
@@ -62,24 +61,26 @@ impl Fixture {
         // The contract's outline example is this page, byte for byte.
         write(
             "pages/a.md",
-            &format!("- one\n  id:: {UUID}\n  author:: claude\n\t- under one\n- TODO two\n"),
+            &format!("- one\n  id:: {UUID}\n  tine.author:: claude\n\t- under one\n- TODO two\n"),
         );
         write(
             "pages/b.md",
-            &format!("- see [[a]]\n  author:: erin\n- and (({UUID}))\n- TODO see [[a]] again\n"),
+            &format!(
+                "- see [[a]]\n  tine.author:: erin\n- and (({UUID}))\n- TODO see [[a]] again\n"
+            ),
         );
-        // Literal `author::` text inside a code fence is content, not attribution.
+        // Literal `tine.author::` text inside a code fence is content, not attribution.
         write(
             "pages/fence.md",
-            "- Example\n  ```\n  author:: Bob\n  ```\n- Real\n  author:: Alice\n  note:: x\n  ```\n  author:: Bob\n  ```\n",
+            "- Example\n  ```\n  tine.author:: Bob\n  ```\n- Real\n  tine.author:: Alice\n  note:: x\n  ```\n  tine.author:: Bob\n  ```\n",
         );
         write(
             "pages/org1.org",
-            "* Heading\n:PROPERTIES:\n:author: carol\n:END:\nbody\n",
+            "* Heading\n:PROPERTIES:\n:tine.author: carol\n:END:\nbody\n",
         );
         write(
             "pages/lookalike.md",
-            "- text\n  Author::   Dave  \n- authors:: x\n- plain\n  authors:: y\n",
+            "- text\n  Tine.Author::   Dave  \n- authors:: x\n- plain\n  authors:: y\n- book notes\n  author:: Tolkien\n",
         );
         write("pages/props.md", "foo:: bar\n\n- x\n");
         write("pages/ns___child.md", "- in a namespace\n");
@@ -131,7 +132,14 @@ impl Fixture {
     fn statuses(&self) -> Vec<Value> {
         let paths = |name: &str| GraphPaths {
             lock: self.owners.join(format!("{name}.lock")),
+            #[cfg(unix)]
             socket: self.owners.join(format!("{name}.sock")),
+            #[cfg(windows)]
+            socket: super::windows_security::pipe_name(&format!(
+                "{:016x}",
+                crate::settings::graph_hash(&self.root.join(name))
+            ))
+            .unwrap(),
             start_log: self.owners.join(format!("{name}.start.log")),
         };
         let claim = |paths: &GraphPaths, kind: &str| {
@@ -201,6 +209,29 @@ impl Fixture {
             ("pages", self.ok("pages", json!({ "namespace": "NS" }))),
         ];
         all.extend(self.statuses().into_iter().map(|s| ("owner.status", s)));
+        // Writes last: they change the fixture the reads above answered from.
+        all.push(("ref", self.ok("ref", json!({"handle":UUID}))));
+        all.push(("ref", self.ok("embed", json!({"handle":UUID}))));
+        all.push((
+            "block.edit",
+            self.ok("page.create", json!({"name":"Created"})),
+        ));
+        all.push((
+            "page.rename",
+            self.ok("page.rename", json!({"old":"Created","new":"Renamed"})),
+        ));
+        all.push((
+            "page.delete",
+            self.ok("page.delete", json!({"name":"Renamed","yes":true})),
+        ));
+        all.push((
+            "block.edit",
+            self.ok("block.edit", json!({ "handle": UUID, "text": "edited" })),
+        ));
+        all.push((
+            "block.delete",
+            self.ok("block.delete", json!({ "handle": UUID, "yes": true })),
+        ));
         all
     }
 }
@@ -401,6 +432,9 @@ fn every_payload_has_exactly_the_documented_fields() {
         "search",
         "query",
         "pages",
+        "ref",
+        "page.rename",
+        "page.delete",
     ] {
         assert!(seen.contains_key(needed), "no fixture payload for {needed}");
     }
@@ -625,10 +659,57 @@ fn new_lines(before: &str, after: &str) -> String {
         .join("\n")
 }
 
+/// The text output with block handles left out (positions only), so the
+/// layout tests below read stable addresses; the handle column has its own
+/// test (`a_page_read_prints_each_blocks_handle`).
 fn text_of(payload: &Value) -> String {
+    fn strip(value: &mut Value) {
+        match value {
+            Value::Object(fields) => {
+                fields.remove("handle");
+                fields.values_mut().for_each(strip);
+            }
+            Value::Array(items) => items.iter_mut().for_each(strip),
+            _ => {}
+        }
+    }
+    let mut payload = payload.clone();
+    strip(&mut payload);
     let mut out = String::new();
-    render(payload, &mut out);
+    render(&payload, &mut out);
     out
+}
+
+#[test]
+fn a_page_read_prints_each_blocks_handle() {
+    let fixture = Fixture::new();
+    let page = fixture.ok("page.show", json!({ "name": "a" }));
+    let mut text = String::new();
+    render(&page, &mut text);
+    for (line, handle) in [
+        (
+            text.lines().nth(2).unwrap(),
+            &page["page"]["blocks"][0]["handle"],
+        ),
+        (
+            text.lines().nth(4).unwrap(),
+            &page["page"]["blocks"][0]["children"][0]["handle"],
+        ),
+    ] {
+        let handle = handle.as_str().unwrap();
+        assert!(
+            line.trim_start().starts_with(&format!("{handle} ")),
+            "{line:?} {handle}"
+        );
+    }
+    assert_eq!(
+        page["page"]["blocks"][0]["handle"].as_str().unwrap(),
+        format!(
+            "1~{}",
+            crate::owner::write::fingerprint("one\ntine.author:: claude", false)
+        ),
+        "the fingerprint is the editor text's (hidden id:: left out)"
+    );
 }
 
 fn set(payload: &mut Value, path: &str, value: Value) {
@@ -667,6 +748,26 @@ fn query_ab(f: &Fixture) -> Value {
 }
 
 const DISCLOSURES: &[Disclosure] = &[
+    Disclosure {
+        section: "page.rename",
+        field: "report.skipped_conflicted_referrers",
+        base: |f| f.ok("page.rename", json!({"old":"a","new":"a"})),
+        on: |p| {
+            set(
+                p,
+                "report.skipped_conflicted_referrers",
+                json!(["pages/conflict-zq41.md"]),
+            )
+        },
+        words: &["pages/conflict-zq41.md"],
+    },
+    Disclosure {
+        section: "page.delete",
+        field: "broken_refs",
+        base: |f| f.ok("page.delete", json!({"name":"ns/child","yes":true})),
+        on: |p| set(p, "broken_refs", json!(1337)),
+        words: &["1337"],
+    },
     Disclosure {
         section: "page.show",
         field: "read_only",
@@ -762,6 +863,9 @@ fn every_disclosure_field_the_contract_names_is_tested_and_shows_in_the_text() {
         "search",
         "query",
         "pages",
+        "page.rename",
+        "page.delete",
+        "ref",
     ]
     .iter()
     .flat_map(|section_name| {
@@ -993,12 +1097,14 @@ fn author_sits_beside_the_address_not_on_a_later_line() {
     let text = text_of(&fixture.ok("page.show", json!({ "name": "a" })));
     let lines: Vec<&str> = text.lines().collect();
     assert!(
-        lines.contains(&"1 [author:: claude] one"),
+        lines.contains(&"1 [tine.author:: claude] one"),
         "attribution beside the address: {text}"
     );
     assert!(
-        !lines.iter().any(|l| l.trim_start().starts_with("author::")),
-        "the author:: line is not repeated below the block: {text}"
+        !lines
+            .iter()
+            .any(|l| l.trim_start().starts_with("tine.author::")),
+        "the tine.author:: line is not repeated below the block: {text}"
     );
     // Other properties stay as lines, an unauthored block is unchanged, and
     // the JSON keeps the raw text.
@@ -1011,10 +1117,10 @@ fn author_sits_beside_the_address_not_on_a_later_line() {
     assert!(payload["page"]["blocks"][0]["raw"]
         .as_str()
         .unwrap()
-        .contains("author:: claude"));
+        .contains("tine.author:: claude"));
     // `block show` and `refs` use the same outline.
     let block = text_of(&fixture.ok("block.show", json!({ "uuid": UUID })));
-    assert!(block.contains("1 [author:: claude] one"), "{block}");
+    assert!(block.contains("1 [tine.author:: claude] one"), "{block}");
 }
 
 #[test]
@@ -1022,7 +1128,7 @@ fn author_attribution_is_the_projections_not_a_scan_of_the_lines() {
     let fixture = Fixture::new();
     let outline = |name: &str| text_of(&fixture.ok("page.show", json!({ "name": name })));
 
-    // Code fence content (CODE-2 F6): a block whose only `author::` is inside a
+    // Code fence content (CODE-2 F6): a block whose only `tine.author::` is inside a
     // fence has no author; the literal line stays where it is.
     let fence = outline("fence");
     let lines: Vec<&str> = fence.lines().collect();
@@ -1032,22 +1138,22 @@ fn author_attribution_is_the_projections_not_a_scan_of_the_lines() {
         .unwrap_or_else(|| panic!("{fence}"));
     assert_eq!(
         &lines[at..at + 4],
-        ["1 Example", "  ```", "  author:: Bob", "  ```"],
+        ["1 Example", "  ```", "  tine.author:: Bob", "  ```"],
         "{fence}"
     );
     // A block with a real property AND a fenced line: the property is the
     // attribution (and is not repeated); the fenced line stays.
     let at = lines
         .iter()
-        .position(|l| *l == "2 [author:: Alice] Real")
+        .position(|l| *l == "2 [tine.author:: Alice] Real")
         .unwrap_or_else(|| panic!("{fence}"));
     assert_eq!(
         &lines[at..],
         [
-            "2 [author:: Alice] Real",
+            "2 [tine.author:: Alice] Real",
             "  note:: x",
             "  ```",
-            "  author:: Bob",
+            "  tine.author:: Bob",
             "  ```"
         ],
         "{fence}"
@@ -1055,12 +1161,12 @@ fn author_attribution_is_the_projections_not_a_scan_of_the_lines() {
 
     // Org drawer.
     let org = outline("org1");
-    assert!(org.contains("1 [author:: carol] Heading"), "{org}");
+    assert!(org.contains("1 [tine.author:: carol] Heading"), "{org}");
     assert!(!org.contains(":author:"), "{org}");
 
     // Key spelling and look-alikes: the value is trimmed; `authors::` is another key.
     let look = outline("lookalike");
-    assert!(look.contains("1 [author:: Dave] text"), "{look}");
+    assert!(look.contains("1 [tine.author:: Dave] text"), "{look}");
     assert!(!look.contains("Dave  "), "{look}");
     assert!(
         look.contains("2 authors:: x"),
@@ -1071,13 +1177,20 @@ fn author_attribution_is_the_projections_not_a_scan_of_the_lines() {
         "{look}"
     );
     assert!(
-        !look.contains("[author:: x]") && !look.contains("[author:: y]"),
+        !look.contains("[tine.author:: x]") && !look.contains("[tine.author:: y]"),
         "{look}"
     );
+    // A user's own `author::` (book notes) is an ordinary property row, never
+    // the attribution (Discussion #825, D-20261102-PNS).
+    assert!(
+        look.contains("4 book notes") && look.contains("  author:: Tolkien"),
+        "{look}"
+    );
+    assert!(!look.contains("Tolkien]"), "{look}");
 
     // The same block reached through another verb.
     let query = text_of(&fixture.ok("query", json!({ "text": "[[a]]" })));
-    assert!(query.contains("[author:: claude] one"), "{query}");
+    assert!(query.contains("[tine.author:: claude] one"), "{query}");
 }
 
 #[test]

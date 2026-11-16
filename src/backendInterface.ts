@@ -18,6 +18,7 @@ import type {
   AssetInfo,
   GuideCopyResult,
   GuidePage,
+  GraphMeta,
   Highlight,
   PageDto,
   PageKind,
@@ -42,25 +43,40 @@ import type {
   QueryPublicationPlan,
   PublicationReceipt,
 } from "./types";
-import type { GraphFolderPickResult, PreparedGraphFolder, ClipboardFileList, MediaCaptureResult, KnownGraph, InstalledPluginRecord, PluginRegistryCacheLoad, LoadGraphResult, GraphAccessInspection, TrayStatus } from "./backendTypes";
+import type { GraphFolderPickResult, PreparedGraphFolder, ClipboardFileList, MediaCaptureResult, KnownGraph, InstalledPluginRecord, PluginRegistryCacheLoad, LoadGraphResult, GraphAccessInspection, TrayStatus, GitAutocommitStatus, GitPolicy, GitSyncStatus } from "./backendTypes";
 import type { EditKinds } from "./editKind";
 import type { SheetExport, SheetInput, SheetScope } from "./sheet/staticExport";
 import type { NativeTineLinks } from "./nativeTineLinks";
+import type { QuickShareCheckOutcome, QuickShareConnectStart, QuickShareConnectStatus, QuickShareCreated, QuickShareDeleteOutcome, QuickShareFound, QuickShareListing, QuickSharePrepared } from "./quickShare/commands";
 import type { DebugInfo, DiagnosticReport, DiagnosticFrontendKind, DiagnosticFrontendFields, GpuEnv, BackupInfo, GraphChange, AssetChangedBatch, GraphConfigChange, CustomCssChange, TrashAssetOutcome, GraphAnswersChange } from "./backendTypes";
 import type { DiskToken, OwedPage, PageMail, PageOperation, PageRefusal, PublishedNeed } from "./document";
+
+/** What a native confirmation shows: the action it offers and the way back. */
+export interface ConfirmOptions {
+  title?: string;
+  /** Names the action ("Move to trash"), never "Yes"/"OK". */
+  okLabel: string;
+  /** The way back ("Cancel", "Go back", "Keep editing"). */
+  cancelLabel: string;
+}
 
 export interface Backend {
   graphBindingGeneration(): number;
   inspectGraphAccess(path: string): Promise<GraphAccessInspection>;
   approveExternalAssets(graphRoot: string, assetsPath: string): Promise<void>;
-  loadGraph(path: string): Promise<LoadGraphResult>;
+  loadGraph(path: string, options?: { relocatedFrom: string }): Promise<LoadGraphResult>;
+  /** Native-only, background app-data census after open; never scans the graph. */
+  orphanDrafts?(): Promise<{ id: string; old_root: string | null }[]>;
+  /** Explicit recovery, with both desktop owner locks and a stopped clean host. */
+  recoverOrphanDrafts?(id: string, consumedLastId: number): Promise<{ error: string | null; reloaded: { session: number; nextId: number } | null }>;
   openGraphWindow(path: string): Promise<LoadGraphResult>;
   startupGraphPath(): Promise<string | null>;
   tineLinks?: NativeTineLinks;
   captureTarget(): Promise<string>;
+  captureReceipt(id: string, action: "claim" | "saved" | "release" | "forget" | "status", receiptGeneration: number): Promise<"new" | "pending" | "saved" | "missing">;
   /** Lease the graph selected for this Quick Capture show before issuing
-   * graph-scoped reads from its independent WebView. */
-  bindCaptureGraph(): Promise<void>;
+   * graph-scoped reads from its independent WebView, returning its config. */
+  bindCaptureGraph(): Promise<GraphMeta>;
   listKnownGraphs(): Promise<KnownGraph[]>;
   forgetKnownGraph(path: string): Promise<void>;
   /** Reveal a remembered graph's folder in the desktop file manager. */
@@ -94,6 +110,11 @@ export interface Backend {
    *  the created graph's root path to then `loadGraph`. Creates the graph in
    *  the named child of `dir`, reusing only an empty directory. */
   createGraph(dir: string, name: string): Promise<string | { root: string; display_root: string }>;
+  /** One-off setup; tokens use the same private device store as sync. */
+  gitCloneGraph(dir: string, url: string): Promise<import("./backendTypes").GitCloneResult>;
+  gitSetupSignIn(url: string, username: string, token: string): Promise<void>;
+  gitInitGraph(remoteUrl?: string): Promise<GitAutocommitStatus>;
+  gitFinishSetup(remoteUrl: string): Promise<GitAutocommitStatus>;
   /** First unused notes, notes-2, … child name, supplied by Rust. */
   suggestGraphName(dir: string): Promise<string>;
   /** The whole name inventory (physical pages/journals, aliases, reference-only
@@ -105,11 +126,15 @@ export interface Backend {
    *  opens: times the store already holds (no stat, nothing persisted). */
   pageModified(): Promise<import("./types").PageModified>;
   pageBacklinkCounts(): Promise<[string, number][]>;
-  journalFeedPage(limit: number, beforeDay: number | null): Promise<import("./types").JournalFeedPage>;
+  journalFeedPage(limit: number, beforeDay: number | null, waitForReferences?: boolean, throughDay?: number | null): Promise<import("./types").JournalFeedPage>;
   /** Journal date-keys (yyyymmdd) whose page has real content. */
   journalContentDays(): Promise<number[]>;
   getPage(name: string, kind: "journal" | "page"): Promise<import("./types").PageRead | null>;
   resolvePage(name: string, kind: "journal" | "page"): Promise<import("./types").ResolvedPage>;
+  /** The page header's alias group of `name` (D-20261019-AL1/AL2): its other
+   *  names with no file of their own, and the other names a file claims.
+   *  O(group); waits for graph load. */
+  pageAliasGroup(name: string): Promise<import("./types").AliasGroup>;
   /** The page host (STEP3-DESIGN §3; `src-tauri/src/page_commands.rs`): the only
    * page persistence of a window. Only `src/document/host/wiring.ts` calls these
    * (I-1). Mutating commands carry the window's session and a request id and go
@@ -138,6 +163,9 @@ export interface Backend {
   pageOwed(session: number, paths: readonly string[] | null): Promise<OwedPage[] | null>;
   /** Retry crash-draft storage after the host reported it unavailable. */
   pageDraftsRetry(): Promise<void>;
+  /** Desktop semantic lease recovery; absent in browser/mobile backends. */
+  ownerProtectionStatus?(): Promise<import("./ownerProtection").OwnerProtectionIssue | null>;
+  retryOwnerProtection?(repair: boolean): Promise<import("./ownerProtection").OwnerProtectionIssue | null>;
   onPageMail(cb: (mail: PageMail) => void): Promise<() => void>;
   /** The graph being opened overlaps one that is still saving its pages (F6). */
   onGraphOpenWaiting(cb: (saving: string) => void): Promise<() => void>;
@@ -158,6 +186,9 @@ export interface Backend {
    *  Linked References filter. Ordinary backlink DTOs stay shallow. */
   getBacklinkFilterContext(name: string, targets: BacklinkFilterTarget[]): Promise<BacklinkFilterContext>;
   getUnlinkedRefs(name: string): Promise<RefGroup[]>;
+  registerUnlinkedReference?(subscription: string, target: string | null, bindingGeneration: number): Promise<void>;
+  registerQuerySubscription?(subscription: string, request: import("./querySubscription").QuerySubscription | null,
+    bindingGeneration: number): Promise<import("./querySubscription").QueryRegistration>;
   /** True once the background whole-graph warm has built derived graph-open caches. */
   warmDone(): Promise<boolean>;
   /** Map of block uuid → number of blocks that reference it (the count badge). */
@@ -182,6 +213,35 @@ export interface Backend {
   /** Publish a whole-graph read-only app plus static fallback under a picked
    * folder. `allPages` explicitly includes private pages; default public only. */
   publishLive(destination: string, name: string, allPages: boolean, sheets: SheetExport[]): Promise<PublicationReceipt>;
+  /** Quick share (DESIGN §3.9; src-tauri/src/quick_share). Every GitHub call,
+   * the token and each share's key stay native; failures reject with a
+   * `QuickShareError`. Prepare builds the exact payload a later create uploads,
+   * kept natively for 10 minutes under `prepareId`. */
+  quickSharePrepare(request: QueryPublicationRequest, shareId?: string): Promise<QuickSharePrepared>;
+  /** Upload the prepared payload once (never retried) and copy the link to the
+   *  clipboard natively; the link is not returned. */
+  quickShareCreate(prepareId: string): Promise<QuickShareCreated>;
+  quickShareDiscard(prepareId: string): Promise<void>;
+  /** This device's shares and the connected account; `enabled` is the build gate. */
+  quickShareList(): Promise<QuickShareListing>;
+  /** Development-only, unauthenticated HTTPS GET; returns only a fixed diagnostic code. */
+  quickShareTestConnection(): Promise<import("./quickShare/commands").QuickShareConnectionTest>;
+  /** Look for a pending share on GitHub (connected account only); found → live. */
+  quickShareCheck(shareId: string): Promise<QuickShareCheckOutcome>;
+  /** The account's Tine shares that no record on this device knows. */
+  quickShareFind(): Promise<QuickShareFound[]>;
+  /** Delete a share's gist (by record, or a found gist by id); connected account only. */
+  quickShareDelete(target: { shareId: string } | { gistId: string }): Promise<QuickShareDeleteOutcome>;
+  /** Remove a record and its key; the link can no longer be recovered here. */
+  quickShareForget(shareId: string): Promise<void>;
+  /** Copy a live share's link to the clipboard natively; true when copied. */
+  quickShareCopyLink(shareId: string): Promise<boolean>;
+  /** Start GitHub's device flow; the device code never leaves native code. */
+  quickShareConnectStart(): Promise<QuickShareConnectStart>;
+  quickShareConnectStatus(attemptId: string): Promise<QuickShareConnectStatus>;
+  quickShareConnectCancel(attemptId: string): Promise<void>;
+  /** Delete the account file (the grant is revoked on GitHub's settings page). */
+  quickShareDisconnect(): Promise<void>;
   /** The `tine.view` sheet blocks of the named pages (every page when omitted)
    * with the data the sheet evaluator needs to compute each for a static export.
    * The `sheets` argument of publishLive/publishQuery/pagePrintHtml answers it
@@ -216,6 +276,12 @@ export interface Backend {
    *  or 32 MiB, or over the statistics budget, rejects; no truncated answer is
    *  returned. Context binds only advanced `:current-page`; OG/TQL ignore it. */
   queryRun(query: Query, view: ViewSettings, context?: ExecutionContext): Promise<QueryResult>;
+  /** GH #715: the "Pages tagged with" rows (page anchor) of a page or alias
+   *  name: pages tagged with any name in its alias group (the Linked References
+   *  group), itself included when it tags itself so. Unlike `(page-tags …)`,
+   *  which stays literal. Same
+   *  cost, memoization and bounds as `queryRun`. */
+  taggedPages(name: string): Promise<QueryResult>;
   /** On-demand empty explanation: roughly two full evaluations per conjunct,
    *  O(conjuncts × (pages + blocks)), without result rows or memoization. Ignores
    *  view; no `result-too-large` refusal. Waits for graph load. */
@@ -246,7 +312,7 @@ export interface Backend {
   /** Persist the journal display-title format to config.edn
    *  `:journal/page-title-format` (e.g. "MMM do, yyyy"). Display-only — does not
    *  rename journal files (`:journal/file-name-format` is separate). */
-  setJournalTitleFormat(format: string, kinds: EditKinds): Promise<void>;
+  setJournalTitleFormat(format: string, kinds: EditKinds): Promise<string[]>;
   /** Set (or clear, with null) the new-journal default template in config.edn
    *  `:default-templates {:journals "Name"}`. */
   setDefaultJournalTemplate(name: string | null): Promise<void>;
@@ -315,8 +381,11 @@ export interface Backend {
    *  duplicate day's files before reconciling. */
   readJournalFile(name: string): Promise<string>;
   /** Load a page from a SPECIFIC file by its graph-root-relative path — reaches a
-   *  duplicate-day stray that shares a (kind,name) with the canonical file (#21). */
-  getPageByPath(path: string): Promise<import("./types").PageRead | null>;
+   *  duplicate-day stray that shares a (kind,name) with the canonical file (#21).
+   *  The optional receiver gets the original read's provenance even for absence;
+   *  null means target validation rejected the path before selecting a source.
+   *  Uses the same single page-read IPC. */
+  getPageByPath(path: string, source?: (value: import("./types").PageReadSource | null) => void): Promise<import("./types").PageRead | null>;
   /** Append the blocks of `src` (graph-root-relative path) onto `dst`, then trash
    *  `src` — fold a duplicate-day stray into the canonical day (#21). */
   mergePages(src: string, dst: string, kinds: EditKinds): Promise<void>;
@@ -410,12 +479,16 @@ export interface Backend {
   /** Capture-only page/tag completion capability. It is intentionally not the
    * general graph command route used by the main WebView. */
   captureQuickSwitch(query: string, limit: number, transliteration?: boolean): Promise<PageEntry[]>;
-  listTemplates(): Promise<TemplateDto[]>;
+  /** Every template; with `name`, at most the one graph-wide discovery picks
+   * for that exact name, answered early when the graph's files settle it. */
+  listTemplates(name?: string): Promise<TemplateDto[]>;
   resolveBlock(uuid: string): Promise<RefGroup | null>;
   resolveBlocks(uuids: string[]): Promise<(RefGroup | null)[]>;
   /** Explicit bounded subtree; ordinary resolution is intentionally shallow. */
   previewBlock(uuid: string, maxNodes: number): Promise<BlockPreview | null>;
   readAsset(name: string, maxBytes: number): Promise<Uint8Array>;
+  /** Native PDF range reads; browser/published backends retain their byte loader. */
+  pdfAssetSource?(name: string, maxBytes: number, bindingGeneration: number): Promise<import("./pdfAssetSource").PdfAssetSource>;
   /** Native range-aware URL for audio/video. Unlike `readAsset`, this never
    *  copies the whole media file through IPC. */
   streamAsset(name: string): Promise<string>;
@@ -440,6 +513,13 @@ export interface Backend {
    * No source-byte cap. Bad source/name or write failures reject.
    * Cost O(source bytes + collision candidates). */
   importAsset(path: string, name: string | undefined, bindingGeneration: number): Promise<string>;
+  /** Quick Capture only (GH #835): the capture window has no graph of its own, so
+   * its pasted files are imported into the graph its show was bound to, by these
+   * two narrow commands instead of `importAsset` / `saveAsset`. Same contracts as
+   * those (return the chosen assets-relative name; reject on a bad name, a stale
+   * binding or a failed write); the graph window never calls them. */
+  captureImportAsset(path: string, name: string | undefined, bindingGeneration: number): Promise<string>;
+  captureSaveAsset(name: string, bytes: Uint8Array, bindingGeneration: number): Promise<string>;
   /** Import an app-cache tine_photo_*.jpg (64 MiB max) or tine_memo_*.m4a
    * (32 MiB max) capability into a unique asset. Reject empty/invalid sources,
    * bad names, size limits, and writes. After commit, attempt temp removal;
@@ -452,11 +532,12 @@ export interface Backend {
   /** Read a dropped UTF-8 text file by absolute path. Used only for explicit
    *  local file drops such as CSV/TSV import. */
   readTextFile(path: string): Promise<string>;
-  /** Native yes/no confirmation dialog. Returns true if the user confirms.
+  /** Native confirmation dialog. Returns true if the user takes the action.
    *  Uses the GTK dialog plugin, NOT window.confirm — the latter silently
    *  returns true without showing anything in this WebKitGTK build, which would
-   *  bypass destructive-action and close-tab prompts. */
-  confirm(message: string, title?: string): Promise<boolean>;
+   *  bypass destructive-action and close-tab prompts. The labels are required
+   *  (D-20261018-UI2c): every prompt names its action, none says Yes/No. */
+  confirm(message: string, options: ConfirmOptions): Promise<boolean>;
   /** Native folder picker (graph open). Null if cancelled / unsupported.
    *  `title` overrides the dialog title (e.g. for "create new graph"). */
   pickFolder(title?: string, defaultPath?: string): Promise<string | null>;
@@ -531,6 +612,12 @@ export interface Backend {
   rollbackPdfAreaImage(pdf: string, page: number, id: string, stamp: number, bindingGeneration: number): Promise<void>;
   /** Subscribe to external file changes (file watcher). Returns an unsubscribe. */
   onGraphChanged(cb: (c: GraphChange) => void): Promise<() => void>;
+  /** Native only: the graph owner asks the window to save the text typed on
+   *  `page` before a command-line write (`src/document/host/ownerFlush.ts`). */
+  onOwnerFlushRequest?(cb: (request: { id: number; page: string; all?: boolean; binding_generation: number }) => void): Promise<() => void>;
+  onOwnerPageRenamed?(cb: (rename: import("./types").OwnerPageRename) => void): Promise<() => void>;
+  /** The answer to `onOwnerFlushRequest`: whether that text is saved. */
+  ownerFlushAnswer?(id: number, saved: boolean, bindingGeneration: number): Promise<void>;
   /** Watcher freshness (family 10), native only: a checkout-sized batch as one
    *  event, a refused/restored OS watch, and a focus rescan (one full stat
    *  diff) whose returned sequence completes after its page events. */
@@ -553,6 +640,37 @@ export interface Backend {
    *  through the store's audited create when missing, never rewriting an
    *  existing one, then open it in the system editor. */
   editCustomCss(): Promise<void>;
+  editGlobalCss(): Promise<void>;
+  /** Settings → Graph → Git (ADR 0078): the bound graph's autocommit status. */
+  gitAutocommitStatus(): Promise<GitAutocommitStatus>;
+  /** Read only. pageKey is pageIdentityKey; path is graph-relative. currentText
+   * is the complete rendered page snapshot, including unsaved local edits.
+   * Re-read on page focus/visibility and external page-file changes. */
+  getPageChanges(pageKey: string, path: string, currentText: string): Promise<import("./backendTypes").SeenPageChanges>;
+  /** Call on leave, or explicitly from Mark page seen; never per edit. */
+  markPageSeen(pageKey: string, path: string): Promise<void>;
+  markGraphSeen(): Promise<void>;
+  /** Drop one page's seen baseline (by pageKey or recorded path); the page
+   * then inherits the graph baseline. Tine's own rename/merge/delete already
+   * do this in the backend. */
+  forgetSeenPage(pageKey: string, path: string): Promise<void>;
+  forgetSeenState(): Promise<void>;
+  /** Set this device's autocommit policy for the bound graph; answers the new status. */
+  setGitAutocommit(policy: GitPolicy, intervalMinutes: number): Promise<GitAutocommitStatus>;
+  /** "Sync now": commit pending changes, then one sync cycle on the graph's git thread. Answers at once. */
+  gitSyncNow(): Promise<GitAutocommitStatus>;
+  gitDisableLineEndings(): Promise<GitAutocommitStatus>;
+  /** "Remove the stale lock": remove the offered `index.lock` after rechecking it; refused (rejects) when it
+   *  changed, or while Tine's own git operation runs. Then the worker commits (and syncs) at once. */
+  gitRemoveStaleLock(token: string): Promise<GitAutocommitStatus>;
+  /** A sync problem that persists, for the notice outside Settings; `null` when there is none. */
+  gitSyncNotice(): Promise<GitSyncStatus | null>;
+  /** Keep a token for the remote's HTTPS host on this device (never in the graph or settings). */
+  gitSignIn(username: string, token: string): Promise<GitAutocommitStatus>;
+  gitSignOut(): Promise<GitAutocommitStatus>;
+  /** Android/iOS: the app went to the background (`false`; commit, and push when syncing
+   *  automatically) or came back (`true`; commit and sync). Answers at once. */
+  gitAppLifecycle(foreground: boolean): Promise<void>;
   /** How many launch snapshots to keep. */
   getBackupKeep(): Promise<number>;
   setBackupKeep(keep: number): Promise<void>;
@@ -568,13 +686,15 @@ export interface Backend {
   setWatchMode(mode: string): Promise<void>;
   /** Available snapshots for the current graph, newest first. */
   listBackups(): Promise<BackupInfo[]>;
+  /** Native only: delete snapshots at a revalidated old location under its lock. */
+  deleteOldBackups?(id: string): Promise<void>;
   /** Restore a snapshot (graph text at original paths, config, and sidecars; snapshots current
    *  state first). Destructive — confirm before calling. `consumedLastId`: the
    *  last page-host answer the window consumed. `reloaded` is the session of the
    *  host relaunched after the restore, on success and on a partial failure
    *  alike (the window rebinds either way, S8); null when the stop refused (the
    *  host keeps running) or without a host. `error` says why it failed. */
-  restoreBackup(stamp: string, kind: "replace-page", consumedLastId: number):
+  restoreBackup(id: string, kind: "replace-page", consumedLastId: number):
     Promise<{ error: string | null; reloaded: { session: number; nextId: number } | null }>;
   /** Load the persisted UI session JSON (open tabs / active tab / zoom), or null.
    *  Stored atomically in a backend file so structured session state is independent
@@ -591,9 +711,9 @@ export interface Backend {
    *  warning (see `gpu.ts`). A silent driver fallback is detected in the webview
    *  (WebGL renderer); this just supplies why/where context for the message. */
   gpuEnv(): Promise<GpuEnv>;
-  /** The fallback app-data folder iff this launch had to relocate an unwritable
-   *  one (desktop Linux), delivered once; `null` otherwise. */
-  takeDataHomeFallbackNotice(): Promise<string | null>;
+  /** Once-per-launch app-data relocation and detected volatile-storage warning;
+   *  relocation is Linux-only, classification covers all five native targets. */
+  takeDataHomeFallbackNotice(): Promise<{ relocated_to: string | null; volatile: boolean } | null>;
   /** Experimental smooth-scrolling preference (Lenis), app-level, default off. */
   getSmoothScroll(): Promise<boolean>;
   setSmoothScroll(value: boolean): Promise<void>;

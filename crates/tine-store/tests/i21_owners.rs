@@ -17,9 +17,11 @@ const OWNERS: &[(&str, &str, usize, &str, &str)] = &[
     (
         "crates/tine-store/src/model.rs",
         ".spawn(move ||",
-        1,
-        "parse_pages_parallel scope (on-demand build and background warm)",
-        "std::thread::scope joins its child before return",
+        // parse_pages_parallel, and SnapshotExplicitIndex::build (GJ5: the
+        // initial capture's explicit index, bounded by the loaded pages).
+        2,
+        "parse_pages_parallel scope (on-demand build and background warm); SnapshotExplicitIndex::build has no stop of its own and runs inside ReadSnapshot::capture like the index threads beside it",
+        "std::thread::scope joins every child before return (both sites); at most page_cache_worker_count() children",
     ),
     (
         "crates/tine-store/src/page_host/driver.rs",
@@ -138,7 +140,9 @@ const OWNERS: &[(&str, &str, usize, &str, &str)] = &[
         // +1 GH #616: reveal_export awaits the shared OS reveal helper.
         // -1 GH #481: moved to commands/journals_feed.rs, same awaited owner.
         // -1 UI-CENSUS-18: the unused graph_source_files command was removed.
-        37,
+        // +1 D-20261019-AL2: page_alias_group waits for the initial load like
+        // resolve_page, awaited by its command future.
+        38,
         "command future",
         "caller awaits blocking result",
     ),
@@ -152,9 +156,23 @@ const OWNERS: &[(&str, &str, usize, &str, &str)] = &[
     (
         "src-tauri/src/css_files.rs",
         "spawn_blocking(",
-        4,
-        "read_css_file / save_css_file command future; graph operations retain their slot and Store close revokes writes",
-        "caller awaits each bounded read or guarded durable save before replying; no detached worker",
+        5,
+        "read_css_file / save_css_file / edit_global_css command future; graph operations retain their slot and Store close revokes writes",
+        "caller awaits each bounded read, guarded durable save or create-if-missing preparation before replying",
+    ),
+    (
+        "src-tauri/src/css_files.rs",
+        "recommended_watcher(",
+        1,
+        "app lifetime, independent of graph bindings; the app manages the watcher in a Mutex",
+        "app state owns the watch until teardown; process exit ends the native subscription; no graph worker",
+    ),
+    (
+        "src-tauri/src/css_files.rs",
+        ".spawn(move ||",
+        1,
+        "the external CSS launcher lifetime or app exit; a graph switch must not cancel a user's editor",
+        "dedicated detached reaper waits for launcher status and sends the verdict through a oneshot awaited by the command future; no graph lock or Tauri blocking worker is retained",
     ),
     (
         "src-tauri/src/settings.rs",
@@ -185,6 +203,17 @@ const OWNERS: &[(&str, &str, usize, &str, &str)] = &[
         8,
         "command future",
         "caller awaits blocking result",
+    ),
+    (
+        "src-tauri/src/commands/templates.rs",
+        "spawn_blocking(",
+        // BqbeQ (checkpoint, under review): the named daily-template lookup
+        // races the graph wait against the file lookup; the answer job is
+        // awaited, the file job stops between files once the graph arrives,
+        // and the graph job can outlive the command until the load completes.
+        3,
+        "answer job: command future; file job: graph-arrived flag; graph job: load completion or Store close ends whole_graph()",
+        "answer job awaited; file and graph jobs detached, each sends one message on a channel the answer job may have dropped",
     ),
 ];
 
@@ -271,6 +300,7 @@ fn production_acquisitions_have_owners() {
         "src-tauri/src/commands.rs",
         "src-tauri/src/commands/concord.rs",
         "src-tauri/src/commands/journals_feed.rs",
+        "src-tauri/src/commands/templates.rs",
         "src-tauri/src/graph.rs",
         "src-tauri/src/host_retirement.rs",
         "src-tauri/src/settings.rs",

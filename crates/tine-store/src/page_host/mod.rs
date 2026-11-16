@@ -1,16 +1,14 @@
 //! The page host (storage s3), started per graph binding by
 //! `src-tauri/src/graph.rs` `start_host`: it owns open pages and writes their
-//! saves, renames and deletions. Retained feature transactions
-//! (`tine-graph-features` `pages.rs` and the other reserving writers) still
-//! write page files themselves under a `Reservation` (`binding_retained.rs`)
-//! until the host-only-writer campaign moves them onto the host. Runtime code
-//! is independent of the page_state oracle.
+//! saves, renames and deletions. Feature writers plan HostOps, including
+//! multi-page renames; folded spelling moves finish on the driver.
+//! Runtime code is independent of the page_state oracle.
 
 mod binding;
 pub use binding::{
     ApplyRefusal, DiskToken, Effect, Expected, HostOp, HostRead, HostReadError, Input, Opened,
-    PageHost, PageMail, PageOperation, PageRefusal, Reloaded, RenameRefusal, Reservation,
-    ReserveRefusal, StopMode, StopState, Stopped,
+    PageHost, PageMail, PageOperation, PageRefusal, Reloaded, RenameRefusal, StopMode, StopState,
+    Stopped,
 };
 pub use io::DraftStatus;
 #[cfg(test)]
@@ -26,6 +24,8 @@ mod driver_tests;
 pub mod faults;
 mod io;
 mod logical;
+#[cfg(test)]
+mod m4_environment_tests;
 #[cfg(test)]
 mod model_entries;
 #[cfg(test)]
@@ -342,6 +342,10 @@ enum Event {
         page: PageKey,
         bytes: Text,
     },
+    /// A disk read found the bytes the page already holds: nothing to
+    /// index, but that read is the owner's latest observation, so the
+    /// publication consumer aligns the watcher's stamp with it (A-H1).
+    Confirmed(PageKey),
     /// An operation whose caller stopped waiting (Uncertain) ended with its
     /// draft durably absent: it did not happen (PLAN-P2b-AB v2 Q2).
     OperationDropped(BTreeSet<PageKey>),
@@ -455,6 +459,7 @@ enum Disposition {
 #[cfg_attr(test, derive(Clone))]
 struct Host<F: HostIo> {
     fs: F,
+    storage_diag: Arc<crate::storage_diag::StorageCounters>,
     keys: Keys,
     /// Handles supplied from Graph::page_lock; this is not another registry.
     locks: BTreeMap<PageKey, Arc<Mutex<()>>>,
@@ -509,7 +514,6 @@ struct Host<F: HostIo> {
     events: Vec<Event>,
     job: Option<SaveJob>,
     worker: Option<DraftWorker>,
-    retained: BTreeSet<PageKey>,
     order: order::Order,
     version: u64,
     wseq: u64,
@@ -523,6 +527,8 @@ struct Host<F: HostIo> {
     /// Test schedules (`logical::TestKnobs`); none exists in production.
     #[cfg(test)]
     test: logical::TestKnobs,
+    #[cfg(any(test, feature = "test-faults"))]
+    paused_for_tests: BTreeSet<PageKey>,
 }
 
 impl<F: HostIo> Host<F> {
@@ -530,6 +536,7 @@ impl<F: HostIo> Host<F> {
         let drafts = drafts::scan(fs.draft_files(true)).files;
         fs.draft_changes();
         let mut host = Self {
+            storage_diag: Arc::new(crate::storage_diag::StorageCounters::default()),
             keys: Keys(locks.keys().cloned().collect()),
             fs,
             locks,
@@ -555,7 +562,6 @@ impl<F: HostIo> Host<F> {
             events: vec![],
             job: None,
             worker: None,
-            retained: BTreeSet::new(),
             order: Default::default(),
             version: 0,
             wseq: 0,
@@ -568,6 +574,8 @@ impl<F: HostIo> Host<F> {
             alive: true,
             #[cfg(test)]
             test: Default::default(),
+            #[cfg(any(test, feature = "test-faults"))]
+            paused_for_tests: BTreeSet::new(),
         };
         host.index_drafts();
         host
@@ -840,8 +848,11 @@ impl<F: HostIo> Host<F> {
     }
 
     fn busy(&self, page: &str) -> bool {
-        self.retained.contains(page)
-            || self.job.as_ref().is_some_and(|job| job.page == page)
+        #[cfg(any(test, feature = "test-faults"))]
+        if self.paused_for_tests.contains(page) {
+            return true;
+        }
+        self.job.as_ref().is_some_and(|job| job.page == page)
             || self
                 .worker
                 .as_ref()
@@ -1106,39 +1117,55 @@ impl<F: HostIo> Host<F> {
     }
 
     fn close_clean(&mut self, key: &str) {
-        if self.pages.get(key).is_some_and(Page::clean) {
+        if self.pages.get(key).is_some_and(Page::clean) && !self.release_blocked(key) {
             self.set_page(key, None);
         }
     }
 
+    /// Returning a folded receiver first would make it Unknown under B1
+    /// while its absent source is still owned. Keep the actual page, so
+    /// external observation continues even if the source's cleanup stalls.
+    fn release_blocked(&self, key: &str) -> bool {
+        self.fs
+            .folded_keys(key)
+            .iter()
+            .any(|source| self.order.releases_to(source, key))
+    }
+
+    #[cfg(test)]
     fn observe(&mut self, key: &str) -> Disposition {
+        self.observe_read(key).unwrap_or(Disposition::Refused)
+    }
+
+    /// Observe a held page, preserving a failed read for the waiting opener (A-H1).
+    fn observe_read(&mut self, key: &str) -> Result<Disposition, IoFailure> {
         if !self.alive || !self.pages.contains_key(key) {
-            return Disposition::Disabled;
+            return Ok(Disposition::Disabled);
         }
         let keys = BTreeSet::from([key.into()]);
         if self.busy(key) || self.allocator_busy() || self.lacks_locks(&keys) {
-            return Disposition::Waiting;
+            return Ok(Disposition::Waiting);
         }
         self.with_locks(&keys, |host| {
-            let Ok(bytes) = host.fs.read_page(key) else {
-                return Disposition::Refused;
-            };
-            if host.adopt_read(key, bytes) {
+            let bytes = host.fs.read_page(key)?;
+            Ok(if host.adopt_read(key, bytes) {
                 Disposition::Applied
             } else {
                 Disposition::Disabled
-            }
+            })
         })
     }
 
     /// Apply a disk read of `key` to its page (SPEC read table); false when
-    /// the page is unchanged. A read that changes the page publishes its
+    /// the page is unchanged, which is a confirmation of its last
+    /// observation (`Event::Confirmed`). A read that changes the page publishes its
     /// bytes even when they equal the last observation: an own save may
     /// have moved the index past them since (V3, REVIEW-3a).
     fn adopt_read(&mut self, key: &str, bytes: Text) -> bool {
         let mut page = self.pages[key].clone();
         page.observe(bytes.clone(), self.next_version());
         if page == self.pages[key] {
+            self.events.push(Event::Confirmed(key.into()));
             return false;
         }
         if page.version == self.next_version() {
@@ -1168,20 +1195,6 @@ impl<F: HostIo> Host<F> {
         }
     }
 
-    /// The alias spelling move (STEP3 §2, Q4): on a folding volume the
-    /// retained writer moved the key's entry to `spelling`, which the old
-    /// spelling still names. The key, its page, drafts and every queued
-    /// request stay; I/O and the path lock follow the new spelling. A move
-    /// to an absent distinct path is a host rename between two keys instead.
-    fn respell(&mut self, key: &str, spelling: &str, lock: Arc<Mutex<()>>) {
-        assert!(
-            self.retained.contains(key),
-            "a spelling move runs under the key's reservation"
-        );
-        self.fs.spell(key, spelling);
-        self.locks.insert(key.into(), lock);
-    }
-
     /// The keys `launch` recovers from the readable draft census; the
     /// binding registers them first. Custody markers name exact key strings
     /// and their settling takes no page lock, so they need no registration.
@@ -1202,20 +1215,6 @@ impl<F: HostIo> Host<F> {
                 .is_some_and(|worker| worker.rename && !worker.pages.is_disjoint(keys))
     }
 
-    /// D4 with no chaining (REVIEW-3b-P2b R2): a retained writer over a
-    /// page of a running order waits, like a host operation, until it ends
-    /// (its caller bounds the wait, M6).
-    fn reserve(&mut self, keys: &BTreeSet<PageKey>) -> Disposition {
-        if !self.keys.includes(keys) {
-            return Disposition::Refused;
-        }
-        if keys.iter().any(|key| self.busy(key)) || self.order.touches(keys) {
-            return Disposition::Waiting;
-        }
-        self.retained.extend(keys.iter().cloned());
-        Disposition::Applied
-    }
-
     fn switch_ready(&mut self, consumed_last_id: u64) -> Disposition {
         if !self.alive {
             return Disposition::Disabled;
@@ -1232,6 +1231,10 @@ impl<F: HostIo> Host<F> {
     }
 
     fn can_switch(&self) -> bool {
+        #[cfg(any(test, feature = "test-faults"))]
+        if !self.paused_for_tests.is_empty() {
+            return false;
+        }
         if !self.alive
             || !self.vehicle_debt.is_empty()
             || self.admission_open
@@ -1240,7 +1243,6 @@ impl<F: HostIo> Host<F> {
             || self.applying.is_some()
             || self.job.is_some()
             || self.worker.is_some()
-            || !self.retained.is_empty()
         {
             return false;
         }
@@ -1284,7 +1286,6 @@ impl<F: HostIo> Host<F> {
         self.subscriptions.clear();
         self.job = None;
         self.worker = None;
-        self.retained.clear();
         self.order.stop();
         self.switch_confirmation = None;
     }
@@ -1329,6 +1330,9 @@ impl<F: HostIo> Host<F> {
         self.fs.graph_launch(&self.keys.iter().cloned().collect());
         self.with_locks(&keys, |host| {
             for (key, record) in &scan.logical {
+                host.storage_diag
+                    .drafts_recovered
+                    .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
                 host.version = host.next_version();
                 host.set_page(
                     key,

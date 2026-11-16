@@ -1057,3 +1057,432 @@ fn hierarchy_relations_bind_block_predicates_and_refuse_page_scope() {
         }
     }
 }
+
+// -- links, linked_by, near (docs/contracts/tql-links-near.md) -------------
+
+fn name_is(name: &str) -> Filter {
+    Filter::attr(Attr::Name, CmpOp::Eq, Value::text(name))
+}
+
+fn journal_is(value: bool) -> Filter {
+    Filter::attr(Attr::Journal, CmpOp::Eq, Value::Bool { value })
+}
+
+#[test]
+fn links_near_relations_bind_page_predicates() {
+    for (relation, rel) in [("links", Rel::Links), ("linked_by", Rel::LinkedBy)] {
+        for (word, quant) in [
+            ("any", Quant::Any),
+            ("none", Quant::None),
+            ("every", Quant::Every),
+        ] {
+            assert_eq!(
+                ok(&format!("@page and {word}({relation}, name = 'A')")),
+                Filter::rel(rel, quant, name_is("A"))
+            );
+        }
+        // At @block the relation exists on the other row: kept and reported.
+        let block = parse(&format!("any({relation}, name = 'A')"));
+        assert!(block.is_invalid());
+        assert!(block
+            .diagnostics
+            .iter()
+            .any(|d| d.kind == DiagnosticKind::NotApplicable));
+    }
+    // The element is a page row, so a page relation nests inside it.
+    assert_eq!(
+        ok("@page and any(links, any(linked_by, journal = true))"),
+        Filter::rel(
+            Rel::Links,
+            Quant::Any,
+            Filter::rel(Rel::LinkedBy, Quant::Any, journal_is(true))
+        )
+    );
+}
+
+#[test]
+fn links_near_every_spelling_and_its_canonical_print() {
+    use crate::query::ir::NearDir;
+    let cases: &[(&str, Filter, &str)] = &[
+        (
+            "@page and near(name = 'A', 1)",
+            Filter::near(name_is("A"), 1, NearDir::Both),
+            "@page and near(name = 'A', 1)",
+        ),
+        (
+            "@page and near(name = 'A', 2, 'both')",
+            Filter::near(name_is("A"), 2, NearDir::Both),
+            "@page and near(name = 'A', 2)",
+        ),
+        (
+            "@page and near(name = 'A', 0, 'out')",
+            Filter::near(name_is("A"), 0, NearDir::Out),
+            "@page and near(name = 'A', 0, 'out')",
+        ),
+        (
+            "@page and near(name = 'A', 3, 'IN')",
+            Filter::near(name_is("A"), 3, NearDir::In),
+            "@page and near(name = 'A', 3, 'in')",
+        ),
+        (
+            "@page and near(name in ('A', 'B'), 2, 'out')",
+            Filter::near(
+                Filter::attr(
+                    Attr::Name,
+                    CmpOp::In,
+                    Value::List {
+                        items: vec![Value::text("A"), Value::text("B")],
+                    },
+                ),
+                2,
+                NearDir::Out,
+            ),
+            "@page and near(name in ('A', 'B'), 2, 'out')",
+        ),
+        (
+            "@page and near(name = 'A' or name = 'B', 1) and not name = 'C'",
+            Filter::and(vec![
+                Filter::near(
+                    Filter::or(vec![name_is("A"), name_is("B")]),
+                    1,
+                    NearDir::Both,
+                ),
+                Filter::not(name_is("C")),
+            ]),
+            "@page and near(name = 'A' or name = 'B', 1) and not name = 'C'",
+        ),
+    ];
+    for (source, filter, printed) in cases {
+        let query = parse(source);
+        assert!(!query.is_invalid(), "{source}: {:?}", query.diagnostics);
+        assert_eq!(&query.filter, filter, "{source}");
+        let text = crate::query::print::print_tql(&query);
+        assert_eq!(text, *printed, "{source}");
+        // The printed form reads back as the same query.
+        assert_eq!(&parse(&text).filter, filter, "{text}");
+    }
+}
+
+#[test]
+fn links_near_malformed_calls_are_diagnostics_not_other_searches() {
+    for source in [
+        "@page and near(name = 'A')",
+        "@page and near(name = 'A', -1)",
+        "@page and near(name = 'A', 1.5)",
+        "@page and near(name = 'A', '2')",
+        "@page and near(name = 'A', 2, 'sideways')",
+        "@page and near(name = 'A', 2, out)",
+        "@page and near(name = 'A', 2, 'out', 'in')",
+        "@page and near(name = 'A', through => journal = false, 2)",
+        "@page and near(name = 'A', 2, via => journal = false)",
+        "@page and near(name = 'A', 2, through => journal = false, through => journal = true)",
+        "@page and near(name = 'A', k => 2)",
+        "@page and near(task = 'TODO', 1)",
+        "@page and near(name = 'A', 1, through => task = 'TODO')",
+    ] {
+        let diagnostics = rejected(source);
+        assert!(!diagnostics.is_empty(), "{source}");
+    }
+    // Hub control is deferred (D-20261018-T1): a fourth argument, and any
+    // named argument such as the prototype's `through => …`, is refused with a
+    // message that says the slot is reserved, never read as another search.
+    for source in [
+        "@page and near(name = 'A', 2, 'out', 'in')",
+        "@page and near(name = 'A', 2, 'out', journal = false)",
+        "@page and near(name = 'A', 2, through => journal = false)",
+        "@page and near(name = 'A', 2, 'both', through => journal = false)",
+        "@page and near(name = 'A', through => journal = false, 2)",
+        "@page and near(name = 'A', 2, via => journal = false)",
+    ] {
+        let diagnostics = rejected(source);
+        assert!(
+            diagnostics
+                .iter()
+                .any(|d| d.kind == DiagnosticKind::Syntax && d.message.contains("reserved")),
+            "{source}: {diagnostics:?}"
+        );
+    }
+    // At @block, `near` is a page condition: kept, reported, never false.
+    let block = parse("near(name = 'A', 1)");
+    assert!(block.is_invalid());
+    assert!(block
+        .diagnostics
+        .iter()
+        .any(|d| d.kind == DiagnosticKind::NotApplicable));
+    assert!(matches!(block.filter, Filter::Raw { .. }));
+}
+
+#[test]
+fn links_near_seed_names_are_the_rename_literals() {
+    let source = "@page and near(name in ('Alpha', 'Beta'), 2, 'out') and not name = 'Gamma' and any(links, name = 'Delta')";
+    let found: Vec<String> = page_name_literals(source)
+        .into_iter()
+        .map(|(range, name)| {
+            assert_eq!(&source[range.clone()], format!("'{name}'"));
+            name
+        })
+        .collect();
+    assert_eq!(found, ["Alpha", "Beta", "Gamma", "Delta"]);
+    // A disabled row is not active, so it is not rewritten.
+    assert!(
+        page_name_literals("@page and near(name = 'A', 1)\n-- and near(name = 'B', 1)")
+            .iter()
+            .all(|(_, name)| name == "A")
+    );
+}
+
+#[test]
+fn links_near_inside_off_and_omission() {
+    use crate::query::ir::NearDir;
+    let query = parse("@page and near(name = 'A' or off(journal = false), 1)");
+    assert!(!query.is_invalid(), "{:?}", query.diagnostics);
+    // A disabled seed alternative is left out; disabled seeds remove the leaf.
+    assert_eq!(
+        query.evaluable_filter(),
+        Filter::near(
+            Filter::Or {
+                items: vec![name_is("A")]
+            },
+            1,
+            NearDir::Both
+        )
+    );
+    let query = parse("@page and journal = false and near(off(name = 'A'), 1)");
+    assert_eq!(
+        query.evaluable_filter(),
+        Filter::And {
+            items: vec![journal_is(false)]
+        }
+    );
+}
+
+/// Review r1: the SQL grammar accepts `FILTER`, `OVER`, `WITHIN GROUP` and
+/// the other function modifiers on any call. The query language gives them no
+/// meaning, so every function refuses them as a syntax error instead of
+/// dropping them and running the bare call.
+#[test]
+fn every_function_refuses_sql_function_modifiers() {
+    let calls = [
+        "near(name = 'a', 2)",
+        "near(name = 'a', 2, 'both')",
+        "any(links, name = 'b')",
+        "every(linked_by, journal = false)",
+        "none(blocks, task = 'TODO')",
+        "ref('a')",
+        "page_tag('a')",
+        "off(name = 'a')",
+        "any(prop('k'), value = 'v')",
+    ];
+    for call in calls {
+        for modifier in [
+            " FILTER (WHERE false)",
+            " FILTER (WHERE name = 'x')",
+            " OVER ()",
+            " OVER (PARTITION BY name)",
+            " WITHIN GROUP (ORDER BY name)",
+        ] {
+            let source = format!("@page and {call}{modifier}");
+            let diagnostics = rejected(&source);
+            assert!(
+                diagnostics.iter().any(|d| d.kind == DiagnosticKind::Syntax
+                    && d.message.contains("no SQL function modifiers")),
+                "{source}: {diagnostics:?}"
+            );
+        }
+    }
+    // Modifiers inside the argument list, and a function in a comparison
+    // target or a quantifier's range, are refused the same way.
+    for source in [
+        "@page and ref(DISTINCT 'a')",
+        "@page and ref(ALL 'a')",
+        "@page and any(links, name = 'b' ORDER BY name)",
+        "@page and near(name = 'a', 2 LIMIT 1)",
+        "@page and prop('k') FILTER (WHERE false) = 'v'",
+        "@page and prop('k') OVER () = 'v'",
+        "@page and any(prop('k') FILTER (WHERE false), value = 'v')",
+        "@page and any(prop('k') OVER (), value = 'v')",
+    ] {
+        let diagnostics = rejected(source);
+        assert!(
+            diagnostics.iter().any(|d| d.kind == DiagnosticKind::Syntax),
+            "{source}: {diagnostics:?}"
+        );
+    }
+    // Named and wildcard arguments: `near` reserves its slot (above); every
+    // other function takes positional arguments only.
+    for source in [
+        "@page and ref(page => 'a')",
+        "@page and any(links, name = 'b', through => journal = false)",
+        "@page and prop(key => 'k') = 'v'",
+        "@page and ref(*)",
+    ] {
+        let diagnostics = rejected(source);
+        assert!(
+            diagnostics.iter().any(|d| d.kind == DiagnosticKind::Syntax),
+            "{source}: {diagnostics:?}"
+        );
+    }
+    // The bare calls still parse.
+    for call in calls {
+        ok(&format!("@page and {call}"));
+    }
+}
+
+/// Card BhkrU: "blocks mentioning a day after today" is the reference element's
+/// `day`, quantified over the block's own references (OG `:block/ref-pages` +
+/// `:block/journal-day`, the NEXT query's join). The printer already spells the
+/// IR this way for an advanced NEXT query; the parser must read it back.
+#[test]
+fn direct_refs_quantifier_reads_the_reference_elements_day() {
+    let day_after_today = Filter::rel(
+        Rel::DirectRefs,
+        Quant::Any,
+        Filter::attr(Attr::Day, CmpOp::Gt, Value::date("today")),
+    );
+    let window = Filter::rel(
+        Rel::DirectRefs,
+        Quant::Any,
+        Filter::attr(
+            Attr::Day,
+            CmpOp::Between,
+            Value::List {
+                items: vec![Value::date("tomorrow"), Value::date("+7d")],
+            },
+        ),
+    );
+    let cases: &[(&str, Filter, &str)] = &[
+        (
+            "any(direct_refs, day > today)",
+            day_after_today.clone(),
+            "any(direct_refs, day > today)",
+        ),
+        (
+            "task = 'TODO' and any(direct_refs, day > today)",
+            Filter::and(vec![
+                Filter::attr(Attr::Task, CmpOp::Eq, Value::text("TODO")),
+                day_after_today.clone(),
+            ]),
+            "task = 'TODO' and any(direct_refs, day > today)",
+        ),
+        (
+            "any(direct_refs, day between 'tomorrow' and '+7d')",
+            window,
+            "any(direct_refs, day between 'tomorrow' and '+7d')",
+        ),
+        (
+            "none(direct_refs, journal = true)",
+            Filter::rel(
+                Rel::DirectRefs,
+                Quant::None,
+                Filter::attr(Attr::Journal, CmpOp::Eq, Value::Bool { value: true }),
+            ),
+            "none(direct_refs, journal = true)",
+        ),
+        (
+            "any(direct_refs, name = 'Project' or day = today)",
+            Filter::rel(
+                Rel::DirectRefs,
+                Quant::Any,
+                Filter::or(vec![
+                    Filter::attr(Attr::Name, CmpOp::Eq, Value::text("Project")),
+                    Filter::attr(Attr::Day, CmpOp::Eq, Value::date("today")),
+                ]),
+            ),
+            "any(direct_refs, name = 'Project' or day = today)",
+        ),
+    ];
+    for (source, filter, printed) in cases {
+        assert_eq!(&ok(source), filter, "{source}");
+        let text = crate::query::print::print_tql(&parse(source));
+        assert_eq!(text, *printed, "{source}");
+        assert_eq!(&ok(&text), filter, "{text}");
+    }
+}
+
+/// The element vocabulary is exactly what the evaluator answers for a
+/// reference (`name =`, `journal`, `day`); anything else is a diagnostic,
+/// never a leaf that silently matches nothing (I-22).
+#[test]
+fn direct_refs_element_rejects_what_a_reference_does_not_have() {
+    for source in [
+        "any(direct_refs, task = 'TODO')",
+        "any(direct_refs, content like '%x%')",
+        "any(direct_refs, name like 'Pro%')",
+        "any(direct_refs, name != 'Project')",
+        "any(direct_refs, name in ('a', 'b'))",
+        "any(direct_refs, page.name = 'x')",
+        "any(direct_refs, prop('k') = 'v')",
+        "any(direct_refs, any(children, true))",
+        "any(direct_refs, [[x]])",
+        "any(direct_refs, day like '2026%')",
+        "@page and any(direct_refs, day > today)",
+    ] {
+        let diagnostics = rejected(source);
+        assert!(!diagnostics.is_empty(), "{source}");
+    }
+}
+
+/// The Guide's spelling, `{{tine-query any(direct_refs, day > today)}}`, is a
+/// complete macro argument: block anchor by default, no options.
+#[test]
+fn direct_refs_condition_is_a_complete_tine_query_macro_argument() {
+    for text in [
+        "any(direct_refs, day > today)",
+        "@block and any(direct_refs, day > today)",
+        "task = 'TODO' and any(direct_refs, day between today and '+7d')",
+    ] {
+        let (query, _) = crate::query::parse_query_input(
+            text,
+            crate::query::QueryInput::MacroTql,
+            crate::date::JournalDate::today(),
+            crate::query::registry::Registry::none(),
+        );
+        assert!(!query.is_invalid(), "{text}: {:?}", query.diagnostics);
+        assert_eq!(query.anchor, Anchor::Block, "{text}");
+    }
+}
+
+/// Sibling path (card BhkrU): Logseq's older NEXT query (`:block/ref-pages` +
+/// `:block/journal-day`, gh690) lowers to `any(direct_refs, …)`. Its query
+/// text, as the text pane prints it, must read back as the same condition;
+/// before this card the printed text was a TQL diagnostic.
+#[test]
+fn advanced_next_query_prints_query_text_that_reads_back() {
+    let today = crate::date::JournalDate {
+        year: 2026,
+        month: 10,
+        day: 19,
+    };
+    let (advanced, _) = crate::query::parse_query_input(
+        r#"{:query [:find (pull ?h [*]) :in $ ?start ?next :where
+        [?h :block/ref-pages ?p] [?p :block/journal? true] [?p :block/journal-day ?d]
+        [(> ?d ?start)] [(< ?d ?next)]] :inputs [:today :14d-after]}"#,
+        crate::query::QueryInput::MacroQuery,
+        today,
+        crate::query::registry::Registry::none(),
+    );
+    // An advanced source lowers against the execution's day.
+    let resolved = crate::query::resolve_for_execution(
+        &advanced,
+        &crate::query::ir::ExecutionContext::none(),
+        today,
+    );
+    let advanced = resolved.query();
+    assert!(!advanced.is_invalid(), "{:?}", advanced.diagnostics);
+    let printed = crate::query::print::print_tql(advanced);
+    assert!(printed.contains("any(direct_refs, "), "{printed}");
+    // It reads back. The day bounds come back as date literals ('20261019')
+    // rather than the advanced input's numbers, which `compare_day` resolves
+    // to the same day; from there the text is a fixed point.
+    let reread = parse(&printed);
+    assert!(!reread.is_invalid(), "{printed}: {:?}", reread.diagnostics);
+    let canonical = crate::query::print::print_tql(&reread);
+    assert_eq!(
+        canonical,
+        "any(direct_refs, journal = true and day is not null and day > '20261019' and day < '20261102')"
+    );
+    assert_eq!(
+        crate::query::print::print_tql(&parse(&canonical)),
+        canonical
+    );
+}

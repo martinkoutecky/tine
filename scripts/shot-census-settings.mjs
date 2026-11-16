@@ -4,7 +4,7 @@ import { mkdirSync } from "node:fs";
 import { setTimeout as sleep } from "node:timers/promises";
 const out = "artifacts/sw-census-settings";
 mkdirSync(out, { recursive: true });
-const server = spawn("rtk", ["proxy", "npx", "vite", "preview", "--port", "5218", "--strictPort"], { stdio: "ignore" });
+const server = spawn("npx", ["vite", "preview", "--port", "5218", "--strictPort"], { stdio: "ignore" });
 let browser;
 try {
   for (let i = 0; i < 80; i++) { try { if ((await fetch("http://localhost:5218")).ok) break; } catch {} await sleep(250); }

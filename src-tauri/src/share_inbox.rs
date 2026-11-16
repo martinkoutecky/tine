@@ -383,6 +383,49 @@ mod tests {
     use super::*;
     use std::fs;
 
+    #[test]
+    fn encoded_envelope_limit_matches_native_producers() {
+        let swift = include_str!("../ios-app/Shared/ShareInbox.swift");
+        let kotlin = include_str!("../gen/android/app/src/main/java/page/tine/app/ShareIntake.kt");
+        assert!(swift.contains("static let maxItemBytes = 1024 * 1024"));
+        assert!(swift.contains("if json.count > maxItemBytes { throw Failure.envelopeTooLarge }"));
+        assert!(kotlin.contains("const val MAX_SHARE_ITEM_BYTES = 1024 * 1024"));
+        assert!(kotlin.contains("if (encoded.size > MAX_SHARE_ITEM_BYTES)"));
+        assert!(
+            swift.find("if json.count > maxItemBytes").unwrap()
+                < swift.find("try writeSynced(json").unwrap()
+        );
+        assert!(
+            kotlin
+                .find("if (encoded.size > MAX_SHARE_ITEM_BYTES)")
+                .unwrap()
+                < kotlin
+                    .find("files.write(File(tmp, \"item.json\"))")
+                    .unwrap()
+        );
+        let fixtures: serde_json::Value = serde_json::from_str(include_str!(
+            "../../tests/regressions/fixtures/share-envelope.json"
+        ))
+        .unwrap();
+        assert_eq!(MAX_ITEM_BYTES, fixtures["maxItemBytes"].as_u64().unwrap());
+        for fixture in fixtures["envelopes"].as_array().unwrap() {
+            // Escapes, metadata and UTF-8 all count, not just text characters.
+            let mut item = fixture.clone();
+            let padding = MAX_ITEM_BYTES as usize - serde_json::to_vec(&item).unwrap().len();
+            item["text"] =
+                format!("{}{}", item["text"].as_str().unwrap(), "a".repeat(padding)).into();
+            let encoded = serde_json::to_vec(&item).unwrap();
+            assert_eq!(encoded.len(), MAX_ITEM_BYTES as usize);
+            let temp = tempfile::tempdir().unwrap();
+            let path = temp.path().join(ITEM_FILE);
+            fs::write(&path, &encoded).unwrap();
+            assert!(read_json::<ItemFile>(&path, MAX_ITEM_BYTES).is_ok());
+            item["text"] = format!("{}a", item["text"].as_str().unwrap()).into();
+            fs::write(&path, serde_json::to_vec(&item).unwrap()).unwrap();
+            assert!(read_json::<ItemFile>(&path, MAX_ITEM_BYTES).is_err());
+        }
+    }
+
     fn publish(root: &Path, id: &str, item: &str, files: &[(&str, &[u8])]) -> PathBuf {
         let tmp = root.join(format!(".tmp-{id}"));
         fs::create_dir_all(&tmp).unwrap();

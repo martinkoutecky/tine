@@ -112,13 +112,13 @@ def main():
                                entry["replacement"].encode() + original[entry["end"]:])
             log = args.output / f"{entry['id']}.log"
             with log.open("w") as output:
-                build = subprocess.run(["rtk", "proxy", "cargo", "test", "-p",
+                build = subprocess.run(["cargo", "test", "-p",
                                         "tine-store", "--lib", "--no-run"],
                                        cwd=work, env=env, stdout=output, stderr=output)
                 if build.returncode:
                     status = "unviable"
                 else:
-                    test = subprocess.run(["rtk", "proxy", "cargo", "test", "-p",
+                    test = subprocess.run(["cargo", "test", "-p",
                                            "tine-store", "--lib", "page_state"] + (["--", "--skip", "targeted_quint_witnesses"] if args.skip_witnesses else []),
                                           cwd=work, env=env, stdout=output, stderr=output)
                     status = "caught" if test.returncode else "missed"

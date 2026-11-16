@@ -9,10 +9,20 @@ preview-open-source = Open source
 links-opened-in-new-tab = Opened in a new tab
 preview-page-actions = Page actions
 favorites-block-action = Favourite block
+favorites-block-remove-action = Unfavourite block
 references-linked = Linked References
 journals-upcoming = Upcoming
 references-unlinked = Unlinked References
 references-loading = Loading…
+references-count-stale = Count may be out of date
+## The number beside Linked/Unlinked References counts referencing blocks (as in Logseq); GH #755.
+references-count-title = { $blocks ->
+    [one] 1 block
+   *[other] { $blocks } blocks
+} on { $pages ->
+    [one] 1 page
+   *[other] { $pages } pages
+}
 references-copy-linked = Copy / export linked references
 references-copy-unlinked = Copy / export unlinked references
 references-copy-linked-title = Copy / export selected linked references
@@ -38,3 +48,15 @@ references-expand-all = Expand all
 references-expand-group = Expand references from { $page }
 references-collapse-group = Collapse references from { $page }
 media-youtube-timestamp-seek = Seek the matching or last played YouTube video
+## GH #417: actions on one block reference or embed occurrence in its block
+ref-occurrence-actions = Embed actions
+ref-occurrence-edit = Edit link
+ref-occurrence-edit-title = Edit this link in the block that contains it
+ref-occurrence-remove = Remove
+ref-occurrence-remove-embed-title = Remove this embed from this block. The embedded page or block is not changed.
+ref-occurrence-remove-ref-title = Remove this reference from this block. The referenced block is not changed.
+ref-occurrence-remove-ref = Remove reference
+ref-occurrence-replace-text = Replace with text
+ref-occurrence-replace-embed = Replace with embed
+ref-occurrence-target-unreadable = The referenced block could not be read, so nothing was changed.
+ref-occurrence-changed = This block changed after it was shown, so nothing was edited. Try again.

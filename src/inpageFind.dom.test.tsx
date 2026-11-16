@@ -6,6 +6,7 @@ import {
   closeInPageFind,
   inPageFindBlockElement,
   inPageFindMatches,
+  scopedInPageFindMatchesForQuery,
   openInPageFind,
   setInPageFindQuery,
   inPageFindActiveIndex, stepInPageFind, revealInPageFindMatch, refreshInPageFindHighlights,
@@ -46,6 +47,41 @@ afterEach(() => {
 });
 
 describe("in-page find DOM scoping", () => {
+  it("finds displayed query-table and embed blocks outside the page tree once", () => {
+    Object.defineProperty(Range.prototype, "getClientRects", { configurable: true, value: () => [] });
+    setDoc({ loaded: true, feed: [], pages: [{ name: "Host", kind: "page", title: "Host", preBlock: null,
+      roots: ["host"], format: "md", readOnly: false, guide: false }], byId: {
+      host: { id: "host", raw: "{{embed [[Source]]}}", collapsed: false, parent: null, page: "Host", children: [] },
+    } });
+    restorePaneLayout({ kind: "pane", paneId: "main" }, new Map([["main", pageSnapshot("Host")]]), "main");
+    document.body.innerHTML = `<div data-pane-id="main"><div class="ls-block" data-block-id="host"><div class="block-content macro-host">
+      <div class="ls-block" data-block-id="embedded"><div class="block-content">needle embed</div></div>
+      <div class="sheet-cell sheet-title-cell" data-block-id="query-row"><div class="sheet-cell-body">needle query</div></div>
+      </div></div></div>`;
+    openInPageFind(); setInPageFindQuery("needle");
+    expect(inPageFindMatches().map(match => match.blockId)).toEqual(["embedded", "query-row"]);
+    refreshInPageFindHighlights();
+    expect(document.querySelector('[data-block-id="embedded"]')?.classList.contains("inpage-find-active-block")).toBe(true);
+  });
+
+  it.each(["sheet-grid", "sheet-table"])("GH #876: paints and reveals a %s cell", async (kind) => {
+    setDoc({ loaded: true, feed: [], pages: [{ name: "Sheet", kind: "page", title: "Sheet", preBlock: null,
+      roots: ["cell"], format: "md", readOnly: false, guide: false }], byId: {
+      cell: { id: "cell", raw: "needle", collapsed: false, parent: null, page: "Sheet", children: [] },
+    } });
+    restorePaneLayout({ kind: "pane", paneId: "main" }, new Map([["main", pageSnapshot("Sheet")]]), "main");
+    document.body.innerHTML = `<div data-pane-id="main"><div class="${kind}"><div class="sheet-cell ${kind === "sheet-table" ? "sheet-title-cell" : ""}" data-block-id="cell"><div class="sheet-cell-body">${kind === "sheet-grid" ? '<div class="block-content">needle</div>' : "needle"}</div></div></div></div>`;
+    Object.defineProperty(Range.prototype, "getClientRects", { configurable: true, value: () => [] });
+    const cell = document.querySelector<HTMLElement>(".sheet-cell")!;
+    cell.scrollIntoView = vi.fn();
+    openInPageFind(); setInPageFindQuery("needle");
+    expect(inPageFindMatches()).toHaveLength(1);
+    refreshInPageFindHighlights();
+    expect(cell.classList.contains("inpage-find-active-block")).toBe(true);
+    expect(await revealInPageFindMatch(inPageFindMatches()[0])).toBe(true);
+    expect(cell.scrollIntoView).toHaveBeenCalled();
+  });
+
   it("resolves duplicate block DOM under the focused pane captured by opening find", () => {
     restorePaneLayout(
       {
@@ -101,6 +137,13 @@ describe("in-page find DOM scoping", () => {
     stepInPageFind(1); expect(inPageFindActiveIndex()).toBe(0);
     stepInPageFind(-1); expect(inPageFindActiveIndex()).toBe(2);
     expect(host.querySelector(".inpage-find-count")?.textContent).toBe("3 / 3");
+    const surface = document.createElement("div");
+    surface.dataset.inpageFindSurface = "main-query-row";
+    surface.textContent = "needle";
+    document.querySelector('[data-pane-id="main"]')!.append(surface);
+    expect(scopedInPageFindMatchesForQuery("needle").map(m => m.blockId))
+      .toEqual(["Main", "surface:main-query-row", "Split", "Side"]);
+    surface.remove();
     setRightSidebarItemCollapsed(0, true);
     expect(inPageFindMatches().map((m) => m.blockId)).toEqual(["Main", "Split"]);
     setRightSidebarItemCollapsed(0, false);

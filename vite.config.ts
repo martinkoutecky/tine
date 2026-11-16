@@ -6,6 +6,7 @@ import fs from "node:fs";
 import fsp from "node:fs/promises";
 import path from "node:path";
 import type { IncomingMessage, ServerResponse } from "node:http";
+import { pdfjsAssets } from "./scripts/vite-pdfjs-assets";
 
 // Build timestamp, shown in Settings so it's easy to confirm the running binary is
 // the latest (vs. a stale Syncthing copy). Wall-clock by default, so "Built" tracks
@@ -74,9 +75,18 @@ function twemojiAssets(): Plugin {
 }
 
 // Tauri expects a fixed port and serves the built assets from dist/.
-export default defineConfig({
+export default defineConfig(({ mode }) => {
+const viewer = mode === "quick-share";
+const outDir = viewer ? "artifacts/quick-share-viewer/build" : "dist";
+return {
+  publicDir: viewer ? false : "public",
   base: "./",
-  plugins: [solid(), twemojiAssets()],
+  // Published readers use native emoji (editableEmoji.ts); the viewer needs
+  // neither the desktop SVG bundle nor its root-relative development server.
+  plugins: [solid(), ...(!viewer ? [twemojiAssets(), pdfjsAssets()] : [])],
+  // Upstream's legacy build supplies recent JS API polyfills to existing
+  // WebKitGTK/Android WebViews. Main and worker use the same shared policy.
+  resolve: { alias: [{ find: /^pdfjs-dist$/, replacement: fileURLToPath(new URL("./node_modules/pdfjs-dist/legacy/build/pdf.mjs", import.meta.url)) }] },
   define: {
     __BUILD_TIME__: JSON.stringify(BUILD_TIME),
     __GIT_COMMIT__: JSON.stringify(GIT_COMMIT),
@@ -84,7 +94,7 @@ export default defineConfig({
     // build sets TINE_COMMUNITY_REGISTRY=0 — the F-Droid recipe does this so the
     // published build never fetches executable plugin code at runtime (F-Droid
     // inclusion policy). Local sideloading is unaffected. Default: enabled.
-    __TINE_COMMUNITY_REGISTRY__: JSON.stringify(process.env.TINE_COMMUNITY_REGISTRY !== "0"),
+    __TINE_COMMUNITY_REGISTRY__: JSON.stringify(!viewer && process.env.TINE_COMMUNITY_REGISTRY !== "0"),
   },
   clearScreen: false,
   server: {
@@ -100,13 +110,17 @@ export default defineConfig({
   },
   build: {
     target: "esnext",
-    outDir: "dist",
+    outDir,
+    emptyOutDir: true,
+    // Keep even small KaTeX fonts as hashed files: g1's font-src is self-only.
+    assetsInlineLimit: viewer ? 0 : 4096,
     rollupOptions: {
       // Two HTML entries: the main app and the standalone quick-capture window.
-      input: {
+      input: viewer ? { viewer: fileURLToPath(new URL("./quick-share.html", import.meta.url)) } : {
         main: fileURLToPath(new URL("./index.html", import.meta.url)),
         capture: fileURLToPath(new URL("./capture.html", import.meta.url)),
       },
     },
   },
+};
 });

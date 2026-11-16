@@ -56,8 +56,8 @@ fn directory_sync_has_one_owner_and_no_discarded_result() {
 
 /// Master 54dfcc1b6674's policy (Martin 2026-10-03: follow master): a
 /// directory that cannot be opened or synced because the filesystem does not
-/// offer it does not fail the save. Here a vanished and an unopenable directory
-/// stand in for the NFS/FUSE answers; a real I/O failure still surfaces
+/// offer it does not fail the save. An unopenable directory stands in for the
+/// NFS/FUSE answers; a vanished directory and real I/O failures still surface
 /// (`dir_sync_is_unsupported` unit test).
 #[cfg(unix)]
 #[test]
@@ -69,8 +69,12 @@ fn directory_sync_tolerates_filesystems_without_directory_sync() {
     fs::create_dir_all(&base).unwrap();
 
     let missing = base.join("gone");
-    tine_store::directory_durability::sync_directory_entry(&missing)
-        .expect("NotFound is a filesystem answer, not a lost save");
+    assert_eq!(
+        tine_store::directory_durability::sync_directory_entry(&missing)
+            .expect_err("M3-1: a vanished parent is not Unsupported")
+            .kind(),
+        std::io::ErrorKind::NotFound
+    );
 
     let unreadable = base.join("unreadable");
     fs::create_dir(&unreadable).unwrap();
