@@ -4,13 +4,13 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
 <meta name="claude:viewport-fit-sides" content="cover">
-<title>The Story of Tine: from the first line of code to 0.8.0</title>
-<meta name="description" content="An arcade-style story of how Tine was built: Martin, Claude and Codex, seven worlds, from the first line of code in June 2026 to Tine 0.8.0. About 4.5 minutes.">
+<title>The Story of Tine: from the first line of code to 0.9.0</title>
+<meta name="description" content="An arcade-style story of how Tine was built: Martin, Claude and Codex, eight worlds, from the first line of code in June 2026 to Tine 0.9.0. About 6 minutes.">
 <meta name="theme-color" content="#0e0c16">
 <link rel="icon" href="../favicon.svg" type="image/svg+xml">
 <meta property="og:type" content="website">
-<meta property="og:title" content="The Story of Tine: from the first line of code to 0.8.0">
-<meta property="og:description" content="Martin, Claude and Codex, seven worlds, about 4.5 minutes: how a fast, local-first outliner for Logseq notes was built, and what Martin learned on the way.">
+<meta property="og:title" content="The Story of Tine: from the first line of code to 0.9.0">
+<meta property="og:description" content="Martin, Claude and Codex, eight worlds, about 6 minutes: how a fast, local-first outliner for Logseq notes was built, and what Martin learned on the way.">
 <meta property="og:image" content="https://tine.page/story/og.png">
 <meta property="og:image:width" content="1200">
 <meta property="og:image:height" content="630">
@@ -127,6 +127,8 @@
   #trophies span { font-size: 15px; }
   @keyframes pop { from { opacity: 0; transform: translateY(8px) scale(.97); } to { opacity: 1; transform: none; } }
   .finh { font: 11px/1.6 var(--px); color: var(--gold); margin: 10px 0 0; }
+  #finVideo { display: block; width: 100%; max-width: 720px; aspect-ratio: 16 / 9; background: #000; border-radius: 8px; }
+  #trophies a { color: var(--gold); }
   #syllabus { margin: 0; padding-left: 1.4em; display: grid; gap: 6px; }
   #syllabus b { margin-right: .4em; }
   #syllabus span { color: var(--muted); font-style: italic; }
@@ -165,7 +167,7 @@
         <div class="insert">INSERT COIN</div>
         <div class="logo"><span>T</span>INE</div>
         <p>A fast, local-first outliner for your Logseq notes, built since June 2026 by a computer scientist who learned software engineering on the way, working with Claude and Codex.</p>
-        <p class="muted">Seven worlds, from the first line of code to 0.8.0. About <span id="runtime">4 minutes</span>; pause or skip ahead at any time.</p>
+        <p class="muted">Eight worlds, from the first line of code to 0.9.0. About <span id="runtime">4 minutes</span>; pause or skip ahead at any time.</p>
         <div class="row"><button class="btn primary" id="startPlay">Play</button></div>
         <div class="legend">
           <div><b>? blocks</b>: Martin asks the agents to explain something. <b>LV</b> goes up when he later uses it himself.</div>
@@ -190,15 +192,18 @@
         <div id="finTag"></div>
         <div id="finName"></div>
         <ul id="trophies"></ul>
+        <h3 class="finh">See 0.9 in 44 seconds</h3>
+        <video id="finVideo" controls preload="none" poster="tine-0.9-features.jpg" src="tine-0.9-features.mp4">The <a href="tine-0.9-features.mp4">0.9 feature video</a>.</video>
         <h3 class="finh">What Martin learned on the way</h3>
         <ol id="syllabus"></ol>
         <ul id="tally"></ul>
         <p id="closing"></p>
         <h3 class="finh">Try it</h3>
-        <p>Tine 0.8.0 is out for Linux, macOS, Windows and Android, and for iPhone and iPad on the App Store. It works on the Logseq graph you already have.</p>
+        <p>Tine 0.9.0 is out for Linux, macOS, Windows and Android, and for iPhone and iPad on the App Store. It works on the Logseq graph you already have.</p>
         <div class="finrow">
           <a class="btn primary" href="https://tine.page/" target="_blank" rel="noopener">Download at tine.page</a>
-          <a class="btn" href="https://github.com/martinkoutecky/tine/releases/tag/v0.8.0" target="_blank" rel="noopener">The 0.8.0 release on GitHub</a>
+          <a class="btn" href="https://github.com/martinkoutecky/tine/releases/tag/v0.9.0" target="_blank" rel="noopener">The 0.9.0 release on GitHub</a>
+          <a class="btn" href="https://github.com/martinkoutecky/tine/discussions/962" target="_blank" rel="noopener">How Tine is built: fifteen principles</a>
           <a class="btn" href="https://tine.page/guide/" target="_blank" rel="noopener">The Guide</a>
           <a class="btn" href="https://github.com/martinkoutecky/tine/discussions" target="_blank" rel="noopener">GitHub Discussions</a>
           <button class="btn" id="finReplay">Play again</button>
