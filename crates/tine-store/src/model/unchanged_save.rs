@@ -28,15 +28,78 @@ pub(super) fn counted_serialization() {
     SAVE_WORK.with(|w| w.set((w.get().0, w.get().1 + 1)));
 }
 
+/// How a page save's content firewalls refuse ([`guarded_save`]).
+pub(crate) enum Guard {
+    /// The old or the new bytes cannot be parsed safely (size, encoding,
+    /// nesting).
+    Content(io::Error),
+    /// Refusal R-VCS-MARKERS, with its message.
+    Markers(String),
+    /// The preparation's own refusal or failure.
+    Prepare(io::Error),
+}
+
+/// Every content firewall of a page save, in order, around `prepare` (which
+/// renders the new bytes from the old text, `None` creating): parse
+/// validation of the old bytes, VCS conflict markers (unless `resolving`
+/// them), parse validation of the new bytes. The one place that decides
+/// them, for every page save (`serialize_page_at`) and for the model's P3
+/// check ([`unchanged_save`]).
+pub(crate) fn guarded_save<B: AsRef<[u8]>, T>(
+    old: Option<&[u8]>,
+    path: &Path,
+    resolving: bool,
+    prepare: impl FnOnce(Option<&str>) -> io::Result<(B, T)>,
+) -> Result<(B, T), Guard> {
+    let text = match old {
+        Some(bytes) => {
+            validate_parse_bytes_for_path(bytes, path).map_err(Guard::Content)?;
+            Some(std::str::from_utf8(bytes).map_err(|error| {
+                Guard::Content(io::Error::new(io::ErrorKind::InvalidData, error))
+            })?)
+        }
+        None => None,
+    };
+    // Refusal R-VCS-MARKERS (docs/storage-contract.md). Threat scenario: a
+    // VCS merge by an external writer left unresolved markers; a rewrite
+    // would re-indent them and silently lose a side. Every page save reaches
+    // this (ordinary, forced, merged and PDF-highlight page saves, and the
+    // page host's submits). Only a resolving save passes.
+    let found = text
+        .map(|text| tine_core::concord_queue::vcs_conflict_markers(text, Format::from_path(path)))
+        .unwrap_or_default();
+    if !found.is_empty() && !resolving {
+        return Err(Guard::Markers(format!(
+            "unresolved VCS merge conflict markers ({}); resolve them first",
+            found.join(" ")
+        )));
+    }
+    let (new, saved) = prepare(text).map_err(Guard::Prepare)?;
+    validate_parse_bytes_for_path(new.as_ref(), path).map_err(Guard::Content)?;
+    Ok((new, saved))
+}
+
+/// `prepare`, with a parser panic turned into the error every save reports
+/// for it ([`ParserPanicked`]).
+pub(super) fn parser_unwind<T>(prepare: impl FnOnce() -> io::Result<T>) -> io::Result<T> {
+    std::panic::catch_unwind(std::panic::AssertUnwindSafe(prepare))
+        .map_err(|_| io::Error::new(io::ErrorKind::InvalidData, ParserPanicked))?
+}
+
 /// The bytes a page whose content is `candidate` at `path` (`owner` is its
 /// graph-relative path, giving its blocks a fresh read's runtime ids) would
-/// publish if loaded and saved with no edit, or that save's refusal.
-/// `parsed` is `candidate` parsed by the store (`parse_doc_with_opts`), so a
-/// caller that also reads the text for P2 parses it once.
+/// publish if loaded and saved with no edit, or that save's refusal: the
+/// content firewalls of [`guarded_save`] (a VCS-marker refusal is
+/// `PermissionDenied`, as the save's read-only refusals are) around
+/// [`save_content`]. `parsed` is `candidate` parsed by the store
+/// (`parse_doc_with_opts`), so a caller that also reads the text for P2
+/// parses it once.
 ///
-/// Cost: no parse of `candidate` (the caller's); one serialization (Org: two,
-/// the round-trip firewall's and the save's) and the save's own parse of what
-/// it rendered; per-block projections. Everything [`save_content`] does.
+/// Cost: no parse of `candidate` (the caller's); a validation scan of the
+/// candidate and of the result; one serialization and the save's own parse
+/// of what it rendered (Markdown layout retention's fallback and header
+/// promotion render and parse again); per-block projections. Everything
+/// [`save_content`] does.
 #[cfg_attr(not(test), allow(dead_code))] // the P3 check's, once it is wired
 pub(crate) fn unchanged_save(
     path: &Path,
@@ -59,7 +122,14 @@ pub(crate) fn unchanged_save(
             .map(|b| tine_core::projection::dto_block_to_doc(&block_to_dto(b), is_org))
             .collect(),
     };
-    save_content(page, path, Some((candidate, &old, &opts))).map(|(content, _)| content)
+    let save = |_: Option<&str>| {
+        parser_unwind(|| save_content(page, path, Some((candidate, &old, &opts))))
+    };
+    match guarded_save(Some(candidate.as_bytes()), path, false, save) {
+        Ok((content, _)) => Ok(content),
+        Err(Guard::Content(error) | Guard::Prepare(error)) => Err(error),
+        Err(Guard::Markers(why)) => Err(io::Error::new(io::ErrorKind::PermissionDenied, why)),
+    }
 }
 
 /// Bytes a save writes for `doc` at `path` over `base` (the bytes on disk,

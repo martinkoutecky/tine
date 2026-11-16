@@ -416,6 +416,125 @@ fn a_renamed_key_clashes_under_its_new_key() {
     assert!(!matches(&want, &md("b:: 2\nb:: 1\n- t\n- s\n"), true));
 }
 
+/// Review round 2, finding 2: preamble prose reads with the parser's line
+/// endings (LF), so a CRLF or lone-CR file reads as its LF twin, and a merge
+/// or rename may change a file's line endings.
+#[test]
+fn preamble_prose_reads_with_normalized_line_endings() {
+    let survivor = "- target\n- Intro\n  \n- source\n";
+    for source in [
+        "Intro\n- source\n",
+        "Intro\r\n- source\r\n",
+        "Intro\r- source\r",
+    ] {
+        assert!(merge_ok(source, "- target\n", survivor), "{source:?}");
+        // Negative control: the preamble lost.
+        assert!(
+            !merge_ok(source, "- target\n", "- target\n- source\n"),
+            "{source:?}"
+        );
+    }
+    for before in [
+        "Intro [[Old]]\r\n\r\n- x\r\n",
+        "Intro [[Old]]\r\r- x\r",
+        "Intro [[Old]]\n\n- x\n",
+    ] {
+        assert_eq!(
+            md(before),
+            md(&before.replace("\r\n", "\n").replace('\r', "\n"))
+        );
+        for after in [
+            "Intro [[New]]\n\n- x\n",
+            "Intro [[New]]\r\n\r\n- x\r\n",
+            "Intro [[New]]\r\r- x\r",
+        ] {
+            assert!(
+                rename_ok("Old", "New", before, after, Format::Md),
+                "{before:?} → {after:?}"
+            );
+        }
+        assert!(
+            !rename_ok("Old", "New", before, before, Format::Md),
+            "{before:?}"
+        );
+    }
+}
+
+/// Steps (sites visited, keys, identities and header entries compared) for
+/// `f`, from a reset counter.
+fn steps(f: impl FnOnce()) -> usize {
+    STEPS.with(|n| n.set(0));
+    f();
+    STEPS.with(|n| n.get())
+}
+
+/// Review round 2, finding 4: a merge whose source has 10,000 header
+/// properties costs steps linear in them, for the survivor in order and
+/// reversed (a permuted header is valid).
+#[test]
+fn many_header_properties_cost_linear_steps() {
+    let n = 10_000;
+    let props: Vec<String> = (0..n).map(|i| format!("p{i:05}:: v\n")).collect();
+    let source = format!("{}- source\n", props.concat());
+    let in_order = format!("{}- target\n- source\n", props.concat());
+    let reversed: String = props.iter().rev().map(String::as_str).collect();
+    let reversed = format!("{reversed}- target\n- source\n");
+    for after in [in_order, reversed] {
+        let mut ok = false;
+        let taken = steps(|| ok = merge_ok(&source, "- target\n", &after));
+        assert!(ok);
+        assert!(taken <= 20 * n, "{taken} steps for {n} properties");
+    }
+}
+
+/// A merge uniting 10,000 distinct aliases costs steps linear in them.
+#[test]
+fn many_aliases_cost_linear_steps() {
+    let n = 10_000;
+    let names: Vec<String> = (0..n).map(|i| format!("a{i:04}")).collect();
+    let source = format!("alias:: {}\n- source\n", names.join(", "));
+    let after = format!("alias:: {}\n- target\n- source\n", names.join(", "));
+    let mut ok = false;
+    let taken = steps(|| ok = merge_ok(&source, "- target\n", &after));
+    assert!(ok);
+    assert!(taken <= 20 * n, "{taken} steps for {n} aliases");
+}
+
+/// One query macro with 1,000 page-name arguments: its observation holds the
+/// macro once (all its sites share it), so the observation's size is linear
+/// in the text; the writer's spelling of every argument passes.
+#[test]
+fn many_query_arguments_share_one_macro() {
+    let n = 1_000;
+    let before = format!("- {{{{query (or {})}}}}\n", "[[A]] ".repeat(n));
+    let after = before.replace("[[A]]", "[[B]]");
+    let c = md(&before);
+    let mut seen = std::collections::HashSet::new();
+    let mut held = 0;
+    for s in c.blocks.iter().flat_map(|b| text_sites(&b.body)) {
+        if let Some((q, _)) = &s.within {
+            if seen.insert(Arc::as_ptr(q)) {
+                held += q.argument.len();
+            }
+        }
+    }
+    assert_eq!(
+        c.blocks[0]
+            .body
+            .iter()
+            .filter(|a| matches!(a, Atom::Site(_)))
+            .count(),
+        n
+    );
+    assert!(
+        held <= 2 * before.len(),
+        "{held} bytes of macro for a {}-byte text",
+        before.len()
+    );
+    assert!(rename_ok("A", "B", &before, &after, Format::Md));
+    assert!(!rename_ok("A", "B", &before, &before, Format::Md));
+}
+
 /// `observe` parses the document once, whatever the text holds.
 #[test]
 fn observe_parses_the_document_once() {

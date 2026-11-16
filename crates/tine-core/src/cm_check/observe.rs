@@ -15,6 +15,7 @@ use crate::doc::DocBlock;
 use crate::model::Format;
 use crate::reference_evidence::{ProjectedPageRef, RewriteTarget};
 use std::ops::Range;
+use std::sync::Arc;
 
 #[cfg(test)]
 thread_local! {
@@ -74,7 +75,9 @@ pub fn observe_parsed(
         if let Some(prose) =
             tine_outline::page_preamble::preamble_content_range_in(pre, org, &regions)
         {
-            let block = projected(preamble(text, pre, prose.0), org);
+            // The parser's text: its line endings are LF (`pre` is a prefix).
+            let text = crate::doc::normalize_line_endings(text);
+            let block = projected(preamble(&text, pre, prose.0), org);
             content.blocks.push(Block {
                 depth: 0,
                 body: whole_row(&block, reader),
@@ -95,9 +98,9 @@ pub fn observe_parsed(
 }
 
 /// The preamble prose as the model reads it: from where the parser's prose
-/// starts to the first outline block, so the blank lines before that block
-/// stay (the parser's pre-block drops them). When `pre` is not a prefix of
-/// `text` (a normalized line ending), the parser's own range.
+/// starts to the first outline block of the parser's text `text`, so the
+/// blank lines before that block stay (the parser's pre-block drops them).
+/// When `pre` is not a prefix of `text`, the parser's own range.
 fn preamble<'t>(text: &'t str, pre: &'t str, start: usize) -> &'t str {
     match text.strip_prefix(pre) {
         Some(rest) => {
@@ -211,6 +214,7 @@ fn title_row(
         slot: 0..native.len(),
         native,
         within: None,
+        inner: Vec::new(),
     };
     super::compact(vec![
         Atom::Text(raw[line.start..value.start].to_owned()),
@@ -219,14 +223,22 @@ fn title_row(
     ])
 }
 
-/// The atoms of `range` of `raw`: its text with the `sites` there. A site
-/// inside one already taken (a link that only encodes its enclosing tag) is
-/// that site's.
+/// The atoms of `range` of `raw`: its text with the outermost `sites` (in
+/// source order, as [`block_sites`] gives them) that lie in it. Visits only
+/// the sites that start in `range`.
 fn atoms(raw: &str, sites: &[(Range<usize>, Site)], range: Range<usize>) -> Vec<Atom> {
     let mut out = Vec::new();
     let mut at = range.start;
-    for (r, s) in sites {
-        if r.start < at || r.start < range.start || range.end < r.end {
+    let first = sites.partition_point(|(r, _)| r.start < range.start);
+    for (r, s) in sites[first..]
+        .iter()
+        .take_while(|(r, _)| r.start < range.end)
+    {
+        super::step();
+        // A site that ends past `range` belongs to no atom of it; one that
+        // starts inside the previous one overlaps it (no nesting the parser
+        // reports).
+        if r.start < at || range.end < r.end {
             continue;
         }
         out.push(Atom::Text(raw[at..r.start].to_owned()));
@@ -237,8 +249,8 @@ fn atoms(raw: &str, sites: &[(Range<usize>, Site)], range: Range<usize>) -> Vec<
     super::compact(out)
 }
 
-/// Every site of `block`, with its range in the block's raw, in source order
-/// (an enclosing site before the sites inside it).
+/// Every site of `block` with its range in the block's raw, the outermost in
+/// source order, each holding the sites inside it ([`nest`]).
 fn block_sites(block: &DocBlock, r: Reader) -> Vec<(Range<usize>, Site)> {
     let raw = block.raw();
     let projection = block.projection();
@@ -253,22 +265,52 @@ fn block_sites(block: &DocBlock, r: Reader) -> Vec<(Range<usize>, Site)> {
         }
     }
     sites.sort_by_key(|(r, _)| (r.start, std::cmp::Reverse(r.end)));
-    sites
+    // The evidence names a nested link once per level, with one range.
+    sites.dedup();
+    nest(sites)
 }
 
-/// The innermost name ranges of a nested link `node` (the parser names every
-/// level; the writer respells the inner name and the outer one follows).
-fn innermost(node: &str) -> Vec<Range<usize>> {
-    let names = crate::block_regions::nested_reference_ranges(node);
-    names
-        .iter()
-        .filter(|a| {
-            !names
-                .iter()
-                .any(|b| b != *a && a.start <= b.start && b.end <= a.end)
-        })
-        .cloned()
-        .collect()
+/// `sites` in source order (an enclosing site first) as a forest: each site
+/// inside another (its range within the other's) is that site's inner site,
+/// its range made relative. One pass with a stack of the open sites. The
+/// link the parser also reports for a tag `#[[name]]` (its `[[name]]`, under
+/// the tag's name) is how the tag is written, not a site of its own.
+fn nest(sites: Vec<(Range<usize>, Site)>) -> Vec<(Range<usize>, Site)> {
+    fn close(open: &mut Vec<(Range<usize>, Site)>, out: &mut Vec<(Range<usize>, Site)>) {
+        let (r, s) = open.pop().expect("an open site");
+        match open.last_mut() {
+            Some((p, parent)) => {
+                let at = r.start - p.start..r.end - p.start;
+                let encodes = parent.kind == SiteKind::Tag
+                    && at == (1..parent.native.len())
+                    && s.name == parent.name;
+                if !encodes {
+                    parent.inner.push((at, s));
+                }
+            }
+            None => out.push((r, s)),
+        }
+    }
+    let (mut out, mut open) = (Vec::new(), Vec::new());
+    for (r, s) in sites {
+        while open
+            .last()
+            .is_some_and(|(p, _): &(Range<usize>, Site)| p.end < r.end || p.end <= r.start)
+        {
+            close(&mut open, &mut out);
+        }
+        open.push((r, s));
+    }
+    while !open.is_empty() {
+        close(&mut open, &mut out);
+    }
+    out
+}
+
+/// A level of a nested link: its `[[…]]` range in `node` around the name
+/// range `body`.
+fn level(body: &Range<usize>) -> (Range<usize>, Range<usize>) {
+    (body.start - 2..body.end + 2, 2..body.len() + 2)
 }
 
 /// Where a link node writes its name `name`: `[[name]]`, Org `[[name][…]]`,
@@ -298,16 +340,23 @@ fn reference_sites(
     for p in source.explicit {
         let node = &raw[p.range.clone()];
         if p.rule == "explicit_nested_link" {
+            // The evidence names every level of the node, the enclosing one
+            // included (`nested_reference_names`: each `[[…]]` body), once
+            // per name: each level is a link site named by its body.
             if nested.as_ref() == Some(&p.range) {
                 continue;
             }
-            nested = Some(p.range.clone());
-            for inner in innermost(node) {
-                let at = p.range.start + inner.start..p.range.start + inner.end;
-                let s = site(SiteKind::Link, &raw[at.clone()], 0..inner.len(), None);
-                sites.push((at, s));
+            let levels = crate::block_regions::nested_reference_ranges(node);
+            if !levels.is_empty() {
+                nested = Some(p.range.clone());
+                for body in &levels {
+                    let (at, slot) = level(body);
+                    let at = p.range.start + at.start..p.range.start + at.end;
+                    let name = Some(&node[body.clone()]);
+                    sites.push((at.clone(), site(SiteKind::Link, &raw[at], slot, name)));
+                }
+                continue;
             }
-            continue;
         }
         if p.rule == "explicit_link" && r.org && node.starts_with("[[file:") {
             // An Org file link: its label names the page (a site of its own);
@@ -325,11 +374,15 @@ fn reference_sites(
             "explicit_property_key" => (SiteKind::PropertyKey, 0..node.len()),
             "explicit_task_marker" => (SiteKind::Task, 0..node.len()),
             "explicit_priority" => (SiteKind::Priority, 0..node.len()),
-            "explicit_tag" if node.starts_with("#[[") => (SiteKind::Tag, 3..node.len() - 2),
+            // A tag `#[[name]]`, or `#[[a [[b]]]]`, which the parser names by
+            // its whole bracketed text.
+            "explicit_tag" if node.starts_with("#[[") && node[1..] != p.name => {
+                (SiteKind::Tag, 3..node.len() - 2)
+            }
             "explicit_tag" if node.starts_with('#') => (SiteKind::Tag, 1..node.len()),
             "explicit_tag" => (SiteKind::Tag, 0..node.len()),
             "implicit_linkable_property" => (SiteKind::PropertyValue, 0..node.len()),
-            "explicit_link" => (SiteKind::Link, link_slot(node, &p.name)),
+            "explicit_link" | "explicit_nested_link" => (SiteKind::Link, link_slot(node, &p.name)),
             "explicit_embed" => (SiteKind::Embed, link_slot(node, &p.name)),
             _ => continue,
         };
@@ -383,6 +436,10 @@ fn query_sites(raw: &str, regions: &BlockRegions, org: bool, out: &mut Vec<(Rang
             FormFamily::Edn if crate::query::is_advanced(&form) => Vec::new(),
             FormFamily::Edn => crate::query::og::page_name_arguments(&form),
         };
+        let within = Arc::new(QueryMacro {
+            name: extent.name,
+            argument: extent.argument,
+        });
         for (range, name) in names {
             let at = form_start + range.start..form_start + range.end;
             let native = &raw[at.clone()];
@@ -390,11 +447,7 @@ fn query_sites(raw: &str, regions: &BlockRegions, org: bool, out: &mut Vec<(Rang
             if s.context == Context::Ordinary {
                 s.context = Context::QueryArg;
             }
-            s.within = Some(Box::new(QueryMacro {
-                name: extent.name.clone(),
-                argument: extent.argument.clone(),
-                at: at.start - argument_start,
-            }));
+            s.within = Some((Arc::clone(&within), at.start - argument_start));
             out.push((at, s));
         }
     }
@@ -412,13 +465,19 @@ fn target_sites(raw: &str, target: RewriteTarget, r: Reader, out: &mut Vec<(Rang
                 }
                 out.push((at, s));
             };
-            if p.rule == "explicit_nested_link" {
-                for inner in innermost(node) {
-                    let at = p.range.start + inner.start..p.range.start + inner.end;
-                    push(at, 0..inner.len(), None);
-                }
-            } else {
+            let levels = match p.rule {
+                "explicit_nested_link" => crate::block_regions::nested_reference_ranges(node),
+                _ => Vec::new(),
+            };
+            if levels.is_empty() {
                 push(p.range.clone(), link_slot(node, &p.name), Some(&p.name));
+            }
+            // Every level of a nested link (the walk names each, once per
+            // name; [`block_sites`] keeps one of each).
+            for body in &levels {
+                let (at, slot) = level(body);
+                let at = p.range.start + at.start..p.range.start + at.end;
+                push(at, slot, Some(&node[body.clone()]));
             }
         }
         RewriteTarget::FileLink(range) => {
@@ -457,5 +516,6 @@ fn site(kind: SiteKind, native: &str, slot: Range<usize>, name: Option<&str>) ->
         native: native.to_owned(),
         slot,
         within: None,
+        inner: Vec::new(),
     }
 }

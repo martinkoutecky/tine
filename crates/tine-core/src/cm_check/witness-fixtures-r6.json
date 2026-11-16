@@ -948,6 +948,114 @@
       "merge": true,
       "attended": true,
       "filemerge": false
+    },
+    {
+      "name": "builtin_distinct_join",
+      "before": [
+        {
+          "path": "pages/A.md",
+          "text": "icon:: star\npublic:: true\n- source\n",
+          "format": "md"
+        },
+        {
+          "path": "pages/B.md",
+          "text": "- target\n",
+          "format": "md"
+        }
+      ],
+      "after": [
+        {
+          "path": "pages/B.md",
+          "text": "icon:: star\npublic:: true\n- target\n- source\n",
+          "format": "md"
+        }
+      ],
+      "old": "A",
+      "new": "B",
+      "merge": true,
+      "attended": true,
+      "filemerge": false
+    },
+    {
+      "name": "builtin_same_leftover",
+      "before": [
+        {
+          "path": "pages/A.md",
+          "text": "icon:: star\n- source\n",
+          "format": "md"
+        },
+        {
+          "path": "pages/B.md",
+          "text": "icon:: moon\n- target\n",
+          "format": "md"
+        }
+      ],
+      "after": [
+        {
+          "path": "pages/B.md",
+          "text": "icon:: moon\n- target\n- \n  icon:: star\n- source\n",
+          "format": "md"
+        }
+      ],
+      "old": "A",
+      "new": "B",
+      "merge": true,
+      "attended": true,
+      "filemerge": false
+    },
+    {
+      "name": "builtin_different_survivor",
+      "before": [
+        {
+          "path": "pages/A.md",
+          "text": "icon:: star\n- source\n",
+          "format": "md"
+        },
+        {
+          "path": "pages/B.md",
+          "text": "public:: true\n- target\n",
+          "format": "md"
+        }
+      ],
+      "after": [
+        {
+          "path": "pages/B.md",
+          "text": "public:: true\nicon:: star\n- target\n- source\n",
+          "format": "md"
+        }
+      ],
+      "old": "A",
+      "new": "B",
+      "merge": true,
+      "attended": true,
+      "filemerge": false
+    },
+    {
+      "name": "renamed_key_clash",
+      "before": [
+        {
+          "path": "pages/Old.md",
+          "text": "Old:: source\n- source\n",
+          "format": "md"
+        },
+        {
+          "path": "pages/Two Words.md",
+          "text": "two-words:: target\n- target\n",
+          "format": "md"
+        }
+      ],
+      "after": [
+        {
+          "path": "pages/Two Words.md",
+          "text": "two-words:: target\n- target\n- \n  two-words:: source\n- source\n",
+          "format": "md"
+        }
+      ],
+      "old": "Old",
+      "new": "Two Words",
+      "merge": true,
+      "attended": true,
+      "filemerge": false
     }
   ],
   "negative": [
@@ -1336,6 +1444,6 @@
     "leftover_changed_text": "some .confirm",
     "leftover_changed_text_md": "some .confirm"
   },
-  "native_records": 164,
+  "native_records": 181,
   "file_merge_outside_model": true
 }

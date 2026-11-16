@@ -755,6 +755,10 @@ fn link_edits(
 /// macro is then a binary search of that read's code ranges. `properties` are
 /// in source order and disjoint (`block_regions`' visitors append in source
 /// order), and so are a parse's `literals` (sorted and merged).
+///
+/// A shared reader, not part of the writer: it answers only where a value
+/// holds code, for the writer's `query_edits` and the model check's query
+/// sites (`cm_check::observe`) alike.
 pub(crate) struct PropertyValueCode<'a> {
     raw: &'a str,
     regions: &'a crate::block_regions::BlockRegions,

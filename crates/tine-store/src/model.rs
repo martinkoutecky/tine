@@ -4298,11 +4298,8 @@ impl Graph {
         path: &Path,
         existing: Option<&str>,
     ) -> io::Result<(Vec<u8>, Document)> {
-        std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-            self.prepare_page_content(page, path, existing)
-        }))
-        .map_err(|_| io::Error::new(io::ErrorKind::InvalidData, ParserPanicked))?
-        .map(|(content, doc)| (content.into_bytes(), doc))
+        unchanged_save::parser_unwind(|| self.prepare_page_content(page, path, existing))
+            .map(|(content, doc)| (content.into_bytes(), doc))
     }
 
     pub(crate) fn transaction_note_page(&self, path: &Path, bytes: &[u8]) {

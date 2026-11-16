@@ -46,16 +46,18 @@ fn real(rel: &str, text: &str) -> Option<String> {
     fs::write(dir.join(rel), text).unwrap();
     let store = Arc::new(Store::open(&dir, Default::default()).unwrap().0);
     let id = PageId::from(rel);
-    let read = store.page(&id).unwrap();
-    let saved = HostWriter::start(&store).save(
-        EditKind::ReplacePage,
-        &id,
-        SaveBase::Existing(read.rev),
-        &read.doc,
-    );
-    let out = saved
-        .ok()
-        .map(|_| fs::read_to_string(dir.join(rel)).unwrap());
+    // A page the store does not load is not saved either.
+    let out = store.page(&id).ok().and_then(|read| {
+        HostWriter::start(&store)
+            .save(
+                EditKind::ReplacePage,
+                &id,
+                SaveBase::Existing(read.rev),
+                &read.doc,
+            )
+            .ok()
+            .map(|_| fs::read_to_string(dir.join(rel)).unwrap())
+    });
     store.close();
     let _ = fs::remove_dir_all(&dir);
     out
@@ -97,6 +99,45 @@ fn a_childless_properties_only_first_bullet_does_not_survive() {
 fn an_org_file_that_does_not_round_trip_is_refused() {
     let refused = pure("pages/A.org", "* a\n*** c\n").unwrap_err();
     assert_eq!(refused.kind(), io::ErrorKind::PermissionDenied);
+}
+
+/// Review round 2, finding 3: the pure function refuses what the real
+/// unchanged save refuses, family by family, with the same refusal kind:
+/// unresolved VCS conflict markers (Markdown and Org), an outline nested past
+/// the parse limit, an Org headline past it, and an Org file that does not
+/// round-trip.
+#[test]
+fn every_refusal_family_of_the_real_save_is_the_pure_functions() {
+    let deep: String = (0..130)
+        .map(|d| format!("{}- d{d}\n", "  ".repeat(d)))
+        .collect();
+    let deep_org: String = format!("{} deep\n", "*".repeat(130));
+    use io::ErrorKind::{InvalidData, PermissionDenied};
+    let cases: &[(&str, &str, io::ErrorKind)] = &[
+        (
+            "pages/R.md",
+            "<<<<<<< ours\nx\n=======\ny\n>>>>>>> theirs\n- kept\n",
+            PermissionDenied,
+        ),
+        (
+            "pages/R.md",
+            "- a\n<<<<<<< ours\n- x\n=======\n- y\n>>>>>>> theirs\n",
+            PermissionDenied,
+        ),
+        (
+            "pages/R.org",
+            "* a\n<<<<<<< ours\n* x\n=======\n* y\n>>>>>>> theirs\n",
+            PermissionDenied,
+        ),
+        ("pages/R.md", &deep, InvalidData),
+        ("pages/R.org", &deep_org, InvalidData),
+        ("pages/R.org", "* a\n*** c\n", PermissionDenied),
+    ];
+    for (rel, text, kind) in cases {
+        assert_eq!(real(rel, text), None, "the real save takes {text:?}");
+        let refused = pure(rel, text).expect_err(text);
+        assert_eq!(refused.kind(), *kind, "{text:?}");
+    }
 }
 
 /// Per call, on top of the caller's one parse of the candidate: Markdown

@@ -3,7 +3,7 @@
 //! the input read, and the comparison with how the output reads.
 //!
 //! Translation validation: [`expected`] is a transcription of the Lean
-//! `expectedContent` (`cm-cut6/lean/src/CutObserve.lean`), function by
+//! `expectedContent` (`cm-cut6k/lean/src/CutObserve.lean`), function by
 //! function; every function names its Lean source. It works on observations
 //! only and shares no code with the text rewriter or the merge writer; the
 //! name-level rules (what a name becomes, the day pin, the key and member
@@ -18,7 +18,8 @@
 //! state.
 
 use std::borrow::Cow;
-use std::collections::HashMap;
+use std::collections::{BTreeSet, HashMap, HashSet};
+use std::sync::Arc;
 
 use crate::config::FileNameFormat;
 use crate::model::Format;
@@ -34,12 +35,25 @@ mod tests;
 #[cfg(test)]
 mod witness_tests;
 
+#[cfg(test)]
+thread_local! {
+    /// Steps of the loops over a file's sites and header entries on this
+    /// thread: one per element visited or compared (tests reset it).
+    static STEPS: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
+}
+
+/// Count one step (see [`STEPS`]).
+fn step() {
+    #[cfg(test)]
+    STEPS.with(|n| n.set(n.get() + 1));
+}
+
 /// Lean `SiteKind`, all of them: every reference rule the evidence walk names
 /// and every rewrite target the rename writer respells has one (pinned by
 /// `site_tests::every_rewriter_rule_has_an_observed_kind`). `Query` is a
 /// query macro's page-name argument, `MacroArg` a page link inside another
 /// macro's argument, `OrgFile` the stem of an Org `file:` link.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub enum SiteKind {
     Link,
     Tag,
@@ -56,7 +70,7 @@ pub enum SiteKind {
 }
 
 /// Lean `Context`, the contexts [`observe`] produces.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub enum Context {
     Ordinary,
     MdTag,
@@ -68,39 +82,42 @@ pub enum Context {
 
 /// Lean `Site`. `slot` is where the name is written inside `native`; like the
 /// Lean `start`/`stop` it is a coordinate, erased before any comparison, and
-/// so is `within`.
-#[derive(Clone, Debug, PartialEq, Eq)]
+/// so are `within` and the ranges of `inner`.
+#[derive(Clone, Debug, PartialEq, Eq, Hash)]
 pub struct Site {
     pub kind: SiteKind,
     pub context: Context,
     pub name: String,
     pub native: String,
     pub slot: std::ops::Range<usize>,
-    /// For a `Query` site, the macro its token is written in: whether a
-    /// spelling is legal there depends on the whole macro (Lean
+    /// For a `Query` site, the macro its token is written in, shared by every
+    /// site of that macro, and where the token starts in its argument: whether
+    /// a spelling is legal there depends on the whole macro (Lean
     /// `Observations.spell` sees the site; this is the part of the file the
     /// spelling rule reads).
-    pub within: Option<Box<QueryMacro>>,
+    pub within: Option<(Arc<QueryMacro>, usize)>,
+    /// The sites the parser reports inside this one, each with its range in
+    /// `native`, in source order: the inner levels of a nested link (the
+    /// enclosing name is a site too), the link that spells a tag `#[[x]]`.
+    pub inner: Vec<(std::ops::Range<usize>, Site)>,
 }
 
-/// The query macro around a `Query` site: its name, its argument as written,
-/// and where the site's token starts in that argument.
-#[derive(Clone, Debug, PartialEq, Eq)]
+/// The query macro around `Query` sites: its name and its argument as written.
+#[derive(Debug, PartialEq, Eq, Hash)]
 pub struct QueryMacro {
     pub name: String,
     pub argument: String,
-    pub at: usize,
 }
 
 /// One part of a title: Lean `String ⊕ Site`.
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq, Eq, Hash)]
 pub enum Part {
     Text(String),
     Site(Site),
 }
 
 /// Lean `Atom`.
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq, Eq, Hash)]
 pub enum Atom {
     Text(String),
     Site(Site),
@@ -108,7 +125,7 @@ pub enum Atom {
 }
 
 /// Lean `HeaderRole`.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub enum HeaderRole {
     Title,
     Property,
@@ -117,7 +134,7 @@ pub enum HeaderRole {
 }
 
 /// Lean `NativeForm`.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub enum NativeForm {
     Markdown,
     Directive,
@@ -125,7 +142,7 @@ pub enum NativeForm {
 }
 
 /// Lean `Header`, with its key (see [`header_key`]).
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq, Eq, Hash)]
 pub struct Header {
     pub role: HeaderRole,
     pub form: NativeForm,
@@ -264,42 +281,109 @@ fn spell(site: &Site, name: &str, names: FileNameFormat) -> Option<String> {
 }
 
 /// A query argument's token respelled for `name`, if its macro still reads
-/// as that macro.
+/// as that macro. Cost: the macro's argument, once per respelled token (the
+/// legality of one token is a reading of the whole macro).
 fn query_spelling(site: &Site, name: &str) -> Option<String> {
     use crate::query::macro_text::{macro_safe, recognizable_macro};
-    let q = site.within.as_deref()?;
+    let (q, at) = site.within.as_ref()?;
     let family = FormFamily::for_macro_name(&q.name);
     let token = match family {
         FormFamily::Tql => crate::query::print::sql_string(name),
         FormFamily::Edn => crate::refs::rename::og_token_spelling(&site.native, name),
     };
-    let mut argument = q.argument.clone();
-    argument.replace_range(q.at..q.at + site.native.len(), &token);
+    let rest = &q.argument[at + site.native.len()..];
+    let argument = [&q.argument[..*at], &token, rest].concat();
     (macro_safe(&argument, family).is_ok() && recognizable_macro(&q.name, &argument).is_ok())
         .then_some(token)
 }
 
-/// Lean `siteResult` (the site only; dispositions are reports, not P2).
+/// Lean `siteResult` (the site only; dispositions are reports, not P2). The
+/// sites inside `s` are mapped first, each by this rule, and `s` is then the
+/// site with their results in place (its name too, where they are written in
+/// it); that site's name is mapped like any other (review round 2: every
+/// level of a nested reference is a site).
 fn site_result(rename: &Rename, skip: bool, s: &Site) -> Site {
+    if matches!(s.kind, SiteKind::Task | SiteKind::Priority) || skip {
+        return s.clone();
+    }
+    let s = inner_results(rename, s);
     let n = rename.mapped_name(&s.name);
     // A day maps to itself (`renamed_site_name`), so `n = s.name` covers it.
-    if matches!(s.kind, SiteKind::Task | SiteKind::Priority) || n == s.name || skip {
-        return s.clone();
+    if n == s.name {
+        return s.into_owned();
     }
     let k = if s.kind == SiteKind::PropertyKey {
         crate::refs::rename::property_key_spelling(&n)
     } else {
         Some(n.into_owned())
     };
-    match k.and_then(|k| spell(s, &k, rename.names).map(|raw| (k, raw))) {
+    match k.and_then(|k| spell(&s, &k, rename.names).map(|raw| (k, raw))) {
         Some((k, raw)) => Site {
+            inner: kept_inner(rename, &s),
             slot: 0..raw.len(),
             name: k,
             native: raw,
-            ..s.clone()
+            ..s.into_owned()
         },
-        None => s.clone(),
+        None => s.into_owned(),
     }
+}
+
+/// `s` with each site inside it replaced by its [`site_result`]. A site
+/// written inside `s`'s name changes the name with it. One pass over
+/// `s.native`.
+fn inner_results<'s>(rename: &Rename, s: &'s Site) -> Cow<'s, Site> {
+    if s.inner.is_empty() {
+        return Cow::Borrowed(s);
+    }
+    let slot = &s.slot;
+    let named = s.native.get(slot.clone()) == Some(s.name.as_str());
+    let (mut native, mut inner, mut at) = (String::new(), Vec::new(), 0);
+    let (mut start, mut end) = (slot.start, slot.end);
+    for (r, i) in &s.inner {
+        step();
+        let t = site_result(rename, false, i);
+        native.push_str(&s.native[at..r.start]);
+        let from = native.len();
+        native.push_str(&t.native);
+        // The name's ends move with every change before them.
+        let moved = |x: usize| x + t.native.len() - r.len();
+        if r.end <= slot.start {
+            start = moved(start);
+        }
+        if r.end <= slot.end {
+            end = moved(end);
+        }
+        inner.push((from..native.len(), t));
+        at = r.end;
+    }
+    native.push_str(&s.native[at..]);
+    let name = if named {
+        native[start..end].to_owned()
+    } else {
+        s.name.clone()
+    };
+    Cow::Owned(Site {
+        name,
+        native,
+        slot: start..end,
+        inner,
+        ..s.clone()
+    })
+}
+
+/// The inner sites a respelled `s` still holds: those outside its name, and
+/// those inside its name past the part the renamed name (or its namespace
+/// prefix) occupies, which the new name keeps (Lean `nsSubst`). Their ranges
+/// in the respelled text are not kept (coordinates, erased before any
+/// comparison).
+fn kept_inner(rename: &Rename, s: &Site) -> Vec<(std::ops::Range<usize>, Site)> {
+    let kept = s.slot.start + rename.title_prefix(&s.name);
+    s.inner
+        .iter()
+        .filter(|(r, _)| !(s.slot.start <= r.start && r.end <= s.slot.end) || kept <= r.start)
+        .map(|(_, i)| (0..0, i.clone()))
+        .collect()
 }
 
 /// Lean `compact`: adjacent text atoms merge; an empty text atom goes.
@@ -408,7 +492,11 @@ fn map_content(rename: &Rename, skip: bool, c: &Content) -> Content {
             .iter()
             .map(|h| {
                 let text: Vec<Atom> = map(&h.text);
-                // A respelled key site renames the entry's key.
+                // Lean `mapHeader`: the first key site's result names the key,
+                // else the key stays. The model's key site is named by the
+                // parser's key; this reader's is named by the authored
+                // spelling (`Old::` is `Old`), so its result is normalized as
+                // the parser normalizes a key.
                 let key = text_sites(&text)
                     .find(|s| s.kind == SiteKind::PropertyKey)
                     .map_or_else(|| h.key.clone(), |s| crate::doc::property_key_norm(&s.name));
@@ -433,9 +521,13 @@ fn map_content(rename: &Rename, skip: bool, c: &Content) -> Content {
 /// Lean `eraseSite`.
 fn erase_site(s: &Site) -> Site {
     Site {
+        kind: s.kind,
+        context: s.context,
+        name: s.name.clone(),
+        native: s.native.clone(),
         slot: 0..0,
         within: None,
-        ..s.clone()
+        inner: s.inner.iter().map(|(_, i)| (0..0, erase_site(i))).collect(),
     }
 }
 
@@ -489,12 +581,10 @@ fn text_string(text: &[Atom]) -> String {
         .collect()
 }
 
-/// Lean `headerKey`: the entry's property key as the parser reads it, which
-/// follows the model text (O6, "keys are compared as the parser reads them")
-/// and the corrected Lean (manager ruling Q-c, 2026-11-16). The r6 Lean takes
-/// the first property-key site's name, which is "" for every key that has no
-/// site (an OG built-in key such as `icon`), so two such entries would clash.
-/// A renamed key site renames the key ([`map_content`]).
+/// Lean `headerKey` (`Header.key`, cm-cut6k): the entry's property key as the
+/// parser reads it, present also for a key with no key site (an OG built-in
+/// key such as `icon`); manager ruling Q-c, 2026-11-16. A renamed key site
+/// renames the key ([`map_content`], Lean `mapHeader`).
 fn header_key(h: &Header) -> &str {
     &h.key
 }
@@ -545,27 +635,27 @@ fn semantic(c: &Content) -> Semantic {
     }
 }
 
-/// Lean `uniqueNames`: one name per reading identity, the first kept.
+/// Lean `uniqueNames`: one name per reading identity, the first kept. One
+/// identity per name, kept in a set.
 fn unique_names(rename: &Rename, names: Vec<String>) -> Vec<String> {
-    let mut kept: Vec<String> = Vec::new();
-    for n in names {
-        if !kept
-            .iter()
-            .any(|k| rename.identity(k) == rename.identity(&n))
-        {
-            kept.push(n);
-        }
-    }
-    kept
+    let mut seen = BTreeSet::new();
+    names
+        .into_iter()
+        .filter(|n| {
+            step();
+            seen.insert(rename.identity(n))
+        })
+        .collect()
 }
 
 /// Lean `allocate`: a property whose key is not yet taken joins and takes
-/// its key; every other header entry is left over. Input order kept.
-fn allocate(mut keys: Vec<String>, headers: &[Header]) -> (Vec<Header>, Vec<Header>) {
+/// its key; every other header entry is left over. Input order kept; the
+/// taken keys are a set.
+fn allocate<'h>(mut keys: HashSet<&'h str>, headers: &'h [Header]) -> (Vec<Header>, Vec<Header>) {
     let (mut joined, mut left) = (Vec::new(), Vec::new());
     for h in headers {
-        if h.role == HeaderRole::Property && !keys.iter().any(|k| k == header_key(h)) {
-            keys.push(header_key(h).to_owned());
+        step();
+        if h.role == HeaderRole::Property && keys.insert(header_key(h)) {
             joined.push(h.clone());
         } else {
             left.push(h.clone());
@@ -614,7 +704,7 @@ fn allocation(source: &Semantic, target: &Semantic) -> (Vec<Header>, Vec<Header>
         .header
         .iter()
         .filter(|h| h.role == HeaderRole::Property)
-        .map(|h| header_key(h).to_owned())
+        .map(header_key)
         .collect();
     allocate(keys, &source.header)
 }
@@ -680,16 +770,22 @@ pub fn matches(expected: &Semantic, observed: &Content, survivor: bool) -> bool 
     }
 }
 
-/// Lean `List.Perm`, O(n²) over a page's header entries.
+/// Lean `List.Perm`: the same entries with the same multiplicities, counted
+/// in a map (each entry hashed once).
 fn is_permutation(a: &[Header], b: &[Header]) -> bool {
-    let mut left: Vec<&Header> = b.iter().collect();
+    let mut count: HashMap<&Header, usize> = HashMap::new();
+    for h in b {
+        step();
+        *count.entry(h).or_default() += 1;
+    }
     a.len() == b.len()
-        && a.iter().all(|h| match left.iter().position(|x| *x == h) {
-            Some(at) => {
-                left.swap_remove(at);
-                true
-            }
-            None => false,
+        && a.iter().all(|h| {
+            step();
+            count.get_mut(h).is_some_and(|n| {
+                let left = *n > 0;
+                *n = n.saturating_sub(1);
+                left
+            })
         })
 }
 

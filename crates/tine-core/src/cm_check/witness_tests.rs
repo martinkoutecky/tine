@@ -1,7 +1,7 @@
 //! `expected` against the r6 witness matrix, read through Tine's parser.
 //!
 //! The fixture is a byte copy of
-//! `tine-agents/runtime/research-bulk/cm-cut6/work/witness-fixtures-r6.json`, generated from the
+//! `tine-agents/runtime/research-bulk/cm-cut6k/work/witness-fixtures-r6-headerkey.json`, generated from the
 //! Lean model (`CutFixtureData.lean`); it is never edited by hand (its SHA-256 is pinned below).
 //! The matrix holds texts, not observations: each row's before files are observed with
 //! [`observe`], the expected observation of each kept file is computed with [`expected`] and
@@ -161,7 +161,7 @@ fn the_fixture_is_the_generated_matrix() {
     let hex: String = digest.iter().map(|b| format!("{b:02x}")).collect();
     assert_eq!(
         hex,
-        "140479d80ccbdaacae6ec9b0159f666d4baa412c3d1be879927dd873ee26b5ed"
+        "9af5d0f09a4d9cfb9dc8d379ff73555a14a15dc60a5b518c63f8765226c2dd3f"
     );
 }
 
@@ -172,7 +172,7 @@ fn expected_matches_every_admitted_witness_row() {
     let matrix: Value = serde_json::from_str(MATRIX).unwrap();
     let days = days();
     let rows = matrix["fixtures"].as_array().unwrap();
-    assert_eq!(rows.len(), 32);
+    assert_eq!(rows.len(), 36);
     let unexpressed: Vec<&str> = NOT_EXPRESSIBLE.iter().map(|r| r.0).collect();
     let mut failed = Vec::new();
     for row in rows {
