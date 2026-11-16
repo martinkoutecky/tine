@@ -98,7 +98,11 @@ fn drawer_step() {
 struct Line {
     range: Range<usize>,
     content: Range<usize>,
+    /// The key as the reader compares keys, after the name map (O6 compares
+    /// keys after O1/O7), and the value.
     property: Option<(String, String)>,
+    /// The property key's bytes.
+    key: Range<usize>,
     /// The Org head drawer (index into `Header::drawers`) holding this line.
     drawer: Option<usize>,
     alias: Option<Alias>,
@@ -213,6 +217,7 @@ impl Header {
                     // Keys as the reader compares them (`DocBlock::property`).
                     property: found
                         .map(|p| (tine_core::doc::property_key_norm(&p.key), p.value.clone())),
+                    key: found.map_or(0..0, |p| bytes(&p.key_range)),
                     drawer: {
                         while boxes.get(cursor).is_some_and(|&(_, close)| close < at) {
                             drawer_step();
@@ -548,8 +553,17 @@ pub fn propose<'f>(
     let mut trace = TextTrace::default();
     let mut unrealized = Vec::new();
     let mut rewritten = HashSet::new();
+    let fmt = if org { Format::Org } else { Format::Md };
     for (file, text) in [target_text, source_text].into_iter().enumerate() {
-        let proposal = refs::rename_proposal(text, org, links, queries, format)?;
+        let mut proposal = refs::rename_proposal(text, org, links, queries, format)?;
+        // O1 maps the file's own title too (`mapAtom`/`titleParts`), through
+        // its one producer, before O6 allocates: a source title that becomes
+        // a leftover line is written as the mapped title.
+        if let Some(mapped) = tine_core::model::page_title_from_preamble(text, fmt)
+            .and_then(|title| refs::renamed_page_name(&title, links).map(|n| n.into_owned()))
+        {
+            proposal.rebind_title(org, &mapped)?;
+        }
         let edits: Vec<_> = proposal
             .trace
             .pieces
@@ -563,6 +577,17 @@ pub fn propose<'f>(
                     .map(|s| (p.range.clone(), s.clone()))
             })
             .collect();
+        // O6 compares keys after O1/O7 (`mapHeader`): a key site the map
+        // rewrites is one edit over the key's bytes (`explicit_property_key`),
+        // and the mapped key is what the parser reads from its replacement.
+        let rewritten_keys: HashMap<_, _> = edits.iter().map(|(r, s)| (r.clone(), s)).collect();
+        for line in &mut headers[file].lines {
+            if let Some((key, _)) = &mut line.property {
+                if let Some(to) = rewritten_keys.get(&line.key) {
+                    *key = tine_core::doc::property_key_norm(to);
+                }
+            }
+        }
         let start = trace.pieces.len();
         trace.add_input(text, &edits, &headers[file].cuts(text))?;
         let wrappers: HashSet<_> = proposal
@@ -860,7 +885,6 @@ pub fn propose<'f>(
         // convention-following terminator can separate the lines here.
         return Err(RealizationError::FusedLineEnding);
     }
-    let fmt = if org { Format::Org } else { Format::Md };
     if org && leftover {
         // A leftover line must stay inside its quote (a line reading
         // `#+END_QUOTE` would end it): leftover lines are not page properties.

@@ -142,8 +142,10 @@ fn rename_merge_keeps_survivor_identity_and_joins_aliases() {
     );
     assert!(merged.contains("- survivor block\n"), "{merged}");
     assert!(merged.contains("- source block\n"), "{merged}");
+    // O1 maps the title before O6 demotes it (`mapAtom`, `leftoverPayload`):
+    // the leftover line names the destination.
     assert!(
-        merged.contains("title:: Old"),
+        merged.contains("-\n  title:: New\n"),
         "the source title survives as ordinary block text: {merged}"
     );
     let graph = store.whole_graph().unwrap();
@@ -435,11 +437,12 @@ fn org_merge_keeps_the_source_directives() {
     let merged = read(&root, "pages/New.org");
     // O6: the united `#+ALIAS:` leaves no remnant; the title and the clashing
     // `#+CATEGORY: work` are leftover lines, which Tine still reads in the
-    // quote (references kept, so `leftoverReference` does not refuse).
+    // quote (references kept, so `leftoverReference` does not refuse). O1
+    // maps the title before O6 demotes it: it names the destination.
     assert_eq!(
         merged,
         "#+ALIAS: Kept, Former\n#+CATEGORY: home\n* survivor block\n\
-         *\n#+BEGIN_QUOTE\n#+TITLE: Old\n#+CATEGORY: work\n#+END_QUOTE\n* free text\n* source block\n"
+         *\n#+BEGIN_QUOTE\n#+TITLE: New\n#+CATEGORY: work\n#+END_QUOTE\n* free text\n* source block\n"
     );
     let graph = store.whole_graph().unwrap();
     for name in ["New", "Former", "Kept"] {

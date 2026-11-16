@@ -58,6 +58,57 @@ fn merged(src: &str, dst: &str, org: bool) -> Result<(String, PageDto), String> 
     Ok((bytes, doc))
 }
 
+/// The rename-selected merge: rename `old` to `new`, confirming the merge
+/// into the existing `new` page; `files` are (stem, text) pairs written under
+/// `pages/`. The model maps the name (O1/O7) in both files before O6 merges
+/// them. Returns the survivor's bytes, or the refusal with every file
+/// unchanged.
+fn rename_merged(
+    files: &[(&str, &str)],
+    old: &str,
+    new: &str,
+    org: bool,
+) -> Result<String, String> {
+    let dir = tempfile::tempdir().unwrap();
+    fs::create_dir(dir.path().join("pages")).unwrap();
+    fs::create_dir(dir.path().join("logseq")).unwrap();
+    fs::write(
+        dir.path().join("logseq/config.edn"),
+        "{:file/name-format :triple-lowbar}\n",
+    )
+    .unwrap();
+    let ext = if org { "org" } else { "md" };
+    let path = |stem: &str| format!("pages/{}.{ext}", stem.replace('/', "___"));
+    for (stem, text) in files {
+        fs::write(dir.path().join(path(stem)), text).unwrap();
+    }
+    let store = Arc::new(Store::open(dir.path(), Default::default()).unwrap().0);
+    let host = crate::test_host(&store);
+    let survivor = path(new);
+    let done = pages::rename_or_merge_page(&store, &host, old, new, None, Some(&survivor), &[]);
+    if let Err(error) = done {
+        for (stem, text) in files {
+            assert_eq!(
+                fs::read_to_string(dir.path().join(path(stem))).unwrap(),
+                *text
+            );
+        }
+        return Err(error.to_string());
+    }
+    assert!(!dir.path().join(path(old)).exists());
+    let bytes = fs::read_to_string(dir.path().join(&survivor)).unwrap();
+    let id = tine_core::model::PageId::from(survivor.as_str());
+    assert!(
+        refs_same(&store.page(&id).unwrap().doc.name, new),
+        "P3: the survivor keeps its name"
+    );
+    Ok(bytes)
+}
+
+fn refs_same(a: &str, b: &str) -> bool {
+    tine_core::refs::page_key(a) == tine_core::refs::page_key(b)
+}
+
 /// The survivor's alias members as Tine reads them from its header.
 fn aliases(doc: &PageDto, org: bool) -> Vec<String> {
     tine_core::page_header::page_header_text(
@@ -518,5 +569,211 @@ fn o6_text_before_the_first_block_is_that_files_first_block() {
         let (tp, sp) = (prose(dst), prose(src));
         assert!(at(&tp) < at("target"), "{rows:?}");
         assert!(at("target") < at(&sp) && at(&sp) < at("source"), "{rows:?}");
+    }
+}
+
+/// O6 compares keys "after the O1/O7 transformations" (`CutObserve.lean`
+/// `mapHeader`, `expectedContent`): in a rename-selected merge a property key
+/// that names the renamed page is the destination's key before allocation,
+/// in both files, as the parser reads the mapped key.
+#[test]
+fn o6_rename_merge_allocates_by_the_mapped_keys() {
+    let _guard = crate::integration_lock();
+    for (org, files, want) in [
+        // The reviewer's input: the source key becomes the survivor's.
+        (
+            false,
+            [
+                ("Old", "old:: x\n- source\n"),
+                ("New", "new:: y\n- target\n"),
+            ],
+            "new:: y\n- target\n-\n  new:: x\n- source\n",
+        ),
+        (
+            true,
+            [
+                ("Old", "#+old: x\n* source\n"),
+                ("New", "#+new: y\n* target\n"),
+            ],
+            "#+new: y\n* target\n*\n#+BEGIN_QUOTE\n#+new: x\n#+END_QUOTE\n* source\n",
+        ),
+        // The survivor's own key is a renamed site.
+        (
+            false,
+            [
+                ("Old", "new:: x\n- source\n"),
+                ("New", "old:: y\n- target\n"),
+            ],
+            "new:: y\n- target\n-\n  new:: x\n- source\n",
+        ),
+        // Two source keys that coincide only after the map: the first joins.
+        (
+            false,
+            [
+                ("Old", "old:: a\nnew:: b\n- source\n"),
+                ("New", "k:: v\n- target\n"),
+            ],
+            "k:: v\nnew:: a\n- target\n-\n  new:: b\n- source\n",
+        ),
+    ] {
+        assert_eq!(
+            rename_merged(&files, "Old", "New", org).unwrap(),
+            want,
+            "{files:?}"
+        );
+    }
+}
+
+/// A namespace key: O1 maps `old/k` to `new/k` (`siteResult` maps every site
+/// kind through `nameMap`), so it clashes with the survivor's `new/k`. Red:
+/// the reference rewriter maps a property key only by its exact name
+/// (`refs_rename.rs` `Renames::keys`), not by namespace prefix, in every
+/// rename. That file is outside this slice; the writer allocates by the key
+/// the rewriter writes.
+#[test]
+#[ignore = "O1 gap in the reference rewriter (namespace property keys), outside the merge writer"]
+fn o6_rename_merge_maps_a_namespace_key() {
+    let _guard = crate::integration_lock();
+    let files = [
+        ("Old", "old/k:: x\n- source\n"),
+        ("New", "new/k:: y\n- target\n"),
+    ];
+    assert_eq!(
+        rename_merged(&files, "Old", "New", false).unwrap(),
+        "new/k:: y\n- target\n-\n  new/k:: x\n- source\n"
+    );
+}
+
+/// O1 includes the file's title, and O6 demotes the transformed title
+/// (`mapAtom`/`titleParts`, `leftoverPayload`): the source's title, now a
+/// leftover line, names the destination. A title that only starts with the
+/// old name keeps its namespace tail; one that does not name a renamed page
+/// is unchanged.
+#[test]
+fn o6_rename_merge_demotes_the_mapped_title() {
+    let _guard = crate::integration_lock();
+    for (org, files, old, new, want) in [
+        (
+            false,
+            vec![("Old", "title:: Old\n- source\n"), ("New", "- target\n")],
+            "Old",
+            "New",
+            "- target\n-\n  title:: New\n- source\n",
+        ),
+        (
+            true,
+            vec![("Old", "#+TITLE: Old\n* source\n"), ("New", "* target\n")],
+            "Old",
+            "New",
+            "* target\n*\n#+BEGIN_QUOTE\n#+TITLE: New\n#+END_QUOTE\n* source\n",
+        ),
+        // Case only: the title reads as the page, so it names the destination.
+        (
+            false,
+            vec![("Old", "title:: old\n- source\n"), ("New", "- target\n")],
+            "Old",
+            "New",
+            "- target\n-\n  title:: New\n- source\n",
+        ),
+        // A namespace source moved by its parent's rename: only the old
+        // prefix is replaced (`titlePrefix`), the tail is kept.
+        (
+            false,
+            vec![
+                ("Old", "- parent\n"),
+                ("Old/child", "title:: Old/child\n- source\n"),
+                ("New/child", "- target\n"),
+            ],
+            "Old/child",
+            "New/child",
+            "- target\n-\n  title:: New/child\n- source\n",
+        ),
+    ] {
+        assert_eq!(
+            rename_merged(&files, old, new, org).unwrap(),
+            want,
+            "{files:?}"
+        );
+    }
+}
+
+/// O6's alias union in a rename-selected merge reads the members after the
+/// map: a member naming the old page names the destination, so it reads as
+/// a member equal to the survivor's name, and one spelled as that name is the
+/// same member.
+#[test]
+fn o6_rename_merge_unites_the_mapped_alias_members() {
+    let _guard = crate::integration_lock();
+    for (org, files, want) in [
+        (
+            false,
+            [
+                ("Old", "alias:: New, X\n- source\n"),
+                ("New", "alias:: Old\n- target\n"),
+            ],
+            "alias:: New, X\n- target\n- source\n",
+        ),
+        (
+            false,
+            [("Old", "alias:: Old\n- source\n"), ("New", "- target\n")],
+            "alias:: New\n- target\n- source\n",
+        ),
+        (
+            true,
+            [
+                ("Old", "#+alias: New, X\n* source\n"),
+                ("New", "#+alias: Old\n* target\n"),
+            ],
+            "#+alias: New, X\n* target\n* source\n",
+        ),
+    ] {
+        assert_eq!(
+            rename_merged(&files, "Old", "New", org),
+            Ok(want.to_owned()),
+            "{files:?}"
+        );
+    }
+}
+
+/// P4: only bytes the parser does not report as content are layout. Content
+/// that looks like layout (a blank line inside a block, a code block or a
+/// quote, a literal drawer frame in a block body, Markdown `*` and `+` lines,
+/// Org prose before a later directive) survives the merge byte for byte,
+/// while a blank line in the source header is dropped (not a leftover line).
+#[test]
+fn o6_layout_shaped_content_survives_the_merge() {
+    let _guard = crate::integration_lock();
+    let md_body = "- a\n\n  b\n\
+                   - ```\n  :PROPERTIES:\n\n  -\n  :END:\n  ```\n\
+                   - > q\n  >\n  > r\n\
+                   - body\n  :PROPERTIES:\n  :END:\n\
+                   - c\n  *\n  +\n  * star\n  + plus\n";
+    let org_body = "* a\n\n  b\n\
+                    * code\n#+BEGIN_SRC\n:PROPERTIES:\n\n:END:\n#+END_SRC\n\
+                    * quote\n#+BEGIN_QUOTE\n\n:END:\n#+END_QUOTE\n";
+    for (org, src, dst, want) in [
+        (
+            false,
+            format!("k:: s\n\n{md_body}"),
+            "k:: t\n- target\n".to_owned(),
+            format!("k:: t\n- target\n-\n  k:: s\n{md_body}"),
+        ),
+        (
+            true,
+            format!("#+k: s\n\n{org_body}"),
+            "#+k: t\n* target\n".to_owned(),
+            format!("#+k: t\n* target\n*\n#+BEGIN_QUOTE\n#+k: s\n#+END_QUOTE\n{org_body}"),
+        ),
+        // Org prose before a later directive is header text: each line is a
+        // leftover line, and the blank line between them is not one (O6).
+        (
+            true,
+            "free text\n\n#+k: s\n* source\n".to_owned(),
+            "#+k: t\n* target\n".to_owned(),
+            "#+k: t\n* target\n*\n#+BEGIN_QUOTE\nfree text\n#+k: s\n#+END_QUOTE\n* source\n"
+                .to_owned(),
+        ),
+    ] {
+        assert_eq!(bytes(merged(&src, &dst, org), &src), want, "{src:?}");
     }
 }

@@ -30,7 +30,11 @@ list can be a name, including its quotes. A wholly quoted value has no members.
 
 A source property joins the survivor's header when neither the survivor nor an
 earlier joined entry has its key, keys compared as the reader compares them
-(`property_key_norm`). Existing target Org drawer frames remain in order;
+(`property_key_norm`). In a rename-selected merge both files are read after
+the name map, before allocation: a key the rename rewrites is compared as its
+new key, and the source's own title, written as a leftover line, names the
+destination (the title's one producer, `RenameProposal::rebind_title`).
+Existing target Org drawer frames remain in order;
 joined drawer entries enter the target's last drawer, else one new drawer.
 Source titles, clashing or repeated properties and other source header lines
 are the leftover lines, in order, each its own line without its structural

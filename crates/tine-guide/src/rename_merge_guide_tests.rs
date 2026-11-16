@@ -11,6 +11,8 @@ fn rename_merge_and_journal_rename_proposals_are_documented_in_the_bundled_guide
         "use their first spelling",
         // CM step 2, model r6 O6: union by reading, survivor header, leftover.
         "the page that remains keeps its own header",
+        // Review round 2: keys and the leftover title after the rename's map.
+        "`old::` and `new::` are then one key",
         "names that read as the same page",
         "made only when there are such lines",
         "Org source header lines, drawer entries included, stay inside a quote",
