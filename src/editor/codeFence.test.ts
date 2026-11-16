@@ -1,5 +1,7 @@
 import { describe, expect, it } from "vitest";
-import { codeBodyExitTrim, codeBodyJoin, codeBodyProjection, codeFenceOnly, codeLanguageCaret, codeLanguageChange, codeLanguageInput } from "./codeFence";
+import { codeBodyExitTrim, codeBodyJoin, codeBodyProjection, codeFenceOnly, codeLanguageCaret, codeLanguageChange, codeLanguageInput, codeSourceCaret } from "./codeFence";
+import { parseBlock } from "../render/parse";
+import { FORMATS, OPENERS, codeRaw, literalOf, needsSeparator } from "./codeLanguageOpeners.test.support";
 
 describe("codeFenceOnly", () => {
   it("detects a whole-block markdown fence with a language", () => {
@@ -264,5 +266,50 @@ describe("codeLanguageChange", () => {
     expect(codeLanguageChange(before, before.replace(" rust", "rust"), "org")).toBeNull();
     expect(codeLanguageChange(before, before.replace("body", "edited"), "org")).toBeNull();
     expect(codeLanguageChange("", before.replace(" rust", "rust"), "org")).toBeNull();
+  });
+});
+
+// Every opener form the routed `components/Page.codeLanguage.test.tsx` cannot afford to mount with every entry
+// method (the owners below decide the outcome; the routed test mounts each form once per engine/format/mixed).
+describe("language label over every opener form (the pure owners behind the routed entry methods)", () => {
+  const cases = FORMATS.flatMap(format => OPENERS.flatMap(opener => [false, true].map(mixed => ({ format, ...opener, mixed }))));
+  it.each(cases)("activation lands on the language and every input shape saves it: %j", ({ format, open, close, lang, mixed }) => {
+    const raw = codeRaw({ open, close, lang }, mixed);
+    const literal = literalOf(open);
+    const parsed = parseBlock(raw, format === "org").find(block => block.kind === literal)!;
+    expect(parsed).toMatchObject(literal === "src" ? { kind: "src", lang } : { kind: "example" });
+    const code = (parsed as { code: string }).code;
+    // Activation: the rendered label hands the fence's parser byte to codeSourceCaret; a label click on a block
+    // already being edited asks codeLanguageCaret. Both land on the language slot.
+    const at = codeSourceCaret(raw, format, (parsed as { span: [number, number] }).span[0])!;
+    expect(codeLanguageCaret(raw, format)).toBe(at);
+    expect(raw.slice(at, at + lang.length)).toBe(lang);
+    const expected = raw.slice(0, at) + (needsSeparator(open) ? " " : "") + "rust" + raw.slice(at + lang.length);
+    const inserted = raw.slice(0, at) + "rust" + raw.slice(at + lang.length);
+    const reads = (saved: string) => {
+      expect(saved).toBe(expected);
+      expect(parseBlock(saved, format === "org").find(block => block.kind === literal)).toMatchObject(
+        literal === "src" ? { kind: "src", lang: "rust", code } : { kind: "example", code });
+    };
+    // Whole-buffer commits (textarea commit, paste, drop, replacement, IME finish, plain input).
+    reads(codeLanguageChange(raw, inserted, format)?.value ?? inserted);
+    // CM6 per-transaction filter: one replacement of the selected language ...
+    const one = codeLanguageInput(inserted, format, at + 4, "rust", lang);
+    reads(one ? one.value : inserted);
+    // ... and typing "rust" a character at a time over the selection (CM6 filter, then textarea commit).
+    let cm = raw, cmCaret = at, ta = raw, taCaret = at;
+    for (const [i, ch] of [..."rust"].entries()) {
+      const replaced = i === 0 ? lang : "";
+      const next = cm.slice(0, cmCaret) + ch + cm.slice(cmCaret + replaced.length);
+      const cmEdit = codeLanguageInput(next, format, cmCaret + 1, ch, replaced);
+      cm = cmEdit?.value ?? next; cmCaret = cmEdit?.caret ?? cmCaret + 1;
+      const typedTa = ta.slice(0, taCaret) + ch + ta.slice(taCaret + replaced.length);
+      const taEdit = codeLanguageChange(ta, typedTa, format);
+      ta = taEdit?.value ?? typedTa; taCaret = taEdit?.caret ?? taCaret + 1;
+    }
+    reads(cm);
+    reads(ta);
+    // Activation alone and a no-op commit never rewrite a byte.
+    expect(codeLanguageChange(raw, raw, format)).toBeNull();
   });
 });
