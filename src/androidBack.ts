@@ -77,8 +77,8 @@ export type AndroidRootCloseResult =
   | "exit_failed";
 
 /** Once frontend preparation is accepted the graph is durable, and the only
- * remaining step is the activity exit. Direct Files has no native runtime to
- * drain before it (ADR 0066). */
+ * remaining step is the activity exit. There is no native storage runtime to
+ * drain before it. */
 export enum AndroidRootClosePhase {
   Idle = "Idle",
   PreparingFrontend = "PreparingFrontend",

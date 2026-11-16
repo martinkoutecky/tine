@@ -3,7 +3,7 @@
 // disposable 50×10 editable grid overlay (three auto-fit strategies + a no-grid
 // control), and measures keystroke→paint and resize-reflow latency in-page via
 // double-rAF. No app code is touched; results feed the go/no-go gate in
-// docs/plans/sheets-progress.md.
+// the Sheets build notes (removed when Sheets shipped; see git history).
 //
 // Usage: DISPLAY=:99 node scripts/spike-sheets-perf.mjs
 import { spawn } from "node:child_process";

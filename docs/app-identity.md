@@ -175,7 +175,7 @@ as follows:
 
 - `logseq/.tine-trash/` and `assets/.tine-restore-recovery/` are shared.
   og writes and reads the same layouts.
-- `.tine-sync/` (ex-Managed Storage, ADR 0066) is read by neither build and
+- `.tine-sync/` (left by Managed Storage, which no longer exists) is read by neither build and
   left alone.
 - The write-probe sentinels (`.tine-capability-*`, `.tine-write-probe-*`) are
   transient.
