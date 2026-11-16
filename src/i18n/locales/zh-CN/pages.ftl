@@ -85,4 +85,6 @@ rename-refused-not-a-page = 无法重命名“{ $name }”：没有页面或别�
 rename-refused-day = 无法重命名“{ $name }”：这是一个日记日期，日期不会改名。
 rename-refused-alias-held = 无法重命名：“{ $alias }”是页面“{ $page }”的别名。请换一个名称，或先从“{ $page }”中移除该别名。
 rename-refused-conflict-markers = 无法重命名：{ $file } 含有未解决的冲突标记，移动它需要修改内容。请先解决冲突。
+rename-refused-capture = 无法重命名：“{ $name }”会变成“{ $image }”，而它已是页面“{ $page }”。请先重命名或合并该页面。
+rename-refused-contested = 无法重命名：多个文件都声明了“{ $name }”（{ $files }）。请先将其中一个合并到另一个，或移除其中一个。
 rename-alias-choice-stale-what = 重命名

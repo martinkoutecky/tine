@@ -16,7 +16,11 @@ pub use rename_plan::{RenameBlocked, RenameChoice, RenamedPage};
 #[path = "pages_rename_offer.rs"]
 mod rename_offer;
 pub use rename_offer::{rename_offer, rename_page_as, RenameOffer};
+#[path = "pages_rename_report.rs"]
+mod rename_report;
 use rename_plan::{plan_rename, RenamePlan};
+use rename_report::{site_exceptions, IncompleteRename};
+pub use rename_report::{Disposition, RenameOutcome, RenameReport, SiteException, TouchedPage};
 
 impl RenamePlan {
     /// Input policy of the host operation (STEP3 §7).
@@ -555,8 +559,11 @@ pub fn follow_page_identity(store: &Store, path: &str, old: &str) -> io::Result<
     if !matches!(graph.resolve(old, false), Resolved::Absent { .. }) {
         return Ok(IdentityFollow::default());
     }
-    let lookup = HashMap::from([(refs::normalize(old), name.clone())]);
-    let step = commit_config(store, &lookup, None)?;
+    // A title edit is not a rename request (model r6 Scope): only the one
+    // name follows, exactly.
+    let old_key = refs::normalize(old);
+    let renamed = |stored: &str| (refs::normalize(stored) == old_key).then(|| name.clone());
+    let step = commit_config(store, &renamed, None, None)?;
     let current = store.config();
     let favorites = step.favorites.or_else(|| {
         Some(crate::config::FavoritesAfter {
@@ -739,8 +746,8 @@ fn multi_rename(
         return Ok(None);
     }
     let (mut report, home) = built.into_inner().expect("planned before the operation");
-    if let Some((lookup, merged_old)) = home {
-        commit_config_after(store, &mut report, &lookup, merged_old.as_ref())?;
+    if let Some((lookup, merged_old, days)) = home {
+        commit_config_after(store, &mut report, &lookup, merged_old.as_ref(), &days)?;
     }
     Ok(Some(report))
 }
@@ -756,9 +763,14 @@ enum RenameTransaction<'s> {
         report: RenameReport,
         /// A merge's `(source, survivor)`.
         merge: Option<(PageId, PageId)>,
-        /// What the home page step needs: the rename's lookup, and the
-        /// merged source, whose home `merge-pages!` keeps.
-        home: (HashMap<String, String>, Option<String>),
+        /// What the settings step needs (O8): the rename's lookup, the merged
+        /// source, whose home `merge-pages!` keeps, and the day format (days
+        /// are pinned; after a merge, one entry per page or day).
+        home: (
+            HashMap<String, String>,
+            Option<String>,
+            tine_core::date::JournalFormat,
+        ),
     },
 }
 
@@ -811,6 +823,15 @@ fn rename_transaction<'s>(
         )?),
         None => None,
     };
+    // O7's site exceptions, from the proposals the steps write (no walk of
+    // their own): the survivor's two inputs, then each rewritten file.
+    let mut sites = Vec::new();
+    if let (Some((src, dst)), Some(survivor)) = (&merge, &merged) {
+        for (file, site) in &survivor.proposal.unrealized {
+            let path = [dst, src][*file].as_str();
+            sites.extend(site_exceptions(path, [site]));
+        }
+    }
     if let (Some((_, dst)), Some(survivor)) = (&merge, &merged) {
         tx.rewrite_refs_prepared(
             &[
@@ -884,6 +905,7 @@ fn rename_transaction<'s>(
             match refs::rename_proposal(&content, org, &lookup, &query_lookup, spelling) {
                 Ok(proposal) => {
                     names.clone_from(&proposal.rewritten);
+                    sites.extend(site_exceptions(id.as_str(), &proposal.unrealized));
                     let changed = proposal.text != content;
                     proposed = Some(proposal);
                     changed
@@ -893,7 +915,14 @@ fn rename_transaction<'s>(
         } else if moved || marked {
             rewrite(&mut names) != content || (!org && marked && own_title)
         } else if rebind {
-            let new = rewrite(&mut names);
+            let new = match refs::rename_proposal(&content, org, &lookup, &query_lookup, spelling) {
+                Ok(proposal) => {
+                    names.clone_from(&proposal.rewritten);
+                    sites.extend(site_exceptions(id.as_str(), &proposal.unrealized));
+                    proposal.text
+                }
+                Err(_) => rewrite(&mut names),
+            };
             tx.rewrite_refs(&id, rev.clone(), None, &map, TitleRebind::Own);
             new != content
         } else {
@@ -906,6 +935,7 @@ fn rename_transaction<'s>(
                 None => None,
             };
             if let Some(proposal) = prepared {
+                sites.extend(site_exceptions(id.as_str(), &proposal.unrealized));
                 names = proposal.rewritten;
                 let changed = proposal.text != content;
                 if changed {
@@ -961,9 +991,11 @@ fn rename_transaction<'s>(
     };
     skipped.sort_unstable();
     skipped.dedup();
+    sites.sort_by(|a: &SiteException, b| (&a.path, a.start).cmp(&(&b.path, b.start)));
     if edits.is_empty() && merged.is_none() {
         return Ok(RenameTransaction::Unchanged(RenameReport {
             skipped_conflicted_referrers: skipped,
+            site_exceptions: sites,
             ..RenameReport::unchanged()
         }));
     }
@@ -1021,12 +1053,13 @@ fn rename_transaction<'s>(
             touched,
             renamed,
             skipped_conflicted_referrers: skipped,
+            site_exceptions: sites,
             home_page: None,
             favorites: None,
             config_skipped: None,
         },
         merge,
-        home: (lookup, merged_old),
+        home: (lookup, merged_old, days),
     })
 }
 
@@ -1037,8 +1070,15 @@ fn commit_config_after(
     report: &mut RenameReport,
     lookup: &HashMap<String, String>,
     merged_old: Option<&String>,
+    days: &tine_core::date::JournalFormat,
 ) -> io::Result<()> {
-    match commit_config(store, lookup, merged_old) {
+    // O8: settings follow O1, the rename's one name map (namespace prefix,
+    // days pinned), so a name under the source that only a setting holds
+    // follows too.
+    let renamed = |name: &str| {
+        refs::renamed_site_name(name, lookup, Some(days)).map(std::borrow::Cow::into_owned)
+    };
+    match commit_config(store, &renamed, merged_old, merged_old.map(|_| days)) {
         Ok(step) => {
             report.home_page = step.home;
             report.favorites = step.favorites;
@@ -1058,23 +1098,25 @@ fn commit_config_after(
 /// A rename's `config.edn` step: `logseq/config.edn` (the meta area, never a
 /// page file) in ONE guarded transaction after the host's operation, so no
 /// page-host fence applies. It moves `:default-home` (a merged source,
-/// `merged_old`, keeps it: OG `merge-pages!`), `:favorites` and
-/// `:tine/favorites-page` together (`config::config_after_rename`, the one
-/// answerer). Conflicts retry with fresh bytes.
+/// `merged_old`, keeps it: OG `merge-pages!`), `:favorites` (one entry per
+/// page after a merge, `merged_days`) and `:tine/favorites-page` together
+/// (`config::config_after_rename`, the one answerer), all or none.
+/// `renamed` is the stored name's new spelling. Conflicts retry with fresh
+/// bytes.
 fn commit_config(
     store: &Store,
-    lookup: &HashMap<String, String>,
+    renamed: &dyn Fn(&str) -> Option<String>,
     merged_old: Option<&String>,
+    merged_days: Option<&tine_core::date::JournalFormat>,
 ) -> io::Result<crate::config::ConfigAfterRename> {
-    let renamed = |name: &str| lookup.get(&refs::normalize(name)).cloned();
     let home_renamed = |home: &str| {
-        let key = refs::normalize(home);
-        (merged_old != Some(&key))
-            .then(|| lookup.get(&key).cloned())
+        (merged_old != Some(&refs::normalize(home)))
+            .then(|| renamed(home))
             .flatten()
     };
     crate::retry_on_conflict("config.edn changed repeatedly during rename", || {
-        let mut step = crate::config::config_after_rename(store, &home_renamed, &renamed);
+        let mut step =
+            crate::config::config_after_rename(store, &home_renamed, renamed, merged_days);
         let Some((id, rev, bytes)) = step.write.take() else {
             return Ok(Some(step));
         };
@@ -1153,121 +1195,6 @@ fn namespace_suffix<'a>(name: &'a str, parent_key: &str) -> &'a str {
     body.match_indices('/')
         .nth(depth)
         .map_or("", |(at, _)| &body[at..])
-}
-
-/// What [`rename_or_merge_page`] did, and the page files it wrote.
-#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize)]
-pub struct RenameReport {
-    pub outcome: RenameOutcome,
-    /// Every page file moved, trashed or rewritten; empty when `Unchanged`.
-    pub touched: Vec<TouchedPage>,
-    /// Every page identity the rename moved, from its old name to the name it
-    /// wrote: the renamed page (a reference-only one too), each file-backed
-    /// namespace descendant, and each reference-only namespace member whose
-    /// references it renamed (`path: None`). Empty when `Unchanged`. The
-    /// window's navigation follows exactly this map; it never re-derives a
-    /// moved name.
-    pub renamed: Vec<RenamedPage>,
-    /// Paths of referrers carrying VCS conflict markers whose references the
-    /// rename left untouched (R-VCS-MARKERS); the UI says so. Reported once
-    /// per file.
-    pub skipped_conflicted_referrers: Vec<String>,
-    /// The new `:default-home` page name when this rename moved the home page
-    /// with it (in the rename's config.edn step, its own transaction after
-    /// the page operation); `None` otherwise.
-    pub home_page: Option<String>,
-    /// The favorites list and arrangement page name after the rename, when
-    /// the same config.edn step changed them; the frontend adopts it.
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub favorites: Option<crate::config::FavoritesAfter>,
-    /// Why the config.edn step skipped a move the rename called for
-    /// (config.edn unreadable, or a value it cannot edit safely); the rename
-    /// itself succeeded.
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub config_skipped: Option<String>,
-}
-
-impl RenameReport {
-    /// Page changes already published before a later, separate home-page
-    /// configuration transaction failed. Callers must refresh these pages
-    /// even though the overall operation returned an error. Other errors
-    /// carry no such proof and may still represent partial publication.
-    pub fn applied_before_error(error: &io::Error) -> Option<&Self> {
-        error
-            .get_ref()?
-            .downcast_ref::<IncompleteRename>()
-            .map(|error| &error.report)
-    }
-
-    /// [`Self::applied_before_error`] for a caller that has a window to refresh
-    /// and no command line to inspect (the app's rename): the same report with
-    /// the failed config write's cause in `config_skipped`. The rename happened;
-    /// home and favorites did not follow, and the window says so.
-    pub fn with_config_failure(error: &io::Error) -> Option<Self> {
-        let incomplete = error.get_ref()?.downcast_ref::<IncompleteRename>()?;
-        Some(Self {
-            config_skipped: Some(incomplete.source.to_string()),
-            ..incomplete.report.clone()
-        })
-    }
-
-    fn unchanged() -> Self {
-        Self {
-            outcome: RenameOutcome::Unchanged,
-            touched: Vec::new(),
-            renamed: Vec::new(),
-            skipped_conflicted_referrers: Vec::new(),
-            home_page: None,
-            favorites: None,
-            config_skipped: None,
-        }
-    }
-}
-
-#[derive(Debug)]
-struct IncompleteRename {
-    report: RenameReport,
-    source: io::Error,
-}
-
-impl std::fmt::Display for IncompleteRename {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(
-            f,
-            "Page files renamed, but the config.edn update (home page, favorites) failed: {}",
-            self.source
-        )
-    }
-}
-
-impl std::error::Error for IncompleteRename {
-    fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
-        Some(&self.source)
-    }
-}
-
-/// One page file a rename or merge wrote.
-#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize)]
-pub struct TouchedPage {
-    /// Graph-relative path before the operation (the frontend's page id).
-    pub path: String,
-    /// The file left this path (moved, or trashed by a merge); otherwise it
-    /// was rewritten in place.
-    pub moved: bool,
-}
-
-/// What [`rename_or_merge_page`] did; serialized lowercase for the frontend.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize)]
-#[serde(rename_all = "lowercase")]
-pub enum RenameOutcome {
-    /// Files moved and/or references rewritten.
-    Renamed,
-    /// Merged into the confirmed page (for a file-less source: its references
-    /// were repointed).
-    Merged,
-    /// Nothing was written: identical spelling, an empty `old`, or a name
-    /// that no file or reference uses.
-    Unchanged,
 }
 
 /// Rescue a stray page or journal file into a uniquely named normal page.

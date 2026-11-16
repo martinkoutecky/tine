@@ -405,9 +405,19 @@ fn own_alias_renames_in_one_step_and_conflicted_empty_target_refuses() {
         ],
     );
     let before = snapshot(&root);
-    assert!(rename_offer(&store, "source", "ML", None).is_err());
+    // Slice 2: the refusal is the model's named reason (O3, O4 contested),
+    // shown by the dialog, not an untyped error.
+    let contested = RenameBlocked::Contested {
+        name: "ML".into(),
+        files: vec!["pages/ML.md".into(), "pages/ML.org".into()],
+    };
+    assert!(matches!(
+        rename_offer(&store, "source", "ML", None).unwrap(),
+        RenameOffer::Refused { reason, .. } if reason == contested
+    ));
     for choice in [RenameChoice::Rename, RenameChoice::MergeInto("pages/ML.md")] {
-        assert!(rename(&store, "source", "ML", choice).is_err());
+        let error = rename(&store, "source", "ML", choice).unwrap_err();
+        assert_eq!(RenameBlocked::of(&error), Some(&contested));
     }
     assert_eq!(snapshot(&root), before);
 }
@@ -730,9 +740,9 @@ fn rename_onto_a_day_offers_a_merge_into_its_journal() {
 }
 
 /// R12 / M-Q6, CM-OWN-CHILD: the own namespace child is refused when used
-/// (a file claims it, or a page, the renamed one included, declares it as an
-/// alias), with the reason, whatever the answer; nothing is written. A
-/// merely linked child name is free.
+/// (a file claims it, or the renamed page declares it as an alias), with the
+/// reason, whatever the answer; nothing is written. Declared by another page,
+/// O3's alias-held refusal comes first. A merely linked child name is free.
 #[test]
 fn own_namespace_child_refuses_when_used() {
     let _guard = crate::integration_lock();
@@ -746,16 +756,6 @@ fn own_namespace_child_refuses_when_used() {
             ],
             "Foo",
             "Foo/bar",
-        ),
-        (
-            "alias",
-            &[
-                ("pages/a.md", "- ay\n"),
-                ("pages/o.md", "alias:: a/x\n\n- oh\n"),
-                ("pages/p.md", "- see [[a]] and [[a/x]]\n"),
-            ],
-            "a",
-            "a/x",
         ),
         (
             "own-alias",
@@ -806,6 +806,33 @@ fn own_namespace_child_refuses_when_used() {
         );
         assert_eq!(snapshot(&root), before, "{label}: nothing written");
     }
+    // The own child declared as another page's alias: O3 decides the typed
+    // name before O4 (Lean `selectCore`: no file holds `a/x`, `o` declares
+    // it, so `.aliasHeld "pages/o.md"` before `preSafety`'s ownChild), for
+    // every answer; nothing is written.
+    let (root, store) = fixture(
+        "alias",
+        &[
+            ("pages/a.md", "- ay\n"),
+            ("pages/o.md", "alias:: a/x\n\n- oh\n"),
+            ("pages/p.md", "- see [[a]] and [[a/x]]\n"),
+        ],
+    );
+    let before = snapshot(&root);
+    let held = RenameBlocked::AliasHeld {
+        alias: "a/x".into(),
+        page: "o".into(),
+        path: "pages/o.md".into(),
+    };
+    assert!(matches!(
+        rename_offer(&store, "a", "a/x", None).unwrap(),
+        RenameOffer::Refused { reason, .. } if reason == held
+    ));
+    for choice in [RenameChoice::Rename, RenameChoice::MergeInto("pages/o.md")] {
+        let error = rename(&store, "a", "a/x", choice).unwrap_err();
+        assert_eq!(RenameBlocked::of(&error), Some(&held), "{error}");
+    }
+    assert_eq!(snapshot(&root), before, "alias: nothing written");
     // Merely linked: unused, a plain rename.
     let (root, store) = fixture(
         "unused",
@@ -941,3 +968,15 @@ fn case_only_rename_onto_another_pages_file_refuses_with_the_reason() {
 /// CM step 2 slice 1 (model r6): the request-level rules, on these helpers.
 #[path = "cm_requests.rs"]
 mod cm_requests;
+
+/// CM step 2 slice 2 (model r6 O4): the touched names, on these helpers.
+#[path = "cm_touched.rs"]
+mod cm_touched;
+
+/// CM step 2 slice 2 (model r6 O7): the report's site exceptions.
+#[path = "cm_report.rs"]
+mod cm_report;
+
+/// CM step 2 slice 2 (model r6 O8): the settings step.
+#[path = "cm_settings.rs"]
+mod cm_settings;

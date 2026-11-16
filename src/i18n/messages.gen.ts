@@ -1151,6 +1151,8 @@ export interface MessageArgs {
   "graph-rewrite-config-skipped": { "page": string | number; "reason": string | number };
   "graph-rewrite-conflicted-referrers": { "count": number; "files": string | number; "page": string | number };
   "graph-rewrite-rename-failed": { "error": string | number };
+  "graph-rewrite-respelled-keys": { "count": number; "files": string | number; "name": string | number; "page": string | number };
+  "graph-rewrite-unspellable-sites": { "count": number; "files": string | number; "name": string | number; "page": string | number };
   "graph-row-menu-copy-link": {};
   "graph-row-menu-copy-path": {};
   "graph-row-menu-could-not-copy-graph-path": { "error": string | number };
@@ -2412,7 +2414,9 @@ export interface MessageArgs {
   "rename-alias-choice-stale-what": {};
   "rename-alias-choice-title": { "to": string | number };
   "rename-refused-alias-held": { "alias": string | number; "page": string | number };
+  "rename-refused-capture": { "image": string | number; "name": string | number; "page": string | number };
   "rename-refused-conflict-markers": { "file": string | number };
+  "rename-refused-contested": { "files": string | number; "name": string | number };
   "rename-refused-day": { "name": string | number };
   "rename-refused-file-taken": { "file": string | number; "page": string | number };
   "rename-refused-not-a-page": { "name": string | number };

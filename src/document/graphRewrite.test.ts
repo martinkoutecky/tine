@@ -114,6 +114,29 @@ it("names the referrers a rename left untouched because they are mid-merge (og 2
   setToasts([]);
 });
 
+// Model r6 O7: "the report lists every site it could not spell (left as it
+// was) and every property key it respelled, each with its typed location".
+it("names the files where a rename left sites unchanged or respelled a property key (model r6 O7)", async () => {
+  setToasts([]);
+  vi.spyOn(backend(), "renamePage").mockResolvedValueOnce({ outcome: "unchanged", renamed: [], touched: [],
+    site_exceptions: [
+      { path: "pages/r.org", start: 11, end: 14, kind: "tag", disposition: "unspellable" },
+      { path: "pages/r.org", start: 30, end: 33, kind: "tag", disposition: "unspellable" },
+      { path: "pages/k.md", start: 2, end: 5, kind: "propertyKey", disposition: "normalizedKey" },
+    ] });
+  installRenameRefreshHandler(() => {});
+  expect(await renamePageOnDisk("Old", "two words")).toBe("unchanged");
+  const left = toasts().find((toast) => toast.message.includes("pages/r.org"));
+  expect(left).toMatchObject({ kind: "warn", sticky: true });
+  expect(left!.message).toContain("2");
+  expect(left!.message).toContain("“two words”");
+  expect(left!.message).toContain("“Old”");
+  expect(left!.message.match(/pages\/r\.org/g)).toHaveLength(1);
+  const keys = toasts().find((toast) => toast.message.includes("pages/k.md"));
+  expect(keys!.message).toContain("key spelling");
+  setToasts([]);
+});
+
 it("says the rename happened when only the config.edn step failed after the page files moved", async () => {
   // The app's rename command answers this case with the applied report and the
   // cause in `config_skipped` (`RenameReport::with_config_failure`), not with an error.

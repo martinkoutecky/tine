@@ -31,10 +31,24 @@ fn rename_merge_and_journal_rename_proposals_are_documented_in_the_bundled_guide
         "`ML notes/x` becomes `Machine Learning/x`",
         "inside its own namespace that is already used",
         "is refused with that page's name",
+        // CM step 2 slice 2, model r6 O4 (touched names) and O7 (report).
+        "and another page is already `B/x`, or when several files claim one",
+        "Tine lists the files where that happened",
     ] {
         assert!(
             tips.contains(control),
             "missing family-16 Guide control: {control}"
         );
+    }
+    // Model r6 O7 and O8 (slice 2): the report and the settings step.
+    let pages = include_str!("templates/pages-links-references-search.md");
+    for control in [
+        "Tine lists the files where either happened",
+        "and a property key `a/x::` into `b/x::`",
+        "The label of a file link that names the page",
+        "after a merge each page is listed once in Favorites, in its first place",
+        "none of it changes and Tine says so",
+    ] {
+        assert!(pages.contains(control), "missing Guide control: {control}");
     }
 }

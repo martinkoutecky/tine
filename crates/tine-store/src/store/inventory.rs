@@ -270,6 +270,13 @@ pub enum InventoryScope<'a> {
     /// The other typed members of this name's alias group (D-20261019-AL1).
     /// A fileless day uses an unclaimed spelling if its title names another file.
     AliasGroup(&'a str),
+    /// The names strictly under `key/` (a page key) that no file claims and
+    /// that a reference names or a page declares as an alias, once per key:
+    /// with `FilesAtOrUnder`, the names a rename of `key` touches (model r6
+    /// O4). Namespace parents of these are the caller's (`refs::namespace_refs`).
+    FilelessUnder(&'a str),
+    /// The alias names this page file declares, as `All` lists each.
+    AliasesOf(&'a PageId),
     /// Every journal day a file claims in this view, once per day: the
     /// view's day index, not a directory listing.
     #[cfg(any(test, feature = "test-faults"))]
@@ -355,6 +362,15 @@ impl WholeGraph {
     /// nothing. The page header shows them (D-20261019-AL2). Cost
     /// O(component log P) over the snapshot's alias edges and real-name
     /// table; no parse and no disk access.
+    ///
+    /// [`InventoryScope::FilelessUnder`] reads the referenced-name table and
+    /// the alias relation's declared keys, both ordered by page key, from
+    /// `key/`: O(log R + log A + k (log P + C)) for k names under the key (each
+    /// resolved, C its alias declarers), no walk of unrelated names, no parse
+    /// and no disk access. Each visited key counts one namespace name visit.
+    ///
+    /// [`InventoryScope::AliasesOf`] reads the page's declared spellings from
+    /// the per-page alias index: O(log P + a log P) for a aliases.
     ///
     /// [`InventoryScope::JournalFilesBefore`] lists at most `limit` file-claimed
     /// days below an exclusive cursor, in descending order, from the existing
@@ -530,6 +546,22 @@ impl WholeGraph {
                 Arc::new(Inventory(self.page_files_at_or_under(key)))
             }
             InventoryScope::AliasGroup(name) => Arc::new(Inventory(self.alias_group(name))),
+            InventoryScope::FilelessUnder(key) => Arc::new(Inventory(self.fileless_under(key))),
+            InventoryScope::AliasesOf(id) => Arc::new(Inventory(
+                self.graph
+                    .physical_pages
+                    .positions
+                    .get(id.as_str())
+                    .and_then(|&slot| self.graph.physical_pages.get(slot))
+                    .map(|(entry, _)| {
+                        self.graph
+                            .declared_alias_spellings(&entry.path)
+                            .iter()
+                            .map(|spelling| self.named_entry(spelling))
+                            .collect()
+                    })
+                    .unwrap_or_default(),
+            )),
             #[cfg(any(test, feature = "test-faults"))]
             InventoryScope::JournalFiles => {
                 let mut entries: Vec<_> = self
@@ -708,21 +740,51 @@ impl WholeGraph {
                 .filter(|page| (page.kind == PageKind::Journal) == journal);
             match claimant {
                 Some(page) => entries.extend(self.claimed_entries(page, key)),
-                None => {
-                    let mut answer = crate::model::fileless_names::FilelessName::new(
-                        &self.journal_format,
-                        &spelling,
-                    );
-                    answer.name = spelling;
-                    entries.push(fileless_entry(
-                        answer.clone(),
-                        self.resolve(&answer.name, answer.day.is_some()),
-                    ));
-                }
+                None => entries.push(self.named_entry(&spelling)),
             }
         }
         sort_inventory(&mut entries);
         entries
+    }
+
+    /// One name as a row with no file of its own, targeting what `resolve`
+    /// gives it in this view.
+    fn named_entry(&self, name: &str) -> InventoryEntry {
+        let mut answer =
+            crate::model::fileless_names::FilelessName::new(&self.journal_format, name);
+        answer.name = name.to_owned();
+        let target = self.resolve(&answer.name, answer.day.is_some());
+        fileless_entry(answer, target)
+    }
+
+    /// [`InventoryScope::FilelessUnder`]'s entries; see [`Self::inventory`].
+    fn fileless_under(&self, key: &str) -> Vec<InventoryEntry> {
+        let prefix = format!("{key}/");
+        let mut names = std::collections::BTreeMap::new();
+        for (name_key, referrers) in self.graph.referenced_name_table().iter_from(&prefix) {
+            if !name_key.starts_with(&prefix) {
+                break;
+            }
+            crate::cost_counters::namespace_name_visit();
+            names.insert(name_key.clone(), referrers.spelling.clone());
+        }
+        for alias_key in self.graph.alias_relation().keys_from(&prefix) {
+            if !alias_key.starts_with(&prefix) {
+                break;
+            }
+            crate::cost_counters::namespace_name_visit();
+            if !names.contains_key(alias_key) {
+                if let Some(spelling) = self.graph.alias_spelling(alias_key) {
+                    names.insert(alias_key.clone(), spelling);
+                }
+            }
+        }
+        names
+            .into_values()
+            .filter(|name| tine_core::refs::is_namespace_name(name))
+            .map(|name| self.named_entry(&name))
+            .filter(|entry| !matches!(entry.target, Resolved::Existing { .. }))
+            .collect()
     }
 
     /// One entry per spelling of `page`'s claimant bucket (`key` is its page

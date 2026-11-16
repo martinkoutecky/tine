@@ -523,6 +523,16 @@ graph-rewrite-conflicted-referrers = { $count ->
    *[other] { NUMBER($count, useGrouping: 0) } 个页面仍在合并中，保留其指向“{ $page }”的引用：{ $files }。请解决合并后更新引用。
     }
 
+graph-rewrite-unspellable-sites = { $count ->
+    [one] 有一处无法写入名称“{ $name }”，仍为“{ $page }”：位于 { $files }。如有需要请手动修改。
+   *[other] 有 { NUMBER($count, useGrouping: 0) } 处无法写入名称“{ $name }”，仍为“{ $page }”：位于 { $files }。如有需要请手动修改。
+    }
+
+graph-rewrite-respelled-keys = { $count ->
+    [one] 有一个原指向“{ $page }”的属性键现在以键名写法（小写，空格改为连字符）指向“{ $name }”：位于 { $files }。
+   *[other] 有 { NUMBER($count, useGrouping: 0) } 个原指向“{ $page }”的属性键现在以键名写法（小写，空格改为连字符）指向“{ $name }”：位于 { $files }。
+    }
+
 block-link-copy-save-failed = { $kind ->
     [ref] 无法保存块 id，未复制引用。
    *[embed] 无法保存块 id，未复制嵌入。

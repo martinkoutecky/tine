@@ -275,9 +275,12 @@ fn home_and_favorites_move_together_in_the_config_step() {
 }
 
 /// A favorite that only renames onto a name already among the favorites (a
-/// reference-only favorite) leaves one entry, in the first one's place.
+/// reference-only favorite) keeps both entries: model r6 O8 keeps only the
+/// first entry of each name "after a merge", and this is a plain rename
+/// (Lean `favorites_rename`: every entry maps, none is dropped). Slice 2
+/// changed this expectation; it was one entry, `["New", "Pinned"]`.
 #[test]
-fn a_favorite_renamed_onto_another_favorite_is_deduplicated() {
+fn a_favorite_renamed_onto_another_favorite_keeps_both_entries() {
     let _integration_guard = crate::integration_lock();
     let dir = scratch("dedupe", "{:favorites [\"New\" \"Old\" \"Pinned\"]}\n");
     fs::write(dir.join("pages/Old.md"), "- old\n").unwrap();
@@ -287,8 +290,11 @@ fn a_favorite_renamed_onto_another_favorite_is_deduplicated() {
         pages::rename_or_merge_page(&store, host, "Old", "New", None, None, &[])
     })
     .unwrap();
-    assert_eq!(report.favorites.expect("moved").names, ["New", "Pinned"]);
-    assert_eq!(config(&dir), "{:favorites [\"New\" \"Pinned\"]}\n");
+    assert_eq!(
+        report.favorites.expect("moved").names,
+        ["New", "New", "Pinned"]
+    );
+    assert_eq!(config(&dir), "{:favorites [\"New\" \"New\" \"Pinned\"]}\n");
 }
 
 /// Home and favorites are independent: a rename of a page that is only a

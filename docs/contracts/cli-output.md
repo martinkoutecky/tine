@@ -603,7 +603,11 @@ references and physical descendants move without creating a placeholder page.
 Renaming a page to an alias it declares itself is one step, and the declaration stays.
 A destination another file holds, or an alias another page declares, refuses as
 `refused:page-exists` (for an alias, the message names the page it opens); merging
-requires confirmation in the app. Every other refusal of the app's rename planner (a name no
+requires confirmation in the app. The same refusal covers every other name the rename
+touches (each name under the source, from a file, a reference or any page's alias, and
+the aliases the source declares): one that would become a name another page already
+holds (the message names both spellings and that page), or one several files claim (the
+message names the files). Every other refusal of the app's rename planner (a name no
 page or alias has, a journal day as the source, a name inside the source's own namespace, a
 moved file with conflict markers that would need a rewrite) refuses as
 `refused:rename-refused` with the planner's message. All of these come before any change
@@ -641,6 +645,12 @@ unchanged without failing the rename: `report.config_skipped` says why.
 | `report.renamed[].to` | string | always | no | the name the rename gave it (its file name or title, and the references that followed) |
 | `report.renamed[].path` | string | nullable | no | graph-relative path of its file before the rename; `null` for a renamed page with no file and for a reference-only member |
 | `report.skipped_conflicted_referrers` | array of string | always | yes | referrers carrying VCS markers left unchanged; text prints each path |
+| `report.site_exceptions` | array | always | yes | every name site the rename left unchanged because it cannot spell the new name there, and every property key it wrote in key spelling (lower-cased, whitespace hyphenated) that differs from the new name; sorted by `path`, then `start`; empty when there are none; text prints one line per site |
+| `report.site_exceptions[].path` | string | always | no | graph-relative path of the file before the rename |
+| `report.site_exceptions[].start` | integer | always | no | byte offset where the site starts in that file before the rename |
+| `report.site_exceptions[].end` | integer | always | no | byte offset where the site ends (exclusive) |
+| `report.site_exceptions[].kind` | string | always | no | `link`, `tag`, `embed`, `propertyKey`, `propertyValue`, `query` or `macroArg` |
+| `report.site_exceptions[].disposition` | string | always | no | `unspellable` (left as it was) or `normalizedKey` (the key was rewritten in key spelling) |
 | `report.home_page` | string | nullable | no | new home-page title when changed |
 | `report.favorites` | object | optional | no | config.edn's favorites after the rename, present only when they changed: `names` (`:favorites`, in order) and `page` (`:tine/favorites-page`, nullable). A merged-away page's favorite moves to the survivor (deduplicated); an alias spelling stays |
 | `report.config_skipped` | string | optional | yes | why the config step left config.edn unchanged (unreadable, or a value it cannot edit safely); home and favorites may still name the old page; text prints the reason |

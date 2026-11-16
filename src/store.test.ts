@@ -2497,8 +2497,8 @@ describe("save engine (persistence)", () => {
   });
 
   // Favorites are not re-keyed here (CM step 2 batch 4, I-12): the backend's
-  // config step answers them, deduplicating a rename onto another favorite
-  // (home_rename.rs `a_favorite_renamed_onto_another_favorite_is_deduplicated`).
+  // config step answers them (model r6 O8; home_rename.rs
+  // `a_favorite_renamed_onto_another_favorite_keeps_both_entries`, cm_settings.rs).
   it("a successful rename leaves favorites to the backend and collapses old/new recent duplicates", () => {
     setFavorites([
       { name: "Old", kind: "page" },

@@ -760,6 +760,14 @@ impl ReadSnapshot {
             .cloned()
     }
 
+    /// The alias spellings the page file at `path` (absolute) declares, from
+    /// the per-page spelling index the alias relation is built from. O(log P).
+    pub(crate) fn declared_alias_spellings(&self, path: &Path) -> &[String] {
+        self.alias_spelling_index()
+            .get(path)
+            .map_or(&[], |spellings| spellings.as_slice())
+    }
+
     #[cfg(test)]
     pub(crate) fn from_page_snapshot(pages: Vec<(PageEntry, Arc<Document>)>) -> Self {
         let graph = Graph::from_page_snapshot("", pages);

@@ -1468,13 +1468,8 @@
       "r13-alias-edge-preview: A -> X: {\"destination\":\"X\",\"survivor\":null}": [
         "G3/B4: safe candidate cannot be selected through the original request"
       ],
-      "r13-alias-image-conflict: A -> B: offers/automatic": [
-        "G3/B4: offered identities: model [], Tine [{\"destination\":\"B\",\"survivor\":null}]",
-        "G9/B6: unattended cardinality 0: model allowed=false, Tine Ok(Renamed)"
-      ],
-      "r13-alias-image-conflict: A -> B: {\"destination\":\"B\",\"survivor\":null}": [
-        "G4/B3: admission: model safe=false, Tine result=Ok(Renamed); checks {\"consistent\":true,\"localClean\":false,\"noCapture\":true,\"ownership\":true,\"pairReady\":true,\"paths\":true,\"supported\":true}"
-      ],
+      "r13-alias-image-conflict: A -> B: offers/automatic": [],
+      "r13-alias-image-conflict: A -> B: {\"destination\":\"B\",\"survivor\":null}": [],
       "r13-empty-child-gains-parent: A -> B/x: offers/automatic": [
         "G9/B6: unattended cardinality 1: model allowed=true, Tine Err(\"target page identity already exists elsewhere in the graph\")"
       ],
@@ -1486,8 +1481,7 @@
         "G9/B6: unattended cardinality 0: model allowed=false, Tine Ok(Renamed)"
       ],
       "r13-favorite-image-conflict: A -> B: {\"destination\":\"B\",\"survivor\":null}": [
-        "G4/B3: admission: model safe=false, Tine result=Ok(Renamed); checks {\"consistent\":true,\"localClean\":false,\"noCapture\":true,\"ownership\":true,\"pairReady\":true,\"paths\":true,\"supported\":true}",
-        "G10/B4a: favorites: model [\"B/x\"], Tine [\"A/x\"]"
+        "G4/B3: admission: model safe=false, Tine result=Ok(Renamed); checks {\"consistent\":true,\"localClean\":false,\"noCapture\":true,\"ownership\":true,\"pairReady\":true,\"paths\":true,\"supported\":true}"
       ],
       "r13-fileless-multiple: A -> X: offers/automatic": [
         "G3/B4: offered identities: model [{\"destination\":\"X\",\"survivor\":null},{\"destination\":\"B\",\"survivor\":null},{\"destination\":\"C\",\"survivor\":null}], Tine []"
@@ -1503,7 +1497,6 @@
       ],
       "r13-fixed-favorites-setting: Favorites -> Saved: offers/automatic": [],
       "r13-fixed-favorites-setting: Favorites -> Saved: {\"destination\":\"Saved\",\"survivor\":null}": [
-        "G10/B4a: favorites: model [\"Saved\",\"Saved/virtual\"], Tine [\"Saved\", \"Favorites/virtual\"]",
         "G10/B4a: Favorites exclusion setting changed to Some(\"Saved\")",
         "G10/B4a: computed after-meaning links: model [[[\"page\",\"saved\"],[\"page\",\"target\"]],[[\"page\",\"r\"],[\"page\",\"saved\"]],[[\"page\",\"r\"],[\"page\",\"saved/virtual\"]]], actual writer [[[\"page\",\"r\"],[\"page\",\"saved\"]],[[\"page\",\"r\"],[\"page\",\"saved/virtual\"]]]"
       ],
@@ -1621,13 +1614,8 @@
       "r13-unsafe-literal-safe-alternate: A -> X: {\"destination\":\"X\",\"survivor\":null}": [],
       "r13-unsupported-query-favorite: Absent -> Other: offers/automatic": [],
       "r13-unsupported-query-favorite: Absent -> Other: {\"destination\":\"Other\",\"survivor\":null}": [],
-      "r13-virtual-capture: A -> B: offers/automatic": [
-        "G3/B4: offered identities: model [], Tine [{\"destination\":\"B\",\"survivor\":null}]",
-        "G9/B6: unattended cardinality 0: model allowed=false, Tine Ok(Renamed)"
-      ],
-      "r13-virtual-capture: A -> B: {\"destination\":\"B\",\"survivor\":null}": [
-        "G4/B3: admission: model safe=false, Tine result=Ok(Renamed); checks {\"consistent\":true,\"localClean\":true,\"noCapture\":false,\"ownership\":true,\"pairReady\":true,\"paths\":true,\"supported\":true}"
-      ],
+      "r13-virtual-capture: A -> B: offers/automatic": [],
+      "r13-virtual-capture: A -> B: {\"destination\":\"B\",\"survivor\":null}": [],
       "r13-whitespace-namespace-output: A -> Z/w: offers/automatic": [],
       "r13-whitespace-namespace-output: A -> Z/w: {\"destination\":\"Z/w\",\"survivor\":null}": [],
       "r6-case-only: Foo -> foo: offers/automatic": [],
@@ -2083,8 +2071,13 @@
       "random-25: a -> n/y: {\"destination\":\"n/y\",\"survivor\":null}": [
         "G4/B3: admission: model safe=false, Tine result=Ok(Renamed); checks {\"consistent\":false,\"localClean\":true,\"noCapture\":true,\"ownership\":true,\"pairReady\":true,\"paths\":true,\"supported\":true}"
       ],
-      "random-26: n/y -> B: offers/automatic": [],
-      "random-26: n/y -> B: {\"destination\":\"B\",\"survivor\":null}": [],
+      "random-26: n/y -> B: offers/automatic": [
+        "G3/B4: offered identities: model [{\"destination\":\"B\",\"survivor\":null}], Tine []",
+        "G9/B6: unattended cardinality 1: model allowed=true, Tine Err(\"cannot rename: several files claim “A” (pages/A.md, pages/a.md); merge one file into the other or remove one, then try again\")"
+      ],
+      "random-26: n/y -> B: {\"destination\":\"B\",\"survivor\":null}": [
+        "G3/B4: safe candidate cannot be selected through the original request"
+      ],
       "random-27: N/y -> n/z: offers/automatic": [],
       "random-27: N/y -> n/z: {\"destination\":\"n/z\",\"survivor\":null}": [],
       "random-28: N/y -> a: offers/automatic": [

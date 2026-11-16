@@ -551,6 +551,16 @@ graph-rewrite-conflicted-referrers =
         [one] One page still mid-merge keeps its references to “{ $page }”: { $files }. Resolve the merge, then update them.
        *[other] { NUMBER($count, useGrouping: 0) } pages still mid-merge keep their references to “{ $page }”: { $files }. Resolve the merge, then update them.
     }
+graph-rewrite-unspellable-sites =
+    { $count ->
+        [one] One place cannot hold the name “{ $name }” and still says “{ $page }”: in { $files }. Change it by hand if needed.
+       *[other] { NUMBER($count, useGrouping: 0) } places cannot hold the name “{ $name }” and still say “{ $page }”: in { $files }. Change them by hand if needed.
+    }
+graph-rewrite-respelled-keys =
+    { $count ->
+        [one] One property key that named “{ $page }” now names “{ $name }” in key spelling (lower case, hyphens for spaces): in { $files }.
+       *[other] { NUMBER($count, useGrouping: 0) } property keys that named “{ $page }” now name “{ $name }” in key spelling (lower case, hyphens for spaces): in { $files }.
+    }
 block-link-copy-save-failed =
     { $kind ->
         [ref] Couldn't save the block id — reference not copied.

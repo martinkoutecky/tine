@@ -51,22 +51,86 @@ use crate::reference_evidence::RewriteTarget;
 use crate::refs::{is_linkable_property_separator, page_key};
 use crate::text_trace::{TextTrace, TraceError};
 
-/// A covered site the span writer cannot faithfully realize. B3 decides
-/// admission; this writer reports the evidence without refusing the site.
+/// A covered site model r6 O7 reports: one the span writer cannot faithfully
+/// realize (left as it is), or a property key written in key spelling that
+/// differs from the new name. B3 decides admission; this writer reports the
+/// evidence without refusing the site.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Site {
     pub range: Range<usize>,
     pub reason: Unrealized,
+    /// What kind of name site it is (model `SiteKind`).
+    pub kind: SiteKind,
 }
 
-/// Why a covered substitution did not have a faithful native spelling.
+/// Why a covered substitution did not have a faithful native spelling, or
+/// (`KeySpelling`) had one only in key spelling.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum Unrealized {
     HeadlineTag,
+    /// A property key cannot hold the new name (left as it is).
     PropertyKey,
     StoredQuery,
     CrossPiece,
     MacroLink,
+    /// O7: "a property key is written in key spelling (lower-cased,
+    /// whitespace hyphenated), reported when that differs from the new name".
+    /// The key is rewritten.
+    KeySpelling,
+    /// A Markdown file link's label cannot hold the new name (a bracket or a
+    /// line break); left as it is.
+    LinkLabel,
+}
+
+/// The kind of a reported name site (the model's `SiteKind`, the kinds a
+/// report can carry: task markers and priorities are fixed sites, O2).
+#[derive(Clone, Copy, Debug, PartialEq, Eq, serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+pub enum SiteKind {
+    Link,
+    Tag,
+    Embed,
+    PropertyKey,
+    PropertyValue,
+    Query,
+    MacroArg,
+}
+
+impl SiteKind {
+    /// The kind of an explicit reference by its rule.
+    fn of_rule(rule: &str) -> Self {
+        match rule {
+            "explicit_tag" => SiteKind::Tag,
+            "explicit_embed" => SiteKind::Embed,
+            "explicit_property_key" => SiteKind::PropertyKey,
+            "implicit_linkable_property" => SiteKind::PropertyValue,
+            _ => SiteKind::Link,
+        }
+    }
+}
+
+/// The kind of the name site at `range` of `block` (raw offsets): the
+/// explicit reference holding it, else the query macro holding it, else a
+/// macro argument (the rewrite targets no reference selects).
+fn site_kind_at(raw: &str, block: &DocBlock, range: &Range<usize>) -> SiteKind {
+    let within = |outer: &Range<usize>| outer.start <= range.start && range.end <= outer.end;
+    if let Some(reference) = block
+        .projection()
+        .reference_source()
+        .explicit
+        .iter()
+        .find(|reference| within(&reference.range))
+    {
+        return SiteKind::of_rule(reference.rule);
+    }
+    if query_macro_extents(raw)
+        .iter()
+        .any(|extent| within(&(extent.start..extent.end)))
+    {
+        SiteKind::Query
+    } else {
+        SiteKind::MacroArg
+    }
 }
 
 /// One physical file's span rewrite and complete-text evidence, all ephemeral.
@@ -219,11 +283,13 @@ impl<'a> Renames<'a> {
         .or_else(|| self.page(name))
     }
 
-    /// The new name of a property key, looked up by its key spelling.
-    fn key(&self, name: &str) -> Option<&'a str> {
-        let keys = &self.keys;
+    /// The new name of a property key: the page it names is the one whose
+    /// name folds to it, so the one O1 answer (`renamed_page_name`, prefix
+    /// substitution included: a key under the source follows like a link)
+    /// runs over the folded map, through the day pin (model r6 O1, O7).
+    fn key(&self, name: &str) -> Option<Cow<'_, str>> {
         crate::refs::pinned_site(name, self.days, || {
-            keys.get(&property_key_norm(&page_key(name))).copied()
+            crate::refs::renamed_page_name(&property_key_norm(&page_key(name)), &self.keys)
         })
     }
 
@@ -236,8 +302,12 @@ impl<'a> Renames<'a> {
         )
     }
 
-    fn miss(&self, range: Range<usize>, reason: Unrealized) {
-        self.unrealized.borrow_mut().push(Site { range, reason });
+    fn miss(&self, range: Range<usize>, reason: Unrealized, kind: SiteKind) {
+        self.unrealized.borrow_mut().push(Site {
+            range,
+            reason,
+            kind,
+        });
     }
 }
 
@@ -469,7 +539,8 @@ fn page_edits(text: &str, is_org: bool, renames: &Renames<'_>) -> Vec<Edit> {
                 let shift = page_start - piece_start;
                 edits.push((range.start + shift..range.end + shift, to, name));
             } else {
-                renames.miss(range, Unrealized::CrossPiece);
+                let kind = site_kind_at(&raw, &block, &range);
+                renames.miss(range, Unrealized::CrossPiece, kind);
             }
         }
         for site in &mut renames.unrealized.borrow_mut()[misses..] {
@@ -568,7 +639,8 @@ fn property_edits(pre: &str, is_org: bool, renames: &Renames<'_>) -> Vec<Edit> {
                 .iter()
                 .find(|(start, end, _)| *start <= range.start && range.end <= *end)
             else {
-                renames.miss(0..pre.len(), Unrealized::CrossPiece);
+                let kind = site_kind_at(&raw, &block, &range);
+                renames.miss(0..pre.len(), Unrealized::CrossPiece, kind);
                 return None;
             };
             Some((range.start - start + at..range.end - start + at, to, name))
@@ -597,13 +669,17 @@ fn block_edits(raw: &str, is_org: bool, block: &DocBlock, renames: &Renames<'_>)
                 // The key names its page by page identity (`Über::` is page
                 // "über"); `keys` is keyed by the old name's key spelling.
                 if let Some(to) = renames.key(&reference.name) {
-                    if let Some(key) = property_key_spelling(to) {
+                    if let Some(key) = property_key_spelling(&to) {
                         if key != *to {
-                            renames.miss(range.clone(), Unrealized::PropertyKey);
+                            renames.miss(
+                                range.clone(),
+                                Unrealized::KeySpelling,
+                                SiteKind::PropertyKey,
+                            );
                         }
-                        edits.push(renames.edit(range, &reference.name, to, key));
+                        edits.push(renames.edit(range, &reference.name, &to, key));
                     } else {
-                        renames.miss(range, Unrealized::PropertyKey);
+                        renames.miss(range, Unrealized::PropertyKey, SiteKind::PropertyKey);
                     }
                 }
             }
@@ -633,7 +709,7 @@ fn block_edits(raw: &str, is_org: bool, block: &DocBlock, renames: &Renames<'_>)
                     // An Org headline tag `:name:`: the range is the name.
                     edits.push(renames.edit(range, &reference.name, &to, to.to_string()));
                 } else {
-                    renames.miss(range, Unrealized::HeadlineTag);
+                    renames.miss(range, Unrealized::HeadlineTag, SiteKind::Tag);
                 }
             }
             "explicit_link" => link_edits(raw, range, &reference.name, renames, &mut edits),
@@ -682,7 +758,7 @@ fn block_edits(raw: &str, is_org: bool, block: &DocBlock, renames: &Renames<'_>)
                     }
                     for edit in local {
                         if edit.1.contains('}') {
-                            renames.miss(edit.0, Unrealized::MacroLink);
+                            renames.miss(edit.0, Unrealized::MacroLink, SiteKind::MacroArg);
                         } else {
                             edits.push(edit);
                         }
@@ -708,8 +784,9 @@ fn nested_edits(node: &str, at: usize, renames: &Renames<'_>, edits: &mut Vec<Ed
     }
 }
 
-/// A link node `[[x]]`, Org `[[x][label]]`, Markdown `[label]([[x]])` or an
-/// Org `[[file:…][label]]` (named by its label): respell the target name.
+/// A link node `[[x]]`, Org `[[x][label]]`, Markdown `[label]([[x]])`, or a
+/// file link named by its label (Org `[[file:…][label]]`, Markdown
+/// `[label](file:…)` or `[label](../pages/x.md)`): respell the name.
 fn link_edits(
     raw: &str,
     range: Range<usize>,
@@ -746,6 +823,22 @@ fn link_edits(
         if trimmed.starts_with("[[") && trimmed.ends_with("]]") && trimmed.len() >= 4 {
             let start = split + 2 + lead + 2;
             push(start..start + trimmed.len() - 4);
+        } else if node.starts_with('[') {
+            // Markdown file link (`[Old](file:x.md)`, `[Old](../pages/x.md)`):
+            // its label names the page (the evidence's rule), as for Org. A
+            // label cannot hold a bracket or a line break (O7): left as it is
+            // and reported.
+            if to.contains(['[', ']', '\n', '\r']) {
+                if renames.page(&node[1..split]).as_deref() == Some(to.as_ref()) {
+                    renames.miss(
+                        range.start + 1..range.start + split,
+                        Unrealized::LinkLabel,
+                        SiteKind::Link,
+                    );
+                }
+            } else {
+                push(1..split);
+            }
         }
     }
 }
@@ -894,7 +987,7 @@ fn query_edits(
             edits.extend(local);
         } else {
             for (range, _, _) in local {
-                renames.miss(range, Unrealized::StoredQuery);
+                renames.miss(range, Unrealized::StoredQuery, SiteKind::Query);
             }
         }
     }
@@ -1183,18 +1276,76 @@ mod tests {
         );
     }
 
+    /// Model r6 O1 ("every reference") with O7 ("a site that can spell the new
+    /// name is rewritten; one that cannot is left and reported"): a Markdown
+    /// file link is a link named by its label (`[Old](file:x.md)`,
+    /// `[Old](../pages/x.md)`), so its label is respelled like an Org file
+    /// link's; a new name the label cannot hold (a `]`) leaves it as it is and
+    /// reports the site.
+    #[test]
+    fn a_markdown_file_link_label_follows_the_rename_or_is_reported() {
+        for target in ["file:x.md", "../pages/x.md"] {
+            let text = format!("- see [Old]({target})\n");
+            let map = HashMap::from([(crate::refs::page_key("Old"), "New".to_owned())]);
+            let p = crate::refs::rename_proposal(
+                &text,
+                false,
+                &map,
+                &HashMap::new(),
+                FileNameFormat::TripleLowbar,
+            )
+            .unwrap();
+            assert_eq!(p.text, format!("- see [New]({target})\n"), "{target}");
+            assert!(p.unrealized.is_empty(), "{target}: {:?}", p.unrealized);
+            let map = HashMap::from([(crate::refs::page_key("Old"), "a]b".to_owned())]);
+            let p = crate::refs::rename_proposal(
+                &text,
+                false,
+                &map,
+                &HashMap::new(),
+                FileNameFormat::TripleLowbar,
+            )
+            .unwrap();
+            assert_eq!(p.text, text, "{target}: the label cannot hold `]`");
+            let [site] = p.unrealized.as_slice() else {
+                panic!("{target}: one reported site: {:?}", p.unrealized);
+            };
+            assert_eq!(site.kind, super::SiteKind::Link, "{target}");
+            assert_eq!(&text[site.range.clone()], "Old", "{target}");
+        }
+    }
+
     #[test]
     fn proposal_reports_each_unrealized_covered_site() {
+        use super::SiteKind as K;
         use super::Unrealized::*;
-        for (text, org, old, to, reason) in [
-            ("* heading :Old:\n", true, "Old", "two words", HeadlineTag),
-            ("- Old:: value\n", false, "Old", "Two Words", PropertyKey),
+        // Model r6 O7: a key respelled into key spelling is reported as such
+        // (slice 2; it was `PropertyKey`, which now means a key that cannot
+        // hold the new name), and every site carries its kind.
+        for (text, org, old, to, reason, kind) in [
+            (
+                "* heading :Old:\n",
+                true,
+                "Old",
+                "two words",
+                HeadlineTag,
+                K::Tag,
+            ),
+            (
+                "- Old:: value\n",
+                false,
+                "Old",
+                "Two Words",
+                KeySpelling,
+                K::PropertyKey,
+            ),
             (
                 "- {{query (page [[Old]])}}\n",
                 false,
                 "Old",
                 "bad}name",
                 StoredQuery,
+                K::Query,
             ),
             (
                 "- {{renderer [[Old]]}}\n",
@@ -1202,6 +1353,7 @@ mod tests {
                 "Old",
                 "bad}name",
                 MacroLink,
+                K::MacroArg,
             ),
             (
                 "- {{query (page \"Old\n  name\")}}\n",
@@ -1209,6 +1361,7 @@ mod tests {
                 "Old\nname",
                 "New",
                 CrossPiece,
+                K::Query,
             ),
         ] {
             let map = HashMap::from([(crate::refs::page_key(old), to.to_owned())]);
@@ -1221,8 +1374,10 @@ mod tests {
             )
             .unwrap();
             assert!(
-                p.unrealized.iter().any(|s| s.reason == reason),
-                "{reason:?}: {:?}",
+                p.unrealized
+                    .iter()
+                    .any(|s| s.reason == reason && s.kind == kind),
+                "{reason:?} {kind:?}: {:?}",
                 p.unrealized
             );
             p.trace.check(&p.text, &p.trace.substitution).unwrap();

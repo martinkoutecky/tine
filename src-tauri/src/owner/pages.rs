@@ -321,7 +321,9 @@ fn rename_refused(
             "page-exists",
             "a page or alias already owns the destination".to_owned(),
         ),
-        B::FileTaken { .. } | B::AliasHeld { .. } => ("page-exists", blocked.to_string()),
+        B::FileTaken { .. } | B::AliasHeld { .. } | B::Capture { .. } | B::Contested { .. } => {
+            ("page-exists", blocked.to_string())
+        }
         B::OwnChild { .. } | B::NotAPage { .. } | B::Day { .. } | B::ConflictMarkers { .. } => {
             ("rename-refused", blocked.to_string())
         }

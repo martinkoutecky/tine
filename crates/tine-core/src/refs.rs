@@ -116,19 +116,22 @@ pub fn pinned_site<T>(
 
 /// The renamed spelling of a page name, including unclaimed namespace
 /// members. `pages` maps old page keys to new display names. O(namespace
-/// depth). A rename's sites use [`renamed_site_name`].
-pub fn renamed_page_name<'a>(
+/// depth). A rename's sites use [`renamed_site_name`]; a property key uses it
+/// over the property-key fold of the same map (`refs_rename::Renames::key`).
+pub fn renamed_page_name<'a, V: AsRef<str>>(
     name: &str,
-    pages: &'a std::collections::HashMap<String, String>,
+    pages: &'a std::collections::HashMap<String, V>,
 ) -> Option<std::borrow::Cow<'a, str>> {
     if let Some(to) = pages.get(&page_key(name)) {
-        return Some(std::borrow::Cow::Borrowed(to));
+        return Some(std::borrow::Cow::Borrowed(to.as_ref()));
     }
     namespace_refs(name)
         .filter(|prefix| prefix.len() < name.len())
         .filter_map(|prefix| pages.get(&page_key(prefix)).map(|to| (prefix, to)))
         .last()
-        .map(|(prefix, to)| std::borrow::Cow::Owned(format!("{to}{}", &name[prefix.len()..])))
+        .map(|(prefix, to)| {
+            std::borrow::Cow::Owned(format!("{}{}", to.as_ref(), &name[prefix.len()..]))
+        })
 }
 
 /// Pages whose text is never a reference source: the target page itself (OG
@@ -278,7 +281,7 @@ pub fn rename_rewrite_with_queries<'f>(
     )
 }
 
-pub use rename::{RenameProposal, Site, Unrealized};
+pub use rename::{RenameProposal, Site, SiteKind, Unrealized};
 
 /// Physical block ranges from the same outline authority as the page reader.
 /// Each tuple is (whole block, content start, structural level, continuation

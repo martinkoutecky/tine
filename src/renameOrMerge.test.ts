@@ -8,7 +8,7 @@ import { resetStore } from "./document";
 import { recentPages, setRecentPages, rightSidebar, setRightSidebar } from "./ui";
 import { aliasRenameRequest } from "./renameAliasChoice";
 import { renderEnglish, type Msg } from "./i18n";
-import type { RenameOffer } from "./types";
+import type { RenameOffer, RenameRefusal } from "./types";
 
 const offer = (value: RenameOffer) => vi.spyOn(backend(), "renameOffer").mockResolvedValue(value);
 
@@ -116,11 +116,15 @@ it("a refused rename writes nothing and words the backend's reason", async () =>
 // conflict markers are each worded by their reason, and nothing is renamed.
 it("words the O0, O2 and O4 refusals and submits no rename", async () => {
   const rename = vi.spyOn(backend(), "renamePage");
-  for (const [reason, text] of [
+  const cases: [RenameRefusal, string][] = [
     [{ kind: "notAPage", name: "Ghost" }, "Couldn't rename “Ghost”: no page or alias has that name."],
     [{ kind: "day", name: "Oct 26th, 2026" }, "Couldn't rename “Oct 26th, 2026”: it is a journal day, and days keep their names."],
     [{ kind: "conflictMarkers", file: "pages/Old.md" }, "Couldn't rename: pages/Old.md has unresolved conflict markers and would need changes to move. Resolve the conflict first."],
-  ] as const) {
+    // O4 over every touched name (slice 2): capture and contested.
+    [{ kind: "capture", name: "old/x", image: "new/x", page: "new/x" }, "Couldn't rename: “old/x” would become “new/x”, which is already the page “new/x”. Rename or merge that page first."],
+    [{ kind: "contested", name: "X", files: ["pages/P.md", "pages/Q.md"] }, "Couldn't rename: several files claim “X” (pages/P.md, pages/Q.md). Merge one into the other or remove one first."],
+  ];
+  for (const [reason, text] of cases) {
     offer({ kind: "refused", reason, message: "" });
     const result = await renameOrMergePage("old", "new");
     expect(renderEnglish(renameOutcomeMessage(result, "old", "new") as Msg)).toBe(text);

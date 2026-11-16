@@ -67,4 +67,6 @@ rename-refused-not-a-page = Couldn't rename “{ $name }”: no page or alias ha
 rename-refused-day = Couldn't rename “{ $name }”: it is a journal day, and days keep their names.
 rename-refused-alias-held = Couldn't rename: “{ $alias }” is an alias of the page “{ $page }”. Pick another name, or remove that alias from “{ $page }” first.
 rename-refused-conflict-markers = Couldn't rename: { $file } has unresolved conflict markers and would need changes to move. Resolve the conflict first.
+rename-refused-capture = Couldn't rename: “{ $name }” would become “{ $image }”, which is already the page “{ $page }”. Rename or merge that page first.
+rename-refused-contested = Couldn't rename: several files claim “{ $name }” ({ $files }). Merge one into the other or remove one first.
 rename-alias-choice-stale-what = The rename

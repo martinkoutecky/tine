@@ -528,6 +528,8 @@ export function renameOutcomeMessage(outcome: RenameOutcome, from: string, to: s
       case "day": return msg("rename-refused-day", { name: reason.name });
       case "aliasHeld": return msg("rename-refused-alias-held", { alias: reason.alias, page: reason.page });
       case "conflictMarkers": return msg("rename-refused-conflict-markers", { file: reason.file });
+      case "capture": return msg("rename-refused-capture", { name: reason.name, image: reason.image, page: reason.page });
+      case "contested": return msg("rename-refused-contested", { name: reason.name, files: reason.files.join(", ") });
     }
   }
   if (typeof outcome === "object") {
