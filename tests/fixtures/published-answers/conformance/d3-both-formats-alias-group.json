@@ -49,8 +49,9 @@
         },
         "name": "22.10.2026",
         "target": {
-          "id": "pages/22%2E10%2E2026.md",
-          "kind": "absent"
+          "id": "journals/22.10.2026.md",
+          "kind": "existing",
+          "others": []
         }
       },
       {
@@ -85,8 +86,9 @@
         },
         "name": "Oct 22nd, 2026",
         "target": {
-          "id": "pages/Oct 22nd, 2026.md",
-          "kind": "absent"
+          "id": "journals/22.10.2026.md",
+          "kind": "existing",
+          "others": []
         }
       }
     ],

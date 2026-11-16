@@ -413,12 +413,32 @@ impl PageEntry {
     }
 }
 
-/// The opening claimant order (R13 OWN2): ordinary kind preference, then
-/// unsigned UTF-8 graph-relative path bytes. Configured filename/date formats
-/// and a file's text do not rank valid, distinct physical paths.
-pub fn compare_page_claimants(a: &PageEntry, b: &PageEntry) -> std::cmp::Ordering {
-    (a.kind == PageKind::Journal)
-        .cmp(&(b.kind == PageKind::Journal))
+/// The opening claimant order (CM SPEC §2.2; D-20261110-CM CM-ORDER: "file
+/// path (unsigned UTF-8 …), with one extra line: a journal wins over an
+/// ordinary page"): among the claimants of one identity, a file in the
+/// journals directory `journals_dir` (graph-relative, as configured) first,
+/// then unsigned UTF-8 graph-relative path bytes. Configured filename/date
+/// formats and a file's text do not rank valid, distinct physical paths.
+///
+/// Name-keyed tables (`page_key` alone) can hold two identities under one
+/// key only when a year-less title format gives a day the label of an
+/// ordinary name (`MM-dd`: the page `11-02` and the day 2026-11-02, SPEC §2.1
+/// label limitation). The ordinary claim ranks first there: it is the real
+/// file of the typed name, and the label identifies no day.
+pub fn compare_page_claimants(
+    journals_dir: &str,
+    a: &PageEntry,
+    b: &PageEntry,
+) -> std::cmp::Ordering {
+    let rank = |entry: &PageEntry| {
+        let in_journals = entry
+            .rel_path_str()
+            .strip_prefix(journals_dir.trim_end_matches('/'))
+            .is_some_and(|tail| tail.starts_with('/'));
+        (entry.date_key.is_some(), !in_journals)
+    };
+    rank(a)
+        .cmp(&rank(b))
         .then_with(|| a.rel_path_str().as_bytes().cmp(b.rel_path_str().as_bytes()))
 }
 

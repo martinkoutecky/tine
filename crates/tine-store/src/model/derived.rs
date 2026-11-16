@@ -312,9 +312,7 @@ impl Graph {
         let mut entry = self.owned_listing(key)?;
         validate_parse_bytes_for_path(bytes, &entry.path).ok()?;
         let content = std::str::from_utf8(bytes).ok()?;
-        if let Ok(name) = self.name_from(&entry, content) {
-            entry.name = name;
-        }
+        let _ = self.name_from(&mut entry, content);
         Some(entry)
     }
 
@@ -350,9 +348,7 @@ impl Graph {
         validate_parse_bytes_for_path(bytes, &entry.path)?;
         let content = std::str::from_utf8(bytes)
             .map_err(|error| io::Error::new(io::ErrorKind::InvalidData, error))?;
-        if let Ok(name) = self.name_from(&entry, content) {
-            entry.name = name;
-        }
+        let _ = self.name_from(&mut entry, content);
         let (mut doc, disk) = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
             parse_page_content(&entry, content)
         }))
@@ -563,9 +559,22 @@ impl Graph {
         entries.retain(|entry| self.disk_sourced_in(&mut memo, &entry.path));
         #[cfg(test)]
         crate::store::pause_at_hook(&self.certify_pause);
+        let formats = (
+            self.current_journal_format(),
+            self.journals_path(),
+            self.current_config().file_name_format,
+        );
         for (key, bytes) in self.held.published() {
             if let Some(entry) = self.owned_entry(&key, &bytes) {
-                if kind.is_none_or(|kind| kind == entry.kind) {
+                // As the listing: an ordinary-kind listing keeps a day only a
+                // `title::` names.
+                let title_day = kind == Some(PageKind::Page)
+                    && entry.kind == PageKind::Journal
+                    && !super::page_identity::journal_listing_covers(
+                        (&formats.0, &formats.1, formats.2),
+                        &entry.path,
+                    );
+                if kind.is_none_or(|kind| kind == entry.kind) || title_day {
                     entries.push(entry);
                 }
             }
@@ -611,10 +620,17 @@ impl Graph {
             (&format, &journals, self.current_config().file_name_format),
             path.to_path_buf(),
         );
+        // A day only a `title::` names (SPEC §2.1) is named by its title.
+        let date_key = (*kind == PageKind::Journal)
+            .then(|| {
+                (listed.and_then(|entry| entry.date_key))
+                    .or_else(|| format.parse(name).map(|day| day.ordinal_key()))
+            })
+            .flatten();
         PageEntry {
             name: name.clone(),
             kind: *kind,
-            date_key: listed.and_then(|entry| entry.date_key),
+            date_key,
             rel_path: Some(self.rel_path(path).into()),
             path: path.to_path_buf(),
         }
@@ -924,7 +940,7 @@ impl Graph {
     /// page list memo and the first publication's name inventory.
     pub(super) fn install_launch_listing(&self, gen: u64, named: Vec<PageEntry>) {
         let named = self.certify(named, None);
-        let deduped = dedup_journal_days(named.0.clone());
+        let deduped = dedup_journal_days(&self.current_config().journals_dir, named.0.clone());
         *self.derived.page_list_cache.write().unwrap() =
             Some((gen, Arc::new(EntryList::from(deduped.as_slice()))));
         *self.derived.launch_listing.write().unwrap() = Some((gen, named));

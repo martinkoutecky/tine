@@ -248,7 +248,7 @@ fn compare_owner_answers(
     let least = |group: &[&PageEntry]| -> Option<String> {
         group
             .iter()
-            .min_by(|a, b| compare_page_claimants(a, b))
+            .min_by(|a, b| compare_page_claimants(&view.config.config.journals_dir, a, b))
             .map(|e| e.rel_path_str().to_owned())
     };
     let kind_name = |k: PageKind| {

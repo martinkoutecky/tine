@@ -128,11 +128,14 @@ fn tag_availability_and_table_agree_on_closures_aliases_dates_and_removal() {
             ("DateAlias", true),
         ],
     );
+    // A date-named pages file is that day (CM-DAYFILE), so both spellings
+    // name the referenced day. (Superseded: it was an ordinary page that
+    // took the `2026-10-03` reference from the day.)
     write(root.path(), "pages/2026-10-03.md", "");
     store.refresh(crate::Depth::Stamps).unwrap();
     check(
         &store.whole_graph().unwrap(),
-        &[("October 3rd, 2026", false), ("2026-10-03", true)],
+        &[("October 3rd, 2026", true), ("2026-10-03", true)],
     );
     std::fs::remove_file(root.path().join("pages/2026-10-03.md")).unwrap();
     store.refresh(crate::Depth::Stamps).unwrap();

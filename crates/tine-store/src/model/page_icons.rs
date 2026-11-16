@@ -92,7 +92,7 @@ impl IconIndex {
     }
     // Alias rows are applied in (path, alias) order. An alias inherits its
     // owner's icon only from earlier rows; decreasing bounds also stop cycles.
-    fn get(&self, key: &str, pages: &Pages) -> Option<&String> {
+    fn get(&self, key: &str, (pages, journals_dir): (&Pages, &str)) -> Option<&String> {
         let real_icon = |key: &str| {
             let owners = self.real.get(key)?;
             if owners.len() == 1 {
@@ -104,7 +104,7 @@ impl IconIndex {
             let (slot, _) = owners
                 .iter()
                 .filter_map(|(slot, _)| pages.get(*slot).map(|(entry, _)| (slot, entry)))
-                .min_by(|(_, a), (_, b)| compare_page_claimants(a, b))?;
+                .min_by(|(_, a), (_, b)| compare_page_claimants(journals_dir, a, b))?;
             self.icons.get(key)?.get(slot)
         };
         if let Some(icon) = real_icon(key) {
@@ -144,7 +144,10 @@ impl ReadSnapshot {
             .iter()
             .filter_map(|name| {
                 icons
-                    .get(&tine_core::refs::page_key(name), &self.pages)
+                    .get(
+                        &tine_core::refs::page_key(name),
+                        (&self.pages, &self.config.journals_dir),
+                    )
                     .map(|icon| (name.clone(), icon.clone()))
             })
             .collect()

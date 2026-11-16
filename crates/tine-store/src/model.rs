@@ -829,8 +829,12 @@ impl ReadSnapshot {
             changed_paths,
         ));
         let physical_changed_paths = changed_paths;
-        let (pages, semantic_paths) =
-            active_pages::capture(&physical_pages, &real_page_names, old, changed_paths);
+        let (pages, semantic_paths) = active_pages::capture(
+            &physical_pages,
+            (&real_page_names, &config.journals_dir),
+            old,
+            changed_paths,
+        );
         let changed_paths = semantic_paths.as_slice();
         let initial = old.is_none().then(|| {
             let explicit =
@@ -2938,7 +2942,7 @@ impl Graph {
         // a `yyyy_MM_dd` file) must appear ONCE — both files resolve to the same
         // page name, so otherwise the day renders twice. The stray stays visible
         // via tine_graph_features::journals::journal_conflicts for reconciliation.
-        let mut js = dedup_journal_days(raw);
+        let mut js = dedup_journal_days(&self.current_config().journals_dir, raw);
         js.sort_by_key(|e| std::cmp::Reverse(e.date_key.unwrap_or(0)));
         js
     }
@@ -3351,7 +3355,10 @@ impl Graph {
             HashMap::with_capacity(listed.len() + tracked_only.len());
         let mut racy = std::collections::HashSet::new();
         // Ordinary-page names and discovery failures, taken from the reads.
-        let mut names: HashMap<PathBuf, String> = HashMap::new();
+        // A file outside the journals directory claims what its bytes name
+        // (its kind too: a `title::` date is that day, `name_from`).
+        let journals = self.journals_path();
+        let mut names: HashMap<PathBuf, (String, PageKind, Option<i64>)> = HashMap::new();
         let mut discovery: Vec<(crate::FileId, crate::IoError)> = Vec::new();
         // Per-file phase time accumulates across the worker threads (atomics, no
         // allocation): read/parse/stat are summed THREAD time, so with N workers
@@ -3380,9 +3387,8 @@ impl Graph {
             let mut name_failure = None;
             let parsed = match read {
                 Ok(content) => {
-                    match self.name_from(&e, &content) {
-                        Ok(name) => e.name = name,
-                        Err(error) => name_failure = Some(error),
+                    if let Err(error) = self.name_from(&mut e, &content) {
+                        name_failure = Some(error);
                     }
                     clock.crlf(line_endings::convention(Some(&content)) == "\r\n");
                     let phase = std::time::Instant::now();
@@ -3396,7 +3402,7 @@ impl Graph {
                 // launch diff reconciles whatever is there now.
                 Err(error) if error.kind() == io::ErrorKind::NotFound => Ok(None),
                 Err(error) => {
-                    if e.kind == PageKind::Page {
+                    if !e.path.starts_with(&journals) {
                         name_failure = Some(io::Error::new(error.kind(), error.to_string()));
                     }
                     PageParseFailure::unreadable(
@@ -3429,8 +3435,9 @@ impl Graph {
             PageParseResult,
         )| {
             if let Ok(Some((entry, _, rev))) = &parsed {
-                if entry.kind == PageKind::Page {
-                    names.insert(path.clone(), entry.name.clone());
+                if !entry.path.starts_with(&journals) {
+                    let claim = (entry.name.clone(), entry.kind, entry.date_key);
+                    names.insert(path.clone(), claim);
                 }
                 if let Some(created) = since_open {
                     announce.push((path.clone(), created, entry.kind, entry.name.clone()));
@@ -3528,8 +3535,8 @@ impl Graph {
         let named: Vec<PageEntry> = listed
             .into_iter()
             .map(|mut entry| {
-                if let Some(name) = names.get(&entry.path) {
-                    entry.name = name.clone();
+                if let Some((name, kind, date_key)) = names.get(&entry.path) {
+                    (entry.name, entry.kind, entry.date_key) = (name.clone(), *kind, *date_key);
                 }
                 entry
             })
@@ -3921,15 +3928,14 @@ impl Graph {
                 path: path.to_path_buf(),
             }
         } else {
+            let name =
+                self.discover_page_name(path, stem, self.current_config().file_name_format, text)?;
+            let (name, kind, date_key) =
+                page_identity::page_file_claim(&self.current_journal_format(), name);
             PageEntry {
-                name: self.discover_page_name(
-                    path,
-                    stem,
-                    self.current_config().file_name_format,
-                    text,
-                )?,
-                kind: PageKind::Page,
-                date_key: None,
+                name,
+                kind,
+                date_key,
                 rel_path: Some(self.rel_path(path).into()),
                 path: path.to_path_buf(),
             }
@@ -4567,14 +4573,14 @@ pub(crate) const TEST_INDEX_PANIC_SENTINEL: &str = "__TINE_TEST_INDEX_PANIC__";
 /// canonical `yyyy_MM_dd` file) — a leftover title-named duplicate must not show
 /// the day twice in the feed, quick-switch, or All-Pages. Non-journal entries and
 /// the input order are preserved.
-fn dedup_journal_days(entries: Vec<PageEntry>) -> Vec<PageEntry> {
+fn dedup_journal_days(journals_dir: &str, entries: Vec<PageEntry>) -> Vec<PageEntry> {
     let mut idx_of: std::collections::HashMap<i64, usize> = std::collections::HashMap::new();
     let mut out: Vec<PageEntry> = Vec::new();
     for e in entries {
         match e.date_key {
             Some(k) if e.kind == PageKind::Journal => {
                 if let Some(&i) = idx_of.get(&k) {
-                    if compare_page_claimants(&e, &out[i]).is_lt() {
+                    if compare_page_claimants(journals_dir, &e, &out[i]).is_lt() {
                         out[i] = e;
                     }
                 } else {

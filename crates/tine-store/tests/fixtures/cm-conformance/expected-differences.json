@@ -305,6 +305,7 @@
   "frontend": {
     "fixtures": {
       "d4-date-named-page-file-format": [
+        "frontend navigate [[25-10-2026]]: model (\"page\", \"oct 25th, 2026\"), frontend (\"journal\", \"oct 25th, 2026\") via (journal, Oct 25th, 2026); backend agrees with the frontend",
         "frontend navigate [[Oct 25th, 2026]]: model (\"page\", \"oct 25th, 2026\"), frontend (\"journal\", \"oct 25th, 2026\") via (journal, Oct 25th, 2026); backend agrees with the frontend"
       ],
       "r11-empty-alias-source": [
@@ -324,6 +325,9 @@
       ],
       "r3-empty-own-file": [
         "frontend navigate [[ML]]: model (\"page\", \"machine learning\"), frontend (\"page\", \"ml\") via (page, ML); backend agrees with the frontend"
+      ],
+      "r4-date-named-page": [
+        "frontend navigate [[2026-10-26]]: model (\"page\", \"oct 26th, 2026\"), frontend (\"journal\", \"oct 26th, 2026\") via (journal, Oct 26th, 2026); backend agrees with the frontend"
       ],
       "r9-empty-alias-blank-block": [
         "frontend navigate [[ML]]: model (\"page\", \"machine learning\"), frontend (\"page\", \"ml\") via (page, ML); backend agrees with the frontend"
@@ -354,11 +358,6 @@
         "frontend all pages: file pages/A.md has no row (hidden as an OG built-in page, A11)",
         "frontend all pages: model page (\"page\", \"b\") is reference-only and has no row (hidden as an OG built-in page, A11)",
         "frontend all pages: model page (\"page\", \"todo\") is reference-only and has no row (hidden as an OG built-in page, A11)"
-      ],
-      "d4-date-named-page-file-format": [
-        "frontend all pages count of (\"page\", \"oct 25th, 2026\") (pages/25-10-2026.md): model 2, All Pages 1",
-        "frontend all pages: row ref:oct 25th, 2026 (count 1) owns no model page",
-        "frontend linked refs header of (\"page\", \"oct 25th, 2026\") [[25-10-2026]]: model 2, header 1"
       ],
       "n1-legacy-codec": [
         "frontend all pages: model page (\"page\", \"a\") is reference-only and has no row (hidden as an OG built-in page, A11)"
@@ -410,8 +409,7 @@
         "frontend all pages: row pages/other.md (count —) owns no model page"
       ],
       "q1-page-and-journal-same-day": [
-        "frontend all pages: row journals/2026_10_26.md (count 0) owns no model page",
-        "frontend all pages: row pages/2026-10-26.md (count 1) owns no model page"
+        "frontend all pages: row journals/2026_10_26.md (count 1) owns no model page"
       ],
       "q6-task-and-priority-pages": [
         "frontend all pages: model page (\"page\", \"a\") is reference-only and has no row (hidden as an OG built-in page, A11)",
@@ -724,7 +722,7 @@
         "pages/b.md: launch walk \"b\", answer Some(\"a\")"
       ],
       "o2-date-alias-on-twin": [
-        "pages/2026-10-26.md: launch walk \"2026-10-26\", answer Some(\"a\")"
+        "pages/2026-10-26.md: launch walk \"Oct 26th, 2026\", answer Some(\"a\")"
       ],
       "q1-duplicate-claim": [
         "pages/other.md: launch walk \"other\", answer Some(\"foo\")"
@@ -3579,11 +3577,13 @@
       "d2-title-format-links": [],
       "d3-both-formats-alias-group": [],
       "d4-date-named-page-file-format": [
-        "backlink count of (\"page\", \"oct 25th, 2026\") (pages/25-10-2026.md): model 2, Tine 1 (as Tine's Linked References, which differ from the model's)",
-        "Linked References of (\"page\", \"oct 25th, 2026\"): model has block (\"pages/x.md\", 1), Tine does not",
+        "navigate [[25-10-2026]]: model (\"page\", \"oct 25th, 2026\"), Tine (\"journal\", \"oct 25th, 2026\")",
         "navigate [[Oct 25th, 2026]]: model (\"page\", \"oct 25th, 2026\"), Tine (\"journal\", \"oct 25th, 2026\")",
+        "owner of (\"page\", \"oct 25th, 2026\"): model pages/25-10-2026.md, Tine None",
         "pages: Tine has (\"journal\", \"oct 25th, 2026\"), model does not",
-        "query \"[[25-10-2026]]\": model has block (\"pages/x.md\", 1), Tine does not"
+        "pages: model has (\"page\", \"oct 25th, 2026\"), Tine does not",
+        "query \"@page and name = '25-10-2026'\": Tine has page (\"journal\", \"oct 25th, 2026\"), model does not",
+        "query \"@page and name = '25-10-2026'\": model has page (\"page\", \"oct 25th, 2026\"), Tine does not"
       ],
       "d5-lenient-spellings": [],
       "d6-fileless-date-parent": [
@@ -3610,9 +3610,8 @@
       ],
       "q1-duplicate-claim": [],
       "q1-page-and-journal-same-day": [
-        "conflicts: model \"oct 26th, 2026\" conflicted, Tine not",
-        "backlink count of (\"journal\", \"oct 26th, 2026\") (journals/2026_10_26.md): model 1, Tine 0 (as Tine's Linked References, which differ from the model's)",
-        "Linked References of (\"journal\", \"oct 26th, 2026\"): model has block (\"pages/Notes.md\", 0), Tine does not"
+        "counts of (\"page\", \"oct 26th, 2026\") (pages/2026-10-26.md): model 1, Tine none (non-owner twin)",
+        "pages: model has (\"page\", \"oct 26th, 2026\"), Tine does not"
       ],
       "q6-task-and-priority-pages": [],
       "r1-namespace-parent": [],
@@ -3674,7 +3673,14 @@
       "r3-indirect-declarer": [],
       "r3-own-file-wins": [],
       "r3-two-declarers": [],
-      "r4-date-named-page": [],
+      "r4-date-named-page": [
+        "link table node 0",
+        "link \"notes\" -> \"oct 26th, 2026\": model has it, Tine does not",
+        "navigate [[2026-10-26]]: model (\"page\", \"oct 26th, 2026\"), Tine (\"journal\", \"oct 26th, 2026\")",
+        "owner of (\"page\", \"oct 26th, 2026\"): model pages/2026-10-26.md, Tine None",
+        "pages: Tine has (\"journal\", \"oct 26th, 2026\"), model does not",
+        "pages: model has (\"page\", \"oct 26th, 2026\"), Tine does not"
+      ],
       "r4-journal-and-date-links": [],
       "r5-favorites-excluded": [],
       "r5-journal-alias": [],
@@ -3707,7 +3713,59 @@
       "r9-own-child-page": [],
       "r9-own-child-unused": []
     },
-    "harnessSkipped": [],
+    "harnessSkipped": [
+      "random-1",
+      "random-3",
+      "random-11",
+      "random-21",
+      "random-24",
+      "random-26",
+      "random-27",
+      "random-38",
+      "random-39",
+      "random-41",
+      "random-49",
+      "random-67",
+      "random-70",
+      "random-72",
+      "random-74",
+      "random-76",
+      "random-84",
+      "random-87",
+      "random-92",
+      "random-93",
+      "random-94",
+      "random-95",
+      "random-96",
+      "random-116",
+      "random-118",
+      "random-124",
+      "random-141",
+      "random-142",
+      "random-147",
+      "random-149",
+      "random-162",
+      "random-166",
+      "random-168",
+      "random-187",
+      "random-199",
+      "random-202",
+      "random-211",
+      "random-216",
+      "random-221",
+      "random-247",
+      "random-257",
+      "random-266",
+      "random-267",
+      "random-268",
+      "random-278",
+      "random-283",
+      "random-285",
+      "random-286",
+      "random-287",
+      "random-289",
+      "random-292"
+    ],
     "random": {
       "[duplicate claim] alias group: model larger": {
         "detail": "alias group of (\"journal\", \"oct 26th, 2026\"): model {\"oct 26th, 2026\", \"x\"}, Tine {\"oct 26th, 2026\"}",
@@ -3763,8 +3821,97 @@
           ]
         }
       },
-      "[duplicate claim] conflicts: model-only": {
-        "detail": "conflicts: model \"oct 26th, 2026\" conflicted, Tine not",
+      "[duplicate claim] alias owner: link_target vs first owner by path": {
+        "detail": "[[2026-10-26]]: first owner pages/n.md Some((\"n\", false)), link_target LinkTarget { name: \"Oct 26th, 2026\", is_journal: true }",
+        "graph": {
+          "files": {
+            "journals/2026_10_26.md": "alias:: n/y, n\n\n- #x tagged\n- [[n]] and [[A]]\n- note\n  rel:: [[n/y]]\n",
+            "pages/n%2Fy.md": "title:: 2026-10-26\n\n- [#A] priority\n- TODO task [[n/y]]\n- [#A] priority\n",
+            "pages/n.md": "alias:: 2026-10-26\n\n- [[n/y]] and [[a]]\n  - child [[N/y]]\n- plain words\n- note\n  rel:: [[N/y]]\n",
+            "pages/x.md": ""
+          },
+          "queries": [
+            {
+              "anchor": "block",
+              "dialect": "og",
+              "q": {
+                "refs": "n/y"
+              },
+              "tine": "[[n/y]]"
+            },
+            {
+              "anchor": "page",
+              "dialect": "tql",
+              "q": {
+                "not": {
+                  "name": "n/y"
+                }
+              },
+              "tine": "@page and not (name = 'n/y')"
+            }
+          ]
+        }
+      },
+      "[duplicate claim] alias owner: page_named vs first owner by path": {
+        "detail": "[[2026-10-26]]: first owner pages/n.md, page_named Ok(Some(\"journals/2026_10_26.md\"))",
+        "graph": {
+          "files": {
+            "journals/2026_10_26.md": "alias:: n/y, n\n\n- #x tagged\n- [[n]] and [[A]]\n- note\n  rel:: [[n/y]]\n",
+            "pages/n%2Fy.md": "title:: 2026-10-26\n\n- [#A] priority\n- TODO task [[n/y]]\n- [#A] priority\n",
+            "pages/n.md": "alias:: 2026-10-26\n\n- [[n/y]] and [[a]]\n  - child [[N/y]]\n- plain words\n- note\n  rel:: [[N/y]]\n",
+            "pages/x.md": ""
+          },
+          "queries": [
+            {
+              "anchor": "block",
+              "dialect": "og",
+              "q": {
+                "refs": "n/y"
+              },
+              "tine": "[[n/y]]"
+            },
+            {
+              "anchor": "page",
+              "dialect": "tql",
+              "q": {
+                "not": {
+                  "name": "n/y"
+                }
+              },
+              "tine": "@page and not (name = 'n/y')"
+            }
+          ]
+        }
+      },
+      "[duplicate claim] alias owner: resolve vs first owner by path": {
+        "detail": "[[2026-10-26]]: first owner journals/2026_10_26.md, resolve Existing { id: PageId(\"journals/2026_10_26.md\"), others: [] }",
+        "graph": {
+          "files": {
+            "journals/2026_10_26.md": "alias:: 2026-10-26\n\n- see [[a]]\n",
+            "pages/N%2Fy.md": "",
+            "pages/n%2Fy.md": "alias:: n/y, B\n"
+          },
+          "queries": [
+            {
+              "anchor": "block",
+              "dialect": "og",
+              "q": {
+                "or": [
+                  {
+                    "refs": "2026-10-26"
+                  },
+                  {
+                    "refs": "n"
+                  }
+                ]
+              },
+              "tine": "(or [[2026-10-26]] [[n]])"
+            }
+          ]
+        }
+      },
+      "[duplicate claim] counts: as Tine's Linked References": {
+        "detail": "backlink count of (\"journal\", \"oct 26th, 2026\") (journals/2026_10_26.md): model 1, Tine 0 (as Tine's Linked References, which differ from the model's)",
         "graph": {
           "files": {
             "journals/2026_10_26.md": "",
@@ -3790,8 +3937,8 @@
           ]
         }
       },
-      "[duplicate claim] counts: as Tine's Linked References": {
-        "detail": "backlink count of (\"journal\", \"oct 26th, 2026\") (journals/2026_10_26.md): model 1, Tine 0 (as Tine's Linked References, which differ from the model's)",
+      "[duplicate claim] counts: the model's owner is a Tine non-owner twin": {
+        "detail": "counts of (\"page\", \"oct 26th, 2026\") (pages/2026-10-26.md): model 0, Tine none (non-owner twin)",
         "graph": {
           "files": {
             "journals/2026_10_26.md": "",
@@ -3840,6 +3987,26 @@
                 "name": "n/y"
               },
               "tine": "@page and name = 'n/y'"
+            }
+          ]
+        }
+      },
+      "[duplicate claim] links: Tine-only": {
+        "detail": "link \"n/y\" -> \"a\": Tine has it, model does not",
+        "graph": {
+          "files": {
+            "journals/2026_10_26.md": "- [[n/y]] and [[A]]\n",
+            "pages/2026-10-26.md": "alias:: a\n",
+            "pages/N%2Fy.md": "- [#A] priority\n- A mentioned\n"
+          },
+          "queries": [
+            {
+              "anchor": "block",
+              "dialect": "og",
+              "q": {
+                "refs": "2026-10-26"
+              },
+              "tine": "[[2026-10-26]]"
             }
           ]
         }
@@ -3917,29 +4084,49 @@
           ]
         }
       },
-      "[duplicate claim] pages: model-only page": {
-        "detail": "pages: model has (\"page\", \"n\"), Tine does not",
+      "[duplicate claim] pages: Tine-only page": {
+        "detail": "pages: Tine has (\"page\", \"a\"), model does not",
         "graph": {
           "files": {
-            "journals/2026_10_26.md": "alias:: 2026-10-26\n\n- see [[a]]\n",
-            "pages/N%2Fy.md": "",
-            "pages/n%2Fy.md": "alias:: n/y, B\n"
+            "journals/2026_10_26.md": "- [[n/y]] and [[A]]\n",
+            "pages/2026-10-26.md": "alias:: a\n",
+            "pages/N%2Fy.md": "- [#A] priority\n- A mentioned\n"
           },
           "queries": [
             {
               "anchor": "block",
               "dialect": "og",
               "q": {
-                "or": [
-                  {
-                    "refs": "2026-10-26"
-                  },
-                  {
-                    "refs": "n"
-                  }
-                ]
+                "refs": "2026-10-26"
               },
-              "tine": "(or [[2026-10-26]] [[n]])"
+              "tine": "[[2026-10-26]]"
+            }
+          ]
+        }
+      },
+      "[duplicate claim] pages: model-only page": {
+        "detail": "pages: model has (\"page\", \"oct 26th, 2026\"), Tine does not",
+        "graph": {
+          "files": {
+            "journals/2026_10_26.md": "",
+            "pages/2026-10-26.md": "alias:: x, 2026-10-26\n"
+          },
+          "queries": [
+            {
+              "anchor": "block",
+              "dialect": "og",
+              "q": {
+                "refs": "x"
+              },
+              "tine": "[[x]]"
+            },
+            {
+              "anchor": "page",
+              "dialect": "tql",
+              "q": {
+                "name": "n/y"
+              },
+              "tine": "@page and name = 'n/y'"
             }
           ]
         }
@@ -3976,127 +4163,66 @@
         }
       },
       "[duplicate claim] query @block: model-only block": {
-        "detail": "query \"[[n/y]]\": model has block (\"pages/2026-10-26.md\", 2), Tine does not",
+        "detail": "query \"[[x]]\": model has block (\"pages/2026-10-26.md\", 0), Tine does not",
         "graph": {
           "files": {
             "journals/2026_10_26.md": "",
-            "pages/2026-10-26.md": "alias:: n/y\n\n- [#A] priority\n  - child [[a]]\n"
+            "pages/2026-10-26.md": "alias:: x, 2026-10-26\n"
           },
           "queries": [
             {
               "anchor": "block",
               "dialect": "og",
               "q": {
-                "refs": "n/y"
+                "refs": "x"
               },
-              "tine": "[[n/y]]"
+              "tine": "[[x]]"
             },
             {
               "anchor": "page",
               "dialect": "tql",
               "q": {
-                "and": [
-                  {
-                    "name": "N/y"
-                  },
-                  {
-                    "not": {
-                      "name": "x"
-                    }
-                  }
-                ]
+                "name": "n/y"
               },
-              "tine": "@page and (name = 'N/y' and not (name = 'x'))"
+              "tine": "@page and name = 'n/y'"
             }
           ]
         }
       },
-      "[duplicate claim] query @page with not: Tine-only page": {
-        "detail": "query \"@page and not (name = '2026-10-26')\": Tine has page (\"journal\", \"oct 26th, 2026\"), model does not",
+      "[duplicate claim] query @page with not: model-only page": {
+        "detail": "query \"@page and not (name = 'n/y')\": model has page (\"page\", \"n\"), Tine does not",
         "graph": {
           "files": {
-            "journals/2026_10_26.md": "alias:: n/y\n",
-            "journals/2026_10_27.md": "",
-            "pages/2026-10-26.md": "alias:: 2026-10-26, 2026-10-26\n\n- N/y mentioned\n- [#A] priority\n- [#A] priority\n",
-            "pages/a.md": "- see [[a]]\n  - child [[A]]\n"
+            "journals/2026_10_26.md": "alias:: x\n\n- [#A] priority\n- A mentioned\n",
+            "pages/2026-10-26.md": "- TODO task [[n/y]]\n- [#A] priority\n- x mentioned\n",
+            "pages/x.md": "title:: 2026-10-26\n\n- x mentioned\n- TODO task [[B]]\n"
           },
           "queries": [
             {
               "anchor": "block",
               "dialect": "og",
               "q": {
-                "or": [
-                  {
-                    "refs": "N/y"
-                  },
-                  {
-                    "refs": "a"
-                  }
-                ]
+                "not": {
+                  "refs": "A"
+                }
               },
-              "tine": "(or [[N/y]] [[a]])"
+              "tine": "(not [[A]])"
             },
             {
               "anchor": "page",
               "dialect": "tql",
               "q": {
                 "not": {
-                  "name": "2026-10-26"
+                  "name": "n/y"
                 }
               },
-              "tine": "@page and not (name = '2026-10-26')"
-            }
-          ]
-        }
-      },
-      "[duplicate claim] query @page with not: model-only page": {
-        "detail": "query \"@page and (name = '2026-10-26' and not (name = 'B'))\": model has page (\"journal\", \"oct 26th, 2026\"), Tine does not",
-        "graph": {
-          "files": {
-            "journals/2026_10_26.md": "alias:: B\n\n- note\n  rel:: [[2026-10-26]]\n- [[B]] and [[a]]\n- #A tagged\n  - child [[x]]\n",
-            "journals/2026_10_27.md": "alias:: B\n\n- #N/y tagged\n- see [[A]]\n",
-            "pages/2026-10-26.md": "",
-            "pages/N%2Fy.md": "- plain words\n  - child [[N/y]]\n- plain words\n  - child [[a]]\n- see [[B]]\n  - child [[2026-10-26]]\n",
-            "pages/n%2Fy.md": "alias:: A, x\n"
-          },
-          "queries": [
-            {
-              "anchor": "block",
-              "dialect": "og",
-              "q": {
-                "or": [
-                  {
-                    "refs": "n/y"
-                  },
-                  {
-                    "refs": "n/y"
-                  }
-                ]
-              },
-              "tine": "(or [[n/y]] [[n/y]])"
-            },
-            {
-              "anchor": "page",
-              "dialect": "tql",
-              "q": {
-                "and": [
-                  {
-                    "name": "2026-10-26"
-                  },
-                  {
-                    "not": {
-                      "name": "B"
-                    }
-                  }
-                ]
-              },
-              "tine": "@page and (name = '2026-10-26' and not (name = 'B'))"
+              "tine": "@page and not (name = 'n/y')"
             }
           ]
         }
       },
       "[duplicate claim] query @page: model-only page": {
-        "detail": "query \"@page and name = '2026-10-26'\": model has page (\"journal\", \"oct 26th, 2026\"), Tine does not",
+        "detail": "query \"@page and name = '2026-10-26'\": model has page (\"page\", \"oct 26th, 2026\"), Tine does not",
         "graph": {
           "files": {
             "journals/2026_10_26.md": "",
@@ -4197,6 +4323,37 @@
                 ]
               },
               "tine": "(and (page \"N/y\") (not (page \"N/y\")))"
+            }
+          ]
+        }
+      },
+      "alias owner: resolve vs first owner by path (one owner)": {
+        "detail": "[[2026-10-26]]: first owner journals/2026_10_26.md, resolve Existing { id: PageId(\"journals/2026_10_26.md\"), others: [] }",
+        "graph": {
+          "files": {
+            "journals/2026_10_26.md": "alias:: n/y, 2026-10-26\n\n- plain words\n- plain words\n",
+            "pages/B.md": "- see [[n]]\n  - child [[n/y]]\n",
+            "pages/n%2Fy.md": "alias:: B\n\n- #B tagged\n"
+          },
+          "queries": [
+            {
+              "anchor": "block",
+              "dialect": "og",
+              "q": {
+                "and": [
+                  {
+                    "page": {
+                      "name": "n/y"
+                    }
+                  },
+                  {
+                    "not": {
+                      "refs": "x"
+                    }
+                  }
+                ]
+              },
+              "tine": "(and (page \"n/y\") (not [[x]]))"
             }
           ]
         }
@@ -4362,11 +4519,11 @@
         }
       },
       "query @block with not: model-only block (parent also matches, via ancestor)": {
-        "detail": "query \"(and [[n/y]] (not [[A]]))\": model has block (\"pages/2026-10-26.md\", 2), Tine does not",
+        "detail": "query \"(and [[a]] (not [[n]]))\": model has block (\"pages/a.md\", 2), Tine does not",
         "graph": {
           "files": {
-            "pages/2026-10-26.md": "alias:: B\n\n- #N/y tagged\n  - child [[n]]\n- see [[2026-10-26]]\n- [[2026-10-26]] and [[A]]\n",
-            "pages/n.md": "- plain words\n- note\n  rel:: [[N/y]]\n  - child [[a]]\n"
+            "pages/A.md": "title:: n\n\n- note\n  rel:: [[a]]\n- x mentioned\n",
+            "pages/a.md": "title:: a\nalias:: x\n\n- [#A] priority\n  - child [[2026-10-26]]\n- #n tagged\n- note\n  rel:: [[N/y]]\n  - child [[n/y]]\n"
           },
           "queries": [
             {
@@ -4375,46 +4532,16 @@
               "q": {
                 "and": [
                   {
-                    "refs": "n/y"
+                    "refs": "a"
                   },
                   {
                     "not": {
-                      "refs": "A"
+                      "refs": "n"
                     }
                   }
                 ]
               },
-              "tine": "(and [[n/y]] (not [[A]]))"
-            }
-          ]
-        }
-      },
-      "query @block with not: model-only block (parent also matches, via owner page key)": {
-        "detail": "query \"(and [[2026-10-26]] (not (page \\\"A\\\")))\": model has block (\"pages/2026-10-26.md\", 1), Tine does not",
-        "graph": {
-          "files": {
-            "pages/2026-10-26.md": "- plain words\n  - child [[x]]\n- TODO task [[n/y]]\n  - child [[n/y]]\n- #a tagged\n",
-            "pages/a.md": ""
-          },
-          "queries": [
-            {
-              "anchor": "block",
-              "dialect": "og",
-              "q": {
-                "and": [
-                  {
-                    "refs": "2026-10-26"
-                  },
-                  {
-                    "not": {
-                      "page": {
-                        "name": "A"
-                      }
-                    }
-                  }
-                ]
-              },
-              "tine": "(and [[2026-10-26]] (not (page \"A\")))"
+              "tine": "(and [[a]] (not [[n]]))"
             }
           ]
         }
@@ -4554,17 +4681,7 @@
       "d1-file-format-links": [],
       "d2-title-format-links": [],
       "d3-both-formats-alias-group": [],
-      "d4-date-named-page-file-format": [
-        "K1 (§2.1 file claim): counts: (\"journal\", \"Day 2026-10-25\") (pages/25-10-2026.md): model 2, Tine Some(1)",
-        "K1 (§2.1 file claim): linked refs: (\"journal\", \"Day 2026-10-25\"): model {(\"pages/x.md\", 0), (\"pages/x.md\", 1)}, Tine {(\"pages/x.md\", 0)}",
-        "K1 (§2.1 file claim): links: link (\"page\", \"x\") -> (\"page\", \"25-10-2026\"): model=false, Tine=true",
-        "K1 (§2.1 file claim): navigation: \"25-10-2026\": model [\"journal\",\"Day 2026-10-25\"], Tine (\"page\", \"25-10-2026\")",
-        "K1 (§2.1 file claim): owners: (\"journal\", \"Day 2026-10-25\"): model \"pages/25-10-2026.md\", Tine None",
-        "K1 (§2.1 file claim): pages: page (\"page\", \"25-10-2026\"): model=false, Tine=true",
-        "K1 (§2.1 file claim): query @page: Tine-only page (page ref-only): query \"@page and name = '25-10-2026'\": Tine has page (\"page\", \"Day 2026-10-25\"), model does not",
-        "K1 (§2.1 file claim): query @page: model-only page (journal real): query \"@page and name = '25-10-2026'\": model has page (\"journal\", \"Day 2026-10-25\"), Tine does not",
-        "K1 (§2.1 file claim, reference): query @block: model-only block (own direct by link): query \"[[25-10-2026]]\": model has block (\"pages/x.md\", 1), Tine does not"
-      ],
+      "d4-date-named-page-file-format": [],
       "d5-lenient-spellings": [],
       "d6-fileless-date-parent": [],
       "n1-legacy-codec": [],
@@ -4583,16 +4700,7 @@
       "o2-date-alias-on-owner": [],
       "o2-date-alias-on-twin": [],
       "q1-duplicate-claim": [],
-      "q1-page-and-journal-same-day": [
-        "K1 (§2.1 file claim): active files: pages/2026-10-26.md: model=false, Tine=true",
-        "K1 (§2.1 file claim): conflicts: \"Day 2026-10-26\" conflicted: model=true, Tine=false",
-        "K1 (§2.1 file claim): counts: (\"journal\", \"Day 2026-10-26\") (journals/2026_10_26.md): model 1, Tine Some(0)",
-        "K1 (§2.1 file claim): linked refs: (\"journal\", \"Day 2026-10-26\"): model {(\"pages/Notes.md\", 0)}, Tine {}",
-        "K1 (§2.1 file claim): links: link (\"page\", \"notes\") -> (\"journal\", \"Day 2026-10-26\"): model=true, Tine=false",
-        "K1 (§2.1 file claim): links: link (\"page\", \"notes\") -> (\"page\", \"2026-10-26\"): model=false, Tine=true",
-        "K1 (§2.1 file claim): navigation: \"2026-10-26\": model [\"journal\",\"Day 2026-10-26\"], Tine (\"page\", \"2026-10-26\")",
-        "K1 (§2.1 file claim): pages: page (\"page\", \"2026-10-26\"): model=false, Tine=true"
-      ],
+      "q1-page-and-journal-same-day": [],
       "q6-task-and-priority-pages": [],
       "r1-namespace-parent": [],
       "r1-one-name-one-page": [],
@@ -4633,30 +4741,14 @@
       "r12-preamble-queries": [],
       "r13-alias-edge-preview": [],
       "r13-alias-image-conflict": [],
-      "r13-configured-date-literal": [
-        "K1 (§2.1 file claim): active files: pages/2026-11-06.md: model=false, Tine=true",
-        "K1 (§2.1 file claim): conflicts: \"Day 2026-11-06\" conflicted: model=true, Tine=false",
-        "K1 (§2.1 file claim): links: link (\"page\", \"r\") -> (\"page\", \"2026-11-06\"): model=false, Tine=true",
-        "K1 (§2.1 file claim): navigation: \"2026-11-06\": model [\"journal\",\"Day 2026-11-06\"], Tine (\"page\", \"2026-11-06\")",
-        "K1 (§2.1 file claim): pages: page (\"page\", \"2026-11-06\"): model=false, Tine=true"
-      ],
+      "r13-configured-date-literal": [],
       "r13-empty-child-gains-parent": [],
       "r13-empty-namespace-output": [],
       "r13-empty-real-opens-self": [],
       "r13-favorite-image-conflict": [],
       "r13-fileless-multiple": [],
       "r13-fixed-favorites-setting": [],
-      "r13-inactive-journal-anchor": [
-        "K1 (§2.1 file claim): active files: pages/P.md: model=false, Tine=true",
-        "K1 (§2.1 file claim): conflicts: \"Day 2026-10-26\" conflicted: model=true, Tine=false",
-        "K1 (§2.1 file claim): conflicts: \"oct 26th, 2026\" conflicted: model=false, Tine=true",
-        "K1 (§2.1 file claim): navigation: \"Oct 26th, 2026\": model [\"journal\",\"Day 2026-10-26\"], Tine (\"page\", \"oct 26th, 2026\")",
-        "K1 (§2.1 file claim): pages: page (\"journal\", \"Day 2026-10-26\"): model=true, Tine=false",
-        "K1 (§2.1 file claim): pages: page (\"page\", \"oct 26th, 2026\"): model=false, Tine=true",
-        "K3 (§2.2 journals directory first): active files: journals/2026_10_26.md: model=true, Tine=false",
-        "K3 (§2.2 journals directory first): counts: (\"journal\", \"Day 2026-10-26\") (journals/2026_10_26.md): model 0, Tine None",
-        "K3 (§2.2 journals directory first): owners: (\"journal\", \"Day 2026-10-26\"): model \"journals/2026_10_26.md\", Tine None"
-      ],
+      "r13-inactive-journal-anchor": [],
       "r13-journal-parent-loss": [],
       "r13-moving-child-vacates": [],
       "r13-multiple-declarers": [],
@@ -4692,14 +4784,7 @@
       "r3-indirect-declarer": [],
       "r3-own-file-wins": [],
       "r3-two-declarers": [],
-      "r4-date-named-page": [
-        "K1 (§2.1 file claim): links: link (\"page\", \"notes\") -> (\"journal\", \"Day 2026-10-26\"): model=true, Tine=false",
-        "K1 (§2.1 file claim): links: link (\"page\", \"notes\") -> (\"page\", \"2026-10-26\"): model=false, Tine=true",
-        "K1 (§2.1 file claim): navigation: \"2026-10-26\": model [\"journal\",\"Day 2026-10-26\"], Tine (\"page\", \"2026-10-26\")",
-        "K1 (§2.1 file claim): owners: (\"journal\", \"Day 2026-10-26\"): model \"pages/2026-10-26.md\", Tine None",
-        "K1 (§2.1 file claim): pages: page (\"journal\", \"Day 2026-10-26\"): model=true, Tine=false",
-        "K1 (§2.1 file claim): pages: page (\"page\", \"2026-10-26\"): model=false, Tine=true"
-      ],
+      "r4-date-named-page": [],
       "r4-journal-and-date-links": [],
       "r5-favorites-excluded": [],
       "r5-journal-alias": [],
@@ -4728,115 +4813,35 @@
       "r9-own-child-page": [],
       "r9-own-child-unused": [],
       "random-0": [],
-      "random-1": [
-        "K1 (§2.1 file claim): navigation: \"2026-10-26\": model [\"journal\",\"Day 2026-10-26\"], Tine (\"page\", \"2026-10-26\")",
-        "K1 (§2.1 file claim): owners: (\"journal\", \"Day 2026-10-26\"): model \"pages/2026-10-26.md\", Tine None",
-        "K1 (§2.1 file claim): pages: page (\"journal\", \"Day 2026-10-26\"): model=true, Tine=false",
-        "K1 (§2.1 file claim): pages: page (\"page\", \"2026-10-26\"): model=false, Tine=true",
-        "K1 (§2.1 file claim): query @page with not: Tine-only page (page ref-only): query \"@page and not (name = 'n')\": Tine has page (\"page\", \"Day 2026-10-26\"), model does not",
-        "K1 (§2.1 file claim): query @page with not: model-only page (journal real): query \"@page and not (name = 'n')\": model has page (\"journal\", \"Day 2026-10-26\"), Tine does not"
-      ],
+      "random-1": [],
       "random-10": [],
       "random-100": [],
       "random-101": [],
       "random-102": [],
       "random-103": [],
-      "random-104": [
-        "K1 (§2.1 file claim): active files: pages/2026-10-26.md: model=false, Tine=true",
-        "K1 (§2.1 file claim): conflicts: \"Day 2026-10-26\" conflicted: model=true, Tine=false",
-        "K1 (§2.1 file claim): links: link (\"page\", \"2026-10-26\") -> (\"page\", \"a\"): model=false, Tine=true",
-        "K1 (§2.1 file claim): links: link (\"page\", \"2026-10-26\") -> (\"page\", \"n\"): model=false, Tine=true",
-        "K1 (§2.1 file claim): links: link (\"page\", \"2026-10-26\") -> (\"page\", \"n/y\"): model=false, Tine=true",
-        "K1 (§2.1 file claim): navigation: \"2026-10-26\": model [\"journal\",\"Day 2026-10-26\"], Tine (\"page\", \"2026-10-26\")",
-        "K1 (§2.1 file claim): pages: page (\"page\", \"2026-10-26\"): model=false, Tine=true",
-        "K1 (§2.1 file claim): query @page: Tine-only page (page ref-only): query \"@page and name = '2026-10-26'\": Tine has page (\"page\", \"Day 2026-10-26\"), model does not",
-        "K1 (§2.1 file claim): query @page: model-only page (journal real): query \"@page and name = '2026-10-26'\": model has page (\"journal\", \"Day 2026-10-26\"), Tine does not",
-        "K2 (§2.2 inactive claimant): pages: page (\"page\", \"a\"): model=false, Tine=true",
-        "K2 (§2.2 inactive claimant): pages: page (\"page\", \"n\"): model=false, Tine=true",
-        "K2 (§2.2 inactive claimant): pages: page (\"page\", \"n/y\"): model=false, Tine=true"
-      ],
+      "random-104": [],
       "random-105": [],
       "random-106": [],
       "random-107": [],
-      "random-108": [
-        "K1 (§2.1 file claim): active files: pages/2026-10-26.md: model=false, Tine=true",
-        "K1 (§2.1 file claim): conflicts: \"Day 2026-10-26\" conflicted: model=true, Tine=false",
-        "K1 (§2.1 file claim): links: link (\"page\", \"2026-10-26\") -> (\"page\", \"a\"): model=false, Tine=true",
-        "K1 (§2.1 file claim): navigation: \"2026-10-26\": model [\"journal\",\"Day 2026-10-26\"], Tine (\"page\", \"2026-10-26\")",
-        "K1 (§2.1 file claim): pages: page (\"page\", \"2026-10-26\"): model=false, Tine=true",
-        "K1 (§2.1 file claim): query @page with not: Tine-only page (journal real): query \"@page and not (name = '2026-10-26')\": Tine has page (\"journal\", \"Day 2026-10-26\"), model does not",
-        "K2 (§2.2 inactive claimant): counts: (\"page\", \"a\") (pages/a.md): model 0, Tine Some(2)",
-        "K2 (§2.2 inactive claimant): linked refs: (\"page\", \"a\"): model {}, Tine {(\"pages/2026-10-26.md\", 2), (\"pages/2026-10-26.md\", 3)}",
-        "K2 (§2.2 inactive claimant): query @block: Tine-only block (non-owner file, own direct by priority): query \"(or [[N/y]] [[a]])\": Tine has block (\"pages/2026-10-26.md\", 2), model does not",
-        "K2 (§2.2 inactive claimant): query @block: Tine-only block (non-owner file, own direct by priority): query \"(or [[N/y]] [[a]])\": Tine has block (\"pages/2026-10-26.md\", 3), model does not"
-      ],
+      "random-108": [],
       "random-109": [],
-      "random-11": [
-        "K1 (§2.1 file claim): navigation: \"2026-10-26\": model [\"journal\",\"Day 2026-10-26\"], Tine (\"page\", \"2026-10-26\")",
-        "K1 (§2.1 file claim): navigation: \"a\": model [\"journal\",\"Day 2026-10-26\"], Tine (\"page\", \"2026-10-26\")",
-        "K1 (§2.1 file claim): navigation: \"n\": model [\"journal\",\"Day 2026-10-26\"], Tine (\"page\", \"2026-10-26\")",
-        "K1 (§2.1 file claim): owners: (\"journal\", \"Day 2026-10-26\"): model \"pages/2026-10-26.md\", Tine None",
-        "K1 (§2.1 file claim): pages: page (\"journal\", \"Day 2026-10-26\"): model=true, Tine=false",
-        "K1 (§2.1 file claim): pages: page (\"page\", \"2026-10-26\"): model=false, Tine=true"
-      ],
+      "random-11": [],
       "random-110": [],
-      "random-111": [
-        "K1 (§2.1 file claim): active files: pages/2026-10-26.md: model=false, Tine=true",
-        "K1 (§2.1 file claim): conflicts: \"Day 2026-10-26\" conflicted: model=true, Tine=false",
-        "K1 (§2.1 file claim): links: link (\"page\", \"2026-10-26\") -> (\"page\", \"a\"): model=false, Tine=true",
-        "K1 (§2.1 file claim): links: link (\"page\", \"2026-10-26\") -> (\"page\", \"rel\"): model=false, Tine=true",
-        "K1 (§2.1 file claim): navigation: \"2026-10-26\": model [\"journal\",\"Day 2026-10-26\"], Tine (\"page\", \"2026-10-26\")",
-        "K1 (§2.1 file claim): pages: page (\"page\", \"2026-10-26\"): model=false, Tine=true",
-        "K2 (§2.2 inactive claimant): pages: page (\"page\", \"a\"): model=false, Tine=true",
-        "K2 (§2.2 inactive claimant): pages: page (\"page\", \"rel\"): model=false, Tine=true",
-        "K2 (§2.2 inactive claimant): query @page: Tine-only page (page ref-only): query \"@page and name = 'a'\": Tine has page (\"page\", \"a\"), model does not"
-      ],
+      "random-111": [],
       "random-112": [],
       "random-113": [],
       "random-114": [],
       "random-115": [],
-      "random-116": [
-        "K1 (§2.1 file claim): links: link (\"journal\", \"Day 2026-10-26\") -> (\"page\", \"b\"): model=true, Tine=false",
-        "K1 (§2.1 file claim): links: link (\"journal\", \"Day 2026-10-26\") -> (\"page\", \"n\"): model=true, Tine=false",
-        "K1 (§2.1 file claim): links: link (\"journal\", \"Day 2026-10-26\") -> (\"page\", \"n/y\"): model=true, Tine=false",
-        "K1 (§2.1 file claim): links: link (\"page\", \"2026-10-26\") -> (\"page\", \"b\"): model=false, Tine=true",
-        "K1 (§2.1 file claim): links: link (\"page\", \"2026-10-26\") -> (\"page\", \"n\"): model=false, Tine=true",
-        "K1 (§2.1 file claim): links: link (\"page\", \"2026-10-26\") -> (\"page\", \"n/y\"): model=false, Tine=true",
-        "K1 (§2.1 file claim): navigation: \"2026-10-26\": model [\"journal\",\"Day 2026-10-26\"], Tine (\"page\", \"2026-10-26\")",
-        "K1 (§2.1 file claim): navigation: \"a\": model [\"journal\",\"Day 2026-10-26\"], Tine (\"page\", \"2026-10-26\")",
-        "K1 (§2.1 file claim): owners: (\"journal\", \"Day 2026-10-26\"): model \"pages/2026-10-26.md\", Tine None",
-        "K1 (§2.1 file claim): pages: page (\"journal\", \"Day 2026-10-26\"): model=true, Tine=false",
-        "K1 (§2.1 file claim): pages: page (\"page\", \"2026-10-26\"): model=false, Tine=true"
-      ],
+      "random-116": [],
       "random-117": [],
-      "random-118": [
-        "K1 (§2.1 file claim): links: link (\"journal\", \"Day 2026-10-26\") -> (\"page\", \"n\"): model=true, Tine=false",
-        "K1 (§2.1 file claim): links: link (\"journal\", \"Day 2026-10-26\") -> (\"page\", \"n/y\"): model=true, Tine=false",
-        "K1 (§2.1 file claim): links: link (\"journal\", \"Day 2026-10-26\") -> (\"page\", \"rel\"): model=true, Tine=false",
-        "K1 (§2.1 file claim): links: link (\"journal\", \"Day 2026-10-26\") -> (\"page\", \"todo\"): model=true, Tine=false",
-        "K1 (§2.1 file claim): links: link (\"page\", \"2026-10-26\") -> (\"page\", \"n\"): model=false, Tine=true",
-        "K1 (§2.1 file claim): links: link (\"page\", \"2026-10-26\") -> (\"page\", \"n/y\"): model=false, Tine=true",
-        "K1 (§2.1 file claim): links: link (\"page\", \"2026-10-26\") -> (\"page\", \"rel\"): model=false, Tine=true",
-        "K1 (§2.1 file claim): links: link (\"page\", \"2026-10-26\") -> (\"page\", \"todo\"): model=false, Tine=true",
-        "K1 (§2.1 file claim): navigation: \"2026-10-26\": model [\"journal\",\"Day 2026-10-26\"], Tine (\"page\", \"2026-10-26\")",
-        "K1 (§2.1 file claim): owners: (\"journal\", \"Day 2026-10-26\"): model \"pages/2026-10-26.md\", Tine None",
-        "K1 (§2.1 file claim): pages: page (\"journal\", \"Day 2026-10-26\"): model=true, Tine=false",
-        "K1 (§2.1 file claim): pages: page (\"page\", \"2026-10-26\"): model=false, Tine=true",
-        "K1 (§2.1 file claim): query @page with not: Tine-only page (page ref-only): query \"@page and not (name = 'n/y')\": Tine has page (\"page\", \"Day 2026-10-26\"), model does not",
-        "K1 (§2.1 file claim): query @page with not: model-only page (journal real): query \"@page and not (name = 'n/y')\": model has page (\"journal\", \"Day 2026-10-26\"), Tine does not"
-      ],
+      "random-118": [],
       "random-119": [],
       "random-12": [],
       "random-120": [],
       "random-121": [],
       "random-122": [],
       "random-123": [],
-      "random-124": [
-        "K1 (§2.1 file claim): navigation: \"2026-10-26\": model [\"journal\",\"Day 2026-10-26\"], Tine (\"page\", \"2026-10-26\")",
-        "K1 (§2.1 file claim): owners: (\"journal\", \"Day 2026-10-26\"): model \"pages/2026-10-26.md\", Tine None",
-        "K1 (§2.1 file claim): pages: page (\"journal\", \"Day 2026-10-26\"): model=true, Tine=false",
-        "K1 (§2.1 file claim): pages: page (\"page\", \"2026-10-26\"): model=false, Tine=true"
-      ],
+      "random-124": [],
       "random-125": [],
       "random-126": [],
       "random-127": [],
@@ -4845,20 +4850,7 @@
       "random-13": [],
       "random-130": [],
       "random-131": [],
-      "random-132": [
-        "K1 (§2.1 file claim): active files: pages/2026-10-26.md: model=false, Tine=true",
-        "K1 (§2.1 file claim): conflicts: \"Day 2026-10-26\" conflicted: model=true, Tine=false",
-        "K1 (§2.1 file claim): counts: (\"journal\", \"Day 2026-10-26\") (journals/2026_10_26.md): model 3, Tine Some(2)",
-        "K1 (§2.1 file claim): linked refs: (\"journal\", \"Day 2026-10-26\"): model {(\"journals/2026_10_27.md\", 0), (\"pages/N%2Fy.md\", 4), (\"pages/N%2Fy.md\", 5)}, Tine {(\"journals/2026_10_27.md\", 0), (\"pages/N%2Fy.md\", 4)}",
-        "K1 (§2.1 file claim): links: link (\"journal\", \"Day 2026-10-26\") -> (\"page\", \"2026-10-26\"): model=false, Tine=true",
-        "K1 (§2.1 file claim): links: link (\"page\", \"n/y\") -> (\"page\", \"2026-10-26\"): model=false, Tine=true",
-        "K1 (§2.1 file claim): navigation: \"2026-10-26\": model [\"journal\",\"Day 2026-10-26\"], Tine (\"page\", \"2026-10-26\")",
-        "K1 (§2.1 file claim): pages: page (\"page\", \"2026-10-26\"): model=false, Tine=true",
-        "K1 (§2.1 file claim): query @page with not: Tine-only page (page ref-only): query \"@page and (name = '2026-10-26' and not (name = 'B'))\": Tine has page (\"page\", \"Day 2026-10-26\"), model does not",
-        "K1 (§2.1 file claim): query @page with not: model-only page (journal real): query \"@page and (name = '2026-10-26' and not (name = 'B'))\": model has page (\"journal\", \"Day 2026-10-26\"), Tine does not",
-        "K1 (§2.1 file claim, reference): counts: (\"journal\", \"Day 2026-10-27\") (journals/2026_10_27.md): model 5, Tine Some(3)",
-        "K1 (§2.1 file claim, reference): linked refs: (\"journal\", \"Day 2026-10-27\"): model {(\"journals/2026_10_26.md\", 0), (\"journals/2026_10_26.md\", 1), (\"journals/2026_10_26.md\", 2), (\"pages/N%2Fy.md\", 4), (\"pages/N%2Fy.md\", 5)}, Tine {(\"journals/2026_10_26.md\", 0), (\"journals/2026_10_26.md\", 2), (\"pages/N%2Fy.md\", 4)}"
-      ],
+      "random-132": [],
       "random-133": [],
       "random-134": [],
       "random-135": [],
@@ -4868,56 +4860,15 @@
       "random-139": [],
       "random-14": [],
       "random-140": [],
-      "random-141": [
-        "K1 (§2.1 file claim): navigation: \"2026-10-26\": model [\"journal\",\"Day 2026-10-26\"], Tine (\"page\", \"2026-10-26\")",
-        "K1 (§2.1 file claim): owners: (\"journal\", \"Day 2026-10-26\"): model \"pages/2026-10-26.md\", Tine None",
-        "K1 (§2.1 file claim): pages: page (\"journal\", \"Day 2026-10-26\"): model=true, Tine=false",
-        "K1 (§2.1 file claim): pages: page (\"page\", \"2026-10-26\"): model=false, Tine=true",
-        "K1 (§2.1 file claim): query @page with not: Tine-only page (page ref-only): query \"@page and not (name = 'n/y')\": Tine has page (\"page\", \"Day 2026-10-26\"), model does not",
-        "K1 (§2.1 file claim): query @page with not: model-only page (journal real): query \"@page and not (name = 'n/y')\": model has page (\"journal\", \"Day 2026-10-26\"), Tine does not"
-      ],
-      "random-142": [
-        "K1 (§2.1 file claim): links: link (\"journal\", \"Day 2026-10-26\") -> (\"page\", \"a\"): model=true, Tine=false",
-        "K1 (§2.1 file claim): links: link (\"journal\", \"Day 2026-10-26\") -> (\"page\", \"n\"): model=true, Tine=false",
-        "K1 (§2.1 file claim): links: link (\"journal\", \"Day 2026-10-26\") -> (\"page\", \"n/y\"): model=true, Tine=false",
-        "K1 (§2.1 file claim): links: link (\"page\", \"2026-10-26\") -> (\"page\", \"a\"): model=false, Tine=true",
-        "K1 (§2.1 file claim): links: link (\"page\", \"2026-10-26\") -> (\"page\", \"n\"): model=false, Tine=true",
-        "K1 (§2.1 file claim): links: link (\"page\", \"2026-10-26\") -> (\"page\", \"n/y\"): model=false, Tine=true",
-        "K1 (§2.1 file claim): navigation: \"2026-10-26\": model [\"journal\",\"Day 2026-10-26\"], Tine (\"page\", \"2026-10-26\")",
-        "K1 (§2.1 file claim): navigation: \"B\": model [\"journal\",\"Day 2026-10-26\"], Tine (\"page\", \"2026-10-26\")",
-        "K1 (§2.1 file claim): owners: (\"journal\", \"Day 2026-10-26\"): model \"pages/2026-10-26.md\", Tine None",
-        "K1 (§2.1 file claim): pages: page (\"journal\", \"Day 2026-10-26\"): model=true, Tine=false",
-        "K1 (§2.1 file claim): pages: page (\"page\", \"2026-10-26\"): model=false, Tine=true"
-      ],
+      "random-141": [],
+      "random-142": [],
       "random-143": [],
       "random-144": [],
       "random-145": [],
       "random-146": [],
-      "random-147": [
-        "K1 (§2.1 file claim): links: link (\"journal\", \"Day 2026-10-26\") -> (\"page\", \"a\"): model=true, Tine=false",
-        "K1 (§2.1 file claim): links: link (\"journal\", \"Day 2026-10-26\") -> (\"page\", \"n\"): model=true, Tine=false",
-        "K1 (§2.1 file claim): links: link (\"journal\", \"Day 2026-10-26\") -> (\"page\", \"n/y\"): model=true, Tine=false",
-        "K1 (§2.1 file claim): links: link (\"journal\", \"Day 2026-10-26\") -> (\"page\", \"todo\"): model=true, Tine=false",
-        "K1 (§2.1 file claim): links: link (\"journal\", \"Day 2026-10-26\") -> (\"page\", \"x\"): model=true, Tine=false",
-        "K1 (§2.1 file claim): links: link (\"page\", \"2026-10-26\") -> (\"page\", \"a\"): model=false, Tine=true",
-        "K1 (§2.1 file claim): links: link (\"page\", \"2026-10-26\") -> (\"page\", \"n\"): model=false, Tine=true",
-        "K1 (§2.1 file claim): links: link (\"page\", \"2026-10-26\") -> (\"page\", \"n/y\"): model=false, Tine=true",
-        "K1 (§2.1 file claim): links: link (\"page\", \"2026-10-26\") -> (\"page\", \"todo\"): model=false, Tine=true",
-        "K1 (§2.1 file claim): links: link (\"page\", \"2026-10-26\") -> (\"page\", \"x\"): model=false, Tine=true",
-        "K1 (§2.1 file claim): navigation: \"2026-10-26\": model [\"journal\",\"Day 2026-10-26\"], Tine (\"page\", \"2026-10-26\")",
-        "K1 (§2.1 file claim): owners: (\"journal\", \"Day 2026-10-26\"): model \"pages/2026-10-26.md\", Tine None",
-        "K1 (§2.1 file claim): pages: page (\"journal\", \"Day 2026-10-26\"): model=true, Tine=false",
-        "K1 (§2.1 file claim): pages: page (\"page\", \"2026-10-26\"): model=false, Tine=true"
-      ],
+      "random-147": [],
       "random-148": [],
-      "random-149": [
-        "K1 (§2.1 file claim): links: link (\"journal\", \"Day 2026-10-26\") -> (\"page\", \"a\"): model=true, Tine=false",
-        "K1 (§2.1 file claim): links: link (\"page\", \"2026-10-26\") -> (\"page\", \"a\"): model=false, Tine=true",
-        "K1 (§2.1 file claim): navigation: \"2026-10-26\": model [\"journal\",\"Day 2026-10-26\"], Tine (\"page\", \"2026-10-26\")",
-        "K1 (§2.1 file claim): owners: (\"journal\", \"Day 2026-10-26\"): model \"pages/2026-10-26.md\", Tine None",
-        "K1 (§2.1 file claim): pages: page (\"journal\", \"Day 2026-10-26\"): model=true, Tine=false",
-        "K1 (§2.1 file claim): pages: page (\"page\", \"2026-10-26\"): model=false, Tine=true"
-      ],
+      "random-149": [],
       "random-15": [],
       "random-150": [],
       "random-151": [],
@@ -4932,51 +4883,13 @@
       "random-16": [],
       "random-160": [],
       "random-161": [],
-      "random-162": [
-        "K1 (§2.1 file claim): navigation: \"2026-10-26\": model [\"journal\",\"Day 2026-10-26\"], Tine (\"page\", \"2026-10-26\")",
-        "K1 (§2.1 file claim): owners: (\"journal\", \"Day 2026-10-26\"): model \"pages/2026-10-26.md\", Tine None",
-        "K1 (§2.1 file claim): pages: page (\"journal\", \"Day 2026-10-26\"): model=true, Tine=false",
-        "K1 (§2.1 file claim): pages: page (\"page\", \"2026-10-26\"): model=false, Tine=true"
-      ],
+      "random-162": [],
       "random-163": [],
-      "random-164": [
-        "K1 (§2.1 file claim): active files: pages/2026-10-26.md: model=false, Tine=true",
-        "K1 (§2.1 file claim): conflicts: \"2026-10-26\" conflicted: model=false, Tine=true",
-        "K1 (§2.1 file claim): conflicts: \"Day 2026-10-26\" conflicted: model=true, Tine=false",
-        "K1 (§2.1 file claim): links: link (\"page\", \"2026-10-26\") -> (\"page\", \"a\"): model=false, Tine=true",
-        "K1 (§2.1 file claim): links: link (\"page\", \"2026-10-26\") -> (\"page\", \"n\"): model=false, Tine=true",
-        "K1 (§2.1 file claim): links: link (\"page\", \"2026-10-26\") -> (\"page\", \"n/y\"): model=false, Tine=true",
-        "K1 (§2.1 file claim): links: link (\"page\", \"2026-10-26\") -> (\"page\", \"todo\"): model=false, Tine=true",
-        "K1 (§2.1 file claim): navigation: \"2026-10-26\": model [\"journal\",\"Day 2026-10-26\"], Tine (\"page\", \"2026-10-26\")",
-        "K1 (§2.1 file claim): pages: page (\"page\", \"2026-10-26\"): model=false, Tine=true",
-        "K1 (§2.1 file claim): query @page with not: Tine-only page (page ref-only): query \"@page and not (name = 'n/y')\": Tine has page (\"page\", \"Day 2026-10-26\"), model does not",
-        "K2 (§2.2 inactive claimant): linked refs: (\"page\", \"a\"): model {(\"journals/2026_10_26.md\", 1)}, Tine {(\"journals/2026_10_26.md\", 1), (\"pages/2026-10-26.md\", 1)}",
-        "K2 (§2.2 inactive claimant): pages: page (\"page\", \"n\"): model=false, Tine=true",
-        "K2 (§2.2 inactive claimant): pages: page (\"page\", \"n/y\"): model=false, Tine=true",
-        "K2 (§2.2 inactive claimant): pages: page (\"page\", \"todo\"): model=false, Tine=true",
-        "K2 (§2.2 inactive claimant): query @block with not: Tine-only block (non-owner file): query \"(not [[A]])\": Tine has block (\"pages/2026-10-26.md\", 0), model does not",
-        "K2 (§2.2 inactive claimant): query @block with not: Tine-only block (non-owner file): query \"(not [[A]])\": Tine has block (\"pages/2026-10-26.md\", 2), model does not",
-        "K2 (§2.2 inactive claimant): query @page with not: Tine-only page (page ref-only): query \"@page and not (name = 'n/y')\": Tine has page (\"page\", \"n\"), model does not",
-        "K2 (§2.2 inactive claimant): query @page with not: Tine-only page (page ref-only): query \"@page and not (name = 'n/y')\": Tine has page (\"page\", \"todo\"), model does not"
-      ],
+      "random-164": [],
       "random-165": [],
-      "random-166": [
-        "K1 (§2.1 file claim): links: link (\"journal\", \"Day 2026-10-26\") -> (\"page\", \"n\"): model=true, Tine=false",
-        "K1 (§2.1 file claim): links: link (\"journal\", \"Day 2026-10-26\") -> (\"page\", \"x\"): model=true, Tine=false",
-        "K1 (§2.1 file claim): links: link (\"page\", \"2026-10-26\") -> (\"page\", \"n\"): model=false, Tine=true",
-        "K1 (§2.1 file claim): links: link (\"page\", \"2026-10-26\") -> (\"page\", \"x\"): model=false, Tine=true",
-        "K1 (§2.1 file claim): navigation: \"2026-10-26\": model [\"journal\",\"Day 2026-10-26\"], Tine (\"page\", \"2026-10-26\")",
-        "K1 (§2.1 file claim): owners: (\"journal\", \"Day 2026-10-26\"): model \"pages/2026-10-26.md\", Tine None",
-        "K1 (§2.1 file claim): pages: page (\"journal\", \"Day 2026-10-26\"): model=true, Tine=false",
-        "K1 (§2.1 file claim): pages: page (\"page\", \"2026-10-26\"): model=false, Tine=true"
-      ],
+      "random-166": [],
       "random-167": [],
-      "random-168": [
-        "K1 (§2.1 file claim): navigation: \"2026-10-26\": model [\"journal\",\"Day 2026-10-26\"], Tine (\"page\", \"2026-10-26\")",
-        "K1 (§2.1 file claim): owners: (\"journal\", \"Day 2026-10-26\"): model \"pages/2026-10-26.md\", Tine None",
-        "K1 (§2.1 file claim): pages: page (\"journal\", \"Day 2026-10-26\"): model=true, Tine=false",
-        "K1 (§2.1 file claim): pages: page (\"page\", \"2026-10-26\"): model=false, Tine=true"
-      ],
+      "random-168": [],
       "random-169": [],
       "random-17": [],
       "random-170": [],
@@ -4997,12 +4910,7 @@
       "random-184": [],
       "random-185": [],
       "random-186": [],
-      "random-187": [
-        "K1 (§2.1 file claim): navigation: \"2026-10-26\": model [\"journal\",\"Day 2026-10-26\"], Tine (\"page\", \"2026-10-26\")",
-        "K1 (§2.1 file claim): owners: (\"journal\", \"Day 2026-10-26\"): model \"pages/2026-10-26.md\", Tine None",
-        "K1 (§2.1 file claim): pages: page (\"journal\", \"Day 2026-10-26\"): model=true, Tine=false",
-        "K1 (§2.1 file claim): pages: page (\"page\", \"2026-10-26\"): model=false, Tine=true"
-      ],
+      "random-187": [],
       "random-188": [],
       "random-189": [],
       "random-19": [],
@@ -5015,103 +4923,33 @@
       "random-196": [],
       "random-197": [],
       "random-198": [],
-      "random-199": [
-        "K1 (§2.1 file claim): links: link (\"journal\", \"Day 2026-10-26\") -> (\"page\", \"b\"): model=true, Tine=false",
-        "K1 (§2.1 file claim): links: link (\"journal\", \"Day 2026-10-26\") -> (\"page\", \"n\"): model=true, Tine=false",
-        "K1 (§2.1 file claim): links: link (\"journal\", \"Day 2026-10-26\") -> (\"page\", \"n/y\"): model=true, Tine=false",
-        "K1 (§2.1 file claim): links: link (\"page\", \"2026-10-26\") -> (\"page\", \"b\"): model=false, Tine=true",
-        "K1 (§2.1 file claim): links: link (\"page\", \"2026-10-26\") -> (\"page\", \"n\"): model=false, Tine=true",
-        "K1 (§2.1 file claim): links: link (\"page\", \"2026-10-26\") -> (\"page\", \"n/y\"): model=false, Tine=true",
-        "K1 (§2.1 file claim): navigation: \"2026-10-26\": model [\"journal\",\"Day 2026-10-26\"], Tine (\"page\", \"2026-10-26\")",
-        "K1 (§2.1 file claim): owners: (\"journal\", \"Day 2026-10-26\"): model \"pages/2026-10-26.md\", Tine None",
-        "K1 (§2.1 file claim): pages: page (\"journal\", \"Day 2026-10-26\"): model=true, Tine=false",
-        "K1 (§2.1 file claim): pages: page (\"page\", \"2026-10-26\"): model=false, Tine=true"
-      ],
+      "random-199": [],
       "random-2": [],
       "random-20": [],
       "random-200": [],
-      "random-201": [
-        "K1 (§2.1 file claim): active files: pages/N%2Fy.md: model=false, Tine=true",
-        "K1 (§2.1 file claim): conflicts: \"Day 2026-10-26\" conflicted: model=true, Tine=false",
-        "K1 (§2.1 file claim): counts: (\"journal\", \"Day 2026-10-26\") (journals/2026_10_26.md): model 1, Tine Some(0)",
-        "K1 (§2.1 file claim): linked refs: (\"journal\", \"Day 2026-10-26\"): model {(\"pages/a.md\", 2)}, Tine {}",
-        "K1 (§2.1 file claim): links: link (\"page\", \"2026-10-26\") -> (\"page\", \"a\"): model=false, Tine=true",
-        "K1 (§2.1 file claim): links: link (\"page\", \"a\") -> (\"journal\", \"Day 2026-10-26\"): model=true, Tine=false",
-        "K1 (§2.1 file claim): links: link (\"page\", \"a\") -> (\"page\", \"2026-10-26\"): model=false, Tine=true",
-        "K1 (§2.1 file claim): navigation: \"2026-10-26\": model [\"journal\",\"Day 2026-10-26\"], Tine (\"page\", \"2026-10-26\")",
-        "K1 (§2.1 file claim): pages: page (\"page\", \"2026-10-26\"): model=false, Tine=true",
-        "K2 (§2.2 inactive claimant): counts: (\"page\", \"a\") (pages/a.md): model 0, Tine Some(1)",
-        "K2 (§2.2 inactive claimant): linked refs: (\"page\", \"a\"): model {}, Tine {(\"pages/N%2Fy.md\", 2)}"
-      ],
-      "random-202": [
-        "K1 (§2.1 file claim): links: link (\"journal\", \"Day 2026-10-26\") -> (\"page\", \"a\"): model=true, Tine=false",
-        "K1 (§2.1 file claim): links: link (\"journal\", \"Day 2026-10-26\") -> (\"page\", \"b\"): model=true, Tine=false",
-        "K1 (§2.1 file claim): links: link (\"journal\", \"Day 2026-10-26\") -> (\"page\", \"n\"): model=true, Tine=false",
-        "K1 (§2.1 file claim): links: link (\"page\", \"2026-10-26\") -> (\"page\", \"a\"): model=false, Tine=true",
-        "K1 (§2.1 file claim): links: link (\"page\", \"2026-10-26\") -> (\"page\", \"b\"): model=false, Tine=true",
-        "K1 (§2.1 file claim): links: link (\"page\", \"2026-10-26\") -> (\"page\", \"n\"): model=false, Tine=true",
-        "K1 (§2.1 file claim): links: link (\"page\", \"x\") -> (\"journal\", \"Day 2026-10-26\"): model=true, Tine=false",
-        "K1 (§2.1 file claim): links: link (\"page\", \"x\") -> (\"page\", \"2026-10-26\"): model=false, Tine=true",
-        "K1 (§2.1 file claim): navigation: \"2026-10-26\": model [\"journal\",\"Day 2026-10-26\"], Tine (\"page\", \"2026-10-26\")",
-        "K1 (§2.1 file claim): navigation: \"N/y\": model [\"journal\",\"Day 2026-10-26\"], Tine (\"page\", \"2026-10-26\")",
-        "K1 (§2.1 file claim): owners: (\"journal\", \"Day 2026-10-26\"): model \"pages/2026-10-26.md\", Tine None",
-        "K1 (§2.1 file claim): pages: page (\"journal\", \"Day 2026-10-26\"): model=true, Tine=false",
-        "K1 (§2.1 file claim): pages: page (\"page\", \"2026-10-26\"): model=false, Tine=true"
-      ],
+      "random-201": [],
+      "random-202": [],
       "random-203": [],
       "random-204": [],
       "random-205": [],
       "random-206": [],
       "random-207": [],
       "random-208": [],
-      "random-209": [
-        "K1 (§2.1 file claim): active files: pages/2026-10-26.md: model=false, Tine=true",
-        "K1 (§2.1 file claim): conflicts: \"Day 2026-10-26\" conflicted: model=true, Tine=false",
-        "K1 (§2.1 file claim): navigation: \"2026-10-26\": model [\"journal\",\"Day 2026-10-26\"], Tine (\"page\", \"2026-10-26\")",
-        "K1 (§2.1 file claim): pages: page (\"page\", \"2026-10-26\"): model=false, Tine=true"
-      ],
-      "random-21": [
-        "K1 (§2.1 file claim): navigation: \"2026-10-26\": model [\"journal\",\"Day 2026-10-26\"], Tine (\"page\", \"2026-10-26\")",
-        "K1 (§2.1 file claim): owners: (\"journal\", \"Day 2026-10-26\"): model \"pages/2026-10-26.md\", Tine None",
-        "K1 (§2.1 file claim): pages: page (\"journal\", \"Day 2026-10-26\"): model=true, Tine=false",
-        "K1 (§2.1 file claim): pages: page (\"page\", \"2026-10-26\"): model=false, Tine=true"
-      ],
+      "random-209": [],
+      "random-21": [],
       "random-210": [],
-      "random-211": [
-        "K1 (§2.1 file claim): navigation: \"2026-10-26\": model [\"journal\",\"Day 2026-10-26\"], Tine (\"page\", \"2026-10-26\")",
-        "K1 (§2.1 file claim): owners: (\"journal\", \"Day 2026-10-26\"): model \"pages/2026-10-26.md\", Tine None",
-        "K1 (§2.1 file claim): pages: page (\"journal\", \"Day 2026-10-26\"): model=true, Tine=false",
-        "K1 (§2.1 file claim): pages: page (\"page\", \"2026-10-26\"): model=false, Tine=true"
-      ],
+      "random-211": [],
       "random-212": [],
       "random-213": [],
       "random-214": [],
       "random-215": [],
-      "random-216": [
-        "K1 (§2.1 file claim): links: link (\"journal\", \"Day 2026-10-26\") -> (\"page\", \"b\"): model=true, Tine=false",
-        "K1 (§2.1 file claim): links: link (\"journal\", \"Day 2026-10-26\") -> (\"page\", \"n\"): model=true, Tine=false",
-        "K1 (§2.1 file claim): links: link (\"journal\", \"Day 2026-10-26\") -> (\"page\", \"n/y\"): model=true, Tine=false",
-        "K1 (§2.1 file claim): links: link (\"page\", \"2026-10-26\") -> (\"page\", \"b\"): model=false, Tine=true",
-        "K1 (§2.1 file claim): links: link (\"page\", \"2026-10-26\") -> (\"page\", \"n\"): model=false, Tine=true",
-        "K1 (§2.1 file claim): links: link (\"page\", \"2026-10-26\") -> (\"page\", \"n/y\"): model=false, Tine=true",
-        "K1 (§2.1 file claim): links: link (\"page\", \"b\") -> (\"journal\", \"Day 2026-10-26\"): model=true, Tine=false",
-        "K1 (§2.1 file claim): links: link (\"page\", \"b\") -> (\"page\", \"2026-10-26\"): model=false, Tine=true",
-        "K1 (§2.1 file claim): navigation: \"2026-10-26\": model [\"journal\",\"Day 2026-10-26\"], Tine (\"page\", \"2026-10-26\")",
-        "K1 (§2.1 file claim): owners: (\"journal\", \"Day 2026-10-26\"): model \"pages/2026-10-26.md\", Tine None",
-        "K1 (§2.1 file claim): pages: page (\"journal\", \"Day 2026-10-26\"): model=true, Tine=false",
-        "K1 (§2.1 file claim): pages: page (\"page\", \"2026-10-26\"): model=false, Tine=true"
-      ],
+      "random-216": [],
       "random-217": [],
       "random-218": [],
       "random-219": [],
       "random-22": [],
       "random-220": [],
-      "random-221": [
-        "K1 (§2.1 file claim): navigation: \"2026-10-26\": model [\"journal\",\"Day 2026-10-26\"], Tine (\"page\", \"2026-10-26\")",
-        "K1 (§2.1 file claim): owners: (\"journal\", \"Day 2026-10-26\"): model \"pages/2026-10-26.md\", Tine None",
-        "K1 (§2.1 file claim): pages: page (\"journal\", \"Day 2026-10-26\"): model=true, Tine=false",
-        "K1 (§2.1 file claim): pages: page (\"page\", \"2026-10-26\"): model=false, Tine=true"
-      ],
+      "random-221": [],
       "random-222": [],
       "random-223": [],
       "random-224": [],
@@ -5120,124 +4958,26 @@
       "random-227": [],
       "random-228": [],
       "random-229": [],
-      "random-23": [
-        "K1 (§2.1 file claim): active files: pages/2026-10-26.md: model=false, Tine=true",
-        "K1 (§2.1 file claim): conflicts: \"Day 2026-10-26\" conflicted: model=true, Tine=false",
-        "K1 (§2.1 file claim): links: link (\"page\", \"2026-10-26\") -> (\"page\", \"a\"): model=false, Tine=true",
-        "K1 (§2.1 file claim): links: link (\"page\", \"2026-10-26\") -> (\"page\", \"n\"): model=false, Tine=true",
-        "K1 (§2.1 file claim): navigation: \"2026-10-26\": model [\"journal\",\"Day 2026-10-26\"], Tine (\"page\", \"2026-10-26\")",
-        "K1 (§2.1 file claim): navigation: \"n/y\": model [\"page\",\"n/y\"], Tine (\"page\", \"2026-10-26\")",
-        "K1 (§2.1 file claim): pages: page (\"page\", \"2026-10-26\"): model=false, Tine=true",
-        "K2 (§2.2 inactive claimant): pages: page (\"page\", \"a\"): model=false, Tine=true",
-        "K2 (§2.2 inactive claimant): pages: page (\"page\", \"n\"): model=false, Tine=true",
-        "K2 (§2.2 inactive claimant): query @block: Tine-only block (non-owner file): query \"[[n/y]]\": Tine has block (\"pages/2026-10-26.md\", 1), model does not",
-        "K2 (§2.2 inactive claimant): query @block: Tine-only block (pre-block, non-owner file, own direct by linkableValue): query \"[[n/y]]\": Tine has block (\"pages/2026-10-26.md\", 0), model does not"
-      ],
+      "random-23": [],
       "random-230": [],
       "random-231": [],
       "random-232": [],
-      "random-233": [
-        "K1 (§2.1 file claim): active files: pages/2026-10-26.md: model=false, Tine=true",
-        "K1 (§2.1 file claim): conflicts: \"Day 2026-10-26\" conflicted: model=true, Tine=false",
-        "K1 (§2.1 file claim): navigation: \"2026-10-26\": model [\"journal\",\"Day 2026-10-26\"], Tine (\"page\", \"2026-10-26\")",
-        "K1 (§2.1 file claim): navigation: \"x\": model [\"page\",\"x\"], Tine (\"page\", \"2026-10-26\")",
-        "K1 (§2.1 file claim): pages: page (\"page\", \"2026-10-26\"): model=false, Tine=true",
-        "K2 (§2.2 inactive claimant): query @block: Tine-only block (pre-block, non-owner file, own direct by linkableValue): query \"[[x]]\": Tine has block (\"pages/2026-10-26.md\", 0), model does not"
-      ],
+      "random-233": [],
       "random-234": [],
       "random-235": [],
       "random-236": [],
-      "random-237": [
-        "K1 (§2.1 file claim): active files: pages/2026-10-26.md: model=false, Tine=true",
-        "K1 (§2.1 file claim): conflicts: \"Day 2026-10-26\" conflicted: model=true, Tine=false",
-        "K1 (§2.1 file claim): links: link (\"page\", \"2026-10-26\") -> (\"page\", \"todo\"): model=false, Tine=true",
-        "K1 (§2.1 file claim): navigation: \"2026-10-26\": model [\"journal\",\"Day 2026-10-26\"], Tine (\"page\", \"2026-10-26\")",
-        "K1 (§2.1 file claim): pages: page (\"page\", \"2026-10-26\"): model=false, Tine=true",
-        "K2 (§2.2 inactive claimant): pages: page (\"page\", \"todo\"): model=false, Tine=true",
-        "K2 (§2.2 inactive claimant): query @block with not: Tine-only block (non-owner file): query \"(not [[A]])\": Tine has block (\"pages/2026-10-26.md\", 0), model does not"
-      ],
+      "random-237": [],
       "random-238": [],
       "random-239": [],
-      "random-24": [
-        "K1 (§2.1 file claim): links: link (\"journal\", \"Day 2026-10-26\") -> (\"page\", \"n\"): model=true, Tine=false",
-        "K1 (§2.1 file claim): links: link (\"journal\", \"Day 2026-10-26\") -> (\"page\", \"n/y\"): model=true, Tine=false",
-        "K1 (§2.1 file claim): links: link (\"page\", \"2026-10-26\") -> (\"page\", \"n\"): model=false, Tine=true",
-        "K1 (§2.1 file claim): links: link (\"page\", \"2026-10-26\") -> (\"page\", \"n/y\"): model=false, Tine=true",
-        "K1 (§2.1 file claim): links: link (\"page\", \"x\") -> (\"journal\", \"Day 2026-10-26\"): model=true, Tine=false",
-        "K1 (§2.1 file claim): links: link (\"page\", \"x\") -> (\"page\", \"2026-10-26\"): model=false, Tine=true",
-        "K1 (§2.1 file claim): navigation: \"2026-10-26\": model [\"journal\",\"Day 2026-10-26\"], Tine (\"page\", \"2026-10-26\")",
-        "K1 (§2.1 file claim): navigation: \"B\": model [\"journal\",\"Day 2026-10-26\"], Tine (\"page\", \"2026-10-26\")",
-        "K1 (§2.1 file claim): owners: (\"journal\", \"Day 2026-10-26\"): model \"pages/2026-10-26.md\", Tine None",
-        "K1 (§2.1 file claim): pages: page (\"journal\", \"Day 2026-10-26\"): model=true, Tine=false",
-        "K1 (§2.1 file claim): pages: page (\"page\", \"2026-10-26\"): model=false, Tine=true"
-      ],
+      "random-24": [],
       "random-240": [],
       "random-241": [],
       "random-242": [],
       "random-243": [],
       "random-244": [],
-      "random-245": [
-        "K1 (§2.1 file claim): active files: pages/n%2Fy.md: model=false, Tine=true",
-        "K1 (§2.1 file claim): conflicts: \"Day 2026-10-26\" conflicted: model=true, Tine=false",
-        "K1 (§2.1 file claim): counts: (\"journal\", \"Day 2026-10-26\") (journals/2026_10_26.md): model 4, Tine Some(5)",
-        "K1 (§2.1 file claim): linked refs: (\"journal\", \"Day 2026-10-26\"): model {(\"pages/n.md\", 0), (\"pages/n.md\", 1), (\"pages/n.md\", 2), (\"pages/n.md\", 4)}, Tine {(\"pages/n%2Fy.md\", 2), (\"pages/n.md\", 0), (\"pages/n.md\", 1), (\"pages/n.md\", 2), (\"pages/n.md\", 4)}",
-        "K1 (§2.1 file claim): links: link (\"journal\", \"Day 2026-10-26\") -> (\"page\", \"2026-10-26\"): model=false, Tine=true",
-        "K1 (§2.1 file claim): links: link (\"page\", \"2026-10-26\") -> (\"journal\", \"Day 2026-10-26\"): model=false, Tine=true",
-        "K1 (§2.1 file claim): links: link (\"page\", \"2026-10-26\") -> (\"page\", \"a\"): model=false, Tine=true",
-        "K1 (§2.1 file claim): links: link (\"page\", \"2026-10-26\") -> (\"page\", \"n\"): model=false, Tine=true",
-        "K1 (§2.1 file claim): links: link (\"page\", \"2026-10-26\") -> (\"page\", \"todo\"): model=false, Tine=true",
-        "K1 (§2.1 file claim): links: link (\"page\", \"n\") -> (\"page\", \"2026-10-26\"): model=false, Tine=true",
-        "K1 (§2.1 file claim): navigation: \"2026-10-26\": model [\"journal\",\"Day 2026-10-26\"], Tine (\"page\", \"2026-10-26\")",
-        "K1 (§2.1 file claim): pages: page (\"page\", \"2026-10-26\"): model=false, Tine=true",
-        "K1 (§2.1 file claim): query @page with not: Tine-only page (page ref-only): query \"@page and not (name = 'n/y')\": Tine has page (\"page\", \"Day 2026-10-26\"), model does not",
-        "K1 (§2.1 file claim, reference): counts: (\"page\", \"n\") (pages/n.md): model 3, Tine Some(4)",
-        "K2 (§2.2 inactive claimant): linked refs: (\"page\", \"a\"): model {(\"journals/2026_10_26.md\", 2), (\"pages/n.md\", 1)}, Tine {(\"journals/2026_10_26.md\", 2), (\"pages/n%2Fy.md\", 1), (\"pages/n%2Fy.md\", 3), (\"pages/n.md\", 1)}",
-        "K2 (§2.2 inactive claimant): linked refs: (\"page\", \"n\"): model {(\"journals/2026_10_26.md\", 0), (\"journals/2026_10_26.md\", 2), (\"journals/2026_10_26.md\", 3)}, Tine {(\"journals/2026_10_26.md\", 0), (\"journals/2026_10_26.md\", 2), (\"journals/2026_10_26.md\", 3), (\"pages/n%2Fy.md\", 2)}",
-        "K2 (§2.2 inactive claimant): pages: page (\"page\", \"todo\"): model=false, Tine=true",
-        "K2 (§2.2 inactive claimant): query @block: Tine-only block (non-owner file): query \"[[n/y]]\": Tine has block (\"pages/n%2Fy.md\", 1), model does not",
-        "K2 (§2.2 inactive claimant): query @block: Tine-only block (non-owner file): query \"[[n/y]]\": Tine has block (\"pages/n%2Fy.md\", 3), model does not",
-        "K2 (§2.2 inactive claimant): query @block: Tine-only block (non-owner file, own alias+ns-prefix|direct by link): query \"[[n/y]]\": Tine has block (\"pages/n%2Fy.md\", 2), model does not",
-        "K2 (§2.2 inactive claimant): query @block: Tine-only block (pre-block, non-owner file): query \"[[n/y]]\": Tine has block (\"pages/n%2Fy.md\", 0), model does not",
-        "K2 (§2.2 inactive claimant): query @page with not: Tine-only page (page ref-only): query \"@page and not (name = 'n/y')\": Tine has page (\"page\", \"todo\"), model does not"
-      ],
-      "random-246": [
-        "K1 (§2.1 file claim): active files: pages/2026-10-26.md: model=false, Tine=true",
-        "K1 (§2.1 file claim): conflicts: \"Day 2026-10-26\" conflicted: model=true, Tine=false",
-        "K1 (§2.1 file claim): counts: (\"journal\", \"Day 2026-10-26\") (journals/2026_10_26.md): model 5, Tine Some(6)",
-        "K1 (§2.1 file claim): linked refs: (\"journal\", \"Day 2026-10-26\"): model {(\"pages/N%2Fy.md\", 0), (\"pages/N%2Fy.md\", 1), (\"pages/N%2Fy.md\", 2), (\"pages/x.md\", 0), (\"pages/x.md\", 1)}, Tine {(\"pages/2026-10-26.md\", 2), (\"pages/N%2Fy.md\", 0), (\"pages/N%2Fy.md\", 1), (\"pages/N%2Fy.md\", 2), (\"pages/x.md\", 0), (\"pages/x.md\", 1)}",
-        "K1 (§2.1 file claim): links: link (\"journal\", \"Day 2026-10-26\") -> (\"page\", \"2026-10-26\"): model=false, Tine=true",
-        "K1 (§2.1 file claim): links: link (\"page\", \"2026-10-26\") -> (\"journal\", \"Day 2026-10-26\"): model=false, Tine=true",
-        "K1 (§2.1 file claim): links: link (\"page\", \"2026-10-26\") -> (\"page\", \"a\"): model=false, Tine=true",
-        "K1 (§2.1 file claim): links: link (\"page\", \"2026-10-26\") -> (\"page\", \"b\"): model=false, Tine=true",
-        "K1 (§2.1 file claim): links: link (\"page\", \"2026-10-26\") -> (\"page\", \"n\"): model=false, Tine=true",
-        "K1 (§2.1 file claim): links: link (\"page\", \"2026-10-26\") -> (\"page\", \"rel\"): model=false, Tine=true",
-        "K1 (§2.1 file claim): links: link (\"page\", \"2026-10-26\") -> (\"page\", \"todo\"): model=false, Tine=true",
-        "K1 (§2.1 file claim): links: link (\"page\", \"2026-10-26\") -> (\"page\", \"x\"): model=false, Tine=true",
-        "K1 (§2.1 file claim): links: link (\"page\", \"a\") -> (\"page\", \"2026-10-26\"): model=false, Tine=true",
-        "K1 (§2.1 file claim): links: link (\"page\", \"x\") -> (\"page\", \"2026-10-26\"): model=false, Tine=true",
-        "K1 (§2.1 file claim): navigation: \"2026-10-26\": model [\"journal\",\"Day 2026-10-26\"], Tine (\"page\", \"2026-10-26\")",
-        "K1 (§2.1 file claim): pages: page (\"page\", \"2026-10-26\"): model=false, Tine=true",
-        "K1 (§2.1 file claim, reference): counts: (\"page\", \"a\") (pages/N%2Fy.md): model 4, Tine Some(5)",
-        "K2 (§2.2 inactive claimant): counts: (\"page\", \"x\") (pages/x.md): model 0, Tine Some(1)",
-        "K2 (§2.2 inactive claimant): linked refs: (\"page\", \"a\"): model {(\"journals/2026_10_26.md\", 0), (\"journals/2026_10_26.md\", 1), (\"pages/x.md\", 0), (\"pages/x.md\", 1)}, Tine {(\"journals/2026_10_26.md\", 0), (\"journals/2026_10_26.md\", 1), (\"pages/2026-10-26.md\", 2), (\"pages/x.md\", 0), (\"pages/x.md\", 1)}",
-        "K2 (§2.2 inactive claimant): linked refs: (\"page\", \"b\"): model {(\"pages/x.md\", 2)}, Tine {(\"pages/2026-10-26.md\", 0), (\"pages/x.md\", 2)}",
-        "K2 (§2.2 inactive claimant): linked refs: (\"page\", \"n\"): model {(\"journals/2026_10_26.md\", 1), (\"pages/N%2Fy.md\", 0), (\"pages/N%2Fy.md\", 2), (\"pages/x.md\", 1)}, Tine {(\"journals/2026_10_26.md\", 1), (\"pages/2026-10-26.md\", 2), (\"pages/N%2Fy.md\", 0), (\"pages/N%2Fy.md\", 2), (\"pages/x.md\", 1)}",
-        "K2 (§2.2 inactive claimant): linked refs: (\"page\", \"rel\"): model {(\"pages/x.md\", 2)}, Tine {(\"pages/2026-10-26.md\", 2), (\"pages/x.md\", 2)}",
-        "K2 (§2.2 inactive claimant): linked refs: (\"page\", \"todo\"): model {(\"pages/x.md\", 0)}, Tine {(\"pages/2026-10-26.md\", 0), (\"pages/x.md\", 0)}",
-        "K2 (§2.2 inactive claimant): linked refs: (\"page\", \"x\"): model {}, Tine {(\"pages/2026-10-26.md\", 1)}"
-      ],
-      "random-247": [
-        "K1 (§2.1 file claim): links: link (\"journal\", \"Day 2026-10-26\") -> (\"page\", \"n\"): model=true, Tine=false",
-        "K1 (§2.1 file claim): links: link (\"journal\", \"Day 2026-10-26\") -> (\"page\", \"n/y\"): model=true, Tine=false",
-        "K1 (§2.1 file claim): links: link (\"page\", \"2026-10-26\") -> (\"page\", \"n\"): model=false, Tine=true",
-        "K1 (§2.1 file claim): links: link (\"page\", \"2026-10-26\") -> (\"page\", \"n/y\"): model=false, Tine=true",
-        "K1 (§2.1 file claim): links: link (\"page\", \"n/y\") -> (\"journal\", \"Day 2026-10-26\"): model=true, Tine=false",
-        "K1 (§2.1 file claim): links: link (\"page\", \"n/y\") -> (\"page\", \"2026-10-26\"): model=false, Tine=true",
-        "K1 (§2.1 file claim): navigation: \"2026-10-26\": model [\"journal\",\"Day 2026-10-26\"], Tine (\"page\", \"2026-10-26\")",
-        "K1 (§2.1 file claim): owners: (\"journal\", \"Day 2026-10-26\"): model \"pages/2026-10-26.md\", Tine None",
-        "K1 (§2.1 file claim): pages: page (\"journal\", \"Day 2026-10-26\"): model=true, Tine=false",
-        "K1 (§2.1 file claim): pages: page (\"page\", \"2026-10-26\"): model=false, Tine=true"
-      ],
+      "random-245": [],
+      "random-246": [],
+      "random-247": [],
       "random-248": [],
       "random-249": [],
       "random-25": [],
@@ -5246,118 +4986,23 @@
       "random-252": [],
       "random-253": [],
       "random-254": [],
-      "random-255": [
-        "K1 (§2.1 file claim): active files: pages/2026-10-26.md: model=false, Tine=true",
-        "K1 (§2.1 file claim): conflicts: \"Day 2026-10-26\" conflicted: model=true, Tine=false",
-        "K1 (§2.1 file claim): links: link (\"journal\", \"Day 2026-10-26\") -> (\"page\", \"2026-10-26\"): model=false, Tine=true",
-        "K1 (§2.1 file claim): links: link (\"journal\", \"Day 2026-10-26\") -> (\"page\", \"a\"): model=true, Tine=false",
-        "K1 (§2.1 file claim): links: link (\"page\", \"n/y\") -> (\"page\", \"2026-10-26\"): model=false, Tine=true",
-        "K1 (§2.1 file claim): navigation: \"2026-10-26\": model [\"journal\",\"Day 2026-10-26\"], Tine (\"page\", \"2026-10-26\")",
-        "K1 (§2.1 file claim): navigation: \"A\": model [\"page\",\"a\"], Tine (\"page\", \"2026-10-26\")",
-        "K1 (§2.1 file claim): navigation: \"a\": model [\"page\",\"a\"], Tine (\"page\", \"2026-10-26\")",
-        "K1 (§2.1 file claim): pages: page (\"page\", \"2026-10-26\"): model=false, Tine=true",
-        "K1 (§2.1 file claim, reference): links: link (\"page\", \"n/y\") -> (\"page\", \"a\"): model=true, Tine=false",
-        "K1 (§2.1 file claim, reference): pages: page (\"page\", \"a\"): model=true, Tine=false",
-        "K1 (§2.1 file claim, reference): query @block: Tine-only block (): query \"[[2026-10-26]]\": Tine has block (\"pages/N%2Fy.md\", 0), model does not",
-        "K2 (§2.2 inactive claimant): query @block: Tine-only block (pre-block, non-owner file): query \"[[2026-10-26]]\": Tine has block (\"pages/2026-10-26.md\", 0), model does not"
-      ],
+      "random-255": [],
       "random-256": [],
-      "random-257": [
-        "K1 (§2.1 file claim): links: link (\"journal\", \"Day 2026-10-26\") -> (\"page\", \"b\"): model=true, Tine=false",
-        "K1 (§2.1 file claim): links: link (\"journal\", \"Day 2026-10-26\") -> (\"page\", \"rel\"): model=true, Tine=false",
-        "K1 (§2.1 file claim): links: link (\"journal\", \"Day 2026-10-26\") -> (\"page\", \"x\"): model=true, Tine=false",
-        "K1 (§2.1 file claim): links: link (\"page\", \"2026-10-26\") -> (\"page\", \"b\"): model=false, Tine=true",
-        "K1 (§2.1 file claim): links: link (\"page\", \"2026-10-26\") -> (\"page\", \"rel\"): model=false, Tine=true",
-        "K1 (§2.1 file claim): links: link (\"page\", \"2026-10-26\") -> (\"page\", \"x\"): model=false, Tine=true",
-        "K1 (§2.1 file claim): navigation: \"2026-10-26\": model [\"journal\",\"Day 2026-10-26\"], Tine (\"page\", \"2026-10-26\")",
-        "K1 (§2.1 file claim): navigation: \"A\": model [\"journal\",\"Day 2026-10-26\"], Tine (\"page\", \"2026-10-26\")",
-        "K1 (§2.1 file claim): navigation: \"a\": model [\"journal\",\"Day 2026-10-26\"], Tine (\"page\", \"2026-10-26\")",
-        "K1 (§2.1 file claim): owners: (\"journal\", \"Day 2026-10-26\"): model \"pages/2026-10-26.md\", Tine None",
-        "K1 (§2.1 file claim): pages: page (\"journal\", \"Day 2026-10-26\"): model=true, Tine=false",
-        "K1 (§2.1 file claim): pages: page (\"page\", \"2026-10-26\"): model=false, Tine=true"
-      ],
+      "random-257": [],
       "random-258": [],
       "random-259": [],
-      "random-26": [
-        "K1 (§2.1 file claim): navigation: \"2026-10-26\": model [\"journal\",\"Day 2026-10-26\"], Tine (\"page\", \"2026-10-26\")",
-        "K1 (§2.1 file claim): owners: (\"journal\", \"Day 2026-10-26\"): model \"pages/2026-10-26.md\", Tine None",
-        "K1 (§2.1 file claim): pages: page (\"journal\", \"Day 2026-10-26\"): model=true, Tine=false",
-        "K1 (§2.1 file claim): pages: page (\"page\", \"2026-10-26\"): model=false, Tine=true",
-        "K1 (§2.1 file claim): query @page with not: Tine-only page (page ref-only): query \"@page and not (name = 'n')\": Tine has page (\"page\", \"Day 2026-10-26\"), model does not",
-        "K1 (§2.1 file claim): query @page with not: model-only page (journal real): query \"@page and not (name = 'n')\": model has page (\"journal\", \"Day 2026-10-26\"), Tine does not"
-      ],
+      "random-26": [],
       "random-260": [],
       "random-261": [],
       "random-262": [],
-      "random-263": [
-        "K1 (§2.1 file claim): active files: pages/B.md: model=false, Tine=true",
-        "K1 (§2.1 file claim): conflicts: \"Day 2026-10-26\" conflicted: model=true, Tine=false",
-        "K1 (§2.1 file claim): navigation: \"2026-10-26\": model [\"journal\",\"Day 2026-10-26\"], Tine (\"page\", \"2026-10-26\")",
-        "K1 (§2.1 file claim): pages: page (\"page\", \"2026-10-26\"): model=false, Tine=true",
-        "K2 (§2.2 inactive claimant): query @block with not: Tine-only block (pre-block, non-owner file): query \"(not [[n/y]])\": Tine has block (\"pages/B.md\", 0), model does not"
-      ],
+      "random-263": [],
       "random-264": [],
       "random-265": [],
-      "random-266": [
-        "K1 (§2.1 file claim): navigation: \"2026-10-26\": model [\"journal\",\"Day 2026-10-26\"], Tine (\"page\", \"2026-10-26\")",
-        "K1 (§2.1 file claim): owners: (\"journal\", \"Day 2026-10-26\"): model \"pages/2026-10-26.md\", Tine None",
-        "K1 (§2.1 file claim): pages: page (\"journal\", \"Day 2026-10-26\"): model=true, Tine=false",
-        "K1 (§2.1 file claim): pages: page (\"page\", \"2026-10-26\"): model=false, Tine=true",
-        "K1 (§2.1 file claim): query @page with not: Tine-only page (page ref-only): query \"@page and not (name = 'N/y')\": Tine has page (\"page\", \"Day 2026-10-26\"), model does not",
-        "K1 (§2.1 file claim): query @page with not: model-only page (journal real): query \"@page and not (name = 'N/y')\": model has page (\"journal\", \"Day 2026-10-26\"), Tine does not"
-      ],
-      "random-267": [
-        "K1 (§2.1 file claim): links: link (\"journal\", \"Day 2026-10-26\") -> (\"page\", \"a\"): model=true, Tine=false",
-        "K1 (§2.1 file claim): links: link (\"journal\", \"Day 2026-10-26\") -> (\"page\", \"b\"): model=true, Tine=false",
-        "K1 (§2.1 file claim): links: link (\"journal\", \"Day 2026-10-26\") -> (\"page\", \"todo\"): model=true, Tine=false",
-        "K1 (§2.1 file claim): links: link (\"journal\", \"Day 2026-10-27\") -> (\"journal\", \"Day 2026-10-26\"): model=true, Tine=false",
-        "K1 (§2.1 file claim): links: link (\"journal\", \"Day 2026-10-27\") -> (\"page\", \"2026-10-26\"): model=false, Tine=true",
-        "K1 (§2.1 file claim): links: link (\"page\", \"2026-10-26\") -> (\"page\", \"a\"): model=false, Tine=true",
-        "K1 (§2.1 file claim): links: link (\"page\", \"2026-10-26\") -> (\"page\", \"b\"): model=false, Tine=true",
-        "K1 (§2.1 file claim): links: link (\"page\", \"2026-10-26\") -> (\"page\", \"todo\"): model=false, Tine=true",
-        "K1 (§2.1 file claim): links: link (\"page\", \"a\") -> (\"journal\", \"Day 2026-10-26\"): model=true, Tine=false",
-        "K1 (§2.1 file claim): links: link (\"page\", \"a\") -> (\"page\", \"2026-10-26\"): model=false, Tine=true",
-        "K1 (§2.1 file claim): links: link (\"page\", \"b\") -> (\"journal\", \"Day 2026-10-26\"): model=true, Tine=false",
-        "K1 (§2.1 file claim): links: link (\"page\", \"b\") -> (\"page\", \"2026-10-26\"): model=false, Tine=true",
-        "K1 (§2.1 file claim): links: link (\"page\", \"x\") -> (\"journal\", \"Day 2026-10-26\"): model=true, Tine=false",
-        "K1 (§2.1 file claim): links: link (\"page\", \"x\") -> (\"page\", \"2026-10-26\"): model=false, Tine=true",
-        "K1 (§2.1 file claim): navigation: \"2026-10-26\": model [\"journal\",\"Day 2026-10-26\"], Tine (\"page\", \"2026-10-26\")",
-        "K1 (§2.1 file claim): navigation: \"n\": model [\"journal\",\"Day 2026-10-26\"], Tine (\"page\", \"2026-10-26\")",
-        "K1 (§2.1 file claim): owners: (\"journal\", \"Day 2026-10-26\"): model \"pages/2026-10-26.md\", Tine None",
-        "K1 (§2.1 file claim): pages: page (\"journal\", \"Day 2026-10-26\"): model=true, Tine=false",
-        "K1 (§2.1 file claim): pages: page (\"page\", \"2026-10-26\"): model=false, Tine=true",
-        "K1 (§2.1 file claim): query @page with not: Tine-only page (page ref-only): query \"@page and (name = '2026-10-26' and not (name = 'n/y'))\": Tine has page (\"page\", \"Day 2026-10-26\"), model does not",
-        "K1 (§2.1 file claim): query @page with not: model-only page (journal real): query \"@page and (name = '2026-10-26' and not (name = 'n/y'))\": model has page (\"journal\", \"Day 2026-10-26\"), Tine does not"
-      ],
-      "random-268": [
-        "K1 (§2.1 file claim): links: link (\"journal\", \"Day 2026-10-26\") -> (\"page\", \"a\"): model=true, Tine=false",
-        "K1 (§2.1 file claim): links: link (\"journal\", \"Day 2026-10-26\") -> (\"page\", \"b\"): model=true, Tine=false",
-        "K1 (§2.1 file claim): links: link (\"journal\", \"Day 2026-10-26\") -> (\"page\", \"n\"): model=true, Tine=false",
-        "K1 (§2.1 file claim): links: link (\"journal\", \"Day 2026-10-26\") -> (\"page\", \"n/y\"): model=true, Tine=false",
-        "K1 (§2.1 file claim): links: link (\"page\", \"2026-10-26\") -> (\"page\", \"a\"): model=false, Tine=true",
-        "K1 (§2.1 file claim): links: link (\"page\", \"2026-10-26\") -> (\"page\", \"b\"): model=false, Tine=true",
-        "K1 (§2.1 file claim): links: link (\"page\", \"2026-10-26\") -> (\"page\", \"n\"): model=false, Tine=true",
-        "K1 (§2.1 file claim): links: link (\"page\", \"2026-10-26\") -> (\"page\", \"n/y\"): model=false, Tine=true",
-        "K1 (§2.1 file claim): navigation: \"2026-10-26\": model [\"journal\",\"Day 2026-10-26\"], Tine (\"page\", \"2026-10-26\")",
-        "K1 (§2.1 file claim): owners: (\"journal\", \"Day 2026-10-26\"): model \"pages/2026-10-26.md\", Tine None",
-        "K1 (§2.1 file claim): pages: page (\"journal\", \"Day 2026-10-26\"): model=true, Tine=false",
-        "K1 (§2.1 file claim): pages: page (\"page\", \"2026-10-26\"): model=false, Tine=true"
-      ],
+      "random-266": [],
+      "random-267": [],
+      "random-268": [],
       "random-269": [],
-      "random-27": [
-        "K1 (§2.1 file claim): links: link (\"journal\", \"Day 2026-10-26\") -> (\"page\", \"n\"): model=true, Tine=false",
-        "K1 (§2.1 file claim): links: link (\"journal\", \"Day 2026-10-26\") -> (\"page\", \"n/y\"): model=true, Tine=false",
-        "K1 (§2.1 file claim): links: link (\"journal\", \"Day 2026-10-26\") -> (\"page\", \"rel\"): model=true, Tine=false",
-        "K1 (§2.1 file claim): links: link (\"page\", \"2026-10-26\") -> (\"page\", \"n\"): model=false, Tine=true",
-        "K1 (§2.1 file claim): links: link (\"page\", \"2026-10-26\") -> (\"page\", \"n/y\"): model=false, Tine=true",
-        "K1 (§2.1 file claim): links: link (\"page\", \"2026-10-26\") -> (\"page\", \"rel\"): model=false, Tine=true",
-        "K1 (§2.1 file claim): links: link (\"page\", \"n\") -> (\"journal\", \"Day 2026-10-26\"): model=true, Tine=false",
-        "K1 (§2.1 file claim): links: link (\"page\", \"n\") -> (\"page\", \"2026-10-26\"): model=false, Tine=true",
-        "K1 (§2.1 file claim): navigation: \"2026-10-26\": model [\"journal\",\"Day 2026-10-26\"], Tine (\"page\", \"2026-10-26\")",
-        "K1 (§2.1 file claim): owners: (\"journal\", \"Day 2026-10-26\"): model \"pages/2026-10-26.md\", Tine None",
-        "K1 (§2.1 file claim): pages: page (\"journal\", \"Day 2026-10-26\"): model=true, Tine=false",
-        "K1 (§2.1 file claim): pages: page (\"page\", \"2026-10-26\"): model=false, Tine=true"
-      ],
+      "random-27": [],
       "random-270": [],
       "random-271": [],
       "random-272": [],
@@ -5366,106 +5011,23 @@
       "random-275": [],
       "random-276": [],
       "random-277": [],
-      "random-278": [
-        "K1 (§2.1 file claim): links: link (\"journal\", \"Day 2026-10-26\") -> (\"page\", \"n\"): model=true, Tine=false",
-        "K1 (§2.1 file claim): links: link (\"journal\", \"Day 2026-10-26\") -> (\"page\", \"n/y\"): model=true, Tine=false",
-        "K1 (§2.1 file claim): links: link (\"journal\", \"Day 2026-10-26\") -> (\"page\", \"rel\"): model=true, Tine=false",
-        "K1 (§2.1 file claim): links: link (\"journal\", \"Day 2026-10-26\") -> (\"page\", \"x\"): model=true, Tine=false",
-        "K1 (§2.1 file claim): links: link (\"journal\", \"Day 2026-10-27\") -> (\"journal\", \"Day 2026-10-26\"): model=true, Tine=false",
-        "K1 (§2.1 file claim): links: link (\"journal\", \"Day 2026-10-27\") -> (\"page\", \"2026-10-26\"): model=false, Tine=true",
-        "K1 (§2.1 file claim): links: link (\"page\", \"2026-10-26\") -> (\"page\", \"n\"): model=false, Tine=true",
-        "K1 (§2.1 file claim): links: link (\"page\", \"2026-10-26\") -> (\"page\", \"n/y\"): model=false, Tine=true",
-        "K1 (§2.1 file claim): links: link (\"page\", \"2026-10-26\") -> (\"page\", \"rel\"): model=false, Tine=true",
-        "K1 (§2.1 file claim): links: link (\"page\", \"2026-10-26\") -> (\"page\", \"x\"): model=false, Tine=true",
-        "K1 (§2.1 file claim): links: link (\"page\", \"n\") -> (\"journal\", \"Day 2026-10-26\"): model=true, Tine=false",
-        "K1 (§2.1 file claim): links: link (\"page\", \"n\") -> (\"page\", \"2026-10-26\"): model=false, Tine=true",
-        "K1 (§2.1 file claim): links: link (\"page\", \"n/y\") -> (\"journal\", \"Day 2026-10-26\"): model=true, Tine=false",
-        "K1 (§2.1 file claim): links: link (\"page\", \"n/y\") -> (\"page\", \"2026-10-26\"): model=false, Tine=true",
-        "K1 (§2.1 file claim): navigation: \"2026-10-26\": model [\"journal\",\"Day 2026-10-26\"], Tine (\"page\", \"2026-10-26\")",
-        "K1 (§2.1 file claim): owners: (\"journal\", \"Day 2026-10-26\"): model \"pages/2026-10-26.md\", Tine None",
-        "K1 (§2.1 file claim): pages: page (\"journal\", \"Day 2026-10-26\"): model=true, Tine=false",
-        "K1 (§2.1 file claim): pages: page (\"page\", \"2026-10-26\"): model=false, Tine=true"
-      ],
+      "random-278": [],
       "random-279": [],
       "random-28": [],
       "random-280": [],
       "random-281": [],
       "random-282": [],
-      "random-283": [
-        "K1 (§2.1 file claim): links: link (\"page\", \"a\") -> (\"journal\", \"Day 2026-10-26\"): model=true, Tine=false",
-        "K1 (§2.1 file claim): links: link (\"page\", \"a\") -> (\"page\", \"2026-10-26\"): model=false, Tine=true",
-        "K1 (§2.1 file claim): links: link (\"page\", \"n/y\") -> (\"journal\", \"Day 2026-10-26\"): model=true, Tine=false",
-        "K1 (§2.1 file claim): links: link (\"page\", \"n/y\") -> (\"page\", \"2026-10-26\"): model=false, Tine=true",
-        "K1 (§2.1 file claim): navigation: \"2026-10-26\": model [\"journal\",\"Day 2026-10-26\"], Tine (\"page\", \"2026-10-26\")",
-        "K1 (§2.1 file claim): owners: (\"journal\", \"Day 2026-10-26\"): model \"pages/2026-10-26.md\", Tine None",
-        "K1 (§2.1 file claim): pages: page (\"journal\", \"Day 2026-10-26\"): model=true, Tine=false",
-        "K1 (§2.1 file claim): pages: page (\"page\", \"2026-10-26\"): model=false, Tine=true",
-        "K1 (§2.1 file claim): query @page: Tine-only page (page ref-only): query \"@page and (name = 'n' or name = '2026-10-26')\": Tine has page (\"page\", \"Day 2026-10-26\"), model does not",
-        "K1 (§2.1 file claim): query @page: model-only page (journal real): query \"@page and (name = 'n' or name = '2026-10-26')\": model has page (\"journal\", \"Day 2026-10-26\"), Tine does not"
-      ],
+      "random-283": [],
       "random-284": [],
-      "random-285": [
-        "K1 (§2.1 file claim): links: link (\"journal\", \"Day 2026-10-26\") -> (\"page\", \"a\"): model=true, Tine=false",
-        "K1 (§2.1 file claim): links: link (\"journal\", \"Day 2026-10-26\") -> (\"page\", \"todo\"): model=true, Tine=false",
-        "K1 (§2.1 file claim): links: link (\"page\", \"2026-10-26\") -> (\"page\", \"a\"): model=false, Tine=true",
-        "K1 (§2.1 file claim): links: link (\"page\", \"2026-10-26\") -> (\"page\", \"todo\"): model=false, Tine=true",
-        "K1 (§2.1 file claim): navigation: \"2026-10-26\": model [\"journal\",\"Day 2026-10-26\"], Tine (\"page\", \"2026-10-26\")",
-        "K1 (§2.1 file claim): owners: (\"journal\", \"Day 2026-10-26\"): model \"pages/2026-10-26.md\", Tine None",
-        "K1 (§2.1 file claim): pages: page (\"journal\", \"Day 2026-10-26\"): model=true, Tine=false",
-        "K1 (§2.1 file claim): pages: page (\"page\", \"2026-10-26\"): model=false, Tine=true"
-      ],
-      "random-286": [
-        "K1 (§2.1 file claim): navigation: \"2026-10-26\": model [\"journal\",\"Day 2026-10-26\"], Tine (\"page\", \"2026-10-26\")",
-        "K1 (§2.1 file claim): owners: (\"journal\", \"Day 2026-10-26\"): model \"pages/2026-10-26.md\", Tine None",
-        "K1 (§2.1 file claim): pages: page (\"journal\", \"Day 2026-10-26\"): model=true, Tine=false",
-        "K1 (§2.1 file claim): pages: page (\"page\", \"2026-10-26\"): model=false, Tine=true"
-      ],
-      "random-287": [
-        "K1 (§2.1 file claim): links: link (\"journal\", \"Day 2026-10-26\") -> (\"page\", \"a\"): model=true, Tine=false",
-        "K1 (§2.1 file claim): links: link (\"journal\", \"Day 2026-10-26\") -> (\"page\", \"n\"): model=true, Tine=false",
-        "K1 (§2.1 file claim): links: link (\"journal\", \"Day 2026-10-26\") -> (\"page\", \"n/y\"): model=true, Tine=false",
-        "K1 (§2.1 file claim): links: link (\"journal\", \"Day 2026-10-26\") -> (\"page\", \"rel\"): model=true, Tine=false",
-        "K1 (§2.1 file claim): links: link (\"page\", \"2026-10-26\") -> (\"page\", \"a\"): model=false, Tine=true",
-        "K1 (§2.1 file claim): links: link (\"page\", \"2026-10-26\") -> (\"page\", \"n\"): model=false, Tine=true",
-        "K1 (§2.1 file claim): links: link (\"page\", \"2026-10-26\") -> (\"page\", \"n/y\"): model=false, Tine=true",
-        "K1 (§2.1 file claim): links: link (\"page\", \"2026-10-26\") -> (\"page\", \"rel\"): model=false, Tine=true",
-        "K1 (§2.1 file claim): links: link (\"page\", \"b\") -> (\"journal\", \"Day 2026-10-26\"): model=true, Tine=false",
-        "K1 (§2.1 file claim): links: link (\"page\", \"b\") -> (\"page\", \"2026-10-26\"): model=false, Tine=true",
-        "K1 (§2.1 file claim): navigation: \"2026-10-26\": model [\"journal\",\"Day 2026-10-26\"], Tine (\"page\", \"2026-10-26\")",
-        "K1 (§2.1 file claim): owners: (\"journal\", \"Day 2026-10-26\"): model \"pages/2026-10-26.md\", Tine None",
-        "K1 (§2.1 file claim): pages: page (\"journal\", \"Day 2026-10-26\"): model=true, Tine=false",
-        "K1 (§2.1 file claim): pages: page (\"page\", \"2026-10-26\"): model=false, Tine=true"
-      ],
+      "random-285": [],
+      "random-286": [],
+      "random-287": [],
       "random-288": [],
-      "random-289": [
-        "K1 (§2.1 file claim): links: link (\"journal\", \"Day 2026-10-26\") -> (\"page\", \"n\"): model=true, Tine=false",
-        "K1 (§2.1 file claim): links: link (\"journal\", \"Day 2026-10-26\") -> (\"page\", \"n/y\"): model=true, Tine=false",
-        "K1 (§2.1 file claim): links: link (\"page\", \"2026-10-26\") -> (\"page\", \"n\"): model=false, Tine=true",
-        "K1 (§2.1 file claim): links: link (\"page\", \"2026-10-26\") -> (\"page\", \"n/y\"): model=false, Tine=true",
-        "K1 (§2.1 file claim): navigation: \"2026-10-26\": model [\"journal\",\"Day 2026-10-26\"], Tine (\"page\", \"2026-10-26\")",
-        "K1 (§2.1 file claim): owners: (\"journal\", \"Day 2026-10-26\"): model \"pages/2026-10-26.md\", Tine None",
-        "K1 (§2.1 file claim): pages: page (\"journal\", \"Day 2026-10-26\"): model=true, Tine=false",
-        "K1 (§2.1 file claim): pages: page (\"page\", \"2026-10-26\"): model=false, Tine=true"
-      ],
+      "random-289": [],
       "random-29": [],
       "random-290": [],
       "random-291": [],
-      "random-292": [
-        "K1 (§2.1 file claim): links: link (\"journal\", \"Day 2026-10-26\") -> (\"page\", \"a\"): model=true, Tine=false",
-        "K1 (§2.1 file claim): links: link (\"journal\", \"Day 2026-10-26\") -> (\"page\", \"n\"): model=true, Tine=false",
-        "K1 (§2.1 file claim): links: link (\"journal\", \"Day 2026-10-26\") -> (\"page\", \"n/y\"): model=true, Tine=false",
-        "K1 (§2.1 file claim): links: link (\"journal\", \"Day 2026-10-26\") -> (\"page\", \"rel\"): model=true, Tine=false",
-        "K1 (§2.1 file claim): links: link (\"journal\", \"Day 2026-10-26\") -> (\"page\", \"x\"): model=true, Tine=false",
-        "K1 (§2.1 file claim): links: link (\"page\", \"2026-10-26\") -> (\"page\", \"a\"): model=false, Tine=true",
-        "K1 (§2.1 file claim): links: link (\"page\", \"2026-10-26\") -> (\"page\", \"n\"): model=false, Tine=true",
-        "K1 (§2.1 file claim): links: link (\"page\", \"2026-10-26\") -> (\"page\", \"n/y\"): model=false, Tine=true",
-        "K1 (§2.1 file claim): links: link (\"page\", \"2026-10-26\") -> (\"page\", \"rel\"): model=false, Tine=true",
-        "K1 (§2.1 file claim): links: link (\"page\", \"2026-10-26\") -> (\"page\", \"x\"): model=false, Tine=true",
-        "K1 (§2.1 file claim): navigation: \"2026-10-26\": model [\"journal\",\"Day 2026-10-26\"], Tine (\"page\", \"2026-10-26\")",
-        "K1 (§2.1 file claim): owners: (\"journal\", \"Day 2026-10-26\"): model \"pages/a.md\", Tine None",
-        "K1 (§2.1 file claim): pages: page (\"journal\", \"Day 2026-10-26\"): model=true, Tine=false",
-        "K1 (§2.1 file claim): pages: page (\"page\", \"2026-10-26\"): model=false, Tine=true"
-      ],
+      "random-292": [],
       "random-293": [],
       "random-294": [],
       "random-295": [],
@@ -5473,18 +5035,7 @@
       "random-297": [],
       "random-298": [],
       "random-299": [],
-      "random-3": [
-        "K1 (§2.1 file claim): links: link (\"journal\", \"Day 2026-10-26\") -> (\"page\", \"a\"): model=true, Tine=false",
-        "K1 (§2.1 file claim): links: link (\"journal\", \"Day 2026-10-26\") -> (\"page\", \"n\"): model=true, Tine=false",
-        "K1 (§2.1 file claim): links: link (\"journal\", \"Day 2026-10-26\") -> (\"page\", \"x\"): model=true, Tine=false",
-        "K1 (§2.1 file claim): links: link (\"page\", \"2026-10-26\") -> (\"page\", \"a\"): model=false, Tine=true",
-        "K1 (§2.1 file claim): links: link (\"page\", \"2026-10-26\") -> (\"page\", \"n\"): model=false, Tine=true",
-        "K1 (§2.1 file claim): links: link (\"page\", \"2026-10-26\") -> (\"page\", \"x\"): model=false, Tine=true",
-        "K1 (§2.1 file claim): navigation: \"2026-10-26\": model [\"journal\",\"Day 2026-10-26\"], Tine (\"page\", \"2026-10-26\")",
-        "K1 (§2.1 file claim): owners: (\"journal\", \"Day 2026-10-26\"): model \"pages/2026-10-26.md\", Tine None",
-        "K1 (§2.1 file claim): pages: page (\"journal\", \"Day 2026-10-26\"): model=true, Tine=false",
-        "K1 (§2.1 file claim): pages: page (\"page\", \"2026-10-26\"): model=false, Tine=true"
-      ],
+      "random-3": [],
       "random-30": [],
       "random-31": [],
       "random-32": [],
@@ -5493,43 +5044,11 @@
       "random-35": [],
       "random-36": [],
       "random-37": [],
-      "random-38": [
-        "K1 (§2.1 file claim): links: link (\"page\", \"n/y\") -> (\"journal\", \"Day 2026-10-26\"): model=true, Tine=false",
-        "K1 (§2.1 file claim): links: link (\"page\", \"n/y\") -> (\"page\", \"2026-10-26\"): model=false, Tine=true",
-        "K1 (§2.1 file claim): navigation: \"2026-10-26\": model [\"journal\",\"Day 2026-10-26\"], Tine (\"page\", \"2026-10-26\")",
-        "K1 (§2.1 file claim): navigation: \"x\": model [\"journal\",\"Day 2026-10-26\"], Tine (\"page\", \"2026-10-26\")",
-        "K1 (§2.1 file claim): owners: (\"journal\", \"Day 2026-10-26\"): model \"pages/2026-10-26.md\", Tine None",
-        "K1 (§2.1 file claim): pages: page (\"journal\", \"Day 2026-10-26\"): model=true, Tine=false",
-        "K1 (§2.1 file claim): pages: page (\"page\", \"2026-10-26\"): model=false, Tine=true"
-      ],
-      "random-39": [
-        "K1 (§2.1 file claim): links: link (\"page\", \"b\") -> (\"journal\", \"Day 2026-10-26\"): model=true, Tine=false",
-        "K1 (§2.1 file claim): links: link (\"page\", \"b\") -> (\"page\", \"2026-10-26\"): model=false, Tine=true",
-        "K1 (§2.1 file claim): links: link (\"page\", \"n\") -> (\"journal\", \"Day 2026-10-26\"): model=true, Tine=false",
-        "K1 (§2.1 file claim): links: link (\"page\", \"n\") -> (\"page\", \"2026-10-26\"): model=false, Tine=true",
-        "K1 (§2.1 file claim): navigation: \"2026-10-26\": model [\"journal\",\"Day 2026-10-26\"], Tine (\"page\", \"2026-10-26\")",
-        "K1 (§2.1 file claim): owners: (\"journal\", \"Day 2026-10-26\"): model \"pages/2026-10-26.md\", Tine None",
-        "K1 (§2.1 file claim): pages: page (\"journal\", \"Day 2026-10-26\"): model=true, Tine=false",
-        "K1 (§2.1 file claim): pages: page (\"page\", \"2026-10-26\"): model=false, Tine=true",
-        "K1 (§2.1 file claim): query @page with not: Tine-only page (page ref-only): query \"@page and not (name = 'n/y')\": Tine has page (\"page\", \"Day 2026-10-26\"), model does not",
-        "K1 (§2.1 file claim): query @page with not: model-only page (journal real): query \"@page and not (name = 'n/y')\": model has page (\"journal\", \"Day 2026-10-26\"), Tine does not"
-      ],
+      "random-38": [],
+      "random-39": [],
       "random-4": [],
       "random-40": [],
-      "random-41": [
-        "K1 (§2.1 file claim): links: link (\"journal\", \"Day 2026-10-26\") -> (\"page\", \"a\"): model=true, Tine=false",
-        "K1 (§2.1 file claim): links: link (\"journal\", \"Day 2026-10-26\") -> (\"page\", \"n\"): model=true, Tine=false",
-        "K1 (§2.1 file claim): links: link (\"journal\", \"Day 2026-10-26\") -> (\"page\", \"n/y\"): model=true, Tine=false",
-        "K1 (§2.1 file claim): links: link (\"journal\", \"Day 2026-10-26\") -> (\"page\", \"todo\"): model=true, Tine=false",
-        "K1 (§2.1 file claim): links: link (\"page\", \"2026-10-26\") -> (\"page\", \"a\"): model=false, Tine=true",
-        "K1 (§2.1 file claim): links: link (\"page\", \"2026-10-26\") -> (\"page\", \"n\"): model=false, Tine=true",
-        "K1 (§2.1 file claim): links: link (\"page\", \"2026-10-26\") -> (\"page\", \"n/y\"): model=false, Tine=true",
-        "K1 (§2.1 file claim): links: link (\"page\", \"2026-10-26\") -> (\"page\", \"todo\"): model=false, Tine=true",
-        "K1 (§2.1 file claim): navigation: \"2026-10-26\": model [\"journal\",\"Day 2026-10-26\"], Tine (\"page\", \"2026-10-26\")",
-        "K1 (§2.1 file claim): owners: (\"journal\", \"Day 2026-10-26\"): model \"pages/a.md\", Tine None",
-        "K1 (§2.1 file claim): pages: page (\"journal\", \"Day 2026-10-26\"): model=true, Tine=false",
-        "K1 (§2.1 file claim): pages: page (\"page\", \"2026-10-26\"): model=false, Tine=true"
-      ],
+      "random-41": [],
       "random-42": [],
       "random-43": [],
       "random-44": [],
@@ -5537,12 +5056,7 @@
       "random-46": [],
       "random-47": [],
       "random-48": [],
-      "random-49": [
-        "K1 (§2.1 file claim): navigation: \"2026-10-26\": model [\"journal\",\"Day 2026-10-26\"], Tine (\"page\", \"2026-10-26\")",
-        "K1 (§2.1 file claim): owners: (\"journal\", \"Day 2026-10-26\"): model \"pages/2026-10-26.md\", Tine None",
-        "K1 (§2.1 file claim): pages: page (\"journal\", \"Day 2026-10-26\"): model=true, Tine=false",
-        "K1 (§2.1 file claim): pages: page (\"page\", \"2026-10-26\"): model=false, Tine=true"
-      ],
+      "random-49": [],
       "random-5": [],
       "random-50": [],
       "random-51": [],
@@ -5554,12 +5068,7 @@
       "random-57": [],
       "random-58": [],
       "random-59": [],
-      "random-6": [
-        "K1 (§2.1 file claim): active files: pages/2026-10-26.md: model=false, Tine=true",
-        "K1 (§2.1 file claim): conflicts: \"Day 2026-10-26\" conflicted: model=true, Tine=false",
-        "K1 (§2.1 file claim): navigation: \"2026-10-26\": model [\"journal\",\"Day 2026-10-26\"], Tine (\"page\", \"2026-10-26\")",
-        "K1 (§2.1 file claim): pages: page (\"page\", \"2026-10-26\"): model=false, Tine=true"
-      ],
+      "random-6": [],
       "random-60": [],
       "random-61": [],
       "random-62": [],
@@ -5567,84 +5076,17 @@
       "random-64": [],
       "random-65": [],
       "random-66": [],
-      "random-67": [
-        "K1 (§2.1 file claim): links: link (\"journal\", \"Day 2026-10-26\") -> (\"page\", \"a\"): model=true, Tine=false",
-        "K1 (§2.1 file claim): links: link (\"journal\", \"Day 2026-10-26\") -> (\"page\", \"n\"): model=true, Tine=false",
-        "K1 (§2.1 file claim): links: link (\"journal\", \"Day 2026-10-26\") -> (\"page\", \"n/y\"): model=true, Tine=false",
-        "K1 (§2.1 file claim): links: link (\"journal\", \"Day 2026-10-26\") -> (\"page\", \"x\"): model=true, Tine=false",
-        "K1 (§2.1 file claim): links: link (\"page\", \"2026-10-26\") -> (\"page\", \"a\"): model=false, Tine=true",
-        "K1 (§2.1 file claim): links: link (\"page\", \"2026-10-26\") -> (\"page\", \"n\"): model=false, Tine=true",
-        "K1 (§2.1 file claim): links: link (\"page\", \"2026-10-26\") -> (\"page\", \"n/y\"): model=false, Tine=true",
-        "K1 (§2.1 file claim): links: link (\"page\", \"2026-10-26\") -> (\"page\", \"x\"): model=false, Tine=true",
-        "K1 (§2.1 file claim): navigation: \"2026-10-26\": model [\"journal\",\"Day 2026-10-26\"], Tine (\"page\", \"2026-10-26\")",
-        "K1 (§2.1 file claim): owners: (\"journal\", \"Day 2026-10-26\"): model \"pages/2026-10-26.md\", Tine None",
-        "K1 (§2.1 file claim): pages: page (\"journal\", \"Day 2026-10-26\"): model=true, Tine=false",
-        "K1 (§2.1 file claim): pages: page (\"page\", \"2026-10-26\"): model=false, Tine=true"
-      ],
+      "random-67": [],
       "random-68": [],
       "random-69": [],
       "random-7": [],
-      "random-70": [
-        "K1 (§2.1 file claim): links: link (\"journal\", \"Day 2026-10-27\") -> (\"journal\", \"Day 2026-10-26\"): model=true, Tine=false",
-        "K1 (§2.1 file claim): links: link (\"journal\", \"Day 2026-10-27\") -> (\"page\", \"2026-10-26\"): model=false, Tine=true",
-        "K1 (§2.1 file claim): links: link (\"page\", \"b\") -> (\"journal\", \"Day 2026-10-26\"): model=true, Tine=false",
-        "K1 (§2.1 file claim): links: link (\"page\", \"b\") -> (\"page\", \"2026-10-26\"): model=false, Tine=true",
-        "K1 (§2.1 file claim): navigation: \"2026-10-26\": model [\"journal\",\"Day 2026-10-26\"], Tine (\"page\", \"2026-10-26\")",
-        "K1 (§2.1 file claim): owners: (\"journal\", \"Day 2026-10-26\"): model \"pages/2026-10-26.md\", Tine None",
-        "K1 (§2.1 file claim): pages: page (\"journal\", \"Day 2026-10-26\"): model=true, Tine=false",
-        "K1 (§2.1 file claim): pages: page (\"page\", \"2026-10-26\"): model=false, Tine=true",
-        "K1 (§2.1 file claim): query @page with not: Tine-only page (page ref-only): query \"@page and not (name = 'n/y')\": Tine has page (\"page\", \"Day 2026-10-26\"), model does not",
-        "K1 (§2.1 file claim): query @page with not: model-only page (journal real): query \"@page and not (name = 'n/y')\": model has page (\"journal\", \"Day 2026-10-26\"), Tine does not"
-      ],
+      "random-70": [],
       "random-71": [],
-      "random-72": [
-        "K1 (§2.1 file claim): links: link (\"journal\", \"Day 2026-10-26\") -> (\"page\", \"a\"): model=true, Tine=false",
-        "K1 (§2.1 file claim): links: link (\"journal\", \"Day 2026-10-26\") -> (\"page\", \"n\"): model=true, Tine=false",
-        "K1 (§2.1 file claim): links: link (\"journal\", \"Day 2026-10-26\") -> (\"page\", \"n/y\"): model=true, Tine=false",
-        "K1 (§2.1 file claim): links: link (\"journal\", \"Day 2026-10-26\") -> (\"page\", \"todo\"): model=true, Tine=false",
-        "K1 (§2.1 file claim): links: link (\"page\", \"2026-10-26\") -> (\"page\", \"a\"): model=false, Tine=true",
-        "K1 (§2.1 file claim): links: link (\"page\", \"2026-10-26\") -> (\"page\", \"n\"): model=false, Tine=true",
-        "K1 (§2.1 file claim): links: link (\"page\", \"2026-10-26\") -> (\"page\", \"n/y\"): model=false, Tine=true",
-        "K1 (§2.1 file claim): links: link (\"page\", \"2026-10-26\") -> (\"page\", \"todo\"): model=false, Tine=true",
-        "K1 (§2.1 file claim): navigation: \"2026-10-26\": model [\"journal\",\"Day 2026-10-26\"], Tine (\"page\", \"2026-10-26\")",
-        "K1 (§2.1 file claim): owners: (\"journal\", \"Day 2026-10-26\"): model \"pages/2026-10-26.md\", Tine None",
-        "K1 (§2.1 file claim): pages: page (\"journal\", \"Day 2026-10-26\"): model=true, Tine=false",
-        "K1 (§2.1 file claim): pages: page (\"page\", \"2026-10-26\"): model=false, Tine=true"
-      ],
+      "random-72": [],
       "random-73": [],
-      "random-74": [
-        "K1 (§2.1 file claim): links: link (\"journal\", \"Day 2026-10-26\") -> (\"page\", \"a\"): model=true, Tine=false",
-        "K1 (§2.1 file claim): links: link (\"journal\", \"Day 2026-10-26\") -> (\"page\", \"rel\"): model=true, Tine=false",
-        "K1 (§2.1 file claim): links: link (\"page\", \"2026-10-26\") -> (\"page\", \"a\"): model=false, Tine=true",
-        "K1 (§2.1 file claim): links: link (\"page\", \"2026-10-26\") -> (\"page\", \"rel\"): model=false, Tine=true",
-        "K1 (§2.1 file claim): links: link (\"page\", \"n\") -> (\"journal\", \"Day 2026-10-26\"): model=true, Tine=false",
-        "K1 (§2.1 file claim): links: link (\"page\", \"n\") -> (\"page\", \"2026-10-26\"): model=false, Tine=true",
-        "K1 (§2.1 file claim): links: link (\"page\", \"n/y\") -> (\"journal\", \"Day 2026-10-26\"): model=true, Tine=false",
-        "K1 (§2.1 file claim): links: link (\"page\", \"n/y\") -> (\"page\", \"2026-10-26\"): model=false, Tine=true",
-        "K1 (§2.1 file claim): navigation: \"2026-10-26\": model [\"journal\",\"Day 2026-10-26\"], Tine (\"page\", \"2026-10-26\")",
-        "K1 (§2.1 file claim): owners: (\"journal\", \"Day 2026-10-26\"): model \"pages/2026-10-26.md\", Tine None",
-        "K1 (§2.1 file claim): pages: page (\"journal\", \"Day 2026-10-26\"): model=true, Tine=false",
-        "K1 (§2.1 file claim): pages: page (\"page\", \"2026-10-26\"): model=false, Tine=true"
-      ],
+      "random-74": [],
       "random-75": [],
-      "random-76": [
-        "K1 (§2.1 file claim): links: link (\"journal\", \"Day 2026-10-26\") -> (\"page\", \"a\"): model=true, Tine=false",
-        "K1 (§2.1 file claim): links: link (\"journal\", \"Day 2026-10-26\") -> (\"page\", \"n\"): model=true, Tine=false",
-        "K1 (§2.1 file claim): links: link (\"journal\", \"Day 2026-10-26\") -> (\"page\", \"n/y\"): model=true, Tine=false",
-        "K1 (§2.1 file claim): links: link (\"journal\", \"Day 2026-10-27\") -> (\"journal\", \"Day 2026-10-26\"): model=true, Tine=false",
-        "K1 (§2.1 file claim): links: link (\"journal\", \"Day 2026-10-27\") -> (\"page\", \"2026-10-26\"): model=false, Tine=true",
-        "K1 (§2.1 file claim): links: link (\"page\", \"2026-10-26\") -> (\"page\", \"a\"): model=false, Tine=true",
-        "K1 (§2.1 file claim): links: link (\"page\", \"2026-10-26\") -> (\"page\", \"n\"): model=false, Tine=true",
-        "K1 (§2.1 file claim): links: link (\"page\", \"2026-10-26\") -> (\"page\", \"n/y\"): model=false, Tine=true",
-        "K1 (§2.1 file claim): links: link (\"page\", \"a\") -> (\"journal\", \"Day 2026-10-26\"): model=true, Tine=false",
-        "K1 (§2.1 file claim): links: link (\"page\", \"a\") -> (\"page\", \"2026-10-26\"): model=false, Tine=true",
-        "K1 (§2.1 file claim): links: link (\"page\", \"n/y\") -> (\"journal\", \"Day 2026-10-26\"): model=true, Tine=false",
-        "K1 (§2.1 file claim): links: link (\"page\", \"n/y\") -> (\"page\", \"2026-10-26\"): model=false, Tine=true",
-        "K1 (§2.1 file claim): navigation: \"2026-10-26\": model [\"journal\",\"Day 2026-10-26\"], Tine (\"page\", \"2026-10-26\")",
-        "K1 (§2.1 file claim): owners: (\"journal\", \"Day 2026-10-26\"): model \"pages/2026-10-26.md\", Tine None",
-        "K1 (§2.1 file claim): pages: page (\"journal\", \"Day 2026-10-26\"): model=true, Tine=false",
-        "K1 (§2.1 file claim): pages: page (\"page\", \"2026-10-26\"): model=false, Tine=true"
-      ],
+      "random-76": [],
       "random-77": [],
       "random-78": [],
       "random-79": [],
@@ -5653,104 +5095,22 @@
       "random-81": [],
       "random-82": [],
       "random-83": [],
-      "random-84": [
-        "K1 (§2.1 file claim): links: link (\"journal\", \"Day 2026-10-26\") -> (\"page\", \"a\"): model=true, Tine=false",
-        "K1 (§2.1 file claim): links: link (\"journal\", \"Day 2026-10-26\") -> (\"page\", \"n\"): model=true, Tine=false",
-        "K1 (§2.1 file claim): links: link (\"page\", \"2026-10-26\") -> (\"page\", \"a\"): model=false, Tine=true",
-        "K1 (§2.1 file claim): links: link (\"page\", \"2026-10-26\") -> (\"page\", \"n\"): model=false, Tine=true",
-        "K1 (§2.1 file claim): navigation: \"2026-10-26\": model [\"journal\",\"Day 2026-10-26\"], Tine (\"page\", \"2026-10-26\")",
-        "K1 (§2.1 file claim): owners: (\"journal\", \"Day 2026-10-26\"): model \"pages/2026-10-26.md\", Tine None",
-        "K1 (§2.1 file claim): pages: page (\"journal\", \"Day 2026-10-26\"): model=true, Tine=false",
-        "K1 (§2.1 file claim): pages: page (\"page\", \"2026-10-26\"): model=false, Tine=true"
-      ],
+      "random-84": [],
       "random-85": [],
       "random-86": [],
-      "random-87": [
-        "K1 (§2.1 file claim): links: link (\"journal\", \"Day 2026-10-26\") -> (\"page\", \"a\"): model=true, Tine=false",
-        "K1 (§2.1 file claim): links: link (\"journal\", \"Day 2026-10-26\") -> (\"page\", \"n\"): model=true, Tine=false",
-        "K1 (§2.1 file claim): links: link (\"journal\", \"Day 2026-10-26\") -> (\"page\", \"n/y\"): model=true, Tine=false",
-        "K1 (§2.1 file claim): links: link (\"journal\", \"Day 2026-10-26\") -> (\"page\", \"rel\"): model=true, Tine=false",
-        "K1 (§2.1 file claim): links: link (\"page\", \"2026-10-26\") -> (\"page\", \"a\"): model=false, Tine=true",
-        "K1 (§2.1 file claim): links: link (\"page\", \"2026-10-26\") -> (\"page\", \"n\"): model=false, Tine=true",
-        "K1 (§2.1 file claim): links: link (\"page\", \"2026-10-26\") -> (\"page\", \"n/y\"): model=false, Tine=true",
-        "K1 (§2.1 file claim): links: link (\"page\", \"2026-10-26\") -> (\"page\", \"rel\"): model=false, Tine=true",
-        "K1 (§2.1 file claim): navigation: \"2026-10-26\": model [\"journal\",\"Day 2026-10-26\"], Tine (\"page\", \"2026-10-26\")",
-        "K1 (§2.1 file claim): owners: (\"journal\", \"Day 2026-10-26\"): model \"pages/2026-10-26.md\", Tine None",
-        "K1 (§2.1 file claim): pages: page (\"journal\", \"Day 2026-10-26\"): model=true, Tine=false",
-        "K1 (§2.1 file claim): pages: page (\"page\", \"2026-10-26\"): model=false, Tine=true"
-      ],
+      "random-87": [],
       "random-88": [],
       "random-89": [],
       "random-9": [],
       "random-90": [],
       "random-91": [],
-      "random-92": [
-        "K1 (§2.1 file claim): navigation: \"2026-10-26\": model [\"journal\",\"Day 2026-10-26\"], Tine (\"page\", \"2026-10-26\")",
-        "K1 (§2.1 file claim): owners: (\"journal\", \"Day 2026-10-26\"): model \"pages/2026-10-26.md\", Tine None",
-        "K1 (§2.1 file claim): pages: page (\"journal\", \"Day 2026-10-26\"): model=true, Tine=false",
-        "K1 (§2.1 file claim): pages: page (\"page\", \"2026-10-26\"): model=false, Tine=true"
-      ],
-      "random-93": [
-        "K1 (§2.1 file claim): navigation: \"2026-10-26\": model [\"journal\",\"Day 2026-10-26\"], Tine (\"page\", \"2026-10-26\")",
-        "K1 (§2.1 file claim): owners: (\"journal\", \"Day 2026-10-26\"): model \"pages/2026-10-26.md\", Tine None",
-        "K1 (§2.1 file claim): pages: page (\"journal\", \"Day 2026-10-26\"): model=true, Tine=false",
-        "K1 (§2.1 file claim): pages: page (\"page\", \"2026-10-26\"): model=false, Tine=true"
-      ],
-      "random-94": [
-        "K1 (§2.1 file claim): links: link (\"journal\", \"Day 2026-10-26\") -> (\"page\", \"n\"): model=true, Tine=false",
-        "K1 (§2.1 file claim): links: link (\"journal\", \"Day 2026-10-26\") -> (\"page\", \"rel\"): model=true, Tine=false",
-        "K1 (§2.1 file claim): links: link (\"page\", \"2026-10-26\") -> (\"page\", \"n\"): model=false, Tine=true",
-        "K1 (§2.1 file claim): links: link (\"page\", \"2026-10-26\") -> (\"page\", \"rel\"): model=false, Tine=true",
-        "K1 (§2.1 file claim): navigation: \"2026-10-26\": model [\"journal\",\"Day 2026-10-26\"], Tine (\"page\", \"2026-10-26\")",
-        "K1 (§2.1 file claim): owners: (\"journal\", \"Day 2026-10-26\"): model \"pages/2026-10-26.md\", Tine None",
-        "K1 (§2.1 file claim): pages: page (\"journal\", \"Day 2026-10-26\"): model=true, Tine=false",
-        "K1 (§2.1 file claim): pages: page (\"page\", \"2026-10-26\"): model=false, Tine=true"
-      ],
-      "random-95": [
-        "K1 (§2.1 file claim): links: link (\"journal\", \"Day 2026-10-26\") -> (\"page\", \"a\"): model=true, Tine=false",
-        "K1 (§2.1 file claim): links: link (\"journal\", \"Day 2026-10-26\") -> (\"page\", \"rel\"): model=true, Tine=false",
-        "K1 (§2.1 file claim): links: link (\"page\", \"2026-10-26\") -> (\"page\", \"a\"): model=false, Tine=true",
-        "K1 (§2.1 file claim): links: link (\"page\", \"2026-10-26\") -> (\"page\", \"rel\"): model=false, Tine=true",
-        "K1 (§2.1 file claim): navigation: \"2026-10-26\": model [\"journal\",\"Day 2026-10-26\"], Tine (\"page\", \"2026-10-26\")",
-        "K1 (§2.1 file claim): owners: (\"journal\", \"Day 2026-10-26\"): model \"pages/2026-10-26.md\", Tine None",
-        "K1 (§2.1 file claim): pages: page (\"journal\", \"Day 2026-10-26\"): model=true, Tine=false",
-        "K1 (§2.1 file claim): pages: page (\"page\", \"2026-10-26\"): model=false, Tine=true"
-      ],
-      "random-96": [
-        "K1 (§2.1 file claim): links: link (\"page\", \"n/y\") -> (\"journal\", \"Day 2026-10-26\"): model=true, Tine=false",
-        "K1 (§2.1 file claim): links: link (\"page\", \"n/y\") -> (\"page\", \"2026-10-26\"): model=false, Tine=true",
-        "K1 (§2.1 file claim): navigation: \"2026-10-26\": model [\"journal\",\"Day 2026-10-26\"], Tine (\"page\", \"2026-10-26\")",
-        "K1 (§2.1 file claim): owners: (\"journal\", \"Day 2026-10-26\"): model \"pages/2026-10-26.md\", Tine None",
-        "K1 (§2.1 file claim): pages: page (\"journal\", \"Day 2026-10-26\"): model=true, Tine=false",
-        "K1 (§2.1 file claim): pages: page (\"page\", \"2026-10-26\"): model=false, Tine=true"
-      ],
+      "random-92": [],
+      "random-93": [],
+      "random-94": [],
+      "random-95": [],
+      "random-96": [],
       "random-97": [],
-      "random-98": [
-        "K1 (§2.1 file claim): active files: pages/2026-10-26.md: model=false, Tine=true",
-        "K1 (§2.1 file claim): conflicts: \"Day 2026-10-26\" conflicted: model=true, Tine=false",
-        "K1 (§2.1 file claim): counts: (\"journal\", \"Day 2026-10-26\") (journals/2026_10_26.md): model 1, Tine Some(0)",
-        "K1 (§2.1 file claim): linked refs: (\"journal\", \"Day 2026-10-26\"): model {(\"pages/A.md\", 1)}, Tine {}",
-        "K1 (§2.1 file claim): links: link (\"journal\", \"Day 2026-10-26\") -> (\"page\", \"2026-10-26\"): model=false, Tine=true",
-        "K1 (§2.1 file claim): links: link (\"journal\", \"Day 2026-10-26\") -> (\"page\", \"n/y\"): model=true, Tine=false",
-        "K1 (§2.1 file claim): links: link (\"page\", \"2026-10-26\") -> (\"page\", \"a\"): model=false, Tine=true",
-        "K1 (§2.1 file claim): links: link (\"page\", \"2026-10-26\") -> (\"page\", \"n\"): model=false, Tine=true",
-        "K1 (§2.1 file claim): links: link (\"page\", \"2026-10-26\") -> (\"page\", \"rel\"): model=false, Tine=true",
-        "K1 (§2.1 file claim): links: link (\"page\", \"a\") -> (\"journal\", \"Day 2026-10-26\"): model=true, Tine=false",
-        "K1 (§2.1 file claim): links: link (\"page\", \"a\") -> (\"page\", \"2026-10-26\"): model=false, Tine=true",
-        "K1 (§2.1 file claim): navigation: \"2026-10-26\": model [\"journal\",\"Day 2026-10-26\"], Tine (\"page\", \"2026-10-26\")",
-        "K1 (§2.1 file claim): navigation: \"n/y\": model [\"page\",\"n/y\"], Tine (\"page\", \"2026-10-26\")",
-        "K1 (§2.1 file claim): pages: page (\"page\", \"2026-10-26\"): model=false, Tine=true",
-        "K1 (§2.1 file claim, reference): linked refs: (\"page\", \"n/y\"): model {(\"journals/2026_10_26.md\", 0)}, Tine {(\"journals/2026_10_26.md\", 0), (\"pages/A.md\", 1)}",
-        "K1 (§2.1 file claim, reference): pages: page (\"page\", \"n/y\"): model=true, Tine=false",
-        "K1 (§2.1 file claim, reference): query @block: Tine-only block (): query \"[[n/y]]\": Tine has block (\"pages/A.md\", 1), model does not",
-        "K2 (§2.2 inactive claimant): counts: (\"page\", \"a\") (pages/A.md): model 0, Tine Some(2)",
-        "K2 (§2.2 inactive claimant): linked refs: (\"page\", \"a\"): model {}, Tine {(\"pages/2026-10-26.md\", 1), (\"pages/2026-10-26.md\", 3)}",
-        "K2 (§2.2 inactive claimant): linked refs: (\"page\", \"n\"): model {(\"journals/2026_10_26.md\", 0), (\"pages/A.md\", 2)}, Tine {(\"journals/2026_10_26.md\", 0), (\"pages/2026-10-26.md\", 0), (\"pages/A.md\", 2)}",
-        "K2 (§2.2 inactive claimant): pages: page (\"page\", \"rel\"): model=false, Tine=true",
-        "K2 (§2.2 inactive claimant): query @block: Tine-only block (non-owner file): query \"[[n/y]]\": Tine has block (\"pages/2026-10-26.md\", 1), model does not",
-        "K2 (§2.2 inactive claimant): query @block: Tine-only block (non-owner file): query \"[[n/y]]\": Tine has block (\"pages/2026-10-26.md\", 2), model does not",
-        "K2 (§2.2 inactive claimant): query @block: Tine-only block (pre-block, non-owner file, own direct by linkableValue): query \"[[n/y]]\": Tine has block (\"pages/2026-10-26.md\", 0), model does not"
-      ],
+      "random-98": [],
       "random-99": []
     },
     "harnessSkipped": [],

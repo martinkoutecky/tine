@@ -342,9 +342,13 @@ fn fileless_dates_are_one_journal_in_full_and_incremental_inventory() {
         "23.10.2026"
     ]
     .contains(&entry.name.as_str())));
-    assert!(rows.0.iter().any(|entry| entry.name == "24.10.2026"
-        && !entry.is_journal
-        && matches!(entry.target, crate::Resolved::Existing { .. })));
+    // A pages file titled by a date is that day (CM-DAYFILE, D-20261111-
+    // CMR14), named by the day's title. (Superseded: an ordinary page named
+    // `24.10.2026`.)
+    assert!(rows.0.iter().any(|entry| entry.name == "X 2026_24_10"
+        && entry.is_journal
+        && matches!(&entry.target, crate::Resolved::Existing { id, .. } if id.as_str() == "pages/Real.md")));
+    assert!(!rows.0.iter().any(|entry| entry.name == "24.10.2026"));
     assert!(rows
         .0
         .iter()
@@ -416,8 +420,12 @@ fn fileless_dates_are_one_journal_in_full_and_incremental_inventory() {
     store.close();
 }
 
+/// A date-named pages file is its day (CM-DAYFILE, D-20261111-CMR14), and a
+/// later alias of that day keeps the patched inventory equal to a fresh one.
+/// (Superseded: before CM step 2 the file was an ordinary literal page beside
+/// a separate typed day, D-20261107-KD.)
 #[test]
-fn a_canonical_ordinary_date_file_does_not_capture_the_typed_day_or_its_alias_delta() {
+fn a_date_named_pages_file_is_the_day_and_its_alias_delta_patches() {
     let _guard = crate::test_transactions::integration_lock();
     let (_dir, store) = fixture(&[
         (
@@ -432,97 +440,103 @@ fn a_canonical_ordinary_date_file_does_not_capture_the_typed_day_or_its_alias_de
         ("pages/Notes.md", "- [[2026-10-23]]\n"),
         ("pages/2026-10-23%2Fchild.md", "- child\n"),
     ]);
-    let check =
-        |aliased: bool| {
-            let view = store.whole_graph().unwrap();
-            let all = view.inventory(InventoryScope::All);
-            let rows: Vec<_> = all
-                .0
-                .iter()
-                .filter(|entry| entry.name == "2026_10_23")
-                .collect();
-            assert_eq!(rows.len(), 2, "ordinary literal and typed journal: {all:?}");
-            assert!(rows.iter().any(|entry| !entry.is_journal
-                && matches!(entry.target, crate::Resolved::Existing { .. })));
-            let day = rows.iter().find(|entry| entry.is_journal).unwrap();
-            assert_eq!(matches!(day.target, crate::Resolved::Alias { .. }), aliased);
-            assert!(matches!(
-                view.resolve("2026_10_23", false),
-                crate::Resolved::Existing { .. }
-            ));
+    let check = |aliased: bool| {
+        let view = store.whole_graph().unwrap();
+        let all = view.inventory(InventoryScope::All);
+        let rows: Vec<_> = all
+            .0
+            .iter()
+            .filter(|entry| entry.name == "2026_10_23")
+            .collect();
+        // CM-DAYFILE: the date-named pages file is the day itself, one
+        // row, and an alias declared for the day does not take it over.
+        assert_eq!(rows.len(), 1, "the day: {all:?}");
+        let day = rows[0];
+        assert!(day.is_journal);
+        assert_eq!(day.day, Some(crate::Day(20261023)));
+        assert!(
+            matches!(&day.target, crate::Resolved::Existing { id, .. } if id.as_str() == "pages/2026_10_23.md")
+        );
+        assert!(matches!(
+            view.resolve("2026_10_23", false),
+            crate::Resolved::Existing { .. }
+        ));
+        assert_eq!(view.link_target("2026-10-23").name, "2026_10_23");
+        assert!(view.link_target("2026-10-23").is_journal);
+        // Linked References leave out the day's own block; Owner's alias
+        // property block names the day once Owner aliases it.
+        let mut sources: Vec<_> = view
+            .backlinks("2026-10-23")
+            .unwrap()
+            .iter()
+            .flat_map(|group| group.blocks.iter().map(|_| group.page.clone()))
+            .collect();
+        sources.sort();
+        assert_eq!(
+            sources,
+            if aliased {
+                vec!["Notes", "Owner"]
+            } else {
+                vec!["Notes"]
+            }
+        );
+        let crate::QueryResult::Simple(groups) = view
+            .query("[[2026-10-23]]", crate::QueryDialect::Simple)
+            .unwrap()
+        else {
+            panic!("block query")
+        };
+        for source in ["Notes", "2026_10_23"] {
             assert_eq!(
-                view.link_target("2026-10-23").name,
-                if aliased { "Owner" } else { "2026-10-23" }
-            );
-            assert_eq!(
-                view.backlinks("2026-10-23")
+                groups
+                    .iter()
+                    .find(|group| group.page == source)
                     .unwrap()
+                    .blocks
+                    .len(),
+                1,
+                "date reference in {source}"
+            );
+        }
+        // Every spelling of the day is the same day.
+        let crate::QueryResult::Simple(literal) = view
+            .query("[[2026_10_23]]", crate::QueryDialect::Simple)
+            .unwrap()
+        else {
+            panic!("title reference query")
+        };
+        let shape = |groups: &[tine_core::model::RefGroup]| {
+            groups
+                .iter()
+                .map(|group| (group.page.clone(), group.blocks.len()))
+                .collect::<Vec<_>>()
+        };
+        assert_eq!(shape(&literal), shape(&groups));
+        if !aliased {
+            assert_eq!(
+                literal
                     .iter()
                     .map(|group| group.blocks.len())
                     .sum::<usize>(),
                 2
             );
-            let crate::QueryResult::Simple(groups) = view
-                .query("[[2026-10-23]]", crate::QueryDialect::Simple)
-                .unwrap()
-            else {
-                panic!("block query")
-            };
-            for source in ["Notes", "2026_10_23"] {
-                assert_eq!(
-                    groups
-                        .iter()
-                        .find(|group| group.page == source)
-                        .unwrap()
-                        .blocks
-                        .len(),
-                    1,
-                    "date reference in {source}"
-                );
-            }
-            let crate::QueryResult::Simple(literal) = view
-                .query("[[2026_10_23]]", crate::QueryDialect::Simple)
-                .unwrap()
-            else {
-                panic!("literal reference query")
-            };
-            assert!(
-                literal
-                    .iter()
-                    .all(|group| group.page != "Notes" && group.page != "Owner"),
-                "the ordinary literal does not acquire the alternate date spelling"
-            );
-            let (files, references) = view.page_backlink_counts();
-            assert_eq!(
-                files
-                    .iter()
-                    .find(|(path, _)| path == "pages/2026_10_23.md")
-                    .unwrap()
-                    .1,
-                0
-            );
-            if !aliased {
-                assert_eq!(
-                    references
-                        .iter()
-                        .find(|(name, _)| name == "2026_10_23")
-                        .unwrap()
-                        .1,
-                    2
-                );
-                assert!(matches!(day.target, crate::Resolved::Absent { .. }));
-                assert_eq!(day.link.as_ref().unwrap().name, "2026-10-23");
-            }
-        };
+        }
+        assert_eq!(
+            view.inventory(InventoryScope::AliasGroup("2026_10_23"))
+                .0
+                .iter()
+                .any(|entry| entry.name == "Owner"),
+            aliased
+        );
+    };
     check(false);
-    let mut held = inventory(&store);
-    let (changed, deltas) = save(&store, "pages/Owner.md", |doc| {
+    let held = inventory(&store);
+    let (changed, _) = save(&store, "pages/Owner.md", |doc| {
         doc.pre_block = Some("alias:: 2026-10-23".into())
     });
-    assert!(changed);
-    for delta in deltas.expect("bounded alias delta") {
-        apply(&mut held, &delta);
-    }
+    // The day is a real identity and opens itself (CM SPEC §2.3): Owner's
+    // date alias joins the day's group and changes no inventory row.
+    assert!(!changed);
     assert_eq!(held, inventory(&store));
     check(true);
     store.close();
@@ -540,23 +554,41 @@ fn a_masked_journal_cannot_extend_an_ordinary_files_literal_date_claim() {
         ("journals/2026_10_23.md", "- masked journal\n"),
         ("pages/Notes.md", "- [[2026-10-23]]\n"),
     ]);
-    assert!(store
-        .page_named("2026-10-23", tine_core::model::PageKind::Journal)
-        .unwrap()
-        .is_none());
-    let view = store.whole_graph().unwrap();
-    assert!(matches!(
-        view.resolve("2026-10-23", true),
-        crate::Resolved::Absent { .. }
-    ));
-    assert!(
-        matches!(view.resolve("2026_10_23", true), crate::Resolved::Existing { ref id, .. } if id.as_str() == "pages/2026_10_23.md")
+    // CM-ORDER: both files claim the day; the journals file wins it in every
+    // spelling and the pages file stays a losing twin, never exposed.
+    // (Superseded: before CM step 2 the pages file was an ordinary literal
+    // page that masked the journal.)
+    let journal = "journals/2026_10_23.md";
+    assert_eq!(
+        store
+            .page_named("2026-10-23", tine_core::model::PageKind::Journal)
+            .unwrap()
+            .unwrap()
+            .id
+            .as_str(),
+        journal
     );
+    let view = store.whole_graph().unwrap();
+    for spelling in ["2026-10-23", "2026_10_23"] {
+        for is_journal in [false, true] {
+            let crate::Resolved::Existing { id, others } = view.resolve(spelling, is_journal)
+            else {
+                panic!("{spelling}: the day's files")
+            };
+            assert_eq!(id.as_str(), journal);
+            assert_eq!(others, [PageId::from("pages/2026_10_23.md")]);
+        }
+    }
     let all = view.inventory(InventoryScope::All);
-    assert!(all.0.iter().any(|entry| entry.name == "2026_10_23"
-        && entry.is_journal
-        && matches!(entry.target, crate::Resolved::Absent { .. })));
-    assert_eq!(view.link_target("2026-10-23").name, "2026-10-23");
+    let rows: Vec<_> = all
+        .0
+        .iter()
+        .filter(|entry| entry.name == "2026_10_23")
+        .collect();
+    assert_eq!(rows.len(), 1, "{all:?}");
+    assert!(rows[0].is_journal);
+    assert_eq!(view.link_target("2026-10-23").name, "2026_10_23");
+    assert!(view.link_target("2026-10-23").is_journal);
     store.close();
 }
 

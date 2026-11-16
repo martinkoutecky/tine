@@ -50,31 +50,43 @@ fn graph(root: &Path, files: &[(&str, &str)]) -> Store {
     store
 }
 
+/// A date alias with no file of its day stays an alias spelling; once a file
+/// holds the day (here the date-named `pages/2026_10_23.md`, CM-DAYFILE,
+/// D-20261111-CMR14) the alias names that real day page, which opens itself
+/// (CM SPEC §2.3). (Superseded: before CM step 2 the pages file was an
+/// unrelated ordinary page and the alias stayed unclaimed beside it.)
 #[test]
-fn date_alias_group_wire_keeps_an_unclaimed_day_spelling() {
+fn a_date_alias_group_wire_names_the_day_and_its_file_once_one_holds_it() {
     let _integration_guard = crate::integration_lock();
-    let dir = tempfile::tempdir().unwrap();
-    let store = graph(
-        dir.path(),
-        &[
+    for day_file in [false, true] {
+        let dir = tempfile::tempdir().unwrap();
+        let mut files = vec![
             (
                 "logseq/config.edn",
                 "{:journal/page-title-format \"yyyy_MM_dd\"}\n",
             ),
-            ("pages/2026_10_23.md", "- unrelated ordinary file\n"),
             ("pages/Owner.md", "alias:: 2026-10-23\n\n- owner\n"),
-        ],
-    );
-    let view = store.whole_graph().unwrap();
-    let group = tine_graph_features::inventory_wire::alias_group_wire(&view, "Owner");
-    assert!(
-        group.pages.is_empty(),
-        "unrelated file is not a related page: {group:?}"
-    );
-    assert_eq!(group.aliases, ["2026-10-23"]);
-    assert_eq!(view.link_target(&group.aliases[0]).name, "Owner");
-    assert_eq!(view.link_target("2026_10_23").name, "2026_10_23");
-    store.close();
+        ];
+        if day_file {
+            files.push(("pages/2026_10_23.md", "- the day\n"));
+        }
+        let store = graph(dir.path(), &files);
+        let view = store.whole_graph().unwrap();
+        let group = tine_graph_features::inventory_wire::alias_group_wire(&view, "Owner");
+        if day_file {
+            assert!(group.aliases.is_empty(), "{group:?}");
+            assert_eq!(group.pages, ["2026_10_23"], "{group:?}");
+            assert_eq!(view.link_target("2026-10-23").name, "2026_10_23");
+            assert!(view.link_target("2026-10-23").is_journal);
+        } else {
+            // The alias member is the day, named by its title.
+            assert!(group.pages.is_empty(), "{group:?}");
+            assert_eq!(group.aliases, ["2026_10_23"]);
+            assert_eq!(view.link_target("2026-10-23").name, "Owner");
+            assert_eq!(view.link_target("2026_10_23").name, "Owner");
+        }
+        store.close();
+    }
 }
 
 /// Runtime block ids are fresh per parse: renumber them by first occurrence.
@@ -576,7 +588,8 @@ fn a_synthetic_home_never_shadows_an_answered_name() {
                         "kind": "journal", "name": "Oct 26th, 2026"
                     })
                 );
-                serde_json::json!({ "kind": "absent", "id": "pages/2026-10-26.md" })
+                // A day with no file is proposed in `journals/` (CM-DAYFILE).
+                serde_json::json!({ "kind": "absent", "id": "journals/2026_10_26.md" })
             }
             _ => serde_json::json!({ "kind": "existing", "id": "pages/Links.md", "others": [] }),
         };

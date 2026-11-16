@@ -26,8 +26,9 @@
         },
         "name": "2026-10-22",
         "target": {
-          "id": "pages/2026-10-22.md",
-          "kind": "absent"
+          "id": "journals/22-10-2026.md",
+          "kind": "existing",
+          "others": []
         }
       },
       {
@@ -40,8 +41,9 @@
         },
         "name": "22-10-2026",
         "target": {
-          "id": "pages/22-10-2026.md",
-          "kind": "absent"
+          "id": "journals/22-10-2026.md",
+          "kind": "existing",
+          "others": []
         }
       },
       {
@@ -54,7 +56,7 @@
         },
         "name": "23-10-2026",
         "target": {
-          "id": "pages/23-10-2026.md",
+          "id": "journals/23-10-2026.md",
           "kind": "absent"
         }
       },

@@ -66,63 +66,88 @@ impl Graph {
     }
 }
 
-/// Which name claims answer a lookup of `name`: a journal is claimed by its
-/// day's title (any accepted spelling parses to it), and a date name no
-/// journal claims falls back to an ordinary page of the requested name.
-/// The one rule behind `WholeGraph::resolve` and the file-listing answer
+/// The claim a graph text file outside the journals directory makes, from
+/// its effective name `name` (its `title::`, else its decoded file name):
+/// an accepted date is that day (CM SPEC §2.1; D-20261110-CM CM-DATE "one
+/// key per day, no ordinary page named by a date"; D-20261111-CMR14
+/// CM-DAYFILE: `pages/2026-11-02.md` is that day's journal and stays where it
+/// is), named by the day's configured title; any other name is an ordinary
+/// page of that name. A journals-directory file is named by its file name
+/// instead ([`super::journal_stem_name`]). The one rule every listing, path
+/// read and build names such a file by. O(name).
+pub(crate) fn page_file_claim(
+    format: &JournalFormat,
+    name: String,
+) -> (String, PageKind, Option<i64>) {
+    match format.parse(&name) {
+        Some(day) => (
+            format.title(day),
+            PageKind::Journal,
+            Some(day.ordinal_key()),
+        ),
+        None => (name, PageKind::Page, None),
+    }
+}
+
+/// `entry`, a file outside the journals directory, claiming what its
+/// effective name `name` claims ([`page_file_claim`]).
+pub(crate) fn set_page_file_claim(format: &JournalFormat, entry: &mut PageEntry, name: String) {
+    (entry.name, entry.kind, entry.date_key) = page_file_claim(format, name);
+}
+
+/// Which name claims answer a lookup of `name`: a date, in any accepted
+/// spelling, is claimed by the files of its day, keyed by the day's title
+/// (CM SPEC §2.1: no ordinary-date claim ahead of date interpretation); any
+/// other name by the files of that name. The one rule behind
+/// `WholeGraph::resolve` and the file-listing answer
 /// `Store::page_named_from_files` (I-12).
 pub(crate) struct ClaimLookup<'a> {
-    /// The name the claimants of the requested kind are looked up by.
+    /// The name the claimants are looked up by.
     pub(crate) name: std::borrow::Cow<'a, str>,
-    /// An ordinary page name to try when no claimant of `name` exists.
-    pub(crate) page_fallback: Option<&'a str>,
-    /// The day `name` parses to (`JournalDate::ordinal_key`), for a journal
-    /// lookup.
-    day: Option<i64>,
+    /// The kind of those claimants: a journal for a date.
+    pub(crate) kind: PageKind,
+    /// The day `name` parses to (`JournalDate::ordinal_key`).
+    pub(crate) day: Option<i64>,
 }
 
 impl ClaimLookup<'_> {
     /// Whether `entry`, a claimant of [`Self::name`], holds the name looked
-    /// up. A spelling that parses to a day is held only by that day's
-    /// journals (model r6 O3: "a journal holds every accepted spelling of
-    /// its day"): a title format without a year (`MM-dd`) gives two days one
-    /// title, and they remain distinct days (cm-cut6 SPEC §2.1), so the
-    /// title's other journals do not hold it. Ordinary pages, and lookups of
-    /// a name that is no day (the shared label `10-26` itself), keep every
-    /// claimant of the name. O(1) per claimant.
+    /// up. A spelling that parses to a day is held only by that day's files
+    /// (model r6 O3: "a journal holds every accepted spelling of its day"):
+    /// a title format without a year (`MM-dd`) gives two days one title, and
+    /// they remain distinct days (cm-cut6 SPEC §2.1), so the title's other
+    /// files do not hold it. A name that is no day (the shared label `10-26`
+    /// itself) keeps every claimant of the name. O(1) per claimant.
     pub(crate) fn holds(&self, entry: &PageEntry) -> bool {
-        entry.kind != PageKind::Journal || self.day.is_none() || entry.date_key == self.day
+        self.day.is_none() || entry.date_key == self.day
     }
 }
 
+/// `kind` is the caller's kind for a name that is no date: a journals-
+/// directory file whose name is no date is looked up as a journal.
 pub(crate) fn claim_lookup<'a>(
     format: &tine_core::date::JournalFormat,
     name: &'a str,
     kind: PageKind,
 ) -> ClaimLookup<'a> {
-    if kind != PageKind::Journal {
-        return ClaimLookup {
-            name: name.into(),
-            page_fallback: None,
-            day: None,
-        };
-    }
     match format.parse(name) {
         Some(day) => ClaimLookup {
             name: format.title(day).into(),
-            page_fallback: Some(name),
+            kind: PageKind::Journal,
             day: Some(day.ordinal_key()),
         },
         None => ClaimLookup {
             name: name.into(),
-            page_fallback: None,
+            kind,
             day: None,
         },
     }
 }
 
-/// The same claimant ordering for cold direct reads, journal open and snapshots.
-pub(super) fn page_claimants(entries: &[PageEntry]) -> ClaimantMap {
+/// The same claimant ordering for cold direct reads, journal open and
+/// snapshots. `journals_dir`: the configured journals directory, which ranks
+/// first ([`compare_page_claimants`]).
+pub(super) fn page_claimants(journals_dir: &str, entries: &[PageEntry]) -> ClaimantMap {
     let mut claimants: HashMap<(PageKind, String), Vec<PageEntry>> = HashMap::new();
     for entry in entries {
         claimants
@@ -131,7 +156,7 @@ pub(super) fn page_claimants(entries: &[PageEntry]) -> ClaimantMap {
             .push(entry.clone());
     }
     for entries in claimants.values_mut() {
-        entries.sort_by(|a, b| compare_page_claimants(a, b));
+        entries.sort_by(|a, b| compare_page_claimants(journals_dir, a, b));
     }
     (claimants.into_iter())
         .map(|(key, entries)| (claimant_key(&key), entries))
@@ -593,30 +618,32 @@ impl Graph {
             let probe = if let Some(id) = block {
                 file_contains_link_id(&path, id)
             } else if let Some(name) = page {
+                let lookup = claim_lookup(&format, name, PageKind::Page);
                 let entry = listed_entry(
                     self,
                     (&format, &journals, config.file_name_format),
                     path.clone(),
                 );
-                match entry {
-                    Some(entry) if entry.kind == PageKind::Journal => {
-                        let lookup = format
-                            .parse(name)
-                            .map(|date| format.title(date))
-                            .unwrap_or_else(|| name.to_owned());
-                        Ok(tine_core::refs::page_key(&entry.name)
-                            == tine_core::refs::page_key(&lookup))
-                    }
-                    Some(_) => effective_page_name(
+                let claimed = match entry {
+                    Some(entry) if path.starts_with(&journals) => Ok(Some(entry)),
+                    Some(mut entry) => effective_page_name(
                         &path,
                         path.file_stem().unwrap().to_str().unwrap(),
                         config.file_name_format,
                     )
                     .map(|found| {
-                        tine_core::refs::page_key(&found) == tine_core::refs::page_key(name)
+                        set_page_file_claim(&format, &mut entry, found);
+                        Some(entry)
                     }),
-                    None => Ok(false),
-                }
+                    None => Ok(None),
+                };
+                claimed.map(|entry| {
+                    entry.is_some_and(|entry| {
+                        tine_core::refs::page_key(&entry.name)
+                            == tine_core::refs::page_key(&lookup.name)
+                            && lookup.holds(&entry)
+                    })
+                })
             } else {
                 Ok(true)
             };
@@ -735,80 +762,97 @@ pub(super) fn list_graph_pages(graph: &Graph) -> Vec<PageEntry> {
     list_graph_pages_kind(graph, None)
 }
 
-/// Kind selection precedes preamble reads. Journal identity depends on its
-/// date filename, so a cold journal lookup never needs ordinary page titles.
+/// Kind selection precedes preamble reads. A journal-kind listing walks the
+/// journals directory, whose files are named by their file names, and of
+/// every other file reads only those whose decoded file name is a date
+/// (`pages/2026-11-02.md`, SPEC §2.1), to see whether a `title::` names
+/// another page; a cold journal lookup reads no other page title. A file
+/// that is a day only through its `title::` is found by a listing that reads
+/// every title (an ordinary-kind or whole listing, e.g. the launch pass);
+/// `Graph::find_claimants` keeps such rows when it merges a journal-kind
+/// listing.
 pub(crate) fn list_graph_pages_kind(graph: &Graph, kind: Option<PageKind>) -> Vec<PageEntry> {
     #[cfg(test)]
     super::GRAPH_LIST_CALLS.with(|calls| calls.set(calls.get() + 1));
-    list_pages(graph, kind, None)
+    list_pages(graph, kind)
 }
 
-/// `stem_key`: list only ordinary pages whose decoded stem has this
-/// `page_key`, and leave the discovery errors alone.
-fn list_pages(graph: &Graph, kind: Option<PageKind>, stem_key: Option<&str>) -> Vec<PageEntry> {
+/// Whether a journal-kind listing covers `path`: a journals-directory file,
+/// or another file whose decoded file name is a date. The rows it does not
+/// cover are the files that are days only through their `title::`.
+pub(crate) fn journal_listing_covers(
+    (format, journals, name_format): (&JournalFormat, &Path, FileNameFormat),
+    path: &Path,
+) -> bool {
+    path.starts_with(journals)
+        || path
+            .file_stem()
+            .and_then(|stem| stem.to_str())
+            .is_some_and(|stem| format.parse(&decode_page_name(stem, name_format)).is_some())
+}
+
+fn list_pages(graph: &Graph, kind: Option<PageKind>) -> Vec<PageEntry> {
     let mut entries = Vec::new();
     let root = &graph.root;
     let format = graph.current_journal_format();
     let name_format = graph.current_config().file_name_format;
     let journals = graph.journals_path();
     let config = graph.current_config();
-    let start = if kind == Some(PageKind::Journal) {
-        &journals
-    } else {
-        root
-    };
-    if !graph_text_directory_scannable(root, start, &config) {
+    if !graph_text_directory_scannable(root, root, &config) {
         return entries;
     }
     let mut failures = Vec::new();
-    let walk_errors = walk_graph_page_files(root, start, &config, |path| {
-        if kind.is_some_and(|kind| (kind == PageKind::Journal) != path.starts_with(&journals)) {
-            return;
+    let walk_errors = walk_graph_page_files(root, root, &config, |path| {
+        let in_journals = path.starts_with(&journals);
+        match kind {
+            Some(PageKind::Page) if in_journals => return,
+            Some(PageKind::Journal)
+                if !journal_listing_covers((&format, &journals, name_format), &path) =>
+            {
+                return
+            }
+            _ => {}
         }
         let Some(stem) = path.file_stem().and_then(|stem| stem.to_str()) else {
             return;
         };
-        if stem_key.is_some_and(|key| {
-            path.starts_with(&journals)
-                || tine_core::refs::page_key(&decode_page_name(stem, name_format)) != key
-        }) {
+        let (name, claimed, date_key) = if in_journals {
+            let (name, date_key) = super::journal_stem_name(&format, stem);
+            (name, PageKind::Journal, date_key)
+        } else {
+            let name = match effective_page_name(&path, stem, name_format) {
+                Ok(name) => name,
+                Err(error) => {
+                    // A journal-kind listing replaces only the journals
+                    // directory's failures (`replace_discovery_errors`); the
+                    // other files' failures are an ordinary listing's.
+                    if kind != Some(PageKind::Journal) {
+                        failures.push((crate::FileId::from(graph.rel_path(&path)), error.into()));
+                    }
+                    // Keep the physical claim; the file is reported as
+                    // unreadable and the readable names stay available.
+                    decode_page_name(stem, name_format)
+                }
+            };
+            page_file_claim(&format, name)
+        };
+        // An ordinary-kind listing reads every title, so it also keeps a file
+        // that is a day only through its `title::` (doc of
+        // `list_graph_pages_kind`).
+        let title_day = kind == Some(PageKind::Page)
+            && claimed == PageKind::Journal
+            && !journal_listing_covers((&format, &journals, name_format), &path);
+        if kind.is_some_and(|kind| kind != claimed) && !title_day {
             return;
         }
-        let (name, kind, date_key) = if path.starts_with(&journals) {
-            match format.parse(stem) {
-                Some(date) => (
-                    format.title(date),
-                    PageKind::Journal,
-                    Some(date.ordinal_key()),
-                ),
-                None => (stem.to_owned(), PageKind::Journal, None),
-            }
-        } else {
-            (
-                match effective_page_name(&path, stem, name_format) {
-                    Ok(name) => name,
-                    Err(error) => {
-                        failures.push((crate::FileId::from(graph.rel_path(&path)), error.into()));
-                        // Keep the physical claim; the file is reported as
-                        // unreadable and the readable names stay available.
-                        decode_page_name(stem, name_format)
-                    }
-                },
-                PageKind::Page,
-                None,
-            )
-        };
         entries.push(PageEntry {
             name,
-            kind,
+            kind: claimed,
             date_key,
             rel_path: Some(graph.rel_path(&path).into()),
             path,
         });
     });
-    if stem_key.is_some() {
-        return entries;
-    }
     failures.extend(
         walk_errors
             .into_iter()
@@ -876,9 +920,11 @@ pub(crate) fn launch_listing_walk(graph: &Graph) -> LaunchListing {
 }
 
 /// The listing's entry for the graph text file `path`, named from its file
-/// name alone (no file opened): a journal by its date, an ordinary page by
-/// its decoded stem. `formats`: the journal format, the journals
-/// directory and the file name format, read once per listing.
+/// name alone (no file opened): a journal by its date, any other file by
+/// its decoded stem, a day when that is a date ([`page_file_claim`]; its
+/// `title::`, read later, may name it otherwise). `formats`: the journal
+/// format, the journals directory and the file name format, read once per
+/// listing.
 pub(super) fn listed_entry(
     graph: &Graph,
     (format, journals, name_format): (&JournalFormat, &Path, FileNameFormat),
@@ -886,16 +932,10 @@ pub(super) fn listed_entry(
 ) -> Option<PageEntry> {
     let stem = path.file_stem().and_then(|stem| stem.to_str())?;
     let (name, kind, date_key) = if path.starts_with(journals) {
-        match format.parse(stem) {
-            Some(date) => (
-                format.title(date),
-                PageKind::Journal,
-                Some(date.ordinal_key()),
-            ),
-            None => (stem.to_owned(), PageKind::Journal, None),
-        }
+        let (name, date_key) = super::journal_stem_name(format, stem);
+        (name, PageKind::Journal, date_key)
     } else {
-        (decode_page_name(stem, name_format), PageKind::Page, None)
+        page_file_claim(format, decode_page_name(stem, name_format))
     };
     Some(PageEntry {
         name,

@@ -19,18 +19,23 @@ pub(crate) struct RealPageNames {
 /// name across kinds is the least claimant by
 /// [`crate::model::compare_page_claimants`], the same across-kind order that
 /// `resolve` uses (R13 OWN2, I-12). Only this key's claimant bucket is visited;
-/// configuration and filename-format ranks play no part.
+/// the configured journals directory is the only setting that ranks (CM SPEC
+/// §2.2), and filename-format ranks play no part.
 #[derive(Clone)]
 pub(crate) struct RealPageOwners {
     names: std::sync::Arc<RealPageNames>,
+    journals_dir: std::sync::Arc<str>,
 }
 impl RealPageOwners {
-    pub(crate) fn new(names: std::sync::Arc<RealPageNames>) -> Self {
-        Self { names }
+    pub(crate) fn new(names: std::sync::Arc<RealPageNames>, journals_dir: &str) -> Self {
+        Self {
+            names,
+            journals_dir: journals_dir.into(),
+        }
     }
     /// No real pages (a scope that cannot change membership).
     pub(crate) fn empty() -> Self {
-        Self::new(std::sync::Arc::new(RealPageNames::new()))
+        Self::new(std::sync::Arc::new(RealPageNames::new()), "journals")
     }
     /// The owner of a normalized real page name, with its stored name.
     pub(crate) fn get(&self, key: &str) -> Option<(&std::path::PathBuf, &String)> {
@@ -39,10 +44,13 @@ impl RealPageOwners {
     }
     pub(crate) fn opening_entry(&self, key: &str) -> Option<&PageEntry> {
         let bucket = self.names.claimants.get(key)?;
-        Self::opening_claimant(bucket.iter().map(|(_, entry)| entry))
+        self.opening_claimant(bucket.iter().map(|(_, entry)| entry))
     }
-    fn opening_claimant<'a>(entries: impl Iterator<Item = &'a PageEntry>) -> Option<&'a PageEntry> {
-        entries.min_by(|a, b| crate::model::compare_page_claimants(a, b))
+    fn opening_claimant<'a>(
+        &self,
+        entries: impl Iterator<Item = &'a PageEntry>,
+    ) -> Option<&'a PageEntry> {
+        entries.min_by(|a, b| crate::model::compare_page_claimants(&self.journals_dir, a, b))
     }
     /// Active real-name owners under an identity prefix, in identity order.
     /// O(log P + C) for C matching physical claimants; no document reads.
@@ -52,7 +60,7 @@ impl RealPageOwners {
             .iter_from(prefix)
             .take_while(move |(key, _)| key.starts_with(prefix))
             .filter_map(|(_, bucket)| {
-                Self::opening_claimant(bucket.iter().map(|(_, entry)| {
+                self.opening_claimant(bucket.iter().map(|(_, entry)| {
                     #[cfg(feature = "test-faults")]
                     crate::cost_counters::namespace_name_visit();
                     entry

@@ -226,8 +226,14 @@ fn the_page_a_name_writes_to_is_the_page_the_app_opens() {
             .unwrap_or_else(|e| panic!("{name}: {e:?}"));
         assert_eq!(wrote["page"], opens.as_str(), "[[{name}]]");
     }
-    // The literal file keeps its own spelling (D-20261107-KD); the other
-    // spellings of its day are the journal.
-    assert!(disk(&graph, "pages/2026_11_03.md").contains("- written"));
-    assert!(disk(&graph, "journals/2026_11_03.md").contains("- written"));
+    // CM-DAYFILE (D-20261111-CMR14, superseding D-20261107-KD's literal
+    // ordinary file): the date-named pages file is the day for every
+    // spelling, so all three writes land in it and no journals file is made.
+    assert_eq!(
+        disk(&graph, "pages/2026_11_03.md")
+            .matches("- written")
+            .count(),
+        3
+    );
+    assert!(!graph.root.join("journals/2026_11_03.md").exists());
 }

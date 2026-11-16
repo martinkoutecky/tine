@@ -1506,21 +1506,32 @@ fn change_summary_registered_mentions_and_incoming_targets() {
     store.close();
 }
 
+/// A date-named pages file is that day (CM-DAYFILE, D-20261111-CMR14), so
+/// creating `pages/2026-10-22.md` beside `journals/2026_10_22.md` would make
+/// a same-day twin: the existing Twin refusal stops it and writes nothing.
+/// (Superseded: before CM step 2 it created an ordinary literal page.)
 #[test]
-fn change_summary_date_named_page_keeps_its_literal_self_exclusion() {
+fn change_summary_date_named_page_twin_of_a_journal_is_refused() {
     let _guard = crate::test_transactions::integration_lock();
     let (dir, store) = fixture(1);
     let mut doc = store.page(&PageId::from("pages/A.md")).unwrap().doc;
     doc.pre_block = None;
     doc.blocks[0].raw = "2026-10-22 mention".into();
-    commit(&store, &[("pages/2026-10-22.md", doc, SaveBase::CreateNew)]);
-    let before = answers(&store, dir.path());
-    let wire = edit(&store, "pages/2026-10-22.md", |doc| {
-        doc.blocks[0].raw = "2026-10-22 changed mention".into()
-    });
-    assert_eq!(wire["summary"]["full"], false);
-    assert!(!strings(&wire["summary"]["textTo"]).contains("2026-10-22"));
-    check(&before, &answers(&store, dir.path()), &wire["summary"]).unwrap();
+    let mut tx = store.page_plan(Some(EditKind::CreatePage));
+    tx.save_page(
+        &[EditKind::CreatePage],
+        &PageId::from("pages/2026-10-22.md"),
+        SaveBase::CreateNew,
+        &doc,
+    );
+    let refused = tx.plan().err().map(|why| format!("{why:?}"));
+    assert!(
+        refused
+            .as_deref()
+            .is_some_and(|why| why.contains("Twin") && why.contains("journals/2026_10_22.md")),
+        "{refused:?}"
+    );
+    assert!(!dir.path().join("pages/2026-10-22.md").exists());
     store.close();
 }
 

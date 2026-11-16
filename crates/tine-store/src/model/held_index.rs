@@ -115,12 +115,14 @@ impl Graph {
             .collect()
     }
 
-    /// A page's name from the content its document is built from (A-H1),
-    /// for every build and source: an ordinary page's `title::`, else its
-    /// decoded file stem; a journal's is its date.
-    pub(super) fn name_from(&self, entry: &PageEntry, content: &str) -> io::Result<String> {
-        if entry.kind != PageKind::Page {
-            return Ok(entry.name.clone());
+    /// Name `entry` from the content its document is built from (A-H1), for
+    /// every build and source: a journals-directory file keeps the date its
+    /// file name gives; any other file claims what its `title::`, else its
+    /// decoded file stem, claims (`page_identity::page_file_claim`: a date
+    /// is that day). On an error the entry keeps its file-name claim.
+    pub(super) fn name_from(&self, entry: &mut PageEntry, content: &str) -> io::Result<()> {
+        if entry.path.starts_with(self.journals_path()) {
+            return Ok(());
         }
         let stem = entry
             .path
@@ -128,7 +130,9 @@ impl Graph {
             .and_then(|stem| stem.to_str())
             .unwrap_or("");
         let stem = decode_page_name(stem, self.current_config().file_name_format);
-        page_identity::effective_page_name_from_text(&entry.path, &stem, content)
+        let name = page_identity::effective_page_name_from_text(&entry.path, &stem, content)?;
+        page_identity::set_page_file_claim(&self.current_journal_format(), entry, name);
+        Ok(())
     }
 }
 

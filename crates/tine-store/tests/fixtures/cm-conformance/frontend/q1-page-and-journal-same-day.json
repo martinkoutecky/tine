@@ -8,32 +8,17 @@
   "counts": [
     [
       [
-        "pages/2026-10-26.md",
+        "journals/2026_10_26.md",
         1
       ],
       [
         "pages/Notes.md",
-        0
-      ],
-      [
-        "journals/2026_10_26.md",
         0
       ]
     ],
     []
   ],
   "inventory": [
-    {
-      "day": null,
-      "is_journal": false,
-      "key": "2026-10-26",
-      "name": "2026-10-26",
-      "target": {
-        "id": "pages/2026-10-26.md",
-        "kind": "existing",
-        "others": []
-      }
-    },
     {
       "day": null,
       "is_journal": false,
@@ -53,14 +38,15 @@
       "target": {
         "id": "journals/2026_10_26.md",
         "kind": "existing",
-        "others": []
+        "others": [
+          "pages/2026-10-26.md"
+        ]
       }
     }
   ],
   "journalFileFormat": null,
   "journalTitleFormat": null,
   "keyOf": {
-    "2026-10-26": "oct 26th, 2026",
     "Notes": "notes",
     "Oct 26th, 2026": "oct 26th, 2026"
   },
@@ -69,11 +55,11 @@
   "open": {
     "2026-10-26": {
       "journal": [
-        "page",
+        "journal",
         "oct 26th, 2026"
       ],
       "page": [
-        "page",
+        "journal",
         "oct 26th, 2026"
       ]
     },
@@ -93,15 +79,15 @@
         "oct 26th, 2026"
       ],
       "page": [
-        "page",
+        "journal",
         "oct 26th, 2026"
       ]
     }
   },
   "owner": {
     "2026-10-26": {
-      "journal": "pages/2026-10-26.md",
-      "page": "pages/2026-10-26.md"
+      "journal": "journals/2026_10_26.md",
+      "page": "journals/2026_10_26.md"
     },
     "Notes": {
       "journal": null,
@@ -109,7 +95,7 @@
     },
     "Oct 26th, 2026": {
       "journal": "journals/2026_10_26.md",
-      "page": null
+      "page": "journals/2026_10_26.md"
     }
   },
   "pages": [
@@ -125,7 +111,7 @@
   "spellings": {
     "2026-10-26": {
       "backend": [
-        "page",
+        "journal",
         "oct 26th, 2026"
       ],
       "day": [

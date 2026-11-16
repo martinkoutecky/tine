@@ -115,7 +115,7 @@
         "oct 2nd, 2026"
       ],
       "page": [
-        "page",
+        "journal",
         "oct 2nd, 2026"
       ]
     },
@@ -135,7 +135,7 @@
         "oct 22nd, 2026"
       ],
       "page": [
-        "page",
+        "journal",
         "oct 22nd, 2026"
       ]
     },
@@ -145,7 +145,7 @@
         "oct 22nd, 2026"
       ],
       "page": [
-        "page",
+        "journal",
         "oct 22nd, 2026"
       ]
     },
@@ -155,7 +155,7 @@
         "oct 2nd, 2026"
       ],
       "page": [
-        "page",
+        "journal",
         "oct 2nd, 2026"
       ]
     },
@@ -165,7 +165,7 @@
         "oct 22nd, 2026"
       ],
       "page": [
-        "page",
+        "journal",
         "oct 22nd, 2026"
       ]
     },
@@ -175,7 +175,7 @@
         "oct 22nd, 2026"
       ],
       "page": [
-        "page",
+        "journal",
         "oct 22nd, 2026"
       ]
     }
@@ -183,7 +183,7 @@
   "owner": {
     "2026-10-2": {
       "journal": "journals/2026_10_02.md",
-      "page": null
+      "page": "journals/2026_10_02.md"
     },
     "Notes": {
       "journal": null,
@@ -191,23 +191,23 @@
     },
     "Oct 22nd, 2026": {
       "journal": "journals/2026_10_22.md",
-      "page": null
+      "page": "journals/2026_10_22.md"
     },
     "Oct 22st, 2026": {
       "journal": "journals/2026_10_22.md",
-      "page": null
+      "page": "journals/2026_10_22.md"
     },
     "Oct 2nd, 2026": {
       "journal": "journals/2026_10_02.md",
-      "page": null
+      "page": "journals/2026_10_02.md"
     },
     "October 22nd, 2026": {
       "journal": "journals/2026_10_22.md",
-      "page": null
+      "page": "journals/2026_10_22.md"
     },
     "oct 22nd, 2026": {
       "journal": "journals/2026_10_22.md",
-      "page": null
+      "page": "journals/2026_10_22.md"
     }
   },
   "pages": [

@@ -1,8 +1,13 @@
 use tine_core::model::PageKind;
 use tine_store::{PageId, Resolved, Store};
 
+/// CM-DAYFILE and CM-ORDER (D-20261111-CMR14, D-20261110-CM): a pages file
+/// whose effective name is a date is that day's journal where it lies, and a
+/// journals-directory file of the same day wins over it, cold and ready
+/// alike. (Before CM step 2 the literal pages file opened ahead of the
+/// journal; that rule is superseded by those decisions.)
 #[test]
-fn a_literal_real_date_page_opens_before_a_journal_in_cold_and_ready_reads() {
+fn a_date_named_pages_file_is_the_day_unless_a_journal_holds_it_in_cold_and_ready_reads() {
     let _guard = super::integration_lock();
     for (name, filename, preamble) in [
         ("Oct 26th, 2026", "Oct 26th, 2026.md", ""),
@@ -33,21 +38,31 @@ fn a_literal_real_date_page_opens_before_a_journal_in_cold_and_ready_reads() {
             let pause = temp.path().join(".tine-test-pause-load");
             std::fs::write(&pause, "").unwrap();
             let store = Store::open(temp.path(), Default::default()).unwrap().0;
-            let expected = format!("pages/{filename}");
+            let expected = if journal {
+                "journals/2026_10_26.md".to_owned()
+            } else {
+                format!("pages/{filename}")
+            };
             let early = store.page_named(name, PageKind::Journal);
             std::fs::remove_file(pause).unwrap();
-            assert_eq!(early.unwrap().unwrap().id, PageId::from(expected.clone()));
+            assert_eq!(
+                early
+                    .unwrap()
+                    .unwrap_or_else(|| panic!("cold {name} in {filename}, journal {journal}"))
+                    .id,
+                PageId::from(expected.clone())
+            );
             let view = store.whole_graph().unwrap();
             assert!(
                 matches!(view.resolve(name, true), Resolved::Existing { id, .. } if id == PageId::from(expected.clone()))
             );
             let read = store.page_named(name, PageKind::Journal).unwrap().unwrap();
-            assert_eq!(read.id, PageId::from(expected));
-            assert_eq!(read.doc.kind, PageKind::Page);
-            // KD preserves the literal ordinary file's identity even when a
-            // journal exists for its day; OWN2 prefers it for a shared key.
+            assert_eq!(read.id, PageId::from(expected.clone()));
+            assert_eq!(read.doc.kind, PageKind::Journal);
+            // A date names no ordinary page (CM-DATE): a page lookup of it
+            // opens the same day.
             assert!(
-                matches!(view.resolve(name, false), Resolved::Existing { id, .. } if id == PageId::from(format!("pages/{filename}")))
+                matches!(view.resolve(name, false), Resolved::Existing { id, .. } if id == PageId::from(expected.clone()))
             );
             assert!(matches!(
                 view.resolve("Oct 27th, 2026", true),

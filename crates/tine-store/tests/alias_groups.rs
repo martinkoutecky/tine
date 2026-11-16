@@ -50,8 +50,14 @@ fn names(aliases: &[&str], pages: &[&str]) -> (Vec<String>, Vec<String>) {
     (owned(aliases), owned(pages))
 }
 
+/// A date-named pages file is that day (CM-DAYFILE, D-20261111-CMR14), a real
+/// identity that opens itself; a date alias joins its group (CM SPEC §2.3),
+/// with the file's own aliases. Once a journals file holds the day it wins
+/// (CM-ORDER), and the losing pages file's aliases count for nothing.
+/// (Superseded: before CM step 2 the pages file was an unrelated ordinary
+/// page and the day belonged to Owner's group alone, D-20261107-KD.)
 #[test]
-fn date_alias_group_never_acquires_the_ordinary_canonical_claimant() {
+fn a_date_alias_joins_the_day_a_pages_file_holds_until_a_journal_takes_it() {
     let _guard = crate::integration_lock();
     let (dir, store) = graph(&[
         (
@@ -64,40 +70,42 @@ fn date_alias_group_never_acquires_the_ordinary_canonical_claimant() {
         ),
         ("pages/Owner.md", "alias:: 2026-10-23\n\n- owner\n"),
     ]);
-    let check = || {
+    let check = |day_file: &str, literal: bool| {
         let view = store.whole_graph().unwrap();
         let entries = view.inventory(InventoryScope::AliasGroup("Owner"));
-        assert_eq!(entries.0.len(), 1, "one day member: {entries:?}");
-        let member = &entries.0[0];
-        assert!(
-            member.is_journal,
-            "ordinary claimant is unrelated: {member:?}"
-        );
+        let member = entries
+            .0
+            .iter()
+            .find(|entry| entry.is_journal)
+            .unwrap_or_else(|| panic!("the day is a member: {entries:?}"));
+        assert_eq!(member.name, "2026_10_23");
         assert_eq!(member.day, Some(tine_store::Day(20261023)));
-        assert!(matches!(member.target, Resolved::Alias { .. }));
-        assert_eq!(view.link_target(&member.name).name, "Owner");
-        assert_eq!(group(&view, "2026-10-23"), names(&[], &["Owner"]));
-        assert_eq!(group(&view, "2026_10_23"), names(&["Literal"], &[]));
+        assert!(matches!(&member.target, Resolved::Existing { id, .. } if id.as_str() == day_file));
+        for spelling in ["2026_10_23", "2026-10-23"] {
+            let target = view.link_target(spelling);
+            assert_eq!(target.name, "2026_10_23", "opening {spelling}");
+            assert!(target.is_journal);
+        }
+        let aliases: &[&str] = if literal { &["Literal"] } else { &[] };
+        assert_eq!(group(&view, "Owner"), names(aliases, &["2026_10_23"]));
+        for name in ["2026-10-23", "2026_10_23"] {
+            assert_eq!(group(&view, name), names(aliases, &["Owner"]));
+        }
     };
-    check();
+    check("pages/2026_10_23.md", true);
     fs::write(
         dir.path().join("pages/Owner.md"),
         "alias:: 2026-10-23, [[Oct 23rd, 2026]]\n\n- owner\n",
     )
     .unwrap();
     store.refresh(tine_store::Depth::Stamps).unwrap();
-    check();
+    check("pages/2026_10_23.md", true);
     fs::write(dir.path().join("journals/2026_10_23.md"), "- journal\n").unwrap();
     store.refresh(tine_store::Depth::Stamps).unwrap();
-    // The ordinary opening claimant masks this physical journal (OWN2).
-    check();
+    check("journals/2026_10_23.md", false);
     fs::remove_file(dir.path().join("pages/2026_10_23.md")).unwrap();
     store.refresh(tine_store::Depth::Stamps).unwrap();
-    let view = store.whole_graph().unwrap();
-    assert_eq!(group(&view, "Owner"), names(&[], &["2026_10_23"]));
-    for name in ["2026_10_23", "2026-10-23"] {
-        assert_eq!(group(&view, name), names(&[], &["Owner"]));
-    }
+    check("journals/2026_10_23.md", false);
     store.close();
 }
 
@@ -123,13 +131,30 @@ fn date_alias_endpoints_share_opening_and_reference_class_without_a_journal_file
     assert_eq!(group(&view, "Owner"), names(&["Oct 23rd, 2026"], &[]));
     assert_eq!(group(&view, "2026-10-23"), names(&[], &["Owner"]));
     drop(view);
+    // A date-named pages file makes the day a real identity that opens
+    // itself in every spelling (CM-DAYFILE, CM SPEC §2.3); Owner's date alias
+    // joins its group, so Owner's references are unchanged. (Superseded:
+    // before CM step 2 the file was an ordinary literal page that captured
+    // only its own spelling.)
     let literal = dir.path().join("pages/2026-10-23.md");
-    fs::write(&literal, "- literal ordinary date file\n").unwrap();
+    fs::write(&literal, "- date-named pages file\n").unwrap();
     store.refresh(tine_store::Depth::Stamps).unwrap();
     let view = store.whole_graph().unwrap();
-    assert_eq!(view.link_target("2026-10-23").name, "2026-10-23");
-    assert_eq!(view.link_target("2026_10_23").name, "Owner");
-    assert_eq!(view.backlinks("Owner").unwrap()[0].blocks.len(), 1);
+    for name in ["Oct 23rd, 2026", "2026_10_23", "2026-10-23"] {
+        let target = view.link_target(name);
+        assert_eq!(target.name, "Oct 23rd, 2026", "opening {name}");
+        assert!(target.is_journal);
+    }
+    assert_eq!(view.link_target("Owner").name, "Owner");
+    assert_eq!(group(&view, "Owner"), names(&[], &["Oct 23rd, 2026"]));
+    assert_eq!(
+        view.backlinks("Owner")
+            .unwrap()
+            .iter()
+            .map(|row| row.blocks.len())
+            .sum::<usize>(),
+        2
+    );
     drop(view);
     fs::remove_file(literal).unwrap();
     store.refresh(tine_store::Depth::Stamps).unwrap();

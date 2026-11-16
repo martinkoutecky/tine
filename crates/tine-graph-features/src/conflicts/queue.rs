@@ -25,11 +25,27 @@ use super::{
 fn journal_objects(store: &Store, bad: &mut Unreadable) -> io::Result<Vec<ConflictObject>> {
     let mut out = Vec::new();
     bad.journal_days.clear();
+    let journals = format!("{}/", store.config().config.journals_dir);
+    let mut view = None;
     for day in crate::journals::journal_conflicts(store)? {
-        // An ordinary claimant can own this literal name. Its complete
-        // cross-kind bucket is listed below as a name conflict instead.
-        if !day.files.iter().any(|file| file.canonical) {
-            continue;
+        // A file outside the journals directory can claim this day too
+        // (CM-DAYFILE). Its complete bucket is listed as a name conflict
+        // instead ([`name_objects`]); only all-journals days are folded here.
+        let view = match &view {
+            Some(view) => view,
+            None => view.insert(
+                store
+                    .whole_graph()
+                    .map_err(|error| io::Error::other(format!("{error:?}")))?,
+            ),
+        };
+        if let tine_store::Resolved::Existing { id, others } = view.resolve(&day.title, true) {
+            if std::iter::once(&id)
+                .chain(&others)
+                .any(|id| !id.as_str().starts_with(&journals))
+            {
+                continue;
+            }
         }
         for file in &day.files {
             if let Some(reason) = &file.preview_error {
@@ -226,12 +242,16 @@ fn sort_queue(queue: &mut [ConflictObject]) {
     queue.sort_by(|a, b| a.page_name.cmp(&b.page_name).then_with(|| a.id.cmp(&b.id)));
 }
 
-/// Ordinary and cross-kind twins use the same physical claimant answer as
-/// navigation. Journal-only buckets retain their existing resolution journey.
+/// Ordinary and cross-directory twins use the same physical claimant answer
+/// as navigation. A day whose files all lie in the journals directory keeps
+/// its existing resolution journey ([`journal_objects`]); a day with a file
+/// elsewhere (`pages/2026-11-02.md` beside `journals/2026_11_02.md`,
+/// CM-DAYFILE) is listed here, every file kept, none merged.
 fn name_objects(store: &Store, names: Option<&[String]>) -> io::Result<Vec<ConflictObject>> {
     let view = store
         .whole_graph()
         .map_err(|error| io::Error::other(format!("{error:?}")))?;
+    let journals = format!("{}/", store.config().config.journals_dir);
     let inventory = view.inventory(tine_store::InventoryScope::ConflictingFiles(names));
     let mut buckets = std::collections::BTreeMap::<String, Vec<_>>::new();
     for entry in &inventory.0 {
@@ -240,16 +260,20 @@ fn name_objects(store: &Store, names: Option<&[String]>) -> io::Result<Vec<Confl
             .or_default()
             .push(entry);
     }
+    let file = |entry: &tine_store::InventoryEntry| match &entry.target {
+        tine_store::Resolved::Existing { id, .. } => id.as_str().to_owned(),
+        _ => unreachable!("physical conflict inventory contains file targets"),
+    };
     Ok(buckets
         .into_values()
         .into_iter()
-        .filter(|claims| !claims[0].is_journal)
+        .filter(|claims| {
+            !claims
+                .iter()
+                .all(|entry| entry.is_journal && file(entry).starts_with(&journals))
+        })
         .map(|claims| {
             let winner = &claims[0];
-            let file = |entry: &tine_store::InventoryEntry| match &entry.target {
-                tine_store::Resolved::Existing { id, .. } => id.as_str().to_owned(),
-                _ => unreachable!("physical conflict inventory contains file targets"),
-            };
             let kind = |entry: &tine_store::InventoryEntry| {
                 if entry.is_journal {
                     PageKind::Journal
