@@ -94,9 +94,10 @@ impl<'a> PagePlan<'a> {
                     check: Some(check), ..
                 } = step
                 {
-                    crate::cost_counters::model_check(|| {
-                        model_check::check(check, &next, observed)
-                    })?;
+                    let run = || model_check::check(check, &next, observed);
+                    #[cfg(feature = "test-faults")]
+                    let run = || crate::cost_counters::model_check(run);
+                    run()?;
                 }
                 Ok(next)
             }))
