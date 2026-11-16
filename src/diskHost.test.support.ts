@@ -139,7 +139,10 @@ export function installDiskHost(host: TestHost, disk: FakeDisk, options: DiskHos
         const state = held.get(need.key);
         if (state && (state.conflict || state.failed)) return false;
         return !need.witness || JSON.stringify(state ? disk.read(need.key, state.name) : null).includes(need.witness);
-      })),
+      }) ? needs.flatMap(({ key }) => {
+        const state = held.get(key);
+        return state ? [{ key, version: state.version, rev: state.rev }] : [];
+      }) : false),
     // A page whose save failed or conflicted still owes its buffer to its file.
     owed: vi.spyOn(b, "pageOwed").mockImplementation(async (_session, paths) =>
       [...held].filter(([key, state]) => (state.conflict || state.failed) && (!paths || paths.includes(key)))

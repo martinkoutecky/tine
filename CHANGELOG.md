@@ -8,6 +8,7 @@ The format follows [Keep a Changelog](https://keepachangelog.com/); versions use
 
 ## [Unreleased]
 
+- A page link with a label, Org `[[Page][label]]` or Markdown `[label](Page)`, now renders as a page reference with the Show brackets setting, and opens the page, like a plain `[[Page]]` link (#966).
 - **Added:** the authorship marks are a public theming surface, documented in the theme contract and the Guide's "Customize Tine's look": `data-author`, `.ls-block.authored` / `.author-tinted`, `--author-color`, the run classes, a `data-author` on the author chip, and two new tokens: `--tine-author-icon-size`, which with a `background-image` (a `data:` or `https:` address) on an author's chip shows an image instead of the name, and `--tine-author-gutter`, the width of the thread's strip (the window class `tine-author-marks-off`, present while author marks are hidden, is documented for stylesheets that draw the thread). Settings → Appearance → Advanced → Fine-tuning has a new **Author marks** row: **Tint** (the default, today's look) or **Thread**, a thin line down the right edge beside one author chip per run of the same author's blocks, in a strip every block keeps at its end (so the text column has one width and a long name is cut with an ellipsis instead of covering text), with the text left where it was. The Guide shows the same thread for `custom.css`. Nothing changes by default (#892).
 - **Changed:** `.author-run-continued` and `.author-run-continues` now follow reading order through depth (a run goes from a parent into its first child and out of the last descendant to the next block) instead of joining siblings only; the tint's shared cards keep joining childless siblings under the internal (undocumented) names `author-card-continued` and `author-card-continues`. A `custom.css` written before these classes were documented may have relied on the old sibling-only meaning (#892).
 - Hierarchy page links follow **Show brackets**, collapsed numbered-list markers stay circular and centered, and bullet threading no longer draws stubs through margin comment messages (#959, #963, #129).
@@ -115,6 +116,8 @@ The format follows [Keep a Changelog](https://keepachangelog.com/); versions use
 - Block deep links still open the physical file holding the block, including a losing twin. External edits to a losing twin leave graph views quiet unless the opening file changes; promotion refreshes the page from its new opening file (REG-CM-ACTIVE-TWINS).
 
 ### Fixed
+
+- Conflict review keeps the last known saved ancestor when typed changes could not be saved, instead of looking for an unpublished draft in its history (#964).
 - Saving or externally changing one open page no longer makes keyboard navigation revisit every unchanged journal page in the feed; on a 129-page feed the update drops from ~117 ms to ~55 ms (IllLE).
 
 - A page whose properties cannot be parsed is refused consistently while opening, including during startup, and an edit cannot overwrite its unreadable bytes (internal: REG-READABLE-OWNER-COLD; HbcTw).

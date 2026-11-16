@@ -104,7 +104,7 @@ describe("createPage refusal families", () => {
 
   it("keeps a graph switch while the create is being published distinct from disk conflict", async () => {
     let publish!: (done: boolean) => void;
-    vi.spyOn(backend(), "pageWait").mockImplementationOnce(() => new Promise((resolve) => { publish = resolve; }));
+    vi.spyOn(backend(), "pageWait").mockImplementationOnce(() => new Promise((resolve) => { publish = done => resolve(done ? [] : false); }));
     const pending = createPage("New", dto());
     await vi.waitFor(() => expect(publish).toBeTypeOf("function"));
     resetStore();

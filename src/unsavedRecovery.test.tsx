@@ -37,7 +37,7 @@ beforeEach(async () => {
   // While failing, the host never publishes; a retry that works publishes the
   // taken version and clears the page's save-error notice.
   vi.spyOn(backend(), "pageOwed").mockImplementation(async () => failing ? [{ key: PATH, version: 2 }] : []);
-  vi.spyOn(backend(), "pageWait").mockImplementation(async () => !failing);
+  vi.spyOn(backend(), "pageWait").mockImplementation(async () => failing ? false : []);
   vi.spyOn(backend(), "pageSaveNow").mockImplementation(async (_session, keys) => {
     if (!failing) for (const key of keys) host.notice(key, {}, { version: 2 });
   });

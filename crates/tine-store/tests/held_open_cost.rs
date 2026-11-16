@@ -125,11 +125,13 @@ impl Held {
         ))
         .unwrap();
         self.version = self.answer();
-        let published = host.wait_published(
-            self.session,
-            &[(self.key.clone(), self.version, None)],
-            Duration::from_secs(10),
-        );
+        let published = host
+            .wait_published(
+                self.session,
+                &[(self.key.clone(), self.version, None)],
+                Duration::from_secs(10),
+            )
+            .0;
         assert_eq!(format!("{published:?}"), "Applied", "the save publishes");
     }
 

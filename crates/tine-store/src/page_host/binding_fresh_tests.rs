@@ -772,7 +772,7 @@ impl Run<'_> {
         let disk = |key: &str| fs::read(self.live.root.join(key)).ok();
         let text = |bytes: Option<&[u8]>| bytes.map(|b| String::from_utf8_lossy(b).into_owned());
         let mut lags = Vec::new();
-        for (key, (bytes, _)) in &book.index {
+        for (key, (bytes, _, _)) in &book.index {
             let file = disk(key);
             if bytes.as_deref() != file.as_deref() {
                 lags.push(format!(
@@ -804,7 +804,7 @@ impl Run<'_> {
         let state = self.live.host.driver.shared.state_for_tests();
         (state.book.index.iter())
             .filter(|(key, _)| state.progress.host.pages.contains_key(*key))
-            .map(|(key, (bytes, _))| (key.to_string(), bytes.clone()))
+            .map(|(key, (bytes, _, _))| (key.to_string(), bytes.clone()))
             .collect()
     }
 

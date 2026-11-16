@@ -39,7 +39,12 @@ impl Sink for Channel {
             let _ = self.0.send(Delivered::Mail(page, mail));
         }
         let indexed = delivery.publications.into_iter();
-        Ok(indexed.map(|p| (p, Indexing::Indexed)).collect())
+        Ok(indexed
+            .map(|p| {
+                let rev = p.bytes.as_deref().map(crate::store::FileRev::from_bytes);
+                (p, Indexing::Indexed(rev))
+            })
+            .collect())
     }
 }
 

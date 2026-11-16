@@ -222,7 +222,7 @@ pub(crate) struct PublishedNeed {
 /// its barrier still waits.
 const PAGE_WAIT_BOUND: Duration = Duration::from_secs(5);
 
-/// For the window `session` (F1): true once every need is published; false
+/// For the window `session` (F1): witnessed own revisions once every need is published; false
 /// on a terminal notice for a needed key, or when the session is no longer
 /// current; null at `bound_ms` (at most 5 s), never success there (S1).
 #[tauri::command]
@@ -231,21 +231,22 @@ pub(crate) async fn page_wait(
     needs: Vec<PublishedNeed>,
     bound_ms: u64,
     ctx: GraphContext<'_>,
-) -> Result<Option<bool>, String> {
+) -> Result<Option<serde_json::Value>, String> {
     let needs: Vec<_> = needs
         .into_iter()
         .map(|need| (need.key, need.version, need.witness))
         .collect();
     let bound = Duration::from_millis(bound_ms).min(PAGE_WAIT_BOUND);
     hosted(ctx, move |host| {
-        match host.wait_published(session, &needs, bound) {
-            PageOperation::Applied => Some(true),
+        let (outcome, revisions) = host.wait_published(session, &needs, bound);
+        match outcome {
+            PageOperation::Applied => Some(serde_json::json!(revisions)),
             // `wait_published` answers only Applied, Pending or Refused.
             PageOperation::Pending
             | PageOperation::Waiting
             | PageOperation::Uncertain
             | PageOperation::Superseded => None,
-            PageOperation::Refused => Some(false),
+            PageOperation::Refused => Some(serde_json::json!(false)),
         }
     })
     .await

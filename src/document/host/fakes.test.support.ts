@@ -122,7 +122,7 @@ export class FakeHost implements HostPort {
     // A publication proven here is no longer debt, as `page_owed` says.
     if (result !== false) this.owedPages = this.owedPages.filter((owed) =>
       !needs.some((need) => need.key === owed.key && need.version >= owed.version));
-    return result !== false;
+    return result === false ? false : [];
   }
 
   async owed(session: number, paths: readonly string[] | null) {
@@ -182,9 +182,10 @@ export class FakeDoc implements DocumentPort {
   holds(name: string): boolean { return this.held.has(name); }
   holdsPush(name: string): boolean { return this.pushHeld.has(name); }
   tombstoned(name: string): boolean { return this.tombs.has(name); }
-  /** Took answers' revisions, in order. */
-  readonly tookRevs: [string, string][] = [];
-  took(name: string, rev: string): void { this.tookRevs.push([name, rev]); }
+  took(_name: string): void {}
+  /** Proven publications' revisions, in order. */
+  readonly publishedRevs: [string, string | null][] = [];
+  published(name: string, rev: string | null): void { this.publishedRevs.push([name, rev]); }
   released(_name: string): void {}
 }
 

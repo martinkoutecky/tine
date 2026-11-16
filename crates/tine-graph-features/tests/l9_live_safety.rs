@@ -118,7 +118,8 @@ pub(crate) fn save_guarded(
             session,
             &vec![(key, version, None)],
             Duration::from_secs(10)
-        ),
+        )
+        .0,
         PageOperation::Applied
     );
     drop(host);

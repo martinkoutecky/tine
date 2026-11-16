@@ -134,11 +134,13 @@ fn l9_04_resolving_submit_copies_disk_before_publish_and_refuses_if_recovery_fai
         let version = live.answer(&key, id).page.unwrap().version;
         live.host.save_now(live.host.session(), &[key.clone()]);
         assert_eq!(
-            live.host.wait_published(
-                live.host.session(),
-                &vec![(key.clone(), version, None)],
-                Duration::from_secs(10)
-            ),
+            live.host
+                .wait_published(
+                    live.host.session(),
+                    &vec![(key.clone(), version, None)],
+                    Duration::from_secs(10)
+                )
+                .0,
             PageOperation::Applied
         );
         assert_eq!(live.disk(&key), local);

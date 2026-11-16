@@ -1866,7 +1866,7 @@ fn page_merge_delete_and_rescue_match_legacy_bytes() {
             .collect();
         let bound = std::time::Duration::from_secs(20);
         assert_eq!(
-            host.wait_published(session, &needs, bound),
+            host.wait_published(session, &needs, bound).0,
             tine_store::PageOperation::Applied
         );
     });

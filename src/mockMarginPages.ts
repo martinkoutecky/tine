@@ -4,8 +4,9 @@ import type { BlockDto } from "./types";
 
 /** Page names and their blocks; mock.ts wraps them as pages (I-12 keeps page
  * construction in the mock backend and document/convert.ts). */
-export function marginRegressionPages(b: (raw: string, children?: BlockDto[], collapsed?: boolean) => BlockDto): [string, BlockDto[]][] {
+export function marginRegressionPages(b: (raw: string, children?: BlockDto[], collapsed?: boolean) => BlockDto): [string, BlockDto[], "org"?][] {
   return [
+    ["Org label brackets 966", [b("A [[git]] tool for [[Emacs][my favorite editor]]")], "org"],
     ["Rendering regression", [
       b("Numbered fold markers", Array.from({ length: 12 }, (_, i) =>
         b(`Numbered item ${i + 1}\nlogseq.order-list-type:: number\ncollapsed:: true`, [b("Hidden child")], true))),

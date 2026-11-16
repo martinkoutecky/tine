@@ -83,7 +83,7 @@ import type { Backend, ConfirmOptions, FacetScope } from "./backendInterface";
 
 export type { DebugInfo, DiagnosticReport, DiagnosticFrontendKind, DiscardReason, DiagnosticFrontendFields, GpuEnv, BackupInfo, GraphChange, AssetChangedBatch, GraphConfigChange, CustomCssChange, TrashAssetOutcome, GraphAnswersChange, GraphFolderPickResult, PreparedGraphFolder, ClipboardAssetFile, ClipboardFileList, MediaCaptureResult, KnownGraph, InstalledPluginRecord, PluginRegistryCacheEnvelope, PluginRegistryCacheLoad, LoadGraphResult, CaptureGraphBindingResult, GraphAccessInspection, GitAutocommitStatus, GitPolicy, GitSyncStatus, GitRemote } from "./backendTypes";
 import type { DebugInfo, DiagnosticReport, DiagnosticFrontendKind, DiagnosticFrontendFields, GpuEnv, BackupInfo, GraphChange, AssetChangedBatch, GraphConfigChange, CustomCssChange, TrashAssetOutcome, GraphAnswersChange } from "./backendTypes";
-import type { DiskToken, OwedPage, PageMail, PageOperation, PageRefusal, PublishedNeed } from "./document";
+import type { DiskToken, OwedPage, PageMail, PageOperation, PageRefusal, PublishedNeed, PublishedRevision } from "./document";
 
 export function isTauri(): boolean {
   return typeof window !== "undefined" && "__TAURI_INTERNALS__" in window;
@@ -377,7 +377,7 @@ class TauriBackend implements Backend {
     return this.call<PageOperation>("page_delete", { session, name, kind, expectedPath });
   }
   pageWait(session: number, needs: readonly PublishedNeed[], boundMs: number) {
-    return this.call<boolean | null>("page_wait", { session, needs, boundMs });
+    return this.call<PublishedRevision[] | false | null>("page_wait", { session, needs, boundMs });
   }
   pageSaveNow(session: number, keys: readonly string[]) {
     return this.call<void>("page_save_now", { session, keys });
