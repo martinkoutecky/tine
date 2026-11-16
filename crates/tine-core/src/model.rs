@@ -129,7 +129,7 @@ fn org_meta_line(trimmed: &str) -> bool {
     directive || drawer
 }
 
-/// The span of the preamble title's name value (as [`page_title_from_preamble`]
+/// The span of the page header title's name value (as [`page_title_from_header`]
 /// reads it: a `title::` property, Org `#+title:` directive or `:title:`
 /// drawer line) when that title still names `old` (`refs::same_page`). `None`:
 /// no title, or a title naming another page (user content a rename must not
@@ -137,11 +137,19 @@ fn org_meta_line(trimmed: &str) -> bool {
 /// `refs::RenameProposal::rebind_title`; this only answers whether the title
 /// is the page's own. Cost O(content bytes); no I/O or error.
 pub fn own_title_span(content: &str, format: Format, old: &str) -> Option<std::ops::Range<usize>> {
-    let line = page_title_line(content, format)?;
-    crate::refs::same_page(&content[line.value.clone()], old).then_some(line.value)
+    let value = title_name_span(content, format)?;
+    crate::refs::same_page(&content[value.clone()], old).then_some(value)
 }
 
-/// The preamble title's value. Both title readers and the rebind share it.
+/// The title in the parser-owned page header, before the outline or in its
+/// first properties-only root. Uses the same header selection as the model
+/// observation and the alias reader. Cost O(content bytes), one outline parse;
+/// no I/O. `None` when the selected header has no nonempty title.
+pub fn page_title_from_header(content: &str, format: Format) -> Option<String> {
+    title_name_span(content, format).map(|value| content[value].to_owned())
+}
+
+/// Preamble-only title, used by file classification and streaming reads.
 struct TitleLine {
     value: std::ops::Range<usize>,
 }
@@ -163,7 +171,58 @@ fn page_title_line(content: &str, format: Format) -> Option<TitleLine> {
 }
 
 pub(crate) fn title_name_span(content: &str, format: Format) -> Option<std::ops::Range<usize>> {
-    page_title_line(content, format).map(|line| line.value)
+    // A necessary token, not header recognition: avoid parsing ordinary
+    // referrers with no title key. The parser still owns every candidate.
+    if !content
+        .as_bytes()
+        .windows(5)
+        .any(|token| token.eq_ignore_ascii_case(b"title"))
+    {
+        return None;
+    }
+    let org = format == Format::Org;
+    let normalized = crate::doc::normalize_line_endings(content);
+    let (doc, headers) = crate::doc::parse_outlined(&normalized, org);
+    let raw = crate::page_header::page_header_text(
+        doc.pre_block.as_deref(),
+        doc.roots.first().map(crate::doc::DocBlock::raw),
+    )?;
+    let regions = crate::block_regions::parse_document(raw, org);
+    let property = regions
+        .page_properties()
+        .find(|p| p.key.eq_ignore_ascii_case("title") && !p.value.is_empty())?;
+    let value = property.value_range.0..property.value_range.1;
+    // Only coordinates are translated here: the parser owns both the header
+    // selection and property recognition. A native property value is one line.
+    let line = raw[..value.start].bytes().filter(|b| *b == b'\n').count();
+    let column = raw[..value.start].rsplit('\n').next()?.len();
+    let (physical_line, indent) = if doc.pre_block.is_some() {
+        (line, 0)
+    } else {
+        let header = headers.first()?;
+        (
+            header.line + line,
+            if line == 0 {
+                header.prefix_len
+            } else {
+                header.content_indent
+            },
+        )
+    };
+    let (start, text) = crate::doc::physical_lines(content)
+        .scan(0, |at, text| {
+            let start = *at;
+            *at += text.len();
+            Some((start, text))
+        })
+        .nth(physical_line)?;
+    let skip = if doc.pre_block.is_none() && line == 0 {
+        indent
+    } else {
+        text.len() - crate::outline::strip_layout_ws(text, indent).len()
+    };
+    let start = start + skip + column;
+    Some(start..start + value.len())
 }
 
 fn page_title_line_before(content: &str, format: Format, end: usize) -> Option<TitleLine> {

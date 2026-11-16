@@ -92,16 +92,6 @@
     "Foo/bar": "foo/bar",
     "p": "p"
   },
-  "namespaceNodes": [
-    [
-      "page",
-      "foo/bar"
-    ],
-    [
-      "page",
-      "foo"
-    ]
-  ],
   "namespaceTree": [
     {
       "children": [],
@@ -184,7 +174,10 @@
       "linkedRefs": 1,
       "name": "Foo/bar",
       "owner": "pages/Foo%2Fbar.md",
-      "parent": "foo"
+      "parent": [
+        "page",
+        "foo"
+      ]
     },
     {
       "key": "p",
@@ -258,21 +251,14 @@
       ]
     }
   ],
-  "treeNodes": [
-    [
-      "page",
-      "foo/bar"
-    ],
-    [
-      "page",
-      "foo"
-    ],
-    [
-      "page",
-      "p"
-    ]
-  ],
   "treeParent": [
+    {
+      "page": [
+        "page",
+        "foo"
+      ],
+      "parent": null
+    },
     {
       "page": [
         "page",
@@ -282,13 +268,6 @@
         "page",
         "foo"
       ]
-    },
-    {
-      "page": [
-        "page",
-        "foo"
-      ],
-      "parent": null
     },
     {
       "page": [

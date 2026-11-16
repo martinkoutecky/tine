@@ -8,6 +8,9 @@ The format follows [Keep a Changelog](https://keepachangelog.com/); versions use
 
 ## [Unreleased]
 
+- Merging into a page with a date title recognizes the survivor's day across date spellings. Both merge entry points refuse a source with unresolved conflict markers before changing either file (REG-CM-WITNESS-DATE-MERGE, REG-CM-WITNESS-CONFLICT-MERGE).
+- Renaming a page whose title sits in a first-bullet property header updates that title; merging it keeps its child blocks beneath the leftover title, instead of refusing (REG-CM-WITNESS-HEADER-TITLE).
+
 - Rename and merge refusals now explain the affected file. When a file needs its first ordinary save, **Save it and rename** saves it safely and retries the same request once per click; an internal check failure asks for a bug report. The command line includes the failed check and file as JSON fields (UI-CM-REFUSAL-HELP).
 
 - Retrying a page rename immediately after crash recovery no longer reports the recovered page missing; explicit refreshes wait for the page host to publish recovered and external edits (#609).

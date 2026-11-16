@@ -61,7 +61,6 @@
     "ML": "ml",
     "Notes": "notes"
   },
-  "namespaceNodes": [],
   "namespaceTree": [],
   "open": {
     "ML": {
@@ -152,16 +151,6 @@
         "notes"
       ]
     }
-  ],
-  "treeNodes": [
-    [
-      "page",
-      "ml"
-    ],
-    [
-      "page",
-      "notes"
-    ]
   ],
   "treeParent": [
     {

@@ -264,24 +264,6 @@
     "ref": "ref",
     "ref/only": "ref/only"
   },
-  "namespaceNodes": [
-    [
-      "page",
-      "real/alias"
-    ],
-    [
-      "page",
-      "ref/only"
-    ],
-    [
-      "page",
-      "ref"
-    ],
-    [
-      "page",
-      "real"
-    ]
-  ],
   "namespaceTree": [
     {
       "children": [],
@@ -499,7 +481,10 @@
       "linkedRefs": 1,
       "name": "real/alias",
       "owner": "pages/real%2Falias.md",
-      "parent": "real"
+      "parent": [
+        "page",
+        "real"
+      ]
     },
     {
       "key": "ref",
@@ -515,7 +500,10 @@
       "linkedRefs": 1,
       "name": "ref/only",
       "owner": null,
-      "parent": "ref"
+      "parent": [
+        "page",
+        "ref"
+      ]
     }
   ],
   "spellings": {
@@ -528,17 +516,6 @@
       "model": [
         "page",
         "c"
-      ]
-    },
-    "old": {
-      "backend": [
-        "page",
-        "old"
-      ],
-      "day": null,
-      "model": [
-        "page",
-        "old"
       ]
     },
     "old/sub": {
@@ -574,17 +551,6 @@
         "owner"
       ]
     },
-    "real": {
-      "backend": [
-        "page",
-        "real"
-      ],
-      "day": null,
-      "model": [
-        "page",
-        "real"
-      ]
-    },
     "real/alias": {
       "backend": [
         "page",
@@ -594,17 +560,6 @@
       "model": [
         "page",
         "real/alias"
-      ]
-    },
-    "ref": {
-      "backend": [
-        "page",
-        "ref"
-      ],
-      "day": null,
-      "model": [
-        "page",
-        "ref"
       ]
     },
     "ref/only": {
@@ -687,45 +642,18 @@
       ]
     }
   ],
-  "treeNodes": [
-    [
-      "page",
-      "c"
-    ],
-    [
-      "page",
-      "other"
-    ],
-    [
-      "page",
-      "owner"
-    ],
-    [
-      "page",
-      "real/alias"
-    ],
-    [
-      "page",
-      "old"
-    ],
-    [
-      "page",
-      "ref/only"
-    ],
-    [
-      "page",
-      "ref"
-    ],
-    [
-      "page",
-      "real"
-    ]
-  ],
   "treeParent": [
     {
       "page": [
         "page",
         "c"
+      ],
+      "parent": null
+    },
+    {
+      "page": [
+        "page",
+        "old"
       ],
       "parent": null
     },
@@ -746,6 +674,13 @@
     {
       "page": [
         "page",
+        "real"
+      ],
+      "parent": null
+    },
+    {
+      "page": [
+        "page",
         "real/alias"
       ],
       "parent": [
@@ -756,7 +691,7 @@
     {
       "page": [
         "page",
-        "old"
+        "ref"
       ],
       "parent": null
     },
@@ -769,20 +704,6 @@
         "page",
         "ref"
       ]
-    },
-    {
-      "page": [
-        "page",
-        "ref"
-      ],
-      "parent": null
-    },
-    {
-      "page": [
-        "page",
-        "real"
-      ],
-      "parent": null
     }
   ]
 }

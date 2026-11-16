@@ -122,7 +122,6 @@
     "TODO": "todo",
     "p": "p"
   },
-  "namespaceNodes": [],
   "namespaceTree": [],
   "open": {
     "A": {
@@ -294,29 +293,18 @@
       ]
     }
   ],
-  "treeNodes": [
-    [
-      "page",
-      "a"
-    ],
-    [
-      "page",
-      "p"
-    ],
-    [
-      "page",
-      "todo"
-    ],
-    [
-      "page",
-      "a]"
-    ]
-  ],
   "treeParent": [
     {
       "page": [
         "page",
         "a"
+      ],
+      "parent": null
+    },
+    {
+      "page": [
+        "page",
+        "a]"
       ],
       "parent": null
     },
@@ -331,13 +319,6 @@
       "page": [
         "page",
         "todo"
-      ],
-      "parent": null
-    },
-    {
-      "page": [
-        "page",
-        "a]"
       ],
       "parent": null
     }

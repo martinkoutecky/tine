@@ -88,10 +88,9 @@
   "journalTitleFormat": null,
   "keyOf": {
     "A": "a",
-    "Oct 26th, 2026": "oct 26th, 2026",
+    "Oct 26th, 2026": "Day 2026-10-26",
     "TODO": "todo"
   },
-  "namespaceNodes": [],
   "namespaceTree": [],
   "open": {
     "A": {
@@ -107,11 +106,11 @@
     "Oct 26th, 2026": {
       "journal": [
         "journal",
-        "oct 26th, 2026"
+        "Day 2026-10-26"
       ],
       "page": [
         "journal",
-        "oct 26th, 2026"
+        "Day 2026-10-26"
       ]
     },
     "TODO": {
@@ -141,7 +140,7 @@
   },
   "pages": [
     {
-      "key": "oct 26th, 2026",
+      "key": "Day 2026-10-26",
       "kind": "journal",
       "linkedRefs": 0,
       "name": "Oct 26th, 2026",
@@ -180,7 +179,7 @@
     "Oct 26th, 2026": {
       "backend": [
         "journal",
-        "oct 26th, 2026"
+        "Day 2026-10-26"
       ],
       "day": [
         2026,
@@ -189,7 +188,7 @@
       ],
       "model": [
         "journal",
-        "oct 26th, 2026"
+        "Day 2026-10-26"
       ]
     },
     "TODO": {
@@ -209,7 +208,7 @@
       "children": [],
       "page": [
         "journal",
-        "oct 26th, 2026"
+        "Day 2026-10-26"
       ]
     },
     {
@@ -227,32 +226,11 @@
       ]
     }
   ],
-  "treeNodes": [
-    [
-      "journal",
-      "oct 26th, 2026"
-    ],
-    [
-      "page",
-      "todo"
-    ],
-    [
-      "page",
-      "a"
-    ]
-  ],
   "treeParent": [
     {
       "page": [
         "journal",
-        "oct 26th, 2026"
-      ],
-      "parent": null
-    },
-    {
-      "page": [
-        "page",
-        "todo"
+        "Day 2026-10-26"
       ],
       "parent": null
     },
@@ -260,6 +238,13 @@
       "page": [
         "page",
         "a"
+      ],
+      "parent": null
+    },
+    {
+      "page": [
+        "page",
+        "todo"
       ],
       "parent": null
     }

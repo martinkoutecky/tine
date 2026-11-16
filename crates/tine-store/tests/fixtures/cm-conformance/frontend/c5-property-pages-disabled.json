@@ -30,7 +30,6 @@
   "keyOf": {
     "a": "a"
   },
-  "namespaceNodes": [],
   "namespaceTree": [],
   "open": {
     "a": {
@@ -81,12 +80,6 @@
         "a"
       ]
     }
-  ],
-  "treeNodes": [
-    [
-      "page",
-      "a"
-    ]
   ],
   "treeParent": [
     {

@@ -92,16 +92,6 @@
     "old/sub": "old/sub",
     "p": "p"
   },
-  "namespaceNodes": [
-    [
-      "page",
-      "old/sub"
-    ],
-    [
-      "page",
-      "old"
-    ]
-  ],
   "namespaceTree": [
     {
       "children": [],
@@ -184,7 +174,10 @@
       "linkedRefs": 1,
       "name": "old/sub",
       "owner": "pages/old%2Fsub.md",
-      "parent": "old"
+      "parent": [
+        "page",
+        "old"
+      ]
     },
     {
       "key": "p",
@@ -258,21 +251,14 @@
       ]
     }
   ],
-  "treeNodes": [
-    [
-      "page",
-      "old/sub"
-    ],
-    [
-      "page",
-      "old"
-    ],
-    [
-      "page",
-      "p"
-    ]
-  ],
   "treeParent": [
+    {
+      "page": [
+        "page",
+        "old"
+      ],
+      "parent": null
+    },
     {
       "page": [
         "page",
@@ -282,13 +268,6 @@
         "page",
         "old"
       ]
-    },
-    {
-      "page": [
-        "page",
-        "old"
-      ],
-      "parent": null
     },
     {
       "page": [

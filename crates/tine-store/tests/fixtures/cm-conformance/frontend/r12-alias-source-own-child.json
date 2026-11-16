@@ -145,7 +145,6 @@
     "c": "c",
     "owner": "owner"
   },
-  "namespaceNodes": [],
   "namespaceTree": [],
   "open": {
     "ML": {
@@ -367,32 +366,7 @@
       ]
     }
   ],
-  "treeNodes": [
-    [
-      "page",
-      "ml/child"
-    ],
-    [
-      "page",
-      "c"
-    ],
-    [
-      "page",
-      "owner"
-    ],
-    [
-      "page",
-      "ml/linked"
-    ]
-  ],
   "treeParent": [
-    {
-      "page": [
-        "page",
-        "ml/child"
-      ],
-      "parent": null
-    },
     {
       "page": [
         "page",
@@ -403,7 +377,7 @@
     {
       "page": [
         "page",
-        "owner"
+        "ml/child"
       ],
       "parent": null
     },
@@ -411,6 +385,13 @@
       "page": [
         "page",
         "ml/linked"
+      ],
+      "parent": null
+    },
+    {
+      "page": [
+        "page",
+        "owner"
       ],
       "parent": null
     }

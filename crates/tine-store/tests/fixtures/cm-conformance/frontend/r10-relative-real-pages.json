@@ -93,7 +93,6 @@
     "./x": "./x",
     "cc": "cc"
   },
-  "namespaceNodes": [],
   "namespaceTree": [],
   "open": {
     ".": {
@@ -225,28 +224,7 @@
       ]
     }
   ],
-  "treeNodes": [
-    [
-      "page",
-      "cc"
-    ],
-    [
-      "page",
-      "."
-    ],
-    [
-      "page",
-      "./x"
-    ]
-  ],
   "treeParent": [
-    {
-      "page": [
-        "page",
-        "cc"
-      ],
-      "parent": null
-    },
     {
       "page": [
         "page",
@@ -258,6 +236,13 @@
       "page": [
         "page",
         "./x"
+      ],
+      "parent": null
+    },
+    {
+      "page": [
+        "page",
+        "cc"
       ],
       "parent": null
     }

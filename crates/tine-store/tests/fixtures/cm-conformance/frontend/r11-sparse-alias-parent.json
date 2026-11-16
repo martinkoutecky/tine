@@ -97,7 +97,6 @@
     "old/sub/child": "old/sub/child",
     "owner": "owner"
   },
-  "namespaceNodes": [],
   "namespaceTree": [],
   "open": {
     "old": {
@@ -186,17 +185,6 @@
     }
   ],
   "spellings": {
-    "old": {
-      "backend": [
-        "page",
-        "old"
-      ],
-      "day": null,
-      "model": [
-        "page",
-        "old"
-      ]
-    },
     "old/sub": {
       "backend": [
         "page",
@@ -254,21 +242,14 @@
       ]
     }
   ],
-  "treeNodes": [
-    [
-      "page",
-      "old/sub/child"
-    ],
-    [
-      "page",
-      "owner"
-    ],
-    [
-      "page",
-      "old"
-    ]
-  ],
   "treeParent": [
+    {
+      "page": [
+        "page",
+        "old"
+      ],
+      "parent": null
+    },
     {
       "page": [
         "page",
@@ -280,13 +261,6 @@
       "page": [
         "page",
         "owner"
-      ],
-      "parent": null
-    },
-    {
-      "page": [
-        "page",
-        "old"
       ],
       "parent": null
     }

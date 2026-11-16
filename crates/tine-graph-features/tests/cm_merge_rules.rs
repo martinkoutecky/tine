@@ -984,3 +984,6 @@ mod cm_model_check;
 /// CM step 2 slice 2 (model r6 O8): the settings step.
 #[path = "cm_settings.rs"]
 mod cm_settings;
+
+#[path = "cm_witness.rs"]
+mod cm_witness;

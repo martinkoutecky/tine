@@ -81,7 +81,6 @@
     "a": "a",
     "zed": "zed"
   },
-  "namespaceNodes": [],
   "namespaceTree": [],
   "open": {
     "Notes": {
@@ -205,32 +204,18 @@
       ]
     }
   ],
-  "treeNodes": [
-    [
-      "page",
-      "notes"
-    ],
-    [
-      "page",
-      "a"
-    ],
-    [
-      "page",
-      "zed"
-    ]
-  ],
   "treeParent": [
     {
       "page": [
         "page",
-        "notes"
+        "a"
       ],
       "parent": null
     },
     {
       "page": [
         "page",
-        "a"
+        "notes"
       ],
       "parent": null
     },

@@ -68,7 +68,6 @@
     "Notes": "notes",
     "Project Alpha": "project alpha"
   },
-  "namespaceNodes": [],
   "namespaceTree": [],
   "open": {
     " Project Alpha ": {
@@ -209,16 +208,6 @@
         "project alpha"
       ]
     }
-  ],
-  "treeNodes": [
-    [
-      "page",
-      "notes"
-    ],
-    [
-      "page",
-      "project alpha"
-    ]
   ],
   "treeParent": [
     {

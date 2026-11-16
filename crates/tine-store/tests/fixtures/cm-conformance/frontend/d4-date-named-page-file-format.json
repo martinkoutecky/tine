@@ -65,30 +65,29 @@
   "journalFileFormat": "dd-MM-yyyy",
   "journalTitleFormat": null,
   "keyOf": {
-    "Oct 25th, 2026": "oct 25th, 2026",
+    "Oct 25th, 2026": "Day 2026-10-25",
     "x": "x"
   },
-  "namespaceNodes": [],
   "namespaceTree": [],
   "open": {
     "25-10-2026": {
       "journal": [
         "journal",
-        "oct 25th, 2026"
+        "Day 2026-10-25"
       ],
       "page": [
         "journal",
-        "oct 25th, 2026"
+        "Day 2026-10-25"
       ]
     },
     "Oct 25th, 2026": {
       "journal": [
         "journal",
-        "oct 25th, 2026"
+        "Day 2026-10-25"
       ],
       "page": [
         "journal",
-        "oct 25th, 2026"
+        "Day 2026-10-25"
       ]
     },
     "x": {
@@ -118,8 +117,8 @@
   },
   "pages": [
     {
-      "key": "oct 25th, 2026",
-      "kind": "page",
+      "key": "Day 2026-10-25",
+      "kind": "journal",
       "linkedRefs": 2,
       "name": "Oct 25th, 2026",
       "owner": "pages/25-10-2026.md",
@@ -138,7 +137,7 @@
     "25-10-2026": {
       "backend": [
         "journal",
-        "oct 25th, 2026"
+        "Day 2026-10-25"
       ],
       "day": [
         2026,
@@ -146,14 +145,14 @@
         25
       ],
       "model": [
-        "page",
-        "oct 25th, 2026"
+        "journal",
+        "Day 2026-10-25"
       ]
     },
     "Oct 25th, 2026": {
       "backend": [
         "journal",
-        "oct 25th, 2026"
+        "Day 2026-10-25"
       ],
       "day": [
         2026,
@@ -161,8 +160,8 @@
         25
       ],
       "model": [
-        "page",
-        "oct 25th, 2026"
+        "journal",
+        "Day 2026-10-25"
       ]
     },
     "x": {
@@ -181,8 +180,8 @@
     {
       "children": [],
       "page": [
-        "page",
-        "oct 25th, 2026"
+        "journal",
+        "Day 2026-10-25"
       ]
     },
     {
@@ -193,21 +192,11 @@
       ]
     }
   ],
-  "treeNodes": [
-    [
-      "page",
-      "oct 25th, 2026"
-    ],
-    [
-      "page",
-      "x"
-    ]
-  ],
   "treeParent": [
     {
       "page": [
-        "page",
-        "oct 25th, 2026"
+        "journal",
+        "Day 2026-10-25"
       ],
       "parent": null
     },

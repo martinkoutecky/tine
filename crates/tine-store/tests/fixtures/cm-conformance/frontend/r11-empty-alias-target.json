@@ -153,16 +153,6 @@
     "Machine Learning": "machine learning",
     "c": "c"
   },
-  "namespaceNodes": [
-    [
-      "page",
-      "ml notes/x"
-    ],
-    [
-      "page",
-      "ml notes"
-    ]
-  ],
   "namespaceTree": [
     {
       "children": [],
@@ -297,7 +287,10 @@
       "linkedRefs": 0,
       "name": "ML notes/x",
       "owner": "pages/ML notes%2Fx.md",
-      "parent": "ml notes"
+      "parent": [
+        "page",
+        "ml notes"
+      ]
     }
   ],
   "spellings": {
@@ -309,7 +302,7 @@
       "day": null,
       "model": [
         "page",
-        "machine learning"
+        "ml"
       ]
     },
     "ML notes": {
@@ -399,50 +392,11 @@
       ]
     }
   ],
-  "treeNodes": [
-    [
-      "page",
-      "ml notes/x"
-    ],
-    [
-      "page",
-      "ml notes"
-    ],
-    [
-      "page",
-      "ml"
-    ],
-    [
-      "page",
-      "machine learning"
-    ],
-    [
-      "page",
-      "c"
-    ]
-  ],
   "treeParent": [
     {
       "page": [
         "page",
-        "ml notes/x"
-      ],
-      "parent": [
-        "page",
-        "ml notes"
-      ]
-    },
-    {
-      "page": [
-        "page",
-        "ml notes"
-      ],
-      "parent": null
-    },
-    {
-      "page": [
-        "page",
-        "ml"
+        "c"
       ],
       "parent": null
     },
@@ -456,9 +410,26 @@
     {
       "page": [
         "page",
-        "c"
+        "ml"
       ],
       "parent": null
+    },
+    {
+      "page": [
+        "page",
+        "ml notes"
+      ],
+      "parent": null
+    },
+    {
+      "page": [
+        "page",
+        "ml notes/x"
+      ],
+      "parent": [
+        "page",
+        "ml notes"
+      ]
     }
   ]
 }

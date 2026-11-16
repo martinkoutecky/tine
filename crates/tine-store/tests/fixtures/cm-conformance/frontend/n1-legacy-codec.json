@@ -237,16 +237,6 @@
     "café": "café",
     "links": "links"
   },
-  "namespaceNodes": [
-    [
-      "page",
-      "a/b"
-    ],
-    [
-      "page",
-      "a"
-    ]
-  ],
   "namespaceTree": [
     {
       "children": [],
@@ -437,7 +427,10 @@
       "linkedRefs": 1,
       "name": "a/b",
       "owner": "pages/a.b.md",
-      "parent": "a"
+      "parent": [
+        "page",
+        "a"
+      ]
     },
     {
       "key": "café",
@@ -526,17 +519,6 @@
       "model": [
         "page",
         "___lead"
-      ]
-    },
-    "a": {
-      "backend": [
-        "page",
-        "a"
-      ],
-      "day": null,
-      "model": [
-        "page",
-        "a"
       ]
     },
     "a/b": {
@@ -643,44 +625,6 @@
       ]
     }
   ],
-  "treeNodes": [
-    [
-      "page",
-      "%e9"
-    ],
-    [
-      "page",
-      "50%25 of 100%"
-    ],
-    [
-      "page",
-      "ten___child"
-    ],
-    [
-      "page",
-      "___lead"
-    ],
-    [
-      "page",
-      "a/b"
-    ],
-    [
-      "page",
-      "café"
-    ],
-    [
-      "page",
-      "contents"
-    ],
-    [
-      "page",
-      "links"
-    ],
-    [
-      "page",
-      "a"
-    ]
-  ],
   "treeParent": [
     {
       "page": [
@@ -699,14 +643,14 @@
     {
       "page": [
         "page",
-        "ten___child"
+        "___lead"
       ],
       "parent": null
     },
     {
       "page": [
         "page",
-        "___lead"
+        "a"
       ],
       "parent": null
     },
@@ -744,7 +688,7 @@
     {
       "page": [
         "page",
-        "a"
+        "ten___child"
       ],
       "parent": null
     }

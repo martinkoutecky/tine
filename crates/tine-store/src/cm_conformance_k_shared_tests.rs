@@ -4,9 +4,8 @@
 //! the confirmed model (path in `CM_STATIC_BRIDGE`; its answers carry
 //! `"round": "k"`) and compares the static answers Tine gives: pages,
 //! conflicts, active files, owners, navigation, Linked References and their
-//! counts, raw query rows and the link table. The operation comparisons
-//! (`tine-graph-features`, `CM_BRIDGE`) are a separate selection and do not
-//! use this module.
+//! counts, raw query rows and the link table. Real operation witnesses run in
+//! `tine-graph-features/tests/cm_witness.rs` without an operation bridge.
 //!
 //! What the model needs beyond the older protocol:
 //! - **Day values, not labels.** A date is the identity `(journal, day)`
@@ -68,12 +67,14 @@ pub fn requested_queries(spec: &GraphSpec) -> (Vec<QuerySpec>, Vec<QuerySpec>) {
 /// The bridge's input: Tine's parser and configuration answers only. No
 /// owner, no rename and no operation field is supplied.
 pub fn model_input(spec: &GraphSpec) -> Value {
-    let mut input = super::model_input(spec, alias_spellings, &[]);
-    for retired in ["renames", "merges", "mapStrings"] {
-        input.as_object_mut().unwrap().remove(retired);
-    }
     let journal = spec.journal_format();
     let config = spec.config();
+    let mut input = json!({
+        "files": spec.files.iter().filter(|(rel, _)| !is_sync_copy(rel))
+            .map(|(rel, text)| file_json(rel, text, alias_spellings, spec.name_format(), &config)).collect::<Vec<_>>(),
+        "navigate": spec.navigate,
+        "favoritesPage": spec.favorites_page.clone().unwrap_or_else(|| NO_FAVORITES.to_owned()),
+    });
     let (queries, _) = requested_queries(spec);
     input["favorites"] = json!(config.favorites);
     input["queries"] = json!(queries
@@ -165,7 +166,7 @@ fn entry_page(journal: &JournalFormat, e: &super::super::store_crate::InventoryE
 }
 
 /// Tine's page for a resolution, as the model's (kind, key).
-fn resolved_page(
+pub fn resolved_page(
     view: &WholeGraph,
     journal: &JournalFormat,
     r: &Resolved,
@@ -186,7 +187,7 @@ fn resolved_page(
 }
 
 /// A spelling of model page `p` that Tine's name-keyed APIs accept.
-fn spelling(ctx: &Ctx, p: &Page) -> String {
+pub fn spelling(ctx: &Ctx, p: &Page) -> String {
     if let Some(path) = ctx.owner_of_page.get(p) {
         if let Some(e) = ctx
             .view
@@ -727,6 +728,13 @@ pub fn store_conformance(
     roots: Vec<GraphSpec>,
     manifest: &str,
     links: impl Fn(&WholeGraph, &GraphSpec, &Value, &mut Vec<Diff>) -> BTreeSet<(Page, Page)>,
+    mut consumers: impl FnMut(
+        &super::super::store_crate::Store,
+        &WholeGraph,
+        &GraphSpec,
+        &Value,
+        &Value,
+    ) -> Vec<Diff>,
 ) {
     let mut section = Section::default();
     let mut report = BTreeMap::new();
@@ -754,6 +762,7 @@ pub fn store_conformance(
             spec.name
         );
         let mut found = compare(&view, &spec, &input, &model);
+        found.extend(consumers(&store, &view, &spec, &input, &model));
         let mut link_diffs = Vec::new();
         let actual = links(&view, &spec, &input, &mut link_diffs);
         found.extend(link_diffs);

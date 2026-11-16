@@ -145,7 +145,6 @@
     "Machine Learning": "machine learning",
     "c": "c"
   },
-  "namespaceNodes": [],
   "namespaceTree": [],
   "open": {
     "AI": {
@@ -367,24 +366,6 @@
       ]
     }
   ],
-  "treeNodes": [
-    [
-      "page",
-      "artificial intelligence"
-    ],
-    [
-      "page",
-      "ml/x"
-    ],
-    [
-      "page",
-      "machine learning"
-    ],
-    [
-      "page",
-      "c"
-    ]
-  ],
   "treeParent": [
     {
       "page": [
@@ -396,7 +377,7 @@
     {
       "page": [
         "page",
-        "ml/x"
+        "c"
       ],
       "parent": null
     },
@@ -410,7 +391,7 @@
     {
       "page": [
         "page",
-        "c"
+        "ml/x"
       ],
       "parent": null
     }

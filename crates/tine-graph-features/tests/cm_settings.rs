@@ -37,6 +37,38 @@ fn config(root: &Path) -> String {
     fs::read_to_string(root.join("logseq/config.edn")).unwrap()
 }
 
+#[cfg(unix)]
+#[test]
+fn o8_a_failed_step_keeps_the_whole_old_settings_record_and_reports_pages_done() {
+    use std::os::unix::fs::PermissionsExt;
+    let _guard = crate::integration_lock();
+    let settings = "{:default-home {:page \"A\"} :favorites [\"A\" \"A/child\"] :tine/favorites-page \"A/layout\"}\n";
+    let (root, store) = with_config("failed-record", settings, &[("pages/A.md", "- source\n")]);
+    fs::create_dir_all(root.join("logseq/.tine-trash/pages")).unwrap();
+    let app_data = tempfile::tempdir().unwrap();
+    let host = tine_store::PageHost::start_for_tests(&store, app_data.path()).unwrap();
+    let directory = root.join("logseq");
+    fs::set_permissions(&directory, fs::Permissions::from_mode(0o555)).unwrap();
+    let result = rename_page_as(&store, &host, "A", "B", None, RenameChoice::Rename, &[]);
+    fs::set_permissions(&directory, fs::Permissions::from_mode(0o755)).unwrap();
+    let error = result.unwrap_err();
+    let applied = tine_graph_features::pages::RenameReport::applied_before_error(&error).unwrap();
+    assert_eq!(applied.outcome, RenameOutcome::Renamed);
+    let shown = tine_graph_features::pages::RenameReport::with_config_failure(&error).unwrap();
+    assert!(shown
+        .config_skipped
+        .as_ref()
+        .is_some_and(|why| !why.is_empty()));
+    assert_eq!(shown.home_page, None);
+    assert_eq!(shown.favorites, None);
+    assert_eq!(config(&root), settings);
+    assert!(!root.join("pages/A.md").exists());
+    assert_eq!(
+        fs::read_to_string(root.join("pages/B.md")).unwrap(),
+        "- source\n"
+    );
+}
+
 /// O8 (Lean `CutSettingsExamples.favorites_first_name`, `home_merge_stays`):
 /// "after a merge the list then keeps only the first entry of each name".
 /// Favorites `A, X, B`, merge A into B: A's entry becomes B in A's place and

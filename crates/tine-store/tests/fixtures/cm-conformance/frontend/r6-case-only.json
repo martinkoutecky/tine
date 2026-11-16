@@ -61,7 +61,6 @@
     "Foo": "foo",
     "p": "p"
   },
-  "namespaceNodes": [],
   "namespaceTree": [],
   "open": {
     "Foo": {
@@ -152,16 +151,6 @@
         "p"
       ]
     }
-  ],
-  "treeNodes": [
-    [
-      "page",
-      "foo"
-    ],
-    [
-      "page",
-      "p"
-    ]
   ],
   "treeParent": [
     {

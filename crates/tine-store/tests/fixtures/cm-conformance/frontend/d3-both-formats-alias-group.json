@@ -159,18 +159,17 @@
   "journalFileFormat": "dd.MM.yyyy",
   "journalTitleFormat": "yyyy_dd_MM",
   "keyOf": {
-    "2026_10_11": "2026_10_11",
-    "2026_22_10": "2026_22_10",
+    "2026_10_11": "Day 2026-11-10",
+    "2026_22_10": "Day 2026-10-22",
     "Launch": "launch",
     "n": "n"
   },
-  "namespaceNodes": [],
   "namespaceTree": [],
   "open": {
     "2026_10_11": {
       "journal": [
         "journal",
-        "2026_10_11"
+        "Day 2026-11-10"
       ],
       "page": [
         "page",
@@ -180,21 +179,21 @@
     "2026_22_10": {
       "journal": [
         "journal",
-        "2026_22_10"
+        "Day 2026-10-22"
       ],
       "page": [
         "journal",
-        "2026_22_10"
+        "Day 2026-10-22"
       ]
     },
     "22.10.2026": {
       "journal": [
         "journal",
-        "2026_22_10"
+        "Day 2026-10-22"
       ],
       "page": [
         "journal",
-        "2026_22_10"
+        "Day 2026-10-22"
       ]
     },
     "Launch": {
@@ -210,11 +209,11 @@
     "Oct 22nd, 2026": {
       "journal": [
         "journal",
-        "2026_22_10"
+        "Day 2026-10-22"
       ],
       "page": [
         "journal",
-        "2026_22_10"
+        "Day 2026-10-22"
       ]
     },
     "n": {
@@ -256,19 +255,19 @@
   },
   "pages": [
     {
-      "key": "2026_10_11",
-      "kind": "journal",
-      "linkedRefs": 1,
-      "name": "2026_10_11",
-      "owner": null,
-      "parent": null
-    },
-    {
-      "key": "2026_22_10",
+      "key": "Day 2026-10-22",
       "kind": "journal",
       "linkedRefs": 3,
       "name": "2026_22_10",
       "owner": "journals/22.10.2026.md",
+      "parent": null
+    },
+    {
+      "key": "Day 2026-11-10",
+      "kind": "journal",
+      "linkedRefs": 1,
+      "name": "2026_10_11",
+      "owner": null,
       "parent": null
     },
     {
@@ -292,7 +291,7 @@
     "2026_10_11": {
       "backend": [
         "journal",
-        "2026_10_11"
+        "Day 2026-11-10"
       ],
       "day": [
         2026,
@@ -301,13 +300,13 @@
       ],
       "model": [
         "journal",
-        "2026_10_11"
+        "Day 2026-11-10"
       ]
     },
     "2026_22_10": {
       "backend": [
         "journal",
-        "2026_22_10"
+        "Day 2026-10-22"
       ],
       "day": [
         2026,
@@ -316,13 +315,13 @@
       ],
       "model": [
         "journal",
-        "2026_22_10"
+        "Day 2026-10-22"
       ]
     },
     "22.10.2026": {
       "backend": [
         "journal",
-        "2026_22_10"
+        "Day 2026-10-22"
       ],
       "day": [
         2026,
@@ -331,7 +330,7 @@
       ],
       "model": [
         "journal",
-        "2026_22_10"
+        "Day 2026-10-22"
       ]
     },
     "Launch": {
@@ -348,7 +347,7 @@
     "Oct 22nd, 2026": {
       "backend": [
         "journal",
-        "2026_22_10"
+        "Day 2026-10-22"
       ],
       "day": [
         2026,
@@ -357,7 +356,7 @@
       ],
       "model": [
         "journal",
-        "2026_22_10"
+        "Day 2026-10-22"
       ]
     },
     "n": {
@@ -377,7 +376,7 @@
       "children": [],
       "page": [
         "journal",
-        "2026_22_10"
+        "Day 2026-10-22"
       ]
     },
     {
@@ -398,33 +397,22 @@
       "children": [],
       "page": [
         "journal",
-        "2026_10_11"
+        "Day 2026-11-10"
       ]
     }
-  ],
-  "treeNodes": [
-    [
-      "journal",
-      "2026_22_10"
-    ],
-    [
-      "page",
-      "launch"
-    ],
-    [
-      "page",
-      "n"
-    ],
-    [
-      "journal",
-      "2026_10_11"
-    ]
   ],
   "treeParent": [
     {
       "page": [
         "journal",
-        "2026_22_10"
+        "Day 2026-10-22"
+      ],
+      "parent": null
+    },
+    {
+      "page": [
+        "journal",
+        "Day 2026-11-10"
       ],
       "parent": null
     },
@@ -439,13 +427,6 @@
       "page": [
         "page",
         "n"
-      ],
-      "parent": null
-    },
-    {
-      "page": [
-        "journal",
-        "2026_10_11"
       ],
       "parent": null
     }

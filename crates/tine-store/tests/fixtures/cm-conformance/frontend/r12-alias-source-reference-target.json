@@ -127,7 +127,6 @@
     "c": "c",
     "linked": "linked"
   },
-  "namespaceNodes": [],
   "namespaceTree": [],
   "open": {
     "AI": {
@@ -324,29 +323,11 @@
       ]
     }
   ],
-  "treeNodes": [
-    [
-      "page",
-      "machine learning"
-    ],
-    [
-      "page",
-      "c"
-    ],
-    [
-      "page",
-      "linked"
-    ],
-    [
-      "page",
-      "ai"
-    ]
-  ],
   "treeParent": [
     {
       "page": [
         "page",
-        "machine learning"
+        "ai"
       ],
       "parent": null
     },
@@ -367,7 +348,7 @@
     {
       "page": [
         "page",
-        "ai"
+        "machine learning"
       ],
       "parent": null
     }

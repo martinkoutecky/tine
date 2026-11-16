@@ -50,6 +50,10 @@ fn rename_merge_and_journal_rename_proposals_are_documented_in_the_bundled_guide
     // Model r6 O7 and O8 (slice 2): the report and the settings step.
     let pages = include_str!("templates/pages-links-references-search.md");
     for control in [
+        "A page whose title is a date can receive a merge",
+        "A title in a first-bullet property header follows a rename too",
+        "it writes the new title there and keeps the header's child blocks beneath it",
+        "resolve the conflict before merging; neither file changes",
         "**Save it and rename** saves that file normally",
         "Each further file needs another click",
         "a successful save stays even if the rename cannot finish",

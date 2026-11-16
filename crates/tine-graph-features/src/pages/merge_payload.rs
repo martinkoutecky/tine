@@ -570,7 +570,7 @@ pub fn propose<'f>(
         // O1 maps the file's own title too (`mapAtom`/`titleParts`), through
         // its one producer, before O6 allocates: a source title that becomes
         // a leftover line is written as the mapped title.
-        if let Some(mapped) = tine_core::model::page_title_from_preamble(text, fmt)
+        if let Some(mapped) = tine_core::model::page_title_from_header(text, fmt)
             .and_then(|title| refs::renamed_page_name(&title, links).map(|n| n.into_owned()))
         {
             proposal.rebind_title(org, &mapped)?;
@@ -911,12 +911,18 @@ pub fn propose<'f>(
     } else {
         tine_core::doc::parse(&w.text)
     };
-    if read
-        .pre_block
-        .as_deref()
-        .and_then(|pre| tine_core::model::page_title_from_preamble(pre, fmt))
-        .is_some_and(|name| !refs::same_page(&name, &target.name))
-    {
+    if tine_core::page_header::page_header_text(
+        read.pre_block.as_deref(),
+        read.roots.first().map(|block| block.raw()),
+    )
+    .and_then(|header| tine_core::model::page_title_from_header(header, fmt))
+    .is_some_and(|name| {
+        !refs::same_page(&name, &target.name)
+            && !format.days.is_some_and(|days| {
+                days.parse(&name)
+                    .is_some_and(|day| days.parse(&target.name) == Some(day))
+            })
+    }) {
         // The survivor keeps its name (O6, P3): a header the save would read
         // as another title is refused, not patched.
         return Err(RealizationError::SurvivorIdentity);

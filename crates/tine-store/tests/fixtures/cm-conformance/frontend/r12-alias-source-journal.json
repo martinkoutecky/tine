@@ -154,11 +154,10 @@
     "AI": "ai",
     "ML": "ml",
     "ML/sub": "ml/sub",
-    "Oct 26th, 2026": "oct 26th, 2026",
+    "Oct 26th, 2026": "Day 2026-10-26",
     "c": "c",
     "owner": "owner"
   },
-  "namespaceNodes": [],
   "namespaceTree": [],
   "open": {
     "AI": {
@@ -188,17 +187,17 @@
       ],
       "page": [
         "journal",
-        "oct 26th, 2026"
+        "Day 2026-10-26"
       ]
     },
     "Oct 26th, 2026": {
       "journal": [
         "journal",
-        "oct 26th, 2026"
+        "Day 2026-10-26"
       ],
       "page": [
         "journal",
-        "oct 26th, 2026"
+        "Day 2026-10-26"
       ]
     },
     "c": {
@@ -250,7 +249,7 @@
   },
   "pages": [
     {
-      "key": "oct 26th, 2026",
+      "key": "Day 2026-10-26",
       "kind": "journal",
       "linkedRefs": 1,
       "name": "Oct 26th, 2026",
@@ -308,18 +307,18 @@
     "ML/sub": {
       "backend": [
         "journal",
-        "oct 26th, 2026"
+        "Day 2026-10-26"
       ],
       "day": null,
       "model": [
         "journal",
-        "oct 26th, 2026"
+        "Day 2026-10-26"
       ]
     },
     "Oct 26th, 2026": {
       "backend": [
         "journal",
-        "oct 26th, 2026"
+        "Day 2026-10-26"
       ],
       "day": [
         2026,
@@ -328,7 +327,7 @@
       ],
       "model": [
         "journal",
-        "oct 26th, 2026"
+        "Day 2026-10-26"
       ]
     },
     "c": {
@@ -359,7 +358,7 @@
       "children": [],
       "page": [
         "journal",
-        "oct 26th, 2026"
+        "Day 2026-10-26"
       ]
     },
     {
@@ -384,29 +383,11 @@
       ]
     }
   ],
-  "treeNodes": [
-    [
-      "journal",
-      "oct 26th, 2026"
-    ],
-    [
-      "page",
-      "ai"
-    ],
-    [
-      "page",
-      "c"
-    ],
-    [
-      "page",
-      "owner"
-    ]
-  ],
   "treeParent": [
     {
       "page": [
         "journal",
-        "oct 26th, 2026"
+        "Day 2026-10-26"
       ],
       "parent": null
     },

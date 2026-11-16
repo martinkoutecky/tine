@@ -82,7 +82,7 @@ pub(super) fn title_identity(
 ) -> Result<(), Why> {
     let old = std::str::from_utf8(old).map_err(|_| Why::Refused(Refusal::Undecodable))?;
     let new = std::str::from_utf8(new).map_err(|_| Why::Refused(Refusal::Undecodable))?;
-    if let Some(title) = tine_core::model::page_title_from_preamble(old, format) {
+    if let Some(title) = tine_core::model::page_title_from_header(old, format) {
         let keyed = titles.links.entry(Arc::as_ptr(map)).or_insert_with(|| {
             map.0
                 .iter()
@@ -90,7 +90,7 @@ pub(super) fn title_identity(
                 .collect()
         });
         let expected = tine_core::refs::renamed_site_name(&title, keyed, Some(days));
-        let actual = tine_core::model::page_title_from_preamble(new, format);
+        let actual = tine_core::model::page_title_from_header(new, format);
         if actual.as_deref().is_none_or(|actual| {
             !tine_core::refs::same_page(actual, expected.as_deref().unwrap_or(&title))
         }) {
@@ -136,7 +136,7 @@ pub(super) fn refuse_read_only_org(old: &[u8], new: &[u8], is_org: bool) -> Resu
 }
 
 /// A rename move changes a file's logical identity as well as its path. Keep
-/// the own preamble title (Markdown `title::`, Org `#+title:` or `:title:`) in
+/// the own header title (Markdown `title::`, Org `#+title:` or `:title:`) in
 /// the same guarded transaction when it still names the old identity; a custom
 /// title remains untouched. A non-round-tripping Org file is refused rather
 /// than rewritten.
@@ -174,7 +174,7 @@ pub(crate) fn rewrite_move(
     if source.contains(crate::model::TEST_TITLE_READ_PANIC_SENTINEL) {
         panic!("deterministic test sentinel for a rename title-read panic");
     }
-    let Some(title) = tine_core::model::page_title_from_preamble(source, format) else {
+    let Some(title) = tine_core::model::page_title_from_header(source, format) else {
         return done(proposal);
     };
     let Some(new_name) = titles.new_name(map, &title, &destination_name) else {

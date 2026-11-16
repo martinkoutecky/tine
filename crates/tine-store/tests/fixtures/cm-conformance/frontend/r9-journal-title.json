@@ -90,19 +90,18 @@
   "keyOf": {
     "Meeting": "meeting",
     "Notes": "notes",
-    "Oct 26th, 2026": "oct 26th, 2026"
+    "Oct 26th, 2026": "Day 2026-10-26"
   },
-  "namespaceNodes": [],
   "namespaceTree": [],
   "open": {
     "2026-10-26": {
       "journal": [
         "journal",
-        "oct 26th, 2026"
+        "Day 2026-10-26"
       ],
       "page": [
         "journal",
-        "oct 26th, 2026"
+        "Day 2026-10-26"
       ]
     },
     "Meeting": {
@@ -128,11 +127,11 @@
     "Oct 26th, 2026": {
       "journal": [
         "journal",
-        "oct 26th, 2026"
+        "Day 2026-10-26"
       ],
       "page": [
         "journal",
-        "oct 26th, 2026"
+        "Day 2026-10-26"
       ]
     }
   },
@@ -156,7 +155,7 @@
   },
   "pages": [
     {
-      "key": "oct 26th, 2026",
+      "key": "Day 2026-10-26",
       "kind": "journal",
       "linkedRefs": 1,
       "name": "Oct 26th, 2026",
@@ -184,7 +183,7 @@
     "2026-10-26": {
       "backend": [
         "journal",
-        "oct 26th, 2026"
+        "Day 2026-10-26"
       ],
       "day": [
         2026,
@@ -193,7 +192,7 @@
       ],
       "model": [
         "journal",
-        "oct 26th, 2026"
+        "Day 2026-10-26"
       ]
     },
     "Meeting": {
@@ -221,7 +220,7 @@
     "Oct 26th, 2026": {
       "backend": [
         "journal",
-        "oct 26th, 2026"
+        "Day 2026-10-26"
       ],
       "day": [
         2026,
@@ -230,7 +229,7 @@
       ],
       "model": [
         "journal",
-        "oct 26th, 2026"
+        "Day 2026-10-26"
       ]
     }
   },
@@ -239,7 +238,7 @@
       "children": [],
       "page": [
         "journal",
-        "oct 26th, 2026"
+        "Day 2026-10-26"
       ]
     },
     {
@@ -257,32 +256,11 @@
       ]
     }
   ],
-  "treeNodes": [
-    [
-      "journal",
-      "oct 26th, 2026"
-    ],
-    [
-      "page",
-      "notes"
-    ],
-    [
-      "page",
-      "meeting"
-    ]
-  ],
   "treeParent": [
     {
       "page": [
         "journal",
-        "oct 26th, 2026"
-      ],
-      "parent": null
-    },
-    {
-      "page": [
-        "page",
-        "notes"
+        "Day 2026-10-26"
       ],
       "parent": null
     },
@@ -290,6 +268,13 @@
       "page": [
         "page",
         "meeting"
+      ],
+      "parent": null
+    },
+    {
+      "page": [
+        "page",
+        "notes"
       ],
       "parent": null
     }

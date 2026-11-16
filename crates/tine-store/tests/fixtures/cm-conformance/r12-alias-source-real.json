@@ -4,6 +4,5 @@
     "pages/AI.md": "- target\n",
     "pages/ML%2Fx.md": "- child [[ML]]\n",
     "pages/c.md": "- [[ML]] [[ML]]\n- {{query (page \"ML\")}}\n- {{query (page \"ML/x\")}}\n"
-  },
-  "renames": [{"old": "ML", "new": "AI"}]
+  }
 }

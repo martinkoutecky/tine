@@ -1,11 +1,5 @@
 {
   "files": {
     "pages/a.md": "- see [[b]]\n"
-  },
-  "renames": [
-    {
-      "old": "a",
-      "new": "b"
-    }
-  ]
+  }
 }

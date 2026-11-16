@@ -898,7 +898,7 @@ fn rename_transaction<'s>(
         let own_title = moved
             && (org || marked)
             && std::panic::catch_unwind(|| {
-                tine_core::model::page_title_from_preamble(&content, syntax).is_some_and(|title| {
+                tine_core::model::page_title_from_header(&content, syntax).is_some_and(|title| {
                     refs::renamed_site_name(&title, &lookup, Some(&days))
                         .is_some_and(|new| org || new != title)
                 })
@@ -1421,6 +1421,16 @@ fn merged_survivor(
     }
     let (src_text, src_rev) = read_text(store, &src.file())?;
     let (dst_text, dst_rev) = read_text(store, &dst.file())?;
+    let format = Format::from_path(src.as_str().as_ref());
+    if [&src_text, &dst_text].into_iter().any(|text| {
+        tine_core::concord_queue::has_vcs_anchor(text.as_bytes())
+            && !tine_core::concord_queue::vcs_conflict_markers(text, format).is_empty()
+    }) {
+        return Err(error(
+            io::ErrorKind::InvalidData,
+            "merge pair has conflict markers",
+        ));
+    }
     if org && (!tine_core::org::org_editable(&src_text) || !tine_core::org::org_editable(&dst_text))
     {
         return Err(error(
@@ -1454,7 +1464,6 @@ fn merged_survivor(
     }
     // The model check's readings of both inputs. The merge writer reads them
     // through the page DTO, not the parser's document, so they are read here.
-    let format = Format::from_path(dst.as_str().as_ref());
     let read = |text: &str| {
         Arc::new(tine_core::cm_check::observe(
             text,

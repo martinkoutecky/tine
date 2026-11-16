@@ -92,7 +92,6 @@
     "Real Name": "real name",
     "file-name": "file-name"
   },
-  "namespaceNodes": [],
   "namespaceTree": [],
   "open": {
     "Notes": {
@@ -249,21 +248,14 @@
       ]
     }
   ],
-  "treeNodes": [
-    [
-      "page",
-      "notes"
-    ],
-    [
-      "page",
-      "real name"
-    ],
-    [
-      "page",
-      "file-name"
-    ]
-  ],
   "treeParent": [
+    {
+      "page": [
+        "page",
+        "file-name"
+      ],
+      "parent": null
+    },
     {
       "page": [
         "page",
@@ -275,13 +267,6 @@
       "page": [
         "page",
         "real name"
-      ],
-      "parent": null
-    },
-    {
-      "page": [
-        "page",
-        "file-name"
       ],
       "parent": null
     }

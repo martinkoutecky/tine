@@ -103,20 +103,19 @@
   "journalTitleFormat": null,
   "keyOf": {
     "Notes": "notes",
-    "Oct 22nd, 2026": "oct 22nd, 2026",
-    "Oct 2nd, 2026": "oct 2nd, 2026"
+    "Oct 22nd, 2026": "Day 2026-10-22",
+    "Oct 2nd, 2026": "Day 2026-10-02"
   },
-  "namespaceNodes": [],
   "namespaceTree": [],
   "open": {
     "2026-10-2": {
       "journal": [
         "journal",
-        "oct 2nd, 2026"
+        "Day 2026-10-02"
       ],
       "page": [
         "journal",
-        "oct 2nd, 2026"
+        "Day 2026-10-02"
       ]
     },
     "Notes": {
@@ -132,51 +131,51 @@
     "Oct 22nd, 2026": {
       "journal": [
         "journal",
-        "oct 22nd, 2026"
+        "Day 2026-10-22"
       ],
       "page": [
         "journal",
-        "oct 22nd, 2026"
+        "Day 2026-10-22"
       ]
     },
     "Oct 22st, 2026": {
       "journal": [
         "journal",
-        "oct 22nd, 2026"
+        "Day 2026-10-22"
       ],
       "page": [
         "journal",
-        "oct 22nd, 2026"
+        "Day 2026-10-22"
       ]
     },
     "Oct 2nd, 2026": {
       "journal": [
         "journal",
-        "oct 2nd, 2026"
+        "Day 2026-10-02"
       ],
       "page": [
         "journal",
-        "oct 2nd, 2026"
+        "Day 2026-10-02"
       ]
     },
     "October 22nd, 2026": {
       "journal": [
         "journal",
-        "oct 22nd, 2026"
+        "Day 2026-10-22"
       ],
       "page": [
         "journal",
-        "oct 22nd, 2026"
+        "Day 2026-10-22"
       ]
     },
     "oct 22nd, 2026": {
       "journal": [
         "journal",
-        "oct 22nd, 2026"
+        "Day 2026-10-22"
       ],
       "page": [
         "journal",
-        "oct 22nd, 2026"
+        "Day 2026-10-22"
       ]
     }
   },
@@ -212,19 +211,19 @@
   },
   "pages": [
     {
-      "key": "oct 22nd, 2026",
-      "kind": "journal",
-      "linkedRefs": 3,
-      "name": "Oct 22nd, 2026",
-      "owner": "journals/2026_10_22.md",
-      "parent": null
-    },
-    {
-      "key": "oct 2nd, 2026",
+      "key": "Day 2026-10-02",
       "kind": "journal",
       "linkedRefs": 1,
       "name": "Oct 2nd, 2026",
       "owner": "journals/2026_10_02.md",
+      "parent": null
+    },
+    {
+      "key": "Day 2026-10-22",
+      "kind": "journal",
+      "linkedRefs": 3,
+      "name": "Oct 22nd, 2026",
+      "owner": "journals/2026_10_22.md",
       "parent": null
     },
     {
@@ -240,7 +239,7 @@
     "2026-10-2": {
       "backend": [
         "journal",
-        "oct 2nd, 2026"
+        "Day 2026-10-02"
       ],
       "day": [
         2026,
@@ -249,7 +248,7 @@
       ],
       "model": [
         "journal",
-        "oct 2nd, 2026"
+        "Day 2026-10-02"
       ]
     },
     "Notes": {
@@ -266,7 +265,7 @@
     "Oct 22nd, 2026": {
       "backend": [
         "journal",
-        "oct 22nd, 2026"
+        "Day 2026-10-22"
       ],
       "day": [
         2026,
@@ -275,13 +274,13 @@
       ],
       "model": [
         "journal",
-        "oct 22nd, 2026"
+        "Day 2026-10-22"
       ]
     },
     "Oct 22st, 2026": {
       "backend": [
         "journal",
-        "oct 22nd, 2026"
+        "Day 2026-10-22"
       ],
       "day": [
         2026,
@@ -290,13 +289,13 @@
       ],
       "model": [
         "journal",
-        "oct 22nd, 2026"
+        "Day 2026-10-22"
       ]
     },
     "Oct 2nd, 2026": {
       "backend": [
         "journal",
-        "oct 2nd, 2026"
+        "Day 2026-10-02"
       ],
       "day": [
         2026,
@@ -305,13 +304,13 @@
       ],
       "model": [
         "journal",
-        "oct 2nd, 2026"
+        "Day 2026-10-02"
       ]
     },
     "October 22nd, 2026": {
       "backend": [
         "journal",
-        "oct 22nd, 2026"
+        "Day 2026-10-22"
       ],
       "day": [
         2026,
@@ -320,13 +319,13 @@
       ],
       "model": [
         "journal",
-        "oct 22nd, 2026"
+        "Day 2026-10-22"
       ]
     },
     "oct 22nd, 2026": {
       "backend": [
         "journal",
-        "oct 22nd, 2026"
+        "Day 2026-10-22"
       ],
       "day": [
         2026,
@@ -335,7 +334,7 @@
       ],
       "model": [
         "journal",
-        "oct 22nd, 2026"
+        "Day 2026-10-22"
       ]
     }
   },
@@ -344,14 +343,14 @@
       "children": [],
       "page": [
         "journal",
-        "oct 2nd, 2026"
+        "Day 2026-10-02"
       ]
     },
     {
       "children": [],
       "page": [
         "journal",
-        "oct 22nd, 2026"
+        "Day 2026-10-22"
       ]
     },
     {
@@ -362,32 +361,18 @@
       ]
     }
   ],
-  "treeNodes": [
-    [
-      "journal",
-      "oct 2nd, 2026"
-    ],
-    [
-      "journal",
-      "oct 22nd, 2026"
-    ],
-    [
-      "page",
-      "notes"
-    ]
-  ],
   "treeParent": [
     {
       "page": [
         "journal",
-        "oct 2nd, 2026"
+        "Day 2026-10-02"
       ],
       "parent": null
     },
     {
       "page": [
         "journal",
-        "oct 22nd, 2026"
+        "Day 2026-10-22"
       ],
       "parent": null
     },

@@ -182,7 +182,6 @@
     "status": "status",
     "type": "type"
   },
-  "namespaceNodes": [],
   "namespaceTree": [],
   "open": {
     "Book": {
@@ -434,37 +433,25 @@
       ]
     }
   ],
-  "treeNodes": [
-    [
-      "page",
-      "book"
-    ],
-    [
-      "page",
-      "shelf"
-    ],
-    [
-      "page",
-      "status"
-    ],
-    [
-      "page",
-      "type"
-    ],
-    [
-      "page",
-      "rating"
-    ],
-    [
-      "page",
-      "done-at"
-    ]
-  ],
   "treeParent": [
     {
       "page": [
         "page",
         "book"
+      ],
+      "parent": null
+    },
+    {
+      "page": [
+        "page",
+        "done-at"
+      ],
+      "parent": null
+    },
+    {
+      "page": [
+        "page",
+        "rating"
       ],
       "parent": null
     },
@@ -486,20 +473,6 @@
       "page": [
         "page",
         "type"
-      ],
-      "parent": null
-    },
-    {
-      "page": [
-        "page",
-        "rating"
-      ],
-      "parent": null
-    },
-    {
-      "page": [
-        "page",
-        "done-at"
       ],
       "parent": null
     }

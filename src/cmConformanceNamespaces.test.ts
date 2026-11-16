@@ -14,7 +14,7 @@
 // - the "Hierarchy" section of every page (`namespaceHierarchyRows`).
 // Each view's answer is compared with the model's: a page's parent is the
 // model's graph-aware `treeParent`; nodes, children and the global subset are
-// exported directly by r11's `tree` and `namespaceTree`. The test reconstructs
+// exported by K's `tree` and `namespaceTree`. The test reconstructs
 // neither a page universe from inventory names nor parent edges from prefixes.
 //
 // Differences are compared with the `frontendNamespaces` part of
@@ -32,6 +32,7 @@ interface Case {
   journalTitleFormat: string | null;
   journalFileFormat: string | null;
   inventory: PageInventoryEntry[];
+  keyOf: Record<string, string>;
   pages: ModelPage[];
   treeParent: { page: [string, string]; parent: [string, string] | null }[];
   tree: { page: [string, string]; children: [string, string][] }[];
@@ -73,6 +74,7 @@ async function runCase(c: Case): Promise<string[]> {
   const ns = await import("./components/Namespace");
   const nsList = await import("./namespacesList");
   const { pageIdentityKey } = await import("./pageIdentity");
+  const modelKey = (name: string) => c.keyOf[name] ?? pageIdentityKey(name);
   const diffs: string[] = [];
 
   // The model's namespace structure over its page keys (pages of either kind:
@@ -106,7 +108,7 @@ async function runCase(c: Case): Promise<string[]> {
   const pending = tree.map((node) => ({ node, parent: null as string | null }));
   while (pending.length) {
     const { node, parent } = pending.pop()!;
-    const key = pageIdentityKey(node.full);
+    const key = modelKey(node.full);
     shown.set(key, parent);
     for (const child of node.children) pending.push({ node: child, parent: key });
   }
@@ -119,14 +121,14 @@ async function runCase(c: Case): Promise<string[]> {
   for (const [key] of shown) {
     if (!modelNodes.has(key)) diffs.push(`frontend namespace tree: Tine has node "${key}", the model does not`);
   }
-  const listed = new Set(names.map((name) => pageIdentityKey(name)));
+  const listed = new Set(names.map(modelKey));
   for (const [key] of shown) {
     if (!listed.has(key)) diffs.push(`frontend namespace tree: node "${key}" is not a name the inventory lists`);
   }
 
   // The Namespaces view's counts.
   for (const entry of nsList.indexNamespaces(tree)) {
-    const key = pageIdentityKey(entry.node.full);
+    const key = modelKey(entry.node.full);
     if (!model.has(key)) continue;
     const want = below(key).length;
     if (entry.count !== want) diffs.push(`frontend namespaces count "${key}": model ${want}, Tine ${entry.count}`);
@@ -140,9 +142,9 @@ async function runCase(c: Case): Promise<string[]> {
       name,
     );
     const macro = new Set<string>();
-    for (const row of node ? ns.namespaceRows(node.children) : []) macro.add(pageIdentityKey(row.node.full));
+    for (const row of node ? ns.namespaceRows(node.children) : []) macro.add(modelKey(row.node.full));
     if (list(macro) !== list(want)) diffs.push(`frontend {{namespace ${key}}}: model ${list(want)}, Tine ${list(macro)}`);
-    const rows = ns.namespaceHierarchyRows(names, name).map((segs) => pageIdentityKey(segs.join("/")));
+    const rows = ns.namespaceHierarchyRows(names, name).map((segs) => modelKey(segs.join("/")));
     const wantRows = want.length ? want : modelParent(key) !== null ? [modelParent(key)!] : [];
     if (list(rows) !== list(wantRows)) diffs.push(`frontend hierarchy "${key}": model ${list(wantRows)}, Tine ${list(rows)}`);
   }

@@ -1,6 +1,6 @@
 //! Conceptual model conformance: the part shared by the store harness
-//! (`tine-store`, `cm_conformance_tests.rs`) and the rename harness
-//! (`tine-graph-features`, `tests/cm_conformance_rename.rs`). Both crates
+//! (`tine-store`, `cm_conformance_tests.rs`) and consumer snapshots
+//! (`tine-graph-features`, the name, alias and published tests). Both crates
 //! include this one file by `#[path]`; it is test-only code. It names the
 //! store crate only as `super::store_crate`, which each includer defines, and
 //! otherwise depends on `tine_core` and `serde_json` alone.
@@ -13,16 +13,12 @@
 //! expected-differences file.
 //!
 //! `alias_spellings` is a test-side copy of the store's crate-private
-//! `query::document_alias_spellings` (the rename harness cannot call it); the
+//! `query::document_alias_spellings` (the consumer tests cannot call it); the
 //! store harness asserts the copy equals the original on every file it sees.
 #![allow(dead_code)]
 
 #[path = "cm_conformance_k_shared_tests.rs"]
 pub mod k;
-#[path = "cm_conformance_native_shared_tests.rs"]
-pub mod native;
-#[path = "cm_conformance_r13_shared_tests.rs"]
-pub mod r13;
 
 use std::collections::{BTreeMap, BTreeSet};
 use std::fs;
@@ -77,13 +73,6 @@ pub fn listed_apart<'a>(root: &Path, rels: impl IntoIterator<Item = &'a str>) ->
             })
             .contains(name)
     })
-}
-
-pub fn fold(journal: &JournalFormat, s: &str) -> String {
-    match journal.parse(s.trim()) {
-        Some(day) => page_key(&journal.title(day)),
-        None => page_key(s),
-    }
 }
 
 fn occ_kind(rule: &str) -> &'static str {
@@ -186,6 +175,80 @@ fn stored_queries(raw: &str, org: bool) -> Vec<Value> {
             syntax(&q.filter)
         })
         .collect()
+}
+
+#[test]
+fn stored_query_inputs_keep_recursive_names_and_opaque_tokens_in_both_formats() {
+    let base = r#"{{query (and [[Old]] (not (page "Branch")))}} {{tine-query @page and name = 'Other'}} {{query (task TODO)}}"#;
+    for org in [false, true] {
+        let literal = if org {
+            "~{{query [[Hidden]]}}~"
+        } else {
+            "`{{query [[Hidden]]}}`"
+        };
+        let syntax = stored_queries(&format!("{base} {literal}"), org);
+        assert_eq!(syntax.len(), 3, "literal macro is protected");
+        let mut args = Vec::new();
+        for q in &syntax {
+            query_args(q, &mut args);
+        }
+        assert_eq!(args, ["Old", "Branch", "Other"]);
+        assert_eq!(
+            syntax[0],
+            json!({"and": [{"refs": "Old"}, {"not": {"page": {"name": "Branch"}}}]})
+        );
+        assert!(syntax[2]["given"].as_str().unwrap().contains("task"));
+    }
+}
+
+#[test]
+fn linkable_values_keep_their_semantic_owner_through_wrappers() {
+    for value in [
+        "inside",
+        "[[inside]]",
+        "#[[inside]]",
+        "[[comma, name]]",
+        "inside, inside",
+    ] {
+        let block = DocBlock::new(format!("[[inside]] #outside\nalias:: {value}"));
+        let projection = block.projection();
+        let source = projection.reference_source();
+        // The old native adapter observed the enclosing tag once; its link
+        // child is the same member's wrapper, not another alias member.
+        let names: Vec<_> = tine_core::reference_evidence::linkable_property_references(
+            source,
+            &projection.regions,
+        )
+        .filter(|r| {
+            !matches!(r.rule, "explicit_link" | "explicit_nested_link")
+                || !source.explicit.iter().any(|tag| {
+                    tag.rule == "explicit_tag"
+                        && tag.name == r.name
+                        && tag.range.start <= r.range.start
+                        && r.range.end <= tag.range.end
+                })
+        })
+        .map(|r| r.name.as_str())
+        .collect();
+        let want = if value == "[[comma, name]]" {
+            "comma, name"
+        } else {
+            "inside"
+        };
+        assert_eq!(
+            names,
+            vec![want; if value == "inside, inside" { 2 } else { 1 }],
+            "{value}"
+        );
+        assert!(source
+            .explicit
+            .iter()
+            .any(|r| r.rule == "explicit_link" && r.name == "inside"));
+        assert!(source
+            .explicit
+            .iter()
+            .any(|r| r.rule == "explicit_tag" && r.name == "outside"));
+    }
 }
 
 fn walk(blocks: &[DocBlock], level: usize, out: &mut Vec<Value>, config: &Config) {
@@ -373,7 +436,6 @@ pub struct GraphSpec {
     pub extra_config: Vec<String>,
     pub navigate: Vec<String>,
     pub queries: Vec<QuerySpec>,
-    pub renames: Vec<(String, String)>,
 }
 
 fn strings(v: &Value) -> Vec<String> {
@@ -414,19 +476,6 @@ impl GraphSpec {
                     .collect()
             })
             .unwrap_or_default();
-        let renames = v["renames"]
-            .as_array()
-            .map(|a| {
-                a.iter()
-                    .map(|r| {
-                        (
-                            r["old"].as_str().unwrap().to_owned(),
-                            r["new"].as_str().unwrap().to_owned(),
-                        )
-                    })
-                    .collect()
-            })
-            .unwrap_or_default();
         GraphSpec {
             name: name.to_owned(),
             files,
@@ -447,7 +496,6 @@ impl GraphSpec {
             extra_config: strings(&v["config"]["edn"]),
             navigate: strings(&v["navigate"]),
             queries,
-            renames,
         }
     }
 
@@ -476,13 +524,6 @@ impl GraphSpec {
                 .map(
                     |q| json!({"anchor": q.anchor, "q": q.q, "tine": q.tine, "dialect": q.dialect})
                 )
-                .collect::<Vec<_>>());
-        }
-        if !self.renames.is_empty() {
-            v["renames"] = json!(self
-                .renames
-                .iter()
-                .map(|(o, n)| json!({"old": o, "new": n}))
                 .collect::<Vec<_>>());
         }
         v
@@ -564,69 +605,6 @@ impl GraphSpec {
     pub fn listed_apart(&self, root: &Path) -> bool {
         listed_apart(root, self.files.iter().map(|(rel, _)| rel.as_str()))
     }
-
-    /// Page-name arguments of `{{query …}}` macros in the graph's text, the
-    /// strings rule 6.2 pushes through the rename's spelling map.
-    pub fn stored_query_args(&self) -> Vec<String> {
-        let mut out = BTreeSet::new();
-        for text in self.files.values() {
-            for macro_text in query_macros(text) {
-                out.extend(query_page_args(&macro_text));
-            }
-        }
-        out.into_iter().collect()
-    }
-}
-
-/// The argument text of each `{{query …}}` macro in `text`, in order.
-pub fn query_macros(text: &str) -> Vec<String> {
-    let mut out = Vec::new();
-    let mut rest = text;
-    while let Some(start) = rest.find("{{query ") {
-        let after = &rest[start + "{{query ".len()..];
-        match after.find("}}") {
-            Some(end) => {
-                out.push(after[..end].to_owned());
-                rest = &after[end..];
-            }
-            None => break,
-        }
-    }
-    out
-}
-
-/// Page-name arguments in a simple-DSL query text: `[[x]]`, `(page "x")`,
-/// `(page x)`, `(page-ref x)`. A plain string `"x"` is search text, not a page
-/// name, and is not an argument (rule 6.2).
-pub fn query_page_args(q: &str) -> Vec<String> {
-    let mut out = Vec::new();
-    let mut rest = q;
-    while let Some(start) = rest.find("[[") {
-        let after = &rest[start + 2..];
-        match after.find("]]") {
-            Some(end) => {
-                out.push(after[..end].to_owned());
-                rest = &after[end + 2..];
-            }
-            None => break,
-        }
-    }
-    for head in ["(page ", "(page-ref "] {
-        let mut rest = q;
-        while let Some(start) = rest.find(head) {
-            let after = rest[start + head.len()..].trim_start();
-            let arg = if let Some(quoted) = after.strip_prefix('"') {
-                quoted.split('"').next().unwrap_or("")
-            } else {
-                after.split(')').next().unwrap_or("").trim()
-            };
-            if !arg.is_empty() && !arg.starts_with("[[") {
-                out.push(arg.to_owned());
-            }
-            rest = &rest[start + head.len()..];
-        }
-    }
-    out
 }
 
 /// Tine's text for a bridge query: the simple DSL for block queries, TQL for
@@ -751,56 +729,6 @@ pub fn is_sync_copy(rel: &str) -> bool {
         .is_some_and(|stem| tine_core::model::sync_conflict_base(stem).is_some())
 }
 
-/// The bridge's parser/configuration input, independent of inventory owners.
-pub fn model_input(spec: &GraphSpec, aliases: AliasFn, map_strings: &[String]) -> Value {
-    let journal = spec.journal_format();
-    let config = spec.config();
-    let mut input = json!({
-        // A sync-conflict copy is not graph text in Tine (no page, no
-        // references; `sync_conflict_base`), and the model has no such file:
-        // it is left out of the model's graph (census Q2 fixtures).
-        "files": spec.files.iter().filter(|(rel, _)| !is_sync_copy(rel)).map(|(rel, text)| file_json(rel, text, aliases, spec.name_format(), &config)).collect::<Vec<_>>(),
-        "navigate": spec.navigate,
-        "favoritesPage": spec.favorites_page.clone().unwrap_or_else(|| NO_FAVORITES.to_owned()),
-        "queries": spec.queries.iter().map(|q| json!({"anchor": q.anchor, "q": q.q})).collect::<Vec<_>>(),
-        "renames": spec.renames.iter().map(|(o, n)| json!({"old": o, "new": n})).collect::<Vec<_>>(),
-        // Round-9 bridge: each rename is also asked as a merge (the model's
-        // decided merge, M-Q5..7); the rename harness compares whichever of
-        // the two Tine performed. Older bridges ignore the field.
-        "merges": spec.renames.iter().map(|(o, n)| json!({"old": o, "new": n})).collect::<Vec<_>>(),
-        "mapStrings": map_strings,
-    });
-    let mut extra = spec.navigate.clone();
-    for q in &spec.queries {
-        query_args(&q.q, &mut extra);
-    }
-    for (o, n) in &spec.renames {
-        extra.push(o.clone());
-        extra.push(n.clone());
-    }
-    extra.extend(map_strings.iter().cloned());
-    if let Some(f) = &spec.favorites_page {
-        extra.push(f.clone());
-    }
-    let keyed = spellings(&input, &extra);
-    input["keys"] = json!(keyed
-        .iter()
-        .map(|s| (s.clone(), fold(&journal, s)))
-        .collect::<BTreeMap<_, _>>());
-    input["dateKeys"] = json!(keyed
-        .iter()
-        .filter(|s| journal.parse(s.trim()).is_some())
-        .map(|s| fold(&journal, s))
-        .collect::<BTreeSet<_>>());
-    // Round 10 (S15): the model's `urlHasOrigin` is Tine's URL-origin test
-    // (OG `url?`), given per spelling.
-    input["urls"] = json!(keyed
-        .iter()
-        .filter(|s| tine_core::refs::url_has_origin(s))
-        .collect::<Vec<_>>());
-    input
-}
-
 /// Run the Lean bridge on one input.
 pub fn run_bridge(bridge: &Path, input: &Value) -> Result<Value, String> {
     let out = Command::new(bridge)
@@ -827,140 +755,13 @@ pub fn run_bridge(bridge: &Path, input: &Value) -> Result<Value, String> {
     serde_json::from_slice(&out.stdout).map_err(|e| format!("cm-bridge output: {e}"))
 }
 
-/// Round 13 keeps literal claims separate from the configured date target.
-/// All claimant inputs are parser/config answers; no chosen owner is supplied.
-pub fn model_input_r13(spec: &GraphSpec) -> Value {
-    let mut input = model_input(spec, alias_spellings, &[]);
-    let journal = spec.journal_format();
-    let config = spec.config();
-    input["favorites"] = json!(config.favorites);
-    input["queries"] = json!(spec
-        .queries
-        .iter()
-        .map(|q| {
-            let dialect = if q.dialect == "tql" {
-                QueryDialect::Tql
-            } else {
-                QueryDialect::Og
-            };
-            let (parsed, _) = parse_query_text(&q.tine, dialect, JournalDate::from_days(0));
-            json!({"anchor": q.anchor, "q": q.q,
-            "showHeaders": parsed.anchor == tine_core::query::ir::Anchor::Block,
-            "removeBlockChildren": parsed.removes_block_children()})
-        })
-        .collect::<Vec<_>>());
-    for file in input["files"].as_array_mut().unwrap() {
-        let rel = file["path"].as_str().unwrap().to_owned();
-        let raw = Path::new(&rel).file_stem().unwrap().to_str().unwrap();
-        file["rawStem"] = json!(raw);
-    }
-    let mut extra = spec.navigate.clone();
-    extra.extend(config.favorites.iter().cloned());
-    for q in &spec.queries {
-        query_args(&q.q, &mut extra);
-    }
-    for (old, new) in &spec.renames {
-        extra.extend([old.clone(), new.clone()]);
-    }
-    for file in input["files"].as_array().unwrap() {
-        for b in file["blocks"].as_array().unwrap() {
-            for q in b["stored"].as_array().unwrap() {
-                query_args(q, &mut extra);
-            }
-        }
-    }
-    let before = spellings(&input, &extra);
-    // Finite closure of every candidate substitution, including alternate
-    // real members. Key/date/codec tables are functions on spellings only.
-    let destinations: BTreeSet<String> = spec
-        .renames
-        .iter()
-        .map(|(_, new)| new.clone())
-        .chain(input["files"].as_array().unwrap().iter().map(|f| {
-            f["title"]
-                .as_str()
-                .filter(|_| f["dir"] == "pages")
-                .unwrap_or_else(|| f["stem"].as_str().unwrap())
-                .to_owned()
-        }))
-        .collect();
-    let mut all = before.clone();
-    let mut output_paths = Vec::new();
-    for (old, _) in &spec.renames {
-        for new in &destinations {
-            let map = std::collections::HashMap::from([(page_key(old), new.clone())]);
-            for name in &before {
-                if let Some(mapped) = tine_core::refs::renamed_page_name(name, &map) {
-                    all.insert(mapped.into_owned());
-                }
-            }
-            for file in input["files"].as_array().unwrap() {
-                let name = file["title"]
-                    .as_str()
-                    .filter(|_| file["dir"] == "pages")
-                    .unwrap_or_else(|| file["stem"].as_str().unwrap());
-                let mapped = tine_core::refs::renamed_page_name(name, &map)
-                    .map(|s| s.into_owned())
-                    .unwrap_or_else(|| name.to_owned());
-                let rel = file["path"].as_str().unwrap();
-                let ext = Path::new(rel).extension().unwrap().to_str().unwrap();
-                output_paths.push(json!({"source": rel, "name": mapped,
-                    "path": format!("pages/{}.{ext}", encode_page_name(&mapped, spec.name_format()))}));
-            }
-        }
-    }
-    // Namespace parents of output names and canonical date titles are keyed too.
-    let more: Vec<_> = all
-        .iter()
-        .flat_map(|s| {
-            let mut names = tine_core::refs::namespace_refs(s)
-                .map(str::to_owned)
-                .collect::<Vec<_>>();
-            if let Some(day) = journal.parse(s) {
-                names.extend(journal.spellings(day));
-                names.push(journal.title(day));
-            }
-            names
-        })
-        .collect();
-    all.extend(more);
-    input["literalKeys"] = json!(all
-        .iter()
-        .map(|s| (s, page_key(s)))
-        .collect::<BTreeMap<_, _>>());
-    input["keys"] = input["literalKeys"].clone();
-    input["canonicalDates"] = json!(all
-        .iter()
-        .filter_map(|s| journal
-            .parse(s)
-            .map(|d| (page_key(s), page_key(&journal.title(d)))))
-        .collect::<BTreeMap<_, _>>());
-    input["claimantConfig"] = json!({
-        "kindPref": "page", "order": "unsigned-utf8-relative-path",
-        "fileNameFormat": spec.file_name_format.as_deref().unwrap_or("legacy"),
-        "journalFileFormat": journal.file_format(), "journalTitleFormat": journal.title_format(),
-        "stems": input["files"].as_array().unwrap().iter().map(|f| json!({
-            "path": f["path"], "raw": f["rawStem"], "decoded": f["stem"]
-        })).collect::<Vec<_>>()
-    });
-    input["outputPaths"] = json!(output_paths);
-    input["urls"] = json!(all
-        .iter()
-        .filter(|s| tine_core::refs::url_has_origin(s))
-        .collect::<Vec<_>>());
-    for file in input["files"].as_array_mut().unwrap() {
-        native::decorate(file, &config);
-    }
-    input
-}
-
 /// One difference: a stable class (no names; used to deduplicate random
 /// graphs) and the concrete detail.
 #[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord)]
 pub struct Diff {
     pub class: String,
     pub detail: String,
-    /// Structured witnesses used only by r13 attribution; historical rows stay unchanged.
+    /// Structured witnesses used by K's difference attribution.
     pub keys: BTreeSet<String>,
     pub blocks: Vec<BlockId>,
 }
@@ -1175,13 +976,7 @@ impl<'a> Ctx<'a> {
     }
 
     pub fn key(&self, s: &str) -> String {
-        if self.model["round"] == "k" {
-            k::key(&self.journal, s)
-        } else if self.model["round"] == "r13" {
-            page_key(s)
-        } else {
-            fold(&self.journal, s)
-        }
+        k::key(&self.journal, s)
     }
 
     pub fn class_of(&self, k: &str) -> BTreeSet<String> {
@@ -1189,18 +984,6 @@ impl<'a> Ctx<'a> {
             .get(k)
             .cloned()
             .unwrap_or_else(|| BTreeSet::from([k.to_owned()]))
-    }
-
-    fn claimed_keys(&self) -> BTreeSet<String> {
-        self.files.values().map(|f| self.key(&f.name)).collect()
-    }
-
-    fn occ(&self, b: &BlockId) -> &[(String, String)] {
-        self.files
-            .get(&b.0)
-            .and_then(|f| f.blocks.get(b.1))
-            .map(|x| x.1.as_slice())
-            .unwrap_or(&[])
     }
 
     /// How a block's occurrences reach key `t`: direct, a namespace prefix,
@@ -1310,45 +1093,6 @@ fn tine_block_ids(view: &WholeGraph) -> BTreeMap<String, BlockId> {
     out
 }
 
-/// Tine's page for a resolution, as the model's (kind, key).
-fn tine_page(
-    view: &WholeGraph,
-    journal: &JournalFormat,
-    r: &Resolved,
-    name: &str,
-    journal_kind: bool,
-) -> Page {
-    let entry_of = |id: &PageId| {
-        let inv = view.inventory(InventoryScope::File(id));
-        let e = inv.0.first().expect("a claimant has an inventory entry");
-        (
-            if e.is_journal { "journal" } else { "page" }.to_owned(),
-            fold(journal, &e.name),
-        )
-    };
-    match r {
-        Resolved::Existing { id, .. } => entry_of(id),
-        Resolved::Alias { owners } => entry_of(&owners[0]),
-        Resolved::Absent { .. } => (
-            if journal_kind { "journal" } else { "page" }.to_owned(),
-            fold(journal, name),
-        ),
-    }
-}
-
-/// What a link `[[name]]` opens: the one answer (`WholeGraph::link_target`),
-/// then the page `get_page` opens for that destination (`resolve`).
-fn navigate(view: &WholeGraph, journal: &JournalFormat, name: &str) -> Page {
-    let link = view.link_target(name);
-    tine_page(
-        view,
-        journal,
-        &view.resolve(&link.name, link.is_journal),
-        &link.name,
-        link.is_journal,
-    )
-}
-
 /// The wire form of a resolution (`src-tauri` `ResolvedWire`, the
 /// frontend's `ResolvedPage`).
 fn resolved_wire(r: &Resolved) -> Value {
@@ -1437,7 +1181,14 @@ pub fn frontend_case(
         let day = journal
             .parse(s.trim())
             .map(|d| json!([d.year, d.month, d.day]));
-        let backend = navigate(view, journal, s);
+        let link = view.link_target(s);
+        let backend = k::resolved_page(
+            view,
+            journal,
+            &view.resolve(&link.name, link.is_journal),
+            &link.name,
+            link.is_journal,
+        );
         spellings.insert(
             s.clone(),
             json!({"day": day, "model": page, "backend": [backend.0, backend.1]}),
@@ -1446,8 +1197,8 @@ pub fn frontend_case(
     let open: BTreeMap<String, Value> = names
         .iter()
         .map(|n| {
-            let j = tine_page(view, journal, &view.resolve(n, true), n, true);
-            let p = tine_page(view, journal, &view.resolve(n, false), n, false);
+            let j = k::resolved_page(view, journal, &view.resolve(n, true), n, true);
+            let p = k::resolved_page(view, journal, &view.resolve(n, false), n, false);
             (
                 n.clone(),
                 json!({"journal": [j.0, j.1], "page": [p.0, p.1]}),
@@ -1459,19 +1210,24 @@ pub fn frontend_case(
     // References panel on these answers).
     let (files, references) = view.page_backlink_counts();
     let counts = json!([files, references]);
-    // The views' parent of each model page (`Ref10.nsParent`, round 10).
-    let parents: BTreeMap<Page, Value> = ctx.model["pageParents"]
+    // K exports parent-to-children edges. Invert that wire table for the
+    // frontend's parent lookup; no namespace rule is recomputed here.
+    let parents: BTreeMap<Page, Value> = ctx.model["tree"]
         .as_array()
-        .into_iter()
-        .flatten()
-        .map(|row| {
-            let page = &row["page"];
-            let page = (
-                page[0].as_str().unwrap().to_owned(),
-                page[1].as_str().unwrap().to_owned(),
-            );
-            (page, row["parent"].clone())
+        .unwrap()
+        .iter()
+        .flat_map(|row| {
+            row["children"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .map(move |child| (page_pair(child), row["page"].clone()))
         })
+        .collect();
+    let tree_parent: Vec<Value> = ctx
+        .pages
+        .iter()
+        .map(|p| json!({"page": p, "parent": parents.get(p)}))
         .collect();
     let mut pages = Vec::new();
     let mut backlinks = BTreeMap::new();
@@ -1479,7 +1235,7 @@ pub fn frontend_case(
         if ctx.conflicts.contains(&p.1) {
             continue;
         }
-        let name = tine_name(ctx, p);
+        let name = k::spelling(ctx, p);
         let groups: Vec<Value> = match view.backlinks(&name) {
             Ok(groups) => groups.iter().map(ref_group_wire).collect(),
             Err(e) => vec![json!({"harness": format!("backlinks({name:?}): {e:?}")})],
@@ -1497,13 +1253,11 @@ pub fn frontend_case(
     let key_of: BTreeMap<String, String> = inventory
         .0
         .iter()
-        .map(|e| (e.name.clone(), fold(journal, &e.name)))
+        .map(|e| (e.name.clone(), k::key(journal, &e.name)))
         .collect();
     json!({
-        "treeNodes": ctx.model["treeNodes"],
-        "treeParent": ctx.model["treeParent"],
+        "treeParent": tree_parent,
         "tree": ctx.model["tree"],
-        "namespaceNodes": ctx.model["namespaceNodes"],
         "namespaceTree": ctx.model["namespaceTree"],
         "journalTitleFormat": journal_title_format,
         "journalFileFormat": journal_file_format,
@@ -1537,146 +1291,7 @@ fn ref_group_wire(g: &RefGroup) -> Value {
     })
 }
 
-/// Rule 1 and 3 (the manager's first slice): pages, conflicts, owners and
-/// navigation.
-pub fn compare_names(ctx: &Ctx) -> Vec<Diff> {
-    let mut diffs = Vec::new();
-    let view = ctx.view;
-    let journal = &ctx.journal;
-    let inventory = view.inventory(InventoryScope::All);
-    let mut tine_pages = BTreeSet::new();
-    let mut tine_conflicts = BTreeSet::new();
-    let mut tine_owner = BTreeMap::new();
-    for entry in &inventory.0 {
-        let kind = if entry.is_journal { "journal" } else { "page" }.to_owned();
-        let key = fold(journal, &entry.name);
-        match &entry.target {
-            Resolved::Existing { id, others } => {
-                if !others.is_empty() {
-                    tine_conflicts.insert(key.clone());
-                }
-                tine_owner.insert((kind.clone(), key.clone()), id.to_string());
-                tine_pages.insert((kind, key));
-            }
-            Resolved::Alias { .. } => {}
-            Resolved::Absent { .. } => {
-                tine_pages.insert((kind, key));
-            }
-        }
-    }
-    let claimed = ctx.claimed_keys();
-    let origin = |k: &str| {
-        let mut o = Vec::new();
-        if claimed.contains(k) {
-            o.push("claimed");
-        }
-        let mut occ_direct = false;
-        let mut occ_prefix = false;
-        for f in ctx.files.values() {
-            for (_, occ) in &f.blocks {
-                for (_, s) in occ {
-                    for u in tine_core::refs::namespace_refs(s) {
-                        if ctx.key(u) == k {
-                            if u == s.as_str() {
-                                occ_direct = true
-                            } else {
-                                occ_prefix = true
-                            }
-                        }
-                    }
-                }
-            }
-        }
-        if occ_direct {
-            o.push("occurrence");
-        }
-        if occ_prefix {
-            o.push("occurrence-prefix");
-        }
-        if ctx.files.values().any(|f| {
-            tine_core::refs::namespace_refs(&f.name).any(|u| u != f.name && ctx.key(u) == k)
-        }) {
-            o.push("file-name-prefix");
-        }
-        if ctx.class.contains_key(k) {
-            o.push("alias-edge");
-        }
-        if ctx.date_keys.contains(k) {
-            o.push("date");
-        }
-        o.join(",")
-    };
-    for p in ctx.pages.difference(&tine_pages) {
-        diffs.push(Diff::new(
-            format!("pages: model-only {} ({})", p.0, origin(&p.1)),
-            format!("pages: model has {p:?}, Tine does not"),
-        ));
-    }
-    for p in tine_pages.difference(&ctx.pages) {
-        diffs.push(Diff::new(
-            format!("pages: Tine-only {} ({})", p.0, origin(&p.1)),
-            format!("pages: Tine has {p:?}, model does not"),
-        ));
-    }
-    if ctx.conflicts != tine_conflicts {
-        let kinds = |k: &String| {
-            let mut ks: Vec<&str> = ctx
-                .files
-                .values()
-                .filter(|f| ctx.key(&f.name) == *k)
-                .map(|f| if f.journal { "journal" } else { "page" })
-                .collect();
-            ks.sort();
-            ks.join("+")
-        };
-        for k in ctx.conflicts.difference(&tine_conflicts) {
-            diffs.push(Diff::new(
-                format!("conflicts: model-only ({})", kinds(k)),
-                format!("conflicts: model {k:?} conflicted, Tine not"),
-            ));
-        }
-        for k in tine_conflicts.difference(&ctx.conflicts) {
-            diffs.push(Diff::new(
-                format!("conflicts: Tine-only ({})", kinds(k)),
-                format!("conflicts: Tine {k:?} conflicted, model not"),
-            ));
-        }
-    }
-    for (page, model_path) in &ctx.owner_of_page {
-        if ctx.conflicts.contains(&page.1) {
-            continue;
-        }
-        match tine_owner.get(page) {
-            Some(path) if path == model_path => {}
-            other => diffs.push(Diff::new(
-                "owners: differ",
-                format!("owner of {page:?}: model {model_path}, Tine {other:?}"),
-            )),
-        }
-    }
-    for (s, page) in ctx.model["navigate"].as_object().unwrap() {
-        let model_page = page_pair(page);
-        if ctx.conflicts.contains(&model_page.1) {
-            continue;
-        }
-        let tine = navigate(view, journal, s);
-        if tine != model_page {
-            diffs.push(Diff::new(
-                format!(
-                    "navigate: model {} vs Tine {} ({})",
-                    model_page.0,
-                    tine.0,
-                    origin(&ctx.key(s))
-                ),
-                format!("navigate [[{s}]]: model {model_page:?}, Tine {tine:?}"),
-            ));
-        }
-    }
-    diffs
-}
-
-/// The model's Linked References of `p`: blocks referencing p, minus p's own
-/// blocks and the Favorites page's (Link exclusions, §6.2).
+/// The model's Linked References rows for one page.
 fn model_panel(ctx: &Ctx, p: &Page) -> BTreeSet<BlockId> {
     ctx.refs
         .iter()
@@ -1689,20 +1304,6 @@ fn model_panel(ctx: &Ctx, p: &Page) -> BTreeSet<BlockId> {
         })
         .map(|(b, _)| b.clone())
         .collect()
-}
-
-/// The name Tine's name-keyed APIs take for model page p.
-fn tine_name(ctx: &Ctx, p: &Page) -> String {
-    match ctx.owner_of_page.get(p) {
-        Some(path) => ctx
-            .view
-            .inventory(InventoryScope::File(&PageId::from(path.as_str())))
-            .0
-            .first()
-            .map(|e| e.name.clone())
-            .unwrap_or_else(|| p.1.clone()),
-        None => p.1.clone(),
-    }
 }
 
 fn group_blocks(
@@ -1731,231 +1332,7 @@ fn group_blocks(
     out
 }
 
-/// Rule 2 and 5 (Q9 panel): each model page's Linked References against
-/// `WholeGraph::backlinks`.
-pub fn compare_backlinks(ctx: &Ctx) -> Vec<Diff> {
-    let mut diffs = Vec::new();
-    for p in &ctx.pages {
-        let model = model_panel(ctx, p);
-        let name = tine_name(ctx, p);
-        let tine = match ctx.view.backlinks(&name) {
-            Ok(groups) => group_blocks(ctx, &groups, &mut diffs, "backlinks"),
-            Err(e) => {
-                diffs.push(Diff::new(
-                    "harness: backlinks error",
-                    format!("backlinks({name:?}): {e:?}"),
-                ));
-                continue;
-            }
-        };
-        for b in model.difference(&tine) {
-            diffs.push(Diff::new(
-                format!(
-                    "linked refs: model-only, target {}, {}, source {}",
-                    ctx.page_feature(p),
-                    ctx.via(ctx.occ(b), &p.1),
-                    ctx.source_feature(b, p)
-                ),
-                format!("Linked References of {p:?}: model has block {b:?}, Tine does not"),
-            ));
-        }
-        for b in tine.difference(&model) {
-            diffs.push(Diff::new(
-                format!(
-                    "linked refs: Tine-only, target {}, {}, source {}",
-                    ctx.page_feature(p),
-                    ctx.via(ctx.occ(b), &p.1),
-                    ctx.source_feature(b, p)
-                ),
-                format!("Linked References of {p:?}: Tine has block {b:?}, model does not"),
-            ));
-        }
-    }
-    diffs
-}
-
-/// Q9 counts: `page_backlink_counts` per owner file against the size of the
-/// model's Linked References (rule 2: counts see the whole group). Tine's
-/// count is, by construction, the size of its own unfiltered Linked
-/// References panel of that page (D-20261102-CM4 CM-COUNT); a difference is
-/// explained against that panel, so a count that follows a panel difference
-/// is named as such and a count that leaves its own panel is a defect.
-pub fn compare_counts(ctx: &Ctx) -> Vec<Diff> {
-    let mut diffs = Vec::new();
-    let counts: BTreeMap<String, usize> = ctx.view.page_backlink_counts().0.into_iter().collect();
-    // Every file Tine holds (also built from tine-graph-features, so only
-    // public API).
-    let held: BTreeSet<String> = ctx
-        .view
-        .page_modified()
-        .into_iter()
-        .map(|(path, _)| path)
-        .collect();
-    for (p, path) in &ctx.owner_of_page {
-        let model = model_panel(ctx, p).len();
-        let Some(&tine) = counts.get(path) else {
-            let twin = held.contains(path);
-            diffs.push(if twin {
-                Diff::new(
-                    "counts: the model's owner is a Tine non-owner twin (O1 order; All pages shows a dash, A13)",
-                    format!("counts of {p:?} ({path}): model {model}, Tine none (non-owner twin)"),
-                )
-            } else {
-                Diff::new(
-                    "counts: no Tine count for an owner file",
-                    format!("counts of {p:?} ({path}): model {model}, Tine none"),
-                )
-            });
-            continue;
-        };
-        if tine == model {
-            continue;
-        }
-        let name = tine_name(ctx, p);
-        let panel = ctx
-            .view
-            .backlinks(&name)
-            .map(|groups| groups.iter().map(|g| g.blocks.len()).sum::<usize>());
-        let reason = match panel {
-            Ok(panel) if panel == tine => {
-                "as Tine's Linked References, which differ from the model's"
-            }
-            Ok(_) => "not the size of Tine's own Linked References",
-            Err(_) => "Tine's Linked References failed",
-        };
-        diffs.push(Diff::new(
-            format!("counts: {reason}, target {}", ctx.page_feature(p)),
-            format!("backlink count of {p:?} ({path}): model {model}, Tine {tine} ({reason})"),
-        ));
-    }
-    diffs
-}
-
-/// Rule 2 (Q7): each model page's alias class against
-/// `inventory(AliasGroup)`.
-pub fn compare_classes(ctx: &Ctx) -> Vec<Diff> {
-    let mut diffs = Vec::new();
-    let mut seen = BTreeSet::new();
-    for p in &ctx.pages {
-        if !seen.insert(p.1.clone()) {
-            continue;
-        }
-        let model: BTreeSet<String> = ctx.model["classes"][&p.1]
-            .as_array()
-            .map(|a| a.iter().map(|v| v.as_str().unwrap().to_owned()).collect())
-            .unwrap_or_else(|| BTreeSet::from([p.1.clone()]));
-        let name = tine_name(ctx, p);
-        let mut tine: BTreeSet<String> = ctx
-            .view
-            .inventory(InventoryScope::AliasGroup(&name))
-            .0
-            .iter()
-            .map(|e| ctx.key(&e.name))
-            .collect();
-        tine.insert(p.1.clone());
-        if model != tine {
-            let journal_declarer = ctx
-                .files
-                .values()
-                .any(|f| f.journal && !f.aliases.is_empty() && model.contains(&ctx.key(&f.name)));
-            let shape = if model.is_superset(&tine) {
-                "model larger"
-            } else if tine.is_superset(&model) {
-                "Tine larger"
-            } else {
-                "both differ"
-            };
-            diffs.push(Diff::new(
-                format!(
-                    "alias group: {shape}, target {}{}",
-                    ctx.page_feature(p),
-                    if journal_declarer {
-                        ", journal declares"
-                    } else {
-                        ""
-                    }
-                ),
-                format!("alias group of {p:?}: model {model:?}, Tine {tine:?}"),
-            ));
-        }
-    }
-    diffs
-}
-
-/// Q9 link table: model links (S, T) against Tine's `LinkGraph` pairs, both
-/// as page keys (the table is keyed by key, not kind).
-pub fn compare_links(ctx: &Ctx, tine: &BTreeSet<(String, String)>) -> Vec<Diff> {
-    let mut diffs = Vec::new();
-    let model: BTreeSet<(String, String)> = ctx.model["links"]
-        .as_array()
-        .unwrap()
-        .iter()
-        .map(|l| (page_pair(&l[0]).1, page_pair(&l[1]).1))
-        .collect();
-    let kind_of = |k: &str| {
-        ctx.pages
-            .iter()
-            .find(|p| p.1 == k)
-            .map(|p| ctx.page_feature(p))
-            .unwrap_or_else(|| "not a model page".into())
-    };
-    let via = |s: &str, t: &str| {
-        let mut ways = BTreeSet::new();
-        for (path, page) in &ctx.page_of_path {
-            if page.1 == s {
-                if let Some(f) = ctx.files.get(path) {
-                    for (_, occ) in &f.blocks {
-                        let w = ctx.via(occ, t);
-                        if w != "none" {
-                            ways.insert(w);
-                        }
-                    }
-                }
-            }
-        }
-        if ways.is_empty() {
-            "none".to_owned()
-        } else {
-            ways.into_iter().collect::<Vec<_>>().join("; ")
-        }
-    };
-    for (s, t) in model.difference(tine) {
-        diffs.push(Diff::new(
-            format!(
-                "links: model-only, {} -> {}, {}{}",
-                kind_of(s),
-                kind_of(t),
-                via(s, t),
-                if ctx.class_of(t).contains(s) {
-                    ", same alias group"
-                } else {
-                    ""
-                }
-            ),
-            format!("link {s:?} -> {t:?}: model has it, Tine does not"),
-        ));
-    }
-    for (s, t) in tine.difference(&model) {
-        diffs.push(Diff::new(
-            format!(
-                "links: Tine-only, {} -> {}, {}{}",
-                kind_of(s),
-                kind_of(t),
-                via(s, t),
-                if ctx.class_of(t).contains(s) {
-                    ", same alias group"
-                } else {
-                    ""
-                }
-            ),
-            format!("link {s:?} -> {t:?}: Tine has it, model does not"),
-        ));
-    }
-    diffs
-}
-
-/// Rule 7 (Q10): each query's model denotation against `query_ir` of Tine's
-/// text, as sets of nodes.
+/// The model's supported queries against the real query engine.
 pub fn compare_queries(ctx: &Ctx, queries: &[QuerySpec]) -> Vec<Diff> {
     let mut diffs = Vec::new();
     let model_all = ctx.model["queries"].as_array().unwrap();
@@ -2184,7 +1561,13 @@ pub fn compare_reference_days(ctx: &Ctx) -> Vec<Diff> {
         }
     };
     let mut native: BTreeMap<BlockId, Vec<String>> = BTreeMap::new();
+    // K's queries observe active files only (SPEC 2.2); losing twins remain
+    // physical inputs but contribute no reference or query rows.
+    let active: BTreeSet<_> = strings(&ctx.model["activeFiles"]).into_iter().collect();
     for (path, f) in &ctx.files {
+        if !active.contains(path) {
+            continue;
+        }
         for (i, (_, occ)) in f.blocks.iter().enumerate() {
             let dated: Vec<String> = occ
                 .iter()
@@ -2385,62 +1768,6 @@ pub fn names_case(view: &WholeGraph, spec: &GraphSpec) -> Option<Value> {
         .then(|| json!({"fileNameFormat": file_name_format, "files": files, "links": links}))
 }
 
-/// The bridge's own harness reports.
-pub fn harness_reports(model: &Value) -> Vec<Diff> {
-    let mut diffs = Vec::new();
-    for field in ["missingKeys", "nonLocal"] {
-        for s in model[field].as_array().unwrap() {
-            diffs.push(Diff::new(
-                format!("harness: {field}"),
-                format!("harness: {field} {s}"),
-            ));
-        }
-    }
-    diffs
-}
-
-/// Whether the graph has a duplicate claim (two files, or a page and a
-/// journal, claiming one key: the model's `conflicts`). Code-map observations
-/// 2 and 3 make nearly every answer of such a graph differ, so its random
-/// differences are classed coarsely under one prefix; the fixtures keep their
-/// details.
-pub fn has_duplicate_claim(ctx: &Ctx) -> bool {
-    !ctx.conflicts.is_empty() || ctx.files.keys().any(|p| !ctx.page_of_path.contains_key(p))
-}
-
-/// The coarse class of a difference in a graph with a duplicate claim: its
-/// comparison and direction only.
-pub fn coarse(diffs: Vec<Diff>) -> Vec<Diff> {
-    diffs
-        .into_iter()
-        .map(|d| {
-            if d.is_harness() {
-                return d;
-            }
-            let cut = d
-                .class
-                .find(" (")
-                .into_iter()
-                .chain(d.class.find(", "))
-                .chain(d.class.find(" of "))
-                .min()
-                .unwrap_or(d.class.len());
-            Diff::new(format!("[duplicate claim] {}", &d.class[..cut]), d.detail)
-        })
-        .collect()
-}
-
-/// Every comparison a public `WholeGraph` answers.
-pub fn compare_meaning(ctx: &Ctx, queries: &[QuerySpec]) -> Vec<Diff> {
-    let mut diffs = harness_reports(ctx.model);
-    diffs.extend(compare_names(ctx));
-    diffs.extend(compare_backlinks(ctx));
-    diffs.extend(compare_counts(ctx));
-    diffs.extend(compare_classes(ctx));
-    diffs.extend(compare_queries(ctx, queries));
-    diffs
-}
-
 // ---------------------------------------------------------------- generator
 
 /// Deterministic splitmix64.
@@ -2471,21 +1798,6 @@ impl Rng {
 /// The colliding alphabet: case variants, a namespace and its parent, a date
 /// shape, and plain names.
 pub const NAMES: &[&str] = &["A", "a", "B", "n", "n/y", "N/y", "2026-10-26", "x"];
-/// Rename destinations: the alphabet plus fresh names and namespaces.
-pub const NEW_NAMES: &[&str] = &[
-    "A",
-    "a",
-    "B",
-    "n",
-    "n/y",
-    "N/y",
-    "2026-10-26",
-    "x",
-    "Z",
-    "n/z",
-    "Z/w",
-];
-
 fn random_block(rng: &mut Rng) -> String {
     let x = *rng.pick(NAMES);
     let y = *rng.pick(NAMES);
@@ -2606,34 +1918,6 @@ pub fn random_graph(seed: u64) -> GraphSpec {
 }
 
 /// A random rename for `spec`: mostly of a page file's own name.
-pub fn random_rename(seed: u64, spec: &GraphSpec) -> (String, String) {
-    let mut rng = Rng::new(seed ^ 0x5EED_0F_4E4A_3E);
-    let own: Vec<String> = spec
-        .files
-        .iter()
-        .filter(|(p, _)| p.starts_with("pages/"))
-        .map(|(p, text)| {
-            page_title_from_preamble(text, Format::Md).unwrap_or_else(|| {
-                decode_page_name(
-                    Path::new(p).file_stem().unwrap().to_str().unwrap(),
-                    FileNameFormat::Legacy,
-                )
-            })
-        })
-        .collect();
-    loop {
-        let old = if !own.is_empty() && rng.chance(80) {
-            rng.pick(&own).clone()
-        } else {
-            (*rng.pick(NAMES)).to_owned()
-        };
-        let new = (*rng.pick(NEW_NAMES)).to_owned();
-        if old != new {
-            return (old, new);
-        }
-    }
-}
-
 // --------------------------------------------------- expected differences
 
 /// One harness's results: per fixture its difference details, per random

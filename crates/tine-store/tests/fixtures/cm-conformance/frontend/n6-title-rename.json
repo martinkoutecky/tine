@@ -92,7 +92,6 @@
     "Shown Title": "shown title",
     "linker": "linker"
   },
-  "namespaceNodes": [],
   "namespaceTree": [],
   "open": {
     "Custom Name": {
@@ -223,20 +222,6 @@
         "shown title"
       ]
     }
-  ],
-  "treeNodes": [
-    [
-      "page",
-      "custom name"
-    ],
-    [
-      "page",
-      "linker"
-    ],
-    [
-      "page",
-      "shown title"
-    ]
   ],
   "treeParent": [
     {
