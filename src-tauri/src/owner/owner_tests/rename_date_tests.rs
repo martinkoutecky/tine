@@ -4,9 +4,9 @@
 //! accepted spellings of one day, with and without that day's journal.
 //!
 //! Model (SPEC §2.1 `target`, §4.1 candidates, §4.3 unattended; KD): with no
-//! journal file the only candidate renames the ordinary file to the literal
-//! name under `pages/`, and `[[new]]` opens it while the other spellings keep
-//! meaning the day. With the journal, every spelling has the journal in its
+//! journal file the only candidate renames the file to the literal name
+//! under `pages/`, and that file is then the day's journal (CM-DAYFILE,
+//! D-20261111-CMR14): every spelling opens it. With the journal, every spelling has the journal in its
 //! group, so a non-canonical spelling has two safe candidates and the
 //! journal's own title has one (a merge); the CLI, which never merges,
 //! refuses `page-exists` and writes nothing. The app's missing "own page"
@@ -49,7 +49,7 @@ fn opens(graph: &Graph, name: &str) -> (String, bool) {
 }
 
 #[test]
-fn rename_onto_a_free_day_spelling_makes_that_ordinary_page() {
+fn rename_onto_a_free_day_spelling_makes_that_page_file_the_day() {
     for new in SPELLINGS {
         let graph = date_graph(false);
         let offer = tine_graph_features::pages::rename_offer(&graph.store, "Foo", new, None);
@@ -70,12 +70,30 @@ fn rename_onto_a_free_day_spelling_makes_that_ordinary_page() {
         assert!(!after.contains_key("pages/Foo.md"), "{new}: {after:?}");
         assert!(!after.keys().any(|p| p.starts_with("journals/")), "{new}");
         assert_eq!(after["pages/r.md"], format!("- see [[{new}]]\n"));
-        // KD: the literal spelling opens the ordinary page; the others still
-        // mean the day.
-        assert_eq!(opens(&graph, new), (new.to_owned(), false), "{new}");
-        for other in SPELLINGS.iter().filter(|s| **s != new) {
-            assert!(opens(&graph, other).1, "{new}: [[{other}]] means the day");
+        // CM-DAYFILE (K SPEC, Day files: "a pages-directory file produced by
+        // Foo → an accepted date spelling is already the journal"): every
+        // spelling, the new one included, opens the renamed file as the day.
+        // (Superseded: before CM step 2 the literal spelling opened an
+        // ordinary page.)
+        for spelling in SPELLINGS {
+            assert_eq!(
+                opens(&graph, spelling),
+                ("Nov 2nd, 2026".to_owned(), true),
+                "{new}: [[{spelling}]] means the day"
+            );
         }
+        assert_eq!(
+            graph
+                .store
+                .whole_graph()
+                .unwrap()
+                .resolve("Nov 2nd, 2026", true),
+            tine_store::Resolved::Existing {
+                id: tine_store::PageId::from(format!("pages/{new}.md")),
+                others: Vec::new(),
+            },
+            "{new}: the day is the renamed file where it lies"
+        );
     }
 }
 

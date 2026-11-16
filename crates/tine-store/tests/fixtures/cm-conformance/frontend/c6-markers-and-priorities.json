@@ -458,7 +458,7 @@
         "oct 26th, 2026"
       ],
       "page": [
-        "page",
+        "journal",
         "oct 26th, 2026"
       ]
     },
@@ -538,7 +538,7 @@
     },
     "Oct 26th, 2026": {
       "journal": "journals/2026_10_26.md",
-      "page": null
+      "page": "journals/2026_10_26.md"
     },
     "TODO": {
       "journal": null,

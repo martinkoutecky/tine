@@ -25,11 +25,11 @@ impl ReadSnapshot {
 
 pub(super) fn capture(
     physical: &Arc<Pages>,
-    names: &Arc<crate::query::RealPageNames>,
+    (names, journals_dir): (&Arc<crate::query::RealPageNames>, &str),
     old: Option<&ReadSnapshot>,
     paths: &[String],
 ) -> (Arc<Pages>, Vec<String>) {
-    let owners = crate::query::RealPageOwners::new(Arc::clone(names));
+    let owners = crate::query::RealPageOwners::new(Arc::clone(names), journals_dir);
     let old = old.filter(|old| !paths.is_empty() || Arc::ptr_eq(&old.physical_pages, physical));
     if let Some(old) = old {
         let mut affected: BTreeSet<String> = paths.iter().cloned().collect();

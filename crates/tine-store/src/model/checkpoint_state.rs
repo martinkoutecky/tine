@@ -277,7 +277,12 @@ impl Graph {
             &physical_pages,
             &[],
         ));
-        let (pages, _) = active_pages::capture(&physical_pages, &real_page_names, None, &[]);
+        let (pages, _) = active_pages::capture(
+            &physical_pages,
+            (&real_page_names, &config.journals_dir),
+            None,
+            &[],
+        );
         let mut reference = state.reference_candidate_index;
         reference.positions = Arc::clone(&pages.positions);
         let derived = state.derived;

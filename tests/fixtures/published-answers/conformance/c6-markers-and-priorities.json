@@ -134,7 +134,17 @@
       "file_name_format": "yyyy_MM_dd",
       "title_format": "MMM do, yyyy"
     },
-    "resolve": [],
+    "resolve": [
+      {
+        "kind": "page",
+        "name": "Oct 26th, 2026",
+        "target": {
+          "id": "journals/2026_10_26.md",
+          "kind": "existing",
+          "others": []
+        }
+      }
+    ],
     "v": 1
   },
   "backlinks": {},

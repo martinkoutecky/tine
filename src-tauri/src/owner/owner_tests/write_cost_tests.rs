@@ -201,8 +201,10 @@ fn a_write_that_names_its_page_spends_its_lower_bound() {
     );
     assert_eq!(
         spent(&slot),
+        // A day's title is looked up once, as the day (CM-DATE: no ordinary
+        // page is named by a date, so there is no page lookup first).
         OpCounts {
-            lookups: 2,
+            lookups: 1,
             ..EXISTING
         },
         "that day again"

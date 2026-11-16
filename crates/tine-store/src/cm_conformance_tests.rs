@@ -248,7 +248,7 @@ fn compare_owner_answers(
     let least = |group: &[&PageEntry]| -> Option<String> {
         group
             .iter()
-            .min_by(|a, b| compare_page_claimants(a, b))
+            .min_by(|a, b| compare_page_claimants(&view.config.config.journals_dir, a, b))
             .map(|e| e.rel_path_str().to_owned())
     };
     let kind_name = |k: PageKind| {
@@ -650,55 +650,105 @@ fn check_frontend_cases_skipping(
     );
 }
 
+/// The Linked References link table as typed model pairs (`shared::k`): a
+/// journal node is its day's token, as the confirmed model keys a day.
+fn typed_link_pairs(
+    view: &crate::WholeGraph,
+    spec: &GraphSpec,
+    input: &Value,
+    diffs: &mut Vec<Diff>,
+) -> BTreeSet<(shared::Page, shared::Page)> {
+    let journal = spec.journal_format();
+    let snapshot = view.test_read_snapshot();
+    let Some(table) = snapshot.link_graph(&|| false) else {
+        diffs.push(Diff::new("harness: link table not built", "link table"));
+        return BTreeSet::new();
+    };
+    let mut node_page: BTreeMap<u32, shared::Page> = BTreeMap::new();
+    for s in input["literalKeys"].as_object().unwrap().keys() {
+        let pk = page_key(s);
+        for is_journal in [false, true] {
+            if let Some(n) = table.node(&pk, is_journal) {
+                if (n as usize) < table.physical() {
+                    node_page.entry(n).or_insert_with(|| {
+                        if is_journal {
+                            ("journal".to_owned(), shared::k::key(&journal, s))
+                        } else {
+                            ("page".to_owned(), pk.clone())
+                        }
+                    });
+                }
+            }
+        }
+    }
+    for (i, v) in table.virtuals().iter().enumerate() {
+        let page = match v.journal_day {
+            Some(day) => ("journal".to_owned(), shared::k::ordinal_token(day)),
+            None => ("page".to_owned(), page_key(&v.name)),
+        };
+        node_page.insert((table.physical() + i) as u32, page);
+    }
+    let total = table.physical() + table.virtuals().len();
+    let mut pairs = BTreeSet::new();
+    for n in 0..total as u32 {
+        let Some(s) = node_page.get(&n) else {
+            diffs.push(Diff::new(
+                "harness: link table node without a known key",
+                format!("link table node {n}"),
+            ));
+            continue;
+        };
+        for t in table.links(n) {
+            match node_page.get(t) {
+                Some(t) => {
+                    pairs.insert((s.clone(), t.clone()));
+                }
+                None => diffs.push(Diff::new(
+                    "harness: link table node without a known key",
+                    format!("link table node {t}"),
+                )),
+            }
+        }
+    }
+    pairs
+}
+
+/// The static comparison. It runs against the confirmed model's bridge,
+/// selected by `CM_STATIC_BRIDGE` (`shared::k`); the operation comparisons of
+/// `tine-graph-features` keep their own selection, `CM_BRIDGE`.
+///
+/// `CM_BRIDGE` naming a pre-r13 bridge, with `CM_STATIC_BRIDGE` unset, still
+/// runs the older path below: it alone writes the `frontend` cases the
+/// TypeScript conformance tests read (and runs this store's owner and
+/// namespace-parent agreement checks). No gate selects it.
 #[test]
 fn conceptual_model_conformance() {
-    let Ok(bridge) = std::env::var("CM_BRIDGE") else {
-        assert!(
-            std::env::var_os("CM_REQUIRE_BRIDGE").is_none(),
-            "the r13 gate requires CM_BRIDGE; conformance must actually run"
-        );
-        eprintln!("CM_BRIDGE unset: conceptual model conformance skipped");
-        return;
-    };
-    let bridge = Path::new(&bridge);
-    if shared::r13::is_bridge(bridge) {
-        shared::r13::store_conformance(
-            bridge,
+    if let Ok(bridge) = std::env::var("CM_STATIC_BRIDGE") {
+        shared::k::store_conformance(
+            Path::new(&bridge),
             fixture_specs(),
             env!("CARGO_MANIFEST_DIR"),
-            |view, input, model| {
-                let mut diffs = Vec::new();
-                let actual = link_pairs(view, input, &mut diffs);
-                let expected: BTreeSet<_> = model["links"]
-                    .as_array()
-                    .unwrap()
-                    .iter()
-                    .map(|edge| {
-                        (
-                            edge[0][1].as_str().unwrap().to_owned(),
-                            edge[1][1].as_str().unwrap().to_owned(),
-                        )
-                    })
-                    .collect();
-                for (source, target) in actual.symmetric_difference(&expected) {
-                    diffs.push(
-                        Diff::new(
-                            "links",
-                            format!(
-                                "link {source:?} -> {target:?}: model={}, Tine={}",
-                                expected.contains(&(source.clone(), target.clone())),
-                                actual.contains(&(source.clone(), target.clone()))
-                            ),
-                        )
-                        .at_key(source)
-                        .at_key(target),
-                    );
-                }
-                diffs
-            },
+            typed_link_pairs,
         );
         return;
     }
+    let Ok(bridge) = std::env::var("CM_BRIDGE") else {
+        assert!(
+            std::env::var_os("CM_REQUIRE_BRIDGE").is_none(),
+            "the gate requires CM_STATIC_BRIDGE (the confirmed model's bridge); conformance must actually run"
+        );
+        eprintln!("CM_STATIC_BRIDGE unset: conceptual model conformance skipped");
+        return;
+    };
+    let bridge = Path::new(&bridge);
+    let round = shared::run_bridge(bridge, &json!({}))
+        .map(|m| m["round"].clone())
+        .unwrap_or(Value::Null);
+    assert!(
+        round.is_null(),
+        "CM_BRIDGE names a {round} bridge: the static comparison runs against the confirmed \
+         model (CM_STATIC_BRIDGE); CM_BRIDGE selects only the operation tests"
+    );
     let started = Instant::now();
     let mut section = Section::default();
     let mut report = BTreeMap::new();

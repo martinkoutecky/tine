@@ -183,7 +183,7 @@
         "2026_22_10"
       ],
       "page": [
-        "page",
+        "journal",
         "2026_22_10"
       ]
     },
@@ -193,7 +193,7 @@
         "2026_22_10"
       ],
       "page": [
-        "page",
+        "journal",
         "2026_22_10"
       ]
     },
@@ -213,7 +213,7 @@
         "2026_22_10"
       ],
       "page": [
-        "page",
+        "journal",
         "2026_22_10"
       ]
     },
@@ -235,11 +235,11 @@
     },
     "2026_22_10": {
       "journal": "journals/22.10.2026.md",
-      "page": null
+      "page": "journals/22.10.2026.md"
     },
     "22.10.2026": {
       "journal": "journals/22.10.2026.md",
-      "page": null
+      "page": "journals/22.10.2026.md"
     },
     "Launch": {
       "journal": null,
@@ -247,7 +247,7 @@
     },
     "Oct 22nd, 2026": {
       "journal": "journals/22.10.2026.md",
-      "page": null
+      "page": "journals/22.10.2026.md"
     },
     "n": {
       "journal": null,

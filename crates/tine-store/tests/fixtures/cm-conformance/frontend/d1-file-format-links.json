@@ -150,7 +150,7 @@
         "oct 22nd, 2026"
       ],
       "page": [
-        "page",
+        "journal",
         "oct 22nd, 2026"
       ]
     },
@@ -160,7 +160,7 @@
         "oct 22nd, 2026"
       ],
       "page": [
-        "page",
+        "journal",
         "oct 22nd, 2026"
       ]
     },
@@ -210,7 +210,7 @@
         "oct 22nd, 2026"
       ],
       "page": [
-        "page",
+        "journal",
         "oct 22nd, 2026"
       ]
     },
@@ -258,11 +258,11 @@
   "owner": {
     "2026-10-22": {
       "journal": "journals/22-10-2026.md",
-      "page": null
+      "page": "journals/22-10-2026.md"
     },
     "22-10-2026": {
       "journal": "journals/22-10-2026.md",
-      "page": null
+      "page": "journals/22-10-2026.md"
     },
     "23-10-2026": {
       "journal": null,
@@ -282,7 +282,7 @@
     },
     "Oct 22nd, 2026": {
       "journal": "journals/22-10-2026.md",
-      "page": null
+      "page": "journals/22-10-2026.md"
     },
     "Oct 23rd, 2026": {
       "journal": null,

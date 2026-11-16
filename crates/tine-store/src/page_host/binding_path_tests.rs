@@ -427,25 +427,35 @@ fn a_held_absent_day_keeps_an_unobserved_masked_delivery_absent() {
         crate::WatchMode::Notify,
     );
     deaf(&live);
-    let (key, _) = live.open("journals/2026_10_23.md");
-    assert!(matches!(
-        live.store.graph.source(&live.root.join(&key)),
-        crate::model::Source::HeldAbsent
-    ));
+    // CM-DAYFILE: the date-named pages file holds the day, so the journals
+    // path of that day cannot be opened as a second, absent claimant (the
+    // existing Twin refusal). (Superseded: before CM step 2 the pages file
+    // was an ordinary literal page and the day's journals path opened held
+    // absent.) An unobserved delivery of that path stays unseen: the day is
+    // still the observed pages file, in every spelling.
+    let id = live.id();
+    let opened = live.host.open(
+        live.host.session(),
+        id,
+        &PageId::from("journals/2026_10_23.md"),
+        "2026_10_23",
+    );
+    assert!(
+        format!("{:?}", opened.err()).contains("pages/2026_10_23.md"),
+        "the day's file is named"
+    );
+    let key = "journals/2026_10_23.md".to_owned();
     deliver(&live, &key, b"- masked journal\n");
     for _ in 0..2 {
-        assert!(live
-            .store
-            .page_named("2026-10-23", tine_core::model::PageKind::Journal)
-            .unwrap()
-            .is_none());
-        let ordinary = live
-            .store
-            .page_named("2026_10_23", tine_core::model::PageKind::Journal)
-            .unwrap()
-            .expect("the ordinary file keeps its literal title");
-        assert_eq!(ordinary.id.as_str(), "pages/2026_10_23.md");
-        assert_eq!(ordinary.doc.blocks[0].raw, "ordinary");
+        for spelling in ["2026-10-23", "2026_10_23"] {
+            let day = live
+                .store
+                .page_named(spelling, tine_core::model::PageKind::Journal)
+                .unwrap()
+                .expect("the day's file");
+            assert_eq!(day.id.as_str(), "pages/2026_10_23.md");
+            assert_eq!(day.doc.blocks[0].raw, "ordinary");
+        }
     }
     assert_eq!(
         fs::read(live.root.join(key)).unwrap(),

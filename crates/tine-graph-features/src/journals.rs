@@ -155,7 +155,8 @@ fn load_feed_read(
 /// First-page cost O((J + D) log(J + D) + R + returned page bytes), plus indexed
 /// alias lookups for date-shaped names on completion. Loaded scroll steps seek
 /// the day index and visit bounded windows; reference-name enumeration remains
-/// O(R log D). J is journal files, R reference names, D referenced dates.
+/// O(R log D). J is journal files plus the days files outside the journals
+/// directory hold (`Store::journal_days`), R reference names, D referenced dates.
 /// No reference-content scan or graph file write.
 /// Before a name index exists, active selection also discovers ordinary
 /// preambles once per invalidation (O(P)); it does not wait for graph parsing.
@@ -642,6 +643,15 @@ fn feed_days_through(store: &Store, cutoff: Day) -> io::Result<(Vec<(Day, PageId
             }
         }
     }
+    // A day only a file outside the journals directory holds (CM SPEC §2.1,
+    // D-20261111-CMR14 CM-DAYFILE) is in the day index, not this listing.
+    for day in store
+        .journal_days()
+        .into_iter()
+        .filter(|day| *day <= cutoff)
+    {
+        days.entry(day).or_insert(());
+    }
     let days = days
         .into_keys()
         .rev()
@@ -996,6 +1006,7 @@ pub fn journal_conflicts(store: &Store) -> io::Result<Vec<JournalConflict>> {
             .ok()
             .flatten()
             .map(|read| read.id.as_str().to_owned());
+        let journals_dir = store.config().config.journals_dir.clone();
         journal_files.sort_by(|a, b| {
             let opens = |file: &JournalFile| opened.as_deref() == Some(file.path.as_str());
             let claimant = |file: &JournalFile| tine_core::model::PageEntry {
@@ -1005,9 +1016,9 @@ pub fn journal_conflicts(store: &Store) -> io::Result<Vec<JournalConflict>> {
                 rel_path: Some(tine_store::PageId::from(file.path.as_str())),
                 path: Default::default(),
             };
-            opens(b)
-                .cmp(&opens(a))
-                .then_with(|| tine_core::model::compare_page_claimants(&claimant(a), &claimant(b)))
+            opens(b).cmp(&opens(a)).then_with(|| {
+                tine_core::model::compare_page_claimants(&journals_dir, &claimant(a), &claimant(b))
+            })
         });
         for (i, file) in journal_files.iter_mut().enumerate() {
             file.canonical = opened.as_deref().map_or(i == 0, |path| path == file.path);

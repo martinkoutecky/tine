@@ -33,7 +33,17 @@
       "file_name_format": "yyyy_MM_dd",
       "title_format": "dd.MM.yyyy"
     },
-    "resolve": [],
+    "resolve": [
+      {
+        "kind": "page",
+        "name": "26.10.2026",
+        "target": {
+          "id": "journals/2026_10_26.md",
+          "kind": "existing",
+          "others": []
+        }
+      }
+    ],
     "v": 1
   },
   "backlinks": {

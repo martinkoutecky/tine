@@ -153,7 +153,7 @@ impl Graph {
                 Ok(content) => content,
                 Err(error) if error.kind() == io::ErrorKind::NotFound => continue,
                 Err(error) => {
-                    if entry.kind == PageKind::Page {
+                    if !path.starts_with(&journals) {
                         let failure = io::Error::new(error.kind(), error.to_string());
                         pass.discovery
                             .push((crate::FileId::from(rel.clone()), failure.into()));
@@ -168,11 +168,9 @@ impl Graph {
                     continue;
                 }
             };
-            match self.name_from(&entry, &read) {
-                Ok(name) => entry.name = name,
-                Err(error) => pass
-                    .discovery
-                    .push((crate::FileId::from(rel.clone()), error.into())),
+            if let Err(error) = self.name_from(&mut entry, &read) {
+                pass.discovery
+                    .push((crate::FileId::from(rel.clone()), error.into()));
             }
             pass.named.push(entry.clone());
             let parsed = isolate_page_parse(entry, |entry| Some(parse_page_content(entry, &read)));

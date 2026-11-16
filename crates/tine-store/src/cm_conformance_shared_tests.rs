@@ -17,6 +17,8 @@
 //! store harness asserts the copy equals the original on every file it sees.
 #![allow(dead_code)]
 
+#[path = "cm_conformance_k_shared_tests.rs"]
+pub mod k;
 #[path = "cm_conformance_native_shared_tests.rs"]
 pub mod native;
 #[path = "cm_conformance_r13_shared_tests.rs"]
@@ -1173,7 +1175,9 @@ impl<'a> Ctx<'a> {
     }
 
     pub fn key(&self, s: &str) -> String {
-        if self.model["round"] == "r13" {
+        if self.model["round"] == "k" {
+            k::key(&self.journal, s)
+        } else if self.model["round"] == "r13" {
             page_key(s)
         } else {
             fold(&self.journal, s)

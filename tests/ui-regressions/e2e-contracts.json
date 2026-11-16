@@ -1050,6 +1050,24 @@
       ],
       "stability": "stable"
     },
+    "scripts/e2e-cm-day-files.mjs": {
+      "contracts": [
+        {
+          "class": "exact-safety-interoperability",
+          "userOutcome": "With journals/2026_11_02.md and the date-named page file pages/2026-11-02.md for one day, opening Nov 2nd, 2026 shows the journals file; the conflict overview lists the day with both files, the journals file first as the opening file; nothing is moved, merged or rewritten; after the journals file is deleted outside Tine, the day opens pages/2026-11-02.md where it lies and no journals file is created.",
+          "blocking": true,
+          "authority": "CM-DAYFILE (D-20261111-CMR14) and CM-ORDER (D-20261110-CM), Martin"
+        }
+      ],
+      "acceptableVariations": [
+        "Overview wording, badge text and timing may vary while the day's row lists both files with the journals file first."
+      ],
+      "nonRequirements": [
+        "Windows WebView2 or macOS/mobile runtime certification from a Linux WebKitGTK run.",
+        "Exact pixels or incidental DOM nesting."
+      ],
+      "stability": "burn-in"
+    },
     "scripts/e2e-cm-query-alias.mjs": {
       "contracts": [
         {

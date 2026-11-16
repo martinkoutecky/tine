@@ -68,7 +68,9 @@ impl Graph {
             let entries = self.certify(list_graph_pages(self), None);
             // A duplicate-day journal (canonical + leftover title-named file)
             // shows once in quick-switch and All Pages: both resolve to one page.
-            let entries = Arc::new(EntryList::from(dedup_journal_days(entries.0).as_slice()));
+            let entries = Arc::new(EntryList::from(
+                dedup_journal_days(&self.current_config().journals_dir, entries.0).as_slice(),
+            ));
             let installed = self.install_name_memo(stamp, || {
                 *self.derived.page_list_cache.write().unwrap() =
                     Some((stamp.0, Arc::clone(&entries)));
@@ -88,10 +90,24 @@ impl Graph {
                 return found;
             }
             let listed = self.certify(list_graph_pages_kind(self, Some(kind)), Some(kind));
+            let journals_dir = self.current_config().journals_dir.clone();
             let mut built = FindEntryIndex::new();
-            built.entries = Arc::new(page_claimants(&listed.0));
+            built.entries = Arc::new(page_claimants(&journals_dir, &listed.0));
             built.mark_kind_loaded(kind);
             let key = claimant_key(&key);
+            let (format, journals) = (self.current_journal_format(), self.journals_path());
+            let name_format = self.current_config().file_name_format;
+            // The rows a listing of `kind` replaces: every row of that kind,
+            // except a day only a `title::` names, which a journal-kind
+            // listing does not read (`list_graph_pages_kind`) and which this
+            // generation's index already holds from a listing that did.
+            let replaced = |row: &PageEntry| {
+                kind == PageKind::Page
+                    || page_identity::journal_listing_covers(
+                        (&format, &journals, name_format),
+                        &row.path,
+                    )
+            };
             let found = self.install_name_memo(stamp, || {
                 let mut guard = self.derived.find_entry_cache.write().unwrap();
                 match guard.as_mut() {
@@ -104,10 +120,28 @@ impl Graph {
                                 .map(|(key, _)| key.clone())
                                 .collect();
                             for key in stale {
+                                let mut kept = entries.get(&key).cloned().unwrap_or_default();
                                 entries.remove(&key);
+                                kept.retain(|row| !replaced(row));
+                                if !kept.is_empty() {
+                                    entries.insert(key, kept);
+                                }
                             }
                             for (key, rows) in built.entries.iter() {
-                                entries.insert(key.clone(), rows.clone());
+                                let mut rows = rows.clone();
+                                if let Some(kept) = entries.get(key) {
+                                    let fresh: Vec<_> =
+                                        rows.iter().map(|row| row.path.clone()).collect();
+                                    rows.extend(
+                                        kept.iter()
+                                            .filter(|row| !fresh.contains(&row.path))
+                                            .cloned(),
+                                    );
+                                    rows.sort_by(|a, b| {
+                                        compare_page_claimants(&journals_dir, a, b)
+                                    });
+                                }
+                                entries.insert(key.clone(), rows);
                             }
                             index.mark_kind_loaded(kind);
                         }
@@ -128,8 +162,9 @@ impl Graph {
 
     /// A direct path read can observe a new or retitled file before the
     /// watcher. A live file missing from its bucket joins it when no other
-    /// bucket can name it: a journal (its file name is its name) or a page
-    /// file this generation's page list does not list (a new file).
+    /// bucket can name it: a journals-directory file (its file name is its
+    /// name) or another file this generation's page list does not list (a
+    /// new file).
     /// It joins only a kind the index lists completely (a missing bucket of
     /// an unlisted kind would hide the name's other claimants) and only when
     /// the entry was named from the file's bytes, not from its file name
@@ -146,7 +181,7 @@ impl Graph {
                 return;
             }
             let gen = stamp.0;
-            let unlisted = entry.kind == PageKind::Journal
+            let unlisted = entry.path.starts_with(self.journals_path())
                 || (self.derived.page_list_cache.read().unwrap().as_ref())
                     .is_some_and(|(g, list)| *g == gen && list.get_path(&entry.path).is_none());
             let mut cache = self.derived.find_entry_cache.write().unwrap();
@@ -170,7 +205,8 @@ impl Graph {
             let entries = Arc::make_mut(&mut index.entries);
             let mut bucket = entries.get(&key).cloned().unwrap_or_default();
             bucket.push(entry.clone());
-            bucket.sort_by(|a, b| compare_page_claimants(a, b));
+            bucket
+                .sort_by(|a, b| compare_page_claimants(&self.current_config().journals_dir, a, b));
             entries.insert(key, bucket);
         });
         if observed.is_none() {
@@ -189,7 +225,10 @@ impl Graph {
             Some(PageKind::Journal),
         );
         let mut index = FindEntryIndex::new();
-        index.entries = Arc::new(page_claimants(&entries.0));
+        index.entries = Arc::new(page_claimants(
+            &self.current_config().journals_dir,
+            &entries.0,
+        ));
         index.mark_kind_loaded(PageKind::Journal);
         *self.derived.find_entry_cache.write().unwrap() = Some((gen, index));
         entries.0
@@ -233,7 +272,10 @@ impl Graph {
             Some((_, entries)) => entries,
             None => self.certify(list_graph_pages(self), None),
         };
-        let claimants = Arc::new(page_claimants(&entries.0));
+        let claimants = Arc::new(page_claimants(
+            &self.current_config().journals_dir,
+            &entries.0,
+        ));
         *self.derived.find_entry_cache.write().unwrap() = Some((
             gen,
             FindEntryIndex {
@@ -244,7 +286,9 @@ impl Graph {
                 journals_loaded: false,
             },
         ));
-        let list = Arc::new(EntryList::from(dedup_journal_days(entries.0).as_slice()));
+        let list = Arc::new(EntryList::from(
+            dedup_journal_days(&self.current_config().journals_dir, entries.0).as_slice(),
+        ));
         *self.derived.page_list_cache.write().unwrap() = Some((gen, Arc::clone(&list)));
         (list, claimants)
     }

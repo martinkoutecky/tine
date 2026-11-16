@@ -116,7 +116,12 @@ const MAGIC: &[u8; 8] = b"TINECKPT";
 // 32 (CM B5): empty Org page drawers are native headers, and native Ctrl-Z
 // delimiter mapping changes derived ownership for unchanged graph files.
 // Older indexes rebuild; the serialized body schema is unchanged.
-pub(crate) const FORMAT: u32 = 32;
+// 33 (CM step 2 day files, D-20261111-CMR14 CM-DAYFILE): a file outside the
+// journals directory whose effective name is a date is that day's journal,
+// and claimants rank the journals directory first, so the persisted list,
+// claimants, `name_by_path` and real-name owners change for unchanged graph
+// files. The serialized body schema is unchanged; older ones rebuild.
+pub(crate) const FORMAT: u32 = 33;
 /// The lsdoc release tine-core parses with (`crates/tine-core/Cargo.toml`;
 /// `checkpoint_tests::the_parser_tag_matches_the_lsdoc_pin` keeps them equal).
 pub(crate) const PARSER: &str = "lsdoc v0.5.11";
@@ -637,7 +642,8 @@ impl ChangeFeed {
         let (evaluator, list) = self
             .graph
             .checkpoint_install(graph, (*config.config).clone())?;
-        *self.journal_ids.lock().unwrap() = journal_ids_from_entries(list.iter());
+        *self.journal_ids.lock().unwrap() =
+            journal_ids_from_entries(&config.config.journals_dir, list.iter());
         let mut state = self.state.lock().unwrap();
         state.rev += 1;
         let mut snapshot = Snapshot {

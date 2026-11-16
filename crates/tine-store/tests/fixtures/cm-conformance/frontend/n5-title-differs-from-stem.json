@@ -234,7 +234,7 @@
         "oct 27th, 2026"
       ],
       "page": [
-        "page",
+        "journal",
         "oct 27th, 2026"
       ]
     },
@@ -296,7 +296,7 @@
     },
     "Oct 27th, 2026": {
       "journal": "journals/2026_10_27.md",
-      "page": null
+      "page": "journals/2026_10_27.md"
     },
     "Org Title": {
       "journal": null,

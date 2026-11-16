@@ -168,9 +168,13 @@ fn publish_carries_nothing_of_a_private_file_that_shares_a_public_pages_name() {
     let graph = Store::open(&dir, Default::default()).unwrap().0;
     let (outdir, count) = publish_graph(&graph).unwrap();
     let out = Path::new(&outdir);
-    assert_eq!(count, 2);
-    let twin = fs::read_to_string(out.join("twin.html")).unwrap();
-    assert!(twin.contains("public sentinel"), "{twin}");
+    // CM-ORDER (D-20261110-CM; CM SPEC §2.2, "journals-directory first, then
+    // unsigned UTF-8 relative path"): `journals/Twin.md` owns `Twin`, so the
+    // losing public file contributes nothing, its `public::` included, and no
+    // Twin page is published. (Superseded: before CM step 2 the pages file
+    // owned the name and was published.)
+    assert_eq!(count, 1);
+    assert!(!out.join("twin.html").exists());
     for entry in fs::read_dir(out).unwrap() {
         let path = entry.unwrap().path();
         if path.is_file() {

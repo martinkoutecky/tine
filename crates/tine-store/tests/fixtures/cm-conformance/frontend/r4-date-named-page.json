@@ -1,6 +1,7 @@
 {
   "backlinks": {
-    "2026-10-26": [
+    "Notes": [],
+    "Oct 26th, 2026": [
       {
         "blocks": [
           {
@@ -14,8 +15,7 @@
         "kind": "page",
         "page": "Notes"
       }
-    ],
-    "Notes": []
+    ]
   },
   "conflicts": [],
   "counts": [
@@ -35,21 +35,21 @@
     {
       "day": null,
       "is_journal": false,
-      "key": "2026-10-26",
-      "name": "2026-10-26",
+      "key": "notes",
+      "name": "Notes",
       "target": {
-        "id": "pages/2026-10-26.md",
+        "id": "pages/Notes.md",
         "kind": "existing",
         "others": []
       }
     },
     {
-      "day": null,
-      "is_journal": false,
-      "key": "notes",
-      "name": "Notes",
+      "day": 20261026,
+      "is_journal": true,
+      "key": "oct 26th, 2026",
+      "name": "Oct 26th, 2026",
       "target": {
-        "id": "pages/Notes.md",
+        "id": "pages/2026-10-26.md",
         "kind": "existing",
         "others": []
       }
@@ -58,19 +58,19 @@
   "journalFileFormat": null,
   "journalTitleFormat": null,
   "keyOf": {
-    "2026-10-26": "oct 26th, 2026",
-    "Notes": "notes"
+    "Notes": "notes",
+    "Oct 26th, 2026": "oct 26th, 2026"
   },
   "namespaceNodes": [],
   "namespaceTree": [],
   "open": {
     "2026-10-26": {
       "journal": [
-        "page",
+        "journal",
         "oct 26th, 2026"
       ],
       "page": [
-        "page",
+        "journal",
         "oct 26th, 2026"
       ]
     },
@@ -83,6 +83,16 @@
         "page",
         "notes"
       ]
+    },
+    "Oct 26th, 2026": {
+      "journal": [
+        "journal",
+        "oct 26th, 2026"
+      ],
+      "page": [
+        "journal",
+        "oct 26th, 2026"
+      ]
     }
   },
   "owner": {
@@ -93,6 +103,10 @@
     "Notes": {
       "journal": null,
       "page": "pages/Notes.md"
+    },
+    "Oct 26th, 2026": {
+      "journal": "pages/2026-10-26.md",
+      "page": "pages/2026-10-26.md"
     }
   },
   "pages": [
@@ -108,7 +122,7 @@
       "key": "oct 26th, 2026",
       "kind": "page",
       "linkedRefs": 1,
-      "name": "2026-10-26",
+      "name": "Oct 26th, 2026",
       "owner": "pages/2026-10-26.md",
       "parent": null
     }
@@ -116,7 +130,7 @@
   "spellings": {
     "2026-10-26": {
       "backend": [
-        "page",
+        "journal",
         "oct 26th, 2026"
       ],
       "day": [

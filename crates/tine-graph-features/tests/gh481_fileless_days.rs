@@ -179,30 +179,35 @@ fn future_references_are_upcoming_and_deleting_a_referenced_file_keeps_the_day()
     store.close();
 }
 
+/// A query-only date is no journal row. A date-named pages file is its day's
+/// journal (CM-DAYFILE, D-20261111-CMR14), shown once in the feed with its
+/// references. (Superseded: before CM step 2 `pages/2000-01-01.md` was an
+/// ordinary page and the feed was empty.)
 #[test]
-fn ordinary_date_pages_and_query_only_dates_do_not_become_journal_rows() {
+fn a_date_named_pages_file_is_a_journal_row_and_query_only_dates_are_not() {
     let _integration_guard = crate::integration_lock();
     let root = tempfile::tempdir().unwrap();
     for directory in ["pages", "journals"] {
         std::fs::create_dir(root.path().join(directory)).unwrap();
     }
-    std::fs::write(
-        root.path().join("pages/2000-01-01.md"),
-        "- ordinary date page\n",
-    )
-    .unwrap();
+    std::fs::write(root.path().join("pages/2000-01-01.md"), "- date page\n").unwrap();
     std::fs::write(
         root.path().join("pages/Plan.md"),
         "- [[2000-01-01]]\n- {{query [[2000-01-02]]}}\n",
     )
     .unwrap();
     let store = Store::open(root.path(), Default::default()).unwrap().0;
-    assert!(completed_feed(&store, 5, None).unwrap().pages.is_empty());
-    assert!(store
+    let feed = completed_feed(&store, 5, None).unwrap();
+    assert_eq!(feed.pages.len(), 1);
+    assert_eq!(feed.pages[0].doc.name, "Jan 1st, 2000");
+    assert_eq!(feed.pages[0].doc.blocks[0].raw, "date page");
+    let backlinks = store
         .whole_graph()
         .unwrap()
         .backlinks("Jan 1st, 2000")
-        .unwrap()
-        .is_empty());
+        .unwrap();
+    let blocks: usize = backlinks.iter().map(|row| row.blocks.len()).sum();
+    assert_eq!(blocks, 1, "{backlinks:?}");
+    assert!(!root.path().join("journals/2000_01_01.md").exists());
     store.close();
 }

@@ -28,8 +28,9 @@
         },
         "name": "2026-10-26",
         "target": {
-          "id": "pages/2026-10-26.md",
-          "kind": "absent"
+          "id": "journals/2026_10_26.md",
+          "kind": "existing",
+          "others": []
         }
       },
       {
@@ -42,8 +43,9 @@
         },
         "name": "2026-10-27",
         "target": {
-          "id": "pages/2026-10-27.md",
-          "kind": "absent"
+          "id": "journals/2026_10_27.md",
+          "kind": "existing",
+          "others": []
         }
       },
       {
@@ -112,6 +114,24 @@
       {
         "kind": "journal",
         "name": "2026-10-27",
+        "target": {
+          "id": "journals/2026_10_27.md",
+          "kind": "existing",
+          "others": []
+        }
+      },
+      {
+        "kind": "page",
+        "name": "Oct 26th, 2026",
+        "target": {
+          "id": "journals/2026_10_26.md",
+          "kind": "existing",
+          "others": []
+        }
+      },
+      {
+        "kind": "page",
+        "name": "Oct 27th, 2026",
         "target": {
           "id": "journals/2026_10_27.md",
           "kind": "existing",

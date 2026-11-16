@@ -122,7 +122,7 @@
         "22.10.2026"
       ],
       "page": [
-        "page",
+        "journal",
         "22.10.2026"
       ]
     },
@@ -132,7 +132,7 @@
         "22.10.2026"
       ],
       "page": [
-        "page",
+        "journal",
         "22.10.2026"
       ]
     },
@@ -142,7 +142,7 @@
         "22.10.2026"
       ],
       "page": [
-        "page",
+        "journal",
         "22.10.2026"
       ]
     },
@@ -172,7 +172,7 @@
         "22.10.2026"
       ],
       "page": [
-        "page",
+        "journal",
         "22.10.2026"
       ]
     }
@@ -180,15 +180,15 @@
   "owner": {
     "2026-10-22": {
       "journal": "journals/2026_10_22.md",
-      "page": null
+      "page": "journals/2026_10_22.md"
     },
     "2026_10_22": {
       "journal": "journals/2026_10_22.md",
-      "page": null
+      "page": "journals/2026_10_22.md"
     },
     "22.10.2026": {
       "journal": "journals/2026_10_22.md",
-      "page": null
+      "page": "journals/2026_10_22.md"
     },
     "23.10.2026": {
       "journal": null,
@@ -200,7 +200,7 @@
     },
     "Oct 22nd, 2026": {
       "journal": "journals/2026_10_22.md",
-      "page": null
+      "page": "journals/2026_10_22.md"
     }
   },
   "pages": [

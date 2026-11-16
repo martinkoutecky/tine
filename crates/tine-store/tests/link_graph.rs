@@ -51,8 +51,12 @@ fn set(names: &[&str]) -> BTreeSet<String> {
     names.iter().map(|name| page_key(name)).collect()
 }
 
+/// A date-named pages file is its day (CM-DAYFILE, D-20261111-CMR14), so its
+/// own `[[2026-10-23]]` is a self link, which is not a link, and the day is
+/// linked by Notes alone. (Superseded: before CM step 2 the file was an
+/// ordinary page linking a separate virtual day.)
 #[test]
-fn a_virtual_day_with_an_ordinary_canonical_title_has_its_own_links() {
+fn a_date_named_pages_file_is_the_day_its_links_point_to() {
     let _guard = crate::integration_lock();
     let dir = tempfile::tempdir().unwrap();
     write(
@@ -65,20 +69,16 @@ fn a_virtual_day_with_an_ordinary_canonical_title_has_its_own_links() {
     let (_store, graph) = open(dir.path());
     assert_eq!(
         pages(&graph, "@page and any(links, journal = true)"),
-        set(&["Notes", "2026_10_23"])
+        set(&["Notes"])
     );
     assert_eq!(
         pages(
             &graph,
-            "@page and journal = true and any(linked_by, name = '2026_10_23')"
+            "@page and journal = true and any(linked_by, name = 'Notes')"
         ),
         set(&["2026_10_23"])
     );
-    assert!(pages(
-        &graph,
-        "@page and journal = false and name = '2026_10_23' and any(linked_by, true)"
-    )
-    .is_empty());
+    assert!(pages(&graph, "@page and journal = false and name = '2026_10_23'").is_empty());
     assert_eq!(
         pages(
             &graph,

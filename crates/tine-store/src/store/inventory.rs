@@ -133,6 +133,8 @@ pub(crate) fn link_target_in(
             is_journal: entry.kind == PageKind::Journal,
         };
     }
+    // A date in any spelling is its day, held by journal-kind files in any
+    // directory; no ordinary file claims a date (CM SPEC §2.1).
     if fallback.day.is_some() {
         if let Some(journals) = claimed(true, tine_core::refs::page_key(&fallback.name)) {
             if let Some(entry) = owners.opening_entry(&tine_core::refs::page_key(&fallback.name)) {
@@ -140,9 +142,6 @@ pub(crate) fn link_target_in(
                     return opens(journals, true);
                 }
             }
-        }
-        if let Some(pages) = claimed(false, key.clone()) {
-            return opens(pages, false);
         }
         if let Some(owner) = owner() {
             return owner;
@@ -765,6 +764,7 @@ impl WholeGraph {
             if !name_key.starts_with(&prefix) {
                 break;
             }
+            #[cfg(feature = "test-faults")]
             crate::cost_counters::namespace_name_visit();
             names.insert(name_key.clone(), referrers.spelling.clone());
         }
@@ -772,6 +772,7 @@ impl WholeGraph {
             if !alias_key.starts_with(&prefix) {
                 break;
             }
+            #[cfg(feature = "test-faults")]
             crate::cost_counters::namespace_name_visit();
             if !names.contains_key(alias_key) {
                 if let Some(spelling) = self.graph.alias_spelling(alias_key) {
