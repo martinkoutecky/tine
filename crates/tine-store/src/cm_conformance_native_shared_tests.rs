@@ -198,7 +198,7 @@ pub fn pieces(
             *next += 1;
             refined.push(global);
             pieces.push(json!({"id": global, "text": &trace.inputs[file][at..end], "editable": p.editable,
-                "role": match p.role { Role::Opaque => "opaque", Role::AliasName => "name", Role::AliasKey => "key", Role::AliasDelimiter => "delimiter", Role::DrawerBoundary => "drawerBoundary" }}));
+                "role": match p.role { Role::Opaque => "opaque", Role::AliasName => "name", Role::AliasKey => "key", Role::AliasDelimiter => "delimiter", Role::Layout => "layout" }}));
             at = end;
         }
         ids.insert(id, refined);

@@ -1,26 +1,26 @@
-//! Ephemeral complete-text evidence (conceptual model §5.2, Alias14.Valid).
+//! Ephemeral complete-text evidence for the merge writer (model O6 and P4).
 //!
 //! A writer partitions its original files at parser-owned edit/placement
 //! boundaries, then places originals or explicit inserted syntax. `check`
-//! verifies coverage, multiplicity, scoped alias consumption and the complete
+//! verifies coverage, multiplicity, scoped consumption and the complete
 //! rendered result in O(input + output bytes + pieces). No I/O or durable state.
 use std::{
     collections::{HashMap, HashSet},
     ops::Range,
 };
-mod drawers;
-pub use drawers::SourceDrawer;
 
-/// The fixed input classifier. Alias syntax, exact duplicate rendered names
-/// and independently owned source drawer boundaries have narrow consumption
-/// rules; ordinary text is always retained.
+/// The fixed input classifier. P4 lets a merge drop only an alias member that
+/// reads as a kept one, the syntax of combined alias declarations, and bytes
+/// the parser does not report as content (layout); each has a narrow
+/// consumption rule, and ordinary text is always retained.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum Role {
     Opaque,
     AliasKey,
     AliasDelimiter,
     AliasName,
-    DrawerBoundary,
+    /// A blank line, a structural prefix or a property-drawer frame line.
+    Layout,
 }
 
 /// One disjoint interval of an original physical file.
@@ -74,10 +74,8 @@ pub struct TextTrace {
     /// Paired native link inserts around a changed semantic name. Wrappers
     /// already present in the input remain protected original pieces.
     pub wrappers: HashSet<usize>,
-    /// Native source head drawers, independently cut before assembly.
-    pub source_drawers: Vec<SourceDrawer>,
-    /// Physical output header extent; only placements wholly inside it join.
-    pub header_end: usize,
+    /// The page each alias-name piece reads as (the writer's name identity).
+    pub readings: HashMap<usize, String>,
     starts: HashMap<(usize, usize), usize>,
 }
 
@@ -260,9 +258,6 @@ impl TextTrace {
     pub fn check(&self, output: &str, m: &HashMap<usize, String>) -> Result<(), TraceError> {
         #[cfg(feature = "test-counters")]
         work::certificate_check();
-        if self.header_end > output.len() {
-            return Err(TraceError::Partition);
-        }
         let mut offsets = vec![0; self.inputs.len()];
         for p in &self.pieces {
             let at = offsets.get_mut(p.file).ok_or(TraceError::Partition)?;
@@ -283,24 +278,17 @@ impl TextTrace {
         }
         let mut counts = vec![0u8; self.pieces.len()];
         let mut at = 0;
-        let mut key = false;
         let mut names = HashSet::new();
-        let boundaries = self.approved_drawer_boundaries(m)?;
         for placement in &self.output {
             let text = match placement {
                 Placement::Insert(s) => s.as_str(),
                 Placement::Original(id) => {
                     let count = counts.get_mut(*id).ok_or(TraceError::Partition)?;
                     *count = count.saturating_add(1);
-                    let text = self.rendered(*id, m)?;
-                    match self.pieces[*id].role {
-                        Role::AliasKey => key |= consumable_alias_key(self.original(*id)),
-                        Role::AliasName => {
-                            names.insert(text);
-                        }
-                        _ => {}
+                    if self.pieces[*id].role == Role::AliasName {
+                        names.extend(self.readings.get(id).map(String::as_str));
                     }
-                    text
+                    self.rendered(*id, m)?
                 }
             };
             if output.get(at..at + text.len()) != Some(text) {
@@ -317,14 +305,18 @@ impl TextTrace {
             if !self.scope.contains(&p.file) {
                 return Err(TraceError::Consumption);
             }
+            // Syntax goes only where a declaration with members remains; a
+            // name only where a kept name reads as the same page.
+            let text = self.original(*id);
             let allowed = match p.role {
-                Role::AliasKey => key && consumable_alias_key(self.original(*id)),
-                Role::AliasDelimiter => {
-                    key && matches!(self.original(*id), ", " | "," | "\n" | "\r\n" | "\r")
-                }
-                Role::AliasName => names.contains(self.rendered(*id, m)?),
+                Role::AliasKey => !names.is_empty() && alias_key(text),
+                Role::AliasDelimiter => !names.is_empty() && alias_syntax(text),
+                Role::AliasName => self
+                    .readings
+                    .get(id)
+                    .is_some_and(|r| names.contains(r.as_str())),
                 Role::Opaque => false,
-                Role::DrawerBoundary => boundaries.contains(id),
+                Role::Layout => layout(text),
             };
             if !allowed {
                 return Err(TraceError::Consumption);
@@ -337,13 +329,50 @@ impl TextTrace {
     }
 }
 
-/// The frozen AL key whitelist, applied only to an independently native-owned
-/// declaration prefix. O(1), bounded tokens; this does not recognize properties.
-pub fn consumable_alias_key(s: &str) -> bool {
-    matches!(
-        s,
-        "alias:: " | "aliases:: " | "#+alias: " | "#+aliases: " | ":ALIAS: " | ":ALIASES: "
-    )
+/// The key of a parser-owned alias declaration (line start through the value
+/// start), in any case and spacing, on one line. O(bytes); this does not
+/// recognize properties, the parser did.
+pub fn alias_key(s: &str) -> bool {
+    !s.contains(['\n', '\r'])
+        && matches!(
+            s.trim().to_ascii_lowercase().as_str(),
+            "alias::" | "aliases::" | "#+alias:" | "#+aliases:" | ":alias:" | ":aliases:"
+        )
+}
+
+/// Bytes of an alias value outside its member names: separators, link and
+/// tag wrappers, spacing and the line terminator. O(bytes).
+pub fn alias_syntax(s: &str) -> bool {
+    s.chars().all(|c| {
+        c.is_whitespace()
+            || crate::refs::is_linkable_property_separator(c)
+            || matches!(c, '#' | '[' | ']')
+    })
+}
+
+/// The whitespace a blank line or an indentation may hold here: the mldoc
+/// indentation alphabet (parsers.ml:8,17), never other Unicode spaces.
+const SPACE: [char; 4] = [' ', '\t', '\u{c}', '\u{1a}'];
+
+/// A line holding only spacing and its terminator. O(bytes).
+pub fn blank(s: &str) -> bool {
+    s.trim_end_matches(['\r', '\n'])
+        .trim_matches(SPACE)
+        .is_empty()
+}
+
+/// Bytes the parser does not report as content (P4): a blank line, a
+/// structural prefix (indentation and a bullet) or a property-drawer frame
+/// line. O(bytes).
+pub fn layout(s: &str) -> bool {
+    let body = s.trim_end_matches(['\r', '\n']);
+    let t = body.trim_matches(SPACE);
+    t.is_empty()
+        || t == "-"
+        || t == "+"
+        || t.bytes().all(|b| b == b'*')
+        || crate::block_regions::is_property_drawer_marker(body, true)
+        || crate::block_regions::is_property_drawer_marker(body, false)
 }
 
 /// Process-global counts of rename text work, for downstream cost tests of a
@@ -428,12 +457,14 @@ mod tests {
         assert_eq!(t.check(&s, &changed), Err(TraceError::Substitution));
     }
 
+    /// P4: a merge drops only a member that reads as a kept one and the
+    /// syntax of a combined declaration, and only while a declaration with
+    /// members remains. `A` reads as `a` here (the writer's reading).
     #[test]
-    fn consumption_requires_scoped_native_syntax_and_an_identical_retained_name() {
+    fn consumption_requires_scoped_alias_syntax_and_a_kept_name_of_the_same_reading() {
         let mut t = TextTrace::default();
-        for _ in 0..2 {
-            t.add_input("alias:: a\n", &[], &[8, 9]).unwrap();
-        }
+        t.add_input("alias:: a\n", &[], &[8, 9]).unwrap();
+        t.add_input("Alias::  A\n", &[], &[9, 10]).unwrap();
         for (id, p) in t.pieces.iter_mut().enumerate() {
             p.role = match id % 3 {
                 0 => Role::AliasKey,
@@ -441,6 +472,8 @@ mod tests {
                 _ => Role::AliasDelimiter,
             };
         }
+        t.readings.insert(1, "a".into());
+        t.readings.insert(4, "a".into());
         t.output = (0..3).map(Placement::Original).collect();
         t.consumed = (3..6).collect();
         t.scope.insert(1);
@@ -451,14 +484,22 @@ mod tests {
             bad.check("alias:: a\n", &bad.substitution),
             Err(TraceError::Consumption)
         );
+        // No kept name: the syntax and the name have nowhere to go.
         let mut bad = t.clone();
-        bad.pieces[0].role = Role::Opaque;
+        bad.pieces[1].role = Role::Opaque;
+        assert_eq!(
+            bad.check("alias:: a\n", &bad.substitution),
+            Err(TraceError::Consumption)
+        );
+        // A name that reads as another page is never dropped.
+        let mut bad = t.clone();
+        bad.readings.insert(4, "b".into());
         assert_eq!(
             bad.check("alias:: a\n", &bad.substitution),
             Err(TraceError::Consumption)
         );
         let mut bad = t.clone();
-        bad.inputs[1] = "alias:: b\n".into();
+        bad.readings.remove(&4);
         assert_eq!(
             bad.check("alias:: a\n", &bad.substitution),
             Err(TraceError::Consumption)
@@ -469,5 +510,59 @@ mod tests {
             bad.check("alias:: a\n", &bad.substitution),
             Err(TraceError::Consumption)
         );
+        // Text that is not a declaration key or alias syntax stays.
+        for (text, cut) in [("tags:: A\n", 7), ("alias:: **A**\n", 8)] {
+            let mut bad = TextTrace::default();
+            bad.add_input("alias:: a\n", &[], &[8, 9]).unwrap();
+            bad.add_input(text, &[], &[cut]).unwrap();
+            bad.pieces[1].role = Role::AliasName;
+            bad.readings.insert(1, "a".into());
+            bad.pieces[3].role = Role::AliasKey;
+            bad.pieces[4].role = Role::AliasDelimiter;
+            bad.output = (0..3).map(Placement::Original).collect();
+            bad.consumed = vec![3, 4];
+            bad.scope.insert(1);
+            assert_eq!(
+                bad.check("alias:: a\n", &bad.substitution),
+                Err(TraceError::Consumption),
+                "{text:?}"
+            );
+        }
+    }
+
+    /// P4: blank lines, structural prefixes and drawer frames are not
+    /// content; a drawer marker is the mldoc indentation alphabet
+    /// (parsers.ml:8,17; drawer.ml:55,60) and any physical ending. A content
+    /// line marked as layout is refused.
+    #[test]
+    fn layout_consumption_is_limited_to_bytes_that_are_not_content() {
+        let consumed = |text: &str| {
+            let mut t = TextTrace::default();
+            t.add_input(text, &[], &[]).unwrap();
+            t.pieces[0].role = Role::Layout;
+            t.consumed = vec![0];
+            t.scope.insert(0);
+            t.check("", &t.substitution)
+        };
+        for indent in ["", " \t", "\u{c}", "\u{1a}"] {
+            for ending in ["\n", "\r\n", "\r", ""] {
+                for line in [":pRoPeRtIeS:", ":EnD:", "", "-", "* ", "  - "] {
+                    let text = format!("{indent}{line}{ending}");
+                    if !text.is_empty() {
+                        assert_eq!(consumed(&text), Ok(()), "{text:?}");
+                    }
+                }
+            }
+        }
+        for text in [
+            "\u{b}:END:\n",
+            "\u{a0}\n",
+            ":K: value\n",
+            "- x",
+            "title:: x\n",
+            ":END: x\n",
+        ] {
+            assert_eq!(consumed(text), Err(TraceError::Consumption), "{text:?}");
+        }
     }
 }

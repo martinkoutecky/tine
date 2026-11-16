@@ -271,7 +271,8 @@ pub struct Decl {
     pub names: Vec<String>,
     pub end: &'static str,
     pub quoted: Option<String>,
-    pub name_quotes: usize,
+    /// Each member's decoded name and, where the parser maps it, its token.
+    pub tokens: Vec<(String, Option<String>)>,
 }
 
 /// One page property as the parser reads it: generated line, key and value.
@@ -319,11 +320,13 @@ pub fn header_entries(lines: &[GenLine], org: bool) -> Vec<Entry> {
         .collect()
 }
 
-/// Which generated lines declare an alias.
+/// Which generated lines declare an alias with members (O6 unites exactly
+/// these; a memberless declaration is header text like any other).
 fn alias_lines(lines: &[GenLine], org: bool) -> Vec<bool> {
     let mut out = vec![false; lines.len()];
     for e in header_entries(lines, org) {
-        out[e.line] |= tine_core::page_header::is_alias_key(&e.key);
+        out[e.line] |= tine_core::page_header::is_alias_key(&e.key)
+            && !tine_core::property_refs::linkable_names(&e.value, org).is_empty();
     }
     out
 }
@@ -339,18 +342,16 @@ pub fn decls(lines: &[GenLine], org: bool) -> Vec<Decl> {
         .filter(|e| tine_core::page_header::is_alias_key(&e.key))
         .map(|Entry { line, value, .. }| {
             let trimmed = value.trim();
-            let mut name_quotes = 0;
-            tine_core::property_refs::for_each_linkable_member(&value, org, |_, range, plain| {
-                if let Some(range) = range.filter(|_| plain) {
-                    name_quotes += value[range].matches('"').count();
-                }
+            let mut tokens = Vec::new();
+            tine_core::property_refs::for_each_linkable_member(&value, org, |name, range, _| {
+                tokens.push((name, range.map(|r| value[r].to_owned())));
             });
             Decl {
                 names: tine_core::property_refs::linkable_names(&value, org),
                 end: lines[line].end,
                 quoted: (trimmed.len() > 1 && trimmed.starts_with('"') && trimmed.ends_with('"'))
                     .then(|| trimmed.to_owned()),
-                name_quotes,
+                tokens,
             }
         })
         .collect()
@@ -358,8 +359,12 @@ pub fn decls(lines: &[GenLine], org: bool) -> Vec<Decl> {
 
 /// What the model says the survivor must be.
 pub struct Expected {
-    /// Survivor-first union, deduplicated by exact native decoded names.
+    /// Survivor-first union, one member per reading (O6; the pool has no
+    /// journal days, so a name reads as its page key).
     pub aliases: Vec<String>,
+    /// The kept members' tokens as written (wrappers, tag marks, escapes),
+    /// with multiplicity: P4 lets a merge drop only the others.
+    pub tokens: BTreeMap<String, usize>,
     /// The selected declaration's own ending.
     pub end_own: &'static str,
 }
@@ -367,16 +372,21 @@ pub fn expected(case: &Case) -> Expected {
     let target = decls(&case.dst, case.org);
     let source = decls(&case.src, case.org);
     let mut aliases = Vec::new();
+    let mut tokens = BTreeMap::new();
     let mut seen = std::collections::HashSet::new();
     for d in target.iter().chain(&source) {
-        for name in &d.names {
-            if seen.insert(name) {
+        for (name, token) in &d.tokens {
+            if seen.insert(tine_core::refs::page_key(name)) {
                 aliases.push(name.clone());
+                if let Some(token) = token {
+                    *tokens.entry(token.clone()).or_default() += 1;
+                }
             }
         }
     }
     Expected {
         aliases,
+        tokens,
         end_own: target
             .iter()
             .chain(&source)
@@ -474,7 +484,10 @@ fn header_alias_lines<'a>(output: &'a str, org: bool) -> Vec<&'a str> {
         let body = content.trim_end_matches(['\r', '\n']);
         if tine_core::page_header::page_property_lines(body, org)
             .iter()
-            .any(|(k, _)| tine_core::page_header::is_alias_key(k))
+            .any(|(k, v)| {
+                tine_core::page_header::is_alias_key(k)
+                    && !tine_core::property_refs::linkable_names(v, org).is_empty()
+            })
         {
             found.push(*line);
         }
@@ -489,20 +502,6 @@ fn count(haystack: &str, needle: &str) -> usize {
         .match_indices(needle)
         .filter(|(at, _)| {
             !needle.ends_with('\r') || !haystack[at + needle.len()..].starts_with('\n')
-        })
-        .count()
-}
-
-/// Tag marks: a `#` opening a token. A `#` inside a plain member (`C#`, an
-/// escaped `\#`) is member text, which §5.1 deduplicates with its member.
-fn hashes(text: &str) -> usize {
-    text.match_indices('#')
-        .filter(|(at, _)| !text[at + 1..].starts_with('+'))
-        .filter(|(at, _)| {
-            text[..*at]
-                .chars()
-                .next_back()
-                .is_none_or(|c| c.is_whitespace() || c == ',')
         })
         .count()
 }
@@ -579,7 +578,7 @@ pub fn check_output(
                 let ids = trace.interval(1, start..end).unwrap();
                 if ids.len() == 1
                     && consumed.contains(&ids[0])
-                    && trace.pieces[ids[0]].role == tine_core::text_trace::Role::DrawerBoundary
+                    && trace.pieces[ids[0]].role == tine_core::text_trace::Role::Layout
                 {
                     *approved.entry(line.to_owned()).or_default() += 1;
                 }
@@ -601,26 +600,14 @@ pub fn check_output(
             fail("line-lost", format!("{needle:?} x{n}"));
         }
     }
-    // Protected syntax is never consumed (§5.2): wrappers, quotes, tag marks.
+    // O6/P4: a merge drops only members that read as a kept one and the
+    // syntax of combined declarations. Every kept member keeps its token as
+    // written; every other line is checked above.
     let input = format!("{}{}", case.dst_text(), case.src_text());
-    for w in ["[[", "]]"] {
-        if count(out, w) < count(&input, w) {
-            fail("protected-lost", format!("{w:?}"));
+    for (token, n) in &want.tokens {
+        if count(out, token) < *n {
+            fail("protected-lost", format!("{token:?} x{n}"));
         }
-    }
-    let name_quotes: usize = decls(&case.dst, org)
-        .iter()
-        .chain(&decls(&case.src, org))
-        .map(|d| d.name_quotes)
-        .sum();
-    if count(out, "\"") < count(&input, "\"") - name_quotes {
-        fail(
-            "protected-lost",
-            "quotes outside native plain member names".into(),
-        );
-    }
-    if hashes(out) < hashes(&input) {
-        fail("protected-lost", "\"#\"".into());
     }
     for d in decls(&case.dst, org).iter().chain(&decls(&case.src, org)) {
         if let Some(q) = &d.quoted {
@@ -674,6 +661,92 @@ pub fn check_output(
         }
     }
     failures
+}
+
+/// The refusal O6 names for this pair, decided from the inputs as the parser
+/// reads them: `headerChildren` (blocks under the source's header and no
+/// leftover line) or, in Org, `leftoverReference` (the quote does not read
+/// the references the leftover lines had, Tine's reader being the model's
+/// observation).
+pub fn model_refusal(case: &Case) -> Option<&'static str> {
+    let org = case.org;
+    let mut keys: std::collections::HashSet<_> = header_entries(&case.dst, org)
+        .into_iter()
+        .map(|e| e.key)
+        .collect();
+    let entries = header_entries(&case.src, org);
+    let mut leftover = false;
+    let mut hidden = false;
+    let mut drawer = false;
+    let mut quoted = String::new();
+    let mut required = std::collections::HashMap::new();
+    let refs_of =
+        |block: &tine_core::DocBlock,
+         counts: &mut std::collections::HashMap<(&'static str, String), usize>| {
+            for r in block.projection().reference_source().explicit {
+                if !matches!(r.rule, "explicit_task_marker" | "explicit_priority") {
+                    *counts
+                        .entry((r.rule, tine_core::refs::page_key(&r.name)))
+                        .or_default() += 1;
+                }
+            }
+        };
+    for (n, l) in case.src.iter().enumerate().take_while(|(_, l)| l.header) {
+        let content = l.content.trim();
+        if content.eq_ignore_ascii_case(":PROPERTIES:") || content.eq_ignore_ascii_case(":END:") {
+            drawer = content.eq_ignore_ascii_case(":PROPERTIES:");
+            continue;
+        }
+        if content.is_empty() {
+            continue;
+        }
+        let entry = entries.iter().find(|e| e.line == n);
+        let joins = entry.is_some_and(|e| {
+            if tine_core::page_header::is_alias_key(&e.key) {
+                !tine_core::property_refs::linkable_names(&e.value, org).is_empty()
+            } else {
+                e.key != "title" && keys.insert(e.key.clone())
+            }
+        });
+        if joins {
+            continue;
+        }
+        leftover = true;
+        if org {
+            let text = if drawer && entry.is_some() {
+                format!(":PROPERTIES:\n{content}\n:END:\n")
+            } else {
+                format!("{content}\n")
+            };
+            for (_, block) in tine_core::page_properties::pre_block_projections(&text, true) {
+                refs_of(&block, &mut required);
+            }
+            quoted.push_str(&format!("{content}\n"));
+        }
+    }
+    if org && leftover {
+        // The model's `leftoverUnkeepable` with Tine's reader as the
+        // observation: the quote must read the references the lines had.
+        let read =
+            tine_core::org::parse_org(&format!("* x\n*\n#+BEGIN_QUOTE\n{quoted}#+END_QUOTE\n"));
+        let mut actual = std::collections::HashMap::new();
+        if let Some(block) = read.roots.get(1) {
+            refs_of(block, &mut actual);
+        }
+        hidden = actual != required;
+    }
+    let children = case
+        .src
+        .iter()
+        .find(|l| !l.header)
+        .is_some_and(|l| l.prefix == "  - ");
+    if !leftover && children {
+        Some("HeaderChildren")
+    } else if hidden {
+        Some("HiddenOccurrence")
+    } else {
+        None
+    }
 }
 
 /// The outcome of one generated case through the real host.
@@ -798,6 +871,8 @@ pub struct Report {
     /// Refused, files unchanged, because a CR would fuse with a following
     /// LF into one CRLF (model question Q4 of RECEIPT-cm-b4-fix3).
     pub fused: usize,
+    /// Refused, files unchanged, exactly where O6 refuses (`model_refusal`).
+    pub model_refused: usize,
     /// Native extraction tripwires with their witnesses.
     pub reported: BTreeMap<&'static str, (usize, String)>,
     pub classes: BTreeMap<String, (usize, String)>,
@@ -807,18 +882,27 @@ pub fn report(cases: &[Case]) -> Report {
     let mut r = Report {
         merged: 0,
         fused: 0,
+        model_refused: 0,
         reported: BTreeMap::new(),
         classes: BTreeMap::new(),
     };
     for case in cases {
         let outcome = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| run(case)));
+        let refusal = model_refusal(case);
         let failures = match outcome {
+            Ok(Run::Merged { .. }) if refusal.is_some() => {
+                vec![("model-refuses", refusal.unwrap().to_owned())]
+            }
             Ok(Run::Merged { failures, .. }) => {
                 r.merged += 1;
                 failures
             }
             Ok(Run::Refused(e)) if e == "merge realization: FusedLineEnding" => {
                 r.fused += 1;
+                Vec::new()
+            }
+            Ok(Run::Refused(e)) if refusal.is_some_and(|reason| e.ends_with(reason)) => {
+                r.model_refused += 1;
                 Vec::new()
             }
             Ok(Run::Refused(e)) => vec![("refused", e)],
@@ -865,8 +949,8 @@ pub fn report(cases: &[Case]) -> Report {
 
 fn assert_clean(r: &Report, total: usize) {
     eprintln!(
-        "generated merges: {total} cases, {} merged, {} fused-ending refusals (Q4, files unchanged)",
-        r.merged, r.fused
+        "generated merges: {total} cases, {} merged, {} fused-ending refusals (Q4, files unchanged), {} O6 refusals (files unchanged)",
+        r.merged, r.fused, r.model_refused
     );
     for (group, (n, witness)) in &r.reported {
         eprintln!("  reported {group}: {n}\n    {witness}");

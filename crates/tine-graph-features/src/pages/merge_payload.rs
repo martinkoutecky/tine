@@ -1,12 +1,13 @@
-//! Physical merge realization (SPEC §5.1–5.2). Extends the reference span
-//! writer rather than serializing either body's DTO. O(changed file bytes),
-//! no I/O; the caller queues the checked bytes through PagePlan's guarded step.
+//! Physical merge realization: the survivor file the model's merge rule O6
+//! describes (`cm-cut-model-r6.md`). Extends the reference span writer rather
+//! than serializing either body's DTO. O(changed file bytes), no I/O; the
+//! caller queues the checked bytes through PagePlan's guarded step.
 use std::{
     collections::{HashMap, HashSet},
     ops::Range,
 };
 use tine_core::{
-    model::{BlockDto, Format, PageDto},
+    model::{Format, PageDto},
     refs,
     text_trace::{Placement, Role, TextTrace, TraceError},
 };
@@ -33,26 +34,25 @@ pub struct MergeProposal {
     pub rewritten: HashSet<(String, String)>,
 }
 
-/// A candidate whose bytes cannot realize the specified merge layout.
+/// A merge refused before any write. `HeaderChildren`, `HiddenOccurrence`
+/// (`leftoverReference`) and `SurvivorIdentity` are the model's refusals; the
+/// others are the writer's checks that its bytes read as O6 says.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum RealizationError {
     Trace(TraceError),
     BodyLaw,
+    HeaderChildren,
     HiddenOccurrence,
-    AddedOccurrence,
     SurvivorIdentity,
     AliasField,
     DirectiveEscape,
     FusedLineEnding,
     MissingNativeNameRange,
-    AliasOwner,
 }
 impl std::fmt::Display for RealizationError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         if *self == Self::MissingNativeNameRange {
             f.write_str("F-LINK")
-        } else if *self == Self::AliasOwner {
-            f.write_str("Q-OWNER")
         } else {
             write!(f, "merge realization: {self:?}")
         }
@@ -98,19 +98,29 @@ fn drawer_step() {
 struct Line {
     range: Range<usize>,
     content: Range<usize>,
+    /// The key as the reader compares keys, after the name map (O6 compares
+    /// keys after O1/O7), and the value.
     property: Option<(String, String)>,
+    /// The property key's bytes.
+    key: Range<usize>,
     /// The Org head drawer (index into `Header::drawers`) holding this line.
     drawer: Option<usize>,
     alias: Option<Alias>,
 }
+/// One alias declaration as the parser reads it. Its bytes are the key
+/// (line content start through the parser's value start), the member tokens
+/// (each holding its decoded name's bytes) and the syntax between them.
 struct Alias {
-    key: Option<Range<usize>>,
+    value: usize,
     names: Vec<(String, Range<usize>)>,
     tokens: Vec<Range<usize>>,
-    syntax: Vec<Range<usize>>,
-    plain: bool,
     movable: bool,
-    selection: Vec<(bool, bool)>,
+    /// Per member: kept (the first that reads as its name), else dropped.
+    kept: Vec<bool>,
+}
+/// An alias declaration with members (O6 unites exactly these).
+fn members(line: &Line) -> bool {
+    line.alias.as_ref().is_some_and(|a| !a.names.is_empty())
 }
 struct Header {
     end: usize,
@@ -202,17 +212,12 @@ impl Header {
                 };
                 let alias = found
                     .filter(|p| tine_core::page_header::is_alias_key(&p.key))
-                    .map(|p| {
-                        Alias::read(
-                            text,
-                            content.clone(),
-                            bytes(&p.key_range),
-                            bytes(&p.value_range),
-                            org,
-                        )
-                    });
+                    .map(|p| Alias::read(text, content.clone(), bytes(&p.value_range), org));
                 Line {
-                    property: found.map(|p| (p.key.to_ascii_lowercase(), p.value.clone())),
+                    // Keys as the reader compares them (`DocBlock::property`).
+                    property: found
+                        .map(|p| (tine_core::doc::property_key_norm(&p.key), p.value.clone())),
+                    key: found.map_or(0..0, |p| bytes(&p.key_range)),
                     drawer: {
                         while boxes.get(cursor).is_some_and(|&(_, close)| close < at) {
                             drawer_step();
@@ -277,16 +282,12 @@ impl Header {
         for l in &self.lines {
             cuts.extend([l.range.start, l.content.start, l.content.end]);
             if let Some(a) = &l.alias {
-                // The field writer copies or replaces the line's terminator.
                 let raw = &text[l.content.clone()];
-                cuts.push(l.content.end - tine_core::doc::line_terminator(raw).len());
-                for r in a
-                    .key
-                    .iter()
-                    .chain(a.names.iter().map(|(_, r)| r))
-                    .chain(&a.tokens)
-                    .chain(&a.syntax)
-                {
+                cuts.extend([
+                    a.value,
+                    l.content.end - tine_core::doc::line_terminator(raw).len(),
+                ]);
+                for r in a.names.iter().map(|(_, r)| r).chain(&a.tokens) {
                     cuts.extend([r.start, r.end]);
                 }
             }
@@ -296,81 +297,50 @@ impl Header {
 }
 
 impl Alias {
-    /// `key` and `value` are the parser's byte ranges of this declaration.
-    fn read(
-        text: &str,
-        range: Range<usize>,
-        key: Range<usize>,
-        value: Range<usize>,
-        org: bool,
-    ) -> Self {
+    /// `range` is the line's content and `value` the parser's value range.
+    fn read(text: &str, range: Range<usize>, value: Range<usize>, org: bool) -> Self {
         let raw = &text[range.clone()];
         let body = &raw[..raw.len() - tine_core::doc::line_terminator(raw).len()];
         let value_start = value.start - range.start;
-        let value = &text[value];
-        // The parser decides what the declaration and its key are. The model's
-        // narrow syntax (§5.2) decides only whether the bytes from the line
-        // start through the key's separator are a consumable native key.
-        let key_end = key.end + if org { 2 } else { 3 };
-        let key = text
-            .get(range.start..key_end)
-            .filter(|prefix| tine_core::text_trace::consumable_alias_key(prefix))
-            .map(|_| range.start..key_end);
-        let mut at = key.as_ref().map_or(value_start, |r| r.end - range.start);
+        let mut at = value_start;
         let mut names = Vec::new();
         let mut tokens = Vec::new();
-        let mut syntax = Vec::new();
-        let mut plain = key.is_some();
         let mut movable = true;
         // Reader-owned member parsing; never split a bracketed comma again.
         // A plain member's bytes are the parser's (escapes included); the
-        // decoded name travels beside them for the reader comparison.
-        tine_core::property_refs::for_each_linkable_member(value, org, |name, token, bare| {
-            let token = token.map(|r| value_start + r.start..value_start + r.end);
-            let found = if bare {
-                token
-                    .clone()
-                    .filter(|r| at <= r.start && r.end <= body.len())
-            } else {
-                body[at..].find(&name).map(|o| at + o..at + o + name.len())
-            };
-            let Some(Range { start, end }) = found else {
-                plain = false;
-                movable = false;
-                return;
-            };
-            let token = token
-                .filter(|r| {
-                    at <= r.start && r.start <= start && end <= r.end && r.end <= body.len()
-                })
-                .unwrap_or(start..end);
-            plain &= token == (start..end);
-            if token.start > at {
-                let gap = at..token.start;
-                if matches!(&body[gap.clone()], ", " | ",") {
-                    syntax.push(range.start + gap.start..range.start + gap.end);
+        // decoded name travels beside them for the reading comparison.
+        tine_core::property_refs::for_each_linkable_member(
+            &text[value],
+            org,
+            |name, token, bare| {
+                let token = token.map(|r| value_start + r.start..value_start + r.end);
+                let found = if bare {
+                    token
+                        .clone()
+                        .filter(|r| at <= r.start && r.end <= body.len())
                 } else {
-                    plain = false;
-                }
-            }
-            names.push((name, range.start + start..range.start + end));
-            at = token.end;
-            tokens.push(range.start + token.start..range.start + token.end);
-        });
-        if at != body.len() {
-            plain = false;
-        }
-        if matches!(&raw[body.len()..], "\n" | "\r\n" | "\r") {
-            syntax.push(range.start + body.len()..range.end);
-        }
+                    body[at..].find(&name).map(|o| at + o..at + o + name.len())
+                };
+                let Some(Range { start, end }) = found else {
+                    movable = false;
+                    return;
+                };
+                let token = token
+                    .filter(|r| {
+                        at <= r.start && r.start <= start && end <= r.end && r.end <= body.len()
+                    })
+                    .unwrap_or(start..end);
+                names.push((name, range.start + start..range.start + end));
+                at = token.end;
+                tokens.push(range.start + token.start..range.start + token.end);
+            },
+        );
         Self {
-            key,
+            value: range.start + value_start,
             names,
             tokens,
-            syntax,
-            plain,
             movable,
-            selection: Vec::new(),
+            kept: Vec::new(),
         }
     }
 }
@@ -380,10 +350,6 @@ struct Writer {
     text: String,
     /// The terminator of every inserted line (see `propose`).
     eol: &'static str,
-    /// A rebuilt active field's terminator: the survivor's first alias
-    /// declaration's, else LF (the model's `mergeField`, SPEC §5.1).
-    field_end: &'static str,
-    relocate_field_end: bool,
     /// Where the text's last placement ended, when it was original bytes.
     after: Option<(usize, usize)>,
     /// A CR that ended a line was followed by an LF it did not precede
@@ -489,73 +455,74 @@ impl Writer {
             self.insert(self.eol);
         }
     }
+    fn consume(&mut self, file: usize, range: Range<usize>) -> Result<(), TraceError> {
+        let ids = self.trace.interval(file, range)?;
+        self.trace.consumed.extend(ids);
+        Ok(())
+    }
+    /// Drop bytes the parser does not report as content (P4: blank lines,
+    /// structural prefixes, drawer frames); the trace checks each one.
+    fn layout(&mut self, file: usize, range: Range<usize>) -> Result<(), TraceError> {
+        for id in self.trace.interval(file, range)? {
+            self.trace.pieces[id].role = Role::Layout;
+            self.trace.consumed.push(id);
+        }
+        Ok(())
+    }
+    /// The united alias declaration, written on the retained `line` (O6): its
+    /// key and first member as written (the first member is always kept),
+    /// each later kept member with its own delimiter (`, ` where a dropped
+    /// one stood before it), then `additions`, the kept member tokens of the
+    /// other declarations. A dropped member and its syntax are consumed.
     fn field(
         &mut self,
         file: usize,
         line: &Line,
-        additions: &[Vec<Placement>],
-        rebuild: bool,
-        org: bool,
+        additions: &[Vec<usize>],
     ) -> Result<(), TraceError> {
         let a = line.alias.as_ref().unwrap();
-        let start = line.content.start;
         let raw = &self.trace.inputs[file][line.content.clone()];
-        let ending = tine_core::doc::line_terminator(raw).len();
-        let end = line.content.end - ending;
-        if rebuild {
-            self.insert(if !org {
-                "alias:: "
-            } else if line.drawer.is_some() {
-                ":ALIAS: "
-            } else {
-                "#+alias: "
-            });
-        } else if a.plain {
-            let key = a.key.as_ref().unwrap();
-            self.original(file, start..key.end)?;
-            let mut previous = key.end;
-            for ((_, range), (first, _)) in a.names.iter().zip(&a.selection) {
-                if *first {
-                    self.original(file, previous..range.start)?;
-                    self.original(file, range.clone())?;
-                } else {
-                    self.trace
-                        .consumed
-                        .extend(self.trace.interval(file, previous..range.end)?);
-                }
-                previous = range.end;
-            }
-            self.original(file, previous..end)?;
-        } else {
-            self.original(file, start..end)?;
-        }
-        for (n, items) in additions.iter().enumerate() {
-            if n > 0 || (!rebuild && !a.names.is_empty()) {
+        let end = line.content.end - tine_core::doc::line_terminator(raw).len();
+        let mut at = line.content.start;
+        let mut previous = true;
+        for (token, &kept) in a.tokens.iter().zip(&a.kept) {
+            if kept && !previous {
                 self.insert(", ");
+                self.consume(file, at..token.start)?;
+                at = token.start;
             }
-            for p in items {
-                match p {
-                    Placement::Original(id) => self.ids([*id]),
-                    Placement::Insert(s) => self.insert(s),
-                }
-            }
-        }
-        if rebuild || self.relocate_field_end {
-            self.insert(if self.field_end.is_empty() {
-                self.eol
+            if kept {
+                self.original(file, at..token.end)?;
             } else {
-                self.field_end
-            });
-        } else {
-            self.original(file, end..line.content.end)?;
+                self.consume(file, at..token.end)?;
+            }
+            at = token.end;
+            previous = kept;
         }
-        Ok(())
+        self.original(file, at..end)?;
+        for ids in additions {
+            self.insert(", ");
+            self.ids(ids.iter().copied());
+        }
+        self.original(file, end..line.content.end)
+    }
+}
+
+/// How the reader identifies the page an alias member names: a name that
+/// parses as a journal day reads as that day, any other by its page key
+/// (the model's `Date13.target`, then `page_key`). O(name bytes).
+fn reading(name: &str, format: &refs::RenameFormat<'_>) -> String {
+    match format.days.and_then(|days| days.parse(name)) {
+        Some(day) => format!("\u{0}{}", day.ordinal_key()),
+        None => refs::page_key(name),
     }
 }
 
 /// Realize a merge from the exact bytes guarded by the caller's revisions.
 /// `links` and `queries` are the span writer's already-keyed substitutions.
-/// Failure returns no writable proposal. O(changed bytes), no graph scan/I/O.
+/// The survivor keeps its header and blocks; the source header is allocated
+/// as O6 says, in input order. Failure returns no writable proposal.
+/// O(changed bytes), no graph scan/I/O.
 pub fn propose<'f>(
     target: &PageDto,
     target_text: &str,
@@ -576,18 +543,27 @@ pub fn propose<'f>(
         .flat_map(|h| &h.lines)
         .any(|line| line.alias.as_ref().is_some_and(|a| !a.movable))
     {
+        // In scope: malformed input. A member the parser reads but whose
+        // bytes it cannot place could be lost or duplicated.
         return Err(RealizationError::MissingNativeNameRange);
     }
-    // A childless first-root header would promote on the next ordinary save.
-    // Realize it as a native preamble now; retain its old outline prefix in
-    // the same inert leftover as other protected header syntax. A header with
-    // children is already nonpromoting and keeps its body parent.
+    // A childless first-root header would promote on the next ordinary save:
+    // realize it as a native preamble now (P4: header position is free).
     let normalize_target = !org && headers[0].first_root && target.blocks[0].children.is_empty();
     let mut trace = TextTrace::default();
     let mut unrealized = Vec::new();
     let mut rewritten = HashSet::new();
+    let fmt = if org { Format::Org } else { Format::Md };
     for (file, text) in [target_text, source_text].into_iter().enumerate() {
-        let proposal = refs::rename_proposal(text, org, links, queries, format)?;
+        let mut proposal = refs::rename_proposal(text, org, links, queries, format)?;
+        // O1 maps the file's own title too (`mapAtom`/`titleParts`), through
+        // its one producer, before O6 allocates: a source title that becomes
+        // a leftover line is written as the mapped title.
+        if let Some(mapped) = tine_core::model::page_title_from_preamble(text, fmt)
+            .and_then(|title| refs::renamed_page_name(&title, links).map(|n| n.into_owned()))
+        {
+            proposal.rebind_title(org, &mapped)?;
+        }
         let edits: Vec<_> = proposal
             .trace
             .pieces
@@ -601,6 +577,17 @@ pub fn propose<'f>(
                     .map(|s| (p.range.clone(), s.clone()))
             })
             .collect();
+        // O6 compares keys after O1/O7 (`mapHeader`): a key site the map
+        // rewrites is one edit over the key's bytes (`explicit_property_key`),
+        // and the mapped key is what the parser reads from its replacement.
+        let rewritten_keys: HashMap<_, _> = edits.iter().map(|(r, s)| (r.clone(), s)).collect();
+        for line in &mut headers[file].lines {
+            if let Some((key, _)) = &mut line.property {
+                if let Some(to) = rewritten_keys.get(&line.key) {
+                    *key = tine_core::doc::property_key_norm(to);
+                }
+            }
+        }
         let start = trace.pieces.len();
         trace.add_input(text, &edits, &headers[file].cuts(text))?;
         let wrappers: HashSet<_> = proposal
@@ -613,304 +600,159 @@ pub fn propose<'f>(
             (start..trace.pieces.len()).filter(|id| wrappers.contains(&trace.pieces[*id].range)),
         );
         trace.scope.insert(file);
-        for line in &headers[file].lines {
-            if let Some(a) = &line.alias {
-                for (range, role) in a
-                    .key
-                    .iter()
-                    .map(|r| (r, Role::AliasKey))
-                    .chain(a.syntax.iter().map(|r| (r, Role::AliasDelimiter)))
-                    .chain(a.names.iter().map(|(_, r)| (r, Role::AliasName)))
-                {
-                    for id in trace.interval(file, range.clone())? {
-                        trace.pieces[id].role = role.clone();
-                    }
+        // A declaration with members: its key, names and syntax between them.
+        for line in headers[file].lines.iter().filter(|l| members(l)) {
+            let a = line.alias.as_ref().unwrap();
+            let mut names = a.names.iter().map(|(_, r)| r).peekable();
+            for id in trace.interval(file, line.content.clone())? {
+                let r = trace.pieces[id].range.clone();
+                while names.peek().is_some_and(|n| n.end <= r.start) {
+                    names.next();
                 }
+                trace.pieces[id].role = if r.end <= a.value {
+                    Role::AliasKey
+                } else if names.peek().is_some_and(|n| n.start <= r.start) {
+                    Role::AliasName
+                } else {
+                    Role::AliasDelimiter
+                };
             }
         }
         unrealized.extend(proposal.unrealized.into_iter().map(|site| (file, site)));
         rewritten.extend(proposal.rewritten);
     }
-    // The retained declaration is the first survivor alias with members,
-    // otherwise the first source one; with no members anywhere, the first
-    // declaration. A memberless value (wholly quoted, empty) cannot carry the
-    // union. Other fields become protected leftover text unless their entire
-    // line is approved native syntax/name tokens.
-    let first = |members: bool| {
-        (0..2).find_map(|file| {
-            headers[file]
-                .lines
-                .iter()
-                .position(|line| {
-                    line.alias
-                        .as_ref()
-                        .is_some_and(|a| !members || !a.names.is_empty())
-                })
-                .map(|n| (file, n))
-        })
-    };
-    let retained = first(true);
     let mut w = Writer {
         trace,
         text: String::new(),
         eol: tine_core::doc::line_convention(target_text),
         after: None,
         fused: false,
-        field_end: retained.map_or("", |(file, n)| {
-            tine_core::doc::line_terminator(
-                &[target_text, source_text][file][headers[file].lines[n].content.clone()],
-            )
-        }),
-        relocate_field_end: false,
     };
+    // O6: every alias declaration with members, of both files, becomes one,
+    // holding each member once, survivor's first; a member that reads as a
+    // kept one is dropped. It is written on the first such declaration (the
+    // survivor's when it has one); the others' kept tokens join it there.
+    let retained = (0..2).find_map(|file| {
+        headers[file]
+            .lines
+            .iter()
+            .position(members)
+            .map(|n| (file, n))
+    });
     let mut expected_aliases = Vec::new();
-    let mut seen = HashMap::new();
-    // Selection is one ordered decoded-name lookup per member. Carry each
-    // result into assembly instead of deriving the union again there.
-    let mut rebuild_retained = false;
-    let retained_target_drawer = retained
-        .filter(|(file, _)| *file == 0)
-        .and_then(|(_, n)| headers[0].lines[n].drawer);
+    let mut seen = HashSet::new();
+    let mut additions = Vec::new();
     for file in 0..2 {
         for (n, line) in headers[file].lines.iter_mut().enumerate() {
-            if let Some(a) = &mut line.alias {
-                for ((decoded, range), token) in a.names.iter().zip(&a.tokens) {
-                    let name = w.decoded(file, decoded, range.clone())?;
-                    let raw = w.value(file, range.clone())?;
-                    let (first, identical) = match seen.entry(name.clone()) {
-                        std::collections::hash_map::Entry::Vacant(entry) => {
-                            entry.insert(raw);
-                            expected_aliases.push(name);
-                            (true, false)
-                        }
-                        std::collections::hash_map::Entry::Occupied(entry) => {
-                            (false, *entry.get() == raw)
-                        }
-                    };
-                    // A first original in another fixed target frame cannot
-                    // supply the selected field without leaving its owner.
-                    if first
-                        && file == 0
-                        && line.drawer.is_some()
-                        && line.drawer != retained_target_drawer
-                    {
-                        return Err(RealizationError::AliasOwner);
+            let Some(a) = &mut line.alias else { continue };
+            for ((decoded, range), token) in a.names.iter().zip(&a.tokens) {
+                let name = w.decoded(file, decoded, range.clone())?;
+                let read = reading(&name, &format);
+                for id in w.trace.interval(file, range.clone())? {
+                    w.trace.readings.insert(id, read.clone());
+                }
+                let kept = seen.insert(read);
+                if kept {
+                    expected_aliases.push(name);
+                    if retained != Some((file, n)) {
+                        additions.push(w.trace.interval(file, token.clone())?);
                     }
-                    if !first && retained == Some((file, n)) && (!a.plain || !identical) {
-                        rebuild_retained = true;
+                }
+                a.kept.push(kept);
+            }
+        }
+    }
+    let relocated: HashSet<usize> = additions.iter().flatten().copied().collect();
+    for file in 0..2 {
+        for (n, line) in headers[file].lines.iter().enumerate() {
+            if members(line) && retained != Some((file, n)) {
+                for id in w.trace.interval(file, line.content.clone())? {
+                    if !relocated.contains(&id) {
+                        w.trace.consumed.push(id);
                     }
-                    w.relocate_field_end |= first
-                        && file == 0
-                        && retained != Some((file, n))
-                        && retained_target_drawer.is_some()
-                        && line.drawer == retained_target_drawer;
-                    a.selection.push((first, identical && token == range));
                 }
             }
         }
     }
-    w.relocate_field_end &= !rebuild_retained && !w.field_end.is_empty();
-    let mut moved = Vec::<(usize, Range<usize>)>::new();
-    if normalize_target {
-        for line in &headers[0].lines {
-            if line
-                .property
-                .as_ref()
-                .is_some_and(|(key, _)| key == "title")
-            {
-                moved.push((0, line.range.clone()));
-            }
+    // A combined declaration's bytes outside its kept members must be alias
+    // syntax. In scope: malformed input (other text inside an alias value,
+    // `alias:: a **b**`), which dropping the syntax would lose.
+    if w.trace.consumed.iter().any(|&id| {
+        let text = w.trace.original(id);
+        match w.trace.pieces[id].role {
+            Role::AliasKey => !tine_core::text_trace::alias_key(text),
+            Role::AliasDelimiter => !tine_core::text_trace::alias_syntax(text),
+            _ => false,
         }
+    }) {
+        return Err(RealizationError::MissingNativeNameRange);
     }
-    let mut promoted = Vec::new();
+    // O6, the other source header entries in order: a property whose key
+    // (as the reader compares keys) neither the survivor nor an earlier
+    // joined entry has joins; a title, a clashing or repeated property and
+    // other header text are leftover lines. Blank lines, drawer frames and
+    // structural prefixes are not content (P4).
     let mut keys: HashSet<_> = headers[0]
         .lines
         .iter()
         .filter_map(|l| l.property.as_ref().map(|p| p.0.clone()))
         .collect();
-    // A nonclashing source property joins the target header; a clashing one,
-    // a title and unknown text become leftover text (SPEC §5.1).
-    let joins: Vec<_> = headers[1]
-        .lines
-        .iter()
-        .map(|line| {
-            line.alias.is_none()
-                && line
-                    .property
-                    .as_ref()
-                    .is_some_and(|(key, _)| key != "title" && keys.insert(key.clone()))
-        })
-        .collect();
+    let mut joined = Vec::new();
+    let mut leftover_lines = Vec::new();
+    for (n, line) in headers[1].lines.iter().enumerate() {
+        let content = &source_text[line.content.clone()];
+        let frame = tine_core::text_trace::blank(content) || headers[1].delimiter(n);
+        if members(line) {
+            if retained == Some((1, n)) {
+                joined.push(n);
+            }
+        } else if frame {
+        } else if line.alias.is_none()
+            && line
+                .property
+                .as_ref()
+                .is_some_and(|(key, _)| key != "title" && keys.insert(key.clone()))
+        {
+            joined.push(n);
+        } else {
+            leftover_lines.push(n);
+        }
+        w.layout(
+            1,
+            if frame && !members(line) {
+                line.range.clone()
+            } else {
+                line.range.start..line.content.start
+            },
+        )?;
+    }
+    let leftover = !leftover_lines.is_empty();
+    let source_header_children = if headers[1].first_root {
+        source.blocks[0].children.as_slice()
+    } else {
+        &[]
+    };
+    if !leftover && !source_header_children.is_empty() {
+        // O6 refusal `headerChildren`: blocks under the source's header hang
+        // under the leftover block, and with no leftover lines there is none.
+        return Err(RealizationError::HeaderChildren);
+    }
     // Joining drawer entries go into one head drawer: the target's last, else
-    // the first source drawer holding one, placed first. One drawer reads the
-    // same in Logseq (mldoc folds a drawer and the directives after it into
-    // one; a directive before a drawer hides it) and in Tine for every line
-    // ending. Other source drawer delimiters are leftover text.
-    let boxed: Vec<_> = (0..headers[1].lines.len())
-        .filter(|&n| headers[1].lines[n].drawer.is_some() && (joins[n] || retained == Some((1, n))))
+    // a new one placed first. One drawer reads the same in Logseq (mldoc
+    // folds a drawer and the directives after it into one; a directive before
+    // a drawer hides it) and in Tine for every line ending.
+    let boxed: Vec<_> = joined
+        .iter()
+        .copied()
+        .filter(|&n| headers[1].lines[n].drawer.is_some())
+        .collect();
+    let promoted: Vec<_> = joined
+        .iter()
+        .copied()
+        .filter(|&n| headers[1].lines[n].drawer.is_none())
         .collect();
     let target_close = headers[0].drawers.last().map(|d| d.1);
-    let kept_drawer = target_close
-        .is_none()
-        .then(|| {
-            headers[1].lines.iter().enumerate().find_map(|(n, line)| {
-                line.drawer.filter(|_| {
-                    joins[n]
-                        || line
-                            .alias
-                            .as_ref()
-                            .is_some_and(|a| a.selection.iter().any(|(first, _)| *first))
-                })
-            })
-        })
-        .flatten();
-    let can_consume = retained
-        .is_some_and(|(file, n)| headers[file].lines[n].alias.as_ref().unwrap().key.is_some());
-    let mut alias_additions = Vec::new();
-    for file in 0..2 {
-        for (n, line) in headers[file].lines.iter().enumerate() {
-            if let Some(a) = &line.alias {
-                if retained.is_none() && file == 0 {
-                    continue;
-                }
-                if retained == Some((file, n)) {
-                    if file == 1 {
-                        promoted.push(n);
-                        if !rebuild_retained && line.range.start < line.content.start {
-                            moved.push((file, line.range.start..line.content.start));
-                        }
-                    }
-                    if !rebuild_retained {
-                        continue;
-                    }
-                }
-                if a.movable {
-                    if file == 1 && line.range.start < line.content.start {
-                        moved.push((file, line.range.start..line.content.start));
-                    }
-                    // A rebuilt retained field leaves its protected spacing
-                    // and duplicate wrappers with their original property owner.
-                    let mut protected_duplicate = retained == Some((file, n));
-                    let mut consumed = HashSet::new();
-                    let mut relocated = HashSet::new();
-                    for (((_, name), token), &(first, consumable)) in
-                        a.names.iter().zip(&a.tokens).zip(&a.selection)
-                    {
-                        if first {
-                            let ids = w.trace.interval(file, token.clone())?;
-                            relocated.extend(ids.iter().copied());
-                            alias_additions
-                                .push(ids.into_iter().map(Placement::Original).collect());
-                        } else if consumable {
-                            consumed.extend(w.trace.interval(file, name.clone())?);
-                        } else {
-                            // Keep its property owner too: a retained tag
-                            // member must remain a linkable-value occurrence.
-                            protected_duplicate = true;
-                        }
-                    }
-                    for id in w.trace.interval(file, line.content.clone())? {
-                        if relocated.contains(&id) {
-                            continue;
-                        }
-                        let piece = &w.trace.pieces[id];
-                        if consumed.contains(&id)
-                            || (!protected_duplicate
-                                && can_consume
-                                && matches!(piece.role, Role::AliasKey | Role::AliasDelimiter))
-                        {
-                            w.trace.consumed.push(id);
-                        } else if let Some((_, range)) = moved.last_mut().filter(|(f, r)| {
-                            *f == file
-                                && r.start >= line.content.start
-                                && r.end == piece.range.start
-                        }) {
-                            range.end = piece.range.end;
-                        } else {
-                            moved.push((file, piece.range.clone()));
-                        }
-                    }
-                } else {
-                    return Err(RealizationError::MissingNativeNameRange);
-                }
-            } else if file == 0 {
-                continue;
-            } else if joins[n] {
-                promoted.push(n);
-                if line.range.start < line.content.start {
-                    moved.push((file, line.range.start..line.content.start));
-                }
-            } else {
-                moved.push((1, line.range.clone()));
-            }
-        }
-    }
-    if w.relocate_field_end {
-        let (_, n) = retained.unwrap();
-        let line = &headers[0].lines[n];
-        // Retain the selected terminator outside the target frame so adding
-        // later original members preserves that frame's original ordering.
-        moved.push((0, line.content.end - w.field_end.len()..line.content.end));
-    }
-    // Every source frame is independently owned. Only a frame with no
-    // remaining entry fragment is redundant; target markers never enter here.
-    let mut remnants = HashSet::new();
-    let mut source_line = 0;
-    for (file, range) in &moved {
-        if *file != 1 {
-            continue;
-        }
-        while headers[1]
-            .lines
-            .get(source_line)
-            .is_some_and(|line| line.range.end <= range.start)
-        {
-            source_line += 1;
-        }
-        let first = source_line;
-        for (n, line) in headers[1].lines.iter().enumerate().skip(first) {
-            if line.range.start >= range.end {
-                break;
-            }
-            if !headers[1].delimiter(n) {
-                if let Some(drawer) = line.drawer {
-                    remnants.insert(drawer);
-                }
-            }
-        }
-    }
-    let mut discarded = HashSet::new();
-    for (d, &(open, close)) in headers[1].drawers.iter().enumerate() {
-        let opening = w.trace.interval(1, headers[1].lines[open].range.clone())?;
-        let closing = w.trace.interval(1, headers[1].lines[close].range.clone())?;
-        if opening.len() != 1 || closing.len() != 1 {
-            return Err(TraceError::Partition.into());
-        }
-        for id in [opening[0], closing[0]] {
-            w.trace.pieces[id].role = Role::DrawerBoundary;
-        }
-        w.trace
-            .source_drawers
-            .push(tine_core::text_trace::SourceDrawer {
-                org,
-                opening: opening[0],
-                closing: closing[0],
-                entries: w.trace.interval(
-                    1,
-                    headers[1].lines[open].range.end..headers[1].lines[close].range.start,
-                )?,
-            });
-        if !remnants.contains(&d) {
-            discarded.extend([
-                headers[1].lines[open].range.clone(),
-                headers[1].lines[close].range.clone(),
-            ]);
-            w.trace.consumed.extend([opening[0], closing[0]]);
-        }
-    }
-    moved.retain(|(file, range)| *file != 1 || !discarded.contains(range));
-    // When the source supplies the retained field, its own members are already
-    // present; only later source declarations extend it.
+    let new_drawer = target_close.is_none() && !boxed.is_empty();
     let header_insert = headers[0]
         .lines
         .iter()
@@ -918,23 +760,12 @@ pub fn propose<'f>(
         .map_or(0, |n| n + 1);
     // A target header's structural prefixes are positional: its j-th output
     // line takes its j-th prefix (the first is the block's bullet), whichever
-    // line's content lands there. Prefixes left over are protected leftover
-    // bytes; a preamble header has none, a normalized one keeps none.
-    let kept = |(_, line): &(usize, &Line)| {
-        !(normalize_target
-            && line
-                .property
-                .as_ref()
-                .is_some_and(|(key, _)| key == "title"))
-    };
-    let emitted = |(n, line): &(usize, &Line)| {
-        line.alias.is_none() || retained.is_none() || retained == Some((0, *n))
-    };
+    // line's content lands there. Prefixes left over are layout; a preamble
+    // header has none, a normalized one keeps none.
+    let emitted = |n: usize, line: &Line| !members(line) || retained == Some((0, n));
     let slots: Vec<_> = headers[0].lines[..header_insert]
         .iter()
-        .enumerate()
-        .filter(kept)
-        .map(|(_, line)| line.range.start..line.content.start)
+        .map(|line| line.range.start..line.content.start)
         .filter(|r| !r.is_empty())
         .collect();
     let used = if normalize_target {
@@ -943,17 +774,18 @@ pub fn propose<'f>(
         let lines = headers[0].lines[..header_insert].iter().enumerate();
         slots
             .len()
-            .min(lines.filter(kept).filter(emitted).count() + promoted.len())
+            .min(lines.filter(|(n, l)| emitted(*n, l)).count() + joined.len())
     };
-    moved.extend(slots[used..].iter().map(|r| (0, r.clone())));
+    for r in &slots[used..] {
+        w.layout(0, r.clone())?;
+    }
     let mut slots = slots[..used].iter();
-    promoted.retain(|&n| headers[1].lines[n].drawer.is_none());
     let entries = |w: &mut Writer| -> Result<(), TraceError> {
         for &n in &boxed {
             w.newline();
             let line = &headers[1].lines[n];
             if retained == Some((1, n)) {
-                w.field(1, line, &alias_additions, rebuild_retained, org)?;
+                w.field(1, line, &additions)?;
             } else {
                 w.original(1, line.content.clone())?;
             }
@@ -961,7 +793,7 @@ pub fn propose<'f>(
         Ok(())
     };
     let source_drawer = |w: &mut Writer| -> Result<(), TraceError> {
-        if kept_drawer.is_some() {
+        if new_drawer {
             w.insert(&format!(":PROPERTIES:{}", w.eol));
             entries(w)?;
             w.newline();
@@ -978,22 +810,14 @@ pub fn propose<'f>(
             entries(&mut w)?;
             w.newline();
         }
-        if normalize_target
-            && line
-                .property
-                .as_ref()
-                .is_some_and(|(key, _)| key == "title")
-        {
-            continue;
-        }
-        if retained.is_some() && line.alias.is_some() && retained != Some((0, n)) {
+        if !emitted(n, line) {
             continue;
         }
         if let Some(prefix) = slots.next() {
             w.original(0, prefix.clone())?;
         }
         if retained == Some((0, n)) {
-            w.field(0, line, &alias_additions, rebuild_retained, org)?;
+            w.field(0, line, &additions)?;
         } else {
             w.original(0, line.content.clone())?;
         }
@@ -1001,10 +825,7 @@ pub fn propose<'f>(
     if header_insert == 0 {
         source_drawer(&mut w)?;
     }
-    let has_promoted = !promoted.is_empty()
-        || !boxed.is_empty()
-        || headers[1].lines.iter().any(|l| l.alias.is_some());
-    for n in promoted {
+    for &n in &promoted {
         let line = &headers[1].lines[n];
         w.newline();
         if let Some(prefix) = slots.next() {
@@ -1013,7 +834,7 @@ pub fn propose<'f>(
             w.insert("  ");
         }
         if retained == Some((1, n)) {
-            w.field(1, line, &alias_additions, rebuild_retained, org)?;
+            w.field(1, line, &additions)?;
         } else {
             w.original(1, line.content.clone())?;
         }
@@ -1022,208 +843,34 @@ pub fn propose<'f>(
     for line in &headers[0].lines[header_insert..] {
         w.original(0, line.range.clone())?;
     }
-    w.trace.header_end = w.text.len();
     if let Some(prose) = &headers[0].prose {
         w.prose(0, prose.clone(), org)?;
     }
     w.original(0, headers[0].end..target_text.len())?;
     w.newline();
-    let leftover = !moved.is_empty() || (headers[1].properties && !headers[1].drawers.is_empty());
+    // O6's leftover block, top level after the survivor's blocks: an empty
+    // first line (Org: a headline with an empty title), then the leftover
+    // lines, in Org inside a quote, which owns them as body text (OG groups
+    // every top-level directive, even below a headline: og 6e7afa8,
+    // graph-parser/mldoc.cljc).
     let leftover_start = w.text.len();
-    let mut lines: Vec<(usize, usize, Vec<Range<usize>>)> = Vec::new();
     if leftover {
-        // OG collect-page-properties groups every top-level directive, even
-        // below a headline (og 6e7afa8, graph-parser/mldoc.cljc). A quote owns
-        // the source directives as body text rather than page properties.
-        // The leftover is laid out by original line: each moved line's
-        // fragments stay together on one line, ended by their own terminator
-        // (else an inserted one). Structural prefixes and whitespace-only
-        // fragments never start a line, where they could open a block; in
-        // Markdown they go on the title, which then never reads as a property.
-        let mut title = Vec::new();
-        let mut line_of = HashMap::new();
-        let (mut cursors, mut rewinds) = ([0; 2], [0; 2]);
-        for (file, range) in &moved {
-            let header = &headers[*file].lines;
-            let cursor = &mut cursors[*file];
-            if header
-                .get(*cursor)
-                .is_none_or(|line| range.start < line.range.start)
-            {
-                *cursor = 0;
-                rewinds[*file] += 1;
-                debug_assert!(
-                    rewinds[*file] <= 3,
-                    "moved fragments have four ordered phases"
-                );
-            }
-            while header
-                .get(*cursor)
-                .is_some_and(|line| line.range.end <= range.start)
-            {
-                *cursor += 1;
-            }
-            let first = *cursor;
-            for (n, line) in header.iter().enumerate().skip(first) {
-                if line.range.start >= range.end {
-                    break;
-                }
-                let prefix = range.start.max(line.range.start)..range.end.min(line.content.start);
-                let content = range.start.max(line.content.start)..range.end.min(line.range.end);
-                if prefix.start < prefix.end {
-                    title.push((*file, prefix));
-                }
-                if content.start < content.end {
-                    let at = *line_of.entry((*file, n)).or_insert_with(|| {
-                        lines.push((*file, n, Vec::new()));
-                        lines.len() - 1
-                    });
-                    lines[at].2.push(content);
-                }
-            }
-        }
-        // A whitespace-only remainder within one line joins the title; a
-        // blank original line that comes first ends it with its own bytes.
-        lines.retain(|(file, _, parts)| {
-            let inline = !org
-                && parts.iter().all(|r| {
-                    let t = &w.trace.inputs[*file][r.clone()];
-                    t.trim().is_empty() && tine_core::doc::line_terminator(t).is_empty()
-                });
-            if inline {
-                title.extend(parts.iter().map(|r| (*file, r.clone())));
-            }
-            !inline
-        });
-        let mut alias_remnants = Vec::new();
-        let mut quote_parts = HashMap::new();
-        for (index, (file, n, parts)) in lines.iter().enumerate() {
-            let alias = headers[*file].lines[*n]
-                .alias
-                .as_ref()
-                .filter(|_| org && headers[*file].lines[*n].drawer.is_none());
-            let Some(alias) = alias else {
-                continue;
-            };
-            let mut tokens = alias.tokens.iter().peekable();
-            let mut remainder = Vec::new();
-            let mut members = Vec::new();
-            for part in parts {
-                let mut at = part.start;
-                while tokens.peek().is_some_and(|token| token.end <= at) {
-                    tokens.next();
-                }
-                while let Some(token) = tokens.peek().filter(|token| token.start < part.end) {
-                    if token.start < at || token.end > part.end {
-                        return Err(TraceError::Partition.into());
-                    }
-                    if at < token.start {
-                        remainder.push(at..token.start);
-                    }
-                    members.push((*file, (*token).clone()));
-                    at = token.end;
-                    tokens.next();
-                }
-                if at < part.end {
-                    remainder.push(at..part.end);
-                }
-            }
-            if !members.is_empty() {
-                alias_remnants.push(members);
-                quote_parts.insert(index, remainder);
-            }
-        }
+        let eol = w.eol;
         if org {
-            let eol = w.eol;
             w.insert(&format!("*{eol}"));
-            let relocated = w.relocate_field_end;
-            let quote_only = |file, n| relocated && retained == Some((file, n));
-            // Native drawer remnants stay block properties outside quotes.
-            // Keep their original physical frames and entry-owner order.
-            let target_remnant = !alias_remnants.is_empty()
-                || lines.iter().any(|(file, n, _)| {
-                    *file == 0 && !quote_only(*file, *n) && headers[0].lines[*n].drawer.is_some()
-                });
-            if target_remnant {
-                w.insert(&format!(":PROPERTIES:{eol}"));
-            }
-            for members in &alias_remnants {
-                w.insert(":ALIAS: ");
-                for (index, (file, range)) in members.iter().enumerate() {
-                    if index > 0 {
-                        w.insert(", ");
-                    }
-                    w.original(*file, range.clone())?;
-                }
-                w.insert(eol);
-            }
-            let mut target_closed = false;
-            for (file, n, parts) in &lines {
-                if *file == 1 && target_remnant && !target_closed {
-                    w.insert(&format!(":END:{eol}"));
-                    target_closed = true;
-                }
-                if headers[*file].lines[*n].drawer.is_some() && !quote_only(*file, *n) {
-                    for range in parts {
-                        w.original(*file, range.clone())?;
-                    }
-                    w.newline();
-                }
-            }
-            if target_remnant && !target_closed {
-                w.insert(&format!(":END:{eol}"));
-            }
             w.insert(&format!("#+BEGIN_QUOTE{eol}"));
         } else {
-            let blank = lines
-                .first()
-                .is_some_and(|(file, _, parts)| {
-                    parts
-                        .iter()
-                        .all(|r| w.trace.inputs[*file][r.clone()].trim().is_empty())
-                })
-                .then_some(0);
-            w.insert(if title.is_empty() && blank.is_none() {
-                "-"
-            } else {
-                "- "
-            });
-            for (file, range) in &title {
-                w.original(*file, range.clone())?;
-            }
-            match blank.map(|at| lines.remove(at)) {
-                Some((file, _, parts)) => {
-                    for range in parts {
-                        w.original(file, range)?;
-                    }
-                }
-                None => {
-                    let eol = w.eol;
-                    w.insert(eol);
-                }
-            }
+            w.insert("-");
+            w.insert(eol);
         }
-        for (index, (file, n, original)) in lines.iter().enumerate() {
-            if org
-                && headers[*file].lines[*n].drawer.is_some()
-                && !(w.relocate_field_end && retained == Some((*file, *n)))
-            {
-                continue;
-            }
-            let parts = quote_parts.get(&index).unwrap_or(original);
+        for &n in &leftover_lines {
             if !org {
                 w.insert("  ");
             }
-            for range in parts {
-                w.original(*file, range.clone())?;
-            }
-            if tine_core::doc::line_terminator(&w.text).is_empty() {
-                let eol = w.eol;
-                w.insert(eol);
-            }
+            w.original(1, headers[1].lines[n].content.clone())?;
+            w.newline();
         }
         if org {
-            let eol = w.eol;
             w.insert(&format!("#+END_QUOTE{eol}"));
         }
     }
@@ -1238,60 +885,9 @@ pub fn propose<'f>(
         // convention-following terminator can separate the lines here.
         return Err(RealizationError::FusedLineEnding);
     }
-    if leftover
-        && headers
-            .iter()
-            .any(|h| h.lines.iter().any(|line| line.alias.is_some()))
-    {
-        // Routed name originals must still occupy actual native member name
-        // coordinates. Complete-byte retention alone cannot certify meaning.
-        let raw = tine_core::org::lone_cr_to_lf(&w.text[leftover_start..leftover_end]);
-        let native = tine_core::block_regions::parse_document(&raw, org);
-        let mut names = HashSet::new();
-        let mut missing = false;
-        for property in native
-            .properties
-            .iter()
-            .filter(|p| p.applicable && tine_core::page_header::is_alias_key(&p.key))
-        {
-            let alias = Alias::read(
-                &raw,
-                property.line.0..property.line.1,
-                property.key_range.0..property.key_range.1,
-                property.value_range.0..property.value_range.1,
-                org,
-            );
-            missing |= !alias.movable;
-            names.extend(
-                alias
-                    .names
-                    .iter()
-                    .map(|(_, range)| (leftover_start + range.start, leftover_start + range.end)),
-            );
-        }
-        if missing {
-            return Err(RealizationError::MissingNativeNameRange);
-        }
-        let mut at = 0;
-        for placement in &w.trace.output {
-            let (length, name) = match placement {
-                Placement::Insert(text) => (text.len(), false),
-                Placement::Original(id) => (
-                    w.trace
-                        .substitution
-                        .get(id)
-                        .map_or_else(|| w.trace.original(*id).len(), String::len),
-                    w.trace.pieces[*id].role == Role::AliasName,
-                ),
-            };
-            if name && at + length > w.trace.header_end && !names.contains(&(at, at + length)) {
-                return Err(RealizationError::AliasOwner);
-            }
-            at += length;
-        }
-    }
-    let fmt = if org { Format::Org } else { Format::Md };
     if org && leftover {
+        // A leftover line must stay inside its quote (a line reading
+        // `#+END_QUOTE` would end it): leftover lines are not page properties.
         let quote = tine_core::org::lone_cr_to_lf(&w.text[leftover_start..leftover_end]);
         let ast = tine_core::render::parse_text_bounded(&quote, true)
             .ok_or(RealizationError::DirectiveEscape)?;
@@ -1314,6 +910,8 @@ pub fn propose<'f>(
         .and_then(|pre| tine_core::model::page_title_from_preamble(pre, fmt))
         .is_some_and(|name| !refs::same_page(&name, &target.name))
     {
+        // The survivor keeps its name (O6, P3): a header the save would read
+        // as another title is refused, not patched.
         return Err(RealizationError::SurvivorIdentity);
     }
     let header = tine_core::page_header::page_header_text(
@@ -1324,20 +922,15 @@ pub fn propose<'f>(
         .into_iter()
         .flat_map(|h| tine_core::page_header::page_property_lines(h, org))
         .filter(|(k, _)| tine_core::page_header::is_alias_key(k))
+        .map(|(_, v)| tine_core::property_refs::linkable_names(&v, org))
+        .filter(|names| !names.is_empty())
         .collect();
-    let actual_aliases: Vec<_> = fields
-        .iter()
-        .flat_map(|(_, v)| tine_core::property_refs::linkable_names(v, org))
-        .collect();
-    if actual_aliases != expected_aliases || (!expected_aliases.is_empty() && fields.len() != 1) {
+    // P2: the survivor reads the united members, and one declaration has
+    // members.
+    if fields.concat() != expected_aliases || (!expected_aliases.is_empty() && fields.len() != 1) {
         return Err(RealizationError::AliasField);
     }
     let source_body = &source.blocks[usize::from(headers[1].first_root)..];
-    let source_header_children = if headers[1].first_root {
-        source.blocks[0].children.as_slice()
-    } else {
-        &[]
-    };
     let skip = usize::from(headers[0].first_root && !normalize_target);
     let roots = &read.roots;
     let target_prose = usize::from(headers[0].prose.is_some());
@@ -1345,7 +938,7 @@ pub fn propose<'f>(
     let target_roots = target.blocks.len() - usize::from(normalize_target) + target_prose;
     let source_start = target_roots + usize::from(leftover);
     let count = source_start + source_prose + source_body.len();
-    if roots.len() != count || (!leftover && !source_header_children.is_empty()) {
+    if roots.len() != count {
         return Err(RealizationError::BodyLaw);
     }
     let source_child_count = same_shape(
@@ -1366,71 +959,51 @@ pub fn propose<'f>(
     let source_body_count = same_shape(source_body, &roots[source_start + source_prose..])
         .ok_or(RealizationError::BodyLaw)?;
     if org && leftover {
-        // The same lines, read where they came from: as header directives.
-        // A wholly moved alias line's members are in the field instead.
-        // A line from a head drawer is read inside that drawer, as it was.
+        // O6 refusal `leftoverReference` (model `leftoverUnkeepable`): the
+        // references the leftover lines had, read where they came from (a
+        // drawer entry inside its drawer), are exactly the ones Tine reads
+        // in the quote, kind and name.
         let mut required = HashMap::new();
-        let count_refs = |block: &tine_core::DocBlock,
-                          counts: &mut HashMap<(bool, String), usize>| {
-            for r in block.projection().reference_source().explicit {
-                if matches!(r.rule, "explicit_task_marker" | "explicit_priority") {
-                    continue;
+        let count_refs =
+            |block: &tine_core::DocBlock, counts: &mut HashMap<(&'static str, String), usize>| {
+                for r in block.projection().reference_source().explicit {
+                    if matches!(r.rule, "explicit_task_marker" | "explicit_priority") {
+                        continue;
+                    }
+                    *counts.entry((r.rule, refs::page_key(&r.name))).or_default() += 1;
                 }
-                *counts
-                    .entry((r.rule == "explicit_property_key", refs::page_key(&r.name)))
-                    .or_default() += 1;
-            }
-        };
-        for (file, n, parts) in &lines {
-            let header = &headers[*file];
-            let line = &header.lines[*n];
-            if header.delimiter(*n)
-                || line.alias.is_some()
-                    && parts.iter().map(|r| r.len()).sum::<usize>() == line.content.len()
-            {
-                continue;
-            }
-            // Each retained property keeps its original native container.
-            // Concatenating unrelated directives and drawers can change what
-            // the parser reads before the output is even compared.
+            };
+        let header = &headers[1];
+        for &n in &leftover_lines {
+            let line = &header.lines[n];
             let mut original = String::new();
             let drawer = line.drawer.map(|d| header.drawers[d]);
             if let Some((open, _)) = drawer {
-                original.push_str(&w.value(*file, header.lines[open].content.clone())?);
+                original.push_str(&w.value(1, header.lines[open].content.clone())?);
             }
-            for range in parts {
-                original.push_str(&w.value(*file, range.clone())?);
-            }
+            original.push_str(&w.value(1, line.content.clone())?);
             if tine_core::doc::line_terminator(&original).is_empty() {
                 original.push('\n');
             }
             if let Some((_, close)) = drawer {
-                original.push_str(&w.value(*file, header.lines[close].content.clone())?);
+                original.push_str(&w.value(1, header.lines[close].content.clone())?);
                 if tine_core::doc::line_terminator(&original).is_empty() {
                     original.push('\n');
                 }
             }
             let original = tine_core::org::lone_cr_to_lf(&original);
+            let mut own = HashMap::new();
             for (_, block) in tine_core::page_properties::pre_block_projections(&original, true) {
-                count_refs(&block, &mut required);
+                count_refs(&block, &mut own);
+            }
+            for (site, n) in own {
+                *required.entry(site).or_default() += n;
             }
         }
         let mut actual = HashMap::new();
         count_refs(&roots[target_roots], &mut actual);
-        if required
-            .iter()
-            .any(|(site, n)| actual.get(site).copied().unwrap_or(0) < *n)
-        {
+        if required != actual {
             return Err(RealizationError::HiddenOccurrence);
-        }
-        // Leftover drawer delimiters before a directive make the reader take
-        // `#+title` for a tag (RECEIPT-cm-b4-fix4 Q7): refuse a leftover that
-        // reads a reference to a name none of its lines refers to.
-        let delimiters = lines
-            .iter()
-            .any(|(file, n, _)| headers[*file].delimiter(*n));
-        if delimiters && actual.keys().any(|site| !required.contains_key(site)) {
-            return Err(RealizationError::AddedOccurrence);
         }
     }
     let source_header = usize::from(headers[1].properties) + source_prose;
@@ -1442,6 +1015,7 @@ pub fn propose<'f>(
             Origin::Target(0)
         }
     };
+    let has_promoted = !joined.is_empty() || !additions.is_empty();
     let mut origins = Vec::new();
     for _ in 0..usize::from(read.pre_block.is_some()) + skip {
         let mut origin = Vec::new();
@@ -1459,15 +1033,8 @@ pub fn propose<'f>(
     origins.extend((0..target_body_count).map(|j| vec![Origin::Target(target_header + j)]));
     if leftover {
         let mut origin = vec![Origin::Leftover];
-        if headers[1].properties
-            && (moved.iter().any(|(file, _)| *file == 1) || !headers[1].drawers.is_empty())
-        {
+        if headers[1].properties {
             origin.push(Origin::Source(0));
-        }
-        if moved.iter().any(|(file, _)| *file == 0) {
-            if headers[0].properties {
-                origin.push(target_property_origin());
-            }
         }
         origins.push(origin);
         origins.extend((0..source_child_count).map(|j| vec![Origin::Source(source_header + j)]));
