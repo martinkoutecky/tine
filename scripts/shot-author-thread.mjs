@@ -298,6 +298,27 @@ try {
         assert.ok(near(guided[i].rowRight, thread[i].rowRight, 0.5));
       }
     });
+    // Results hits are independent: a hit the tint card joins to the hit above (author-card-continued) keeps its
+    // chip under the Guide's thread, and only a real run continuation (author-run-continued) hides it. Both the
+    // reading and the editing chip (#892 review of 8a887f3c5, F1).
+    const hitChips = await page2.evaluate(() => {
+      const host = document.querySelector(".ls-block")?.parentElement ?? document.body;
+      const probe = (classes, editing) => {
+        const block = document.createElement("div");
+        block.className = `ls-block authored author-tinted ${classes}`;
+        block.innerHTML = `<div class="block-main"><div class="block-content-wrapper"><div class="${editing ? "authored-editor" : "block-content"}"><span class="author-chip" data-author="Mira">Mira</span></div></div></div>`;
+        host.appendChild(block);
+        const shown = getComputedStyle(block.querySelector(".author-chip")).display !== "none";
+        block.remove();
+        return shown;
+      };
+      return { joined: [probe("author-card-continued", false), probe("author-card-continued", true)],
+        continued: [probe("author-card-continued author-run-continued", false), probe("author-card-continued author-run-continued", true)] };
+    });
+    await run(`${theme} guide thread results hits`, () => {
+      assert.deepEqual(hitChips.joined, [true, true], "the Guide's thread hides the chip of a results hit the tint joins to the one above");
+      assert.deepEqual(hitChips.continued, [false, false], "the Guide's thread shows the chip of a run continuation");
+    });
     await addCss(page2, guideIcon);
     const guidedIcon = await page2.evaluate(measure);
     await run(`${theme} guide icon`, () => assert.ok(guidedIcon.find(r => r.chip?.author === "Claude").chip.image.includes("data:image/svg+xml")));

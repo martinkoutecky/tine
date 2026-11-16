@@ -153,6 +153,7 @@ icon:: 🎨
     .ls-block.author-tinted.author-run-continues > .block-main > .block-content-wrapper::after { bottom: 0; }
     .ls-block.author-tinted > .block-main > .block-content-wrapper > .block-content > .author-chip,
     .ls-block.author-tinted > .block-main > .block-content-wrapper > .authored-editor > .author-chip {
+      display: inline-block;
       position: absolute;
       z-index: 1;
       inset-inline-start: calc(100% - var(--author-thread-reserve) + 10px);
