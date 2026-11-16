@@ -32,5 +32,4 @@ share-dialog-definition-failed = 导出已写入，但保存其定义失败：{ 
 share-dialog-no-page = 请先打开一个页面再分享
 share-topbar-title = 分享此页面
 share-page-title-button = 分享此页面
-share-menu-item = 分享…
 share-query-icon = 分享此查询

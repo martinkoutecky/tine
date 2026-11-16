@@ -33,5 +33,4 @@ share-dialog-definition-failed = The export was written, but saving its definiti
 share-dialog-no-page = Open a page to share it
 share-topbar-title = Share this page
 share-page-title-button = Share this page
-share-menu-item = Share…
 share-query-icon = Share this query

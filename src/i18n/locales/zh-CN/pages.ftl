@@ -28,16 +28,12 @@ pages-all-no-matches = 没有匹配的页面名称。
 
 pages-all-empty = 尚无页面。
 
-pages-all-open-full-list = 打开完整列表…
-
 pages-all-count = { $count ->
     [one] { NUMBER($count, useGrouping: 0) } 个页面
    *[other] { NUMBER($count, useGrouping: 0) } 个页面
     }
 
 pages-all-filtered-count = { NUMBER($count, useGrouping: 0) } / { NUMBER($total, useGrouping: 0) } 个页面
-
-pages-all-open-more = 还有 { NUMBER($count, useGrouping: 0) } 个，打开完整列表…
 
 config-query-title = 查询
 

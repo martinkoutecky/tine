@@ -13,8 +13,6 @@ toast-copy-failed = 无法复制该消息，请手动选择文字。
 
 toast-graph-folder-reveal-failed = 无法显示图谱文件夹：{ $error }
 
-toast-link-outside-graph = { $dest } 指向图谱文件夹外，Tine 不会打开它。
-
 toast-wsl-rootfs-warning = 此图谱位于 WSL1 rootfs 中。从 Windows 访问可能损坏 Linux 文件。请改用 \\wsl.localhost\<distro>\… 打开。
 
 toast-graph-open-owner-waiting = 正在完成命令行对此图谱的操作（{ $progress }）…

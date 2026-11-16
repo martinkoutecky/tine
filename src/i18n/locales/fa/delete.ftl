@@ -2,7 +2,6 @@ delete-failed = حذف انجام نشد: { $reason }
 delete-reason-rewrite = گراف در حال بازنویسی است. پس از پایان آن دوباره امتحان کنید.
 delete-reason-target = مقصد این صفحه تغییر کرده است؛ منوی عملیات صفحه را دوباره باز کنید.
 delete-reason-read-only = این صفحه فقط‌خواندنی است.
-delete-reason-conflict = تعارض ذخیره‌سازی این صفحه حل نشد.
 delete-reason-storage = { $reason }
 delete-reason-unsaved = «{ $name }» ذخیره نشد؛ صفحه حذف نشد.
 delete-reason-no-host = نشست ذخیره‌سازی گراف در دسترس نیست.

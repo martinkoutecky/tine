@@ -38,8 +38,6 @@ app-the-block-renderer-failed-to-load = 块渲染器加载失败，文本将以�
 
 app-finishing-graph-operation = 正在完成图谱操作…
 
-app-close = 关闭
-
 app-close-navigation-sidebar = 关闭导航侧边栏
 
 app-journals = 日记
