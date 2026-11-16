@@ -26,6 +26,7 @@ use crate::model::Format;
 use crate::query::macro_text::FormFamily;
 
 mod observe;
+pub(crate) use observe::observe_with_readings;
 pub use observe::{observe, observe_parsed};
 
 #[cfg(test)]
@@ -92,6 +93,9 @@ pub struct Site {
     pub name: String,
     pub native: String,
     pub slot: std::ops::Range<usize>,
+    /// Reader-owned nesting and rule, used only for the O7 spelling decision.
+    pub nested: bool,
+    pub rule: Option<&'static str>,
     /// For a `Query` site, the macro its token is written in, shared by every
     /// site of that macro, and where the token starts in its argument: whether
     /// a spelling is legal there depends on the whole macro (Lean
@@ -301,7 +305,10 @@ pub enum Expect<'a> {
 /// another macro's argument is unspellable with a `}` (it would end the
 /// macro); an Org file stem is the name through the graph's file-name codec.
 fn spell(rename: &Rename, site: &Site, name: &str) -> Option<String> {
-    if site.context == Context::SplitLine || (site.kind == SiteKind::MacroArg && name.contains('}'))
+    if site.nested
+        || (site.kind == SiteKind::Embed && site.slot.is_empty())
+        || site.context == Context::SplitLine
+        || (site.kind == SiteKind::MacroArg && name.contains('}'))
     {
         return None;
     }
@@ -317,22 +324,18 @@ fn spell(rename: &Rename, site: &Site, name: &str) -> Option<String> {
     };
     let tag = || crate::refs::rename::tag_spelling(name, site.native.starts_with("#[["), site.org);
     let link = || {
-        if !site.inner.is_empty() {
-            Some(replaced())
-        } else {
-            crate::refs::label::reference_spelling(
-                &site.native,
-                site.slot.clone(),
-                name,
-                site.org,
-                "explicit_link",
-            )
-            .map(|spelling| {
-                let mut out = site.native.clone();
-                out.replace_range(site.slot.clone(), &spelling);
-                out
-            })
-        }
+        crate::refs::label::reference_spelling(
+            &site.native,
+            site.slot.clone(),
+            name,
+            site.org,
+            site.rule.unwrap_or("explicit_link"),
+        )
+        .map(|spelling| {
+            let mut out = site.native.clone();
+            out.replace_range(site.slot.clone(), &spelling);
+            out
+        })
     };
     match (site.context, site.kind) {
         (Context::OrgHeadlineTag, _) => crate::refs::rename::headline_tag_ok(name).then(replaced),
@@ -376,10 +379,9 @@ fn query_token(family: FormFamily, native: &str, name: &str) -> String {
 }
 
 /// Lean `siteResult` (the site only; dispositions are reports, not P2). The
-/// sites inside `s` are mapped first, each by this rule, and `s` is then the
-/// site with their results in place (its name too, where they are written in
-/// it); that site's name is mapped like any other (review round 2: every
-/// level of a nested reference is a site).
+/// Every level follows its own parser-read name. O7 leaves a name nested
+/// inside another name, so transforming inner sites never composes a new
+/// enclosing name from the raw rename map.
 fn site_result(rename: &Rename, skip: bool, s: &Site) -> Site {
     if matches!(s.kind, SiteKind::Task | SiteKind::Priority) || skip {
         return s.clone();
@@ -415,7 +417,6 @@ fn inner_results<'s>(rename: &Rename, s: &'s Site) -> Cow<'s, Site> {
         return Cow::Borrowed(s);
     }
     let slot = &s.slot;
-    let named = s.native.get(slot.clone()) == Some(s.name.as_str());
     let (mut native, mut inner, mut at) = (String::new(), Vec::new(), 0);
     let (mut start, mut end) = (slot.start, slot.end);
     for (r, i) in &s.inner {
@@ -436,13 +437,7 @@ fn inner_results<'s>(rename: &Rename, s: &'s Site) -> Cow<'s, Site> {
         at = r.end;
     }
     native.push_str(&s.native[at..]);
-    let name = if named {
-        native[start..end].to_owned()
-    } else {
-        s.name.clone()
-    };
     Cow::Owned(Site {
-        name,
         native,
         slot: start..end,
         inner,
@@ -608,6 +603,8 @@ fn erase_site(s: &Site) -> Site {
         label: None,
         org: false,
         file_link: None,
+        nested: false,
+        rule: None,
         inner: s.inner.iter().map(|(_, i)| (0..0, erase_site(i))).collect(),
     }
 }

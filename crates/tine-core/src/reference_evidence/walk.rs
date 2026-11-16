@@ -12,6 +12,11 @@
 use lsdoc::ast::{Block, Inline, ListItem, Span, Url};
 use std::ops::Range;
 
+mod slots;
+pub use slots::NameSlot;
+#[cfg(test)]
+pub(super) use slots::SLOT_WORK;
+
 /// One parser-recognized page reference and its source span.
 #[deny(missing_docs)]
 #[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
@@ -69,7 +74,29 @@ pub struct ReferenceSourceProjection {
     pub withheld_ranges: Vec<Range<usize>>,
     /// Collected only for a rename ([`rename_targets`]); never stored.
     #[serde(skip)]
-    pub(super) rewrite_targets: Option<Vec<RewriteTarget>>,
+    pub(crate) rewrite_targets: Option<Vec<RewriteTarget>>,
+}
+
+/// A reference and its native name coordinates, requested only while rewriting
+/// or checking a file. This result is never retained in a block or checkpoint.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct SlottedPageRef {
+    /// The parser's reference identity and node extent.
+    pub reference: ProjectedPageRef,
+    /// Native spelling and enclosure evidence from the same reader pass.
+    pub slot: NameSlot,
+}
+
+impl std::ops::Deref for SlottedPageRef {
+    type Target = ProjectedPageRef;
+    fn deref(&self) -> &Self::Target {
+        &self.reference
+    }
+}
+
+struct Collector<'a> {
+    source: &'a mut ReferenceSourceProjection,
+    slots: Option<&'a mut Vec<SlottedPageRef>>,
 }
 
 /// A source span a rename rewrites although it is no page reference
@@ -83,7 +110,7 @@ pub enum RewriteTarget {
     /// `explicit_nested_link`) inside the argument of a macro other than
     /// `embed` (an embed is a reference) and the query macros (whose
     /// arguments the query parsers read): cloze, renderer, plugin macros.
-    MacroLink(ProjectedPageRef),
+    MacroLink(SlottedPageRef),
 }
 
 /// The page links of one macro's argument text, as [`RewriteTarget::MacroLink`]s.
@@ -93,9 +120,9 @@ fn collect_macro_links(
     mapper: SpanMapper,
     raw: &str,
     is_org: bool,
-    projection: &mut ReferenceSourceProjection,
+    projection: &mut Collector<'_>,
 ) {
-    let Some(targets) = projection.rewrite_targets.as_mut() else {
+    let Some(targets) = projection.source.rewrite_targets.as_mut() else {
         return;
     };
     if name.eq_ignore_ascii_case("embed") || super::is_query_macro_name(name) {
@@ -120,20 +147,20 @@ fn collect_macro_links(
         return;
     };
     let mut inner = ReferenceSourceProjection::default();
+    let mut slotted = Vec::new();
     walk_inlines(
         &nodes,
         SpanMapper::direct(range.start + start),
         raw,
         is_org,
-        &mut inner,
+        &mut Collector {
+            source: &mut inner,
+            slots: Some(&mut slotted),
+        },
     );
-    targets.extend(
-        inner
-            .explicit
-            .into_iter()
-            .filter(|r| r.rule == "explicit_link" || r.rule == "explicit_nested_link")
-            .map(RewriteTarget::MacroLink),
-    );
+    slotted.retain(|r| r.rule == "explicit_link" || r.rule == "explicit_nested_link");
+    slots::mark_nested(&mut slotted);
+    targets.extend(slotted.into_iter().map(RewriteTarget::MacroLink));
 }
 
 #[derive(Clone, Copy)]
@@ -213,7 +240,7 @@ fn flatten_inlines(inlines: &[Inline], out: &mut String) {
     }
 }
 
-use super::block_regions::{nested_reference_names as nested_names, unbracket};
+use super::block_regions::unbracket;
 
 fn link_page_name(url: &Url, label: &[Inline], is_org: bool) -> Option<String> {
     let mut text = String::new();
@@ -236,7 +263,7 @@ fn tag_name(children: &[Inline]) -> String {
 }
 
 fn push_explicit(
-    projection: &mut ReferenceSourceProjection,
+    projection: &mut Collector<'_>,
     name: String,
     span: Option<&Span>,
     mapper: SpanMapper,
@@ -250,7 +277,7 @@ fn push_explicit(
 }
 
 fn push_explicit_range(
-    projection: &mut ReferenceSourceProjection,
+    projection: &mut Collector<'_>,
     name: String,
     range: Range<usize>,
     raw_len: usize,
@@ -260,9 +287,14 @@ fn push_explicit_range(
         return;
     }
     if !name.trim().is_empty() {
-        projection
-            .explicit
-            .push(ProjectedPageRef { name, range, rule });
+        let reference = ProjectedPageRef { name, range, rule };
+        if let Some(slots) = projection.slots.as_mut() {
+            slots.push(SlottedPageRef {
+                slot: NameSlot::whole(reference.range.clone()),
+                reference: reference.clone(),
+            });
+        }
+        projection.source.explicit.push(reference);
     }
 }
 
@@ -271,7 +303,7 @@ fn walk_inlines(
     mapper: SpanMapper,
     raw: &str,
     is_org: bool,
-    projection: &mut ReferenceSourceProjection,
+    projection: &mut Collector<'_>,
 ) {
     let raw_len = raw.len();
     for inline in inlines {
@@ -283,18 +315,19 @@ fn walk_inlines(
                 // page and must not become a plain page mention either.
                 if matches!(url, Url::BlockRef { .. }) {
                     if let Some(range) = span.as_ref().and_then(|span| mapper.map(span, raw_len)) {
-                        projection.withheld_ranges.push(range);
+                        projection.source.withheld_ranges.push(range);
                     }
                 }
                 if is_org && matches!(url, Url::File { .. }) {
                     if let (Some(targets), Some(range)) = (
-                        projection.rewrite_targets.as_mut(),
+                        projection.source.rewrite_targets.as_mut(),
                         span.as_ref().and_then(|span| mapper.map(span, raw_len)),
                     ) {
                         targets.push(RewriteTarget::FileLink(range));
                     }
                 }
                 if let Some(name) = link_page_name(url, label, is_org) {
+                    let next = projection.source.explicit.len();
                     push_explicit(
                         projection,
                         name,
@@ -303,22 +336,48 @@ fn walk_inlines(
                         raw_len,
                         "explicit_link",
                     );
+                    if let Some(reference) = projection.slots.as_mut().and_then(|s| s.get_mut(next))
+                    {
+                        reference.slot = slots::link(raw, reference, url, label, mapper, is_org);
+                    }
                 }
                 walk_inlines(label, mapper, raw, is_org, projection);
             }
             Inline::NestedLink { content, span } => {
-                for name in nested_names(content) {
-                    push_explicit(
-                        projection,
-                        name,
-                        span.as_ref(),
-                        mapper,
-                        raw_len,
-                        "explicit_nested_link",
-                    );
+                if let Some(range) = span.as_ref().and_then(|s| mapper.map(s, raw_len)) {
+                    let levels = super::block_regions::nested_reference_ranges(content);
+                    if levels.is_empty() && !content.trim().is_empty() {
+                        push_explicit_range(
+                            projection,
+                            unbracket(content).to_owned(),
+                            range.clone(),
+                            raw_len,
+                            "explicit_nested_link",
+                        );
+                    }
+                    for body in levels {
+                        if content[body.clone()].trim().is_empty() {
+                            continue;
+                        }
+                        let at = range.start + body.start..range.start + body.end;
+                        push_explicit_range(
+                            projection,
+                            content[body].to_owned(),
+                            range.clone(),
+                            raw_len,
+                            "explicit_nested_link",
+                        );
+                        if let Some(reference) =
+                            projection.slots.as_mut().and_then(|s| s.last_mut())
+                        {
+                            reference.reference.range = at.start - 2..at.end + 2;
+                            reference.slot = NameSlot::whole(at);
+                        }
+                    }
                 }
             }
             Inline::Tag { children, span } => {
+                let next = projection.source.explicit.len();
                 push_explicit(
                     projection,
                     tag_name(children),
@@ -327,12 +386,31 @@ fn walk_inlines(
                     raw_len,
                     "explicit_tag",
                 );
+                if let Some(reference) = projection.slots.as_mut().and_then(|s| s.get_mut(next)) {
+                    let range = &reference.range;
+                    // A PageRef child drops its brackets when the reader
+                    // names the tag. NestedLink content retains them, and
+                    // glued text makes the complete child sequence its name.
+                    let bracketed = matches!(
+                        children.as_slice(),
+                        [Inline::Link {
+                            url: Url::PageRef { .. },
+                            ..
+                        }]
+                    );
+                    reference.slot = NameSlot::whole(if bracketed {
+                        range.start + 3..range.end - 2
+                    } else {
+                        range.start + 1..range.end
+                    });
+                }
                 walk_inlines(children, mapper, raw, is_org, projection);
             }
             Inline::Macro { name, span, .. } if name != "embed" => {
                 collect_macro_links(name, span.as_ref(), mapper, raw, is_org, projection)
             }
             Inline::Macro { name, args, span } if name == "embed" => {
+                let next = projection.source.explicit.len();
                 let value = if args.len() <= 1 {
                     args.first().cloned().unwrap_or_default()
                 } else {
@@ -346,6 +424,17 @@ fn walk_inlines(
                     raw_len,
                     "explicit_embed",
                 );
+                if let Some(reference) = projection.slots.as_mut().and_then(|s| s.get_mut(next)) {
+                    let node = &raw[reference.range.clone()];
+                    // A block embed has no page-name run. It must never be
+                    // rewritten as though its complete macro were a name.
+                    reference.slot = NameSlot::whole(reference.range.start..reference.range.start);
+                    if let (Some(open), Some(close)) = (node.find("[["), node.rfind("]]")) {
+                        reference.slot = NameSlot::whole(
+                            reference.range.start + open + 2..reference.range.start + close,
+                        );
+                    }
+                }
             }
             Inline::Emphasis { children, .. }
             | Inline::Subscript { children, .. }
@@ -364,7 +453,7 @@ fn walk_list_item(
     mapper: SpanMapper,
     raw: &str,
     is_org: bool,
-    projection: &mut ReferenceSourceProjection,
+    projection: &mut Collector<'_>,
 ) {
     walk_inlines(&item.name, mapper, raw, is_org, projection);
     walk_blocks(&item.content, mapper, raw, is_org, projection);
@@ -380,7 +469,7 @@ pub(super) fn property_key_eligible(norm: &str) -> bool {
 }
 
 fn project_property_key(
-    projection: &mut ReferenceSourceProjection,
+    projection: &mut Collector<'_>,
     key: &str,
     key_range: Range<usize>,
     raw_len: usize,
@@ -403,14 +492,15 @@ pub(super) fn quoted_linkable_value(value: &str) -> bool {
 }
 
 fn project_implicit_linkable_property(
-    projection: &mut ReferenceSourceProjection,
+    projection: &mut Collector<'_>,
     key: &str,
     value_offset: usize,
     value: &str,
-    raw_len: usize,
+    raw: &str,
     nodes: &[Inline],
     config: &super::ParseConfig,
 ) {
+    let raw_len = raw.len();
     let key = super::property_key_norm(key);
     if !super::separated_by_commas(&key, config)
         || super::reference_parsing_suppressed(&key, config)
@@ -435,6 +525,10 @@ fn project_implicit_linkable_property(
         let Some(range) = SpanMapper::direct(value_offset).map(&span, raw_len) else {
             continue;
         };
+        let mut offsets = projection
+            .slots
+            .as_ref()
+            .map(|_| slots::PlainOffsets::new(&raw[range.clone()], text));
         let mut segment_start = 0;
         for (index, separator) in text
             .char_indices()
@@ -453,7 +547,8 @@ fn project_implicit_linkable_property(
                 && !name.contains("]]")
                 && !name.starts_with('#')
             {
-                let start = range.start + segment_start + leading;
+                let from = segment_start + leading;
+                let start = range.start + from;
                 let end = start + name.len();
                 push_explicit_range(
                     projection,
@@ -462,6 +557,14 @@ fn project_implicit_linkable_property(
                     raw_len,
                     "implicit_linkable_property",
                 );
+                if let (Some(offsets), Some(slots)) = (offsets.as_mut(), projection.slots.as_mut())
+                {
+                    let start = range.start + offsets.at(from);
+                    let end = range.start + offsets.at(from + name.len());
+                    let reference = slots.last_mut().unwrap();
+                    reference.reference.range = start..end;
+                    reference.slot = NameSlot::whole(start..end);
+                }
             }
             segment_start = index + separator;
         }
@@ -482,7 +585,7 @@ fn project_headline_tags(
     span: Option<&Span>,
     mapper: SpanMapper,
     raw: &str,
-    projection: &mut ReferenceSourceProjection,
+    projection: &mut Collector<'_>,
 ) {
     if tags.is_empty() {
         return;
@@ -521,7 +624,7 @@ fn walk_blocks(
     mapper: SpanMapper,
     raw: &str,
     is_org: bool,
-    projection: &mut ReferenceSourceProjection,
+    projection: &mut Collector<'_>,
 ) {
     for block in blocks {
         match block {
@@ -568,7 +671,7 @@ fn walk_blocks(
                 span: Some(span),
             } if name.eq_ignore_ascii_case("logbook") => {
                 if let Some(range) = mapper.map(span, raw.len()) {
-                    projection.withheld_ranges.push(range);
+                    projection.source.withheld_ranges.push(range);
                 }
             }
             _ => {}
@@ -613,18 +716,24 @@ pub fn project_with_config(
     config: &super::ParseConfig,
 ) -> ReferenceSourceProjection {
     let mut projection = ReferenceSourceProjection::default();
-    project_into(&mut projection, raw, is_org, blocks, regions, config);
+    project_into(&mut projection, raw, is_org, blocks, regions, config, None);
     projection
 }
 
-pub(super) fn project_into(
+/// One evidence walk; only rename/check callers request native name slots.
+pub(crate) fn project_into(
     projection: &mut ReferenceSourceProjection,
     raw: &str,
     is_org: bool,
     blocks: &[Block],
     regions: &super::block_regions::BlockRegions,
     config: &super::ParseConfig,
+    slots: Option<&mut Vec<SlottedPageRef>>,
 ) {
+    let projection = &mut Collector {
+        source: projection,
+        slots,
+    };
     let mapper = SpanMapper::block(raw);
     walk_blocks(blocks, mapper, raw, is_org, projection);
     // OG graph-parser/block.cljs `with-page-refs` (0.10.9 and 1.0.0) concatenates
@@ -690,6 +799,7 @@ pub(super) fn project_into(
         project_property_key(projection, key, key_range.clone(), raw.len());
         if structural_property(key, raw, is_org) {
             projection
+                .source
                 .withheld_ranges
                 .push(key_range.start..property.value_range.1);
             continue;
@@ -698,25 +808,28 @@ pub(super) fn project_into(
             super::parse_inline_bounded(value, if is_org { "org" } else { "markdown" })
         {
             walk_inlines(&nodes, SpanMapper::direct(offset), raw, is_org, projection);
-            project_implicit_linkable_property(
-                projection,
-                key,
-                offset,
-                value,
-                raw.len(),
-                &nodes,
-                config,
-            );
+            project_implicit_linkable_property(projection, key, offset, value, raw, &nodes, config);
         }
     }
 
-    projection.explicit.sort_by(|a, b| {
+    projection.source.explicit.sort_by(|a, b| {
         a.range
             .start
             .cmp(&b.range.start)
             .then_with(|| a.range.end.cmp(&b.range.end))
             .then_with(|| a.name.cmp(&b.name))
     });
-    projection.explicit.dedup();
-    projection.plain_ranges = plain_search_ranges(raw.len(), projection);
+    projection.source.explicit.dedup();
+    if let Some(slots) = projection.slots.as_mut() {
+        slots.sort_by(|a, b| {
+            a.range
+                .start
+                .cmp(&b.range.start)
+                .then_with(|| a.range.end.cmp(&b.range.end))
+                .then_with(|| a.name.cmp(&b.name))
+        });
+        slots.dedup();
+        slots::mark_nested(slots);
+    }
+    projection.source.plain_ranges = plain_search_ranges(raw.len(), projection.source);
 }

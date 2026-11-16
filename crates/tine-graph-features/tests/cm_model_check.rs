@@ -14,6 +14,476 @@ use tine_store::Guarantee;
 
 const BUG: &str = tine_store::model::TEST_RENAME_WRITER_BUG_SENTINEL;
 
+fn nested_rename(
+    store: &Arc<Store>,
+    old: &str,
+    new: &str,
+) -> tine_graph_features::pages::RenameReport {
+    let app_data = tempfile::tempdir().unwrap();
+    let host = tine_store::PageHost::start_for_tests(store, app_data.path()).unwrap();
+    rename_page_as(store, &host, old, new, None, RenameChoice::Rename, &[])
+        .unwrap_or_else(|e| panic!("{old:?} -> {new:?}: {e}"))
+}
+
+/// O7: changing an inner name would repoint the enclosing reference to a
+/// different page. Leave it, report its source location, and still rename.
+#[test]
+fn nested_names_are_left_and_reported_by_the_transaction() {
+    let _guard = crate::integration_lock();
+    let mut failures = Vec::new();
+    for (org, old, body) in [
+        (false, "Old", "[[a [[Old]]]]"),
+        (false, "Old", "#[[a [[Old]]]]"),
+        (false, "Old Name", "#[[Old Name]]Tail"),
+        (true, "Old Name", "#[[Old Name]]Tail"),
+        (false, "Old", "body\n  tags:: [[a [[Old]]]]"),
+        (false, "Old", "body\n  alias:: [[a [[Old]]]]"),
+        (false, "Old", "{{renderer [[a [[Old]]]]}}"),
+        (true, "Old", "[[a [[Old]]]]"),
+        (
+            true,
+            "Old",
+            "body\n:PROPERTIES:\n:tags: [[a [[Old]]]]\n:END:",
+        ),
+        (
+            true,
+            "Old",
+            "body\n:PROPERTIES:\n:alias: [[a [[Old]]]]\n:END:",
+        ),
+    ] {
+        for ordinary in [false, true] {
+            let path = if org { "pages/r.org" } else { "pages/r.md" };
+            let prefix = if org { "* " } else { "- " };
+            let tail = if ordinary {
+                format!("\n{prefix}[[{old}]]")
+            } else {
+                String::new()
+            };
+            let before = format!("{prefix}{body}{tail}\n");
+            let (root, store) = fixture(
+                "check-nested",
+                &[
+                    ("pages/source.md", &format!("title:: {old}\n\n- source\n")),
+                    (path, &before),
+                ],
+            );
+            let app_data = tempfile::tempdir().unwrap();
+            let host = tine_store::PageHost::start_for_tests(&store, app_data.path()).unwrap();
+            let report =
+                match rename_page_as(&store, &host, old, "New", None, RenameChoice::Rename, &[]) {
+                    Ok(report) => report,
+                    Err(error) => {
+                        failures.push(format!("{before:?}: refused: {error}"));
+                        continue;
+                    }
+                };
+            let expected = if ordinary {
+                format!("{prefix}{body}\n{prefix}[[New]]\n")
+            } else {
+                before.clone()
+            };
+            let actual = fs::read_to_string(root.join(path)).unwrap();
+            if actual != expected {
+                failures.push(format!(
+                    "{before:?}: wrote {actual:?}, expected {expected:?}"
+                ));
+            }
+            if report.site_exceptions.len() != 1 {
+                failures.push(format!(
+                    "{before:?}: expected one report: {:?}",
+                    report.site_exceptions
+                ));
+                continue;
+            }
+            let site = &report.site_exceptions[0];
+            assert_eq!(site.path, path);
+            assert_eq!(&before[site.start..site.end], old);
+            assert_eq!(site.start, before.find(old).unwrap());
+            assert_eq!(
+                site.kind,
+                if body.contains("renderer") {
+                    tine_core::refs::SiteKind::MacroArg
+                } else {
+                    tine_core::refs::SiteKind::Link
+                }
+            );
+            assert_eq!(
+                site.disposition,
+                tine_graph_features::pages::Disposition::Unspellable
+            );
+        }
+    }
+    assert!(failures.is_empty(), "{}", failures.join("\n"));
+}
+
+#[test]
+fn escaped_names_can_be_renamed_again_by_the_transaction() {
+    let _guard = crate::integration_lock();
+    let mut failures = Vec::new();
+    let old = r"New\\Tail";
+    for (before, after) in [
+        ("- [[New\\\\\\\\Tail]]\n", "- [[Final]]\n"),
+        ("- [New\\\\\\\\Tail](file:x.md)\n", "- [Final](file:x.md)\n"),
+        ("- #[[New\\\\\\\\Tail]]\n", "- #[[Final]]\n"),
+        (
+            "- body\n  tags:: [[New\\\\\\\\Tail]]\n",
+            "- body\n  tags:: [[Final]]\n",
+        ),
+        (
+            "alias:: [[New\\\\\\\\Tail]]\n\n- body\n",
+            "alias:: [[Final]]\n\n- body\n",
+        ),
+        (
+            "alias:: New\\\\\\\\Tail\n\n- body\n",
+            "alias:: Final\n\n- body\n",
+        ),
+        (
+            "- body\n  tags:: New\\\\\\\\Tail\n",
+            "- body\n  tags:: Final\n",
+        ),
+    ] {
+        let (root, store) = fixture(
+            "check-escaped-input",
+            &[
+                ("pages/source.md", &format!("title:: {old}\n\n- source\n")),
+                ("pages/r.md", before),
+            ],
+        );
+        let app_data = tempfile::tempdir().unwrap();
+        let host = tine_store::PageHost::start_for_tests(&store, app_data.path()).unwrap();
+        match rename_page_as(&store, &host, old, "Final", None, RenameChoice::Rename, &[]) {
+            Ok(report) => {
+                let actual = fs::read_to_string(root.join("pages/r.md")).unwrap();
+                if actual != after || !report.site_exceptions.is_empty() {
+                    failures.push(format!(
+                        "{before:?}: wrote {actual:?}, expected {after:?}; report {:?}",
+                        report.site_exceptions
+                    ));
+                }
+            }
+            Err(error) => failures.push(format!("{before:?}: refused: {error}")),
+        }
+    }
+    assert!(failures.is_empty(), "{}", failures.join("\n"));
+}
+
+/// O7 applies even when no site can take the destination. A reference-only
+/// source avoids a title/file-name question: each escaped input must be
+/// found and reported, though no single-line syntax can hold this new name.
+#[test]
+fn escaped_unspellable_sites_are_reported_by_the_transaction() {
+    let _guard = crate::integration_lock();
+    for before in [
+        "- [[New\\\\\\\\Tail]]\n",
+        "- [New\\\\\\\\Tail](file:x.md)\n",
+        "- #[[New\\\\\\\\Tail]]\n",
+        "- body\n  tags:: [[New\\\\\\\\Tail]]\n",
+        "alias:: [[New\\\\\\\\Tail]]\n\n- body\n",
+        "- body\n  tags:: New\\\\\\\\Tail\n",
+        "alias:: New\\\\\\\\Tail\n\n- body\n",
+    ] {
+        let (root, store) = fixture("check-escaped-unspellable", &[("pages/r.md", before)]);
+        let report = nested_rename(&store, r"New\\Tail", "Two\nLines");
+        assert_eq!(fs::read_to_string(root.join("pages/r.md")).unwrap(), before);
+        assert_eq!(report.site_exceptions.len(), 1, "{before:?}");
+        let site = &report.site_exceptions[0];
+        assert_eq!(site.path, "pages/r.md");
+        assert!(before[site.start..site.end].contains("Tail"));
+        assert_eq!(
+            site.disposition,
+            tine_graph_features::pages::Disposition::Unspellable
+        );
+    }
+}
+
+/// O1 maps the enclosing name itself; O7 retains inner references in the
+/// namespace suffix. A complete enclosing-name rename can replace it.
+#[test]
+fn enclosing_names_follow_their_own_map_by_the_transaction() {
+    let _guard = crate::integration_lock();
+    for (old, before, after, count) in [
+        ("Old", "- [[Old/[[Old]]]]\n", "- [[New/[[Old]]]]\n", 1),
+        ("a [[Old]]", "- [[a [[Old]]]]\n", "- [[New]]\n", 0),
+        ("a [[Old]]", "- #[[a [[Old]]]]\n", "- #[[a [[Old]]]]\n", 1),
+        ("[[a [[Old]]]]", "- #[[a [[Old]]]]\n", "- #[[New]]\n", 0),
+        (
+            "Old",
+            "- {{renderer [[Old/[[Old]]]]}}\n",
+            "- {{renderer [[New/[[Old]]]]}}\n",
+            1,
+        ),
+    ] {
+        let (root, store) = fixture(
+            "check-enclosing-name",
+            &[
+                ("pages/source.md", &format!("title:: {old}\n\n- source\n")),
+                ("pages/r.md", before),
+            ],
+        );
+        let report = nested_rename(&store, old, "New");
+        assert_eq!(fs::read_to_string(root.join("pages/r.md")).unwrap(), after);
+        assert_eq!(report.site_exceptions.len(), count, "{before:?}");
+    }
+}
+
+#[test]
+fn nested_sites_in_a_merge_referrer_and_source_are_left_and_reported() {
+    let _guard = crate::integration_lock();
+    for (org, source, target, referrer, merged) in [
+        (
+            false,
+            "- [[a [[Old]]]] [[Old]]\n",
+            "- target\n",
+            "- #[[Old]]Tail [[Old]]\n",
+            "- target\n- [[a [[Old]]]] [[New]]\n",
+        ),
+        (
+            true,
+            "* [[a [[Old]]]] [[Old]]\n",
+            "* target\n",
+            "* #[[Old]]Tail [[Old]]\n",
+            "* target\n* [[a [[Old]]]] [[New]]\n",
+        ),
+    ] {
+        let source_path = if org { "pages/Old.org" } else { "pages/Old.md" };
+        let target_path = if org { "pages/New.org" } else { "pages/New.md" };
+        let ref_path = if org { "pages/r.org" } else { "pages/r.md" };
+        let (root, store) = fixture(
+            "check-nested-merge",
+            &[
+                (source_path, source),
+                (target_path, target),
+                (ref_path, referrer),
+            ],
+        );
+        let app_data = tempfile::tempdir().unwrap();
+        let host = tine_store::PageHost::start_for_tests(&store, app_data.path()).unwrap();
+        let report = rename_page_as(
+            &store,
+            &host,
+            "Old",
+            "New",
+            None,
+            RenameChoice::MergeInto(target_path),
+            &[],
+        )
+        .unwrap();
+        assert_eq!(report.outcome, RenameOutcome::Merged);
+        assert_eq!(fs::read_to_string(root.join(target_path)).unwrap(), merged);
+        assert_eq!(
+            fs::read_to_string(root.join(ref_path)).unwrap(),
+            referrer.replace(" [[Old]]\n", " [[New]]\n")
+        );
+        assert_eq!(report.site_exceptions.len(), 2);
+        for (path, text) in [(source_path, source), (ref_path, referrer)] {
+            let site = report
+                .site_exceptions
+                .iter()
+                .find(|s| s.path == path)
+                .unwrap();
+            assert_eq!(&text[site.start..site.end], "Old");
+            assert_eq!(
+                site.disposition,
+                tine_graph_features::pages::Disposition::Unspellable
+            );
+        }
+    }
+}
+
+#[test]
+fn unglued_tags_and_glued_plain_links_still_follow_the_transaction() {
+    let _guard = crate::integration_lock();
+    for org in [false, true] {
+        let path = if org { "pages/r.org" } else { "pages/r.md" };
+        let prefix = if org { "*" } else { "-" };
+        let before = format!("{prefix} #[[Old Name]] Tail [[Old Name]]Tail\n");
+        let (root, store) = fixture(
+            "check-unglued",
+            &[("pages/Old Name.md", "- source\n"), (path, &before)],
+        );
+        let report = nested_rename(&store, "Old Name", "New Name");
+        assert!(report.site_exceptions.is_empty());
+        assert_eq!(
+            fs::read_to_string(root.join(path)).unwrap(),
+            before.replace("Old Name", "New Name")
+        );
+    }
+}
+
+/// These look nested in the source but are not inner references in their
+/// respective readers: labels retain literal brackets, the query parser
+/// reads one argument, and the Org suffix is not a headline tag.
+#[test]
+fn labels_queries_and_org_suffixes_follow_the_reader_by_the_transaction() {
+    let _guard = crate::integration_lock();
+    for (org, before, after) in [
+        (
+            false,
+            "- [a [[Old]]](file:x.md) [[Old]]\n",
+            "- [a [[Old]]](file:x.md) [[New]]\n",
+        ),
+        (
+            true,
+            "* [[file:x.org][a [[Old]]]] [[Old]]\n",
+            "* [[file:x.org][a [[Old]]]] [[New]]\n",
+        ),
+        (
+            false,
+            "- {{query [[a [[Old]]]]}} [[Old]]\n",
+            "- {{query [[a [[Old]]]]}} [[New]]\n",
+        ),
+        (true, "* head :a[[Old]]:\n", "* head :a[[New]]:\n"),
+    ] {
+        let path = if org { "pages/r.org" } else { "pages/r.md" };
+        let (root, store) = fixture(
+            "check-reader-nesting-controls",
+            &[("pages/Old.md", "- source\n"), (path, before)],
+        );
+        let report = nested_rename(&store, "Old", "New");
+        assert_eq!(fs::read_to_string(root.join(path)).unwrap(), after);
+        assert!(report.site_exceptions.is_empty());
+    }
+}
+
+#[test]
+fn nested_name_reports_keep_crlf_file_locations() {
+    let _guard = crate::integration_lock();
+    let before = "- lead\r\n- #[[Old Name]]Tail\r\n- [[Old Name]]\r\n";
+    let (root, store) = fixture(
+        "check-nested-crlf",
+        &[
+            ("pages/Old Name.md", "- source\r\n"),
+            ("pages/r.md", before),
+        ],
+    );
+    let report = nested_rename(&store, "Old Name", "New Name");
+    assert_eq!(
+        fs::read_to_string(root.join("pages/r.md")).unwrap(),
+        "- lead\r\n- #[[Old Name]]Tail\r\n- [[New Name]]\r\n"
+    );
+    let [site] = report.site_exceptions.as_slice() else {
+        panic!("{:?}", report.site_exceptions)
+    };
+    assert_eq!(site.start, before.find("Old Name").unwrap());
+    assert_eq!(&before[site.start..site.end], "Old Name");
+}
+
+#[test]
+fn glued_tag_sites_are_reported_for_each_destination_form() {
+    let _guard = crate::integration_lock();
+    for org in [false, true] {
+        for to in ["New Name", "zz-new", "2026-11-02"] {
+            let path = if org { "pages/r.org" } else { "pages/r.md" };
+            let before = if org {
+                "* #[[Old Name]]Tail\n"
+            } else {
+                "- #[[Old Name]]Tail\n"
+            };
+            let (root, store) = fixture(
+                "check-glued-destinations",
+                &[("pages/Old Name.md", "- source\n"), (path, before)],
+            );
+            let report = nested_rename(&store, "Old Name", to);
+            assert_eq!(fs::read_to_string(root.join(path)).unwrap(), before);
+            assert_eq!(report.site_exceptions.len(), 1);
+            let site = &report.site_exceptions[0];
+            assert_eq!(site.path, path);
+            assert_eq!(&before[site.start..site.end], "Old Name");
+            assert_eq!(
+                site.disposition,
+                tine_graph_features::pages::Disposition::Unspellable
+            );
+        }
+    }
+}
+
+#[test]
+fn nested_page_alias_members_are_left_and_reported() {
+    let _guard = crate::integration_lock();
+    for (path, before, after) in [
+        (
+            "pages/r.md",
+            "alias:: [[a [[Old]]]]\n\n- [[Old]]\n",
+            "alias:: [[a [[Old]]]]\n\n- [[New]]\n",
+        ),
+        (
+            "pages/r.org",
+            "#+alias: [[a [[Old]]]]\n* [[Old]]\n",
+            "#+alias: [[a [[Old]]]]\n* [[New]]\n",
+        ),
+    ] {
+        let (root, store) = fixture(
+            "check-nested-page-alias",
+            &[("pages/Old.md", "- source\n"), (path, before)],
+        );
+        let report = nested_rename(&store, "Old", "New");
+        assert_eq!(fs::read_to_string(root.join(path)).unwrap(), after);
+        assert_eq!(report.site_exceptions.len(), 1);
+        let site = &report.site_exceptions[0];
+        assert_eq!(site.path, path);
+        assert_eq!(site.start, before.find("Old").unwrap());
+        assert_eq!(&before[site.start..site.end], "Old");
+    }
+}
+
+#[test]
+fn org_enclosing_names_follow_their_own_map_by_the_transaction() {
+    let _guard = crate::integration_lock();
+    for (old, before, after, reports) in [
+        ("Old", "* [[Old/[[Old]]]]\n", "* [[New/[[Old]]]]\n", 1),
+        ("a [[Old]]", "* [[a [[Old]]]]\n", "* [[New]]\n", 0),
+        (
+            "a [[Old]]",
+            "* [[file:x.org][a [[Old]]]]\n",
+            "* [[file:x.org][New]]\n",
+            0,
+        ),
+    ] {
+        let (root, store) = fixture(
+            "check-org-enclosing",
+            &[
+                ("pages/source.md", &format!("title:: {old}\n\n- source\n")),
+                ("pages/r.org", before),
+            ],
+        );
+        let report = nested_rename(&store, old, "New");
+        assert_eq!(fs::read_to_string(root.join("pages/r.org")).unwrap(), after);
+        assert_eq!(report.site_exceptions.len(), reports);
+    }
+}
+
+#[test]
+fn code_and_literal_file_labels_follow_the_reader() {
+    let _guard = crate::integration_lock();
+    for (path, old, new, before, after) in [
+        (
+            "pages/r.md",
+            "Old",
+            "New",
+            "- [`Old`](file:x.md)\n",
+            "- [`New`](file:x.md)\n",
+        ),
+        (
+            "pages/r.org",
+            "=Old=",
+            "=New=",
+            "* [[file:x.org][=Old=]]\n",
+            "* [[file:x.org][=New=]]\n",
+        ),
+    ] {
+        let (root, store) = fixture(
+            "check-code-label",
+            &[
+                ("pages/source.md", &format!("title:: {old}\n\n- source\n")),
+                (path, before),
+            ],
+        );
+        let report = nested_rename(&store, old, new);
+        assert_eq!(fs::read_to_string(root.join(path)).unwrap(), after);
+        assert!(report.site_exceptions.is_empty());
+    }
+}
+
 /// The rename `old` → `new` as the app answers it, refused by the check:
 /// the refusal, with nothing on disk changed.
 fn refused(
@@ -107,6 +577,19 @@ fn label_spellings(prefix: &str, suffix: &str, org: bool) {
                         "{before:?} -> {to:?}: reports {:?}, actual {actual:?}",
                         report.site_exceptions
                     ));
+                }
+                if spelling.is_some() {
+                    // Read the published bytes as a new graph, so this step
+                    // tests consuming the emitted spelling, not publication
+                    // timing in the previous store instance.
+                    let again = Arc::new(Store::open(&root, Default::default()).unwrap().0);
+                    let second = nested_rename(&again, to.trim(), "Final");
+                    assert!(second.site_exceptions.is_empty(), "{before:?} via {to:?}");
+                    assert_eq!(
+                        fs::read_to_string(root.join(path)).unwrap(),
+                        format!("{prefix}Final{suffix}"),
+                        "{before:?} via {to:?}"
+                    );
                 }
             }
         }
@@ -322,6 +805,22 @@ fn nonlabel_spellings_keep_the_readers_name_or_report_the_site() {
             sites.iter().any(|s| s.name == name),
             "{before:?}: {sites:?}"
         );
+        if exceptions == 0 {
+            let again = Arc::new(Store::open(&root, Default::default()).unwrap().0);
+            let second = nested_rename(&again, to, "Final");
+            assert!(second.site_exceptions.is_empty());
+            let expected = match before {
+                "- #Old\n" | "- #[[Old]]\n" => "- #[[Final]]\n".to_owned(),
+                "- body\n  tags:: Old\n" => "- body\n  tags:: [[Final]]\n".to_owned(),
+                "alias:: Old\n\n- body\n" => "alias:: [[Final]]\n\n- body\n".to_owned(),
+                _ => before.replace("Old", "Final"),
+            };
+            assert_eq!(
+                fs::read_to_string(root.join(path)).unwrap(),
+                expected,
+                "{before:?} via {to:?}"
+            );
+        }
     }
 }
 

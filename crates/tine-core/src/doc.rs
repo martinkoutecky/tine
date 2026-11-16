@@ -81,6 +81,7 @@ pub struct DocBlock {
 }
 
 mod compact_projection;
+mod projection;
 pub use compact_projection::BlockProjection;
 use compact_projection::{PlainRanges, VisibleTexts};
 
@@ -335,99 +336,7 @@ impl DocBlock {
     /// Visible text, references, and facets derived from the current raw body.
     /// [`Self::set_raw`] clears this cache when the body changes.
     pub fn projection(&self) -> &BlockProjection {
-        self.proj.get_or_init(|| {
-            // Test-only fault: a block projection (the lsdoc parse every index
-            // reads) that panics, for the load's one-bad-file isolation tests.
-            #[cfg(feature = "test-faults")]
-            if self.raw.contains(TEST_PROJECTION_PANIC_SENTINEL) {
-                panic!("deterministic test sentinel for a block projection panic");
-            }
-            // ONE lsdoc parse of the block body yields every header facet (marker,
-            // heading level, properties, scheduled/deadline) AND the visible text —
-            // so `doc.rs`, the TS `blockView`, and lsdoc can no longer disagree
-            // about a block's grammar.
-            // ONE lsdoc parse yields AST, facets and refs; region ownership also
-            // recovers an author swallowed by a final quote (GH #895).
-            let proj = crate::render::parse_projection(&self.raw, self.is_org);
-            let (marker, priority, heading_level, mut properties) = header_facets(&proj.blocks);
-            let (scheduled, deadline) = planning_dates(&proj.blocks, &self.raw);
-            let tags = tags_from_blocks(&proj.blocks);
-            let regions = crate::block_regions::from_blocks(&self.raw, self.is_org, &proj.blocks);
-            crate::block_regions::extend_author_facet(&mut properties, &regions);
-            let visible = regions
-                .apply(&self.raw, self.is_org, crate::block_regions::Edit::Visible)
-                .expect("parsed regions");
-            let regions = shared_regions(regions);
-            let visible_lower = crate::search_query::canonical_fold(&visible);
-            let reference_source = crate::reference_evidence::project_with_config(
-                &self.raw,
-                self.is_org,
-                &proj.blocks,
-                &regions,
-                self.property_ref_config
-                    .as_deref()
-                    .unwrap_or_else(|| crate::query::atom::ParseConfig::default_ref()),
-            );
-            // OG 0.10.9 with-page-refs includes headline tags and linkable
-            // property atoms. Queries use the same evidence as backlinks.
-            let mut refs_page = proj.refs.page;
-            let tag_refs = reference_source
-                .explicit
-                .iter()
-                .filter(|r| r.rule == "explicit_tag" || r.rule == "implicit_linkable_property");
-            if tag_refs.clone().next().is_some() {
-                refs_page.extend(tag_refs.map(|r| r.name.clone()));
-                refs_page.sort();
-                refs_page.dedup();
-            }
-            // OG `with-page-refs` also puts the block's marker and priority in its
-            // refs, so `[[A]]` / `[[TODO]]` queries find them. They stay out of
-            // `refs_page`, the virtual-page list behind `[[` autocomplete: Tine
-            // does not offer a page per marker or priority letter.
-            let mut refs_norm: Vec<String> = refs_page
-                .iter()
-                .map(|r| crate::refs::normalize(r))
-                .collect();
-            for r in reference_source
-                .explicit
-                .iter()
-                .filter(|r| r.rule == "explicit_task_marker" || r.rule == "explicit_priority")
-            {
-                let key = crate::refs::normalize(&r.name);
-                if !refs_norm.contains(&key) {
-                    refs_norm.push(key);
-                }
-            }
-            // These lists never grow after publication. Boxed slices trim the
-            // build's slack and avoid retaining a capacity word per list; serde
-            // keeps the same sequence encoding, including in checkpoints.
-            let plain_ranges = PlainRanges::from(reference_source.plain_ranges);
-            let extra = ProjectionExtra {
-                search: std::sync::OnceLock::new(),
-                refs_norm: refs_norm.into_boxed_slice(),
-                refs_page: refs_page.into_boxed_slice(),
-                block_refs: proj.refs.block.into_boxed_slice(),
-                marker: marker.map(String::into_boxed_str),
-                priority: priority.map(String::into_boxed_str),
-                heading_level,
-                properties: properties.into_boxed_slice(),
-                scheduled: scheduled.map(String::into_boxed_str),
-                deadline: deadline.map(String::into_boxed_str),
-                tags: tags.into_boxed_slice(),
-                explicit: reference_source.explicit.into_boxed_slice(),
-                withheld_ranges: reference_source.withheld_ranges.into_boxed_slice(),
-            };
-            let extra = (!extra.is_empty()).then(|| Box::new(extra));
-            let visible_lower = (visible_lower != visible).then(|| visible_lower.into_boxed_str());
-            let visible = (*visible != *self.raw).then(|| visible.into_boxed_str());
-            BlockProjection {
-                regions,
-                texts: VisibleTexts::boxed(visible, visible_lower),
-                visible_literal: std::sync::OnceLock::new(),
-                plain_ranges,
-                extra,
-            }
-        })
+        self.projection_with_slots(None)
     }
 
     /// `key:: value` block properties as lsdoc projects them (md trailer / org

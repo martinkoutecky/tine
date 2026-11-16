@@ -14,6 +14,8 @@ use std::sync::OnceLock;
 mod plain_match;
 mod signature;
 // The walker also compiles into lsdoc-wasm; it reads these through `super::`.
+#[cfg(test)]
+mod name_slot_tests;
 mod walk;
 use crate::block_regions;
 use crate::doc::property_key_norm;
@@ -21,12 +23,57 @@ use crate::query::atom::{reference_parsing_suppressed, separated_by_commas, Pars
 use crate::query::macro_text::is_query_macro_name;
 use crate::render::parse_inline_bounded;
 pub use signature::{BlockSignature, ReferenceFilter};
+pub(crate) use walk::project_into;
 #[cfg(test)]
 use walk::property_key_eligible;
-use walk::{project_into, quoted_linkable_value};
+use walk::quoted_linkable_value;
 pub use walk::{
-    project_with_config, reference_rule, ProjectedPageRef, ReferenceSourceProjection, RewriteTarget,
+    project_with_config, reference_rule, ProjectedPageRef, ReferenceSourceProjection,
+    RewriteTarget, SlottedPageRef,
 };
+
+/// One block's optional rename/check evidence, released with the file operation.
+#[derive(Default)]
+pub(crate) struct RenameSource {
+    pub explicit: Vec<SlottedPageRef>,
+    pub targets: Vec<RewriteTarget>,
+}
+
+/// File-local readings shared by the writer and its input observation. Equal
+/// raw blocks with the same syntax and property policy share one reading.
+#[derive(Default)]
+pub(crate) struct RenameReadings(
+    std::cell::RefCell<std::collections::HashMap<String, Vec<BlockReading>>>,
+);
+
+struct BlockReading {
+    org: bool,
+    config: Option<Box<ParseConfig>>,
+    source: std::rc::Rc<RenameSource>,
+}
+
+impl RenameReadings {
+    pub(crate) fn read(&self, block: &crate::doc::DocBlock) -> std::rc::Rc<RenameSource> {
+        let mut readings = self.0.borrow_mut();
+        if let Some(reading) = readings.get(block.raw()).and_then(|entries| {
+            entries
+                .iter()
+                .find(|r| r.org == block.is_org() && r.config == block.property_ref_config)
+        }) {
+            return reading.source.clone();
+        }
+        let source = std::rc::Rc::new(block.read_for_rename());
+        readings
+            .entry(block.raw().to_owned())
+            .or_default()
+            .push(BlockReading {
+                org: block.is_org(),
+                config: block.property_ref_config.clone(),
+                source: source.clone(),
+            });
+        source
+    }
+}
 
 const MAX_OCCURRENCES_PER_BLOCK: usize = 64;
 
@@ -67,6 +114,7 @@ pub fn rename_targets(raw: &str, is_org: bool) -> Vec<RewriteTarget> {
         &blocks,
         &regions,
         crate::query::atom::ParseConfig::default_ref(),
+        None,
     );
     projection.rewrite_targets.unwrap_or_default()
 }
@@ -133,6 +181,14 @@ pub fn linkable_property_references<'a>(
     projection: ReferenceSource<'a>,
     regions: &'a crate::block_regions::BlockRegions,
 ) -> impl Iterator<Item = &'a ProjectedPageRef> {
+    linkable_property_references_in(projection.explicit.iter(), regions, |r| r)
+}
+
+pub(crate) fn linkable_property_references_in<'a, R: 'a>(
+    references: impl Iterator<Item = &'a R>,
+    regions: &'a crate::block_regions::BlockRegions,
+    reference: impl Fn(&R) -> &ProjectedPageRef,
+) -> impl Iterator<Item = &'a R> {
     let mut properties = regions
         .properties
         .iter()
@@ -144,7 +200,8 @@ pub fn linkable_property_references<'a>(
                 && !quoted_linkable_value(&p.value)
         })
         .peekable();
-    projection.explicit.iter().filter_map(move |reference| {
+    references.filter_map(move |item| {
+        let reference = reference(item);
         while properties
             .peek()
             .is_some_and(|p| p.value_range.1 <= reference.range.start)
@@ -156,7 +213,7 @@ pub fn linkable_property_references<'a>(
             .filter(|p| {
                 p.value_range.0 <= reference.range.start && reference.range.end <= p.value_range.1
             })
-            .map(|_| reference)
+            .map(|_| item)
     })
 }
 

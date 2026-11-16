@@ -268,7 +268,7 @@ fn every_rewriter_rule_has_an_observed_kind() {
                 crate::reference_evidence::rename_targets(&raw, format == ORG)
                     .into_iter()
                     .filter_map(|t| match t {
-                        RewriteTarget::MacroLink(p) => Some(p.name),
+                        RewriteTarget::MacroLink(p) => Some(p.reference.name),
                         RewriteTarget::FileLink(_) => None,
                     }),
             )
@@ -412,8 +412,8 @@ fn a_link_in_a_macro_argument_is_respelled() {
         "Old",
         "New",
         "- {{cloze [[a [[Old]]]]}}\n",
-        "- {{cloze [[a [[New]]]]}}\n",
         "- {{cloze [[a [[Old]]]]}}\n",
+        "- {{cloze [[a [[New]]]]}}\n",
         MD,
     );
     case(
@@ -503,55 +503,81 @@ fn a_markdown_file_link_label_split_by_markup_is_left() {
     assert!(accepts("Old", "New", before, before, MD));
 }
 
-/// Review round 2, finding 1: every level of a nested reference is a site.
-/// An inner name is respelled inside its enclosing name, and the enclosing
-/// name (with its inner names respelled) follows the rename itself: the
-/// writer's output passes, the unchanged text fails. The reviewer's two
-/// inputs first (a nested link inside a tag; a renamed enclosing name).
+/// O7 and the nested-reference ruling: an inner name cannot be respelled
+/// without repointing its enclosing reference. An enclosing site follows
+/// its own name; the forbidden inner rewrite is a negative control.
 #[test]
-fn every_level_of_a_nested_reference_is_respelled() {
+fn every_level_of_a_nested_reference_follows_its_own_name() {
     let unchanged = |old, new, before, after, format| case(old, new, before, after, before, format);
-    unchanged("Old", "New", "- #[[a [[Old]]]]\n", "- #[[a [[New]]]]\n", MD);
-    unchanged("a [[X]]", "New", "- [[a [[X]]]]\n", "- [[New]]\n", MD);
-    unchanged("Old", "New", "- [[a [[Old]]]]\n", "- [[a [[New]]]]\n", MD);
-    unchanged(
+    case(
         "Old",
         "New",
+        "- #[[a [[Old]]]]\n",
+        "- #[[a [[Old]]]]\n",
+        "- #[[a [[New]]]]\n",
+        MD,
+    );
+    unchanged("a [[X]]", "New", "- [[a [[X]]]]\n", "- [[New]]\n", MD);
+    case(
+        "a [[Old]]",
+        "New",
+        "- #[[a [[Old]]]]\n",
+        "- #[[a [[Old]]]]\n",
+        "- #[[New]]\n",
+        MD,
+    );
+    case(
+        "Old",
+        "New",
+        "- [[a [[Old]]]]\n",
+        "- [[a [[Old]]]]\n",
+        "- [[a [[New]]]]\n",
+        MD,
+    );
+    case(
+        "Old",
+        "New",
+        "- [[ a  [[Old]] ]]\n",
         "- [[ a  [[Old]] ]]\n",
         "- [[ a  [[New]] ]]\n",
         MD,
     );
-    unchanged(
+    case(
         "Old",
         "New",
+        "- [[a [[b [[Old]]]]]]\n",
         "- [[a [[b [[Old]]]]]]\n",
         "- [[a [[b [[New]]]]]]\n",
         MD,
     );
-    unchanged(
+    case(
         "b [[Old]]",
         "New",
+        "- [[a [[b [[Old]]]]]]\n",
         "- [[a [[b [[Old]]]]]]\n",
         "- [[a [[New]]]]\n",
         MD,
     );
-    unchanged(
+    case(
         "Old",
         "New",
+        "- tags:: [[a [[Old]]]]\n",
         "- tags:: [[a [[Old]]]]\n",
         "- tags:: [[a [[New]]]]\n",
         MD,
     );
-    unchanged(
+    case(
         "Old",
         "New",
+        "* x [[a [[Old]]]]\n",
         "* x [[a [[Old]]]]\n",
         "* x [[a [[New]]]]\n",
         ORG,
     );
-    unchanged(
+    case(
         "Old",
         "New",
+        "- {{cloze [[a [[Old]]]]}}\n",
         "- {{cloze [[a [[Old]]]]}}\n",
         "- {{cloze [[a [[New]]]]}}\n",
         MD,
@@ -582,16 +608,14 @@ fn every_level_of_a_nested_reference_is_respelled() {
     ));
 }
 
-/// A disagreement the check surfaces (review round 2): renaming `Old`, the
-/// writer respells the enclosing namespace name `Old/[[Old]]` and drops the
-/// inner edit, leaving a link to the renamed page; the model respells both
-/// levels. A writer that respells both flips the first assertion.
+/// O1/O7: the enclosing namespace follows its own name; its nested inner
+/// reference is unspellable and stays in the kept namespace suffix.
 #[test]
-fn a_nested_namespace_name_respells_both_levels() {
+fn a_nested_namespace_name_keeps_its_inner_name() {
     let before = "- [[Old/[[Old]]]]\n";
     assert_eq!(written("Old", "New", before, MD), "- [[New/[[Old]]]]\n");
-    assert!(!accepts("Old", "New", before, "- [[New/[[Old]]]]\n", MD));
-    assert!(accepts("Old", "New", before, "- [[New/[[New]]]]\n", MD));
+    assert!(accepts("Old", "New", before, "- [[New/[[Old]]]]\n", MD));
+    assert!(!accepts("Old", "New", before, "- [[New/[[New]]]]\n", MD));
 }
 
 /// What the rename plan does with a page whose own name holds the renamed

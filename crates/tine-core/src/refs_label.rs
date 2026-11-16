@@ -18,34 +18,18 @@ impl FileLabel {
     /// Recognize the label of a parser-reported file link. Page targets
     /// (`[[page]]`, Org `[[page][label]]`, Markdown `[label]([[page]])`)
     /// name their target instead and return `None`. O(link bytes).
-    pub fn read(node: &str, name: &str, org: bool) -> Option<Self> {
-        let label = if org {
-            let body = node.strip_prefix("[[file:")?.strip_suffix("]]")?;
-            let split = body.find("][")?;
-            7 + split + 2..node.len() - 2
-        } else {
-            let split = node.rfind("](")?;
-            if node[split + 2..node.len() - 1].trim().starts_with("[[") {
-                return None;
-            }
-            let start = if node.starts_with("![") {
-                2
-            } else if node.starts_with('[') {
-                1
-            } else {
-                return None;
-            };
-            start..split
-        };
-        let mut runs = node[label.clone()].match_indices(name);
-        let run = match (runs.next(), runs.next()) {
-            (Some((at, _)), None) if !name.is_empty() => {
-                Some(label.start + at..label.start + at + name.len())
-            }
-            _ => None,
-        };
+    pub fn read(
+        raw: &str,
+        reference: &crate::reference_evidence::SlottedPageRef,
+        org: bool,
+    ) -> Option<Self> {
+        reference.slot.label.as_ref()?;
+        let relative =
+            |r: &Range<usize>| r.start - reference.range.start..r.end - reference.range.start;
+        let label = relative(&reference.slot.extent);
+        let run = reference.slot.run().map(relative);
         Some(Self {
-            node: node.to_owned(),
+            node: raw[reference.range.clone()].to_owned(),
             label,
             run,
             org,
@@ -143,14 +127,13 @@ pub(crate) fn reads_reference(
 ) -> bool {
     let mut block = crate::doc::DocBlock::new(node);
     block.set_org(org);
-    let projection = block.projection();
-    let mut references = projection
-        .reference_source()
-        .explicit
-        .iter()
-        .filter(|r| r.rule == rule);
+    let source = block.read_for_rename();
+    let mut references = source.explicit.iter().filter(|r| {
+        (r.rule == rule || matches!((rule, r.rule), ("explicit_nested_link", "explicit_link")))
+            && range.as_ref().is_none_or(|range| &r.range == range)
+    });
     matches!((references.next(), references.next()), (Some(r), None)
-        if r.name == name && range.is_none_or(|range| r.range == range))
+        if r.name == name)
 }
 
 /// CommonMark's backslash-escaped ASCII punctuation; the parser, rather

@@ -26,16 +26,19 @@
 //! `:LOGBOOK:` drawer or in code stays as written, while `word#old`, an Org
 //! `[[old][label]]`, Org headline tags and an Org drawer `:tags:` value (which
 //! OG's literal replace misses) are rewritten.
+//! O7 also leaves and reports a reference inside another reference's name:
+//! changing it would repoint that enclosing reference. This follows the
+//! confirmed model's nested-reference ruling; Logseq's additional rename
+//! of the enclosing pages is the pending decision [CM-NESTED].
 //!
 //! **Offsets.** Each block's parser offsets are in its raw text (the header line
 //! after its structural prefix, continuation lines dedented); they are mapped
 //! back to the page text line by line, and an LF offset back to the file's own
 //! bytes past each CRLF, so every byte that is not a rewritten name is kept.
 //!
-//! Cost: one lsdoc parse per block (the projection the store builds anyway),
-//! a second one for a block holding `{{` or an Org `[[file:`, plus one query
-//! parse per query macro and one read of each property value that holds one
-//! (`PropertyValueCode`); O(page bytes). Pure.
+//! Cost: one source parse per distinct raw block, shared with the observation;
+//! local candidate confirmations and query/property reads remain bounded by
+//! their sites. O(page bytes). Pure.
 
 use std::borrow::Cow;
 use std::collections::{HashMap, HashSet};
@@ -345,8 +348,9 @@ pub(crate) fn rewrite_page(
     // edits there and place them in the file's own bytes. Normalizing drops the
     // `\r` of each CRLF and turns a lone `\r` into `\n`, so an LF offset moves
     // by the CRLFs before it.
+    let readings = crate::reference_evidence::RenameReadings::default();
     let lf = crate::doc::normalize_line_endings(text);
-    let edits = page_edits(&lf, is_org, renames, None);
+    let edits = page_edits(&lf, is_org, renames, &readings, None);
     if edits.is_empty() {
         return text.to_owned();
     }
@@ -361,15 +365,14 @@ pub(crate) fn rewrite_page(
     )
 }
 
-/// The same legal span finder as `rewrite_page`, carrying its partition,
-/// omitted covered sites and the model's reading of `text` (the rename
-/// check's old observation, [`crate::cm_check::observe`]), made from the one
-/// page parse the span finder reads. No additional block walk or I/O.
+/// `rewrite_page` with a byte partition, omitted sites and an input observation.
+/// Both consumers share the file-local evidence from each block's first parse.
 pub(crate) fn proposal(
     text: &str,
     is_org: bool,
     renames: &Renames<'_>,
 ) -> Result<RenameProposal, TraceError> {
+    let readings = crate::reference_evidence::RenameReadings::default();
     let lf = crate::doc::normalize_line_endings(text);
     let (doc, headers) = crate::doc::parse_outlined(&lf, is_org);
     let format = if is_org {
@@ -377,11 +380,12 @@ pub(crate) fn proposal(
     } else {
         crate::model::Format::Md
     };
-    let observed = crate::cm_check::observe_parsed(&lf, &doc, format, renames.file_name_format);
+    let observed =
+        crate::cm_check::observe_with_readings(&doc, format, renames.file_name_format, &readings);
     let edits = if renames.pages.is_empty() && renames.queries.is_none() {
         Vec::new()
     } else {
-        page_edits(&lf, is_org, renames, Some((&headers, &doc)))
+        page_edits(&lf, is_org, renames, &readings, Some((&headers, &doc)))
     };
     let crlf = lf_offsets_of_crlf(text);
     let original = |at: usize| at + crlf.partition_point(|lf_at| *lf_at < at);
@@ -448,11 +452,12 @@ pub(crate) fn rewrite_block(
     renames: &Renames<'_>,
     rewritten: Option<&mut HashSet<(String, String)>>,
 ) -> String {
+    let readings = crate::reference_evidence::RenameReadings::default();
     let mut block = DocBlock::new(raw);
     block.set_org(is_org);
     splice(
         raw,
-        settle(block_edits(raw, is_org, &block, renames)),
+        settle(block_edits(raw, is_org, &block, renames, &readings)),
         rewritten,
     )
 }
@@ -464,9 +469,10 @@ pub(crate) fn rewrite_pre_block(
     renames: &Renames<'_>,
     rewritten: Option<&mut HashSet<(String, String)>>,
 ) -> String {
+    let readings = crate::reference_evidence::RenameReadings::default();
     splice(
         pre,
-        settle(pre_block_edits(pre, is_org, renames)),
+        settle(pre_block_edits(pre, is_org, renames, &readings)),
         rewritten,
     )
 }
@@ -516,15 +522,13 @@ fn settle(mut edits: Vec<Edit>) -> std::vec::IntoIter<Edit> {
     out.into_iter()
 }
 
-/// The edits of LF page `text`, in page offsets, settled.
-/// The edits of the page `text` (LF). `parsed` is the page parse of `text`
-/// with its outline headers ([`crate::doc::parse_outlined`]): the walk then
-/// reads that outline and each block whose text is the parse's block, so
-/// their projections are made once for the rename and the check's reading.
+/// Settled LF page edits. `parsed` supplies the outline and blocks; `readings`
+/// shares their reader evidence with the check's input observation.
 fn page_edits(
     text: &str,
     is_org: bool,
     renames: &Renames<'_>,
+    readings: &crate::reference_evidence::RenameReadings,
     parsed: Option<(&[outline::Header], &crate::doc::Document)>,
 ) -> Vec<Edit> {
     #[cfg(feature = "test-counters")]
@@ -562,7 +566,7 @@ fn page_edits(
     let first = headers.first().map_or(lines.len(), |header| header.line);
     if first > 0 {
         let pre_end = line_starts.get(first).copied().unwrap_or(text.len());
-        edits.extend(pre_block_edits(&text[..pre_end], is_org, renames));
+        edits.extend(pre_block_edits(&text[..pre_end], is_org, renames, readings));
     }
     for (n, header) in headers.iter().enumerate() {
         let end = headers.get(n + 1).map_or(lines.len(), |next| next.line);
@@ -588,7 +592,7 @@ fn page_edits(
             }
         };
         let misses = renames.unrealized.borrow().len();
-        for (range, to, name) in block_edits(&raw, is_org, block, renames) {
+        for (range, to, name) in block_edits(&raw, is_org, block, renames, readings) {
             let at = pieces.partition_point(|(start, _)| *start <= range.start) - 1;
             let (piece_start, page_start) = pieces[at];
             let piece_end = pieces.get(at + 1).map_or(raw.len(), |(start, _)| start - 1);
@@ -613,15 +617,20 @@ fn page_edits(
 
 /// The edits of a pre-block, in its own offsets: its page properties' and its
 /// prose's (the two blocks the store reads there, batch 8), unsettled.
-fn pre_block_edits(pre: &str, is_org: bool, renames: &Renames<'_>) -> Vec<Edit> {
-    let mut edits = property_edits(pre, is_org, renames);
+fn pre_block_edits(
+    pre: &str,
+    is_org: bool,
+    renames: &Renames<'_>,
+    readings: &crate::reference_evidence::RenameReadings,
+) -> Vec<Edit> {
+    let mut edits = property_edits(pre, is_org, renames, readings);
     if let Some(range) = crate::page_properties::preamble_content_range(pre, is_org) {
         let raw = &pre[range.clone()];
         let mut block = DocBlock::new(raw);
         block.set_org(is_org);
         let misses = renames.unrealized.borrow().len();
         edits.extend(
-            block_edits(raw, is_org, &block, renames)
+            block_edits(raw, is_org, &block, renames, readings)
                 .into_iter()
                 .map(|(r, to, name)| (r.start + range.start..r.end + range.start, to, name)),
         );
@@ -635,7 +644,12 @@ fn pre_block_edits(pre: &str, is_org: bool, renames: &Renames<'_>) -> Vec<Edit> 
 /// The edits of a pre-block's page properties, in its own offsets. The store
 /// reads them as a synthesized block (`page_properties::page_property_raw`);
 /// its sites map back to each property's key and value in `pre`.
-fn property_edits(pre: &str, is_org: bool, renames: &Renames<'_>) -> Vec<Edit> {
+fn property_edits(
+    pre: &str,
+    is_org: bool,
+    renames: &Renames<'_>,
+    readings: &crate::reference_evidence::RenameReadings,
+) -> Vec<Edit> {
     let raw = crate::page_properties::page_property_raw(pre, is_org);
     if raw.is_empty() {
         return Vec::new();
@@ -677,7 +691,7 @@ fn property_edits(pre: &str, is_org: bool, renames: &Renames<'_>) -> Vec<Edit> {
     }
     let block = crate::page_properties::property_projection(&raw, is_org);
     let misses = renames.unrealized.borrow().len();
-    let edits = block_edits(&raw, is_org, &block, renames);
+    let edits = block_edits(&raw, is_org, &block, renames, readings);
     for site in &mut renames.unrealized.borrow_mut()[misses..] {
         if let Some((start, _, at)) = pieces
             .iter()
@@ -706,17 +720,36 @@ fn property_edits(pre: &str, is_org: bool, renames: &Renames<'_>) -> Vec<Edit> {
 }
 
 /// The edits of one block, in its raw offsets (unsettled).
-fn block_edits(raw: &str, is_org: bool, block: &DocBlock, renames: &Renames<'_>) -> Vec<Edit> {
+fn block_edits(
+    raw: &str,
+    is_org: bool,
+    block: &DocBlock,
+    renames: &Renames<'_>,
+    readings: &crate::reference_evidence::RenameReadings,
+) -> Vec<Edit> {
     #[cfg(test)]
     BLOCK_WALKS.with(|walks| walks.set(walks.get() + 1));
+    let source = readings.read(block);
     let projection = block.projection();
-    let source = projection.reference_source();
     let mut edits = Vec::new();
-    for reference in source.explicit {
+    for reference in &source.explicit {
+        if reference.slot.encoding {
+            continue;
+        }
         let range = reference.range.clone();
         let Some(node) = raw.get(range.clone()) else {
             continue;
         };
+        if reference.slot.nested {
+            if renames.page(&reference.name).is_some() {
+                renames.miss(
+                    reference.slot.extent.clone(),
+                    Unrealized::NativeSpelling,
+                    SiteKind::of_rule(reference.rule),
+                );
+            }
+            continue;
+        }
         match reference.rule {
             // Permanent exceptions (D-20261019-M2(4)).
             "explicit_task_marker" | "explicit_priority" => {}
@@ -759,17 +792,16 @@ fn block_edits(raw: &str, is_org: bool, block: &DocBlock, renames: &Renames<'_>)
                         renames.miss(range, Unrealized::NativeSpelling, SiteKind::Tag);
                         continue;
                     };
-                    let (start, end, spelling) = if bracketed {
-                        (
-                            3,
-                            node.len() - 2,
-                            spelling[3..spelling.len() - 2].to_owned(),
-                        )
+                    // The reader supplied the old name extent. Strip only
+                    // the printer's new wrappers that the input already
+                    // carries; a bare tag's new brackets remain an insertion.
+                    let spelling = if reference.slot.extent.start == range.start + 3 {
+                        spelling[3..spelling.len() - 2].to_owned()
                     } else {
-                        (1, node.len(), spelling[1..].to_owned())
+                        spelling[1..].to_owned()
                     };
                     edits.push(renames.edit(
-                        range.start + start..range.start + end,
+                        reference.slot.extent.clone(),
                         &reference.name,
                         &to,
                         spelling,
@@ -781,61 +813,45 @@ fn block_edits(raw: &str, is_org: bool, block: &DocBlock, renames: &Renames<'_>)
                     renames.miss(range, Unrealized::HeadlineTag, SiteKind::Tag);
                 }
             }
-            "explicit_link" => link_edits(raw, range, &reference.name, is_org, renames, &mut edits),
-            "explicit_nested_link" => nested_edits(node, range.start, renames, &mut edits),
+            "explicit_link" | "explicit_nested_link" => {
+                link_edits(raw, reference, is_org, renames, &mut edits)
+            }
             "explicit_embed" => {
-                if let (Some(open), Some(close)) = (node.find("[["), node.rfind("]]")) {
-                    if open + 2 <= close {
-                        if let Some(to) = renames.page(&node[open + 2..close]) {
-                            edits.push(renames.edit(
-                                range.start + open + 2..range.start + close,
-                                &node[open + 2..close],
-                                &to,
-                                to.to_string(),
-                            ));
-                        }
+                if let Some(slot) = reference.slot.run() {
+                    if let Some(to) = renames.page(&reference.name) {
+                        edits.push(renames.edit(
+                            slot.clone(),
+                            &reference.name,
+                            &to,
+                            to.to_string(),
+                        ));
                     }
+                } else if renames.page(&reference.name).is_some() {
+                    renames.miss(range, Unrealized::NativeSpelling, SiteKind::Embed);
                 }
             }
             _ => {}
         }
     }
     edits.extend(query_edits(raw, &projection.regions, is_org, renames));
-    // Rewrite targets need the parse again; only a block that can hold one
-    // pays for it.
-    if raw.contains("{{") || (is_org && raw.contains("[[file:")) {
-        for target in crate::reference_evidence::rename_targets(raw, is_org) {
-            match target {
-                RewriteTarget::FileLink(range) => {
-                    edits.extend(file_link_stem_edit(raw, range, renames));
+    for target in source.targets.iter().cloned() {
+        match target {
+            RewriteTarget::FileLink(range) => {
+                edits.extend(file_link_stem_edit(raw, range, renames));
+            }
+            // A `}` would end the macro early: retain its old bytes.
+            RewriteTarget::MacroLink(reference) => {
+                let misses = renames.unrealized.borrow().len();
+                let mut local = Vec::new();
+                link_edits(raw, &reference, is_org, renames, &mut local);
+                for site in &mut renames.unrealized.borrow_mut()[misses..] {
+                    site.kind = SiteKind::MacroArg;
                 }
-                // A new name with `}` would end the macro early: the macro keeps
-                // its old bytes, as a query macro does.
-                RewriteTarget::MacroLink(reference) => {
-                    let misses = renames.unrealized.borrow().len();
-                    let mut local = Vec::new();
-                    let node = &raw[reference.range.clone()];
-                    if reference.rule == "explicit_nested_link" {
-                        nested_edits(node, reference.range.start, renames, &mut local);
+                for edit in local {
+                    if edit.1.contains('}') {
+                        renames.miss(edit.0, Unrealized::MacroLink, SiteKind::MacroArg);
                     } else {
-                        link_edits(
-                            raw,
-                            reference.range,
-                            &reference.name,
-                            is_org,
-                            renames,
-                            &mut local,
-                        );
-                    }
-                    for site in &mut renames.unrealized.borrow_mut()[misses..] {
-                        site.kind = SiteKind::MacroArg;
-                    }
-                    for edit in local {
-                        if edit.1.contains('}') {
-                            renames.miss(edit.0, Unrealized::MacroLink, SiteKind::MacroArg);
-                        } else {
-                            edits.push(edit);
-                        }
+                        edits.push(edit);
                     }
                 }
             }
@@ -844,46 +860,31 @@ fn block_edits(raw: &str, is_org: bool, block: &DocBlock, renames: &Renames<'_>)
     edits
 }
 
-/// The names inside a nested link `[[a [[x]] c]]` that a rename respells.
-fn nested_edits(node: &str, at: usize, renames: &Renames<'_>, edits: &mut Vec<Edit>) {
-    for inner in crate::block_regions::nested_reference_ranges(node) {
-        if let Some(to) = renames.page(&node[inner.clone()]) {
-            edits.push(renames.edit(
-                at + inner.start..at + inner.end,
-                &node[inner],
-                &to,
-                to.to_string(),
-            ));
-        }
-    }
-}
-
 /// A link node `[[x]]`, Org `[[x][label]]`, Markdown `[label]([[x]])`, or a
 /// file link named by its label (Org `[[file:…][label]]`, Markdown
 /// `[label](file:…)` or `[label](../pages/x.md)`): respell the name.
 fn link_edits(
     raw: &str,
-    range: Range<usize>,
-    name: &str,
+    reference: &crate::reference_evidence::SlottedPageRef,
     is_org: bool,
     renames: &Renames<'_>,
     edits: &mut Vec<Edit>,
 ) {
+    let range = reference.range.clone();
+    let name = &reference.name;
     let Some(to) = renames.page(name) else {
         return;
     };
+    if reference.slot.nested {
+        renames.miss(
+            reference.slot.extent.clone(),
+            Unrealized::NativeSpelling,
+            SiteKind::Link,
+        );
+        return;
+    }
     let node = &raw[range.clone()];
-    let mut push = |inner: Range<usize>| {
-        if renames.page(&node[inner.clone()]).as_deref() == Some(to.as_ref()) {
-            let at = range.start + inner.start..range.start + inner.end;
-            match crate::refs::label::reference_spelling(node, inner, &to, is_org, "explicit_link")
-            {
-                Some(spelling) => edits.push(renames.edit(at, name, &to, spelling)),
-                None => renames.miss(at, Unrealized::NativeSpelling, SiteKind::Link),
-            }
-        }
-    };
-    if let Some(label) = crate::refs::FileLabel::read(node, name, is_org) {
+    if let Some(label) = crate::refs::FileLabel::read(raw, reference, is_org) {
         match label.spelling(&to) {
             Some(spelling) => {
                 let run = label.run.expect("a spelling has a name run");
@@ -902,19 +903,18 @@ fn link_edits(
         }
         return;
     }
-    if let Some(body) = node.strip_prefix("[[").and_then(|b| b.strip_suffix("]]")) {
-        match body.find("][") {
-            Some(split) => push(2..2 + split),
-            None => push(2..node.len() - 2),
+    if let Some(at) = reference.slot.run() {
+        let inner = at.start - range.start..at.end - range.start;
+        match crate::refs::label::reference_spelling(node, inner, &to, is_org, reference.rule) {
+            Some(spelling) => edits.push(renames.edit(at.clone(), name, &to, spelling)),
+            None => renames.miss(at.clone(), Unrealized::NativeSpelling, SiteKind::Link),
         }
-    } else if let Some(split) = node.rfind("](") {
-        let target = &node[split + 2..node.len().saturating_sub(1)];
-        let lead = target.len() - target.trim_start().len();
-        let trimmed = target.trim();
-        if trimmed.starts_with("[[") && trimmed.ends_with("]]") && trimmed.len() >= 4 {
-            let start = split + 2 + lead + 2;
-            push(start..start + trimmed.len() - 4);
-        }
+    } else {
+        renames.miss(
+            reference.slot.extent.clone(),
+            Unrealized::NativeSpelling,
+            SiteKind::Link,
+        );
     }
 }
 

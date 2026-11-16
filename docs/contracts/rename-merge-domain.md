@@ -6,6 +6,16 @@ ownership, and unchanged-save closure. The supported syntax and layout domain
 is frozen. Unsupported candidates refuse before publication with a reason;
 further syntax expansion is not promised.
 
+A reference inside another reference's name cannot change independently:
+renaming `Old` leaves `[[a [[Old]]]]` and a glued tag such as
+`#[[Old]]Tail` unchanged, and reports the inner site as unspellable (O7).
+The enclosing reference follows its own name: `[[Old/[[Old]]]]` becomes
+`[[New/[[Old]]]]` when renaming `Old` to `New`, with the inner site left and
+reported. Ordinary references in the same file still follow the rename.
+Reports identify the input file, native byte span and site kind. The reader
+supplies the decoded name and native name slot, so an escaped spelling
+written by one rename remains eligible for subsequent renames.
+
 A merge writes what the conceptual model's merge rule O6 says
 (`cm-cut-model-r6`). The survivor keeps its name, path, header and blocks; no
 survivor byte moves into the leftover block. Every original byte keeps its

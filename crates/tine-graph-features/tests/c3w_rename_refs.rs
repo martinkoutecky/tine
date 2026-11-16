@@ -117,10 +117,11 @@ fn w3_rename_rewrites_references_after_an_unmatched_opener_and_fullwidth_tags() 
     assert_eq!(
         referrer,
         // The first two lines hold no reference to Target (see the module
-        // comment): left as written.
+        // comment): left as written. O7 also leaves the nested inner name:
+        // changing it would repoint the enclosing page reference.
         "- use [[ to link, then [[Target]] here\n\
          - a tag #[[ opener then #[[Target]] too\n\
-         - nested [[a [[Renamed]] c]]\n\
+         - nested [[a [[Target]] c]]\n\
          - tagged\n  tags:: Other，Renamed\n\
          - plain [[Renamed]]\n"
     );

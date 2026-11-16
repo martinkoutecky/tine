@@ -214,11 +214,12 @@ fn an_unspellable_site_stays() {
 #[test]
 fn tasks_priorities_embeds_and_nested_links() {
     let before = "- TODO [#A] {{embed [[Old]]}} [[a [[Old]] c]]\n";
-    let after = "- TODO [#A] {{embed [[New]]}} [[a [[New]] c]]\n";
+    // O7: the nested inner name stays; the independent embed follows O1.
+    let after = "- TODO [#A] {{embed [[New]]}} [[a [[Old]] c]]\n";
     assert!(rename_ok("Old", "New", before, after, Format::Md));
-    // Negative control: the nested name kept.
-    let kept = "- TODO [#A] {{embed [[New]]}} [[a [[Old]] c]]\n";
-    assert!(!rename_ok("Old", "New", before, kept, Format::Md));
+    // Negative control: rewriting it repoints another page's reference.
+    let repointed = "- TODO [#A] {{embed [[New]]}} [[a [[New]] c]]\n";
+    assert!(!rename_ok("Old", "New", before, repointed, Format::Md));
     // A task marker is never respelled, whatever the rename.
     assert!(rename_ok(
         "todo",
