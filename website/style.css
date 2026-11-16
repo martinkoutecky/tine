@@ -100,9 +100,8 @@ h3 { font-size: 1.12rem; letter-spacing: -.01em; }
   background: var(--card); border: 1px solid var(--line); border-left: 4px solid var(--accent);
   box-shadow: var(--shadow);
 }
-.release-shot { display: block; border-radius: 9px; overflow: hidden; border: 1px solid var(--line); background: #0e0c16; }
-.release-shot img { width: 100%; height: auto; transition: transform .2s ease; }
-.release-shot:hover img { transform: scale(1.02); }
+.release-card-video { max-width: 1040px; grid-template-columns: minmax(0, 1.35fr) minmax(0, 1fr); }
+.release-video { display: block; width: 100%; height: auto; border-radius: 9px; border: 1px solid var(--line); background: #0e0c16; }
 .release-kicker {
   margin: 0 0 .35rem; text-transform: uppercase; letter-spacing: .14em; font-size: .72rem; font-weight: 700;
   color: var(--accent-deep);
