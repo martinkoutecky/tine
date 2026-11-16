@@ -854,7 +854,9 @@ impl<'a> PagePlan<'a> {
         let effect = match read {
             None => RewriteEffect::Changes,
             Some(text) => {
-                let name_format = self.store.config().file_name_format;
+                let config = self.store.config();
+                let name_format = config.file_name_format;
+                let days = config.config.journal_format();
                 let is_org = tine_core::model::Format::from_path(Path::new(file.as_str()))
                     == tine_core::model::Format::Org;
                 let keyed = |pairs: &[(String, String)]| {
@@ -868,7 +870,10 @@ impl<'a> PagePlan<'a> {
                     is_org,
                     &keyed(&renames.0),
                     &keyed(&renames.1),
-                    name_format,
+                    tine_core::refs::RenameFormat {
+                        names: name_format,
+                        days: Some(&days),
+                    },
                 );
                 let Ok(proposal) = proposal else {
                     self.steps.push(Step::Rewrite {

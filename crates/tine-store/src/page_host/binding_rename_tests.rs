@@ -29,7 +29,7 @@ impl PageHost {
             let path = self.store.graph.root.join(id.as_str());
             // This adapter supplies valid fixtures for writer/order proofs.
             // Feature-boundary tests own malformed/marked/unsaved policy.
-            rewrite(bytes, &path, map, view.config.file_name_format)
+            rewrite(bytes, &path, map, view.config.file_name_format.into())
                 .expect("valid general-writer rename fixture")
         };
         refs.remove(source);

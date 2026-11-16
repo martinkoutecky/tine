@@ -76,6 +76,23 @@ pub(crate) struct ClaimLookup<'a> {
     pub(crate) name: std::borrow::Cow<'a, str>,
     /// An ordinary page name to try when no claimant of `name` exists.
     pub(crate) page_fallback: Option<&'a str>,
+    /// The day `name` parses to (`JournalDate::ordinal_key`), for a journal
+    /// lookup.
+    day: Option<i64>,
+}
+
+impl ClaimLookup<'_> {
+    /// Whether `entry`, a claimant of [`Self::name`], holds the name looked
+    /// up. A spelling that parses to a day is held only by that day's
+    /// journals (model r6 O3: "a journal holds every accepted spelling of
+    /// its day"): a title format without a year (`MM-dd`) gives two days one
+    /// title, and they remain distinct days (cm-cut6 SPEC §2.1), so the
+    /// title's other journals do not hold it. Ordinary pages, and lookups of
+    /// a name that is no day (the shared label `10-26` itself), keep every
+    /// claimant of the name. O(1) per claimant.
+    pub(crate) fn holds(&self, entry: &PageEntry) -> bool {
+        entry.kind != PageKind::Journal || self.day.is_none() || entry.date_key == self.day
+    }
 }
 
 pub(crate) fn claim_lookup<'a>(
@@ -87,16 +104,19 @@ pub(crate) fn claim_lookup<'a>(
         return ClaimLookup {
             name: name.into(),
             page_fallback: None,
+            day: None,
         };
     }
     match format.parse(name) {
         Some(day) => ClaimLookup {
             name: format.title(day).into(),
             page_fallback: Some(name),
+            day: Some(day.ordinal_key()),
         },
         None => ClaimLookup {
             name: name.into(),
             page_fallback: None,
+            day: None,
         },
     }
 }

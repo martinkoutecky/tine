@@ -36,22 +36,21 @@ impl Store {
             .page_fallback
             .filter(|name| self.graph.find_entry(name, PageKind::Page).is_some());
         let claim_name = literal.unwrap_or(&lookup.name);
-        let entry = self
-            .graph
-            .find_entry(
-                claim_name,
-                if literal.is_some() {
-                    PageKind::Page
-                } else {
-                    kind
-                },
-            )
-            .and_then(|_| {
-                [PageKind::Page, PageKind::Journal]
-                    .into_iter()
-                    .filter_map(|kind| self.graph.find_entry(claim_name, kind))
-                    .min_by(|a, b| crate::model::compare_page_claimants(a, b))
-            });
+        let held = |kind| {
+            (self.graph.find_claimants(claim_name, kind).into_iter())
+                .find(|entry| lookup.holds(entry))
+        };
+        let entry = held(if literal.is_some() {
+            PageKind::Page
+        } else {
+            kind
+        })
+        .and_then(|_| {
+            [PageKind::Page, PageKind::Journal]
+                .into_iter()
+                .filter_map(held)
+                .min_by(|a, b| crate::model::compare_page_claimants(a, b))
+        });
         let Some(entry) = entry else {
             return Ok(None);
         };

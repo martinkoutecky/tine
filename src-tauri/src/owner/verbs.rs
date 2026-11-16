@@ -478,14 +478,42 @@ pub(super) fn write_claimant(
     graph: &WholeGraph,
     name: &str,
 ) -> Result<Option<PageId>, ErrorBody> {
-    let found = match claimants(lookup(slot, graph, name, false)) {
-        Err(_) => claimants(lookup(slot, graph, name, true)),
-        found => found,
-    };
-    let Ok((candidates, alias)) = found else {
+    let Ok((candidates, alias)) = claimed(slot, graph, name) else {
         return Ok(None);
     };
     Named::Claimed { candidates, alias }.page(name).map(Some)
+}
+
+/// A rename's source file ([`write_claimant`]'s rule for files): `None` for
+/// a name no file claims, and for an alias, which a rename renames itself,
+/// not its owner (model r6 O0: "A is renamable if it is a page ... or an
+/// alias").
+pub(super) fn rename_source(
+    slot: &GraphSlot,
+    graph: &WholeGraph,
+    name: &str,
+) -> Result<Option<PageId>, ErrorBody> {
+    match claimed(slot, graph, name) {
+        Ok((candidates, false)) => Named::Claimed {
+            candidates,
+            alias: false,
+        }
+        .page(name)
+        .map(Some),
+        Ok((_, true)) | Err(_) => Ok(None),
+    }
+}
+
+/// The claimants of `name` for a write: as a page, else as a journal day.
+fn claimed(
+    slot: &GraphSlot,
+    graph: &WholeGraph,
+    name: &str,
+) -> Result<(Vec<PageId>, bool), PageId> {
+    match claimants(lookup(slot, graph, name, false)) {
+        Err(_) => claimants(lookup(slot, graph, name, true)),
+        found => found,
+    }
 }
 
 /// One lookup of `name` in `graph` for a write, counted (`op_counts`).

@@ -27,16 +27,13 @@ pub(crate) async fn rename_offer(
 }
 
 /// Rename `old` to `new`. `merge_into`: the user confirmed a merge into that
-/// page file. `own_page`: the user chose "make it its own page" for a name
-/// that is only an alias (M-Q5); it wins over `merge_into`.
+/// page file (model r6 O3: confirm or cancel are the only answers).
 #[tauri::command]
-#[allow(clippy::too_many_arguments)]
 pub(crate) async fn rename_page(
     old: String,
     new: String,
     expected_path: Option<String>,
     merge_into: Option<String>,
-    own_page: Option<bool>,
     unsaved_paths: Option<Vec<String>>,
     app: tauri::AppHandle,
     state: GraphContext<'_>,
@@ -49,18 +46,15 @@ pub(crate) async fn rename_page(
         // On a git graph that autocommits, bracketed by commits (ADR 0078).
         crate::git_settings::around(
             &slot.root_key,
-            || match (&merge_into, own_page) {
-                (Some(_), None | Some(false)) => {
-                    format!("Merge page \"{old}\" into \"{new}\"")
-                }
-                _ => format!("Rename page \"{old}\" to \"{new}\""),
+            || match &merge_into {
+                Some(_) => format!("Merge page \"{old}\" into \"{new}\""),
+                None => format!("Rename page \"{old}\" to \"{new}\""),
             },
             || {
                 use tine_graph_features::pages::RenameChoice;
-                let choice = match (own_page, merge_into.as_deref()) {
-                    (Some(true), _) => RenameChoice::OwnPage,
-                    (_, Some(into)) => RenameChoice::MergeInto(into),
-                    (_, None) => RenameChoice::Rename,
+                let choice = match merge_into.as_deref() {
+                    Some(into) => RenameChoice::MergeInto(into),
+                    None => RenameChoice::Rename,
                 };
                 window_answer(tine_graph_features::pages::rename_page_as(
                     &slot.store,

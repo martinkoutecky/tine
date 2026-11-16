@@ -311,20 +311,26 @@ impl<'a> PagePlan<'a> {
                 }
                 let old = self.stage(&file, expected)?;
                 let path = self.path(&file)?;
-                let name_format = self.store.config().file_name_format;
+                let config = self.store.config();
+                let name_format = config.file_name_format;
+                let days = config.config.journal_format();
+                let format = tine_core::refs::RenameFormat {
+                    names: name_format,
+                    days: Some(&days),
+                };
                 let reused = prepared
                     .as_ref()
                     .map(|prepared| prepared.reuse(&file, &old, name_format))
                     .transpose()?
                     .flatten();
                 let new = if *rebind_title {
-                    rewrite_move(&old, &path, renames, titles, name_format, None)?
+                    rewrite_move(&old, &path, renames, titles, format, None)?
                 } else if let Some(new) = reused.map(String::into_bytes) {
                     let is_org = Format::from_path(&path) == Format::Org;
                     refuse_read_only_org(&old, &new, is_org)?;
                     new
                 } else {
-                    rewrite(&old, &path, renames, name_format)?
+                    rewrite(&old, &path, renames, format)?
                 };
                 // Reject an unreadable replacement before further native
                 // validation walks; its byte bound is already known.
@@ -340,6 +346,7 @@ impl<'a> PagePlan<'a> {
                         Format::from_path(&path),
                         renames,
                         titles,
+                        &days,
                     )?;
                 }
                 refuse_marker_rewrite(&old, &new, Format::from_path(&path))?;
@@ -377,10 +384,16 @@ impl<'a> PagePlan<'a> {
                 };
                 let absent = self.available_move_destination(file, to)?;
                 self.twin_with_absence(to, Some(file), absent)?;
+                let config = self.store.config();
+                let days = config.config.journal_format();
                 let new = match (&old, renames) {
                     (Some(old), Some(map)) => {
                         let path = self.spelled_path(to)?;
-                        let name_format = self.store.config().file_name_format;
+                        let name_format = config.file_name_format;
+                        let format = tine_core::refs::RenameFormat {
+                            names: name_format,
+                            days: Some(&days),
+                        };
                         // The planning read's rewrite, when it was made from
                         // these staged bytes, this format and this syntax.
                         let same_syntax =
@@ -391,7 +404,7 @@ impl<'a> PagePlan<'a> {
                             }
                             _ => None,
                         };
-                        Some(rewrite_move(old, &path, map, titles, name_format, reused)?)
+                        Some(rewrite_move(old, &path, map, titles, format, reused)?)
                     }
                     (Some(old), None) => Some(old.clone()),
                     (None, None) => None,
@@ -408,6 +421,7 @@ impl<'a> PagePlan<'a> {
                             Format::from_path(&self.path(file)?),
                             map,
                             titles,
+                            &days,
                         )?;
                     }
                     refuse_marker_rewrite(old, new, Format::from_path(&self.path(file)?))?;

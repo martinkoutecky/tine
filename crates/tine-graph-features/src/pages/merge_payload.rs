@@ -556,7 +556,7 @@ impl Writer {
 /// Realize a merge from the exact bytes guarded by the caller's revisions.
 /// `links` and `queries` are the span writer's already-keyed substitutions.
 /// Failure returns no writable proposal. O(changed bytes), no graph scan/I/O.
-pub fn propose(
+pub fn propose<'f>(
     target: &PageDto,
     target_text: &str,
     source: &PageDto,
@@ -564,8 +564,9 @@ pub fn propose(
     links: &HashMap<String, String>,
     queries: &HashMap<String, String>,
     org: bool,
-    format: tine_core::config::FileNameFormat,
+    format: impl Into<refs::RenameFormat<'f>>,
 ) -> Result<MergeProposal, RealizationError> {
+    let format = format.into();
     let mut headers = [
         Header::read(target, target_text, org),
         Header::read(source, source_text, org),

@@ -61,9 +61,49 @@ pub fn namespace_refs(name: &str) -> impl Iterator<Item = &str> {
         .filter(|name| !name.is_empty())
 }
 
+/// How a rename spells the names it writes: the graph's file-name format
+/// (Org `file:` link stems) and its journal format, whose days are never
+/// respelled (model O2: "Days ... are never respelled"; D-20261106-R13 C2C3).
+/// A bare [`FileNameFormat`] converts with no journal format, for a text that
+/// holds no day (the bundled Guide's links, tests).
+#[derive(Clone, Copy)]
+pub struct RenameFormat<'a> {
+    pub names: FileNameFormat,
+    pub days: Option<&'a crate::date::JournalFormat>,
+}
+
+impl<'a> RenameFormat<'a> {
+    /// A graph's rename spelling: its file-name and journal formats.
+    pub fn new(names: FileNameFormat, days: &'a crate::date::JournalFormat) -> Self {
+        Self {
+            names,
+            days: Some(days),
+        }
+    }
+}
+
+impl From<FileNameFormat> for RenameFormat<'_> {
+    fn from(names: FileNameFormat) -> Self {
+        Self { names, days: None }
+    }
+}
+
+/// [`renamed_page_name`] for one name site a rename writes: `None` also for
+/// a day (the graph's one date answer, `JournalFormat::parse`, accepts the
+/// whole name), which stays as it is (O2; O4 "a day under the source ... stays,
+/// and the rename proceeds"). The rewriter and the store's title check share
+/// it. The day test runs only for a site the rename would otherwise respell.
+pub fn renamed_site_name<'a>(
+    name: &str,
+    pages: &'a std::collections::HashMap<String, String>,
+    days: Option<&crate::date::JournalFormat>,
+) -> Option<std::borrow::Cow<'a, str>> {
+    renamed_page_name(name, pages).filter(|_| days.is_none_or(|days| days.parse(name).is_none()))
+}
+
 /// The renamed spelling of a page name, including unclaimed namespace
-/// members. `pages` maps old page keys to new display names. Shared by the
-/// text rewriter and the journal-reference-loss guard; O(namespace depth).
+/// members. `pages` maps old page keys to new display names. O(namespace
+/// depth). A rename's sites use [`renamed_site_name`].
 pub fn renamed_page_name<'a>(
     name: &str,
     pages: &'a std::collections::HashMap<String, String>,
@@ -177,11 +217,11 @@ mod rename;
 /// differences). Keys are raw old names, normalized here; values are display
 /// names. The store's rename steps and the rename planner both call this, so
 /// they cannot disagree on whether a rename changes a file. Pure, O(text).
-pub fn rename_rewrite(
+pub fn rename_rewrite<'f>(
     text: &str,
     is_org: bool,
     renames: &[(String, String)],
-    file_name_format: FileNameFormat,
+    file_name_format: impl Into<RenameFormat<'f>>,
 ) -> String {
     rename_rewrite_with_queries(text, is_org, renames, &[], file_name_format, None)
 }
@@ -196,12 +236,12 @@ pub fn rename_rewrite(
 /// Rejected, overlapping and byte-identical edits contribute nothing. Recording
 /// costs O(name bytes) per proposed edit and retains unique pairs, with no
 /// additional parse or I/O.
-pub fn rename_rewrite_with_queries(
+pub fn rename_rewrite_with_queries<'f>(
     text: &str,
     is_org: bool,
     renames: &[(String, String)],
     queries: &[(String, String)],
-    file_name_format: FileNameFormat,
+    file_name_format: impl Into<RenameFormat<'f>>,
     rewritten: Option<&mut std::collections::HashSet<(String, String)>>,
 ) -> String {
     let keyed = |pairs: &[(String, String)]| -> std::collections::HashMap<String, String> {
@@ -218,7 +258,7 @@ pub fn rename_rewrite_with_queries(
         &rename::Renames::new(
             &renames,
             Some(&queries),
-            file_name_format,
+            file_name_format.into(),
             rewritten.is_some(),
         ),
         rewritten,
@@ -262,31 +302,31 @@ pub fn physical_outline(
 
 /// Prepare the physical span rewrite with its checked complete-text certificate
 /// and covered sites that could not be realized. O(page bytes), no I/O.
-pub fn rename_proposal(
+pub fn rename_proposal<'f>(
     text: &str,
     is_org: bool,
     renames: &std::collections::HashMap<String, String>,
     queries: &std::collections::HashMap<String, String>,
-    format: FileNameFormat,
+    format: impl Into<RenameFormat<'f>>,
 ) -> Result<RenameProposal, crate::text_trace::TraceError> {
     rename::proposal(
         text,
         is_org,
-        &rename::Renames::new(renames, Some(queries), format, true),
+        &rename::Renames::new(renames, Some(queries), format.into(), true),
     )
 }
 
 /// [`rename_rewrite`] with the renames already keyed by `normalize(old)`.
-pub fn rename_rewrite_keyed(
+pub fn rename_rewrite_keyed<'f>(
     text: &str,
     is_org: bool,
     renames: &std::collections::HashMap<String, String>,
-    file_name_format: FileNameFormat,
+    file_name_format: impl Into<RenameFormat<'f>>,
 ) -> String {
     rename::rewrite_page(
         text,
         is_org,
-        &rename::Renames::new(renames, None, file_name_format, false),
+        &rename::Renames::new(renames, None, file_name_format.into(), false),
         None,
     )
 }
@@ -294,18 +334,23 @@ pub fn rename_rewrite_keyed(
 /// [`rename_rewrite_keyed`] for one held block's raw body;
 /// `queries` as [`rename_rewrite_with_queries`].
 /// `rewritten` records applied edits as in that function.
-pub fn rename_block_raw(
+pub fn rename_block_raw<'f>(
     raw: &str,
     is_org: bool,
     renames: &std::collections::HashMap<String, String>,
     queries: Option<&std::collections::HashMap<String, String>>,
-    file_name_format: FileNameFormat,
+    file_name_format: impl Into<RenameFormat<'f>>,
     rewritten: Option<&mut std::collections::HashSet<(String, String)>>,
 ) -> String {
     rename::rewrite_block(
         raw,
         is_org,
-        &rename::Renames::new(renames, queries, file_name_format, rewritten.is_some()),
+        &rename::Renames::new(
+            renames,
+            queries,
+            file_name_format.into(),
+            rewritten.is_some(),
+        ),
         rewritten,
     )
 }
@@ -314,18 +359,23 @@ pub fn rename_block_raw(
 /// properties; `queries` as
 /// [`rename_rewrite_with_queries`].
 /// `rewritten` records applied edits as in that function.
-pub fn rename_pre_block(
+pub fn rename_pre_block<'f>(
     pre: &str,
     is_org: bool,
     renames: &std::collections::HashMap<String, String>,
     queries: Option<&std::collections::HashMap<String, String>>,
-    file_name_format: FileNameFormat,
+    file_name_format: impl Into<RenameFormat<'f>>,
     rewritten: Option<&mut std::collections::HashSet<(String, String)>>,
 ) -> String {
     rename::rewrite_pre_block(
         pre,
         is_org,
-        &rename::Renames::new(renames, queries, file_name_format, rewritten.is_some()),
+        &rename::Renames::new(
+            renames,
+            queries,
+            file_name_format.into(),
+            rewritten.is_some(),
+        ),
         rewritten,
     )
 }

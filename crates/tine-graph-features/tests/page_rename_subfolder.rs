@@ -44,7 +44,10 @@ fn namespace_and_merge_renames_keep_each_files_parent() {
     for (new, survivor) in [
         ("New", None),
         ("New", Some("pages/target/New.md")),
-        ("Nick", Some("pages/target/New.md")),
+        // The survivor typed in another spelling: the merge names it by its
+        // own name (O1). Before model r6 this row merged through the alias
+        // `Nick`, which O3 now refuses (`page_rename_merge`).
+        ("new", Some("pages/target/New.md")),
     ] {
         let mut files = vec![
             ("logseq/config.edn", "{:file/name-format :triple-lowbar}\n"),

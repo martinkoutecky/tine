@@ -174,6 +174,8 @@ pub(crate) struct Renames<'a> {
     queries: Option<&'a HashMap<String, String>>,
     keys: HashMap<String, &'a str>,
     file_name_format: FileNameFormat,
+    /// The graph's journal format: a site spelled as a day stays (O2).
+    days: Option<&'a crate::date::JournalFormat>,
     record: bool,
     unrealized: std::cell::RefCell<Vec<Site>>,
 }
@@ -184,7 +186,7 @@ impl<'a> Renames<'a> {
     pub(crate) fn new(
         pages: &'a HashMap<String, String>,
         queries: Option<&'a HashMap<String, String>>,
-        file_name_format: FileNameFormat,
+        format: crate::refs::RenameFormat<'a>,
         record: bool,
     ) -> Self {
         let keys = pages
@@ -195,14 +197,15 @@ impl<'a> Renames<'a> {
             pages,
             queries: queries.filter(|queries| !queries.is_empty()),
             keys,
-            file_name_format,
+            file_name_format: format.names,
+            days: format.days,
             record,
             unrealized: Default::default(),
         }
     }
 
     fn page(&self, name: &str) -> Option<Cow<'a, str>> {
-        crate::refs::renamed_page_name(name, self.pages)
+        crate::refs::renamed_site_name(name, self.pages, self.days)
     }
 
     /// The new name of a query's page-name argument.

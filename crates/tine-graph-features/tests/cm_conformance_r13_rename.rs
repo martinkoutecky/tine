@@ -62,7 +62,6 @@ fn merge_proof(
 #[derive(Clone)]
 enum Choice {
     Rename,
-    Own,
     Merge(String),
 }
 
@@ -83,21 +82,6 @@ fn options(store: &Store, old: &str, new: &str) -> Vec<(Value, Choice)> {
             Choice::Rename,
         )],
         RenameOffer::Merge { into, .. } => vec![(identity(&into), Choice::Merge(into))],
-        RenameOffer::AliasOf {
-            owner,
-            merge,
-            own_page,
-            ..
-        } => {
-            let mut out = Vec::new();
-            if merge {
-                out.push((identity(&owner), Choice::Merge(owner)));
-            }
-            if own_page {
-                out.push((json!({"destination": new, "survivor": null}), Choice::Own));
-            }
-            out
-        }
         RenameOffer::Refused { .. } => Vec::new(),
     }
 }
@@ -112,7 +96,6 @@ fn execute(
     let host = tine_store::PageHost::start_for_tests(store, app_data.path()).unwrap();
     let c = match choice {
         Some(Choice::Rename) | None => RenameChoice::Rename,
-        Some(Choice::Own) => RenameChoice::OwnPage,
         Some(Choice::Merge(path)) => RenameChoice::MergeInto(path),
     };
     let result = rename_page_as(store, &host, old, new, None, c, &[])

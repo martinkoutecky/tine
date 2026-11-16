@@ -5,8 +5,9 @@
 //! graph, through the app's own rename question (`pages::rename_offer`, the
 //! planner's answer) and its answer (`pages::rename_page_as`).
 //!
-//! - R4 / M-Q5 (D-20261102-MC5): a name that is only an alias offers a merge
-//!   into its owner AND "make it its own page" (still an alias of the owner).
+//! - Model r6 O3 (superseding R4 / M-Q5): a name that is only another
+//!   page's alias is refused, naming the page it opens; the source's own
+//!   alias is a one-step rename. The only answers are confirm and cancel.
 //! - R10 / M-Q7: a journal day is the claimant of its day under every date
 //!   spelling, so a rename onto a day offers a merge into the journal.
 //! - B4 / accepted SPEC §5.3: a merge through an alias substitutes the
@@ -77,72 +78,22 @@ fn backlink_pages(store: &Store, name: &str) -> Vec<String> {
     pages
 }
 
+/// O2: "Days, task markers and priorities are never respelled. A day cannot
+/// be the source of a rename." O4: "A day under the source is not touched:
+/// it stays (O2), and the rename proceeds." (D-20261106-R13 C2C3: no
+/// journal-reference guard.) Each former journal-reference-loss case now
+/// renames; only a source that is a day, in any accepted spelling, is
+/// refused. (A title format with no date field, like `TODO`, gives no day
+/// spelling: such a name is no day.)
+/// (Replaces the guard tests; their source x answer matrix lives on in
+/// `cm_requests::journal_files_follow_the_rename_like_any_other_file`.)
 #[test]
-fn journal_reference_loss_refuses_every_source_and_answer_without_writing() {
+fn days_stay_and_only_a_day_source_is_refused() {
     let _guard = crate::integration_lock();
-    for source in ["real", "reference-only", "alias-only"] {
-        for target in ["free", "page", "alias"] {
-            let mut files = vec![
-                ("journals/2026_10_26.md", "alias:: old/sub\n\n- day\n"),
-                ("pages/p.md", "- [[old/sub]] and [[old/sub]]\n"),
-            ];
-            match source {
-                "real" => files.push(("pages/old.md", "- source\n")),
-                "alias-only" => files.push(("pages/owner.md", "alias:: old\n\n- owner\n")),
-                _ => {}
-            }
-            match target {
-                "page" => files.push(("pages/new.md", "- target\n")),
-                "alias" => files.push(("pages/target.md", "alias:: new\n\n- target\n")),
-                _ => {}
-            }
-            let (root, store) = fixture(&format!("journal-{source}-{target}"), &files);
-            let before = snapshot(&root);
-            let offer = rename_offer(&store, "old", "new", None).unwrap();
-            assert!(
-                matches!(offer, RenameOffer::Refused { .. }),
-                "{source}/{target}: {offer:?}"
-            );
-            let wire = serde_json::to_value(&offer).unwrap();
-            assert_eq!(wire["reason"]["kind"], "journalReferenceLoss");
-            assert_eq!(
-                wire["reason"]["journals"],
-                serde_json::json!(["Oct 26th, 2026"])
-            );
-            assert!(wire["message"].as_str().unwrap().contains("Oct 26th, 2026"));
-            for choice in [
-                RenameChoice::Rename,
-                RenameChoice::OwnPage,
-                RenameChoice::MergeInto(if target == "page" {
-                    "pages/new.md"
-                } else {
-                    "pages/target.md"
-                }),
-            ] {
-                let error = rename(&store, "old", "new", choice).unwrap_err();
-                assert!(
-                    RenameBlocked::of(&error).is_some(),
-                    "{source}/{target}: {error}"
-                );
-                assert_eq!(
-                    snapshot(&root),
-                    before,
-                    "{source}/{target}: refusal wrote files"
-                );
-            }
-            drop(store);
-            fs::remove_dir_all(root).unwrap();
-        }
-    }
-}
-
-#[test]
-fn journal_reference_loss_checks_each_owner_occurrence_and_direct_ownership() {
-    let _guard = crate::integration_lock();
-    for (label, journal_name, referring, old, new, blocked) in [
+    for (label, journal_name, referring, old, new, day) in [
         ("unused", "ns/yyyy-MM-dd", "- [[ns]]\n", "ns", "new", false),
         (
-            "retained-prefix",
+            "prefix-kept",
             "ns",
             "- [[ns/sub]]\n",
             "ns/sub",
@@ -150,12 +101,12 @@ fn journal_reference_loss_checks_each_owner_occurrence_and_direct_ownership() {
             false,
         ),
         (
-            "lost-prefix-outside-subtree",
+            "prefix-left",
             "ns",
             "- [[ns/sub]]\n",
             "ns/sub",
             "new",
-            true,
+            false,
         ),
         (
             "per-occurrence",
@@ -163,7 +114,7 @@ fn journal_reference_loss_checks_each_owner_occurrence_and_direct_ownership() {
             "- [[ns/sub]] [[ns]]\n",
             "ns/sub",
             "new",
-            true,
+            false,
         ),
         (
             "fixed-marker",
@@ -175,12 +126,29 @@ fn journal_reference_loss_checks_each_owner_occurrence_and_direct_ownership() {
         ),
         ("fixed-priority", "A", "- [#A] fixed\n", "A", "new", false),
         (
-            "query-only",
+            "query",
             "ns/yyyy-MM-dd",
-            "- {{query (page ns/2026-10-26)}}\n",
+            "- {{query (page ns/2026-10-26)}}\n- [[ns]]\n",
             "ns",
             "new",
             false,
+        ),
+        ("property", "ns", "- ns:: value\n", "ns", "new", false),
+        (
+            "day-source",
+            "ns/yyyy-MM-dd",
+            "- [[ns/2026-10-26]]\n",
+            "ns/2026-10-26",
+            "new",
+            true,
+        ),
+        (
+            "day-spelling",
+            "ns/yyyy-MM-dd",
+            "- [[ns]]\n",
+            "Oct 26th, 2026",
+            "new",
+            true,
         ),
     ] {
         let config = format!("{{:journal/page-title-format \"{journal_name}\"}}\n");
@@ -192,86 +160,38 @@ fn journal_reference_loss_checks_each_owner_occurrence_and_direct_ownership() {
                 ("logseq/config.edn", &config),
             ],
         );
-        let offer = rename_offer(&store, old, new, None).unwrap();
-        assert_eq!(
-            matches!(offer, RenameOffer::Refused { .. }),
-            blocked,
-            "{label}: {offer:?}"
-        );
+        let wire = serde_json::to_value(rename_offer(&store, old, new, None).unwrap()).unwrap();
+        let kind = if day { "refused" } else { "rename" };
+        assert_eq!(wire["kind"], kind, "{label}: {wire}");
+        if day {
+            assert_eq!(wire["reason"]["kind"], "day", "{label}: {wire}");
+        }
         drop(store);
         fs::remove_dir_all(root).unwrap();
     }
-    // The owner file is p.md; an ignored twin's occurrence must not refuse.
-    let (root, store) = fixture(
-        "non-owner",
-        &[
-            ("journals/2026_10_26.md", "- day\n"),
-            (
-                "logseq/config.edn",
-                "{:journal/page-title-format \"ns/yyyy-MM-dd\"}\n",
-            ),
-            ("pages/p.md", "- owner\n"),
-            ("pages/twin.md", "title:: p\n\n- [[ns/2026-10-26]]\n"),
-            ("pages/q.md", "- [[ns]]\n"),
-        ],
-    );
-    assert_eq!(
-        rename_offer(&store, "ns", "new", None).unwrap(),
-        RenameOffer::Rename
-    );
-    drop(store);
-    fs::remove_dir_all(root).unwrap();
 }
 
+/// O0 and O1: a name a journal declares as an alias is an alias, so it is
+/// renamable, and the journal's declaration follows like any file's (no
+/// journal-reference guard, D-20261106-R13). A name declared beside another
+/// alias of the same journal is no different.
 #[test]
-fn journal_reference_loss_includes_headers_but_not_transitive_alias_ownership() {
+fn a_journal_alias_is_an_ordinary_alias_source() {
     let _guard = crate::integration_lock();
     for files in [
         vec![("journals/2026_10_26.md", "alias:: old\n\n- day\n")],
         vec![("journals/2026_10_26.org", "#+ALIASES: old\n\n* day\n")],
         vec![("journals/2026_10_26.md", "- aliases:: old\n- day\n")],
-    ] {
-        let (root, store) = fixture("declaration-only", &files);
-        assert!(matches!(
-            rename_offer(&store, "old", "new", None).unwrap(),
-            RenameOffer::Refused { .. }
-        ));
-        drop(store);
-        fs::remove_dir_all(root).unwrap();
-    }
-    let (root, store) = fixture(
-        "transitive-alias",
-        &[
+        vec![
             ("journals/2026_10_26.md", "alias:: stable\n\n- day\n"),
             ("pages/owner.md", "alias:: stable, old/sub\n\n- owner\n"),
             ("pages/p.md", "- [[old/sub]]\n"),
         ],
-    );
-    assert_eq!(
-        rename_offer(&store, "old", "new", None).unwrap(),
-        RenameOffer::Rename
-    );
-    drop(store);
-    fs::remove_dir_all(root).unwrap();
-    for (disabled, expected) in [(false, true), (true, false)] {
-        let config = format!(
-            "{{:journal/page-title-format \"ns\" :property-pages/enabled? {}}}\n",
-            !disabled
-        );
-        let (root, store) = fixture(
-            "property-gate",
-            &[
-                ("journals/2026_10_26.md", "- day\n"),
-                ("pages/p.md", "- ns:: value\n"),
-                ("logseq/config.edn", &config),
-            ],
-        );
+    ] {
+        let (root, store) = fixture("journal-alias", &files);
         assert_eq!(
-            matches!(
-                rename_offer(&store, "ns", "new", None).unwrap(),
-                RenameOffer::Refused { .. }
-            ),
-            expected
+            rename_offer(&store, "old", "new", None).unwrap(),
+            RenameOffer::Rename
         );
         drop(store);
         fs::remove_dir_all(root).unwrap();
@@ -306,7 +226,14 @@ fn alias_source_rewrites_all_declarers_and_survives_reload() {
         rename_offer(&store, "ML", "AI", None).unwrap(),
         RenameOffer::Rename
     );
-    assert!(rename(&store, "ML", "AI", RenameChoice::OwnPage).is_err());
+    // O3: "An answer where nothing was asked is refused."
+    assert!(rename(
+        &store,
+        "ML",
+        "AI",
+        RenameChoice::MergeInto("pages/owner.md")
+    )
+    .is_err());
     rename(&store, "ML", "AI", RenameChoice::Rename).unwrap();
     assert_eq!(snapshot(&root)["pages/owner.md"], "alias:: AI\n\n- owner\n");
     assert_eq!(
@@ -325,8 +252,9 @@ fn alias_source_rewrites_all_declarers_and_survives_reload() {
     assert!(backlink_pages(&reloaded, "owner").contains(&"q".to_owned()));
 }
 
-/// C6/C7/C13: no fake OwnPage, the shared empty-target owner selection,
-/// survivor query name, and same-key respelling through the real API.
+/// C6/C7/C13: the shared empty-target owner selection, survivor query
+/// name, and same-key respelling through the real API. O3: one holder is a
+/// merge after one confirm, so a plain rename is no answer to it.
 #[test]
 fn alias_source_empty_target_and_same_key() {
     let _guard = crate::integration_lock();
@@ -344,7 +272,7 @@ fn alias_source_empty_target_and_same_key() {
         into, ..
     } if into == "pages/AI.md")
     );
-    assert!(rename(&store, "ML", "AI", RenameChoice::OwnPage).is_err());
+    assert!(rename(&store, "ML", "AI", RenameChoice::Rename).is_err());
     rename(&store, "ML", "AI", RenameChoice::MergeInto("pages/AI.md")).unwrap();
     let after = snapshot(&root);
     assert_eq!(after["pages/AI.md"], "");
@@ -407,12 +335,19 @@ fn empty_alias_target_dialog_and_both_answers() {
     }
 }
 
-/// R10-Q4: the API rejects OwnPage for a file-less source, while a real
-/// content-free source still gets both answers.
+/// O3: "No holder, and a page other than the source declares B as an
+/// alias ...: refused, naming the page B opens. This holds ... when the
+/// source has no file." A file-less or empty source renamed onto another
+/// page's alias is refused and writes nothing; an (empty) file claiming B is
+/// a holder, so the outcome is the merge into it.
 #[test]
-fn fileless_alias_offer_rejects_own_page() {
+fn fileless_or_empty_source_onto_an_alias_is_refused() {
     let _guard = crate::integration_lock();
-    for empty_target in [false, true] {
+    for (label, empty_target, source) in [
+        ("fileless", false, None),
+        ("fileless-holder", true, None),
+        ("empty-source", false, Some("")),
+    ] {
         let mut files = vec![
             ("pages/owner.md", "alias:: ML\n\n- owner\n"),
             ("pages/refs.md", "- [[B]]\n"),
@@ -420,69 +355,46 @@ fn fileless_alias_offer_rejects_own_page() {
         if empty_target {
             files.push(("pages/ML.md", ""));
         }
-        let (root, store) = fixture("fileless-alias", &files);
-        let offer = serde_json::to_value(rename_offer(&store, "B", "ML", None).unwrap()).unwrap();
-        assert_eq!(
-            offer["kind"],
-            if empty_target { "merge" } else { "aliasOf" }
-        );
-        if !empty_target {
-            assert_eq!(offer["merge"], true);
-            assert_eq!(offer["ownPage"], false);
+        if let Some(text) = source {
+            files.push(("pages/B.md", text));
         }
+        let (root, store) = fixture(label, &files);
+        let offer = serde_json::to_value(rename_offer(&store, "B", "ML", None).unwrap()).unwrap();
         let before = snapshot(&root);
-        assert!(rename(&store, "B", "ML", RenameChoice::OwnPage).is_err());
-        assert_eq!(snapshot(&root), before);
-        rename(
-            &store,
-            "B",
-            "ML",
-            RenameChoice::MergeInto(if empty_target {
-                "pages/ML.md"
-            } else {
-                "pages/owner.md"
-            }),
-        )
-        .unwrap();
-        assert_eq!(
-            snapshot(&root)["pages/refs.md"],
-            if empty_target {
-                "- [[ML]]\n"
-            } else {
-                "- [[owner]]\n"
-            }
-        );
+        if empty_target {
+            assert_eq!(offer["kind"], "merge", "{label}: {offer}");
+            rename(&store, "B", "ML", RenameChoice::MergeInto("pages/ML.md")).unwrap();
+            assert_eq!(snapshot(&root)["pages/refs.md"], "- [[ML]]\n");
+            continue;
+        }
+        assert_eq!(offer["kind"], "refused", "{label}: {offer}");
+        assert_eq!(offer["reason"]["kind"], "aliasHeld", "{label}: {offer}");
+        assert_eq!(offer["reason"]["page"], "owner", "{label}: {offer}");
+        for choice in [
+            RenameChoice::Rename,
+            RenameChoice::MergeInto("pages/owner.md"),
+        ] {
+            assert!(rename(&store, "B", "ML", choice).is_err(), "{label}");
+        }
+        assert_eq!(snapshot(&root), before, "{label}: nothing written");
     }
-    let (root, store) = fixture(
-        "empty-source",
-        &[
-            ("pages/B.md", ""),
-            ("pages/owner.md", "alias:: ML\n\n- owner\n"),
-        ],
-    );
-    let offer = serde_json::to_value(rename_offer(&store, "B", "ML", None).unwrap()).unwrap();
-    assert_eq!(offer["ownPage"], true);
-    rename(&store, "B", "ML", RenameChoice::OwnPage).unwrap();
-    assert!(snapshot(&root).contains_key("pages/ML.md"));
 }
 
+/// O3: an alias "declared only by the source itself: rename in one step".
+/// Two empty files both claiming B are "several holders: refused
+/// (contested)", for every answer, writing nothing.
 #[test]
-fn own_alias_offers_only_own_page_and_conflicted_empty_target_refuses() {
+fn own_alias_renames_in_one_step_and_conflicted_empty_target_refuses() {
     let _guard = crate::integration_lock();
     let (_, store) = fixture(
         "self-alias",
         &[("pages/source.md", "alias:: Short\n\n- body\n")],
     );
-    assert!(matches!(
+    assert_eq!(
         rename_offer(&store, "source", "Short", None).unwrap(),
-        RenameOffer::AliasOf {
-            merge: false,
-            own_page: true,
-            ..
-        }
-    ));
-    assert!(rename(&store, "source", "Short", RenameChoice::Rename).is_err());
-    rename(&store, "source", "Short", RenameChoice::OwnPage).unwrap();
+        RenameOffer::Rename
+    );
+    rename(&store, "source", "Short", RenameChoice::Rename).unwrap();
     let (root, store) = fixture(
         "empty-twins",
         &[
@@ -494,72 +406,53 @@ fn own_alias_offers_only_own_page_and_conflicted_empty_target_refuses() {
     );
     let before = snapshot(&root);
     assert!(rename_offer(&store, "source", "ML", None).is_err());
-    assert!(rename(&store, "source", "ML", RenameChoice::OwnPage).is_err());
+    for choice in [RenameChoice::Rename, RenameChoice::MergeInto("pages/ML.md")] {
+        assert!(rename(&store, "source", "ML", choice).is_err());
+    }
     assert_eq!(snapshot(&root), before);
 }
 
-/// R4 / M-Q5: renaming onto an alias-only name offers both answers; "make it
-/// its own page" leaves `ML.md` a real page while `ML` stays an alias of
-/// Machine Learning, so `[[ML]]` still shows in its Linked References.
+/// O3: "No holder, and a page other than the source declares B as an
+/// alias, and the source's own file does not claim B: refused, naming the
+/// page B opens." (Supersedes R4 / M-Q5's "make it its own page" answer.)
+/// Nothing is written, and `ML` still opens Machine Learning.
 #[test]
-fn alias_only_name_offers_merge_and_own_page() {
+fn alias_only_name_is_refused_naming_its_page() {
     let _guard = crate::integration_lock();
     let (root, store) = fixture("own-page", ML);
+    let before = snapshot(&root);
+    let offer = rename_offer(&store, "ML notes", "ML", None).unwrap();
+    let RenameOffer::Refused { reason, message } = &offer else {
+        panic!("refused, got {offer:?}");
+    };
     assert_eq!(
-        rename_offer(&store, "ML notes", "ML", None).unwrap(),
-        RenameOffer::AliasOf {
-            owner: "pages/Machine Learning.md".into(),
-            name: "Machine Learning".into(),
-            merge: true,
-            own_page: true,
+        reason,
+        &RenameBlocked::AliasHeld {
+            alias: "ML".into(),
+            page: "Machine Learning".into(),
+            path: "pages/Machine Learning.md".into(),
         }
     );
-    // Without an answer, the alias-only name is still not taken silently.
+    assert!(message.contains("Machine Learning"), "{message}");
     let held = rename(&store, "ML notes", "ML", RenameChoice::Rename).unwrap_err();
-    assert!(matches!(
-        RenameBlocked::of(&held),
-        Some(RenameBlocked::AliasOf { merge: true, .. })
-    ));
-    assert_eq!(
-        rename(&store, "ML notes", "ML", RenameChoice::OwnPage).unwrap(),
-        RenameOutcome::Renamed
-    );
-    let files = snapshot(&root);
-    assert_eq!(
-        files.get("pages/ML.md").map(String::as_str),
-        Some("- notes\n")
-    );
-    assert!(!files.contains_key("pages/ML notes.md"));
-    assert_eq!(
-        files["pages/Machine Learning.md"], "alias:: ML\n\n- ml\n",
-        "the owner keeps its alias"
-    );
-    assert!(
-        files["pages/q.md"].contains("see [[ML]]"),
-        "{}",
-        files["pages/q.md"]
-    );
-    match resolve(&store, "ML") {
-        Resolved::Existing { id, .. } => assert_eq!(id.as_str(), "pages/ML.md"),
-        other => panic!("ML is its own page now: {other:?}"),
-    }
-    assert!(
-        backlink_pages(&store, "Machine Learning").contains(&"q".to_owned()),
-        "[[ML]] still counts for Machine Learning (ML is its alias)"
-    );
+    assert_eq!(RenameBlocked::of(&held), Some(reason));
+    assert_eq!(snapshot(&root), before);
+    assert!(matches!(resolve(&store, "ML"), Resolved::Alias { .. }));
 }
 
-/// B4: the merge answer through an alias uses the selected member in
-/// queries, links and namespace children.
+/// O1: "in a merge, ... D is the survivor's own name" in queries, links and
+/// namespace children, not the typed spelling. (Formerly a merge through an
+/// alias, which model r6 O3 refuses; the typed name is now one the survivor
+/// claims under another spelling.)
 #[test]
-fn merge_through_alias_names_the_survivor_in_queries() {
+fn merge_names_the_survivor_in_queries() {
     let _guard = crate::integration_lock();
     let (root, store) = fixture("through-alias", ML);
     assert_eq!(
         rename(
             &store,
             "ML notes",
-            "ML",
+            "machine learning",
             RenameChoice::MergeInto("pages/Machine Learning.md")
         )
         .unwrap(),
@@ -578,8 +471,10 @@ fn merge_through_alias_names_the_survivor_in_queries() {
     ));
 }
 
-// CM B4 / SPEC §5.3: the selected member supplies one substitution at
-// every site, including fileless sources and namespace query arguments.
+// CM B4 / SPEC §5.3, model r6 O1: the survivor's own name supplies one
+// substitution at every site, including fileless sources and namespace query
+// arguments. The typed name is the survivor's claim in another spelling (O3
+// refuses a merge through another page's alias).
 fn selected_spelling_oracle(label: &str, files: &BTreeMap<String, String>) {
     if let Ok(output) = std::env::var("CM_MERGE_ORACLE") {
         fs::write(
@@ -641,7 +536,8 @@ fn selected_spelling_at(site: &str) {
                 files.push((source_path.as_str(), source));
             }
             let (root, store) = fixture("selected-spelling", &files);
-            rename(&store, "B", "ML", RenameChoice::MergeInto(&target_path)).unwrap();
+            let typed = "machine learning";
+            rename(&store, "B", typed, RenameChoice::MergeInto(&target_path)).unwrap();
             let files = snapshot(&root);
             selected_spelling_oracle(&format!("{site}-{org}-{fileless}"), &files);
             let text = &files[&referrer_path];
@@ -733,7 +629,7 @@ fn selected_spelling_in_native_reference_sites() {
         let (root, store) = fixture("selected-native-sites", &[
             (&source_path, source), (&target_path, target), (&referrer_path, before),
         ]);
-        rename(&store, "B", "typed", RenameChoice::MergeInto(&target_path)).unwrap();
+        rename(&store, "B", "Chosen", RenameChoice::MergeInto(&target_path)).unwrap();
         let files = snapshot(&root);
         selected_spelling_oracle(&format!("native-{ext}"), &files);
         assert_eq!(files[&referrer_path], expected);
@@ -762,10 +658,16 @@ fn selected_spelling_identifies_a_day_with_an_ambiguous_label() {
             ),
         ],
     );
+    // The journal holds every accepted spelling of its day (O3); its title
+    // `10-26` names two days, so D is its file-stem spelling (O1).
+    let offer =
+        serde_json::to_value(rename_offer(&store, "B", "2026-10-26", None).unwrap()).unwrap();
+    assert_eq!(offer["kind"], "merge", "{offer}");
+    assert_eq!(offer["into"], "journals/2026_10_26.md", "{offer}");
     rename(
         &store,
         "B",
-        "PickedDay",
+        "2026-10-26",
         RenameChoice::MergeInto("journals/2026_10_26.md"),
     )
     .unwrap();
@@ -881,16 +783,14 @@ fn own_namespace_child_refuses_when_used() {
             "{label}"
         );
         assert!(message.contains("inside"), "{label}: {message}");
-        for choice in [RenameChoice::Rename, RenameChoice::OwnPage] {
-            let error = rename(&store, old, new, choice).unwrap_err();
-            assert!(
-                matches!(
-                    RenameBlocked::of(&error),
-                    Some(RenameBlocked::OwnChild { .. })
-                ),
-                "{label}: {error}"
-            );
-        }
+        let error = rename(&store, old, new, RenameChoice::Rename).unwrap_err();
+        assert!(
+            matches!(
+                RenameBlocked::of(&error),
+                Some(RenameBlocked::OwnChild { .. })
+            ),
+            "{label}: {error}"
+        );
         let survivor = match resolve(&store, new) {
             Resolved::Existing { id, .. } => id.as_str().to_owned(),
             Resolved::Alias { owners } => owners[0].as_str().to_owned(),
@@ -1037,3 +937,7 @@ fn case_only_rename_onto_another_pages_file_refuses_with_the_reason() {
     ));
     assert_eq!(snapshot(&root), before, "nothing written");
 }
+
+/// CM step 2 slice 1 (model r6): the request-level rules, on these helpers.
+#[path = "cm_requests.rs"]
+mod cm_requests;

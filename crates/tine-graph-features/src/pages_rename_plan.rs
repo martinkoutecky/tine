@@ -31,15 +31,6 @@ mod planning_probe {
         }
         samples.sort_unstable();
         println!("planning_us median={} samples={samples:?}", samples[10]);
-        let graph = store.whole_graph().unwrap();
-        let mut guard = Vec::new();
-        for _ in 0..21 {
-            let start = std::time::Instant::now();
-            std::hint::black_box(graph.journal_rewrite_risks(&old, "Rename probe destination"));
-            guard.push(start.elapsed().as_micros());
-        }
-        guard.sort_unstable();
-        println!("journal_guard_us median={}", guard[10]);
     }
 }
 
@@ -49,6 +40,8 @@ mod planning_probe {
 pub(super) struct RenamePlan {
     pub(super) graph: tine_store::WholeGraph,
     pub(super) config: tine_store::ConfigState,
+    /// The planning config's journal format: no rename respells a day (O2).
+    pub(super) days: tine_core::date::JournalFormat,
     pub(super) map: RenameMap,
     pub(super) lookup: HashMap<String, String>,
     /// Optional query overrides from `map.1`, keyed like `lookup`.
@@ -72,6 +65,11 @@ pub(super) struct RenamePlan {
 }
 
 impl RenamePlan {
+    /// How this plan's rewrites spell names (file names, fixed days).
+    pub(super) fn spelling(&self) -> refs::RenameFormat<'_> {
+        refs::RenameFormat::new(self.config.file_name_format, &self.days)
+    }
+
     /// Select from held buffers too: an unchanged unsaved referrer is not
     /// ours to flush; a changed one refuses. Admission guards this snapshot.
     pub(super) fn include_inputs(
@@ -99,7 +97,7 @@ impl RenamePlan {
                     format == Format::Org,
                     &self.map.0,
                     &self.map.1,
-                    self.config.file_name_format,
+                    self.spelling(),
                     None,
                 )
             })
@@ -139,7 +137,6 @@ impl RenamePlan {
     /// markers) is not written, so its unsaved input blocks nothing. The
     /// reads are kept for the commit, which decides on the same bytes.
     pub(super) fn pages(&mut self, store: &Store) -> io::Result<Vec<PageId>> {
-        let format = self.config.file_name_format;
         let mut pages = Vec::new();
         for id in &self.candidates {
             if self.moves.contains_key(id) || self.moved_titles_to_rebind.contains(id) {
@@ -154,6 +151,7 @@ impl RenamePlan {
             // changes it and it carries no VCS conflict markers.
             let syntax = Format::from_path(id.as_str().as_ref());
             let org = syntax == Format::Org;
+            let format = refs::RenameFormat::new(self.config.file_name_format, &self.days);
             let rewritten =
                 refs::rename_proposal(&content, org, &self.lookup, &self.query_lookup, format)
                     .map_err(|e| io::Error::new(io::ErrorKind::InvalidData, e))?;
@@ -214,7 +212,7 @@ fn may_hold_reference(
     store: &Store,
     file: &FileId,
     map: &RenameMap,
-    format: tine_core::config::FileNameFormat,
+    format: refs::RenameFormat<'_>,
 ) -> bool {
     let bytes = match store.read(file, Some(tine_store::PARSE_INPUT_MAX_BYTES)) {
         Ok((bytes, _)) => bytes,
@@ -310,28 +308,6 @@ pub(super) fn holder(
     }
 }
 
-/// The pages other than `source` that hold `new` for a rename of `source`:
-/// [`holder`]'s answer, which the plan and its dialog question use, under
-/// the store's current journal format. Empty when the name is free or held
-/// only by `source`. A journal holds every accepted spelling of its day
-/// (M-Q7), which `resolve(new, false)` alone does not see. A caller without
-/// a confirmation dialog (the CLI) refuses a nonempty answer before it
-/// enters the operation. O(1) indexed lookups, as `holder`.
-pub fn rename_destination_holders(
-    store: &Store,
-    graph: &tine_store::WholeGraph,
-    new: &str,
-    source: Option<&PageId>,
-) -> Vec<PageId> {
-    let journal_format = store.config().config.journal_format();
-    match holder(graph, &journal_format, new.trim()) {
-        Holder::Free => Vec::new(),
-        Holder::Files(ids) | Holder::Aliases(ids) => {
-            ids.into_iter().filter(|id| Some(id) != source).collect()
-        }
-    }
-}
-
 /// CM-OWN-CHILD (D-20261103-CMA) and M-Q6 (D-20261102-MC): `new` lies
 /// strictly inside `old`'s namespace and is used, i.e. some file claims it or
 /// some page (`old` itself included) declares it as an alias. A name that is
@@ -347,6 +323,18 @@ pub(super) fn own_child_used(
     refs::is_namespace_name(new)
         && refs::normalize(new).starts_with(&format!("{old_key}/"))
         && holder(graph, journal_format, new) != Holder::Free
+}
+
+/// O3's refusal of `alias`, an alias `owners` declare and no file claims,
+/// naming the page it opens: the least-path declarer, `owners`' first (the
+/// store's one answer, `Resolved::Alias`).
+fn alias_held(graph: &tine_store::WholeGraph, alias: &str, owners: &[PageId]) -> RenameBlocked {
+    let path = owners[0].as_str().to_owned();
+    RenameBlocked::AliasHeld {
+        alias: alias.to_owned(),
+        page: name_of(graph, &owners[0]).unwrap_or_else(|| path.clone()),
+        path,
+    }
 }
 
 /// The page name a page file answers to in `graph` (its inventory entry).
@@ -367,26 +355,31 @@ pub enum RenameBlocked {
     /// The new name is one other page's or journal day's (`into`, its file):
     /// a merge into it is possible.
     Taken { into: String },
-    /// The new name is only an alias of `owner` (M-Q5, D-20261102-MC5).
-    /// `merge`: whether a merge into the owner is allowed (not when the
-    /// owner is one of the renamed page's own namespace children, M-Q6).
-    AliasOf {
-        owner: String,
-        merge: bool,
-        own_page: bool,
-    },
     /// CM-OWN-CHILD / M-Q6: `new` is a used name inside `old`'s namespace.
     OwnChild { old: String, new: String },
     /// The destination file `file` exists and is the page `page`'s (R14).
     FileTaken { file: String, page: String },
-    /// CM3-1: an owner occurrence loses a key a stationary journal owns.
-    JournalReferenceLoss { journals: Vec<String> },
+    /// O0: `name` is no page (no file, no reference, no namespace child)
+    /// and no alias, so there is nothing to rename.
+    NotAPage { name: String },
+    /// O0, O2: `name` is a day; a day is not a rename source.
+    Day { name: String },
+    /// O3: the new name `alias` is an alias another page declares and no
+    /// file claims; it opens `page` (its file `path`).
+    AliasHeld {
+        alias: String,
+        page: String,
+        path: String,
+    },
+    /// O4: the file `file` would move, carries VCS conflict markers, and
+    /// needs a rewrite, so it can neither be rewritten nor move verbatim.
+    ConflictMarkers { file: String },
 }
 
 impl std::fmt::Display for RenameBlocked {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
-            RenameBlocked::Taken { .. } | RenameBlocked::AliasOf { .. } => {
+            RenameBlocked::Taken { .. } => {
                 f.write_str("target page identity already exists elsewhere in the graph")
             }
             RenameBlocked::OwnChild { old, new } => write!(
@@ -397,10 +390,21 @@ impl std::fmt::Display for RenameBlocked {
                 f,
                 "cannot rename: the file {file} belongs to the page “{page}”; rename or merge that page first"
             ),
-            RenameBlocked::JournalReferenceLoss { journals } => write!(
+            RenameBlocked::NotAPage { name } => write!(
                 f,
-                "cannot rename: some links reach the journal {} through this name; journals keep their names, so renaming would break those links",
-                journals.join(", ")
+                "cannot rename “{name}”: no page or alias has that name"
+            ),
+            RenameBlocked::Day { name } => write!(
+                f,
+                "cannot rename “{name}”: it is a journal day, and days keep their names"
+            ),
+            RenameBlocked::AliasHeld { alias, page, .. } => write!(
+                f,
+                "cannot rename: “{alias}” is an alias of the page “{page}”"
+            ),
+            RenameBlocked::ConflictMarkers { file } => write!(
+                f,
+                "cannot rename: {file} would move and needs a rewrite, but it has unresolved conflict markers; resolve them first"
             ),
         }
     }
@@ -409,12 +413,15 @@ impl std::fmt::Display for RenameBlocked {
 impl std::error::Error for RenameBlocked {}
 
 impl RenameBlocked {
-    fn error(self) -> io::Error {
+    pub(super) fn error(self) -> io::Error {
         let kind = match self {
-            RenameBlocked::OwnChild { .. } | RenameBlocked::JournalReferenceLoss { .. } => {
-                io::ErrorKind::InvalidInput
-            }
-            _ => io::ErrorKind::AlreadyExists,
+            RenameBlocked::Taken { .. }
+            | RenameBlocked::FileTaken { .. }
+            | RenameBlocked::AliasHeld { .. } => io::ErrorKind::AlreadyExists,
+            RenameBlocked::OwnChild { .. }
+            | RenameBlocked::NotAPage { .. }
+            | RenameBlocked::Day { .. } => io::ErrorKind::InvalidInput,
+            RenameBlocked::ConflictMarkers { .. } => io::ErrorKind::InvalidData,
         };
         io::Error::new(kind, self)
     }
@@ -431,11 +438,8 @@ pub enum RenameChoice<'a> {
     /// A plain rename: a new name another page holds refuses.
     Rename,
     /// Merge into this confirmed page (its file path), which holds the name.
+    /// O3: the only answer besides cancel; refused where nothing was asked.
     MergeInto(&'a str),
-    /// M-Q5's second answer: the new name is only an alias of another page;
-    /// the renamed page becomes the real page of that name, and the owner
-    /// keeps its `alias::` (D-20261102-MC5).
-    OwnPage,
 }
 
 /// One page identity a rename or merge moved ([`RenameReport::renamed`]).
@@ -507,6 +511,14 @@ pub(super) fn plan_rename(
     // and commit checks it is still the view's (B2).
     let config = store.config();
     let journal_format = config.config.journal_format();
+    // O0, O2: a day is not a rename source, by its identity (every spelling
+    // the graph's one date answer accepts), wherever its file is.
+    if journal_format.parse(old).is_some() {
+        return Err(RenameBlocked::Day {
+            name: old.to_owned(),
+        }
+        .error());
+    }
     // SPEC §5.3: the selected physical member defines the entire map.
     // Keep `new` for checking that this member still holds the requested
     // spelling. Descendants, referrers and reports use the selection too.
@@ -529,14 +541,22 @@ pub(super) fn plan_rename(
     let owned = graph.inventory(tine_store::InventoryScope::FilesAtOrUnder(&old_key));
     #[cfg(test)]
     after_inventory();
-    let source = existing(graph.resolve(old, false));
-    validate_target(&source, expected_path)?;
-    // One guard for every source and every answer, before target offers:
-    // confirmation cannot bypass a stationary journal's reference protection.
-    let journals = graph.journal_rewrite_risks(old, &selected);
-    if !journals.is_empty() {
-        return Err(RenameBlocked::JournalReferenceLoss { journals }.error());
+    let resolved = graph.resolve(old, false);
+    // O0: a page has a file, a reference or a namespace child (files under
+    // it are in `owned`, referenced children in the referrers index under
+    // every namespace prefix); an alias is declared. Anything else is no
+    // name to rename. The referrers lookup runs only when the rest fail.
+    if owned.0.is_empty()
+        && matches!(resolved, Resolved::Absent { .. })
+        && graph.explicit_referrers(&[old.to_owned()]).is_empty()
+    {
+        return Err(RenameBlocked::NotAPage {
+            name: old.to_owned(),
+        }
+        .error());
     }
+    let source = existing(resolved);
+    validate_target(&source, expected_path)?;
     // CM-OWN-CHILD, M-Q6: refused for a rename and a merge alike, before
     // anything else is decided (D-20261103-CMA).
     if own_child_used(&graph, &journal_format, &old_key, new) {
@@ -546,12 +566,16 @@ pub(super) fn plan_rename(
         }
         .error());
     }
-    // Every file the rename moves: a merge into one of them merges a page
-    // into its own namespace child (M-Q6).
+    // The files the rename moves: no journal, and no day under the source,
+    // which stays (O4) wherever its file is. A merge into one of them merges
+    // a page into its own namespace child (M-Q6).
+    let moves_with = |entry: &&tine_store::InventoryEntry| {
+        !entry.is_journal && journal_format.parse(&entry.name).is_none()
+    };
     let moving: HashSet<PageId> = owned
         .0
         .iter()
-        .filter(|entry| !entry.is_journal)
+        .filter(moves_with)
         .flat_map(|entry| physical(&entry.target))
         .collect();
     // Every identity the rename moves, with the file it moves from: the
@@ -572,7 +596,7 @@ pub(super) fn plan_rename(
     // A plain rename whose new name is held: decided after every other
     // entry, so a refusal the user must act on first is the one reported.
     let mut held = None;
-    for entry in owned.0.iter().filter(|entry| !entry.is_journal) {
+    for entry in owned.0.iter().filter(moves_with) {
         let ids = physical(&entry.target);
         let primary = refs::normalize(&entry.name) == old_key;
         let new_name = if primary {
@@ -585,40 +609,29 @@ pub(super) fn plan_rename(
         // An alias names its owner's page, so it is taken like a file name;
         // a journal day is taken by its journal (M-Q7).
         let requested = if primary { new } else { &new_name };
-        let (mut taken, alias_only) = match holder(&graph, &journal_format, requested) {
-            Holder::Free => (Vec::new(), false),
-            Holder::Files(files) => (files, false),
-            Holder::Aliases(owners) => (owners, true),
-        };
-        if alias_only {
-            validate_target(&existing(graph.resolve(requested, false)), None)?;
-        }
-        if !(primary && alias_only) {
-            taken.retain(|claimant| *claimant != id);
-        }
-        // M-Q5: the alias stays its owners'; the renamed page becomes the
-        // real page of that name (moved below).
-        let own_target = primary && alias_only && choice == RenameChoice::OwnPage;
-        if own_target {
-            if taken.len() != 1 {
-                return Err(error(
-                    io::ErrorKind::AlreadyExists,
-                    "the alias has no unique owner",
-                ));
+        let mut taken = match holder(&graph, &journal_format, requested) {
+            Holder::Free => Vec::new(),
+            Holder::Files(files) => files,
+            // O3: an alias only the source declares is the source's own
+            // name (one-step rename; its declaration stays, P1). Declared by
+            // another page, the name is refused for every answer, naming the
+            // page it opens.
+            Holder::Aliases(owners) if primary => {
+                if owners.iter().any(|owner| *owner != id) {
+                    held = Some(alias_held(&graph, requested, &owners));
+                    primary_is_file = true;
+                    continue;
+                }
+                Vec::new()
             }
-            // Answer two fills the existing empty file through the guarded
-            // merge path; without that file it is an ordinary rename.
-            taken = existing(graph.resolve(&new_name, false));
-            taken.retain(|claimant| *claimant != id);
-        }
+            Holder::Aliases(owners) => owners,
+        };
+        taken.retain(|claimant| *claimant != id);
         if primary {
             if let [survivor] = taken.as_slice() {
                 let merge_allowed = !moving.contains(survivor);
                 match choice {
-                    RenameChoice::MergeInto(_) | RenameChoice::OwnPage
-                        if own_target
-                            || matches!(choice, RenameChoice::MergeInto(into) if survivor.as_str() == into) =>
-                    {
+                    RenameChoice::MergeInto(into) if survivor.as_str() == into => {
                         if !merge_allowed {
                             return Err(RenameBlocked::OwnChild {
                                 old: old.to_owned(),
@@ -633,13 +646,7 @@ pub(super) fn plan_rename(
                         continue;
                     }
                     RenameChoice::Rename => {
-                        held = Some(if alias_only {
-                            RenameBlocked::AliasOf {
-                                owner: survivor.as_str().to_owned(),
-                                merge: merge_allowed,
-                                own_page: true,
-                            }
-                        } else if merge_allowed {
+                        held = Some(if merge_allowed {
                             RenameBlocked::Taken {
                                 into: survivor.as_str().to_owned(),
                             }
@@ -722,30 +729,20 @@ pub(super) fn plan_rename(
     // `merge-pages!` of a page with no blocks, so it needs the confirmation.
     let mut ref_merge = false;
     if !primary_is_file && old != new {
-        // CM12 C6: alias-only sources have no file either. OwnPage would
-        // pretend to create one while merely substituting a name.
-        if choice == RenameChoice::OwnPage {
-            return Err(error(
-                io::ErrorKind::InvalidInput,
-                "a file-less source cannot become its own page",
-            ));
-        }
+        // CM12 C13: respelling an alias's own key is a rename, even when
+        // several pages declare it. No source owner is selected.
         let destination = if refs::normalize(new) == old_key {
-            // CM12 C13: respelling an alias's own key is a rename, even
-            // when several pages declare it. No source owner is selected.
-            Some(Holder::Free)
+            Holder::Free
         } else {
-            None
+            holder(&graph, &journal_format, new)
         };
-        let (taken, alias_only) =
-            match destination.unwrap_or_else(|| holder(&graph, &journal_format, new)) {
-                Holder::Free => (Vec::new(), false),
-                Holder::Files(files) => (files, false),
-                Holder::Aliases(owners) => (owners, true),
-            };
-        if alias_only {
-            validate_target(&existing(graph.resolve(new, false)), None)?;
-        }
+        let taken = match destination {
+            Holder::Free => Vec::new(),
+            Holder::Files(files) => files,
+            // O3: with no file, the source declares nothing: another page's
+            // alias is refused, naming the page it opens.
+            Holder::Aliases(owners) => return Err(alias_held(&graph, new, &owners).error()),
+        };
         match (choice, taken.as_slice()) {
             (_, []) => {}
             (RenameChoice::MergeInto(into), [owner]) if owner.as_str() == into => {
@@ -753,16 +750,8 @@ pub(super) fn plan_rename(
             }
             (RenameChoice::MergeInto(_), _) => {}
             (_, [owner]) => {
-                return Err(if alias_only {
-                    RenameBlocked::AliasOf {
-                        owner: owner.as_str().to_owned(),
-                        merge: true,
-                        own_page: false,
-                    }
-                } else {
-                    RenameBlocked::Taken {
-                        into: owner.as_str().to_owned(),
-                    }
+                return Err(RenameBlocked::Taken {
+                    into: owner.as_str().to_owned(),
                 }
                 .error())
             }
@@ -804,12 +793,9 @@ pub(super) fn plan_rename(
     // query's page-name arguments (D-20261031-CMQ), links in other macros'
     // arguments and Org file links follow the rename like links.
     let olds: Vec<String> = map.0.iter().map(|(from, _)| from.clone()).collect();
+    let spelling = refs::RenameFormat::new(config.file_name_format, &journal_format);
     let mut candidates: Vec<PageId> = graph.explicit_referrers(&olds);
-    candidates.extend(rewrite_target_pages(
-        &graph,
-        &lookup,
-        config.file_name_format,
-    ));
+    candidates.extend(rewrite_target_pages(&graph, &lookup, spelling));
     candidates.extend(moves.keys().cloned());
     candidates.extend(moved_titles_to_rebind.iter().cloned());
     candidates.retain(|id| {
@@ -825,7 +811,7 @@ pub(super) fn plan_rename(
     // ours to rewrite: refuse, naming the file, before anything is written.
     for (file, _) in graph.unreadable_files() {
         let planned = candidates.iter().any(|id| id.file() == *file);
-        if !planned && may_hold_reference(store, file, &map, config.file_name_format) {
+        if !planned && may_hold_reference(store, file, &map, spelling) {
             return Err(error(
                 io::ErrorKind::InvalidData,
                 &format!(
@@ -838,6 +824,7 @@ pub(super) fn plan_rename(
     Ok(RenamePlan {
         graph,
         config,
+        days: journal_format,
         map,
         lookup,
         query_lookup,

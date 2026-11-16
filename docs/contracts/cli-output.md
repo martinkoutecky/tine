@@ -596,11 +596,18 @@ An absent page cannot match `--rev` (`stale`). `--run` uses the existing commits
 ### `page.rename`
 
 `tine page rename OLD NEW` calls the app's rename operation, including references,
-namespaces, titles, the home page and favorites. A sole alias resolves to its canonical page.
-A reference-only source or fileless namespace parent uses the same operation:
+namespaces, titles, the home page and favorites. An alias typed as the source is renamed
+itself: its declarations and references are respelled and the page declaring it keeps its
+name and file. A reference-only source or fileless namespace parent uses the same operation:
 references and physical descendants move without creating a placeholder page.
-A destination owned by a file or alias refuses as `refused:page-exists`; merging
-requires confirmation in the app. A date whose day has a journal file is owned by that
+Renaming a page to an alias it declares itself is one step, and the declaration stays.
+A destination another file holds, or an alias another page declares, refuses as
+`refused:page-exists` (for an alias, the message names the page it opens); merging
+requires confirmation in the app. Every other refusal of the app's rename planner (a name no
+page or alias has, a journal day as the source, a name inside the source's own namespace, a
+moved file with conflict markers that would need a rewrite) refuses as
+`refused:rename-refused` with the planner's message. All of these come before any change
+(`detail.admitted: false`). A date whose day has a journal file is owned by that
 journal under every spelling the app accepts for the day (`2026_11_02`, `2026-11-02`,
 `Nov 2nd, 2026`), so it refuses the same way and writes nothing. A date no file claims is
 an ordinary page under `pages/` with exactly that name: `[[NAME]]` then opens it, and the
@@ -852,6 +859,7 @@ whose reply is lost reports `uncertain` (exit 8) and is never resent automatical
 | `cross-page` | `move` between two pages (not supported yet) |
 | `broken-ref` | `add` content names a `((uuid))` no block has (`detail.uuid`) |
 | `page-exists` | page creation or rename would replace an existing file or alias |
+| `rename-refused` | `page rename` refused by the app's rename planner for another reason (message says why); nothing changed |
 | `confirmation` | `page delete`, or `delete` of a block whose removal would break incoming references, needs `--yes` or `--force` |
 | `rename-options` | graph-wide `page rename` cannot use the single-file `--rev` guard or run commits |
 | `revision-required` | `block.edit` supplies a parser-owned LOGBOOK drawer without the read's `--rev`; reread and pass that revision |

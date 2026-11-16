@@ -12,7 +12,7 @@ use tine_core::model::{Format, PageKind};
 use tine_core::refs;
 #[path = "pages_rename_plan.rs"]
 mod rename_plan;
-pub use rename_plan::{rename_destination_holders, RenameBlocked, RenameChoice, RenamedPage};
+pub use rename_plan::{RenameBlocked, RenameChoice, RenamedPage};
 #[path = "pages_rename_offer.rs"]
 mod rename_offer;
 pub use rename_offer::{rename_offer, rename_page_as, RenameOffer};
@@ -205,7 +205,7 @@ fn existing(target: Resolved) -> Vec<PageId> {
 fn rewrite_target_pages(
     graph: &tine_store::WholeGraph,
     renames: &HashMap<String, String>,
-    format: tine_core::config::FileNameFormat,
+    format: refs::RenameFormat<'_>,
 ) -> Vec<PageId> {
     // A key containing another key is found through that one.
     let mut keys: Vec<&str> = renames.keys().map(String::as_str).collect();
@@ -291,7 +291,9 @@ pub fn rename_would_change(
         })
         .collect();
     renames.insert(old_key, new.to_owned());
-    let format = store.config().file_name_format;
+    let config = store.config();
+    let days = config.config.journal_format();
+    let format = refs::RenameFormat::new(config.file_name_format, &days);
     Ok(texts
         .iter()
         .map(|text| {
@@ -769,10 +771,10 @@ fn rename_transaction<'s>(
     plan: RenamePlan,
     unsaved_paths: &[String],
 ) -> io::Result<RenameTransaction<'s>> {
-    let single = plan.single(store)?.is_some();
     let RenamePlan {
         graph,
         config,
+        days,
         map,
         lookup,
         query_lookup,
@@ -823,6 +825,7 @@ fn rename_transaction<'s>(
         );
     }
     let name_format = config.file_name_format;
+    let spelling = refs::RenameFormat::new(name_format, &days);
     let mut edits = Vec::new();
     // Moved pages' planning reads and proposals, for their move steps.
     let mut carried = HashMap::new();
@@ -848,33 +851,27 @@ fn rename_transaction<'s>(
         let moved = moves.contains_key(&id);
         let rebind = moved_titles_to_rebind.contains(&id);
         let marked = !tine_core::concord_queue::vcs_conflict_markers(&content, syntax).is_empty();
-        let own_title = single
-            && moved
+        // Whether the move respells the file's title (the store's title check).
+        let own_title = moved
             && (org || marked)
             && std::panic::catch_unwind(|| {
-                tine_core::model::own_title_span(&content, syntax, &map.0[0].0)
-                    .is_some_and(|title| org || content[title] != *map.0[0].1)
+                tine_core::model::page_title_from_preamble(&content, syntax).is_some_and(|title| {
+                    refs::renamed_site_name(&title, &lookup, Some(&days))
+                        .is_some_and(|new| org || new != title)
+                })
             })
             .map_err(|_| unwritable(store, &id))?;
         // Master a8fd4230d: a file carrying VCS conflict markers is not
         // ours to rewrite (R-VCS-MARKERS; scenario: an external merge or a
-        // sync service left it mid-conflict). It stays byte-identical, a
-        // moved one moves verbatim, and the rename reports it. A moved
-        // file is rewritten inside its move step, and a marker-bearing one
-        // must not be queued before this check, so both ask the shared
-        // rewriter directly. Every other referrer is queued by the
-        // transaction's own rewrite, computed once from this read and
-        // reused by preflight (GH #623).
+        // sync service left it mid-conflict). A referrer stays byte-identical
+        // and is reported; a moved one moves verbatim if it needs no rewrite,
+        // else the rename refuses (r6 O4). A moved file is rewritten in its
+        // move step and a marked one is not queued before this check, so both
+        // ask the shared rewriter directly. Every other referrer is queued by
+        // the transaction's rewrite, computed once here, reused (GH #623).
         let mut names = HashSet::new();
         let rewrite = |names: &mut HashSet<_>| {
-            refs::rename_rewrite_with_queries(
-                &content,
-                org,
-                &map.0,
-                &map.1,
-                name_format,
-                Some(names),
-            )
+            refs::rename_rewrite_with_queries(&content, org, &map.0, &map.1, spelling, Some(names))
         };
         let mut proposed = None;
         let changed = if moved && !marked {
@@ -883,7 +880,7 @@ fn rename_transaction<'s>(
             // still checked there) instead of walking the page again. One
             // that cannot be certified is left to the move step, which
             // refuses it as before.
-            match refs::rename_proposal(&content, org, &lookup, &query_lookup, name_format) {
+            match refs::rename_proposal(&content, org, &lookup, &query_lookup, spelling) {
                 Ok(proposal) => {
                     names.clone_from(&proposal.rewritten);
                     let changed = proposal.text != content;
@@ -902,7 +899,7 @@ fn rename_transaction<'s>(
             let prepared = match rewritten.remove(&id) {
                 Some(p) => Some(p),
                 None if !planned => Some(
-                    refs::rename_proposal(&content, org, &lookup, &query_lookup, name_format)
+                    refs::rename_proposal(&content, org, &lookup, &query_lookup, spelling)
                         .map_err(|e| io::Error::new(io::ErrorKind::InvalidData, e))?,
                 ),
                 None => None,
@@ -927,13 +924,8 @@ fn rename_transaction<'s>(
             }
         };
         let org_refuses = org && (changed || own_title) && !tine_core::org::org_editable(&content);
-        // A single rename's own marked Org source refuses like any other that
-        // does not round-trip; the marker skip must not move it unrewritten.
-        if changed && marked && !(single && moved && org_refuses) {
+        if changed && marked && !moved {
             skipped.push(id.as_str().to_owned());
-            if moved {
-                edits.push((id, rev, false));
-            }
             continue;
         }
         if org_refuses {
@@ -941,6 +933,12 @@ fn rename_transaction<'s>(
                 .path_for_os_handoff(&file, false)
                 .map_err(store_error)?;
             return Err(read_only_org(&path));
+        }
+        if changed && marked {
+            return Err(RenameBlocked::ConflictMarkers {
+                file: id.as_str().into(),
+            }
+            .error());
         }
         if marked && rebind {
             // References unchanged, but the interrupted rename's title
@@ -952,7 +950,7 @@ fn rename_transaction<'s>(
             if let Some(proposal) = proposed {
                 carried.insert(id.clone(), (content, proposal));
             }
-            edits.push((id, rev, true));
+            edits.push((id, rev, !marked));
         }
     }
     let outcome = if merge.is_some() || ref_merge {
@@ -1452,7 +1450,8 @@ fn merged_survivor(
     let page = |id, text: &str| store.page_of(id, text.as_bytes()).map_err(store_error);
     let source = page(src, &src_text)?.doc;
     let doc = page(dst, &dst_text)?.doc;
-    let format = store.config().file_name_format;
+    let config = store.config();
+    let days = config.config.journal_format();
     let empty = HashMap::new();
     let proposal = merge_payload::propose(
         &doc,
@@ -1462,7 +1461,7 @@ fn merged_survivor(
         renames.map_or(&empty, |n| n.links),
         renames.map_or(&empty, |n| n.queries),
         org,
-        format,
+        refs::RenameFormat::new(config.file_name_format, &days),
     )
     .map_err(|e| io::Error::new(io::ErrorKind::InvalidData, e))?;
     if let Some(names) = renames {

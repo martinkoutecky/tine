@@ -152,23 +152,14 @@ fn run_tine(
 ) -> (TineRename, bool) {
     let app_data = tempfile::tempdir().unwrap();
     let host = tine_store::PageHost::start_for_tests(store, app_data.path()).unwrap();
-    let mut both = false;
+    // Model r6 (O3): the only answers are confirm and cancel, so Tine never
+    // offers both; `own_page` (the old round-9 second answer) has no Tine
+    // counterpart left.
+    let _ = own_page;
+    let both = false;
     let (choice, confirmed, into) = match rename_offer(store, old, new, None) {
         Ok(RenameOffer::Rename) => (Some(RenameChoice::Rename), false, String::new()),
         Ok(RenameOffer::Merge { into, .. }) => (None, true, into),
-        Ok(RenameOffer::AliasOf {
-            owner,
-            merge,
-            own_page: can_own,
-            ..
-        }) => {
-            both = merge && can_own;
-            if (own_page || !merge) && can_own {
-                (Some(RenameChoice::OwnPage), false, String::new())
-            } else {
-                (None, true, owner)
-            }
-        }
         Ok(RenameOffer::Refused { reason, message }) => {
             later_drop(droppers, (host, app_data));
             let kind = format!("{reason:?}");
@@ -325,19 +316,6 @@ fn run_rename(
     let actual_offers = match rename_offer(&store, old, new, None) {
         Ok(RenameOffer::Rename) => vec!["rename", "cancel"],
         Ok(RenameOffer::Merge { .. }) => vec!["mergeOwner", "cancel"],
-        Ok(RenameOffer::AliasOf {
-            merge, own_page, ..
-        }) => {
-            let mut choices = Vec::new();
-            if merge {
-                choices.push("mergeOwner");
-            }
-            if own_page {
-                choices.push("ownPage");
-            }
-            choices.push("cancel");
-            choices
-        }
         _ => vec!["cancel"],
     };
     if offers != actual_offers {

@@ -61,3 +61,109 @@ fn a_literal_real_date_page_opens_before_a_journal_in_cold_and_ready_reads() {
         }
     }
 }
+
+/// What `name` opens as a journal lookup, cold (before the first parse,
+/// `page_named` from the file listing) and ready (`WholeGraph::resolve`):
+/// `(cold, ready)`, each `path` or `path+others` or `absent`/`alias`.
+fn day_opens(root: &std::path::Path, names: &[&str]) -> Vec<(String, String, String)> {
+    let pause = root.join(".tine-test-pause-load");
+    std::fs::write(&pause, "").unwrap();
+    let store = Store::open(root, Default::default()).unwrap().0;
+    let cold: Vec<String> = names
+        .iter()
+        .map(
+            |name| match store.page_named(name, PageKind::Journal).unwrap() {
+                Some(read) => read.id.as_str().to_owned(),
+                None => "absent".to_owned(),
+            },
+        )
+        .collect();
+    std::fs::remove_file(pause).unwrap();
+    let view = store.whole_graph().unwrap();
+    let out = names
+        .iter()
+        .zip(cold)
+        .map(|(name, cold)| {
+            let ready = match view.resolve(name, true) {
+                Resolved::Existing { id, others } => std::iter::once(id)
+                    .chain(others)
+                    .map(|id| id.as_str().to_owned())
+                    .collect::<Vec<_>>()
+                    .join("+"),
+                Resolved::Alias { .. } => "alias".to_owned(),
+                Resolved::Absent { .. } => "absent".to_owned(),
+            };
+            (name.to_string(), cold, ready)
+        })
+        .collect();
+    store.close();
+    out
+}
+
+/// Model r6 O3 ("a journal holds every accepted spelling of its day") and
+/// cm-cut6 SPEC §2.1: with title format `MM-dd`, two days may display the
+/// same label, "they remain distinct day identities", and `Dates.parse`
+/// "must not substitute an ambiguous rendered title for the day". So a
+/// spelling that parses to a day is held only by that day's journal, not by
+/// every journal sharing its rendered title; the ambiguous label `10-26`
+/// itself (which parses to no day) keeps its title lookup. A format with a
+/// year is unchanged, and two files of one day stay twins in path order.
+#[test]
+fn a_full_day_spelling_is_held_only_by_that_days_journal() {
+    let _guard = super::integration_lock();
+    let graph = |config: &str, journals: &[&str]| {
+        let temp = tempfile::tempdir().unwrap();
+        for dir in ["pages", "journals", "logseq"] {
+            std::fs::create_dir(temp.path().join(dir)).unwrap();
+        }
+        std::fs::write(temp.path().join("logseq/config.edn"), config).unwrap();
+        for file in journals {
+            std::fs::write(temp.path().join("journals").join(file), "- day\n").unwrap();
+        }
+        temp
+    };
+    let row = |name: &str, opens: &str| (name.to_owned(), opens.to_owned(), opens.to_owned());
+    let ambiguous = graph(
+        "{:journal/page-title-format \"MM-dd\"}\n",
+        &["2025_10_26.md", "2026_10_26.md"],
+    );
+    assert_eq!(
+        day_opens(
+            ambiguous.path(),
+            &["2026-10-26", "2025_10_26", "2027-10-26", "10-26"]
+        ),
+        [
+            row("2026-10-26", "journals/2026_10_26.md"),
+            row("2025_10_26", "journals/2025_10_26.md"),
+            row("2027-10-26", "absent"),
+            (
+                "10-26".to_owned(),
+                "journals/2025_10_26.md".to_owned(),
+                "journals/2025_10_26.md+journals/2026_10_26.md".to_owned()
+            ),
+        ]
+    );
+    let with_year = graph(
+        "{:journal/page-title-format \"yyyy-MM-dd\"}\n",
+        &["2025_10_26.md", "2026_10_26.md", "2026-10-26.md"],
+    );
+    assert_eq!(
+        day_opens(
+            with_year.path(),
+            &["2026-10-26", "Oct 26th, 2026", "2025-10-26"]
+        ),
+        [
+            (
+                "2026-10-26".to_owned(),
+                "journals/2026-10-26.md".to_owned(),
+                "journals/2026-10-26.md+journals/2026_10_26.md".to_owned()
+            ),
+            (
+                "Oct 26th, 2026".to_owned(),
+                "journals/2026-10-26.md".to_owned(),
+                "journals/2026-10-26.md+journals/2026_10_26.md".to_owned()
+            ),
+            row("2025-10-26", "journals/2025_10_26.md"),
+        ]
+    );
+}

@@ -2782,7 +2782,6 @@ pub struct WholeGraph {
     claimants: Arc<SharedMap<(bool, String), Vec<PageEntry>>>,
 }
 
-mod journal_rename;
 mod template_names;
 fn bounded(result: BoundedRefGroups, what: Budget) -> Result<Arc<Vec<RefGroup>>, QueryError> {
     if result.exceeded {
@@ -2914,8 +2913,10 @@ impl WholeGraph {
                 kind
             },
         );
+        entries.retain(|entry| lookup.holds(entry));
         if !entries.is_empty() {
             entries = self.all_name_claimants(claim_name);
+            entries.retain(|entry| lookup.holds(entry));
         }
         // A normalized journal fallback cannot inherit a masked journal's
         // ordinary opening claimant: that file claims only its literal key.

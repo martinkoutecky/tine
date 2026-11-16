@@ -2411,8 +2411,11 @@ export interface MessageArgs {
   "rename-alias-choice-own-page": { "owner": string | number; "to": string | number };
   "rename-alias-choice-stale-what": {};
   "rename-alias-choice-title": { "to": string | number };
+  "rename-refused-alias-held": { "alias": string | number; "page": string | number };
+  "rename-refused-conflict-markers": { "file": string | number };
+  "rename-refused-day": { "name": string | number };
   "rename-refused-file-taken": { "file": string | number; "page": string | number };
-  "rename-refused-journal-reference-loss": { "journals": string | number };
+  "rename-refused-not-a-page": { "name": string | number };
   "rename-refused-own-child": { "new": string | number; "old": string | number };
   "render-asset-moved-to-trash": {};
   "render-click-to-go-to-the-block-shift-click-sidebar-right-click-for-more": {};

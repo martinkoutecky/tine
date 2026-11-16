@@ -294,10 +294,12 @@ fn plain_merge_never_carries_the_source_title_into_the_survivor_header() {
     fs::remove_dir_all(root).unwrap();
 }
 
-/// Rule 2 B1: an alias names its owner's page, so renaming onto it needs the
-/// same confirmation as renaming onto a page file, and merges into the owner.
+/// Model r6 O3: "No holder, and a page other than the source declares B as
+/// an alias: refused, naming the page B opens." Neither the plain rename nor
+/// a merge into the declaring page is an answer, and nothing is written.
+/// (Before r6 this asked to merge into the alias owner.)
 #[test]
-fn renaming_onto_an_alias_needs_the_merge_confirmation() {
+fn renaming_onto_another_pages_alias_is_refused_naming_it() {
     let _integration_guard = crate::integration_lock();
     let (root, store) = fixture(
         "alias-target",
@@ -307,31 +309,25 @@ fn renaming_onto_an_alias_needs_the_merge_confirmation() {
             ("pages/Ref.md", "- [[Old]]\n"),
         ],
     );
-    let plain = hosted(&store, |host| {
-        pages::rename_page_expected(&store, host, "Old", "New", Some("pages/Old.md"))
-    });
-    assert_eq!(plain.unwrap_err().kind(), std::io::ErrorKind::AlreadyExists);
-    assert_eq!(read(&root, "pages/Old.md"), "- old body\n");
-    assert!(!root.join("pages/New.md").exists());
-    let outcome = hosted(&store, |host| {
-        pages::rename_or_merge_page(
-            &store,
-            host,
-            "Old",
-            "New",
-            None,
-            Some("pages/Owner.md"),
-            &[],
-        )
-    })
-    .unwrap();
-    assert_eq!(outcome.outcome, pages::RenameOutcome::Merged);
-    assert_eq!(
-        read(&root, "pages/Owner.md"),
-        "alias:: New\n\n- owner body\n- old body\n"
-    );
-    assert_eq!(read(&root, "pages/Ref.md"), "- [[Owner]]\n");
-    assert!(!root.join("pages/Old.md").exists());
+    let held = pages::RenameBlocked::AliasHeld {
+        alias: "New".to_owned(),
+        page: "Owner".to_owned(),
+        path: "pages/Owner.md".to_owned(),
+    };
+    for into in [None, Some("pages/Owner.md")] {
+        let refusal = hosted(&store, |host| {
+            pages::rename_or_merge_page(&store, host, "Old", "New", None, into, &[])
+        })
+        .unwrap_err();
+        assert_eq!(pages::RenameBlocked::of(&refusal), Some(&held), "{into:?}");
+        assert_eq!(read(&root, "pages/Old.md"), "- old body\n");
+        assert_eq!(
+            read(&root, "pages/Owner.md"),
+            "alias:: New\n\n- owner body\n"
+        );
+        assert_eq!(read(&root, "pages/Ref.md"), "- [[Old]]\n");
+        assert!(!root.join("pages/New.md").exists());
+    }
     drop(store);
     fs::remove_dir_all(root).unwrap();
 }

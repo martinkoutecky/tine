@@ -38,7 +38,6 @@ import { reportGraphOpenFailure } from "./graphOpenFailure";
 import { activeElement, isHTMLElementNode } from "./windowRealm";
 import { askGraphName } from "./graphNamePrompt";
 import { msg, t, type Msg } from "./i18n";
-import { chooseAliasRename } from "./renameAliasChoice";
 import { APP_IOS_DISPLAY_NAME } from "./appIdentity";
 import { primeQuickShareGate } from "./quickShareGate";
 import { setGraphConfigProblem } from "./graphConfig";
@@ -486,11 +485,8 @@ export type RenameOutcome = Exclude<Awaited<ReturnType<typeof renamePageOnDisk>>
  *    `merge-pages!`): the backend appends the source's blocks, unites aliases,
  *    rewrites references and trashes the source in one transaction; a `from`
  *    with no file only has its references repointed.
- *  - `to` is only another page's alias (M-Q5, D-20261102-MC5): the in-app
- *    dialog offers Merge into the owner / Make `to` its own page (still an
- *    alias of the owner) / Cancel; the merge only when the backend allows it.
- *  - refused (CM-OWN-CHILD, R14): `{ refused }`, worded by
- *    `renameOutcomeMessage`; nothing is written.
+ *  - refused (model r6 O0 to O4, e.g. `to` is only another page's alias):
+ *    `{ refused }`, worded by `renameOutcomeMessage`; nothing is written.
  *  `cancelled`: the user declined or the graph changed before anything was
  *  written. The other outcomes are `renamePageOnDisk`'s. `onRefreshed`
  *  receives the graph owner captured after the rename's refresh. The answer is
@@ -505,7 +501,6 @@ export async function renameOrMergePage(
   if (asked.kind === "stale") return "cancelled";
   const offer = asked.value;
   let into: string | undefined;
-  let ownPage = false;
   switch (offer.kind) {
     case "refused": return { refused: offer.reason };
     case "merge": {
@@ -514,16 +509,9 @@ export async function renameOrMergePage(
       into = offer.into;
       break;
     }
-    case "aliasOf": {
-      const answer = await chooseAliasRename(from, to, offer.name, offer.merge, offer.ownPage);
-      if (!answer || !owner()) return "cancelled";
-      if (answer === "merge") into = offer.owner;
-      else ownPage = true;
-      break;
-    }
     case "rename": break;
   }
-  const done = await renamePageOnDisk(from, to, target, into, onRefreshed, ownPage);
+  const done = await renamePageOnDisk(from, to, target, into, onRefreshed);
   return done === "stale" ? "cancelled" : done;
 }
 
@@ -533,12 +521,14 @@ export async function renameOrMergePage(
 export function renameOutcomeMessage(outcome: RenameOutcome, from: string, to: string): string | Msg | null {
   if (typeof outcome === "object" && "refused" in outcome) {
     const reason = outcome.refused;
-    if (reason.kind === "journalReferenceLoss") {
-      return msg("rename-refused-journal-reference-loss", { journals: reason.journals.join(", ") });
+    switch (reason.kind) {
+      case "ownChild": return msg("rename-refused-own-child", { old: reason.old, new: reason.new });
+      case "fileTaken": return msg("rename-refused-file-taken", { file: reason.file, page: reason.page });
+      case "notAPage": return msg("rename-refused-not-a-page", { name: reason.name });
+      case "day": return msg("rename-refused-day", { name: reason.name });
+      case "aliasHeld": return msg("rename-refused-alias-held", { alias: reason.alias, page: reason.page });
+      case "conflictMarkers": return msg("rename-refused-conflict-markers", { file: reason.file });
     }
-    return reason.kind === "ownChild"
-      ? msg("rename-refused-own-child", { old: reason.old, new: reason.new })
-      : msg("rename-refused-file-taken", { file: reason.file, page: reason.page });
   }
   if (typeof outcome === "object") {
     return outcome.mentions

@@ -14,5 +14,7 @@ fn guide_explains_alias_rename_and_reload() {
     assert!(guide.contains("aliases still work after a reload"));
     assert!(guide.contains("every declaring `alias:: ML` to `alias:: AI`"));
     assert!(guide.contains("no `AI` file is created"));
-    assert!(guide.contains("no **Make it its own page** choice"));
+    // Model r6 O3 replaced the "no Make it its own page" control: a name
+    // that is only another page's alias is refused, naming that page.
+    assert!(guide.contains("If it is only another page's alias, the rename is refused"));
 }
