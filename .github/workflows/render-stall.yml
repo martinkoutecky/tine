@@ -18,7 +18,7 @@ jobs:
         with:
           node-version: 22
           cache: npm
-      - uses: dtolnay/rust-toolchain@stable
+      - uses: dtolnay/rust-toolchain@1.96.0
       - uses: swatinem/rust-cache@v2
       - run: npm ci
       - run: npm run build

@@ -29,9 +29,13 @@ scripts/app-icon-1024.png
 # worktree so `git clean` can't delete it). They are tracked on purpose — a
 # tracked file survives `git clean`; do NOT ignore them.
 
+# Tauri regenerates these on every build; capabilities/*.json cite them only as editor hints.
+/src-tauri/gen/schemas/
+
 # Local agent scratch — subagent task specs + notes, and the internal
 # deferred-work list. Working artifacts between Martin and Claude, not shared.
 /subagent-tasks
+/evidence
 /DEFERRED.md
 /RECEIPT*.md
 

@@ -1,6 +1,7 @@
 # 0018. In-app lsdoc↔mldoc diff panel bundles mldoc and runs it in a worker
 
-- **Status:** Accepted
+- **Status:** Retired. The panel was removed in 0.8.0-beta.3 (UI-CENSUS-18) and the vendored mldoc oracle
+  with its checks in 0.10. lsdoc's own harness (`lsdoc/harness`) compares against mldoc.
 - **Date:** 2026-07-04
 
 ## Context
