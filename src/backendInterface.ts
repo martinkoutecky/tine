@@ -48,7 +48,7 @@ import type { SheetExport, SheetInput, SheetScope } from "./sheet/staticExport";
 import type { NativeTineLinks } from "./nativeTineLinks";
 import type { QuickShareCheckOutcome, QuickShareConnectStart, QuickShareConnectStatus, QuickShareCreated, QuickShareDeleteOutcome, QuickShareFound, QuickShareListing, QuickSharePrepared } from "./quickShare/commands";
 import type { DebugInfo, DiagnosticReport, DiagnosticFrontendKind, DiagnosticFrontendFields, GpuEnv, BackupInfo, GraphChange, AssetChangedBatch, GraphConfigChange, CustomCssChange, TrashAssetOutcome, GraphAnswersChange } from "./backendTypes";
-import type { DiskToken, OwedPage, PageMail, PageOperation, PageRefusal, PublishedNeed } from "./document";
+import type { DiskToken, OwedPage, PageMail, PageOperation, PageRefusal, PublishedNeed, PublishedRevision } from "./document";
 
 /** What a native confirmation shows: the action it offers and the way back. */
 export interface ConfirmOptions {
@@ -160,7 +160,7 @@ export interface Backend {
    * deletion to the bytes it read (GH #620, Q-P2b-5); a failed check rejects. */
   pageDelete(session: number, name: string, kind: PageKind, expectedPath?: string): Promise<PageOperation>;
   /** One bounded wait (≤ 5 s) for these needs to publish; null at the bound. */
-  pageWait(session: number, needs: readonly PublishedNeed[], boundMs: number): Promise<boolean | null>;
+  pageWait(session: number, needs: readonly PublishedNeed[], boundMs: number): Promise<PublishedRevision[] | false | null>;
   pageSaveNow(session: number, keys: readonly string[]): Promise<void>;
   pageOwed(session: number, paths: readonly string[] | null): Promise<OwedPage[] | null>;
   /** Retry crash-draft storage after the host reported it unavailable. */

@@ -35,7 +35,7 @@ it.each(["Destination", ""])("L9-08: retries a landed capture without inserting 
   const payload = { id: `retry-landed-${title}`, target: "main", bindingGeneration: 11, title, text: "- captured thought" };
   await h.receive!({ payload });
   expect(h.ack).toHaveBeenLastCalledWith("capture", "quick-capture-ack", { id: payload.id, ok: false, landed: true });
-  wait.mockResolvedValue(true);
+  wait.mockResolvedValue([]);
   await h.receive!({ payload });
   expect(h.ack).toHaveBeenLastCalledWith("capture", "quick-capture-ack", { id: payload.id, ok: true });
   expect(pageByName(name)!.roots.map(id => doc.byId[id].raw).filter(raw => raw === "captured thought")).toHaveLength(1);
@@ -186,7 +186,7 @@ async function receiveConfigured(meta: Partial<GraphMeta>, payload: { title?: st
   }
   answerOpensFromDocument(await bindTestHost());
   vi.spyOn(backend(), "getPage").mockImplementation(async (name, kind) => ({ name, kind, title: name, id: `pages/${name}.md`, rev: "before", pre_block: null, blocks: [] }));
-  vi.spyOn(backend(), "pageWait").mockResolvedValue(true);
+  vi.spyOn(backend(), "pageWait").mockResolvedValue([]);
   const dispose = await installQuickCaptureReceiver();
   await h.receive!({ payload: { id: `cfg-${Math.random()}`, target: "main", bindingGeneration: 11, ...payload } });
   dispose();

@@ -25,7 +25,7 @@ it("R1: a taken, unpublished page stays loaded, listed and unreloadable under wo
   loadRoutedPage(dto("P"));
   await bindTestHost();
   const answers: ((published: boolean) => void)[] = [];
-  vi.spyOn(backend(), "pageWait").mockImplementation(() => new Promise((resolve) => { answers.push(resolve); }));
+  vi.spyOn(backend(), "pageWait").mockImplementation(() => new Promise((resolve) => { answers.push(published => resolve(published ? [] : false)); }));
   const submit = vi.spyOn(backend(), "pageSubmit");
   setRaw("P-block", "typed", { timetracking: false });
   await vi.waitFor(() => expect(submit).toHaveBeenCalledOnce(), { timeout: 2000 });

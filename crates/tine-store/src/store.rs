@@ -2328,6 +2328,8 @@ pub struct FileRev(String);
 impl FileRev {
     /// The revision of exact bytes (FNV-1a-64 hex), as a guarded write compares it.
     pub fn from_bytes(bytes: &[u8]) -> Self {
+        #[cfg(feature = "test-faults")]
+        crate::cost_counters::byte_hash();
         Self(format!("{:016x}", fnv_update(0xcbf2_9ce4_8422_2325, bytes)))
     }
 

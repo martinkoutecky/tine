@@ -235,8 +235,8 @@ fn command(
                 .host
                 .wait_published(session, &needs, Duration::from_millis(50))
             {
-                PageOperation::Applied => json!(true),
-                PageOperation::Refused => json!(false),
+                (PageOperation::Applied, revisions) => json!(revisions),
+                (PageOperation::Refused, _) => json!(false),
                 _ => Value::Null,
             }
         }

@@ -574,6 +574,16 @@
       "stability":"quarantined",
       "quarantineReason":"IVKfg: uncontrolled setup passed 0/2 in the nightly, then the identical binary passed 3/3, including a false green with five days already merged and an empty editor. The corrected held journey needs a test-faults native build; provision that in the nightly runner before lifting quarantine. See RECEIPT-nightly-reds-1113.md."
     },
+    "scripts/e2e-large-page-cli.mjs": {
+      "setup": "Synthetic 10,900-line page in a disposable account HOME/XDG with the classic editor selected in scratch device settings; real app owner and CLI share the kernel lease.",
+      "contracts": [
+        {"class":"exact-safety-interoperability","userOutcome":"Literal typing on a large routed page saves without CLI activity; during CLI add/edit, typed text remains on disk or in the live editor and every accepted CLI append remains on disk.","blocking":false,"authority":"GH #964; principles 1 and 14"}
+      ],
+      "acceptableVariations":["The race may produce a conflict, refusal or successful serialization; exact keystroke timings depend on WebDriver and host load."],
+      "nonRequirements":["Automatic merge policy, macOS certification, reproducing a particular scheduler interleaving, or a timing budget based on WebDriver round trips."],
+      "stability":"quarantined",
+      "quarantineReason":"Diagnostic journey: release burn-in and macOS reproduction remain outstanding."
+    },
     "scripts/e2e-cli-writes.mjs": {
       "setup": "App, serve and CLI share the disposable account home even under HOME_OVERLAY; asserts the app's kernel lease after serve-to-app handover.",
       "contracts": [

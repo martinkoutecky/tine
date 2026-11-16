@@ -1,4 +1,4 @@
-import type { PageMail } from "./document";
+import type { PageMail, PublishedNeed } from "./document";
 import type { PageDto, ResolvedPage } from "./types";
 
 /** The browser mock's page host: one window, every request taken and
@@ -53,7 +53,12 @@ export function mockPageHost(read: (path: string) => PageDto | null,
     // A close is never answered (model upClose), as on the native host.
     async pageClose(_session: number, id: number) { admit(id); return null; },
     async pageDelete() { return "applied" as const; },
-    async pageWait() { return true; },
+    async pageWait(_session: number, needs: readonly PublishedNeed[]) {
+      return needs.flatMap(({ key }) => {
+        const dto = taken.get(key);
+        return dto?.rev ? [{ key, version: versions.get(key)!, rev: dto.rev }] : [];
+      });
+    },
     async pageSaveNow() {},
     async pageOwed() { return []; },
     async pageDraftsRetry() {},

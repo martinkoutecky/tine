@@ -464,7 +464,8 @@ fn generated_semantic_rename_merge_matches_independent_bytes_and_fresh_indexes()
                     .unwrap()
                     .to_owned();
                 assert_eq!(
-                    host.wait_published(sid, &[(key.clone(), 0, None)], Duration::from_secs(10)),
+                    host.wait_published(sid, &[(key.clone(), 0, None)], Duration::from_secs(10))
+                        .0,
                     tine_store::PageOperation::Applied,
                     "Open applied and its clean held buffer is indexed: {at}"
                 );

@@ -490,7 +490,11 @@ fn store::WholeGraph::page_icons
 fn store::WholeGraph::property_facets
 fn store::WholeGraph::templates
 
-## Page host (ceiling: 62)
+## Page host (ceiling: 63)
+# GH #964: wait_published's disposition cannot identify a coalesced save's
+# actual revision. Extend that existing result with one serialized evidence
+# carrier; no new operation or publicly accessible field is added.
+struct page_host::PublishedRevision
 # Card DuDHQ (57 -> 62): `HostOp.saved`, with `Saved` and its three fields, is
 # what `PagePlan::plan` knew of each page it serialized: the Document its new
 # bytes parse to (the serializer's round-trip parse) and the name and kind they
@@ -611,7 +615,7 @@ use crate::storage_diag::DraftAdoptionReason
 # GX4 S4: typed parameters/results for the existing reader registration door.
 use crate::store::change_summary::{QueryRegistration,QuerySubscription}
 use crate::tine_outline::edit_kind
-use crate::page_host::{ApplyRefusal,DiskToken,DraftStatus,EffectasHostEffect,ExpectedasHostExpected,HostInputs,HostOp,HostRead,HostReadError,Input,Opened,PageHost,PageMail,PageOperation,PageRefusal,Reloaded,SavedasHostSaved,StopMode,StopState,Stopped,}
+use crate::page_host::{ApplyRefusal,DiskToken,DraftStatus,EffectasHostEffect,ExpectedasHostExpected,HostInputs,HostOp,HostRead,HostReadError,Input,Opened,PageHost,PageMail,PageOperation,PageRefusal,PublishedRevision,Reloaded,SavedasHostSaved,StopMode,StopState,Stopped,}
 use crate::edit_kind::EditKind
 use crate::file_kind::{is_asset_sidecar,is_graph_text}
 use crate::model::{not_utf8,parse_input_depth_within_limit,PARSE_INPUT_MAX_BYTES}
