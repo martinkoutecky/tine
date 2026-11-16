@@ -675,6 +675,13 @@ jobs:
           node-version: 22
           cache: npm
 
+      # A baseline release up to v0.9.x builds its PDF decoder from source with
+      # Emscripten (develop retired that build in GH #867), so install the SDK
+      # those refs pin; the candidate build does not use it.
+      - uses: emscripten-core/setup-emsdk@6ab9eb1bda2574c4ddb79809fc9247783eaf9021 # v14
+        with:
+          version: 4.0.20
+
       - name: Install candidate and baseline dependencies
         run: |
           npm ci
