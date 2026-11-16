@@ -12,6 +12,7 @@ import { remote } from "webdriverio";
 import { editorSelector, editorState } from "./lib/e2e-block-editor.mjs";
 import { openPageByName } from "./lib/e2e-navigation.mjs";
 import { ensureMainWindow } from "./lib/e2e-main-window.mjs";
+import { saveJourneyScreenshot } from "./lib/e2e-screenshot.mjs";
 
 const ROOT = path.resolve(import.meta.dirname, "..");
 const OUT = path.resolve("artifacts/ref-embed-actions-417");
@@ -41,10 +42,13 @@ const read = (p) => fs.readFileSync(p, "utf8");
 let browser, stage = "startup";
 const receipt = { tested: "8a5539b18 + review r1 fixes", app: APP, format: ext, surfaces: [], screenshots: [], screenshotErrors: [] };
 
-/** Screenshots are evidence, not assertions: a stalled WebKitWebDriver
- *  screenshot GET must not fail a journey whose state checks passed. */
+/** Screenshots are evidence, not assertions: a failed capture must not fail a
+ *  journey whose state checks passed. They come from the X display, because a
+ *  WebKitWebDriver screenshot GET stalls for the 60 s request timeout (here
+ *  after the hover and both context menus), which alone exceeded the suite's
+ *  180 s scenario limit. */
 async function shot(name) {
-  try { await browser.saveScreenshot(path.join(RUN, name)); receipt.screenshots.push(name); }
+  try { await saveJourneyScreenshot(browser, path.join(RUN, name)); receipt.screenshots.push(name); }
   catch (error) { receipt.screenshotErrors.push(`${name}: ${error.message.split("\n")[0]}`); }
 }
 
@@ -165,7 +169,7 @@ try {
   fs.writeFileSync(path.join(RUN, "receipt.json"), JSON.stringify({ ...receipt, outcome: "PASS" }, null, 2));
   console.log(`PASS: native embed and reference actions in ${receipt.surfaces.join(", ")} (${RUN})`);
 } catch (error) {
-  try { await browser?.saveScreenshot(path.join(RUN, "failure.png")); } catch {}
+  try { if (browser) await saveJourneyScreenshot(browser, path.join(RUN, "failure.png")); } catch {}
   try { fs.writeFileSync(path.join(RUN, "failure-dom.html"), await browser.getPageSource()); } catch {}
   fs.writeFileSync(path.join(RUN, "failure.txt"), `Tested: ${receipt.tested}\nJourney: ${stage}\nExpected: hovering an embed shows Edit link/Open source/Remove; Edit link opens only that surface's host editor with the embed selected; Remove and Remove reference change only the host file and Undo restores it byte for byte; the Source file never changes.\nObserved: ${error.stack}\nClassification: ambiguous until screenshot and log review.\n`);
   throw error;
