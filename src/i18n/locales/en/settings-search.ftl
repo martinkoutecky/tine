@@ -1,5 +1,6 @@
 
 # Interface text; variables carry untranslated names, paths or diagnostic details.
+
 settings-search-interface-translation-locale-menus = interface translation locale menus
 settings-search-theme-mode = Theme mode
 settings-search-light-dark-system = light dark system
