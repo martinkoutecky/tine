@@ -93,6 +93,8 @@ const PREVIEW_MAX_BYTES: usize = RESULT_BRIDGE_MAX_BYTES - 4 * 1024;
 /// [`Self::open`]. `Store` is `Send + Sync`; callers can share it through `Arc`.
 pub struct Store {
     #[cfg(test)]
+    pub(crate) host_publication_pause: Mutex<Option<TestPause>>,
+    #[cfg(test)]
     pub(crate) marker_copy_pause: Mutex<Option<TestPause>>,
     /// Tests: a held page's read waits this long for its owner instead of
     /// `OPERATION_WAIT` (A-H1).
@@ -939,6 +941,8 @@ impl Store {
             watch,
             faults: Mutex::new(std::collections::HashSet::new()),
             marker_copy_pause: Mutex::new(None),
+            #[cfg(test)]
+            host_publication_pause: Mutex::new(None),
             held_read_wait: Mutex::new(None),
         }
     }
@@ -1295,6 +1299,8 @@ impl Store {
                 #[cfg(test)]
                 marker_copy_pause: Mutex::new(None),
                 #[cfg(test)]
+                host_publication_pause: Mutex::new(None),
+                #[cfg(test)]
                 held_read_wait: Mutex::new(None),
             },
             meta,
@@ -1463,8 +1469,8 @@ impl Store {
     /// load returns an error but leaves the last published `WholeGraph` view
     /// available.
     ///
-    /// Returns the change-feed revision through which this refresh's changes
-    /// are published: a subscriber that has received it has received them all.
+    /// Waits for forwarded owner observations after releasing the writer; I/O
+    /// errors or the held-read deadline fail. Returns their published revision.
     pub fn refresh(&self, depth: Depth) -> Result<GraphRev, LoadError> {
         match depth {
             Depth::Stamps => {

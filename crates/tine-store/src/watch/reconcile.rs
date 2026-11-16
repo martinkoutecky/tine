@@ -74,7 +74,7 @@ impl Core {
         trigger: DiffTrigger,
     ) -> Result<(), LoadError> {
         if paths.is_none() {
-            return self.reconcile_full(include_config, scan_semantics, None, trigger);
+            return self.reconcile_full(include_config, scan_semantics, None, trigger, None);
         }
         let _writer = self.writer.lock().unwrap();
         self.reconcile_locked(paths, include_config, scan_semantics, trigger)
@@ -93,7 +93,7 @@ impl Core {
             DiffTrigger::WatchEvent
         };
         if paths.is_none() {
-            return self.reconcile_full(include_config, false, Some(batch), trigger);
+            return self.reconcile_full(include_config, false, Some(batch), trigger, None);
         }
         let _writer = self.writer.lock().unwrap();
         self.reconcile_inner(paths, include_config, false, Some(batch), trigger)
@@ -104,12 +104,13 @@ impl Core {
     /// recovery uses the separate writer-ordered reconciliation entry point. A
     /// publication or cache change while collecting invalidates the observation:
     /// retry rather than replacing a newer own-write baseline with older metadata.
-    fn reconcile_full(
+    pub(super) fn reconcile_full(
         &self,
         include_config: bool,
         scan_semantics: bool,
         batch: Option<WatchBatch>,
         trigger: DiffTrigger,
+        completion: Option<&mut Observations>,
     ) -> Result<(), LoadError> {
         if include_config {
             let _writer = self.writer.lock().unwrap();
@@ -146,6 +147,7 @@ impl Core {
                 trigger,
                 None,
                 Some(prepared),
+                completion,
             );
         }
     }
@@ -172,7 +174,15 @@ impl Core {
         batch: Option<WatchBatch>,
         trigger: DiffTrigger,
     ) -> Result<(), LoadError> {
-        self.reconcile_timed(paths, include_config, scan_semantics, batch, trigger, None)
+        self.reconcile_timed(
+            paths,
+            include_config,
+            scan_semantics,
+            batch,
+            trigger,
+            None,
+            None,
+        )
     }
 
     pub(super) fn reconcile_timed(
@@ -183,6 +193,7 @@ impl Core {
         batch: Option<WatchBatch>,
         trigger: DiffTrigger,
         deferred: Option<&mut Deferred>,
+        completion: Option<&mut Observations>,
     ) -> Result<(), LoadError> {
         self.reconcile_prepared(
             paths,
@@ -192,6 +203,7 @@ impl Core {
             trigger,
             deferred,
             None,
+            completion,
         )
     }
 
@@ -204,6 +216,7 @@ impl Core {
         trigger: DiffTrigger,
         deferred: Option<&mut Deferred>,
         prepared: Option<PreparedWalk>,
+        completion: Option<&mut Observations>,
     ) -> Result<(), LoadError> {
         let began = prepared
             .as_ref()
@@ -223,6 +236,7 @@ impl Core {
             &mut walk,
             deferred,
             prepared,
+            completion,
         );
         if walk.full {
             self.graph
@@ -242,6 +256,7 @@ impl Core {
         walk: &mut CollectTimes,
         deferred: Option<&mut Deferred>,
         prepared: Option<PreparedWalk>,
+        completion: Option<&mut Observations>,
     ) -> Result<(), LoadError> {
         // §5.4: observation time of this cycle's stamps, taken before any is.
         let observed = prepared
@@ -404,7 +419,13 @@ impl Core {
             files.push(config_file);
         }
         let mut pages = Vec::new();
-        let mut forwarded = Vec::new();
+        // A recovery hold can retire a row without changing the file. Its
+        // owner's first publication is owed even on an unchanged disk stamp.
+        let mut forwarded = if paths.is_none() {
+            self.graph.unindexed_held_keys()
+        } else {
+            Vec::new()
+        };
         let mut retired_errors = false;
         // One identity pass for the cycle (REVIEW-3a4 #6).
         let mut identities = crate::model::entry_identity::Memo::default();
@@ -675,7 +696,11 @@ impl Core {
         drop(snapshot);
         if !forwarded.is_empty() {
             if let Some(forward) = self.forward.lock().unwrap().as_ref() {
-                forward(forwarded, None);
+                let done = completion.map(|wait| {
+                    wait.count += forwarded.len();
+                    wait.done.clone()
+                });
+                forward(forwarded, done);
             }
         }
         walk.changed = files.len() as u64;
@@ -1334,6 +1359,7 @@ mod tests {
                     errors,
                     times,
                 }),
+                None,
             )
             .unwrap();
         }

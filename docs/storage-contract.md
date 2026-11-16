@@ -761,6 +761,21 @@ that and then re-parses every file through the cold-launch build (Settings
 `config.edn` only, with no asset or `logseq/custom.css` walk: a planner of
 page writes reads neither.
 
+A successful explicit refresh waits for every held-page observation that its
+walk forwards to the page host, including held pages whose owner has never
+published, even when their disk stamps are unchanged. The host acknowledges
+only after delivering the observation's index publication (or confirming unchanged bytes), so a
+subsequent view includes those observations, including rename drafts recovered
+on launch. The wait uses the existing held-read observation mechanism, outside
+the store writer, with its shared 10 s bound; an observation I/O error or an
+unfinished observation returns `LoadError::Failed`, and a closed store returns
+`LoadError::Closed`. The host driver itself cannot wait for its own observation.
+This adds no scan at open or refresh: `Store::open` still starts background
+parsing, recovery still runs in the page host, and ordinary held views remain
+snapshots of their published generation. Watcher ticks still forward without
+waiting; explicit refreshes settle those pending reads too when their retry
+baseline is encountered (REG-GH609-RECOVERY-VIEW).
+
 A page delete and a rename-file-to-page take exactly one `Depth::PageStamps`
 walk per operation, before their plan; a page rename takes one per attempt,
 inside its host operation's first plan call, after the flush: the attempt

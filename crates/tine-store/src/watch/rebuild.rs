@@ -42,8 +42,7 @@ impl WatchHandle {
             LoadStatus::Ready => drop(status),
             LoadStatus::Loading => unreachable!(),
         }
-        self.core
-            .reconcile(None, true, true, DiffTrigger::Rebuild)?;
+        self.reconcile_refresh(DiffTrigger::Rebuild)?;
         let cancelled = || self.core.closed.load(Ordering::Acquire);
         let mut attempt = 0u32;
         let writer = loop {

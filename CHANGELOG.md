@@ -8,6 +8,8 @@ The format follows [Keep a Changelog](https://keepachangelog.com/); versions use
 
 ## [Unreleased]
 
+- Retrying a page rename immediately after crash recovery no longer reports the recovered page missing; explicit refreshes wait for the page host to publish recovered and external edits (#609).
+
 - Page renames and merges leave and report references nested in other page names, including tags glued to following text, instead of repointing the enclosing reference or refusing the rename as a Tine bug. Escaped links, tags, labels and property members continue to follow subsequent renames (REG-CM-NESTED-GLUED-TAG, REG-CM-NESTED-REPOINT, REG-CM-ESCAPED-RENAME-AGAIN).
 
 - Renames through escaped Markdown labels and emphasized Org file-link labels no longer fail the model check when their new names read correctly. Tags, property members and page links also retain the intended name when it needs escaping; sites whose syntax cannot hold it are left and reported (REG-CM-CHECK-LABEL-SPELLING, REG-CM-CHECK-NATIVE-SPELLING).

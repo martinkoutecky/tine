@@ -294,6 +294,20 @@ impl Graph {
         matches!(self.authority(path), Authority::Disk)
     }
 
+    /// Held pages with no owner publication yet. A disk stamp cannot certify
+    /// their missing rows: reconciliation asks their owners even when no file
+    /// changed. O(held keys), no file reads or page/graph walk.
+    pub(crate) fn unindexed_held_keys(&self) -> Vec<String> {
+        self.held
+            .keys
+            .read()
+            .unwrap()
+            .iter()
+            .filter(|(_, indexed)| indexed.is_none())
+            .map(|(key, _)| key.clone())
+            .collect()
+    }
+
     /// [`Self::disk_sourced`] within the pass whose memo is `memo`.
     pub(crate) fn disk_sourced_in(&self, memo: &mut Memo, path: &Path) -> bool {
         matches!(self.authority_in(memo, path), Authority::Disk)
