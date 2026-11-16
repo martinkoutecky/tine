@@ -115,22 +115,37 @@ icon:: 🎨
     | `.ls-block.author-tinted` | A block by another author that draws the author mark: not a comment, and none while author marks are switched off (**Show/Hide author marks**) |
     | `--author-color` | That author's color. Override it on the block and on its chip: `.ls-block[data-author="Claude" i], .ls-block[data-author="Claude" i] .author-chip { --author-color: #d97757; }` |
     | `.author-run-continued`, `.author-run-continues` | The block drawn right above (below) this one is by the same author. A run continues from a parent into its first child, and out of the last child to the next block; a folded block ends where it is drawn. A block you wrote, a comment or an embed ends a run |
-  - A thread instead of a tint: every block keeps a strip at its end, the same width on every block, and a line runs down it beside one author chip at the start of each run. A long name is cut to the strip, with the full name in the tooltip. Your text stays where it was. To switch it on, choose **Thread** for **Author marks** in Settings → **Appearance** → **Advanced** → **Fine-tuning** (**Tint** is the default); **Reset** puts the tint back. The strip's width is `--tine-author-gutter` (96px unless you set it on `:root`). To draw it yourself, or to restyle it, paste this into `custom.css` and the tint goes away:
+  - A thread instead of a tint: every block keeps a strip at its end, the same width on every block, and a line runs down it beside one author chip at the start of each run. A long name is cut to the strip, with the full name in the tooltip. Your text stays where it was. To switch it on, choose **Thread** for **Author marks** in Settings → **Appearance** → **Advanced** → **Fine-tuning** (**Tint** is the default); **Reset** puts the tint back. The strip's width is `--tine-author-gutter` (96px, or 64px on a phone, unless you set it on `:root`); on a phone the 44px fold button stays at the very end, right of the strip, and while author marks are hidden (**Show/Hide author marks**) no row keeps a strip (Tine puts the class `tine-author-marks-off` on the window then, which the paste below reads). To draw it yourself, or to restyle it, paste this into `custom.css` and the tint goes away:
   - ```css
-    .ls-block:not(.comment-in-thread, .block-embed-host) > .block-main {
+    :root {
+      --author-thread-gutter: var(--tine-author-gutter, 96px);
+      --author-thread-clear: 0px;
+      --author-thread-reserve: calc(var(--author-thread-gutter) + var(--author-thread-clear));
+    }
+    @media (max-width: 640px) and (pointer: coarse) {
+      :root {
+        --author-thread-gutter: var(--tine-author-gutter, 64px);
+        --author-thread-clear: 44px;
+      }
+    }
+    :root:not(.tine-author-marks-off) .ls-block:not(.comment-in-thread, .block-embed-host) > .block-main {
       position: relative;
-      padding-inline-end: var(--tine-author-gutter, 96px);
+      padding-inline-end: var(--author-thread-reserve);
     }
     .ls-block.author-tinted > .block-main > .block-content-wrapper {
       padding-inline: 0;
       margin-inline: 0;
       background: none;
     }
+    :root:not(.tine-author-marks-off) .ls-block:not(.comment-in-thread, .block-embed-host) > .block-main > .block-content-wrapper,
+    .ls-block.author-tinted > .block-main:has(> .block-controls > .collapse-toggle.has-children) > .block-content-wrapper {
+      padding-inline-end: 0;
+    }
     .ls-block.author-tinted > .block-main > .block-content-wrapper::after {
       content: "";
       position: absolute;
       inset-block: 15px 1px;
-      inset-inline-end: calc(var(--tine-author-gutter, 96px) - 5px);
+      inset-inline-end: calc(var(--author-thread-reserve) - 5px);
       width: 2px;
       background: color-mix(in srgb, var(--author-color, var(--accent)) 40%, transparent);
     }
@@ -139,8 +154,9 @@ icon:: 🎨
     .ls-block.author-tinted > .block-main > .block-content-wrapper > .block-content > .author-chip,
     .ls-block.author-tinted > .block-main > .block-content-wrapper > .authored-editor > .author-chip {
       position: absolute;
-      inset-inline-start: calc(100% - var(--tine-author-gutter, 96px) + 10px);
-      max-width: calc(var(--tine-author-gutter, 96px) - 14px);
+      z-index: 1;
+      inset-inline-start: calc(100% - var(--author-thread-reserve) + 10px);
+      max-width: calc(var(--author-thread-gutter) - 14px);
       margin-inline: 0;
       text-overflow: ellipsis;
       background-color: color-mix(in srgb, var(--author-color, var(--accent)) 18%, var(--bg-primary));

@@ -209,7 +209,7 @@
    placed against the row's end edge and live inside the gutter: a long name is cut to it with an ellipsis (the
    tooltip keeps the name). The phone's 44px fold area stays at the very end, right of the gutter. Everything is
    logical, so a mirrored layout puts the thread on the left. Marks hidden (`tine-author-marks-off`, set by
-   authorMarksPref.ts) reserve nothing. */
+   authorMarksPref.ts; a documented hook, the Guide's thread example reads it) reserve nothing. */
 .tine-author-marks-thread {
   --author-thread-gutter: var(--tine-author-gutter, 96px);
   --author-thread-clear: 0px;

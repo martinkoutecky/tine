@@ -242,9 +242,9 @@ export function createCommentIndexFor(id: Accessor<string | null>): Accessor<Com
 /** Which children of a block are comments, with their selectors and resolution:
  * a view of the covering index. Typing in an ordinary child costs one screen
  * and re-runs nothing here; a comment child's edit notifies only when its
- * selector or resolution changed. */
-export function createCommentChildren(parentId: Accessor<string | null>): Accessor<CommentChildren> {
-  const index = createCommentIndexFor(parentId);
+ * selector or resolution changed. A caller that already resolved the covering
+ * index of `parentId` passes it. */
+export function createCommentChildren(parentId: Accessor<string | null>, index: Accessor<CommentIndex | null> = createCommentIndexFor(parentId)): Accessor<CommentChildren> {
   const view = createMemo(() => {
     const own = index();
     const id = parentId();

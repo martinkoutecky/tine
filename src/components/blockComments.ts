@@ -13,7 +13,7 @@ import { authorRunContinues, authorThreadSides, lastRow, type AuthorNeighbors, t
 import { threadResolved } from "../commentResolution";
 import { useResolvedComments } from "./CommentResolutionScope";
 import { editingId } from "../editorController";
-import { createCommentChildren, createCommentIndexFor } from "../commentIndex";
+import { createCommentChildren, createCommentIndexFor, type CommentIndex } from "../commentIndex";
 import { NO_COMMENT_CHILDREN } from "../commentChildren";
 import { createQuoteCoverage } from "../render/quoteHighlight";
 import { datedThreadRoot, hasMessageDate } from "../document";
@@ -60,17 +60,19 @@ export function commentFacts(node: () => CommentNode, properties: () => Props, f
   // covering index (`isComment`), not from the siblings' text: typing re-runs none of it.
   const owner = getOwner();
   let previousLast: Accessor<string | undefined> | undefined;
+  let own: Accessor<CommentIndex | null> | undefined;
   const previousRow = () => (previousLast ??= runWithOwner(owner, () => {
-    // The index that covers the previous sibling covers the whole spine below it.
-    const index = createCommentIndexFor(() => run!.neighbours()?.()?.prev ?? null);
     // A fold reads the row's raw text. Each visited row's fold is a memo owned by this walk, so the walk sees a
     // boolean (typing in a spine row does not re-walk it) and a rerun, which only a real fold, membership or
     // structure change causes, disposes exactly the old spine's memos.
     const foldOf = (id: string) => createMemo(() => run!.folded(id))();
     return createMemo(() => {
       const sides = run!.neighbours()?.() ?? NO_SIDES;
-      return sides.prev === undefined || sides.results ? undefined
-        : lastRow(sides.prev, foldOf, id => index()?.isComment(id) ?? false);
+      if (sides.prev === undefined || sides.results) return undefined;   // a hit never uses the row above: no index
+      // The index that covers the previous sibling covers the whole spine below it, and its list already knows it
+      // (its parent's). Only a list that is not under a parent row (a page's roots) resolves its own, at its depth.
+      const index = sides.index ?? (own ??= runWithOwner(owner, () => createCommentIndexFor(() => run!.neighbours()?.()?.prev ?? null))!)();
+      return lastRow(sides.prev, foldOf, id => index?.isComment(id) ?? false);
     });
   }))!();
   const threadSides = () => {
@@ -124,13 +126,16 @@ export function marginOutline(node: () => CommentNode, _surfaceKey: string, fmt:
     outlineChildren: () => state()?.outlineChildren() ?? node().children,
     marginComments: () => state()?.marginComments() ?? NO_IDS,
     commentChildren: () => state()?.comments() ?? NO_COMMENT_CHILDREN,
+    /** The index that covers this block's children; its child list passes it to its rows. */
+    commentIndex: () => state()?.index() ?? null,
     quoteCoverage: () => state()?.quoteCoverage,
   };
 }
 
 function parentMarginOutline(node: () => CommentNode, fmt: () => "md" | "org", showResolved: () => boolean) {
   const quoteCoverage = createQuoteCoverage();
-  const comments = createCommentChildren(() => node().id);
+  const index = createCommentIndexFor(() => node().id);
+  const comments = createCommentChildren(() => node().id, index);
   const main = () => !!node() && threadRootOf(node().id, fmt()) === null;
   // A body editor that is hand-writing its first quote property must finish
   // that buffer before moving to an annotation surface. Otherwise accepting
@@ -154,7 +159,7 @@ function parentMarginOutline(node: () => CommentNode, fmt: () => "md" | "org", s
   }, [], { equals: sameIds });
   const marginComments = createMemo(() => (main() && !commentMarginHidden() ? comments().entries.flatMap(entry => entry.id !== heldBody()
     && (showResolved() || !entry.resolved) ? [entry.id] : []) : []), [], { equals: sameIds });
-  return { outlineChildren, marginComments, comments, quoteCoverage };
+  return { outlineChildren, marginComments, comments, index, quoteCoverage };
 }
 
 function sameIds(a: readonly string[], b: readonly string[]): boolean {

@@ -244,7 +244,7 @@ export function Block(props: { id: string; hideRefCount?: boolean; forceExpanded
     const n = node();
     return n ? propertySession.facets(n.raw, fmt()) : EMPTY_FACETS;
   });
-  const { outlineChildren, marginComments, commentChildren, quoteCoverage } = marginOutline(node, surfaceKey, fmt);
+  const { outlineChildren, marginComments, commentChildren, commentIndex, quoteCoverage } = marginOutline(node, surfaceKey, fmt);
   const groupedQuote = quoteInGroup(props.id);
   const hasChildren = () => outlineChildren().length > 0;
   const hasFoldableBody = () => hasChildren() || blockHasPageEmbed(props.id) || blockHasQueryBody(props.id); // a query host folds its results (OG; GH #619)
@@ -449,7 +449,7 @@ export function Block(props: { id: string; hideRefCount?: boolean; forceExpanded
               <CollapseAllBorder id={props.id} readOnly={readOnly()} surface={viewCollapseSurface()} />
               <div class="block-children">
                 <For {...blockListProps(outlineChildren, (id, neighbours) => <Block id={id} authorNeighbors={neighbours} />,
-                  { head: props.id, after: () => { const sides = props.authorNeighbors?.(); return sides?.results ? undefined : sides?.next ?? sides?.after; } })} />
+                  { head: props.id, index: commentIndex, after: () => { const sides = props.authorNeighbors?.(); return sides?.results ? undefined : sides?.next ?? sides?.after; } })} />
               </div>
             </div>
           </Match>

@@ -140,6 +140,8 @@ export function marginRegressionPages(b: (raw: string, children?: BlockDto[], co
             b("A hidden comment.\ntine.quote:: hidden child\ntine.author:: Ellis"),
           ]),
         ], true),
+        // An unauthored row with a fold button (phone: the 44px area at the row's end), folded so its child stays hidden.
+        b("An owner row with a fold button and a first line long enough to run across the whole reading column.\ncollapsed:: true", [b("A hidden owner child.")], true),
         b("An owner row to close."),
       ],
     ],

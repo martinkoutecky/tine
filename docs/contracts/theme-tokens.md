@@ -284,6 +284,7 @@ same run and the same "you". The stored text is never rewritten.
 | `.ls-block > .block-main > .block-content-wrapper` | The row's own text box, which the trailing controls make narrower; never its children. The chip is `> .block-content > .author-chip` (an editing row: `> .authored-editor > .author-chip`). These two paths are the only structure promised here, because a thread or any other row-level drawing needs them |
 | `.author-chip`, `.author-chip.agent` | The label (section 7). The first row of a run of same-author siblings carries it; a row that another sibling continues does not. It carries `data-author="<trimmed name>"` (none on a "you" chip). With `--tine-author-icon-size` (section 2) and a `background-image` set on it, it shows the icon instead of the name |
 | `html.tine-author-marks-thread` | Tine's own thread look, below. A class on `<html>`, not a token: Settings > Appearance > Fine-tuning > **Author marks** (Tint, the default, or Thread; the class `tine-<id>-<option>` of the class knob `author-marks`) sets it. `custom.css` cannot add a class, so a stylesheet draws the same line from the run classes (the Guide page shows how); a theme package cannot set it |
+| `html.tine-author-marks-off` | On `<html>` exactly while **Show/Hide author marks** is off (no `author-tinted` row then, and the thread look reserves nothing). Read it, as the Guide's thread example does, to end a gutter your own stylesheet reserves; never set it |
 
 The tint's own join classes (`author-card-continued`, `author-card-continues`,
 sibling rows only, so a card never bends around a child) and the eight
@@ -325,7 +326,8 @@ the chip of a run's first row, crosses the two pixels between rows
 (`author-run-continues`, `author-run-continued`) and ends at the bottom of the run's
 last row. Only a run's first row keeps its chip. Text starts where it always did.
 While **Show/Hide author marks** is off nothing is reserved (the window carries the
-internal class `tine-author-marks-off`, which is not a theme hook). Logical properties
+class `html.tine-author-marks-off`, which a stylesheet that draws the thread itself
+reads, as the Guide's example does). Logical properties
 throughout: a mirrored layout draws the thread on the left. At 390px (phone) the
 gutter is 64px plus the 44px fold area, so every row gives up 108px at its end.
 

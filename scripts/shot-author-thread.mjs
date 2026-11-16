@@ -15,7 +15,8 @@ const commit = execFileSync("git", ["rev-parse", "HEAD"], { encoding: "utf8" }).
 mkdirSync(out, { recursive: true });
 
 // The Guide's two examples, as a reader pastes them.
-const guide = readFileSync("crates/tine-guide/src/templates/customize-look.md", "utf8");
+// (GUIDE_MD points at another copy of the page, to run the script against an older Guide.)
+const guide = readFileSync(process.env.GUIDE_MD ?? "crates/tine-guide/src/templates/customize-look.md", "utf8");
 const section = guide.slice(guide.indexOf("## 5. Show who wrote a block"), guide.indexOf("## 6. Find out what styles"));
 const blocks = [...section.matchAll(/```css\n([\s\S]*?)```/g)].map(m => m[1].replace(/^ {4}/gm, ""));
 assert.equal(blocks.length, 2, "the Guide section has a thread example and an icon example");
@@ -89,7 +90,7 @@ function trailing() {
  *  author chip and (while editing) its editor, with the row's end padding (the gutter, plus the phone's fold area). */
 function layout() {
   const rect = el => { const r = el.getBoundingClientRect(); return { left: r.left, right: r.right, top: r.top, bottom: r.bottom, width: r.width }; };
-  return [...document.querySelectorAll(".page-blocks .ls-block:not(.comment-in-thread)")].flatMap(row => {
+  const rows = [...document.querySelectorAll(".page-blocks .ls-block:not(.comment-in-thread)")].flatMap(row => {
     const main = row.querySelector(":scope > .block-main"), wrapper = main?.querySelector(":scope > .block-content-wrapper");
     const content = wrapper?.querySelector(":scope > .block-content, :scope > .authored-editor");
     if (!content) return [];
@@ -108,11 +109,26 @@ function layout() {
     const controls = [...main.querySelectorAll(":scope > .comment-entry > button, :scope > .comment-below-chip, .block-refs-count")]
       .filter(el => el.offsetParent).map(el => ({ kind: el.className.split(" ")[0], ...rect(el) }));
     const editor = content.querySelector(".editor-wrap");
-    return [{ label: wrapper.textContent.trim().slice(0, 28), authored: row.classList.contains("authored"),
+    // The fold button of a row with children (authored or not): where it is drawn and whether it takes taps.
+    const foldEl = main.querySelector(":scope > .block-controls > .collapse-toggle.has-children");
+    const fold = foldEl && foldEl.offsetParent && getComputedStyle(foldEl).pointerEvents !== "none" ? rect(foldEl) : null;
+    return [{ chipEl, label: wrapper.textContent.trim().slice(0, 28), authored: row.classList.contains("authored"),
       rowRight: main.getBoundingClientRect().right, pad: parseFloat(getComputedStyle(main).paddingRight), wrapperWidth: wrapper.getBoundingClientRect().width,
-      texts, controls, editor: editor ? rect(editor) : null,
+      wrapperPad: parseFloat(getComputedStyle(wrapper).paddingRight),
+      texts, controls, fold, editor: editor ? rect(editor) : null,
       chip: chipEl && chipEl.offsetParent ? { ...rect(chipEl), clipped: chipEl.scrollWidth > chipEl.clientWidth, overflow: chipStyle.textOverflow, title: chipEl.title, author: chipEl.getAttribute("data-author") } : null }];
   });
+  // Which element a click on the chip's own centre reaches (the chip, never the fold button under it). Last, since
+  // scrolling the chip into view moves every rectangle measured before.
+  for (const r of rows) {
+    if (r.chip) {
+      r.chipEl.scrollIntoView({ block: "center" });
+      const c = r.chipEl.getBoundingClientRect(), at = document.elementFromPoint((c.left + c.right) / 2, (c.top + c.bottom) / 2);
+      r.chipHit = !!at?.closest(".author-chip");
+    }
+    delete r.chipEl;
+  }
+  return rows;
 }
 /** No chip rectangle meets a text line, a trailing control or the editor; nothing but the chip is inside the gutter;
  *  a long name is clipped to the gutter with an ellipsis and keeps its full name in the tooltip; plain rows, authored
@@ -121,10 +137,19 @@ function assertLayout(rows, where) {
   const hits = (a, b) => a.left < b.right - 0.5 && b.left < a.right - 0.5 && a.top < b.bottom - 0.5 && b.top < a.bottom - 0.5;
   const chips = rows.filter(r => r.chip);
   assert.equal(chips.length, 4, `${where}: one chip on each of the four runs, saw ${chips.length}`);
+  assert.ok(rows.some(r => !r.authored && r.fold) && rows.some(r => r.authored && r.fold), `${where}: an unauthored and an authored row with a fold button to check`);
   for (const r of rows) {
     const gutterLeft = r.rowRight - r.pad;
     for (const t of r.texts) assert.ok(t.right <= gutterLeft + 0.5, `${where} "${r.label}": text reaches the gutter (${t.right} > ${gutterLeft})`);
     for (const c of r.controls) assert.ok(c.right <= gutterLeft + 0.5, `${where} "${r.label}": ${c.kind} reaches the gutter (${c.right} > ${gutterLeft})`);
+    // The fold button (authored or not) is neither covered by text nor by a chip.
+    if (r.fold) {
+      for (const t of r.texts) assert.ok(!hits(r.fold, t), `${where} "${r.label}": text (${t.left}..${t.right}) runs under the fold button (${r.fold.left}..${r.fold.right})`);
+      if (r.chip) assert.ok(!hits(r.chip, r.fold), `${where} "${r.label}": the chip (${r.chip.left}..${r.chip.right}) overlaps the fold button (${r.fold.left}..${r.fold.right}) by ${Math.min(r.chip.right, r.fold.right) - Math.max(r.chip.left, r.fold.left)}px`);
+    }
+    if (r.chip) assert.ok(r.chipHit, `${where} "${r.label}": a click on the name does not reach the chip (it hits the fold button or another control)`);
+    // The row's own gutter replaces any end padding the text box carried (the phone's 44px/48px fold reserve).
+    if (r.pad > 0) assert.equal(r.wrapperPad, 0, `${where} "${r.label}": the text box keeps ${r.wrapperPad}px end padding inside the gutter`);
     if (!r.chip) continue;
     for (const t of r.texts) assert.ok(!hits(r.chip, t), `${where} "${r.label}": the chip (${r.chip.left}..${r.chip.right}) covers text (${t.left}..${t.right})`);
     for (const c of r.controls) assert.ok(!hits(r.chip, c), `${where} "${r.label}": the chip covers ${c.kind}`);
@@ -144,7 +169,7 @@ const near = (a, b, tol = 1) => Math.abs(a - b) <= tol;
 const run = async (name, fn) => { try { await fn(); } catch (error) { failures.push(`${name}: ${error.message ?? error}`); } };
 
 async function newPage(width, theme, dsf = 2, pageName = "Author thread", threadLines = false) {
-  const ctx = await browser.newContext({ viewport: { width, height: 900 }, hasTouch: width === 390, isMobile: width === 390, deviceScaleFactor: dsf });
+  const ctx = await browser.newContext({ viewport: { width, height: 900 }, hasTouch: width <= 640, isMobile: width <= 640, deviceScaleFactor: dsf });
   const page = await ctx.newPage();
   page.setDefaultTimeout(15_000);
   page.on("pageerror", error => browserErrors.push(String(error)));
@@ -321,7 +346,9 @@ try {
   // first line, beside no control, a comment marker, a resolved label and a folded "N below" chip, at phone, tablet and
   // desktop widths: the chip never meets text, a control or the editor, and every row has one text-column width. Tine's own
   // thread, then the Guide's pasted CSS.
-  for (const width of [390, 800, 1280]) for (const guided of [false, true]) {
+  // 640 is the phone layout's last width (a coarse pointer there), 800 the first without the fold area.
+  const tineLong = {};
+  for (const width of [390, 640, 800, 1280]) for (const guided of [false, true]) {
     const { ctx, page } = await newPage(width, "light", 2, "Author thread long names");
     activePage = page;
     if (guided) await addCss(page, guideThread); else await setThreadClass(page, true);
@@ -336,7 +363,14 @@ try {
       assert.ok(kinds.has("comment-below-chip"), `${where}: the folded row's "N below" chip is drawn (saw ${[...kinds]})`);
       if (width < 1000) for (const kind of ["margin-marker", "comment-resolved-entry"]) assert.ok(kinds.has(kind), `${where}: ${kind} is drawn (saw ${[...kinds]})`);
       assertLayout(rows, where);
-      if (!guided && width === 390) for (const r of rows) assert.ok(r.pad >= 44 + 40, `${where} "${r.label}": the gutter does not leave the fold area (${r.pad}px)`);
+      if (!guided && width <= 640) for (const r of rows) assert.ok(r.pad >= 44 + 40, `${where} "${r.label}": the gutter does not leave the fold area (${r.pad}px)`);
+      if (!guided) tineLong[width] = rows;
+      // The pasted CSS lays every row out as Tine's own thread does: one gutter plus the phone's fold area, one text column.
+      else for (let i = 0; i < rows.length; i++) {
+        const mine = tineLong[width][i];
+        assert.ok(near(rows[i].pad, mine.pad, 0.5) && near(rows[i].wrapperWidth, mine.wrapperWidth, 0.5) && near(rows[i].wrapperPad, mine.wrapperPad, 0.5),
+          `${where} "${rows[i].label}": end padding ${rows[i].pad}/${rows[i].wrapperPad}, text column ${rows[i].wrapperWidth}px; Tine's thread has ${mine.pad}/${mine.wrapperPad}, ${mine.wrapperWidth}px`);
+      }
     });
     if (!guided) {
       // The editor of a run's first row: the chip stays in the gutter beside it.
@@ -354,7 +388,7 @@ try {
     await ctx.close();
   }
   // Show/Hide author marks off: the thread look draws nothing and no row reserves a gutter, on phone and desktop.
-  for (const width of [390, 1280]) {
+  for (const width of [390, 640, 1280]) {
     const { ctx, page } = await newPage(width, "light", 2, "Author thread long names");
     activePage = page;
     const hide = hidden => page.evaluate(async hidden => (await import("/src/authorMarksPref.ts")).setAuthorMarksHidden(hidden), hidden);
@@ -370,6 +404,20 @@ try {
       for (let i = 0; i < wide.length; i++) assert.ok(near(wide[i].wrapperWidth, hidden[i].wrapperWidth, 0.5), `"${wide[i].label}": text column ${wide[i].wrapperWidth} -> ${hidden[i].wrapperWidth}`);
     });
     await ctx.close();
+    // The Guide's pasted CSS ends its gutter the same way, and restores it with the marks.
+    const { ctx: ctx2, page: page2 } = await newPage(width, "light", 2, "Author thread long names");
+    activePage = page2;
+    await addCss(page2, guideThread);
+    await page2.evaluate(async () => (await import("/src/authorMarksPref.ts")).setAuthorMarksHidden(true));
+    const guideHidden = await page2.evaluate(layout);
+    await page2.evaluate(async () => (await import("/src/authorMarksPref.ts")).setAuthorMarksHidden(false));
+    const guideOn = await page2.evaluate(layout);
+    await run(`guide CSS, marks hidden at ${width}px`, () => {
+      assert.ok(guideHidden.every(r => r.pad === 0), `the Guide's CSS still reserves a gutter with marks hidden (${guideHidden.map(r => r.pad)})`);
+      for (let i = 0; i < wide.length; i++) assert.ok(near(wide[i].wrapperWidth, guideHidden[i].wrapperWidth, 0.5), `"${wide[i].label}": text column ${wide[i].wrapperWidth} -> ${guideHidden[i].wrapperWidth} with the Guide's CSS and marks hidden`);
+      assert.deepEqual(guideOn.map(r => r.pad), on.map(r => r.pad), "the Guide's gutter after showing the marks again");
+    });
+    await ctx2.close();
   }
   // The thread look shares no pseudo-element with the thread-lines decoration, which draws a parent's vertical line on
   // the row's own ::after and each child's elbow on its ::before: with both on, an authored parent that has children

@@ -14,6 +14,8 @@ import { backend } from "../backend";
 import type { BlockDto } from "../types";
 import * as runs from "./authorRuns";
 import * as commentChildren from "../commentChildren";
+import * as commentIndex from "../commentIndex";
+import * as documentModule from "../document";
 import * as foldOption from "../document/edits/queryFoldOption";
 import { setAuthorMarksHidden } from "../authorMarksPref";
 import { readFileSync } from "node:fs";
@@ -400,6 +402,56 @@ it("results: the outline rules still apply inside one hit, and the tint card may
 it("the tint hides the chip of a card-joined hit with the stylesheet, so it keeps its look", () => {
   const css = readFileSync("src/styles/comments.css", "utf8");
   expect(css).toMatch(/:where\(:root:not\(\.tine-author-marks-thread\)\) \.ls-block\.author-card-continued > \.block-main > \.block-content-wrapper > \.block-content > \.author-chip/);
+});
+
+// GH #892 review (round 6) F1: resolving the covering comment index is not free (it walks the ancestry), and
+// the row's own list already knows it. The authored rows of a nested outline add no ancestor steps of their own
+// beyond the plain outline's, so mount work stays linear in depth; the hits of a results list, which never use
+// the row above, resolve no index at all.
+/** Ancestor steps taken while mounting, counted inside `createCommentIndexFor` (the only walker): the calls of
+ * the document's `node` made while it runs. */
+function indexSteps(mountIt: () => void): number {
+  const real = commentIndex.createCommentIndexFor;
+  const nodes = vi.spyOn(documentModule, "node");
+  let steps = 0;
+  vi.spyOn(commentIndex, "createCommentIndexFor").mockImplementation(id => {
+    const before = nodes.mock.calls.length;
+    const out = real(id);
+    steps += nodes.mock.calls.length - before;
+    return out;
+  });
+  try { mountIt(); } finally { dispose?.(); vi.restoreAllMocks(); resetStore(); document.body.innerHTML = ""; }
+  return steps;
+}
+/** `n0` > [`n1` > [... `n<depth-1>`], `t0`] with a leaf `t<k>` after every nested level. */
+const nested = (depth: number, by: string | null): BlockDto => {
+  let node = b(`n${depth - 1}`, by);
+  for (let level = depth - 2; level >= 0; level--) node = b(`n${level}`, by, [node, b(`t${level}`, by)]);
+  return node;
+};
+const mountScoped = (blocks: BlockDto[]) => {
+  loadSingle({ name: "Runs", title: "Runs", kind: "page", format: "md", pre_block: null, blocks });
+  const root = document.createElement("div"); document.body.append(root);
+  dispose = render(() => {
+    const index = commentIndex.createCommentIndex(() => pageByName("Runs")!.roots);
+    return <commentIndex.CommentIndexContext.Provider value={index}><BlockList ids={pageByName("Runs")!.roots} /></commentIndex.CommentIndexContext.Provider>;
+  }, root);
+};
+const mountPlain = (blocks: BlockDto[]) => { mount(blocks); };
+it.each([["standalone", mountPlain], ["scoped", mountScoped]] as const)("authored rows of a nested %s outline add no index ancestor steps beyond the plain outline's", (_kind, mountIt) => {
+  for (const depth of [8, 16, 32]) {
+    const plain = indexSteps(() => mountIt([nested(depth, null)]));
+    const authored = indexSteps(() => mountIt([nested(depth, "Ada")]));
+    expect(authored - plain, `depth ${depth}`).toBeLessThanOrEqual(2 * depth);
+  }
+});
+it("the hits of a results list resolve no comment index for the row above", () => {
+  for (const depth of [8, 16, 32]) {
+    const hits = Array.from({ length: depth - 1 }, (_, i) => `t${i}`);
+    const plain = indexSteps(() => mountResults([nested(depth, null)], hits));
+    const authored = indexSteps(() => mountResults([nested(depth, "Ada")], hits));
+    expect(authored - plain, `depth ${depth}`).toBe(0);
+  }
 });
 
 it("a block that becomes a comment (or stops being one) moves the row above its next sibling, live", () => {

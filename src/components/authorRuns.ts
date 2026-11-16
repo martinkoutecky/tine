@@ -2,6 +2,7 @@ import { createMemo } from "solid-js";
 import { blockIsOpaqueSheetView, node } from "../document";
 import { authorOf, quoteSelectorOf } from "../comments";
 import { authorKey } from "../commentIdentity";
+import type { CommentIndex } from "../commentIndex";
 import { facetsOf, parseBody } from "../render/facets";
 import type { Block, Inline, ListItem } from "../render/ast";
 
@@ -16,10 +17,12 @@ export interface RowSides {
   readonly head?: string;
   readonly after?: string;
   readonly results?: boolean;
+  /** The comment index that covers the whole list (the parent's), when the parent row passes it down. */
+  readonly index?: CommentIndex | null;
 }
 export type AuthorNeighbors = () => RowSides;
-/** How a list sits in the outline: `head`/`after` are passed down by the parent row that renders it. */
-export interface ListRun { readonly head?: string; readonly after?: () => string | undefined; readonly results?: boolean }
+/** How a list sits in the outline: `head`/`after`/`index` are passed down by the parent row that renders it. */
+export interface ListRun { readonly head?: string; readonly after?: () => string | undefined; readonly results?: boolean; readonly index?: () => CommentIndex | null }
 
 // Inline embeds are boundaries too. Read body AST nodes, so a macro example
 // inside a code fence or hidden author metadata cannot split a run.
@@ -65,7 +68,7 @@ export function authorSiblingNeighbors(ids: () => readonly string[], list: ListR
   return { ids: members, neighbours: id => () => {
     const [prev, next] = positions().get(id) ?? [undefined, undefined];
     return { prev, next, head: prev === undefined ? list.head : undefined,
-      after: next === undefined ? list.after?.() : undefined, results: list.results };
+      after: next === undefined ? list.after?.() : undefined, results: list.results, index: list.index?.() };
   } };
 }
 
