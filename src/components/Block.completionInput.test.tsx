@@ -92,7 +92,7 @@ it.each(["block", "command", "property-name", "property-value"])("%s keeps its e
     } else {
       expect(search).not.toHaveBeenCalled();
       expect(facets).toHaveBeenCalledTimes(1);
-      expect(facets).toHaveBeenCalledWith(true, kind === "property-name" ? { keys: true } : { key: "alpha" });
+      expect(facets).toHaveBeenCalledWith(kind === "property-name" ? { keys: true } : { key: "alpha" });
       expect(document.querySelector(".autocomplete")?.textContent).toContain(kind === "property-name" ? "alpha" : "two");
     }
   } finally { dispose(); }

@@ -307,7 +307,7 @@ export interface Backend {
    *  completion asks for less: `{ keys: true }` every key (values may be
    *  empty), `{ key }` that key's values only. A backend may ignore `scope`
    *  and answer every key with its values; callers read only what they asked. */
-  queryFacets(autocomplete?: boolean, scope?: FacetScope): Promise<[string, string[]][]>;
+  queryFacets(scope: FacetScope): Promise<[string, string[]][]>;
   /** `icon::` property for each named page that has one (page-name → icon). */
   pageIcons(names: string[]): Promise<Record<string, string>>;
   /** Persist favorited page names to config.edn `:favorites` and, when given,

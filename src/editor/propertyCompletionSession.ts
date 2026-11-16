@@ -26,7 +26,7 @@ export function propertyCompletionSession() {
     const at = generation, owner = graphOwner(() => at === generation);
     let result;
     try {
-      result = await readOwned(owner, backend().queryFacets(true, { key }));
+      result = await readOwned(owner, backend().queryFacets({ key }));
     } catch (error) {
       // Completion is an optional aid: nothing is cached, so the next
       // keystroke asks again; the list shows no values meanwhile.
@@ -50,7 +50,7 @@ export function propertyCompletionSession() {
     keys(): Promise<string[] | null> {
       if (!keys || !keys.owner()) {
         const owner = graphOwner();
-        const value = readOwned(owner, backend().queryFacets(true, { keys: true }))
+        const value = readOwned(owner, backend().queryFacets({ keys: true }))
           .then((result) => {
             if (result.kind === "stale") return null;
             return result.value.map(([key]) => key);

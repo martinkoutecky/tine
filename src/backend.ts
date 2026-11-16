@@ -528,11 +528,8 @@ class TauriBackend implements Backend {
   queryExplainEmpty(query: Query, view: ViewSettings, context?: ExecutionContext) {
     return this.call<ExplainEmptyResult>("query_explain_empty", { query, view, context });
   }
-  queryFacets(autocomplete = false, scope?: FacetScope) {
-    return this.call<[string, string[]][]>(
-      "query_facets",
-      autocomplete ? (scope ? { autocomplete: true, scope } : { autocomplete: true }) : undefined,
-    );
+  queryFacets(scope: FacetScope) {
+    return this.call<[string, string[]][]>("query_facets", { scope });
   }
   pageIcons(names: string[]) {
     return this.call<Record<string, string>>("page_icons", { names });
@@ -1088,10 +1085,4 @@ export function backend(): Backend {
     _backend = isTauri() ? new TauriBackend() : isPublishedExport() ? publishedBackend() : mockBackend();
   }
   return _backend;
-}
-
-/** OG-visible graph property keys/values for the block editor. Kept separate
- * from query-builder facets even though both share the registered IPC command. */
-export function autocompleteFacets(): Promise<[string, string[]][]> {
-  return backend().queryFacets(true);
 }

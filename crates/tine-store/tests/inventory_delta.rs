@@ -1333,7 +1333,7 @@ fn bracket_completion_reads_the_resident_table_not_every_page() {
 }
 
 /// Property-name completion is one keys-only walk per session; values come
-/// for the chosen key only, equal to the full facets' values for it.
+/// for the chosen key only.
 #[test]
 fn property_completion_splits_keys_from_one_keys_values() {
     let _integration_guard = crate::test_transactions::integration_lock();
@@ -1348,10 +1348,20 @@ fn property_completion_splits_keys_from_one_keys_values() {
         ),
     ]);
     let view = store.whole_graph().unwrap();
-    let full = view.property_facets(crate::FacetPolicy::Truncated).unwrap();
+    let full = [
+        ("rating", vec!["5"]),
+        ("status", vec!["done", "todo"]),
+        ("type", vec!["[[Book]]", "[[Paper]]"]),
+    ]
+    .map(|(key, values)| {
+        (
+            key.to_string(),
+            values.into_iter().map(String::from).collect::<Vec<_>>(),
+        )
+    });
     let walks = || crate::query::PROPERTY_FACET_PAGE_WALKS.with(|walks| walks.replace(0));
     walks();
-    let facets = |policy| view.property_facets(policy).unwrap();
+    let facets = |policy| view.property_facets(policy);
     let keys = facets(crate::FacetPolicy::CompletionKeys);
     assert_eq!(
         keys,

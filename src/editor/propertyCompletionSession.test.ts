@@ -8,7 +8,7 @@ afterEach(() => vi.restoreAllMocks());
 const FACETS: [string, string[]][] = [["alpha", ["one", "two"]], ["beta", ["three"]]];
 
 function serve() {
-  return vi.spyOn(backend(), "queryFacets").mockImplementation(async (_autocomplete, scope) => {
+  return vi.spyOn(backend(), "queryFacets").mockImplementation(async (scope) => {
     if (scope && "key" in scope) return FACETS.filter(([key]) => key === scope.key);
     if (scope && "keys" in scope) return FACETS.map(([key]) => [key, []]);
     return FACETS;
@@ -25,7 +25,7 @@ describe("property completion session (cost-model audit 2026-11-02 row 2b)", () 
     expect(facets).toHaveBeenCalledTimes(1);
     session.end();
     await session.keys();
-    expect(facets.mock.calls).toEqual([[true, { keys: true }], [true, { keys: true }]]);
+    expect(facets.mock.calls).toEqual([[{ keys: true }], [{ keys: true }]]);
   });
 
   it("offers values without a property-name session, sharing one request per key", async () => {
@@ -35,7 +35,7 @@ describe("property completion session (cost-model audit 2026-11-02 row 2b)", () 
     expect([first, second]).toEqual([true, true]);
     expect(session.values("alpha")).toEqual(["one", "two"]);
     expect(await session.load("alpha")).toBe(false);
-    expect(facets.mock.calls).toEqual([[true, { key: "alpha" }]]);
+    expect(facets.mock.calls).toEqual([[{ key: "alpha" }]]);
   });
 
   it("drops an answer that lands after its session ended", async () => {
@@ -74,6 +74,6 @@ describe("property completion session (cost-model audit 2026-11-02 row 2b)", () 
     expect(session.values("alpha")).toEqual([]);
     expect(await session.load("alpha")).toBe(true);
     expect(session.values("alpha")).toEqual(["one", "two"]);
-    expect(facets.mock.calls.filter(([, scope]) => scope && "key" in scope)).toHaveLength(2);
+    expect(facets.mock.calls.filter(([scope]) => "key" in scope)).toHaveLength(2);
   });
 });

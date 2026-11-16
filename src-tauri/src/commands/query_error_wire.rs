@@ -13,8 +13,6 @@ pub(crate) fn query_error(error: QueryError) -> String {
             format!("request-too-large: {count} {} (limit: {limit})", budget_text(what)),
         QueryError::ExportRequestTooLarge { macros, bytes, macro_limit, byte_limit, processing_cap } =>
             format!("query-export-request-too-large: {macros} macros / {bytes} bytes (request limits: {macro_limit} macros / {byte_limit} bytes; processing cap: {processing_cap} macros)"),
-        QueryError::ResultTooLarge { what: Budget::PropertyFacets, .. } =>
-            "result-too-large: property facets exceed the construction budget".into(),
         QueryError::ResultTooLarge { what: Budget::ResolvedBlockRows, count, .. } =>
             format!("result-too-large: {count} resolved block-reference rows exceed the construction budget"),
         QueryError::ResultTooLarge { what: Budget::RequestedBlockRefs, count, limit, .. } =>
@@ -56,7 +54,6 @@ fn budget_text(what: Budget) -> &'static str {
         Budget::RequestedBlockRefs => "requested block references",
         Budget::ResolvedBlockRows => "resolved block-reference rows",
         Budget::ExportBytes => "query export bytes",
-        Budget::PropertyFacets => "property facets",
         Budget::AdvancedQueryMatches => "advanced-query matches",
         Budget::SearchHits => "search hits",
     }

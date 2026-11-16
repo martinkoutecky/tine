@@ -146,14 +146,11 @@ fn all_whole_graph_questions_use_the_public_view() {
         .unwrap();
     assert_eq!(export.results.len(), 1);
     assert!(export.results[0].total > 0);
-    assert!(!view
-        .property_facets(FacetPolicy::Budgeted)
-        .unwrap()
-        .is_empty());
-    assert!(!view
-        .property_facets(FacetPolicy::Truncated)
-        .unwrap()
-        .is_empty());
+    assert!(!view.property_facets(FacetPolicy::CompletionKeys).is_empty());
+    assert_eq!(
+        view.property_facets(FacetPolicy::CompletionValues("color".into())),
+        [("color".to_string(), vec!["blue".to_string()])]
+    );
     assert!(view.templates().iter().any(|t| t.name == "Example"));
     let icons = view.page_icons(&["Source".into()]);
     assert_eq!(icons.get("Source").map(String::as_str), Some("⭐"));

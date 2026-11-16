@@ -1832,83 +1832,10 @@ pub(crate) fn templates(graph: &ReadSnapshot) -> Vec<TemplateDto> {
     })
 }
 
-/// Distinct property keys (each with its sorted distinct values) used across the
-/// graph. Drives the query builder's property-filter pickers.
-pub(crate) fn property_facets_bounded(
-    graph: &ReadSnapshot,
-    max_values: usize,
-    max_bytes: usize,
-) -> (Vec<(String, Vec<String>)>, bool) {
-    use std::collections::BTreeMap;
-    use std::collections::BTreeSet;
-    let mut values = 0usize;
-    let mut bytes = 0usize;
-    let mut exceeded = false;
-    let facets = graph.with_pages(|pages| {
-        let mut map: BTreeMap<String, BTreeSet<String>> = BTreeMap::new();
-        // Returns false once the budget is exhausted.
-        let mut offer = |k: String, v: String| -> bool {
-            let k = property_key_norm(&k);
-            if tine_core::query::internal_property_keys()
-                .iter()
-                .any(|p| property_key_norm(p) == k)
-            {
-                return true;
-            }
-            if v.trim().is_empty() {
-                return true;
-            }
-            if map.get(&k).is_some_and(|set| set.contains(&v)) {
-                return true;
-            }
-            let key_bytes = if map.contains_key(&k) {
-                0
-            } else {
-                k.len() + 64
-            };
-            let next_bytes = bytes
-                .saturating_add(key_bytes)
-                .saturating_add(v.len())
-                .saturating_add(64);
-            if values >= max_values || next_bytes > max_bytes {
-                exceeded = true;
-                return false;
-            }
-            values += 1;
-            bytes = next_bytes;
-            map.entry(k).or_default().insert(v);
-            true
-        };
-        'pages: for (_entry, doc) in pages {
-            // OG parity (#7): the header pre-block is a block whose properties
-            // are among the graph's property names and values.
-            for (k, v) in page_facets(doc).0 {
-                if !offer(k, v) {
-                    break 'pages;
-                }
-            }
-            if !walk_until(&doc.roots, &mut |b| {
-                for (k, v) in b.properties() {
-                    if !offer(k, v) {
-                        return false;
-                    }
-                }
-                true
-            }) {
-                break;
-            }
-        }
-        map.into_iter()
-            .map(|(k, vs)| (k, vs.into_iter().collect()))
-            .collect()
-    });
-    (facets, exceeded)
-}
-
 /// OG-visible property names and their distinct values for editor completion.
-/// Unlike query-builder facets, this includes page preambles and editable
-/// built-ins such as `template`/`title`, while applying graph-configured hidden
-/// keys. OG sources: db/model.cljs:1394-1405,1422-1443; search.cljs:184-215;
+/// This includes page preambles and editable built-ins such as
+/// `template`/`title`, while applying graph-configured hidden keys. OG sources:
+/// db/model.cljs:1394-1405,1422-1443; search.cljs:184-215;
 /// util/property.cljs:18-24 at checkout 6e7afa8eb.
 const OG_AUTOCOMPLETE_HIDDEN_PROPS: &[&str] = &[
     "id",
@@ -1943,20 +1870,6 @@ const OG_AUTOCOMPLETE_HIDDEN_PROPS: &[&str] = &[
     "done",
 ];
 
-/// Collect visible keys and distinct nonempty values from page preblocks and
-/// blocks. Limits charge both keys and values plus estimated bytes. Return sorted
-/// facets and a flag when the next distinct item cannot fit; stop at first
-/// excess. Otherwise may scan all graph blocks. No disk read. Values are the
-/// strings OG's value autocomplete offers (`property_value_completions`): a
-/// multi-ref value contributes its individual refs, not the joined text.
-pub(crate) fn autocomplete_property_facets_bounded(
-    graph: &ReadSnapshot,
-    max_items: usize,
-    max_bytes: usize,
-) -> (Vec<(String, Vec<String>)>, bool) {
-    autocomplete_property_facets_scoped(graph, AutocompleteFacets::All, max_items, max_bytes)
-}
-
 #[cfg(test)]
 thread_local! {
     /// Test probe: pages the autocomplete facet walk visited on this thread.
@@ -1967,8 +1880,6 @@ thread_local! {
 /// Which part of the autocomplete facets a caller needs.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) enum AutocompleteFacets<'a> {
-    /// Every visible key with its values.
-    All,
     /// Visible keys only, each with an empty value list: the property-name
     /// menu. No value is parsed.
     Keys,
@@ -1977,10 +1888,14 @@ pub(crate) enum AutocompleteFacets<'a> {
     ValuesOf(&'a str),
 }
 
-/// [`autocomplete_property_facets_bounded`] limited to `scope`. The same walk
-/// and the same answers for what it returns; `Keys` skips every value parse,
-/// `ValuesOf` parses only that key's values. The item and byte budgets charge
-/// only what the scope returns.
+/// Collect visible keys and distinct nonempty values from page preblocks and
+/// blocks, limited to `scope`. `Keys` skips every value parse, `ValuesOf` parses
+/// only that key's values. The item and byte limits charge only what the scope
+/// returns. Return sorted facets and a flag when the next distinct item cannot
+/// fit; stop at first excess. Otherwise may scan all graph blocks. No disk read.
+/// Values are the strings OG's value autocomplete offers
+/// (`property_value_completions`): a multi-ref value contributes its individual
+/// refs, not the joined text.
 pub(crate) fn autocomplete_property_facets_scoped(
     graph: &ReadSnapshot,
     scope: AutocompleteFacets<'_>,
@@ -2046,7 +1961,6 @@ pub(crate) fn autocomplete_property_facets_scoped(
                 return;
             }
             match scope {
-                AutocompleteFacets::All => {}
                 AutocompleteFacets::Keys => {
                     offer(key, String::new());
                     return;
@@ -2097,76 +2011,6 @@ pub(crate) fn autocomplete_property_facets_scoped(
             .collect()
     });
     (facets, exceeded.get())
-}
-
-#[cfg(test)]
-struct ScoredQuickSwitchCand {
-    score: i32,
-    index: usize,
-}
-
-#[cfg(test)]
-impl ScoredQuickSwitchCand {
-    fn is_better_than(&self, other: &Self) -> bool {
-        self.score > other.score || (self.score == other.score && self.index < other.index)
-    }
-}
-
-#[cfg(test)]
-impl PartialEq for ScoredQuickSwitchCand {
-    fn eq(&self, other: &Self) -> bool {
-        self.score == other.score && self.index == other.index
-    }
-}
-
-#[cfg(test)]
-impl Eq for ScoredQuickSwitchCand {}
-
-#[cfg(test)]
-impl PartialOrd for ScoredQuickSwitchCand {
-    fn partial_cmp(&self, other: &Self) -> Option<std::cmp::Ordering> {
-        Some(self.cmp(other))
-    }
-}
-
-#[cfg(test)]
-impl Ord for ScoredQuickSwitchCand {
-    fn cmp(&self, other: &Self) -> std::cmp::Ordering {
-        // BinaryHeap is max-first; define "greater" as worse so the root is the
-        // candidate to evict. The final rank remains score desc, index asc.
-        other
-            .score
-            .cmp(&self.score)
-            .then_with(|| self.index.cmp(&other.index))
-    }
-}
-
-#[cfg(test)]
-fn push_quick_switch_top(
-    heap: &mut std::collections::BinaryHeap<ScoredQuickSwitchCand>,
-    limit: usize,
-    candidate: ScoredQuickSwitchCand,
-) {
-    if heap.len() < limit {
-        heap.push(candidate);
-        return;
-    }
-    if heap
-        .peek()
-        .is_some_and(|worst| candidate.is_better_than(worst))
-    {
-        let mut worst = heap.peek_mut().unwrap();
-        *worst = candidate;
-    }
-}
-
-#[cfg(test)]
-fn finish_quick_switch_top(
-    heap: std::collections::BinaryHeap<ScoredQuickSwitchCand>,
-) -> Vec<ScoredQuickSwitchCand> {
-    let mut top = heap.into_vec();
-    top.sort_by(|a, b| b.score.cmp(&a.score).then_with(|| a.index.cmp(&b.index)));
-    top
 }
 
 /// Fuzzy page-name matcher for the quick switcher. Ranks prefix > substring >
@@ -3583,6 +3427,28 @@ mod tests {
         let _ = fs::remove_dir_all(&dir);
     }
 
+    /// Every visible key with its values: the property-name menu, then each
+    /// key's value menu.
+    fn all_autocomplete_facets(graph: &ReadSnapshot) -> Vec<(String, Vec<String>)> {
+        fn scoped(
+            graph: &ReadSnapshot,
+            scope: AutocompleteFacets<'_>,
+        ) -> Vec<(String, Vec<String>)> {
+            autocomplete_property_facets_scoped(graph, scope, usize::MAX, usize::MAX).0
+        }
+        scoped(graph, AutocompleteFacets::Keys)
+            .into_iter()
+            .map(|(key, _)| {
+                let values = scoped(graph, AutocompleteFacets::ValuesOf(&key))
+                    .into_iter()
+                    .find(|(candidate, _)| *candidate == key)
+                    .map(|(_, values)| values)
+                    .unwrap_or_default();
+                (key, values)
+            })
+            .collect()
+    }
+
     #[test]
     fn property_facets_group_folded_keys() {
         use std::fs;
@@ -3598,7 +3464,7 @@ mod tests {
 
         let graph = test_snapshot(&dir);
         assert_eq!(
-            property_facets_bounded(&graph, usize::MAX, usize::MAX).0,
+            all_autocomplete_facets(&graph),
             vec![(
                 "done-at".to_string(),
                 vec!["one".to_string(), "two".to_string()]
@@ -3687,10 +3553,8 @@ mod tests {
         .unwrap();
 
         let graph = test_snapshot(&dir);
-        let (facets, exceeded) = property_facets_bounded(&graph, usize::MAX, usize::MAX);
-        assert!(!exceeded);
         assert_eq!(
-            facets,
+            all_autocomplete_facets(&graph),
             vec![
                 ("rank".to_string(), vec!["1".to_string()]),
                 ("status".to_string(), vec!["Target".to_string()]),
@@ -3722,29 +3586,20 @@ mod tests {
 
         let graph = test_snapshot(&dir);
         assert_eq!(
-            autocomplete_property_facets_bounded(&graph, usize::MAX, usize::MAX),
-            (
-                vec![
-                    ("alpha".to_string(), vec!["one".to_string()]),
-                    ("alpha-value".to_string(), vec!["two".to_string()]),
-                    ("page-only".to_string(), vec!["preamble".to_string()]),
-                    ("template".to_string(), vec!["My template".to_string()]),
-                    ("title".to_string(), vec!["Page title".to_string()]),
-                ],
-                false,
-            )
+            all_autocomplete_facets(&graph),
+            vec![
+                ("alpha".to_string(), vec!["one".to_string()]),
+                ("alpha-value".to_string(), vec!["two".to_string()]),
+                ("page-only".to_string(), vec!["preamble".to_string()]),
+                ("template".to_string(), vec!["My template".to_string()]),
+                ("title".to_string(), vec!["Page title".to_string()]),
+            ]
         );
 
-        let (bounded, exceeded) = autocomplete_property_facets_bounded(&graph, 3, usize::MAX);
+        let (bounded, exceeded) =
+            autocomplete_property_facets_scoped(&graph, AutocompleteFacets::Keys, 3, usize::MAX);
         assert!(exceeded);
-        assert!(
-            bounded.len()
-                + bounded
-                    .iter()
-                    .map(|(_, values)| values.len())
-                    .sum::<usize>()
-                <= 3
-        );
+        assert_eq!(bounded.len(), 3);
         let _ = fs::remove_dir_all(&dir);
     }
 
@@ -3767,9 +3622,7 @@ mod tests {
         .unwrap();
 
         let graph = test_snapshot(&dir);
-        let (facets, exceeded) =
-            autocomplete_property_facets_bounded(&graph, usize::MAX, usize::MAX);
-        assert!(!exceeded);
+        let facets = all_autocomplete_facets(&graph);
         let values = |key: &str| -> Vec<String> {
             facets
                 .iter()
@@ -4423,31 +4276,6 @@ mod tests {
         });
 
         let _ = fs::remove_dir_all(&dir);
-    }
-
-    #[test]
-    fn quick_switch_topk_sorts_only_survivors() {
-        let limit = 12;
-        let total = 240;
-        let mut heap = std::collections::BinaryHeap::with_capacity(limit);
-        let mut reference = Vec::with_capacity(total);
-        for index in 0..total {
-            let score = (index % 6) as i32;
-            reference.push((score, index));
-            push_quick_switch_top(&mut heap, limit, ScoredQuickSwitchCand { score, index });
-        }
-
-        let top = finish_quick_switch_top(heap);
-        assert_eq!(
-            top.len(),
-            limit,
-            "survivor sort must be bounded by limit, not total candidates"
-        );
-
-        reference.sort_by(|a, b| b.0.cmp(&a.0).then_with(|| a.1.cmp(&b.1)));
-        reference.truncate(limit);
-        let got: Vec<(i32, usize)> = top.into_iter().map(|c| (c.score, c.index)).collect();
-        assert_eq!(got, reference);
     }
 
     /// Issue #9: linked references are grouped by referring page, ordered by the
@@ -5293,9 +5121,10 @@ mod tests {
         assert_eq!(sample.total, 1);
         assert_eq!(RESULT_DTO_CONSTRUCTIONS.with(std::cell::Cell::get), 1);
 
-        let (facets, facets_exceeded) = property_facets_bounded(&graph, 2, usize::MAX);
+        let (facets, facets_exceeded) =
+            autocomplete_property_facets_scoped(&graph, AutocompleteFacets::Keys, 2, usize::MAX);
         assert!(facets_exceeded);
-        assert!(facets.iter().map(|(_, values)| values.len()).sum::<usize>() <= 2);
+        assert_eq!(facets.len(), 2);
         let _ = fs::remove_dir_all(&dir);
     }
 }

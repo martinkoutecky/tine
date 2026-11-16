@@ -69,7 +69,7 @@ describe("property name/value autocomplete", () => {
       await vi.waitFor(() => expect(document.querySelector(".autocomplete .ac-label")?.textContent).toBe("one"));
       enter(editor);
       await vi.waitFor(() => expect(editor.value()).toBe("Body\nalpha:: one"));
-      expect(facets).toHaveBeenCalledWith(true, { key: "alpha" });
+      expect(facets).toHaveBeenCalledWith({ key: "alpha" });
     } finally { dispose(); }
   });
 
@@ -85,13 +85,13 @@ describe("property name/value autocomplete", () => {
       editor.selectByUser(raw.length);
       await new Promise(resolve => setTimeout(resolve, 250));
       expect(document.querySelector(".autocomplete .ac-label")).toBeNull();
-      expect(facets).not.toHaveBeenCalledWith(true, { key: "alpha" });
+      expect(facets).not.toHaveBeenCalledWith({ key: "alpha" });
     } finally { dispose(); }
   });
 
   it("updates the current value query when pending values arrive, without another keystroke", async () => {
     let finish!: (values: [string, string[]][]) => void;
-    const facets = vi.spyOn(backend(), "queryFacets").mockImplementation((_autocomplete, scope) => {
+    const facets = vi.spyOn(backend(), "queryFacets").mockImplementation((scope) => {
       if (scope && "keys" in scope) return Promise.resolve([["alpha", []]]);
       return new Promise(resolve => { finish = resolve; });
     });
@@ -109,7 +109,7 @@ describe("property name/value autocomplete", () => {
       await vi.waitFor(() => expect(document.querySelector(".autocomplete .ac-label")?.textContent).toBe('Create "t"'));
       finish([["alpha", ["one", "two"]]]);
       await vi.waitFor(() => expect(document.querySelector(".autocomplete .ac-label")?.textContent).toBe("two"));
-      expect(facets.mock.calls.filter(([, scope]) => scope && "key" in scope)).toHaveLength(1);
+      expect(facets.mock.calls.filter(([scope]) => "key" in scope)).toHaveLength(1);
     } finally { dispose(); }
   });
 
@@ -187,7 +187,7 @@ describe("property name/value autocomplete", () => {
       const textarea = editorIn(root);
       inputAt(textarea, "prefix\nalpha:: suffix", "prefix\nalpha::".length);
       await vi.waitFor(() => expect(document.body.querySelector(".autocomplete .ac-label")?.textContent).toBe("alpha"));
-      expect(facets).toHaveBeenCalledWith(true, { keys: true });
+      expect(facets).toHaveBeenCalledWith({ keys: true });
 
       enter(textarea);
       await vi.waitFor(() => expect(textarea.value()).toBe("prefix\nalpha::  suffix"));
@@ -202,7 +202,7 @@ describe("property name/value autocomplete", () => {
   });
 
   it("fetches property keys once per completion session and values only for the chosen key (cost-model audit row 2b)", async () => {
-    const facets = vi.spyOn(backend(), "queryFacets").mockImplementation(async (_autocomplete, scope) => {
+    const facets = vi.spyOn(backend(), "queryFacets").mockImplementation(async (scope) => {
       const all: [string, string[]][] = [["alpha", ["one", "two"]], ["beta", ["three"]]];
       if (scope && "key" in scope) return all.filter(([key]) => key === scope.key);
       if (scope && "keys" in scope) return all.map(([key]) => [key, []]);
@@ -229,7 +229,7 @@ describe("property name/value autocomplete", () => {
       // Five keystrokes of one session: one keys request (the old editor
       // fetched every key's values on each of them), then the chosen key's
       // values, and never every key's values.
-      expect(facets.mock.calls).toEqual([[true, { keys: true }], [true, { key: "alpha" }]]);
+      expect(facets.mock.calls).toEqual([[{ keys: true }], [{ key: "alpha" }]]);
     } finally {
       dispose();
     }
