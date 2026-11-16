@@ -35,7 +35,7 @@ val hasReleaseKey = releaseStoreFile != null && releaseStoreFile.exists()
 
 // Derived by set-app-identity.mjs. Build-type resources override main resources;
 // stable uses the original main resources without an overlay.
-val tineIconDirectory = "icons-beta"
+val tineIconDirectory = "icons"
 
 android {
     if (tineIconDirectory != "icons") {
@@ -53,7 +53,7 @@ android {
     namespace = "page.tine.app"
     defaultConfig {
         manifestPlaceholders["usesCleartextTraffic"] = "false"
-        applicationId = "page.tine.beta"
+        applicationId = "page.tine.app"
         minSdk = 24
         targetSdk = 36
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"

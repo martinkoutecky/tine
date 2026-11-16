@@ -1514,46 +1514,6 @@ note = "Shared device-file copy/atomic/sync primitive; app-data, backup and scra
 mutations = "directory_durability::sync_directory_entry=1"
 
 [[site]]
-file = "src-tauri/src/experiment_config_seed.rs"
-fn = "seed"
-domain = "scratch"
-guard = ""
-test = ""
-oracle = false
-note = "Disposable quick-share build output or experimental webview seed/stage; graph content is not stored here."
-mutations = "fs::remove_dir_all=2"
-
-[[site]]
-file = "src-tauri/src/experiment_config_seed.rs"
-fn = "seed_webview_after_stage"
-domain = "scratch"
-guard = ""
-test = ""
-oracle = false
-note = "Disposable quick-share build output or experimental webview seed/stage; graph content is not stored here."
-mutations = "fs::remove_dir_all=1"
-
-[[site]]
-file = "src-tauri/src/experiment_config_seed.rs"
-fn = "seed_window_state"
-domain = "scratch"
-guard = ""
-test = ""
-oracle = false
-note = "Disposable quick-share build output or experimental webview seed/stage; graph content is not stored here."
-mutations = "fs::create_dir_all=1"
-
-[[site]]
-file = "src-tauri/src/experiment_config_seed.rs"
-fn = "stage"
-domain = "scratch"
-guard = ""
-test = ""
-oracle = false
-note = "Disposable quick-share build output or experimental webview seed/stage; graph content is not stored here."
-mutations = "directory_durability::sync_directory_entry=1, fs::create_dir_all=1"
-
-[[site]]
 file = "src-tauri/src/file_lock.rs"
 fn = "open_lock_file"
 domain = "app"

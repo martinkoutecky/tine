@@ -30,8 +30,6 @@ mod device_io;
 mod drafts;
 #[cfg(test)]
 mod edit_kind_guard_tests;
-#[cfg(desktop)]
-mod experiment_config_seed;
 mod file_lock;
 mod flight;
 mod flight_store;
@@ -667,12 +665,6 @@ pub fn run() {
     // DMABUF workaround by default; explicit user overrides take precedence.
     #[cfg(target_os = "linux")]
     linux_gpu::configure();
-
-    // TEMPORARY (docs/app-identity.md): an experiment build with no graph of its
-    // own starts from the released Tine's config. Before the Builder, because
-    // WebKitGTK creates the app-data dir while the Builder is assembled.
-    #[cfg(desktop)]
-    experiment_config_seed::seed_from_release_once();
 
     // Wayland resolves the shell/titlebar icon by matching a window app ID to a
     // desktop-entry basename. Packages ship that identity themselves; the raw

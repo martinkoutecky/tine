@@ -34,7 +34,7 @@ remain accepted for the current campaign build and stable tooling.
 `src-tauri/app-identity.json` is the only place either identity is written:
 
 ```json
-{ "ship": "experiment",
+{ "ship": "release",
   "identities": {
     "release": {
       "identifier": "page.tine.Tine", "productName": "Tine",
@@ -94,8 +94,9 @@ all consume the same layout. Beta updates remain restricted to the `beta` releas
 
 The Beta Flatpak bundle is published with the other Beta assets as
 `Tine-Beta_<version>_x86_64.flatpak` (`flatpak-x64` lane in
-`scripts/release-layout.mjs`; `release.yml` calls `flatpak.yml` with
-`identity: experiment`). It is a manual download: updates mean installing the
+`scripts/release-layout.mjs`; `release.yml` calls `flatpak.yml` with the
+shipped identity: `experiment` for a Beta, `release` once the stable flip is
+made on `release/X.Y`). It is a manual download: updates mean installing the
 next bundle, and `latest.json` never references it.
 
 A few identity-bearing places need no file of their own:
@@ -215,10 +216,11 @@ staging dir, fsyncs it, and renames it into place.
 - In a release build it is a no-op (`APP_IDENTIFIER == RELEASE_IDENTIFIER`).
 - Only on desktop. Mobile app data is private to each application id.
 
-**Delete it when the switch ships `release`** (done in 0.7.0 and again in
-0.8.0). Remove the file, its `_tests.rs`, the `mod` line and the one call in
+**Delete it when the switch ships `release`** (done in 0.7.0, 0.8.0 and
+0.9.0). Remove the file, its `_tests.rs`, the `mod` line and the one call in
 `lib::run()`, and its rows in the portable host-path allowlist
-(`src-tauri/src/portable.rs`) and the regression row's test list; point the
+(`src-tauri/src/portable.rs`), the write-site ledger
+(`crates/tine-store/tests/write_sites.toml`) and the regression row's test list; point the
 updater endpoint at the stable address. `src/appIdentity.guard.test.ts` fails
 until you do.
 

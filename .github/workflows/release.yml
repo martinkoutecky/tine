@@ -605,8 +605,8 @@ jobs:
           retention-days: 14
 
   # The Flatpak bundle builds concurrently from the same offline manifest the
-  # dedicated "Flatpak build test" workflow uses, packaged under the Beta
-  # identity so it installs beside a stable Tine Flatpak. A build failure fails
+  # dedicated "Flatpak build test" workflow uses, packaged under the identity
+  # the tree ships (a Beta installs beside a stable Tine Flatpak). A build failure fails
   # this job, which blocks assembly like any other platform. The identity is the
   # one the tree ships (src-tauri/app-identity.json); flipping the switch to the
   # released identity makes the derivation refuse until this line follows it
@@ -615,7 +615,7 @@ jobs:
     needs: preflight
     uses: ./.github/workflows/flatpak.yml
     with:
-      identity: experiment
+      identity: release
 
   # Name the bundle by the release layout and stage it as an immutable lane,
   # exactly like the other platforms.
