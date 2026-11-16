@@ -45,8 +45,8 @@ entry and a row here (the guard fails otherwise).
 | `--tine-highlight-bg` | Background of `^^highlighted^^` text | `var(--mark-bg)`, i.e. `--ls-page-mark-bg-color` |
 | `--tine-comment-highlight-bg` | Background of a comment's quoted passage in the source text, including the active passage | `color-mix(in srgb, var(--accent) 14%, transparent)`; active wide-margin passage: 30% |
 | `--tine-comment-card-bg` | Background of comment cards and passage groups | `color-mix(in srgb, var(--accent) 6%, var(--bg-primary, transparent))`; authored card: 7% `var(--author-color)` instead; resolved card: `var(--bg-secondary)` |
-| `--tine-author-icon` | An image drawn in the chip of the block's author in place of the name (section 8): a `url()` of a `data:` URI or an `https:` address. Set it per author on `.author-chip[data-author="..." i]` | `none`: the chip shows the author's name |
-| `--tine-author-icon-size` | Turns the chip into an icon of this width, at most the chip's 16px height; set together with `--tine-author-icon` | Unset: the chip keeps its name |
+| `--tine-author-gutter` | Width of the strip at the end of every outline row that holds the thread look's line and author chip (section 8): a length in px (an `em` would be read at the row and at the chip, which have different font sizes). Set it on `:root` | 96px; 64px on a phone (narrow, coarse pointer) |
+| `--tine-author-icon-size` | Turns the chip into an icon of this width, at most the chip's 16px height; set it together with a `background-image` on the same chip (section 8) | Unset: the chip keeps its name |
 | `--tine-missing-page-color` | Color of a `[[link]]` to a page that does not exist yet | A link-colored tint pulled toward `var(--text-secondary)` (`color-mix(in srgb, var(--link-color) 55%, var(--text-secondary))`) |
 | `--tine-external-link-underline` | The line under a link to a web address or file (`border-bottom` shorthand; `none` removes it) | `1px solid`, in the text color (OG's `.external-link`) |
 | `--tine-content-width` | Maximum width of the standard page column | 810px (what `--ls-main-content-max-width` is by default) |
@@ -282,7 +282,7 @@ same run and the same "you". The stored text is never rewritten.
 | `--author-color` | The author's colour, one of eight chosen from the name's key and defined on every authored row and on its chip. Read it as `var(--author-color, var(--accent))`. A rule sets it per author, on the row and its chip: `.ls-block[data-author="Claude"], .ls-block[data-author="Claude"] .author-chip { --author-color: #d97757; }` |
 | `.ls-block > .block-main` | The full row, never its children: bullet column, text and the controls drawn after the text (comment marker, resolved label, folded "N below" chip). Its right edge is the row's edge, whatever trails the text: anchor a drawing at the row's end here (the thread look does) |
 | `.ls-block > .block-main > .block-content-wrapper` | The row's own text box, which the trailing controls make narrower; never its children. The chip is `> .block-content > .author-chip` (an editing row: `> .authored-editor > .author-chip`). These two paths are the only structure promised here, because a thread or any other row-level drawing needs them |
-| `.author-chip`, `.author-chip.agent` | The label (section 7). The first row of a run of same-author siblings carries it; a row that another sibling continues does not. It carries `data-author="<trimmed name>"` (none on a "you" chip). With the icon tokens (section 2) set on it, it shows the icon instead of the name |
+| `.author-chip`, `.author-chip.agent` | The label (section 7). The first row of a run of same-author siblings carries it; a row that another sibling continues does not. It carries `data-author="<trimmed name>"` (none on a "you" chip). With `--tine-author-icon-size` (section 2) and a `background-image` set on it, it shows the icon instead of the name |
 | `html.tine-author-marks-thread` | Tine's own thread look, below. A class on `<html>`, not a token: Settings > Appearance > Fine-tuning > **Author marks** (Tint, the default, or Thread; the class `tine-<id>-<option>` of the class knob `author-marks`) sets it. `custom.css` cannot add a class, so a stylesheet draws the same line from the run classes (the Guide page shows how); a theme package cannot set it |
 
 The tint's own join classes (`author-card-continued`, `author-card-continues`,
@@ -310,22 +310,29 @@ previous sibling's last row is kept per row from the covering comment index
 (which blocks are comments) and the folds, never from the siblings' text:
 typing in any block, or editing a comment, re-runs none of it.
 
-**Thread look (`html.tine-author-marks-thread`).** Instead of the tint: a 2px line in
-the author's colour runs through the author chips in a 16px gutter at the end of
-each authored full row (`.block-main`, the phone's 44px fold area stays to the right
-of it). The gutter is the row's, so the controls after the text (comment markers,
-the resolved label, a folded block's "N below" chip) sit left of it and never move
-the line or the chip. The line starts under the chip of a run's first row, crosses the two pixels
-between rows (`author-run-continues`, `author-run-continued`) and ends at the
-bottom of the run's last row. Only a run's first row keeps its chip; the chip
-sits in the gutter against the row's edge, so the reference count sits beside it, not under it.
-Text starts where it always did. Logical properties throughout: a mirrored layout
-draws the thread on the left.
+**Thread look (`html.tine-author-marks-thread`).** Instead of the tint: every outline
+row, authored or not (not a comment or reply, not the bulletless host of a whole-block
+embed), reserves one gutter of `--tine-author-gutter` at the end of its full row
+(`.block-main`), so the text column has the same width on every row and never shifts
+between authored and unauthored rows. The controls after the text (comment markers,
+the resolved label, a folded block's "N below" chip, the reference count) lay out
+before the gutter, never inside it. The phone's 44px fold area stays at the very end,
+right of the gutter. In the gutter a 2px line in the author's colour sits 3px inside
+its start, and the chip hangs 5px right of the line, at one distance from the row's
+edge, cut to the gutter's width with an ellipsis when the name is longer (the tooltip
+and the accessible name keep it whole; an icon chip fits as is). The line starts under
+the chip of a run's first row, crosses the two pixels between rows
+(`author-run-continues`, `author-run-continued`) and ends at the bottom of the run's
+last row. Only a run's first row keeps its chip. Text starts where it always did.
+While **Show/Hide author marks** is off nothing is reserved (the window carries the
+internal class `tine-author-marks-off`, which is not a theme hook). Logical properties
+throughout: a mirrored layout draws the thread on the left. At 390px (phone) the
+gutter is 64px plus the 44px fold area, so every row gives up 108px at its end.
 
-**Icons.** Set `--tine-author-icon` and `--tine-author-icon-size` on the chip
+**Icons.** Set `--tine-author-icon-size` and a `background-image` on the chip
 (in practice `.author-chip[data-author="..." i]`) and it becomes that image, the
 name staying in the tooltip and in `data-author`. Set them on the chip, not on
-the row: a custom property is inherited, so a row's value would reach the chips
+the row: the size token is inherited, so a row's value would reach the chips
 of its children by other authors. A chip's `data-author` is the trimmed name
 (the row's is the stored text); a "you" chip has none. The image is a `url()`; in `custom.css` it is
 a `data:` URI or an `https:` address. A relative path resolves against Tine's own

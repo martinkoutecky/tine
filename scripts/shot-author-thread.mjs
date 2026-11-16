@@ -85,7 +85,61 @@ function trailing() {
   }
   return rows;
 }
-const transparent = bg => bg === "rgba(0, 0, 0, 0)" || bg === "transparent";
+/** GH #892 review round 2: for every outline row, the rectangles of its text lines, its trailing controls, its
+ *  author chip and (while editing) its editor, with the row's end padding (the gutter, plus the phone's fold area). */
+function layout() {
+  const rect = el => { const r = el.getBoundingClientRect(); return { left: r.left, right: r.right, top: r.top, bottom: r.bottom, width: r.width }; };
+  return [...document.querySelectorAll(".page-blocks .ls-block:not(.comment-in-thread)")].flatMap(row => {
+    const main = row.querySelector(":scope > .block-main"), wrapper = main?.querySelector(":scope > .block-content-wrapper");
+    const content = wrapper?.querySelector(":scope > .block-content, :scope > .authored-editor");
+    if (!content) return [];
+    const texts = [];
+    const walker = document.createTreeWalker(content, NodeFilter.SHOW_TEXT);
+    for (let n; (n = walker.nextNode());) {
+      if (!n.textContent.trim() || n.parentElement.closest(".author-chip, .editor-wrap, .block-refs-count")) continue;
+      // Word by word: a line's hanging trailing space is not text.
+      for (const word of n.textContent.matchAll(/\S+/g)) {
+        const range = document.createRange(); range.setStart(n, word.index); range.setEnd(n, word.index + word[0].length);
+        for (const r of range.getClientRects()) if (r.width > 0 && r.height > 0) texts.push({ left: r.left, right: r.right, top: r.top, bottom: r.bottom });
+      }
+    }
+    const chipEl = content.querySelector(".author-chip");
+    const chipStyle = chipEl && getComputedStyle(chipEl);
+    const controls = [...main.querySelectorAll(":scope > .comment-entry > button, :scope > .comment-below-chip, .block-refs-count")]
+      .filter(el => el.offsetParent).map(el => ({ kind: el.className.split(" ")[0], ...rect(el) }));
+    const editor = content.querySelector(".editor-wrap");
+    return [{ label: wrapper.textContent.trim().slice(0, 28), authored: row.classList.contains("authored"),
+      rowRight: main.getBoundingClientRect().right, pad: parseFloat(getComputedStyle(main).paddingRight), wrapperWidth: wrapper.getBoundingClientRect().width,
+      texts, controls, editor: editor ? rect(editor) : null,
+      chip: chipEl && chipEl.offsetParent ? { ...rect(chipEl), clipped: chipEl.scrollWidth > chipEl.clientWidth, overflow: chipStyle.textOverflow, title: chipEl.title, author: chipEl.getAttribute("data-author") } : null }];
+  });
+}
+/** No chip rectangle meets a text line, a trailing control or the editor; nothing but the chip is inside the gutter;
+ *  a long name is clipped to the gutter with an ellipsis and keeps its full name in the tooltip; plain rows, authored
+ *  or not, have one text-column width. */
+function assertLayout(rows, where) {
+  const hits = (a, b) => a.left < b.right - 0.5 && b.left < a.right - 0.5 && a.top < b.bottom - 0.5 && b.top < a.bottom - 0.5;
+  const chips = rows.filter(r => r.chip);
+  assert.equal(chips.length, 4, `${where}: one chip on each of the four runs, saw ${chips.length}`);
+  for (const r of rows) {
+    const gutterLeft = r.rowRight - r.pad;
+    for (const t of r.texts) assert.ok(t.right <= gutterLeft + 0.5, `${where} "${r.label}": text reaches the gutter (${t.right} > ${gutterLeft})`);
+    for (const c of r.controls) assert.ok(c.right <= gutterLeft + 0.5, `${where} "${r.label}": ${c.kind} reaches the gutter (${c.right} > ${gutterLeft})`);
+    if (!r.chip) continue;
+    for (const t of r.texts) assert.ok(!hits(r.chip, t), `${where} "${r.label}": the chip (${r.chip.left}..${r.chip.right}) covers text (${t.left}..${t.right})`);
+    for (const c of r.controls) assert.ok(!hits(r.chip, c), `${where} "${r.label}": the chip covers ${c.kind}`);
+    if (r.editor) assert.ok(!hits(r.chip, r.editor), `${where} "${r.label}": the chip covers the editor`);
+    assert.ok(r.chip.left >= gutterLeft - 0.5 && r.chip.right <= r.rowRight + 0.5, `${where} "${r.label}": the chip (${r.chip.left}..${r.chip.right}) leaves the gutter (${gutterLeft}..${r.rowRight})`);
+    assert.ok(r.chip.width <= r.pad + 0.5, `${where} "${r.label}": the chip is wider than the gutter`);
+    assert.ok(r.chip.title.includes(r.chip.author), `${where} "${r.label}": the full name is not in the tooltip (${r.chip.title})`);
+  }
+  const long = chips.find(r => r.chip.author === "Alexandria Montgomery-Winterbourne");
+  assert.ok(long.chip.clipped && long.chip.overflow === "ellipsis", `${where}: the long name is not cut with an ellipsis (${JSON.stringify(long.chip)})`);
+  const plain = rows.filter(r => !r.controls.length && !r.editor);
+  assert.ok(plain.length >= 3, `${where}: plain rows to compare, saw ${plain.length}`);
+  for (const r of plain) assert.ok(near(r.wrapperWidth, plain[0].wrapperWidth, 0.5), `${where} "${r.label}": text column ${r.wrapperWidth}px, the first row's is ${plain[0].wrapperWidth}px`);
+}
+const transparent = bg =>bg === "rgba(0, 0, 0, 0)" || bg === "transparent";
 const near = (a, b, tol = 1) => Math.abs(a - b) <= tol;
 const run = async (name, fn) => { try { await fn(); } catch (error) { failures.push(`${name}: ${error.message ?? error}`); } };
 
@@ -166,10 +220,10 @@ try {
       }
       // Text column untouched: every first letter is where the tint look had it, authored or not.
       for (let i = 0; i < tint.length; i++) assert.ok(near(tint[i].textX, thread[i].textX, 0.5), `"${tint[i].label}": text moved ${tint[i].textX} -> ${thread[i].textX}`);
-      // One chip per run: Claude's and Mira's, in the gutter right of the text column, at one fixed distance from the right edge.
+      // One chip per run: Claude's and Mira's, in the gutter right of the text column, starting at one fixed distance from the right edge.
       const chips = authored.filter(r => r.chip);
       assert.deepEqual(chips.map(r => r.chip.author), ["Claude", "Mira"], "one chip per run");
-      assert.ok(near(chips[0].chip.right, chips[1].chip.right, 0.5), "chips are not at one distance from the right edge");
+      assert.ok(near(chips[0].chip.left, chips[1].chip.left, 0.5), "chips are not at one distance from the right edge");
       for (const r of chips) assert.ok(r.chip.left > r.textX, `"${r.label}": chip is left of its text`);
       // The line is one vertical through the chips: same x on every row of a run, under the chip's centre, joined across rows.
       for (const r of authored) {
@@ -178,7 +232,8 @@ try {
         assert.equal(r.up ? r.lineTop : "", r.up ? "0px" : "", `"${r.label}": run-continued line does not reach the row above`);
         assert.equal(r.down ? r.lineBottom : "", r.down ? "0px" : "", `"${r.label}": run-continues line does not reach the row below`);
       }
-      for (const r of chips) assert.ok(r.chip.left < r.rowRight - 7 && r.chip.right > r.rowRight - 8, `"${r.label}": the line is not under its chip`);
+      // The chip hangs on the line: it starts a few pixels right of the line's edge, at one distance for every chip.
+      for (const r of chips) assert.ok(near(r.chip.left - (r.rowRight - r.lineRight), 5, 0.5), `"${r.label}": the chip is ${r.chip.left - (r.rowRight - r.lineRight)}px from its line, not 5`);
       // The runs cross depth: Claude's five rows are one run (parent, child, grandchild, child, closing line), Mira's four likewise.
       for (const r of authored) assert.ok(near(r.lineRight, authored[0].lineRight, 0.5), `"${r.label}": the line is not at one distance from the right edge`);
       const claude = authored.slice(0, 5), ada = authored.slice(5);
@@ -195,7 +250,7 @@ try {
       assert.ok(near(claude.chip.width, 16, 0.5) && near(claude.chip.height, 16, 0.5), `icon chip is ${claude.chip.width}x${claude.chip.height}`);
       assert.equal(ada.chip.image, "none", "Mira's chip got Claude's icon");
       assert.ok(ada.chip.width > 20, "Mira's chip lost its name");
-      assert.ok(near(claude.chip.right, ada.chip.right, 0.5), "the icon chip left the gutter's edge");
+      assert.ok(near(claude.chip.left, ada.chip.left, 0.5), "the icon chip left the gutter's start");
     });
     // Without the thread class: the icon is also drawn in the tint look.
     await setThreadClass(page, false);
@@ -259,6 +314,60 @@ try {
         if (r.chipGap !== null) assert.ok(near(r.chipGap, rows[0].chipGap, 0.5), `"${r.label}": the chip is ${r.chipGap}px from the row's edge, the plain row's is ${rows[0].chipGap}px`);
         for (const c of r.controls) assert.ok(c.right <= r.lineLeft + 0.5 && (r.chipLeft === null || c.right <= r.chipLeft + 0.5), `"${r.label}": ${c.kind} (${c.left}..${c.right}) reaches the thread at ${r.lineLeft}`);
       }
+    });
+    await ctx.close();
+  }
+  // GH #892 review round 2: long author names ("Alexandria", a 34-character one) on the first row of a run with a long
+  // first line, beside no control, a comment marker, a resolved label and a folded "N below" chip, at phone, tablet and
+  // desktop widths: the chip never meets text, a control or the editor, and every row has one text-column width. Tine's own
+  // thread, then the Guide's pasted CSS.
+  for (const width of [390, 800, 1280]) for (const guided of [false, true]) {
+    const { ctx, page } = await newPage(width, "light", 2, "Author thread long names");
+    activePage = page;
+    if (guided) await addCss(page, guideThread); else await setThreadClass(page, true);
+    if (await page.locator(".comment-resolved-toggle").count()) await page.locator(".comment-resolved-toggle").first().click();
+    await page.mouse.move(0, 0);
+    const where = `long names at ${width}px (${guided ? "Guide CSS" : "Tine thread"})`;
+    const rows = await page.evaluate(layout);
+    await shoot(page, `long-names-${width}${guided ? "-guide" : ""}.png`);
+    results[where] = rows;
+    await run(where, () => {
+      const kinds = new Set(rows.flatMap(r => r.controls.map(c => c.kind)));
+      assert.ok(kinds.has("comment-below-chip"), `${where}: the folded row's "N below" chip is drawn (saw ${[...kinds]})`);
+      if (width < 1000) for (const kind of ["margin-marker", "comment-resolved-entry"]) assert.ok(kinds.has(kind), `${where}: ${kind} is drawn (saw ${[...kinds]})`);
+      assertLayout(rows, where);
+      if (!guided && width === 390) for (const r of rows) assert.ok(r.pad >= 44 + 40, `${where} "${r.label}": the gutter does not leave the fold area (${r.pad}px)`);
+    });
+    if (!guided) {
+      // The editor of a run's first row: the chip stays in the gutter beside it.
+      await page.locator(".ls-block.authored .block-content").first().click({ position: { x: 20, y: 10 } });
+      await page.locator(".authored-editor .editor-wrap").first().waitFor({ timeout: 5000 });
+      await page.mouse.move(0, 0);
+      const editing = await page.evaluate(layout);
+      await run(`${where} editing`, () => {
+        const row = editing.find(r => r.editor);
+        assert.ok(row?.chip, `${where}: the editing row has no chip`);
+        assert.ok(row.editor.right <= row.rowRight - row.pad + 0.5, `${where}: the editor (${row.editor.right}) reaches the gutter (${row.rowRight - row.pad})`);
+        assert.ok(row.chip.left >= row.editor.right - 0.5 && row.chip.right <= row.rowRight + 0.5, `${where}: the chip (${row.chip.left}..${row.chip.right}) is not beside the editor (${row.editor.right})`);
+      });
+    }
+    await ctx.close();
+  }
+  // Show/Hide author marks off: the thread look draws nothing and no row reserves a gutter, on phone and desktop.
+  for (const width of [390, 1280]) {
+    const { ctx, page } = await newPage(width, "light", 2, "Author thread long names");
+    activePage = page;
+    const hide = hidden => page.evaluate(async hidden => (await import("/src/authorMarksPref.ts")).setAuthorMarksHidden(hidden), hidden);
+    await hide(true);
+    const wide = await page.evaluate(layout);
+    await setThreadClass(page, true);
+    const hidden = await page.evaluate(layout);
+    await hide(false);
+    const on = await page.evaluate(layout);
+    await run(`marks hidden at ${width}px`, () => {
+      assert.ok(on.every(r => r.pad > 0), "the thread look reserves a gutter on every row");
+      assert.ok(hidden.every(r => r.pad === 0), `marks hidden still reserve a gutter (${hidden.map(r => r.pad)})`);
+      for (let i = 0; i < wide.length; i++) assert.ok(near(wide[i].wrapperWidth, hidden[i].wrapperWidth, 0.5), `"${wide[i].label}": text column ${wide[i].wrapperWidth} -> ${hidden[i].wrapperWidth}`);
     });
     await ctx.close();
   }

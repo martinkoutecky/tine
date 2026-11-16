@@ -33,8 +33,8 @@ icon:: 🎨
     | `--tine-highlight-bg` | Background of `^^highlighted^^` text | The theme's highlight color |
     | `--tine-comment-highlight-bg` | Background of the commented passage, including its active highlight | 14% accent, or 30% for the active wide-margin passage |
     | `--tine-comment-card-bg` | Background of comment cards and passage groups | 6% accent; authored cards use 7% author tint, resolved cards the secondary background |
-    | `--tine-author-icon` | An image in an author's chip instead of the name: a `url()` with a `data:` or `https:` address, set on that author's chip (section 5) | `none`: the chip shows the name |
-    | `--tine-author-icon-size` | The chip's width when it shows an icon (up to 16px); set together with `--tine-author-icon` | Unset: the chip keeps its name |
+    | `--tine-author-gutter` | Width of the strip at the end of every block that holds the author chip and the thread line, while **Author marks** is **Thread** (section 5): a length in px | 96px (64px on a phone) |
+    | `--tine-author-icon-size` | Turns an author's chip into an icon this wide (up to 16px), the name staying in the tooltip; set on that author's chip together with a `background-image` (section 5) | Unset: the chip keeps its name |
     | `--tine-missing-page-color` | Color of a link to a page that does not exist yet | A dimmed tint of the link color |
     | `--tine-external-link-underline` | The line under a link to a web address or file | `1px solid` (use `none` to remove it) |
     | `--tine-content-width` | Maximum width of the page column | 810px |
@@ -115,11 +115,11 @@ icon:: 🎨
     | `.ls-block.author-tinted` | A block by another author that draws the author mark: not a comment, and none while author marks are switched off (**Show/Hide author marks**) |
     | `--author-color` | That author's color. Override it on the block and on its chip: `.ls-block[data-author="Claude" i], .ls-block[data-author="Claude" i] .author-chip { --author-color: #d97757; }` |
     | `.author-run-continued`, `.author-run-continues` | The block drawn right above (below) this one is by the same author. A run continues from a parent into its first child, and out of the last child to the next block; a folded block ends where it is drawn. A block you wrote, a comment or an embed ends a run |
-  - A thread instead of a tint: a line down the right edge of the page, through the author chips, with one chip at the start of each run. Your text stays where it was. To switch it on, choose **Thread** for **Author marks** in Settings → **Appearance** → **Advanced** → **Fine-tuning** (**Tint** is the default); **Reset** puts the tint back. To draw it yourself, or to restyle it, paste this into `custom.css` and the tint goes away:
+  - A thread instead of a tint: every block keeps a strip at its end, the same width on every block, and a line runs down it beside one author chip at the start of each run. A long name is cut to the strip, with the full name in the tooltip. Your text stays where it was. To switch it on, choose **Thread** for **Author marks** in Settings → **Appearance** → **Advanced** → **Fine-tuning** (**Tint** is the default); **Reset** puts the tint back. The strip's width is `--tine-author-gutter` (96px unless you set it on `:root`). To draw it yourself, or to restyle it, paste this into `custom.css` and the tint goes away:
   - ```css
-    .ls-block.author-tinted > .block-main {
+    .ls-block:not(.comment-in-thread, .block-embed-host) > .block-main {
       position: relative;
-      padding-inline-end: 16px;
+      padding-inline-end: var(--tine-author-gutter, 96px);
     }
     .ls-block.author-tinted > .block-main > .block-content-wrapper {
       padding-inline: 0;
@@ -130,29 +130,34 @@ icon:: 🎨
       content: "";
       position: absolute;
       inset-block: 15px 1px;
-      inset-inline-end: 7px;
+      inset-inline-end: calc(var(--tine-author-gutter, 96px) - 5px);
       width: 2px;
       background: color-mix(in srgb, var(--author-color, var(--accent)) 40%, transparent);
     }
     .ls-block.author-tinted.author-run-continued > .block-main > .block-content-wrapper::after { top: 0; }
     .ls-block.author-tinted.author-run-continues > .block-main > .block-content-wrapper::after { bottom: 0; }
-    .ls-block.author-tinted > .block-main > .block-content-wrapper > .block-content > .author-chip {
+    .ls-block.author-tinted > .block-main > .block-content-wrapper > .block-content > .author-chip,
+    .ls-block.author-tinted > .block-main > .block-content-wrapper > .authored-editor > .author-chip {
       position: absolute;
-      inset-inline-end: 0;
+      inset-inline-start: calc(100% - var(--tine-author-gutter, 96px) + 10px);
+      max-width: calc(var(--tine-author-gutter, 96px) - 14px);
+      margin-inline: 0;
+      text-overflow: ellipsis;
       background-color: color-mix(in srgb, var(--author-color, var(--accent)) 18%, var(--bg-primary));
     }
-    .ls-block.author-tinted.author-run-continued > .block-main > .block-content-wrapper > .block-content > .author-chip { display: none; }
+    .ls-block.author-tinted.author-run-continued > .block-main > .block-content-wrapper > .block-content > .author-chip,
+    .ls-block.author-tinted.author-run-continued > .block-main > .block-content-wrapper > .authored-editor > .author-chip { display: none; }
     ```
-  - An icon for one author: set both tokens on that author's chip (`.author-chip` carries the same `data-author`, as the trimmed name). The image must be a `data:` address (it is inside the file, so it works offline) or an `https:` address. A relative path to a file in your graph's assets folder does not work in `custom.css`: it is read from Tine's own page, not from your graph folder. The name stays in the tooltip. Tine ships no icons; this one is a plain diamond:
+  - An icon for one author: set a `background-image` and `--tine-author-icon-size` on that author's chip (`.author-chip` carries the same `data-author`, as the trimmed name). The image must be a `data:` address (it is inside the file, so it works offline) or an `https:` address. A relative path to a file in your graph's assets folder does not work in `custom.css`: it is read from Tine's own page, not from your graph folder. The name stays in the tooltip. Tine ships no icons; this one is a plain diamond:
   - ```css
     .author-chip[data-author="Claude" i] {
-      --tine-author-icon: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'%3E%3Cpath d='M8 1l6 7-6 7-6-7z' fill='%23d97757'/%3E%3C/svg%3E");
+      background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'%3E%3Cpath d='M8 1l6 7-6 7-6-7z' fill='%23d97757'/%3E%3C/svg%3E");
       --tine-author-icon-size: 16px;
     }
     ```
-  - Set the pair on the chip, as above, not on the block: a block's value would be inherited by the chips of its children, even when someone else wrote them. Add one rule per author that should have an icon.
+  - Set both on the chip, as above, not on the block: the size token would be inherited by the chips of the block's children, even when someone else wrote them. Add one rule per author that should have an icon.
   - The **Author marks** choice sets a class on the window that `custom.css` cannot add, which is why the thread above is written out in full for a stylesheet. The class names `author-run-continued` and `author-run-continues` are the part that does the hard work: they know which block comes before and after in the outline, so you do not have to guess with selectors.
-  - What you should see: next to a block by that author, a small diamond where the name was, and with the thread rules a colored line running through the chips at the right edge of the column.
+  - What you should see: next to a block by that author, a small diamond where the name was, and with the thread rules a colored line running down the strip at the right edge of the column, beside the chips.
 - ## 6. Find out what styles an element
   - 1. Settings → **Appearance** → **Advanced** → **Custom CSS** → **Developer tools** (desktop), or press **Ctrl+Shift+J** (**Cmd+Shift+J** on macOS), opens the inspector. It is part of every desktop build, release builds included. Use its element picker, then read the **Styles** pane.
   - 2. Look for a `var(--tine-…)` or `var(--ls-…)` in the rule that draws what you want to change. Setting that variable in `custom.css` is the stable way to change it.

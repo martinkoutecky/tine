@@ -120,6 +120,30 @@ export function marginRegressionPages(b: (raw: string, children?: BlockDto[], co
       ],
     ],
     [
+      // GH #892 review round 2: long author names. Every authored row starts a run (an owner row sits between), has a
+      // long first line, and sits beside one kind of trailing control: none, a comment marker, a resolved label, a
+      // folded block's "N below" chip.
+      "Author thread long names", [
+        b("An owner row with a first line long enough to run across the whole reading column and wrap onto a second line, as a paragraph does, so the text column of an unauthored row can be measured against the authored ones."),
+        b("Alexandria wrote a first line long enough to run across the whole reading column and wrap onto a second line, as a paragraph does, right where the author's name is drawn.\ntine.author:: Alexandria"),
+        b("An owner row between the runs."),
+        b("Alexandria Montgomery-Winterbourne wrote a first line long enough to run across the whole column, beside a comment marker.\ntine.author:: Alexandria Montgomery-Winterbourne", [
+          b("A passage that no longer exists.\ntine.quote:: words that were rewritten\ntine.author:: Ellis"),
+        ]),
+        b("An owner row between the runs."),
+        b("Alexandria wrote a first line long enough to run across the whole column, beside a resolved comment.\ntine.author:: Alexandria", [
+          b("Settled.\ntine.quote:: resolved comment\ntine.resolved:: true\ntine.author:: Ellis"),
+        ]),
+        b("An owner row between the runs."),
+        b("Alexandria wrote a first line long enough to run across the whole column, folded with a comment below.\ntine.author:: Alexandria\ncollapsed:: true\nid:: 89200000-0000-4000-8000-000000000003", [
+          b("A hidden child\ntine.author:: Alexandria", [
+            b("A hidden comment.\ntine.quote:: hidden child\ntine.author:: Ellis"),
+          ]),
+        ], true),
+        b("An owner row to close."),
+      ],
+    ],
+    [
       // GH #893: an authored block that also carries a margin comment on a passage of its text.
       "Author tint comment", [
         b("You wrote the line above."),

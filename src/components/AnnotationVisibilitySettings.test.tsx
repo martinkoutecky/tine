@@ -17,9 +17,12 @@ it.each(["en", "zh-CN"])("%s Settings groups two independently labelled switches
     const comments = root.querySelector<HTMLButtonElement>('[data-setting-id="settings-ui-comment-margin"] [role="switch"]')!;
     expect(marks.closest('[role="group"]')?.contains(comments)).toBe(true);
     expect(root.textContent).toContain(locale === "en" ? "Show/Hide author marks" : "显示/隐藏作者标记");
-    marks.click(); expect(authorMarksHidden()).toBe(true); expect(commentMarginHidden()).toBe(false);
+    // GH #892: the window carries `tine-author-marks-off` exactly while marks are hidden (the thread's gutter ends with it).
+    const off = () => document.documentElement.classList.contains("tine-author-marks-off");
+    expect(off()).toBe(false);
+    marks.click(); expect(authorMarksHidden()).toBe(true); expect(commentMarginHidden()).toBe(false); expect(off()).toBe(true);
     comments.click(); expect(authorMarksHidden()).toBe(true); expect(commentMarginHidden()).toBe(true);
-    marks.click(); expect(authorMarksHidden()).toBe(false); expect(commentMarginHidden()).toBe(true);
+    marks.click(); expect(authorMarksHidden()).toBe(false); expect(commentMarginHidden()).toBe(true); expect(off()).toBe(false);
   } finally { dispose(); }
 });
 it.each(["en", "zh-CN"])("%s offers the default margin choice and persists In a popup with one local write", async locale => {

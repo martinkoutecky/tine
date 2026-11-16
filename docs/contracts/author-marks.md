@@ -36,7 +36,9 @@ internal). The public run classes `author-run-continued` and `author-run-continu
 follow reading order through depth, for the thread look and for theme authors
 (GH #892): a run goes from a parent into its first drawn child and out of the
 last descendant to the next block, and a folded block ends where it is drawn.
-Their definition, the `html.tine-author-marks-thread` look, the author icon tokens and
+Their definition, the `html.tine-author-marks-thread` look (every outline row reserves
+one gutter, `--tine-author-gutter` wide, at its end, which holds the line and the chip and
+never a text line or a trailing control; a long name is cut to it), the author icon token and
 the `data-author` hooks are in `docs/contracts/theme-tokens.md` section 8. Nothing
 here changes the default look: the thread look is the **Author marks** row in
 Settings > Appearance > Fine-tuning (Tint by default, Thread), and applies only
@@ -75,7 +77,9 @@ whole-page authorship computation or graph scan. The thread's run sides read, pe
 authored row, the row's parent (first child), its last-drawn-descendant chain
 (next sibling) and its next sibling; an edit re-runs them for the row and the
 one or two rows next to it in reading order, never its other descendants
-(`Block.authorRuns.test.tsx` counts the calls). No disk read, IPC, save,
+(`Block.authorRuns.test.tsx` counts the calls). The thread look's gutter is one stylesheet
+padding rule over the outline rows (no element, class, listener or signal per row), and hiding
+marks toggles one class on `<html>`. No disk read, IPC, save,
 fsync, lock, index or transport record is added. The preference writes one
 localStorage opt-out (`1`); graph bytes per edit remain unchanged.
 Embed detection's opening-token gate is O(local raw bytes); its body AST

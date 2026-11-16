@@ -16,8 +16,12 @@ it("a name's key is trimmed, space-collapsed and case-folded; the stored text is
 it("the thread look is one class on <html>, drawn with logical sides and the public run classes", () => {
   expect(threadLook.length).toBeGreaterThan(500);
   expect(threadLook).toMatch(/^\.tine-author-marks-thread \{/m);
-  for (const hook of [".author-run-continued", ".author-run-continues", "inset-inline-end", "> .block-content-wrapper::after", "position: absolute", "margin-inline-end", "--author-thread-clear: 44px"])
+  for (const hook of [".author-run-continued", ".author-run-continues", "inset-inline-end", "> .block-content-wrapper::after", "position: absolute", "inset-inline-start", "text-overflow: ellipsis", "--author-thread-clear: 44px"])
     expect(threadLook, hook).toContain(hook);
+  // Every outline row (authored or not) reserves the one gutter, but not while marks are hidden; the token sets its width.
+  expect(threadLook).toContain(".tine-author-marks-thread:not(.tine-author-marks-off) .ls-block:not(.comment-in-thread, .block-embed-host) > .block-main {");
+  expect(threadLook).toContain("padding-inline-end: var(--author-thread-reserve)");
+  expect(threadLook).toContain("var(--tine-author-gutter, 96px)");
   expect(threadLook).not.toMatch(/(^|[\s;{])(left|right|margin-left|margin-right|padding-left|padding-right|float: right|float: left):/m);
   expect(threadLook).not.toMatch(/float: (left|right)/);
 });
@@ -29,8 +33,8 @@ it("the tint steps aside for the thread look and uses the card classes, not the 
   expect(tint).not.toContain("author-run-");
 });
 
-it("the chip takes an icon from the two public tokens", () => {
-  expect(css).toContain("background-image: var(--tine-author-icon, none)");
+it("the chip takes an icon from a stylesheet's background-image and the public size token", () => {
+  expect(css).not.toMatch(/var\(--tine-author-icon[,)]/);
   expect(css).toContain("width: var(--tine-author-icon-size, auto)");
   expect(css).toContain("text-indent: var(--tine-author-icon-size, 0px)");
 });
