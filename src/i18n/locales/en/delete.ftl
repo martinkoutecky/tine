@@ -2,7 +2,6 @@ delete-failed = Delete failed: { $reason }
 delete-reason-rewrite = The graph is being rewritten. Try again after it finishes.
 delete-reason-target = This page target changed; reopen the page actions menu.
 delete-reason-read-only = This page is read-only.
-delete-reason-conflict = The page's save conflict could not be resolved.
 delete-reason-storage = { $reason }
 delete-reason-unsaved = Couldn't save “{ $name }”; the page was not deleted.
 delete-reason-no-host = The graph's storage session is not available.

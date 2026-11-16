@@ -20,7 +20,6 @@ app-drafts-on-volatile-storage = Tine دادهٔ برنامه را در حافظ
 app-quick-capture-could-not-connect-to-this = یادداشت سریع نتوانست به پنجرهٔ این گراف وصل شود.
 app-the-block-renderer-failed-to-load = نمایشگر بلوک بارگذاری نشد و متن بدون قالب‌بندی نشان داده می‌شود. لطفاً Tine را دوباره بارگذاری کنید؛ اگر ادامه داشت، گزارش دهید.
 app-finishing-graph-operation = در حال پایان دادن به عملیات گراف…
-app-close = بستن
 app-close-navigation-sidebar = بستن نوار کناری پیمایش
 app-journals = روزنوشت‌ها
 app-toggle-theme-t-t = تغییر پوسته (t t)

@@ -25,7 +25,6 @@ app-drafts-on-volatile-storage = Tine is keeping application data in temporary o
 app-quick-capture-could-not-connect-to-this = Quick Capture could not connect to this graph window.
 app-the-block-renderer-failed-to-load = The block renderer failed to load — text is shown unformatted. Please reload Tine; if this persists, report it.
 app-finishing-graph-operation = Finishing graph operation…
-app-close = Close
 app-close-navigation-sidebar = Close navigation sidebar
 app-journals = Journals
 app-toggle-theme-t-t = Toggle theme (t t)

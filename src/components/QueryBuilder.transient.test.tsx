@@ -5,7 +5,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { renderEnglish } from "../i18n";
 import { createSignal } from "solid-js";
 import { render } from "solid-js/web";
-import { autocompleteFacets, backend } from "../backend";
+import { backend } from "../backend";
 import { resetSharedQueryResultsForTests } from "../queryResultCache";
 import { bumpGraphEpoch, bumpDataRev } from "../graphSession";
 import { setRefreshEverything } from "../changeKeys";
@@ -179,7 +179,7 @@ describe("QueryBuilder transient ownership (post-GH #161)", () => {
       await vi.waitFor(() => expect(registry).toHaveBeenCalledTimes(2));
 
       // The facets read the builder used to make is gone entirely. The
-      // autocomplete producer's `queryFacets(true)` is a different question and
+      // autocomplete producer's `queryFacets` is a different question and
       // keeps its own path (`Block.propertyAutocomplete.test.tsx`).
       expect(facets).toHaveBeenCalledTimes(0);
     } finally {
@@ -412,7 +412,6 @@ describe("QueryBuilder registry sharing (Harvest W4-P1 item 3)", () => {
     const registry = vi.mocked(backend().queryRegistry);
     registry.mockReset();
     registry.mockImplementation(async () => payloads[current]);
-    const facets = vi.mocked(backend().queryFacets);
 
     const builders = Array.from({ length: 5 }, () => mountBuilder(taskFilter(["TODO"])));
     try {
@@ -460,28 +459,17 @@ describe("QueryBuilder registry sharing (Harvest W4-P1 item 3)", () => {
         expect(propertyKeysOffered(sheet)).toEqual(["revision-four"]);
       }
 
-      // The autocomplete producer asks a DIFFERENT question, on a different
-      // command, and is not served by any of this.
-      facets.mockClear();
-      facets.mockImplementation(async (autocomplete?: boolean) =>
-        autocomplete ? [["autocomplete-only", ["a"]]] : []
-      );
-      expect(await autocompleteFacets()).toEqual([["autocomplete-only", ["a"]]]);
-      const autocompleteCalls = facets.mock.calls.map(([flag]) => flag ?? false);
-
       // eslint-disable-next-line no-console -- the measurement IS the receipt.
       console.log(
         `w4_p1_query_registry builders=5 mounted=${mounted} perDataRev=${perRevision} ` +
-          `perDeclaration=${perDeclaration} perGraphScope=${perGraphScope} ` +
-          `autocomplete=${JSON.stringify(autocompleteCalls)}`
+          `perDeclaration=${perDeclaration} perGraphScope=${perGraphScope}`
       );
 
-      expect({ mounted, perRevision, perDeclaration, perGraphScope, autocompleteCalls }).toEqual({
+      expect({ mounted, perRevision, perDeclaration, perGraphScope }).toEqual({
         mounted: 1,
         perRevision: 1,
         perDeclaration: 1,
         perGraphScope: 1,
-        autocompleteCalls: [true],
       });
     } finally {
       for (const builder of builders) builder.dispose();

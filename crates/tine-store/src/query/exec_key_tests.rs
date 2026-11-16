@@ -385,54 +385,6 @@ fn conjunction_narrows_by_its_tightest_constraint() {
     );
 }
 
-/// Timing probe for the receipt. Ignored: `TINE_KEY_PROBE_ROOT=<copy of a
-/// generated 10k graph>` (`TINE_KEY_PROBE_ROUNDS`, default 7;
-/// `TINE_KEY_PROBE_QUERY`, an OG query, default the export definitions),
-/// `--release`, run alone. Prints the median wall time of the query scanning
-/// every page (the path before narrowing) and narrowed, rounds interleaved,
-/// with the candidate pages of each.
-#[test]
-#[ignore]
-fn definitions_query_at_scale() {
-    let root = std::path::PathBuf::from(std::env::var("TINE_KEY_PROBE_ROOT").unwrap());
-    let rounds: usize = std::env::var("TINE_KEY_PROBE_ROUNDS")
-        .ok()
-        .and_then(|n| n.parse().ok())
-        .unwrap_or(7);
-    let store = crate::Store::open(&root, Default::default()).unwrap().0;
-    let whole = store.whole_graph().unwrap();
-    let graph: &ReadSnapshot = &whole.graph;
-    let source = std::env::var("TINE_KEY_PROBE_QUERY")
-        .unwrap_or_else(|_| tine_core::export_definition::definitions_query());
-    let (first, _) = run(graph, &source, QueryDialect::Og, true);
-    let (mut scan, mut narrow) = (Vec::new(), Vec::new());
-    let mut visited = (0, 0);
-    for _ in 0..rounds {
-        for (narrowed, times) in [(false, &mut scan), (true, &mut narrow)] {
-            let started = std::time::Instant::now();
-            let (answer, pages) = run(graph, &source, QueryDialect::Og, narrowed);
-            times.push(started.elapsed().as_micros());
-            assert_eq!(answer, first);
-            if narrowed {
-                visited.1 = pages
-            } else {
-                visited.0 = pages
-            }
-        }
-    }
-    let median = |mut v: Vec<u128>| {
-        v.sort_unstable();
-        v[v.len() / 2]
-    };
-    println!(
-        "DEFINITIONS rounds={rounds} scan_us={} narrowed_us={} candidates(scan,narrowed)={visited:?}",
-        median(scan),
-        median(narrow)
-    );
-    drop(whole);
-    store.close();
-}
-
 /// The open-threads review (DESIGN §12, `src/commentReviewQuery.ts`): the printed queries in
 /// `tests/fixtures/comment-review-queries.json` list open margin-comment roots, leave out
 /// resolved threads and replies, filter by page and author, and ride the `tine.quote` key

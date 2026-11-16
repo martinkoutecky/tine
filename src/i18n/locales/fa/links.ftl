@@ -1,6 +1,5 @@
 links-open-custom-scheme-confirm = این پیوند { $scheme }: در برنامه‌ای که سیستم برای آن به کار می‌برد باز شود؟{ "\u000A\u000A" }{ $url }
 links-open-custom-scheme-title = باز کردن پیوند { $scheme }:
-links-outside-graph-title = این پیوند به بیرون از پوشهٔ گراف اشاره می‌کند، پس Tine آن را باز نمی‌کند
 links-copy-title = کپی پیوند
 references-filter-unlinked = پالایش ارجاع‌های بدون پیوند
 references-search-unlinked = جستجوی متن ارجاع‌های بدون پیوند

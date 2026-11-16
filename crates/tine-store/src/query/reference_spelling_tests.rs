@@ -1,6 +1,6 @@
 //! R13 B2 F3: authored spellings reuse resident traversals, without a tree
-//! lookup per digit-bearing name. Full reference queries and counts are timed
-//! together so a faster iterator alone cannot stand in for path evidence.
+//! lookup per digit-bearing name. Full reference queries and counts are
+//! checked together so a faster iterator alone cannot stand in for path evidence.
 use super::*;
 use crate::model::referenced_names::name_lookups;
 use crate::Store;
@@ -62,42 +62,4 @@ fn authored_spelling_sweep_does_no_per_name_tree_lookup() {
         );
         store.close();
     }
-}
-
-#[test]
-#[ignore = "measurement: full query/count path with 10,000 referenced names"]
-fn date_reference_query_and_count_timing() {
-    let (_dir, store) = fixture(10_000);
-    let view = store.whole_graph().unwrap();
-    let graph = view.test_read_snapshot();
-    graph.referenced_name_table();
-    let query = "[[Owner]]";
-    let lookups_before = name_lookups();
-    let explicit_names = graph.explicit_reference_names().count();
-    let authored_names = graph.referenced_name_table().iter().count();
-    let started = std::time::Instant::now();
-    for _ in 0..10 {
-        let groups = crate::query::run_query(&graph, query);
-        assert_eq!(
-            groups.iter().map(|group| group.blocks.len()).sum::<usize>(),
-            4
-        );
-        assert_eq!(
-            groups
-                .iter()
-                .find(|group| group.page == "Notes")
-                .unwrap()
-                .blocks
-                .len(),
-            2
-        );
-        let counts = page_counts::referring_block_counts(&graph);
-        assert_eq!(counts.get(&(false, "owner".into())), Some(&2));
-    }
-    eprintln!(
-        "10 complete reference-query/count pairs, {explicit_names} explicit keys, {authored_names} authored rows: {:?}; name-table lookups: {}",
-        started.elapsed(),
-        name_lookups() - lookups_before,
-    );
-    store.close();
 }

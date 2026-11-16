@@ -29,5 +29,4 @@ share-dialog-definition-failed = خروجی نوشته شد، اما ذخیره�
 share-dialog-no-page = برای اشتراک‌گذاری، صفحه‌ای را باز کنید
 share-topbar-title = اشتراک‌گذاری این صفحه
 share-page-title-button = اشتراک‌گذاری این صفحه
-share-menu-item = اشتراک‌گذاری…
 share-query-icon = اشتراک‌گذاری این پرس‌وجو

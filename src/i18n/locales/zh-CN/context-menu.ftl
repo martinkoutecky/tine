@@ -129,12 +129,6 @@ context-menu-ui-copied-page-embed = 已复制页面嵌入
 context-menu-ui-copy-export-as = 复制 / 导出为…
 context-menu-ui-share = 分享…
 
-context-menu-ui-copy-page-as-markdown = 将页面复制为 Markdown
-
-context-menu-ui-copied-page-as-markdown = 已将页面复制为 Markdown
-
-context-menu-ui-couldn-t-copy-page-as-markdown = 无法将页面复制为 Markdown。
-
 context-menu-ui-export-to-pdf = 导出为 PDF…
 
 context-menu-ui-show-in-folder = 在文件夹中显示
