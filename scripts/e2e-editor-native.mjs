@@ -151,13 +151,14 @@ async function acceptCompletion(label, exact = true) {
 async function selectTwoBlocks() {
   await edit("Native source", "block one");
   await exit();
-  // The nested child is visible. Extend past it to select the second root too.
-  await keys("Shift", "ArrowDown");
+  // A selected block is its whole subtree (#941, D-20261112-SU10; Logseq
+  // select-block-up-down skips blocks nested in a selected one), so one
+  // Shift+Down extends past the visible nested child to the second root.
   await keys("Shift", "ArrowDown");
   await browser.waitUntil(() => browser.execute(() => {
     const text = [...document.querySelectorAll(".main-content .block-main.selected .block-content")].map(el => el.textContent);
-    return text.includes("block one") && text.includes("block two") && !text.includes("keep");
-  }), { timeout: 5000, timeoutMsg: "Shift+Down did not select both source blocks" });
+    return text.includes("block one") && text.includes("nested child") && text.includes("block two") && !text.includes("keep");
+  }), { timeout: 5000, timeoutMsg: "Shift+Down did not select both source subtrees, and only them" });
 }
 async function pasteBlocks(page) {
   await edit(page, "destination");
