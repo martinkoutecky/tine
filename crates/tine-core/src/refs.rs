@@ -223,7 +223,7 @@ pub fn as_block_ref(url: &str) -> Option<&str> {
 pub use crate::block_regions::is_linkable_property_separator;
 
 #[path = "refs_rename.rs"]
-mod rename;
+pub(crate) mod rename;
 
 /// The one reference rewrite a page rename applies to a page's text: every
 /// place the reference evidence says names a renamed page (links, tags,

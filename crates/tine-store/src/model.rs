@@ -37,6 +37,7 @@ mod parse_depth;
 mod path_membership;
 pub(crate) mod referenced_names;
 mod template_names;
+pub(crate) mod unchanged_save;
 #[cfg(test)]
 use calendar_days::doc_has_content;
 pub(crate) mod write_target;
@@ -411,6 +412,7 @@ fn rel_under_dir(rel_dir: &str, dir: &Path, path: &Path) -> String {
 fn parse_doc(path: &Path, content: &str) -> Document {
     #[cfg(feature = "test-faults")]
     crate::cost_counters::parse();
+    unchanged_save::counted_parse();
     match Format::from_path(path) {
         Format::Md => doc::parse(content),
         Format::Org => tine_core::org::parse_org(content),
@@ -481,6 +483,7 @@ pub(crate) fn bytes_hold_block_id(path: &Path, bytes: &[u8], id: &str) -> bool {
 fn parse_doc_with_opts(path: &Path, source: &str) -> (Document, doc::SerializeOpts) {
     #[cfg(feature = "test-faults")]
     crate::cost_counters::parse();
+    unchanged_save::counted_parse();
     match Format::from_path(path) {
         Format::Md => doc::parse_with_opts(source),
         Format::Org => (
@@ -4303,11 +4306,8 @@ impl Graph {
         path: &Path,
         existing: Option<&str>,
     ) -> io::Result<(Vec<u8>, Document)> {
-        std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-            self.prepare_page_content(page, path, existing)
-        }))
-        .map_err(|_| io::Error::new(io::ErrorKind::InvalidData, ParserPanicked))?
-        .map(|(content, doc)| (content.into_bytes(), doc))
+        unchanged_save::parser_unwind(|| self.prepare_page_content(page, path, existing))
+            .map(|(content, doc)| (content.into_bytes(), doc))
     }
 
     pub(crate) fn transaction_note_page(&self, path: &Path, bytes: &[u8]) {
@@ -4324,12 +4324,9 @@ impl Graph {
         self.recent_writes.lock().unwrap().remove(path);
     }
 
-    /// Bytes a save writes for `page`. Markdown reuses every unchanged block's
-    /// lines (`layout_retention`), else re-serializes in the file's detected
-    /// style (no Syncthing churn); equal parses keep the disk bytes and revision
-    /// (A5); CRLF and lone-CR files keep their terminators (`line_endings`). The
-    /// bytes re-parse to `page`, except a DTO that cannot round-trip (blocks
-    /// after an unterminated fence): it gets the whole-page serializer's meaning.
+    /// Bytes a save writes for `page` over `existing`: the one answer
+    /// [`unchanged_save::save_content`], given the disk bytes' parse with the
+    /// cache's runtime ids.
     fn prepare_page_content(
         &self,
         page: &PageDto,
@@ -4340,129 +4337,30 @@ impl Graph {
         // `:journal/file-name-format` — so custom-format graphs create the correct
         // file for the day instead of a misplaced default-named duplicate.)
         let dto_is_org = matches!(Format::from_path(path), Format::Org);
-        let mut doc = tine_core::projection::page_dto_document(page, dto_is_org);
-        let (old, opts) = existing.map_or_else(
-            || (None, doc::SerializeOpts::default()),
-            |source| {
-                #[cfg(feature = "test-faults")]
-                crate::cost_counters::old_source_parse();
-                let (mut old, opts) = parse_doc_with_opts(path, source);
-                let cached = self
-                    .with_cached(path, |row| row.map(|(_, cached)| Arc::clone(cached)))
-                    .flatten();
-                identify_old_blocks(
-                    &mut old,
-                    path.strip_prefix(&self.root).ok().and_then(Path::to_str),
-                    cached.as_deref(),
-                    &doc,
-                );
-                prime_projections(&old);
-                (Some(old), opts)
-            },
-        );
-        // Data-preservation firewall for page-header properties (GH #163).
-        // A frontend/store bug once reclassified a suffix of the page pre-block
-        // as the first outline block (`A::` stayed in the header while `B::` and
-        // `C::` were serialized as `- B::` / indented continuation text).  The
-        // string helper used by the gear panel was correct, so helper tests could
-        // not protect the actual DTO -> disk boundary.  No Tine editing command
-        // intentionally moves an existing page-header property line into the
-        // outline; promotion keeps property lines in the pre-block.  Refuse both
-        // normal and force writes that do so, leaving the original bytes intact.
-        if let Some(existing_doc) = old.as_ref() {
-            // A nonempty disk preamble is authoritative. If a contradictory DTO
-            // drops it while presenting a first-root header candidate, refusing
-            // the save is safer than either overwriting the preamble or silently
-            // keeping the candidate as a bullet. The same validator protects
-            // the Store-backed keep-mine path.
-            if existing_doc
-                .pre_block
-                .as_deref()
-                .is_some_and(|pre| !pre.is_empty())
-                && doc.pre_block.as_deref().unwrap_or("").is_empty()
-                && first_root_is_promotable_page_header(&doc)
-            {
-                return Err(io::Error::new(
-                    io::ErrorKind::InvalidData,
-                    "refusing to drop an existing page preamble while authoring page-header properties",
-                ));
-            }
-            if let Some(line) =
-                newly_reclassified_page_property_line(existing_doc, &doc, dto_is_org)
-            {
-                return Err(io::Error::new(
-                    io::ErrorKind::InvalidData,
-                    format!("refusing to move page-header property into outline content: {line}"),
-                ));
-            }
-        }
-        // Match OG's pre-block serialization decision at one native boundary:
-        // a genuinely headerless Markdown page may author a qualifying first
-        // root through the ordinary editor, but the persisted/cache shape is an
-        // unbulleted page header. Existing nonempty preambles were rejected above.
-        if !dto_is_org
-            && page.pre_block.as_deref().unwrap_or("").is_empty()
-            && old
-                .as_ref()
-                .and_then(|parsed| parsed.pre_block.as_deref())
-                .as_deref()
-                .unwrap_or("")
-                .is_empty()
-        {
-            promote_first_root_page_header(&mut doc);
-        }
-        // Own the caller's resolved+locked path (M2: never re-resolve path_for here).
-        let path = path.to_path_buf();
-        let (content, mut parsed) = match Format::from_path(&path) {
-            Format::Md => {
-                let retained = existing.zip(old.as_ref()).and_then(|(source, old)| {
-                    layout_retention::serialize(&doc, source, old, &opts)
-                });
-                // Retained lines carry their own terminators; only a
-                // whole-page rewrite takes the file's convention.
-                let (mut content, reparsed) = retained.unwrap_or_else(|| {
-                    let content = line_endings::restore(doc::serialize_with(&doc, &opts), existing);
-                    let parsed = parse_doc(&path, &content);
-                    (content, parsed)
-                });
-                if let Some(e) = existing {
-                    if e != content && old.as_ref() == Some(&reparsed) {
-                        content = e.to_string(); // A5
-                    }
-                }
-                (content, reparsed)
-            }
-            Format::Org => {
-                // Corruption firewall: never write a .org file Tine cannot
-                // reproduce byte-for-byte. Such a page is served read-only (the
-                // editor blocks edits), but defend the write path too — a stale
-                // editor or a direct save must not rewrite it. The org model is
-                // LF-canonical and its bodies are verbatim, so the serializer is
-                // byte-exact up to line terminators, which
-                // `layout_retention::restore_org` puts back line by line (K01a).
-                if let Some(e) = existing {
-                    if tine_core::org::serialize_org_detect(old.as_ref().unwrap(), Some(e))
-                        != tine_core::doc::normalize_line_endings(e)
-                    {
-                        return Err(io::Error::new(
-                            io::ErrorKind::PermissionDenied,
-                            "org file is read-only (does not round-trip)",
-                        ));
-                    }
-                }
-                let content = tine_core::org::serialize_org_detect(&doc, existing);
-                let content = match existing.zip(old.as_ref()) {
-                    Some((source, old)) => {
-                        layout_retention::restore_org(content, &doc, source, old)
-                    }
-                    None => content,
-                };
-                let parsed = parse_doc(&path, &content);
-                (content, parsed)
-            }
-        };
-        carry_saved_runtime_ids(&mut parsed.roots, &doc.roots);
-        Ok((content, parsed))
+        let doc = tine_core::projection::page_dto_document(page, dto_is_org);
+        let old = existing.map(|source| {
+            #[cfg(feature = "test-faults")]
+            crate::cost_counters::old_source_parse();
+            let (mut old, opts) = parse_doc_with_opts(path, source);
+            let cached = self
+                .with_cached(path, |row| row.map(|(_, cached)| Arc::clone(cached)))
+                .flatten();
+            identify_old_blocks(
+                &mut old,
+                path.strip_prefix(&self.root).ok().and_then(Path::to_str),
+                cached.as_deref(),
+                &doc,
+            );
+            prime_projections(&old);
+            (old, opts)
+        });
+        unchanged_save::save_content(
+            doc,
+            path,
+            existing
+                .zip(old.as_ref())
+                .map(|(source, (old, opts))| (source, old, opts)),
+        )
     }
 }
 

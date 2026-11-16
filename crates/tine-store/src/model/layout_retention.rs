@@ -60,6 +60,7 @@ pub(super) fn serialize(
     }
     let (lines, ends) = line_endings::split(source);
     let olds = map_old_blocks(old, &lines)?;
+    super::unchanged_save::counted_serialization();
     let mut news = Vec::new();
     flatten(&doc.roots, &mut news);
     let Matches { keep, hint, known } = match_blocks(&olds, &news);
@@ -106,6 +107,7 @@ pub(super) fn serialize(
     }
     // A DTO that cannot round-trip at all (e.g. blocks after an unterminated
     // fence) keeps this layout only when it means what a full rebuild means.
+    super::unchanged_save::counted_serialization();
     (reparsed
         == super::parse_doc(
             std::path::Path::new("new.md"),

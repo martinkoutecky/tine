@@ -602,9 +602,11 @@ impl PagePlan<'_> {
     }
 
     /// Serialize `doc` at `path` over `old`, the bytes it replaces (None
-    /// creates), with every content firewall: parse validation of both sides,
-    /// VCS markers (unless `resolving` them), the page-header and Org
-    /// round-trip firewalls in `prepare_page_bytes`.
+    /// creates), with every content firewall: `guarded_save`'s (parse
+    /// validation of both sides, VCS markers unless `resolving` them, the
+    /// refusal R-VCS-MARKERS), and the page-header and Org round-trip
+    /// firewalls in `prepare_page_bytes`. This is the one place og serializes
+    /// page bytes for a save.
     fn serialize_page_at(
         &self,
         path: &Path,
@@ -612,38 +614,12 @@ impl PagePlan<'_> {
         old: Option<&[u8]>,
         resolving: bool,
     ) -> Result<(Vec<u8>, Document), Why> {
-        if let Some(old) = old {
-            crate::model::validate_parse_bytes_for_path(old, path).map_err(content_refusal)?;
-        }
-        let text = match old {
-            Some(bytes) => Some(std::str::from_utf8(bytes).map_err(|error| {
-                content_refusal(io::Error::new(io::ErrorKind::InvalidData, error))
-            })?),
-            None => None,
-        };
-        // Refusal R-VCS-MARKERS (docs/storage-contract.md). Threat
-        // scenario: a VCS merge by an external writer left unresolved
-        // markers; a rewrite would re-indent them and silently lose a
-        // side. This is the one place og serializes page bytes for a
-        // save (ordinary, forced, merged and PDF-highlight page saves
-        // all reach it, and the page host's submits). Only a resolving save
-        // passes.
-        let found = text
-            .map(|text| {
-                tine_core::concord_queue::vcs_conflict_markers(text, Format::from_path(&path))
-            })
-            .unwrap_or_default();
-        if !found.is_empty() && !resolving {
-            return Err(Why::Refused(Refusal::ReadOnly(format!(
-                "unresolved VCS merge conflict markers ({}); resolve them first",
-                found.join(" ")
-            ))));
-        }
-        let (new, saved_page) = self
-            .store
-            .graph
-            .prepare_page_bytes(doc, &path, text)
-            .map_err(|error| {
+        use crate::model::unchanged_save::{guarded_save, Guard};
+        let prepare = |text: Option<&str>| self.store.graph.prepare_page_bytes(doc, path, text);
+        guarded_save(old, path, resolving, prepare).map_err(|guard| match guard {
+            Guard::Content(error) => content_refusal(error),
+            Guard::Markers(why) => Why::Refused(Refusal::ReadOnly(why)),
+            Guard::Prepare(error) => {
                 if error.kind() == io::ErrorKind::PermissionDenied
                     || error
                         .get_ref()
@@ -653,8 +629,7 @@ impl PagePlan<'_> {
                 } else {
                     Why::Failed(error.into())
                 }
-            })?;
-        crate::model::validate_parse_bytes_for_path(&new, &path).map_err(content_refusal)?;
-        Ok((new, saved_page))
+            }
+        })
     }
 }
