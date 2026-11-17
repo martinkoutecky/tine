@@ -302,3 +302,136 @@ fn reader_redesign_preserves_drawer_context_and_mapped_titles() {
     );
     assert_eq!(cases, 864);
 }
+
+/// SPEC O6, item 5 of the source-map lane: an identical clashing directive in
+/// both files merges, the source's line kept as the leftover quote. Its
+/// references stay references there (the model check observes both links in
+/// the source entry and in the quote), so the old writer's `HiddenOccurrence`
+/// refusal, which read the entry outside its context, was an over-refusal.
+/// The 36 outcomes of the review's 10,260-pair generator, with exact bytes.
+#[test]
+fn identical_clashing_directive_merges_as_a_leftover_quote() {
+    use tine_core::{cm_check, model::Format};
+    let cases = [
+        ("#+id: [[One]], [[Two Words]]\n", "#+id: [[One]], [[Two Words]]\n*\n#+BEGIN_QUOTE\n#+id: [[One]], [[Two Words]]\n#+END_QUOTE\n"),
+        ("#+id: [[One]], [[Two Words]]\r\n", "#+id: [[One]], [[Two Words]]\r\n*\r\n#+BEGIN_QUOTE\r\n#+id: [[One]], [[Two Words]]\r\n#+END_QUOTE\r\n"),
+        ("#+id: [[One]], [[Two Words]]\r", "#+id: [[One]], [[Two Words]]\r*\r#+BEGIN_QUOTE\r#+id: [[One]], [[Two Words]]\r#+END_QUOTE\r"),
+        ("#+id: [[One]], [[Two Words]]\r\n", "#+id: [[One]], [[Two Words]]\r\n*\r\n#+BEGIN_QUOTE\r\n#+id: [[One]], [[Two Words]]\r\n#+END_QUOTE\r\n"),
+        ("#+id: [[One]], [[Two Words]]\n#+k: again\n* body\n", "#+id: [[One]], [[Two Words]]\n#+k: again\n* body\n*\n#+BEGIN_QUOTE\n#+id: [[One]], [[Two Words]]\n#+k: again\n#+END_QUOTE\n* body\n"),
+        ("#+id: [[One]], [[Two Words]]\r\n#+k: again\r\n* body\r\n", "#+id: [[One]], [[Two Words]]\r\n#+k: again\r\n* body\r\n*\r\n#+BEGIN_QUOTE\r\n#+id: [[One]], [[Two Words]]\r\n#+k: again\r\n#+END_QUOTE\r\n* body\r\n"),
+        ("#+id: [[One]], [[Two Words]]\r#+k: again\r* body\r", "#+id: [[One]], [[Two Words]]\r#+k: again\r* body\r*\r#+BEGIN_QUOTE\r#+id: [[One]], [[Two Words]]\r#+k: again\r#+END_QUOTE\r* body\r"),
+        ("#+id: [[One]], [[Two Words]]\r\n#+k: again\r* body\n", "#+id: [[One]], [[Two Words]]\r\n#+k: again\r* body\n*\r\n#+BEGIN_QUOTE\r\n#+id: [[One]], [[Two Words]]\r\n#+k: again\r#+END_QUOTE\r\n* body\n"),
+        ("#+id: [[One]], [[Two Words]]\nprose [[A]]\n* body\n", "#+id: [[One]], [[Two Words]]\n* prose [[A]]\n* body\n*\n#+BEGIN_QUOTE\n#+id: [[One]], [[Two Words]]\n#+END_QUOTE\n* prose [[A]]\n* body\n"),
+        ("#+id: [[One]], [[Two Words]]\r\nprose [[A]]\r\n* body\r\n", "#+id: [[One]], [[Two Words]]\r\n* prose [[A]]\r\n* body\r\n*\r\n#+BEGIN_QUOTE\r\n#+id: [[One]], [[Two Words]]\r\n#+END_QUOTE\r\n* prose [[A]]\r\n* body\r\n"),
+        ("#+id: [[One]], [[Two Words]]\rprose [[A]]\r* body\r", "#+id: [[One]], [[Two Words]]\r* prose [[A]]\r* body\r*\r#+BEGIN_QUOTE\r#+id: [[One]], [[Two Words]]\r#+END_QUOTE\r* prose [[A]]\r* body\r"),
+        ("#+id: [[One]], [[Two Words]]\r\nprose [[A]]\r* body\n", "#+id: [[One]], [[Two Words]]\r\n* prose [[A]]\r* body\n*\r\n#+BEGIN_QUOTE\r\n#+id: [[One]], [[Two Words]]\r\n#+END_QUOTE\r\n* prose [[A]]\r* body\n"),
+        ("#+id: #[[Two Words]]\n", "#+id: #[[Two Words]]\n*\n#+BEGIN_QUOTE\n#+id: #[[Two Words]]\n#+END_QUOTE\n"),
+        ("#+id: #[[Two Words]]\r\n", "#+id: #[[Two Words]]\r\n*\r\n#+BEGIN_QUOTE\r\n#+id: #[[Two Words]]\r\n#+END_QUOTE\r\n"),
+        ("#+id: #[[Two Words]]\r", "#+id: #[[Two Words]]\r*\r#+BEGIN_QUOTE\r#+id: #[[Two Words]]\r#+END_QUOTE\r"),
+        ("#+id: #[[Two Words]]\r\n", "#+id: #[[Two Words]]\r\n*\r\n#+BEGIN_QUOTE\r\n#+id: #[[Two Words]]\r\n#+END_QUOTE\r\n"),
+        ("#+id: #[[Two Words]]\n#+k: again\n* body\n", "#+id: #[[Two Words]]\n#+k: again\n* body\n*\n#+BEGIN_QUOTE\n#+id: #[[Two Words]]\n#+k: again\n#+END_QUOTE\n* body\n"),
+        ("#+id: #[[Two Words]]\r\n#+k: again\r\n* body\r\n", "#+id: #[[Two Words]]\r\n#+k: again\r\n* body\r\n*\r\n#+BEGIN_QUOTE\r\n#+id: #[[Two Words]]\r\n#+k: again\r\n#+END_QUOTE\r\n* body\r\n"),
+        ("#+id: #[[Two Words]]\r#+k: again\r* body\r", "#+id: #[[Two Words]]\r#+k: again\r* body\r*\r#+BEGIN_QUOTE\r#+id: #[[Two Words]]\r#+k: again\r#+END_QUOTE\r* body\r"),
+        ("#+id: #[[Two Words]]\r\n#+k: again\r* body\n", "#+id: #[[Two Words]]\r\n#+k: again\r* body\n*\r\n#+BEGIN_QUOTE\r\n#+id: #[[Two Words]]\r\n#+k: again\r#+END_QUOTE\r\n* body\n"),
+        ("#+id: #[[Two Words]]\nprose [[A]]\n* body\n", "#+id: #[[Two Words]]\n* prose [[A]]\n* body\n*\n#+BEGIN_QUOTE\n#+id: #[[Two Words]]\n#+END_QUOTE\n* prose [[A]]\n* body\n"),
+        ("#+id: #[[Two Words]]\r\nprose [[A]]\r\n* body\r\n", "#+id: #[[Two Words]]\r\n* prose [[A]]\r\n* body\r\n*\r\n#+BEGIN_QUOTE\r\n#+id: #[[Two Words]]\r\n#+END_QUOTE\r\n* prose [[A]]\r\n* body\r\n"),
+        ("#+id: #[[Two Words]]\rprose [[A]]\r* body\r", "#+id: #[[Two Words]]\r* prose [[A]]\r* body\r*\r#+BEGIN_QUOTE\r#+id: #[[Two Words]]\r#+END_QUOTE\r* prose [[A]]\r* body\r"),
+        ("#+id: #[[Two Words]]\r\nprose [[A]]\r* body\n", "#+id: #[[Two Words]]\r\n* prose [[A]]\r* body\n*\r\n#+BEGIN_QUOTE\r\n#+id: #[[Two Words]]\r\n#+END_QUOTE\r\n* prose [[A]]\r* body\n"),
+        ("#+id: [[A]] and [[B]]\n", "#+id: [[A]] and [[B]]\n*\n#+BEGIN_QUOTE\n#+id: [[A]] and [[B]]\n#+END_QUOTE\n"),
+        ("#+id: [[A]] and [[B]]\r\n", "#+id: [[A]] and [[B]]\r\n*\r\n#+BEGIN_QUOTE\r\n#+id: [[A]] and [[B]]\r\n#+END_QUOTE\r\n"),
+        ("#+id: [[A]] and [[B]]\r", "#+id: [[A]] and [[B]]\r*\r#+BEGIN_QUOTE\r#+id: [[A]] and [[B]]\r#+END_QUOTE\r"),
+        ("#+id: [[A]] and [[B]]\r\n", "#+id: [[A]] and [[B]]\r\n*\r\n#+BEGIN_QUOTE\r\n#+id: [[A]] and [[B]]\r\n#+END_QUOTE\r\n"),
+        ("#+id: [[A]] and [[B]]\n#+k: again\n* body\n", "#+id: [[A]] and [[B]]\n#+k: again\n* body\n*\n#+BEGIN_QUOTE\n#+id: [[A]] and [[B]]\n#+k: again\n#+END_QUOTE\n* body\n"),
+        ("#+id: [[A]] and [[B]]\r\n#+k: again\r\n* body\r\n", "#+id: [[A]] and [[B]]\r\n#+k: again\r\n* body\r\n*\r\n#+BEGIN_QUOTE\r\n#+id: [[A]] and [[B]]\r\n#+k: again\r\n#+END_QUOTE\r\n* body\r\n"),
+        ("#+id: [[A]] and [[B]]\r#+k: again\r* body\r", "#+id: [[A]] and [[B]]\r#+k: again\r* body\r*\r#+BEGIN_QUOTE\r#+id: [[A]] and [[B]]\r#+k: again\r#+END_QUOTE\r* body\r"),
+        ("#+id: [[A]] and [[B]]\r\n#+k: again\r* body\n", "#+id: [[A]] and [[B]]\r\n#+k: again\r* body\n*\r\n#+BEGIN_QUOTE\r\n#+id: [[A]] and [[B]]\r\n#+k: again\r#+END_QUOTE\r\n* body\n"),
+        ("#+id: [[A]] and [[B]]\nprose [[A]]\n* body\n", "#+id: [[A]] and [[B]]\n* prose [[A]]\n* body\n*\n#+BEGIN_QUOTE\n#+id: [[A]] and [[B]]\n#+END_QUOTE\n* prose [[A]]\n* body\n"),
+        ("#+id: [[A]] and [[B]]\r\nprose [[A]]\r\n* body\r\n", "#+id: [[A]] and [[B]]\r\n* prose [[A]]\r\n* body\r\n*\r\n#+BEGIN_QUOTE\r\n#+id: [[A]] and [[B]]\r\n#+END_QUOTE\r\n* prose [[A]]\r\n* body\r\n"),
+        ("#+id: [[A]] and [[B]]\rprose [[A]]\r* body\r", "#+id: [[A]] and [[B]]\r* prose [[A]]\r* body\r*\r#+BEGIN_QUOTE\r#+id: [[A]] and [[B]]\r#+END_QUOTE\r* prose [[A]]\r* body\r"),
+        ("#+id: [[A]] and [[B]]\r\nprose [[A]]\r* body\n", "#+id: [[A]] and [[B]]\r\n* prose [[A]]\r* body\n*\r\n#+BEGIN_QUOTE\r\n#+id: [[A]] and [[B]]\r\n#+END_QUOTE\r\n* prose [[A]]\r* body\n"),
+    ];
+    let dir = tempfile::tempdir().unwrap();
+    let store = tine_store::Store::open(dir.path(), Default::default())
+        .unwrap()
+        .0;
+    let names = store.config().file_name_format;
+    for (text, merged) in cases {
+        let page = |path: &str| {
+            store
+                .page_of(&tine_store::PageId::from(path), text.as_bytes())
+                .unwrap()
+                .doc
+        };
+        let proposal = propose(
+            &page("pages/Dst.org"),
+            text,
+            &page("pages/Src.org"),
+            text,
+            &Default::default(),
+            &Default::default(),
+            true,
+            names,
+        )
+        .unwrap_or_else(|e| panic!("{text:?}: {e:?}"));
+        assert_eq!(proposal.text, merged, "{text:?}");
+        let observe = |t: &str| cm_check::observe(t, Format::Org, names);
+        let expected = cm_check::expected(
+            &cm_check::Rename::none(None, names),
+            Format::Org,
+            cm_check::Expect::Survivor {
+                source: &observe(text),
+                target: &observe(text),
+            },
+        );
+        assert!(
+            cm_check::matches(&expected, &observe(merged), true),
+            "{text:?}"
+        );
+    }
+}
+
+/// A survivor header line holding only a no-break space is content to the
+/// reader (mldoc's spacing is ` `, tab, form feed, SUB): joined fields go
+/// after it, as after any other header line. The writer used to place them by
+/// Unicode `trim`, before it, and its own acceptance then refused the merge.
+#[test]
+fn a_no_break_space_header_line_is_content_for_insertion() {
+    use tine_core::{cm_check, model::Format};
+    let dir = tempfile::tempdir().unwrap();
+    let store = tine_store::Store::open(dir.path(), Default::default())
+        .unwrap()
+        .0;
+    let names = store.config().file_name_format;
+    for eol in ["\n", "\r\n", "\r"] {
+        let target = format!("k:: v{eol}\u{a0}{eol}- body{eol}");
+        let source = format!("- plain{eol}");
+        let page = |path: &str, text: &str| {
+            store
+                .page_of(&tine_store::PageId::from(path), text.as_bytes())
+                .unwrap()
+                .doc
+        };
+        let proposal = propose(
+            &page("pages/Dst.md", &target),
+            &target,
+            &page("pages/Src.md", &source),
+            &source,
+            &Default::default(),
+            &Default::default(),
+            false,
+            names,
+        )
+        .unwrap();
+        assert_eq!(proposal.text, format!("{target}{source}"));
+        let observe = |t: &str| cm_check::observe(t, Format::Md, names);
+        let expected = cm_check::expected(
+            &cm_check::Rename::none(None, names),
+            Format::Md,
+            cm_check::Expect::Survivor {
+                source: &observe(&source),
+                target: &observe(&target),
+            },
+        );
+        assert!(cm_check::matches(&expected, &observe(&proposal.text), true));
+    }
+}

@@ -856,7 +856,7 @@ pub fn line_terminator(line: &str) -> &'static str {
 /// text is the pre-block, so a save writes it back unchanged. Pure,
 /// infallible; one lsdoc parse, O(page bytes).
 pub fn parse(content: &str) -> Document {
-    parse_document_with(content, |_, _, _| ()).0
+    parse_outlined(content, false, false).document
 }
 
 /// Parse a Markdown page and infer its serialization layout from the SAME
@@ -865,46 +865,83 @@ pub fn parse(content: &str) -> Document {
 /// Pure, infallible; one lsdoc outline parse, O(page bytes). Line terminators
 /// are normalized for parsing; the store restores them when writing.
 pub fn parse_with_opts(content: &str) -> (Document, SerializeOpts) {
-    parse_document_with(content, SerializeOpts::from_outline)
+    let content = &normalize_line_endings(content);
+    let headers = outline::headers_or_none(content, OutlineFormat::Markdown);
+    let (document, lines, _) = document_of(content, &headers, false, None);
+    (
+        document,
+        SerializeOpts::from_outline(content, &lines, &headers),
+    )
 }
 
-/// [`parse`] (or, `is_org`, [`crate::org::parse_org`]) of LF text `content`,
-/// with the outline headers that parse found: the rename writer reads the
-/// same outline and blocks, so one outline parse serves both.
-pub(crate) fn parse_outlined(content: &str, is_org: bool) -> (Document, Vec<outline::Header>) {
-    if is_org {
-        let headers = outline::headers_or_none(content, OutlineFormat::Org);
-        (crate::org::parse_org_with(content, &headers), headers)
+pub use crate::outline::SourceMap;
+
+/// One read of native page text: [`parse`] (or, `is_org`,
+/// [`crate::org::parse_org`]), the outline headers it found and, when
+/// `mapped`, the reader's [`SourceMap`] of the same pass. The rename writer
+/// reads the same outline and blocks, and a physical writer places the mapped
+/// ranges, so one outline parse serves all three. O(page bytes).
+pub(crate) struct Outlined<'a> {
+    pub lf: std::borrow::Cow<'a, str>,
+    pub document: Document,
+    pub headers: Vec<outline::Header>,
+    pub map: Option<SourceMap>,
+}
+
+pub(crate) fn parse_outlined(text: &str, is_org: bool, mapped: bool) -> Outlined<'_> {
+    // A stray `\r` in the model would pollute property / `id::` values.
+    let lf = normalize_line_endings(text);
+    let format = if is_org {
+        OutlineFormat::Org
     } else {
-        parse_document_with(content, |_, _, headers| headers.to_vec())
+        OutlineFormat::Markdown
+    };
+    let headers = outline::headers_or_none(&lf, format);
+    let mut removed = Vec::new();
+    let (document, lines, pre) = document_of(&lf, &headers, is_org, mapped.then_some(&mut removed));
+    let map = mapped.then(|| SourceMap::new(text, &lines, removed, &headers, pre));
+    Outlined {
+        lf,
+        document,
+        headers,
+        map,
     }
 }
 
-fn parse_document_with<T>(
-    content: &str,
-    layout: impl FnOnce(&str, &[&str], &[outline::Header]) -> T,
-) -> (Document, T) {
-    // A stray `\r` in the model would pollute property / `id::` values.
-    let normalized = normalize_line_endings(content);
-    let content: &str = &normalized;
-    let body = content.strip_suffix('\n').unwrap_or(content);
+/// The reader's split of LF `content` with its outline `headers`: the
+/// document, its lines and the pre-block's line count. Markdown reads the
+/// text without its final line break and drops the pre-block's trailing blank
+/// lines; Org reads it without any final line breaks. `removed` collects the
+/// bytes removed in front of each line (see [`SourceMap`]).
+pub(crate) fn document_of<'a>(
+    content: &'a str,
+    headers: &[outline::Header],
+    is_org: bool,
+    removed: Option<&mut Vec<usize>>,
+) -> (Document, Vec<&'a str>, usize) {
+    let body = if is_org {
+        content.trim_end_matches('\n')
+    } else {
+        content.strip_suffix('\n').unwrap_or(content)
+    };
     let lines: Vec<&str> = if body.is_empty() {
         Vec::new()
     } else {
         body.split('\n').collect()
     };
-    let headers = outline::headers_or_none(content, OutlineFormat::Markdown);
-    let first = headers.first().map_or(lines.len(), |header| header.line);
-    let mut pre_end = first;
-    while pre_end > 0 && lines[pre_end - 1].trim().is_empty() {
-        pre_end -= 1;
+    let mut pre = headers.first().map_or(lines.len(), |header| header.line);
+    while !is_org && pre > 0 && lines[pre - 1].trim().is_empty() {
+        pre -= 1;
     }
-    let opts = layout(content, &lines, &headers);
+    let removed = removed.map(|r| {
+        r.resize(lines.len(), 0);
+        r.as_mut_slice()
+    });
     let document = Document {
-        pre_block: (pre_end > 0).then(|| lines[..pre_end].join("\n")),
-        roots: outline::blocks(&lines, &headers, false),
+        pre_block: (pre > 0).then(|| lines[..pre].join("\n")),
+        roots: outline::blocks(&lines, headers, is_org, removed),
     };
-    (document, opts)
+    (document, lines, pre)
 }
 
 /// Whether lsdoc reads `line` alone as an unbulleted Markdown ATX heading

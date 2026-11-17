@@ -323,7 +323,14 @@ pub fn physical_outline(
     };
     let headers =
         crate::outline::headers(&crate::org::lone_cr_to_lf(text), format).unwrap_or_default();
-    crate::outline::native_ranges(text, &headers)
+    let map = crate::doc::SourceMap::new(text, &[], Vec::new(), &headers, 0);
+    (headers.iter().enumerate())
+        .map(|(i, h)| {
+            let start = map.block_start(i).unwrap();
+            let end = map.block_start(i + 1).unwrap_or(text.len());
+            (start..end, start + h.prefix_len, h.level, h.content_indent)
+        })
+        .collect()
 }
 
 /// Prepare the physical span rewrite with its checked complete-text certificate

@@ -350,6 +350,31 @@ pub fn alias_syntax(s: &str) -> bool {
     })
 }
 
+/// The fragments of an alias declaration that this certificate cannot accept
+/// as declaration syntax, so a merge that combines the declaration must keep
+/// them: before the `value`, unless it is an alias key; between member
+/// `tokens` and after the last, unless alias syntax. Native ranges of `text`;
+/// `line` is the declaration's line without its structural prefix. O(bytes).
+pub fn alias_nonsyntax(
+    text: &str,
+    line: Range<usize>,
+    value: usize,
+    tokens: &[Range<usize>],
+) -> Vec<Range<usize>> {
+    let mut out = Vec::new();
+    if !alias_key(&text[line.start..value]) {
+        out.push(line.start..value);
+    }
+    let mut at = value;
+    for token in tokens.iter().chain([&(line.end..line.end)]) {
+        if !alias_syntax(&text[at..token.start]) {
+            out.push(at..token.start);
+        }
+        at = token.end;
+    }
+    out
+}
+
 /// The whitespace a blank line or an indentation may hold here: the mldoc
 /// indentation alphabet (parsers.ml:8,17), never other Unicode spaces.
 const SPACE: [char; 4] = [' ', '\t', '\u{c}', '\u{1a}'];

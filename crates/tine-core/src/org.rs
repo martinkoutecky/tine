@@ -76,24 +76,8 @@ pub fn parse_org(content: &str) -> Document {
     if content.trim_end_matches('\n').is_empty() {
         return Document::default();
     }
-    parse_org_with(
-        content,
-        &outline::headers_or_none(content, OutlineFormat::Org),
-    )
-}
-
-/// [`parse_org`] of LF text `content` whose outline `headers` the caller has.
-pub(crate) fn parse_org_with(content: &str, headers: &[outline::Header]) -> Document {
-    let body = content.trim_end_matches('\n');
-    if body.is_empty() {
-        return Document::default();
-    }
-    let lines: Vec<&str> = body.split('\n').collect();
-    let first = headers.first().map_or(lines.len(), |header| header.line);
-    Document {
-        pre_block: (first > 0).then(|| lines[..first].join("\n")),
-        roots: outline::blocks(&lines, headers, true),
-    }
+    let headers = outline::headers_or_none(content, OutlineFormat::Org);
+    crate::doc::document_of(content, &headers, true, None).0
 }
 
 /// Serialize a [`Document`] to org text with one trailing newline (the common

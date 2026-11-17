@@ -124,10 +124,22 @@ input; checks of assembled output name the survivor. `BodyLaw`,
 `DirectiveEscape` and `MissingNativeNameRange` can occur in ordinary files.
 Each source root supplies its own indentation offset for its subtree. Removal
 is bounded by each block line's reader-owned layout: leading whitespace before
-the marker, or the continuation prefix returned by `doc::continuation_raw`.
-The next root chooses its own offset. `tine_core::doc::native::NativeDocument`
-exposes the document reader's tree, native payload ranges, header fields and
-alias members, prose, removable prefixes and line endings. Input descriptions
+the marker, or the continuation dedent the reader removed.
+The next root chooses its own offset. The document reader returns its own
+source map (`tine_core::doc::SourceMap`, built in the same outline pass): each
+physical line's native range, the bytes the reader removed in front of each
+line it read, each line's offset in its owner's text (pre-block or block
+`raw`), and each block's lines and indentation. `doc::native::NativeDocument`
+assembles, per header line, the fields, drawers and alias members the reader
+found, placed through that map, plus prose and line endings. Merge policy
+stays with the writer: its partition cuts, the join terminator, the
+removable prefixes of indented roots, the insertion point of joined fields
+(after the survivor's last nonblank header line, blank as the reader reads
+it) and the output's directive check. The certificate (`text_trace`) owns
+which alias fragments are syntax (`alias_nonsyntax`). An Org header entry's
+references, which the leftover check compares, are the rename's own reading
+of the entry: a field in its original context, and an edited entry or a
+non-field line read as it will stand on its own. Input descriptions
 come from the rename reader's existing outline pass. Allocation places those
 ranges; it does not recognize Markdown or Org. One output read checks the
 intended header, block content, order and tree. The writer compares every placed block's
@@ -152,8 +164,18 @@ Header checking costs O(header bytes), uses the same native description as the
 body comparison, and retains temporary intended header text until comparison.
 There is one outline read per input and one for the output, including mapped
 titles; native title coordinates are carried to the title span writer. A Rust
-syntax-tree guard rejects parser entries, input line scans and input text
-predicates in the merge writer. P2 independently
+syntax-tree guard allow-lists every method, called function and macro the
+merge writer uses (some only on a fixed receiver or argument), and rejects
+cfg-attributed production modules, renamed function imports, macro
+definitions and byte literals. It has no types and does not look inside
+macros or at operators, so it bounds the writer's named operations, not every
+possible reading of its inputs.
+The writer's acceptance certifies placement: the output reads as the header
+intent and blocks it emitted. It does not certify the meaning of what it
+emitted: an emitter fault that writes a member outside the alias union
+(`alias:: A, B, Ghost`) corrupts output and intent alike. Only P2, the
+independent model check, certifies the alias union and every other meaning,
+and it refuses such a survivor before any write. P2 independently
 checks the final allocated header and body.
 Only layout bytes are consumed, through the existing trace; P2/P3 still check
 the result. Prefixes crossing a rewritten name span and remaining unrealizable

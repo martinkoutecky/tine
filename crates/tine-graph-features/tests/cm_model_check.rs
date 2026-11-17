@@ -1429,6 +1429,31 @@ fn a_merge_survivors_united_aliases_are_checked() {
     }
 }
 
+/// The review's Ghost mutation, at the transaction: a survivor whose united
+/// alias declaration names a member the union does not hold
+/// (`alias:: X, B, Ghost`). The writer's own acceptance compares placement
+/// with the header intent it emitted, so a fault in the field emitter would
+/// corrupt both alike; only the independent model check certifies the union's
+/// meaning, and it refuses the step with P2 before any write.
+#[test]
+fn a_survivor_alias_member_outside_the_union_is_refused() {
+    let _guard = crate::integration_lock();
+    let (root, store) = fixture(
+        "check-ghost-member",
+        &[
+            ("pages/A.md", &format!("alias:: B, Gh{BUG}ost\n- source\n")),
+            ("pages/B.md", "alias:: X\n- target\n"),
+        ],
+    );
+    let before = snapshot(&root);
+    let app_data = tempfile::tempdir().unwrap();
+    let host = tine_store::PageHost::start_for_tests(&store, app_data.path()).unwrap();
+    let error = tine_graph_features::pages::merge_pages(&store, &host, "pages/A.md", "pages/B.md")
+        .unwrap_err();
+    assert_eq!(CheckRefused::of(&error), Some(&p2("pages/B.md")), "{error}");
+    assert_eq!(snapshot(&root), before, "a refusal writes nothing");
+}
+
 /// The merge that renames nothing (`pages::merge_pages`, the model's empty
 /// plan): its survivor is checked the same way.
 #[test]

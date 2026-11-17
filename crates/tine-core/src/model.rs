@@ -190,47 +190,19 @@ pub(crate) fn title_name_span(content: &str, format: Format) -> Option<std::ops:
     {
         return None;
     }
-    let org = format == Format::Org;
-    let normalized = crate::doc::normalize_line_endings(content);
-    let (doc, headers) = crate::doc::parse_outlined(&normalized, org);
+    let read = crate::doc::parse_outlined(content, format == Format::Org, true);
+    let doc = &read.document;
     let raw = crate::page_header::page_header_text(
         doc.pre_block.as_deref(),
         doc.roots.first().map(crate::doc::DocBlock::raw),
     )?;
-    let regions = crate::block_regions::parse_document(raw, org);
-    let property = title_property_in(&regions)?;
-    let value = property.value_range.0..property.value_range.1;
-    // Only coordinates are translated here: the parser owns both the header
-    // selection and property recognition. A native property value is one line.
-    let line = raw[..value.start].bytes().filter(|b| *b == b'\n').count();
-    let column = raw[..value.start].rsplit('\n').next()?.len();
-    let (physical_line, indent) = if doc.pre_block.is_some() {
-        (line, 0)
-    } else {
-        let header = headers.first()?;
-        (
-            header.line + line,
-            if line == 0 {
-                header.prefix_len
-            } else {
-                header.content_indent
-            },
-        )
-    };
-    let (start, text) = crate::doc::physical_lines(content)
-        .scan(0, |at, text| {
-            let start = *at;
-            *at += text.len();
-            Some((start, text))
-        })
-        .nth(physical_line)?;
-    let skip = if doc.pre_block.is_none() && line == 0 {
-        indent
-    } else {
-        text.len() - crate::outline::strip_layout_ws(text, indent).len()
-    };
-    let start = start + skip + column;
-    Some(start..start + value.len())
+    let regions = crate::block_regions::parse_document(raw, format == Format::Org);
+    let value = &title_property_in(&regions)?.value_range;
+    let (from, to) = (value.0, value.1);
+    // The parser owns the header selection and property recognition; the
+    // reader's source map places its offset. A native property value is one line.
+    let start = read.map?.native(doc.pre_block.is_none().then_some(0), from);
+    Some(start..start + to - from)
 }
 
 fn page_title_line_before(content: &str, format: Format, end: usize) -> Option<TitleLine> {

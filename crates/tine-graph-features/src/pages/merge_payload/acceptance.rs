@@ -1,7 +1,7 @@
 //! One comparison of allocation's intended description with the output reader.
 use super::{Header, MergePart, RealizationError, RealizationFailure, Writer};
 use std::collections::HashMap;
-use tine_core::{doc::native::NativeBlock, refs, DocBlock};
+use tine_core::{lsdoc::ast::Block, refs, DocBlock};
 
 #[cfg(test)]
 #[path = "../merge_acceptance_tests.rs"]
@@ -61,6 +61,7 @@ impl Intended {
         w: &Writer,
         inputs: &[Header; 2],
         leftover: &[usize],
+        indented: bool,
         normalize: bool,
         org: bool,
         target: &str,
@@ -85,13 +86,21 @@ impl Intended {
             dst.document.roots.len() - usize::from(normalize) + usize::from(dst.prose.is_some());
         let source_roots = src.document.roots.len() - usize::from(src.first_root)
             + usize::from(src.prose.is_some());
-        if org && !leftover.is_empty() && read.has_directive(target_roots) {
+        // The leftover quote must own its lines: a top-level Org directive in
+        // that output root, outside its literal regions, escaped it.
+        let directive = |root: &DocBlock| {
+            let is_directive = |b: &Block| matches!(b, Block::Directive { .. });
+            let ast = tine_core::render::parse_text_bounded(root.raw(), true);
+            ast.is_none_or(|ast| ast.blocks.iter().any(is_directive))
+        };
+        let quoted = read.document.roots.get(target_roots);
+        if org && !leftover.is_empty() && quoted.is_some_and(directive) {
             return Err(RealizationError::DirectiveEscape.at(MergePart::Source));
         }
         if read.document.roots.len()
             != target_roots + usize::from(!leftover.is_empty()) + source_roots
         {
-            return Err(if !src.body.prefixes.is_empty() {
+            return Err(if indented {
                 RealizationError::IndentedBody.at(MergePart::Source)
             } else {
                 refused()
@@ -101,7 +110,7 @@ impl Intended {
             prose(w, 0, dst, roots.next().unwrap(), &mut scratch)?;
         }
         let skip = usize::from(normalize);
-        let mut native = dst.body.blocks[skip..].iter();
+        let mut native = skip;
         let mut target_count = 0;
         for (n, original) in dst.document.roots[skip..].iter().enumerate() {
             target_count += tree(
@@ -109,14 +118,14 @@ impl Intended {
                 0,
                 original,
                 roots.next().unwrap(),
+                dst,
                 &mut native,
                 dst.first_root && !normalize && n == 0,
                 &mut scratch,
             )?;
         }
-        let mut source_native = src.body.blocks.iter();
+        let mut source_native = usize::from(src.first_root);
         let source_children = if src.first_root {
-            source_native.next();
             src.document.roots[0].children.as_slice()
         } else {
             &[]
@@ -142,7 +151,7 @@ impl Intended {
                 return Err(RealizationError::BodyLaw.at(MergePart::Source));
             }
             for (a, b) in source_children.iter().zip(&actual.children) {
-                child_count += tree(w, 1, a, b, &mut source_native, false, &mut scratch)?;
+                child_count += tree(w, 1, a, b, src, &mut source_native, false, &mut scratch)?;
             }
             if org {
                 let mut required = HashMap::new();
@@ -176,6 +185,7 @@ impl Intended {
                 1,
                 original,
                 roots.next().unwrap(),
+                src,
                 &mut source_native,
                 false,
                 &mut scratch,
@@ -251,22 +261,24 @@ fn tree(
     file: usize,
     original: &DocBlock,
     actual: &DocBlock,
-    native: &mut std::slice::Iter<'_, NativeBlock>,
+    h: &Header,
+    block: &mut usize,
     header: bool,
     raw: &mut String,
 ) -> Result<usize, RealizationFailure> {
     let refused = || RealizationError::BodyLaw.at(file.into());
-    let block = native.next().ok_or_else(refused)?;
-    if block.children != actual.children.len() {
+    let lines = h.map.block(*block);
+    *block += 1;
+    if original.children.len() != actual.children.len() {
         return Err(refused());
     }
     if !header {
         raw.clear();
-        for (n, r) in block.lines.iter().enumerate() {
-            if n > 0 {
+        for i in lines.clone() {
+            if i > lines.start {
                 raw.push('\n');
             }
-            append(w, file, r.clone(), raw)?;
+            append(w, file, h.map.payload(i), raw)?;
         }
         if raw != actual.raw() {
             return Err(refused());
@@ -274,7 +286,7 @@ fn tree(
     }
     let mut count = 1;
     for (a, b) in original.children.iter().zip(&actual.children) {
-        count += tree(w, file, a, b, native, false, raw)?;
+        count += tree(w, file, a, b, h, block, false, raw)?;
     }
     Ok(count)
 }

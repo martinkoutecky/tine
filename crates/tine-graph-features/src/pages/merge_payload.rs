@@ -10,7 +10,7 @@ use tine_core::{
     doc::native::{NativeDocument as Header, NativeLine as Line},
     model::PageDto,
     refs,
-    text_trace::{Placement, Role, TextTrace, TraceError},
+    text_trace::{self, Placement, Role, TextTrace, TraceError},
 };
 mod acceptance;
 
@@ -117,6 +117,70 @@ fn members(line: &Line) -> bool {
     line.alias.as_ref().is_some_and(|a| !a.names.is_empty())
 }
 
+/// Where the survivor's body ends with one terminator: Org omits all final
+/// line breaks from its last block's content; the join keeps one original
+/// terminator and the remaining unread breaks are layout (O6/P4).
+fn join_end(h: &Header) -> usize {
+    h.map.read_end().max(h.end)
+}
+
+/// Markdown root blocks indented in the file: the layout prefix of each body
+/// line that normalizing a root's subtree to column 0 removes (P4), and the
+/// lines visited. The source map gives each block's indentation and dedent.
+fn body_prefixes(h: &Header, org: bool) -> (Vec<Range<usize>>, usize) {
+    fn size(b: &tine_core::DocBlock) -> usize {
+        1 + b.children.iter().map(size).sum::<usize>()
+    }
+    let (map, mut prefixes, mut lines, mut n) = (&h.map, Vec::new(), 0, 0);
+    for root in h.document.roots.iter().filter(|_| !org) {
+        let (offset, blocks) = (map.indent(n), n..n + size(root));
+        n = blocks.end;
+        for (k, i) in blocks.flat_map(|k| map.block(k).map(move |i| (k, i))) {
+            let at = map.line(i).start;
+            if at >= h.end && offset > 0 {
+                lines += 1;
+                let first = i == map.block(k).start;
+                let layout = if first { map.indent(k) } else { map.removed(i) };
+                if offset.min(layout) > 0 {
+                    prefixes.push(at..at + offset.min(layout));
+                }
+            }
+        }
+    }
+    (prefixes, lines)
+}
+
+/// The writer's partition of an input: every boundary the description names
+/// (header lines, fields, alias members, prose lines, body payloads, removable
+/// prefixes), so each placement is whole pieces; a drawer frame line stays
+/// whole with its terminator. O(boundaries).
+fn cuts(h: &Header, prefixes: &[Range<usize>]) -> Vec<usize> {
+    let map = &h.map;
+    let mut cuts = vec![h.end, join_end(h)];
+    if let Some(p) = &h.prose {
+        let lines = (map.line_at(p.start)..map.lines().end).map(|i| map.line(i));
+        let header = lines.take_while(|l| l.start < h.end);
+        cuts.extend([p.start, p.end]);
+        cuts.extend(header.map(|l| l.end.min(h.end)));
+    }
+    for l in &h.lines {
+        cuts.extend([l.range.start, l.content.start, l.content.end]);
+        if !l.frame {
+            cuts.push(l.payload.end);
+        }
+        if let Some(a) = &l.alias {
+            cuts.extend([a.value, l.unterminated_end]);
+            let members = a.names.iter().map(|(_, r)| r).chain(&a.tokens);
+            cuts.extend(members.flat_map(|r| [r.start, r.end]));
+        }
+    }
+    let blocks = (0..).take_while(|&n| map.block_start(n).is_some());
+    let lines = blocks.flat_map(|n| map.block(n));
+    cuts.extend(lines.flat_map(|i| [map.payload(i).start, map.end(i)]));
+    cuts.extend(prefixes.iter().flat_map(|r| [r.start, r.end]));
+    cuts
+}
+
 struct Writer {
     trace: TextTrace,
     text: String,
@@ -171,18 +235,26 @@ impl Writer {
             .interval(file, range)
             .map_err(|error| RealizationError::Trace(error).at(file.into()))
     }
-    /// Promote exactly the input reader's prose range. Its excluded suffix is
-    /// layout; no writer-owned blank-line rule determines content.
+    /// Promote exactly the input reader's prose range, with its last line's
+    /// terminator. Its excluded suffix is layout; no writer-owned blank-line
+    /// rule determines content.
     fn prose(&mut self, file: usize, header: &Header, org: bool) -> Result<(), RealizationFailure> {
+        let (p, map) = (header.prose.clone().unwrap(), &header.map);
         self.insert(if org { "* " } else { "- " });
-        for (n, line) in header.prose_lines.iter().enumerate() {
-            self.original(file, line.clone())?;
-            if n + 1 < header.prose_lines.len() && !org {
+        let lines = (map.line_at(p.start)..map.lines().end).map(|i| map.line(i));
+        for (n, line) in lines.take_while(|l| l.start < p.end).enumerate() {
+            if n > 0 && !org {
                 self.insert("  ");
             }
+            self.original(file, line.start.max(p.start)..line.end.min(p.end))?;
         }
-        self.original(file, header.prose_separator.clone())?;
-        self.layout(file, header.prose_separator.end..header.end)?;
+        let mut separator = p.end;
+        if p.end < header.end {
+            let last = map.line_at(p.end);
+            separator += map.line(last).end - map.end(last);
+        }
+        self.original(file, p.end..separator)?;
+        self.layout(file, separator..header.end)?;
         self.newline();
         Ok(())
     }
@@ -353,12 +425,14 @@ pub fn propose<'f>(
         refs::rename_described_proposal(source_text, org, links, queries, format)
             .map_err(|e| RealizationError::Trace(e).at(MergePart::Source))?;
     let mut headers = [target_read, source_read];
+    let prefixes = headers.each_ref().map(|h| body_prefixes(h, org));
     #[cfg(test)]
     {
         DRAWER_STEPS
             .with(|n| n.set(n.get() + headers.iter().map(|h| h.drawer_steps).sum::<usize>()));
-        BODY_LINES.with(|n| n.set(n.get() + headers[1].body.normalization_lines));
+        BODY_LINES.with(|n| n.set(n.get() + prefixes[1].1));
     }
+    let prefixes = prefixes.map(|p| p.0);
     for (file, header) in headers.iter().enumerate() {
         // The reader can report a malformed preamble property both as a field
         // and inside its prose. Realizing both would duplicate original bytes.
@@ -382,10 +456,7 @@ pub fn propose<'f>(
     // realize it as a native preamble now (P4: header position is free).
     let normalize_target =
         !org && headers[0].first_root && headers[0].document.roots[0].children.is_empty();
-    // Org omits all final line breaks from its last block's content. Keep
-    // one original terminator at the join and consume only the remaining
-    // unobserved breaks as layout (O6/P4).
-    let target_end = headers[0].join_end;
+    let target_end = join_end(&headers[0]);
     let mut trace = TextTrace::default();
     let mut unrealized = Vec::new();
     let mut rewritten = HashSet::new();
@@ -411,7 +482,7 @@ pub fn propose<'f>(
                 .collect();
             if file == 1 {
                 let mut edit = 0;
-                for prefix in &headers[1].body.prefixes {
+                for prefix in &prefixes[1] {
                     while edit < edits.len() && edits[edit].0.end <= prefix.start {
                         edit += 1;
                     }
@@ -432,7 +503,7 @@ pub fn propose<'f>(
                 }
             }
             let start = trace.pieces.len();
-            trace.add_input(text, &edits, &headers[file].cuts)?;
+            trace.add_input(text, &edits, &cuts(&headers[file], &prefixes[file]))?;
             let wrappers: HashSet<_> = proposal
                 .trace
                 .wrappers
@@ -451,7 +522,9 @@ pub fn propose<'f>(
                 // a file link includes its label, path and wrappers. Only the
                 // syntax between reader-owned tokens is a delimiter.
                 let mut names = a.tokens.iter().peekable();
-                let mut protected = a.protected.iter().peekable();
+                let protected =
+                    text_trace::alias_nonsyntax(text, line.content.clone(), a.value, &a.tokens);
+                let mut protected = protected.iter().peekable();
                 for id in trace.interval(file, line.content.clone())? {
                     let r = trace.pieces[id].range.clone();
                     while protected.peek().is_some_and(|p| p.end <= r.start) {
@@ -616,7 +689,10 @@ pub fn propose<'f>(
         .collect();
     let target_close = headers[0].drawers.last().map(|d| d.1);
     let new_drawer = target_close.is_none() && !boxed.is_empty();
-    let header_insert = headers[0].header_insert;
+    // Joining fields go after the survivor's last nonblank header line; its
+    // trailing blank lines stay where they are (P4).
+    let survivor = &headers[0].lines;
+    let header_insert = survivor.iter().rposition(|l| !l.blank).map_or(0, |n| n + 1);
     // Each survivor line keeps its own reader-derived prefix. Normalizing a
     // childless header consumes those prefixes; layout never takes a slot.
     let emitted = |n: usize, line: &Line| !members(line) || retained == Some((0, n));
@@ -755,7 +831,7 @@ pub fn propose<'f>(
         w.prose(1, &headers[1], org)?;
     }
     let mut at = headers[1].end;
-    for prefix in &headers[1].body.prefixes {
+    for prefix in &prefixes[1] {
         w.original(1, at..prefix.start)?;
         w.layout(1, prefix.clone())?;
         at = prefix.end;
@@ -772,6 +848,7 @@ pub fn propose<'f>(
         &w,
         &headers,
         &leftover_lines,
+        !prefixes[1].is_empty(),
         normalize_target,
         org,
         &target.name,

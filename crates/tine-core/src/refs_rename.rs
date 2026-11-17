@@ -383,7 +383,7 @@ pub(crate) fn proposal(
     is_org: bool,
     renames: &Renames<'_>,
 ) -> Result<RenameProposal, TraceError> {
-    proposal_read(text, is_org, renames, |_, _| ()).map(|(proposal, ())| proposal)
+    proposal_read(text, is_org, renames, false, |_, _| ()).map(|(proposal, ())| proposal)
 }
 
 pub(crate) fn described_proposal(
@@ -391,9 +391,9 @@ pub(crate) fn described_proposal(
     is_org: bool,
     renames: &Renames<'_>,
 ) -> Result<(RenameProposal, crate::doc::native::NativeDocument), TraceError> {
-    let (mut proposal, (doc, headers)) =
-        proposal_read(text, is_org, renames, |doc, headers| (doc, headers))?;
-    let mut native = crate::doc::native::NativeDocument::from_outlined(text, is_org, doc, &headers);
+    let (mut proposal, mut native) = proposal_read(text, is_org, renames, true, |doc, map| {
+        crate::doc::native::NativeDocument::from_read(text, is_org, doc, map.expect("mapped read"))
+    })?;
     if let Some(mapped) = native.title.as_ref().and_then(|title| {
         crate::refs::renamed_page_name(title, renames.pages).map(|n| n.into_owned())
     }) {
@@ -402,20 +402,96 @@ pub(crate) fn described_proposal(
         }
     }
     if is_org {
-        native.map_header_references(text, &proposal.trace)?;
+        standing_header_references(&mut native, text, &proposal.trace)?;
     }
     Ok((proposal, native))
+}
+
+/// The references an Org header entry carries where a merge places it alone
+/// (O6's leftover): an entry this rename edits, and a non-field line, are
+/// read as they will stand, the edited text in its own drawer, through the
+/// pre-block reader. A non-field line can sit inside a construct its
+/// neighbours open (a quote), which its leftover line leaves; a whole-title
+/// replacement can remove or introduce inner references. An unedited field
+/// keeps the document reader's reading in context. Linear in header lines
+/// and read entry bytes; transient entry buffers.
+fn standing_header_references(
+    native: &mut crate::doc::native::NativeDocument,
+    text: &str,
+    trace: &crate::text_trace::TextTrace,
+) -> Result<(), TraceError> {
+    let edits: Vec<_> = trace
+        .pieces
+        .iter()
+        .enumerate()
+        .take_while(|(_, p)| p.range.start < native.end)
+        .filter_map(|(id, p)| trace.substitution.get(&id).map(|s| (&p.range, s)))
+        .collect();
+    let mut cursor = 0;
+    for n in 0..native.lines.len() {
+        let (line, edit) = (&native.lines[n], |c: usize| edits.get(c).map(|(r, _)| *r));
+        while edit(cursor).is_some_and(|r| r.end <= line.content.start) {
+            cursor += 1;
+        }
+        let field = line.property.is_some() || line.drawer.is_some() || line.frame || line.blank;
+        if field && !edit(cursor).is_some_and(|r| r.start < line.content.end) {
+            continue;
+        }
+        let mut raw = String::new();
+        let drawer = line.drawer.map(|d| native.drawers[d]);
+        if let Some((open, _)) = drawer {
+            raw.push_str(&text[native.lines[open].content.clone()]);
+        }
+        let mut at = line.content.start;
+        while let Some((range, value)) = edits
+            .get(cursor)
+            .filter(|(r, _)| r.start < line.content.end)
+        {
+            if range.start < at || range.end > line.content.end {
+                return Err(TraceError::Partition);
+            }
+            raw.push_str(&text[at..range.start]);
+            raw.push_str(value);
+            at = range.end;
+            cursor += 1;
+        }
+        let close = drawer.map(|(_, close)| native.lines[close].content.clone());
+        for part in [Some(at..line.content.end), close].into_iter().flatten() {
+            raw.push_str(&text[part]);
+            if crate::doc::line_terminator(&raw).is_empty() {
+                raw.push('\n');
+            }
+        }
+        let raw = crate::org::lone_cr_to_lf(&raw);
+        let entries = crate::page_properties::pre_block_projections(&raw, true);
+        let mut references = Vec::new();
+        for (_, block) in entries {
+            for r in block.projection().reference_source().explicit {
+                if !matches!(r.rule, "explicit_task_marker" | "explicit_priority") {
+                    let (name, rule) = (r.name.clone(), r.rule);
+                    references.push(crate::doc::native::NativeReference { name, rule });
+                }
+            }
+        }
+        native.lines[n].references = references;
+    }
+    Ok(())
 }
 
 fn proposal_read<T>(
     text: &str,
     is_org: bool,
     renames: &Renames<'_>,
-    carry: impl FnOnce(crate::doc::Document, Vec<crate::outline::Header>) -> T,
+    mapped: bool,
+    carry: impl FnOnce(crate::doc::Document, Option<crate::doc::SourceMap>) -> T,
 ) -> Result<(RenameProposal, T), TraceError> {
     let readings = crate::reference_evidence::RenameReadings::default();
-    let lf = crate::doc::normalize_line_endings(text);
-    let (doc, headers) = crate::doc::parse_outlined(&lf, is_org);
+    let crate::doc::Outlined {
+        lf,
+        document: doc,
+        headers,
+        map,
+    } = crate::doc::parse_outlined(text, is_org, mapped);
     let format = if is_org {
         crate::model::Format::Org
     } else {
@@ -485,7 +561,7 @@ fn proposal_read<T>(
             rewritten,
             observed: Some(std::sync::Arc::new(observed)),
         },
-        carry(doc, headers),
+        carry(doc, map),
     ))
 }
 
