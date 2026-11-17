@@ -194,7 +194,8 @@ fn header_rows<'p>(
 
 /// O6's "any other header text": each non-blank line of the header `block`
 /// (the pre-block through its last page property) that is neither a property
-/// line nor inside a property drawer, e.g. Org prose before a directive. It
+/// line nor inside an Org property drawer, e.g. Org prose before a directive
+/// or a Markdown `#tag:: x` line in the first property node. It
 /// has no key and stays in line order among the property rows.
 fn other_header_text(
     block: &DocBlock,
@@ -222,8 +223,10 @@ fn other_header_text(
             super::step();
             drawers.next();
         }
+        // A Markdown property node's line that is no page property (a `#`
+        // key, a folded `#+` line) is header text, never silently unread.
         let covered = properties.peek().is_some_and(|p| p.line.0 <= at)
-            || drawers.peek().is_some_and(|g| g.0 <= at);
+            || (r.org && drawers.peek().is_some_and(|g| g.0 <= at));
         let text = line.trim_end_matches(['\n', '\r']);
         if !text.trim().is_empty() && !covered {
             let sites = sites.get_or_init(|| block_sites(block, r));

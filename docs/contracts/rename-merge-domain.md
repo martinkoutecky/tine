@@ -157,11 +157,12 @@ Joined fields use their input reader's payload coordinates and the destination's
 native header syntax. The writer records allocation's intended logical lines,
 including the united alias tokens, and checks the output reader's header for
 exact payload, field order, normalized keys and native property forms. Any
-unexpected pre-block prose refuses `BodyLaw` naming the survivor. An input whose
-reader reports a field inside its pre-block prose refuses `HeaderProseOverlap`
-(`headerProseOverlap` in the window), naming that input: preserving both readings
-would duplicate original bytes. Its window and command-line explanation asks
-for blank lines before or between the opening property lines to be removed.
+unexpected pre-block prose refuses `BodyLaw` naming the survivor. An input's
+header fields and its pre-block prose never overlap: both are read from one
+answer, the parser's page properties (Markdown: OG's first top-level property
+node before the first block; Org: the top-level directives before the first
+headline and the head drawer), and the prose starts after the node holding the
+last of them.
 Header checking costs O(header bytes), uses the same native description as the
 body comparison, and retains temporary intended header text until comparison.
 There is one outline read per input and one for the output, including mapped
@@ -226,7 +227,6 @@ uncontested source identities to one destination path.
 | Legal encoding or partition | Required edits cannot be represented by the supported nonoverlapping native name spans and encodings, including an edit outside a title producer's kept tail. |
 | Whole-day header representation | Active day aliases span distinct native header blocks and cannot be retained by the single-header certificate. |
 | Missing native name range (`F-LINK`) | A required member lacks a contiguous parser-owned name run, such as a Markdown tag with an escape (`#a\_b`, member `a_b`), or a combined alias declaration holds text (such as a file link, `alias:: [x](A.md), B`) that is neither a member nor alias syntax. Escaped members with truthful native slots remain covered. |
-| Header/prose overlap (`HeaderProseOverlap`) | The input reader reports an opening property both as a header entry and inside prose. Preserving both would duplicate its native bytes. Remove blank lines before or between the opening property lines, save and retry. |
 | Fused line ending (`Q4`) | Assembly would form CRLF from unrelated original CR and LF coordinates, or an inserted half would borrow an original ending. Mixed endings alone do not refuse. |
 | Header children (`HeaderChildren`, model `headerChildren`) | Blocks hang under the source's header and the header leaves no leftover line to hold them: writing would lose their parent. |
 | Leftover reference (`HiddenOccurrence`, model `leftoverReference`) | Tine reads the Org leftover block's references differently from the leftover lines where they came from (a clashing drawer entry with a reference, its key being one, loses its drawer). Writing would lose or add references a user made. |

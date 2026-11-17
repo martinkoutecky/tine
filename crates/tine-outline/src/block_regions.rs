@@ -503,8 +503,31 @@ fn mapped_regions(raw: &str, is_org: bool, blocks: &[Block], document: bool) -> 
     exclude_literals(&mut result.planning, &result.literals, |p| p.line.0);
     exclude_literals(&mut result.drawers, &result.literals, |p| p.range.0);
     let own = result.own_org_region(raw);
+    // The one owner of where a page header ends (OG `block.cljs
+    // extract-blocks`): only top-level nodes before the first block count. A
+    // Markdown file's page properties are the first property node there (the
+    // earliest wins; a later node is prose); Org's are the directives there
+    // and the head drawer. A `#` key stays a property, as in a block (OG's
+    // `valid-property-name?` drops it from both; a named difference).
+    let (mut top, mut first_node) = (Vec::new(), None);
+    for b in blocks
+        .iter()
+        .take_while(|b| !matches!(b, Block::Bullet { .. } | Block::Heading { .. }))
+    {
+        if let Block::Properties { span, .. } | Block::Directive { span, .. } = b {
+            let r = raw_range(raw, span, true).map(|r| whole_line(raw, r));
+            top.extend(r);
+            first_node = first_node.or(r.filter(|_| matches!(b, Block::Properties { .. })));
+        }
+    }
     for p in &mut result.properties {
-        p.primary = p.primary && (!is_org || Some(p.region) == own);
+        let region = result.property_regions[p.region];
+        p.directive &= !(document && is_org) || top.contains(&region);
+        p.primary &= if is_org {
+            Some(p.region) == own
+        } else {
+            !document || Some(region) == first_node
+        };
     }
     result.id = result
         .properties
@@ -724,37 +747,16 @@ fn visit_inline(raw: &str, inline: &[Inline], document: bool, out: &mut BlockReg
     }
 }
 
-/// One Markdown page-header property: the parser's accepted key and value, its
-/// 0-based line index, and the byte range of its line without the newline.
-#[derive(Debug, Clone, PartialEq, Serialize)]
-pub struct HeaderEntry {
-    pub key: String,
-    pub value: String,
-    pub line: usize,
-    pub start: usize,
-    pub end: usize,
-}
+pub use crate::page_preamble::{page_header, page_header_in, HeaderEntry, PageHeader};
 
-/// Leading Markdown page-header properties (see [`page_header`]).
-#[derive(Debug, Clone, Default, PartialEq, Serialize)]
-pub struct PageHeader {
-    /// Byte end of the last header line, newline excluded; 0 with no entries.
-    pub end: usize,
-    pub entries: Vec<HeaderEntry>,
-}
-
-pub use crate::page_preamble::{page_header, page_header_in};
-
-/// The page header of `raw` when the text is nothing but header properties (no
-/// leading or trailing newline, at least one entry). Single answerer (I-12) for
-/// "is this first block a page-properties block": a header line is a parser
-/// property, so `key::value` (no space) and literal-fence content are prose.
+/// The page header of `raw` when every line of the text is a page property
+/// (at least one). Single answerer (I-12) for "is this first block a
+/// page-properties block": a header line is a parser page property, so
+/// `key::value` (no space), literal-fence content, a `#` key and a line after
+/// a blank one (OG reads only the first property node) are not.
 pub fn page_header_only(raw: &str) -> Option<PageHeader> {
-    if raw.is_empty() || raw.starts_with('\n') || raw.ends_with('\n') {
-        return None;
-    }
     let header = page_header(raw);
-    (!header.entries.is_empty() && header.end == raw.len()).then_some(header)
+    header.whole.then_some(header)
 }
 
 #[derive(Debug, Deserialize)]

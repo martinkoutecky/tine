@@ -78,21 +78,6 @@ fn ordinary_merge_limitations_name_the_failing_input_at_the_window_boundary() {
             "aliasSpelling",
             "target",
         ),
-        (
-            "a:: x\n \nb:: y\n",
-            "- target\n",
-            "md",
-            "headerProseOverlap",
-            "source",
-        ),
-        (
-            "- source\n",
-            "a:: x\n \nb:: y\n",
-            "md",
-            "headerProseOverlap",
-            "target",
-        ),
-        ("\na::", "- target\n", "md", "headerProseOverlap", "source"),
     ] {
         let root = tempfile::tempdir().unwrap();
         std::fs::create_dir_all(root.path().join("pages")).unwrap();
@@ -130,14 +115,6 @@ fn ordinary_merge_limitations_name_the_failing_input_at_the_window_boundary() {
                 assert_eq!(wire["refused"]["alias"], "alias:: #a\\_b");
                 assert!(message.contains("alias:: #a\\_b"), "{message}");
             }
-            if kind == "headerProseOverlap" {
-                assert!(message.contains("both properties and prose"), "{message}");
-                assert!(
-                    message.contains("remove blank lines before or between the property lines"),
-                    "{message}"
-                );
-                assert!(!message.contains("top-level blocks"), "{message}");
-            }
             assert_eq!(wire["refused"]["file"], format!("pages/{file}.{ext}"));
             assert!(!message.contains("bug in Tine"), "{message}");
             assert!(message.contains("nothing was merged"), "{message}");
@@ -152,13 +129,7 @@ fn ordinary_merge_limitations_name_the_failing_input_at_the_window_boundary() {
         }
         drop(host);
         drop(store);
-        let repaired = |text: &str| {
-            text.replace("#+END_QUOTE\n", "")
-                .replace("#a\\_b", "a_b")
-                .replace("\n \n", "\n")
-                .trim_start_matches('\n')
-                .to_owned()
-        };
+        let repaired = |text: &str| text.replace("#+END_QUOTE\n", "").replace("#a\\_b", "a_b");
         std::fs::write(root.path().join(&src), repaired(source)).unwrap();
         std::fs::write(root.path().join(&dst), repaired(target)).unwrap();
         let store = std::sync::Arc::new(
@@ -172,11 +143,7 @@ fn ordinary_merge_limitations_name_the_failing_input_at_the_window_boundary() {
         assert!(!root.path().join(&src).exists());
         assert!(std::fs::read_to_string(root.path().join(&dst))
             .unwrap()
-            .contains(if kind == "headerProseOverlap" {
-                "a::"
-            } else {
-                "source"
-            }));
+            .contains("source"));
     }
 }
 
@@ -581,7 +548,6 @@ fn rewrite_boundary_preserves_both_check_failures_and_all_named_merge_refusals()
         (M::HiddenOccurrence, "hiddenOccurrence"),
         (M::SurvivorIdentity, "survivorIdentity"),
         (M::BodyLaw, "bodyLayout"),
-        (M::HeaderProseOverlap, "headerProseOverlap"),
         (M::IndentedBody, "indentedBody"),
         (M::DirectiveEscape, "directiveEscape"),
         (

@@ -24,7 +24,6 @@ pub struct NativeDocument {
     pub end: usize,
     pub first_root: bool,
     pub properties: bool,
-    pub overlapping_prose: bool,
     /// The text before the first block, after the header lines.
     pub prose: Option<Range<usize>>,
     /// The physical lines before `end` (and before the prose).
@@ -129,9 +128,6 @@ impl NativeDocument {
             .pre_block
             .as_deref()
             .and_then(|pre| page_properties::preamble_range_in(pre, org, &regions));
-        let overlapping_prose = prose
-            .as_ref()
-            .is_some_and(|r| regions.page_properties().any(|p| p.line.0 >= r.start));
         let prose = prose.map(|r| map.native(None, r.start)..map.native(None, r.end));
         let has_properties = first_root
             || regions.page_properties().next().is_some()
@@ -257,7 +253,6 @@ impl NativeDocument {
             end,
             first_root,
             properties: has_properties,
-            overlapping_prose,
             prose,
             lines,
             drawers,

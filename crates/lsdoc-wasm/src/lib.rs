@@ -245,7 +245,8 @@ pub fn header_tokens_json(raw: &str, is_org: bool) -> String {
     serde_json::to_string(&block_regions::header_tokens(raw, is_org)).unwrap()
 }
 
-/// Markdown page header (leading accepted properties, see `block_regions::page_header`).
+/// Markdown page header (the parser's page properties, whether they are the
+/// whole text and its first stray line; see `block_regions::page_header`).
 /// O(preamble bytes); no I/O.
 #[wasm_bindgen]
 pub fn page_header_json(raw: &str) -> String {

@@ -119,12 +119,12 @@ pub fn document_page_property_block(doc: &Document) -> Option<DocBlock> {
 /// the page properties as the header block ([`document_page_property_block`])
 /// and reads this prose as the page's first block, which is also what the
 /// page shows (`Page.tsx`) and what editing it promotes it to (GH #85). The
-/// one answer (I-12; CM step 2, batch 8):
-/// - Markdown: `tine_outline::page_preamble::page_preamble_content` (after the leading run
-///   of page properties; the window asks the same function through wasm).
-/// - Org: after the last line of the parser's page properties (directives and
-///   the head drawer). Text between two directives is not read (recorded in
-///   the batch 8 design note).
+/// one answer (I-12) is `tine_outline::page_preamble::preamble_content_range`,
+/// for both formats and the window (through wasm): the text after the parser
+/// node holding the last page property (a later Markdown property node is
+/// prose). Text before it that is not a page property (Org text between
+/// directives, Markdown text before the first property node) is header text,
+/// not read as prose.
 ///
 /// O(pre-block bytes); `None` when there is no prose.
 pub fn preamble_content_range(pre: &str, is_org: bool) -> Option<std::ops::Range<usize>> {

@@ -79,10 +79,15 @@ describe("readPageProperties is the rendered page-property set (B1)", () => {
   });
 
   it("removing the first header key keeps the rest of the header a header", () => {
-    load("Sep", "a:: 1\n\nb:: 2\n\nIntro");
+    load("Sep", "a:: 1\nb:: 2\n\nIntro");
     setPageProperty("Sep", "a", null);
     expect(pre("Sep")).toBe("b:: 2\n\nIntro");
     expect(readPageProperties("Sep")).toEqual([["b", "2"]]);
+  });
+
+  it("a property after a blank line is opening text, never a header key (OG)", () => {
+    load("Gap", "a:: 1\n\nb:: 2\n\nIntro");
+    expect(readPageProperties("Gap")).toEqual([["a", "1"]]);
   });
 
   it("removal clears every case-insensitive duplicate", () => {

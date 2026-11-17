@@ -554,9 +554,13 @@ pub(crate) fn outermost_member(reference: &SlottedPageRef) -> bool {
 /// [`linkable_property_references_in`] selects in its page-property `alias` /
 /// `aliases` lines, read from the header's own block parse exactly as the
 /// model observation and the merge read it. The page header and the frontend
-/// (`lsdoc-wasm`) ask this. O(header bytes), one block parse plus one inline
+/// (`lsdoc-wasm`) ask this. Only the header's page properties count (the
+/// parser's document answer, OG's first property node): a later node is
+/// prose. O(header bytes), one block and one document parse plus one inline
 /// parse and, for a linkable value, one document parse per property.
 pub(crate) fn header_alias_members(raw: &str, is_org: bool) -> Vec<String> {
+    let page = tine_outline::block_regions::parse_document(raw, is_org);
+    let page: Vec<_> = page.page_properties().map(|p| p.line).collect();
     let blocks = tine_outline::lsdoc_block_parse::parse_projection(raw, is_org).blocks;
     let regions = super::block_regions::from_blocks(raw, is_org, &blocks);
     let mut projection = ReferenceSourceProjection::default();
@@ -572,7 +576,7 @@ pub(crate) fn header_alias_members(raw: &str, is_org: bool) -> Vec<String> {
     );
     linkable_property_references_in(slots.iter(), &regions, |r| &r.reference)
         .filter(|(p, r)| {
-            (p.primary || p.directive)
+            page.contains(&p.line)
                 && crate::page_header::is_alias_key(&p.key)
                 && outermost_member(r)
         })

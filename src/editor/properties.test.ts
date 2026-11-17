@@ -22,14 +22,15 @@ const upsertPropertyLine = (block: string | null, key: string, value: string | n
   pagePartsWithProperty([block ?? ""], "md", key, value)[0] || null;
 
 describe("canonical Markdown page-header grammar (GH #163)", () => {
-  it("accepts Unicode/plugin keys and preserves internal blank separators", () => {
+  it("accepts Unicode/plugin keys; a blank line ends the header (OG's first property node)", () => {
     expect(pagePropertyEntries("klíč:: hodnota", "md")).toEqual([{ key: "klíč", value: "hodnota", line: 0 }]);
     expect(pagePropertyEntries("e\u0301/plugin.key:: value", "md").map((e) => e.key)).toEqual(["e\u0301/plugin.key"]);
-    expect(isPageHeaderPropertiesOnly("alias:: book\n\nklíč:: hodnota")).toBe(true);
+    expect(isPageHeaderPropertiesOnly("alias:: book\nklíč:: hodnota")).toBe(true);
+    expect(isPageHeaderPropertiesOnly("alias:: book\n\nklíč:: hodnota")).toBe(false);
     expect(splitPagePreamble("alias:: book\n\nklíč:: hodnota\n\nIntro")).toEqual({
-      properties: "alias:: book\n\nklíč:: hodnota",
-      content: "Intro",
-      remainder: "\n\nIntro",
+      properties: "alias:: book",
+      content: "klíč:: hodnota\n\nIntro",
+      remainder: "\n\nklíč:: hodnota\n\nIntro",
     });
   });
 
@@ -39,14 +40,18 @@ describe("canonical Markdown page-header grammar (GH #163)", () => {
   it("follows the parser for the separating space (no-space key::value is prose)", () => {
     expect(pagePropertyEntries("e\u0301/plugin.key::value", "md")).toEqual([]);
     expect(isPageHeaderPropertiesOnly("alias:: x\nplugin::value")).toBe(false);
-    expect(splitPagePreamble("plugin::value\nalias:: x").properties).toBeNull();
+    // OG (mldoc 1.5.9): the `alias::` node after the prose line is the page's property node; the
+    // prose before it is header text (REG-CM-HEADER-BOUNDARY).
+    expect(pagePropertyEntries("plugin::value\nalias:: x", "md").map((e) => e.key)).toEqual(["alias"]);
+    expect(splitPagePreamble("plugin::value\nalias:: x").properties).toBe("plugin::value\nalias:: x");
     expect(pagePropertyEntries("empty::\nalias:: x", "md").map((e) => [e.key, e.value])).toEqual([["empty", ""], ["alias", "x"]]);
   });
 
-  it("rejects leading whitespace, headings, prose, fences and trailing blanks", () => {
-    for (const raw of [" alias:: x", "#alias:: x", "alias key:: x", "```\na:: b\n```", "alias:: x\nprose", "alias:: x\n"]) {
+  it("rejects headings, prose, fences and trailing blanks; an indented property is one (OG)", () => {
+    for (const raw of ["#alias:: x", "alias key:: x", "```\na:: b\n```", "alias:: x\nprose", "alias:: x\n"]) {
       expect(isPageHeaderPropertiesOnly(raw), raw).toBe(false);
     }
+    expect(isPageHeaderPropertiesOnly(" alias:: x")).toBe(true);
   });
 });
 

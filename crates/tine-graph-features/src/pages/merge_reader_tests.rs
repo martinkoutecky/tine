@@ -135,10 +135,22 @@ fn reader_redesign_preserves_parent_bytes_and_refusal_provenance() {
     // non-member `[x](A.md)` would lose text (P4), so they refuse as
     // `MissingNativeNameRange`; before, they were 600 of 22404 proposals.
     assert_eq!(link_text_kept, 600);
-    assert_eq!((proposals, refusals), (22404 - 600, 4496 + 600));
+    // cm-header-boundary (one owner of where a page header ends, OG's rule)
+    // moved, against the hash 56437893…bf5d: 2220 HeaderProseOverlap to
+    // proposals (Markdown `k:: v`, blank, `b:: y`: `b:: y` is the prose block
+    // now), 228 + 52 HeaderProseOverlap to the BodyLaw / IndentedBody refusals
+    // every prose-headed page with an indented body already gets, 600 BodyLaw
+    // to proposals and 1300 proposals' bytes (an Org `#+K:` inside a quote is
+    // no page property, so the quote stays whole as prose instead of losing
+    // its directive to the header). Every moved proposal passes P2 and keeps
+    // every non-space character of both inputs.
+    assert_eq!(
+        (proposals, refusals),
+        (22404 - 600 + 2220 + 600, 4496 + 600 - 2220 - 600)
+    );
     assert_eq!(
         hash,
-        "56437893f92dedb2dbbc55c0cd7c5fc98fb63c4111c92d120621280fc55bbf5d"
+        "07eda2c4e1847c474d71e241554bf65d1282098e6126fcea1cf11b210ed980b3"
     );
 }
 

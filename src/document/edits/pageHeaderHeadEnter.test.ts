@@ -89,9 +89,16 @@ for (const kind of ["page", "journal"] as const) {
       splitBlock(h, "alias:: book\n".length + 1); // the start of the second property line
       expect(page(name).roots).toEqual([h, "o1"]);
       expect(doc.byId[h].raw).toBe(`\nalias:: book\n\ntags:: reading`);
+      // A blank line ends the page's properties (OG reads only the first property
+      // node), so `tags::` would be opening text: the draft is held, named, and kept.
       finishPageHeaderEdit(h);
+      expect(await flushPage(name)).toBe(false);
+      expect(isDirty(name)).toBe(true);
+      expect(toasts()).toHaveLength(1);
+      expect(doc.byId[h].raw).toBe(`alias:: book\n\ntags:: reading`);
+      setRaw(h, HEADER);
       expect(await flushPage(name)).toBe(true);
-      expect(writes.at(-1)!.pre_block).toBe("alias:: book\n\ntags:: reading");
+      expect(writes.at(-1)!.pre_block).toBe(HEADER);
       expect(writes.at(-1)!.blocks.map((b) => b.raw)).toEqual(["other"]);
     });
 

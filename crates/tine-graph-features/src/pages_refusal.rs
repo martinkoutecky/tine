@@ -115,7 +115,6 @@ impl MergeRefused {
             | M::HiddenOccurrence
             | M::SurvivorIdentity
             | M::BodyLaw
-            | M::HeaderProseOverlap
             | M::IndentedBody
             | M::DirectiveEscape
             | M::MissingNativeNameRange { .. }
@@ -141,7 +140,6 @@ impl std::fmt::Display for MergeRefused {
             M::SurvivorIdentity => write!(f, "cannot merge: the title in the first block of {file} would give the remaining page a different name; save that file once with its intended page title and try again; nothing was merged"),
             M::Trace(tine_core::text_trace::TraceError::TitleIdentity) => write!(f, "cannot rename or merge: changing the references inside the title of {file} would give the page a different name; edit that title so its references do not name the page being renamed, then try again; nothing was renamed or merged"),
             M::BodyLaw => write!(f, "cannot merge: Tine cannot preserve the block structure of {file} when joining the files; align the top-level blocks with the left edge in that file, save it and try again; nothing was merged"),
-            M::HeaderProseOverlap => write!(f, "cannot merge: Tine reads the opening properties of {file} as both properties and prose; remove blank lines before or between the property lines at the top of that file, save it and try again; nothing was merged"),
             M::IndentedBody => write!(f, "cannot merge: the first block of {file} is indented, so Tine cannot keep its blocks at the top level when joining the files; align the top-level blocks with the left edge in that file, save it and try again; nothing was merged"),
             M::DirectiveEscape => write!(f, "cannot merge: {file} contains a #+END_QUOTE line outside a quote, which would end the merged page's quote early; move that line into a quote or remove it in that file, then try again; nothing was merged"),
             M::MissingNativeNameRange { declaration } => write!(f, "cannot merge: Tine cannot move the alias declaration “{declaration}” in {file} without losing its spelling; replace that declaration with plain alias names separated by commas in that file, save it and try again; nothing was merged"),

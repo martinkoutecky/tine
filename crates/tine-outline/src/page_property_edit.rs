@@ -1,24 +1,16 @@
 //! The page-properties form's text edit, shared by the window and owner verbs.
 //! Parser-owned entries only; unrelated lines and preamble prose retain bytes.
-use crate::block_regions::{page_header, parse_document};
+use crate::block_regions::parse_document;
 
 fn entries(raw: &str, org: bool) -> Result<Vec<(usize, String)>, String> {
     let regions = parse_document(raw, org);
     if regions.quarantined {
         return Err("page properties could not be parsed".into());
     }
-    Ok(if org {
-        regions
-            .page_properties()
-            .map(|p| (raw[..p.line.0].matches('\n').count(), p.key.to_lowercase()))
-            .collect()
-    } else {
-        page_header(raw)
-            .entries
-            .into_iter()
-            .map(|p| (p.line, p.key))
-            .collect()
-    })
+    Ok(regions
+        .page_properties()
+        .map(|p| (raw[..p.line.0].matches('\n').count(), p.key.clone()))
+        .collect())
 }
 
 /// Replace the first match, remove duplicate matches, or prepend a new property
@@ -140,13 +132,25 @@ mod tests {
     fn form_policy_keeps_prose_and_removes_duplicate_and_empty_drawer() {
         assert_eq!(
             set(
+                &["Tags:: old\ntags:: duplicate\n\nprose".into()],
+                false,
+                "tags",
+                Some("new")
+            )
+            .unwrap(),
+            ["Tags:: new\n\nprose"]
+        );
+        // A property node after a blank line is header text, not a page
+        // property (OG reads only the first node): it keeps its bytes.
+        assert_eq!(
+            set(
                 &["Tags:: old\n\ntags:: duplicate\n\nprose".into()],
                 false,
                 "tags",
                 Some("new")
             )
             .unwrap(),
-            ["Tags:: new\n\n\nprose"]
+            ["Tags:: new\n\ntags:: duplicate\n\nprose"]
         );
         assert_eq!(
             set(

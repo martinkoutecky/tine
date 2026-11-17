@@ -313,7 +313,10 @@ fn review_alias_classification_uses_the_reader() {
 }
 
 #[test]
-fn overlapping_properties_name_the_input_and_the_repair() {
+fn headers_with_blank_gaps_merge_with_ogs_page_properties() {
+    // These pages once refused `HeaderProseOverlap`: two readers disagreed on
+    // where the header ends. One owner now answers OG's rule (the first
+    // property node), so a later node is prose and both merge.
     let mut cases = Vec::new();
     for rename in [false, true] {
         for ending in 0..4 {
@@ -324,23 +327,38 @@ fn overlapping_properties_name_the_input_and_the_repair() {
                         target: endings(if source { "- target\n" } else { rich }, ending),
                         org: false,
                         rename,
-                        refusal: Some(("HeaderProseOverlap", source)),
+                        refusal: None,
                     });
                 }
             }
         }
     }
-    // This matrix intentionally contains only refusals. Include its repaired
-    // counterpart so the same real-transaction harness also verifies success.
-    cases.push(Case {
-        source: "a:: x\nb:: y\n".into(),
-        target: "- target\n".into(),
-        org: false,
-        rename: false,
-        refusal: None,
+    // Text before the first node, and a folded `#+` line inside it, are other
+    // header text: the merge moves them to the leftover block.
+    for source in ["text [[P]]\na:: x\n- body\n", "a:: x\n#+b: y\n- body\n"] {
+        cases.push(Case {
+            source: source.into(),
+            target: "- target\n".into(),
+            org: false,
+            rename: false,
+            refusal: None,
+        });
+    }
+    assert_eq!(cases.len(), 34);
+    run_pinned(cases, &|case| {
+        let pinned = match (case.source.as_str(), case.target.as_str()) {
+            // The second node is the preamble's prose, kept as a block.
+            ("a:: x\n \nb:: y\n", "- target\n") => "a:: x\n- target\n-  \n  b:: y\n",
+            ("- source\n", "a:: x\n \nb:: y\n") => "a:: x\n-  \n  b:: y\n- source\n",
+            // A leading blank line is not header text: the field joins.
+            ("\na::", "- target\n") => "a::\n- target\n",
+            ("- source\n", "\na::") => "\na::\n- source\n",
+            ("text [[P]]\na:: x\n- body\n", _) => "a:: x\n- target\n-\n  text [[P]]\n- body\n",
+            ("a:: x\n#+b: y\n- body\n", _) => "a:: x\n- target\n-\n  #+b: y\n- body\n",
+            _ => return None,
+        };
+        Some(pinned.to_owned())
     });
-    assert_eq!(cases.len(), 33);
-    run(cases);
 }
 
 #[test]
@@ -413,9 +431,7 @@ fn generated_headers_merge_or_explain_the_limitation_before_the_check() {
                                 ),
                                 org,
                                 rename,
-                                refusal: if !org && variant % 2 == 1 && !blank.is_empty() {
-                                    Some(("HeaderProseOverlap", role == 0))
-                                } else if org
+                                refusal: if org
                                     && variant % 2 == 1
                                     && (role == 2
                                         || (role == 0

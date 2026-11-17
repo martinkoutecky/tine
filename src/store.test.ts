@@ -195,13 +195,15 @@ describe("properties-only first block", () => {
     });
     const id = beginPageHeaderEdit("Test");
     expect(id).not.toBeNull();
+    // OG reads only the first property node: the property after the blank line is opening text,
+    // so it stays in the pre-block, and the fold restores the file's bytes.
     expect(doc.byId[id!]).toMatchObject({
-      raw: "alias:: book\n\nklíč:: hodnota",
+      raw: "alias:: book",
       originatedFromPageHeader: true,
       children: [],
     });
     expect(doc.pages[0].roots).toEqual([id, body.id]);
-    expect(doc.pages[0].preBlock).toBe("\n\nIntro");
+    expect(doc.pages[0].preBlock).toBe("\n\nklíč:: hodnota\n\nIntro");
     expect(isDirty("Test")).toBe(false);
     expect(pageToDto("Test")).toMatchObject({
       pre_block: "alias:: book\n\nklíč:: hodnota\n\nIntro",
@@ -261,7 +263,7 @@ describe("properties-only first block", () => {
     installPageContent("Test", structuredClone(dto));
     expect(editingId()).toBe(id);
     expect(doc.pages[0].roots[0]).toBe(id);
-    expect(doc.byId[id].raw).toBe("alias:: book\n\nklíč:: hodnota");
+    expect(doc.byId[id].raw).toBe("alias:: book"); // OG: the first property node only
   });
 
   it("does not synthesize page-header editors for Org, Guide, read-only, prose or fenced preambles", () => {

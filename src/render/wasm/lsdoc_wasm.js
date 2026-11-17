@@ -730,7 +730,8 @@ function __tine_raw_page_file_format(path) {
 }
 
 /**
- * Markdown page header (leading accepted properties, see `block_regions::page_header`).
+ * Markdown page header (the parser's page properties, whether they are the
+ * whole text and its first stray line; see `block_regions::page_header`).
  * O(preamble bytes); no I/O.
  * @param {string} raw
  * @returns {string}

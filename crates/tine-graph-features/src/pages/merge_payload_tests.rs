@@ -5,6 +5,11 @@ use tine_core::model::Format;
 fn parent_success_header_bytes_are_preserved() {
     // Exported from ebffef508's exact writer; each row independently passed
     // O6/P2 there. Keep these bytes pinned rather than deriving them here.
+    // cm-header-boundary moved the 8 rows whose first root is
+    // `k:: v`, a blank line, `other:: x`: with OG's boundary (a blank line
+    // ends the properties) that root is no page header, so it is kept as the
+    // block it was instead of promoted (which turned `other:: x` into prose
+    // and dropped the whitespace line of the identical-pages rows).
     let rows: Vec<serde_json::Value> = serde_json::from_str(include_str!(
         "../../tests/fixtures/cm-merge-header-parent.json"
     ))
@@ -14,6 +19,7 @@ fn parent_success_header_bytes_are_preserved() {
     let store = tine_store::Store::open(root.path(), Default::default())
         .unwrap()
         .0;
+    let mut wrong = Vec::new();
     for row in rows {
         let source = row["source"].as_str().unwrap();
         let target = row["target"].as_str().unwrap();
@@ -36,12 +42,17 @@ fn parent_success_header_bytes_are_preserved() {
             store.config().file_name_format,
         )
         .unwrap();
-        assert_eq!(proposal.text, row["expected"].as_str().unwrap(), "{row}");
+        if proposal.text != row["expected"].as_str().unwrap() {
+            wrong.push(format!("{row}\n  got {:?}", proposal.text));
+        }
     }
+    assert!(wrong.is_empty(), "{}", wrong.join("\n"));
 }
 
 #[test]
-fn overlapping_header_observations_require_both_fields_and_the_prose() {
+fn a_header_after_a_blank_line_is_observed_once_as_prose() {
+    // Once read as both header fields and prose (`HeaderProseOverlap`); OG
+    // reads only the first property node, so `b:: y` is prose alone.
     use tine_core::cm_check::{self, Atom};
     let root = tempfile::tempdir().unwrap();
     let store = tine_store::Store::open(root.path(), Default::default())
@@ -73,7 +84,7 @@ fn overlapping_header_observations_require_both_fields_and_the_prose() {
             .iter()
             .map(|h| h.key.as_str())
             .collect::<Vec<_>>(),
-        ["a", "b"]
+        ["a"]
     );
     assert_eq!(
         expected
@@ -81,7 +92,7 @@ fn overlapping_header_observations_require_both_fields_and_the_prose() {
             .iter()
             .map(|h| h.key.as_str())
             .collect::<Vec<_>>(),
-        ["a", "b"]
+        ["a"]
     );
     assert_eq!(source.blocks.len(), 1);
     assert_eq!(expected.blocks.len(), 2);
@@ -541,7 +552,12 @@ mod header_property_tests {
     #[test]
     fn a_fenced_example_is_never_a_header_property() {
         let prose = "```\nnote:: keep me\n```\nkey:: v\n";
-        assert!(lines(prose, false).is_empty());
+        // OG (mldoc 1.5.9 + extract-blocks): the fence is no property, and
+        // `key::` after it is the first property node, so a page property.
+        assert_eq!(
+            lines(prose, false),
+            vec![None, None, None, Some(("key".into(), "v".into()))]
+        );
         assert_eq!(
             lines(&format!("kept:: yes\n{prose}"), false),
             vec![Some(("kept".into(), "yes".into()))],

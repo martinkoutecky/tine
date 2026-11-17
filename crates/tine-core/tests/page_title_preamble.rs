@@ -22,10 +22,12 @@ const SHAPES: &[(&str, Format, Option<&str>)] = &[
         Format::Md,
         Some("Src"),
     ),
+    // OG (mldoc 1.5.9 + extract-blocks) reads only the first property node,
+    // which the `#tag line` ends: `title::` after it is opening text.
     (
         "alias:: a\n#tag line\ntitle:: After Tag\n- b\n",
         Format::Md,
-        Some("After Tag"),
+        None,
     ),
     ("title:: Crlf\r\n\r\n- body\r\n", Format::Md, Some("Crlf")),
     (

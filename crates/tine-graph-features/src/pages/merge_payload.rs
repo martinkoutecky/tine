@@ -41,7 +41,6 @@ pub struct MergeProposal {
 pub enum RealizationError {
     Trace(TraceError),
     BodyLaw,
-    HeaderProseOverlap,
     IndentedBody,
     HeaderChildren,
     HiddenOccurrence,
@@ -434,11 +433,6 @@ pub fn propose<'f>(
     }
     let prefixes = prefixes.map(|p| p.0);
     for (file, header) in headers.iter().enumerate() {
-        // The reader can report a malformed preamble property both as a field
-        // and inside its prose. Realizing both would duplicate original bytes.
-        if header.overlapping_prose {
-            return Err(RealizationError::HeaderProseOverlap.at(file.into()));
-        }
         if let Some(line) = header
             .lines
             .iter()

@@ -1,48 +1,48 @@
 [
   {
-    "expected": "k:: v\n\nother:: x\n- plain\n",
+    "expected": "- k:: v\n  \n  other:: x\n- plain\n",
     "org": false,
     "source": "- plain\n",
     "target": "- k:: v\n  \n  other:: x\n"
   },
   {
-    "expected": "k:: v\r\n\r\nother:: x\r\n- plain\r\n",
+    "expected": "- k:: v\r\n  \r\n  other:: x\r\n- plain\r\n",
     "org": false,
     "source": "- plain\r\n",
     "target": "- k:: v\r\n  \r\n  other:: x\r\n"
   },
   {
-    "expected": "k:: v\r\rother:: x\r- plain\r",
+    "expected": "- k:: v\r  \r  other:: x\r- plain\r",
     "org": false,
     "source": "- plain\r",
     "target": "- k:: v\r  \r  other:: x\r"
   },
   {
-    "expected": "k:: v\r\n\rother:: x\n- plain\r\n",
+    "expected": "- k:: v\r\n  \r  other:: x\n- plain\r\n",
     "org": false,
     "source": "- plain\r\n",
     "target": "- k:: v\r\n  \r  other:: x\n"
   },
   {
-    "expected": "k:: v\n\nother:: x\n-\n  k:: v\n  other:: x\n",
+    "expected": "- k:: v\n  \n  other:: x\n- k:: v\n  \n  other:: x\n",
     "org": false,
     "source": "- k:: v\n  \n  other:: x\n",
     "target": "- k:: v\n  \n  other:: x\n"
   },
   {
-    "expected": "k:: v\r\n\r\nother:: x\r\n-\r\n  k:: v\r\n  other:: x\r\n",
+    "expected": "- k:: v\r\n  \r\n  other:: x\r\n- k:: v\r\n  \r\n  other:: x\r\n",
     "org": false,
     "source": "- k:: v\r\n  \r\n  other:: x\r\n",
     "target": "- k:: v\r\n  \r\n  other:: x\r\n"
   },
   {
-    "expected": "k:: v\r\rother:: x\r-\r  k:: v\r  other:: x\r",
+    "expected": "- k:: v\r  \r  other:: x\r- k:: v\r  \r  other:: x\r",
     "org": false,
     "source": "- k:: v\r  \r  other:: x\r",
     "target": "- k:: v\r  \r  other:: x\r"
   },
   {
-    "expected": "k:: v\r\n\rother:: x\n-\r\n  k:: v\r\n  other:: x\n",
+    "expected": "- k:: v\r\n  \r  other:: x\n- k:: v\r\n  \r  other:: x\n",
     "org": false,
     "source": "- k:: v\r\n  \r  other:: x\n",
     "target": "- k:: v\r\n  \r  other:: x\n"

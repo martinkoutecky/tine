@@ -289,17 +289,23 @@ fn page_header_is_the_parsers_leading_property_run() {
             .map(|e| e.key)
             .collect()
     };
-    assert_eq!(keys("title:: A\n\nalias:: B\nprose"), ["title", "alias"]);
+    // OG reads only the first property node: a line after a blank one is prose.
+    assert_eq!(keys("title:: A\n\nalias:: B\nprose"), ["title"]);
     // I-12 (Martin 2026-10-01): not properties to the parser, so not header lines.
     assert!(keys("title::A").is_empty());
-    assert!(keys(" title:: A").is_empty());
-    assert!(keys("#tag:: x").is_empty());
-    assert!(keys("prose\ntitle:: A").is_empty());
+    // OG (mldoc 1.5.9 + extract-blocks) reads an indented property line, and a
+    // property node after leading prose, as page properties; a `#` key stays a
+    // property, as in a block (named difference: OG drops it).
+    assert_eq!(keys(" title:: A"), ["title"]);
+    assert_eq!(keys("#tag:: x"), ["#tag"]);
+    assert_eq!(keys("prose\ntitle:: A"), ["title"]);
     assert_eq!(keys("title:: A\n```\nx:: y\n```\nalias:: B"), ["title"]);
     let h = page_header("klíč:: é\r\nb:: c");
     assert_eq!(h.entries.len(), 2);
     assert_eq!(h.end, "klíč:: é\r\nb:: c".len());
-    assert!(page_header_only("a:: 1\n\nb:: 2").is_some());
+    assert!(page_header_only("a:: 1\nb:: 2").is_some());
+    assert!(page_header_only("a:: 1\n\nb:: 2").is_none());
+    assert!(page_header_only("#a:: 1").is_none());
     assert!(page_header_only("a:: 1\n").is_none());
     assert!(page_header_only("a:: 1\nprose").is_none());
     assert!(page_header_only("a:: 1\nb::2").is_none());

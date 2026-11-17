@@ -8453,7 +8453,7 @@ mod tests {
             blocks: vec![
                 BlockDto {
                     id: "transient-header".into(),
-                    raw: "alias:: book\n\nklíč:: hodnota".into(),
+                    raw: "alias:: book\nklíč:: hodnota".into(),
                     ..Default::default()
                 },
                 BlockDto {
@@ -8472,14 +8472,14 @@ mod tests {
         let path = dir.join("pages").join("Property Authoring.md");
         assert_eq!(
             fs::read_to_string(&path).unwrap(),
-            "alias:: book\n\nklíč:: hodnota\n\n- Reading list\n"
+            "alias:: book\nklíč:: hodnota\n\n- Reading list\n"
         );
 
         let id = tine_store::PageId::from("pages/Property Authoring.md");
         let warm = store.page(&id).unwrap().doc;
         assert_eq!(
             warm.pre_block.as_deref(),
-            Some("alias:: book\n\nklíč:: hodnota")
+            Some("alias:: book\nklíč:: hodnota")
         );
         assert_eq!(warm.blocks.len(), 1);
         assert_eq!(warm.blocks[0].raw, "Reading list");
@@ -8595,12 +8595,17 @@ mod tests {
 
     #[test]
     fn page_header_authoring_is_bounded_and_preserves_existing_preambles() {
-        assert!(tine_core::block_regions::page_header_only(
-            "alias:: book\n\ne\u{301}/plugin.key:: value"
-        )
-        .is_some());
+        // An indented property line is a page property to OG (mldoc 1.5.9).
+        for valid in ["alias:: book\ne\u{301}/plugin.key:: value", " alias:: x"] {
+            assert!(
+                tine_core::block_regions::page_header_only(valid).is_some(),
+                "refused {valid:?}"
+            );
+        }
         for invalid in [
-            " alias:: x",
+            // OG reads only the first property node: promoting this would turn
+            // the line after the blank one into prose, so it stays a block.
+            "alias:: book\n\ne\u{301}/plugin.key:: value",
             "#alias:: x",
             "alias key:: x",
             "alias:: x\nprose",

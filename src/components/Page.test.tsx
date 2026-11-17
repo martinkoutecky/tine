@@ -2463,7 +2463,8 @@ describe("Markdown preamble content", () => {
       name: "Header",
       kind: "page" as const,
       title: "Header",
-      pre_block: "klíč:: hodnota\n\nalias:: Book",
+      // One property node: OG reads a property after a blank line as opening text.
+      pre_block: "klíč:: hodnota\nalias:: Book",
       blocks: [{ id: bodyId, raw: "First body", collapsed: false, children: [] }],
     };
     setDoc({
@@ -2485,9 +2486,9 @@ describe("Markdown preamble content", () => {
       expect(isDirty(dto.name)).toBe(false);
       expect(pageToDto(dto.name)?.pre_block).toBe(dto.pre_block);
 
-      editor.input("klíč:: změněno\n\nalias:: Book", undefined, { eventKind: "plain" });
+      editor.input("klíč:: změněno\nalias:: Book", undefined, { eventKind: "plain" });
       expect(isDirty(dto.name)).toBe(true);
-      expect(pageToDto(dto.name)?.pre_block).toBe("klíč:: změněno\n\nalias:: Book");
+      expect(pageToDto(dto.name)?.pre_block).toBe("klíč:: změněno\nalias:: Book");
       expect(pageToDto(dto.name)?.blocks.map((block) => block.raw)).toEqual(["First body"]);
       endEdit("blur");
       await tick();

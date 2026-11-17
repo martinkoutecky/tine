@@ -143,7 +143,14 @@ const MAGIC: &[u8; 8] = b"TINECKPT";
 // owner alone. Cached reference evidence, page references and alias relations
 // change for unchanged files; the body schema is unchanged and older caches
 // rebuild.
-pub(crate) const FORMAT: u32 = 37;
+// 38 (CM header boundary): a Markdown page's properties are its first
+// top-level property node before the first block (OG `extract-blocks`); an
+// Org page's directives are those at the top level
+// before the first headline. A later node is prose, so its references become
+// the preamble block's and a key there stops being a page property. Cached
+// page properties, aliases and references change for unchanged files; the
+// body schema is unchanged and older caches rebuild.
+pub(crate) const FORMAT: u32 = 38;
 /// The lsdoc release tine-core parses with (`crates/tine-core/Cargo.toml`;
 /// `checkpoint_tests::the_parser_tag_matches_the_lsdoc_pin` keeps them equal).
 pub(crate) const PARSER: &str = "lsdoc v0.5.12";

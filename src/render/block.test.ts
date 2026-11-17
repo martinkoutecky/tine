@@ -59,12 +59,13 @@ describe("pageProperties", () => {
       ["tags", "a, b"],
     ]);
   });
-  it("only renders the canonical header prefix, never later prose/fence lookalikes", () => {
-    expect(pageProperties("Intro\ncustom:: not-a-header")).toEqual([]);
+  it("renders OG's page properties: the first property node, never fence lookalikes", () => {
+    // OG (mldoc 1.5.9 + extract-blocks): the first property node before the first block,
+    // also after opening prose; a blank line ends it.
+    expect(pageProperties("Intro\ncustom:: a-header")).toEqual([["custom", "a-header"]]);
     expect(pageProperties("```\ncustom:: not-a-header\n```")).toEqual([]);
     expect(pageProperties("klíč:: hodnota\n\ncustom/key:: value\n\nIntro\nlater:: body")).toEqual([
       ["klíč", "hodnota"],
-      ["custom/key", "value"],
     ]);
   });
   it("org #+KEY: directives and :PROPERTIES: drawer (keys lowercased)", () => {

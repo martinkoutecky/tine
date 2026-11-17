@@ -191,7 +191,8 @@ export function page_alias_spellings(pre_block: string | null | undefined, first
 export function page_file_format(path: string): string;
 
 /**
- * Markdown page header (leading accepted properties, see `block_regions::page_header`).
+ * Markdown page header (the parser's page properties, whether they are the
+ * whole text and its first stray line; see `block_regions::page_header`).
  * O(preamble bytes); no I/O.
  */
 export function page_header_json(raw: string): string;

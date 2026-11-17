@@ -70,8 +70,12 @@ export function isEditablePropertyKey(key: string): boolean {
 interface PageHeader {
   end: number;
   entries: { key: string; value: string; line: number }[];
+  /** Every line is a page property (Rust `PageHeader::whole`). */
+  whole: boolean;
+  /** The first non-blank line that is no page property (Rust `PageHeader::stray`). */
+  stray: number | null;
 }
-const NO_HEADER: PageHeader = { end: 0, entries: [] };
+const NO_HEADER: PageHeader = { end: 0, entries: [], whole: false, stray: null };
 let lastHeader: { raw: string; header: PageHeader } | undefined;
 
 function pageHeader(raw: string): PageHeader {
@@ -87,34 +91,30 @@ function pageHeader(raw: string): PageHeader {
     reportUiFailure("page-header-read", error);
     return NO_HEADER;
   }
-  const parsed = JSON.parse(json) as { end: number; entries: PageHeader["entries"] };
-  const header = { end: utf8ToUtf16Cursor(raw)(parsed.end), entries: parsed.entries.map(({ key, value, line }) => ({ key, value, line })) };
+  const parsed = JSON.parse(json) as PageHeader;
+  const header = { end: utf8ToUtf16Cursor(raw)(parsed.end), entries: parsed.entries.map(({ key, value, line }) => ({ key, value, line })), whole: parsed.whole, stray: parsed.stray };
   lastHeader = { raw, header };
   return header;
 }
 
-/** A complete page header: the whole text is header properties, with empty lines permitted only
- * between properties (never at either edge). */
+/** A complete page header: every line is a page property (Rust `page_header_only`; an empty
+ * line ends the header, as in Logseq). */
 export function isPageHeaderPropertiesOnly(raw: string): boolean {
-  const header = pageHeader(raw);
-  return header.entries.length > 0 && header.end === raw.length;
+  return pageHeader(raw).whole;
 }
 
 /** The first line that keeps `raw` from being a complete page header, as
  * `{ line, text }` (1-based line number, trimmed text), or null when `raw` is a
- * complete header or has no such line. The line is the first non-empty one after
- * the leading run of accepted properties (the whole first line when `raw` does
- * not start with one): the same boundary {@link isPageHeaderPropertiesOnly}
- * judges, so a message built from it names what that predicate refused. */
+ * complete header or has no such line: the parser's first non-blank line that is
+ * no page property (Rust `PageHeader::stray`, the line
+ * {@link isPageHeaderPropertiesOnly} refuses), so a message built from it names
+ * what that predicate refused. Unread (no `::`, or no parser) it is the first non-blank line. */
 export function pageHeaderBadLine(raw: string): { line: number; text: string } | null {
   const header = pageHeader(raw);
-  if (header.entries.length > 0 && header.end === raw.length) return null;
-  let offset = header.entries.length > 0 ? header.end : 0;
-  for (const line of raw.slice(offset).split("\n")) {
-    if (line.trim() !== "") return { line: raw.slice(0, offset).split("\n").length, text: line.trim() };
-    offset += line.length + 1;
-  }
-  return null;
+  if (header.whole) return null;
+  const lines = raw.split("\n");
+  const bad = header === NO_HEADER ? lines.findIndex((line) => line.trim() !== "") : header.stray;
+  return bad === null || bad < 0 ? null : { line: bad + 1, text: lines[bad].trim() };
 }
 
 /** Properties that describe the block they sit on, never a page: a first
@@ -207,7 +207,7 @@ export function caretOnPropertyLine(raw: string, caret: number): boolean {
 /** Split a Markdown page preamble into real page-property lines and ordinary
  * content. Property-looking text inside a fenced code block stays content.
  * `content` is the prose the page shows as its first block row: the Rust
- * answer (`page_preamble::page_preamble_content`), which the store's Linked
+ * answer (`page_preamble::preamble_content_range`), which the store's Linked
  * References, All pages counts and rename read as that block too (CM step 2
  * batch 8, I-12). */
 export function splitPagePreamble(raw: string | null | undefined, format: Format = "md"): {
