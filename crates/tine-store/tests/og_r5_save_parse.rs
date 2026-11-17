@@ -150,6 +150,14 @@ fn ambiguous_editor_submit_keeps_the_save_primitive_counts() {
             "ambiguous editor blocks={} submit={submitted:?} flush={elapsed:?} peak_bytes={peak_bytes} cost={cost:?}",
             ballast + 7
         );
+        if ballast == 5993 {
+            // Base 734810bed: debug submit 267 ms, through-flush 597 ms.
+            assert!(
+                submitted < std::time::Duration::from_secs(2),
+                "{submitted:?}"
+            );
+            assert!(elapsed < std::time::Duration::from_secs(5), "{elapsed:?}");
+        }
         assert_eq!(cost.parses, 3, "old source, splice check, publication");
         assert_eq!(cost.old_source_parses, 1);
         assert_eq!(cost.full_reads, 2, "save source and base guard");

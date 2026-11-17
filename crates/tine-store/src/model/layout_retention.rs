@@ -16,8 +16,10 @@
 //! block joining another parent takes its new siblings' prefix (or one indent
 //! step below its parent). A block matched by text alone keeps its old prefix
 //! wherever the parse rule allows it. When runtime lineage is ambiguous, text
-//! matching pairs parent subtrees first so repeated children cannot borrow
-//! physical lines from a different subtree.
+//! ownership is recursive within paired parents: exact subtrees pair first,
+//! then remaining containers pair by text and gap position before leftover
+//! blocks. Each pair owns both its old lines and its old child scope. Unclaimed
+//! old roots can move into a child scope by exact subtree equality.
 //!
 //! Cost: borrows the caller's single old-source parse; one output parse (two,
 //! plus a full serialization, when the
@@ -386,8 +388,8 @@ struct Matches {
 /// the old blocks no identity kept: equal raw by an LCS over the changed middle, unpaired blocks by
 /// position inside each gap between matches (a changed block), then equal raw
 /// anywhere (a moved block). Where old identities are ambiguous, pair whole
-/// subtrees and surviving child context before equal parent text, then match
-/// children within the paired parents. A text match is never identity, so it
+/// subtrees first, then remaining containers before leftover blocks, and match
+/// children within those same ownership pairs. A text match is never identity, so it
 /// keeps its old lines and prefix but does not carry a parent's
 /// re-indentation ([`Emitter::preferred_prefix`]). O(old + new bytes and blocks)
 /// plus the capped LCS.
@@ -464,37 +466,28 @@ fn match_blocks(olds: &[OldBlock], news: &[&DocBlock]) -> Matches {
                     }
                 }
             }
-            // Parent ownership precedes line matching: an inserted leaf must
-            // not claim a changed parent's line and strand its old children.
-            // A surviving child class is evidence only when all its old
-            // occurrences in the remaining scope belong to the same parent.
-            let mut by_child: HashMap<usize, Option<usize>> = HashMap::new();
-            for &o in old_group.iter().filter(|&&o| !used[o]) {
-                for &child in &old_groups[o + 1] {
-                    by_child
-                        .entry(old_tags[child])
-                        .and_modify(|parent| {
-                            if *parent != Some(o) {
-                                *parent = None;
-                            }
-                        })
-                        .or_insert(Some(o));
-                }
-            }
-            for &j in &new_group {
-                if matched.known[j] || matched.keep[j].is_some() {
-                    continue;
-                }
-                let mut candidates = new_groups[j + 1]
-                    .iter()
-                    .filter_map(|child| by_child.get(&new_tags[*child]).copied().flatten())
-                    .filter(|&o| !used[o]);
-                if let Some(o) = candidates.next().filter(|o| candidates.all(|c| c == *o)) {
-                    if olds[o].block.raw() == news[j].raw() {
-                        matched.keep[j] = Some(o);
-                    } else {
-                        matched.hint[j] = Some(o);
-                    }
+            let old_containers: Vec<_> = old_group
+                .iter()
+                .copied()
+                .filter(|&o| !olds[o].block.children.is_empty())
+                .collect();
+            let new_containers: Vec<_> = new_group
+                .iter()
+                .copied()
+                .filter(|&j| !news[j].children.is_empty())
+                .collect();
+            match_text(
+                olds,
+                news,
+                &old_containers,
+                &new_containers,
+                &mut matched,
+                &mut used,
+                &mut budget,
+            );
+            // A container's changed line and its children have one owner too.
+            for &j in &new_containers {
+                if let Some(o) = matched.keep[j].or(matched.hint[j]) {
                     used[o] = true;
                 }
             }
@@ -947,6 +940,10 @@ impl Emitter<'_> {
             .collect()
     }
 }
+
+#[cfg(test)]
+#[path = "layout_ownership_tests.rs"]
+mod layout_ownership_tests;
 
 #[cfg(test)]
 mod ambiguous_parent_tests {

@@ -778,6 +778,193 @@ fn editor_insert_and_edit_after_swapping_keeps_existing_child_layout() {
     );
 }
 
+#[test]
+fn editor_swap_insert_edit_all_children() {
+    let mut failures = Vec::new();
+    let mut cases = 0;
+    for unit in ["\t", "  ", "\x0c", " \t"] {
+        for newline in ["\n", "\r\n", "\r"] {
+            for child_count in [1, 2] {
+                for before in [true, false] {
+                    for same in [true, false] {
+                        let children = |letter: &str, depth: usize| {
+                            (0..child_count)
+                                .map(|i| format!("{}- {letter}{i}\n", unit.repeat(depth)))
+                                .collect::<String>()
+                        };
+                        let first = format!("- dup\n{}", children("a", 2));
+                        let second = format!("- dup\n{}", children("b", 3));
+                        let source = format!("{first}{second}- target\n").replace('\n', newline);
+                        let live = Live::new(&[("pages/a.md", &source)]);
+                        let (key, page) = live.open("pages/a.md");
+                        let MailText::Page { mut dto } = page.text else {
+                            panic!("dto")
+                        };
+                        dto.blocks.swap(0, 1);
+                        let id = live.id();
+                        live.host
+                            .submit(
+                                live.host.session(),
+                                id,
+                                &key,
+                                &dto,
+                                page.version,
+                                None,
+                                &[EditKind::MoveBlocks],
+                            )
+                            .unwrap();
+                        live.answer(&key, id);
+                        live.host.flush_input(&[PageId::from(key.clone())]).unwrap();
+                        let (_, page) = live.open(&key);
+                        let MailText::Page { mut dto } = page.text else {
+                            panic!("dto")
+                        };
+                        for child in &mut dto.blocks[0].children {
+                            child.raw.push('!');
+                        }
+                        let mut leaf = dto.blocks[2].clone();
+                        leaf.id = "new-leaf".into();
+                        leaf.raw = if same { "dup" } else { "inserted" }.into();
+                        let leaf_text = leaf.raw.clone();
+                        dto.blocks.insert(usize::from(!before), leaf);
+                        let id = live.id();
+                        live.host
+                            .submit(
+                                live.host.session(),
+                                id,
+                                &key,
+                                &dto,
+                                page.version,
+                                None,
+                                &[EditKind::SaveBlock],
+                            )
+                            .unwrap();
+                        live.answer(&key, id);
+                        live.host.flush_input(&[PageId::from(key.clone())]).unwrap();
+                        let edited = (0..child_count).fold(second.clone(), |s, i| {
+                            s.replace(&format!("b{i}\n"), &format!("b{i}!\n"))
+                        });
+                        let leaf = format!("- {leaf_text}\n");
+                        let expected = if before {
+                            format!("{leaf}{edited}{first}- target\n")
+                        } else {
+                            format!("{edited}{leaf}{first}- target\n")
+                        }
+                        .replace('\n', newline);
+                        let written = live.disk(&key);
+                        cases += 1;
+                        if written != expected {
+                            failures.push(format!("{unit:?} {newline:?} count={child_count} before={before} same={same}: {written:?}"));
+                        }
+                    }
+                }
+            }
+        }
+    }
+    assert_eq!(cases, 96);
+    assert!(
+        failures.is_empty(),
+        "{} of {cases} failed: {}",
+        failures.len(),
+        failures.join("\n")
+    );
+}
+
+#[test]
+fn editor_swap_insert_edit_nested_child() {
+    let mut failures = Vec::new();
+    let mut cases = 0;
+    for unit in ["\t", "  ", "\x0c", " \t"] {
+        for newline in ["\n", "\r\n", "\r"] {
+            for parent_too in [true, false] {
+                for before in [true, false] {
+                    for same in [true, false] {
+                        let first =
+                            format!("- dup\n{}- x\n{}- a\n", unit.repeat(2), unit.repeat(4));
+                        let second =
+                            format!("- dup\n{}- x\n{}- b\n", unit.repeat(3), unit.repeat(6));
+                        let source = format!("{first}{second}- target\n").replace('\n', newline);
+                        let live = Live::new(&[("pages/a.md", &source)]);
+                        let (key, page) = live.open("pages/a.md");
+                        let MailText::Page { mut dto } = page.text else {
+                            panic!("dto")
+                        };
+                        dto.blocks.swap(0, 1);
+                        let id = live.id();
+                        live.host
+                            .submit(
+                                live.host.session(),
+                                id,
+                                &key,
+                                &dto,
+                                page.version,
+                                None,
+                                &[EditKind::MoveBlocks],
+                            )
+                            .unwrap();
+                        live.answer(&key, id);
+                        live.host.flush_input(&[PageId::from(key.clone())]).unwrap();
+                        assert_eq!(
+                            live.disk(&key),
+                            format!("{second}{first}- target\n").replace('\n', newline)
+                        );
+                        let (_, page) = live.open(&key);
+                        let MailText::Page { mut dto } = page.text else {
+                            panic!("dto")
+                        };
+                        dto.blocks[0].children[0].raw.push('!');
+                        if parent_too {
+                            dto.blocks[0].raw.push('!');
+                        }
+                        let mut leaf = dto.blocks[2].clone();
+                        leaf.id = "new-leaf".into();
+                        leaf.raw = if same { "dup" } else { "inserted" }.into();
+                        let leaf_text = leaf.raw.clone();
+                        dto.blocks.insert(usize::from(!before), leaf);
+                        let id = live.id();
+                        live.host
+                            .submit(
+                                live.host.session(),
+                                id,
+                                &key,
+                                &dto,
+                                page.version,
+                                None,
+                                &[EditKind::SaveBlock],
+                            )
+                            .unwrap();
+                        live.answer(&key, id);
+                        live.host.flush_input(&[PageId::from(key.clone())]).unwrap();
+                        let mut edited = second.replace("- x\n", "- x!\n");
+                        if parent_too {
+                            edited = edited.replacen("dup", "dup!", 1);
+                        }
+                        let leaf = format!("- {leaf_text}\n");
+                        let expected = if before {
+                            format!("{leaf}{edited}{first}- target\n")
+                        } else {
+                            format!("{edited}{leaf}{first}- target\n")
+                        }
+                        .replace('\n', newline);
+                        let written = live.disk(&key);
+                        cases += 1;
+                        if written != expected {
+                            failures.push(format!("{unit:?} {newline:?} parent_too={parent_too} before={before} same={same}: {written:?}"));
+                        }
+                    }
+                }
+            }
+        }
+    }
+    assert_eq!(cases, 96);
+    assert!(
+        failures.is_empty(),
+        "{} of {cases} failed: {}",
+        failures.len(),
+        failures.join("\n")
+    );
+}
+
 /// Q-P2b-3 (GH #538): the save-failure notice names the failed platform
 /// step and its OS error, and a later published save clears both.
 #[cfg(unix)]
