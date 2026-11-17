@@ -39,11 +39,18 @@ alias in the first spelling, and nothing else. A declaration without members
 is header text: the survivor's stays where it is, the source's is a leftover
 line. A combined declaration whose bytes outside its member tokens are not
 alias syntax (a key, separators, link and tag wrappers, spacing) refuses,
-since dropping them would lose text. This is a writer failure to realize O6:
-the interface names the file and asks for a bug report, as for P2.
+since dropping them would lose text. The interface names the file and affected
+declaration and asks for plain comma-separated alias names before retrying.
 
 The parser decides whether a quoted token is a member: `"literal"` in a mixed
 list can be a name, including its quotes. A wholly quoted value has no members.
+Alias allocation reads `reference_evidence::linkable_property_members`, the
+native-slot view of the index and observation's `linkable_property_references_in`.
+It uses the reader's decoded names, native name runs and complete member tokens,
+including file-link labels. A member without a contiguous native name run
+refuses as `MissingNativeNameRange` (`aliasSpelling` in the window). Duplicate
+members' complete native tokens are consumed by their reader identity; only
+bytes between tokens are delimiter syntax.
 
 A source property joins the survivor's header when neither the survivor nor an
 earlier joined entry has its key, keys compared as the reader compares them
@@ -121,13 +128,18 @@ leftover payload are checked too, using the existing assembled-output parse.
 Every retained header line keeps its own reader-derived structural prefix;
 blank layout does not take another line's prefix. A childless Markdown header
 becomes a preamble, consuming its structural prefixes and leading layout.
+Interior blank lines remain. A removed alias declaration's reader-derived
+continuation prefix can be reused by a joined field, before inserting new layout.
 Joined fields use their input reader's payload coordinates and the destination's
 native header syntax. The writer records allocation's intended logical lines,
 including the united alias tokens, and checks the output reader's header for
 exact payload, field order, normalized keys and native property forms. Any
 unexpected pre-block prose refuses `BodyLaw` naming the survivor. An input whose
-reader reports a field inside its pre-block prose refuses `BodyLaw` naming that
-input: preserving both readings would duplicate original bytes. Header checking
+reader reports a field inside its pre-block prose refuses `HeaderProseOverlap`
+(`headerProseOverlap` in the window), naming that input: preserving both readings
+would duplicate original bytes. Its window and command-line explanation asks
+for blank lines before or between the opening property lines to be removed.
+Header checking
 costs O(header bytes), projects only the header from the existing output parse,
 and retains temporary intended header text until comparison. P2 independently
 checks the final allocated header and body.
@@ -177,7 +189,8 @@ uncontested source identities to one destination path.
 | Title identity (`Q-TITLE`) | The actual rebound native title names a different page from its namespace image, including a stationary namespace whose inner reference changes. References in titles alone do not refuse; case-only and unrelated-reference twins are covered. |
 | Legal encoding or partition | Required edits cannot be represented by the supported nonoverlapping native name spans and encodings, including an edit outside a title producer's kept tail. |
 | Whole-day header representation | Active day aliases span distinct native header blocks and cannot be retained by the single-header certificate. |
-| Missing native name range (`F-LINK`) | Malformed or externally edited input: a required member lacks parser-owned inner-name coordinates, such as an escaped linked Markdown name, or a combined alias declaration holds text that is neither a member nor alias syntax. Plain escaped members with truthful maps remain covered. |
+| Missing native name range (`F-LINK`) | A required member lacks a contiguous parser-owned name run, such as a file-link label split by formatting, or a combined alias declaration holds text that is neither a member nor alias syntax. Escaped members with truthful native slots remain covered. |
+| Header/prose overlap (`HeaderProseOverlap`) | The input reader reports an opening property both as a header entry and inside prose. Preserving both would duplicate its native bytes. Remove blank lines before or between the opening property lines, save and retry. |
 | Fused line ending (`Q4`) | Assembly would form CRLF from unrelated original CR and LF coordinates, or an inserted half would borrow an original ending. Mixed endings alone do not refuse. |
 | Header children (`HeaderChildren`, model `headerChildren`) | Blocks hang under the source's header and the header leaves no leftover line to hold them: writing would lose their parent. |
 | Leftover reference (`HiddenOccurrence`, model `leftoverReference`) | Tine reads the Org leftover block's references differently from the leftover lines where they came from (a clashing drawer entry with a reference, its key being one, loses its drawer). Writing would lose or add references a user made. |

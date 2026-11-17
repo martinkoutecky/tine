@@ -99,5 +99,6 @@ rename-refused-body-layout = 无法合并：合并文件时，Tine 无法保留 
 rename-refused-indented-body = 无法合并：{ $file } 的第一个块有缩进，因此合并文件时 Tine 无法将其块保留在顶层。请在该文件中将顶层块与左边缘对齐，保存后重试。未合并任何页面。
 rename-refused-directive-escape = 无法合并：{ $file } 在引用块之外含有 #+END_QUOTE 行，会提前结束合并页面中的引用块。请在该文件中将此行移入引用块或删除此行，然后重试。未合并任何页面。
 rename-refused-alias-spelling = 无法合并：Tine 无法在保留原有写法的情况下移动 { $file } 中的别名声明“{ $alias }”。请在该文件中将该声明改为用逗号分隔的普通别名名称，保存后重试。未合并任何页面。
+rename-refused-header-prose-overlap = 无法合并：Tine 将 { $file } 开头的属性同时读取为属性和正文。请删除该文件顶部属性行之前或之间的空白行，保存后重试。未合并任何页面。
 rename-refused-duplicate-files = 无法重命名：这些文件声明了同一个页面：{ $files }。请先将其中一个合并到另一个，或移除其中一个，再重试。
 rename-alias-choice-stale-what = 重命名

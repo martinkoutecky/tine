@@ -63,7 +63,7 @@ fn ordinary_merge_limitations_name_the_failing_input_at_the_window_boundary() {
             "source",
         ),
         (
-            "alias:: [[C\\#]]\n- source\n",
+            "alias:: [**x**_y_](A.md)\n- source\n",
             "- target\n",
             "md",
             "aliasSpelling",
@@ -71,11 +71,26 @@ fn ordinary_merge_limitations_name_the_failing_input_at_the_window_boundary() {
         ),
         (
             "- source\n",
-            "alias:: [[C\\#]]\n- target\n",
+            "alias:: [**x**_y_](A.md)\n- target\n",
             "md",
             "aliasSpelling",
             "target",
         ),
+        (
+            "a:: x\n \nb:: y\n",
+            "- target\n",
+            "md",
+            "headerProseOverlap",
+            "source",
+        ),
+        (
+            "- source\n",
+            "a:: x\n \nb:: y\n",
+            "md",
+            "headerProseOverlap",
+            "target",
+        ),
+        ("\na::", "- target\n", "md", "headerProseOverlap", "source"),
     ] {
         let root = tempfile::tempdir().unwrap();
         std::fs::create_dir_all(root.path().join("pages")).unwrap();
@@ -110,8 +125,16 @@ fn ordinary_merge_limitations_name_the_failing_input_at_the_window_boundary() {
             let wire = serde_json::to_value(RewriteError::of(error)).unwrap();
             assert_eq!(wire["refused"]["kind"], kind, "named={named}: {message}");
             if kind == "aliasSpelling" {
-                assert_eq!(wire["refused"]["alias"], "alias:: [[C\\#]]");
-                assert!(message.contains("alias:: [[C\\#]]"), "{message}");
+                assert_eq!(wire["refused"]["alias"], "alias:: [**x**_y_](A.md)");
+                assert!(message.contains("alias:: [**x**_y_](A.md)"), "{message}");
+            }
+            if kind == "headerProseOverlap" {
+                assert!(message.contains("both properties and prose"), "{message}");
+                assert!(
+                    message.contains("remove blank lines before or between the property lines"),
+                    "{message}"
+                );
+                assert!(!message.contains("top-level blocks"), "{message}");
             }
             assert_eq!(wire["refused"]["file"], format!("pages/{file}.{ext}"));
             assert!(!message.contains("bug in Tine"), "{message}");
@@ -127,7 +150,13 @@ fn ordinary_merge_limitations_name_the_failing_input_at_the_window_boundary() {
         }
         drop(host);
         drop(store);
-        let repaired = |text: &str| text.replace("#+END_QUOTE\n", "").replace("[[C\\#]]", "C#");
+        let repaired = |text: &str| {
+            text.replace("#+END_QUOTE\n", "")
+                .replace("[**x**_y_](A.md)", "xy")
+                .replace("\n \n", "\n")
+                .trim_start_matches('\n')
+                .to_owned()
+        };
         std::fs::write(root.path().join(&src), repaired(source)).unwrap();
         std::fs::write(root.path().join(&dst), repaired(target)).unwrap();
         let store = std::sync::Arc::new(
@@ -141,7 +170,11 @@ fn ordinary_merge_limitations_name_the_failing_input_at_the_window_boundary() {
         assert!(!root.path().join(&src).exists());
         assert!(std::fs::read_to_string(root.path().join(&dst))
             .unwrap()
-            .contains("source"));
+            .contains(if kind == "headerProseOverlap" {
+                "a::"
+            } else {
+                "source"
+            }));
     }
 }
 
@@ -251,7 +284,7 @@ fn a_merge_refusal_after_flush_saves_pending_edits_but_merges_nothing() {
     for named in [false, true] {
         let root = tempfile::tempdir().unwrap();
         std::fs::create_dir_all(root.path().join("pages")).unwrap();
-        let source = "alias:: [[C\\#]]\n- source\n";
+        let source = "alias:: [**x**_y_](A.md)\n- source\n";
         std::fs::write(root.path().join("pages/source.md"), source).unwrap();
         std::fs::write(root.path().join("pages/target.md"), "- target\n").unwrap();
         let store = std::sync::Arc::new(
@@ -546,6 +579,7 @@ fn rewrite_boundary_preserves_both_check_failures_and_all_named_merge_refusals()
         (M::HiddenOccurrence, "hiddenOccurrence"),
         (M::SurvivorIdentity, "survivorIdentity"),
         (M::BodyLaw, "bodyLayout"),
+        (M::HeaderProseOverlap, "headerProseOverlap"),
         (M::IndentedBody, "indentedBody"),
         (M::DirectiveEscape, "directiveEscape"),
         (

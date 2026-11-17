@@ -1,6 +1,34 @@
 use crate::doc::DocBlock;
 
 #[test]
+fn escaped_plain_alias_members_keep_their_reader_names_and_native_ranges() {
+    for (name, native) in [("#x", "\\#x"), ("a[[b", "a\\[\\[b"), ("a]]b", "a\\]\\]b")] {
+        let raw = format!("alias:: {native}");
+        let block = DocBlock::new(&raw);
+        let members = super::linkable_property_members(&block);
+        let found: Vec<_> = members
+            .iter()
+            .map(|m| {
+                (
+                    m.name.as_str(),
+                    &raw[m.range.clone()],
+                    &raw[m.slot.run().unwrap().clone()],
+                )
+            })
+            .collect();
+        assert_eq!(found, [(name, native, native)]);
+        assert_eq!(
+            super::linkable_property_names(
+                block.projection().reference_source(),
+                &block.projection().regions
+            )
+            .collect::<Vec<_>>(),
+            [name]
+        );
+    }
+}
+
+#[test]
 fn nested_candidate_confirmation_keeps_one_source_parse_per_block() {
     use crate::render::BLOCK_PARSES;
     for org in [false, true] {

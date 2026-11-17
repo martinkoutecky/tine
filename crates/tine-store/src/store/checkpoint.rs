@@ -121,7 +121,10 @@ const MAGIC: &[u8; 8] = b"TINECKPT";
 // and claimants rank the journals directory first, so the persisted list,
 // claimants, `name_by_path` and real-name owners change for unchanged graph
 // files. The serialized body schema is unchanged; older ones rebuild.
-pub(crate) const FORMAT: u32 = 33;
+// 34 (CM merge header allocation): parser-classified Plain property members
+// retain escaped # and bracket characters, changing cached reference evidence
+// for unchanged files. The body schema is unchanged; older caches rebuild.
+pub(crate) const FORMAT: u32 = 34;
 /// The lsdoc release tine-core parses with (`crates/tine-core/Cargo.toml`;
 /// `checkpoint_tests::the_parser_tag_matches_the_lsdoc_pin` keeps them equal).
 pub(crate) const PARSER: &str = "lsdoc v0.5.11";

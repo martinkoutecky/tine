@@ -42,6 +42,7 @@ pub struct MergeProposal {
 pub enum RealizationError {
     Trace(TraceError),
     BodyLaw,
+    HeaderProseOverlap,
     IndentedBody,
     HeaderChildren,
     HiddenOccurrence,
@@ -204,6 +205,18 @@ impl Header {
         };
         let regions = tine_core::block_regions::parse_document(observed, org);
         let properties: HashMap<_, _> = regions.page_properties().map(|p| (p.line.0, p)).collect();
+        let mut alias_members = if properties
+            .values()
+            .any(|p| tine_core::page_header::is_alias_key(&p.key))
+        {
+            let mut block = tine_core::DocBlock::new(observed);
+            block.set_org(org);
+            tine_core::reference_evidence::linkable_property_members(&block)
+        } else {
+            Vec::new()
+        }
+        .into_iter()
+        .peekable();
         let boxes = regions.property_drawer_boundaries(observed);
         debug_assert!(boxes.windows(2).all(|w| w[0].1 < w[1].0));
         let mut observed_lines = (!observed.is_empty())
@@ -279,7 +292,40 @@ impl Header {
                 };
                 let alias = found
                     .filter(|p| tine_core::page_header::is_alias_key(&p.key))
-                    .map(|p| Alias::read(text, content.clone(), bytes(&p.value_range), org));
+                    .map(|p| {
+                        while alias_members
+                            .peek()
+                            .is_some_and(|m| m.range.start < p.value_range.0)
+                        {
+                            alias_members.next();
+                        }
+                        let mut names = Vec::new();
+                        let mut tokens = Vec::new();
+                        let mut movable = true;
+                        while alias_members
+                            .peek()
+                            .is_some_and(|m| m.range.start < p.value_range.1)
+                        {
+                            let member = alias_members.next().unwrap();
+                            if let Some(run) = member.slot.run() {
+                                let physical = |r: &Range<usize>| {
+                                    content.start + r.start - at.unwrap()
+                                        ..content.start + r.end - at.unwrap()
+                                };
+                                names.push((member.name.clone(), physical(run)));
+                                tokens.push(physical(&member.range));
+                            } else {
+                                movable = false;
+                            }
+                        }
+                        Alias {
+                            value: bytes(&p.value_range).start,
+                            names,
+                            tokens,
+                            movable,
+                            kept: Vec::new(),
+                        }
+                    });
                 Line {
                     // Keys as the reader compares them (`DocBlock::property`).
                     property: found
@@ -373,55 +419,6 @@ impl Header {
             }
         }
         cuts
-    }
-}
-
-impl Alias {
-    /// `range` is the line's content and `value` the parser's value range.
-    fn read(text: &str, range: Range<usize>, value: Range<usize>, org: bool) -> Self {
-        let raw = &text[range.clone()];
-        let body = &raw[..raw.len() - tine_core::doc::line_terminator(raw).len()];
-        let value_start = value.start - range.start;
-        let mut at = value_start;
-        let mut names = Vec::new();
-        let mut tokens = Vec::new();
-        let mut movable = true;
-        // Reader-owned member parsing; never split a bracketed comma again.
-        // A plain member's bytes are the parser's (escapes included); the
-        // decoded name travels beside them for the reading comparison.
-        tine_core::property_refs::for_each_linkable_member(
-            &text[value],
-            org,
-            |name, token, bare| {
-                let token = token.map(|r| value_start + r.start..value_start + r.end);
-                let found = if bare {
-                    token
-                        .clone()
-                        .filter(|r| at <= r.start && r.end <= body.len())
-                } else {
-                    body[at..].find(&name).map(|o| at + o..at + o + name.len())
-                };
-                let Some(Range { start, end }) = found else {
-                    movable = false;
-                    return;
-                };
-                let token = token
-                    .filter(|r| {
-                        at <= r.start && r.start <= start && end <= r.end && r.end <= body.len()
-                    })
-                    .unwrap_or(start..end);
-                names.push((name, range.start + start..range.start + end));
-                at = token.end;
-                tokens.push(range.start + token.start..range.start + token.end);
-            },
-        );
-        Self {
-            value: range.start + value_start,
-            names,
-            tokens,
-            movable,
-            kept: Vec::new(),
-        }
     }
 }
 
@@ -684,7 +681,7 @@ pub fn propose<'f>(
         // The reader can report a malformed preamble property both as a field
         // and inside its prose. Realizing both would duplicate original bytes.
         if header.overlapping_prose {
-            return Err(RealizationError::BodyLaw.at(file.into()));
+            return Err(RealizationError::HeaderProseOverlap.at(file.into()));
         }
         if let Some(line) = header
             .lines
@@ -786,7 +783,10 @@ pub fn propose<'f>(
             // A declaration with members: its key, names and syntax between them.
             for line in headers[file].lines.iter().filter(|l| members(l)) {
                 let a = line.alias.as_ref().unwrap();
-                let mut names = a.names.iter().map(|(_, r)| r).peekable();
+                // A member's whole native spelling belongs to that member:
+                // a file link includes its label, path and wrappers. Only the
+                // syntax between reader-owned tokens is a delimiter.
+                let mut names = a.tokens.iter().peekable();
                 for id in trace.interval(file, line.content.clone())? {
                     let r = trace.pieces[id].range.clone();
                     while names.peek().is_some_and(|n| n.end <= r.start) {
@@ -833,7 +833,7 @@ pub fn propose<'f>(
             for ((decoded, range), token) in a.names.iter().zip(&a.tokens) {
                 let name = w.decoded(file, decoded, range.clone())?;
                 let read = reading(&name, &format);
-                for id in w.interval(file, range.clone())? {
+                for id in w.interval(file, token.clone())? {
                     w.trace.readings.insert(id, read.clone());
                 }
                 let kept = seen.insert(read);
@@ -956,6 +956,19 @@ pub fn propose<'f>(
     // Each survivor line keeps its own reader-derived prefix. Normalizing a
     // childless header consumes those prefixes; layout never takes a slot.
     let emitted = |n: usize, line: &Line| !members(line) || retained == Some((0, n));
+    let first_payload = headers[0]
+        .lines
+        .iter()
+        .position(|l| !l.payload.is_empty())
+        .unwrap_or(0);
+    // A removed declaration can donate its own reader-derived continuation
+    // prefix to a joining field. Retained lines never exchange prefixes.
+    let mut spare_prefixes = headers[0].lines[..header_insert]
+        .iter()
+        .enumerate()
+        .filter(|(n, l)| !emitted(*n, l))
+        .map(|(_, l)| l.range.start..l.content.start)
+        .filter(|r| !r.is_empty());
     let mut expected_header = header::Expected::default();
     let entries =
         |w: &mut Writer, expected: &mut header::Expected| -> Result<(), RealizationFailure> {
@@ -985,10 +998,9 @@ pub fn propose<'f>(
             w.newline();
         }
         if !emitted(n, line) {
-            w.layout(0, line.range.start..line.content.start)?;
             continue;
         }
-        if normalize_target && line.payload.is_empty() {
+        if normalize_target && n < first_payload {
             w.layout(0, line.range.clone())?;
             continue;
         }
@@ -1012,8 +1024,12 @@ pub fn propose<'f>(
     }
     for &n in &promoted {
         w.newline();
-        if headers[0].first_root && !normalize_target {
-            w.insert("  ");
+        if !normalize_target {
+            if let Some(prefix) = spare_prefixes.next() {
+                w.original(0, prefix)?;
+            } else if headers[0].first_root {
+                w.insert("  ");
+            }
         }
         expected_header.emit(
             &mut w,
@@ -1023,6 +1039,9 @@ pub fn propose<'f>(
             retained == Some((1, n)),
             &additions,
         )?;
+    }
+    for prefix in spare_prefixes {
+        w.layout(0, prefix)?;
     }
     w.newline();
     for line in &headers[0].lines[header_insert..] {

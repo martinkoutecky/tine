@@ -184,6 +184,21 @@ pub fn linkable_property_references<'a>(
     linkable_property_references_in(projection.explicit.iter(), regions, |r| r)
 }
 
+/// Outermost linkable-property members with their native name slots and token
+/// ranges in `block.raw()`. Uses the same selection as the page index and the
+/// model observation, including file-link labels and wholly quoted values.
+/// A missing name run is explicit in `slot.run()`; callers must not search for
+/// decoded names in source text. O(block bytes), one header projection, no I/O.
+pub fn linkable_property_members(block: &crate::doc::DocBlock) -> Vec<SlottedPageRef> {
+    let source = block.read_for_rename();
+    linkable_property_references_in(source.explicit.iter(), &block.projection().regions, |r| {
+        &r.reference
+    })
+    .filter(|r| !r.slot.encoding && !r.slot.nested)
+    .cloned()
+    .collect()
+}
+
 pub(crate) fn linkable_property_references_in<'a, R: 'a>(
     references: impl Iterator<Item = &'a R>,
     regions: &'a crate::block_regions::BlockRegions,

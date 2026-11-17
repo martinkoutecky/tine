@@ -129,6 +129,153 @@ fn run_batch(cases: &[Case]) -> usize {
 }
 
 #[test]
+fn parent_header_layout_merges_and_saves_through_both_entries() {
+    let rows: Vec<serde_json::Value> =
+        serde_json::from_str(include_str!("fixtures/cm-merge-header-parent.json")).unwrap();
+    assert_eq!(rows.len(), 16);
+    run(rows
+        .iter()
+        .flat_map(|row| {
+            [false, true].map(|rename| Case {
+                source: row["source"].as_str().unwrap().into(),
+                target: row["target"]
+                    .as_str()
+                    .unwrap()
+                    .replace("title:: dst", "title:: TARGET"),
+                org: false,
+                rename,
+                refusal: None,
+            })
+        })
+        .collect());
+}
+
+#[test]
+fn reviewed_eighty_eight_alias_links_merge_through_both_entries() {
+    let rows: Vec<serde_json::Value> =
+        serde_json::from_str(include_str!("fixtures/cm-merge-header-links.json")).unwrap();
+    assert_eq!(rows.len(), 88);
+    let cases = rows
+        .iter()
+        .flat_map(|row| {
+            [false, true].map(|rename| Case {
+                source: row["source"].as_str().unwrap().into(),
+                target: row["target"].as_str().unwrap().into(),
+                org: false,
+                rename,
+                refusal: row["refusal"].as_str().map(|reason| {
+                    assert_eq!(reason, "HeaderChildren");
+                    ("HeaderChildren", true)
+                }),
+            })
+        })
+        .collect();
+    run(cases);
+}
+
+#[test]
+fn native_alias_member_siblings_have_pinned_outcomes() {
+    let mut cases = Vec::new();
+    for org in [false, true] {
+        for rename in [false, true] {
+            for ending in 0..4 {
+                for key in ["alias", "aliases"] {
+                    for value in [
+                        "[[One, Two]]",
+                        "#[[One, Two]]",
+                        "One, \"literal\"",
+                        "\"One, Two\"",
+                        "C\\#, C#",
+                        "[[C\\#]]",
+                        "\\#x, a\\[b",
+                        "a\\[\\[b",
+                        "a\\]\\]b",
+                        "[**x**_y_](A.md)",
+                    ] {
+                        let rich = if org {
+                            format!("#+{key}: {value}\n")
+                        } else {
+                            format!("{key}:: {value}\n")
+                        };
+                        let plain = if org { "* plain\n" } else { "- plain\n" };
+                        for role in 0..3 {
+                            cases.push(Case {
+                                source: endings(if role == 1 { plain } else { &rich }, ending),
+                                target: endings(if role == 0 { plain } else { &rich }, ending),
+                                org, rename,
+                                refusal: if !org && value == "[**x**_y_](A.md)" {
+                                    Some((if key == "alias" { "MissingNativeNameRange { declaration: \"alias:: [**x**_y_](A.md)\" }" } else { "MissingNativeNameRange { declaration: \"aliases:: [**x**_y_](A.md)\" }" }, role == 0))
+                                } else if org && role == 2 && value == "[**x**_y_](A.md)" {
+                                    Some((if key == "alias" { "MissingNativeNameRange { declaration: \"#+alias: [**x**_y_](A.md)\" }" } else { "MissingNativeNameRange { declaration: \"#+aliases: [**x**_y_](A.md)\" }" }, true))
+                                } else { None },
+                            });
+                        }
+                    }
+                }
+            }
+        }
+    }
+    assert_eq!(cases.len(), 960);
+    run(cases);
+}
+
+#[test]
+fn review_alias_classification_uses_the_reader() {
+    let mut cases = Vec::new();
+    for rename in [false, true] {
+        for ending in 0..4 {
+            for value in ["[x](A.md)", "[x](a)", "[x](file:A.md)"] {
+                for key in ["alias", "aliases"] {
+                    for role in 0..3 {
+                        let rich = format!("{key}:: {value}\n");
+                        cases.push(Case {
+                            source: endings(if role == 1 { "- source\n" } else { &rich }, ending),
+                            target: endings(if role == 0 { "- target\n" } else { &rich }, ending),
+                            org: false,
+                            rename,
+                            refusal: None,
+                        });
+                    }
+                }
+            }
+        }
+    }
+    assert_eq!(cases.len(), 144);
+    run(cases);
+}
+
+#[test]
+fn overlapping_properties_name_the_input_and_the_repair() {
+    let mut cases = Vec::new();
+    for rename in [false, true] {
+        for ending in 0..4 {
+            for rich in ["\na::", "a:: x\n \nb:: y\n"] {
+                for source in [false, true] {
+                    cases.push(Case {
+                        source: endings(if source { rich } else { "- source\n" }, ending),
+                        target: endings(if source { "- target\n" } else { rich }, ending),
+                        org: false,
+                        rename,
+                        refusal: Some(("HeaderProseOverlap", source)),
+                    });
+                }
+            }
+        }
+    }
+    // This matrix intentionally contains only refusals. Include its repaired
+    // counterpart so the same real-transaction harness also verifies success.
+    cases.push(Case {
+        source: "a:: x\nb:: y\n".into(),
+        target: "- target\n".into(),
+        org: false,
+        rename: false,
+        refusal: None,
+    });
+    assert_eq!(cases.len(), 33);
+    run(cases);
+}
+
+#[test]
 fn review_header_layout_merges_in_both_entries() {
     let mut cases = Vec::new();
     for rename in [false, true] {
@@ -199,7 +346,7 @@ fn generated_headers_merge_or_explain_the_limitation_before_the_check() {
                                 org,
                                 rename,
                                 refusal: if !org && variant % 2 == 1 && !blank.is_empty() {
-                                    Some(("BodyLaw", role == 0))
+                                    Some(("HeaderProseOverlap", role == 0))
                                 } else if org
                                     && variant % 2 == 1
                                     && (role == 2

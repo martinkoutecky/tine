@@ -540,14 +540,10 @@ fn project_implicit_linkable_property(
             let segment = &text[segment_start..index];
             let leading = segment.len() - segment.trim_start().len();
             let name = segment.trim();
-            // Wrapped page refs and tags are already parser-owned explicit
-            // occurrences. Mixed syntax is likewise left to the parser rather than
-            // inventing a second interpretation for one property member.
-            if !name.is_empty()
-                && !name.contains("[[")
-                && !name.contains("]]")
-                && !name.starts_with('#')
-            {
+            // The parser has already classified this node as Plain. Decoded
+            // escapes such as \#x and a\[\[b are names too; recognizing link
+            // or tag syntax again from decoded characters would discard them.
+            if !name.is_empty() {
                 let from = segment_start + leading;
                 let start = range.start + from;
                 let end = start + name.len();

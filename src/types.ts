@@ -252,7 +252,7 @@ export interface AliasGroup {
 export type RenameRefusal =
   | { kind: "taken"; into: string }
   | { kind: "checkRefused"; guarantee: "P2" | "P3"; file: string }
-  | { kind: "headerChildren" | "hiddenOccurrence" | "survivorIdentity" | "titleIdentity" | "bodyLayout" | "indentedBody" | "directiveEscape"; file: string }
+  | { kind: "headerChildren" | "hiddenOccurrence" | "survivorIdentity" | "titleIdentity" | "bodyLayout" | "headerProseOverlap" | "indentedBody" | "directiveEscape"; file: string }
   | { kind: "aliasSpelling"; file: string; alias: string }
   | { kind: "ownChild"; old: string; new: string }
   | { kind: "fileTaken"; file: string; page: string }

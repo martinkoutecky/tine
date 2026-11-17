@@ -8,6 +8,7 @@ The format follows [Keep a Changelog](https://keepachangelog.com/); versions use
 
 ## [Unreleased]
 
+- Page merges read linked aliases through the same reader as the page index, preserve interior header blank lines and continuation prefixes, and explain how to repair opening property lines that are also read as prose (REG-CM-MERGE-HEADER-ALLOCATION).
 - Merging into a first-bullet property header after blank lines keeps the properties and their child blocks in place. Header layouts that cannot be preserved receive an explained limitation naming the file (REG-CM-MERGE-HEADER-PLACEMENT).
 - Merging a page with spaces or tabs on lines after its opening prose now preserves the prose as Markdown or Org reads it, instead of reporting an internal check failure (REG-CM-MERGE-PROSE-BOUNDARY).
 - Merging into an Org page ending in blank lines now keeps its blocks intact and completes the merge, including pages containing only a header (REG-CM-MERGE-ORG-TAIL).

@@ -1,6 +1,95 @@
 use super::*;
 
 #[test]
+fn parent_success_header_bytes_are_preserved() {
+    // Exported from ebffef508's exact writer; each row independently passed
+    // O6/P2 there. Keep these bytes pinned rather than deriving them here.
+    let rows: Vec<serde_json::Value> = serde_json::from_str(include_str!(
+        "../../tests/fixtures/cm-merge-header-parent.json"
+    ))
+    .unwrap();
+    assert_eq!(rows.len(), 16);
+    let root = tempfile::tempdir().unwrap();
+    let store = tine_store::Store::open(root.path(), Default::default())
+        .unwrap()
+        .0;
+    for row in rows {
+        let source = row["source"].as_str().unwrap();
+        let target = row["target"].as_str().unwrap();
+        let src = store
+            .page_of(&tine_store::PageId::from("pages/src.md"), source.as_bytes())
+            .unwrap()
+            .doc;
+        let dst = store
+            .page_of(&tine_store::PageId::from("pages/dst.md"), target.as_bytes())
+            .unwrap()
+            .doc;
+        let proposal = propose(
+            &dst,
+            target,
+            &src,
+            source,
+            &Default::default(),
+            &Default::default(),
+            false,
+            store.config().file_name_format,
+        )
+        .unwrap();
+        assert_eq!(proposal.text, row["expected"].as_str().unwrap(), "{row}");
+    }
+}
+
+#[test]
+fn overlapping_header_observations_require_both_fields_and_the_prose() {
+    use tine_core::cm_check::{self, Atom};
+    let root = tempfile::tempdir().unwrap();
+    let store = tine_store::Store::open(root.path(), Default::default())
+        .unwrap()
+        .0;
+    let names = store.config().file_name_format;
+    let text = |atoms: &[Atom]| {
+        atoms
+            .iter()
+            .map(|a| match a {
+                Atom::Text(s) => s.as_str(),
+                Atom::Site(s) | Atom::Title(s, _) => s.native.as_str(),
+            })
+            .collect::<String>()
+    };
+    let source = cm_check::observe("a:: x\n \nb:: y\n", Format::Md, names);
+    let target = cm_check::observe("- target\n", Format::Md, names);
+    let expected = cm_check::expected(
+        &cm_check::Rename::none(None, names),
+        Format::Md,
+        cm_check::Expect::Survivor {
+            source: &source,
+            target: &target,
+        },
+    );
+    assert_eq!(
+        source
+            .header
+            .iter()
+            .map(|h| h.key.as_str())
+            .collect::<Vec<_>>(),
+        ["a", "b"]
+    );
+    assert_eq!(
+        expected
+            .header
+            .iter()
+            .map(|h| h.key.as_str())
+            .collect::<Vec<_>>(),
+        ["a", "b"]
+    );
+    assert_eq!(source.blocks.len(), 1);
+    assert_eq!(expected.blocks.len(), 2);
+    assert_eq!(text(&source.blocks[0].body), text(&expected.blocks[1].body));
+    eprintln!("overlap source={source:#?}\nO6 expected={expected:#?}");
+    assert_eq!(text(&source.blocks[0].body), " \nb:: y");
+}
+
+#[test]
 fn prose_uses_the_readers_content_end_and_excludes_only_layout() {
     let root = tempfile::tempdir().unwrap();
     let store = tine_store::Store::open(root.path(), Default::default())

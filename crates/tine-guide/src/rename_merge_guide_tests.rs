@@ -66,6 +66,7 @@ fn rename_merge_and_journal_rename_proposals_are_documented_in_the_bundled_guide
         "choose two different files, use matching Markdown or Org formats",
         "Some ordinary files exceed the merge writer's current capabilities",
         "rewrite an alias declaration as plain comma-separated names",
+        "remove blank lines before or between the property lines at the top of that file",
         "nothing was renamed or merged",
         "Pending edits may already have been saved before a refusal; those saves stay",
         "Tine lists the files where either happened",

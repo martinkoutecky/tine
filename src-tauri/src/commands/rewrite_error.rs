@@ -52,6 +52,7 @@ impl RewriteError {
                 M::HiddenOccurrence => Some("hiddenOccurrence"),
                 M::SurvivorIdentity => Some("survivorIdentity"),
                 M::BodyLaw => Some("bodyLayout"),
+                M::HeaderProseOverlap => Some("headerProseOverlap"),
                 M::IndentedBody => Some("indentedBody"),
                 M::DirectiveEscape => Some("directiveEscape"),
                 M::MissingNativeNameRange { declaration } => {

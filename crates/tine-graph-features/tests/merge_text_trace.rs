@@ -226,7 +226,7 @@ fn round15k_alias_first_owners_cannot_cross_fixed_target_frames() {
 fn round15k_missing_link_name_coordinates_refuse_unchanged() {
     let _guard = crate::integration_lock();
     let reason = valid_merge(
-        "alias:: [[C\\#]]\n- source\n",
+        "alias:: [**x**_y_](A.md)\n- source\n",
         "- target\n",
         false,
         |_, _| {},

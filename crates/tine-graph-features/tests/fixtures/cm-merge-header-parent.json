@@ -1,0 +1,98 @@
+[
+  {
+    "expected": "k:: v\n\nother:: x\n- plain\n",
+    "org": false,
+    "source": "- plain\n",
+    "target": "- k:: v\n  \n  other:: x\n"
+  },
+  {
+    "expected": "k:: v\r\n\r\nother:: x\r\n- plain\r\n",
+    "org": false,
+    "source": "- plain\r\n",
+    "target": "- k:: v\r\n  \r\n  other:: x\r\n"
+  },
+  {
+    "expected": "k:: v\r\rother:: x\r- plain\r",
+    "org": false,
+    "source": "- plain\r",
+    "target": "- k:: v\r  \r  other:: x\r"
+  },
+  {
+    "expected": "k:: v\r\n\rother:: x\n- plain\r\n",
+    "org": false,
+    "source": "- plain\r\n",
+    "target": "- k:: v\r\n  \r  other:: x\n"
+  },
+  {
+    "expected": "k:: v\n\nother:: x\n-\n  k:: v\n  other:: x\n",
+    "org": false,
+    "source": "- k:: v\n  \n  other:: x\n",
+    "target": "- k:: v\n  \n  other:: x\n"
+  },
+  {
+    "expected": "k:: v\r\n\r\nother:: x\r\n-\r\n  k:: v\r\n  other:: x\r\n",
+    "org": false,
+    "source": "- k:: v\r\n  \r\n  other:: x\r\n",
+    "target": "- k:: v\r\n  \r\n  other:: x\r\n"
+  },
+  {
+    "expected": "k:: v\r\rother:: x\r-\r  k:: v\r  other:: x\r",
+    "org": false,
+    "source": "- k:: v\r  \r  other:: x\r",
+    "target": "- k:: v\r  \r  other:: x\r"
+  },
+  {
+    "expected": "k:: v\r\n\rother:: x\n-\r\n  k:: v\r\n  other:: x\n",
+    "org": false,
+    "source": "- k:: v\r\n  \r  other:: x\n",
+    "target": "- k:: v\r\n  \r  other:: x\n"
+  },
+  {
+    "expected": "- alias:: a, b\n  - child\n- plain\n",
+    "org": false,
+    "source": "- plain\n",
+    "target": "- alias:: a, a\n  aliases:: b\n  - child\n"
+  },
+  {
+    "expected": "- alias:: a, b\r\n  - child\r\n- plain\r\n",
+    "org": false,
+    "source": "- plain\r\n",
+    "target": "- alias:: a, a\r\n  aliases:: b\r\n  - child\r\n"
+  },
+  {
+    "expected": "- alias:: a, b\r  - child\r- plain\r",
+    "org": false,
+    "source": "- plain\r",
+    "target": "- alias:: a, a\r  aliases:: b\r  - child\r"
+  },
+  {
+    "expected": "- alias:: a, b\r\n  - child\n- plain\r\n",
+    "org": false,
+    "source": "- plain\r\n",
+    "target": "- alias:: a, a\r\n  aliases:: b\r  - child\n"
+  },
+  {
+    "expected": "- title:: dst\n \tk:: café 雪\n \talias:: One, [[Two Words]], Three\n \ttags:: Red, [[Blue Sky]]\n \ts:: plain\n  - child\n- plain\n",
+    "org": false,
+    "source": "s:: plain\n- plain\n",
+    "target": "- title:: dst\n \tk:: café 雪\n \talias:: One, [[Two Words]], one\n \taliases:: Three\n \ttags:: Red, [[Blue Sky]]\n  - child\n"
+  },
+  {
+    "expected": "- title:: dst\r\n \tk:: café 雪\r\n \talias:: One, [[Two Words]], Three\r\n \ttags:: Red, [[Blue Sky]]\r\n \ts:: plain\r\n  - child\r\n- plain\r\n",
+    "org": false,
+    "source": "s:: plain\r\n- plain\r\n",
+    "target": "- title:: dst\r\n \tk:: café 雪\r\n \talias:: One, [[Two Words]], one\r\n \taliases:: Three\r\n \ttags:: Red, [[Blue Sky]]\r\n  - child\r\n"
+  },
+  {
+    "expected": "- title:: dst\r \tk:: café 雪\r \talias:: One, [[Two Words]], Three\r \ttags:: Red, [[Blue Sky]]\r \ts:: plain\r  - child\r- plain\r",
+    "org": false,
+    "source": "s:: plain\r- plain\r",
+    "target": "- title:: dst\r \tk:: café 雪\r \talias:: One, [[Two Words]], one\r \taliases:: Three\r \ttags:: Red, [[Blue Sky]]\r  - child\r"
+  },
+  {
+    "expected": "- title:: dst\r\n \tk:: café 雪\r \talias:: One, [[Two Words]], Three\n \ttags:: Red, [[Blue Sky]]\r \ts:: plain\r\n  - child\n- plain\r",
+    "org": false,
+    "source": "s:: plain\r\n- plain\r",
+    "target": "- title:: dst\r\n \tk:: café 雪\r \talias:: One, [[Two Words]], one\n \taliases:: Three\r\n \ttags:: Red, [[Blue Sky]]\r  - child\n"
+  }
+]

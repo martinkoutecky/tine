@@ -479,6 +479,30 @@ fn gh699_old_property_extraction_checkpoints_are_rebuilt() {
 }
 
 #[test]
+fn pre_escaped_plain_property_checkpoints_are_rebuilt() {
+    let root = graph();
+    fs::write(
+        root.path().join("pages/D.md"),
+        "tags:: \\#x, a\\[b\n- body\n",
+    )
+    .unwrap();
+    let cp = root.path().join("launch.bin");
+    write_checkpoint(root.path(), &cp);
+    let mut bytes = fs::read(&cp).unwrap();
+    bytes[8..12].copy_from_slice(&33_u32.to_le_bytes());
+    fs::write(&cp, bytes).unwrap();
+    let store = open_cp(root.path(), &cp);
+    let graph = store.whole_graph_reconciled().unwrap();
+    assert_eq!(load_outcome(&store), "format");
+    assert!(
+        parse_passes(&store) > 0,
+        "old reference evidence must rebuild"
+    );
+    assert_eq!(graph.backlinks("#x").unwrap().len(), 1);
+    store.close();
+}
+
+#[test]
 fn pre_priority_reference_checkpoints_are_rebuilt() {
     let root = graph();
     fs::write(root.path().join("pages/D.md"), "- [#C] low\n- plain\n").unwrap();
@@ -1340,7 +1364,7 @@ fn the_golden_body_is_pinned_to_format() {
     let digest: String = sha256(&bytes).iter().map(|b| format!("{b:02x}")).collect();
     assert_eq!(
         (FORMAT, digest.as_str()),
-        (33, GOLDEN),
+        (34, GOLDEN),
         "ADR 0070: the checkpoint body changed; bump FORMAT and re-pin GOLDEN"
     );
 }

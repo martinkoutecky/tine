@@ -86,6 +86,7 @@ it("localizes a duplicate-title refusal from the real rename question await in C
 
 it.each([
   ["bodyLayout", "Tine cannot preserve the block structure", "Align the top-level blocks"],
+  ["headerProseOverlap", "as both properties and prose", "Remove blank lines before or between the property lines"],
   ["indentedBody", "the first block of pages/source.md is indented", "Align the top-level blocks"],
   ["directiveEscape", "contains a #+END_QUOTE line outside a quote", "Move that line into a quote"],
   ["aliasSpelling", "the alias declaration “alias:: [[C\\#]]”", "plain alias names"],
@@ -101,6 +102,10 @@ it.each([
     expect(text()).toContain("无法合并");
     expect(text()).toContain("请");
     expect(text()).toContain("pages/source.md");
+    if (kind === "headerProseOverlap") {
+      expect(text()).toContain("同时读取为属性和正文");
+      expect(text()).toContain("请删除该文件顶部属性行之前或之间的空白行");
+    }
   } finally { await setActiveLocale("en"); }
 });
 

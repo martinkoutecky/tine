@@ -2429,6 +2429,7 @@ export interface MessageArgs {
   "rename-refused-file-taken": { "file": string | number; "page": string | number };
   "rename-refused-first-save": { "file": string | number };
   "rename-refused-header-children": { "file": string | number };
+  "rename-refused-header-prose-overlap": { "file": string | number };
   "rename-refused-hidden-occurrence": { "file": string | number };
   "rename-refused-indented-body": { "file": string | number };
   "rename-refused-merge-conflict-markers": { "file": string | number };
