@@ -207,6 +207,15 @@ describe("GH #210: when the header toast does fire it says what is wrong", () =>
     expect(toasts()[0].message).toContain("test table");
   });
 
+  it("a valid property after a blank line: names the blank line, not the property (review F3)", async () => {
+    await markedHeader("alias:: book\n\ntags:: reading", 0);
+    finishPageHeaderEdit("h1");
+    const message = toasts()[0].message;
+    expect(message).toContain("blank line before line 3");
+    expect(message).toContain("tags:: reading");
+    expect(message).not.toContain("is not a key:: value");
+  });
+
   it("truncates a long offending line", async () => {
     await markedHeader(`alias:: book\n${"x".repeat(300)}`, 0);
     finishPageHeaderEdit("h1");

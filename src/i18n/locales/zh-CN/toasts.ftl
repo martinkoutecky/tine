@@ -201,6 +201,8 @@ properties-page-header-properties-must-contain-only-valid-key = 页面头部属�
 
 properties-page-header-bad-line = 页面属性暂时无法保存：属性块的第 { $line } 行“{ $text }”不是 key:: value 属性。请修改或删除该行。
 
+properties-page-header-blank-line-before = 页面属性暂时无法保存：第 { $line } 行“{ $text }”之前的空行结束了页面属性，该行将变成页面正文。请删除这个空行，使属性保持在同一个属性块中。
+
 properties-page-header-has-child-blocks = 页面属性暂时无法保存：属性块下有子块。请将其取消缩进或删除。
 
 selection-outline-is-too-deep-to-indent = 大纲层级过深，无法缩进

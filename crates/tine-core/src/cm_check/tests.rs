@@ -658,14 +658,16 @@ fn org_prose_before_a_directive_is_other_header_text() {
 }
 
 /// O6: a line lsdoc folds into a Markdown page's property node that is no
-/// page property (`#+b: y`) is other header text: it was unread, so a merge
-/// keeping it as the leftover block was refused by P2.
+/// page property (`#+b: y`) ends the page properties and is prose: it was
+/// unread, so a merge keeping it as a block was refused by P2.
 #[test]
-fn a_folded_line_in_a_markdown_property_node_is_other_header_text() {
+fn a_folded_line_in_a_markdown_property_node_is_prose() {
     // `merged` renames A to B, so the key is not `a`.
     let want = merged("k:: x\n#+b: y\n- source\n", "- target\n", Format::Md);
     let read = |text: &str| matches(&want, &observe(text, Format::Md), true);
-    assert!(read("k:: x\n- target\n-\n  #+b: y\n- source\n"));
+    // The folded line ends the page properties: it is prose, kept as a block
+    // (REG-CM-HEADER-TEXT-HIDDEN; the merge writer's output).
+    assert!(read("k:: x\n- target\n- #+b: y\n- source\n"));
     // Negative control: the line lost.
     assert!(!read("k:: x\n- target\n- source\n"));
 }

@@ -159,10 +159,12 @@ including the united alias tokens, and checks the output reader's header for
 exact payload, field order, normalized keys and native property forms. Any
 unexpected pre-block prose refuses `BodyLaw` naming the survivor. An input's
 header fields and its pre-block prose never overlap: both are read from one
-answer, the parser's page properties (Markdown: OG's first top-level property
-node before the first block; Org: the top-level directives before the first
-headline and the head drawer), and the prose starts after the node holding the
-last of them.
+answer, the parser's page properties (Markdown: the property lines of the first
+top-level property node, when only blank lines precede it, up to its first line
+that is no property; Org: the top-level directives before the first headline and
+the head drawer), and the prose starts after the last of them (Org: after the
+drawer holding it). Every other non-blank byte of a Markdown pre-block is prose,
+so it is indexed, renamed and kept like any block text.
 Header checking costs O(header bytes), uses the same native description as the
 body comparison, and retains temporary intended header text until comparison.
 There is one outline read per input and one for the output, including mapped

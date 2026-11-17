@@ -504,11 +504,15 @@ fn mapped_regions(raw: &str, is_org: bool, blocks: &[Block], document: bool) -> 
     exclude_literals(&mut result.drawers, &result.literals, |p| p.range.0);
     let own = result.own_org_region(raw);
     // The one owner of where a page header ends (OG `block.cljs
-    // extract-blocks`): only top-level nodes before the first block count. A
-    // Markdown file's page properties are the first property node there (the
-    // earliest wins; a later node is prose); Org's are the directives there
-    // and the head drawer. A `#` key stays a property, as in a block (OG's
-    // `valid-property-name?` drops it from both; a named difference).
+    // extract-blocks`): only top-level nodes before the first block count.
+    // Org's page properties are the directives there and the head drawer.
+    // A Markdown file's are the property lines of the first property node
+    // there (a later node is prose, as in OG), up to the node's first line
+    // that is no property, and only when nothing but blank lines precedes the
+    // node. Tine shows a page as a header plus a prose row, so every other
+    // byte must be prose: two named differences from OG, which also reads a
+    // node after opening text and the lines after a folded one. A `#` key
+    // stays a property, as in a block (OG's `valid-property-name?` drops it).
     let (mut top, mut first_node) = (Vec::new(), None);
     for b in blocks
         .iter()
@@ -520,13 +524,32 @@ fn mapped_regions(raw: &str, is_org: bool, blocks: &[Block], document: bool) -> 
             first_node = first_node.or(r.filter(|_| matches!(b, Block::Properties { .. })));
         }
     }
+    let first_node = first_node.filter(|r| {
+        raw[..r.0]
+            .chars()
+            .all(|c| c.is_whitespace() || c == '\u{feff}')
+    });
+    let cut = first_node.map_or(0, |node| {
+        let regions = &result.property_regions;
+        let mut lines = (result.properties.iter())
+            .filter(|p| p.primary && regions[p.region] == node)
+            .map(|p| p.line.0)
+            .peekable();
+        let stray = line_ranges(raw, node)
+            .into_iter()
+            .find(|line| lines.next_if_eq(&line.0).is_none());
+        stray.map_or(node.1, |line| line.0)
+    });
     for p in &mut result.properties {
         let region = result.property_regions[p.region];
-        p.directive &= !(document && is_org) || top.contains(&region);
+        p.directive &= !(document && is_org)
+            || top
+                .binary_search_by_key(&region.0, |r| r.0)
+                .is_ok_and(|i| top[i] == region);
         p.primary &= if is_org {
             Some(p.region) == own
         } else {
-            !document || Some(region) == first_node
+            !document || (Some(region) == first_node && p.line.0 < cut)
         };
     }
     result.id = result
@@ -747,17 +770,9 @@ fn visit_inline(raw: &str, inline: &[Inline], document: bool, out: &mut BlockReg
     }
 }
 
-pub use crate::page_preamble::{page_header, page_header_in, HeaderEntry, PageHeader};
-
-/// The page header of `raw` when every line of the text is a page property
-/// (at least one). Single answerer (I-12) for "is this first block a
-/// page-properties block": a header line is a parser page property, so
-/// `key::value` (no space), literal-fence content, a `#` key and a line after
-/// a blank one (OG reads only the first property node) are not.
-pub fn page_header_only(raw: &str) -> Option<PageHeader> {
-    let header = page_header(raw);
-    header.whole.then_some(header)
-}
+pub use crate::page_preamble::{
+    page_header, page_header_in, page_header_only, HeaderEntry, PageHeader,
+};
 
 #[derive(Debug, Deserialize)]
 #[serde(tag = "kind", rename_all = "snake_case")]

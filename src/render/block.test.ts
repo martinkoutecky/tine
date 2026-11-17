@@ -59,10 +59,10 @@ describe("pageProperties", () => {
       ["tags", "a, b"],
     ]);
   });
-  it("renders OG's page properties: the first property node, never fence lookalikes", () => {
-    // OG (mldoc 1.5.9 + extract-blocks): the first property node before the first block,
-    // also after opening prose; a blank line ends it.
-    expect(pageProperties("Intro\ncustom:: a-header")).toEqual([["custom", "a-header"]]);
+  it("renders the page properties: the top property lines, never later or fenced lookalikes", () => {
+    // The first property node before the first block (OG extract-blocks); a blank line ends it.
+    // After opening text it is opening text (named difference: OG reads `custom` there).
+    expect(pageProperties("Intro\ncustom:: not-a-header")).toEqual([]);
     expect(pageProperties("```\ncustom:: not-a-header\n```")).toEqual([]);
     expect(pageProperties("klíč:: hodnota\n\ncustom/key:: value\n\nIntro\nlater:: body")).toEqual([
       ["klíč", "hodnota"],

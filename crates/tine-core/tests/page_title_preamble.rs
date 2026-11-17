@@ -12,15 +12,18 @@ const SHAPES: &[(&str, Format, Option<&str>)] = &[
         None,
     ),
     (
+        // Opening text (a fence) before the property node: no page properties
+        // (named difference; OG reads `Fenced`; REG-CM-HEADER-TEXT-HIDDEN).
         "```\n- not a block\n```\ntitle:: Fenced\n- body\n",
         Format::Md,
-        Some("Fenced"),
+        None,
     ),
     ("```\n- x\n```\n", Format::Md, None),
     (
+        // Same rule as the fence above (named difference; OG reads `Src`).
         "#+BEGIN_SRC\n- x\n#+END_SRC\ntitle:: Src\n- b\n",
         Format::Md,
-        Some("Src"),
+        None,
     ),
     // OG (mldoc 1.5.9 + extract-blocks) reads only the first property node,
     // which the `#tag line` ends: `title::` after it is opening text.

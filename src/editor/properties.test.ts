@@ -40,10 +40,12 @@ describe("canonical Markdown page-header grammar (GH #163)", () => {
   it("follows the parser for the separating space (no-space key::value is prose)", () => {
     expect(pagePropertyEntries("e\u0301/plugin.key::value", "md")).toEqual([]);
     expect(isPageHeaderPropertiesOnly("alias:: x\nplugin::value")).toBe(false);
-    // OG (mldoc 1.5.9): the `alias::` node after the prose line is the page's property node; the
-    // prose before it is header text (REG-CM-HEADER-BOUNDARY).
-    expect(pagePropertyEntries("plugin::value\nalias:: x", "md").map((e) => e.key)).toEqual(["alias"]);
-    expect(splitPagePreamble("plugin::value\nalias:: x").properties).toBe("plugin::value\nalias:: x");
+    // Text before the property node makes the whole pre-block opening text (named difference: OG
+    // reads `alias` here), so no line is hidden (REG-CM-HEADER-TEXT-HIDDEN).
+    expect(pagePropertyEntries("plugin::value\nalias:: x", "md")).toEqual([]);
+    expect(splitPagePreamble("plugin::value\nalias:: x")).toEqual({
+      properties: null, content: "plugin::value\nalias:: x", remainder: "plugin::value\nalias:: x",
+    });
     expect(pagePropertyEntries("empty::\nalias:: x", "md").map((e) => [e.key, e.value])).toEqual([["empty", ""], ["alias", "x"]]);
   });
 

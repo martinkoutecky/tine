@@ -2536,6 +2536,51 @@ describe("Markdown preamble content", () => {
       dispose();
     }
   });
+
+  // REG-CM-HEADER-TEXT-HIDDEN (review F1): every line of a Markdown pre-block is shown, either
+  // as a page property or in the opening-text row, and the properties stay editable.
+  for (const [preBlock, header, prose] of [
+    ["Intro [[X]]\nalias:: y", null, "Intro [[X]]\nalias:: y"],
+    ["k:: x\n#+b: [[X]]", "k:: x", "#+b: [[X]]"],
+  ] as const) {
+    it(`shows every line of ${JSON.stringify(preBlock)} as header or opening text`, async () => {
+      const bodyId = "44444444-4444-4444-8444-444444444444";
+      const dto = {
+        name: "Opening",
+        kind: "page" as const,
+        title: "Opening",
+        pre_block: preBlock,
+        blocks: [{ id: bodyId, raw: "b", collapsed: false, children: [] }],
+      };
+      setDoc({
+        byId: { [bodyId]: node(bodyId, "b", dto.name) },
+        pages: [page(dto.name, "page", [bodyId], dto.pre_block)],
+        feed: [], loaded: true,
+      });
+      vi.spyOn(backend(), "getPage").mockResolvedValue(unpinned(dto));
+      mainPaneRouter.openPage(dto.name, "page", { inPlace: true });
+      const { root, dispose } = mount(() => <PageView />);
+      try {
+        await tick(); await tick();
+        const shown = root.querySelector(".preamble-block .block-content-wrapper")?.textContent ?? "";
+        // The opening-text row renders the prose as a block (its property lines as block properties).
+        expect(shown).toContain(prose.split("\n")[0]);
+        const row = root.querySelector(".page-properties .prop-row") as HTMLElement | null;
+        if (header === null) {
+          expect(row).toBeNull();
+          return;
+        }
+        row!.click();
+        await tick();
+        const headerId = pageByName(dto.name)!.roots[0];
+        const editor = maybeEditorIn(root.querySelector<HTMLElement>(`[data-block-id="${headerId}"]`)!) as EditorDriver;
+        expect(editor.value()).toBe(header);
+        expect(pageToDto(dto.name)?.pre_block).toBe(preBlock);
+      } finally {
+        dispose();
+      }
+    });
+  }
 });
 
 describe("theme API 0.2 presentation on the journal title row", () => {

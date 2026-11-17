@@ -553,11 +553,10 @@ mod header_property_tests {
     fn a_fenced_example_is_never_a_header_property() {
         let prose = "```\nnote:: keep me\n```\nkey:: v\n";
         // OG (mldoc 1.5.9 + extract-blocks): the fence is no property, and
-        // `key::` after it is the first property node, so a page property.
-        assert_eq!(
-            lines(prose, false),
-            vec![None, None, None, Some(("key".into(), "v".into()))]
-        );
+        // `key::` after it is the first property node, so a page property; Tine
+        // keeps the whole text as opening text (named difference,
+        // REG-CM-HEADER-TEXT-HIDDEN), so no header line is read.
+        assert_eq!(lines(prose, false), vec![]);
         assert_eq!(
             lines(&format!("kept:: yes\n{prose}"), false),
             vec![Some(("kept".into(), "yes".into()))],

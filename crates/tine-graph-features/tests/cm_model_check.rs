@@ -742,6 +742,36 @@ fn embed_members_of_linkable_properties_rename_in_place() {
     }
 }
 
+/// REG-CM-HEADER-TEXT-HIDDEN (review F1): opening text before a property
+/// line or after a folded non-property line is prose, and a rename rewrites
+/// it under the model check.
+#[test]
+fn opening_text_around_page_properties_renames() {
+    let _guard = crate::integration_lock();
+    for (before, after) in [
+        (
+            "Intro [[X]]\nalias:: y\n- b\n",
+            "Intro [[Z]]\nalias:: y\n- b\n",
+        ),
+        (
+            "k:: x\n#+b: y\nm:: [[X]]\n- b\n",
+            "k:: x\n#+b: y\nm:: [[Z]]\n- b\n",
+        ),
+    ] {
+        let (root, store) = fixture(
+            "check-header-text",
+            &[("pages/X.md", "- source\n"), ("pages/r.md", before)],
+        );
+        let report = nested_rename(&store, "X", "Z");
+        assert_eq!(
+            fs::read_to_string(root.join("pages/r.md")).unwrap(),
+            after,
+            "{before:?}"
+        );
+        assert!(report.site_exceptions.is_empty(), "{before:?}");
+    }
+}
+
 #[test]
 fn nested_page_alias_members_are_left_unlisted() {
     let _guard = crate::integration_lock();

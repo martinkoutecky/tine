@@ -270,7 +270,7 @@ function dropHeaderLeadingBlankLines(id: string): void {
  * terminal newlines are an authoring artifact the disk firewall tolerates. */
 export type PageHeaderDraftProblem =
   | { kind: "children" }
-  | { kind: "line"; line: number; text: string }
+  | { kind: "line"; line: number; text: string; afterBlank: boolean }
   | { kind: "invalid" };
 export function pageHeaderDraftProblem(node: Node): PageHeaderDraftProblem | null {
   if (node.children.length > 0) return { kind: "children" };
@@ -315,8 +315,10 @@ export function reportInvalidPageHeaderOnExit(id: string): void {
     show = () => pushToast(msg("properties-page-header-has-child-blocks"), "error");
   } else if (problem.kind === "line") {
     const line = problem.text.length > BAD_LINE_SHOWN ? `${problem.text.slice(0, BAD_LINE_SHOWN)}…` : problem.text;
-    said = `line ${problem.line} ${line}`;
-    show = () => pushToast(msg("properties-page-header-bad-line", { line: problem.line, text: line }), "error");
+    said = `line ${problem.line} ${problem.afterBlank} ${line}`;
+    show = problem.afterBlank
+      ? () => pushToast(msg("properties-page-header-blank-line-before", { line: problem.line, text: line }), "error")
+      : () => pushToast(msg("properties-page-header-bad-line", { line: problem.line, text: line }), "error");
   } else {
     said = "invalid";
     show = () => pushToast(msg("properties-page-header-properties-must-contain-only-valid-key"), "error");

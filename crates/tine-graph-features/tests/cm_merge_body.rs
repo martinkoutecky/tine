@@ -333,8 +333,9 @@ fn headers_with_blank_gaps_merge_with_ogs_page_properties() {
             }
         }
     }
-    // Text before the first node, and a folded `#+` line inside it, are other
-    // header text: the merge moves them to the leftover block.
+    // Text before the first node makes the whole pre-block opening text, and a
+    // folded `#+` line ends the page properties: the merge keeps that prose as
+    // a block (REG-CM-HEADER-TEXT-HIDDEN).
     for source in ["text [[P]]\na:: x\n- body\n", "a:: x\n#+b: y\n- body\n"] {
         cases.push(Case {
             source: source.into(),
@@ -353,8 +354,8 @@ fn headers_with_blank_gaps_merge_with_ogs_page_properties() {
             // A leading blank line is not header text: the field joins.
             ("\na::", "- target\n") => "a::\n- target\n",
             ("- source\n", "\na::") => "\na::\n- source\n",
-            ("text [[P]]\na:: x\n- body\n", _) => "a:: x\n- target\n-\n  text [[P]]\n- body\n",
-            ("a:: x\n#+b: y\n- body\n", _) => "a:: x\n- target\n-\n  #+b: y\n- body\n",
+            ("text [[P]]\na:: x\n- body\n", _) => "- target\n- text [[P]]\n  a:: x\n- body\n",
+            ("a:: x\n#+b: y\n- body\n", _) => "a:: x\n- target\n- #+b: y\n- body\n",
             _ => return None,
         };
         Some(pinned.to_owned())

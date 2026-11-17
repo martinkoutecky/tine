@@ -229,6 +229,8 @@ properties-page-header-properties-must-contain-only-valid-key = Page-header prop
 # $line is the 1-based line number inside the page-properties block; $text is that line, shortened.
 properties-page-header-bad-line = Page properties can't be saved yet: line { $line } of the properties block, "{ $text }", is not a key:: value property. Fix or remove it.
 
+properties-page-header-blank-line-before = Page properties can't be saved yet: the blank line before line { $line }, "{ $text }", ends the page properties, so that line would become page text. Remove the blank line to keep one properties block.
+
 properties-page-header-has-child-blocks = Page properties can't be saved yet: the properties block has child blocks. Outdent or delete them.
 
 selection-outline-is-too-deep-to-indent = Outline is too deep to indent

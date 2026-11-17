@@ -81,18 +81,11 @@ pub(crate) fn observe_with_readings(
     if let Some(pre) = doc.pre_block.as_deref() {
         let regions = crate::block_regions::parse_document(pre, org);
         let properties: Vec<&Property> = regions.page_properties().collect();
-        if let Some(last) = properties.iter().map(|p| p.line.1).max() {
-            // Through the end of the region (an Org drawer's `:END:`) that
-            // holds the last property: cut inside it, the drawer would not
-            // read as one, and its values would hold no sites.
-            let end = regions
-                .property_regions
-                .iter()
-                .filter(|g| g.0 < last && last <= g.1)
-                .map(|g| g.1)
-                .max()
-                .unwrap_or(last);
-            let block = projected(&pre[..end], org);
+        let prose = tine_outline::page_preamble::preamble_content_range_in(pre, org, &regions);
+        if !properties.is_empty() {
+            // The header is everything before the prose (the one boundary,
+            // an Org drawer's `:END:` included).
+            let block = projected(&pre[..prose.map_or(pre.len(), |p| p.0)], org);
             content.header = header_rows(&block, reader, properties.iter().copied());
             other_header_text(&block, reader, &regions, &mut content.header);
         }
@@ -100,9 +93,7 @@ pub(crate) fn observe_with_readings(
         // (`page_properties::preamble_block`, the one range the page shows and
         // promotes): the newlines that end it separate it from the first
         // block (SPEC P4: line endings and blank lines are not observed).
-        if let Some(prose) =
-            tine_outline::page_preamble::preamble_content_range_in(pre, org, &regions)
-        {
+        if let Some(prose) = prose {
             let block = projected(&pre[prose.0..prose.1], org);
             content.blocks.push(Block {
                 depth: 0,
@@ -193,10 +184,10 @@ fn header_rows<'p>(
 }
 
 /// O6's "any other header text": each non-blank line of the header `block`
-/// (the pre-block through its last page property) that is neither a property
-/// line nor inside an Org property drawer, e.g. Org prose before a directive
-/// or a Markdown `#tag:: x` line in the first property node. It
-/// has no key and stays in line order among the property rows.
+/// (the pre-block before its prose) that is neither a property line nor
+/// inside an Org property drawer, e.g. Org prose before a directive (a
+/// Markdown header holds only page-property lines). It has no key and stays
+/// in line order among the property rows.
 fn other_header_text(
     block: &DocBlock,
     r: Reader<'_>,

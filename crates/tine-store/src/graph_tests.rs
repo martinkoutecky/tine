@@ -1679,6 +1679,35 @@ fn property_members_are_top_level_with_macros_skipped() {
     std::fs::remove_dir_all(&root).ok();
 }
 
+/// REG-CM-HEADER-TEXT-HIDDEN (review F1): Markdown text before a page's
+/// property line, or after a folded non-property line, is the page's opening
+/// text: its links are backlinks, and no alias is declared from after it.
+#[test]
+fn opening_text_around_page_properties_is_indexed() {
+    use tine_core::model::PageKind;
+    let root = crate::test_support::fresh_dir("tine-header-text-");
+    std::fs::create_dir_all(root.join("pages")).unwrap();
+    let w = |name: &str, text: &str| std::fs::write(root.join("pages").join(name), text).unwrap();
+    w("Lead.md", "Intro [[X]]\nalias:: y\n- b\n");
+    w("Folded.md", "k:: x\n#+b: y\nm:: [[X]]\nalias:: z\n- b\n");
+    w("X.md", "- x\n");
+    let graph = store_at(&root).whole_graph_reconciled().unwrap();
+    let mut pages: Vec<_> = graph
+        .backlinks("X")
+        .unwrap()
+        .iter()
+        .map(|b| b.page.clone())
+        .collect();
+    pages.sort();
+    assert_eq!(pages, ["Folded", "Lead"]);
+    let g = Graph::open(&root);
+    for alias in ["y", "z"] {
+        let owner = g.load_named(alias, PageKind::Page).unwrap();
+        assert_eq!(owner.map(|p| p.name), None, "{alias}");
+    }
+    std::fs::remove_dir_all(&root).ok();
+}
+
 fn page_row_names(answer: tine_store::IrAnswer) -> Vec<String> {
     let tine_store::IrAnswer::Result(answer) = answer else {
         panic!("query result");

@@ -1730,6 +1730,7 @@ export interface MessageArgs {
   "print-print-failed": {};
   "print-query-limit": { "detail": string | number };
   "properties-page-header-bad-line": { "line": string | number; "text": string | number };
+  "properties-page-header-blank-line-before": { "line": string | number; "text": string | number };
   "properties-page-header-has-child-blocks": {};
   "properties-page-header-properties-must-contain-only-valid-key": {};
   "property-type-could-not-save-property-type": { "error": string | number };

@@ -140,8 +140,8 @@ mod tests {
             .unwrap(),
             ["Tags:: new\n\nprose"]
         );
-        // A property node after a blank line is header text, not a page
-        // property (OG reads only the first node): it keeps its bytes.
+        // A property node after a blank line is prose, not a page property
+        // (OG reads only the first node): it keeps its bytes.
         assert_eq!(
             set(
                 &["Tags:: old\n\ntags:: duplicate\n\nprose".into()],
@@ -162,5 +162,36 @@ mod tests {
             .unwrap(),
             ["prose"]
         );
+    }
+
+    /// The page properties and the prose `raw` reads as.
+    fn reading(raw: &str) -> (Vec<String>, Option<&str>) {
+        let header = crate::page_preamble::page_header(raw);
+        let prose = crate::page_preamble::preamble_content_range(raw, false);
+        (
+            header.entries.into_iter().map(|e| e.key).collect(),
+            prose.map(|r| &raw[r.0..r.1]),
+        )
+    }
+
+    /// Review F2: editing one key keeps every other line's role and bytes.
+    #[test]
+    fn an_edit_keeps_the_other_lines_reading() {
+        // Opening text before a property line: no page property, all prose. A
+        // new key goes on top; the alias line stays prose, never a declaration.
+        let before = "Intro [[X]]\nalias:: y";
+        assert_eq!(reading(before), (vec![], Some(before)));
+        let out = set(&[before.into()], false, "tags", Some("new")).unwrap();
+        assert_eq!(out, ["tags:: new\nIntro [[X]]\nalias:: y"]);
+        assert_eq!(reading(&out[0]), (vec!["tags".into()], Some(before)));
+        // Removing the only page property leaves a later node first, so it
+        // becomes the page's properties. OG does the same: its removal
+        // (`batch-set-block-property!` → `property/remove-properties`, which
+        // drops the leading `key:: value` lines of the pre-block's content)
+        // saves `\nalias:: Surprise` (left-trimmed by `wrap-parse-block`), and
+        // mldoc 1.5.9 reads `alias` from that text. Tine keeps the newline.
+        let out = set(&["a:: 1\n\nalias:: Surprise".into()], false, "a", None).unwrap();
+        assert_eq!(out, ["\nalias:: Surprise"]);
+        assert_eq!(reading(&out[0]), (vec!["alias".into()], None));
     }
 }

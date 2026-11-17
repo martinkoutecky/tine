@@ -555,12 +555,23 @@ pub(crate) fn outermost_member(reference: &SlottedPageRef) -> bool {
 /// `aliases` lines, read from the header's own block parse exactly as the
 /// model observation and the merge read it. The page header and the frontend
 /// (`lsdoc-wasm`) ask this. Only the header's page properties count (the
-/// parser's document answer, OG's first property node): a later node is
-/// prose. O(header bytes), one block and one document parse plus one inline
-/// parse and, for a linkable value, one document parse per property.
+/// parser's document answer, `BlockRegions::page_properties`): the prose is
+/// no header. O(header bytes): one document parse; only with an alias page
+/// property, one block parse of the text before its prose, one
+/// inline parse and, for a linkable value, one document parse per property.
 pub(crate) fn header_alias_members(raw: &str, is_org: bool) -> Vec<String> {
     let page = tine_outline::block_regions::parse_document(raw, is_org);
-    let page: Vec<_> = page.page_properties().map(|p| p.line).collect();
+    let mut aliases = (page.page_properties())
+        .filter(|p| crate::page_header::is_alias_key(&p.key))
+        .map(|p| p.line.0)
+        .peekable();
+    if aliases.peek().is_none() {
+        return Vec::new();
+    }
+    // The bytes before the prose (an Org drawer's `:END:` included), so the
+    // block parse's offsets are the document's.
+    let prose = tine_outline::page_preamble::preamble_content_range_in(raw, is_org, &page);
+    let raw = &raw[..prose.map_or(raw.len(), |p| p.0)];
     let blocks = tine_outline::lsdoc_block_parse::parse_projection(raw, is_org).blocks;
     let regions = super::block_regions::from_blocks(raw, is_org, &blocks);
     let mut projection = ReferenceSourceProjection::default();
@@ -574,11 +585,11 @@ pub(crate) fn header_alias_members(raw: &str, is_org: bool) -> Vec<String> {
         super::ParseConfig::default_ref(),
         Some(&mut slots),
     );
+    // Both are in source order: each alias line is passed once.
     linkable_property_references_in(slots.iter(), &regions, |r| &r.reference)
         .filter(|(p, r)| {
-            page.contains(&p.line)
-                && crate::page_header::is_alias_key(&p.key)
-                && outermost_member(r)
+            while aliases.next_if(|&at| at < p.line.0).is_some() {}
+            aliases.peek() == Some(&p.line.0) && outermost_member(r)
         })
         .map(|(_, r)| r.reference.name.clone())
         .collect()

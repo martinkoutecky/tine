@@ -61,12 +61,11 @@ export function isEditablePropertyKey(key: string): boolean {
   return /^[\p{L}\p{M}\p{N}_./-]+$/u.test(key);
 }
 
-/** A Markdown page header the parser accepted (Rust `block_regions::page_header`): the leading run of
- * accepted `key:: value` properties, joined only by empty lines. Named Tine policies over lsdoc's
- * answer: the run starts at the first byte, lines start at column zero, and a key does not start
- * with `#` (a `#tag::` line is prose that happens to parse). No-space `key::value`, indented lines
- * and fenced lines are not properties because lsdoc says so (I-12). Offsets here are UTF-16: `end`
- * is the end of the last header line (newline excluded), `line` is the 0-based line index. */
+/** A Markdown page header as the parser's one owner answers it (Rust `page_preamble::page_header`,
+ * from `block_regions::mapped_regions`): the property lines of the first property node, when only
+ * blank lines precede it, up to its first line that is no property; everything else is prose.
+ * Offsets here are UTF-16: `end` is the end of the last header line (newline excluded), `line` is
+ * the 0-based line index. */
 interface PageHeader {
   end: number;
   entries: { key: string; value: string; line: number }[];
@@ -108,13 +107,17 @@ export function isPageHeaderPropertiesOnly(raw: string): boolean {
  * complete header or has no such line: the parser's first non-blank line that is
  * no page property (Rust `PageHeader::stray`, the line
  * {@link isPageHeaderPropertiesOnly} refuses), so a message built from it names
- * what that predicate refused. Unread (no `::`, or no parser) it is the first non-blank line. */
-export function pageHeaderBadLine(raw: string): { line: number; text: string } | null {
+ * what that predicate refused. Unread (no `::`, or no parser) it is the first non-blank line.
+ * `afterBlank`: the line is itself a `key:: value` property, kept out only by the blank line
+ * before it, which ends the page properties. */
+export function pageHeaderBadLine(raw: string): { line: number; text: string; afterBlank: boolean } | null {
   const header = pageHeader(raw);
   if (header.whole) return null;
   const lines = raw.split("\n");
   const bad = header === NO_HEADER ? lines.findIndex((line) => line.trim() !== "") : header.stray;
-  return bad === null || bad < 0 ? null : { line: bad + 1, text: lines[bad].trim() };
+  if (bad === null || bad < 0) return null;
+  const afterBlank = bad > 0 && lines[bad - 1].trim() === "" && acceptedPropertyLine(lines[bad].replace(/\r$/, "")) !== null;
+  return { line: bad + 1, text: lines[bad].trim(), afterBlank };
 }
 
 /** Properties that describe the block they sit on, never a page: a first
@@ -194,7 +197,8 @@ export function withoutLeadingBlankLines(raw: string): string {
 /** Whether the textarea caret is on a complete `key:: value` line. This is
  * deliberately line-local: an empty line after a run of page properties is the
  * double-Enter exit sentinel, not another property line. The line is lsdoc's accepted
- * property line under the page-header policies (column zero, no `#` key). */
+ * property line, under an editor-gesture policy of its own (column zero, no `#` key) that
+ * decides only what Enter does; where the page header ends is `pageHeader`'s answer. */
 export function caretOnPropertyLine(raw: string, caret: number): boolean {
   const c = Math.max(0, Math.min(caret, raw.length));
   const lineStart = raw.lastIndexOf("\n", c - 1) + 1;

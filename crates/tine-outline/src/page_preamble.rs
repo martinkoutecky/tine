@@ -24,7 +24,7 @@ pub struct PageHeader {
     pub entries: Vec<HeaderEntry>,
     /// Every line of the text is one of `entries` (at least one), none with a
     /// `#` key, which OG reads as no property (`valid-property-name?`): the
-    /// text is a complete page header (`block_regions::page_header_only`).
+    /// text is a complete page header ([`page_header_only`]).
     pub whole: bool,
     /// The 0-based index of the first non-blank line that is no such entry:
     /// the line an incomplete header names.
@@ -37,6 +37,17 @@ pub struct PageHeader {
 /// O(bytes).
 pub fn page_header(raw: &str) -> PageHeader {
     page_header_in(raw, &parse_document(raw, false))
+}
+
+/// The page header of `raw` when every line of the text is a page property
+/// (at least one). Single answerer (I-12) for "is this first block a
+/// page-properties block": a header line is a parser page property, so
+/// `key::value` (no space), literal-fence content, a `#` key and a line after
+/// a blank one (OG reads only the first property node) are not
+/// (`block_regions::mapped_regions` owns the rule).
+pub fn page_header_only(raw: &str) -> Option<PageHeader> {
+    let header = page_header(raw);
+    header.whole.then_some(header)
 }
 
 /// [`page_header`] over `raw`'s Markdown regions already parsed (one parse
@@ -75,10 +86,10 @@ pub fn page_header_in(raw: &str, regions: &BlockRegions) -> PageHeader {
     header
 }
 
-/// Where the prose of a page preamble is: the text after the region (Org
-/// drawer, Markdown property node) holding its last page property, without
-/// the newlines at either edge; the whole text when it has none. `None` when
-/// nothing is left. Text before the last page property is header text.
+/// Where the prose of a page preamble is: the text after its last page
+/// property (Org: after the drawer holding it), without the newlines at
+/// either edge; the whole text when it has none. `None` when nothing is left.
+/// In Markdown every other non-blank byte is a page-property line.
 /// OG reads the text before a page's first block as its first block
 /// (graph-parser `block.cljs with-pre-block-if-exists`); Tine shows this part
 /// as that block's row (`Page.tsx`) and promotes it to a real block when
@@ -99,7 +110,13 @@ pub fn preamble_content_range_in(raw: &str, is_org: bool, regions: &BlockRegions
         .map_or(0, |region| region.1);
     for property in regions.page_properties() {
         start = start.max(property.line.1);
-        if let Some(region) = regions.property_regions.get(property.region) {
+        // An Org drawer's `:END:` is header; a Markdown node's line after its
+        // last page property is prose (`block_regions::mapped_regions`).
+        if let Some(region) = regions
+            .property_regions
+            .get(property.region)
+            .filter(|_| is_org)
+        {
             start = start.max(region.1);
         }
     }
@@ -170,7 +187,8 @@ mod tests {
                     row.input
                 );
                 // A node with no valid key (`#tag:: x`) leaves its text to the prose.
-                if let Some(end) = row.header_end.filter(|_| !keys.is_empty()) {
+                let same = row.known_difference.is_none();
+                if let Some(end) = row.header_end.filter(|_| same && !keys.is_empty()) {
                     assert!(prose.0 >= end, "{:?}", row.input);
                 }
             }
@@ -191,5 +209,75 @@ mod tests {
             }
         }
         assert!(wrong.is_empty(), "{wrong:#?}");
+    }
+
+    /// Where `raw` breaks the Markdown header/prose partition: a non-blank
+    /// byte in both a page-property line and the prose, or in neither (shown
+    /// nowhere, indexed nowhere, skipped by rename).
+    fn partition_error(raw: &str) -> Option<String> {
+        let regions = crate::block_regions::parse_document(raw, false);
+        if regions.quarantined {
+            return None;
+        }
+        let prose = preamble_content_range(raw, false);
+        let lines: Vec<_> = regions.page_properties().map(|p| p.line).collect();
+        let (i, c) = raw.char_indices().find(|&(i, c)| {
+            let property = lines.iter().any(|l| l.0 <= i && i < l.1);
+            let in_prose = prose.is_some_and(|r| r.0 <= i && i < r.1);
+            !c.is_whitespace() && c != '\u{feff}' && property == in_prose
+        })?;
+        Some(format!(
+            "{raw:?}: byte {i} ({c:?}) lines {lines:?} prose {prose:?}"
+        ))
+    }
+
+    /// Every non-blank byte of a Markdown pre-block is in exactly one of the
+    /// page header and the prose row (REG-CM-HEADER-BOUNDARY, review F1):
+    /// over the OG fixture and every sequence of up to three generated lines.
+    #[test]
+    fn every_markdown_preamble_byte_is_header_or_prose_once() {
+        let rows: Vec<Row> =
+            serde_json::from_str(include_str!("page_preamble/og_page_header.json")).unwrap();
+        let mut inputs: Vec<String> = (rows.into_iter())
+            .filter(|r| r.format == "md")
+            .map(|r| r.input)
+            .collect();
+        let pieces = [
+            "",
+            " ",
+            "alias:: y",
+            " k:: v",
+            "#tag:: x",
+            "Intro [[X]]",
+            "#+b: [[X]]",
+            "```",
+            ":PROPERTIES:",
+            ":END:",
+            "k::v",
+            "title:: T",
+            "\u{feff}a:: 1",
+            "> q:: r",
+        ];
+        for a in pieces {
+            for b in pieces {
+                for c in pieces {
+                    for eol in ["\n", "\r\n"] {
+                        inputs.push([a, b, c].join(eol));
+                        inputs.push([a, b, c, ""].join(eol));
+                    }
+                }
+            }
+        }
+        let wrong: Vec<_> = inputs
+            .iter()
+            .filter_map(|raw| partition_error(raw))
+            .collect();
+        assert!(
+            wrong.is_empty(),
+            "{} of {}: {:#?}",
+            wrong.len(),
+            inputs.len(),
+            &wrong[..wrong.len().min(20)]
+        );
     }
 }
