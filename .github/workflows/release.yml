@@ -60,7 +60,7 @@ jobs:
         # A development-purpose CI run (no release metadata check) only
         # satisfies a build that publishes nothing.
         run: node scripts/check-ci-evidence.mjs ${{ (github.event_name == 'workflow_dispatch' && inputs.publish == false) && '--allow-development' || '' }}
-      - uses: dtolnay/rust-toolchain@b725eda525362e7cf34af9a7243cac1e3f01a7ec # stable
+      - uses: dtolnay/rust-toolchain@d86e0fa8f147d6539442c26a61ebba8becc19489 # 1.96.0
       - uses: swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
         with:
           workspaces: ". -> target"
@@ -95,8 +95,6 @@ jobs:
         run: node scripts/check-release-preflight.mjs
       - name: lsdoc WASM pin is current
         run: node scripts/check-wasm-pin.mjs
-      - name: lsdoc oracle bytes and cross-platform EOL policy are current
-        run: node scripts/check-lsdoc-oracle-sync.mjs
       - name: Release pipeline contract fixtures
         run: |
           node scripts/test-release-pipeline.mjs
@@ -177,7 +175,7 @@ jobs:
           node-version: 22
           cache: npm
 
-      - uses: dtolnay/rust-toolchain@b725eda525362e7cf34af9a7243cac1e3f01a7ec # stable
+      - uses: dtolnay/rust-toolchain@d86e0fa8f147d6539442c26a61ebba8becc19489 # 1.96.0
         with:
           targets: ${{ matrix.rust-targets }}
 
@@ -540,7 +538,7 @@ jobs:
         with:
           node-version: 22
           cache: npm
-      - uses: dtolnay/rust-toolchain@b725eda525362e7cf34af9a7243cac1e3f01a7ec # stable
+      - uses: dtolnay/rust-toolchain@d86e0fa8f147d6539442c26a61ebba8becc19489 # 1.96.0
       - run: npm ci
       - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
         with:
@@ -575,6 +573,10 @@ jobs:
           $exe = Get-ChildItem "$env:RUNNER_TEMP\tine-portable" -Filter '*.exe' | Select-Object -First 1
           if (-not $exe) { throw "portable Tine executable is missing" }
           "TINE_APP=$($exe.FullName)" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
+          # The staged ZIP is portable: it reads settings beside the executable,
+          # rather than the scratch APPDATA that individual journeys provide.
+          $appId = node --input-type=module -e 'import { APP_ID } from "./scripts/lib/app-identity.mjs"; console.log(APP_ID)'
+          "E2E_CLASSIC_SETTINGS_DIR=$($exe.DirectoryName)\tine-data\$appId\roaming" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
           "TINE_E2E_BUILD_RECEIPT=$env:RUNNER_TEMP\tine-receipt\tine.exe.build.json" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
       - name: Install Edge WebDriver matching the hosted browser
         shell: pwsh

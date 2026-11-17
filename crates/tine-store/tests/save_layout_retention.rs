@@ -5,7 +5,7 @@ use std::fs;
 use std::path::PathBuf;
 
 use tine_core::model::{BlockDto, PageDto};
-use tine_store::{EditKind, PageId, SaveBase, Store};
+use tine_store::{Depth, EditKind, PageId, SaveBase, Store};
 
 /// Layout the DTO cannot express: every root under a base tab, a depth jump
 /// (a child three tabs deep), a whitespace-only continuation line, trailing
@@ -32,6 +32,13 @@ impl Page {
             store,
             id: PageId::from("pages/p.md"),
         }
+    }
+
+    /// Replace the file's bytes behind the store, as an external editor does,
+    /// and reload it.
+    fn reset(&self, source: &str) {
+        fs::write(self.root.join("pages/p.md"), source).unwrap();
+        self.store.refresh(Depth::Bytes).unwrap();
     }
 
     /// Apply `edit` to the loaded DTO, save it, and return the disk bytes.
@@ -61,8 +68,21 @@ fn block(raw: &str) -> BlockDto {
     }
 }
 
+/// One save of `source`. A test's many cases share one open store and host (a
+/// fresh pair costs 0.2 s); each case rewrites the file first, so nothing a
+/// case saved reaches the next. Tests that need a fresh store use `Page::new`.
 fn saved(source: &str, kind: EditKind, edit: impl FnOnce(&mut PageDto)) -> String {
-    Page::new(source).save(kind, edit)
+    thread_local! {
+        static SHARED: std::cell::RefCell<crate::test_host_writer::ThreadSlot<Page>> = const { std::cell::RefCell::new(crate::test_host_writer::ThreadSlot(None)) };
+    }
+    SHARED.with(|shared| {
+        let shared = &mut shared.borrow_mut().0;
+        match shared.as_ref() {
+            Some(page) => page.reset(source),
+            None => *shared = Some(Page::new(source)),
+        }
+        shared.as_ref().unwrap().save(kind, edit)
+    })
 }
 
 #[test]

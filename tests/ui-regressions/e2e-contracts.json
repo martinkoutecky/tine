@@ -466,7 +466,7 @@
     "scripts/e2e-ref-body-bench.mjs": {
       "setup": "Set REF_BENCH_OUT to a new disposable output directory for every run; existing profiles are deliberately rejected so cold A/B measurements cannot reuse warm state.",
       "contracts": [{"class":"core-operation","userOutcome":"A large linked-reference panel settles with its nested rows present and native typing remains focused while the panel is visible.","blocking":false,"authority":"M-19 Wave 4 measure-first; provisional GH #746 stall budget 100 ms/s"}],
-      "acceptableVariations": ["Expansion latency, frame timing and memory vary with the host; compare repeated baseline and prototype samples."],
+      "acceptableVariations": ["Offscreen rows may retire into viewport windows; scrolling must expose every fixture row, including nested descendants after disclosure, without fallback rows.", "Expansion latency, frame timing and memory vary with the host; compare repeated baseline and prototype samples with the same expansionScope."],
       "nonRequirements": ["Exact pixels or DOM shape; unsupported WebKit performance APIs; final release acceptance or burn-in."],
       "stability":"burn-in"
     },

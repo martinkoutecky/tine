@@ -6,8 +6,6 @@ delete-reason-target = 目标页面已更改，请重新打开页面操作菜单
 
 delete-reason-read-only = 此页面为只读。
 
-delete-reason-conflict = 无法解决页面的保存冲突。
-
 delete-reason-storage = { $reason }
 
 delete-reason-unsaved = 无法保存“{ $name }”，页面未删除。

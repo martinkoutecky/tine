@@ -9,10 +9,8 @@ import { maybeEditorIn } from "./tests/editorDriver";
 // KEYSTROKE_ONLY="substr|substr"); KEYSTROKE_SWEEP_OUT=<file> writes the JSON
 // report; KEYSTROKE_SIZES=a,b overrides the page sizes.
 //
-// Verdicts are a ratchet: GROWS names the surfaces known (2026-10-17 sweep) to do
-// work proportional to page/result size per keystroke. A surface that stops
-// growing fails its "grows" assertion on purpose: fix landed, move it out of GROWS.
-// A surface outside GROWS that starts growing is a new GH #248-shaped regression.
+// A surface whose per-keystroke work on other nodes grows with page/result size is a
+// GH #248-shaped regression.
 import "./keystrokeProbe.test.support";
 import { afterEach, beforeAll, describe, expect, it, vi } from "vitest";
 import fs from "node:fs";
@@ -601,8 +599,6 @@ const FIXED_RESIDUE = new Set([
   "sheet table view, N rows (edit a row)",
   "sheet board view, N rows (edit a row)",
 ]);
-/** No known per-keystroke growers remain in the sweep. Keep the ratchet for new investigations. */
-const GROWS = new Set<string>();
 /** The default (fast) set: zoom/plain-page controls, compact summary, and the fixed large-subtree window. */
 const FAST = new Set([
   "large routed zoom, edit root",
@@ -736,16 +732,11 @@ describe("keystroke scaling", () => {
           }
         }
         console.log(`${surface.name} / ${via}: foreignRaw ${small.foreignRaw} -> ${big.foreignRaw}; runs ${small.runs} -> ${big.runs}`);
-        if (GROWS.has(surface.name)) {
-          expect(big.foreignRaw, `${surface.name} no longer grows (${small.foreignRaw} -> ${big.foreignRaw}): fixed? remove it from GROWS`)
-            .toBeGreaterThanOrEqual(small.foreignRaw * 2 + 8);
-        } else {
-          expect(big.foreignRaw, `${surface.name}: per-keystroke reads of other blocks' text grow with size (${small.foreignRaw} -> ${big.foreignRaw}): the GH #248 shape`)
-            .toBeLessThanOrEqual(small.foreignRaw * 1.25 + 4);
-          if (FIXED_RESIDUE.has(surface.name)) {
-            expect(big.runs, `${surface.name}: per-keystroke computations grow with size`)
-              .toBeLessThanOrEqual(small.runs * 1.25 + 8);
-          }
+        expect(big.foreignRaw, `${surface.name}: per-keystroke reads of other blocks' text grow with size (${small.foreignRaw} -> ${big.foreignRaw}): the GH #248 shape`)
+          .toBeLessThanOrEqual(small.foreignRaw * 1.25 + 4);
+        if (FIXED_RESIDUE.has(surface.name)) {
+          expect(big.runs, `${surface.name}: per-keystroke computations grow with size`)
+            .toBeLessThanOrEqual(small.runs * 1.25 + 8);
         }
       }, 240_000);
     }

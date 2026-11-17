@@ -70,8 +70,6 @@ right-sidebar-close-others = 关闭其他
 
 right-sidebar-collapse = 折叠
 
-right-sidebar-expand = 展开
-
 right-sidebar-collapse-others = 折叠其他
 
 right-sidebar-expand-sidebar-item = 展开侧边栏条目

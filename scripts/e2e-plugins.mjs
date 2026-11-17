@@ -118,7 +118,8 @@ try {
   // Exercise the real signed Dev Theme Colors package that previously returned
   // to Install and then failed its metadata comparison.
   await page.setViewportSize({ width: 1280, height: 860 });
-  await page.getByRole("button", { name: "Appearance", exact: true }).click();
+  // Theme packages live in their own Settings category since #926.
+  await page.locator(".settings-nav-item").filter({ hasText: /^Themes$/ }).click();
   const showAllThemes = page.getByRole("button", { name: /^Show all \d+ theme packages$/ });
   if (await showAllThemes.count()) await showAllThemes.click();
   const devTheme = page.locator(".settings-field", { hasText: "Dev Theme Colors" }).first();

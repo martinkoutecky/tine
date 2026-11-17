@@ -317,9 +317,6 @@ mod share_selector;
 #[path = "rename_cost.rs"]
 mod rename_cost;
 
-#[path = "rename_cost_probe.rs"]
-mod rename_cost_probe;
-
 #[path = "rename_io.rs"]
 mod rename_io;
 

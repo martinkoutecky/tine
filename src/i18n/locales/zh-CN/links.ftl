@@ -9,8 +9,6 @@ links-forget-scheme = 忘记 { $scheme } 链接
 links-no-remembered-schemes = 尚未记住任何协议
 links-consent-save-failed = 无法保存应用链接授权。已恢复之前的设置。
 
-links-outside-graph-title = 此链接指向图谱文件夹外，Tine 不会打开它
-
 links-copy-title = 复制链接
 
 references-filter-unlinked = 筛选未链接引用

@@ -265,33 +265,4 @@ mod tests {
         assert!(error.contains("index.lock"), "{error}");
         assert_eq!(fs::read(repo.path().join("config")).unwrap(), before);
     }
-
-    /// Writes 41 MB; run on demand (`--ignored`) to re-measure.
-    #[test]
-    #[ignore]
-    fn crlf_probe_cost_on_ten_thousand_files() {
-        let (dir, repo) = fixture();
-        repo.config()
-            .unwrap()
-            .set_bool("core.autocrlf", false)
-            .unwrap();
-        let mut index = repo.index().unwrap();
-        for n in 2..10_000 {
-            let name = format!("pages/{n}.md");
-            fs::write(dir.path().join(&name), "- synthetic page\n".repeat(256)).unwrap();
-            index.add_path(Path::new(&name)).unwrap();
-        }
-        index.write().unwrap();
-        repo.config()
-            .unwrap()
-            .set_bool("core.autocrlf", true)
-            .unwrap();
-        let start = std::time::Instant::now();
-        let got = probe(dir.path());
-        eprintln!(
-            "10k probe (10,000 tracked files, ~41 MB): {:?}",
-            start.elapsed()
-        );
-        assert!(got.safe, "{got:?}");
-    }
 }

@@ -356,6 +356,107 @@
       rect(-bw / 2, -14, bw, 28, back ? '#3a2f12' : '#1f3a2e'); rect(-bw / 2, -14, bw, 2, back ? '#ffcf4a' : '#6ee7b7');
       txt(back ? p.later : p.label, 0, -4, back ? '#ffcf4a' : '#ffffff', 8, 'center');
       c.restore();
+    } else if (p.kind === 'thread') {
+      // a page with margin comments: 'comment' highlights words and puts Martin's cards in the margin,
+      // 'reply' hangs an agent's answer under each card
+      const sc0 = sc.steps.find(s => s.act === 'comment:' + p.id), sr = sc.steps.find(s => s.act === 'reply:' + p.id);
+      const kc = sc0 ? clamp((t - sc0.t0) / 1.4) : 0, kr = sr ? clamp((t - sr.t0) / 1.2) : 0;
+      const w = 132, h = 96, x0 = x - 100, y0 = GROUND - h - 14;
+      rect(x0, y0, w, h, '#f7f3ea'); rect(x0, y0, w, 10, '#323a52'); ['#ff6b5b', '#ffcf4a', '#5cf28f'].forEach((col, i) => rect(x0 + 5 + i * 8, y0 + 3, 4, 4, col));
+      const rows = [0, 1, 2, 3, 4, 5], hot = [1, 4];
+      for (const r of rows) {
+        const y = y0 + 18 + r * 12, len = 50 + rnd(r + 30) * 60;
+        rect(x0 + 8, y, 3, 3, '#9aa3b8');
+        const hi = hot.indexOf(r);
+        if (hi >= 0) { const f = ease(clamp(kc * 2 - hi)); if (f > 0) rect(x0 + 30, y - 2, 40 * f, 7, '#fde68a'); }
+        rect(x0 + 15, y + 1, len, 2, '#5b6478');
+      }
+      rect(x - 4, GROUND - 14, 8, 14, '#323a52');
+      hot.forEach((r, i) => {
+        const f = ease(clamp(kc * 2 - i - 0.3)); if (f <= 0) return;
+        const y = y0 + 12 + r * 12 + (i ? 4 : -6), cx0 = x0 + w + 8 + (1 - f) * 40;
+        c.globalAlpha = f;
+        c.strokeStyle = '#e9c46a'; c.lineWidth = 1; c.beginPath(); c.moveTo(x0 + 70, y0 + 19 + r * 12); c.lineTo(cx0, y + 6); c.stroke();
+        rect(cx0, y, 62, 16, '#fff7d6'); rect(cx0, y, 2, 16, '#e9a23b');
+        circle(cx0 + 9, y + 8, 4, '#ffd23f'); rect(cx0 + 17, y + 4, 38, 2, '#7a6a4a'); rect(cx0 + 17, y + 9, 26, 2, '#7a6a4a');
+        const g = ease(clamp(kr * 2 - i));
+        if (g > 0) {
+          c.globalAlpha = f * g; const ry = y + 18;
+          rect(cx0 + 8, ry, 54, 14, '#fde3d3'); rect(cx0 + 8, ry, 2, 14, '#d97757');
+          c.fillStyle = '#d97757'; c.beginPath(); c.roundRect(cx0 + 13, ry + 3, 8, 8, 3); c.fill();
+          rect(cx0 + 25, ry + 4, 30, 2, '#8a5a44'); rect(cx0 + 25, ry + 8, 20, 2, '#8a5a44');
+        }
+        c.globalAlpha = 1;
+      });
+      label(p.label, x - 34, y0 - 16, '#fff3b0');
+    } else if (p.kind === 'book') {
+      // scattered rules: 'gather' flies the scraps into one short book, 'flip' opens it at one page
+      const sg = sc.steps.find(s => s.act === 'gather:' + p.id), sf = sc.steps.find(s => s.act === 'flip:' + p.id);
+      const kg = sg ? clamp((t - sg.t0) / 1.8) : 0, kf = sf ? clamp((t - sf.t0) / 1.0) : 0;
+      const bx = x, by = GROUND - 96;
+      // the many small notes, then the labelled ones on top
+      const n = 16, spots = [[-90, -126], [56, -148], [-10, -70]];
+      for (let i = 0; i < n + p.scraps.length; i++) {
+        const lab = i >= n ? p.scraps[i - n] : null;
+        const sx = lab ? x + spots[i - n][0] : x - 120 + rnd(i + 60) * 220, sy = lab ? GROUND + spots[i - n][1] : GROUND - 160 + rnd(i + 70) * 130;
+        const f = ease(clamp(kg * 1.4 - (lab ? 0.25 : rnd(i + 80) * 0.3))); if (f >= 1) continue;
+        const drift = Math.sin(t * 1.3 + i) * 3 * (1 - f);
+        const px = sx + (bx - sx) * f, py = sy + drift + (by + 20 - sy) * f, s = 1 - 0.8 * f;
+        c.save(); c.translate(px, py); c.rotate((rnd(i + 90) - 0.5) * 0.5 * (1 - f)); c.scale(s, s);
+        if (lab) { c.font = '8px ' + PX; const tw = c.measureText(lab).width + 10; rect(-tw / 2, -6, tw, 14, '#f3eee4'); rect(-tw / 2, -6, tw, 2, '#c9b98a'); txt(lab, 0, -3, '#3a2f12', 8, 'center'); }
+        else { rect(-7, -5, 14, 10, '#e9e4d8'); rect(-5, -2, 10, 1, '#9a9282'); rect(-5, 1, 7, 1, '#9a9282'); }
+        c.restore();
+      }
+      const bf = ease(clamp((kg - 0.55) / 0.45)); if (bf <= 0) return;
+      c.save(); c.translate(bx, by + 30); c.scale(bf, bf); c.translate(-bx, -by - 30);
+      if (kf <= 0) {
+        rect(bx - 24, by, 48, 60, '#6d4bd8'); rect(bx - 24, by, 6, 60, '#4c33a0'); rect(bx - 16, by + 4, 38, 2, '#c4b5fd'); rect(bx - 16, by + 54, 38, 2, '#c4b5fd');
+        txt(p.cover, bx + 3, by + 22, '#ffffff', 16, 'center');
+      } else {
+        // open: two pages, the right one turns over and shows the page
+        // the leaf turns from the right page over to the left one, uncovering the page underneath
+        const PW = 90;
+        rect(bx - PW - 4, by, 2 * PW + 8, 62, '#4c33a0');
+        rect(bx - PW - 1, by + 2, PW, 58, '#f7f3ea'); for (let r = 0; r < 6; r++) rect(bx - PW + 6, by + 10 + r * 8, PW - 20 - rnd(r) * 24, 2, '#b8b0a0');
+        rect(bx + 1, by + 2, PW, 58, '#f7f3ea'); txt(p.page[0], bx + 1 + PW / 2, by + 8, '#6d4bd8', 16, 'center');
+        p.page.slice(1).forEach((ln, i) => txt(ln, bx + 1 + PW / 2, by + 30 + i * 11, '#3a2f12', 8, 'center'));
+        const turn = Math.cos(kf * Math.PI), pw = PW * Math.abs(turn);
+        if (kf < 1) { if (turn > 0) rect(bx + 1, by + 2, pw, 58, '#e3dccb'); else rect(bx - 1 - pw, by + 2, pw, 58, '#e3dccb'); }
+        rect(bx - 1, by, 2, 62, '#2f1f6a');
+      }
+      c.restore();
+      if (kf <= 0 && bf >= 1) label(p.label, bx, by - 18, '#e9ddff');
+    } else if (p.kind === 'reviews') {
+      // merges ride a belt past the reviewer's stamp; some are held. 'count' shows the record, 'shrink'
+      // the fix size per finding
+      const scn = sc.steps.find(s => s.act === 'count:' + p.id), ssh = sc.steps.find(s => s.act === 'shrink:' + p.id);
+      const kn = scn ? clamp((t - scn.t0) / 1.6) : 0, ks = ssh ? clamp((t - ssh.t0 - 0.3) / 1.4) : 0;
+      const bx0 = x - 120, bx1 = x + 110, gate = x - 10, by = GROUND - 12;
+      rect(bx0, by, bx1 - bx0, 6, '#3a3f4f'); for (let q = bx0 + ((t * 30) % 12); q < bx1; q += 12) rect(q, by + 2, 4, 2, '#5b6478');
+      const speed = 34, gap = 30, head = (t - sc.t0) * speed;
+      let near = Infinity;
+      for (let k = 0; k < 40; k++) {
+        const xx = bx0 + head - k * gap; if (xx < bx0 - 4) break; if (xx > bx1 - 14) continue;
+        const held = rnd(k + 300) < 0.21, past = xx > gate;
+        near = Math.min(near, Math.abs(xx + 7 - gate));
+        const col = held && past ? '#c0392b' : '#10b981';
+        rect(xx, by - 14, 14, 14, col); rect(xx, by - 14, 14, 2, shade(col, 0.35));
+        if (held && past) txt('!', xx + 7, by - 12, '#ffffff', 8, 'center');
+      }
+      const down = near < 6 ? 1 : 0;
+      rect(gate - 2, GROUND - 74, 4, 62 - 30, '#8a6a4a'); rect(gate - 26, GROUND - 78, 30, 4, '#8a6a4a');
+      rect(gate - 7, GROUND - 74 + down * 26, 14, 10, '#4a5165'); rect(gate - 9, GROUND - 64 + down * 26, 18, 4, '#c0392b');
+      label('REVIEW', gate - 11, GROUND - 92, '#cfd6e6');
+      if (kn > 0) {
+        const e = ease(kn), rows = [['REVIEWS', 616], ['MERGES HELD', 130], ['REAL PROBLEMS', 140]];
+        rows.forEach(([nm, v], i) => { c.globalAlpha = clamp(kn * 3 - i); txt(nm + ' ' + Math.round(v * e), x - 30, GROUND - 176 + i * 13, i === 2 ? '#6ee7b7' : '#fff7e0', 8, 'center'); });
+        c.globalAlpha = 1;
+      }
+      if (ssh && t >= ssh.t0) {
+        const v = Math.round(43 - 29 * ease(ks)), y = GROUND - 132, lx = x + 80;
+        txt('LINES PER FIX', lx, y, '#fde68a', 8, 'center');
+        rect(lx - 43, y + 12, v * 2, 8, v > 20 ? '#e9a23b' : '#10b981'); txt(String(v), lx - 43 + v * 2 + 6, y + 12, '#ffffff', 8);
+      }
     }
   }
 
@@ -592,7 +693,7 @@
       box.className = (st ? 'who-' + (st.who || 'none') + (st.mode ? ' ' + st.mode : '') : 'empty') + (old ? ' old' : '');
       const nm = !st ? '' : st.who === 'martin' && st.mode === 'ask' ? 'MARTIN ASKS' : st.who === 'martin' && st.mode === 'aha' ? 'MARTIN · LEVEL UP' : NAME[st.who] || '';
       $('dName').textContent = nm;
-      $('dDate').textContent = st ? fmtDate(st.d) : '';
+      $('dDate').textContent = st ? fmtDate(st.was ? parse(st.was) : st.d) : '';
       $('dMore').hidden = !(st && (st.more || st.src));
     }
     const key = st ? st.who + (st.mode || '') : '';
@@ -649,7 +750,10 @@
     build: SFX.build, swell: SFX.boss, pull: SFX.yank, bump: SFX.thud, enter: SFX.warp, exit: SFX.up, scare: SFX.scare, overtake: () => seq([523, 698, 880, 1047, 1397], 0.05, 'triangle', 0.07),
     night: () => seq([392, 330, 262, 196], 0.22, 'triangle', 0.05), cheer: () => { SFX.up(); SFX.coin(0.5); SFX.coin(0.8); }, pop: () => { SFX.coin(); SFX.major(); }, split: () => seq([660, 990], 0.08, 'square', 0.05),
     fork: () => { for (let i = 0; i < 3; i++) seq([523 + i * 131, 659 + i * 131], 0.06, 'square', 0.05, i * 0.53); }, crash: () => { noise(0.9, 0.2); seq([220, 165, 110], 0.15, 'sawtooth', 0.06, 0.4); },
-    defer: () => seq([440, 392, 494], 0.1, 'triangle', 0.06) };
+    defer: () => seq([440, 392, 494], 0.1, 'triangle', 0.06),
+    comment: () => { SFX.coin(0); SFX.coin(0.7); }, reply: () => seq([494, 587, 740], 0.07, 'triangle', 0.06),
+    gather: () => { noise(0.8, 0.08); seq([262, 330, 392, 523], 0.12, 'square', 0.05, 0.6); }, flip: () => noise(0.25, 0.1),
+    count: () => { for (let i = 0; i < 8; i++) SFX.coin(i * 0.18); }, shrink: () => seq([784, 659, 523, 392], 0.12, 'triangle', 0.05) };
   function sounds(t0, t1) {
     if (!state.sound) return;
     for (const it of items) {
@@ -744,7 +848,9 @@
     $('finTag').textContent = 'TINE ' + FIN.tag.replace(/^v/, '') + (FIN.pending ? ' (release pending)' : ' · STABLE · ' + fmtDate(parse(FIN.at)).toUpperCase());
     $('finName').textContent = FIN.name;
     const tr = $('trophies'); tr.innerHTML = '';
-    FIN.trophies.forEach((x, i) => { const li = document.createElement('li'); li.style.setProperty('--i', i); const b = document.createElement('b'); b.textContent = x.label; const s = document.createElement('span'); s.textContent = x.text; li.append(b, s); tr.appendChild(li); });
+    FIN.trophies.forEach((x, i) => { const li = document.createElement('li'); li.style.setProperty('--i', i); const b = document.createElement('b'); b.textContent = x.label; const s = document.createElement('span'); s.textContent = x.text; li.append(b, s);
+      if (x.href) { const a = document.createElement('a'); a.href = x.href; a.target = '_blank'; a.rel = 'noopener'; a.textContent = x.link || 'Read more'; li.append(' ', a); }
+      tr.appendChild(li); });
     const sy = $('syllabus'); sy.innerHTML = '';
     for (const ch of FIN.syllabus || []) { const li = document.createElement('li'); const b = document.createElement('b'); b.textContent = ch.chapter; const q = document.createElement('span'); q.textContent = '“' + ch.q + '”'; li.append(b, q); sy.appendChild(li); }
     const total = D.commits.reduce((a, r) => a + r[1], 0);
@@ -767,7 +873,7 @@
   }
   function openCard() {
     const st = shownStep; if (!st) return; setPlaying(false);
-    $('cardDate').textContent = fmtDate(st.d);
+    $('cardDate').textContent = fmtDate(st.was ? parse(st.was) : st.d);
     $('cardQuote').textContent = st.who === 'martin' ? '“' + st.text + '”' : st.text;
     $('cardMore').hidden = !st.more; $('cardMore').textContent = st.more || '';
     $('cardSrc').hidden = !st.src; $('cardSrc').textContent = st.src ? 'Source: ' + st.src : '';

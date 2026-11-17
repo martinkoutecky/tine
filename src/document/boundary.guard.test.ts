@@ -14,8 +14,20 @@ function sourceFiles(dir = "src"): string[] {
   });
 }
 
+// One read and one parse per file for the whole test file: the six tests share them. `sources()` hands
+// each test its own Map, because the tests plant files into it.
+let readOnce: [string, string][] | undefined;
 function sources(): Sources {
-  return new Map(sourceFiles().map((file) => [file, readFileSync(file, "utf8")]));
+  readOnce ??= sourceFiles().map((file) => [file, readFileSync(file, "utf8")]);
+  return new Map(readOnce);
+}
+const parsedOnce = new Map<string, { source: string; parsed: ts.SourceFile }>();
+function parse(file: string, source: string): ts.SourceFile {
+  const hit = parsedOnce.get(file);
+  if (hit?.source === source) return hit.parsed;
+  const parsed = ts.createSourceFile(file, source, ts.ScriptTarget.Latest, true);
+  parsedOnce.set(file, { source, parsed });
+  return parsed;
 }
 
 // Each check parses every production source; under a loaded full-suite run
@@ -27,7 +39,7 @@ function production(file: string): boolean {
 }
 
 function imports(file: string, source: string): { spec: string; names: string[]; typeOnly: boolean }[] {
-  const parsed = ts.createSourceFile(file, source, ts.ScriptTarget.Latest, true);
+  const parsed = parse(file, source);
   return parsed.statements.flatMap((statement) => {
     if (!ts.isImportDeclaration(statement) && !ts.isExportDeclaration(statement)) return [];
     const module = statement.moduleSpecifier;
@@ -115,7 +127,7 @@ function backendWriteViolations(all: Sources): string[] {
   };
   for (const [file, source] of all) {
     if (file.endsWith("/mock.ts")) continue;
-    const parsed = ts.createSourceFile(file, source, ts.ScriptTarget.Latest, true);
+    const parsed = parse(file, source);
     const visit = (node: ts.Node): void => {
       if (ts.isCallExpression(node) && ts.isPropertyAccessExpression(node.expression)
           && ts.isCallExpression(node.expression.expression)
@@ -145,7 +157,7 @@ function dtoBuilderViolations(all: Sources): string[] {
   const bad: string[] = [];
   for (const [file, source] of all) {
     if (file === `${DOC}/convert.ts` || file.endsWith("/mock.ts")) continue;
-    const parsed = ts.createSourceFile(file, source, ts.ScriptTarget.Latest, true);
+    const parsed = parse(file, source);
     const visit = (node: ts.Node): void => {
       // document/kernel.ts builds the outline kernel's `OutlinePage` arena (a
       // keyed block map the kernel reads), not a PageDto; nothing saves it.

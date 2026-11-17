@@ -6,7 +6,6 @@ toast-repeat-count = { $count } بار نمایش داده شد
 toast-copied = پیام خطا کپی شد
 toast-copy-failed = پیام کپی نشد؛ به‌جایش متن آن را انتخاب کنید.
 toast-graph-folder-reveal-failed = پوشهٔ گراف نشان داده نشد: { $error }
-toast-link-outside-graph = { $dest } به بیرون از پوشهٔ گراف اشاره می‌کند، پس Tine آن را باز نمی‌کند.
 toast-wsl-rootfs-warning = این گراف درون rootfs از WSL1 است. دسترسی Windows می‌تواند فایل‌های Linux را خراب کند. به‌جایش از مسیر \\wsl.localhost\<distro>\… بازش کنید.
 toast-graph-open-owner-waiting = در حال پایان دادن به کار خط فرمان روی این گراف ({ $progress })…
 asset-landing-the-asset-was-saved-but-it-was-not = پیوست ذخیره شد، اما چون گراف یا بلوک تغییر کرد درج نشد.

@@ -495,14 +495,6 @@ html[data-system-insets="native-viewport"] {
 }
 :root[dir="rtl"] .mac-overlay .topbar { padding-left: 78px; }
 /* Thin divider that sets the far-right Settings cog apart from the action icons. */
-.settings-build {
-  margin-top: 18px;
-  padding-top: 12px;
-  border-top: 1px solid var(--border-color);
-  font-size: 11px;
-  color: var(--text-muted);
-  text-align: end;
-}
 .topbar-sep {
   width: 1px;
   align-self: stretch;
@@ -1881,23 +1873,6 @@ html[data-system-insets="native-viewport"] {
   color: #f5c518;
 }
 
-.page-delete {
-  background: none;
-  border: none;
-  cursor: pointer;
-  font-size: 15px;
-  opacity: 0;
-  transition: opacity 0.1s;
-}
-
-.page-title-row:hover .page-delete {
-  opacity: 0.6;
-}
-
-.page-delete:hover {
-  opacity: 1;
-}
-
 .unlinked-references {
   margin-top: 18px;
 }
@@ -2385,12 +2360,6 @@ html[data-system-insets="native-viewport"] {
     justify-content: flex-start;
   }
 }
-.settings-shortcuts {
-  margin-top: 8px;
-  display: flex;
-  flex-direction: column;
-  gap: 2px;
-}
 /* Backups tab */
 .settings-backups {
   margin-top: 8px;
@@ -2778,64 +2747,6 @@ html[data-system-insets="native-viewport"] {
   .settings-row {
     gap: 12px;
   }
-}
-.settings-shortcut-row {
-  display: grid;
-  grid-template-columns: 1fr auto 1fr;
-  align-items: center;
-  gap: 10px;
-  font-size: 12px;
-  padding: 2px 0;
-}
-.settings-shortcut-label {
-  color: var(--text-primary);
-}
-.settings-shortcut-binding {
-  background: var(--code-bg);
-  border: 1px solid transparent;
-  border-radius: 3px;
-  padding: 1px 8px;
-  justify-self: center;
-  white-space: nowrap;
-  font-family: inherit;
-  font-size: 12px;
-  color: var(--text-primary);
-  cursor: pointer;
-}
-.settings-shortcut-binding:hover {
-  border-color: var(--border-color);
-}
-.settings-shortcut-binding.overridden {
-  color: var(--accent, #2b7);
-  font-weight: 600;
-}
-.settings-shortcut-binding.recording {
-  border-color: var(--accent, #2b7);
-  background: transparent;
-  color: var(--text-muted);
-  font-style: italic;
-}
-.settings-shortcut-tail {
-  display: flex;
-  align-items: center;
-  justify-content: flex-end;
-  gap: 6px;
-}
-.settings-shortcut-reset {
-  background: none;
-  border: none;
-  cursor: pointer;
-  color: var(--text-muted);
-  font-size: 13px;
-  padding: 0 2px;
-  line-height: 1;
-}
-.settings-shortcut-reset:hover {
-  color: var(--text-primary);
-}
-.settings-shortcut-id {
-  color: var(--text-muted);
-  font-size: 11px;
 }
 /* Independent on/off toggle switch (used for the orthogonal layout modes). */
 .settings-toggle {
@@ -7517,31 +7428,6 @@ img.emoji {
   margin-inline-start: -2px;
 }
 
-.query-view-switcher {
-  margin-inline-start: auto;
-  display: inline-flex;
-  border: 1px solid var(--border-color);
-  border-radius: 5px;
-  overflow: hidden;
-  background: var(--bg-primary);
-}
-.query-view-switcher button {
-  font-size: 11px;
-  padding: 2px 7px;
-  border: 0;
-  border-inline-start: 1px solid var(--border-color);
-  background: transparent;
-  color: var(--text-secondary);
-  cursor: pointer;
-}
-.query-view-switcher button:first-child {
-  border-inline-start: 0;
-}
-.query-view-switcher button.active {
-  background: var(--bg-tertiary);
-  color: var(--text-primary);
-}
-
 .query-search-results {
   display: flex;
   flex-direction: column;
@@ -8181,11 +8067,6 @@ html.tine-embed-shading-accent .embed-block {
   text-overflow: ellipsis;
   max-width: 45%;
   flex: 0 1 auto;
-}
-
-.switcher-page {
-  color: var(--text-muted);
-  font-weight: 500;
 }
 
 .switcher-empty {
@@ -8949,10 +8830,6 @@ html.tine-embed-shading-accent .embed-block {
   padding-inline-start: 20px;
   color: var(--text-secondary);
   font-size: 12.5px;
-}
-.query-workspace-empty {
-  padding: 26px 0;
-  color: var(--text-muted);
 }
 .query-results-search,
 .query-results-list {

@@ -44,25 +44,6 @@
   border-left: 0;
 }
 
-.pdf-pane-mobile .pdf-pane-resizer {
-  display: none;
-}
-
-.pdf-pane-resizer {
-  position: absolute;
-  left: 0;
-  top: 0;
-  bottom: 0;
-  width: 6px;
-  margin-left: -3px;
-  cursor: col-resize;
-  z-index: 5;
-}
-.pdf-pane-resizer:hover {
-  background: var(--accent, #2b7);
-  opacity: 0.4;
-}
-
 .pdf-scroll {
   /* Keep native one-finger panning, but reserve two-finger zoom for the PDF.
      The app viewport meta is deliberately unchanged outside this surface. */

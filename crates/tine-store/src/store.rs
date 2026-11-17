@@ -2665,8 +2665,6 @@ pub enum Budget {
     ResolvedBlockRows,
     /// Exported query bytes.
     ExportBytes,
-    /// Property facet entries.
-    PropertyFacets,
     /// Advanced query matches.
     AdvancedQueryMatches,
     /// Search hits in a serialized response.
@@ -2766,23 +2764,17 @@ mod bridge_matching_blocks_tests {
 #[derive(Default)]
 pub struct Cancel(pub Arc<AtomicBool>);
 
-/// Facet answer policy. The two variants use different inputs and budgets;
-/// both can cost O(B) over the view's blocks.
+/// Property-completion facet policy. Both variants walk the view's blocks and
+/// page pre-blocks, apply hidden property settings and trimmed values, and
+/// return up to 2,000 items or 2 MiB without a truncation indicator.
 pub enum FacetPolicy {
-    /// Block properties only, excluding internal keys, with raw values.
-    /// Refuses more than 20,000 items or 32 MiB.
-    Budgeted,
-    /// Autocomplete facets from blocks and page pre-blocks, applying hidden
-    /// property settings and trimmed values. Returns up to 2,000 items or
-    /// 2 MiB without a truncation indicator.
-    Truncated,
-    /// The property-name completion menu: `Truncated`'s keys, each with no
+    /// The property-name completion menu: every visible key, each with no
     /// values, the truncation budget charged to keys alone. One walk and no
     /// value parse (cost-model audit 2026-11-02 row 2b).
     CompletionKeys,
     /// The property-value completion menu for one key as `CompletionKeys`
-    /// spells it: at most one row, `Truncated`'s values for that key, the
-    /// budget charged to them alone. One walk parsing only that key.
+    /// spells it: at most one row, that key's values, the budget charged to
+    /// them alone. One walk parsing only that key.
     CompletionValues(String),
 }
 
@@ -3351,45 +3343,21 @@ impl WholeGraph {
         }
     }
 
-    /// Budgeted facets reject over 20,000 items or 32 MiB, reporting
-    /// `ResultTooLarge` with an uninformative `count: 0`; truncated facets
-    /// return a prefix of at most 2,000 items and 2 MiB. Cost O(B).
-    pub fn property_facets(
-        &self,
-        policy: FacetPolicy,
-    ) -> Result<Vec<(String, Vec<String>)>, QueryError> {
+    /// Property-completion facets: a prefix of at most 2,000 items and 2 MiB.
+    /// Cost O(B).
+    pub fn property_facets(&self, policy: FacetPolicy) -> Vec<(String, Vec<String>)> {
         match policy {
-            FacetPolicy::Budgeted => {
-                let (facets, exceeded) = crate::query::property_facets_bounded(
+            FacetPolicy::CompletionKeys => {
+                crate::query::autocomplete_property_facets_scoped(
                     &self.graph,
-                    RESULT_BRIDGE_MAX_ROWS,
-                    RESULT_BRIDGE_MAX_BYTES,
-                );
-                if exceeded {
-                    Err(QueryError::bridge_result_too_large(
-                        Budget::PropertyFacets,
-                        0,
-                        None,
-                    ))
-                } else {
-                    Ok(facets)
-                }
+                    crate::query::AutocompleteFacets::Keys,
+                    AUTOCOMPLETE_FACET_MAX_ITEMS,
+                    AUTOCOMPLETE_FACET_MAX_BYTES,
+                )
+                .0
             }
-            FacetPolicy::Truncated => Ok(crate::query::autocomplete_property_facets_bounded(
-                &self.graph,
-                AUTOCOMPLETE_FACET_MAX_ITEMS,
-                AUTOCOMPLETE_FACET_MAX_BYTES,
-            )
-            .0),
-            FacetPolicy::CompletionKeys => Ok(crate::query::autocomplete_property_facets_scoped(
-                &self.graph,
-                crate::query::AutocompleteFacets::Keys,
-                AUTOCOMPLETE_FACET_MAX_ITEMS,
-                AUTOCOMPLETE_FACET_MAX_BYTES,
-            )
-            .0),
             FacetPolicy::CompletionValues(key) => {
-                Ok(crate::query::autocomplete_property_facets_scoped(
+                crate::query::autocomplete_property_facets_scoped(
                     &self.graph,
                     crate::query::AutocompleteFacets::ValuesOf(&key),
                     AUTOCOMPLETE_FACET_MAX_ITEMS,
@@ -3398,7 +3366,7 @@ impl WholeGraph {
                 .0
                 .into_iter()
                 .filter(|(candidate, _)| *candidate == key)
-                .collect())
+                .collect()
             }
         }
     }
@@ -5236,7 +5204,7 @@ mod rev5_tests {
             ),
             (
                 "property_facets",
-                format!("{:?}", view.property_facets(FacetPolicy::Budgeted).unwrap()),
+                format!("{:?}", view.property_facets(FacetPolicy::CompletionKeys)),
             ),
             ("templates", format!("{:?}", view.templates())),
             (

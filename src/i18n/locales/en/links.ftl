@@ -8,7 +8,6 @@ links-forget = Forget
 links-forget-scheme = Forget { $scheme } links
 links-no-remembered-schemes = No remembered schemes
 links-consent-save-failed = Could not save app link consent. The previous setting has been restored.
-links-outside-graph-title = This link points outside the graph folder, so Tine does not open it
 links-copy-title = Copy link
 references-filter-unlinked = Filter unlinked references
 references-search-unlinked = Search unlinked reference text

@@ -45,6 +45,8 @@ try {
   fs.copyFileSync(inputHelper, path.join(fixture, "scripts/build-e2e-inputs.mjs"));
   fs.copyFileSync(runner, path.join(fixture, "scripts/run-e2e.mjs"));
   fs.copyFileSync(capabilities, path.join(fixture, "scripts/e2e-capabilities.mjs"));
+  fs.cpSync(path.join(root, "scripts/lib"), path.join(fixture, "scripts/lib"), { recursive: true });
+  fs.copyFileSync(path.join(root, "src-tauri/app-identity.json"), path.join(fixture, "src-tauri/app-identity.json"));
   fs.copyFileSync(contracts, path.join(fixture, "tests/ui-regressions/e2e-contracts.json"));
   fs.writeFileSync(path.join(fixture, "scripts/e2e-multigraph.mjs"), "// Provenance validation reached the selected scenario.\n");
   fs.writeFileSync(path.join(fixture, "source.txt"), "before\n");

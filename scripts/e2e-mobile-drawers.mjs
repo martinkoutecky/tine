@@ -7,6 +7,8 @@ import { remote } from "webdriverio";
 import { setTimeout as sleep } from "node:timers/promises";
 import fs from "node:fs";
 import { editorSelector, editorState, withEditor } from "./lib/e2e-block-editor.mjs";
+import { nativeScreenshot } from "./lib/e2e-native-screenshot.mjs";
+import { waitDrawer } from "./lib/e2e-drawer.mjs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 
@@ -111,7 +113,7 @@ async function withApp(index, forced, fn) {
   } catch (error) {
     const failure = { testedCommit: proof.testedCommit, sourceDelta: proof.sourceDelta, journey: proof.scenario, app: APP, expected: "mounted app and successful drawer navigation", observed: String(error), classification: "ambiguous", screenshot: `failure-${index}.png`, log: logPath };
     try { failure.document = await browser.execute(() => ({ url: location.href, title: document.title, body: document.body.innerText.slice(0, 2000) })); } catch {}
-    try { await browser.saveScreenshot(path.join(ARTIFACT, `failure-${index}.png`)); } catch {}
+    try { nativeScreenshot(path.join(ARTIFACT, `failure-${index}.png`)); } catch {}
     fs.writeFileSync(path.join(ARTIFACT, `failure-${index}.json`), `${JSON.stringify(failure, null, 2)}\n`);
     throw error;
   } finally {
@@ -182,24 +184,6 @@ async function pointerAt(browser, x, y) {
     ],
   }]);
   await browser.releaseActions();
-}
-
-function nativeScreenshot(file) {
-  // WebKitGTK's screenshot endpoint can hang after painting a live nested
-  // sidebar editor. Capture the actual isolated Xvfb surface instead; this is
-  // also the native pixels a user sees, and avoids turning an observation into
-  // a WebDriver transport flake.
-  const result = spawnSync("import", ["-window", "root", file], { env: process.env, encoding: "utf8" });
-  assert(result.status === 0 && fs.existsSync(file) && fs.statSync(file).size > 0,
-    "native X11 screenshot failed", { file, status: result.status, stderr: result.stderr });
-}
-
-async function waitDrawer(browser, side) {
-  await browser.waitUntil(() => browser.execute((wanted) =>
-    document.querySelector(".app-container")?.getAttribute("data-active-drawer") === wanted
-    && document.querySelectorAll(".mobile-drawer-scrim").length === 1
-    && document.querySelectorAll("[data-mobile-drawer-panel]").length === 1,
-  side), { timeout: 8_000, timeoutMsg: `${side} drawer did not become active` });
 }
 
 async function waitNoDrawer(browser) {

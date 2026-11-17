@@ -29,6 +29,8 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { waitForFileText } from "./e2e-file-poll.mjs";
 import { openPageByName, currentPageTitle } from "./lib/e2e-navigation.mjs";
+import { nativeScreenshot } from "./lib/e2e-native-screenshot.mjs";
+import { waitDrawer } from "./lib/e2e-drawer.mjs";
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const APP = process.env.TINE_APP || path.join(process.env.CARGO_TARGET_DIR || path.join(ROOT, "target"), "release/tine");
@@ -118,7 +120,7 @@ async function withApp(index, platform, fn, reduced = false) {
     await sleep(300);
   } catch (error) {
     const screenshot = path.join(ARTIFACT, `failure-${index}-${platform}.png`);
-    try { await browser?.saveScreenshot(screenshot); } catch {}
+    try { nativeScreenshot(screenshot); } catch {}
     fs.writeFileSync(path.join(ARTIFACT, `failure-${index}-${platform}.json`), JSON.stringify({ testedCommit: proof.testedCommit, journey: `touch gestures / ${platform} / reduced=${reduced}`, expected: "gesture and drawer motion assertions pass", observed: String(error), screenshot, classification: "ambiguous; inspect assertion and driver log" }, null, 2));
     throw error;
   } finally {
@@ -186,15 +188,6 @@ async function expectNoDrawerFor(browser, ms, what) {
   assert(drawer === null, `${what}: a drawer opened`, drawer);
 }
 
-async function waitDrawer(browser, side) {
-  await browser.waitUntil(async () => (await activeDrawer(browser)) === side, { timeout: 8_000, timeoutMsg: `${side} drawer did not open` });
-  // Geometry-based hold/drag journeys need the row at its resting position.
-  // Visibility state intentionally changes before the slide has completed.
-  await browser.waitUntil(() => browser.execute((side) => {
-    const panel = document.querySelector(`[data-mobile-drawer-panel="${side}"]`);
-    return !!panel && panel.getAnimations().length === 0 && (getComputedStyle(panel).transform === "none" || new DOMMatrixReadOnly(getComputedStyle(panel).transform).m41 === 0);
-  }, side), { timeout: 4_000, timeoutMsg: `${side} drawer did not settle before measuring rows` });
-}
 async function waitNoDrawer(browser) {
   await browser.waitUntil(async () => (await activeDrawer(browser)) === null, { timeout: 8_000, timeoutMsg: "drawer did not close" });
 }
@@ -480,7 +473,7 @@ async function drawerMotionJourney(browser, platform) {
       assert(Math.abs(sample.x) > 0 && Math.abs(sample.x) < sample.width, "drawer did not pass through a mid-slide position", sample);
       assert(sample.opacity > 0 && sample.opacity < 1, "scrim did not fade between endpoints", sample);
       if (closing) assert(sample.immediate.active === "" && sample.immediate.inert && sample.immediate.hidden === "true", "closing drawer remained interactive", sample);
-      await browser.saveScreenshot(path.join(ARTIFACT, `${platform}-${side}-${closing ? "out" : "in"}-mid.png`));
+      nativeScreenshot(path.join(ARTIFACT, `${platform}-${side}-${closing ? "out" : "in"}-mid.png`));
       await browser.execute(() => {
         for (const el of document.querySelectorAll("[data-mobile-drawer-panel], [data-mobile-drawer-scrim]")) for (const a of el.getAnimations()) a.play();
       });
@@ -488,7 +481,7 @@ async function drawerMotionJourney(browser, platform) {
         const panel = document.querySelector(`[data-mobile-drawer-panel="${side}"]`);
         return closing ? !panel : !!panel && panel.getAnimations().length === 0;
       }, side, closing), { timeout: 4_000, timeoutMsg: `${side} drawer motion did not settle` });
-      await browser.saveScreenshot(path.join(ARTIFACT, `${platform}-${side}-${closing ? "closed" : "open"}.png`));
+      nativeScreenshot(path.join(ARTIFACT, `${platform}-${side}-${closing ? "closed" : "open"}.png`));
     }
   }
   // Preload a favorite, return to the routed source, then tap that real page

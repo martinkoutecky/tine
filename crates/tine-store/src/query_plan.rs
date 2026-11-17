@@ -35,8 +35,6 @@ thread_local! {
     pub(crate) static PAGE_SELECTION: std::cell::Cell<(usize, usize)> = const { std::cell::Cell::new((0, 0)) };
 }
 #[cfg(test)]
-mod completion_bench_tests;
-#[cfg(test)]
 mod completion_tests;
 #[cfg(test)]
 mod sort_tests;

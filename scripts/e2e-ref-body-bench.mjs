@@ -22,7 +22,8 @@ const basePort = Number(process.env.E2E_DRIVER_PORT || 4720);
 if (process.platform !== "linux") throw new Error("This calibration harness requires Linux WebKitGTK");
 if (![runs, rows, seconds].every(n => Number.isFinite(n) && n > 0)) throw new Error("Invalid benchmark dimensions");
 fs.mkdirSync(out, { recursive: true });
-const report = { testedCommit: process.env.REF_BENCH_COMMIT || "working tree", app, rows, seconds, fallbackOnly, runs: [] };
+const report = { testedCommit: process.env.REF_BENCH_COMMIT || "working tree", app, rows, seconds, fallbackOnly,
+  expansionScope: fallbackOnly ? "all fallback rows" : "initial viewport; complete rows checked by scrolling", runs: [] };
 for (let run = 0; run < runs; run++) {
   const port = basePort + run * 3;
   const dir = path.join(out, String(run));
@@ -33,6 +34,7 @@ for (let run = 0; run < runs; run++) {
   fs.writeFileSync(path.join(graph, "pages/Reference bench.md"), "- Typing target\n");
   fs.writeFileSync(path.join(graph, "logseq/config.edn"), "{:ref/linked-references-collapsed-threshold 0}\n");
   const source = [];
+  const expectedLabels = [];
   for (let i = 0; i < rows; i++) {
     const text = [
       `- Plain ${i} [[Reference bench]] **readable text**`,
@@ -41,6 +43,8 @@ for (let run = 0; run < runs; run++) {
       `- Parent ${i} [[Reference bench]]\n  - Nested child ${i}\n    - Grandchild ${i}`,
     ][i % 4];
     source.push(text);
+    expectedLabels.push(`${["Plain", "Code", "Date", "Parent"][i % 4]} ${i}`);
+    if (i % 4 === 3) expectedLabels.push(`Nested child ${i}`, `Grandchild ${i}`);
   }
   fs.writeFileSync(path.join(graph, "pages/Reference source.md"), source.join("\n") + "\n");
   const env = { ...process.env, TINE_GRAPH: graph, XDG_DATA_HOME: path.join(dir, "data"),
@@ -60,13 +64,14 @@ for (let run = 0; run < runs; run++) {
     browser = await remote({ hostname: "127.0.0.1", port, path: "/", logLevel: "error", connectionRetryCount: 0,
       connectionRetryTimeout: 120000, capabilities: tauriCapabilities(app, "ref-body-bench") });
     fs.writeFileSync(path.join(dir, "session.json"), JSON.stringify({ sessionId: browser.sessionId, port }));
-    await browser.$(".page-title").waitForExist({ timeout: 60000 });
+    await browser.$(".main-content").waitForExist({ timeout: 60000 });
     await openPageByName(browser, "Reference bench");
     await browser.waitUntil(() => browser.execute(expected => document.querySelector(".linked-references .references-header")?.textContent.includes(String(expected)), rows),
       { timeout: 60000, timeoutMsg: `Expected ${rows} reference roots` });
     // Expansion is the clock origin. Two rAF callbacks bracket a paint opportunity;
-    // settled means all 500 roots + descendants mounted, no DTO fallback, and no
-    // DOM mutation for 250 ms. This is a paint proxy, not a compositor timestamp.
+    // Natural expansion mounts the viewport, not every offscreen outline window.
+    // Check the complete fixture by scrolling below; keep the held-read experiment
+    // separate. Both wait for no DOM mutation for 250 ms (a paint proxy).
     await browser.execute(({ expected, fallbackOnly }) => {
       const panel = document.querySelector(".linked-references");
       window.__tineBench = true;
@@ -124,9 +129,10 @@ for (let run = 0; run < runs; run++) {
         p.previous = t;
         const count = panel.querySelectorAll(".ls-block").length;
         p.maxFallbackRows = Math.max(p.maxFallbackRows, panel.querySelectorAll(".ref-block").length);
-        if (p.firstPaintMs === null && count >= expected) requestAnimationFrame(() => { p.firstPaintMs ??= performance.now() - p.start; });
+        const mounted = fallbackOnly ? count >= expected : count > 0;
+        if (p.firstPaintMs === null && mounted) requestAnimationFrame(() => { p.firstPaintMs ??= performance.now() - p.start; });
         const sourceSettled = fallbackOnly ? panel.querySelectorAll(".ref-block").length >= expected : !panel.querySelector(".ref-block");
-        if (p.settledMs === null && count >= expected && sourceSettled && t - p.lastMutation >= 250) {
+        if (p.settledMs === null && mounted && sourceSettled && t - p.lastMutation >= 250) {
           p.settledMs = p.lastMutation - p.start;
           p.settleConfirmedMs = performance.now() - p.start;
           p.rowCount = count;
@@ -148,11 +154,63 @@ for (let run = 0; run < runs; run++) {
         supported: p.supported, longTasks: p.longTasks, loaf: p.loaf, frames: p.frames };
     });
     if (fallbackOnly && expansion.heldSourceReads < 1) throw new Error("Fallback-only experiment did not hold a source read");
+    if (!fallbackOnly) {
+      // Visit every outline window through scrolling, and open nested disclosures
+      // as a reader would. Offscreen retirement must not count as missing content.
+      const windows = await browser.execute(() => {
+        const panel = document.querySelector(".linked-references");
+        const p = window.__refTraversal = { lastMutation: performance.now(), labels: new Set(), samples: [] };
+        p.observer = new MutationObserver(() => { p.lastMutation = performance.now(); });
+        p.observer.observe(panel, { subtree: true, childList: true, characterData: true, attributes: true });
+        return panel.querySelectorAll(".outline-window").length;
+      });
+      for (let index = 0; index < Math.max(1, windows); index++) {
+        await browser.execute(index => {
+          const panel = document.querySelector(".linked-references");
+          (panel.querySelectorAll(".outline-window")[index] || panel).scrollIntoView({ block: "start" });
+          window.__refTraversal.lastMutation = performance.now();
+        }, index);
+        await browser.waitUntil(() => browser.execute(index => {
+          const panel = document.querySelector(".linked-references");
+          const scope = panel.querySelectorAll(".outline-window")[index] || panel;
+          return scope.querySelector(".ls-block") && !scope.querySelector(".ref-block")
+            && performance.now() - window.__refTraversal.lastMutation >= 250;
+        }, index), { timeout: 60000, timeoutMsg: `Reference window ${index} did not hydrate and settle` });
+        await browser.execute(() => {
+          for (const row of document.querySelectorAll(".linked-references .ls-block.collapsed")) {
+            row.querySelector(":scope > .block-main .collapse-toggle.has-children")?.click();
+          }
+        });
+        await browser.waitUntil(() => browser.execute(() =>
+          performance.now() - window.__refTraversal.lastMutation >= 250),
+        { timeout: 60000, timeoutMsg: `Nested reference rows in window ${index} did not settle` });
+        await browser.execute(() => {
+          const panel = document.querySelector(".linked-references");
+          const p = window.__refTraversal;
+          for (const row of panel.querySelectorAll(".ls-block:not(.ref-block)")) {
+            const text = row.querySelector(":scope > .block-main .block-content-wrapper")?.textContent || "";
+            const label = text.match(/\b(Plain|Code|Date|Parent|Nested child|Grandchild) (\d+)\b/);
+            if (label) p.labels.add(`${label[1]} ${label[2]}`);
+          }
+          p.samples.push({ rows: panel.querySelectorAll(".ls-block").length, fallback: panel.querySelectorAll(".ref-block").length });
+        });
+      }
+      const traversal = await browser.execute(expected => {
+        const p = window.__refTraversal;
+        p.observer.disconnect();
+        return { seenRowCount: p.labels.size, missing: expected.filter(label => !p.labels.has(label)), samples: p.samples };
+      }, expectedLabels);
+      fs.writeFileSync(path.join(dir, "traversal.json"), JSON.stringify(traversal, null, 2));
+      if (traversal.missing.length || traversal.samples.some(sample => sample.fallback !== 0)) {
+        throw new Error(`Reference rows missing or unhydrated: ${JSON.stringify(traversal)}`);
+      }
+      expansion.seenRowCount = traversal.seenRowCount;
+    }
     // Keep panel visible below the one-line editable target.
     await browser.execute(() => {
       document.querySelector(".main-content").scrollTop = 0;
-      document.querySelector(".main-content .ls-block .block-content-wrapper").dispatchEvent(new MouseEvent("mousedown", { bubbles: true, button: 0 }));
     });
+    await browser.$(".main-content .ls-block .block-content-wrapper").click();
     await browser.$(editorSelector()).waitForExist();
     await browser.execute(selector => {
       const p = window.__typingBench = { start: performance.now(), frames: [], inputs: [], previous: 0, active: true };
@@ -187,6 +245,7 @@ for (let run = 0; run < runs; run++) {
     await browser?.execute(() => {
       if (window.__refBench) { window.__refBench.active = false; window.__refBench.mutations.disconnect(); }
       if (window.__typingBench) window.__typingBench.active = false;
+      window.__refTraversal?.observer.disconnect();
       window.__refReleaseSource?.();
     }).catch(() => {});
     await browser?.saveScreenshot(path.join(dir, "failure.png")).catch(() => {});

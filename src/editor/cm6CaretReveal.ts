@@ -1,4 +1,4 @@
-import { EditorView } from "@codemirror/view";
+import { EditorView, type Rect } from "@codemirror/view";
 import { nearestScrollableY } from "../components/blockParts";
 import { registerCaretRowSource, revealCaretRect, watchCaretReveal } from "./caretReveal";
 
@@ -10,10 +10,8 @@ export function cm6CaretReveal(view: EditorView) {
   // its pane even before it overflows; other hosts retain CM's native scrolling.
   const pane = nearestScrollableY(editor) ?? editor.closest<HTMLElement>(".main-content, .right-sidebar");
   let settling = view.hasFocus && pane !== null;
-  const reveal = () => {
-    settling = false;
-    if (!view.hasFocus || !editor.isConnected) return;
-    const rect = view.coordsAtPos(view.state.selection.main.head);
+  const caret = () => view.hasFocus && editor.isConnected ? view.coordsAtPos(view.state.selection.main.head) : null;
+  const show = (rect: Rect | null) => {
     if (!rect || rect.bottom <= rect.top) return;
     revealCaretRect(editor, pane, rect);
     const scroll = view.scrollDOM;
@@ -23,6 +21,7 @@ export function cm6CaretReveal(view: EditorView) {
       else if (rect.right > box.right - 24) scroll.scrollLeft += rect.right - box.right + 24;
     }
   };
+  const reveal = () => { settling = false; show(caret()); };
   const stopWatch = watchCaretReveal(editor, pane, reveal);
   // The keyboard-time follow (MobileKeyboardToolbar, GH #783) places the caret from this row, as for the textarea.
   const unregisterRow = registerCaretRowSource(editor, () => {
@@ -41,7 +40,9 @@ export function cm6CaretReveal(view: EditorView) {
     if (!pane) return false;
     // Initial CM measurement may see interim window heights. The settling
     // watcher owns that first reveal; subsequent typing reveals immediately.
-    if (!settling) reveal();
+    // CM calls this while it writes a measurement, when layout reads throw:
+    // read the caret in its next measure cycle instead.
+    if (!settling) view.requestMeasure({ key: show, read: caret, write: show });
     return true;
   }) };
 }

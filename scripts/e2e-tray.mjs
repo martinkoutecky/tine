@@ -296,6 +296,14 @@ try {
     xdo("windowactivate", "--sync", graphId);
     await editBlock(browser, "tray one");
     xdo("type", "--delay", "30", " saved-by-quit");
+    // XTest delivering the last key is asynchronous with the webview's input.
+    // Quit must save the complete edit the user can already see.
+    await until(() => withEditor(browser, "", editor => editor?.value === "tray one saved-by-quit"), 5_000,
+      "the complete edit did not reach the graph window's editor before tray Quit");
+    if (disk().includes("- tray one saved-by-quit")) {
+      throw new Error("the edit was already saved before tray Quit; this run cannot prove the close flush");
+    }
+    step("the graph window shows the complete edit, still unsaved before tray Quit");
     clickTrayMenu(item, "Quit", env);
     await until(() => mainIds({ visibleOnly: false }).length === 0, 30_000, "tray Quit did not end the app");
     await until(() => disk().includes("- tray one saved-by-quit"), 5_000,

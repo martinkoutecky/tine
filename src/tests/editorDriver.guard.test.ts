@@ -4,12 +4,10 @@ import { describe, expect, it } from "vitest";
 /**
  * Ratchet for the editor-neutral test driver (src/tests/editorDriver.ts, CM6
  * stage 1, D-20261025-BW): component tests reach the block editor only through
- * the driver, so an alternative editor can run the same suite. Files below
- * still touch a textarea directly and are being migrated; the list only
- * shrinks. A file whose textarea is NOT the block editor (a formula field, a
- * settings input) moves to OTHER_TEXTAREAS with its reason instead.
+ * the driver, so an alternative editor can run the same suite. A file whose
+ * textarea is NOT the block editor (a formula field, a settings input) is
+ * listed in OTHER_TEXTAREAS with its reason.
  */
-const LEGACY = new Set<string>();
 
 /** Test files whose textarea is a different control than the block editor. */
 const OTHER_TEXTAREAS = new Map<string, string>([
@@ -53,11 +51,10 @@ describe("block-editor tests go through the editor driver", () => {
   const direct = tests.filter((f) => DIRECT.test(readFileSync(f, "utf8"))).sort();
 
   it("adds no new direct textarea access", () => {
-    expect(direct.filter((f) => !LEGACY.has(f) && !OTHER_TEXTAREAS.has(f))).toEqual([]);
+    expect(direct.filter((f) => !OTHER_TEXTAREAS.has(f))).toEqual([]);
   });
 
-  it("drops migrated files from the legacy list", () => {
-    expect([...LEGACY].filter((f) => !direct.includes(f))).toEqual([]);
+  it("drops files from the list once they stop touching a textarea", () => {
     expect([...OTHER_TEXTAREAS.keys()].filter((f) => !direct.includes(f))).toEqual([]);
   });
 });

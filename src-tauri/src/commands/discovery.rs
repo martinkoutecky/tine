@@ -429,13 +429,9 @@ mod inventory_adapter_tests {
     /// (the window fetches keys once per trigger session, values per chosen
     /// key; before, the full facets on every trigger update).
     fn probe_property_names(view: &WholeGraph) -> usize {
-        serde_json::to_vec(
-            &view
-                .property_facets(tine_store::FacetPolicy::CompletionKeys)
-                .unwrap(),
-        )
-        .unwrap()
-        .len()
+        serde_json::to_vec(&view.property_facets(tine_store::FacetPolicy::CompletionKeys))
+            .unwrap()
+            .len()
     }
 
     /// Existing files beat a colliding alias (v0.6.5 `load_named`): the wire has

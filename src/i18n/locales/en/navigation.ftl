@@ -72,8 +72,6 @@ right-sidebar-close-others = Close others
 
 right-sidebar-collapse = Collapse
 
-right-sidebar-expand = Expand
-
 right-sidebar-collapse-others = Collapse others
 
 right-sidebar-expand-sidebar-item = Expand sidebar item

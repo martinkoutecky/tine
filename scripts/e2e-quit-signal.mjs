@@ -40,13 +40,16 @@ const port = Number(process.env.E2E_DRIVER_PORT || 4895);
 const proof = { commit: execFileSync("git", ["rev-parse", "HEAD"], { cwd: ROOT, encoding: "utf8" }).trim(), binarySha256: createHash("sha256").update(fs.readFileSync(APP)).digest("hex"), journey: "termination signals quit cleanly (GH #701)", expected: "SIGTERM and SIGHUP save the pending edit, exit, and remove the unclean-exit marker", steps: [] };
 
 /** The app process this journey launched: the binary, with this journey's data home. */
+// The suite runner hands journeys a launcher script as TINE_APP (it `exec`s the
+// binary, keeping the pid), so the process is found by its executable, the real
+// binary named by TINE_APP_BINARY, not by the launcher path in TINE_APP.
+const BINARY = fs.realpathSync(process.env.TINE_APP_BINARY || APP);
 function appPid() {
-  for (const line of execFileSync("ps", ["-eo", "pid=,args="], { encoding: "utf8" }).split("\n")) {
-    const match = /^\s*(\d+)\s+(\S+)/.exec(line);
-    if (!match || path.resolve(match[2]) !== path.resolve(APP)) continue;
+  for (const pid of fs.readdirSync("/proc").filter((name) => /^\d+$/.test(name))) {
     try {
-      if (fs.readFileSync(`/proc/${match[1]}/environ`, "utf8").split("\0").includes(`XDG_DATA_HOME=${env.XDG_DATA_HOME}`)) return Number(match[1]);
-    } catch { /* exited meanwhile */ }
+      if (fs.readlinkSync(`/proc/${pid}/exe`) !== BINARY) continue;
+      if (fs.readFileSync(`/proc/${pid}/environ`, "utf8").split("\0").includes(`XDG_DATA_HOME=${env.XDG_DATA_HOME}`)) return Number(pid);
+    } catch { /* exited meanwhile, or not ours */ }
   }
   return null;
 }

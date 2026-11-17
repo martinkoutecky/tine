@@ -157,22 +157,11 @@
 .sync-merge-seg-short {
   display: none;
 }
-.conflict-narrow {
-  display: none;
-}
 /* Narrow panel (phone sheet, skinny pane): the two-column row starved the
    TEXT — the one thing the user must read to decide — because the per-row
    segments carry side labels and don't shrink. Stack the cells full-width and
    turn the segments into one compact equal-width strip: dot + short word. */
 @container conflict (max-width: 35rem) {
-  .conflict-wide {
-    display: none;
-  }
-  .conflict-narrow {
-    display: inline-flex;
-    align-items: center;
-    gap: 5px;
-  }
   .page-conflict-legend {
     flex-wrap: wrap;
     row-gap: 4px;

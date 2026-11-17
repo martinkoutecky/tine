@@ -1,6 +1,7 @@
 // Capture real mock-app screenshots while exercising all launch plugins.
 // Usage: npm run build, build the plugin WASMs, then run this script.
 import { chromium } from "playwright";
+import assert from "node:assert/strict";
 import { spawn } from "node:child_process";
 import { mkdirSync, mkdtempSync, rmSync } from "node:fs";
 import { readFile } from "node:fs/promises";
@@ -8,6 +9,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { build } from "vite";
 import { setTimeout as sleep } from "node:timers/promises";
+import { editorSelector, editorState, editorText } from "./lib/e2e-block-editor.mjs";
 import {
   resolveLaunchPluginRoots,
   resolveRepositoryRoot,
@@ -99,7 +101,8 @@ async function waitForServer(url) {
 
 async function openPlugins(page) {
   await page.getByTitle("Settings (t s)").click();
-  await page.getByRole("button", { name: "Plugins", exact: true }).click();
+  // Phone Settings lists categories with a CSS chevron in the accessible name.
+  await page.locator('.settings-nav-item[data-settings-tab="plugins"]').click();
 }
 
 async function dismissInitialMobileDrawer(page) {
@@ -170,6 +173,10 @@ try {
     }),
   });
   page.setDefaultTimeout(8_000);
+  // Adapt the shared editor inspection helper's variadic WebDriver call to Playwright.
+  const editorBrowser = {
+    execute: (fn, ...args) => page.evaluate(`(${fn.toString()})(...${JSON.stringify(args)})`),
+  };
   const errors = [];
   page.on("pageerror", (error) => errors.push(String(error)));
   page.on("console", (message) => message.type() === "error" && errors.push(`console: ${message.text()}`));
@@ -180,7 +187,7 @@ try {
   for (const root of [BULLET_SHOTS, QUERY_SHOTS, HEADING_SHOTS]) mkdirSync(root, { recursive: true });
   await openPlugins(page);
   await installLocal(page, BULLET_ROOT, "tine_plugin_bullet_threading.wasm");
-  await page.locator(".settings-pane-head .icon-btn:not(.settings-maximize)").click();
+  await page.locator(".settings-pane-head .settings-close").click();
   await navigate(page, "Jun 14th, 2026");
   const threaded = page.locator(".ls-block.plugin-thread-lines:has(> .block-children-container)").first();
   await threaded.waitFor();
@@ -188,7 +195,7 @@ try {
 
   await openPlugins(page);
   await installLocal(page, QUERY_ROOT, "tine_plugin_query_filter.wasm");
-  await page.locator(".settings-pane-head .icon-btn:not(.settings-maximize)").click();
+  await page.locator(".settings-pane-head .settings-close").click();
   await navigate(page, "Jun 14th, 2026");
 
   const queryBlock = page.locator(".ls-block", { hasText: "All todos + Prio A" }).first();
@@ -197,8 +204,9 @@ try {
   if (!queryId) throw new Error("inline query block has no stable id");
   const tasksBlock = page.locator(`.ls-block[data-block-id="${queryId}"]`);
   await queryBlock.locator(".block-content").first().click({ position: { x: 24, y: 10 } });
-  const editor = page.locator("textarea.block-editor");
+  const editor = page.locator(editorSelector());
   await editor.waitFor();
+  assert.equal((await editorState(editorBrowser)).kind, "cm6", "launch plugins exercise the default editor");
   await editor.fill(
     PLATFORM === "desktop"
       ? "Tasks\n{{query (todo TODO DOING DONE)}}"
@@ -218,15 +226,19 @@ try {
   await tasksBlock.locator(".sheet-table .sheet-cell").filter({ hasText: /^DONE$/ }).waitFor();
   await tasksBlock.getByText("Open task", { exact: true }).waitFor();
   await tasksBlock.locator(".block-content").first().click({ position: { x: 24, y: 10 } });
-  const tableEditor = page.locator("textarea.block-editor");
+  const tableEditor = page.locator(editorSelector());
   await tableEditor.waitFor();
-  const tableRaw = await tableEditor.inputValue();
+  const tableRaw = await editorText(editorBrowser);
   if (!tableRaw.includes("tine.view:: table")) {
     throw new Error(`query editor did not retain the selected table view: ${JSON.stringify(tableRaw)}`);
   }
   await page.locator(".toast-close").evaluateAll((buttons) => buttons.forEach((button) => button.click()));
   await page.keyboard.press("Control+k");
-  await page.locator(".switcher-input").fill("hide completed");
+  const switcher = page.locator(".switcher-input");
+  await switcher.waitFor();
+  await page.waitForFunction(() => document.activeElement?.classList.contains("switcher-input"));
+  await switcher.fill("hide completed");
+  await page.waitForFunction(() => document.querySelector(".switcher-input")?.value === "hide completed");
   await page.getByText("Query view: hide completed rows", { exact: true }).waitFor();
   await page.screenshot({ path: `${QUERY_SHOTS}/query-filter-command.png` });
   await page.getByText("Query view: hide completed rows", { exact: true }).click();
@@ -241,13 +253,13 @@ try {
 
   await openPlugins(page);
   await installLocal(page, HEADING_ROOT, "tine_plugin_heading_level_shortcuts.wasm");
-  await page.locator(".settings-pane-head .icon-btn:not(.settings-maximize)").click();
+  await page.locator(".settings-pane-head .settings-close").click();
   await navigate(page, "Jun 14th, 2026");
   const headingBlock = page.locator(".ls-block", { hasText: "Started the" }).first();
   await headingBlock.locator(".block-content").first().click({ position: { x: 80, y: 12 } });
-  const headingEditor = page.locator("textarea.block-editor");
+  const headingEditor = page.locator(editorSelector());
   await headingEditor.waitFor();
-  const originalHeading = await headingEditor.inputValue();
+  const originalHeading = await editorText(editorBrowser);
   await page.keyboard.press("Control+k");
   await page.locator(".switcher-input").fill("heading level 1");
   await page.getByText("Heading: level 1", { exact: true }).waitFor();
@@ -255,10 +267,8 @@ try {
   await page.getByText("Heading: level 1", { exact: true }).click();
   await headingBlock.locator(".heading-text.h1").waitFor();
   await headingBlock.locator(".block-content").first().click({ position: { x: 80, y: 12 } });
-  await page.waitForFunction(
-    (before) => document.querySelector("textarea.block-editor")?.value === `# ${before}`,
-    originalHeading,
-  );
+  await headingEditor.waitFor();
+  assert.equal(await editorText(editorBrowser), `# ${originalHeading}`);
   await page.keyboard.press("Escape");
   await headingBlock.locator(".heading-text.h1").waitFor();
   await headingBlock.screenshot({ path: `${HEADING_SHOTS}/heading-level-result.png` });

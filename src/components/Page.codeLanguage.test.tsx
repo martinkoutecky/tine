@@ -17,27 +17,22 @@ import { AstBody } from "../render/body";
 import { parseBlock } from "../render/parse";
 import * as clipboard from "../clipboard";
 import { dispatchFocusedEditorCommand } from "../editorCommandBridge";
+import { ENTRIES, FORMATS, OPENERS, REPRESENTATIVE, codeRaw, literalOf, needsSeparator } from "../editor/codeLanguageOpeners.test.support";
 
 installBlockEditorLifecycle();
 afterEach(() => { endEdit("page-navigation"); resetTabsToJournals(); resetPaneLayoutToSingle(); applySidebarSession({ right: false, items: [] }); vi.restoreAllMocks(); });
 describe.each<EditorKind>(["textarea", "cm6"])("code language source in %s", kind => {
   useEditorKind(kind);
-  // lsdoc v0.5.11 parse.rs/org.rs: fence_marker/fence_lang and block_begin/begin_lang.
-  it.each((["md", "org"] as const).flatMap(format => [
-    ["```", "```", ""], ["~~~", "~~~", ""],
-    ["```js :results output", "```", "js"], ["~~~\t js :results output", "~~~", "js"],
-    ["````js :results output", "````", "`js"], ["~~~~~", "~~~~~", "~~"],
-    ["  ```", "  ```", ""], ["  #+BEGIN_SRC", "  #+END_SRC", ""],
-    ["#+BEGIN_SRC", "#+END_SRC", ""], ["#+begin_src", "#+end_src", ""],
-    ["#+BeGiN_sRc", "#+EnD_sRc", ""],
-    ["#+BEGIN_SRC js :results output", "#+END_SRC", "js"],
-    ["#+begin_src\tjs :results output", "#+end_src", "js"],
-    ["#+BEGIN_SRC ", "#+END_SRC", ""],
-    ["#+BEGIN_EXAMPLE", "#+END_EXAMPLE", ""], ["#+begin_example", "#+end_example", ""],
-  ].flatMap(([open, close, lang]) => [false, true].flatMap(mixed => ["leave", "typing", "paste", "programmatic paste", "IME", "drop", "replacement", "plain input"].map(entry => ({ format, open, close, lang, mixed, entry })))))) (
+  // Every opener form x format x whole/mixed is mounted once per engine; the three REPRESENTATIVE forms also take every
+  // entry method, the others take one entry each, rotating so every entry meets many forms. What the form decides
+  // (parse, activation caret, separator, saved bytes) is the pure owners' answer, tabled over every form in
+  // `src/editor/codeFence.test.ts`; the entry method only chooses which of those owners the editor calls.
+  let rotation = 0;
+  it.each(FORMATS.flatMap(format => OPENERS.flatMap(opener => [false, true].flatMap(mixed =>
+    (REPRESENTATIVE.includes(opener.open) ? ENTRIES : [ENTRIES[rotation++ % ENTRIES.length]]).map(entry => ({ format, ...opener, mixed, entry }))))))(
     "keeps the source block and language after label activation: %j", async ({ format, open, close, lang, mixed, entry }) => {
-      const raw = `${mixed ? "前 🐈\n" : ""}${open}\nx\n${close}${mixed ? "\nAfter" : ""}`;
-      const literal = /begin_example/i.test(open) ? "example" : "src";
+      const raw = codeRaw({ open, close, lang }, mixed);
+      const literal = literalOf(open);
       const parsed = parseBlock(raw, format === "org").find(block => block.kind === literal)!;
       expect(parsed).toMatchObject(literal === "src" ? { kind: "src", lang } : { kind: "example" });
       const dto = { id: `pages/Code.${format}`, name: "Code", title: "Code", kind: "page" as const, pre_block: null,
@@ -89,7 +84,7 @@ describe.each<EditorKind>(["textarea", "cm6"])("code language source in %s", kin
         endEdit("page-navigation");
         await flushPage("Code");
         const saved = submittedPages(submits, "Code").at(-1)!.blocks[0].raw;
-        const expected = raw.slice(0, at) + (["#+begin_src", "#+begin_example"].includes(open.trimStart().toLowerCase()) ? " " : "") + "rust" + raw.slice(at + lang.length);
+        const expected = raw.slice(0, at) + (needsSeparator(open) ? " " : "") + "rust" + raw.slice(at + lang.length);
         expect(saved).toBe(expected);
         expect(parseBlock(saved, format === "org").find(block => block.kind === literal)).toMatchObject(
           literal === "src" ? { kind: "src", lang: "rust", code: (parsed as { code: string }).code } : { kind: "example", code: (parsed as { code: string }).code });

@@ -23,6 +23,9 @@ release preflight fails when either catalog is invalid.
 - `npm run e2e:linux:smoke` is a quick local check of caret navigation,
   multi-graph isolation, and Sheets.
 - `npm run e2e:linux:release` runs the complete real-app Linux release catalog.
+  In CI, whole-suite runs use the registry's `--fan-out` selection. Journeys
+  marked `BY_NAME` run only with `--scenario=<id>` there; local whole-suite runs
+  still include them and need their documented prerequisites.
 - `npm run e2e:windows:smoke` is the advisory Windows x64 launch/edit/save/reload
   check and must run on Windows.
 

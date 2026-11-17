@@ -34,7 +34,6 @@ right-sidebar-more-actions = عملیات بیشتر
 right-sidebar-close = بستن
 right-sidebar-close-others = بستن بقیه
 right-sidebar-collapse = جمع کردن
-right-sidebar-expand = باز کردن
 right-sidebar-collapse-others = جمع کردن بقیه
 right-sidebar-expand-sidebar-item = باز کردن مورد نوار کناری
 right-sidebar-collapse-sidebar-item = جمع کردن مورد نوار کناری
