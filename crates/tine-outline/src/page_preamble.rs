@@ -86,10 +86,12 @@ pub fn page_header_in(raw: &str, regions: &BlockRegions) -> PageHeader {
     header
 }
 
-/// Where the prose of a page preamble is: the text after its last page
-/// property (Org: after the drawer holding it), without the newlines at
-/// either edge; the whole text when it has none. `None` when nothing is left.
-/// In Markdown every other non-blank byte is a page-property line.
+/// Where the prose of a page preamble is: the text between the page-property
+/// lines before it and those after it (Org: whole drawers), without the
+/// newlines at either edge; the whole text when it has none. `None` when
+/// nothing is left. Every other non-blank byte is a page-property line
+/// (`block_regions::mapped_regions` keeps them out of the prose: Markdown has
+/// none after it, Org none inside it).
 /// OG reads the text before a page's first block as its first block
 /// (graph-parser `block.cljs with-pre-block-if-exists`); Tine shows this part
 /// as that block's row (`Page.tsx`) and promotes it to a real block when
@@ -104,26 +106,37 @@ pub fn preamble_content_range_in(raw: &str, is_org: bool, regions: &BlockRegions
     if regions.quarantined {
         return None;
     }
-    let mut start = regions
-        .find_org_preamble_property_region(raw)
-        .filter(|_| is_org)
-        .map_or(0, |region| region.1);
-    for property in regions.page_properties() {
-        start = start.max(property.line.1);
-        // An Org drawer's `:END:` is header; a Markdown node's line after its
-        // last page property is prose (`block_regions::mapped_regions`).
-        if let Some(region) = regions
-            .property_regions
-            .get(property.region)
-            .filter(|_| is_org)
-        {
-            start = start.max(region.1);
+    // An Org drawer's `:END:` is header; a Markdown node's line after its
+    // last page property is prose.
+    let spans = if is_org {
+        regions.org_page_property_spans(raw)
+    } else {
+        regions.page_properties().map(|p| p.line).collect()
+    };
+    let blank = |s: &str| s.chars().all(|c| c.is_whitespace() || c == '\u{feff}');
+    let mut start = 0;
+    for span in &spans {
+        if !blank(&raw[start.min(span.0)..span.0]) {
+            break;
         }
+        start = start.max(span.1);
     }
-    let start = start.min(raw.len());
-    let rest = &raw[start..];
+    let mut end = raw.len();
+    for span in spans.iter().rev() {
+        if span.0 < start || !blank(&raw[span.1.min(end)..end]) {
+            break;
+        }
+        end = end.min(span.0);
+    }
+    let (start, end) = (start.min(raw.len()), end.max(start).min(raw.len()));
+    let rest = &raw[start..end];
     let leading = rest.len() - rest.trim_start_matches('\n').len();
-    let content = rest.trim_matches('\n');
+    let content = rest.trim_start_matches('\n');
+    let content = if end < raw.len() {
+        content.trim_end_matches(['\r', '\n'])
+    } else {
+        content.trim_end_matches('\n')
+    };
     (!content.is_empty()).then(|| Range(start + leading, start + leading + content.len()))
 }
 
@@ -164,8 +177,8 @@ mod tests {
         known_difference: Option<String>,
     }
 
-    /// Tine's page properties are OG's, and no page property lies at or after
-    /// the start of the prose (the boundary has one owner).
+    /// Tine's page properties are OG's, and no page property lies inside the
+    /// prose (the boundary has one owner).
     #[test]
     fn page_properties_and_the_prose_boundary_are_ogs() {
         let rows: Vec<Row> =
@@ -179,15 +192,30 @@ mod tests {
                 .page_properties()
                 .map(|p| p.key.to_lowercase())
                 .collect();
-            let prose = preamble_content_range(&row.input, org);
+            // The prose of the pre-block (callers pass the text before the
+            // first block): Org page properties can follow it.
+            let pre = match org {
+                true => match row.input.find("\n* ") {
+                    _ if row.input.starts_with("* ") => "",
+                    Some(at) => &row.input[..at],
+                    None => &row.input,
+                },
+                false => &row.input,
+            };
+            let prose = preamble_content_range(pre, org);
             if let Some(prose) = prose {
                 assert!(
-                    regions.page_properties().all(|p| p.line.1 <= prose.0),
+                    // Org page properties can follow the prose, never sit in it.
+                    regions
+                        .page_properties()
+                        .all(|p| p.line.1 <= prose.0 || (org && p.line.0 >= prose.1)),
                     "a page property inside the prose: {:?}",
                     row.input
                 );
-                // A node with no valid key (`#tag:: x`) leaves its text to the prose.
-                let same = row.known_difference.is_none();
+                // A node with no valid key (`#tag:: x`) leaves its text to the
+                // prose. Org prose can precede the head drawer; the assertion
+                // above keeps it out of the drawer.
+                let same = row.known_difference.is_none() && !org;
                 if let Some(end) = row.header_end.filter(|_| same && !keys.is_empty()) {
                     assert!(prose.0 >= end, "{:?}", row.input);
                 }
@@ -211,16 +239,20 @@ mod tests {
         assert!(wrong.is_empty(), "{wrong:#?}");
     }
 
-    /// Where `raw` breaks the Markdown header/prose partition: a non-blank
-    /// byte in both a page-property line and the prose, or in neither (shown
-    /// nowhere, indexed nowhere, skipped by rename).
-    fn partition_error(raw: &str) -> Option<String> {
-        let regions = crate::block_regions::parse_document(raw, false);
+    /// Where `raw` breaks the header/prose partition: a non-blank byte in
+    /// both a page-property line (Org: its whole drawer) and the prose, or in
+    /// neither (shown nowhere, indexed nowhere, skipped by rename).
+    fn partition_error(raw: &str, org: bool) -> Option<String> {
+        let regions = crate::block_regions::parse_document(raw, org);
         if regions.quarantined {
             return None;
         }
-        let prose = preamble_content_range(raw, false);
-        let lines: Vec<_> = regions.page_properties().map(|p| p.line).collect();
+        let prose = preamble_content_range(raw, org);
+        let lines: Vec<_> = if org {
+            regions.org_page_property_spans(raw)
+        } else {
+            regions.page_properties().map(|p| p.line).collect()
+        };
         let (i, c) = raw.char_indices().find(|&(i, c)| {
             let property = lines.iter().any(|l| l.0 <= i && i < l.1);
             let in_prose = prose.is_some_and(|r| r.0 <= i && i < r.1);
@@ -270,7 +302,55 @@ mod tests {
         }
         let wrong: Vec<_> = inputs
             .iter()
-            .filter_map(|raw| partition_error(raw))
+            .filter_map(|raw| partition_error(raw, false))
+            .collect();
+        assert!(
+            wrong.is_empty(),
+            "{} of {}: {:#?}",
+            wrong.len(),
+            inputs.len(),
+            &wrong[..wrong.len().min(20)]
+        );
+    }
+
+    /// The same partition for an Org pre-block (REG-CM-ORG-TEXT-BETWEEN-
+    /// DIRECTIVES): text between directives or around the head drawer is
+    /// prose, never neither. Over the Org fixture rows' pre-blocks and every
+    /// sequence of up to four generated lines (a pre-block has no headline).
+    #[test]
+    fn every_org_preamble_byte_is_header_or_prose_once() {
+        let rows: Vec<Row> =
+            serde_json::from_str(include_str!("page_preamble/og_page_header.json")).unwrap();
+        let mut inputs: Vec<String> = (rows.into_iter())
+            .filter(|r| r.format == "org")
+            .map(|r| r.input.split("\n* ").next().unwrap_or("").to_string())
+            .filter(|pre| !pre.starts_with("* ") && !pre.contains('\r'))
+            .collect();
+        let pieces = [
+            "",
+            " ",
+            "#+title: T",
+            "[[X]] text",
+            ":PROPERTIES:",
+            ":a: x",
+            ":END:",
+            "#+alias: y",
+            "#+BEGIN_QUOTE",
+            "#+END_QUOTE",
+            "\u{feff}#+b: z",
+        ];
+        for a in pieces {
+            for b in pieces {
+                for c in pieces {
+                    for d in pieces {
+                        inputs.push([a, b, c, d].join("\n"));
+                    }
+                }
+            }
+        }
+        let wrong: Vec<_> = inputs
+            .iter()
+            .filter_map(|raw| partition_error(raw, true))
             .collect();
         assert!(
             wrong.is_empty(),

@@ -48,6 +48,11 @@ pub struct Document {
     pub pre_block: Option<String>,
     /// Top-level blocks in document order.
     pub roots: Vec<DocBlock>,
+    /// Whether the file is Org: the reader's format, set by the one that
+    /// read it ([`parse`] or [`crate::org::parse_org`]), never inferred from
+    /// the text (a Markdown page can hold `#+` lines; REG-CM-MD-PAGE-READ-AS-ORG).
+    #[serde(default)]
+    pub org: bool,
 }
 
 /// One parsed block with raw text and nested children.
@@ -940,6 +945,7 @@ pub(crate) fn document_of<'a>(
     let document = Document {
         pre_block: (pre > 0).then(|| lines[..pre].join("\n")),
         roots: outline::blocks(&lines, headers, is_org, removed),
+        org: is_org,
     };
     (document, lines, pre)
 }

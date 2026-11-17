@@ -2542,6 +2542,9 @@ describe("Markdown preamble content", () => {
   for (const [preBlock, header, prose] of [
     ["Intro [[X]]\nalias:: y", null, "Intro [[X]]\nalias:: y"],
     ["k:: x\n#+b: [[X]]", "k:: x", "#+b: [[X]]"],
+    // REG-CM-MD-DIRECTIVE-LINK, REG-CM-MD-PAGE-READ-AS-ORG: a `#+` line is opening text.
+    ["#+b: [[X]]", null, "#+b: [[X]]"],
+    ["[[X]]\n#+b: y", null, "[[X]]\n#+b: y"],
   ] as const) {
     it(`shows every line of ${JSON.stringify(preBlock)} as header or opening text`, async () => {
       const bodyId = "44444444-4444-4444-8444-444444444444";
@@ -2576,6 +2579,48 @@ describe("Markdown preamble content", () => {
         const editor = maybeEditorIn(root.querySelector<HTMLElement>(`[data-block-id="${headerId}"]`)!) as EditorDriver;
         expect(editor.value()).toBe(header);
         expect(pageToDto(dto.name)?.pre_block).toBe(preBlock);
+      } finally {
+        dispose();
+      }
+    });
+  }
+
+  // REG-CM-ORG-TEXT-BETWEEN-DIRECTIVES: Org text between opening directives is shown as the
+  // opening-text row, and editing it promotes exactly that text, keeping the directives on
+  // both sides of it in the header.
+  for (const [preBlock, prose, header] of [
+    ["#+TITLE: Direct\n[[X]] text\n#+ALIAS: y", "[[X]] text", "#+TITLE: Direct\n#+ALIAS: y"],
+    ["Intro [[X]]\n#+ALIAS: y", "Intro [[X]]", "#+ALIAS: y"],
+    ["#+ALIAS: y\n\nIntro [[X]]", "Intro [[X]]", "#+ALIAS: y\n\n"],
+  ] as const) {
+    it(`shows and promotes the Org opening text of ${JSON.stringify(preBlock)}`, async () => {
+      const bodyId = "55555555-5555-4555-8555-555555555555";
+      const dto = {
+        name: "Direct",
+        kind: "page" as const,
+        title: "Direct",
+        pre_block: preBlock,
+        format: "org" as const,
+        blocks: [{ id: bodyId, raw: "Head", collapsed: false, children: [] }],
+      };
+      setDoc({
+        byId: { [bodyId]: node(bodyId, "Head", dto.name) },
+        pages: [{ ...page(dto.name, "page", [bodyId], dto.pre_block), format: "org" }],
+        feed: [], loaded: true,
+      });
+      vi.spyOn(backend(), "getPage").mockResolvedValue(unpinned(dto));
+      mainPaneRouter.openPage(dto.name, "page", { inPlace: true });
+      const { root, dispose } = mount(() => <PageView />);
+      try {
+        await tick(); await tick();
+        const preamble = root.querySelector(".preamble-block .block-content-wrapper") as HTMLElement | null;
+        expect(preamble?.textContent).toContain(prose);
+        preamble!.click();
+        await tick();
+        const promoted = pageByName(dto.name)!.roots[0];
+        expect(doc.byId[promoted].raw).toBe(prose);
+        expect(pageByName(dto.name)?.preBlock).toBe(header);
+        expect(editingId()).toBe(promoted);
       } finally {
         dispose();
       }

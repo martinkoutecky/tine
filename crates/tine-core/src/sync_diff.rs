@@ -542,6 +542,7 @@ fn merged_body_is_valid(merged: &str, is_org: bool) -> bool {
     let doc = crate::doc::Document {
         pre_block: None,
         roots: vec![block],
+        org: is_org,
     };
     let serialized = if is_org {
         crate::org::serialize_org(&doc)

@@ -63,6 +63,7 @@ impl Unit {
             document: Document {
                 pre_block: Some(mark.into()),
                 roots: vec![],
+                org: false,
             },
             kinds: vec![EditKind::SaveBlock],
         };

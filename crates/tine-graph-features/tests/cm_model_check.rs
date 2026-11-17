@@ -772,6 +772,56 @@ fn opening_text_around_page_properties_renames() {
     }
 }
 
+/// REG-CM-ORG-TEXT-BETWEEN-DIRECTIVES, REG-CM-MD-DIRECTIVE-LINK,
+/// REG-CM-MD-PAGE-READ-AS-ORG: links Logseq counts in a page's opening text,
+/// in Org text between directives and in Markdown `#+` lines, are renamed and
+/// the check observes them as the rename's sites.
+#[test]
+fn opening_text_between_directives_and_directive_lines_rename() {
+    let _guard = crate::integration_lock();
+    let mut wrong = Vec::new();
+    for (path, before, after) in [
+        (
+            "pages/r.org",
+            "#+TITLE: Direct\n[[X]]\n#+ALIAS: y\n* Head\n",
+            "#+TITLE: Direct\n[[Z]]\n#+ALIAS: y\n* Head\n",
+        ),
+        (
+            "pages/r.org",
+            "#+b: z\n[[X]]\n#+c: w\nmore [[X]]\n* Head\n",
+            "#+b: z\n[[Z]]\n#+c: w\nmore [[Z]]\n* Head\n",
+        ),
+        (
+            "pages/r.md",
+            "k:: x\n#+b: [[X]]\n- b\n",
+            "k:: x\n#+b: [[Z]]\n- b\n",
+        ),
+        ("pages/r.md", "#+b: [[X]]\n- b\n", "#+b: [[Z]]\n- b\n"),
+        (
+            "pages/r.md",
+            "- a\n  #+b: [[X]]\n- c\n  k:: v\n  #+b: [[X]]\n",
+            "- a\n  #+b: [[Z]]\n- c\n  k:: v\n  #+b: [[Z]]\n",
+        ),
+        ("pages/r.md", "[[X]]\n#+b: y", "[[Z]]\n#+b: y"),
+        (
+            "pages/r.md",
+            "alias:: a\n#+b: [[X]]",
+            "alias:: a\n#+b: [[Z]]",
+        ),
+    ] {
+        let (root, store) = fixture(
+            "check-opening-directives",
+            &[("pages/X.md", "- source\n"), (path, before)],
+        );
+        let report = nested_rename(&store, "X", "Z");
+        let wrote = fs::read_to_string(root.join(path)).unwrap();
+        if wrote != after || !report.site_exceptions.is_empty() {
+            wrong.push(format!("{before:?}: wrote {wrote:?}"));
+        }
+    }
+    assert!(wrong.is_empty(), "{wrong:#?}");
+}
+
 #[test]
 fn nested_page_alias_members_are_left_unlisted() {
     let _guard = crate::integration_lock();

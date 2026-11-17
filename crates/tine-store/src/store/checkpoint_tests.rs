@@ -595,6 +595,30 @@ fn pre_header_boundary_checkpoints_are_rebuilt() {
 }
 
 #[test]
+fn pre_opening_text_checkpoints_are_rebuilt() {
+    let root = graph();
+    let pages = root.path().join("pages");
+    let o = "#+TITLE: O\n[[Opening X]]\n#+ALIAS: y\n* Head\n";
+    fs::write(pages.join("O.org"), o).unwrap();
+    fs::write(pages.join("M.md"), "k:: x\n#+b: [[Opening Y]]\n- b\n").unwrap();
+    let cp = root.path().join("launch.bin");
+    write_checkpoint(root.path(), &cp);
+    // Format 38 read neither link: the Org text sat inside the header, and a
+    // Markdown `#+b:` line was no property OG-style (REG-CM-ORG-TEXT-BETWEEN-
+    // DIRECTIVES, REG-CM-MD-DIRECTIVE-LINK).
+    let mut bytes = fs::read(&cp).unwrap();
+    bytes[8..12].copy_from_slice(&38_u32.to_le_bytes());
+    fs::write(&cp, bytes).unwrap();
+    let store = open_cp(root.path(), &cp);
+    let graph = store.whole_graph_reconciled().unwrap();
+    assert_eq!(load_outcome(&store), "format");
+    assert!(parse_passes(&store) > 0, "old references must rebuild");
+    assert_eq!(graph.backlinks("Opening X").unwrap().len(), 1);
+    assert_eq!(graph.backlinks("Opening Y").unwrap().len(), 1);
+    store.close();
+}
+
+#[test]
 fn pre_whole_value_property_parse_checkpoints_are_rebuilt() {
     let root = graph();
     fs::write(
@@ -1485,7 +1509,7 @@ fn the_golden_body_is_pinned_to_format() {
     let digest: String = sha256(&bytes).iter().map(|b| format!("{b:02x}")).collect();
     assert_eq!(
         (FORMAT, digest.as_str()),
-        (38, GOLDEN),
+        (39, GOLDEN),
         "ADR 0070: the checkpoint body changed; bump FORMAT and re-pin GOLDEN"
     );
 }

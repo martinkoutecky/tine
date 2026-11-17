@@ -125,8 +125,7 @@ impl WholeGraph {
                             .iter()
                             .find(|(entry, _)| entry.name == page)
                         {
-                            reference
-                                .set_org(crate::query::page_properties::page_document_is_org(doc));
+                            reference.set_org(doc.org);
                         }
                         // The editor block's names by the collector's own
                         // per-block rule (`visit_block_referenced_names`).

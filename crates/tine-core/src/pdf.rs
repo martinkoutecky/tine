@@ -608,6 +608,7 @@ pub fn merge_hls_page_for_format(
     Document {
         pre_block: Some(pre),
         roots,
+        org: format == Format::Org,
     }
 }
 
@@ -1186,7 +1187,7 @@ mod tests {
             (Format::Md, "tags:: reading\r\nfile:: [Original label](../assets/paper.pdf)\r\nfile-path:: ../assets/paper.pdf\r\n"),
             (Format::Org, "#+TITLE: hls\r\n#+FILE: [[../assets/paper.pdf][Original label]]\r\n#+FILE-PATH: ../assets/paper.pdf\r\n"),
         ] {
-            let existing = Document { pre_block: Some(pre.into()), roots: Vec::new() };
+            let existing = Document { pre_block: Some(pre.into()), roots: Vec::new(), org: format == Format::Org };
             let merged = merge_hls_page_for_format(
                 Some(&existing), "paper.pdf", "Different label", &[sample()], &HashSet::new(), format,
             );
@@ -1214,6 +1215,7 @@ mod tests {
                 let existing = Document {
                     pre_block: Some(pre.clone()),
                     roots: Vec::new(),
+                    org: format == Format::Org,
                 };
                 let merged = merge_hls_page_for_format(
                     Some(&existing),
@@ -1236,6 +1238,7 @@ mod tests {
             let existing = Document {
                 pre_block: Some(pre.into()),
                 roots: Vec::new(),
+                org: format == Format::Org,
             };
             let merged = merge_hls_page_for_format(
                 Some(&existing),
@@ -1294,6 +1297,7 @@ mod tests {
             let existing = Document {
                 pre_block: Some(pre.into()),
                 roots: Vec::new(),
+                org: false,
             };
             let merged = merge_hls_page(Some(&existing), "paper name.pdf", "New label", &[]);
             let pre = merged.pre_block.unwrap();
@@ -1381,6 +1385,7 @@ mod tests {
         let existing = Document {
             pre_block: Some(pre_text.clone()),
             roots: Vec::new(),
+            org: false,
         };
         let once = merge_hls_page(Some(&existing), "paper.pdf", "Paper", &[]);
         assert_eq!(once.pre_block.as_deref(), Some(pre_text.as_str()));

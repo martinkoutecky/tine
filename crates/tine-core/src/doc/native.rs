@@ -24,9 +24,10 @@ pub struct NativeDocument {
     pub end: usize,
     pub first_root: bool,
     pub properties: bool,
-    /// The text before the first block, after the header lines.
+    /// The text before the first block that is no header line.
     pub prose: Option<Range<usize>>,
-    /// The physical lines before `end` (and before the prose).
+    /// The physical lines before `end` outside the prose (Org page
+    /// properties can follow it).
     pub lines: Vec<NativeLine>,
     pub drawers: Vec<(usize, usize)>,
     pub eol: &'static str,
@@ -140,11 +141,19 @@ impl NativeDocument {
         let title_range = title_field
             .map(|p| map.native(owner, p.value_range.0)..map.native(owner, p.value_range.1));
         let (mut cursor, mut drawer_steps) = (0, 0);
+        // Org page properties can follow the prose: those lines are header too.
+        let tail = prose
+            .as_ref()
+            .is_some_and(|p| !text[p.end..end.max(p.end)].trim().is_empty());
         let mut lines: Vec<_> = map
             .lines()
             .map(|i| (i, map.line(i)))
             .take_while(|(_, range)| range.start < end)
-            .filter(|(_, range)| prose.as_ref().is_none_or(|p| range.start < p.start))
+            .filter(|(_, range)| {
+                prose
+                    .as_ref()
+                    .is_none_or(|p| range.start < p.start || (tail && range.start >= p.end))
+            })
             .map(|(i, range)| {
                 let read = read.contains(&i);
                 let at = read.then(|| map.offset(i));

@@ -1,0 +1,16 @@
+[
+  {"format":"md","input":"k:: x\n#+b: [[X]]\n- b\n","refs":["X"]},
+  {"format":"md","input":"#+b: [[X]]\n- b\n","refs":["X"]},
+  {"format":"md","input":"Intro\n#+b: [[X]]\n- b\n","refs":["X"]},
+  {"format":"md","input":"- a\n  #+b: [[X]]\n- c\n","refs":["X"]},
+  {"format":"md","input":"- a\n  k:: v\n  #+b: [[X]]\n- c\n","refs":["X"]},
+  {"format":"md","input":"- a\n#+b: [[X]]\n- c\n","refs":["X"]},
+  {"format":"md","input":"[[X]]\n#+b: y","refs":["X"]},
+  {"format":"md","input":"- a\n  > #+b: [[X]]\n- c\n","refs":[]},
+  {"format":"md","input":"- a\n  ```\n  #+b: [[X]]\n  ```\n- c\n","refs":[]},
+  {"format":"org","input":"#+TITLE: Direct\n[[X]]\n#+ALIAS: y\n* Head\n","refs":["X"]},
+  {"format":"org","input":"#+TITLE: Direct\n[[X]]\n#+ALIAS: y\nmore [[W]]\n* Head\n","refs":["W","X"]},
+  {"format":"org","input":"prose [[X]]\n:PROPERTIES:\n:a: x\n:END:\nmore\n* blk","refs":["X"]},
+  {"format":"org","input":":PROPERTIES:\n:a: x\n:END:\n[[X]]\n#+ALIAS: y\n* blk","refs":["X"]},
+  {"format":"org","input":"prose [[X]]\n#+title: t\n* blk","refs":["X"]}
+]

@@ -227,8 +227,15 @@ export function splitPagePreamble(raw: string | null | undefined, format: Format
     const range = JSON.parse(page_preamble_content_json(raw, true)) as [number, number] | null;
     if (!range) return { properties: raw, content: null, remainder: null };
     const at = utf8ToUtf16Cursor(raw);
-    const start = at(range[0]);
-    return { properties: raw.slice(0, start) || null, content: raw.slice(start, at(range[1])), remainder: raw.slice(start) };
+    const [start, end] = [at(range[0]), at(range[1])];
+    // Page properties can follow the prose (REG-CM-ORG-TEXT-BETWEEN-DIRECTIVES):
+    // `properties` is then the pre-block without it, so promoting the prose
+    // keeps every header line.
+    const before = raw.slice(0, start);
+    const properties = raw.slice(end).trim()
+      ? (before.replace(/\n+$/, "") + raw.slice(end)).replace(/^\n+/, "")
+      : before;
+    return { properties: properties || null, content: raw.slice(start, end), remainder: raw.slice(start) };
   }
   const { end, entries } = pageHeader(raw);
   const remainder = entries.length ? raw.slice(end) || null : raw;

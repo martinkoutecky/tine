@@ -265,7 +265,7 @@ fn is_properties_only(raw: &str) -> bool {
 /// Test-side copy of `tine_store::query::document_alias_spellings` (crate
 /// private). The store harness checks the two agree on every file.
 pub fn alias_spellings(doc: &Document) -> Vec<String> {
-    let is_org = tine_core::page_properties::page_document_is_org(doc);
+    let is_org = doc.org;
     let alias_text: Option<&str> = match &doc.pre_block {
         Some(pre) => Some(pre.as_str()),
         None => doc

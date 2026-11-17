@@ -761,13 +761,14 @@ fn o6_layout_shaped_content_survives_the_merge() {
             "#+k: t\n* target\n".to_owned(),
             format!("#+k: t\n* target\n*\n#+BEGIN_QUOTE\n#+k: s\n#+END_QUOTE\n{org_body}"),
         ),
-        // Org prose before a later directive is header text: each line is a
-        // leftover line, and the blank line between them is not one (O6).
+        // Org prose before a later directive is opening text, its own block
+        // after the leftover quote; the blank line between them is no
+        // leftover line (O6, REG-CM-ORG-TEXT-BETWEEN-DIRECTIVES).
         (
             true,
             "free text\n\n#+k: s\n* source\n".to_owned(),
             "#+k: t\n* target\n".to_owned(),
-            "#+k: t\n* target\n*\n#+BEGIN_QUOTE\nfree text\n#+k: s\n#+END_QUOTE\n* source\n"
+            "#+k: t\n* target\n*\n#+BEGIN_QUOTE\n#+k: s\n#+END_QUOTE\n* free text\n* source\n"
                 .to_owned(),
         ),
     ] {

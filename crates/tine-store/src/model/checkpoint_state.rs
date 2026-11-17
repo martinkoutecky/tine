@@ -69,7 +69,14 @@ impl PagesIn {
                 let mut roots: Vec<DocBlock> =
                     roots.into_iter().map(CheckpointBlock::into_block).collect();
                 tine_core::projection::assign_doc_runtime_ids(&mut roots, entry.rel_path_str());
-                (slot, (entry, Arc::new(Document { pre_block, roots })))
+                let org = tine_core::model::Format::from_path(&entry.path)
+                    == tine_core::model::Format::Org;
+                let doc = Document {
+                    pre_block,
+                    roots,
+                    org,
+                };
+                (slot, (entry, Arc::new(doc)))
             })
             .collect();
         Arc::new(Pages::from_slots(rows, next))
@@ -489,6 +496,7 @@ fn block_index_wire_keeps_runtime_ids_compact() {
     let mut doc = Document {
         pre_block: None,
         roots: (0..2048).map(|_| DocBlock::new("ordinary block")).collect(),
+        org: false,
     };
     assign_doc_runtime_ids(&mut doc.roots, "pages/A.md");
     let entry = PageEntry {

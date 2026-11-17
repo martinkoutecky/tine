@@ -1708,6 +1708,49 @@ fn opening_text_around_page_properties_is_indexed() {
     std::fs::remove_dir_all(&root).ok();
 }
 
+/// REG-CM-ORG-TEXT-BETWEEN-DIRECTIVES, REG-CM-MD-DIRECTIVE-LINK,
+/// REG-CM-MD-PAGE-READ-AS-ORG: every link Logseq counts in opening text is a
+/// backlink (mldoc oracle, target/cm-leftovers/oracle/refs-rows.jsonl), and
+/// the Org title and alias around the text stay the page's.
+#[test]
+fn opening_text_between_directives_and_directive_lines_is_indexed() {
+    let root = crate::test_support::fresh_dir("tine-opening-directives-");
+    std::fs::create_dir_all(root.join("pages")).unwrap();
+    let w = |name: &str, text: &str| std::fs::write(root.join("pages").join(name), text).unwrap();
+    w("Org.org", "#+TITLE: Direct\n[[X]]\n#+ALIAS: Ali\n* Head\n");
+    w("Folded.md", "k:: x\n#+b: [[X]]\n- b\n");
+    w("Alone.md", "#+b: [[X]]\n- b\n");
+    w("Inner.md", "- a\n  #+b: [[X]]\n- c\n  > #+b: [[X]]\n");
+    w("Rootless.md", "[[X]]\n#+b: y");
+    // A Markdown page with no blocks keeps its Markdown page properties.
+    w("RootAlias.md", "alias:: Ra\n#+b: y");
+    w("X.md", "- x\n");
+    let graph = store_at(&root).whole_graph_reconciled().unwrap();
+    let mut pages: Vec<_> = graph
+        .backlinks("X")
+        .unwrap()
+        .iter()
+        .map(|b| b.page.clone())
+        .collect();
+    pages.sort();
+    let alias = |name| {
+        matches!(
+            graph.resolve(name, false),
+            tine_store::Resolved::Alias { .. }
+        )
+    };
+    assert_eq!(
+        (pages, [alias("Ali"), alias("Ra")]),
+        (
+            ["Alone", "Direct", "Folded", "Inner", "Rootless"]
+                .map(String::from)
+                .to_vec(),
+            [true, true]
+        )
+    );
+    std::fs::remove_dir_all(&root).ok();
+}
+
 fn page_row_names(answer: tine_store::IrAnswer) -> Vec<String> {
     let tine_store::IrAnswer::Result(answer) = answer else {
         panic!("query result");

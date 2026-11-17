@@ -1500,8 +1500,8 @@ fn indented_source_blocks_merge_at_their_original_outline_depths() {
 fn escaping_org_directives_refuse_without_partial_writes() {
     let _guard = crate::integration_lock();
     for (src, dst, org, reason) in [(
-        "#+END_QUOTE\n#+title: src\n* source\n",
-        "#+title: dst\n* target\n",
+        "#+END_QUOTE: s\n#+title: src\n* source\n",
+        "#+END_QUOTE: t\n#+title: dst\n* target\n",
         true,
         pages::merge_payload::RealizationError::DirectiveEscape,
     )] {
@@ -1782,15 +1782,15 @@ fn alias_looking_examples_are_protected_in_both_formats() {
 #[test]
 fn org_title_after_a_clashing_directive_stays_inside_the_leftover_quote() {
     let _guard = crate::integration_lock();
-    // A title carries no reference, so it stays inside the quote, in order
-    // after other leftover text (Tine reads prose before a directive as
-    // header text).
+    // A title carries no reference, so it stays inside the quote; prose
+    // before it is the source's opening text, its own block after the quote
+    // (REG-CM-ORG-TEXT-BETWEEN-DIRECTIVES).
     merge(
         "free text\n#+TITLE: src\n* source\n",
         "#+TITLE: dst\n#+CATEGORY: target\n* target\n",
         true,
         |text, _, _| {
-            assert_eq!(text,"#+TITLE: dst\n#+CATEGORY: target\n* target\n*\n#+BEGIN_QUOTE\nfree text\n#+TITLE: src\n#+END_QUOTE\n* source\n");
+            assert_eq!(text,"#+TITLE: dst\n#+CATEGORY: target\n* target\n*\n#+BEGIN_QUOTE\n#+TITLE: src\n#+END_QUOTE\n* free text\n* source\n");
         },
     );
     // A clashing directive before the title: both stay in the quote, in order.

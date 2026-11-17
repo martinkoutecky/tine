@@ -640,21 +640,36 @@ fn observe_parses_the_document_once() {
     }
 }
 
-/// O6: "any other header text are the leftover lines". Org prose before a
-/// directive is header text: it was dropped from the reading, so a writer
-/// losing it passed and the writer keeping it was refused.
+/// Org text before a directive is the page's opening text (OG's pre-block
+/// body; REG-CM-ORG-TEXT-BETWEEN-DIRECTIVES), read as its first block, and
+/// the directive after it is a page property: the source's prose survives as
+/// a block, its directive as a leftover header line (O6). Text between two
+/// directives reads the same way.
 #[test]
-fn org_prose_before_a_directive_is_other_header_text() {
-    let source = "free text\n\n#+k: s\n* source\n";
-    let want = merged(source, "#+k: t\n* target\n", Format::Org);
-    let read = |text: &str| matches(&want, &observe(text, Format::Org), true);
-    assert!(read(
-        "#+k: t\n* target\n*\n#+BEGIN_QUOTE\nfree text\n#+k: s\n#+END_QUOTE\n* source\n"
-    ));
-    // Negative control: the prose lost.
-    assert!(!read(
-        "#+k: t\n* target\n*\n#+BEGIN_QUOTE\n#+k: s\n#+END_QUOTE\n* source\n"
-    ));
+fn org_prose_before_a_directive_is_the_opening_block() {
+    // (source, survivor header, the opening text); the joining `#+j: r` is a
+    // page property after the text.
+    for (source, head, text) in [
+        ("free text\n\n#+k: s\n* source\n", "#+k: t\n", "free text"),
+        (
+            "#+k: s\nfree [[X]]\n#+j: r\n* source\n",
+            "#+k: t\n#+j: r\n",
+            "free [[X]]",
+        ),
+    ] {
+        let want = merged(source, "#+k: t\n* target\n", Format::Org);
+        let read = |text: &str| matches(&want, &observe(text, Format::Org), true);
+        let quote = "*\n#+BEGIN_QUOTE\n#+k: s\n#+END_QUOTE\n";
+        // The writer's output (cm_merge_body.rs pins the same bytes).
+        assert!(
+            read(&format!("{head}* target\n{quote}* {text}\n* source\n")),
+            "{source:?}"
+        );
+        // Negative controls: the text lost, or kept as header text.
+        assert!(!read(&format!("{head}* target\n{quote}* source\n")));
+        let inside = format!("*\n#+BEGIN_QUOTE\n#+k: s\n{text}\n#+END_QUOTE\n");
+        assert!(!read(&format!("{head}* target\n{inside}* source\n")));
+    }
 }
 
 /// O6: a line lsdoc folds into a Markdown page's property node that is no

@@ -537,7 +537,7 @@ fn baked_queries(graph: &WholeGraph, corpus: &tine_core::Corpus) -> io::Result<V
             Ok(())
         };
         if let Some(pre) = &page.document.pre_block {
-            let is_org = tine_core::page_properties::page_document_is_org(&page.document);
+            let is_org = page.document.org;
             for (_, value) in tine_core::page_properties::page_property_lines(pre, is_org) {
                 bake(&value, Vec::new())?;
             }

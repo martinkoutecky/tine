@@ -17,6 +17,7 @@ fn mixed_code_editor_outputs_preserve_bytes_and_reparse() {
                 field("suffix")
             );
             let document = |body: &str| Document {
+                org: false,
                 pre_block: None,
                 roots: vec![
                     DocBlock::new("before"),

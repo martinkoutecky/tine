@@ -253,7 +253,9 @@ impl Writer {
             separator += map.line(last).end - map.end(last);
         }
         self.original(file, p.end..separator)?;
-        self.layout(file, separator..header.end)?;
+        // Header lines after the prose (Org) are placed with the header.
+        let after = header.lines.iter().find(|l| l.range.start >= p.end);
+        self.layout(file, separator..after.map_or(header.end, |l| l.range.start))?;
         self.newline();
         Ok(())
     }

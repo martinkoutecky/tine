@@ -30,7 +30,6 @@ pub(crate) mod page_properties;
 mod reference_spelling_tests;
 #[cfg(test)]
 mod sample_seed_tests;
-use page_properties::page_document_is_org;
 pub(crate) use page_properties::page_facets;
 pub(crate) use tine_core::page_properties::page_property_raw;
 
@@ -400,7 +399,7 @@ pub(crate) fn document_alias_spellings(doc: &Document) -> Vec<String> {
     tine_core::page_header::page_alias_spellings(
         doc.pre_block.as_deref(),
         doc.roots.first().map(|b| b.raw()),
-        page_document_is_org(doc),
+        doc.org,
     )
 }
 

@@ -82,9 +82,17 @@ pub(crate) fn observe_with_readings(
         let regions = crate::block_regions::parse_document(pre, org);
         let properties: Vec<&Property> = regions.page_properties().collect();
         let prose = tine_outline::page_preamble::preamble_content_range_in(pre, org, &regions);
-        if !properties.is_empty() {
-            // The header is everything before the prose (the one boundary,
-            // an Org drawer's `:END:` included).
+        // The header is everything but the prose (the one boundary, an Org
+        // drawer's `:END:` included). Org page properties can follow the
+        // prose; the header is then read without it.
+        let after = prose.filter(|p| !pre[p.1..].trim().is_empty());
+        if let Some(p) = after.filter(|_| !properties.is_empty()) {
+            let text = format!("{}{}", &pre[..p.0], &pre[p.1..]);
+            let regions = crate::block_regions::parse_document(&text, org);
+            let block = projected(&text, org);
+            content.header = header_rows(&block, reader, regions.page_properties());
+            other_header_text(&block, reader, &regions, &mut content.header);
+        } else if !properties.is_empty() {
             let block = projected(&pre[..prose.map_or(pre.len(), |p| p.0)], org);
             content.header = header_rows(&block, reader, properties.iter().copied());
             other_header_text(&block, reader, &regions, &mut content.header);

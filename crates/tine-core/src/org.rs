@@ -74,7 +74,10 @@ pub fn lone_cr_to_lf(content: &str) -> std::borrow::Cow<'_, str> {
 pub fn parse_org(content: &str) -> Document {
     let content = &*normalize_line_endings(content);
     if content.trim_end_matches('\n').is_empty() {
-        return Document::default();
+        return Document {
+            org: true,
+            ..Document::default()
+        };
     }
     let headers = outline::headers_or_none(content, OutlineFormat::Org);
     crate::doc::document_of(content, &headers, true, None).0
@@ -287,6 +290,7 @@ mod tests {
         let pre_only = Document {
             pre_block: Some("#+TITLE: Notes\n".into()),
             roots: Vec::new(),
+            org: true,
         };
         assert_eq!(serialize_org(&pre_only), "#+TITLE: Notes\n");
     }

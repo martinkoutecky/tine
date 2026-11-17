@@ -122,6 +122,7 @@ pub(crate) fn unchanged_save(
             .iter()
             .map(|b| tine_core::projection::dto_block_to_doc(&block_to_dto(b), is_org))
             .collect(),
+        org: is_org,
     };
     let save = |_: Option<&str>| {
         parser_unwind(|| save_content(page, path, Some((candidate, &old, &opts))))

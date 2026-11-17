@@ -56,8 +56,10 @@ fn ordinary_merge_limitations_name_the_failing_input_at_the_window_boundary() {
     use tine_graph_features::pages;
     for (source, target, ext, kind, file) in [
         (
-            "#+END_QUOTE\n#+title: source\n* source\n",
-            "#+title: target\n* target\n",
+            // A clashing `#+END_QUOTE:` directive is a leftover line that
+            // would end the leftover quote early.
+            "#+END_QUOTE: s\n#+title: source\n* source\n",
+            "#+END_QUOTE: t\n#+title: target\n* target\n",
             "org",
             "directiveEscape",
             "source",
@@ -129,7 +131,12 @@ fn ordinary_merge_limitations_name_the_failing_input_at_the_window_boundary() {
         }
         drop(host);
         drop(store);
-        let repaired = |text: &str| text.replace("#+END_QUOTE\n", "").replace("#a\\_b", "a_b");
+        let repaired = |text: &str| {
+            (text
+                .replace("#+END_QUOTE: s\n", "")
+                .replace("#+END_QUOTE: t\n", ""))
+            .replace("#a\\_b", "a_b")
+        };
         std::fs::write(root.path().join(&src), repaired(source)).unwrap();
         std::fs::write(root.path().join(&dst), repaired(target)).unwrap();
         let store = std::sync::Arc::new(

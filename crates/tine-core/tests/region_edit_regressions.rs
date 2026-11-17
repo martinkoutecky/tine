@@ -81,6 +81,7 @@ fn annotation_refresh_keeps_literal_properties() {
     let doc = Document {
         pre_block: None,
         roots: vec![DocBlock::new(raw)],
+        org: false,
     };
     let h: Highlight = serde_json::from_value(serde_json::json!({"id":"highlight", "page":2, "color":"blue", "position":{"page":2,"bounding":{"top":0,"left":0,"width":1,"height":1},"rects":[]},"text":"Highlight","image":null})).unwrap();
     let out =

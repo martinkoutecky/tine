@@ -94,10 +94,21 @@ impl DocBlock {
             // tags, and every property value's members, which are
             // `property_refs`' answer as the reference walk projected it.
             let explicit = &reference_source.explicit;
-            let applicable = regions.properties.iter().filter(|p| p.applicable);
+            let directives = crate::reference_evidence::markdown_directives(
+                &self.raw,
+                self.is_org,
+                &proj.blocks,
+            );
+            let mut applicable: Vec<_> = (regions.properties.iter())
+                .filter(|p| p.applicable)
+                .chain(&directives)
+                .collect();
+            if !directives.is_empty() {
+                applicable.sort_by_key(|p| p.value_range.0);
+            }
             let values = crate::reference_evidence::property_references_in(
                 explicit.iter(),
-                applicable,
+                applicable.into_iter(),
                 |r| r,
             );
             let tag_refs = explicit.iter().filter(|r| r.rule == "explicit_tag");

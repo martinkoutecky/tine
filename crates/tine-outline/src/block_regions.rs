@@ -505,7 +505,7 @@ fn mapped_regions(raw: &str, is_org: bool, blocks: &[Block], document: bool) -> 
     let own = result.own_org_region(raw);
     // The one owner of where a page header ends (OG `block.cljs
     // extract-blocks`): only top-level nodes before the first block count.
-    // Org's page properties are the directives there and the head drawer.
+    // Org's: the directives there and the head drawer, outside its text.
     // A Markdown file's are the property lines of the first property node
     // there (a later node is prose, as in OG), up to the node's first line
     // that is no property, and only when nothing but blank lines precedes the
@@ -551,6 +551,9 @@ fn mapped_regions(raw: &str, is_org: bool, blocks: &[Block], document: bool) -> 
         } else {
             !document || (Some(region) == first_node && p.line.0 < cut)
         };
+    }
+    if document && is_org {
+        result.demote_org_properties_inside_text(raw, blocks);
     }
     result.id = result
         .properties
@@ -648,8 +651,8 @@ fn visit_blocks(raw: &str, org: bool, blocks: &[Block], document: bool, out: &mu
                         } else {
                             [markdown, directive, drawer]
                         };
-                        // Accepted entries of the other format still own spans
-                        // (e.g. template id removal), but are not active metadata.
+                        // Other-format entries own spans (template id removal), not
+                        // metadata; a `#+` line's references count (OG hoists it).
                         let Some((key, value, prefix, delim, appropriate)) = candidates
                             .into_iter()
                             .flatten()
@@ -670,7 +673,7 @@ fn visit_blocks(raw: &str, org: bool, blocks: &[Block], document: bool, out: &mu
                             region: index,
                             primary: appropriate,
                             directive: org && prefix == 2,
-                            applicable: appropriate || (org && prefix == 2),
+                            applicable: appropriate || prefix == 2,
                         });
                     }
                 }

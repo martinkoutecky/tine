@@ -571,6 +571,11 @@ pub(crate) fn header_alias_members(raw: &str, is_org: bool) -> Vec<String> {
     // The bytes before the prose (an Org drawer's `:END:` included), so the
     // block parse's offsets are the document's.
     let prose = tine_outline::page_preamble::preamble_content_range_in(raw, is_org, &page);
+    // An Org page property after the prose (REG-CM-ORG-TEXT-BETWEEN-DIRECTIVES)
+    // is read from the header without the prose, as the model observation reads it.
+    if let Some(p) = prose.filter(|p| !raw[p.1..].trim().is_empty()) {
+        return header_alias_members(&format!("{}{}", &raw[..p.0], &raw[p.1..]), is_org);
+    }
     let raw = &raw[..prose.map_or(raw.len(), |p| p.0)];
     let blocks = tine_outline::lsdoc_block_parse::parse_projection(raw, is_org).blocks;
     let regions = super::block_regions::from_blocks(raw, is_org, &blocks);
@@ -682,6 +687,53 @@ fn project_property_value(
         }
     }
     projection.source.rewrite_targets = scratch.rewrite_targets;
+}
+
+/// The `#+key: value` lines of a Markdown block that stand on their own (a
+/// top-level directive node; one folded into a property node is an
+/// applicable property of `block_regions`). OG hoists every such line into
+/// the page's properties (graph-parser `mldoc.cljc collect-page-properties`),
+/// so its key and value are references as a property's are; Tine keeps the
+/// line where it is written, shown as text and no property, and reads those
+/// references there (REG-CM-MD-DIRECTIVE-LINK). Ranges in `raw`; O(blocks).
+pub(crate) fn markdown_directives(
+    raw: &str,
+    is_org: bool,
+    blocks: &[Block],
+) -> Vec<super::block_regions::Property> {
+    let mapper = SpanMapper::block(raw);
+    let lines = blocks.iter().filter(|_| !is_org).filter_map(|b| match b {
+        Block::Directive {
+            name,
+            value,
+            span: Some(span),
+        } => Some((name, value, mapper.map(span, raw.len())?)),
+        _ => None,
+    });
+    let mut out = Vec::new();
+    for (name, value, span) in lines {
+        let start = span.start + (raw[span.clone()].len() - raw[span.clone()].trim_start().len());
+        let text = raw[start..span.end].trim_end();
+        let (Some(rest), Some(colon)) = (text.strip_prefix("#+"), text.find(':')) else {
+            continue;
+        };
+        let lead = rest.len() - rest.trim_start().len();
+        let after = &text[colon + 1..];
+        let value_start = start + colon + 1 + (after.len() - after.trim_start().len());
+        let range = |a: usize, b: usize| super::block_regions::Range(a, b);
+        out.push(super::block_regions::Property {
+            key: name.clone(),
+            value: value.clone(),
+            line: range(start, start + text.len()),
+            key_range: range(start + 2 + lead, start + colon),
+            value_range: range(value_start.min(start + text.len()), start + text.len()),
+            region: usize::MAX,
+            primary: false,
+            directive: false,
+            applicable: true,
+        });
+    }
+    out
 }
 
 fn structural_property(key: &str, raw: &str, is_org: bool) -> bool {
@@ -904,7 +956,13 @@ pub(crate) fn project_into(
             }
         }
     }
-    for property in regions.properties.iter().filter(|p| p.applicable) {
+    let directives = markdown_directives(raw, is_org, blocks);
+    for property in regions
+        .properties
+        .iter()
+        .filter(|p| p.applicable)
+        .chain(&directives)
+    {
         let key = &property.key;
         let key_range = property.key_range.0..property.key_range.1;
         let offset = property.value_range.0;

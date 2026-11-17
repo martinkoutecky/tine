@@ -363,6 +363,88 @@ fn headers_with_blank_gaps_merge_with_ogs_page_properties() {
 }
 
 #[test]
+fn opening_text_between_directives_and_directive_lines_merge_whole() {
+    // Org text between opening directives is prose, with page properties on
+    // both sides of it (REG-CM-ORG-TEXT-BETWEEN-DIRECTIVES); a Markdown `#+`
+    // line's link is a reference (REG-CM-MD-DIRECTIVE-LINK); a Markdown page
+    // with no blocks is Markdown (REG-CM-MD-PAGE-READ-AS-ORG). Every byte
+    // survives the merge, in both entries and both directions (a page whose
+    // opening text is promoted to a block when it is the survivor, as in
+    // Markdown). The title row is checked, not pinned: its names vary.
+    let pages = [
+        ("#+ALIAS: y\n[[P]] text\n#+b: z\n* body\n", true),
+        ("#+TITLE: NAME\n[[P]]\n#+ALIAS: y\n* body\n", true),
+        ("#+b: z\n[[P]]\n#+c: w\nmore [[Q]]\n* body\n", true),
+        ("k:: x\n#+b: [[P]]\n- body\n", false),
+        ("#+b: [[P]]\n- body\n", false),
+        ("[[P]]\n#+b: y", false),
+    ];
+    let mut cases = Vec::new();
+    for (page, org) in pages {
+        let plain = if org { "* other\n" } else { "- other\n" };
+        for rename in [false, true] {
+            for source in [false, true] {
+                // A title names its own file's page.
+                let page = page.replace("NAME", if source { "SOURCE" } else { "TARGET" });
+                cases.push(Case {
+                    source: if source { page.clone() } else { plain.into() },
+                    target: if source { plain.into() } else { page },
+                    org,
+                    rename,
+                    refusal: None,
+                });
+            }
+        }
+    }
+    // Org text before a directive is the page's opening text: it merges as a
+    // block, the source's directive as a leftover header line.
+    for source in [
+        "free text\n\n#+k: s\n* source\n",
+        "#+k: s\nfree [[X]]\n#+j: r\n* source\n",
+    ] {
+        cases.push(Case {
+            source: source.into(),
+            target: "#+k: t\n* target\n".into(),
+            org: true,
+            rename: false,
+            refusal: None,
+        });
+    }
+    assert_eq!(cases.len(), 26);
+    run_pinned(cases, &|case| {
+        let pinned = match (case.source.as_str(), case.target.as_str()) {
+            ("free text\n\n#+k: s\n* source\n", _) => {
+                "#+k: t\n* target\n*\n#+BEGIN_QUOTE\n#+k: s\n#+END_QUOTE\n* free text\n* source\n"
+            }
+            // The directive after the text is a page property: it joins.
+            ("#+k: s\nfree [[X]]\n#+j: r\n* source\n", _) => {
+                "#+k: t\n#+j: r\n* target\n*\n#+BEGIN_QUOTE\n#+k: s\n#+END_QUOTE\n* free [[X]]\n* source\n"
+            }
+            ("#+ALIAS: y\n[[P]] text\n#+b: z\n* body\n", "* other\n") => {
+                "#+ALIAS: y\n#+b: z\n* other\n* [[P]] text\n* body\n"
+            }
+            ("* other\n", "#+ALIAS: y\n[[P]] text\n#+b: z\n* body\n") => {
+                "#+ALIAS: y\n#+b: z\n* [[P]] text\n* body\n* other\n"
+            }
+            ("#+b: z\n[[P]]\n#+c: w\nmore [[Q]]\n* body\n", "* other\n") => {
+                "#+b: z\n* other\n* [[P]]\n#+c: w\nmore [[Q]]\n* body\n"
+            }
+            ("* other\n", "#+b: z\n[[P]]\n#+c: w\nmore [[Q]]\n* body\n") => {
+                "#+b: z\n* [[P]]\n#+c: w\nmore [[Q]]\n* body\n* other\n"
+            }
+            ("k:: x\n#+b: [[P]]\n- body\n", "- other\n") => "k:: x\n- other\n- #+b: [[P]]\n- body\n",
+            ("- other\n", "k:: x\n#+b: [[P]]\n- body\n") => "k:: x\n- #+b: [[P]]\n- body\n- other\n",
+            ("#+b: [[P]]\n- body\n", "- other\n") => "- other\n- #+b: [[P]]\n- body\n",
+            ("- other\n", "#+b: [[P]]\n- body\n") => "- #+b: [[P]]\n- body\n- other\n",
+            ("[[P]]\n#+b: y", "- other\n") => "- other\n- [[P]]\n  #+b: y\n",
+            ("- other\n", "[[P]]\n#+b: y") => "- [[P]]\n  #+b: y\n- other\n",
+            _ => return None,
+        };
+        Some(pinned.to_owned())
+    });
+}
+
+#[test]
 fn review_header_layout_merges_in_both_entries() {
     let mut cases = Vec::new();
     for rename in [false, true] {
@@ -671,7 +753,9 @@ fn generated_native_bodies_merge_or_explain_the_limitation_before_the_check() {
                     rename: n % 2 == 0,
                     refusal: match (survivor, n) {
                         (false, 1) => Some(("HiddenOccurrence", true)),
-                        (false, 3) => Some(("DirectiveEscape", true)),
+                        // A stray `#+END_QUOTE` before the title is opening
+                        // text, now its own block (REG-CM-ORG-TEXT-BETWEEN-DIRECTIVES);
+                        // the escape refusal is pinned in merge_text_trace.rs.
                         _ => None,
                     },
                 });

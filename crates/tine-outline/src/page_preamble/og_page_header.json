@@ -66,5 +66,10 @@
   {"format":"org","input":"#+BEGIN_QUOTE\n#+title: t\n#+END_QUOTE\n* blk","properties":[],"header_end":null},
   {"format":"org","input":"#+title: t\nprose\n* blk","properties":["title"],"header_end":null},
   {"format":"org","input":"#+title: t\n* blk\n#+alias: a\n","properties":["title","alias"],"header_end":null,"known_difference":"OG hoists directives from the whole file; Tine reads those before the first headline"},
-  {"format":"org","input":"* blk\n#+title: t\n","properties":["title"],"header_end":null,"known_difference":"OG hoists directives from the whole file; Tine reads those before the first headline"}
+  {"format":"org","input":"* blk\n#+title: t\n","properties":["title"],"header_end":null,"known_difference":"OG hoists directives from the whole file; Tine reads those before the first headline"},
+  {"format":"org","input":"#+TITLE: Direct\n[[X]]\n#+ALIAS: y\n* Head\n","properties":["title","alias"],"header_end":null},
+  {"format":"org","input":"#+title: t\nprose\n#+b: m\nmore\n* blk","properties":["title","b"],"header_end":null,"known_difference":"OG reads every top-level directive; Tine shows one prose row, so a directive between two lines of opening text is part of that text"},
+  {"format":"org","input":"prose\n:PROPERTIES:\n:a: x\n:END:\nmore\n* blk","properties":["a"],"header_end":31,"known_difference":"OG reads the head drawer after opening text; Tine shows one prose row, so a drawer between two lines of opening text is part of that text"},
+  {"format":"org","input":":PROPERTIES:\n:a: x\n:END:\n[[X]]\n#+ALIAS: y\n* blk","properties":["alias"],"header_end":null,"known_difference":"OG's hoisted directives replace the head drawer; Tine reads both"},
+  {"format":"org","input":"#+b: z\n[[P]]\n#+c: w\nmore [[Q]]\n* body\n","properties":["b","c"],"header_end":null,"known_difference":"OG reads every top-level directive; Tine shows one prose row, so a directive between two lines of opening text is part of that text"}
 ]

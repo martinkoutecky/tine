@@ -1913,7 +1913,7 @@ fn visit_document_referenced_names(
     }
     if let Some(pre) = &doc.pre_block {
         let mut block = DocBlock::new(pre);
-        block.set_org(crate::query::page_properties::page_document_is_org(doc));
+        block.set_org(doc.org);
         visit_block_property_and_evidence_names(&block, config, f);
     }
     // CM step 2, batch 8: the prose before the first block is the page's
