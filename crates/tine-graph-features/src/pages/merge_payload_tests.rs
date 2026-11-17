@@ -33,17 +33,31 @@ fn source_indentation_work_is_one_visit_per_line_and_bounded_by_merge_work() {
             .unwrap()
         };
         BODY_LINES.with(|count| count.set(0));
+        BODY_BYTES.with(|count| count.set(0));
         merge(&normal, &aligned);
         assert_eq!(
             BODY_LINES.with(|count| count.get()),
             0,
             "aligned sources need no normalization pass"
         );
+        let expected_bytes =
+            ("source".len() + "continuation".len() + "child".len()) * blocks + "target".len();
+        assert_eq!(
+            BODY_BYTES.with(|count| count.get()),
+            expected_bytes,
+            "each native content byte is compared once, using the existing output read"
+        );
+        BODY_BYTES.with(|count| count.set(0));
         merge(&source, &indented);
         assert_eq!(
             BODY_LINES.with(|count| count.get()),
             3 * blocks,
             "normalization must visit each physical source line once"
+        );
+        assert_eq!(
+            BODY_BYTES.with(|count| count.get()),
+            expected_bytes,
+            "indent removal adds no second content check"
         );
         let best = |doc: &PageDto, text: &str| {
             (0..3)

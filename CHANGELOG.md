@@ -8,6 +8,8 @@ The format follows [Keep a Changelog](https://keepachangelog.com/); versions use
 
 ## [Unreleased]
 
+- Merging blocks with different indentation preserves continuation text and fenced code. A layout the writer cannot preserve receives an explained merge limitation naming the file (REG-CM-MERGE-BODY-CONTENT).
+
 - Merging an indented source now preserves its block depths, including continuations and header children. Rename and merge refusals explain incompatible formats, conflict markers, stale selections and unreadable files in the interface's language. Remaining merge limitations explain the affected input file and a next step; the rename question preserves localized refusal data too. Refusals say nothing was renamed or merged, since pending edits may already have been saved. (REG-CM-REFUSAL-RAW-ERRORS, REG-CM-REFUSAL-CONTEXT)
 
 - Merging into a page with a date title recognizes the survivor's day across date spellings. Both merge entry points refuse a source with unresolved conflict markers before changing either file (REG-CM-WITNESS-DATE-MERGE, REG-CM-WITNESS-CONFLICT-MERGE).

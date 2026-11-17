@@ -111,11 +111,17 @@ existing refusal conditions, not additional restrictions.
 diagnostics. The writer attaches the source or survivor while reading that
 input; checks of assembled output name the survivor. `BodyLaw`,
 `DirectiveEscape` and `MissingNativeNameRange` can occur in ordinary files.
-The source's initial native indentation is removed from its body placements
-using the outline reader's structural prefix, retaining relative depths,
-continuations and header children. Only layout bytes are consumed, through the
-existing trace; P2/P3 still check the result. Prefixes crossing a rewritten name
-span and remaining unrealizable body shapes are explained limitations.
+Each source root supplies its own indentation offset for its subtree. Removal
+is bounded by each block line's reader-owned layout: leading whitespace before
+the marker, or the continuation prefix returned by `doc::continuation_raw`.
+The next root chooses its own offset. The writer compares every placed block's
+raw content, children and order against its native input content slices with
+legal trace substitutions applied. The survivor body, prose and the fixed
+leftover payload are checked too, using the existing assembled-output parse;
+the allocated header's fields remain the independent model check's question.
+Only layout bytes are consumed, through the existing trace; P2/P3 still check
+the result. Prefixes crossing a rewritten name span and remaining unrealizable
+body placements are explained limitations.
 They explain the writer's limitation and a legal next step in the named file:
 align top-level blocks, move or remove the stray Org end-quote line, or rewrite
 the affected alias declaration as plain comma-separated names. They never ask
@@ -126,8 +132,9 @@ identity. It explains how to edit that title before retrying. The other named
 merge refusals remain header children, leftover references and survivor identity.
 Classification uses variants, never error-message text. These mappings add no
 file reads, parses, writes, locks or IPC calls. Normalizing an indented source
-adds one linear pass over its physical lines and trace placements; ordinary
-unindented sources need no such pass.
+uses the native coordinates from the header's existing outline read. Body
+acceptance costs O(input and output body bytes plus trace pieces), without an
+extra document parse or I/O, and holds at most one block's comparison text.
 The read-only rename-question command preserves the same typed refusals as
 the rename and file-merge commands. The window localizes a refused question
 before reaching any rename call. Preparation can save pending edits before a

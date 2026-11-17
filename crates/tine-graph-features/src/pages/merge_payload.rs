@@ -12,7 +12,7 @@ use tine_core::{
     text_trace::{Placement, Role, TextTrace, TraceError},
 };
 mod body;
-use body::same_shape;
+use body::Body;
 
 /// Provenance of each output block; a combined header can have two origins.
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -130,6 +130,7 @@ thread_local! {
     /// Drawer-ownership and delimiter comparisons, for the cost test.
     static DRAWER_STEPS: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
     static BODY_LINES: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
+    static BODY_BYTES: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
 }
 #[inline]
 fn drawer_step() {
@@ -166,7 +167,7 @@ fn members(line: &Line) -> bool {
 }
 struct Header {
     end: usize,
-    body_indent: usize,
+    body: Body,
     first_root: bool,
     properties: bool,
     prose: Option<Range<usize>>,
@@ -293,16 +294,7 @@ impl Header {
         }
         Self {
             end,
-            body_indent: if org {
-                0
-            } else {
-                blocks.first().map_or(0, |b| {
-                    text[b.0.start..b.1]
-                        .bytes()
-                        .take_while(|b| matches!(b, b' ' | b'\t'))
-                        .count()
-                })
-            },
+            body: Body::read(text, &blocks, end, org),
             first_root,
             properties: has_properties,
             prose,
@@ -640,27 +632,6 @@ pub fn propose<'f>(
     let mut unrealized = Vec::new();
     let mut rewritten = HashSet::new();
     let fmt = if org { Format::Org } else { Format::Md };
-    // A file's first native root may be indented while still reading as a
-    // root. At the join it would attach under the survivor's last block.
-    // Carry only those structural prefixes into the trace; P2/P3 still check
-    // that removing them preserves the source outline and ordinary save.
-    let mut source_prefixes = Vec::new();
-    if headers[1].body_indent > 0 {
-        let mut at = headers[1].end;
-        for line in tine_core::doc::physical_lines(&source_text[at..]) {
-            #[cfg(test)]
-            BODY_LINES.with(|count| count.set(count.get() + 1));
-            let prefix = line
-                .bytes()
-                .take(headers[1].body_indent)
-                .take_while(|b| matches!(b, b' ' | b'\t'))
-                .count();
-            if prefix > 0 {
-                source_prefixes.push(at..at + prefix);
-            }
-            at += line.len();
-        }
-    }
     for (file, text) in [target_text, source_text].into_iter().enumerate() {
         let mut input = || -> Result<(), RealizationError> {
             let mut proposal = refs::rename_proposal(text, org, links, queries, format)?;
@@ -687,7 +658,7 @@ pub fn propose<'f>(
                 .collect();
             if file == 1 {
                 let mut edit = 0;
-                for prefix in &source_prefixes {
+                for prefix in &headers[1].body.prefixes {
                     while edit < edits.len() && edits[edit].0.end <= prefix.start {
                         edit += 1;
                     }
@@ -709,9 +680,7 @@ pub fn propose<'f>(
             }
             let start = trace.pieces.len();
             let mut cuts = headers[file].cuts(text);
-            if file == 1 {
-                cuts.extend(source_prefixes.iter().flat_map(|r| [r.start, r.end]));
-            }
+            cuts.extend(headers[file].body.cuts());
             trace.add_input(text, &edits, &cuts)?;
             let wrappers: HashSet<_> = proposal
                 .trace
@@ -1015,7 +984,7 @@ pub fn propose<'f>(
         w.prose(1, prose.clone(), org)?;
     }
     let mut at = headers[1].end;
-    for prefix in &source_prefixes {
+    for prefix in &headers[1].body.prefixes {
         w.original(1, at..prefix.start)?;
         w.layout(1, prefix.clone())?;
         at = prefix.end;
@@ -1073,30 +1042,57 @@ pub fn propose<'f>(
     let source_start = target_roots + usize::from(leftover);
     let count = source_start + source_prose + source_body.len();
     if roots.len() != count {
-        let source_indented = headers[1].body_indent > 0;
+        let source_indented = !headers[1].body.prefixes.is_empty();
         return Err(if source_indented {
             RealizationError::IndentedBody.at(MergePart::Source)
         } else {
             RealizationError::BodyLaw.at(MergePart::Output)
         });
     }
-    let source_child_count = same_shape(
+    body::check_payloads(
+        &w,
+        0,
+        &headers[0],
+        (target_prose > 0).then(|| &roots[0]),
+        None,
+        org,
+    )?;
+    body::check_payloads(
+        &w,
+        1,
+        &headers[1],
+        (source_prose > 0).then(|| &roots[source_start]),
+        leftover.then(|| (leftover_lines.as_slice(), &roots[target_roots])),
+        org,
+    )?;
+    let source_child_count = headers[1].body.check(
+        &w,
+        1,
         source_header_children,
         if leftover {
             &roots[target_roots].children
         } else {
             &[]
         },
-    )
-    .ok_or_else(|| RealizationError::BodyLaw.at(MergePart::Source))?;
-    let target_body_count = same_shape(
+        usize::from(headers[1].first_root),
+        false,
+    )?;
+    let target_body_count = headers[0].body.check(
+        &w,
+        0,
         &target.blocks[usize::from(normalize_target)..],
         &roots[target_prose..target_roots],
-    )
-    .ok_or_else(|| RealizationError::BodyLaw.at(MergePart::Survivor))?
-        - skip;
-    let source_body_count = same_shape(source_body, &roots[source_start + source_prose..])
-        .ok_or_else(|| RealizationError::BodyLaw.at(MergePart::Source))?;
+        usize::from(normalize_target),
+        headers[0].first_root && !normalize_target,
+    )? - skip;
+    let source_body_count = headers[1].body.check(
+        &w,
+        1,
+        source_body,
+        &roots[source_start + source_prose..],
+        usize::from(headers[1].first_root) + source_child_count,
+        false,
+    )?;
     if org && leftover {
         // O6 refusal `leftoverReference` (model `leftoverUnkeepable`): the
         // references the leftover lines had, read where they came from (a

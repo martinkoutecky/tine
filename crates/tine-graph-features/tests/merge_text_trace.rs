@@ -3,6 +3,9 @@ use std::{fs, sync::Arc};
 use tine_graph_features::pages;
 use tine_store::Store;
 
+#[path = "cm_merge_body.rs"]
+mod body_redesign;
+
 #[test]
 fn round15k_first_spelling_and_native_drawer_remnants_survive_saves() {
     let _guard = crate::integration_lock();
@@ -1408,6 +1411,8 @@ fn indented_source_blocks_merge_at_their_original_outline_depths() {
             "  - title:: src\n    - child\n  - source\n",
             "    - source\n      - child\n    - sibling\n",
             "\t- source\n\t  - child\n\t- sibling\n",
+            "  - first\n- second\n    code\n",
+            "  - first\n- second\n  ```\n    code\n  ```\n",
         ] {
             valid_merge(
                 &source.replace('\n', eol),
