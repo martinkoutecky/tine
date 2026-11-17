@@ -142,42 +142,50 @@
   {
     "source": "- alias:: [label](../pages/A.md)\n    - child\n",
     "target": "- plain\n",
-    "refusal": "HeaderChildren"
+    "refusal": null,
+    "survivor": "- plain\n-\n  alias:: [label](../pages/A.md)\n    - child\n"
   },
   {
     "source": "- alias:: [label](../pages/A.md)\r\n    - child\r\n",
     "target": "- plain\r\n",
-    "refusal": "HeaderChildren"
+    "refusal": null,
+    "survivor": "- plain\r\n-\r\n  alias:: [label](../pages/A.md)\r\n    - child\r\n"
   },
   {
     "source": "- alias:: [label](../pages/A.md)\r    - child\r",
     "target": "- plain\r",
-    "refusal": "HeaderChildren"
+    "refusal": null,
+    "survivor": "- plain\r-\r  alias:: [label](../pages/A.md)\r    - child\r"
   },
   {
     "source": "- alias:: [label](../pages/A.md)\r\n    - child\r",
     "target": "- plain\r\n",
-    "refusal": "HeaderChildren"
+    "refusal": null,
+    "survivor": "- plain\r\n-\r\n  alias:: [label](../pages/A.md)\r\n    - child\r"
   },
   {
     "source": "- alias:: [label](../pages/A.md)\n    - child\n",
     "target": "- alias:: [label](../pages/A.md)\n    - child\n",
-    "refusal": "HeaderChildren"
+    "refusal": null,
+    "survivor": "- alias:: [label](../pages/A.md)\n    - child\n-\n  alias:: [label](../pages/A.md)\n    - child\n"
   },
   {
     "source": "- alias:: [label](../pages/A.md)\r\n    - child\r\n",
     "target": "- alias:: [label](../pages/A.md)\r\n    - child\r\n",
-    "refusal": "HeaderChildren"
+    "refusal": null,
+    "survivor": "- alias:: [label](../pages/A.md)\r\n    - child\r\n-\r\n  alias:: [label](../pages/A.md)\r\n    - child\r\n"
   },
   {
     "source": "- alias:: [label](../pages/A.md)\r    - child\r",
     "target": "- alias:: [label](../pages/A.md)\r    - child\r",
-    "refusal": "HeaderChildren"
+    "refusal": null,
+    "survivor": "- alias:: [label](../pages/A.md)\r    - child\r-\r  alias:: [label](../pages/A.md)\r    - child\r"
   },
   {
     "source": "- alias:: [label](../pages/A.md)\r\n    - child\r",
     "target": "- alias:: [label](../pages/A.md)\r\n    - child\r",
-    "refusal": "HeaderChildren"
+    "refusal": null,
+    "survivor": "- alias:: [label](../pages/A.md)\r\n    - child\r-\r\n  alias:: [label](../pages/A.md)\r\n    - child\r"
   },
   {
     "source": "alias:: [label](../pages/A.md)\nprose [[A]]\n- body\n",
@@ -362,42 +370,50 @@
   {
     "source": "- aliases:: [label](../pages/A.md)\n    - child\n",
     "target": "- plain\n",
-    "refusal": "HeaderChildren"
+    "refusal": null,
+    "survivor": "- plain\n-\n  aliases:: [label](../pages/A.md)\n    - child\n"
   },
   {
     "source": "- aliases:: [label](../pages/A.md)\r\n    - child\r\n",
     "target": "- plain\r\n",
-    "refusal": "HeaderChildren"
+    "refusal": null,
+    "survivor": "- plain\r\n-\r\n  aliases:: [label](../pages/A.md)\r\n    - child\r\n"
   },
   {
     "source": "- aliases:: [label](../pages/A.md)\r    - child\r",
     "target": "- plain\r",
-    "refusal": "HeaderChildren"
+    "refusal": null,
+    "survivor": "- plain\r-\r  aliases:: [label](../pages/A.md)\r    - child\r"
   },
   {
     "source": "- aliases:: [label](../pages/A.md)\r\n    - child\r",
     "target": "- plain\r\n",
-    "refusal": "HeaderChildren"
+    "refusal": null,
+    "survivor": "- plain\r\n-\r\n  aliases:: [label](../pages/A.md)\r\n    - child\r"
   },
   {
     "source": "- aliases:: [label](../pages/A.md)\n    - child\n",
     "target": "- aliases:: [label](../pages/A.md)\n    - child\n",
-    "refusal": "HeaderChildren"
+    "refusal": null,
+    "survivor": "- aliases:: [label](../pages/A.md)\n    - child\n-\n  aliases:: [label](../pages/A.md)\n    - child\n"
   },
   {
     "source": "- aliases:: [label](../pages/A.md)\r\n    - child\r\n",
     "target": "- aliases:: [label](../pages/A.md)\r\n    - child\r\n",
-    "refusal": "HeaderChildren"
+    "refusal": null,
+    "survivor": "- aliases:: [label](../pages/A.md)\r\n    - child\r\n-\r\n  aliases:: [label](../pages/A.md)\r\n    - child\r\n"
   },
   {
     "source": "- aliases:: [label](../pages/A.md)\r    - child\r",
     "target": "- aliases:: [label](../pages/A.md)\r    - child\r",
-    "refusal": "HeaderChildren"
+    "refusal": null,
+    "survivor": "- aliases:: [label](../pages/A.md)\r    - child\r-\r  aliases:: [label](../pages/A.md)\r    - child\r"
   },
   {
     "source": "- aliases:: [label](../pages/A.md)\r\n    - child\r",
     "target": "- aliases:: [label](../pages/A.md)\r\n    - child\r",
-    "refusal": "HeaderChildren"
+    "refusal": null,
+    "survivor": "- aliases:: [label](../pages/A.md)\r\n    - child\r-\r\n  aliases:: [label](../pages/A.md)\r\n    - child\r"
   },
   {
     "source": "aliases:: [label](../pages/A.md)\nprose [[A]]\n- body\n",

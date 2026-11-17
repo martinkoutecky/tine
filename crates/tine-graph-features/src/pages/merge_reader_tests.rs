@@ -1,6 +1,7 @@
 //! Byte/refusal compatibility of the reader-coordinate redesign.
-//! Fingerprints were captured from e70f1466d's exact writer, before redesign;
-//! each outcome includes all survivor bytes or the refusal kind and file.
+//! Fingerprints were captured from e70f1466d's exact writer, before redesign,
+//! and re-captured after the reader merge (3c1844a19) with its moved outcomes
+//! counted; each outcome includes all survivor bytes or the refusal kind and file.
 use super::*;
 use sha2::{Digest, Sha256};
 
@@ -11,7 +12,7 @@ fn reader_redesign_preserves_parent_bytes_and_refusal_provenance() {
         .unwrap()
         .0;
     let mut digest = Sha256::new();
-    let (mut proposals, mut refusals) = (0, 0);
+    let (mut proposals, mut refusals, mut link_text_kept) = (0, 0, 0);
     for org in [false, true] {
         let heads: &[&str] = if org {
             &[
@@ -100,6 +101,15 @@ fn reader_redesign_preserves_parent_bytes_and_refusal_provenance() {
                         org,
                         store.config().file_name_format,
                     );
+                    if let Err(RealizationFailure {
+                        part: MergePart::Source,
+                        reason: RealizationError::MissingNativeNameRange { declaration },
+                    }) = &result
+                    {
+                        if declaration == "alias:: [x](A.md), B" {
+                            link_text_kept += 1;
+                        }
+                    }
                     let outcome = match result {
                         Ok(p) => {
                             proposals += 1;
@@ -118,10 +128,17 @@ fn reader_redesign_preserves_parent_bytes_and_refusal_provenance() {
     }
     let hash = format!("{:x}", digest.finalize());
     eprintln!("parent compatibility: {proposals} proposals, {refusals} refusals; {hash}");
-    assert_eq!((proposals, refusals), (22404, 4496));
+    // The reader merge (Logseq's reading: a file link declares no alias
+    // member) moved exactly the 600 outcomes that combine a source
+    // `alias:: [x](A.md), B` (member `B` only) into a survivor declaring
+    // members (6 heads x 5 bodies x 5 source bodies x 4 endings). Dropping the
+    // non-member `[x](A.md)` would lose text (P4), so they refuse as
+    // `MissingNativeNameRange`; before, they were 600 of 22404 proposals.
+    assert_eq!(link_text_kept, 600);
+    assert_eq!((proposals, refusals), (22404 - 600, 4496 + 600));
     assert_eq!(
         hash,
-        "77d9b34b43b2e04e049f5b57524ad44708ae31204c52b17cf016f80921290d3d"
+        "56437893f92dedb2dbbc55c0cd7c5fc98fb63c4111c92d120621280fc55bbf5d"
     );
 }
 

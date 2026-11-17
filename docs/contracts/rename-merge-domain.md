@@ -46,9 +46,13 @@ The parser decides whether a quoted token is a member: `"literal"` in a mixed
 list can be a name, including its quotes. A wholly quoted value has no members.
 Alias allocation reads `reference_evidence::linkable_property_members`, the
 native-slot view of the index and observation's `linkable_property_references_in`.
-It uses the reader's decoded names, native name runs and complete member tokens,
-including file-link labels. A member without a contiguous native name run
-refuses as `MissingNativeNameRange` (`aliasSpelling` in the window). Duplicate
+It uses the reader's decoded names, native name runs and complete member tokens.
+A file, search or asset link in an alias value is no member (Logseq's reading),
+so `alias:: [x](A.md)` alone is a declaration without members, and in a
+combined declaration such a link is text that is neither a member nor alias
+syntax. A member without a contiguous native name run (an embed without
+brackets, `{{embed x}}`) refuses as `MissingNativeNameRange` (`aliasSpelling`
+in the window). Duplicate
 members' complete native tokens are consumed by their reader identity; only
 bytes between tokens are delimiter syntax.
 
@@ -197,7 +201,7 @@ uncontested source identities to one destination path.
 | Title identity (`Q-TITLE`) | The actual rebound native title names a different page from its namespace image, including a stationary namespace whose inner reference changes. References in titles alone do not refuse; case-only and unrelated-reference twins are covered. |
 | Legal encoding or partition | Required edits cannot be represented by the supported nonoverlapping native name spans and encodings, including an edit outside a title producer's kept tail. |
 | Whole-day header representation | Active day aliases span distinct native header blocks and cannot be retained by the single-header certificate. |
-| Missing native name range (`F-LINK`) | A required member lacks a contiguous parser-owned name run, such as a file-link label split by formatting, or a combined alias declaration holds text that is neither a member nor alias syntax. Escaped members with truthful native slots remain covered. |
+| Missing native name range (`F-LINK`) | A required member lacks a contiguous parser-owned name run, such as an embed without brackets (`{{embed x}}`), or a combined alias declaration holds text (such as a file link, `alias:: [x](A.md), B`) that is neither a member nor alias syntax. Escaped members with truthful native slots remain covered. |
 | Header/prose overlap (`HeaderProseOverlap`) | The input reader reports an opening property both as a header entry and inside prose. Preserving both would duplicate its native bytes. Remove blank lines before or between the opening property lines, save and retry. |
 | Fused line ending (`Q4`) | Assembly would form CRLF from unrelated original CR and LF coordinates, or an inserted half would borrow an original ending. Mixed endings alone do not refuse. |
 | Header children (`HeaderChildren`, model `headerChildren`) | Blocks hang under the source's header and the header leaves no leftover line to hold them: writing would lose their parent. |

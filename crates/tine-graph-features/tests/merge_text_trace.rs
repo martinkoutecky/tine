@@ -225,14 +225,58 @@ fn round15k_alias_first_owners_cannot_cross_fixed_target_frames() {
 #[test]
 fn round15k_missing_link_name_coordinates_refuse_unchanged() {
     let _guard = crate::integration_lock();
-    let reason = valid_merge(
-        "alias:: [**x**_y_](A.md)\n- source\n",
-        "- target\n",
-        false,
-        |_, _| {},
-    )
-    .unwrap_err();
-    assert!(reason.ends_with("F-LINK"), "{reason}");
+    // `{{embed x}}` declares the member `x`, but the reader gives an embed
+    // without brackets no native name run: no guessed coordinates are used.
+    for (source, target, org) in [
+        ("alias:: {{embed x}}\n- source\n", "- target\n", false),
+        ("- source\n", "alias:: {{embed x}}\n- target\n", false),
+        ("#+alias: {{embed x}}\n* source\n", "* target\n", true),
+        ("* source\n", "#+alias: {{embed x}}\n* target\n", true),
+    ] {
+        let reason = valid_merge(source, target, org, |_, _| {}).unwrap_err();
+        assert!(reason.ends_with("F-LINK"), "{reason}");
+    }
+}
+
+#[test]
+fn round15k_file_link_alias_lines_merge_as_header_text() {
+    let _guard = crate::integration_lock();
+    // A native file link declares no alias member (Logseq's reading), so the
+    // declaration is other header text: the survivor keeps its own, and the
+    // source's is a leftover line (O6). Nothing is lost or duplicated (P4).
+    for (source, target, org, survivor) in [
+        (
+            "alias:: [**x**_y_](A.md)\n- source\n",
+            "- target\n",
+            false,
+            "- target\n-\n  alias:: [**x**_y_](A.md)\n- source\n",
+        ),
+        (
+            "- source\n",
+            "alias:: [**x**_y_](A.md)\n- target\n",
+            false,
+            "alias:: [**x**_y_](A.md)\n- target\n- source\n",
+        ),
+        (
+            "alias:: [**x**_y_](A.md)\n- source\n",
+            "alias:: kept\n- target\n",
+            false,
+            "alias:: kept\n- target\n-\n  alias:: [**x**_y_](A.md)\n- source\n",
+        ),
+        (
+            "#+alias: [[file:A.org][*x* /y/]]\n* source\n",
+            "#+alias: kept\n* target\n",
+            true,
+            "#+alias: kept\n* target\n*\n#+BEGIN_QUOTE\n#+alias: [[file:A.org][*x* /y/]]\n#+END_QUOTE\n* source\n",
+        ),
+    ] {
+        valid_merge(source, target, org, |doc, proof| {
+            assert_eq!(proof.text, survivor);
+            let kept: &[&str] = if target.contains("kept") { &["kept"] } else { &[] };
+            assert_eq!(header_aliases(doc, org), kept);
+        })
+        .unwrap();
+    }
 }
 
 #[test]

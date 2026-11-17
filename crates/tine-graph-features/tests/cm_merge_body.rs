@@ -11,13 +11,18 @@ struct Case {
 }
 
 fn run(cases: Vec<Case>) {
+    run_pinned(cases, &|_| None);
+}
+
+/// As `run`, and a merged case with a pinned survivor must write exactly it.
+fn run_pinned(cases: Vec<Case>, survivor: &dyn Fn(&Case) -> Option<String>) {
     // Each transaction needs only its pair. Bound the fixture graph so the
     // matrix measures the writer rather than repeatedly indexing other cases.
-    let failures: usize = cases.chunks(64).map(run_batch).sum();
+    let failures: usize = cases.chunks(64).map(|c| run_batch(c, survivor)).sum();
     assert_eq!(failures, 0, "unexpected matrix outcomes");
 }
 
-fn run_batch(cases: &[Case]) -> usize {
+fn run_batch(cases: &[Case], survivor: &dyn Fn(&Case) -> Option<String>) -> usize {
     let _guard = crate::integration_lock();
     let root = tempfile::tempdir().unwrap();
     fs::create_dir(root.path().join("pages")).unwrap();
@@ -76,6 +81,9 @@ fn run_batch(cases: &[Case]) -> usize {
         merged += 1;
         assert!(!root.path().join(a).exists(), "{}", label());
         let after = fs::read_to_string(root.path().join(b)).unwrap();
+        if let Some(expected) = survivor(case).filter(|expected| *expected != after) {
+            failures.push(format!("{}: wrote {after:?}, pinned {expected:?}", label()));
+        }
         let fmt = if case.org { Format::Org } else { Format::Md };
         let names = store.config().file_name_format;
         let rename = cm_check::Rename::new(
@@ -170,7 +178,28 @@ fn reviewed_eighty_eight_alias_links_merge_through_both_entries() {
             })
         })
         .collect();
-    run(cases);
+    // A file link declares no alias member (Logseq's reading), so a first-bullet
+    // `alias:: [label](../pages/A.md)` is other header text: O6 makes it the
+    // leftover line, and the header's child hangs under that leftover block.
+    let pinned: std::collections::HashMap<_, _> = rows
+        .iter()
+        .filter_map(|row| {
+            let survivor = row.get("survivor")?.as_str()?;
+            Some((
+                (
+                    row["source"].as_str().unwrap(),
+                    row["target"].as_str().unwrap(),
+                ),
+                survivor.to_owned(),
+            ))
+        })
+        .collect();
+    assert_eq!(pinned.len(), 16);
+    run_pinned(cases, &|case| {
+        pinned
+            .get(&(case.source.as_str(), case.target.as_str()))
+            .cloned()
+    });
 }
 
 #[test]
@@ -191,6 +220,7 @@ fn native_alias_member_siblings_have_pinned_outcomes() {
                         "a\\[\\[b",
                         "a\\]\\]b",
                         "[**x**_y_](A.md)",
+                        "{{embed x}}",
                     ] {
                         let rich = if org {
                             format!("#+{key}: {value}\n")
@@ -203,8 +233,15 @@ fn native_alias_member_siblings_have_pinned_outcomes() {
                                 source: endings(if role == 1 { plain } else { &rich }, ending),
                                 target: endings(if role == 0 { plain } else { &rich }, ending),
                                 org, rename,
-                                refusal: if !org && value == "[**x**_y_](A.md)" {
-                                    Some((if key == "alias" { "MissingNativeNameRange { declaration: \"alias:: [**x**_y_](A.md)\" }" } else { "MissingNativeNameRange { declaration: \"aliases:: [**x**_y_](A.md)\" }" }, role == 0))
+                                // An embed without brackets is a member the
+                                // reader gives no native name run.
+                                refusal: if value == "{{embed x}}" {
+                                    Some((match (org, key) {
+                                        (false, "alias") => "MissingNativeNameRange { declaration: \"alias:: {{embed x}}\" }",
+                                        (false, _) => "MissingNativeNameRange { declaration: \"aliases:: {{embed x}}\" }",
+                                        (true, "alias") => "MissingNativeNameRange { declaration: \"#+alias: {{embed x}}\" }",
+                                        (true, _) => "MissingNativeNameRange { declaration: \"#+aliases: {{embed x}}\" }",
+                                    }, role == 0))
                                 } else if org && role == 2 && value == "[**x**_y_](A.md)" {
                                     Some((if key == "alias" { "MissingNativeNameRange { declaration: \"#+alias: [**x**_y_](A.md)\" }" } else { "MissingNativeNameRange { declaration: \"#+aliases: [**x**_y_](A.md)\" }" }, true))
                                 } else { None },
@@ -215,8 +252,29 @@ fn native_alias_member_siblings_have_pinned_outcomes() {
             }
         }
     }
-    assert_eq!(cases.len(), 960);
-    run(cases);
+    assert_eq!(cases.len(), 1056);
+    // A Markdown file link declares no alias member (Logseq's reading): the
+    // survivor keeps its own declaration as header text, and the source's is
+    // other header text, so O6 writes it as the leftover block's line.
+    run_pinned(cases, &|case| {
+        let value = "[**x**_y_](A.md)";
+        if case.org || !(case.source.contains(value) || case.target.contains(value)) {
+            return None;
+        }
+        let line = |text: &str| text.split(['\r', '\n']).next().unwrap().to_owned();
+        let e = ["\r\n", "\n", "\r"]
+            .into_iter()
+            .find(|e| case.source.ends_with(e))
+            .unwrap();
+        let leftover = |text: &str| format!("-{e}  {}{e}", line(text));
+        Some(if !case.target.contains(value) {
+            format!("- plain{e}{}", leftover(&case.source))
+        } else if !case.source.contains(value) {
+            format!("{}{e}- plain{e}", line(&case.target))
+        } else {
+            format!("{}{e}{}", line(&case.target), leftover(&case.source))
+        })
+    });
 }
 
 #[test]
