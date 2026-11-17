@@ -26,7 +26,7 @@ pub use signature::{BlockSignature, ReferenceFilter};
 pub(crate) use walk::project_into;
 #[cfg(test)]
 use walk::property_key_eligible;
-use walk::quoted_linkable_value;
+pub(crate) use walk::{header_alias_members, linkable_property_references_in};
 pub use walk::{
     project_with_config, reference_rule, ProjectedPageRef, ReferenceSourceProjection,
     RewriteTarget, SlottedPageRef,
@@ -181,55 +181,23 @@ pub fn linkable_property_references<'a>(
     projection: ReferenceSource<'a>,
     regions: &'a crate::block_regions::BlockRegions,
 ) -> impl Iterator<Item = &'a ProjectedPageRef> {
-    linkable_property_references_in(projection.explicit.iter(), regions, |r| r)
+    linkable_property_references_in(projection.explicit.iter(), regions, |r| r).map(|(_, r)| r)
 }
 
 /// Outermost linkable-property members with their native name slots and token
 /// ranges in `block.raw()`. Uses the same selection as the page index and the
-/// model observation, including file-link labels and wholly quoted values.
-/// A missing name run is explicit in `slot.run()`; callers must not search for
-/// decoded names in source text. O(block bytes), one header projection, no I/O.
+/// model observation and the page header's aliases ([`header_alias_members`]),
+/// and wholly quoted values. A missing name run is explicit in `slot.run()`;
+/// callers must not search for decoded names in source text. O(block bytes),
+/// one header projection, no I/O.
 pub fn linkable_property_members(block: &crate::doc::DocBlock) -> Vec<SlottedPageRef> {
     let source = block.read_for_rename();
     linkable_property_references_in(source.explicit.iter(), &block.projection().regions, |r| {
         &r.reference
     })
-    .filter(|r| !r.slot.encoding && !r.slot.nested)
-    .cloned()
+    .filter(|(_, r)| walk::outermost_member(r))
+    .map(|(_, r)| r.clone())
     .collect()
-}
-
-pub(crate) fn linkable_property_references_in<'a, R: 'a>(
-    references: impl Iterator<Item = &'a R>,
-    regions: &'a crate::block_regions::BlockRegions,
-    reference: impl Fn(&R) -> &ProjectedPageRef,
-) -> impl Iterator<Item = &'a R> {
-    let mut properties = regions
-        .properties
-        .iter()
-        .filter(|p| {
-            p.applicable
-                && (p.key.eq_ignore_ascii_case("tags")
-                    || p.key.eq_ignore_ascii_case("alias")
-                    || p.key.eq_ignore_ascii_case("aliases"))
-                && !quoted_linkable_value(&p.value)
-        })
-        .peekable();
-    references.filter_map(move |item| {
-        let reference = reference(item);
-        while properties
-            .peek()
-            .is_some_and(|p| p.value_range.1 <= reference.range.start)
-        {
-            properties.next();
-        }
-        properties
-            .peek()
-            .filter(|p| {
-                p.value_range.0 <= reference.range.start && reference.range.end <= p.value_range.1
-            })
-            .map(|_| item)
-    })
 }
 
 /// Project parser-claimed references and the remaining plain-search spans for

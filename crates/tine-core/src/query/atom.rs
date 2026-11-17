@@ -159,9 +159,9 @@ fn sep_by_comma(value: &str) -> Vec<&str> {
         .collect()
 }
 
-/// OG `get-ref-from-ast` (`text.cljs:100-119`) over one lsdoc inline node: a
-/// `Link` whose url is `Page_ref` or `Search`, a `Nested_link`, or a `Tag`.
-use tine_outline::property_refs::{plain_segments, ref_from_inline};
+/// OG `extract-refs-from-mldoc-ast` (`text.cljs:100-131`) over one lsdoc inline
+/// node, and the document-parse nodes OG's comma split reads.
+use tine_outline::property_refs::{comma_nodes, plain_segments, ref_from_inline};
 
 /// The ONE atomizer (SPEC §6.2), as Tine runs it. `key` is the raw source key;
 /// it is normalized with the existing [`property_key_norm`] before every rule
@@ -238,7 +238,10 @@ fn refs_and_segments(
     let mut segments: Vec<String> = Vec::new();
     if separated_by_commas(key_norm, config) {
         let mut plains: Vec<String> = Vec::new();
-        plain_segments(&nodes, &mut plains);
+        plain_segments(
+            &comma_nodes(trimmed, format == AtomFormat::Org),
+            &mut plains,
+        );
         for plain in &plains {
             for segment in sep_by_comma(plain) {
                 segments.push(segment.to_string());

@@ -1573,6 +1573,77 @@ fn page_aliases_resolve_and_collect_backlinks() {
     std::fs::remove_dir_all(&root).ok();
 }
 
+/// The index reads property members as OG does (og-0.10.9 `text.cljs`
+/// `parse-property-refs`): comma members come from the value's DOCUMENT parse,
+/// so the heading `# x` has none while escaped Plain names stay members, and a
+/// file, search, URL or asset link is no member (`mldoc.cljc` `ast-link?`).
+/// Aliases come from the same reader. OG's page-level scalar fallback
+/// (`extract.cljc` `extract-page-alias-and-tags`: a value with no members is
+/// one page alias/tag) is not Tine's: such a header declares nothing here.
+#[test]
+fn property_members_and_aliases_follow_ogs_value_grammar() {
+    use tine_core::model::PageKind;
+    let root = crate::test_support::fresh_dir("tine-property-members-");
+    std::fs::create_dir_all(root.join("pages")).unwrap();
+    let w = |name: &str, text: &str| std::fs::write(root.join("pages").join(name), text).unwrap();
+    w("D.md", "- body\n  tags:: # x\n");
+    w(
+        "E.md",
+        "- body\n  tags:: \\#x, a\\[b\n- b\n  tags:: [[a\n- c\n  tags:: a]] b\n",
+    );
+    w("H.md", "tags:: # y\n\n- body\n");
+    w("M1.md", "alias:: [x1](A.md)\n\n- body\n");
+    w("M2.md", "alias:: [x2](A.org)\n\n- body\n");
+    w("M3.md", "alias:: [[../assets/x3.png]]\n\n- body\n");
+    w("M4.md", "alias:: [[x4 [[y4]]]]\n\n- body\n");
+    w("M5.md", "alias:: {{embed [[x5]]}}\n\n- body\n");
+    w("M6.md", "alias:: # x6\n\n- body\n");
+    w("M7.md", "alias:: \\# x7, [[x8]]\n\n- body\n");
+    w("Org1.org", "#+alias: [[file:A.org][o1]]\n* body\n");
+    w("Org2.org", "#+alias: [[O2target][o2]]\n* body\n");
+    w("Org3.org", "#+alias: o3, [[o4]]\n* body\n");
+
+    let graph = store_at(&root).whole_graph_reconciled().unwrap();
+    let backlinks = |name: &str| graph.backlinks(name).unwrap().len();
+    assert_eq!(backlinks("# x"), 0);
+    for name in ["#x", "a[b", "[[a", "a]] b"] {
+        assert_eq!(backlinks(name), 1, "{name}");
+    }
+    assert_eq!(backlinks("# y"), 0);
+
+    let g = Graph::open(&root);
+    let owner = |alias: &str| {
+        g.load_named(alias, PageKind::Page)
+            .unwrap()
+            .map(|page| page.name)
+    };
+    for (alias, page) in [
+        ("x4 [[y4]]", "M4"),
+        ("x5", "M5"),
+        ("# x7", "M7"),
+        ("x8", "M7"),
+        ("o3", "Org3"),
+        ("o4", "Org3"),
+    ] {
+        assert_eq!(owner(alias).as_deref(), Some(page), "{alias}");
+    }
+    for alias in [
+        "x1",
+        "x2",
+        "A.org",
+        "../assets/x3.png",
+        "[[x4 [[y4]]]]",
+        "# x6",
+        "[x1](A.md)",
+        "o1",
+        "O2target",
+        "o2",
+    ] {
+        assert_eq!(owner(alias), None, "{alias}");
+    }
+    std::fs::remove_dir_all(&root).ok();
+}
+
 fn page_row_names(answer: tine_store::IrAnswer) -> Vec<String> {
     let tine_store::IrAnswer::Result(answer) = answer else {
         panic!("query result");

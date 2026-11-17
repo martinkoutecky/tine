@@ -153,6 +153,11 @@ use tine_outline::lsdoc_block_parse::parse_inline_bounded;
 #[path = "../../tine-core/src/reference_evidence/walk.rs"]
 mod walk;
 
+/// The name `page_header.rs` asks for the alias members, as in tine-core.
+mod reference_evidence {
+    pub(crate) use super::walk::header_alias_members;
+}
+
 /// Every page name one block's source references, in source order (may
 /// repeat): the reference evidence's own walk (`reference_evidence/walk.rs`)
 /// over the same block parse, under the default parse config. O(block bytes)

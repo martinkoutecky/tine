@@ -438,7 +438,7 @@ fn reference_sites(
         crate::reference_evidence::linkable_property_references_in(source.iter(), regions, |p| {
             &p.reference
         })
-        .map(std::ptr::from_ref)
+        .map(|(_, p)| std::ptr::from_ref(p))
         .collect();
     let mut sites: Vec<(Range<usize>, Site)> = Vec::new();
     for p in source {

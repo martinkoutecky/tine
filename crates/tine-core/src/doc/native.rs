@@ -210,6 +210,7 @@ impl NativeDocument {
                     &block.projection().regions,
                     |r| &r.reference,
                 )
+                .map(|(_, r)| r)
                 .filter(|r| !r.slot.encoding && !r.slot.nested)
                 .collect::<Vec<_>>()
             })

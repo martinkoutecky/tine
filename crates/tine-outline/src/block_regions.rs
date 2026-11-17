@@ -62,8 +62,7 @@ pub fn reference_target_name(
     legacy_file_names: bool,
 ) -> Option<String> {
     let path = value.strip_prefix("file:").unwrap_or(value);
-    let local_asset =
-        path.trim_start_matches(['.', '/']).starts_with("assets") || path.starts_with("draws");
+    let local_asset = local_asset_target(path);
     match kind {
         "page_ref" if !local_asset => Some(value.to_owned()),
         "search" if value.trim().starts_with("[[") && value.trim().ends_with("]]") => {
@@ -84,6 +83,13 @@ pub fn reference_target_name(
         "file" if !label.trim().is_empty() && label != value => Some(label.to_owned()),
         _ => None,
     }
+}
+
+/// A link target naming a local asset or a drawing, never a page: OG
+/// `config.cljs` `local-asset?` (`^[./]*assets`) and `draw?` (`draws` prefix),
+/// which `mldoc.cljc` `ast-link?` excludes. O(1).
+pub fn local_asset_target(path: &str) -> bool {
+    path.trim_start_matches(['.', '/']).starts_with("assets") || path.starts_with("draws")
 }
 
 pub fn unbracket(value: &str) -> &str {
