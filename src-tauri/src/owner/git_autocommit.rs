@@ -57,13 +57,8 @@ pub(crate) use cadence::IDLE;
 pub(crate) const DEFAULT_INTERVAL_MINUTES: u32 = 10;
 const MIN_INTERVAL_MINUTES: u32 = 1;
 const MAX_INTERVAL_MINUTES: u32 = 24 * 60;
-/// How often the worker looks at the graph's publication revision. The unit
-/// tests of this module wait whole ticks, so they run a short one; no test
-/// asserts the 15 s value, and the release build has only the 15 s line.
-#[cfg(not(test))]
+/// How often the worker looks at the graph's publication revision.
 const TICK: Duration = Duration::from_secs(15);
-#[cfg(test)]
-const TICK: Duration = Duration::from_millis(100);
 pub(crate) const INITIAL_MESSAGE: &str = "Tine: initial graph";
 /// Tine's commits between repacks (G9).
 const REPACK_COMMITS: u32 = 50;
