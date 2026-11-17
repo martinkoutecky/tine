@@ -12,6 +12,7 @@ import { windowsWebviewProfileSnapshot } from "./e2e-capabilities.mjs";
 import { privateSessionLaunch } from "./lib/e2e-session-bus.mjs";
 import { accountHomeFixture } from "./lib/e2e-account-home.mjs";
 import { defaultClassicEditorProfile } from "./lib/e2e-classic-profile.mjs";
+import { BY_NAME, selectScenarios } from "./lib/e2e-scenario-selection.mjs";
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const contractsPath = path.join(root, "tests/ui-regressions/e2e-contracts.json");
@@ -72,9 +73,8 @@ if (portableX11Deps) {
 }
 
 // A scenario marked BY_NAME (a fourth element) is left out of the suite's
-// workflow fan-out (`--fan-out`), so a workflow runs it only when dispatched by
-// its id. A local run of the whole suite still includes it.
-const BY_NAME = "by-name";
+// workflow fan-out (`--fan-out`) and CI whole-suite runs, so a workflow runs it
+// only when dispatched by its id. A local whole-suite run still includes it.
 
 // This table is the one owner of which scenarios exist and which of them a suite
 // fans out to. Workflows and tests ask it (`<suite> --fan-out`, `<suite> --scripts`)
@@ -258,7 +258,7 @@ const registryQuery = process.argv.find((arg) => arg === "--fan-out" || arg === 
 if (registryQuery) {
   const rows = suites[suiteName];
   const answer = registryQuery === "--fan-out"
-    ? rows.filter((row) => row[3] !== BY_NAME).map(([id]) => id)
+    ? selectScenarios(rows, undefined, true).map(([id]) => id)
     : [...new Set(rows.map(([, script]) => script))];
   if (!answer.length) {
     console.error(`suite ${suiteName} has nothing for ${registryQuery}`);
@@ -669,9 +669,12 @@ async function runScenario([id, script, extraEnv], contractEntry) {
   throw new Error(`unreachable scenario retry state for ${id}`);
 }
 
-let scenarios = suites[suiteName];
-if (only) scenarios = scenarios.filter(([id]) => id === only);
+const scenarios = selectScenarios(suites[suiteName], only, process.env.CI === "true");
 if (!scenarios.length) throw new Error(`no scenario named ${only} in ${suiteName}`);
+if (!only && process.env.CI === "true") {
+  const byName = suites[suiteName].filter((row) => row[3] === BY_NAME).map(([id]) => id);
+  if (byName.length) console.log(`By-name journeys excluded from workflow whole-suite execution; dispatch with --scenario=<id>: ${byName.join(", ")}`);
+}
 
 const receipt = resolveBuildProvenanceInputs();
 if (!fs.existsSync(app)) {

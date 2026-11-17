@@ -573,6 +573,10 @@ jobs:
           $exe = Get-ChildItem "$env:RUNNER_TEMP\tine-portable" -Filter '*.exe' | Select-Object -First 1
           if (-not $exe) { throw "portable Tine executable is missing" }
           "TINE_APP=$($exe.FullName)" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
+          # The staged ZIP is portable: it reads settings beside the executable,
+          # rather than the scratch APPDATA that individual journeys provide.
+          $appId = node --input-type=module -e 'import { APP_ID } from "./scripts/lib/app-identity.mjs"; console.log(APP_ID)'
+          "E2E_CLASSIC_SETTINGS_DIR=$($exe.DirectoryName)\tine-data\$appId\roaming" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
           "TINE_E2E_BUILD_RECEIPT=$env:RUNNER_TEMP\tine-receipt\tine.exe.build.json" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
       - name: Install Edge WebDriver matching the hosted browser
         shell: pwsh
