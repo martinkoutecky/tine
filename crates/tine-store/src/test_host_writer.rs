@@ -75,18 +75,19 @@ struct Running {
     _app_data: tempfile::TempDir,
 }
 
-/// This thread's `for_store` writer. Windows runs thread-local destructors
-/// under the loader lock, and dropping the last writer joins the page-host
-/// thread, whose own exit needs that lock: the test thread then never ends.
-/// The last writer is dropped on a fresh thread instead.
-struct Current(Option<HostWriter>);
+/// A thread-local slot that holds a test host. Windows runs thread-local
+/// destructors under the loader lock, and dropping a host joins its thread,
+/// whose own exit needs that lock: the test thread then never ends, and every
+/// other test stalls at its next thread start or exit. The slot drops what it
+/// holds on a fresh thread instead.
+pub(crate) struct ThreadSlot<T: Send + 'static>(pub(crate) Option<T>);
 
-impl Drop for Current {
+impl<T: Send + 'static> Drop for ThreadSlot<T> {
     fn drop(&mut self) {
-        if let Some(writer) = self.0.take() {
+        if let Some(held) = self.0.take() {
             let _ = std::thread::Builder::new()
                 .name("test-host-drop".into())
-                .spawn(move || drop(writer));
+                .spawn(move || drop(held));
         }
     }
 }
@@ -118,7 +119,7 @@ impl HostWriter {
     /// one host: a helper that has no writer to hand takes it from here.
     pub(crate) fn for_store(store: &Arc<Store>) -> Self {
         thread_local! {
-            static CURRENT: std::cell::RefCell<Current> = const { std::cell::RefCell::new(Current(None)) };
+            static CURRENT: std::cell::RefCell<ThreadSlot<HostWriter>> = const { std::cell::RefCell::new(ThreadSlot(None)) };
         }
         CURRENT.with(|current| {
             let current = &mut current.borrow_mut().0;

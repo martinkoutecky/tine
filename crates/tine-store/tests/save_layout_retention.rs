@@ -73,10 +73,10 @@ fn block(raw: &str) -> BlockDto {
 /// case saved reaches the next. Tests that need a fresh store use `Page::new`.
 fn saved(source: &str, kind: EditKind, edit: impl FnOnce(&mut PageDto)) -> String {
     thread_local! {
-        static SHARED: std::cell::RefCell<Option<Page>> = const { std::cell::RefCell::new(None) };
+        static SHARED: std::cell::RefCell<crate::test_host_writer::ThreadSlot<Page>> = const { std::cell::RefCell::new(crate::test_host_writer::ThreadSlot(None)) };
     }
     SHARED.with(|shared| {
-        let mut shared = shared.borrow_mut();
+        let shared = &mut shared.borrow_mut().0;
         match shared.as_ref() {
             Some(page) => page.reset(source),
             None => *shared = Some(Page::new(source)),
