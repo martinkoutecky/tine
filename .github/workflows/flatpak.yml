@@ -30,24 +30,7 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
-  viewer-ready:
-    runs-on: ubuntu-24.04  # Playwright has no chromium build for ubuntu-latest = 26.04 (11/17)
-    outputs:
-      quick_share_viewer_g1_ready: ${{ steps.viewer-ready.outputs.quick_share_viewer_g1_ready }}
-    steps:
-      - uses: actions/checkout@v5
-      - uses: actions/setup-node@v4
-        with:
-          node-version: 22
-      - run: npm ci
-      - run: npx playwright install --with-deps chromium
-      - name: Verify the deployed quick share viewer before enabling the writer
-        id: viewer-ready
-        continue-on-error: true
-        run: node scripts/check-release-readiness.mjs --quick-share-only
-
   flatpak-builder:
-    needs: viewer-ready
     name: build (${{ matrix.arch }})
     runs-on: ubuntu-latest
     container:
@@ -83,7 +66,6 @@ jobs:
         id: derive
         env:
           FLATPAK_IDENTITY: ${{ inputs.identity }}
-          TINE_QUICK_SHARE_VIEWER_G1_READY: ${{ needs.viewer-ready.outputs.quick_share_viewer_g1_ready }}
         run: node scripts/derive-flatpak-identity.mjs --identity "$FLATPAK_IDENTITY"
 
       - name: Build

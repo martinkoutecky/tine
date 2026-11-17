@@ -38,8 +38,10 @@ export function QuickShareExportActions(props: { hostBlockId: string; reshare: (
   // a forgotten key without needing a page reload.
   const [listing] = createResource(() => !settingsOpen() && gistId(), readListing);
   const listed = () => readOr(listing, QUICK_SHARE_OFF, "export share account") ?? QUICK_SHARE_OFF;
+  // The browser preview refuses the listing: no link actions there.
+  const offered = () => readOr(listing, undefined, "export share account") !== undefined;
   const row = () => listed().shares.find(share => share.gistId === gistId());
-  const canDelete = () => listed().enabled && !!listed().account && !listed().error && (!row() || row()!.accountMatches);
+  const canDelete = () => !!listed().account && !listed().error && (!row() || row()!.accountMatches);
   const remove = async () => {
     const gist = gistId();
     if (!gist || busy() || !canDelete()) return;
@@ -84,7 +86,7 @@ export function QuickShareExportActions(props: { hostBlockId: string; reshare: (
       onClick={event => { event.stopPropagation(); props.reexport?.(folder()); }}>{t("folder-export-update")}</button>
   }</Show><Show when={gistId()}>
     <span class="quick-share-export-controls" onClick={event => event.stopPropagation()} onMouseDown={event => event.stopPropagation()}>
-      <Show when={listed().enabled}>
+      <Show when={offered()}>
         <button type="button" class="export-btn-secondary quick-share-export-reshare" disabled={busy()}
           onClick={props.reshare}>{row() ? t("quick-share-reshare") : t("quick-share-reshare-new")}</button>
         <button type="button" class="export-btn-secondary quick-share-export-delete" disabled={busy() || !canDelete()}

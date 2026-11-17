@@ -42,7 +42,6 @@ jobs:
   preflight:
     runs-on: ubuntu-22.04
     outputs:
-      quick_share_viewer_g1_ready: ${{ steps.viewer-ready.outputs.quick_share_viewer_g1_ready }}
       windows_scenarios: ${{ steps.windows-scenarios.outputs.list }}
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
@@ -66,11 +65,9 @@ jobs:
           workspaces: ". -> target"
       - run: npm ci
       - run: npx playwright install --with-deps chromium
-      - name: Verify the deployed quick share viewer before enabling the writer
-        id: viewer-ready
-        # A missing or incompatible viewer leaves the writer disabled (the output
-        # stays empty); it never blocks an ordinary release.
-        continue-on-error: true
+      - name: Refuse the release unless tine.page reads this writer's links
+        # Every build offers quick share links (D-20261117-QSG); a release whose
+        # links the deployed viewer cannot render must not ship.
         run: node scripts/check-release-readiness.mjs --quick-share-only
       - name: Read the advisory Windows scenario list from the E2E registry
         id: windows-scenarios
@@ -104,8 +101,6 @@ jobs:
   # they upload immutable workflow artifacts for the assembler/publisher below.
   build:
     needs: preflight
-    env:
-      TINE_QUICK_SHARE_VIEWER_G1_READY: ${{ needs.preflight.outputs.quick_share_viewer_g1_ready }}
     strategy:
       fail-fast: false
       max-parallel: 6
@@ -660,8 +655,6 @@ jobs:
   #       ANDROID_KEY_PASSWORD       key password
   android:
     needs: preflight
-    env:
-      TINE_QUICK_SHARE_VIEWER_G1_READY: ${{ needs.preflight.outputs.quick_share_viewer_g1_ready }}
     runs-on: ubuntu-22.04
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0

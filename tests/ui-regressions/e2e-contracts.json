@@ -356,7 +356,7 @@
       "stability":"burn-in"
     },
     "scripts/e2e-quick-share-viewer.mjs": {
-      "setup": "Build the quick-share viewer and verify its compatibility with scripts/check-quick-share-readiness.mjs before building TINE_APP with TINE_QUICK_SHARE_VIEWER_G1_READY; QUICK_SHARE_VIEWER_DIR selects the matching built viewer.",
+      "setup": "Build the quick-share viewer (npm run build:quick-share-viewer); QUICK_SHARE_VIEWER_DIR selects the matching built viewer. Every build offers quick share links (D-20261117-QSG).",
       "contracts": [{"class":"stateful-ux","userOutcome":"A native share dialog uploads its reviewed pages to mocked GitHub, records the share without its key in the graph, and the built browser viewer renders the uploaded copy and follows a shared page link while preserving the secret prefix. After a page edit, Re-share from Exports previews membership, waits for confirmation, updates one gist and shows the edit at the same link without a duplicate definition. Delete changes nothing when declined and removes the gist and graph marker when confirmed.","blocking":true,"authority":"UI-QUICK-SHARE-VIEWER-G1; UI-QUICK-SHARE-EXPORT-ACTIONS; UI-QUICK-SHARE-RESHARE; generation 1 DESIGN sections 3.7, 3.8, 5 and 8"}],
       "acceptableVariations": ["Dialog layout, connection timing and rendered styling may vary."],
       "nonRequirements": ["No live GitHub writes, real Pages deployment, mobile device HTTPS, exact pixels or complete enumeration of envelope boundary cases."],
@@ -1375,7 +1375,7 @@
       "setup": "Build npx vite build --mode quick-share first, then generate artifacts/view-fold/static/folds.html with TINE_VIEW_FOLD_STATIC_DIR=$PWD/artifacts/view-fold/static cargo test -p tine-graph-features --lib static_child_folds_keep_authored_state_and_all_content.",
       "contracts": [{ "class": "stateful-ux", "userOutcome": "Readers expand and collapse authored folds in the built quick-share and published viewers, keep choices across page navigation, and restore original folds on reload without mutation requests. Static HTML opens and closes child folds with JavaScript disabled.", "blocking": false }],
       "acceptableVariations": ["Arrow styling, page layout and bundle filenames can change."],
-      "nonRequirements": ["Exact pixels, native desktop launch, or deployed G1 attestation."],
+      "nonRequirements": ["Exact pixels, native desktop launch, or the deployed generation-1 viewer."],
       "stability": "burn-in"
     },
     "scripts/e2e-outline-guide.mjs": {

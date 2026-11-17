@@ -8,6 +8,14 @@ The format follows [Keep a Changelog](https://keepachangelog.com/); versions use
 
 ## [Unreleased]
 
+### Fixed
+
+- Quick share links are offered in every build of Tine, including the Flatpak
+  and builds from source. They used to show "Coming soon" in any build made
+  outside Tine's release workflow. A release is now refused instead while
+  tine.page cannot open its links (reported by Dieterbe in discussion #968;
+  REG-QS-ATTEST-STORES-09).
+
 ## [0.10.0-beta.1] - 2026-11-16
 
 The first Tine 0.10 Beta, with every fix in stable 0.9.0. CodeMirror becomes the default editor; margin comments gain dated messages, folding and review; notes and the interface support right-to-left writing, with Persian available; and phones gain full-screen Settings and a toolbar you can customize. This release also improves page names, aliases, queries and renames, expands the command line, and reduces work and memory use on large graphs.
