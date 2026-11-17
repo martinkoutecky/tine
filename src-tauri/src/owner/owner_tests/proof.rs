@@ -518,9 +518,6 @@ fn shape(blocks: &[tine_core::model::BlockDto]) -> Value {
 fn generated(verb_name: &str) {
     let mut seed = 0x71ae_2026_u64;
     for org in [false, true] {
-        // One graph per format; each iteration rewrites the page file behind
-        // the store, so no iteration sees what another saved.
-        let (graph, slot, path) = fixture("", org);
         for iteration in 0..40 {
             seed = seed.wrapping_mul(6364136223846793005).wrapping_add(1);
             let n = 3 + (seed as usize % 7);
@@ -546,8 +543,7 @@ fn generated(verb_name: &str) {
                 chunks.push(chunk);
             }
             let input = chunks.concat();
-            std::fs::write(&path, &input).unwrap();
-            graph.store.refresh(tine_store::Depth::Bytes).unwrap();
+            let (graph, slot, path) = fixture(&input, org);
             let page = verb(&slot, "page.show", json!({"name": "proof"})).unwrap();
             let handle = format!("proof/{}", block_handle(&page, target));
             let mut expected = chunks.clone();
