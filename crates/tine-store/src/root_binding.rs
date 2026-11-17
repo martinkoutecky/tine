@@ -260,7 +260,11 @@ impl Identity {
 /// check is vanish-only, as on Android. A weaker check, never a false refusal.
 #[cfg(target_os = "windows")]
 #[derive(Debug, PartialEq, Eq)]
-enum Identity {
+struct Identity(IdentityKind);
+
+#[cfg(target_os = "windows")]
+#[derive(Debug, PartialEq, Eq)]
+enum IdentityKind {
     FileId { volume: u64, id: [u8; 16] },
     Volume(u32),
     Present,
@@ -308,10 +312,10 @@ fn identity(path: &Path) -> io::Result<Identity> {
             )
         } != 0;
     if ok {
-        return Ok(Identity::FileId {
+        return Ok(Identity(IdentityKind::FileId {
             volume: info.VolumeSerialNumber,
             id: info.FileId.Identifier,
-        });
+        }));
     }
     let error = if forced == 0 {
         io::Error::last_os_error()
@@ -327,7 +331,7 @@ fn identity(path: &Path) -> io::Result<Identity> {
     }
     let mut info = BY_HANDLE_FILE_INFORMATION::default();
     if forced < 2 && unsafe { GetFileInformationByHandle(file.as_raw_handle(), &mut info) } != 0 {
-        return Ok(Identity::Volume(info.dwVolumeSerialNumber));
+        return Ok(Identity(IdentityKind::Volume(info.dwVolumeSerialNumber)));
     }
     let error = if forced < 2 {
         io::Error::last_os_error()
@@ -335,7 +339,7 @@ fn identity(path: &Path) -> io::Result<Identity> {
         io::Error::from_raw_os_error(50)
     };
     if unsupported(&error) {
-        Ok(Identity::Present)
+        Ok(Identity(IdentityKind::Present))
     } else {
         Err(error)
     }
@@ -412,10 +416,10 @@ mod tests {
         let source = include_str!("root_binding.rs");
         let code = &source[..source.find("#[cfg(test)]\nmod tests").unwrap()];
         let windows = &code[code
-            .find("enum Identity {\n    FileId")
+            .find("enum IdentityKind {\n    FileId")
             .expect("Windows identity has a file-id-free mode")..];
         assert!(windows.contains("GetFileInformationByHandle(file.as_raw_handle()"));
-        assert!(windows.contains("Ok(Identity::Present)"));
+        assert!(windows.contains("Ok(Identity(IdentityKind::Present))"));
         assert!(windows.contains("Some(1 | 50 | 87)"));
     }
 
