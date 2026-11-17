@@ -49,18 +49,29 @@ jobs:
   flatpak-builder:
     needs: viewer-ready
     name: build (${{ matrix.arch }})
-    # ubuntu-latest, as at v0.9.0: on an ubuntu-24.04 host this container cannot update
-    # the GNOME SDK ("Invalid cross-device link", release run 44071269913).
     runs-on: ubuntu-latest
     container:
       image: ghcr.io/flathub-infra/flatpak-github-actions:gnome-49
       options: --privileged
+      # Updating a runtime that ships inside the image renames directories across
+      # overlayfs layers and fails with "Invalid cross-device link" (11/17, on both
+      # 24.04 and 26.04 hosts; flatpak/flatpak-github-actions#267). An anonymous
+      # volume is a plain directory that Docker fills from the image, so the
+      # update renames within one filesystem.
+      volumes:
+        - /var/lib/flatpak
     strategy:
       fail-fast: false
       matrix:
         arch: [x86_64]
     steps:
       - uses: actions/checkout@v5
+
+      - name: Show where the image's runtimes live
+        run: |
+          findmnt -T /var/lib/flatpak || true
+          flatpak --installations
+          flatpak list --runtime --columns=application,branch,installation
 
       # The container image carries python but no node; the derivation script is
       # node because it shares scripts/lib/app-identity.mjs with the release layout.
