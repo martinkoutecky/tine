@@ -8,6 +8,8 @@ The format follows [Keep a Changelog](https://keepachangelog.com/); versions use
 
 ## [Unreleased]
 
+- Rename and merge refusals now explain incompatible formats, conflict markers, stale selections and unreadable files in the interface's language. Failed merge writer checks name the file and ask for a bug report instead of displaying implementation errors such as `F-LINK`. (REG-CM-REFUSAL-RAW-ERRORS)
+
 - Merging into a page with a date title recognizes the survivor's day across date spellings. Both merge entry points refuse a source with unresolved conflict markers before changing either file (REG-CM-WITNESS-DATE-MERGE, REG-CM-WITNESS-CONFLICT-MERGE).
 - Renaming a page whose title sits in a first-bullet property header updates that title; merging it keeps its child blocks beneath the leftover title, instead of refusing (REG-CM-WITNESS-HEADER-TITLE).
 

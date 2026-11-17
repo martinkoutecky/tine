@@ -293,7 +293,19 @@ pub(super) fn rename_named_page(slot: &GraphSlot, args: &Value) -> Result<Value,
             // The planner's refusal, before any write (O4, O5): no dialog
             // here, so a held destination is refused, never merged.
             return rename_refused(blocked, page.as_ref());
-        } else if let Some(check) = tine_graph_features::pages::CheckRefused::of(&e) {
+        } else if let Some(blocked) = tine_graph_features::pages::RewriteBlocked::of(&e) {
+            return refused(
+                "rename-refused",
+                page.as_ref(),
+                format!("{blocked}; nothing changed"),
+            );
+        } else if let Some(check) = tine_graph_features::pages::CheckRefused::of(&e)
+            .cloned()
+            .or_else(|| {
+                tine_graph_features::pages::MergeRefused::of(&e)
+                    .and_then(|merge| merge.check_refused())
+            })
+        {
             // The model's check of a file the rename would write (P2, P3),
             // before any write: `rename-refused`, with its message.
             let mut body = refused(
@@ -304,6 +316,10 @@ pub(super) fn rename_named_page(slot: &GraphSlot, args: &Value) -> Result<Value,
             let detail = body.detail.as_mut().expect("refused carries detail");
             detail["guarantee"] = json!(check.guarantee);
             detail["file"] = json!(check.file);
+            return body;
+        } else if let Some(merge) = tine_graph_features::pages::MergeRefused::of(&e) {
+            let mut body = refused("rename-refused", page.as_ref(), merge.to_string());
+            body.detail.as_mut().expect("refused carries detail")["file"] = json!(merge.file);
             return body;
         } else {
             // Any I/O kind can also follow admission or incomplete rollback.
@@ -329,10 +345,7 @@ fn rename_refused(
 ) -> ErrorBody {
     use tine_graph_features::pages::RenameBlocked as B;
     let (reason, message) = match blocked {
-        B::Taken { .. } => (
-            "page-exists",
-            "a page or alias already owns the destination".to_owned(),
-        ),
+        B::Taken { .. } => ("page-exists", blocked.to_string()),
         B::FileTaken { .. } | B::AliasHeld { .. } | B::Capture { .. } | B::Contested { .. } => {
             ("page-exists", blocked.to_string())
         }

@@ -103,7 +103,7 @@ fn round15k_stationary_title_conflicts_refuse_before_writing() {
         for merge in [false, true] {
             for title in ["Elm/[[Old]]", "Old/[[Old]]", "Old/[[X]] [[Old]]"] {
                 let reason = rename_with_titled_child("New", title, org, merge).unwrap_err();
-                assert_eq!(reason, "Q-TITLE", "the command's exact wire reason");
+                assert_eq!(reason, "Q-TITLE", "the retained exact trace reason");
             }
         }
     }
@@ -347,8 +347,10 @@ fn valid_merge(
     if let Err(error) = pages::merge_pages(&store, &host, &source, &target) {
         assert_eq!(fs::read_to_string(dir.path().join(&source)).unwrap(), src);
         assert_eq!(fs::read_to_string(dir.path().join(&target)).unwrap(), dst);
+        let reason = pages::MergeRefused::of(&error)
+            .map_or_else(|| error.to_string(), |refusal| refusal.reason.to_string());
         return Err(format!(
-            "org={org}, source={src:?}, target={dst:?}: {error}"
+            "org={org}, source={src:?}, target={dst:?}: {reason}"
         ));
     }
     assert!(!dir.path().join(&source).exists());
@@ -1133,7 +1135,14 @@ fn survivor_first_root_headers_keep_native_save_closure() {
         let store = Arc::new(Store::open(dir.path(), Default::default()).unwrap().0);
         let host = crate::test_host(&store);
         let error = pages::merge_pages(&store, &host, "pages/src.md", "pages/dst.md").unwrap_err();
-        assert!(error.to_string().contains("SurvivorIdentity"), "{error}");
+        assert_eq!(
+            pages::MergeRefused::of(&error).map(|refusal| &refusal.reason),
+            Some(&pages::merge_payload::RealizationError::SurvivorIdentity)
+        );
+        assert_eq!(
+            pages::MergeRefused::of(&error).unwrap().file,
+            "pages/dst.md"
+        );
         assert_eq!(
             fs::read_to_string(dir.path().join("pages/src.md")).unwrap(),
             "- source\n"
@@ -1420,9 +1429,13 @@ fn unrealizable_body_or_escaping_org_directives_refuse_without_partial_writes() 
             error
                 .get_ref()
                 .unwrap()
-                .downcast_ref::<pages::merge_payload::RealizationError>(),
+                .downcast_ref::<pages::MergeRefused>()
+                .map(|refusal| &refusal.reason),
             Some(&reason)
         );
+        let refusal = pages::MergeRefused::of(&error).unwrap();
+        assert_eq!(refusal.file, b);
+        assert!(error.to_string().contains("bug in Tine"), "{error}");
         assert_eq!(fs::read_to_string(dir.path().join(a)).unwrap(), src);
         assert_eq!(fs::read_to_string(dir.path().join(b)).unwrap(), dst);
     }
@@ -1593,8 +1606,8 @@ fn invalid_merge_certificate_refuses_before_the_survivor_or_source_changes() {
         assert!(matches!(
             tx.plan(),
             Err(tine_store::Why::Refused(
-                tine_store::Refusal::TextRealization(_)
-            ))
+                tine_store::Refusal::FileTextRealization { ref file, .. }
+            )) if file.as_str() == dst.as_str()
         ));
         assert_eq!(
             fs::read_to_string(dir.path().join("pages/src.md")).unwrap(),
@@ -2200,7 +2213,14 @@ fn rename_with_titled_child(
     );
     if let Err(error) = result {
         assert_eq!(files(dir.path()), before, "a refused rename writes nothing");
-        return Err(error.to_string());
+        let reason = pages::MergeRefused::of(&error).map_or_else(
+            || error.to_string(),
+            |refusal| match &refusal.reason {
+                pages::merge_payload::RealizationError::Trace(reason) => reason.to_string(),
+                reason => reason.to_string(),
+            },
+        );
+        return Err(reason);
     }
     let after = files(dir.path());
     Ok((dir, after))

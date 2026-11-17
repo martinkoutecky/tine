@@ -38,8 +38,9 @@ stays, survivor's first. For example, Markdown `C\#` and `C#` produce one `C#`
 alias in the first spelling, and nothing else. A declaration without members
 is header text: the survivor's stays where it is, the source's is a leftover
 line. A combined declaration whose bytes outside its member tokens are not
-alias syntax (a key, separators, link and tag wrappers, spacing) refuses as
-`F-LINK`, since dropping them would lose text.
+alias syntax (a key, separators, link and tag wrappers, spacing) refuses,
+since dropping them would lose text. This is a writer failure to realize O6:
+the interface names the file and asks for a bug report, as for P2.
 
 The parser decides whether a quoted token is a member: `"literal"` in a mixed
 list can be a name, including its quotes. A wholly quoted value has no members.
@@ -97,6 +98,32 @@ file and asks the user to open it in the app, save once and repeat the rename.
 P2 asks for a report. Both keep `code: refused`, `detail.reason: rename-refused`
 and `detail.admitted: false`, and add `detail.guarantee` (`P2` or `P3`) and
 `detail.file` (the graph-relative on-disk path).
+
+`RewriteBlocked` carries the remaining pre-write context: the two files for
+incompatible formats, the file with conflict markers, the duplicate file in a
+self-merge, stale source or survivor selections, an unreadable file, an Org
+file that cannot be saved unchanged, or several files claiming the selected
+source page. The window uses the existing sticky toast and catalog
+boundary; CLI messages name the same files and legal next step. These are
+existing refusal conditions, not additional restrictions.
+
+`MergeRefused` retains the exact realization reason for diagnostics. Its
+`check_refused` classifies `BodyLaw`, `DirectiveEscape`, `FusedLineEnding`,
+`MissingNativeNameRange` and trace failures as failed internal checks, with
+the survivor file whose output could not be realized, and no retry action. A trace's `TitleIdentity` is O4's named
+title refusal instead: changing a title's references would change its page
+identity. It explains how to edit that title before retrying. The other named
+merge refusals remain header children, leftover references and survivor identity.
+Classification uses variants, never error-message text. These mappings add no
+file reads, parses, writes, locks or IPC calls.
+Transaction preflight attaches the original input file to a bare text-certificate
+failure before discarding its step index. The same typed realization boundary
+therefore covers non-merge rename failures, including a stationary title whose
+references would change its page identity. No file is guessed from the rename's
+source; a failing referrer's own path survives to both callers.
+The planner's duplicate-destination guard is also an internal check failure:
+O1's namespace substitution and the reversible filename codec cannot map two
+uncontested source identities to one destination path.
 
 | Reason | Refusal boundary |
 | --- | --- |

@@ -798,8 +798,10 @@ pub fn run(case: &Case) -> Run {
     if let Err(error) = pages::merge_pages(&store, &host, &source, &target) {
         let unchanged = fs::read_to_string(dir.path().join(&source)).ok() == Some(src)
             && fs::read_to_string(dir.path().join(&target)).ok() == Some(dst);
+        let reason = pages::MergeRefused::of(&error)
+            .map_or_else(|| error.to_string(), |refusal| refusal.reason.to_string());
         return Run::Refused(format!(
-            "{error}{}",
+            "{reason}{}",
             if unchanged { "" } else { " (FILES CHANGED)" }
         ));
     }

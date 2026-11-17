@@ -27,7 +27,8 @@ fn merged(src: &str, dst: &str, org: bool) -> Result<(String, PageDto), String> 
     if let Err(error) = pages::merge_pages(&store, &host, &source, &target) {
         assert_eq!(fs::read_to_string(dir.path().join(&source)).unwrap(), src);
         assert_eq!(fs::read_to_string(dir.path().join(&target)).unwrap(), dst);
-        return Err(error.to_string());
+        return Err(pages::MergeRefused::of(&error)
+            .map_or_else(|| error.to_string(), |refusal| refusal.reason.to_string()));
     }
     assert!(!dir.path().join(&source).exists());
     let bytes = fs::read_to_string(dir.path().join(&target)).unwrap();

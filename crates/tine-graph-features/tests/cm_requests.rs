@@ -5,6 +5,161 @@
 //! the user gets: the outcome, the refusal and its reason, the file bytes.
 use super::*;
 
+#[test]
+fn a_stationary_title_refusal_names_its_file_as_data() {
+    let _guard = crate::integration_lock();
+    let (root, store) = fixture(
+        "title-refusal-context",
+        &[
+            ("pages/Old.md", "- old\n"),
+            ("pages/child.md", "title:: Else/[[Old]]\n\n- child\n"),
+        ],
+    );
+    let before = snapshot(&root);
+    let error = rename(&store, "Old", "New", RenameChoice::Rename).unwrap_err();
+    let refusal =
+        tine_graph_features::pages::MergeRefused::of(&error).expect("typed title refusal");
+    assert_eq!(refusal.file, "pages/child.md");
+    assert_eq!(
+        refusal.reason,
+        tine_graph_features::pages::merge_payload::RealizationError::Trace(
+            tine_core::text_trace::TraceError::TitleIdentity
+        )
+    );
+    assert_eq!(snapshot(&root), before);
+}
+
+#[test]
+fn remaining_rewrite_refusals_keep_context_and_leave_files_unchanged() {
+    use tine_graph_features::pages::{merge_pages, RewriteBlocked as R};
+    let _guard = crate::integration_lock();
+    for eol in ["\n", "\r\n"] {
+        let duplicate = format!("title:: A{eol}{eol}- a{eol}");
+        let (root, store) = fixture(
+            "remaining-duplicate-refusal",
+            &[("pages/one.md", &duplicate), ("pages/two.md", &duplicate)],
+        );
+        let before = snapshot(&root);
+        let error = rename(&store, "A", "B", RenameChoice::Rename).unwrap_err();
+        assert_eq!(
+            R::of(&error),
+            Some(&R::DuplicateFiles {
+                files: vec!["pages/one.md".into(), "pages/two.md".into()]
+            })
+        );
+        assert_eq!(snapshot(&root), before);
+        for (source, target, into, expected) in [
+            (
+                "pages/A.md",
+                "pages/B.org",
+                "pages/B.org",
+                R::DifferentFormats {
+                    source: "pages/A.md".into(),
+                    target: "pages/B.org".into(),
+                },
+            ),
+            (
+                "pages/A.md",
+                "pages/B.md",
+                "pages/A.md",
+                R::SameFile {
+                    file: "pages/A.md".into(),
+                },
+            ),
+        ] {
+            let (root, store) = fixture(
+                "remaining-file-refusals",
+                &[(source, "- a\n"), (target, "* b\n")],
+            );
+            let before = snapshot(&root);
+            let host = crate::test_host(&store);
+            let error = merge_pages(&store, &host, source, into).unwrap_err();
+            assert_eq!(R::of(&error), Some(&expected), "{error}");
+            assert_eq!(snapshot(&root), before);
+        }
+        for marked_source in [false, true] {
+            let marked =
+                "- a\n<<<<<<< ours\n- x\n=======\n- y\n>>>>>>> theirs\n".replace('\n', eol);
+            let files = if marked_source {
+                [("pages/A.md", marked.as_str()), ("pages/B.md", "- b\n")]
+            } else {
+                [("pages/A.md", "- a\n"), ("pages/B.md", marked.as_str())]
+            };
+            let (root, store) = fixture("remaining-conflict-refusal", &files);
+            let before = snapshot(&root);
+            let host = crate::test_host(&store);
+            let error = merge_pages(&store, &host, "pages/A.md", "pages/B.md").unwrap_err();
+            assert_eq!(
+                R::of(&error),
+                Some(&R::MergeConflictMarkers {
+                    file: if marked_source {
+                        "pages/A.md"
+                    } else {
+                        "pages/B.md"
+                    }
+                    .into(),
+                })
+            );
+            assert_eq!(snapshot(&root), before);
+        }
+        let (root, store) = fixture(
+            "remaining-selection-refusals",
+            &[("pages/A.md", "- a\n"), ("pages/B.md", "- b\n")],
+        );
+        let before = snapshot(&root);
+        let host = crate::test_host(&store);
+        let error = rename_page_as(
+            &store,
+            &host,
+            "A",
+            "B",
+            None,
+            RenameChoice::MergeInto("pages/missing.md"),
+            &[],
+        )
+        .unwrap_err();
+        assert_eq!(
+            R::of(&error),
+            Some(&R::StaleMerge {
+                file: "pages/missing.md".into()
+            })
+        );
+        let error = rename_page_as(
+            &store,
+            &host,
+            "A",
+            "C",
+            Some("pages/missing.md"),
+            RenameChoice::Rename,
+            &[],
+        )
+        .unwrap_err();
+        assert_eq!(
+            R::of(&error),
+            Some(&R::StaleSource {
+                file: "pages/missing.md".into()
+            })
+        );
+        assert_eq!(snapshot(&root), before);
+
+        let org = "#+title: A\n* parent\n*** child\n".replace('\n', eol);
+        let (root, store) = fixture(
+            "remaining-org-refusal",
+            &[("pages/A.org", &org), ("pages/B.org", "* b\n")],
+        );
+        let before = snapshot(&root);
+        let host = crate::test_host(&store);
+        let error = merge_pages(&store, &host, "pages/A.org", "pages/B.org").unwrap_err();
+        assert_eq!(
+            R::of(&error),
+            Some(&R::ReadOnlyOrg {
+                file: "pages/A.org".into()
+            })
+        );
+        assert_eq!(snapshot(&root), before);
+    }
+}
+
 fn reason(store: &Store, old: &str, new: &str) -> serde_json::Value {
     let offer = serde_json::to_value(rename_offer(store, old, new, None).unwrap()).unwrap();
     assert_eq!(offer["kind"], "refused", "{old} → {new}: {offer}");

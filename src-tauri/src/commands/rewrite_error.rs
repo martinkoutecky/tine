@@ -37,11 +37,21 @@ impl RewriteError {
             )
         } else if let Some(blocked) = pages::RenameBlocked::of(&error) {
             Some(serde_json::json!(blocked))
+        } else if let Some(blocked) = pages::RewriteBlocked::of(&error) {
+            Some(serde_json::json!(blocked))
         } else if let Some(merge) = pages::MergeRefused::of(&error) {
+            if let Some(check) = merge.check_refused() {
+                return Self::Refused {
+                    refused: serde_json::json!({
+                        "kind":"checkRefused", "guarantee":check.guarantee, "file":check.file
+                    }),
+                };
+            }
             let kind = match merge.reason {
                 M::HeaderChildren => Some("headerChildren"),
                 M::HiddenOccurrence => Some("hiddenOccurrence"),
                 M::SurvivorIdentity => Some("survivorIdentity"),
+                M::Trace(tine_core::text_trace::TraceError::TitleIdentity) => Some("titleIdentity"),
                 _ => None,
             };
             kind.map(|kind| serde_json::json!({"kind":kind, "file":merge.file}))

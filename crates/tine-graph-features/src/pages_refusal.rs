@@ -2,8 +2,68 @@
 //! the interface's explicit save-then-rename helper (D-20261116-P3H).
 use super::*;
 
-/// The file whose merge representation was refused. The writer's reason is
-/// preserved as data, including reasons which still use backend wording.
+/// Pre-write refusals shared by name renames and physical file merges.
+/// The file context and legal next step survive both window and CLI boundaries;
+/// formatting costs O(message bytes) and performs no I/O.
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize)]
+#[serde(tag = "kind", rename_all = "camelCase")]
+pub enum RewriteBlocked {
+    /// O3: the confirmed survivor no longer owns the requested name.
+    StaleMerge { file: String },
+    /// Imported or synced content exceeds the reader's safe domain.
+    Unindexed { file: String },
+    /// O4: the Org save cannot preserve this file's content.
+    ReadOnlyOrg { file: String },
+    /// O4: a merge pair must use one format.
+    DifferentFormats { source: String, target: String },
+    /// O4: neither merge member may contain conflict markers.
+    MergeConflictMarkers { file: String },
+    /// File merge needs two different physical files.
+    SameFile { file: String },
+    /// External changes invalidated the source selection.
+    StaleSource { file: String },
+    /// O4: more than one physical file claims the selected source page.
+    DuplicateFiles { files: Vec<String> },
+}
+
+impl RewriteBlocked {
+    pub(super) fn error(self) -> io::Error {
+        let kind = match self {
+            Self::DuplicateFiles { .. } => io::ErrorKind::AlreadyExists,
+            Self::DifferentFormats { .. } | Self::SameFile { .. } => io::ErrorKind::InvalidInput,
+            Self::Unindexed { .. } | Self::MergeConflictMarkers { .. } => {
+                io::ErrorKind::InvalidData
+            }
+            Self::StaleMerge { .. } | Self::StaleSource { .. } => io::ErrorKind::NotFound,
+            Self::ReadOnlyOrg { .. } => io::ErrorKind::PermissionDenied,
+        };
+        io::Error::new(kind, self)
+    }
+
+    /// This boundary's refusal, if the operation stopped before writing.
+    pub fn of(error: &io::Error) -> Option<&Self> {
+        error.get_ref().and_then(|cause| cause.downcast_ref())
+    }
+}
+
+impl std::fmt::Display for RewriteBlocked {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::StaleMerge { file } => write!(f, "cannot merge: {file} no longer holds the name you chose; start the rename again to choose the remaining page"),
+            Self::Unindexed { file } => write!(f, "cannot rename or merge: Tine cannot read {file} safely; repair its encoding or simplify the file in another editor, then try again"),
+            Self::ReadOnlyOrg { file } => write!(f, "cannot rename or merge: Tine cannot save {file} without changing its content; edit it in another Org editor or move the notes into a new page, then try again"),
+            Self::DifferentFormats { source, target } => write!(f, "cannot merge: {source} and {target} use different formats; move the notes into pages with the same format, then try again"),
+            Self::MergeConflictMarkers { file } => write!(f, "cannot merge: resolve the conflict markers in {file}, then try again; nothing was merged"),
+            Self::SameFile { file } => write!(f, "cannot merge: {file} is both the source and the remaining file; choose two different files"),
+            Self::StaleSource { file } => write!(f, "cannot rename: {file} no longer identifies the page you chose; reopen the page and start the rename again"),
+            Self::DuplicateFiles { files } => write!(f, "cannot rename: these files claim the same page: {}; merge one file into the other or remove one, then try again", files.join(", ")),
+        }
+    }
+}
+impl std::error::Error for RewriteBlocked {}
+
+/// The file whose rename or merge was refused, retaining the writer's
+/// reason for diagnostics. User-facing writer faults use the P2 explanation.
 #[derive(Debug)]
 pub struct MergeRefused {
     pub file: String,
@@ -11,23 +71,27 @@ pub struct MergeRefused {
 }
 
 impl MergeRefused {
+    pub(crate) fn trace(reason: tine_core::text_trace::TraceError, file: &str) -> io::Error {
+        io::Error::new(
+            io::ErrorKind::InvalidData,
+            Self {
+                file: file.into(),
+                reason: merge_payload::RealizationError::Trace(reason),
+            },
+        )
+    }
+
     pub(super) fn error(
         reason: merge_payload::RealizationError,
         src: &PageId,
         dst: &PageId,
     ) -> io::Error {
-        if !matches!(
-            reason,
-            merge_payload::RealizationError::HeaderChildren
-                | merge_payload::RealizationError::HiddenOccurrence
-                | merge_payload::RealizationError::SurvivorIdentity
-        ) {
-            return io::Error::new(io::ErrorKind::InvalidData, reason);
-        }
-        let file = if reason == merge_payload::RealizationError::SurvivorIdentity {
-            dst
-        } else {
-            src
+        use merge_payload::RealizationError as M;
+        let file = match reason {
+            M::HeaderChildren
+            | M::HiddenOccurrence
+            | M::Trace(tine_core::text_trace::TraceError::TitleIdentity) => src,
+            _ => dst,
         };
         io::Error::new(
             io::ErrorKind::InvalidData,
@@ -42,14 +106,62 @@ impl MergeRefused {
     pub fn of(error: &io::Error) -> Option<&Self> {
         error.get_ref().and_then(|cause| cause.downcast_ref())
     }
+
+    /// The writer failed to realize O6, rather than a named model refusal.
+    /// O(file path bytes), no I/O; names the input the user can inspect.
+    pub fn check_refused(&self) -> Option<CheckRefused> {
+        use merge_payload::RealizationError as M;
+        match self.reason {
+            M::HeaderChildren
+            | M::HiddenOccurrence
+            | M::SurvivorIdentity
+            | M::Trace(tine_core::text_trace::TraceError::TitleIdentity) => None,
+            M::Trace(_)
+            | M::BodyLaw
+            | M::DirectiveEscape
+            | M::FusedLineEnding
+            | M::MissingNativeNameRange => Some(CheckRefused {
+                guarantee: tine_store::Guarantee::P2,
+                file: self.file.clone(),
+            }),
+        }
+    }
 }
 
 impl std::fmt::Display for MergeRefused {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(f, "{}: {}", self.file, self.reason)
+        if let Some(check) = self.check_refused() {
+            return check.fmt(f);
+        }
+        use merge_payload::RealizationError as M;
+        let file = &self.file;
+        match self.reason {
+            M::HeaderChildren => write!(f, "cannot merge: blocks under the header in {file} would lose their parent; move them out from under the header and try again; nothing was merged"),
+            M::HiddenOccurrence => write!(f, "cannot merge: references in the page properties of {file} would stop working in the merged page; move those references into ordinary blocks and try again; nothing was merged"),
+            M::SurvivorIdentity => write!(f, "cannot merge: the title in the first block of {file} would give the remaining page a different name; save that file once with its intended page title and try again; nothing was merged"),
+            M::Trace(tine_core::text_trace::TraceError::TitleIdentity) => write!(f, "cannot rename or merge: changing the references inside the title of {file} would give the page a different name; edit that title so its references do not name the page being renamed, then try again; nothing was changed"),
+            _ => unreachable!("writer faults use the check explanation"),
+        }
     }
 }
 impl std::error::Error for MergeRefused {}
+
+/// Refuse unsaved input only on pages the rename would rewrite.
+pub(super) fn unsaved_error(graph: &tine_store::WholeGraph, path: &str) -> io::Error {
+    let inventory = graph.inventory(tine_store::InventoryScope::All);
+    let name = inventory
+        .0
+        .iter()
+        .find(|entry| physical(&entry.target).iter().any(|id| id.as_str() == path))
+        .map_or(path, |entry| entry.name.as_str());
+    error(
+        io::ErrorKind::WouldBlock,
+        &format!(
+            "“{name}” has changes Tine could not save, and this rename would rewrite it. \
+             Save or discard those changes, then rename again."
+        ),
+    )
+}
 
 /// Save exactly `path` without an edit, using the normal save preparation and
 /// the page host's guarded publication. Pending input is flushed first; the

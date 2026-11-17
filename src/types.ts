@@ -252,7 +252,7 @@ export interface AliasGroup {
 export type RenameRefusal =
   | { kind: "taken"; into: string }
   | { kind: "checkRefused"; guarantee: "P2" | "P3"; file: string }
-  | { kind: "headerChildren" | "hiddenOccurrence" | "survivorIdentity"; file: string }
+  | { kind: "headerChildren" | "hiddenOccurrence" | "survivorIdentity" | "titleIdentity"; file: string }
   | { kind: "ownChild"; old: string; new: string }
   | { kind: "fileTaken"; file: string; page: string }
   | { kind: "notAPage"; name: string }
@@ -260,7 +260,10 @@ export type RenameRefusal =
   | { kind: "aliasHeld"; alias: string; page: string; path: string }
   | { kind: "conflictMarkers"; file: string }
   | { kind: "capture"; name: string; image: string; page: string }
-  | { kind: "contested"; name: string; files: string[] };
+  | { kind: "contested"; name: string; files: string[] }
+  | { kind: "staleMerge" | "unindexed" | "readOnlyOrg" | "mergeConflictMarkers" | "sameFile" | "staleSource"; file: string }
+  | { kind: "duplicateFiles"; files: string[] }
+  | { kind: "differentFormats"; source: string; target: string };
 
 /** What renaming a page asks of the user, answered by the rename's own planner
  *  (`pages::rename_offer`; the window never re-derives it). `merge`: the new

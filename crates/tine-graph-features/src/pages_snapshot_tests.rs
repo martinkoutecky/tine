@@ -204,10 +204,13 @@ fn single_rename_refuses_unwritable_and_unsaved_referrers_untouched() {
         assert_eq!(error.kind(), io::ErrorKind::PermissionDenied);
         assert_eq!(
             error.to_string(),
-            format!(
-                "cannot rename: {} is a read-only .org file (does not round-trip)",
-                shown_path(&root.join("pages/o.org"))
-            )
+            "cannot rename or merge: Tine cannot save pages/o.org without changing its content; edit it in another Org editor or move the notes into a new page, then try again"
+        );
+        assert_eq!(
+            RewriteBlocked::of(&error),
+            Some(&RewriteBlocked::ReadOnlyOrg {
+                file: "pages/o.org".into()
+            })
         );
         assert!(!error.to_string().contains(r"\\?\"), "{error}");
         assert_eq!(text_at(&root, "pages/o.org"), org);
@@ -359,10 +362,13 @@ fn a_single_org_title_rebind_keeps_its_unwritable_refusal() {
     assert_eq!(error.kind(), io::ErrorKind::PermissionDenied);
     assert_eq!(
         error.to_string(),
-        format!(
-            "cannot rename: {} is a read-only .org file (does not round-trip)",
-            shown_path(&root.join("pages/Old.org"))
-        )
+        "cannot rename or merge: Tine cannot save pages/Old.org without changing its content; edit it in another Org editor or move the notes into a new page, then try again"
+    );
+    assert_eq!(
+        RewriteBlocked::of(&error),
+        Some(&RewriteBlocked::ReadOnlyOrg {
+            file: "pages/Old.org".into()
+        })
     );
     assert!(!error.to_string().contains(r"\\?\"), "{error}");
     assert_eq!(text_at(&root, "pages/Old.org"), content);
@@ -916,14 +922,6 @@ fn a_hosted_rename_routes_by_the_plan_shape() {
     let _ = disk::remove_dir_all(root);
 }
 
-/// A graph under a temp dir: `files` relative to the graph root.
-/// A file as a refusal names it: where it really is (the temp dir may be an
-/// 8.3 or symlinked spelling), without Windows' verbatim `\\?\` prefix.
-fn shown_path(path: &std::path::Path) -> String {
-    let real = disk::canonicalize(path).unwrap();
-    tine_core::graph_paths::normalize_graph_path(&real.display().to_string())
-}
-
 /// A Windows user reads the refusal: the verbatim prefix of a canonical path
 /// never reaches the message, on any platform the path string arrives from.
 #[test]
@@ -942,11 +940,15 @@ fn a_read_only_org_refusal_names_the_file_without_the_verbatim_prefix() {
             "/home/me/graph/pages/Old.org",
         ),
     ] {
-        let error = read_only_org(std::path::Path::new(path));
+        let error = read_only_org(path);
         assert_eq!(error.kind(), io::ErrorKind::PermissionDenied);
         assert_eq!(
             error.to_string(),
-            format!("cannot rename: {shown} is a read-only .org file (does not round-trip)")
+            format!("cannot rename or merge: Tine cannot save {shown} without changing its content; edit it in another Org editor or move the notes into a new page, then try again")
+        );
+        assert_eq!(
+            RewriteBlocked::of(&error),
+            Some(&RewriteBlocked::ReadOnlyOrg { file: shown.into() })
         );
     }
 }

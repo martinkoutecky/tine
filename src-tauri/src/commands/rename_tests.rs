@@ -196,6 +196,10 @@ fn rewrite_boundary_preserves_both_check_failures_and_all_named_merge_refusals()
         (M::HeaderChildren, "headerChildren"),
         (M::HiddenOccurrence, "hiddenOccurrence"),
         (M::SurvivorIdentity, "survivorIdentity"),
+        (
+            M::Trace(tine_core::text_trace::TraceError::TitleIdentity),
+            "titleIdentity",
+        ),
     ] {
         let error = std::io::Error::new(
             std::io::ErrorKind::InvalidData,
@@ -208,6 +212,33 @@ fn rewrite_boundary_preserves_both_check_failures_and_all_named_merge_refusals()
         assert_eq!(
             wire,
             serde_json::json!({"refused":{"kind":kind,"file":"pages/Old.md"}})
+        );
+    }
+}
+
+#[test]
+fn rewrite_boundary_reports_every_merge_writer_fault_as_tines_failed_check() {
+    use tine_graph_features::pages::{merge_payload::RealizationError as M, MergeRefused};
+    for reason in [
+        M::Trace(tine_core::text_trace::TraceError::Partition),
+        M::BodyLaw,
+        M::DirectiveEscape,
+        M::FusedLineEnding,
+        M::MissingNativeNameRange,
+    ] {
+        let error = std::io::Error::new(
+            std::io::ErrorKind::InvalidData,
+            MergeRefused {
+                reason,
+                file: "pages/source.md".into(),
+            },
+        );
+        let wire = serde_json::to_value(window_answer(Err(error)).unwrap_err()).unwrap();
+        assert_eq!(
+            wire,
+            serde_json::json!({"refused": {
+                "kind":"checkRefused", "guarantee":"P2", "file":"pages/source.md"
+            }})
         );
     }
 }

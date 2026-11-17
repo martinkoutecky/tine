@@ -145,6 +145,7 @@ fn cli_planner_refusals_are_refused_before_any_write() {
         &[
             ("pages/owner.md", "alias:: Destination\n\n- owner\n"),
             ("journals/2026_11_02.md", "- day\n"),
+            ("pages/titled.md", "title:: Else/[[a]]\n\n- child\n"),
         ],
     );
     let slot = graph.slot();
@@ -156,7 +157,12 @@ fn cli_planner_refusals_are_refused_before_any_write() {
             "page-exists",
             "alias of the page “owner”",
         ),
-        ("a", "b", "page-exists", "already owns the destination"),
+        (
+            "a",
+            "b",
+            "page-exists",
+            "pages/b.md now owns that name; start the rename again to review the merge choice",
+        ),
         (
             "Ghost",
             "New",
@@ -165,6 +171,12 @@ fn cli_planner_refusals_are_refused_before_any_write() {
         ),
         ("Nov 2nd, 2026", "New", "rename-refused", "journal day"),
         ("ns", "ns/child", "rename-refused", "inside “ns”"),
+        (
+            "a",
+            "Fresh",
+            "rename-refused",
+            "references inside the title of pages/titled.md",
+        ),
     ] {
         let result = verb(&slot, "page.rename", json!({"old":old,"new":new}));
         let body = result.expect_err("refused");
@@ -181,6 +193,10 @@ fn cli_planner_refusals_are_refused_before_any_write() {
             body.message
         );
         assert_eq!(files(&graph.root), before, "{old} → {new}: nothing written");
+        if new == "Fresh" {
+            assert_eq!(detail["file"], "pages/titled.md");
+            assert!(body.message.contains("edit that title"), "{}", body.message);
+        }
     }
 }
 

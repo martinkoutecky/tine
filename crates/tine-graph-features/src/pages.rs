@@ -20,7 +20,8 @@ pub use rename_offer::{rename_offer, rename_page_as, RenameOffer};
 mod refusal;
 #[path = "pages_rename_report.rs"]
 mod rename_report;
-pub use refusal::{save_page_unchanged, MergeRefused};
+use refusal::unsaved_error;
+pub use refusal::{save_page_unchanged, MergeRefused, RewriteBlocked};
 use rename_plan::{plan_rename, RenamePlan};
 use rename_report::{site_exceptions, survivor_check, IncompleteRename, StepChecks};
 pub use rename_report::{
@@ -329,21 +330,16 @@ fn physical(target: &Resolved) -> Vec<PageId> {
 
 fn validate_target(ids: &[PageId], expected_path: Option<&str>) -> io::Result<()> {
     if ids.len() > 1 {
-        let mut paths: Vec<_> = ids.iter().map(|id| id.as_str()).collect();
+        let mut paths: Vec<_> = ids.iter().map(|id| id.as_str().to_owned()).collect();
         paths.sort_unstable();
-        let paths = paths
-            .iter()
-            .map(|path| format!("“{path}”"))
-            .collect::<Vec<_>>()
-            .join("\n");
-        return Err(error(
-            io::ErrorKind::AlreadyExists,
-            &format!("Multiple files share this page identity:\n\n{paths}\n\nTo resolve this, merge one file into the other or remove one, then try again."),
-        ));
+        return Err(RewriteBlocked::DuplicateFiles { files: paths }.error());
     }
     if let Some(expected) = expected_path.filter(|path| !path.trim().is_empty()) {
         if ids.first().is_none_or(|id| id.as_str() != expected) {
-            return Err(error(io::ErrorKind::NotFound, "stale page target"));
+            return Err(RewriteBlocked::StaleSource {
+                file: expected.into(),
+            }
+            .error());
         }
     }
     Ok(())
@@ -952,7 +948,7 @@ fn rename_transaction<'s>(
                 Some(p) => Some(p),
                 None if !planned => Some(
                     refs::rename_proposal(&content, org, &lookup, &query_lookup, spelling)
-                        .map_err(|e| io::Error::new(io::ErrorKind::InvalidData, e))?,
+                        .map_err(|e| MergeRefused::trace(e, id.as_str()))?,
                 ),
                 None => None,
             };
@@ -983,10 +979,7 @@ fn rename_transaction<'s>(
             continue;
         }
         if org_refuses {
-            let path = store
-                .path_for_os_handoff(&file, false)
-                .map_err(store_error)?;
-            return Err(read_only_org(&path));
+            return Err(read_only_org(id.as_str()));
         }
         if changed && marked {
             return Err(RenameBlocked::ConflictMarkers {
@@ -1174,48 +1167,24 @@ pub(crate) fn rename_operation_error(err: io::Error) -> io::Error {
     }
 }
 
-/// The refusal of a rename that would rewrite a page with unsaved input,
-/// naming the page by its title.
-fn unsaved_error(graph: &tine_store::WholeGraph, path: &str) -> io::Error {
-    let inventory = graph.inventory(tine_store::InventoryScope::All);
-    let name = inventory
-        .0
-        .iter()
-        .find(|entry| physical(&entry.target).iter().any(|id| id.as_str() == path))
-        .map_or(path, |entry| entry.name.as_str());
-    error(
-        io::ErrorKind::WouldBlock,
-        &format!(
-            "“{name}” has changes Tine could not save, and this rename would rewrite it. \
-             Save or discard those changes, then rename again."
-        ),
-    )
-}
-
-/// The refusal of a rename that would rewrite a read-only Org file. It names
-/// the file as the user knows it: the canonical OS path is `\\?\C:\...` on
-/// Windows, so it goes through the shared display boundary first.
-fn read_only_org(path: &std::path::Path) -> io::Error {
-    let shown = tine_core::graph_paths::normalize_graph_path(&path.display().to_string());
-    error(
-        io::ErrorKind::PermissionDenied,
-        &format!("cannot rename: {shown} is a read-only .org file (does not round-trip)"),
-    )
+/// O4's unchanged-save restriction, naming the input file.
+fn read_only_org(file: &str) -> io::Error {
+    RewriteBlocked::ReadOnlyOrg {
+        file: tine_core::graph_paths::normalize_graph_path(file),
+    }
+    .error()
 }
 
 /// The refusal of a rename that would change a page it cannot rewrite: a
 /// read-only Org file, or one that is not UTF-8.
-fn unwritable(store: &Store, page: &PageId) -> io::Error {
-    let file = page.file();
+fn unwritable(_store: &Store, page: &PageId) -> io::Error {
     if Format::from_path(page.as_str().as_ref()) == Format::Org {
-        if let Ok(path) = store.path_for_os_handoff(&file, false) {
-            return read_only_org(&path);
-        }
+        return read_only_org(page.as_str());
     }
-    error(
-        io::ErrorKind::InvalidData,
-        &format!("{}: {}", file.as_str(), tine_store::not_utf8()),
-    )
+    RewriteBlocked::Unindexed {
+        file: page.as_str().into(),
+    }
+    .error()
 }
 
 /// The namespace tail of descendant `name` below the parent whose page key is
@@ -1332,10 +1301,10 @@ pub fn merge_pages(store: &Store, host: &PageHost, src_rel: &str, dst_rel: &str)
     let src = text_file(store, src_rel)?;
     let dst = text_file(store, dst_rel)?;
     if src == dst {
-        return Err(error(
-            io::ErrorKind::InvalidInput,
-            "cannot merge a file into itself",
-        ));
+        return Err(RewriteBlocked::SameFile {
+            file: src_rel.into(),
+        }
+        .error());
     }
     let src_id = store
         .as_page(&src)
@@ -1414,29 +1383,31 @@ fn merged_survivor(
 ) -> io::Result<Survivor> {
     let org = Format::from_path(src.as_str().as_ref()) == Format::Org;
     if org != (Format::from_path(dst.as_str().as_ref()) == Format::Org) {
-        return Err(error(
-            io::ErrorKind::InvalidInput,
-            "files are in different formats",
-        ));
+        return Err(RewriteBlocked::DifferentFormats {
+            source: src.as_str().into(),
+            target: dst.as_str().into(),
+        }
+        .error());
     }
     let (src_text, src_rev) = read_text(store, &src.file())?;
     let (dst_text, dst_rev) = read_text(store, &dst.file())?;
     let format = Format::from_path(src.as_str().as_ref());
-    if [&src_text, &dst_text].into_iter().any(|text| {
-        tine_core::concord_queue::has_vcs_anchor(text.as_bytes())
+    for (id, text) in [(src, &src_text), (dst, &dst_text)] {
+        if tine_core::concord_queue::has_vcs_anchor(text.as_bytes())
             && !tine_core::concord_queue::vcs_conflict_markers(text, format).is_empty()
-    }) {
-        return Err(error(
-            io::ErrorKind::InvalidData,
-            "merge pair has conflict markers",
-        ));
+        {
+            return Err(RewriteBlocked::MergeConflictMarkers {
+                file: id.as_str().into(),
+            }
+            .error());
+        }
     }
-    if org && (!tine_core::org::org_editable(&src_text) || !tine_core::org::org_editable(&dst_text))
-    {
-        return Err(error(
-            io::ErrorKind::PermissionDenied,
-            "an org file in this pair does not round-trip; not merging",
-        ));
+    if org {
+        for (id, text) in [(src, &src_text), (dst, &dst_text)] {
+            if !tine_core::org::org_editable(text) {
+                return Err(read_only_org(id.as_str()));
+            }
+        }
     }
     // Parsed from the bytes whose revisions guard the write (A-V4b).
     let page = |id, text: &str| store.page_of(id, text.as_bytes()).map_err(store_error);

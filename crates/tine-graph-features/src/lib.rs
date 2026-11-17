@@ -174,6 +174,9 @@ fn why_error(why: Why) -> io::Error {
         Why::Failed(error) => io::Error::new(error.kind, error.message),
         Why::Refused(refusal) => match refusal {
             Refusal::TextRealization(error) => io::Error::new(io::ErrorKind::InvalidData, error),
+            Refusal::FileTextRealization { reason, file } => {
+                pages::MergeRefused::trace(reason, file.as_str())
+            }
             Refusal::ReadOnly(message) | Refusal::InvalidTarget(message) => {
                 io::Error::new(io::ErrorKind::InvalidInput, message)
             }

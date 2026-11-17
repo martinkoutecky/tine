@@ -17,6 +17,7 @@ export function renameRefusalMessage(reason: RenameRefusal): Msg {
     case "headerChildren": return msg("rename-refused-header-children", { file: reason.file });
     case "hiddenOccurrence": return msg("rename-refused-hidden-occurrence", { file: reason.file });
     case "survivorIdentity": return msg("rename-refused-survivor-identity", { file: reason.file });
+    case "titleIdentity": return msg("rename-refused-title-identity", { file: reason.file });
     case "ownChild": return msg("rename-refused-own-child", { old: reason.old, new: reason.new });
     case "fileTaken": return msg("rename-refused-file-taken", { file: reason.file, page: reason.page });
     case "notAPage": return msg("rename-refused-not-a-page", { name: reason.name });
@@ -25,6 +26,14 @@ export function renameRefusalMessage(reason: RenameRefusal): Msg {
     case "conflictMarkers": return msg("rename-refused-conflict-markers", { file: reason.file });
     case "capture": return msg("rename-refused-capture", { name: reason.name, image: reason.image, page: reason.page });
     case "contested": return msg("rename-refused-contested", { name: reason.name, files: reason.files.join(", ") });
+    case "staleMerge": return msg("rename-refused-stale-merge", { file: reason.file });
+    case "unindexed": return msg("rename-refused-unindexed", { file: reason.file });
+    case "readOnlyOrg": return msg("rename-refused-read-only-org", { file: reason.file });
+    case "differentFormats": return msg("rename-refused-different-formats", { source: reason.source, target: reason.target });
+    case "mergeConflictMarkers": return msg("rename-refused-merge-conflict-markers", { file: reason.file });
+    case "sameFile": return msg("rename-refused-same-file", { file: reason.file });
+    case "staleSource": return msg("rename-refused-stale-source", { file: reason.file });
+    case "duplicateFiles": return msg("rename-refused-duplicate-files", { files: reason.files.join(", ") });
   }
 }
 

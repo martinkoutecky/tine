@@ -9,6 +9,26 @@ use tine_graph_features::pages::CheckRefused;
 const MATRIX: &str = include_str!("../../tine-core/src/cm_check/witness-fixtures-r6.json");
 const NAMES: FileNameFormat = FileNameFormat::Legacy;
 
+/// Markdown link escapes do not decode in the page-title identity. This is
+/// the small parser probe for the manager's titleParts question, independent
+/// of the writer and of P2's comparison.
+#[test]
+fn escaping_a_title_link_changes_its_page_name() {
+    for (format, header) in [
+        (Format::Md, "title:: "),
+        (Format::Md, "- title:: "),
+        (Format::Org, "#+title: "),
+    ] {
+        for eol in ["\n", "\r\n"] {
+            let name = r"b \[\[Y\]\]";
+            let text = format!("{header}{name}{eol}");
+            let title = tine_core::model::page_title_from_header(&text, format).unwrap();
+            assert_eq!(title, name);
+            assert!(!tine_core::refs::same_page(&title, "b [[Y]]"));
+        }
+    }
+}
+
 // The toy reader's observations cannot be expressed by these original texts.
 // Each row is accounted for by name; parser-readable equivalents run below.
 const READER_DIFFERENCES: &[(&str, &str)] = &[
@@ -399,9 +419,9 @@ fn wrong_output(row: &Value) {
         assert!(
             matches!(
                 error,
-                tine_store::Why::Refused(tine_store::Refusal::TextRealization(
-                    tine_core::text_trace::TraceError::TitleIdentity
-                ))
+                tine_store::Why::Refused(tine_store::Refusal::FileTextRealization {
+                    reason: tine_core::text_trace::TraceError::TitleIdentity, ref file,
+                }) if file.as_str() == id.as_str()
             ),
             "{error:?}"
         );
@@ -550,7 +570,7 @@ fn k_negative_rows_run_without_skips() {
             ".capture" => kind.as_deref() == Some("capture"),
             ".ownChild" => kind.as_deref() == Some("ownChild"),
             ".pathTaken" => kind.as_deref() == Some("fileTaken"),
-            ".titleIdentity" => error.get_ref().and_then(|e| e.downcast_ref::<tine_core::text_trace::TraceError>()) == Some(&tine_core::text_trace::TraceError::TitleIdentity),
+            ".titleIdentity" => tine_graph_features::pages::MergeRefused::of(&error).is_some_and(|e| e.reason == tine_graph_features::pages::merge_payload::RealizationError::Trace(tine_core::text_trace::TraceError::TitleIdentity)),
             ".headerChildren" => tine_graph_features::pages::MergeRefused::of(&error).is_some_and(|e| e.reason == tine_graph_features::pages::merge_payload::RealizationError::HeaderChildren),
             ".conflictPair" => error.to_string().contains("conflict"),
             ".leftoverReference" => error.to_string().contains("reference"),
@@ -720,7 +740,15 @@ fn both_merge_entries_refuse_mixed_formats_without_writing() {
                 .unwrap_err()
         };
         assert_eq!(error.kind(), std::io::ErrorKind::InvalidInput);
-        assert_eq!(error.to_string(), "files are in different formats");
+        assert_eq!(
+            tine_graph_features::pages::RewriteBlocked::of(&error),
+            Some(
+                &tine_graph_features::pages::RewriteBlocked::DifferentFormats {
+                    source: "pages/A.md".into(),
+                    target: "pages/B.org".into(),
+                }
+            )
+        );
         assert_eq!(snapshot(&root), before);
     }
 }

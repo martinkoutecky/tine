@@ -49,7 +49,12 @@ fn single_rename_refuses_its_marked_org_source_that_does_not_round_trip() {
     })
     .unwrap_err();
     assert_eq!(refusal.kind(), std::io::ErrorKind::PermissionDenied);
-    assert!(refusal.to_string().contains("read-only .org file"));
+    assert_eq!(
+        pages::RewriteBlocked::of(&refusal),
+        Some(&pages::RewriteBlocked::ReadOnlyOrg {
+            file: "pages/Old.org".into()
+        })
+    );
     assert_eq!(
         fs::read_to_string(root.join("pages/Old.org")).unwrap(),
         source

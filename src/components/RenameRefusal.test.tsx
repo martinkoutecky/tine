@@ -88,6 +88,29 @@ it("the recovery action cannot run in a replacement graph", async () => {
   expect(rename).toHaveBeenCalledTimes(1);
 });
 
+it.each([
+  [{ kind: "differentFormats", source: "pages/A.md", target: "pages/B.org" }, "pages/A.md and pages/B.org use different formats"],
+  [{ kind: "mergeConflictMarkers", file: "pages/A.md" }, "Resolve the conflict markers in pages/A.md"],
+  [{ kind: "sameFile", file: "pages/A.md" }, "pages/A.md is both the source and the remaining file"],
+  [{ kind: "staleMerge", file: "pages/B.md" }, "pages/B.md no longer holds the name you chose"],
+  [{ kind: "unindexed", file: "pages/A.md" }, "Tine cannot read pages/A.md safely"],
+  [{ kind: "readOnlyOrg", file: "pages/A.org" }, "Tine cannot save pages/A.org without changing its content"],
+  [{ kind: "staleSource", file: "pages/A.md" }, "pages/A.md no longer identifies the page you chose"],
+  [{ kind: "titleIdentity", file: "pages/A.md" }, "changing the references inside the title of pages/A.md would give the page a different name"],
+  [{ kind: "duplicateFiles", files: ["pages/A.md", "pages/B.md"] }, "these files claim the same page: pages/A.md, pages/B.md"],
+])("localizes the remaining refusal %# and keeps it until dismissed", async (reason, explanation) => {
+  expect(showRewriteRefusal({ refused: reason })).toBe(true);
+  expect(text()).toContain(explanation);
+  expect(text()).not.toContain("Save it and rename");
+  expect(toasts()[0].sticky).toBe(true);
+  try {
+    await setActiveLocale("zh-CN");
+    expect(text()).toContain("无法");
+    expect(text()).toContain("请");
+    expect(text()).toContain("pages/");
+  } finally { await setActiveLocale("en"); }
+});
+
 it("dedupes identical blocking refusals and translates them live", async () => {
   const retry = vi.fn();
   showRewriteRefusal(refusal("P3"), retry);

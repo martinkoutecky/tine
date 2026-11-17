@@ -106,7 +106,23 @@ impl<'a> PagePlan<'a> {
                     "page could not be parsed; Tine will not rewrite it".into(),
                 )))
             })
-            .map_err(|why| (index, why))?;
+            .map_err(|why| {
+                let why = match why {
+                    Why::Refused(Refusal::TextRealization(reason)) => {
+                        let file = match step {
+                            Step::Rewrite { id, .. } => Some(id.file()),
+                            Step::Move { file, .. } => Some(file.clone()),
+                            _ => None,
+                        };
+                        Why::Refused(match file {
+                            Some(file) => Refusal::FileTextRealization { reason, file },
+                            None => Refusal::TextRealization(reason),
+                        })
+                    }
+                    why => why,
+                };
+                (index, why)
+            })?;
             // File IDs and configured directories are dynamic. The public
             // commit builder may inspect pages, but may never mutate one.
             if self.non_page && !matches!(step, Step::Expect { .. }) {

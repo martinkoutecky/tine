@@ -158,7 +158,7 @@ impl RenamePlan {
             let format = refs::RenameFormat::new(self.config.file_name_format, &self.days);
             let rewritten =
                 refs::rename_proposal(&content, org, &self.lookup, &self.query_lookup, format)
-                    .map_err(|e| io::Error::new(io::ErrorKind::InvalidData, e))?;
+                    .map_err(|e| MergeRefused::trace(e, id.as_str()))?;
             let changed = rewritten.text != content;
             let marked =
                 !tine_core::concord_queue::vcs_conflict_markers(&content, syntax).is_empty();
@@ -533,9 +533,7 @@ pub enum RenameBlocked {
 impl std::fmt::Display for RenameBlocked {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
-            RenameBlocked::Taken { .. } => {
-                f.write_str("target page identity already exists elsewhere in the graph")
-            }
+            RenameBlocked::Taken { into } => write!(f, "cannot rename: {into} now owns that name; start the rename again to review the merge choice"),
             RenameBlocked::OwnChild { old, new } => write!(
                 f,
                 "cannot rename “{old}” to “{new}”: “{new}” is already a page or an alias inside “{old}”, and every page under “{old}” moves with it"
@@ -661,11 +659,8 @@ pub(super) fn report_rewritten_names(
 /// is stale (another instance, an external editor or a sync delivery changed
 /// the names between the question and the answer), or a caller answered a
 /// question the planner never asked.
-fn unasked() -> io::Error {
-    error(
-        io::ErrorKind::NotFound,
-        "the page to merge into no longer owns that name",
-    )
+fn unasked(file: &str) -> io::Error {
+    RewriteBlocked::StaleMerge { file: file.into() }.error()
 }
 
 pub(super) fn plan_rename(
@@ -817,7 +812,7 @@ pub(super) fn plan_rename(
         .map_or(old, |entry| entry.name.as_str());
     if own == new {
         if merge_into.is_some() {
-            return Err(unasked());
+            return Err(unasked(merge_into.unwrap()));
         }
         return Ok(RenamePlan {
             graph,
@@ -920,10 +915,14 @@ pub(super) fn plan_rename(
             }
         }
         if !taken.is_empty() {
-            return Err(error(
-                io::ErrorKind::AlreadyExists,
-                "target page identity already exists elsewhere in the graph",
-            ));
+            if taken.len() == 1 {
+                return Err(unasked(merge_into.unwrap()));
+            }
+            return Err(RenameBlocked::Contested {
+                name: new_name,
+                files: taken.iter().map(|id| id.as_str().to_owned()).collect(),
+            }
+            .error());
         }
         let ext = Format::from_path(id.as_str().as_ref()).ext();
         let basename = format!(
@@ -941,10 +940,11 @@ pub(super) fn plan_rename(
         if !destinations.insert(to.as_str().to_owned())
             || !identities.insert(refs::normalize(&new_name))
         {
-            return Err(error(
-                io::ErrorKind::AlreadyExists,
-                "multiple pages map to the same rename target",
-            ));
+            return Err(CheckRefused {
+                guarantee: tine_store::Guarantee::P2,
+                file: id.as_str().into(),
+            }
+            .error());
         }
         if to == id.file() {
             // A crash after the physical rename can leave Old's explicit
@@ -1005,10 +1005,11 @@ pub(super) fn plan_rename(
                 .error())
             }
             (_, _) => {
-                return Err(error(
-                    io::ErrorKind::AlreadyExists,
-                    "target page identity already exists elsewhere in the graph",
-                ))
+                return Err(RenameBlocked::Contested {
+                    name: new.into(),
+                    files: taken.iter().map(|id| id.as_str().to_owned()).collect(),
+                }
+                .error())
             }
         }
         renamed.push(RenamedPage {
@@ -1018,7 +1019,7 @@ pub(super) fn plan_rename(
         });
     }
     if merge_into.is_some() && merge.is_none() && !ref_merge {
-        return Err(unasked());
+        return Err(unasked(merge_into.unwrap()));
     }
     let pairs = renamed
         .iter()
@@ -1058,13 +1059,10 @@ pub(super) fn plan_rename(
     for (file, _) in graph.unreadable_files() {
         let planned = candidates.iter().any(|id| id.file() == *file);
         if !planned && may_hold_reference(store, file, &map, spelling) {
-            return Err(error(
-                io::ErrorKind::InvalidData,
-                &format!(
-                    "cannot rename: {} could not be indexed and may link to this page; repair or remove it first",
-                    file.as_str()
-                ),
-            ));
+            return Err(RewriteBlocked::Unindexed {
+                file: file.as_str().into(),
+            }
+            .error());
         }
     }
     Ok(RenamePlan {
