@@ -14,6 +14,7 @@ const NAMES: FileNameFormat = FileNameFormat::Legacy;
 /// of the writer and of P2's comparison.
 #[test]
 fn escaping_a_title_link_changes_its_page_name() {
+    let _integration_guard = crate::integration_lock();
     for (format, header) in [
         (Format::Md, "title:: "),
         (Format::Md, "- title:: "),

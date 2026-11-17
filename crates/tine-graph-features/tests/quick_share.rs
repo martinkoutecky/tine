@@ -484,6 +484,7 @@ fn without_cm_date_day_pages(frozen: &Value, fresh: &mut Value) {
 /// target, and nothing else (negative controls).
 #[test]
 fn the_cm_date_allowance_admits_only_a_day_asked_as_a_page() {
+    let _integration_guard = crate::integration_lock();
     let dir =
         Path::new(env!("CARGO_MANIFEST_DIR")).join("../../tests/fixtures/quick-share/g1/answers");
     let read = |name: &str| -> Value {

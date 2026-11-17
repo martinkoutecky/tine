@@ -138,6 +138,7 @@ fn run_batch(cases: &[Case], survivor: &dyn Fn(&Case) -> Option<String>) -> usiz
 
 #[test]
 fn parent_header_layout_merges_and_saves_through_both_entries() {
+    let _integration_guard = crate::integration_lock();
     let rows: Vec<serde_json::Value> =
         serde_json::from_str(include_str!("fixtures/cm-merge-header-parent.json")).unwrap();
     assert_eq!(rows.len(), 16);
@@ -160,6 +161,7 @@ fn parent_header_layout_merges_and_saves_through_both_entries() {
 
 #[test]
 fn reviewed_eighty_eight_alias_links_merge_through_both_entries() {
+    let _integration_guard = crate::integration_lock();
     let rows: Vec<serde_json::Value> =
         serde_json::from_str(include_str!("fixtures/cm-merge-header-links.json")).unwrap();
     assert_eq!(rows.len(), 88);
@@ -204,6 +206,7 @@ fn reviewed_eighty_eight_alias_links_merge_through_both_entries() {
 
 #[test]
 fn native_alias_member_siblings_have_pinned_outcomes() {
+    let _integration_guard = crate::integration_lock();
     let mut cases = Vec::new();
     for org in [false, true] {
         for rename in [false, true] {
@@ -289,6 +292,7 @@ fn native_alias_member_siblings_have_pinned_outcomes() {
 
 #[test]
 fn review_alias_classification_uses_the_reader() {
+    let _integration_guard = crate::integration_lock();
     let mut cases = Vec::new();
     for rename in [false, true] {
         for ending in 0..4 {
@@ -314,6 +318,7 @@ fn review_alias_classification_uses_the_reader() {
 
 #[test]
 fn headers_with_blank_gaps_merge_with_ogs_page_properties() {
+    let _integration_guard = crate::integration_lock();
     // These pages once refused `HeaderProseOverlap`: two readers disagreed on
     // where the header ends. One owner now answers OG's rule (the first
     // property node), so a later node is prose and both merge.
@@ -364,6 +369,7 @@ fn headers_with_blank_gaps_merge_with_ogs_page_properties() {
 
 #[test]
 fn opening_text_between_directives_and_directive_lines_merge_whole() {
+    let _integration_guard = crate::integration_lock();
     // Org text between opening directives is prose, with page properties on
     // both sides of it (REG-CM-ORG-TEXT-BETWEEN-DIRECTIVES); a Markdown `#+`
     // line's link is a reference (REG-CM-MD-DIRECTIVE-LINK); a Markdown page
@@ -446,6 +452,7 @@ fn opening_text_between_directives_and_directive_lines_merge_whole() {
 
 #[test]
 fn review_header_layout_merges_in_both_entries() {
+    let _integration_guard = crate::integration_lock();
     let mut cases = Vec::new();
     for rename in [false, true] {
         for ending in 0..4 {
@@ -464,6 +471,7 @@ fn review_header_layout_merges_in_both_entries() {
 
 #[test]
 fn generated_headers_merge_or_explain_the_limitation_before_the_check() {
+    let _integration_guard = crate::integration_lock();
     let mut cases = Vec::new();
     for org in [false, true] {
         for rename in [false, true] {
@@ -568,6 +576,7 @@ fn generated_headers_merge_or_explain_the_limitation_before_the_check() {
 
 #[test]
 fn review_sources_merge_with_code_intact_in_both_entries() {
+    let _integration_guard = crate::integration_lock();
     let mut cases = Vec::new();
     for source in [
         "  - first\n- second\n    code\n",
@@ -591,6 +600,7 @@ fn review_sources_merge_with_code_intact_in_both_entries() {
 
 #[test]
 fn review_prose_separators_merge_in_both_entries() {
+    let _integration_guard = crate::integration_lock();
     let mut cases = Vec::new();
     for rename in [false, true] {
         for ending in 0..4 {
@@ -643,6 +653,7 @@ fn endings(text: &str, pattern: usize) -> String {
 
 #[test]
 fn generated_native_bodies_merge_or_explain_the_limitation_before_the_check() {
+    let _integration_guard = crate::integration_lock();
     let mut cases = Vec::new();
     let indents = [
         "", " ", "  ", "   ", "    ", "     ", "      ", "\t", " \t", "\t ", "\x0c",
@@ -874,6 +885,7 @@ fn generated_native_bodies_merge_or_explain_the_limitation_before_the_check() {
 
 #[test]
 fn trailing_blank_lines_merge_in_both_entries() {
+    let _integration_guard = crate::integration_lock();
     let mut cases = Vec::new();
     for rename in [false, true] {
         for eol in ["\n", "\r\n"] {

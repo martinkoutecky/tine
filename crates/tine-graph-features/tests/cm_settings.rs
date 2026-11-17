@@ -76,6 +76,7 @@ fn o8_a_failed_step_keeps_the_whole_old_settings_record_and_reports_pages_done()
 /// merge.
 #[test]
 fn o8_after_a_merge_each_page_is_listed_once_and_the_first_entry_stays() {
+    let _integration_guard = crate::integration_lock();
     let (root, store) = with_config(
         "merge-first",
         "{:default-home {:page \"A\"} :favorites [\"A\" \"X\" \"B\"]}\n",
@@ -103,6 +104,7 @@ fn o8_after_a_merge_each_page_is_listed_once_and_the_first_entry_stays() {
 /// same-spelling request is the control: it writes nothing.
 #[test]
 fn o8_a_rename_that_changes_no_page_bytes_still_moves_the_settings() {
+    let _integration_guard = crate::integration_lock();
     let settings = "{:default-home {:page \"Old\"} :favorites [\"Old\"]}\n";
     let tagged = "* heading :Old:\n";
     let (root, store) = with_config("no-bytes", settings, &[("pages/r.org", tagged)]);
@@ -147,6 +149,7 @@ fn o8_a_rename_that_changes_no_page_bytes_still_moves_the_settings() {
 /// `B/…` like a file-backed child.
 #[test]
 fn o8_settings_under_the_source_follow_by_namespace_prefix() {
+    let _integration_guard = crate::integration_lock();
     let (root, store) = with_config(
         "prefix",
         "{:default-home {:page \"A/x\"} :favorites [\"A/x\" \"A/y\" \"Other\"]}\n",
@@ -170,6 +173,7 @@ fn o8_settings_under_the_source_follow_by_namespace_prefix() {
 /// entry too, and a day is one name in all its spellings.
 #[test]
 fn o8_after_a_merge_every_repeated_favorite_is_listed_once() {
+    let _integration_guard = crate::integration_lock();
     let (root, store) = with_config(
         "merge-repeats",
         "{:favorites [\"X\" \"x\" \"Nov 2nd, 2026\" \"2026_11_02\"]}\n",

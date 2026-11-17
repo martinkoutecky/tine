@@ -49,6 +49,7 @@ fn located<'t>(
 /// survivor's), by path and offset in that file's text before the merge.
 #[test]
 fn o7_a_merges_exceptions_are_located_in_each_original_file() {
+    let _integration_guard = crate::integration_lock();
     let source = "* old heading :Old:\n";
     let survivor = "#+title: two words\n* kept :Old:\n";
     let (root, store) = fixture(
@@ -87,6 +88,7 @@ fn o7_a_merges_exceptions_are_located_in_each_original_file() {
 /// full; and one file reports two kinds of exception, in file order.
 #[test]
 fn o7_offsets_count_crlf_and_multibyte_bytes_and_one_file_reports_two_kinds() {
+    let _integration_guard = crate::integration_lock();
     let org = "* žluťoučký kůň :Old:\r\n:PROPERTIES:\r\n:Old: v\r\n:END:\r\n";
     let md = "- žluťoučký [[Old]]\r\n- Old:: v\r\n";
     let (root, store) = fixture(
@@ -142,6 +144,7 @@ fn o7_offsets_count_crlf_and_multibyte_bytes_and_one_file_reports_two_kinds() {
 /// are pinned, O2).
 #[test]
 fn o7_keys_that_do_not_name_the_page_stay_and_are_not_reported() {
+    let _integration_guard = crate::integration_lock();
     // (label, source file, rename, referrer, referrer after the rename)
     let day_format = (
         "logseq/config.edn",
@@ -195,6 +198,7 @@ fn o7_keys_that_do_not_name_the_page_stay_and_are_not_reported() {
 /// and its kind (a tag).
 #[test]
 fn o7_a_site_that_cannot_spell_the_new_name_is_reported_where_it_stands() {
+    let _integration_guard = crate::integration_lock();
     let referrer = "* heading :Old:\n";
     let (root, store) = fixture(
         "o7-unspellable",
@@ -226,6 +230,7 @@ fn o7_a_site_that_cannot_spell_the_new_name_is_reported_where_it_stands() {
 /// `cm_model_check::a_referrer_tine_would_reformat_is_refused_with_p3`.)
 #[test]
 fn o7_a_property_key_respelled_into_key_spelling_is_reported() {
+    let _integration_guard = crate::integration_lock();
     let referrer = "- r\n- Old:: value\n";
     let (root, store) = fixture(
         "o7-key-spelling",
@@ -249,6 +254,7 @@ fn o7_a_property_key_respelled_into_key_spelling_is_reported() {
 /// spelling equals the new name).
 #[test]
 fn o7_a_rename_every_site_spells_reports_nothing() {
+    let _integration_guard = crate::integration_lock();
     let (_root, store) = fixture(
         "o7-clean",
         &[
@@ -272,6 +278,7 @@ fn o7_a_rename_every_site_spells_reports_nothing() {
 /// reported (its key spelling differs from the new name `B/…`).
 #[test]
 fn o1_a_property_key_under_the_source_follows_the_namespace_prefix() {
+    let _integration_guard = crate::integration_lock();
     // Not a first block of only properties (a page header; see
     // `o7_a_property_key_respelled_into_key_spelling_is_reported`).
     let md = "- r\n- a/x:: one\n- a/y:: two\n";
