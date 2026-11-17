@@ -115,10 +115,19 @@ pub fn set(
             {
                 return Err("Invalid page property key".into());
             }
-            out[0] = if out[0].is_empty() {
-                line
+            // A Markdown header may follow blank lines; the new line joins
+            // it there, since a blank line below it would end the header.
+            let headed = !org && !entries(&out[0], org)?.is_empty();
+            let head: usize = out[0]
+                .split_inclusive('\n')
+                .take_while(|l| headed && l.ends_with('\n') && l.trim().is_empty())
+                .map(str::len)
+                .sum();
+            let (blank, rest) = out[0].split_at(head);
+            out[0] = if rest.is_empty() {
+                format!("{blank}{line}")
             } else {
-                format!("{line}\n{}", out[0])
+                format!("{blank}{line}\n{rest}")
             };
         }
     }
@@ -193,5 +202,24 @@ mod tests {
         let out = set(&["a:: 1\n\nalias:: Surprise".into()], false, "a", None).unwrap();
         assert_eq!(out, ["\nalias:: Surprise"]);
         assert_eq!(reading(&out[0]), (vec!["alias".into()], None));
+        // A header after blank lines stays one header when a key is added.
+        for (before, after) in [
+            (
+                "\ntitle:: Existing\nalias:: y",
+                "\ntags:: new\ntitle:: Existing\nalias:: y",
+            ),
+            (
+                "\r\n \r\ntitle:: Existing\r\nalias:: y",
+                "\r\n \r\ntags:: new\ntitle:: Existing\r\nalias:: y",
+            ),
+        ] {
+            assert_eq!(reading(before).0, ["title", "alias"]);
+            let out = set(&[before.into()], false, "tags", Some("new")).unwrap();
+            assert_eq!(out, [after]);
+            assert_eq!(reading(after).0, ["tags", "title", "alias"]);
+        }
+        let out = set(&["\n\nprose".into()], false, "tags", Some("new")).unwrap();
+        assert_eq!(out, ["tags:: new\n\n\nprose"]);
+        assert_eq!(reading(&out[0]), (vec!["tags".into()], Some("prose")));
     }
 }

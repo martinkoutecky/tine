@@ -128,7 +128,9 @@ describe("property line helpers", () => {
   });
 
   it("trims the value while preserving blank separators", () => {
-    expect(upsertPropertyLine("\n\ntags:: x\n\n", "alias", "  Foo  ")).toBe("alias:: Foo\n\n\ntags:: x\n\n");
+    // The new line joins the header below the leading blank lines: above them, the blank
+    // line would end the header and turn `tags` into opening text (Logseq's rule).
+    expect(upsertPropertyLine("\n\ntags:: x\n\n", "alias", "  Foo  ")).toBe("\n\nalias:: Foo\ntags:: x\n\n");
   });
 
   it("preserves the issue-163 page-property layout byte-for-byte outside the edited line", () => {
