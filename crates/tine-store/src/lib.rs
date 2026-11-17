@@ -146,6 +146,8 @@ use crate as store_crate;
 mod test_host_writer;
 #[cfg(test)]
 mod test_host_writer_ext;
+#[cfg(test)]
+mod thread_local_hosts_guard;
 pub mod transaction;
 mod transliteration;
 mod watch;

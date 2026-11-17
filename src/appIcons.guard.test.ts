@@ -35,7 +35,11 @@ describe("identity icons", () => {
   });
 
   it("keeps the release config byte-identical to the previous identity resolution", () => {
-    expect(deriveIdentityFiles(ROOT, "release")["src-tauri/tauri.conf.json"])
+    // The fixture pins the identity, not the version: a version bump must not touch it.
+    const unversioned = (config: string) => config
+      .replace(/"version": "[^"]*"/, '"version": "0.0.0"')
+      .replace(/"versionCode": \d+/, '"versionCode": 0');
+    expect(unversioned(deriveIdentityFiles(ROOT, "release")["src-tauri/tauri.conf.json"]))
       .toBe(read("src/fixtures/release-icon-config.json").toString());
   });
 
