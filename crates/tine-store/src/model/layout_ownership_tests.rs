@@ -1,6 +1,154 @@
-//! Sibling families from the second move/swap review: no direct child survives
-//! unchanged, but descendants still own their original physical lines.
+//! Sibling move/swap families: surviving descendants keep their physical lines
+//! through ancestor edits and beside inserted leaves or subtrees.
 use super::*;
+
+#[test]
+fn review_inserted_container_boundary() {
+    let mut failures = Vec::new();
+    let mut cases = 0;
+    let mut buckets = std::collections::BTreeMap::new();
+    for header in [
+        "- dup",
+        "- prose text",
+        "-",
+        "- ## dup",
+        "## dup",
+        "### dup",
+    ] {
+        for unit in ["\t", "  ", "\x0c", " \t"] {
+            for newline in ["\n", "\r\n", "\r"] {
+                for parent_edit in [false, true] {
+                    for child_edit in [false, true] {
+                        for same in [false, true] {
+                            for before in [false, true] {
+                                for nested in [false, true] {
+                                    for old_nested in [false, true] {
+                                        let first = format!(
+                                            "{header}\n{}- x\n{}- a\n",
+                                            unit.repeat(2),
+                                            unit.repeat(if old_nested { 4 } else { 2 })
+                                        );
+                                        let second = format!(
+                                            "{header}\n{}- x\n{}- b\n",
+                                            unit.repeat(3),
+                                            unit.repeat(if old_nested { 6 } else { 3 })
+                                        );
+                                        let source = format!("{second}{first}- target\n")
+                                            .replace('\n', newline);
+                                        let mut old = super::super::parse_doc(
+                                            std::path::Path::new("p.md"),
+                                            &source,
+                                        );
+                                        clear_ids(&mut old.roots);
+                                        let mut doc = old.clone();
+                                        if parent_edit {
+                                            doc.roots[0]
+                                                .set_raw(format!("{}!", old.roots[0].raw()));
+                                        }
+                                        if child_edit {
+                                            doc.roots[0].children[0].set_raw("x!");
+                                        }
+                                        let mut inserted = DocBlock::new(if same {
+                                            old.roots[0].raw()
+                                        } else {
+                                            "inserted"
+                                        });
+                                        inserted.children.push(DocBlock::new("new child"));
+                                        if nested {
+                                            inserted.children[0]
+                                                .children
+                                                .push(DocBlock::new("new grandchild"));
+                                        }
+                                        doc.roots.insert(usize::from(!before), inserted);
+                                        let written = serialize(
+                                            &doc,
+                                            &source,
+                                            &old,
+                                            &SerializeOpts::default(),
+                                        )
+                                        .map(|v| v.0);
+                                        let tail = format!(
+                                            "{}- b{}",
+                                            unit.repeat(if old_nested { 6 } else { 3 }),
+                                            newline
+                                        );
+                                        cases += 1;
+                                        if !written.as_ref().is_some_and(|v| v.contains(&tail)) {
+                                            *buckets
+                                                .entry((
+                                                    header,
+                                                    parent_edit,
+                                                    child_edit,
+                                                    same,
+                                                    before,
+                                                    nested,
+                                                ))
+                                                .or_insert(0usize) += 1;
+                                            failures.push(format!("header={header:?} unit={unit:?} nl={newline:?} parent={parent_edit} child={child_edit} same={same} before={before} nested={nested}: {written:?}"));
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+    eprintln!("review containers: {} / {cases} failures", failures.len());
+    eprintln!("review buckets: {buckets:?}");
+    for f in failures.iter().take(36) {
+        eprintln!("{f}");
+    }
+    assert_eq!(cases, 4608);
+    assert!(failures.is_empty());
+}
+#[test]
+fn review_org_inserted_container_endings() {
+    use tine_core::org::{parse_org, serialize_org_detect};
+    let mut counts = std::collections::BTreeMap::new();
+    let mut failures = 0;
+    let mut cases = 0;
+    for convention in ["\n", "\r\n", "\r"] {
+        for b_end in ["\n", "\r\n", "\r"] {
+            for before in [false, true] {
+                for same in [false, true] {
+                    for parent in [false, true] {
+                        for child in [false, true] {
+                            let source = format!("* dup{convention}** x{convention}*** b{b_end}* dup{convention}** x{convention}*** a{convention}* target{convention}");
+                            let mut old = parse_org(&source);
+                            clear_ids(&mut old.roots);
+                            let mut doc = old.clone();
+                            if parent {
+                                doc.roots[0].set_raw("dup!");
+                            }
+                            if child {
+                                doc.roots[0].children[0].set_raw("x!");
+                            }
+                            let mut inserted = DocBlock::new(if same { "dup" } else { "inserted" });
+                            inserted.children.push(DocBlock::new("new child"));
+                            doc.roots.insert(usize::from(!before), inserted);
+                            let lf = serialize_org_detect(&doc, Some(&source));
+                            let candidate = restore_org(lf, &doc, &source, &old);
+                            let actual_end = |s: &str| {
+                                let (lines, ends) = line_endings::pieces(s);
+                                ends[lines.iter().position(|l| *l == "*** b").unwrap()]
+                            };
+                            cases += 1;
+                            if actual_end(&candidate) != b_end {
+                                failures += 1;
+                                *counts.entry((convention, b_end)).or_insert(0usize) += 1;
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+    eprintln!("review Org endings: candidate {failures}/{cases}; buckets {counts:?}");
+    assert_eq!(cases, 144);
+    assert_eq!(failures, 0);
+}
 
 fn clear_ids(blocks: &mut [DocBlock]) {
     for block in blocks {

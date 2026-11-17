@@ -441,8 +441,9 @@ or is killed while its write stands in line does not cancel it: the write can la
   cannot tell which earlier block a block is (after a save in the same session reordered same-shaped
   subtrees), that block may keep its previous Markdown indentation instead. Ambiguous text matching
   keeps a repeated child's physical lines within the matching parent subtree, including when a parent or
-  child is edited while a new sibling leaf is inserted, or every direct child is edited and an
-  untouched grandchild remains. Containers receive ownership before leftover leaf lines are matched;
+  child is edited while a new sibling leaf or subtree is inserted, or every direct child is edited and an
+  untouched grandchild remains. A container's surviving descendants decide its ownership before text
+  and positional fallback; containers receive ownership before leftover leaf lines are matched;
   Markdown indentation and mixed Org terminators follow the same ownership.
   A move to another page is refused `cross-page` in this version.
 - **`--run RUN`** (optional, every write; or `TINE_RUN`): commit the write to the graph's git repository as

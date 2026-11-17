@@ -16,9 +16,10 @@
 //! block joining another parent takes its new siblings' prefix (or one indent
 //! step below its parent). A block matched by text alone keeps its old prefix
 //! wherever the parse rule allows it. When runtime lineage is ambiguous, text
-//! ownership is recursive within paired parents: exact subtrees pair first,
-//! then remaining containers pair by text and gap position before leftover
-//! blocks. Each pair owns both its old lines and its old child scope. Unclaimed
+//! ownership is recursive within paired parents: exact subtrees pair first;
+//! a container's surviving descendants decide its owner before text and gap
+//! position pair remaining containers, then leftover blocks. Each pair owns
+//! both its old lines and its old child scope. Unclaimed
 //! old roots can move into a child scope by exact subtree equality.
 //!
 //! Cost: borrows the caller's single old-source parse; one output parse (two,
@@ -388,7 +389,8 @@ struct Matches {
 /// the old blocks no identity kept: equal raw by an LCS over the changed middle, unpaired blocks by
 /// position inside each gap between matches (a changed block), then equal raw
 /// anywhere (a moved block). Where old identities are ambiguous, pair whole
-/// subtrees first, then remaining containers before leftover blocks, and match
+/// subtrees first, reserve containers by surviving descendants, then pair
+/// remaining containers before leftover blocks, and match
 /// children within those same ownership pairs. A text match is never identity, so it
 /// keeps its old lines and prefix but does not carry a parent's
 /// re-indentation ([`Emitter::preferred_prefix`]). O(old + new bytes and blocks)
@@ -435,7 +437,43 @@ fn match_blocks(olds: &[OldBlock], news: &[&DocBlock]) -> Matches {
             &mut classes,
         );
         let (new_tags, mut new_groups) = text_tree(news, &mut classes);
+        // An anchor's tag must occur exactly once in each tree.
+        let mut anchors = vec![None; classes.len()];
+        let mut counts = vec![0; classes.len()];
+        for (o, &tag) in old_tags.iter().enumerate() {
+            anchors[tag] = Some(o);
+            counts[tag] += 1;
+        }
+        for &tag in &new_tags {
+            counts[tag] += 1;
+        }
         drop(classes);
+        let mut old_parents = vec![0; n];
+        for (parent, children) in old_groups.iter().enumerate() {
+            for &o in children {
+                old_parents[o] = parent;
+            }
+        }
+        // Unique surviving subtrees anchor ownership. Propagate agreement
+        // through edited containers once, bottom-up, without subtree walks.
+        let mut owners = vec![None; m];
+        for j in (0..m).rev() {
+            owners[j] = if counts[new_tags[j]] == 2 {
+                anchors[new_tags[j]]
+            } else {
+                None
+            };
+            if owners[j].is_none() {
+                let mut parents = new_groups[j + 1]
+                    .iter()
+                    .filter_map(|&child| owners[child])
+                    .filter_map(|o| old_parents[o].checked_sub(1));
+                if let Some(o) = parents.next() {
+                    owners[j] = parents.all(|other| other == o).then_some(o);
+                }
+            }
+        }
+        drop((anchors, counts));
         // Unclaimed old roots may move under another parent. Descendants
         // belong to their paired parent's sibling group, never a global pool.
         let mut roots: HashMap<usize, VecDeque<usize>> = HashMap::new();
@@ -476,6 +514,21 @@ fn match_blocks(olds: &[OldBlock], news: &[&DocBlock]) -> Matches {
                 .copied()
                 .filter(|&j| !news[j].children.is_empty())
                 .collect();
+            let scope = old_group.first().map(|&o| old_parents[o]);
+            for &j in &new_containers {
+                if !matched.known[j] && matched.keep[j].or(matched.hint[j]).is_none() {
+                    if let Some(o) =
+                        owners[j].filter(|&o| !used[o] && Some(old_parents[o]) == scope)
+                    {
+                        if olds[o].block.raw() == news[j].raw() {
+                            matched.keep[j] = Some(o);
+                        } else {
+                            matched.hint[j] = Some(o);
+                        }
+                        used[o] = true;
+                    }
+                }
+            }
             match_text(
                 olds,
                 news,

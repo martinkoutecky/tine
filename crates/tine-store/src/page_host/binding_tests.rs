@@ -680,6 +680,101 @@ fn editor_move_after_swapping_repeated_parents_keeps_the_other_subtree() {
     );
 }
 
+#[test]
+fn review_inserted_subtree_after_swapping() {
+    let mut failures = Vec::new();
+    let mut cases = 0;
+    for org in [false, true] {
+        for before in [false, true] {
+            for same in [false, true] {
+                for parent_edit in [false, true] {
+                    for child_edit in [false, true] {
+                        let first = if org {
+                            "* dup\r\n** x\n*** a\r\n"
+                        } else {
+                            "- dup\n\t\t- x\n\t\t\t\t- a\n"
+                        };
+                        let second = if org {
+                            "* dup\r\n** x\n*** b\r"
+                        } else {
+                            "- dup\n\t\t\t- x\n\t\t\t\t\t\t- b\n"
+                        };
+                        let target = if org { "* target\r\n" } else { "- target\n" };
+                        let path = if org { "pages/a.org" } else { "pages/a.md" };
+                        let live = Live::new(&[(path, &format!("{first}{second}{target}"))]);
+                        let (key, page) = live.open(path);
+                        let MailText::Page { mut dto } = page.text else {
+                            panic!("dto")
+                        };
+                        dto.blocks.swap(0, 1);
+                        let id = live.id();
+                        live.host
+                            .submit(
+                                live.host.session(),
+                                id,
+                                &key,
+                                &dto,
+                                page.version,
+                                None,
+                                &[EditKind::MoveBlocks],
+                            )
+                            .unwrap();
+                        live.answer(&key, id);
+                        live.host.flush_input(&[PageId::from(key.clone())]).unwrap();
+                        assert_eq!(live.disk(&key), format!("{second}{first}{target}"));
+                        let (_, page) = live.open(&key);
+                        let MailText::Page { mut dto } = page.text else {
+                            panic!("dto")
+                        };
+                        if parent_edit {
+                            dto.blocks[0].raw.push('!');
+                        }
+                        if child_edit {
+                            dto.blocks[0].children[0].raw.push('!');
+                        }
+                        let mut inserted = dto.blocks[2].clone();
+                        inserted.id = "new-parent".into();
+                        inserted.raw = if same { "dup" } else { "inserted" }.into();
+                        let mut child = dto.blocks[2].clone();
+                        child.id = "new-child".into();
+                        child.raw = "new child".into();
+                        inserted.children.push(child);
+                        dto.blocks.insert(usize::from(!before), inserted);
+                        let id = live.id();
+                        live.host
+                            .submit(
+                                live.host.session(),
+                                id,
+                                &key,
+                                &dto,
+                                page.version,
+                                None,
+                                &[EditKind::InsertBlocks],
+                            )
+                            .unwrap();
+                        live.answer(&key, id);
+                        live.host.flush_input(&[PageId::from(key.clone())]).unwrap();
+                        let written = live.disk(&key);
+                        let expected_line = if org { "*** b\r" } else { "\t\t\t\t\t\t- b\n" };
+                        cases += 1;
+                        if !written.contains(expected_line)
+                            || (org && written.contains("*** b\r\n"))
+                        {
+                            failures.push(format!("org={org} before={before} same={same} parent={parent_edit} child={child_edit}: {written:?}"));
+                        }
+                    }
+                }
+            }
+        }
+    }
+    eprintln!("review PageHost: {} / {cases} failures", failures.len());
+    for f in &failures {
+        eprintln!("{f}");
+    }
+    assert_eq!(cases, 32);
+    assert!(failures.is_empty());
+}
+
 /// A new leaf must not take the old parent away from its surviving children.
 #[test]
 fn editor_insert_and_edit_after_swapping_keeps_existing_child_layout() {
