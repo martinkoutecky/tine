@@ -31,7 +31,7 @@ concurrency:
 
 jobs:
   viewer-ready:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04  # Playwright has no chromium build for ubuntu-latest = 26.04 (11/17)
     outputs:
       quick_share_viewer_g1_ready: ${{ steps.viewer-ready.outputs.quick_share_viewer_g1_ready }}
     steps:
@@ -49,7 +49,7 @@ jobs:
   flatpak-builder:
     needs: viewer-ready
     name: build (${{ matrix.arch }})
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     container:
       image: ghcr.io/flathub-infra/flatpak-github-actions:gnome-49
       options: --privileged
