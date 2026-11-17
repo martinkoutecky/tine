@@ -52,6 +52,7 @@ fn rename_merge_and_journal_rename_proposals_are_documented_in_the_bundled_guide
     for control in [
         "A page whose title is a date can receive a merge",
         "A title in a first-bullet property header follows a rename too",
+        "Blank lines before a first-bullet property header keep its properties and children in place during a merge",
         "it writes the new title there and keeps the header's child blocks beneath it",
         "An indented source can merge while keeping its block depths",
         "Different indentation on later blocks keeps their continuation text and fenced code intact",

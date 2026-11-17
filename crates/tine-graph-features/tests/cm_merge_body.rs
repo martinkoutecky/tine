@@ -13,12 +13,11 @@ struct Case {
 fn run(cases: Vec<Case>) {
     // Each transaction needs only its pair. Bound the fixture graph so the
     // matrix measures the writer rather than repeatedly indexing other cases.
-    for batch in cases.chunks(64) {
-        run_batch(batch);
-    }
+    let failures: usize = cases.chunks(64).map(run_batch).sum();
+    assert_eq!(failures, 0, "unexpected matrix outcomes");
 }
 
-fn run_batch(cases: &[Case]) {
+fn run_batch(cases: &[Case]) -> usize {
     let _guard = crate::integration_lock();
     let root = tempfile::tempdir().unwrap();
     fs::create_dir(root.path().join("pages")).unwrap();
@@ -67,11 +66,13 @@ fn run_batch(cases: &[Case]) {
                     assert_eq!(reason.file, *if source { a } else { b }, "{}", label());
                     *refused.entry(format!("{:?}", reason.reason)).or_insert(0) += 1;
                 }
-                _ => failures.push(format!("{}: {error}", label())),
+                _ => failures.push(format!("{}: {error:?}", label())),
             }
             continue;
         }
-        assert!(case.refusal.is_none(), "unexpected merge: {}", label());
+        if case.refusal.is_some() {
+            failures.push(format!("unexpected merge: {}", label()));
+        }
         merged += 1;
         assert!(!root.path().join(a).exists(), "{}", label());
         let after = fs::read_to_string(root.path().join(b)).unwrap();
@@ -120,13 +121,135 @@ fn run_batch(cases: &[Case]) {
         failures.len(),
         started.elapsed()
     );
-    assert!(
-        failures.is_empty(),
-        "{} failures:\n{}",
-        failures.len(),
-        failures.join("\n")
-    );
+    if !failures.is_empty() {
+        eprintln!("{} failures:\n{}", failures.len(), failures.join("\n"));
+    }
     assert!(merged > 0);
+    failures.len()
+}
+
+#[test]
+fn review_header_layout_merges_in_both_entries() {
+    let mut cases = Vec::new();
+    for rename in [false, true] {
+        for ending in 0..4 {
+            cases.push(Case {
+                source: endings("- plain\n", ending),
+                target: endings("\n- title:: TARGET\n \u{c}k:: café 雪\n  - child\n", ending),
+                org: false,
+                rename,
+                refusal: None,
+            });
+        }
+    }
+    assert_eq!(cases.len(), 8);
+    run(cases);
+}
+
+#[test]
+fn generated_headers_merge_or_explain_the_limitation_before_the_check() {
+    let mut cases = Vec::new();
+    for org in [false, true] {
+        for rename in [false, true] {
+            for ending in 0..4 {
+                for (lead, blank) in ["", "\n", " \n", "\u{c}\n", " \n\t\n", "\n \n\u{c}\n"]
+                    .iter()
+                    .enumerate()
+                {
+                    for (variant, indent) in
+                        ["  ", "\t", "\u{c} ", " \u{c}", " \t"].iter().enumerate()
+                    {
+                        let header = if org {
+                            if variant % 2 == 0 {
+                                format!("{blank}#+title: SOURCE\n#+K: café 雪\n{blank}#+K: repeated\n#+alias: One, [[Two Words]], one\n#+aliases: Three\n#+tags: Red, [[Blue Sky]]\n")
+                            } else {
+                                format!("{blank}:PROPERTIES:\n:TITLE: SOURCE\n:K: café 雪\n:ALIAS: One, [[Two Words]], one\n:END:\n{blank}:PROPERTIES:\n:K: repeated\n:ALIASES: Three\n:TAGS: Red, [[Blue Sky]]\n:END:\n")
+                            }
+                        } else if variant % 2 == 0 {
+                            format!("{blank}- title:: SOURCE\n{indent}k:: café 雪\n{indent}k:: repeated\n{indent}alias:: One, [[Two Words]], one\n{indent}aliases:: Three\n{indent}tags:: Red, [[Blue Sky]]\n")
+                        } else {
+                            format!("{blank}title:: SOURCE\nk:: café 雪\n{blank}k:: repeated\nalias:: One, [[Two Words]], one\naliases:: Three\ntags:: Red, [[Blue Sky]]\n")
+                        };
+                        let tail = match (lead + variant) % 3 {
+                            0 => "",
+                            1 if org => "* body\n** child\n",
+                            1 if variant % 2 == 0 => "  - child\n",
+                            1 => "- body\n  - child\n",
+                            _ if org => "body café 雪\n* body\n",
+                            _ if variant % 2 == 0 => "- body café 雪\n",
+                            _ => "body café 雪\n- body\n",
+                        };
+                        let rich = header + tail;
+                        let plain = if org {
+                            "#+S: plain\n* plain\n"
+                        } else {
+                            "s:: plain\n- plain\n"
+                        };
+                        for role in 0..3 {
+                            cases.push(Case {
+                                source: endings(if role == 1 { plain } else { &rich }, ending),
+                                target: endings(
+                                    &if role == 0 {
+                                        plain.to_owned()
+                                    } else {
+                                        rich.replace("SOURCE", "TARGET")
+                                    },
+                                    ending,
+                                ),
+                                org,
+                                rename,
+                                refusal: if !org && variant % 2 == 1 && !blank.is_empty() {
+                                    Some(("BodyLaw", role == 0))
+                                } else if org
+                                    && variant % 2 == 1
+                                    && (role == 2
+                                        || (role == 0
+                                            && [true, false, false, false, true, true][lead]))
+                                {
+                                    Some(("HiddenOccurrence", true))
+                                } else {
+                                    None
+                                },
+                            });
+                        }
+                    }
+                }
+            }
+        }
+    }
+    for rename in [false, true] {
+        for ending in 0..4 {
+            for (lead, blank) in ["", "\n", " \n\u{c}\n", "\u{c}\n \n\t\n"]
+                .iter()
+                .enumerate()
+            {
+                for indent in ["\t", " \u{c}", "\u{c}", "\t \u{c}"] {
+                    let rich = format!(
+                        "{blank}- title:: SOURCE\n{indent}k:: café 雪\n{}",
+                        if lead % 2 == 0 { "  - child\n" } else { "" }
+                    );
+                    for role in 0..3 {
+                        cases.push(Case {
+                            source: endings(if role == 1 { "- plain\n" } else { &rich }, ending),
+                            target: endings(
+                                &if role == 0 {
+                                    "- plain\n".to_owned()
+                                } else {
+                                    rich.replace("SOURCE", "TARGET")
+                                },
+                                ending,
+                            ),
+                            org: false,
+                            rename,
+                            refusal: None,
+                        });
+                    }
+                }
+            }
+        }
+    }
+    assert_eq!(cases.len(), 1824);
+    run(cases);
 }
 
 #[test]

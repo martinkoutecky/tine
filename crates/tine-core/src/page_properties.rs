@@ -152,7 +152,9 @@ pub fn pre_block_parts(pre: &str, is_org: bool) -> (String, Option<std::ops::Ran
     (raw, preamble_range_in(pre, is_org, &regions))
 }
 
-fn preamble_range_in(
+/// [`preamble_content_range`] using the caller's parsed regions. O(pre-block
+/// bytes), without a second parse, allocation or I/O.
+pub fn preamble_range_in(
     pre: &str,
     is_org: bool,
     regions: &crate::block_regions::BlockRegions,

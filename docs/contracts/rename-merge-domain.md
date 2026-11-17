@@ -117,8 +117,20 @@ the marker, or the continuation prefix returned by `doc::continuation_raw`.
 The next root chooses its own offset. The writer compares every placed block's
 raw content, children and order against its native input content slices with
 legal trace substitutions applied. The survivor body, prose and the fixed
-leftover payload are checked too, using the existing assembled-output parse;
-the allocated header's fields remain the independent model check's question.
+leftover payload are checked too, using the existing assembled-output parse.
+Every retained header line keeps its own reader-derived structural prefix;
+blank layout does not take another line's prefix. A childless Markdown header
+becomes a preamble, consuming its structural prefixes and leading layout.
+Joined fields use their input reader's payload coordinates and the destination's
+native header syntax. The writer records allocation's intended logical lines,
+including the united alias tokens, and checks the output reader's header for
+exact payload, field order, normalized keys and native property forms. Any
+unexpected pre-block prose refuses `BodyLaw` naming the survivor. An input whose
+reader reports a field inside its pre-block prose refuses `BodyLaw` naming that
+input: preserving both readings would duplicate original bytes. Header checking
+costs O(header bytes), projects only the header from the existing output parse,
+and retains temporary intended header text until comparison. P2 independently
+checks the final allocated header and body.
 Only layout bytes are consumed, through the existing trace; P2/P3 still check
 the result. Prefixes crossing a rewritten name span and remaining unrealizable
 body placements are explained limitations.

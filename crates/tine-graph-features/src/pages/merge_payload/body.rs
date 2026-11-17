@@ -17,23 +17,7 @@ fn append(
 ) -> Result<(), RealizationFailure> {
     #[cfg(test)]
     super::BODY_BYTES.with(|count| count.set(count.get() + range.len()));
-    for id in writer.interval(file, range)? {
-        if writer.trace.wrappers.contains(&id) {
-            raw.push_str("[[");
-        }
-        raw.push_str(
-            writer
-                .trace
-                .substitution
-                .get(&id)
-                .map(String::as_str)
-                .unwrap_or_else(|| writer.trace.original(id)),
-        );
-        if writer.trace.wrappers.contains(&id) {
-            raw.push_str("]]");
-        }
-    }
-    Ok(())
+    writer.payload(file, range, raw)
 }
 
 /// Input-derived prose and O6's fixed leftover payload, checked by the same
