@@ -51,7 +51,7 @@ pub(super) fn check_payloads(
     if let (Some(range), Some(block)) = (&header.prose, prose) {
         append(writer, file, range.clone(), &mut raw)?;
         let normalized = tine_core::doc::normalize_line_endings(&raw);
-        if normalized.trim_end_matches('\n') != block.raw() || !block.children.is_empty() {
+        if normalized != block.raw() || !block.children.is_empty() {
             return Err(refused());
         }
     }
@@ -62,10 +62,7 @@ pub(super) fn check_payloads(
         }
         for &n in lines {
             raw.push('\n');
-            let start = raw.len();
-            append(writer, file, header.lines[n].content.clone(), &mut raw)?;
-            let end = start + raw[start..].trim_end_matches(['\r', '\n']).len();
-            raw.truncate(end);
+            append(writer, file, header.lines[n].payload.clone(), &mut raw)?;
         }
         if org {
             raw.push_str("\n#+END_QUOTE");

@@ -125,8 +125,14 @@ body placements are explained limitations.
 After an Org survivor's final outline block, its run of line breaks keeps one
 original terminator at the join; the remaining breaks are consumed as layout.
 This preserves the last block's observed content (O6), consuming only
-parser-unreported bytes (P4). A space-filled preamble line is observed prose and keeps its
-spaces when promoted to a block; only empty trailing lines are consumed there.
+parser-unreported bytes (P4). Pre-block prose emission and its content check use
+both endpoints of the input reader's prose range. Markdown's reader excludes
+trailing whitespace-only pre-block lines; Org keeps their spaces and tabs and
+excludes only edge line breaks. Interior whitespace remains content in both
+formats. The original terminator stays as the separator; the remaining excluded
+suffix is consumed as layout. Header classification uses
+the reader's pre-block or first-root text; leftover lines use that reading's
+content coordinates, without terminators or reader-owned continuation prefixes.
 They explain the writer's limitation and a legal next step in the named file:
 align top-level blocks, move or remove the stray Org end-quote line, or rewrite
 the affected alias declaration as plain comma-separated names. They never ask

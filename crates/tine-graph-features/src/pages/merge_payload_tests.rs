@@ -1,6 +1,114 @@
 use super::*;
 
 #[test]
+fn prose_uses_the_readers_content_end_and_excludes_only_layout() {
+    let root = tempfile::tempdir().unwrap();
+    let store = tine_store::Store::open(root.path(), Default::default())
+        .unwrap()
+        .0;
+    for (org, target) in [(false, "prose\n \n- target\n"), (true, "#+K: v\n \n")] {
+        let source = if org { "* source\n" } else { "- source\n" };
+        let ext = if org { "org" } else { "md" };
+        let page = |name, text: &str| {
+            store
+                .page_of(&tine_store::PageId::from(name), text.as_bytes())
+                .unwrap()
+                .doc
+        };
+        let dst = page(format!("pages/target.{ext}"), target);
+        let src = page(format!("pages/source.{ext}"), source);
+        let header = Header::read(&dst, target, org);
+        assert_eq!(
+            &target[header.prose.clone().unwrap()],
+            if org { " " } else { "prose" },
+            "pre={:?}",
+            dst.pre_block
+        );
+        let proposal = propose(
+            &dst,
+            target,
+            &src,
+            source,
+            &Default::default(),
+            &Default::default(),
+            org,
+            store.config().file_name_format,
+        )
+        .unwrap();
+        assert!(proposal
+            .trace
+            .consumed
+            .iter()
+            .all(|&id| proposal.trace.pieces[id].role == Role::Layout));
+        let fmt = if org { Format::Org } else { Format::Md };
+        let names = store.config().file_name_format;
+        let rename = tine_core::cm_check::Rename::new("", "", None, names);
+        let expected = tine_core::cm_check::expected(
+            &rename,
+            fmt,
+            tine_core::cm_check::Expect::Survivor {
+                source: &tine_core::cm_check::observe(source, fmt, names),
+                target: &tine_core::cm_check::observe(target, fmt, names),
+            },
+        );
+        assert!(
+            tine_core::cm_check::matches(
+                &expected,
+                &tine_core::cm_check::observe(&proposal.text, fmt, names),
+                true
+            ),
+            "{:?}",
+            proposal.text
+        );
+    }
+}
+
+#[test]
+fn prose_content_comparison_visits_each_observed_byte_once() {
+    let root = tempfile::tempdir().unwrap();
+    let store = tine_store::Store::open(root.path(), Default::default())
+        .unwrap()
+        .0;
+    for lines in [64, 1024] {
+        for org in [false, true] {
+            let target = format!(
+                "{}\n \n{}\n",
+                "prose\n".repeat(lines).trim_end_matches('\n'),
+                if org { "* target" } else { "- target" }
+            );
+            let source = if org { "* source\n" } else { "- source\n" };
+            let ext = if org { "org" } else { "md" };
+            let page = |name, text: &str| {
+                store
+                    .page_of(&tine_store::PageId::from(name), text.as_bytes())
+                    .unwrap()
+                    .doc
+            };
+            let dst = page(format!("pages/target.{ext}"), &target);
+            let src = page(format!("pages/source.{ext}"), source);
+            let prose =
+                tine_core::page_properties::preamble_block(dst.pre_block.as_deref().unwrap(), org)
+                    .unwrap();
+            BODY_BYTES.with(|count| count.set(0));
+            propose(
+                &dst,
+                &target,
+                &src,
+                source,
+                &Default::default(),
+                &Default::default(),
+                org,
+                store.config().file_name_format,
+            )
+            .unwrap();
+            let expected = prose.raw().len() + "target".len() + "source".len();
+            assert_eq!(BODY_BYTES.with(|count| count.get()), expected);
+            eprintln!("{lines} prose lines, org={org}: {expected} content bytes compared once");
+        }
+    }
+}
+
+#[test]
 fn org_final_breaks_are_only_consumed_join_layout() {
     let root = tempfile::tempdir().unwrap();
     let store = tine_store::Store::open(root.path(), Default::default())

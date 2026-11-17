@@ -141,6 +141,8 @@ fn drawer_step() {
 struct Line {
     range: Range<usize>,
     content: Range<usize>,
+    /// The input reader's line, without its terminator or structural prefix.
+    payload: Range<usize>,
     /// The key as the reader compares keys, after the name map (O6 compares
     /// keys after O1/O7), and the value.
     property: Option<(String, String)>,
@@ -192,40 +194,50 @@ impl Header {
         } else {
             0
         };
-        let mut physical = 0;
-        let mut logical = String::new();
+        let observed = if first_root {
+            page.blocks[0].raw.as_str()
+        } else {
+            page.pre_block.as_deref().unwrap_or("")
+        };
+        let regions = tine_core::block_regions::parse_document(observed, org);
+        let properties: HashMap<_, _> = regions.page_properties().map(|p| (p.line.0, p)).collect();
+        let boxes = regions.property_drawer_boundaries(observed);
+        debug_assert!(boxes.windows(2).all(|w| w[0].1 < w[1].0));
+        let mut observed_lines = (!observed.is_empty())
+            .then(|| observed.split('\n'))
+            .into_iter()
+            .flatten();
+        let (mut physical, mut logical) = (0, 0);
         let mut lines = Vec::new();
-        // Physical lines (`doc::physical_lines`); the classifier reads them in
-        // the same-length view where a lone CR is LF, as the reader does.
-        let view = tine_core::org::lone_cr_to_lf(&text[..end]);
+        // Classify the reader's actual header; physical coordinates only map
+        // its lines back to original bytes. Unreported lines are layout.
         for raw in tine_core::doc::physical_lines(&text[..end]) {
             let skip = if first_root && blocks.first().is_some_and(|b| b.0.start == physical) {
                 blocks.first().map_or(0, |b| b.1 - physical)
             } else if first_root && blocks.first().is_some_and(|b| physical > b.0.start) {
-                // This is layout mapping, not property recognition.
-                raw.bytes()
-                    .take(indent)
-                    .take_while(|c| matches!(c, b' ' | b'\t'))
-                    .count()
+                raw.len() - tine_core::doc::continuation_raw(raw, indent).len()
             } else {
                 0
             };
-            let start = logical.len();
-            logical.push_str(&view[physical + skip..physical + raw.len()]);
+            let observed_line =
+                if first_root && blocks.first().is_some_and(|b| physical < b.0.start) {
+                    None
+                } else {
+                    observed_lines.next()
+                };
+            let at = observed_line.map(|line| {
+                let at = logical;
+                logical += line.len() + 1;
+                at
+            });
             lines.push((
                 physical..physical + raw.len(),
                 physical + skip..physical + raw.len(),
-                start,
+                physical + skip..physical + skip + observed_line.map_or(0, str::len),
+                at,
             ));
             physical += raw.len();
         }
-        // The page's properties are the parser's answer, the same one the
-        // reader and the final field check ask (`page_property_lines`):
-        // Markdown `key::` lines, Org `#+KEY:` directives and head drawers.
-        let regions = tine_core::block_regions::parse_document(&logical, org);
-        let properties: HashMap<_, _> = regions.page_properties().map(|p| (p.line.0, p)).collect();
-        let boxes = regions.property_drawer_boundaries(&logical);
-        debug_assert!(boxes.windows(2).all(|w| w[0].1 < w[1].0));
         // Lines and drawers both run in source order: one forward cursor
         // assigns each line its drawer, O(lines + drawers).
         let mut cursor = 0;
@@ -234,25 +246,27 @@ impl Header {
             let prose = prose.map(|r| {
                 // Both models are LF-canonical: each CRLF before the prose
                 // is one byte the parser's offset does not count.
-                let mut extra = 0;
+                let (mut start, mut finish, mut extra) = (r.start, r.end, 0);
                 for (at, _) in text[..end].match_indices("\r\n") {
-                    if at - extra >= r.start {
+                    if at - extra >= r.end {
                         break;
                     }
+                    start += usize::from(at - extra < r.start);
+                    finish += 1;
                     extra += 1;
                 }
-                r.start + extra..end
+                start..finish
             });
             (!properties.is_empty(), prose)
         });
         let mut lines: Vec<Line> = lines
             .into_iter()
-            .filter(|(range, _, _)| prose.as_ref().is_none_or(|p| range.start < p.start))
-            .map(|(range, content, at)| {
-                let found = properties.get(&at);
+            .filter(|(range, _, _, _)| prose.as_ref().is_none_or(|p| range.start < p.start))
+            .map(|(range, content, payload, at)| {
+                let found = at.and_then(|at| properties.get(&at));
                 // Parser offsets are in the logical line; map them to bytes.
                 let bytes = |r: &tine_core::block_regions::Range| {
-                    content.start + r.0 - at..content.start + r.1 - at
+                    content.start + r.0 - at.unwrap()..content.start + r.1 - at.unwrap()
                 };
                 let alias = found
                     .filter(|p| tine_core::page_header::is_alias_key(&p.key))
@@ -263,18 +277,22 @@ impl Header {
                         .map(|p| (tine_core::doc::property_key_norm(&p.key), p.value.clone())),
                     key: found.map_or(0..0, |p| bytes(&p.key_range)),
                     drawer: {
-                        while boxes.get(cursor).is_some_and(|&(_, close)| close < at) {
+                        while boxes
+                            .get(cursor)
+                            .is_some_and(|&(_, close)| Some(close) < at)
+                        {
                             drawer_step();
                             cursor += 1;
                         }
                         drawer_step();
                         boxes
                             .get(cursor)
-                            .filter(|&&(open, _)| open <= at)
+                            .filter(|&&(open, _)| at.is_some_and(|at| open <= at))
                             .map(|_| cursor)
                     },
                     range,
                     content,
+                    payload,
                     alias,
                 }
             })
@@ -315,17 +333,22 @@ impl Header {
     fn cuts(&self, text: &str) -> Vec<usize> {
         let mut cuts = vec![self.end];
         if let Some(prose) = &self.prose {
-            cuts.push(prose.start);
-            cuts.extend(tine_core::doc::physical_lines(&text[prose.clone()]).scan(
-                prose.start,
-                |at, l| {
-                    *at += l.len();
-                    Some(*at)
-                },
-            ));
+            cuts.extend([prose.start, prose.end]);
+            cuts.extend(
+                tine_core::doc::physical_lines(&text[prose.start..self.end]).scan(
+                    prose.start,
+                    |at, l| {
+                        *at += l.len();
+                        Some(*at)
+                    },
+                ),
+            );
         }
-        for l in &self.lines {
+        for (n, l) in self.lines.iter().enumerate() {
             cuts.extend([l.range.start, l.content.start, l.content.end]);
+            if !self.delimiter(n) {
+                cuts.push(l.payload.end);
+            }
             if let Some(a) = &l.alias {
                 let raw = &text[l.content.clone()];
                 cuts.extend([
@@ -421,36 +444,36 @@ impl Writer {
             .interval(file, range)
             .map_err(|error| RealizationError::Trace(error).at(file.into()))
     }
-    /// The pre-block prose as its block. The empty lines that end the range
-    /// separate the prose from the first block; they are not the block's
-    /// text (the outline's `preamble_block` and the model check read the
-    /// prose without them, manager ruling Q1), so they are layout.
+    /// Promote exactly the input reader's prose range. Its excluded suffix is
+    /// layout; no writer-owned blank-line rule determines content.
     fn prose(
         &mut self,
         file: usize,
         range: Range<usize>,
+        header_end: usize,
         org: bool,
     ) -> Result<(), RealizationFailure> {
         self.insert(if org { "* " } else { "- " });
         let mut at = range.start;
-        let lines: Vec<_> = tine_core::doc::physical_lines(&self.trace.inputs[file][range.clone()])
-            .map(|line| (line.len(), line.trim_end_matches(['\r', '\n']).is_empty()))
-            .collect();
-        let content = lines
-            .iter()
-            .rposition(|&(_, blank)| !blank)
-            .map_or(0, |n| n + 1);
-        for (n, &(len, _)) in lines.iter().enumerate() {
-            if n >= content {
-                self.layout(file, at..at + len)?;
-            } else {
-                self.original(file, at..at + len)?;
-                if n + 1 < content && !org {
-                    self.insert("  ");
-                }
-            }
+        let lengths: Vec<_> =
+            tine_core::doc::physical_lines(&self.trace.inputs[file][range.clone()])
+                .map(str::len)
+                .collect();
+        for len in lengths {
+            self.original(file, at..at + len)?;
             at += len;
+            if at < range.end && !org {
+                self.insert("  ");
+            }
         }
+        // Keep the content's original terminator as its separator. Only the
+        // remaining reader-excluded suffix needs consumption as layout.
+        let terminator =
+            tine_core::doc::physical_lines(&self.trace.inputs[file][range.end..header_end])
+                .next()
+                .map_or(0, |line| tine_core::doc::line_terminator(line).len());
+        self.original(file, range.end..range.end + terminator)?;
+        self.layout(file, range.end + terminator..header_end)?;
         self.newline();
         Ok(())
     }
@@ -964,7 +987,7 @@ pub fn propose<'f>(
         w.original(0, line.range.clone())?;
     }
     if let Some(prose) = &headers[0].prose {
-        w.prose(0, prose.clone(), org)?;
+        w.prose(0, prose.clone(), headers[0].end, org)?;
     }
     w.original(0, headers[0].end..target_end)?;
     w.newline();
@@ -996,7 +1019,7 @@ pub fn propose<'f>(
     }
     let leftover_end = w.text.len();
     if let Some(prose) = &headers[1].prose {
-        w.prose(1, prose.clone(), org)?;
+        w.prose(1, prose.clone(), headers[1].end, org)?;
     }
     let mut at = headers[1].end;
     for prefix in &headers[1].body.prefixes {

@@ -56,6 +56,7 @@ fn rename_merge_and_journal_rename_proposals_are_documented_in_the_bundled_guide
         "An indented source can merge while keeping its block depths",
         "Different indentation on later blocks keeps their continuation text and fenced code intact",
         "An Org page ending in blank lines can receive a merge, including a page containing only a header",
+        "Opening prose with spaces or tabs on trailing lines can merge too",
         "resolve the conflict before merging; nothing is merged",
         "**Save it and rename** saves that file normally",
         "Each further file needs another click",

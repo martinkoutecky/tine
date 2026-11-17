@@ -11,6 +11,14 @@ struct Case {
 }
 
 fn run(cases: Vec<Case>) {
+    // Each transaction needs only its pair. Bound the fixture graph so the
+    // matrix measures the writer rather than repeatedly indexing other cases.
+    for batch in cases.chunks(64) {
+        run_batch(batch);
+    }
+}
+
+fn run_batch(cases: &[Case]) {
     let _guard = crate::integration_lock();
     let root = tempfile::tempdir().unwrap();
     fs::create_dir(root.path().join("pages")).unwrap();
@@ -145,6 +153,58 @@ fn review_sources_merge_with_code_intact_in_both_entries() {
 }
 
 #[test]
+fn review_prose_separators_merge_in_both_entries() {
+    let mut cases = Vec::new();
+    for rename in [false, true] {
+        for ending in 0..4 {
+            for survivor in [false, true] {
+                for (separator, following) in [
+                    (" ", "- target\n"),
+                    ("\t", "- target\n"),
+                    (" ", ""),
+                    ("\t", ""),
+                ] {
+                    let prose = endings(&format!("prose\n{separator}\n{following}"), ending);
+                    let plain = endings("- source\n", ending);
+                    let (source, target) = if survivor {
+                        (plain, prose)
+                    } else {
+                        (prose, plain)
+                    };
+                    cases.push(Case {
+                        source,
+                        target,
+                        org: false,
+                        rename,
+                        refusal: None,
+                    });
+                }
+            }
+        }
+    }
+    assert_eq!(cases.len(), 64);
+    run(cases);
+}
+
+fn endings(text: &str, pattern: usize) -> String {
+    let mut result = String::new();
+    for (n, line) in text.split_inclusive('\n').enumerate() {
+        if let Some(content) = line.strip_suffix('\n') {
+            result.push_str(content);
+            result.push_str(match pattern {
+                0 => "\n",
+                1 => "\r\n",
+                2 => "\r",
+                _ => ["\r\n", "\r", "\n"][n % 3],
+            });
+        } else {
+            result.push_str(line);
+        }
+    }
+    result
+}
+
+#[test]
 fn generated_native_bodies_merge_or_explain_the_limitation_before_the_check() {
     let mut cases = Vec::new();
     let indents = [
@@ -274,7 +334,102 @@ fn generated_native_bodies_merge_or_explain_the_limitation_before_the_check() {
             });
         }
     }
-    assert_eq!(cases.len(), 294);
+    for org in [false, true] {
+        for rename in [false, true] {
+            for ending in 0..4 {
+                for role in 0..3 {
+                    for (n, pattern) in [
+                        "prose [[SOURCE]]\n \n- block\n",
+                        "prose [[SOURCE]]\n\t\n",
+                        "prose [[SOURCE]]\n \t \n\n- block\n",
+                        "prose [[SOURCE]]\n \n\t\n \t\n",
+                        "prose [[SOURCE]]\n \ninside\n\t\n- block\n",
+                        "prose [[SOURCE]]",
+                    ]
+                    .iter()
+                    .enumerate()
+                    {
+                        let mut rich = if org {
+                            pattern.replace("- block", "* block")
+                        } else {
+                            (*pattern).to_owned()
+                        };
+                        if n % 2 == 1 {
+                            rich =
+                                format!("{}\n\n{rich}", if org { "#+K: café" } else { "k:: café" });
+                        }
+                        let plain = if org { "* plain\n" } else { "- plain\n" };
+                        cases.push(Case {
+                            source: endings(if role == 1 { plain } else { &rich }, ending),
+                            target: endings(if role == 0 { plain } else { &rich }, ending),
+                            org,
+                            rename,
+                            refusal: None,
+                        });
+                    }
+                }
+                // Reader-owned header lines feed the leftover too, including
+                // first-root continuation layout and canonical line endings.
+                for (source, target) in [
+                    (
+                        "- title:: SOURCE\n \u{c}k:: source\n  - child\n",
+                        "k:: target\n- target\n",
+                    ),
+                    (
+                        "k:: source\nk:: repeated\nprose\n \n",
+                        "k:: target\n- target\n",
+                    ),
+                ] {
+                    let render = |text: &str| {
+                        if org {
+                            text.replace(
+                                "- title:: SOURCE\n \u{c}k:: source",
+                                "#+title: SOURCE\n#+K: source",
+                            )
+                            .replace("k:: source", "#+K: source")
+                            .replace("k:: repeated", "#+K: repeated")
+                            .replace("k:: target", "#+K: target")
+                            .replace("  - child", "* child")
+                            .replace("- target", "* target")
+                        } else {
+                            text.into()
+                        }
+                    };
+                    for survivor in [false, true] {
+                        let (source, target) = if survivor {
+                            (render(target), render(source).replace("SOURCE", "TARGET"))
+                        } else {
+                            (render(source), render(target))
+                        };
+                        cases.push(Case {
+                            source: endings(&source, ending),
+                            target: endings(&target, ending),
+                            org,
+                            rename,
+                            refusal: None,
+                        });
+                    }
+                }
+                if org {
+                    cases.push(Case {
+                        source: endings("#+K: v\n \n", ending),
+                        target: endings("* target\n", ending),
+                        org,
+                        rename,
+                        refusal: None,
+                    });
+                    cases.push(Case {
+                        source: endings("* source\n", ending),
+                        target: endings("#+K: v\n \n", ending),
+                        org,
+                        rename,
+                        refusal: None,
+                    });
+                }
+            }
+        }
+    }
+    assert_eq!(cases.len(), 662);
     run(cases);
 }
 
