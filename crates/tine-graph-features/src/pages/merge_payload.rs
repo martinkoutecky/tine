@@ -421,7 +421,7 @@ impl Writer {
             .interval(file, range)
             .map_err(|error| RealizationError::Trace(error).at(file.into()))
     }
-    /// The pre-block prose as its block. The blank lines that end the range
+    /// The pre-block prose as its block. The empty lines that end the range
     /// separate the prose from the first block; they are not the block's
     /// text (the outline's `preamble_block` and the model check read the
     /// prose without them, manager ruling Q1), so they are layout.
@@ -434,7 +434,7 @@ impl Writer {
         self.insert(if org { "* " } else { "- " });
         let mut at = range.start;
         let lines: Vec<_> = tine_core::doc::physical_lines(&self.trace.inputs[file][range.clone()])
-            .map(|line| (line.len(), line.trim().is_empty()))
+            .map(|line| (line.len(), line.trim_end_matches(['\r', '\n']).is_empty()))
             .collect();
         let content = lines
             .iter()
@@ -628,6 +628,18 @@ pub fn propose<'f>(
     // A childless first-root header would promote on the next ordinary save:
     // realize it as a native preamble now (P4: header position is free).
     let normalize_target = !org && headers[0].first_root && target.blocks[0].children.is_empty();
+    // Org omits all final line breaks from its last block's content. Keep
+    // one original terminator at the join and consume only the remaining
+    // unobserved breaks as layout (O6/P4).
+    let target_end = if org {
+        let end = target_text.trim_end_matches(['\r', '\n']).len();
+        let ending = tine_core::doc::physical_lines(&target_text[end..])
+            .next()
+            .map_or(0, str::len);
+        (end + ending).max(headers[0].end)
+    } else {
+        target_text.len()
+    };
     let mut trace = TextTrace::default();
     let mut unrealized = Vec::new();
     let mut rewritten = HashSet::new();
@@ -681,6 +693,9 @@ pub fn propose<'f>(
             let start = trace.pieces.len();
             let mut cuts = headers[file].cuts(text);
             cuts.extend(headers[file].body.cuts());
+            if file == 0 {
+                cuts.push(target_end);
+            }
             trace.add_input(text, &edits, &cuts)?;
             let wrappers: HashSet<_> = proposal
                 .trace
@@ -951,7 +966,7 @@ pub fn propose<'f>(
     if let Some(prose) = &headers[0].prose {
         w.prose(0, prose.clone(), org)?;
     }
-    w.original(0, headers[0].end..target_text.len())?;
+    w.original(0, headers[0].end..target_end)?;
     w.newline();
     // O6's leftover block, top level after the survivor's blocks: an empty
     // first line (Org: a headline with an empty title), then the leftover
@@ -990,6 +1005,7 @@ pub fn propose<'f>(
         at = prefix.end;
     }
     w.original(1, at..source_text.len())?;
+    w.layout(0, target_end..target_text.len())?;
     w.trace.check(&w.text, &w.trace.substitution)?;
     if w.fused {
         // In scope: a mixed-ending page (external editors, sync). No

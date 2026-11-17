@@ -122,6 +122,11 @@ the allocated header's fields remain the independent model check's question.
 Only layout bytes are consumed, through the existing trace; P2/P3 still check
 the result. Prefixes crossing a rewritten name span and remaining unrealizable
 body placements are explained limitations.
+After an Org survivor's final outline block, its run of line breaks keeps one
+original terminator at the join; the remaining breaks are consumed as layout.
+This preserves the last block's observed content (O6), consuming only
+parser-unreported bytes (P4). A space-filled preamble line is observed prose and keeps its
+spaces when promoted to a block; only empty trailing lines are consumed there.
 They explain the writer's limitation and a legal next step in the named file:
 align top-level blocks, move or remove the stray Org end-quote line, or rewrite
 the affected alias declaration as plain comma-separated names. They never ask

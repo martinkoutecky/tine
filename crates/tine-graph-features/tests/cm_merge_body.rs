@@ -7,7 +7,7 @@ struct Case {
     target: String,
     org: bool,
     rename: bool,
-    required: bool,
+    refusal: Option<(&'static str, bool)>,
 }
 
 fn run(cases: Vec<Case>) {
@@ -53,14 +53,17 @@ fn run(cases: Vec<Case>) {
             assert_eq!(fs::read_to_string(root.path().join(a)).unwrap(), *src);
             assert_eq!(fs::read_to_string(root.path().join(b)).unwrap(), *dst);
             match pages::MergeRefused::of(&error) {
-                Some(reason) if reason.check_refused().is_none() && !case.required => {
-                    assert!(reason.file == *a || reason.file == *b, "{reason:?}");
+                Some(reason) if reason.check_refused().is_none() && case.refusal.is_some() => {
+                    let (kind, source) = case.refusal.unwrap();
+                    assert_eq!(format!("{:?}", reason.reason), kind, "{}", label());
+                    assert_eq!(reason.file, *if source { a } else { b }, "{}", label());
                     *refused.entry(format!("{:?}", reason.reason)).or_insert(0) += 1;
                 }
                 _ => failures.push(format!("{}: {error}", label())),
             }
             continue;
         }
+        assert!(case.refusal.is_none(), "unexpected merge: {}", label());
         merged += 1;
         assert!(!root.path().join(a).exists(), "{}", label());
         let after = fs::read_to_string(root.path().join(b)).unwrap();
@@ -132,11 +135,12 @@ fn review_sources_merge_with_code_intact_in_both_entries() {
                     target: format!("- target{eol}"),
                     org: false,
                     rename,
-                    required: true,
+                    refusal: None,
                 });
             }
         }
     }
+    assert_eq!(cases.len(), 8);
     run(cases);
 }
 
@@ -144,7 +148,7 @@ fn review_sources_merge_with_code_intact_in_both_entries() {
 fn generated_native_bodies_merge_or_explain_the_limitation_before_the_check() {
     let mut cases = Vec::new();
     let indents = [
-        "", " ", "  ", "   ", "    ", "     ", "      ", "\t", " \t", "\t ",
+        "", " ", "  ", "   ", "    ", "     ", "      ", "\t", " \t", "\t ", "\x0c",
     ];
     for (i, first) in indents.iter().enumerate() {
         for (j, later) in indents.iter().enumerate() {
@@ -183,7 +187,7 @@ fn generated_native_bodies_merge_or_explain_the_limitation_before_the_check() {
                     target: ending(target),
                     org: false,
                     rename: (i + j) % 7 == 0,
-                    required: false,
+                    refusal: None,
                 });
             }
         }
@@ -214,7 +218,7 @@ fn generated_native_bodies_merge_or_explain_the_limitation_before_the_check() {
                 target,
                 org: false,
                 rename: n % 2 == 0,
-                required: false,
+                refusal: None,
             });
         }
         for (n, head) in [
@@ -250,7 +254,11 @@ fn generated_native_bodies_merge_or_explain_the_limitation_before_the_check() {
                     target: ending(target),
                     org: true,
                     rename: n % 2 == 0,
-                    required: false,
+                    refusal: match (survivor, n) {
+                        (false, 1) => Some(("HiddenOccurrence", true)),
+                        (false, 3) => Some(("DirectiveEscape", true)),
+                        _ => None,
+                    },
                 });
             }
         }
@@ -262,9 +270,73 @@ fn generated_native_bodies_merge_or_explain_the_limitation_before_the_check() {
                 target: format!("* target{eol}{eol}"),
                 org: true,
                 rename,
-                required: false,
+                refusal: None,
             });
         }
     }
+    assert_eq!(cases.len(), 294);
+    run(cases);
+}
+
+#[test]
+fn trailing_blank_lines_merge_in_both_entries() {
+    let mut cases = Vec::new();
+    for rename in [false, true] {
+        for eol in ["\n", "\r\n"] {
+            for target in [
+                "* target",
+                "* target\n body",
+                "* target\n:PROPERTIES:\n:K: v\n:END:",
+                "#+K: target",
+                ":PROPERTIES:\n:K: target\n:END:",
+                "#+K: target\n* target\n** child",
+            ] {
+                for tail in ["\n", "\n\n\n", "\n \n", "\n \n\n"] {
+                    for source in ["* source\n", "* source\n\n"] {
+                        cases.push(Case {
+                            source: source.replace('\n', eol),
+                            target: format!("{target}{tail}").replace('\n', eol),
+                            org: true,
+                            rename,
+                            refusal: None,
+                        });
+                    }
+                }
+            }
+            for target in ["- target\n\n", "- target\n \n"] {
+                for source in ["- source\n", "- source\n\n"] {
+                    cases.push(Case {
+                        source: source.replace('\n', eol),
+                        target: target.replace('\n', eol),
+                        org: false,
+                        rename,
+                        refusal: None,
+                    });
+                }
+            }
+            cases.push(Case {
+                source: "#+S: source\n \n\n".replace('\n', eol),
+                target: "* target\n\n".replace('\n', eol),
+                org: true,
+                rename,
+                refusal: None,
+            });
+            cases.push(Case {
+                source: "* source".to_owned(),
+                target: "* target\n\n".replace('\n', eol),
+                org: true,
+                rename,
+                refusal: None,
+            });
+            cases.push(Case {
+                source: "* source\r".to_owned(),
+                target: "* target\n\n".replace('\n', eol),
+                org: true,
+                rename,
+                refusal: None,
+            });
+        }
+    }
+    assert_eq!(cases.len(), 220);
     run(cases);
 }

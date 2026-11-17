@@ -1,6 +1,55 @@
 use super::*;
 
 #[test]
+fn org_final_breaks_are_only_consumed_join_layout() {
+    let root = tempfile::tempdir().unwrap();
+    let store = tine_store::Store::open(root.path(), Default::default())
+        .unwrap()
+        .0;
+    for (eol, source_eol) in [("\n", "\n"), ("\r\n", "\r\n"), ("\r", "\r"), ("\n", "\r")] {
+        let target = format!("* target{eol}{eol}{eol}");
+        let source = format!("* source{source_eol}{source_eol}");
+        let page = |name, text: &str| {
+            store
+                .page_of(&tine_store::PageId::from(name), text.as_bytes())
+                .unwrap()
+                .doc
+        };
+        let proposal = propose(
+            &page("pages/target.org", &target),
+            &target,
+            &page("pages/source.org", &source),
+            &source,
+            &Default::default(),
+            &Default::default(),
+            true,
+            store.config().file_name_format,
+        )
+        .unwrap();
+        assert_eq!(proposal.text, format!("* target{eol}{source}"));
+        assert!(proposal
+            .trace
+            .output
+            .iter()
+            .all(|p| matches!(p, Placement::Original(_))));
+        let consumed: String = proposal
+            .trace
+            .consumed
+            .iter()
+            .map(|&id| {
+                assert_eq!(proposal.trace.pieces[id].role, Role::Layout);
+                proposal.trace.original(id)
+            })
+            .collect();
+        assert_eq!(consumed, eol.repeat(2));
+        proposal
+            .trace
+            .check(&proposal.text, &proposal.trace.substitution)
+            .unwrap();
+    }
+}
+
+#[test]
 fn source_indentation_work_is_one_visit_per_line_and_bounded_by_merge_work() {
     let root = tempfile::tempdir().unwrap();
     let store = tine_store::Store::open(root.path(), Default::default())
