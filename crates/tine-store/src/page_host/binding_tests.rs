@@ -680,6 +680,104 @@ fn editor_move_after_swapping_repeated_parents_keeps_the_other_subtree() {
     );
 }
 
+/// A new leaf must not take the old parent away from its surviving children.
+#[test]
+fn editor_insert_and_edit_after_swapping_keeps_existing_child_layout() {
+    let mut failures = Vec::new();
+    let mut cases = 0;
+    for unit in ["\t", "  ", "\x0c", " \t"] {
+        for newline in ["\n", "\r\n", "\r"] {
+            for edit_parent in [true, false] {
+                for same_text in [true, false] {
+                    for before in [true, false] {
+                        let first =
+                            format!("- dup\n{}- x\n{}- a\n", unit.repeat(2), unit.repeat(2));
+                        let second =
+                            format!("- dup\n{}- x\n{}- b\n", unit.repeat(3), unit.repeat(3));
+                        let source = format!("{first}{second}- target\n").replace('\n', newline);
+                        let live = Live::new(&[("pages/a.md", &source)]);
+                        let (key, page) = live.open("pages/a.md");
+                        let MailText::Page { mut dto } = page.text else {
+                            panic!("open DTO")
+                        };
+                        dto.blocks.swap(0, 1);
+                        let id = live.id();
+                        live.host
+                            .submit(
+                                live.host.session(),
+                                id,
+                                &key,
+                                &dto,
+                                page.version,
+                                None,
+                                &[EditKind::MoveBlocks],
+                            )
+                            .unwrap();
+                        live.answer(&key, id);
+                        live.host.flush_input(&[PageId::from(key.clone())]).unwrap();
+                        assert_eq!(
+                            live.disk(&key),
+                            format!("{second}{first}- target\n").replace('\n', newline)
+                        );
+                        let (_, page) = live.open(&key);
+                        let MailText::Page { mut dto } = page.text else {
+                            panic!("reopen DTO")
+                        };
+                        if edit_parent {
+                            dto.blocks[0].raw.push('!');
+                        } else {
+                            dto.blocks[0].children[1].raw.push('!');
+                        }
+                        let leaf_text = if same_text { "dup" } else { "inserted" };
+                        let mut leaf = dto.blocks[2].clone();
+                        leaf.id = "new-leaf".into();
+                        leaf.raw = leaf_text.into();
+                        dto.blocks.insert(usize::from(!before), leaf);
+                        let id = live.id();
+                        live.host
+                            .submit(
+                                live.host.session(),
+                                id,
+                                &key,
+                                &dto,
+                                page.version,
+                                None,
+                                &[EditKind::SaveBlock],
+                            )
+                            .unwrap();
+                        live.answer(&key, id);
+                        live.host.flush_input(&[PageId::from(key.clone())]).unwrap();
+                        let edited = if edit_parent {
+                            second.replacen("dup", "dup!", 1)
+                        } else {
+                            second.replace("- b\n", "- b!\n")
+                        };
+                        let leaf = format!("- {leaf_text}\n");
+                        let expected = if before {
+                            format!("{leaf}{edited}{first}- target\n")
+                        } else {
+                            format!("{edited}{leaf}{first}- target\n")
+                        }
+                        .replace('\n', newline);
+                        let written = live.disk(&key);
+                        cases += 1;
+                        if written != expected {
+                            failures.push(format!("{unit:?} {newline:?} parent={edit_parent} same={same_text} before={before}: {written:?}"));
+                        }
+                    }
+                }
+            }
+        }
+    }
+    assert_eq!(cases, 96);
+    assert!(
+        failures.is_empty(),
+        "{} of {cases} failed:\n{}",
+        failures.len(),
+        failures.join("\n")
+    );
+}
+
 /// Q-P2b-3 (GH #538): the save-failure notice names the failed platform
 /// step and its OS error, and a later published save clears both.
 #[cfg(unix)]

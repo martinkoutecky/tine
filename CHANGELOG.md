@@ -10,7 +10,7 @@ The format follows [Keep a Changelog](https://keepachangelog.com/); versions use
 
 ### Fixed
 
-- After swapping repeated parent blocks and reopening the page, moving one parent keeps the other parent's child indentation unchanged (#960 follow-up).
+- After swapping repeated parent blocks and reopening the page, moving one parent keeps the other subtree's indentation; inserting a leaf while editing a parent or child also preserves untouched children's indentation (#960 follow-up).
 
 ## [0.10.0-beta.1] - 2026-11-16
 

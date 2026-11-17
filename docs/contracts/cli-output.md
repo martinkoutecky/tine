@@ -440,7 +440,8 @@ or is killed while its write stands in line does not cancel it: the write can la
   blocks repeat their text: file lines are attributed to blocks by block identity, not text. Where Tine
   cannot tell which earlier block a block is (after a save in the same session reordered same-shaped
   subtrees), that block may keep its previous Markdown indentation instead. Ambiguous text matching
-  keeps a repeated child's physical lines within the matching parent subtree.
+  keeps a repeated child's physical lines within the matching parent subtree, including when a parent or
+  child is edited while a new sibling leaf is inserted.
   A move to another page is refused `cross-page` in this version.
 - **`--run RUN`** (optional, every write; or `TINE_RUN`): commit the write to the graph's git repository as
   part of a run (see *Runs*). Checked before the write: a graph with no usable repository is refused `git` and

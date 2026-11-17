@@ -386,9 +386,9 @@ struct Matches {
 /// the old blocks no identity kept: equal raw by an LCS over the changed middle, unpaired blocks by
 /// position inside each gap between matches (a changed block), then equal raw
 /// anywhere (a moved block). Where old identities are ambiguous, pair whole
-/// subtrees before equal parent text, then match children within the paired
-/// parents. A text match is never identity, so it keeps its old lines and
-/// prefix but does not carry a parent's
+/// subtrees and surviving child context before equal parent text, then match
+/// children within the paired parents. A text match is never identity, so it
+/// keeps its old lines and prefix but does not carry a parent's
 /// re-indentation ([`Emitter::preferred_prefix`]). O(old + new bytes and blocks)
 /// plus the capped LCS.
 fn match_blocks(olds: &[OldBlock], news: &[&DocBlock]) -> Matches {
@@ -464,6 +464,40 @@ fn match_blocks(olds: &[OldBlock], news: &[&DocBlock]) -> Matches {
                     }
                 }
             }
+            // Parent ownership precedes line matching: an inserted leaf must
+            // not claim a changed parent's line and strand its old children.
+            // A surviving child class is evidence only when all its old
+            // occurrences in the remaining scope belong to the same parent.
+            let mut by_child: HashMap<usize, Option<usize>> = HashMap::new();
+            for &o in old_group.iter().filter(|&&o| !used[o]) {
+                for &child in &old_groups[o + 1] {
+                    by_child
+                        .entry(old_tags[child])
+                        .and_modify(|parent| {
+                            if *parent != Some(o) {
+                                *parent = None;
+                            }
+                        })
+                        .or_insert(Some(o));
+                }
+            }
+            for &j in &new_group {
+                if matched.known[j] || matched.keep[j].is_some() {
+                    continue;
+                }
+                let mut candidates = new_groups[j + 1]
+                    .iter()
+                    .filter_map(|child| by_child.get(&new_tags[*child]).copied().flatten())
+                    .filter(|&o| !used[o]);
+                if let Some(o) = candidates.next().filter(|o| candidates.all(|c| c == *o)) {
+                    if olds[o].block.raw() == news[j].raw() {
+                        matched.keep[j] = Some(o);
+                    } else {
+                        matched.hint[j] = Some(o);
+                    }
+                    used[o] = true;
+                }
+            }
             match_text(
                 olds,
                 news,
@@ -513,7 +547,7 @@ fn match_text(
     let b: Vec<usize> = new_group
         .iter()
         .copied()
-        .filter(|&j| !known[j] && keep[j].is_none())
+        .filter(|&j| !known[j] && keep[j].is_none() && hint[j].is_none())
         .collect();
     if b.is_empty() {
         return;
@@ -568,7 +602,7 @@ fn match_text(
         .for_each(|o| {
             free.entry(olds[o].block.raw()).or_default().push_back(o);
         });
-    for &j in new_group {
+    for &j in &b {
         if keep[j].is_none() && !known[j] {
             keep[j] = free.get_mut(news[j].raw()).and_then(VecDeque::pop_front);
             if let Some(o) = keep[j] {
@@ -911,6 +945,103 @@ impl Emitter<'_> {
                 (doc::continuation_raw(line, indent) == b[j]).then_some((j, start + k))
             })
             .collect()
+    }
+}
+
+#[cfg(test)]
+mod ambiguous_parent_tests {
+    use super::*;
+
+    #[test]
+    fn inserted_leaves_do_not_take_surviving_child_groups() {
+        let mut failures = Vec::new();
+        let mut cases = 0;
+        for header in [
+            "- dup",
+            "- prose text",
+            "-",
+            "- ## dup",
+            "## dup",
+            "### dup",
+        ] {
+            for unit in ["\t", "  ", "\x0c", " \t"] {
+                for newline in ["\n", "\r\n", "\r"] {
+                    for edit_parent in [true, false] {
+                        for same_text in [true, false] {
+                            for before in [true, false] {
+                                let first = format!(
+                                    "{header}\n{}- x\n{}- a\n",
+                                    unit.repeat(2),
+                                    unit.repeat(2)
+                                );
+                                let second = format!(
+                                    "{header}\n{}- x\n{}- b\n",
+                                    unit.repeat(3),
+                                    unit.repeat(3)
+                                );
+                                let source =
+                                    format!("{second}{first}- target\n").replace('\n', newline);
+                                let mut old =
+                                    super::super::parse_doc(std::path::Path::new("p.md"), &source);
+                                fn clear(blocks: &mut [DocBlock]) {
+                                    for block in blocks {
+                                        block.uuid = BlockId::default();
+                                        clear(&mut block.children);
+                                    }
+                                }
+                                clear(&mut old.roots);
+                                assert_eq!(old.roots.len(), 3, "{source:?}");
+                                let mut doc = old.clone();
+                                let parent_raw = old.roots[0].raw();
+                                let leaf_raw = if same_text { parent_raw } else { "inserted" };
+                                if edit_parent {
+                                    doc.roots[0].set_raw(format!("{parent_raw}!"));
+                                } else {
+                                    doc.roots[0].children[1].set_raw("b!");
+                                }
+                                doc.roots
+                                    .insert(usize::from(!before), DocBlock::new(leaf_raw));
+                                let edited = if edit_parent {
+                                    let edited_header = if header == "-" {
+                                        "- !".to_string()
+                                    } else {
+                                        format!("{header}!")
+                                    };
+                                    second.replacen(header, &edited_header, 1)
+                                } else {
+                                    second.replace("- b\n", "- b!\n")
+                                };
+                                let leaf = if leaf_raw.is_empty() {
+                                    "-\n".to_string()
+                                } else {
+                                    format!("- {leaf_raw}\n")
+                                };
+                                let expected = if before {
+                                    format!("{leaf}{edited}{first}- target\n")
+                                } else {
+                                    format!("{edited}{leaf}{first}- target\n")
+                                }
+                                .replace('\n', newline);
+                                let written =
+                                    serialize(&doc, &source, &old, &SerializeOpts::default())
+                                        .map(|v| v.0);
+                                cases += 1;
+                                if written.as_deref() != Some(expected.as_str()) {
+                                    failures.push(format!("{header:?} {unit:?} {newline:?} parent={edit_parent} same={same_text} before={before}: {written:?}"));
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+        assert_eq!(cases, 576);
+        assert!(
+            failures.is_empty(),
+            "{} of {cases} failed:\n{}",
+            failures.len(),
+            failures.join("\n")
+        );
     }
 }
 
