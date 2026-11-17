@@ -49,7 +49,9 @@ jobs:
   flatpak-builder:
     needs: viewer-ready
     name: build (${{ matrix.arch }})
-    runs-on: ubuntu-24.04
+    # ubuntu-latest, as at v0.9.0: on an ubuntu-24.04 host this container cannot update
+    # the GNOME SDK ("Invalid cross-device link", release run 44071269913).
+    runs-on: ubuntu-latest
     container:
       image: ghcr.io/flathub-infra/flatpak-github-actions:gnome-49
       options: --privileged
