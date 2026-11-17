@@ -8,6 +8,14 @@ The format follows [Keep a Changelog](https://keepachangelog.com/); versions use
 
 ## [Unreleased]
 
+### Fixed
+
+- Quick share links are offered in every build of Tine, including the Flatpak
+  and builds from source. They used to show "Coming soon" in any build made
+  outside Tine's release workflow. A release is now refused instead while
+  tine.page cannot open its links (reported by Dieterbe in discussion #968;
+  REG-QS-ATTEST-STORES-09).
+
 ## [0.9.0] - 2026-11-16
 
 Tine 0.9.0 makes the 0.9 Beta line stable. It is Tine Beta 0.9.0-beta.14 (the

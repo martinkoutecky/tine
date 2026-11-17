@@ -18,7 +18,6 @@ share-dialog-where = Where to share
 share-dialog-folder = Folder
 share-dialog-folder-note = Exports a static site and read-only app into your graph folder. You name it on the next step.
 share-dialog-link = Link
-share-dialog-link-soon = Coming soon: quick share is the next step.
 share-dialog-link-note = Uploads an encrypted copy to a secret gist in your GitHub account; anyone with the link can read it.
 share-dialog-create-link = Create link…
 share-dialog-saved-as-definition = After the export, Tine saves it as a definition on the Exports page, so it can be repeated.

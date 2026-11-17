@@ -18,7 +18,7 @@ const row = (extra: Partial<QuickShareListed>): QuickShareListed => ({ shareId: 
   createdAt: "2026-10-17T10:00:00Z", title: "Project", pages: 3, accountMatches: true, ...extra });
 let shares: QuickShareListed[];
 const listing = (extra: Partial<QuickShareListing> = {}): QuickShareListing =>
-  ({ enabled: true, account: { login: "octo", accountId: 7 }, shares, error: null, ...extra });
+  ({ account: { login: "octo", accountId: 7 }, shares, error: null, ...extra });
 
 let dispose: (() => void) | undefined;
 let api: ReturnType<typeof spies>;
@@ -186,9 +186,10 @@ it("an unreadable shares file is reported, not shown as no shares", async () => 
 
 it("Settings shows the Sharing tab only where quick share is on", async () => {
   for (const enabled of [false, true]) {
-    // Each pass is a different build: the gate is read once per session.
+    // Each pass is a different backend (the browser preview refuses the listing; every native build answers it):
+    // the gate is read once per session.
     resetQuickShareGateForTest();
-    api.list.mockImplementation(async () => listing({ enabled }));
+    api.list.mockImplementation(async () => { if (!enabled) throw { kind: "disabled" }; return listing(); });
     const root = document.createElement("div"); document.body.append(root);
     const done = render(() => <Suspense><Settings /></Suspense>, root);
     openSettings();

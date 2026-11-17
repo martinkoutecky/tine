@@ -943,7 +943,7 @@
     "scripts/e2e-view-fold.mjs": {
       "contracts": [{ "class": "stateful-ux", "userOutcome": "Readers expand and collapse authored folds in the built quick-share and published viewers, keep choices across page navigation, and restore original folds on reload without mutation requests. Static HTML opens and closes child folds with JavaScript disabled.", "blocking": false }],
       "acceptableVariations": ["Arrow styling, page layout and bundle filenames can change."],
-      "nonRequirements": ["Exact pixels, native desktop launch, or deployed G1 attestation."],
+      "nonRequirements": ["Exact pixels, native desktop launch, or the deployed generation-1 viewer."],
       "stability": "burn-in"
     },
     "scripts/e2e-outline-guide.mjs": {

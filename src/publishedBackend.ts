@@ -940,9 +940,9 @@ export function publishedBackend(load: () => Promise<PublishedSnapshot> = loadPu
     async legacyDraftsFile() {
       return null;
     },
-    // Quick share is a native feature (DESIGN §3.9): a published export reports it off.
+    // Quick share is a native feature (DESIGN §3.9): a published export refuses the listing, so links are not offered.
     async quickShareList(): Promise<QuickShareListing> {
-      return { enabled: false, account: null, shares: [], error: null };
+      throw { kind: "disabled" };
     },
   };
 

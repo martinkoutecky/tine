@@ -196,7 +196,6 @@ function Dialog(props: { request: QueryPublicationRequest }): JSX.Element {
       if (answer.kind === "stale") return;
       setListing(answer.value);
       setBusy(null);
-      if (!answer.value.enabled) { setError(quickShareErrorText({ kind: "disabled" })); return; }
       if (answer.value.error) { setError(answer.value.error); return; }
       const definition = quickShareDefinition(props.request);
       const host = definition ? definition.hostBlockId : props.request.hostBlockId;

@@ -151,36 +151,33 @@ Code: `src-tauri/src/quick_share/` (`github.rs` transport, `records.rs`,
 `src/components/QuickShareDialog.tsx`, `src/components/QuickShareSettings.tsx`
 (Settings → Sharing), types in `src/quickShare/commands.ts`.
 
-### Build gate
+### Viewer gate
 
-Creating shares is off until the deployed viewer passes the candidate's
-generation-1 fixture corpus in a headless browser. Run
-`node scripts/check-release-readiness.mjs --quick-share-only`; it fetches
-`https://tine.page/s/1/viewer.json`, verifies the hashes of deployed files
-used by the reader, and decrypts and renders every frozen fixture. Only a
-successful check writes `artifacts/quick-share-viewer/writer-ready.env` and
-the workflow step's `quick_share_viewer_g1_ready` output. The native build
-takes `TINE_QUICK_SHARE_VIEWER_G1_READY` from that check; the value must
-match a SHA-256 of this build's exact fixture files (names and bytes).
+Every build offers quick share links, whoever builds it: release, store,
+Flatpak, source and debug builds alike. No build input switches links off
+(D-20261117-QSG). What must hold instead is that the viewer deployed at
+`https://tine.page/s/1/` reads this writer's links, and two checks enforce it:
+
+- In the repository, the writer is tested against the frozen generation-1
+  fixture corpus (`tests/fixtures/quick-share/g1/`), and the built viewer must
+  decrypt and render that whole corpus (`scripts/quick-share-compatibility.test.mjs`).
+- At release, the preflight runs
+  `node scripts/check-release-readiness.mjs --quick-share-only`. It fetches
+  `https://tine.page/s/1/viewer.json`, verifies the hashes of the deployed
+  files the reader uses, and decrypts and renders every frozen fixture in a
+  headless browser. A failure refuses the release: no build job starts
+  (`scripts/test-quick-share-viewer-preflight.mjs` pins this). The full
+  `check-release-readiness.mjs` run reports the same failure as a problem.
+
 The viewer manifest's `fixture_sha256` records its build corpus, not a
-compatibility requirement: a viewer built for another corpus passes only if
-it decrypts and renders this writer's entire corpus. The successful check
-attests this writer's fixture fingerprint, never the viewer's build fingerprint.
-Desktop and Android release builds consume the release preflight's output.
-The independently dispatched iOS TestFlight and Microsoft Store (MSIX x64
-and ARM64) workflows run the same check against their checked-out writer and
-pass its output to the native build. A failed check leaves the value empty;
-these workflows may still package with sharing disabled. The log line
-`Quick share viewer-first gate passed`, rather than a green workflow alone,
-proves the check succeeded. Flatpak's offline manifest has no attestation
-input yet, so Flatpak builds keep sharing disabled pending an offline
-attestation mechanism decision.
-A debug build and the old launch-time `TINE_QUICK_SHARE=1` switch cannot
-bypass this gate. Off: `quick_share_list` answers
-`enabled: false` (the share dialog's Link stays "coming soon", Settings has no
-Sharing tab) and every GitHub-touching command refuses with `disabled`.
-`quick_share_forget`, `quick_share_copy_link` and `quick_share_list` stay
-available, so records made while it was on remain manageable.
+compatibility requirement: a viewer built for another corpus passes only if it
+decrypts and renders this writer's entire corpus. A viewer change is deployed
+before any release whose writer needs it (viewer first).
+
+A backend without the native commands (the browser preview, a published
+export) refuses `quick_share_list` with `disabled`; that refusal is the only
+case in which the share dialog's Link choice stays off and Settings has no
+Sharing tab.
 
 ### Hosted reader builds and retention
 
