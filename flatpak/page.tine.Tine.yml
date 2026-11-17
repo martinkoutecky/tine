@@ -53,9 +53,7 @@ modules:
       env:
         CARGO_HOME: /run/build/tine/cargo
         npm_config_cache: /run/build/tine/npm-cache
-        # Filled by identity derivation from the shared viewer check's output.
-        TINE_QUICK_SHARE_VIEWER_G1_READY: ""
-        # Browser binaries are only needed by the separate viewer-check job.
+        # The quick share viewer check runs in the release preflight, never in the sandbox.
         PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD: "1"
         PLAYWRIGHT_BROWSERS_PATH: "0"
         LC_ALL: C.UTF-8

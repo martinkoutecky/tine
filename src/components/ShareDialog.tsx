@@ -50,9 +50,9 @@ function Dialog(props: { target: ShareTarget }): JSX.Element {
   const [includeComments, setIncludeComments] = createSignal<boolean | undefined>();
   const initialShare = hostBlockId ? blockProperty(hostBlockId, SHARE_PROPERTY) : null;
   const [where, setWhere] = createSignal<Where>(initialShare && !pendingRecordId(initialShare) ? "link" : "folder");
-  // Quick share is gated off in shipped builds until its viewer is deployed (DESIGN §5 phase 3).
+  // Every native build offers links; the browser preview refuses the listing, which leaves the choice off.
   const [quickShare] = createResource(() => backend().quickShareList());
-  const linkAvailable = () => readOr(quickShare, QUICK_SHARE_OFF, "quick share listing")?.enabled === true;
+  const linkAvailable = () => readOr(quickShare, undefined, "quick share listing") !== undefined;
   let mounted = true;
   onCleanup(() => { mounted = false; });
 
@@ -280,7 +280,7 @@ function Dialog(props: { target: ShareTarget }): JSX.Element {
                 <input type="radio" name="share-where" value="link" checked={where() === "link"} disabled={!linkAvailable()}
                   onChange={() => setWhere("link")} />
                 <span class="share-choice-label">{t("share-dialog-link")}</span>
-                <small class="settings-hint">{linkAvailable() ? t("share-dialog-link-note") : t("share-dialog-link-soon")}</small>
+                <small class="settings-hint">{t("share-dialog-link-note")}</small>
               </label>
             </div>
             <Show when={where() === "folder"}>

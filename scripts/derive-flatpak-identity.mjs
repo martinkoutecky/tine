@@ -33,9 +33,8 @@ const RELEASED = "release";
  * Pure derivation. Returns { id, productName, manifestPath, files } where `files`
  * maps repo-relative output paths to their text. Throws on a mismatched identity
  * or when a stable source file no longer has the shape the derivation relies on.
- * viewerReady carries the shared viewer check's output into the sandbox.
  */
-export function deriveFlatpak({ root = ROOT, identity, date, version, viewerReady = "" }) {
+export function deriveFlatpak({ root = ROOT, identity, date, version }) {
   const sw = readSwitch(root);
   if (!sw.identities[identity]) {
     throw new Error(`unknown identity "${identity}" (expected one of ${Object.keys(sw.identities).join(", ")})`);
@@ -61,10 +60,6 @@ export function deriveFlatpak({ root = ROOT, identity, date, version, viewerRead
   const installDir = released ? "flatpak" : "flatpak/derived";
 
   let manifest = read(`${stableId}.yml`);
-  // The sandbox gets the same attestation as other native builds. Embedding it
-  // in the manifest also invalidates the builder cache when readiness changes.
-  manifest = manifest.replace('TINE_QUICK_SHARE_VIEWER_G1_READY: ""',
-    `TINE_QUICK_SHARE_VIEWER_G1_READY: ${JSON.stringify(viewerReady)}`);
   if (!released) {
     manifest = manifest
       .replaceAll(`src-tauri/${stable.iconDirectory}/`, `src-tauri/${target.iconDirectory}/`)
@@ -154,8 +149,7 @@ if (process.argv[1] === fileURLToPath(import.meta.url)) {
     if (!args.identity) throw new Error("usage: derive-flatpak-identity.mjs --identity <release|experiment> [--date YYYY-MM-DD]");
     const conf = JSON.parse(fs.readFileSync(path.join(ROOT, "src-tauri/tauri.conf.json"), "utf8"));
     const date = resolveReleaseDate({ explicit: args.date });
-    const derived = deriveFlatpak({ identity: args.identity, date, version: conf.version,
-      viewerReady: process.env.TINE_QUICK_SHARE_VIEWER_G1_READY ?? "" });
+    const derived = deriveFlatpak({ identity: args.identity, date, version: conf.version });
     for (const [file, text] of Object.entries(derived.files)) {
       fs.mkdirSync(path.dirname(path.join(ROOT, file)), { recursive: true });
       fs.writeFileSync(path.join(ROOT, file), text);
