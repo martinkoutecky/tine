@@ -5,12 +5,13 @@
 //!
 //! OG 0.10.9 graph-parser `text.cljs:100-131,148-185` (`parse-property`):
 //! the value's top-level reference forms from mldoc's property parse
-//! (`Property.property_references`: macros skipped, so a macro's text is read
-//! in place) after `mldoc.cljc:117-132` `ast-link?` removal, united, for a
-//! comma-separated key, with the comma members of the Plain children of the
-//! value's first DOCUMENT node. Nothing nested in another inline form
-//! (emphasis, sub/superscript, a link label) is a member. Never split the
-//! whole raw value: spaces and commas inside a reference belong to its name.
+//! (`Property.property_references`, the parser's own whole-value reading with
+//! macros disabled: [`lsdoc::property_references`]) after
+//! `mldoc.cljc:117-132` `ast-link?` removal, united, for a comma-separated
+//! key, with the comma members of the Plain children of the value's first
+//! DOCUMENT node. Nothing nested in another inline form (emphasis,
+//! sub/superscript, a link label) is a member. Never split the whole raw
+//! value: spaces and commas inside a reference belong to its name.
 
 use lsdoc::ast::{Inline, Url};
 use std::ops::Range;
@@ -39,13 +40,13 @@ pub enum Kind {
     Plain,
 }
 
-/// Where a member stands.
+/// Where a member stands, by the value's ordinary inline parse.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Within {
     Value,
-    /// Inside the top-level `{{embed …}}` at this range.
+    /// Wholly inside the `{{embed …}}` at this range.
     Embed(Range<usize>),
-    /// Inside another top-level macro at this range.
+    /// Wholly inside another macro at this range.
     Macro(Range<usize>),
 }
 
@@ -63,28 +64,38 @@ pub struct Member {
 }
 
 /// The members of `value` in source order, before identity deduplication. A
-/// wholly quoted value has none. O(value bytes): one inline parse, one more
-/// per top-level macro (its own bytes), and for [`Grammar::Linkable`] one
-/// bounded document parse. No I/O.
+/// wholly quoted value has none. O(value bytes): one inline parse, a second
+/// (the macro-disabled one) when the value holds `{{`, and for
+/// [`Grammar::Linkable`] one bounded document parse. No I/O.
 pub fn members(value: &str, is_org: bool, grammar: Grammar) -> Vec<Member> {
-    read(value, is_org, grammar).members
+    let reading = read(value, is_org, grammar);
+    match reading.string {
+        true => Vec::new(),
+        false => reading.members,
+    }
 }
 
-/// [`members`] with the inline parse they were read from, so a caller that
-/// also walks the value's nodes (the reference walk's rename targets) parses
-/// it once.
+/// A value's block references with its ordinary inline parse, so a caller
+/// that also walks the value's nodes (the reference walk's rename targets)
+/// parses it once.
 pub struct Reading {
+    /// [`members`], or for a [`Reading::string`] value the string's
+    /// references.
     pub members: Vec<Member>,
-    /// The trimmed value's inline parse; empty when it has no members to read
-    /// (blank or quoted) or is deeper than the parser's bound.
+    /// `parse-property` found no member, so the value is a string; a block
+    /// still references the top-level references of its ordinary parse
+    /// (`block.cljs` `extract-refs-from-property-value`), which differ from
+    /// the members only when the value holds a macro.
+    pub string: bool,
+    /// The trimmed value's ordinary inline parse (macros are macros); empty
+    /// when it has no members to read (blank or quoted) or is deeper than the
+    /// parser's bound.
     pub nodes: Vec<Inline>,
     /// The trimmed value's offset in `value`: node spans start here.
     pub lead: usize,
 }
 
-/// [`members`] and the parse behind them. O(value bytes): one inline parse,
-/// one in-place parse per top-level macro and, for [`Grammar::Linkable`], one
-/// document parse.
+/// [`members`] and the parse behind them. Costs as [`members`].
 pub fn read(value: &str, is_org: bool, grammar: Grammar) -> Reading {
     let lead = value.len() - value.trim_start().len();
     let text = value.trim();
@@ -92,20 +103,30 @@ pub fn read(value: &str, is_org: bool, grammar: Grammar) -> Reading {
     if text.is_empty() || (text.len() > 1 && text.starts_with('"') && text.ends_with('"')) {
         return Reading {
             members: out,
+            string: false,
             nodes: Vec::new(),
             lead,
         };
     }
-    let nodes =
-        crate::lsdoc_block_parse::parse_inline_bounded(text, format(is_org)).unwrap_or_default();
-    let reader = Read {
-        text,
-        org: is_org,
-        skip_macros: grammar != Grammar::Literal,
-    };
-    reader.references(&nodes, 0, &Within::Value, &mut out);
+    use crate::lsdoc_block_parse::{parse_inline_bounded, parse_property_references_bounded};
+    let fmt = format(is_org);
+    let nodes = parse_inline_bounded(text, fmt).unwrap_or_default();
+    // An ignored key keeps OG's ordinary inline reading. Otherwise the
+    // references are the parser's macro-disabled reading, which for a value
+    // without `{{` is the ordinary one (`lsdoc::property_references`).
+    let skipped = (grammar != Grammar::Literal && text.contains("{{"))
+        .then(|| parse_property_references_bounded(text, fmt).unwrap_or_default());
+    let reader = Read { text, org: is_org };
+    reader.references(skipped.as_deref().unwrap_or(&nodes), &mut out);
+    if skipped.is_some() {
+        place_in_macros(&nodes, &mut out);
+    }
     if grammar == Grammar::Linkable {
         plain_members(text, is_org, &mut out);
+    }
+    let string = out.is_empty();
+    if string && skipped.is_some() {
+        reader.references(&nodes, &mut out);
     }
     out.sort_by_key(|m| m.token.start);
     let shift = |r: &mut Range<usize>| *r = r.start + lead..r.end + lead;
@@ -120,6 +141,7 @@ pub fn read(value: &str, is_org: bool, grammar: Grammar) -> Reading {
     }
     Reading {
         members: out,
+        string,
         nodes,
         lead,
     }
@@ -152,71 +174,85 @@ pub fn page_link_run(node: &str, org: bool) -> Option<Range<usize>> {
     Some(start..start + target.trim().len().checked_sub(4)?)
 }
 
-struct Read<'a> {
-    text: &'a str,
-    org: bool,
-    skip_macros: bool,
-}
-
-impl Read<'_> {
-    /// The top-level reference forms of `nodes`, parsed from `text[base..]`.
-    fn references(&self, nodes: &[Inline], base: usize, within: &Within, out: &mut Vec<Member>) {
-        for node in nodes {
-            if let Some((name, token, run, kind)) = self.reference(node, base, false) {
-                if !name.is_empty() {
-                    out.push(Member {
-                        name,
-                        token,
-                        run,
-                        kind,
-                        within: within.clone(),
-                    });
-                }
-                continue;
-            }
-            let Inline::Macro {
-                name,
-                span: Some(span),
-                ..
-            } = node
-            else {
-                continue;
-            };
-            // mldoc reads property references with macros skipped: `{{` is
-            // text and the macro's bytes after it (closing braces included)
-            // are read in place, so its top-level links are the value's.
-            let whole = base + span.0..base + span.1;
-            let Some(inner) = self.text.get(whole.start + 2..whole.end) else {
-                continue;
-            };
-            if !self.skip_macros || !self.text[whole.clone()].starts_with("{{") {
-                continue;
-            }
-            let within = match within {
-                Within::Value if name.eq_ignore_ascii_case("embed") => Within::Embed(whole.clone()),
-                Within::Value => Within::Macro(whole.clone()),
-                outer => outer.clone(),
-            };
-            if let Some(nodes) =
-                crate::lsdoc_block_parse::parse_inline_bounded(inner, format(self.org))
-            {
-                self.references(&nodes, whole.start + 2, &within, out);
+/// Marks each reference member wholly inside a macro of the ordinary parse
+/// `nodes` (the reference walk rewrites it as that macro's argument; an embed
+/// is its site). A reference that only starts inside one (`{{x [[a}} b]]`)
+/// stands in the value. `out` holds references only, in source order.
+/// O(nodes + members + M log M) for M macros (the walk visits nested levels
+/// out of order; macros never overlap, so one cursor serves).
+fn place_in_macros(nodes: &[Inline], out: &mut [Member]) {
+    let (mut macros, mut stack) = (Vec::new(), vec![nodes]);
+    while let Some(level) = stack.pop() {
+        for node in level {
+            match node {
+                Inline::Macro {
+                    name,
+                    span: Some(s),
+                    ..
+                } if name.eq_ignore_ascii_case("embed") => macros.push(Within::Embed(s.0..s.1)),
+                Inline::Macro { span: Some(s), .. } => macros.push(Within::Macro(s.0..s.1)),
+                Inline::Emphasis { children, .. }
+                | Inline::Subscript { children, .. }
+                | Inline::Superscript { children, .. }
+                | Inline::Tag { children, .. }
+                | Inline::Link {
+                    label: children, ..
+                } => stack.push(children),
+                _ => {}
             }
         }
     }
+    let range = |w: &Within| match w {
+        Within::Embed(r) | Within::Macro(r) => r.clone(),
+        Within::Value => 0..0,
+    };
+    macros.sort_by_key(|w| range(w).start);
+    let mut macros = macros.into_iter().peekable();
+    for member in out {
+        let t = &member.token;
+        while macros.next_if(|w| range(w).end <= t.start).is_some() {}
+        if let Some(w) = macros
+            .peek()
+            .filter(|w| range(w).start <= t.start && t.end <= range(w).end)
+        {
+            member.within = w.clone();
+        }
+    }
+}
 
-    /// OG `get-ref-from-ast` on one node: a page link (no asset or drawing,
-    /// `ast-link?`), a nested link, or a tag named by its first child.
-    /// Returns (trimmed name, token, run, kind).
+struct Read<'a> {
+    text: &'a str,
+    org: bool,
+}
+
+impl Read<'_> {
+    /// The reference members among top-level `nodes`, in source order.
+    fn references(&self, nodes: &[Inline], out: &mut Vec<Member>) {
+        let found = nodes.iter().filter_map(|node| self.reference(node, false));
+        out.extend(
+            found
+                .filter(|r| !r.0.is_empty())
+                .map(|(name, token, run, kind)| Member {
+                    name,
+                    token,
+                    run,
+                    kind,
+                    within: Within::Value,
+                }),
+        );
+    }
+
+    /// OG `get-ref-from-ast` on one top-level node: a page link (no asset or
+    /// drawing, `ast-link?`), a nested link, or a tag named by its first
+    /// child. Returns (trimmed name, token, run, kind).
     fn reference(
         &self,
         node: &Inline,
-        base: usize,
         tag_child: bool,
     ) -> Option<(String, Range<usize>, Option<Range<usize>>, Kind)> {
         let token = |span: &Option<lsdoc::ast::Span>| {
             span.as_ref()
-                .map(|s| base + s.0..base + s.1)
+                .map(|s| s.0..s.1)
                 .filter(|r| r.start <= r.end && r.end <= self.text.len())
         };
         match node {
@@ -265,7 +301,7 @@ impl Read<'_> {
                         (text.trim().to_owned(), run)
                     }
                     child => {
-                        let (name, _, run, _) = self.reference(child, base, true)?;
+                        let (name, _, run, _) = self.reference(child, true)?;
                         (name, run)
                     }
                 };
@@ -477,6 +513,22 @@ mod member_range_tests {
         assert_eq!(e.run, Some(13..14));
         // A literal key reads macros as macros.
         assert!(members("{{embed [[a]]}}", false, Grammar::Literal).is_empty());
+        // A link crossing a macro's end stands in the value.
+        let crossing = members("{{x [[a}} b]]", false, Grammar::Parsed);
+        assert_eq!(
+            (crossing[0].name.as_str(), &crossing[0].within),
+            ("a}} b", &Within::Value)
+        );
+        // No member: the value is a string, and only a block references the
+        // string's top-level `[[b]]` (mldoc keeps the bold run whole).
+        let string = super::read("{{x **[[a]]}} [[b]]**", false, Grammar::Parsed);
+        assert!(
+            string.string && members("{{x **[[a]]}} [[b]]**", false, Grammar::Parsed).is_empty()
+        );
+        assert_eq!(
+            string.members.iter().map(|m| &m.name).collect::<Vec<_>>(),
+            ["b"]
+        );
         // Tag runs: bare and bracketed.
         let t = &members("#a, #[[b c]]", false, Grammar::Parsed);
         assert_eq!(

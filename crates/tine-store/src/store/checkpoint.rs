@@ -135,10 +135,18 @@ const MAGIC: &[u8; 8] = b"TINECKPT";
 // member, a macro's link is, and a comma member's range is its native bytes.
 // Cached reference evidence and alias relations change for unchanged files;
 // the body schema is unchanged and older caches rebuild.
-pub(crate) const FORMAT: u32 = 36;
+// 37 (CM property parse): a property value's references come from lsdoc's
+// whole-value, macro-disabled parse (mldoc `Property.property_references`), so
+// a link crossing a macro's end (`{{x [[a}} b]]`) is a member, a value whose
+// parse keeps no member reads its ordinary parse (`{{x **[[a]]}} [[b]]**`
+// names `b`), and a block's page references take property values from that
+// owner alone. Cached reference evidence, page references and alias relations
+// change for unchanged files; the body schema is unchanged and older caches
+// rebuild.
+pub(crate) const FORMAT: u32 = 37;
 /// The lsdoc release tine-core parses with (`crates/tine-core/Cargo.toml`;
 /// `checkpoint_tests::the_parser_tag_matches_the_lsdoc_pin` keeps them equal).
-pub(crate) const PARSER: &str = "lsdoc v0.5.11";
+pub(crate) const PARSER: &str = "lsdoc v0.5.12";
 /// Quiet time after the last dirtying publication before a checkpoint.
 pub(crate) const IDLE: Duration = Duration::from_secs(60);
 /// Least time between two checkpoint writes (Martin, 2026-10-02): at most 12

@@ -565,6 +565,17 @@ mod tests {
 
     // --- SPEC §6.2 frozen fixture vectors ---------------------------------
 
+    /// mldoc's macro-disabled property parse keeps no top-level reference
+    /// here (the bold run spans the macro's end), so OG `parse-property`
+    /// keeps the value as one string; the block's references to `b` are not
+    /// the value's atoms.
+    #[test]
+    fn a_value_with_no_member_is_one_string_atom() {
+        let atoms = md("k", "{{x **[[a]]}} [[b]]**", &config());
+        let atoms: Vec<_> = atoms.iter().map(|a| (a.text.as_str(), a.origin)).collect();
+        assert_eq!(atoms, [("{{x **[[a]]}} [[b]]**", AtomOrigin::Plain)]);
+    }
+
     #[test]
     fn plain_value_is_one_plain_atom() {
         let atoms = md("k", "foo", &config());

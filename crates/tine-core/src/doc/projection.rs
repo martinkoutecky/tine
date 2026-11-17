@@ -89,15 +89,27 @@ impl DocBlock {
                     config,
                 )
             };
-            // OG 0.10.9 with-page-refs includes headline tags and linkable
-            // property atoms. Queries use the same evidence as backlinks.
+            // OG 0.10.9 with-page-refs: the parser's references outside
+            // property values (its projection leaves those out), headline
+            // tags, and every property value's members, which are
+            // `property_refs`' answer as the reference walk projected it.
+            let explicit = &reference_source.explicit;
+            let applicable = regions.properties.iter().filter(|p| p.applicable);
+            let values = crate::reference_evidence::property_references_in(
+                explicit.iter(),
+                applicable,
+                |r| r,
+            );
+            let tag_refs = explicit.iter().filter(|r| r.rule == "explicit_tag");
             let mut refs_page = proj.refs.page;
-            let tag_refs = reference_source
-                .explicit
-                .iter()
-                .filter(|r| r.rule == "explicit_tag" || r.rule == "implicit_linkable_property");
-            if tag_refs.clone().next().is_some() {
-                refs_page.extend(tag_refs.map(|r| r.name.clone()));
+            let before = refs_page.len();
+            refs_page.extend(
+                values
+                    .map(|(_, r)| r)
+                    .chain(tag_refs)
+                    .map(|r| r.name.clone()),
+            );
+            if refs_page.len() > before {
                 refs_page.sort();
                 refs_page.dedup();
             }

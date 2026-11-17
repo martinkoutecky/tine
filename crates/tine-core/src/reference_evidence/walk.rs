@@ -506,17 +506,27 @@ pub(crate) fn linkable_property_references_in<'a, R: 'a>(
     regions: &'a super::block_regions::BlockRegions,
     reference: impl Fn(&R) -> &ProjectedPageRef,
 ) -> impl Iterator<Item = (&'a super::block_regions::Property, &'a R)> {
-    let mut properties = regions
-        .properties
-        .iter()
-        .filter(|p| {
+    property_references_in(
+        references,
+        regions.properties.iter().filter(|p| {
             p.applicable
                 && (p.key.eq_ignore_ascii_case("tags")
                     || p.key.eq_ignore_ascii_case("alias")
                     || p.key.eq_ignore_ascii_case("aliases"))
                 && !quoted_linkable_value(&p.value)
-        })
-        .peekable();
+        }),
+        reference,
+    )
+}
+
+/// The references inside the values of `properties`, each with its property.
+/// Both are one block's, in source order. O(properties + references).
+pub(crate) fn property_references_in<'a, R: 'a>(
+    references: impl Iterator<Item = &'a R>,
+    properties: impl Iterator<Item = &'a super::block_regions::Property>,
+    reference: impl Fn(&R) -> &ProjectedPageRef,
+) -> impl Iterator<Item = (&'a super::block_regions::Property, &'a R)> {
+    let mut properties = properties.peekable();
     references.filter_map(move |item| {
         let reference = reference(item);
         while properties
@@ -582,9 +592,9 @@ fn property_grammar(key: &str, config: &super::ParseConfig) -> property_refs::Gr
     }
 }
 
-/// One property value's references: exactly its members
-/// ([`property_refs::members`], the one owner), each with the native slot the
-/// owner reports. A member in `{{embed …}}` is the embed site, as in a body;
+/// One property value's references: exactly the owner's
+/// ([`property_refs::read`]: its members, or a string value's references),
+/// each with the native slot the owner reports. A member in `{{embed …}}` is the embed site, as in a body;
 /// one in another macro names its page here and is rewritten as that macro's
 /// argument. Rename targets (Org file links, macro arguments) are what the
 /// body walk reports for the same nodes, collected only for a rename.

@@ -700,6 +700,8 @@ fn parse_block_inner(raw: &str, is_org: bool) -> Vec<Block> {
     }
 }
 
+/// One block body's projection. Its `refs.page` leaves out property values:
+/// their members are `property_refs`' answer, added by the block projection.
 #[allow(dead_code)] // the wasm crate needs block parsing only; tine-core uses the full projection
 pub fn parse_projection(raw: &str, is_org: bool) -> Projection {
     let mut projection = parse_projection_inner(raw, is_org);
@@ -713,20 +715,20 @@ fn parse_projection_inner(raw: &str, is_org: bool) -> Projection {
     admit_block_source(raw);
     let prepared = match prepare(raw, is_org) {
         Preparation::Plain(input) => {
-            return bounded_projection(lsdoc::parse_format(
+            return bounded_projection(lsdoc::parse_format_without_property_page_refs(
                 &input,
                 if is_org { "org" } else { "md" },
             ))
         }
         Preparation::Protected(prepared) => prepared,
     };
-    let mut projection = lsdoc::parse_format(&prepared.input, "md");
+    let mut projection = lsdoc::parse_format_without_property_page_refs(&prepared.input, "md");
     let mut restored = vec![false; prepared.protected.len()];
     restore_blocks(&mut projection.blocks, &prepared.protected, &mut restored);
     if restored.iter().all(|value| *value) {
         bounded_projection(projection)
     } else {
-        bounded_projection(lsdoc::parse_format(
+        bounded_projection(lsdoc::parse_format_without_property_page_refs(
             &format!("- {}", trim_block_start(raw)),
             "md",
         ))
@@ -778,10 +780,19 @@ pub fn parse_outline_bounded(text: &str, format: &str) -> Option<Vec<lsdoc::Outl
 /// [`lsdoc::inline`] under the same bound, for inline-only readers.
 #[allow(dead_code)] // each crate that includes this file uses a subset
 pub fn parse_inline_bounded(text: &str, format: &str) -> Option<Vec<Inline>> {
-    let wrapped = vec![Block::Paragraph {
-        inline: lsdoc::inline(text, format),
-        span: None,
-    }];
+    bounded_inlines(lsdoc::inline(text, format))
+}
+
+/// [`lsdoc::property_references`] (mldoc's macro-disabled property-value
+/// parse) under the same bound.
+#[allow(dead_code)] // each crate that includes this file uses a subset
+pub fn parse_property_references_bounded(text: &str, format: &str) -> Option<Vec<Inline>> {
+    bounded_inlines(lsdoc::property_references(text, format))
+}
+
+#[allow(dead_code)] // each crate that includes this file uses a subset
+fn bounded_inlines(inline: Vec<Inline>) -> Option<Vec<Inline>> {
+    let wrapped = vec![Block::Paragraph { inline, span: None }];
     if !parsed_tree_within_limit(&wrapped, MAX_PARSED_TREE_DEPTH) {
         drop_parsed_tree(wrapped);
         return None;

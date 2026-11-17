@@ -26,7 +26,9 @@ pub use signature::{BlockSignature, ReferenceFilter};
 pub(crate) use walk::project_into;
 #[cfg(test)]
 use walk::property_key_eligible;
-pub(crate) use walk::{header_alias_members, linkable_property_references_in};
+pub(crate) use walk::{
+    header_alias_members, linkable_property_references_in, property_references_in,
+};
 pub use walk::{
     project_with_config, reference_rule, ProjectedPageRef, ReferenceSourceProjection,
     RewriteTarget, SlottedPageRef,
