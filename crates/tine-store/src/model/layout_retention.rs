@@ -26,7 +26,8 @@
 use std::collections::{HashMap, VecDeque};
 
 use tine_core::doc::{self, DocBlock, Document, SerializeOpts};
-use tine_core::BlockId;
+/// A block's runtime id (0.9 keeps it as a string; develop has `tine_core::BlockId`).
+type BlockId = String;
 
 use super::line_endings;
 

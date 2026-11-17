@@ -172,7 +172,7 @@ fn cli_move_and_add_beside_a_repeated_parent_keep_each_parents_children() {
         let read = verb(&slot, "page.show", json!({"name": "proof"})).unwrap();
         let args = json!({"before": handle(&read, 0), "content": "- dup\n\t- new-child", "rev": read["rev"], "no_author": true});
         verb(&slot, "block.add", args).unwrap();
-        let after = std::fs::read_to_string(&path).unwrap();
+        let after = without_author(&std::fs::read_to_string(&path).unwrap());
         let id = after
             .split(['\n', '\r'])
             .find_map(|line| line.strip_prefix("  id:: "))
@@ -249,7 +249,7 @@ fn cli_move_and_add_beside_repeated_children_keep_untouched_bytes() {
             let content = format!("- dup\n{}", first.trim_end());
             let args = json!({"under": handle(&read, &[0]), "content": content, "rev": read["rev"], "no_author": true});
             verb(&slot, "block.add", args).unwrap();
-            let after = std::fs::read_to_string(&path).unwrap();
+            let after = without_author(&std::fs::read_to_string(&path).unwrap());
             let id = after
                 .split(['\n', '\r'])
                 .find_map(|line| line.strip_prefix("  id:: "))
@@ -273,4 +273,27 @@ fn cli_move_and_add_beside_repeated_children_keep_untouched_bytes() {
         failures.len(),
         failures.join("\n")
     );
+}
+
+/// The file without the `tine.author:: agent` lines Tine 0.9's `block.add`
+/// writes (its `no_author` option came after 0.9): these tests check
+/// indentation, which the author line does not change.
+fn without_author(text: &str) -> String {
+    let mut out = String::new();
+    let mut rest = text;
+    while !rest.is_empty() {
+        let end = rest.find(['\n', '\r']).map_or(rest.len(), |i| {
+            if rest[i..].starts_with("\r\n") {
+                i + 2
+            } else {
+                i + 1
+            }
+        });
+        let line = &rest[..end];
+        if line.trim() != "tine.author:: agent" {
+            out.push_str(line);
+        }
+        rest = &rest[end..];
+    }
+    out
 }

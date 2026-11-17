@@ -2,7 +2,8 @@
 //! their block vectors release growth capacity before publication.
 
 use super::*;
-use tine_core::BlockId;
+/// A block's runtime id (0.9 keeps it as a string; develop has `tine_core::BlockId`).
+type BlockId = String;
 
 impl Graph {
     /// Publication eligibility shared by prepared saves and external parses.
