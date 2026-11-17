@@ -124,7 +124,12 @@ const MAGIC: &[u8; 8] = b"TINECKPT";
 // 34 (CM merge header allocation): parser-classified Plain property members
 // retain escaped # and bracket characters, changing cached reference evidence
 // for unchanged files. The body schema is unchanged; older caches rebuild.
-pub(crate) const FORMAT: u32 = 34;
+// 35 (CM reader slice): property members follow OG's value grammar (comma
+// members from the value's document parse, so `# x` names nothing) and file,
+// search and URL links in property values name no page; page aliases come
+// from that reader. Cached reference evidence and alias relations change for
+// unchanged files; the body schema is unchanged and older caches rebuild.
+pub(crate) const FORMAT: u32 = 35;
 /// The lsdoc release tine-core parses with (`crates/tine-core/Cargo.toml`;
 /// `checkpoint_tests::the_parser_tag_matches_the_lsdoc_pin` keeps them equal).
 pub(crate) const PARSER: &str = "lsdoc v0.5.11";

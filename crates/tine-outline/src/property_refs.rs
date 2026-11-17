@@ -7,12 +7,15 @@ use lsdoc::ast::{Inline, Url};
 use std::ops::Range;
 
 /// Append the explicit page reference carried by one top-level inline token.
+/// OG removes every `mldoc.cljc` `ast-link?` first: a link other than a page
+/// or block reference (file, search, URL) and a page link to a local asset or
+/// drawing name no page, and their labels are not members.
 pub fn ref_from_inline(node: &Inline, out: &mut Vec<String>) {
     match node {
         Inline::Link {
-            url: Url::PageRef { v } | Url::Search { v },
+            url: Url::PageRef { v },
             ..
-        } => out.push(v.trim().to_string()),
+        } if !crate::block_regions::local_asset_target(v) => out.push(v.trim().to_string()),
         Inline::NestedLink { content, .. } => out.push(content.trim().to_string()),
         Inline::Tag { children, .. } => {
             let mut text = String::new();
@@ -36,6 +39,23 @@ fn tag_plain_text(children: &[Inline], out: &mut String) {
             Inline::NestedLink { content, .. } => out.push_str(content),
             _ => {}
         }
+    }
+}
+
+/// The nodes OG's comma split reads (`text.cljs` `extract-refs-by-commas`):
+/// it parses the value with the DOCUMENT entry point (`gp-mldoc/->edn`) and
+/// takes the children of the first node. Only a paragraph has inline children
+/// there; any other first node (heading, list, quote, table, rule, directive,
+/// comment, example, math, HTML, hiccup) gives none, so `# x` has no comma
+/// member while `\# x` has `# x`. Spans are offsets in `value`, which the
+/// caller has trimmed as OG does. The parser decides the form; nothing here
+/// looks at the text. O(value bytes), one bounded document parse.
+pub fn comma_nodes(value: &str, is_org: bool) -> Vec<Inline> {
+    let parsed =
+        crate::lsdoc_block_parse::parse_text_bounded(value, if is_org { "org" } else { "md" });
+    match parsed.and_then(|doc| doc.blocks.into_iter().next()) {
+        Some(lsdoc::ast::Block::Paragraph { inline, .. }) => inline,
+        _ => Vec::new(),
     }
 }
 
@@ -75,9 +95,26 @@ pub fn for_each_linkable_member(
     if value.len() > 1 && value.starts_with('"') && value.ends_with('"') {
         return;
     }
-    let nodes =
+    // References come from the value's inline parse; plain members from its
+    // document parse ([`comma_nodes`]). Both lists are in source order; one
+    // merge keeps the members in text order.
+    let refs =
         crate::lsdoc_block_parse::parse_inline_bounded(value, if is_org { "org" } else { "md" })
-            .unwrap_or_default();
+            .unwrap_or_default()
+            .into_iter()
+            .filter(|node| !matches!(node, Inline::Plain { .. }));
+    let plains = comma_nodes(value, is_org)
+        .into_iter()
+        .filter(|node| matches!(node, Inline::Plain { .. }));
+    let start = |node: &Inline| match node {
+        Inline::Link { span, .. }
+        | Inline::NestedLink { span, .. }
+        | Inline::Tag { span, .. }
+        | Inline::Plain { span, .. } => span.as_ref().map_or(usize::MAX, |s| s.0),
+        _ => usize::MAX,
+    };
+    let mut nodes: Vec<Inline> = refs.chain(plains).collect();
+    nodes.sort_by_key(start);
     let mut names = Vec::new();
     for node in nodes {
         let token = match &node {

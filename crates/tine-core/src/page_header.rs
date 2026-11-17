@@ -117,22 +117,13 @@ pub fn page_property_lines_in(
         .collect()
 }
 
-/// The alias spellings one page header declares, as authored: every
-/// [`is_alias_key`] line's value through `property_refs::linkable_names`, a
-/// wholly quoted value skipped (literal text), one spelling per page identity
-/// (the sorted-first). O(header bytes).
+/// The alias spellings one page header declares, as authored: the members of
+/// its [`is_alias_key`] lines as the shared property-member reader selects
+/// them (`reference_evidence::header_alias_members`, the model's and the
+/// merge's reading too; a wholly quoted value is literal text), one spelling
+/// per page identity (the sorted-first). O(header bytes).
 pub fn header_alias_spellings(text: &str, is_org: bool) -> Vec<String> {
-    let mut aliases = Vec::new();
-    for (key, value) in page_property_lines(text, is_org) {
-        if !is_alias_key(&key) {
-            continue;
-        }
-        let trimmed = value.trim();
-        if trimmed.len() >= 2 && trimmed.starts_with('"') && trimmed.ends_with('"') {
-            continue;
-        }
-        aliases.extend(tine_outline::property_refs::linkable_names(&value, is_org));
-    }
+    let mut aliases = crate::reference_evidence::header_alias_members(text, is_org);
     aliases.sort_unstable();
     let mut seen = std::collections::HashSet::new();
     aliases.retain(|alias| seen.insert(crate::page_identity::page_key(alias)));

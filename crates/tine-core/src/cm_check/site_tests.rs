@@ -95,20 +95,35 @@ fn a_labels_parsed_name_is_compared_even_with_equal_native_text() {
     assert!(!matches(&want, &actual, false));
 }
 
-/// A label is still the property member its reader reports, not an
-/// ordinary body link. Alias allocation depends on this classification.
+/// OG's answer (manager ruling 2026-11-17): a file link in a property value
+/// is an `ast-link?` (og-0.10.9 `mldoc.cljc`), so it contributes no member and
+/// its label is no alias. The declaration is ordinary header text: the label
+/// is no site, a rename of `Old` leaves the line byte-identical, and the check
+/// accepts exactly that. The Org link's path stem is still the file site it
+/// is everywhere.
 #[test]
-fn file_link_labels_remain_alias_members() {
+fn file_link_labels_are_not_alias_members() {
     for (before, format) in [
         ("alias:: [Old](file:x.md)\n\n- body\n", MD),
+        ("alias:: [Old](x.md)\n\n- body\n", MD),
         ("#+alias: [[file:x.org][Old]]\n* body\n", ORG),
     ] {
         let content = read(before, format);
-        assert_eq!(content.header[0].role, HeaderRole::Aliases);
-        assert!(text_sites(&content.header[0].text)
-            .any(|s| s.kind == SiteKind::AliasName && s.name == "Old"));
+        assert_eq!(content.header[0].role, HeaderRole::Other, "{before:?}");
+        assert!(
+            !text_sites(&content.header[0].text).any(|s| s.name == "Old"),
+            "{before:?}"
+        );
         let after = written("Old", "New", before, format);
+        assert_eq!(after, before);
         assert!(accepts("Old", "New", before, &after, format));
+        assert!(!accepts(
+            "Old",
+            "New",
+            before,
+            &before.replacen("Old", "New", 1),
+            format
+        ));
     }
 }
 

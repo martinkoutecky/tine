@@ -12,6 +12,9 @@
 use lsdoc::ast::{Block, Inline, ListItem, Span, Url};
 use std::ops::Range;
 
+// lsdoc-wasm includes this file by path as a module-root file, so a bare
+// `mod slots;` would be looked for beside it, not in `walk/`.
+#[cfg_attr(target_arch = "wasm32", path = "walk/slots.rs")]
 mod slots;
 pub use slots::NameSlot;
 #[cfg(test)]
@@ -492,13 +495,87 @@ pub(super) fn quoted_linkable_value(value: &str) -> bool {
     whole.len() >= 2 && whole.starts_with('"') && whole.ends_with('"')
 }
 
+/// The references inside applicable `tags`/`alias`/`aliases` values that are
+/// not wholly quoted, each with its property: the ONE selection of property
+/// members, read by the page index, the model observation, the merge and the
+/// page header's aliases. `references` and `regions` are the same block's, in
+/// source order. O(properties + references), no parse or allocation.
+pub(crate) fn linkable_property_references_in<'a, R: 'a>(
+    references: impl Iterator<Item = &'a R>,
+    regions: &'a super::block_regions::BlockRegions,
+    reference: impl Fn(&R) -> &ProjectedPageRef,
+) -> impl Iterator<Item = (&'a super::block_regions::Property, &'a R)> {
+    let mut properties = regions
+        .properties
+        .iter()
+        .filter(|p| {
+            p.applicable
+                && (p.key.eq_ignore_ascii_case("tags")
+                    || p.key.eq_ignore_ascii_case("alias")
+                    || p.key.eq_ignore_ascii_case("aliases"))
+                && !quoted_linkable_value(&p.value)
+        })
+        .peekable();
+    references.filter_map(move |item| {
+        let reference = reference(item);
+        while properties
+            .peek()
+            .is_some_and(|p| p.value_range.1 <= reference.range.start)
+        {
+            properties.next();
+        }
+        properties
+            .peek()
+            .filter(|p| {
+                p.value_range.0 <= reference.range.start && reference.range.end <= p.value_range.1
+            })
+            .map(|p| (*p, item))
+    })
+}
+
+/// A selected reference that is a member itself: not nested in another
+/// reference and not the link a tag encodes.
+pub(crate) fn outermost_member(reference: &SlottedPageRef) -> bool {
+    !reference.slot.encoding && !reference.slot.nested
+}
+
+/// The alias members one page header declares, in source order: the members
+/// [`linkable_property_references_in`] selects in its page-property `alias` /
+/// `aliases` lines, read from the header's own block parse exactly as the
+/// model observation and the merge read it. The page header and the frontend
+/// (`lsdoc-wasm`) ask this. O(header bytes), one block parse plus one inline
+/// parse and, for a linkable value, one document parse per property.
+pub(crate) fn header_alias_members(raw: &str, is_org: bool) -> Vec<String> {
+    let blocks = tine_outline::lsdoc_block_parse::parse_projection(raw, is_org).blocks;
+    let regions = super::block_regions::from_blocks(raw, is_org, &blocks);
+    let mut projection = ReferenceSourceProjection::default();
+    let mut slots = Vec::new();
+    project_into(
+        &mut projection,
+        raw,
+        is_org,
+        &blocks,
+        &regions,
+        super::ParseConfig::default_ref(),
+        Some(&mut slots),
+    );
+    linkable_property_references_in(slots.iter(), &regions, |r| &r.reference)
+        .filter(|(p, r)| {
+            (p.primary || p.directive)
+                && crate::page_header::is_alias_key(&p.key)
+                && outermost_member(r)
+        })
+        .map(|(_, r)| r.reference.name.clone())
+        .collect()
+}
+
 fn project_implicit_linkable_property(
     projection: &mut Collector<'_>,
     key: &str,
     value_offset: usize,
     value: &str,
     raw: &str,
-    nodes: &[Inline],
+    is_org: bool,
     config: &super::ParseConfig,
 ) {
     let raw_len = raw.len();
@@ -512,9 +589,13 @@ fn project_implicit_linkable_property(
         return;
     }
 
-    // OG extract-refs-by-commas reads only top-level Plain nodes. lsdoc owns
-    // syntax and spans, so code, emphasis and link labels cannot become atoms.
-    for node in nodes {
+    // OG extract-refs-by-commas reads the top-level Plain children of the
+    // value's DOCUMENT parse (`property_refs::comma_nodes`): `# x` is a
+    // heading there and has none. lsdoc owns syntax and spans, so code,
+    // emphasis and link labels cannot become atoms.
+    let leading = value.len() - value.trim_start().len();
+    let value_offset = value_offset + leading;
+    for node in &tine_outline::property_refs::comma_nodes(value.trim(), is_org) {
         let Inline::Plain {
             text,
             span: Some(span),
@@ -804,8 +885,34 @@ pub(crate) fn project_into(
         if let Some(nodes) =
             super::parse_inline_bounded(value, if is_org { "org" } else { "markdown" })
         {
-            walk_inlines(&nodes, SpanMapper::direct(offset), raw, is_org, projection);
-            project_implicit_linkable_property(projection, key, offset, value, raw, &nodes, config);
+            // OG `extract-refs-from-mldoc-ast` drops every `ast-link?` (a file,
+            // search or URL link) from a property value: it names no page and
+            // its label is no member. An Org file link stays a rewrite target.
+            for node in &nodes {
+                match node {
+                    Inline::Link { url, span, .. }
+                        if !matches!(url, Url::PageRef { .. } | Url::BlockRef { .. }) =>
+                    {
+                        if let (true, Url::File { .. }, Some(targets), Some(range)) = (
+                            is_org,
+                            url,
+                            projection.source.rewrite_targets.as_mut(),
+                            span.as_ref()
+                                .and_then(|span| SpanMapper::direct(offset).map(span, raw.len())),
+                        ) {
+                            targets.push(RewriteTarget::FileLink(range));
+                        }
+                    }
+                    node => walk_inlines(
+                        std::slice::from_ref(node),
+                        SpanMapper::direct(offset),
+                        raw,
+                        is_org,
+                        projection,
+                    ),
+                }
+            }
+            project_implicit_linkable_property(projection, key, offset, value, raw, is_org, config);
         }
     }
 

@@ -503,6 +503,37 @@ fn pre_escaped_plain_property_checkpoints_are_rebuilt() {
 }
 
 #[test]
+fn pre_document_grammar_property_checkpoints_are_rebuilt() {
+    let root = graph();
+    fs::write(
+        root.path().join("pages/D.md"),
+        "alias:: {{embed [[Embedded]]}}\n\n- body\n  tags:: # x\n",
+    )
+    .unwrap();
+    let cp = root.path().join("launch.bin");
+    write_checkpoint(root.path(), &cp);
+    // Format 34 can retain the heading member `# x` and the alias relation
+    // built by the value-only alias reader.
+    let mut bytes = fs::read(&cp).unwrap();
+    bytes[8..12].copy_from_slice(&34_u32.to_le_bytes());
+    fs::write(&cp, bytes).unwrap();
+    let store = open_cp(root.path(), &cp);
+    let graph = store.whole_graph_reconciled().unwrap();
+    assert_eq!(load_outcome(&store), "format");
+    assert!(
+        parse_passes(&store) > 0,
+        "old reference evidence must rebuild"
+    );
+    assert!(graph.backlinks("# x").unwrap().is_empty());
+    assert!(!graph
+        .graph
+        .alias_owner_paths("embedded", None)
+        .unwrap()
+        .is_empty());
+    store.close();
+}
+
+#[test]
 fn pre_priority_reference_checkpoints_are_rebuilt() {
     let root = graph();
     fs::write(root.path().join("pages/D.md"), "- [#C] low\n- plain\n").unwrap();
@@ -1364,7 +1395,7 @@ fn the_golden_body_is_pinned_to_format() {
     let digest: String = sha256(&bytes).iter().map(|b| format!("{b:02x}")).collect();
     assert_eq!(
         (FORMAT, digest.as_str()),
-        (34, GOLDEN),
+        (35, GOLDEN),
         "ADR 0070: the checkpoint body changed; bump FORMAT and re-pin GOLDEN"
     );
 }

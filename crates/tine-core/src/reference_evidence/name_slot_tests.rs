@@ -1,5 +1,79 @@
 use crate::doc::DocBlock;
 
+/// OG's members of one linkable property value, from the pinned mldoc oracle
+/// (`og_property_members.json`; og-0.10.9 `text.cljs` `parse-property-refs`:
+/// the value's top-level inline references after `mldoc.cljc` `ast-link?`,
+/// united with the Plain children of the value's first DOCUMENT node). Every
+/// row is read through the shared reader (a block property and an Org drawer)
+/// and the value-only reader; each must give OG's members, as a set.
+#[test]
+fn property_members_are_ogs_for_every_oracle_value() {
+    #[derive(serde::Deserialize)]
+    struct Row {
+        org: bool,
+        value: String,
+        members: Vec<String>,
+    }
+    let rows: Vec<Row> = serde_json::from_str(include_str!("og_property_members.json")).unwrap();
+    assert!(rows.len() > 150);
+    let set = |names: Vec<String>| names.into_iter().collect::<std::collections::BTreeSet<_>>();
+    let mut failures = Vec::new();
+    for row in &rows {
+        let want = set(row.members.clone());
+        let raw = if row.org {
+            format!("body\n:PROPERTIES:\n:tags: {}\n:END:", row.value)
+        } else {
+            format!("body\ntags:: {}", row.value)
+        };
+        let mut block = DocBlock::new(&raw);
+        block.set_org(row.org);
+        let shared = set(super::linkable_property_members(&block)
+            .into_iter()
+            .map(|m| m.reference.name)
+            .collect());
+        let value_only = set(tine_outline::property_refs::linkable_names(
+            &row.value, row.org,
+        ));
+        // Named remaining differences (receipt cm-reader-slice, follow-ups),
+        // outside this slice's two questions. Each must still differ, so a
+        // fixed one is removed here rather than silently kept.
+        let known_shared = matches!(
+            (row.org, row.value.as_str()),
+            // OG's property references are top-level only (mldoc
+            // `Property.property_references`); the shared walk descends into
+            // emphasis.
+            (_, "**[[a]]**")
+            // lsdoc v0.5.11 reads this Org image as text; mldoc as a Search link.
+            | (true, "![x](../assets/a.png)")
+        );
+        let known_value_only = matches!(
+            (row.org, row.value.as_str()),
+            // The value-only reader keeps a nested link's brackets (OG
+            // `get-page-name` drops them) and parses macros (OG skips them
+            // for property references, so an embed's page is a member).
+            (_, "[[a [[b]]]]") | (_, "{{embed [[a]]}}") | (true, "![x](../assets/a.png)")
+        );
+        for (known, got, reader) in [
+            (known_shared, &shared, "shared"),
+            (known_value_only, &value_only, "value-only"),
+        ] {
+            if known && got == &want {
+                failures.push(format!(
+                    "org={} {:?}: {reader} now agrees; drop it from the known list",
+                    row.org, row.value
+                ));
+            }
+        }
+        if (shared != want && !known_shared) || (value_only != want && !known_value_only) {
+            failures.push(format!(
+                "org={} {:?}: OG {want:?}, shared {shared:?}, value-only {value_only:?}",
+                row.org, row.value
+            ));
+        }
+    }
+    assert!(failures.is_empty(), "{}", failures.join("\n"));
+}
+
 #[test]
 fn escaped_plain_alias_members_keep_their_reader_names_and_native_ranges() {
     for (name, native) in [("#x", "\\#x"), ("a[[b", "a\\[\\[b"), ("a]]b", "a\\]\\]b")] {
