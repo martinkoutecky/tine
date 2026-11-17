@@ -472,7 +472,9 @@ fn reference_sites(
         };
         let slot = p.slot.run().unwrap_or(&p.slot.extent);
         let slot = slot.start - p.range.start..slot.end - p.range.start;
-        let kind = if value && kind != SiteKind::PropertyKey {
+        // An embed member keeps its native `{{embed [[..]]}}` form: its site
+        // is the embed's, wherever it stands.
+        let kind = if value && !matches!(kind, SiteKind::PropertyKey | SiteKind::Embed) {
             SiteKind::PropertyValue
         } else {
             kind

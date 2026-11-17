@@ -691,6 +691,57 @@ fn glued_tag_sites_are_reported_for_each_destination_form() {
     }
 }
 
+/// An embed that is a linkable property's member keeps its `{{embed [[..]]}}`
+/// form when its page is renamed; the check expects that native form.
+#[test]
+fn embed_members_of_linkable_properties_rename_in_place() {
+    let _guard = crate::integration_lock();
+    for (path, before, after) in [
+        (
+            "pages/r.md",
+            "- body\n  tags:: {{embed [[a]]}}\n- [[a]]\n",
+            "- body\n  tags:: {{embed [[New]]}}\n- [[New]]\n",
+        ),
+        (
+            "pages/r.md",
+            "- body\n  alias:: {{embed [[a]]}}\n- [[a]]\n",
+            "- body\n  alias:: {{embed [[New]]}}\n- [[New]]\n",
+        ),
+        (
+            "pages/r.md",
+            "tags:: {{embed [[a]]}}\n\n- [[a]]\n",
+            "tags:: {{embed [[New]]}}\n\n- [[New]]\n",
+        ),
+        (
+            "pages/r.org",
+            "* body\n:PROPERTIES:\n:tags: {{embed [[a]]}}\n:END:\n* [[a]]\n",
+            "* body\n:PROPERTIES:\n:tags: {{embed [[New]]}}\n:END:\n* [[New]]\n",
+        ),
+        (
+            "pages/r.org",
+            "* body\n:PROPERTIES:\n:alias: {{embed [[a]]}}\n:END:\n* [[a]]\n",
+            "* body\n:PROPERTIES:\n:alias: {{embed [[New]]}}\n:END:\n* [[New]]\n",
+        ),
+        (
+            "pages/r.org",
+            "#+tags: {{embed [[a]]}}\n* [[a]]\n",
+            "#+tags: {{embed [[New]]}}\n* [[New]]\n",
+        ),
+    ] {
+        let (root, store) = fixture(
+            "check-embed-member",
+            &[("pages/a.md", "- source\n"), (path, before)],
+        );
+        let report = nested_rename(&store, "a", "New");
+        assert_eq!(
+            fs::read_to_string(root.join(path)).unwrap(),
+            after,
+            "{before:?}"
+        );
+        assert!(report.site_exceptions.is_empty(), "{before:?}");
+    }
+}
+
 #[test]
 fn nested_page_alias_members_are_left_unlisted() {
     let _guard = crate::integration_lock();
