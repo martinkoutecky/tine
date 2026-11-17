@@ -221,6 +221,7 @@ fn native_alias_member_siblings_have_pinned_outcomes() {
                         "a\\]\\]b",
                         "[**x**_y_](A.md)",
                         "{{embed x}}",
+                        "#a\\_b",
                     ] {
                         let rich = if org {
                             format!("#+{key}: {value}\n")
@@ -233,14 +234,15 @@ fn native_alias_member_siblings_have_pinned_outcomes() {
                                 source: endings(if role == 1 { plain } else { &rich }, ending),
                                 target: endings(if role == 0 { plain } else { &rich }, ending),
                                 org, rename,
-                                // An embed without brackets is a member the
-                                // reader gives no native name run.
-                                refusal: if value == "{{embed x}}" {
-                                    Some((match (org, key) {
-                                        (false, "alias") => "MissingNativeNameRange { declaration: \"alias:: {{embed x}}\" }",
-                                        (false, _) => "MissingNativeNameRange { declaration: \"aliases:: {{embed x}}\" }",
-                                        (true, "alias") => "MissingNativeNameRange { declaration: \"#+alias: {{embed x}}\" }",
-                                        (true, _) => "MissingNativeNameRange { declaration: \"#+aliases: {{embed x}}\" }",
+                                // A Markdown tag with an escape declares the
+                                // member `a_b`, which no contiguous native
+                                // run spells: the writer refuses rather than
+                                // guess its coordinates.
+                                refusal: if !org && value == "#a\\_b" {
+                                    Some((if key == "alias" {
+                                        "MissingNativeNameRange { declaration: \"alias:: #a\\\\_b\" }"
+                                    } else {
+                                        "MissingNativeNameRange { declaration: \"aliases:: #a\\\\_b\" }"
                                     }, role == 0))
                                 } else if org && role == 2 && value == "[**x**_y_](A.md)" {
                                     Some((if key == "alias" { "MissingNativeNameRange { declaration: \"#+alias: [**x**_y_](A.md)\" }" } else { "MissingNativeNameRange { declaration: \"#+aliases: [**x**_y_](A.md)\" }" }, true))
@@ -252,25 +254,33 @@ fn native_alias_member_siblings_have_pinned_outcomes() {
             }
         }
     }
-    assert_eq!(cases.len(), 1056);
-    // A Markdown file link declares no alias member (Logseq's reading): the
-    // survivor keeps its own declaration as header text, and the source's is
-    // other header text, so O6 writes it as the leftover block's line.
+    assert_eq!(cases.len(), 1152);
+    // A Markdown file link and an embed (macros skipped) declare no alias
+    // member (Logseq's reading): the survivor keeps its own declaration as
+    // header text, and the source's is other header text, so O6 writes it as
+    // the leftover block's line (an Org leftover quotes it).
     run_pinned(cases, &|case| {
-        let value = "[**x**_y_](A.md)";
-        if case.org || !(case.source.contains(value) || case.target.contains(value)) {
-            return None;
-        }
+        let value = ["[**x**_y_](A.md)", "{{embed x}}"]
+            .into_iter()
+            .filter(|v| !case.org || *v == "{{embed x}}")
+            .find(|v| case.source.contains(v) || case.target.contains(v))?;
         let line = |text: &str| text.split(['\r', '\n']).next().unwrap().to_owned();
         let e = ["\r\n", "\n", "\r"]
             .into_iter()
             .find(|e| case.source.ends_with(e))
             .unwrap();
-        let leftover = |text: &str| format!("-{e}  {}{e}", line(text));
+        let leftover = |text: &str| {
+            if case.org {
+                format!("*{e}#+BEGIN_QUOTE{e}{}{e}#+END_QUOTE{e}", line(text))
+            } else {
+                format!("-{e}  {}{e}", line(text))
+            }
+        };
+        let plain = if case.org { "* plain" } else { "- plain" };
         Some(if !case.target.contains(value) {
-            format!("- plain{e}{}", leftover(&case.source))
+            format!("{plain}{e}{}", leftover(&case.source))
         } else if !case.source.contains(value) {
-            format!("{}{e}- plain{e}", line(&case.target))
+            format!("{}{e}{plain}{e}", line(&case.target))
         } else {
             format!("{}{e}{}", line(&case.target), leftover(&case.source))
         })

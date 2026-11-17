@@ -63,8 +63,9 @@ fn ordinary_merge_limitations_name_the_failing_input_at_the_window_boundary() {
             "source",
         ),
         (
-            // `{{embed x}}` declares `x` with no native name run.
-            "alias:: {{embed x}}\n- source\n",
+            // The Markdown tag `#a\_b` declares `a_b`, which no contiguous
+            // native run spells.
+            "alias:: #a\\_b\n- source\n",
             "- target\n",
             "md",
             "aliasSpelling",
@@ -72,7 +73,7 @@ fn ordinary_merge_limitations_name_the_failing_input_at_the_window_boundary() {
         ),
         (
             "- source\n",
-            "alias:: {{embed x}}\n- target\n",
+            "alias:: #a\\_b\n- target\n",
             "md",
             "aliasSpelling",
             "target",
@@ -126,8 +127,8 @@ fn ordinary_merge_limitations_name_the_failing_input_at_the_window_boundary() {
             let wire = serde_json::to_value(RewriteError::of(error)).unwrap();
             assert_eq!(wire["refused"]["kind"], kind, "named={named}: {message}");
             if kind == "aliasSpelling" {
-                assert_eq!(wire["refused"]["alias"], "alias:: {{embed x}}");
-                assert!(message.contains("alias:: {{embed x}}"), "{message}");
+                assert_eq!(wire["refused"]["alias"], "alias:: #a\\_b");
+                assert!(message.contains("alias:: #a\\_b"), "{message}");
             }
             if kind == "headerProseOverlap" {
                 assert!(message.contains("both properties and prose"), "{message}");
@@ -153,7 +154,7 @@ fn ordinary_merge_limitations_name_the_failing_input_at_the_window_boundary() {
         drop(store);
         let repaired = |text: &str| {
             text.replace("#+END_QUOTE\n", "")
-                .replace("{{embed x}}", "x")
+                .replace("#a\\_b", "a_b")
                 .replace("\n \n", "\n")
                 .trim_start_matches('\n')
                 .to_owned()
@@ -285,7 +286,7 @@ fn a_merge_refusal_after_flush_saves_pending_edits_but_merges_nothing() {
     for named in [false, true] {
         let root = tempfile::tempdir().unwrap();
         std::fs::create_dir_all(root.path().join("pages")).unwrap();
-        let source = "alias:: {{embed x}}\n- source\n";
+        let source = "alias:: #a\\_b\n- source\n";
         std::fs::write(root.path().join("pages/source.md"), source).unwrap();
         std::fs::write(root.path().join("pages/target.md"), "- target\n").unwrap();
         let store = std::sync::Arc::new(

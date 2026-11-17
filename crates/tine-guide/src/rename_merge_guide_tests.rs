@@ -20,7 +20,7 @@ fn rename_merge_and_journal_rename_proposals_are_documented_in_the_bundled_guide
         "an Org source drawer entry clashes with one the remaining page has",
         "holds other text besides names, such as a file link",
         "write the aliases there as plain names separated by commas",
-        "A file link alone on an alias line declares no alias",
+        "A file link or a macro such as `{{embed x}}` alone on an alias line declares no alias",
         "Saving it again keeps the survivor's name",
         "Tag-shaped aliases keep their `#` and existing brackets",
         // GH #535: when an unsaved page still stops a rename, or a refusal

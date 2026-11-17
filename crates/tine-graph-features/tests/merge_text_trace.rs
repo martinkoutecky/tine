@@ -225,13 +225,14 @@ fn round15k_alias_first_owners_cannot_cross_fixed_target_frames() {
 #[test]
 fn round15k_missing_link_name_coordinates_refuse_unchanged() {
     let _guard = crate::integration_lock();
-    // `{{embed x}}` declares the member `x`, but the reader gives an embed
-    // without brackets no native name run: no guessed coordinates are used.
+    // A Markdown tag with an escape, `#a\_b`, declares the member `a_b`, but
+    // no contiguous native run spells that name: no guessed coordinates are
+    // used. Org reads the same bytes as the member `a\_b`, its own run.
     for (source, target, org) in [
-        ("alias:: {{embed x}}\n- source\n", "- target\n", false),
-        ("- source\n", "alias:: {{embed x}}\n- target\n", false),
-        ("#+alias: {{embed x}}\n* source\n", "* target\n", true),
-        ("* source\n", "#+alias: {{embed x}}\n* target\n", true),
+        ("alias:: #a\\_b\n- source\n", "- target\n", false),
+        ("- source\n", "alias:: #a\\_b\n- target\n", false),
+        ("- alias:: #a\\_b\n- source\n", "- target\n", false),
+        ("- source\n", "- alias:: #a\\_b\n- target\n", false),
     ] {
         let reason = valid_merge(source, target, org, |_, _| {}).unwrap_err();
         assert!(reason.ends_with("F-LINK"), "{reason}");
@@ -268,6 +269,32 @@ fn round15k_file_link_alias_lines_merge_as_header_text() {
             "#+alias: kept\n* target\n",
             true,
             "#+alias: kept\n* target\n*\n#+BEGIN_QUOTE\n#+alias: [[file:A.org][*x* /y/]]\n#+END_QUOTE\n* source\n",
+        ),
+        // An embed reads macros skipped (Logseq's property parse), so
+        // `{{embed x}}` declares no member either.
+        (
+            "alias:: {{embed x}}\n- source\n",
+            "- target\n",
+            false,
+            "- target\n-\n  alias:: {{embed x}}\n- source\n",
+        ),
+        (
+            "- source\n",
+            "alias:: {{embed x}}\n- target\n",
+            false,
+            "alias:: {{embed x}}\n- target\n- source\n",
+        ),
+        (
+            "#+alias: {{embed x}}\n* source\n",
+            "* target\n",
+            true,
+            "* target\n*\n#+BEGIN_QUOTE\n#+alias: {{embed x}}\n#+END_QUOTE\n* source\n",
+        ),
+        (
+            "* source\n",
+            "#+alias: {{embed x}}\n* target\n",
+            true,
+            "#+alias: {{embed x}}\n* target\n* source\n",
         ),
     ] {
         valid_merge(source, target, org, |doc, proof| {
