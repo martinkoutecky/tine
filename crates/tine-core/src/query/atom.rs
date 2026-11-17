@@ -23,10 +23,10 @@
 //!    de-duplicated by [`atom_key`] with first occurrence winning.
 //! 4. else: keep the trimmed value as one `Plain` atom (Martin D2, 2026-10-04).
 //!
-//! The value is parsed with `lsdoc::inline(value, format)` (through the bounded
-//! door `render::parse_inline_bounded`, I-22) — the transcription
-//! of OG parsing the value with mldoc in `extract-refs-by-commas` /
-//! `extract-refs-from-mldoc-ast`. It is **not** read off
+//! The refs and segments are the value's members from the one owner,
+//! `tine_outline::property_refs::members` — the transcription of OG parsing
+//! the value with mldoc in `extract-refs-by-commas` /
+//! `extract-refs-from-mldoc-ast`. They are **not** read off
 //! `BlockProjection.refs_page`, which aggregates the whole block's refs without
 //! saying which property value produced each (K11).
 
@@ -86,15 +86,6 @@ impl From<crate::model::Format> for AtomFormat {
     }
 }
 
-impl AtomFormat {
-    fn lsdoc_name(self) -> &'static str {
-        match self {
-            AtomFormat::Markdown => "markdown",
-            AtomFormat::Org => "org",
-        }
-    }
-}
-
 /// Where an atom came from: an explicit page reference in the value, or a plain
 /// text segment. Only `ordinal` and `origin` depend on the ordering rule, and
 /// `origin` affects only the registry's `ref` class, never a match (§6.2).
@@ -149,19 +140,9 @@ fn wrapped_by_quotes(value: &str) -> bool {
     value.len() > 1 && value.starts_with('"') && value.ends_with('"')
 }
 
-/// OG `sep-by-comma` (`text.cljs:132-139`): split on one `,` or `，`, trim, drop
-/// blanks. OG returns a set; Tine keeps text order (K19).
-fn sep_by_comma(value: &str) -> Vec<&str> {
-    value
-        .split(crate::refs::is_linkable_property_separator)
-        .map(str::trim)
-        .filter(|segment| !segment.is_empty())
-        .collect()
-}
-
-/// OG `extract-refs-from-mldoc-ast` (`text.cljs:100-131`) over one lsdoc inline
-/// node, and the document-parse nodes OG's comma split reads.
-use tine_outline::property_refs::{comma_nodes, plain_segments, ref_from_inline};
+/// The value's members: OG `parse-property-refs` (`text.cljs:100-163`), from
+/// the one owner. OG returns a set; Tine keeps text order (K19).
+use tine_outline::property_refs::{members, Grammar, Kind};
 
 /// The ONE atomizer (SPEC §6.2), as Tine runs it. `key` is the raw source key;
 /// it is normalized with the existing [`property_key_norm`] before every rule
@@ -229,23 +210,17 @@ fn refs_and_segments(
     format: AtomFormat,
     config: &ParseConfig,
 ) -> (Vec<String>, Vec<String>) {
-    let nodes =
-        crate::render::parse_inline_bounded(trimmed, format.lsdoc_name()).unwrap_or_default();
-    let mut refs: Vec<String> = Vec::new();
-    for node in &nodes {
-        ref_from_inline(node, &mut refs);
-    }
-    let mut segments: Vec<String> = Vec::new();
-    if separated_by_commas(key_norm, config) {
-        let mut plains: Vec<String> = Vec::new();
-        plain_segments(
-            &comma_nodes(trimmed, format == AtomFormat::Org),
-            &mut plains,
-        );
-        for plain in &plains {
-            for segment in sep_by_comma(plain) {
-                segments.push(segment.to_string());
-            }
+    let grammar = if separated_by_commas(key_norm, config) {
+        Grammar::Linkable
+    } else {
+        Grammar::Parsed
+    };
+    let (mut refs, mut segments) = (Vec::new(), Vec::new());
+    for member in members(trimmed, format == AtomFormat::Org, grammar) {
+        if member.kind == Kind::Plain {
+            segments.push(member.name);
+        } else {
+            refs.push(member.name);
         }
     }
     (refs, segments)

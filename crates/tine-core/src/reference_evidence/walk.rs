@@ -11,6 +11,7 @@
 
 use lsdoc::ast::{Block, Inline, ListItem, Span, Url};
 use std::ops::Range;
+use tine_outline::property_refs;
 
 // lsdoc-wasm includes this file by path as a module-root file, so a bare
 // `mod slots;` would be looked for beside it, not in `walk/`.
@@ -569,84 +570,93 @@ pub(crate) fn header_alias_members(raw: &str, is_org: bool) -> Vec<String> {
         .collect()
 }
 
-fn project_implicit_linkable_property(
+/// How OG reads the value of `key` (`text.cljs` `parse-property`).
+fn property_grammar(key: &str, config: &super::ParseConfig) -> property_refs::Grammar {
+    let key = super::property_key_norm(key);
+    if super::reference_parsing_suppressed(&key, config) {
+        property_refs::Grammar::Literal
+    } else if super::separated_by_commas(&key, config) {
+        property_refs::Grammar::Linkable
+    } else {
+        property_refs::Grammar::Parsed
+    }
+}
+
+/// One property value's references: exactly its members
+/// ([`property_refs::members`], the one owner), each with the native slot the
+/// owner reports. A member in `{{embed …}}` is the embed site, as in a body;
+/// one in another macro names its page here and is rewritten as that macro's
+/// argument. Rename targets (Org file links, macro arguments) are what the
+/// body walk reports for the same nodes, collected only for a rename.
+fn project_property_value(
     projection: &mut Collector<'_>,
     key: &str,
-    value_offset: usize,
+    offset: usize,
     value: &str,
     raw: &str,
     is_org: bool,
     config: &super::ParseConfig,
 ) {
+    use property_refs::{Kind, Within};
     let raw_len = raw.len();
-    let key = super::property_key_norm(key);
-    if !super::separated_by_commas(&key, config)
-        || super::reference_parsing_suppressed(&key, config)
-    {
-        return;
-    }
-    if quoted_linkable_value(value) {
-        return;
-    }
-
-    // OG extract-refs-by-commas reads the top-level Plain children of the
-    // value's DOCUMENT parse (`property_refs::comma_nodes`): `# x` is a
-    // heading there and has none. lsdoc owns syntax and spans, so code,
-    // emphasis and link labels cannot become atoms.
-    let leading = value.len() - value.trim_start().len();
-    let value_offset = value_offset + leading;
-    for node in &tine_outline::property_refs::comma_nodes(value.trim(), is_org) {
-        let Inline::Plain {
-            text,
-            span: Some(span),
-            ..
-        } = node
-        else {
-            continue;
+    let at = |r: &Range<usize>| offset + r.start..offset + r.end;
+    let reading = property_refs::read(value, is_org, property_grammar(key, config));
+    for member in reading.members {
+        let (rule, range) = match (&member.within, member.kind) {
+            (Within::Embed(whole), _) => ("explicit_embed", at(whole)),
+            (_, Kind::Link) => ("explicit_link", at(&member.token)),
+            (_, Kind::NestedLink) => ("explicit_nested_link", at(&member.token)),
+            (_, Kind::Tag) => ("explicit_tag", at(&member.token)),
+            (_, Kind::Plain) => ("implicit_linkable_property", at(&member.token)),
         };
-        let Some(range) = SpanMapper::direct(value_offset).map(&span, raw_len) else {
-            continue;
-        };
-        let mut offsets = projection
-            .slots
-            .as_ref()
-            .map(|_| slots::PlainOffsets::new(&raw[range.clone()], text));
-        let mut segment_start = 0;
-        for (index, separator) in text
-            .char_indices()
-            .filter(|(_, ch)| super::block_regions::is_linkable_property_separator(*ch))
-            .map(|(index, ch)| (index, ch.len_utf8()))
-            .chain(std::iter::once((text.len(), 0)))
-        {
-            let segment = &text[segment_start..index];
-            let leading = segment.len() - segment.trim_start().len();
-            let name = segment.trim();
-            // The parser has already classified this node as Plain. Decoded
-            // escapes such as \#x and a\[\[b are names too; recognizing link
-            // or tag syntax again from decoded characters would discard them.
-            if !name.is_empty() {
-                let from = segment_start + leading;
-                let start = range.start + from;
-                let end = start + name.len();
-                push_explicit_range(
-                    projection,
-                    name.to_string(),
-                    start..end,
-                    raw_len,
-                    "implicit_linkable_property",
-                );
-                if let (Some(offsets), Some(slots)) = (offsets.as_mut(), projection.slots.as_mut())
-                {
-                    let start = range.start + offsets.at(from);
-                    let end = range.start + offsets.at(from + name.len());
-                    let reference = slots.last_mut().unwrap();
-                    reference.reference.range = start..end;
-                    reference.slot = NameSlot::whole(start..end);
-                }
-            }
-            segment_start = index + separator;
+        let next = projection.slots.as_ref().map_or(0, |s| s.len());
+        push_explicit_range(projection, member.name, range.clone(), raw_len, rule);
+        if let Some(reference) = projection.slots.as_mut().and_then(|s| s.get_mut(next)) {
+            let run = member.run.as_ref().map_or(range.start..range.start, at);
+            reference.slot = NameSlot::whole(run);
+            reference.slot.in_macro = matches!(member.within, Within::Macro(_));
         }
     }
+    if projection.source.rewrite_targets.is_none() {
+        return;
+    }
+    // The body walk over the owner's parse of the value, on a scratch
+    // projection, keeping only its targets. A non-page link's label is not
+    // walked (`ast-link?`); an Org file link stays a rewrite target.
+    let (nodes, offset) = (reading.nodes, offset + reading.lead);
+    let mut scratch = ReferenceSourceProjection {
+        rewrite_targets: projection.source.rewrite_targets.take(),
+        ..Default::default()
+    };
+    let collector = &mut Collector {
+        source: &mut scratch,
+        slots: None,
+    };
+    for node in &nodes {
+        match node {
+            Inline::Link { url, span, .. }
+                if !matches!(url, Url::PageRef { .. } | Url::BlockRef { .. }) =>
+            {
+                if let (true, Url::File { .. }, Some(targets), Some(range)) = (
+                    is_org,
+                    url,
+                    collector.source.rewrite_targets.as_mut(),
+                    span.as_ref()
+                        .and_then(|span| SpanMapper::direct(offset).map(span, raw_len)),
+                ) {
+                    targets.push(RewriteTarget::FileLink(range));
+                }
+            }
+            node => walk_inlines(
+                std::slice::from_ref(node),
+                SpanMapper::direct(offset),
+                raw,
+                is_org,
+                collector,
+            ),
+        }
+    }
+    projection.source.rewrite_targets = scratch.rewrite_targets;
 }
 
 fn structural_property(key: &str, raw: &str, is_org: bool) -> bool {
@@ -882,38 +892,7 @@ pub(crate) fn project_into(
                 .push(key_range.start..property.value_range.1);
             continue;
         }
-        if let Some(nodes) =
-            super::parse_inline_bounded(value, if is_org { "org" } else { "markdown" })
-        {
-            // OG `extract-refs-from-mldoc-ast` drops every `ast-link?` (a file,
-            // search or URL link) from a property value: it names no page and
-            // its label is no member. An Org file link stays a rewrite target.
-            for node in &nodes {
-                match node {
-                    Inline::Link { url, span, .. }
-                        if !matches!(url, Url::PageRef { .. } | Url::BlockRef { .. }) =>
-                    {
-                        if let (true, Url::File { .. }, Some(targets), Some(range)) = (
-                            is_org,
-                            url,
-                            projection.source.rewrite_targets.as_mut(),
-                            span.as_ref()
-                                .and_then(|span| SpanMapper::direct(offset).map(span, raw.len())),
-                        ) {
-                            targets.push(RewriteTarget::FileLink(range));
-                        }
-                    }
-                    node => walk_inlines(
-                        std::slice::from_ref(node),
-                        SpanMapper::direct(offset),
-                        raw,
-                        is_org,
-                        projection,
-                    ),
-                }
-            }
-            project_implicit_linkable_property(projection, key, offset, value, raw, is_org, config);
-        }
+        project_property_value(projection, key, offset, value, raw, is_org, config);
     }
 
     projection.source.explicit.sort_by(|a, b| {

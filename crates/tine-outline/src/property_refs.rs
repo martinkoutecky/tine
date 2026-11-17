@@ -1,160 +1,352 @@
-//! OG 0.10.9 graph-parser/text.cljs `get-ref-from-ast` and
-//! `extract-refs-by-commas`: explicit refs in any parsed property; comma-split
-//! top-level Plain nodes additionally for linkable properties. Never split the
+//! The members of one property value: the ONE answer to "which names does a
+//! property value contain?", read by the reference walk (index, aliases, model
+//! observation, rename, merge), the window's property chips and page tags,
+//! and query atoms.
+//!
+//! OG 0.10.9 graph-parser `text.cljs:100-131,148-185` (`parse-property`):
+//! the value's top-level reference forms from mldoc's property parse
+//! (`Property.property_references`: macros skipped, so a macro's text is read
+//! in place) after `mldoc.cljc:117-132` `ast-link?` removal, united, for a
+//! comma-separated key, with the comma members of the Plain children of the
+//! value's first DOCUMENT node. Nothing nested in another inline form
+//! (emphasis, sub/superscript, a link label) is a member. Never split the
 //! whole raw value: spaces and commas inside a reference belong to its name.
 
 use lsdoc::ast::{Inline, Url};
 use std::ops::Range;
 
-/// Append the explicit page reference carried by one top-level inline token.
-/// OG removes every `mldoc.cljc` `ast-link?` first: a link other than a page
-/// or block reference (file, search, URL) and a page link to a local asset or
-/// drawing name no page, and their labels are not members.
-pub fn ref_from_inline(node: &Inline, out: &mut Vec<String>) {
-    match node {
-        Inline::Link {
-            url: Url::PageRef { v },
-            ..
-        } if !crate::block_regions::local_asset_target(v) => out.push(v.trim().to_string()),
-        Inline::NestedLink { content, .. } => out.push(content.trim().to_string()),
-        Inline::Tag { children, .. } => {
-            let mut text = String::new();
-            tag_plain_text(children, &mut text);
-            if !text.trim().is_empty() {
-                out.push(text.trim().to_string());
+/// How a value is read, by its key (the caller decides from the graph config).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Grammar {
+    /// A comma-separated key (`tags`, `alias`, `aliases`, configured keys):
+    /// references plus comma members.
+    Linkable,
+    /// Every other parsed key: references only.
+    Parsed,
+    /// A key in `:ignored-page-references-keywords`: OG keeps the string and
+    /// `block.cljs` `extract-refs-from-property-value` reads its ordinary
+    /// inline parse, so macros stay macros.
+    Literal,
+}
+
+/// The syntactic form a member was read from.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Kind {
+    Link,
+    NestedLink,
+    Tag,
+    /// A comma member of a Plain node.
+    Plain,
+}
+
+/// Where a member stands.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum Within {
+    Value,
+    /// Inside the top-level `{{embed …}}` at this range.
+    Embed(Range<usize>),
+    /// Inside another top-level macro at this range.
+    Macro(Range<usize>),
+}
+
+/// One member with its native coordinates, byte offsets in the value as given
+/// (untrimmed). `token` is the whole reference token, wrappers included; for a
+/// plain member it is the bytes its name was decoded from (escapes included).
+/// `run` is the name's own bytes, absent when no contiguous run spells it.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Member {
+    pub name: String,
+    pub token: Range<usize>,
+    pub run: Option<Range<usize>>,
+    pub kind: Kind,
+    pub within: Within,
+}
+
+/// The members of `value` in source order, before identity deduplication. A
+/// wholly quoted value has none. O(value bytes): one inline parse, one more
+/// per top-level macro (its own bytes), and for [`Grammar::Linkable`] one
+/// bounded document parse. No I/O.
+pub fn members(value: &str, is_org: bool, grammar: Grammar) -> Vec<Member> {
+    read(value, is_org, grammar).members
+}
+
+/// [`members`] with the inline parse they were read from, so a caller that
+/// also walks the value's nodes (the reference walk's rename targets) parses
+/// it once.
+pub struct Reading {
+    pub members: Vec<Member>,
+    /// The trimmed value's inline parse; empty when it has no members to read
+    /// (blank or quoted) or is deeper than the parser's bound.
+    pub nodes: Vec<Inline>,
+    /// The trimmed value's offset in `value`: node spans start here.
+    pub lead: usize,
+}
+
+/// [`members`] and the parse behind them. O(value bytes): one inline parse,
+/// one in-place parse per top-level macro and, for [`Grammar::Linkable`], one
+/// document parse.
+pub fn read(value: &str, is_org: bool, grammar: Grammar) -> Reading {
+    let lead = value.len() - value.trim_start().len();
+    let text = value.trim();
+    let mut out = Vec::new();
+    if text.is_empty() || (text.len() > 1 && text.starts_with('"') && text.ends_with('"')) {
+        return Reading {
+            members: out,
+            nodes: Vec::new(),
+            lead,
+        };
+    }
+    let nodes =
+        crate::lsdoc_block_parse::parse_inline_bounded(text, format(is_org)).unwrap_or_default();
+    let reader = Read {
+        text,
+        org: is_org,
+        skip_macros: grammar != Grammar::Literal,
+    };
+    reader.references(&nodes, 0, &Within::Value, &mut out);
+    if grammar == Grammar::Linkable {
+        plain_members(text, is_org, &mut out);
+    }
+    out.sort_by_key(|m| m.token.start);
+    let shift = |r: &mut Range<usize>| *r = r.start + lead..r.end + lead;
+    for member in &mut out {
+        shift(&mut member.token);
+        if let Some(run) = member.run.as_mut() {
+            shift(run);
+        }
+        if let Within::Embed(r) | Within::Macro(r) = &mut member.within {
+            shift(r);
+        }
+    }
+    Reading {
+        members: out,
+        nodes,
+        lead,
+    }
+}
+
+fn format(is_org: bool) -> &'static str {
+    if is_org {
+        "org"
+    } else {
+        "md"
+    }
+}
+
+/// The name run of an accepted page link node (`[[x]]`, Org `[[x][label]]`,
+/// Markdown `[label]([[x]])`), relative to the node. O(node bytes).
+pub fn page_link_run(node: &str, org: bool) -> Option<Range<usize>> {
+    if node.len() < 4 {
+        return None;
+    }
+    if org {
+        return Some(2..node.find("][").unwrap_or(node.len() - 2));
+    }
+    if node.starts_with("[[") {
+        return Some(2..node.len() - 2);
+    }
+    let split = node.rfind("](")?;
+    let target = node.get(split + 2..node.len() - 1)?;
+    let lead = target.len() - target.trim_start().len();
+    let start = split + 2 + lead + 2;
+    Some(start..start + target.trim().len().checked_sub(4)?)
+}
+
+struct Read<'a> {
+    text: &'a str,
+    org: bool,
+    skip_macros: bool,
+}
+
+impl Read<'_> {
+    /// The top-level reference forms of `nodes`, parsed from `text[base..]`.
+    fn references(&self, nodes: &[Inline], base: usize, within: &Within, out: &mut Vec<Member>) {
+        for node in nodes {
+            if let Some((name, token, run, kind)) = self.reference(node, base, false) {
+                if !name.is_empty() {
+                    out.push(Member {
+                        name,
+                        token,
+                        run,
+                        kind,
+                        within: within.clone(),
+                    });
+                }
+                continue;
+            }
+            let Inline::Macro {
+                name,
+                span: Some(span),
+                ..
+            } = node
+            else {
+                continue;
+            };
+            // mldoc reads property references with macros skipped: `{{` is
+            // text and the macro's bytes after it (closing braces included)
+            // are read in place, so its top-level links are the value's.
+            let whole = base + span.0..base + span.1;
+            let Some(inner) = self.text.get(whole.start + 2..whole.end) else {
+                continue;
+            };
+            if !self.skip_macros || !self.text[whole.clone()].starts_with("{{") {
+                continue;
+            }
+            let within = match within {
+                Within::Value if name.eq_ignore_ascii_case("embed") => Within::Embed(whole.clone()),
+                Within::Value => Within::Macro(whole.clone()),
+                outer => outer.clone(),
+            };
+            if let Some(nodes) =
+                crate::lsdoc_block_parse::parse_inline_bounded(inner, format(self.org))
+            {
+                self.references(&nodes, whole.start + 2, &within, out);
             }
         }
-        _ => {}
     }
-}
 
-fn tag_plain_text(children: &[Inline], out: &mut String) {
-    for child in children {
-        match child {
-            Inline::Plain { text, .. } => out.push_str(text),
+    /// OG `get-ref-from-ast` on one node: a page link (no asset or drawing,
+    /// `ast-link?`), a nested link, or a tag named by its first child.
+    /// Returns (trimmed name, token, run, kind).
+    fn reference(
+        &self,
+        node: &Inline,
+        base: usize,
+        tag_child: bool,
+    ) -> Option<(String, Range<usize>, Option<Range<usize>>, Kind)> {
+        let token = |span: &Option<lsdoc::ast::Span>| {
+            span.as_ref()
+                .map(|s| base + s.0..base + s.1)
+                .filter(|r| r.start <= r.end && r.end <= self.text.len())
+        };
+        match node {
+            // A tag's first child is read by `get-ref-from-ast` without the
+            // `ast-link?` filter, so a Search target names it as well.
             Inline::Link {
-                url: Url::PageRef { v } | Url::Search { v },
+                url: Url::PageRef { v },
+                span,
                 ..
-            } => out.push_str(v),
-            Inline::NestedLink { content, .. } => out.push_str(content),
-            _ => {}
+            }
+            | Inline::Link {
+                url: Url::Search { v },
+                span,
+                ..
+            } if tag_child
+                || matches!(
+                    node,
+                    Inline::Link {
+                        url: Url::PageRef { .. },
+                        ..
+                    }
+                ) && !crate::block_regions::local_asset_target(v) =>
+            {
+                let token = token(span)?;
+                let run = page_link_run(&self.text[token.clone()], self.org)
+                    .map(|r| token.start + r.start..token.start + r.end);
+                Some((v.trim().to_owned(), token, run, Kind::Link))
+            }
+            // `page-ref/get-page-name`: the text between the outermost brackets.
+            Inline::NestedLink { content, span } => {
+                let token = token(span)?;
+                let name = content.strip_prefix("[[")?.strip_suffix("]]")?;
+                let node = &self.text[token.clone()];
+                let run = (node.starts_with("[[") && node.ends_with("]]") && node.len() >= 4)
+                    .then(|| token.start + 2..token.end - 2);
+                Some((name.trim().to_owned(), token, run, Kind::NestedLink))
+            }
+            Inline::Tag { children, span } => {
+                let token = token(span)?;
+                let (name, run) = match children.first()? {
+                    Inline::Plain { text, .. } => {
+                        let at = token.start + 1;
+                        let run = self.text[at..]
+                            .starts_with(text.as_str())
+                            .then(|| at..at + text.len());
+                        (text.trim().to_owned(), run)
+                    }
+                    child => {
+                        let (name, _, run, _) = self.reference(child, base, true)?;
+                        (name, run)
+                    }
+                };
+                Some((name, token, run, Kind::Tag))
+            }
+            _ => None,
         }
     }
 }
 
-/// The nodes OG's comma split reads (`text.cljs` `extract-refs-by-commas`):
-/// it parses the value with the DOCUMENT entry point (`gp-mldoc/->edn`) and
-/// takes the children of the first node. Only a paragraph has inline children
-/// there; any other first node (heading, list, quote, table, rule, directive,
-/// comment, example, math, HTML, hiccup) gives none, so `# x` has no comma
-/// member while `\# x` has `# x`. Spans are offsets in `value`, which the
-/// caller has trimmed as OG does. The parser decides the form; nothing here
-/// looks at the text. O(value bytes), one bounded document parse.
-pub fn comma_nodes(value: &str, is_org: bool) -> Vec<Inline> {
-    let parsed =
-        crate::lsdoc_block_parse::parse_text_bounded(value, if is_org { "org" } else { "md" });
-    match parsed.and_then(|doc| doc.blocks.into_iter().next()) {
+/// OG `extract-refs-by-commas`: it parses the value with the DOCUMENT entry
+/// point (`gp-mldoc/->edn`) and splits the Plain children of the first node.
+/// Only a paragraph has inline children there; any other first node (heading,
+/// list, quote, table, rule, directive, comment, example, math, HTML, hiccup)
+/// gives none, so `# x` has no comma member while `\# x` has `# x`. The parser
+/// decides the form and the source of each decoded byte; nothing here looks
+/// at the text. O(value bytes), one bounded document parse.
+fn plain_members(text: &str, is_org: bool, out: &mut Vec<Member>) {
+    let nodes = match crate::lsdoc_block_parse::parse_text_bounded(text, format(is_org))
+        .and_then(|doc| doc.blocks.into_iter().next())
+    {
         Some(lsdoc::ast::Block::Paragraph { inline, .. }) => inline,
-        _ => Vec::new(),
-    }
-}
-
-/// Read exactly the top-level Plain nodes, as OG's comma extraction does.
-pub fn plain_segments(nodes: &[Inline], out: &mut Vec<String>) {
+        _ => return,
+    };
     for node in nodes {
-        if let Inline::Plain { text, .. } = node {
-            out.push(text.clone());
+        let Inline::Plain {
+            text: plain,
+            span,
+            span_map,
+        } = node
+        else {
+            continue;
+        };
+        // lsdoc keeps the segment type crate-private; its fields are public.
+        let map: Option<Vec<_>> = span_map.map(|m| m.iter().map(|s| (s.0, s.1, s.2)).collect());
+        let whole = span.as_ref().map_or(0..0, |s| s.0..s.1);
+        let source = PlainSource::new(text, &plain, span, map.as_deref());
+        let mut source = source.map(|s| (s, 0));
+        let mut at = 0;
+        for segment in plain.split(crate::block_regions::is_linkable_property_separator) {
+            let name = segment.trim();
+            if !name.is_empty() {
+                let offset = at + segment.len() - segment.trim_start().len();
+                let run = source
+                    .as_mut()
+                    .and_then(|(s, cursor)| s.range(offset..offset + name.len(), cursor));
+                out.push(Member {
+                    name: name.to_owned(),
+                    token: run.clone().unwrap_or(whole.clone()),
+                    run,
+                    kind: Kind::Plain,
+                    within: Within::Value,
+                });
+            }
+            at += segment.len();
+            at += plain[at..].chars().next().map_or(0, char::len_utf8);
         }
     }
 }
 
-/// Linkable-property names in source order, before identity deduplication.
-/// A wholly quoted value has no references. In a mixed value, the native
-/// Plain splitter can return a quoted token as a complete name, quotes included.
-/// Cost O(value bytes), no I/O.
+/// The names of a comma-separated key's value, in source order, before
+/// identity deduplication. O(value bytes), no I/O.
 pub fn linkable_names(value: &str, is_org: bool) -> Vec<String> {
-    let mut names = Vec::new();
-    for_each_linkable_member(value, is_org, |name, _, _| names.push(name));
-    names
+    members(value, is_org, Grammar::Linkable)
+        .into_iter()
+        .map(|m| m.name)
+        .collect()
 }
 
-/// Visit native members, each with its source byte range in `value` and
-/// whether it is a plain member. A reference's range is its complete token,
-/// wrappers included. A plain member's range is exactly the bytes its name
-/// was decoded from, Markdown escapes included (`C\#` reads `C#`), from the
-/// parser's text-to-source map. Ranges are absent when the parser cannot map
-/// decoded text to source bytes. Names share the same producer as
-/// [`linkable_names`]. O(value bytes), no I/O.
+/// [`members`] of a comma-separated key as (name, range, plain): a reference's
+/// range is its complete token, a plain member's the bytes its name was
+/// decoded from, absent when the parser cannot map them. O(value bytes).
 pub fn for_each_linkable_member(
     value: &str,
     is_org: bool,
     mut visit: impl FnMut(String, Option<Range<usize>>, bool),
 ) {
-    let leading = value.len() - value.trim_start().len();
-    let value = value.trim();
-    if value.len() > 1 && value.starts_with('"') && value.ends_with('"') {
-        return;
-    }
-    // References come from the value's inline parse; plain members from its
-    // document parse ([`comma_nodes`]). Both lists are in source order; one
-    // merge keeps the members in text order.
-    let refs =
-        crate::lsdoc_block_parse::parse_inline_bounded(value, if is_org { "org" } else { "md" })
-            .unwrap_or_default()
-            .into_iter()
-            .filter(|node| !matches!(node, Inline::Plain { .. }));
-    let plains = comma_nodes(value, is_org)
-        .into_iter()
-        .filter(|node| matches!(node, Inline::Plain { .. }));
-    let start = |node: &Inline| match node {
-        Inline::Link { span, .. }
-        | Inline::NestedLink { span, .. }
-        | Inline::Tag { span, .. }
-        | Inline::Plain { span, .. } => span.as_ref().map_or(usize::MAX, |s| s.0),
-        _ => usize::MAX,
-    };
-    let mut nodes: Vec<Inline> = refs.chain(plains).collect();
-    nodes.sort_by_key(start);
-    let mut names = Vec::new();
-    for node in nodes {
-        let token = match &node {
-            Inline::Link { span, .. }
-            | Inline::NestedLink { span, .. }
-            | Inline::Tag { span, .. } => span.as_ref().map(|s| leading + s.0..leading + s.1),
-            _ => None,
-        };
-        ref_from_inline(&node, &mut names);
-        for name in names.drain(..) {
-            visit(name, token.clone(), false);
-        }
-        if let Inline::Plain {
-            text,
-            span,
-            span_map,
-        } = node
-        {
-            // lsdoc keeps the segment type crate-private; its fields are public.
-            let map: Option<Vec<_>> = span_map.map(|m| m.iter().map(|s| (s.0, s.1, s.2)).collect());
-            let source = PlainSource::new(value, &text, span, map.as_deref());
-            let mut source = source.map(|s| (s, 0));
-            let mut at = 0;
-            for segment in text.split(crate::block_regions::is_linkable_property_separator) {
-                let name = segment.trim();
-                if !name.is_empty() {
-                    let offset = at + segment.len() - segment.trim_start().len();
-                    let range = source
-                        .as_mut()
-                        .and_then(|(s, cursor)| s.range(offset..offset + name.len(), cursor));
-                    visit(
-                        name.to_owned(),
-                        range.map(|r| leading + r.start..leading + r.end),
-                        true,
-                    );
-                }
-                at += segment.len();
-                at += text[at..].chars().next().map_or(0, char::len_utf8);
-            }
-        }
+    for m in members(value, is_org, Grammar::Linkable) {
+        let plain = m.kind == Kind::Plain;
+        let range = if plain { m.run } else { Some(m.token) };
+        visit(m.name, range, plain);
     }
 }
 
@@ -262,6 +454,34 @@ mod member_range_tests {
                 ("C#".to_owned(), Some("[[C\\#]]".to_owned()), false),
                 m("b", "b")
             ]
+        );
+    }
+
+    #[test]
+    fn members_are_top_level_and_read_macros_in_place() {
+        use super::{members, Grammar, Kind, Within};
+        let names = |value: &str, org: bool| -> Vec<String> {
+            members(value, org, Grammar::Linkable)
+                .into_iter()
+                .map(|m| m.name)
+                .collect()
+        };
+        // Emphasis, sub/superscript and link labels hold no member.
+        assert!(names("**[[a]]**", false).is_empty());
+        assert_eq!(names("[[a [[b]]]]", false), ["a [[b]]"]);
+        assert_eq!(names("{{renderer [[m]]}}", false), ["m"]);
+        let embed = members("x, {{embed [[a]]}}", false, Grammar::Linkable);
+        let e = &embed[1];
+        assert_eq!((e.name.as_str(), e.kind), ("a", Kind::Link));
+        assert_eq!(e.within, Within::Embed(3..18));
+        assert_eq!(e.run, Some(13..14));
+        // A literal key reads macros as macros.
+        assert!(members("{{embed [[a]]}}", false, Grammar::Literal).is_empty());
+        // Tag runs: bare and bracketed.
+        let t = &members("#a, #[[b c]]", false, Grammar::Parsed);
+        assert_eq!(
+            (t[0].run.clone(), t[1].run.clone()),
+            (Some(1..2), Some(7..10))
         );
     }
 }

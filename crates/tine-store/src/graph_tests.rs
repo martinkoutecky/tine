@@ -1644,6 +1644,41 @@ fn property_members_and_aliases_follow_ogs_value_grammar() {
     std::fs::remove_dir_all(&root).ok();
 }
 
+/// OG's property members are the value's top-level references, macros
+/// skipped (og-0.10.9 `text.cljs` `parse-property-refs` over mldoc
+/// `Property.property_references`): a link inside emphasis is no member, a
+/// macro's link is one, a nested link names only its outermost page.
+#[test]
+fn property_members_are_top_level_with_macros_skipped() {
+    use tine_core::model::PageKind;
+    let root = crate::test_support::fresh_dir("tine-property-top-level-");
+    std::fs::create_dir_all(root.join("pages")).unwrap();
+    let w = |name: &str, text: &str| std::fs::write(root.join("pages").join(name), text).unwrap();
+    w("Q1.md", "alias:: **[[p1]]**\n\n- body\n");
+    w("Q2.md", "alias:: {{renderer [[p2]]}}\n\n- body\n");
+    w("Q3.org", "#+alias: /[[p3]]/\n* body\n");
+    w(
+        "B.md",
+        "- body\n  tags:: **[[b1]]**, [[b2 [[b3]]]]\n- x\n  foo:: {{embed [[b4]]}}, _[[b5]]_\n",
+    );
+
+    let graph = store_at(&root).whole_graph_reconciled().unwrap();
+    let backlinks = |name: &str| graph.backlinks(name).unwrap().len();
+    for (name, want) in [("b1", 0), ("b2 [[b3]]", 1), ("b3", 0), ("b4", 1), ("b5", 0)] {
+        assert_eq!(backlinks(name), want, "{name}");
+    }
+    let g = Graph::open(&root);
+    let owner = |alias: &str| {
+        g.load_named(alias, PageKind::Page)
+            .unwrap()
+            .map(|page| page.name)
+    };
+    assert_eq!(owner("p1"), None);
+    assert_eq!(owner("p2").as_deref(), Some("Q2"));
+    assert_eq!(owner("p3"), None);
+    std::fs::remove_dir_all(&root).ok();
+}
+
 fn page_row_names(answer: tine_store::IrAnswer) -> Vec<String> {
     let tine_store::IrAnswer::Result(answer) = answer else {
         panic!("query result");

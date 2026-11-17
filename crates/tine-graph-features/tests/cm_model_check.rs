@@ -370,6 +370,18 @@ fn nested_names_are_left_and_reported_by_the_transaction() {
                     "{before:?}: wrote {actual:?}, expected {expected:?}"
                 ));
             }
+            // A property value's members are its top-level links only, as in
+            // Logseq: the inner name of a nested member is no reference to
+            // `old`, so the member is left and nothing is listed.
+            if body.contains("tags:") || body.contains("alias:") {
+                if !report.site_exceptions.is_empty() {
+                    failures.push(format!(
+                        "{before:?}: expected no report: {:?}",
+                        report.site_exceptions
+                    ));
+                }
+                continue;
+            }
             if report.site_exceptions.len() != 1 {
                 failures.push(format!(
                     "{before:?}: expected one report: {:?}",
@@ -680,7 +692,7 @@ fn glued_tag_sites_are_reported_for_each_destination_form() {
 }
 
 #[test]
-fn nested_page_alias_members_are_left_and_reported() {
+fn nested_page_alias_members_are_left_unlisted() {
     let _guard = crate::integration_lock();
     for (path, before, after) in [
         (
@@ -700,11 +712,9 @@ fn nested_page_alias_members_are_left_and_reported() {
         );
         let report = nested_rename(&store, "Old", "New");
         assert_eq!(fs::read_to_string(root.join(path)).unwrap(), after);
-        assert_eq!(report.site_exceptions.len(), 1);
-        let site = &report.site_exceptions[0];
-        assert_eq!(site.path, path);
-        assert_eq!(site.start, before.find("Old").unwrap());
-        assert_eq!(&before[site.start..site.end], "Old");
+        // The alias is `a [[Old]]`; its inner name is no reference to `Old`
+        // (Logseq reads a property value's top-level links only).
+        assert!(report.site_exceptions.is_empty());
     }
 }
 

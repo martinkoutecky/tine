@@ -39,7 +39,11 @@ describe("OG-B-DOOR2 shared-answer boundaries", () => {
   });
 
   it("uses Rust property separators and one grapheme-safe plain matcher (I-4/I-12)", () => {
-    expect(read("crates/tine-core/src/reference_evidence/walk.rs")).toContain("super::block_regions::is_linkable_property_separator");
+    // The one property-member owner splits comma members at the Rust
+    // separator; the reference walk asks it and splits nothing itself.
+    expect(read("crates/tine-outline/src/property_refs.rs")).toContain("block_regions::is_linkable_property_separator");
+    expect(read("crates/tine-core/src/reference_evidence/walk.rs")).toContain("property_refs::read(");
+    expect(read("crates/tine-core/src/reference_evidence/walk.rs")).not.toContain("is_linkable_property_separator");
     expect(read("src/render/block.ts")).not.toContain(".split(/[,，]/)");
     expect(read("src/mock.ts")).not.toContain(".split(/[,，]/)");
     const source = read("crates/tine-core/src/reference_evidence/plain_match.rs");
