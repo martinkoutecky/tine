@@ -169,6 +169,17 @@ impl RenameProposal {
         let Some(range) = crate::model::title_name_span(original, format) else {
             return Ok(());
         };
+        self.rebind_title_at(range, name)
+    }
+
+    /// Rebind using the native title coordinates already returned by the
+    /// reader. Same span writer as `rebind_title`, without reading the input.
+    pub(crate) fn rebind_title_at(
+        &mut self,
+        range: Range<usize>,
+        name: &str,
+    ) -> Result<(), TraceError> {
+        let original = &self.trace.inputs[0];
         let kept = common_suffix_len(&original[range.clone()], name);
         let tail = range.end - kept;
         let mut edits = Vec::new();
@@ -372,6 +383,36 @@ pub(crate) fn proposal(
     is_org: bool,
     renames: &Renames<'_>,
 ) -> Result<RenameProposal, TraceError> {
+    proposal_read(text, is_org, renames, |_, _| ()).map(|(proposal, ())| proposal)
+}
+
+pub(crate) fn described_proposal(
+    text: &str,
+    is_org: bool,
+    renames: &Renames<'_>,
+) -> Result<(RenameProposal, crate::doc::native::NativeDocument), TraceError> {
+    let (mut proposal, (doc, headers)) =
+        proposal_read(text, is_org, renames, |doc, headers| (doc, headers))?;
+    let mut native = crate::doc::native::NativeDocument::from_outlined(text, is_org, doc, &headers);
+    if let Some(mapped) = native.title.as_ref().and_then(|title| {
+        crate::refs::renamed_page_name(title, renames.pages).map(|n| n.into_owned())
+    }) {
+        if let Some(range) = &native.title_range {
+            proposal.rebind_title_at(range.clone(), &mapped)?;
+        }
+    }
+    if is_org {
+        native.map_header_references(text, &proposal.trace)?;
+    }
+    Ok((proposal, native))
+}
+
+fn proposal_read<T>(
+    text: &str,
+    is_org: bool,
+    renames: &Renames<'_>,
+    carry: impl FnOnce(crate::doc::Document, Vec<crate::outline::Header>) -> T,
+) -> Result<(RenameProposal, T), TraceError> {
     let readings = crate::reference_evidence::RenameReadings::default();
     let lf = crate::doc::normalize_line_endings(text);
     let (doc, headers) = crate::doc::parse_outlined(&lf, is_org);
@@ -436,13 +477,16 @@ pub(crate) fn proposal(
             ..site
         })
         .collect();
-    Ok(RenameProposal {
-        text,
-        trace,
-        unrealized,
-        rewritten,
-        observed: Some(std::sync::Arc::new(observed)),
-    })
+    Ok((
+        RenameProposal {
+            text,
+            trace,
+            unrealized,
+            rewritten,
+            observed: Some(std::sync::Arc::new(observed)),
+        },
+        carry(doc, headers),
+    ))
 }
 
 /// Rewrite one held block's raw text for rename inspection.

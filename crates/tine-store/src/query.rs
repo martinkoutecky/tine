@@ -392,23 +392,6 @@ pub(crate) fn document_aliases(doc: &Document) -> Vec<String> {
     aliases
 }
 
-/// The text a page's own properties are read from: the one header rule,
-/// `tine_core::page_header::page_header_text` (pre-block, else a
-/// properties-only first root). Kept as the store's name for it; the merge
-/// asks it here.
-pub fn page_header_text<'a>(
-    pre_block: Option<&'a str>,
-    first_root: Option<&'a str>,
-) -> Option<&'a str> {
-    tine_core::page_header::page_header_text(pre_block, first_root)
-}
-
-/// Whether a page-header key declares aliases (`alias`, `aliases`; a named
-/// OG difference): `tine_core::page_header::is_alias_key`.
-pub fn is_alias_key(key: &str) -> bool {
-    tine_core::page_header::is_alias_key(key)
-}
-
 /// Authored spellings for display/insertion. Identity consumers use
 /// `document_aliases` or `page_key`; case-only edits must refresh this projection.
 /// The answer is `tine_core::page_header::page_alias_spellings`, the same code

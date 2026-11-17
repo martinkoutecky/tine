@@ -16,6 +16,11 @@
 use crate::doc::DocBlock;
 use lsdoc::OutlineHeaderKind;
 
+#[cfg(feature = "test-counters")]
+thread_local! {
+    pub(crate) static READS: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
+}
+
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub(crate) enum OutlineFormat {
     Markdown,
@@ -52,6 +57,28 @@ pub(crate) struct Header {
     pub(crate) content_indent: usize,
 }
 
+/// Native ranges of an already read outline. LF/CRLF/lone-CR lines share
+/// line indices; their native byte starts restore physical coordinates.
+pub(crate) fn native_ranges(
+    text: &str,
+    headers: &[Header],
+) -> Vec<(std::ops::Range<usize>, usize, u32, usize)> {
+    let mut starts = vec![0];
+    starts.extend(crate::doc::physical_lines(text).scan(0, |at, line| {
+        *at += line.len();
+        Some(*at)
+    }));
+    headers
+        .iter()
+        .enumerate()
+        .map(|(i, h)| {
+            let start = starts[h.line];
+            let end = headers.get(i + 1).map_or(text.len(), |h| starts[h.line]);
+            (start..end, start + h.prefix_len, h.level, h.content_indent)
+        })
+        .collect()
+}
+
 /// Why the page has no representable outline. Each makes `doc::parse` /
 /// `org::parse_org` show the whole page as its unparsed preamble text, which a
 /// save writes back verbatim.
@@ -72,6 +99,8 @@ pub(crate) enum Refusal {
 /// line breaks (a CRLF's `\r` may stay in the line; a lone `\r` must already
 /// be a `\n`). `Err` names why no outline is representable.
 pub(crate) fn headers(text: &str, format: OutlineFormat) -> Result<Vec<Header>, Refusal> {
+    #[cfg(feature = "test-counters")]
+    READS.with(|n| n.set(n.get() + 1));
     let events = crate::render::parse_outline_bounded(text, format == OutlineFormat::Org)
         .ok_or(Refusal::Unowned)?;
     let mut line_starts = vec![0usize];

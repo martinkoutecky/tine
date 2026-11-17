@@ -149,6 +149,16 @@ pub fn page_title_from_header(content: &str, format: Format) -> Option<String> {
     title_name_span(content, format).map(|value| content[value].to_owned())
 }
 
+/// The title field in an already selected and read page header. Coordinate
+/// consumers use the same selection as the existing title/span readers.
+pub(crate) fn title_property_in(
+    regions: &crate::block_regions::BlockRegions,
+) -> Option<&crate::block_regions::Property> {
+    regions
+        .page_properties()
+        .find(|p| p.key.eq_ignore_ascii_case("title") && !p.value.is_empty())
+}
+
 /// Preamble-only title, used by file classification and streaming reads.
 struct TitleLine {
     value: std::ops::Range<usize>,
@@ -188,9 +198,7 @@ pub(crate) fn title_name_span(content: &str, format: Format) -> Option<std::ops:
         doc.roots.first().map(crate::doc::DocBlock::raw),
     )?;
     let regions = crate::block_regions::parse_document(raw, org);
-    let property = regions
-        .page_properties()
-        .find(|p| p.key.eq_ignore_ascii_case("title") && !p.value.is_empty())?;
+    let property = title_property_in(&regions)?;
     let value = property.value_range.0..property.value_range.1;
     // Only coordinates are translated here: the parser owns both the header
     // selection and property recognition. A native property value is one line.
@@ -228,9 +236,7 @@ pub(crate) fn title_name_span(content: &str, format: Format) -> Option<std::ops:
 fn page_title_line_before(content: &str, format: Format, end: usize) -> Option<TitleLine> {
     let text = crate::org::lone_cr_to_lf(content);
     let regions = crate::block_regions::parse_document(&text[..end], format == Format::Org);
-    let p = regions
-        .page_properties()
-        .find(|p| p.key.eq_ignore_ascii_case("title") && !p.value.is_empty())?;
+    let p = title_property_in(&regions)?;
     Some(TitleLine {
         value: p.value_range.0..p.value_range.1,
     })

@@ -308,12 +308,10 @@ pub fn rename_rewrite_with_queries<'f>(
 
 pub use rename::{RenameProposal, Site, SiteKind, Unrealized};
 
-/// Physical block ranges from the same outline authority as the page reader.
-/// Each tuple is (whole block, content start, structural level, continuation
-/// indentation). Ranges include line terminators (CRLF, LF or a lone CR,
-/// `doc::physical_lines`); children follow their parent. The outline reads
-/// the same-length view with each lone CR as LF (`org::lone_cr_to_lf`), so
-/// its offsets are the file's. O(page bytes), one outline parse, no I/O.
+/// Test oracle for native ranges from the outline authority. Merge inputs use
+/// their already-read native description; this independent entry remains for
+/// reader-coordinate tests. Tuples are (block, content start, level, indent).
+#[cfg(any(test, feature = "test-faults"))]
 pub fn physical_outline(
     text: &str,
     is_org: bool,
@@ -325,20 +323,7 @@ pub fn physical_outline(
     };
     let headers =
         crate::outline::headers(&crate::org::lone_cr_to_lf(text), format).unwrap_or_default();
-    let mut starts = vec![0];
-    starts.extend(crate::doc::physical_lines(text).scan(0, |at, line| {
-        *at += line.len();
-        Some(*at)
-    }));
-    headers
-        .iter()
-        .enumerate()
-        .map(|(i, h)| {
-            let start = starts[h.line];
-            let end = headers.get(i + 1).map_or(text.len(), |h| starts[h.line]);
-            (start..end, start + h.prefix_len, h.level, h.content_indent)
-        })
-        .collect()
+    crate::outline::native_ranges(text, &headers)
 }
 
 /// Prepare the physical span rewrite with its checked complete-text certificate
@@ -351,6 +336,23 @@ pub fn rename_proposal<'f>(
     format: impl Into<RenameFormat<'f>>,
 ) -> Result<RenameProposal, crate::text_trace::TraceError> {
     rename::proposal(
+        text,
+        is_org,
+        &rename::Renames::new(renames, Some(queries), format.into(), true),
+    )
+}
+
+/// A rename proposal and native reader coordinates from its same input parse.
+/// Merge allocation needs both; neither caller parses the input again.
+/// O(file bytes + projections), transient file-local data, no I/O.
+pub fn rename_described_proposal<'f>(
+    text: &str,
+    is_org: bool,
+    renames: &std::collections::HashMap<String, String>,
+    queries: &std::collections::HashMap<String, String>,
+    format: impl Into<RenameFormat<'f>>,
+) -> Result<(RenameProposal, crate::doc::native::NativeDocument), crate::text_trace::TraceError> {
+    rename::described_proposal(
         text,
         is_org,
         &rename::Renames::new(renames, Some(queries), format.into(), true),

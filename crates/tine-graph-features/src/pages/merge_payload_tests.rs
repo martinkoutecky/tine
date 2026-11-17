@@ -1,4 +1,5 @@
 use super::*;
+use tine_core::model::Format;
 
 #[test]
 fn parent_success_header_bytes_are_preserved() {
@@ -106,7 +107,7 @@ fn prose_uses_the_readers_content_end_and_excludes_only_layout() {
         };
         let dst = page(format!("pages/target.{ext}"), target);
         let src = page(format!("pages/source.{ext}"), source);
-        let header = Header::read(&dst, target, org);
+        let header = Header::read(target, org);
         assert_eq!(
             &target[header.prose.clone().unwrap()],
             if org { " " } else { "prose" },
@@ -477,17 +478,6 @@ mod drawer_cost_tests {
     #[test]
     fn drawer_classification_stays_within_a_parse_of_the_head() {
         let target = survivor(8192);
-        let page = tine_core::model::PageDto {
-            name: "dst".into(),
-            title: "dst".into(),
-            kind: tine_core::model::PageKind::Page,
-            pre_block: Some(target[..target.len() - "* target\n".len()].into()),
-            blocks: Vec::new(),
-            rev: None,
-            format: tine_core::model::Format::Org,
-            read_only: false,
-            guide: false,
-        };
         let best = |f: &mut dyn FnMut()| {
             (0..3)
                 .map(|_| {
@@ -502,9 +492,9 @@ mod drawer_cost_tests {
             std::hint::black_box(tine_core::block_regions::parse_document(&target, true));
         });
         let classify = best(&mut || {
-            let header = Header::read(&page, &target, true);
+            let header = Header::read(&target, true);
             let delimiters = (0..header.lines.len())
-                .filter(|&n| header.delimiter(n))
+                .filter(|&n| header.lines[n].frame)
                 .count();
             assert_eq!(delimiters, 2 * 8192);
         });
@@ -518,21 +508,10 @@ mod drawer_cost_tests {
 
 #[cfg(test)]
 mod header_property_tests {
-    use super::{Format, Header, PageDto};
+    use super::Header;
 
     fn lines(text: &str, org: bool) -> Vec<Option<(String, String)>> {
-        let page = PageDto {
-            name: "Header".into(),
-            title: "Header".into(),
-            kind: tine_core::model::PageKind::Page,
-            pre_block: Some(text.into()),
-            blocks: Vec::new(),
-            rev: None,
-            format: if org { Format::Org } else { Format::Md },
-            read_only: false,
-            guide: false,
-        };
-        Header::read(&page, text, org)
+        Header::read(text, org)
             .lines
             .into_iter()
             .map(|line| line.property)

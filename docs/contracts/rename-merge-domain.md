@@ -121,7 +121,12 @@ input; checks of assembled output name the survivor. `BodyLaw`,
 Each source root supplies its own indentation offset for its subtree. Removal
 is bounded by each block line's reader-owned layout: leading whitespace before
 the marker, or the continuation prefix returned by `doc::continuation_raw`.
-The next root chooses its own offset. The writer compares every placed block's
+The next root chooses its own offset. `tine_core::doc::native::NativeDocument`
+exposes the document reader's tree, native payload ranges, header fields and
+alias members, prose, removable prefixes and line endings. Input descriptions
+come from the rename reader's existing outline pass. Allocation places those
+ranges; it does not recognize Markdown or Org. One output read checks the
+intended header, block content, order and tree. The writer compares every placed block's
 raw content, children and order against its native input content slices with
 legal trace substitutions applied. The survivor body, prose and the fixed
 leftover payload are checked too, using the existing assembled-output parse.
@@ -139,9 +144,12 @@ reader reports a field inside its pre-block prose refuses `HeaderProseOverlap`
 (`headerProseOverlap` in the window), naming that input: preserving both readings
 would duplicate original bytes. Its window and command-line explanation asks
 for blank lines before or between the opening property lines to be removed.
-Header checking
-costs O(header bytes), projects only the header from the existing output parse,
-and retains temporary intended header text until comparison. P2 independently
+Header checking costs O(header bytes), uses the same native description as the
+body comparison, and retains temporary intended header text until comparison.
+There is one outline read per input and one for the output, including mapped
+titles; native title coordinates are carried to the title span writer. A Rust
+syntax-tree guard rejects parser entries, input line scans and input text
+predicates in the merge writer. P2 independently
 checks the final allocated header and body.
 Only layout bytes are consumed, through the existing trace; P2/P3 still check
 the result. Prefixes crossing a rewritten name span and remaining unrealizable

@@ -120,6 +120,8 @@ pub use page_host::{
 };
 pub use root_binding::BoundDirectory;
 #[cfg(test)]
+mod merge_reader_guard_tests;
+#[cfg(test)]
 mod page_state;
 mod path_identity;
 mod platform_step;

@@ -14,6 +14,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::outline::{self, OutlineFormat};
 
+pub mod native;
 mod search;
 
 /// Recognized task markers (leading keyword of a block).
