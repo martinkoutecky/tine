@@ -2,10 +2,10 @@
   "frontend": {},
   "owner": {
     "f4-merge": [
-      "owner merge: refused (refused): cannot rename: pages/Dst.md now owns that name; start the rename again to review the merge choice; nothing changed"
+      "owner merge: refused (refused): cannot rename: pages/Dst.md now owns that name; start the rename again to review the merge choice; nothing was renamed"
     ],
     "f5-merge-both-favorites": [
-      "owner merge: refused (refused): cannot rename: pages/Dst.md now owns that name; start the rename again to review the merge choice; nothing changed"
+      "owner merge: refused (refused): cannot rename: pages/Dst.md now owns that name; start the rename again to review the merge choice; nothing was renamed"
     ]
   },
   "rust": {}

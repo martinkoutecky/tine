@@ -630,13 +630,13 @@ fn several_claimants(name: &str, candidates: &[PageId], alias: bool) -> ErrorBod
     let files = candidates.iter().map(PageId::as_str).collect::<Vec<_>>();
     let message = if alias {
         format!(
-            "`{name}` is an alias of {} pages ({}); name one of them; nothing changed",
+            "`{name}` is an alias of {} pages ({}); name one of them and try again",
             files.len(),
             files.join(", ")
         )
     } else {
         format!(
-            "{} files claim the page `{name}` ({}); resolve the duplicate in the app (merge them, or rename or remove one file), then retry; nothing changed",
+            "{} files claim the page `{name}` ({}); resolve the duplicate in the app (merge them, or rename or remove one file), then retry",
             files.len(),
             files.join(", ")
         )

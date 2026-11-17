@@ -6,7 +6,7 @@ import { renameRefusalMessage, showRenameNotice, showRewriteRefusal } from "./re
 import { refreshRootRecovery } from "./rootRecoveryState";
 import { backend, type CustomCssChange, type GraphConfigChange } from "./backend";
 import { captureBinding, bindingCurrent } from "./binding";
-import { bindingOwner, graphOwner, readOwned, writeOwned, type Owner } from "./owned";
+import { bindingOwner, graphOwner, readOwned, writeOwned, type Owned, type Owner } from "./owned";
 import { setGraphMeta, bumpGraphEpoch, bumpPageInventoryRev, graphMeta, graphEpoch } from "./graphSession";
 import { applyTaskWorkflow, setRightSidebar, seedFavorites, favorites, pruneSidebarBlocks, refreshJournalConflicts, refreshSyncConflicts, clearRecent, graphTransitioning, setGraphTransitioning, followPagesInNavigation, resetLeftSidebarSections, closePageProps, setAudioPlayer } from "./ui";
 import { dismissToast, pushToast } from "./toasts";
@@ -24,7 +24,7 @@ import { setChangeSummaryBaseline } from "./changeSummary";
 import { applyCustomCss, customCssVersion } from "./customCss";
 import { flushCssEditor, loadGlobalCss, checkCssEditorDisk, retireGraphCssEditor } from "./cssEditor";
 import { isMobile, platformKind } from "./platform";
-import type { BlockDto, GraphMeta, RenameRefusal } from "./types";
+import type { BlockDto, GraphMeta, RenameOffer, RenameRefusal } from "./types";
 import type { DraftStatus } from "./document";
 import { maybeShowGuideAnnouncement } from "./guide";
 import { endEdit } from "./editorController";
@@ -502,7 +502,13 @@ export async function renameOrMergePage(
   onRecovered?: (outcome: "renamed" | "merged") => void,
 ): Promise<RenameOutcome> {
   const owner = bindingOwner();
-  const asked = await readOwned(owner, backend().renameOffer(from, to, target?.path));
+  let asked: Owned<RenameOffer>;
+  try {
+    asked = await readOwned(owner, backend().renameOffer(from, to, target?.path));
+  } catch (error) {
+    if (!owner() || showRewriteRefusal(error)) return "cancelled";
+    throw error;
+  }
   if (asked.kind === "stale") return "cancelled";
   const offer = asked.value;
   let into: string | undefined;

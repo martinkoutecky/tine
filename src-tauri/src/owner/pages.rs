@@ -76,14 +76,14 @@ fn flush_window(slot: &GraphSlot, page: Option<&str>) -> Result<(), ErrorBody> {
                 return Err(refused(
                     "unsaved",
                     None,
-                    "the window has text it could not save; nothing changed",
+                    "the window has text it could not save; save or discard the remaining edits and try again",
                 ))
             }
             super::window::Flushed::NoAnswer => {
                 return Err(refused(
                     "page-busy",
                     None,
-                    "the window did not save its typed text in time; nothing changed",
+                    "the window did not save its typed text in time; check the pending edits and try again",
                 ))
             }
         }
@@ -242,7 +242,7 @@ pub(super) fn rename_named_page(slot: &GraphSlot, args: &Value) -> Result<Value,
         return Err(refused(
             "rename-options",
             None,
-            "page rename does not support --rev or --run; nothing changed",
+            "page rename does not support --rev or --run; nothing was renamed",
         ));
     }
     // It rewrites referrers too, so no command writes the graph meanwhile, and
@@ -297,7 +297,7 @@ pub(super) fn rename_named_page(slot: &GraphSlot, args: &Value) -> Result<Value,
             return refused(
                 "rename-refused",
                 page.as_ref(),
-                format!("{blocked}; nothing changed"),
+                format!("{blocked}; nothing was renamed or merged"),
             );
         } else if let Some(check) = tine_graph_features::pages::CheckRefused::of(&e)
             .cloned()
@@ -307,12 +307,9 @@ pub(super) fn rename_named_page(slot: &GraphSlot, args: &Value) -> Result<Value,
             })
         {
             // The model's check of a file the rename would write (P2, P3),
-            // before any write: `rename-refused`, with its message.
-            let mut body = refused(
-                "rename-refused",
-                page.as_ref(),
-                format!("{check}; nothing changed"),
-            );
+            // before renaming: `rename-refused`, with its message. Pending
+            // edits may already have been saved by the preparation flush.
+            let mut body = refused("rename-refused", page.as_ref(), check.to_string());
             let detail = body.detail.as_mut().expect("refused carries detail");
             detail["guarantee"] = json!(check.guarantee);
             detail["file"] = json!(check.file);
@@ -353,7 +350,7 @@ fn rename_refused(
             ("rename-refused", blocked.to_string())
         }
     };
-    refused(reason, page, format!("{message}; nothing changed"))
+    refused(reason, page, format!("{message}; nothing was renamed"))
 }
 
 #[derive(Deserialize)]

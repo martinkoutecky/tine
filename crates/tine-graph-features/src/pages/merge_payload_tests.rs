@@ -1,5 +1,161 @@
 use super::*;
 
+#[test]
+fn source_indentation_work_is_one_visit_per_line_and_bounded_by_merge_work() {
+    let root = tempfile::tempdir().unwrap();
+    let store = tine_store::Store::open(root.path(), Default::default())
+        .unwrap()
+        .0;
+    let page = |name, text: &str| {
+        store
+            .page_of(&tine_store::PageId::from(name), text.as_bytes())
+            .unwrap()
+            .doc
+    };
+    let target = "- target\n";
+    let dst = page("pages/target.md", target);
+    for blocks in [64, 1024] {
+        let aligned = "- source\n  continuation\n  - child\n".repeat(blocks);
+        let indented = "  - source\n    continuation\n    - child\n".repeat(blocks);
+        let normal = page("pages/source.md", &aligned);
+        let source = page("pages/source.md", &indented);
+        let merge = |doc: &PageDto, text: &str| {
+            propose(
+                &dst,
+                target,
+                doc,
+                text,
+                &Default::default(),
+                &Default::default(),
+                false,
+                store.config().file_name_format,
+            )
+            .unwrap()
+        };
+        BODY_LINES.with(|count| count.set(0));
+        merge(&normal, &aligned);
+        assert_eq!(
+            BODY_LINES.with(|count| count.get()),
+            0,
+            "aligned sources need no normalization pass"
+        );
+        merge(&source, &indented);
+        assert_eq!(
+            BODY_LINES.with(|count| count.get()),
+            3 * blocks,
+            "normalization must visit each physical source line once"
+        );
+        let best = |doc: &PageDto, text: &str| {
+            (0..3)
+                .map(|_| {
+                    let start = std::time::Instant::now();
+                    std::hint::black_box(merge(doc, text));
+                    start.elapsed()
+                })
+                .min()
+                .unwrap()
+        };
+        let baseline = best(&normal, &aligned);
+        let normalized = best(&source, &indented);
+        eprintln!("{blocks} roots: aligned {baseline:?}, indented {normalized:?}");
+        assert!(
+            normalized <= baseline * 4 + std::time::Duration::from_millis(50),
+            "normalizing indentation must stay a small multiple of existing merge work"
+        );
+    }
+}
+
+#[test]
+fn source_and_survivor_trace_context_survive_the_io_boundary() {
+    use super::super::MergeRefused;
+    let root = tempfile::tempdir().unwrap();
+    let store = tine_store::Store::open(root.path(), Default::default())
+        .unwrap()
+        .0;
+    let links = HashMap::from([("a".into(), "B".into())]);
+    let src = tine_store::PageId::from("pages/source.md");
+    let dst = tine_store::PageId::from("pages/survivor.md");
+    for source_fails in [false, true] {
+        let text = "title:: A/[[A]]\n\n- body\n";
+        let (source, target) = if source_fails {
+            (text, "- target\n")
+        } else {
+            ("- source\n", text)
+        };
+        let failure = propose(
+            &store.page_of(&dst, target.as_bytes()).unwrap().doc,
+            target,
+            &store.page_of(&src, source.as_bytes()).unwrap().doc,
+            source,
+            &links,
+            &Default::default(),
+            false,
+            store.config().file_name_format,
+        )
+        .unwrap_err();
+        let error = MergeRefused::error(failure, &src, &dst);
+        let refused = MergeRefused::of(&error).unwrap();
+        assert_eq!(
+            refused.reason,
+            RealizationError::Trace(TraceError::TitleIdentity)
+        );
+        assert_eq!(
+            refused.file,
+            if source_fails {
+                src.as_str()
+            } else {
+                dst.as_str()
+            }
+        );
+    }
+}
+
+#[test]
+fn ordinary_line_endings_never_require_an_internal_trace_refusal() {
+    let dir = tempfile::tempdir().unwrap();
+    let store = tine_store::Store::open(dir.path(), Default::default())
+        .unwrap()
+        .0;
+    let endings = ["\n", "\r\n", "\r", ""];
+    for org in [false, true] {
+        for source_eol in endings {
+            for target_eol in endings {
+                for middle in ["\n", "\r\n", "\r"] {
+                    let (key, bullet, ext) = if org {
+                        ("#+k:", "*", "org")
+                    } else {
+                        ("k::", "-", "md")
+                    };
+                    let source = format!("{key} source{middle}{bullet} source{source_eol}");
+                    let target = format!("{key} target{middle}{bullet} target{target_eol}");
+                    let page = |name, text: &str| {
+                        store
+                            .page_of(
+                                &tine_store::PageId::from(format!("pages/{name}.{ext}")),
+                                text.as_bytes(),
+                            )
+                            .unwrap()
+                            .doc
+                    };
+                    if let Err(error) = propose(
+                        &page("target", &target),
+                        &target,
+                        &page("source", &source),
+                        &source,
+                        &Default::default(),
+                        &Default::default(),
+                        org,
+                        store.config().file_name_format,
+                    ) {
+                        assert!(!matches!(error.reason, RealizationError::Trace(_) | RealizationError::FusedLineEnding),
+                            "ordinary ending refused: source={source:?}, target={target:?}, error={error:?}");
+                    }
+                }
+            }
+        }
+    }
+}
+
 #[cfg(test)]
 mod drawer_cost_tests {
     use super::{propose, Header, DRAWER_STEPS};

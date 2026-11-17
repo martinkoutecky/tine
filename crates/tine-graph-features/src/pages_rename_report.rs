@@ -192,11 +192,11 @@ impl std::fmt::Display for CheckRefused {
         match self.guarantee {
             tine_store::Guarantee::P3 => write!(
                 f,
-                "cannot rename: the next time Tine saves {file}, it would rewrite that file's header, so the rename cannot write it as it is; open {file} in the Tine app and save it once, then repeat the rename"
+                "cannot rename or merge: the next time Tine saves {file}, it would change that file's layout, so this request cannot write it as it is; nothing was renamed or merged; open {file} in the Tine app and save it once, then repeat the request"
             ),
             tine_store::Guarantee::P2 => write!(
                 f,
-                "cannot rename: Tine's rewrite of {file} did not read back as the rename intends, so nothing was changed; this is a bug in Tine, please report it with the page names at https://github.com/martinkoutecky/tine/issues"
+                "cannot rename or merge: Tine's rewrite of {file} did not read back as intended, so nothing was renamed or merged; this is a bug in Tine, please report it with the page names at https://github.com/martinkoutecky/tine/issues"
             ),
         }
     }

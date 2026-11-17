@@ -18,6 +18,10 @@ export function renameRefusalMessage(reason: RenameRefusal): Msg {
     case "hiddenOccurrence": return msg("rename-refused-hidden-occurrence", { file: reason.file });
     case "survivorIdentity": return msg("rename-refused-survivor-identity", { file: reason.file });
     case "titleIdentity": return msg("rename-refused-title-identity", { file: reason.file });
+    case "bodyLayout": return msg("rename-refused-body-layout", { file: reason.file });
+    case "indentedBody": return msg("rename-refused-indented-body", { file: reason.file });
+    case "directiveEscape": return msg("rename-refused-directive-escape", { file: reason.file });
+    case "aliasSpelling": return msg("rename-refused-alias-spelling", { file: reason.file, alias: reason.alias });
     case "ownChild": return msg("rename-refused-own-child", { old: reason.old, new: reason.new });
     case "fileTaken": return msg("rename-refused-file-taken", { file: reason.file, page: reason.page });
     case "notAPage": return msg("rename-refused-not-a-page", { name: reason.name });

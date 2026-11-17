@@ -47,10 +47,18 @@ impl RewriteError {
                     }),
                 };
             }
-            let kind = match merge.reason {
+            let kind = match &merge.reason {
                 M::HeaderChildren => Some("headerChildren"),
                 M::HiddenOccurrence => Some("hiddenOccurrence"),
                 M::SurvivorIdentity => Some("survivorIdentity"),
+                M::BodyLaw => Some("bodyLayout"),
+                M::IndentedBody => Some("indentedBody"),
+                M::DirectiveEscape => Some("directiveEscape"),
+                M::MissingNativeNameRange { declaration } => {
+                    return Self::Refused {
+                        refused: serde_json::json!({"kind":"aliasSpelling", "file":merge.file, "alias":declaration}),
+                    }
+                }
                 M::Trace(tine_core::text_trace::TraceError::TitleIdentity) => Some("titleIdentity"),
                 _ => None,
             };

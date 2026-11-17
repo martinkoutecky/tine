@@ -11,6 +11,7 @@ import { invalidateUndoForPage } from "./history";
 import { toLoadablePage } from "./convert";
 import { graphRewriteFrozen, tryFreezeGraphRewrite } from "./graphRewriteState";
 import { pushToast } from "../toasts";
+import { showRewriteRefusal } from "../renameRefusal";
 import { pageIdentityKey } from "../ui";
 import type { RenameDone, RenamedPage, RenameProbeText, RenameTouchedPage } from "../types";
 import { graphMeta, setGraphMeta } from "../graphSession";
@@ -79,7 +80,7 @@ export async function renamePageOnDisk(
     try {
       result = await writeOwned(owner, backend().renamePage(from, to, "rename-page", target?.path, mergeInto, prepared, ...(saveFirst ? [saveFirst] : [])));
     } catch (error) {
-      if (!owner()) pushToast(msg("graph-rewrite-rename-failed", { error: String(error) }), "error");
+      if (!owner() && !showRewriteRefusal(error)) pushToast(msg("graph-rewrite-rename-failed", { error: String(error) }), "error");
       throw error;
     }
     if (result.kind === "stale") return "uncertain";

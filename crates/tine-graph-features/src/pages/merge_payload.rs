@@ -41,16 +41,17 @@ pub struct MergeProposal {
 pub enum RealizationError {
     Trace(TraceError),
     BodyLaw,
+    IndentedBody,
     HeaderChildren,
     HiddenOccurrence,
     SurvivorIdentity,
     DirectiveEscape,
     FusedLineEnding,
-    MissingNativeNameRange,
+    MissingNativeNameRange { declaration: String },
 }
 impl std::fmt::Display for RealizationError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        if *self == Self::MissingNativeNameRange {
+        if matches!(self, Self::MissingNativeNameRange { .. }) {
             f.write_str("F-LINK")
         } else {
             write!(f, "merge realization: {self:?}")
@@ -59,10 +60,51 @@ impl std::fmt::Display for RealizationError {
 }
 impl std::error::Error for RealizationError {}
 impl From<TraceError> for RealizationError {
-    fn from(e: TraceError) -> Self {
-        Self::Trace(e)
+    fn from(error: TraceError) -> Self {
+        Self::Trace(error)
     }
 }
+/// Where realization failed: either native input or the assembled output.
+/// Output failures name the survivor, whose proposed bytes failed the check.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum MergePart {
+    Survivor,
+    Source,
+    Output,
+}
+impl From<usize> for MergePart {
+    fn from(file: usize) -> Self {
+        if file == 0 {
+            Self::Survivor
+        } else {
+            Self::Source
+        }
+    }
+}
+
+/// A realization reason with provenance captured at its raising site.
+/// Error-only metadata; no extra reads or parsing on the successful path.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct RealizationFailure {
+    pub part: MergePart,
+    pub reason: RealizationError,
+}
+impl RealizationError {
+    fn at(self, part: MergePart) -> RealizationFailure {
+        RealizationFailure { part, reason: self }
+    }
+}
+impl From<TraceError> for RealizationFailure {
+    fn from(error: TraceError) -> Self {
+        RealizationError::Trace(error).at(MergePart::Output)
+    }
+}
+impl std::fmt::Display for RealizationFailure {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        self.reason.fmt(f)
+    }
+}
+impl std::error::Error for RealizationFailure {}
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(super) enum HeaderAt {
@@ -87,6 +129,7 @@ pub(super) fn header_of(page: &PageDto) -> Option<(HeaderAt, &str)> {
 thread_local! {
     /// Drawer-ownership and delimiter comparisons, for the cost test.
     static DRAWER_STEPS: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
+    static BODY_LINES: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
 }
 #[inline]
 fn drawer_step() {
@@ -123,6 +166,7 @@ fn members(line: &Line) -> bool {
 }
 struct Header {
     end: usize,
+    body_indent: usize,
     first_root: bool,
     properties: bool,
     prose: Option<Range<usize>>,
@@ -249,6 +293,16 @@ impl Header {
         }
         Self {
             end,
+            body_indent: if org {
+                0
+            } else {
+                blocks.first().map_or(0, |b| {
+                    text[b.0.start..b.1]
+                        .bytes()
+                        .take_while(|b| matches!(b, b' ' | b'\t'))
+                        .count()
+                })
+            },
             first_root,
             properties: has_properties,
             prose,
@@ -370,11 +424,21 @@ fn place(
     text.push_str(bytes);
 }
 impl Writer {
+    fn interval(&self, file: usize, range: Range<usize>) -> Result<Vec<usize>, RealizationFailure> {
+        self.trace
+            .interval(file, range)
+            .map_err(|error| RealizationError::Trace(error).at(file.into()))
+    }
     /// The pre-block prose as its block. The blank lines that end the range
     /// separate the prose from the first block; they are not the block's
     /// text (the outline's `preamble_block` and the model check read the
     /// prose without them, manager ruling Q1), so they are layout.
-    fn prose(&mut self, file: usize, range: Range<usize>, org: bool) -> Result<(), TraceError> {
+    fn prose(
+        &mut self,
+        file: usize,
+        range: Range<usize>,
+        org: bool,
+    ) -> Result<(), RealizationFailure> {
         self.insert(if org { "* " } else { "- " });
         let mut at = range.start;
         let lines: Vec<_> = tine_core::doc::physical_lines(&self.trace.inputs[file][range.clone()])
@@ -398,9 +462,9 @@ impl Writer {
         self.newline();
         Ok(())
     }
-    fn value(&self, file: usize, range: Range<usize>) -> Result<String, TraceError> {
+    fn value(&self, file: usize, range: Range<usize>) -> Result<String, RealizationFailure> {
         let mut text = String::new();
-        for id in self.trace.interval(file, range)? {
+        for id in self.interval(file, range)? {
             text.push_str(
                 self.trace
                     .substitution
@@ -413,8 +477,13 @@ impl Writer {
     }
     /// The name the reader takes from a member as written: the parser's
     /// decoded `name`, or the name the rename wrote over its bytes.
-    fn decoded(&self, file: usize, name: &str, range: Range<usize>) -> Result<String, TraceError> {
-        let ids = self.trace.interval(file, range.clone())?;
+    fn decoded(
+        &self,
+        file: usize,
+        name: &str,
+        range: Range<usize>,
+    ) -> Result<String, RealizationFailure> {
+        let ids = self.interval(file, range.clone())?;
         if ids
             .iter()
             .any(|id| self.trace.substitution.contains_key(id))
@@ -457,8 +526,8 @@ impl Writer {
             }
         }
     }
-    fn original(&mut self, file: usize, range: Range<usize>) -> Result<(), TraceError> {
-        self.ids(self.trace.interval(file, range)?);
+    fn original(&mut self, file: usize, range: Range<usize>) -> Result<(), RealizationFailure> {
+        self.ids(self.interval(file, range)?);
         Ok(())
     }
     fn newline(&mut self) {
@@ -466,15 +535,15 @@ impl Writer {
             self.insert(self.eol);
         }
     }
-    fn consume(&mut self, file: usize, range: Range<usize>) -> Result<(), TraceError> {
-        let ids = self.trace.interval(file, range)?;
+    fn consume(&mut self, file: usize, range: Range<usize>) -> Result<(), RealizationFailure> {
+        let ids = self.interval(file, range)?;
         self.trace.consumed.extend(ids);
         Ok(())
     }
     /// Drop bytes the parser does not report as content (P4: blank lines,
     /// structural prefixes, drawer frames); the trace checks each one.
-    fn layout(&mut self, file: usize, range: Range<usize>) -> Result<(), TraceError> {
-        for id in self.trace.interval(file, range)? {
+    fn layout(&mut self, file: usize, range: Range<usize>) -> Result<(), RealizationFailure> {
+        for id in self.interval(file, range)? {
             self.trace.pieces[id].role = Role::Layout;
             self.trace.consumed.push(id);
         }
@@ -490,7 +559,7 @@ impl Writer {
         file: usize,
         line: &Line,
         additions: &[Vec<usize>],
-    ) -> Result<(), TraceError> {
+    ) -> Result<(), RealizationFailure> {
         let a = line.alias.as_ref().unwrap();
         let raw = &self.trace.inputs[file][line.content.clone()];
         let end = line.content.end - tine_core::doc::line_terminator(raw).len();
@@ -543,20 +612,26 @@ pub fn propose<'f>(
     queries: &HashMap<String, String>,
     org: bool,
     format: impl Into<refs::RenameFormat<'f>>,
-) -> Result<MergeProposal, RealizationError> {
+) -> Result<MergeProposal, RealizationFailure> {
     let format = format.into();
     let mut headers = [
         Header::read(target, target_text, org),
         Header::read(source, source_text, org),
     ];
-    if headers
-        .iter()
-        .flat_map(|h| &h.lines)
-        .any(|line| line.alias.as_ref().is_some_and(|a| !a.movable))
-    {
-        // In scope: malformed input. A member the parser reads but whose
-        // bytes it cannot place could be lost or duplicated.
-        return Err(RealizationError::MissingNativeNameRange);
+    for (file, header) in headers.iter().enumerate() {
+        if let Some(line) = header
+            .lines
+            .iter()
+            .find(|line| line.alias.as_ref().is_some_and(|a| !a.movable))
+        {
+            // The reader decodes some legal spellings without native inner-name
+            // coordinates. Do not lose or duplicate those alias members.
+            let text = [target_text, source_text][file];
+            return Err(RealizationError::MissingNativeNameRange {
+                declaration: text[line.content.clone()].trim_end().into(),
+            }
+            .at(file.into()));
+        }
     }
     // A childless first-root header would promote on the next ordinary save:
     // realize it as a native preamble now (P4: header position is free).
@@ -565,72 +640,113 @@ pub fn propose<'f>(
     let mut unrealized = Vec::new();
     let mut rewritten = HashSet::new();
     let fmt = if org { Format::Org } else { Format::Md };
+    // A file's first native root may be indented while still reading as a
+    // root. At the join it would attach under the survivor's last block.
+    // Carry only those structural prefixes into the trace; P2/P3 still check
+    // that removing them preserves the source outline and ordinary save.
+    let mut source_prefixes = Vec::new();
+    if headers[1].body_indent > 0 {
+        let mut at = headers[1].end;
+        for line in tine_core::doc::physical_lines(&source_text[at..]) {
+            #[cfg(test)]
+            BODY_LINES.with(|count| count.set(count.get() + 1));
+            let prefix = line
+                .bytes()
+                .take(headers[1].body_indent)
+                .take_while(|b| matches!(b, b' ' | b'\t'))
+                .count();
+            if prefix > 0 {
+                source_prefixes.push(at..at + prefix);
+            }
+            at += line.len();
+        }
+    }
     for (file, text) in [target_text, source_text].into_iter().enumerate() {
-        let mut proposal = refs::rename_proposal(text, org, links, queries, format)?;
-        // O1 maps the file's own title too (`mapAtom`/`titleParts`), through
-        // its one producer, before O6 allocates: a source title that becomes
-        // a leftover line is written as the mapped title.
-        if let Some(mapped) = tine_core::model::page_title_from_header(text, fmt)
-            .and_then(|title| refs::renamed_page_name(&title, links).map(|n| n.into_owned()))
-        {
-            proposal.rebind_title(org, &mapped)?;
-        }
-        let edits: Vec<_> = proposal
-            .trace
-            .pieces
-            .iter()
-            .enumerate()
-            .filter_map(|(id, p)| {
-                proposal
-                    .trace
-                    .substitution
-                    .get(&id)
-                    .map(|s| (p.range.clone(), s.clone()))
-            })
-            .collect();
-        // O6 compares keys after O1/O7 (`mapHeader`): a key site the map
-        // rewrites is one edit over the key's bytes (`explicit_property_key`),
-        // and the mapped key is what the parser reads from its replacement.
-        let rewritten_keys: HashMap<_, _> = edits.iter().map(|(r, s)| (r.clone(), s)).collect();
-        for line in &mut headers[file].lines {
-            if let Some((key, _)) = &mut line.property {
-                if let Some(to) = rewritten_keys.get(&line.key) {
-                    *key = tine_core::doc::property_key_norm(to);
+        let mut input = || -> Result<(), RealizationError> {
+            let mut proposal = refs::rename_proposal(text, org, links, queries, format)?;
+            // O1 maps the file's own title too (`mapAtom`/`titleParts`), through
+            // its one producer, before O6 allocates: a source title that becomes
+            // a leftover line is written as the mapped title.
+            if let Some(mapped) = tine_core::model::page_title_from_header(text, fmt)
+                .and_then(|title| refs::renamed_page_name(&title, links).map(|n| n.into_owned()))
+            {
+                proposal.rebind_title(org, &mapped)?;
+            }
+            let edits: Vec<_> = proposal
+                .trace
+                .pieces
+                .iter()
+                .enumerate()
+                .filter_map(|(id, p)| {
+                    proposal
+                        .trace
+                        .substitution
+                        .get(&id)
+                        .map(|s| (p.range.clone(), s.clone()))
+                })
+                .collect();
+            if file == 1 {
+                let mut edit = 0;
+                for prefix in &source_prefixes {
+                    while edit < edits.len() && edits[edit].0.end <= prefix.start {
+                        edit += 1;
+                    }
+                    if edit < edits.len() && edits[edit].0.start < prefix.end {
+                        return Err(RealizationError::IndentedBody);
+                    }
                 }
             }
-        }
-        let start = trace.pieces.len();
-        trace.add_input(text, &edits, &headers[file].cuts(text))?;
-        let wrappers: HashSet<_> = proposal
-            .trace
-            .wrappers
-            .iter()
-            .map(|id| proposal.trace.pieces[*id].range.clone())
-            .collect();
-        trace.wrappers.extend(
-            (start..trace.pieces.len()).filter(|id| wrappers.contains(&trace.pieces[*id].range)),
-        );
-        trace.scope.insert(file);
-        // A declaration with members: its key, names and syntax between them.
-        for line in headers[file].lines.iter().filter(|l| members(l)) {
-            let a = line.alias.as_ref().unwrap();
-            let mut names = a.names.iter().map(|(_, r)| r).peekable();
-            for id in trace.interval(file, line.content.clone())? {
-                let r = trace.pieces[id].range.clone();
-                while names.peek().is_some_and(|n| n.end <= r.start) {
-                    names.next();
+            // O6 compares keys after O1/O7 (`mapHeader`): a key site the map
+            // rewrites is one edit over the key's bytes (`explicit_property_key`),
+            // and the mapped key is what the parser reads from its replacement.
+            let rewritten_keys: HashMap<_, _> = edits.iter().map(|(r, s)| (r.clone(), s)).collect();
+            for line in &mut headers[file].lines {
+                if let Some((key, _)) = &mut line.property {
+                    if let Some(to) = rewritten_keys.get(&line.key) {
+                        *key = tine_core::doc::property_key_norm(to);
+                    }
                 }
-                trace.pieces[id].role = if r.end <= a.value {
-                    Role::AliasKey
-                } else if names.peek().is_some_and(|n| n.start <= r.start) {
-                    Role::AliasName
-                } else {
-                    Role::AliasDelimiter
-                };
             }
-        }
-        unrealized.extend(proposal.unrealized.into_iter().map(|site| (file, site)));
-        rewritten.extend(proposal.rewritten);
+            let start = trace.pieces.len();
+            let mut cuts = headers[file].cuts(text);
+            if file == 1 {
+                cuts.extend(source_prefixes.iter().flat_map(|r| [r.start, r.end]));
+            }
+            trace.add_input(text, &edits, &cuts)?;
+            let wrappers: HashSet<_> = proposal
+                .trace
+                .wrappers
+                .iter()
+                .map(|id| proposal.trace.pieces[*id].range.clone())
+                .collect();
+            trace.wrappers.extend(
+                (start..trace.pieces.len())
+                    .filter(|id| wrappers.contains(&trace.pieces[*id].range)),
+            );
+            trace.scope.insert(file);
+            // A declaration with members: its key, names and syntax between them.
+            for line in headers[file].lines.iter().filter(|l| members(l)) {
+                let a = line.alias.as_ref().unwrap();
+                let mut names = a.names.iter().map(|(_, r)| r).peekable();
+                for id in trace.interval(file, line.content.clone())? {
+                    let r = trace.pieces[id].range.clone();
+                    while names.peek().is_some_and(|n| n.end <= r.start) {
+                        names.next();
+                    }
+                    trace.pieces[id].role = if r.end <= a.value {
+                        Role::AliasKey
+                    } else if names.peek().is_some_and(|n| n.start <= r.start) {
+                        Role::AliasName
+                    } else {
+                        Role::AliasDelimiter
+                    };
+                }
+            }
+            unrealized.extend(proposal.unrealized.into_iter().map(|site| (file, site)));
+            rewritten.extend(proposal.rewritten);
+            Ok(())
+        };
+        input().map_err(|reason| reason.at(file.into()))?;
     }
     let mut w = Writer {
         trace,
@@ -658,12 +774,12 @@ pub fn propose<'f>(
             for ((decoded, range), token) in a.names.iter().zip(&a.tokens) {
                 let name = w.decoded(file, decoded, range.clone())?;
                 let read = reading(&name, &format);
-                for id in w.trace.interval(file, range.clone())? {
+                for id in w.interval(file, range.clone())? {
                     w.trace.readings.insert(id, read.clone());
                 }
                 let kept = seen.insert(read);
                 if kept && retained != Some((file, n)) {
-                    additions.push(w.trace.interval(file, token.clone())?);
+                    additions.push(w.interval(file, token.clone())?);
                 }
                 a.kept.push(kept);
             }
@@ -673,7 +789,7 @@ pub fn propose<'f>(
     for file in 0..2 {
         for (n, line) in headers[file].lines.iter().enumerate() {
             if members(line) && retained != Some((file, n)) {
-                for id in w.trace.interval(file, line.content.clone())? {
+                for id in w.interval(file, line.content.clone())? {
                     if !relocated.contains(&id) {
                         w.trace.consumed.push(id);
                     }
@@ -684,7 +800,7 @@ pub fn propose<'f>(
     // A combined declaration's bytes outside its kept members must be alias
     // syntax. In scope: malformed input (other text inside an alias value,
     // `alias:: a **b**`), which dropping the syntax would lose.
-    if w.trace.consumed.iter().any(|&id| {
+    if let Some(&id) = w.trace.consumed.iter().find(|&&id| {
         let text = w.trace.original(id);
         match w.trace.pieces[id].role {
             Role::AliasKey => !tine_core::text_trace::alias_key(text),
@@ -692,7 +808,20 @@ pub fn propose<'f>(
             _ => false,
         }
     }) {
-        return Err(RealizationError::MissingNativeNameRange);
+        let piece = &w.trace.pieces[id];
+        let line = headers[piece.file]
+            .lines
+            .iter()
+            .find(|line| {
+                line.content.start <= piece.range.start && piece.range.end <= line.content.end
+            })
+            .expect("consumed alias syntax belongs to its header line");
+        return Err(RealizationError::MissingNativeNameRange {
+            declaration: w.trace.inputs[piece.file][line.content.clone()]
+                .trim_end()
+                .into(),
+        }
+        .at(piece.file.into()));
     }
     // O6, the other source header entries in order: a property whose key
     // (as the reader compares keys) neither the survivor nor an earlier
@@ -742,7 +871,7 @@ pub fn propose<'f>(
     if !leftover && !source_header_children.is_empty() {
         // O6 refusal `headerChildren`: blocks under the source's header hang
         // under the leftover block, and with no leftover lines there is none.
-        return Err(RealizationError::HeaderChildren);
+        return Err(RealizationError::HeaderChildren.at(MergePart::Source));
     }
     // Joining drawer entries go into one head drawer: the target's last, else
     // a new one placed first. One drawer reads the same in Logseq (mldoc
@@ -787,7 +916,7 @@ pub fn propose<'f>(
         w.layout(0, r.clone())?;
     }
     let mut slots = slots[..used].iter();
-    let entries = |w: &mut Writer| -> Result<(), TraceError> {
+    let entries = |w: &mut Writer| -> Result<(), RealizationFailure> {
         for &n in &boxed {
             w.newline();
             let line = &headers[1].lines[n];
@@ -799,7 +928,7 @@ pub fn propose<'f>(
         }
         Ok(())
     };
-    let source_drawer = |w: &mut Writer| -> Result<(), TraceError> {
+    let source_drawer = |w: &mut Writer| -> Result<(), RealizationFailure> {
         if new_drawer {
             w.insert(&format!(":PROPERTIES:{}", w.eol));
             entries(w)?;
@@ -885,25 +1014,31 @@ pub fn propose<'f>(
     if let Some(prose) = &headers[1].prose {
         w.prose(1, prose.clone(), org)?;
     }
-    w.original(1, headers[1].end..source_text.len())?;
+    let mut at = headers[1].end;
+    for prefix in &source_prefixes {
+        w.original(1, at..prefix.start)?;
+        w.layout(1, prefix.clone())?;
+        at = prefix.end;
+    }
+    w.original(1, at..source_text.len())?;
     w.trace.check(&w.text, &w.trace.substitution)?;
     if w.fused {
         // In scope: a mixed-ending page (external editors, sync). No
         // convention-following terminator can separate the lines here.
-        return Err(RealizationError::FusedLineEnding);
+        return Err(RealizationError::FusedLineEnding.at(MergePart::Output));
     }
     if org && leftover {
         // A leftover line must stay inside its quote (a line reading
         // `#+END_QUOTE` would end it): leftover lines are not page properties.
         let quote = tine_core::org::lone_cr_to_lf(&w.text[leftover_start..leftover_end]);
         let ast = tine_core::render::parse_text_bounded(&quote, true)
-            .ok_or(RealizationError::DirectiveEscape)?;
+            .ok_or_else(|| RealizationError::DirectiveEscape.at(MergePart::Source))?;
         if ast
             .blocks
             .iter()
             .any(|block| matches!(block, tine_core::lsdoc::ast::Block::Directive { .. }))
         {
-            return Err(RealizationError::DirectiveEscape);
+            return Err(RealizationError::DirectiveEscape.at(MergePart::Source));
         }
     }
     let read = if org {
@@ -925,7 +1060,7 @@ pub fn propose<'f>(
     }) {
         // The survivor keeps its name (O6, P3): a header the save would read
         // as another title is refused, not patched.
-        return Err(RealizationError::SurvivorIdentity);
+        return Err(RealizationError::SurvivorIdentity.at(MergePart::Output));
     }
     // Whether the survivor reads the united alias members in one declaration
     // is the transaction's model check (P2), on the final bytes.
@@ -938,7 +1073,12 @@ pub fn propose<'f>(
     let source_start = target_roots + usize::from(leftover);
     let count = source_start + source_prose + source_body.len();
     if roots.len() != count {
-        return Err(RealizationError::BodyLaw);
+        let source_indented = headers[1].body_indent > 0;
+        return Err(if source_indented {
+            RealizationError::IndentedBody.at(MergePart::Source)
+        } else {
+            RealizationError::BodyLaw.at(MergePart::Output)
+        });
     }
     let source_child_count = same_shape(
         source_header_children,
@@ -948,15 +1088,15 @@ pub fn propose<'f>(
             &[]
         },
     )
-    .ok_or(RealizationError::BodyLaw)?;
+    .ok_or_else(|| RealizationError::BodyLaw.at(MergePart::Source))?;
     let target_body_count = same_shape(
         &target.blocks[usize::from(normalize_target)..],
         &roots[target_prose..target_roots],
     )
-    .ok_or(RealizationError::BodyLaw)?
+    .ok_or_else(|| RealizationError::BodyLaw.at(MergePart::Survivor))?
         - skip;
     let source_body_count = same_shape(source_body, &roots[source_start + source_prose..])
-        .ok_or(RealizationError::BodyLaw)?;
+        .ok_or_else(|| RealizationError::BodyLaw.at(MergePart::Source))?;
     if org && leftover {
         // O6 refusal `leftoverReference` (model `leftoverUnkeepable`): the
         // references the leftover lines had, read where they came from (a
@@ -1002,7 +1142,7 @@ pub fn propose<'f>(
         let mut actual = HashMap::new();
         count_refs(&roots[target_roots], &mut actual);
         if required != actual {
-            return Err(RealizationError::HiddenOccurrence);
+            return Err(RealizationError::HiddenOccurrence.at(MergePart::Source));
         }
     }
     let source_header = usize::from(headers[1].properties) + source_prose;

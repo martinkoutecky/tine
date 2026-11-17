@@ -62,8 +62,46 @@ it("blames Tine for its own failed check and offers no retry", async () => {
   vi.spyOn(backend(), "renamePage").mockRejectedValueOnce(refusal("P2"));
   await renameOrMergePage("Old", "New");
   expect(text()).toMatch(/Tine stopped because its own check failed for pages\/referrer.md/);
-  expect(text()).toMatch(/Nothing was changed.*Please report this bug/);
+  expect(text()).toMatch(/Nothing was renamed or merged.*Please report this bug/);
   expect(text()).not.toContain("Save it and rename");
+});
+
+it("localizes a duplicate-title refusal from the real rename question await in Chinese", async () => {
+  // The command test seeds both files with title:: A; this is its wire answer.
+  const offer = vi.spyOn(backend(), "renameOffer").mockRejectedValue({ refused: {
+    kind: "duplicateFiles", files: ["pages/one.md", "pages/two.md"],
+  } });
+  const rename = vi.spyOn(backend(), "renamePage");
+  try {
+    await setActiveLocale("zh-CN");
+    expect(await renameOrMergePage("A", "B")).toBe("cancelled");
+    expect(offer).toHaveBeenCalledWith("A", "B", undefined);
+    expect(text()).toContain("这些文件声明了同一个页面");
+    expect(text()).toContain("pages/one.md, pages/two.md");
+    expect(text()).not.toContain("[object Object]");
+    expect(toasts()[0].sticky).toBe(true);
+    expect(rename).not.toHaveBeenCalled();
+  } finally { await setActiveLocale("en"); }
+});
+
+it.each([
+  ["bodyLayout", "Tine cannot preserve the block structure", "Align the top-level blocks"],
+  ["indentedBody", "the first block of pages/source.md is indented", "Align the top-level blocks"],
+  ["directiveEscape", "contains a #+END_QUOTE line outside a quote", "Move that line into a quote"],
+  ["aliasSpelling", "the alias declaration “alias:: [[C\\#]]”", "plain alias names"],
+])("explains the ordinary-file %s limitation in both languages", async (kind, explanation, next) => {
+  showRewriteRefusal({ refused: { kind, file: "pages/source.md", alias: "alias:: [[C\\#]]" } });
+  expect(text()).toContain(explanation);
+  expect(text()).toContain(next);
+  expect(text()).toContain("pages/source.md");
+  expect(text()).toContain("Nothing was merged.");
+  expect(text()).not.toMatch(/bug|own check/);
+  try {
+    await setActiveLocale("zh-CN");
+    expect(text()).toContain("无法合并");
+    expect(text()).toContain("请");
+    expect(text()).toContain("pages/source.md");
+  } finally { await setActiveLocale("en"); }
 });
 
 it.each([

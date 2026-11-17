@@ -548,8 +548,8 @@ block-link-copy-copied = { $kind ->
        *[other] 已复制块嵌入
         }
     }
-rename-refused-first-save = 无法重命名：Tine 首次保存 { $file } 时会改变其布局，因此不能在重命名时改写此文件。未重命名任何页面。请先保存此文件一次，再尝试相同的重命名。
-rename-refused-check-failed = Tine 对 { $file } 的内部检查失败，操作已停止。未做任何更改。请通过帮助中的“{ help-report-a-bug-request-a-feature }”报告此错误。
+rename-refused-first-save = 无法重命名或合并：Tine 首次保存 { $file } 时会改变其布局，因此不能在重命名或合并时改写此文件。未重命名或合并任何页面。请先保存此文件一次，再尝试相同的操作。
+rename-refused-check-failed = Tine 对 { $file } 的内部检查失败，操作已停止。未重命名或合并任何页面。请通过帮助中的“{ help-report-a-bug-request-a-feature }”报告此错误。
 rename-save-and-retry = 保存文件并重命名
 rename-recovery-failed = 无法完成保存文件及重命名。如果保存失败，则不会再次尝试重命名。{ $error }
 rename-refused-header-children = 无法合并：{ $file } 中页首下的块会失去父级。请先将这些块移出页首，再重试。未合并任何页面。

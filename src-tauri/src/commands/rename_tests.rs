@@ -1,6 +1,355 @@
 use super::*;
 
 #[test]
+fn rename_question_preserves_duplicate_stale_and_unindexed_refusal_data() {
+    for (files, old, new, selected, kind) in [
+        (
+            vec![
+                ("pages/one.md", b"title:: A\n\n- a\n".as_slice()),
+                ("pages/two.md", b"title:: A\n\n- a\n".as_slice()),
+            ],
+            "A",
+            "B",
+            None,
+            "duplicateFiles",
+        ),
+        (
+            vec![("pages/A.md", b"- a\n".as_slice())],
+            "A",
+            "B",
+            Some("pages/missing.md"),
+            "staleSource",
+        ),
+        (
+            vec![
+                ("pages/A.md", b"- a\n".as_slice()),
+                ("pages/bad.md", b"- \xff [[A]]\n".as_slice()),
+            ],
+            "A",
+            "B",
+            None,
+            "unindexed",
+        ),
+    ] {
+        let root = tempfile::tempdir().unwrap();
+        std::fs::create_dir_all(root.path().join("pages")).unwrap();
+        for (path, bytes) in files {
+            std::fs::write(root.path().join(path), bytes).unwrap();
+        }
+        let store = tine_store::Store::open(root.path(), Default::default())
+            .unwrap()
+            .0;
+        let error = window_offer(&store, old, new, selected).unwrap_err();
+        let wire = serde_json::to_value(error).unwrap();
+        assert_eq!(wire["refused"]["kind"], kind, "{wire}");
+        if kind == "duplicateFiles" {
+            assert_eq!(
+                wire["refused"]["files"],
+                serde_json::json!(["pages/one.md", "pages/two.md"])
+            );
+        }
+    }
+}
+
+#[test]
+fn ordinary_merge_limitations_name_the_failing_input_at_the_window_boundary() {
+    use tine_graph_features::pages;
+    for (source, target, ext, kind, file) in [
+        (
+            "#+END_QUOTE\n#+title: source\n* source\n",
+            "#+title: target\n* target\n",
+            "org",
+            "directiveEscape",
+            "source",
+        ),
+        (
+            "alias:: [[C\\#]]\n- source\n",
+            "- target\n",
+            "md",
+            "aliasSpelling",
+            "source",
+        ),
+        (
+            "- source\n",
+            "alias:: [[C\\#]]\n- target\n",
+            "md",
+            "aliasSpelling",
+            "target",
+        ),
+    ] {
+        let root = tempfile::tempdir().unwrap();
+        std::fs::create_dir_all(root.path().join("pages")).unwrap();
+        let src = format!("pages/source.{ext}");
+        let dst = format!("pages/target.{ext}");
+        std::fs::write(root.path().join(&src), source).unwrap();
+        std::fs::write(root.path().join(&dst), target).unwrap();
+        let store = std::sync::Arc::new(
+            tine_store::Store::open(root.path(), Default::default())
+                .unwrap()
+                .0,
+        );
+        let data = tempfile::tempdir().unwrap();
+        let host = tine_store::PageHost::start_for_tests(&store, data.path()).unwrap();
+        for named in [false, true] {
+            let error = if named {
+                pages::rename_page_as(
+                    &store,
+                    &host,
+                    "source",
+                    "target",
+                    Some(&src),
+                    pages::RenameChoice::MergeInto(&dst),
+                    &[],
+                )
+                .map(|_| ())
+            } else {
+                pages::merge_pages(&store, &host, &src, &dst)
+            }
+            .unwrap_err();
+            let message = error.to_string();
+            let wire = serde_json::to_value(RewriteError::of(error)).unwrap();
+            assert_eq!(wire["refused"]["kind"], kind, "named={named}: {message}");
+            if kind == "aliasSpelling" {
+                assert_eq!(wire["refused"]["alias"], "alias:: [[C\\#]]");
+                assert!(message.contains("alias:: [[C\\#]]"), "{message}");
+            }
+            assert_eq!(wire["refused"]["file"], format!("pages/{file}.{ext}"));
+            assert!(!message.contains("bug in Tine"), "{message}");
+            assert!(message.contains("nothing was merged"), "{message}");
+            assert_eq!(
+                std::fs::read_to_string(root.path().join(&src)).unwrap(),
+                source
+            );
+            assert_eq!(
+                std::fs::read_to_string(root.path().join(&dst)).unwrap(),
+                target
+            );
+        }
+        drop(host);
+        drop(store);
+        let repaired = |text: &str| text.replace("#+END_QUOTE\n", "").replace("[[C\\#]]", "C#");
+        std::fs::write(root.path().join(&src), repaired(source)).unwrap();
+        std::fs::write(root.path().join(&dst), repaired(target)).unwrap();
+        let store = std::sync::Arc::new(
+            tine_store::Store::open(root.path(), Default::default())
+                .unwrap()
+                .0,
+        );
+        let host = tine_store::PageHost::start_for_tests(&store, data.path()).unwrap();
+        pages::merge_pages(&store, &host, &src, &dst)
+            .expect("the suggested edit permits the merge with P2 and P3 enforced");
+        assert!(!root.path().join(&src).exists());
+        assert!(std::fs::read_to_string(root.path().join(&dst))
+            .unwrap()
+            .contains("source"));
+    }
+}
+
+#[test]
+fn indented_sources_merge_through_both_command_entries_with_checks_enforced() {
+    use tine_graph_features::pages;
+    for named in [false, true] {
+        for eol in ["\n", "\r\n"] {
+            for source in [
+                "  - indented source\n",
+                "  - title:: source\n    - child\n  - source\n",
+            ] {
+                let root = tempfile::tempdir().unwrap();
+                std::fs::create_dir_all(root.path().join("pages")).unwrap();
+                std::fs::write(
+                    root.path().join("pages/source.md"),
+                    source.replace('\n', eol),
+                )
+                .unwrap();
+                std::fs::write(
+                    root.path().join("pages/target.md"),
+                    format!("- target{eol}"),
+                )
+                .unwrap();
+                let store = std::sync::Arc::new(
+                    tine_store::Store::open(root.path(), Default::default())
+                        .unwrap()
+                        .0,
+                );
+                let data = tempfile::tempdir().unwrap();
+                let host = tine_store::PageHost::start_for_tests(&store, data.path()).unwrap();
+                let answer = if named {
+                    window_answer(pages::rename_page_as(
+                        &store,
+                        &host,
+                        "source",
+                        "target",
+                        Some("pages/source.md"),
+                        pages::RenameChoice::MergeInto("pages/target.md"),
+                        &[],
+                    ))
+                    .map(|_| ())
+                } else {
+                    pages::merge_pages(&store, &host, "pages/source.md", "pages/target.md")
+                        .map_err(RewriteError::of)
+                };
+                answer.unwrap();
+                assert!(!root.path().join("pages/source.md").exists());
+                let merged = std::fs::read_to_string(root.path().join("pages/target.md")).unwrap();
+                assert!(merged.starts_with(&format!("- target{eol}")));
+                assert!(merged.contains("source"));
+            }
+        }
+    }
+}
+
+#[test]
+fn merge_input_trace_failures_keep_their_own_file() {
+    use tine_graph_features::pages::merge_payload::{self, MergePart, RealizationError};
+    let root = tempfile::tempdir().unwrap();
+    let store = tine_store::Store::open(root.path(), Default::default())
+        .unwrap()
+        .0;
+    let links = std::collections::HashMap::from([("a".into(), "B".into())]);
+    for source_fails in [false, true] {
+        let text = "title:: A/[[A]]\n\n- body\n";
+        let (source, target) = if source_fails {
+            (text, "- target\n")
+        } else {
+            ("- source\n", text)
+        };
+        let page = |path: &str, text: &str| {
+            store
+                .page_of(&tine_store::PageId::from(path), text.as_bytes())
+                .unwrap()
+                .doc
+        };
+        let error = merge_payload::propose(
+            &page("pages/target.md", target),
+            target,
+            &page("pages/source.md", source),
+            source,
+            &links,
+            &Default::default(),
+            false,
+            store.config().file_name_format,
+        )
+        .unwrap_err();
+        assert_eq!(
+            error.reason,
+            RealizationError::Trace(tine_core::text_trace::TraceError::TitleIdentity)
+        );
+        assert_eq!(
+            error.part,
+            if source_fails {
+                MergePart::Source
+            } else {
+                MergePart::Survivor
+            }
+        );
+    }
+}
+
+#[test]
+fn a_merge_refusal_after_flush_saves_pending_edits_but_merges_nothing() {
+    use tine_graph_features::pages;
+    for named in [false, true] {
+        let root = tempfile::tempdir().unwrap();
+        std::fs::create_dir_all(root.path().join("pages")).unwrap();
+        let source = "alias:: [[C\\#]]\n- source\n";
+        std::fs::write(root.path().join("pages/source.md"), source).unwrap();
+        std::fs::write(root.path().join("pages/target.md"), "- target\n").unwrap();
+        let store = std::sync::Arc::new(
+            tine_store::Store::open(root.path(), Default::default())
+                .unwrap()
+                .0,
+        );
+        store.whole_graph().unwrap();
+        let data = tempfile::tempdir().unwrap();
+        let (send, receive) = std::sync::mpsc::channel();
+        let host = tine_store::PageHost::start(
+            &store,
+            data.path(),
+            "pending-refusal",
+            |_, _| {},
+            move |mail| {
+                let _ = send.send(serde_json::to_value(mail).unwrap());
+            },
+        )
+        .unwrap();
+        let session = serde_json::to_value(host.window_reloaded()).unwrap()["session"]
+            .as_u64()
+            .unwrap();
+        let target = tine_store::PageId::from("pages/target.md");
+        let opened =
+            serde_json::to_value(host.open(session, 1, &target, "target").unwrap()).unwrap();
+        let next = |id| loop {
+            let mail = receive
+                .recv_timeout(std::time::Duration::from_secs(5))
+                .expect("page host must answer the pending input request");
+            if mail["answer"]["id"] == id {
+                break mail;
+            }
+        };
+        let version = next(1)["page"]["version"].as_u64().unwrap();
+        let pause = host.pause_for_tests(std::slice::from_ref(&target));
+        let edited = "- target edited\n";
+        let dto = store.page_of(&target, edited.as_bytes()).unwrap().doc;
+        host.submit(
+            session,
+            2,
+            opened["key"].as_str().unwrap(),
+            &dto,
+            version,
+            None,
+            &[tine_store::EditKind::SaveBlock],
+        )
+        .unwrap();
+        assert_eq!(
+            std::fs::read_to_string(root.path().join(target.as_str())).unwrap(),
+            "- target\n"
+        );
+        assert!(
+            !host
+                .owed(session, Some(std::slice::from_ref(&target)))
+                .unwrap()
+                .is_empty(),
+            "the submitted edit must still be pending publication"
+        );
+        let error = std::thread::scope(|scope| {
+            let run = scope.spawn(|| {
+                if named {
+                    pages::rename_page_as(
+                        &store,
+                        &host,
+                        "source",
+                        "target",
+                        Some("pages/source.md"),
+                        pages::RenameChoice::MergeInto("pages/target.md"),
+                        &[],
+                    )
+                    .map(|_| ())
+                } else {
+                    pages::merge_pages(&store, &host, "pages/source.md", "pages/target.md")
+                }
+            });
+            drop(pause);
+            run.join().unwrap().unwrap_err()
+        });
+        let message = error.to_string();
+        assert_eq!(
+            std::fs::read_to_string(root.path().join(target.as_str())).unwrap(),
+            edited
+        );
+        assert_eq!(
+            std::fs::read_to_string(root.path().join("pages/source.md")).unwrap(),
+            source
+        );
+        assert_eq!(
+            pages::MergeRefused::of(&error).unwrap().file,
+            "pages/source.md"
+        );
+        assert!(message.contains("nothing was merged"), "{message}");
+        assert!(!message.contains("nothing was changed"), "{message}");
+    }
+}
+
+#[test]
 fn unchanged_save_recovery_cost_is_one_page_and_no_graph_walk() {
     let root = tempfile::tempdir().unwrap();
     std::fs::create_dir_all(root.path().join("pages")).unwrap();
@@ -196,6 +545,15 @@ fn rewrite_boundary_preserves_both_check_failures_and_all_named_merge_refusals()
         (M::HeaderChildren, "headerChildren"),
         (M::HiddenOccurrence, "hiddenOccurrence"),
         (M::SurvivorIdentity, "survivorIdentity"),
+        (M::BodyLaw, "bodyLayout"),
+        (M::IndentedBody, "indentedBody"),
+        (M::DirectiveEscape, "directiveEscape"),
+        (
+            M::MissingNativeNameRange {
+                declaration: "alias:: [[C\\#]]".into(),
+            },
+            "aliasSpelling",
+        ),
         (
             M::Trace(tine_core::text_trace::TraceError::TitleIdentity),
             "titleIdentity",
@@ -209,22 +567,24 @@ fn rewrite_boundary_preserves_both_check_failures_and_all_named_merge_refusals()
             },
         );
         let wire = serde_json::to_value(window_answer(Err(error)).unwrap_err()).unwrap();
-        assert_eq!(
-            wire,
-            serde_json::json!({"refused":{"kind":kind,"file":"pages/Old.md"}})
-        );
+        let mut expected = serde_json::json!({"refused":{"kind":kind,"file":"pages/Old.md"}});
+        if kind == "aliasSpelling" {
+            expected["refused"]["alias"] = serde_json::json!("alias:: [[C\\#]]");
+        }
+        assert_eq!(wire, expected);
     }
 }
 
 #[test]
-fn rewrite_boundary_reports_every_merge_writer_fault_as_tines_failed_check() {
+fn rewrite_boundary_reports_internal_merge_writer_faults_as_tines_failed_check() {
     use tine_graph_features::pages::{merge_payload::RealizationError as M, MergeRefused};
     for reason in [
         M::Trace(tine_core::text_trace::TraceError::Partition),
-        M::BodyLaw,
-        M::DirectiveEscape,
+        M::Trace(tine_core::text_trace::TraceError::Substitution),
+        M::Trace(tine_core::text_trace::TraceError::Output),
+        M::Trace(tine_core::text_trace::TraceError::Multiplicity),
+        M::Trace(tine_core::text_trace::TraceError::Consumption),
         M::FusedLineEnding,
-        M::MissingNativeNameRange,
     ] {
         let error = std::io::Error::new(
             std::io::ErrorKind::InvalidData,

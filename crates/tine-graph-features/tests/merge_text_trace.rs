@@ -1399,22 +1399,36 @@ fn merge_empty_survivor_keeps_its_name_and_org_directives_are_nested() {
 }
 
 #[test]
-fn unrealizable_body_or_escaping_org_directives_refuse_without_partial_writes() {
+fn indented_source_blocks_merge_at_their_original_outline_depths() {
     let _guard = crate::integration_lock();
-    for (src, dst, org, reason) in [
-        (
+    for eol in ["\n", "\r\n"] {
+        for source in [
             "  - indented source\n",
-            "- target\n",
-            false,
-            pages::merge_payload::RealizationError::BodyLaw,
-        ),
-        (
-            "#+END_QUOTE\n#+title: src\n* source\n",
-            "#+title: dst\n* target\n",
-            true,
-            pages::merge_payload::RealizationError::DirectiveEscape,
-        ),
-    ] {
+            "  - source\n    continuation\n    - child\n  - sibling\n",
+            "  - title:: src\n    - child\n  - source\n",
+            "    - source\n      - child\n    - sibling\n",
+            "\t- source\n\t  - child\n\t- sibling\n",
+        ] {
+            valid_merge(
+                &source.replace('\n', eol),
+                &format!("- target{eol}"),
+                false,
+                |_, _| {},
+            )
+            .unwrap();
+        }
+    }
+}
+
+#[test]
+fn escaping_org_directives_refuse_without_partial_writes() {
+    let _guard = crate::integration_lock();
+    for (src, dst, org, reason) in [(
+        "#+END_QUOTE\n#+title: src\n* source\n",
+        "#+title: dst\n* target\n",
+        true,
+        pages::merge_payload::RealizationError::DirectiveEscape,
+    )] {
         let dir = tempfile::tempdir().unwrap();
         fs::create_dir(dir.path().join("pages")).unwrap();
         let ext = if org { "org" } else { "md" };
@@ -1434,8 +1448,10 @@ fn unrealizable_body_or_escaping_org_directives_refuse_without_partial_writes() 
             Some(&reason)
         );
         let refusal = pages::MergeRefused::of(&error).unwrap();
-        assert_eq!(refusal.file, b);
-        assert!(error.to_string().contains("bug in Tine"), "{error}");
+        assert_eq!(refusal.file, a);
+        assert!(refusal.check_refused().is_none(), "{error}");
+        assert!(error.to_string().contains("nothing was merged"), "{error}");
+        assert!(!error.to_string().contains("bug in Tine"), "{error}");
         assert_eq!(fs::read_to_string(dir.path().join(a)).unwrap(), src);
         assert_eq!(fs::read_to_string(dir.path().join(b)).unwrap(), dst);
     }

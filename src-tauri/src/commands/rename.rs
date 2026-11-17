@@ -19,14 +19,23 @@ pub(crate) async fn rename_offer(
     new: String,
     expected_path: Option<String>,
     state: GraphContext<'_>,
-) -> Result<tine_graph_features::pages::RenameOffer, String> {
+) -> Result<tine_graph_features::pages::RenameOffer, RewriteError> {
     let slot = slot_for_context(&state)?;
     tauri::async_runtime::spawn_blocking(move || {
-        tine_graph_features::pages::rename_offer(&slot.store, &old, &new, expected_path.as_deref())
-            .map_err(|e| e.to_string())
+        window_offer(&slot.store, &old, &new, expected_path.as_deref())
     })
     .await
-    .map_err(|error| error.to_string())?
+    .map_err(|error| RewriteError::from(error.to_string()))?
+}
+
+fn window_offer(
+    store: &tine_store::Store,
+    old: &str,
+    new: &str,
+    expected_path: Option<&str>,
+) -> Result<tine_graph_features::pages::RenameOffer, RewriteError> {
+    tine_graph_features::pages::rename_offer(store, old, new, expected_path)
+        .map_err(RewriteError::of)
 }
 
 /// Rename `old` to `new`. `merge_into`: the user confirmed a merge into that

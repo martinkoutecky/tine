@@ -29,6 +29,16 @@ fn cli_check_refusal_carries_the_file_and_save_fix_as_data_and_prose() {
     assert_eq!(detail["guarantee"], "P3");
     assert_eq!(detail["file"], "pages/r.md");
     assert!(
+        body.message.contains("nothing was renamed or merged"),
+        "{}",
+        body.message
+    );
+    assert!(
+        !body.message.contains("nothing changed"),
+        "{}",
+        body.message
+    );
+    assert!(
         body.message
             .contains("open pages/r.md in the Tine app and save it once"),
         "{}",
@@ -61,7 +71,51 @@ fn cli_failed_writer_check_is_refused_with_file_and_a_bug_report_request() {
     assert_eq!(detail["guarantee"], "P2");
     assert_eq!(detail["file"], "pages/r.md");
     assert!(
+        body.message.contains("nothing was renamed or merged"),
+        "{}",
+        body.message
+    );
+    assert!(
+        !body.message.contains("nothing changed"),
+        "{}",
+        body.message
+    );
+    assert!(
         body.message.contains("bug in Tine, please report"),
+        "{}",
+        body.message
+    );
+    assert_eq!(files(&graph.root), before);
+}
+
+#[test]
+fn cli_duplicate_title_refusal_carries_both_candidate_files() {
+    let graph = Graph::seeded(
+        Default::default(),
+        &[
+            ("pages/one.md", "title:: Duplicate\n\n- a\n"),
+            ("pages/two.md", "title:: Duplicate\n\n- a\n"),
+        ],
+    );
+    let before = files(&graph.root);
+    let body = verb(
+        &graph.slot(),
+        "page.rename",
+        json!({"old":"Duplicate","new":"Destination"}),
+    )
+    .unwrap_err();
+    assert_eq!(body.code, "ambiguous");
+    assert_eq!(
+        body.detail.unwrap()["candidates"],
+        json!(["pages/one.md", "pages/two.md"])
+    );
+    assert!(
+        body.message.contains("resolve the duplicate in the app"),
+        "{}",
+        body.message
+    );
+    assert!(
+        !body.message.contains("nothing changed"),
         "{}",
         body.message
     );

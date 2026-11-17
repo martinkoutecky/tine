@@ -107,15 +107,32 @@ source page. The window uses the existing sticky toast and catalog
 boundary; CLI messages name the same files and legal next step. These are
 existing refusal conditions, not additional restrictions.
 
-`MergeRefused` retains the exact realization reason for diagnostics. Its
-`check_refused` classifies `BodyLaw`, `DirectiveEscape`, `FusedLineEnding`,
-`MissingNativeNameRange` and trace failures as failed internal checks, with
-the survivor file whose output could not be realized, and no retry action. A trace's `TitleIdentity` is O4's named
+`MergeRefused` retains the exact realization reason and its provenance for
+diagnostics. The writer attaches the source or survivor while reading that
+input; checks of assembled output name the survivor. `BodyLaw`,
+`DirectiveEscape` and `MissingNativeNameRange` can occur in ordinary files.
+The source's initial native indentation is removed from its body placements
+using the outline reader's structural prefix, retaining relative depths,
+continuations and header children. Only layout bytes are consumed, through the
+existing trace; P2/P3 still check the result. Prefixes crossing a rewritten name
+span and remaining unrealizable body shapes are explained limitations.
+They explain the writer's limitation and a legal next step in the named file:
+align top-level blocks, move or remove the stray Org end-quote line, or rewrite
+the affected alias declaration as plain comma-separated names. They never ask
+for a bug report. `check_refused` classifies `FusedLineEnding` and other trace
+failures as internal checks, with no retry action. A trace's `TitleIdentity` is O4's named
 title refusal instead: changing a title's references would change its page
 identity. It explains how to edit that title before retrying. The other named
 merge refusals remain header children, leftover references and survivor identity.
 Classification uses variants, never error-message text. These mappings add no
-file reads, parses, writes, locks or IPC calls.
+file reads, parses, writes, locks or IPC calls. Normalizing an indented source
+adds one linear pass over its physical lines and trace placements; ordinary
+unindented sources need no such pass.
+The read-only rename-question command preserves the same typed refusals as
+the rename and file-merge commands. The window localizes a refused question
+before reaching any rename call. Preparation can save pending edits before a
+later refusal: messages promise only that nothing was renamed or merged,
+never that no file changed. The flush policy and both output checks stay intact.
 Transaction preflight attaches the original input file to a bare text-certificate
 failure before discarding its step index. The same typed realization boundary
 therefore covers non-merge rename failures, including a stationary title whose

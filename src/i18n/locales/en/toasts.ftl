@@ -577,8 +577,8 @@ block-link-copy-copied =
            *[other] Copied block embeds
         }
     }
-rename-refused-first-save = Couldn't rename: Tine would change the layout of { $file } the first time it saves it, so it cannot rewrite that file during a rename. Nothing was renamed. Save that file once, then try the same rename again.
-rename-refused-check-failed = Tine stopped because its own check failed for { $file }. Nothing was changed. Please report this bug using “{ help-report-a-bug-request-a-feature }” in Help.
+rename-refused-first-save = Couldn't rename or merge: Tine would change the layout of { $file } the first time it saves it, so it cannot rewrite that file during a rename or merge. Nothing was renamed or merged. Save that file once, then try the same request again.
+rename-refused-check-failed = Tine stopped because its own check failed for { $file }. Nothing was renamed or merged. Please report this bug using “{ help-report-a-bug-request-a-feature }” in Help.
 rename-save-and-retry = Save it and rename
 rename-recovery-failed = Couldn't finish saving the file and renaming. The rename was not repeated if the save failed. { $error }
 rename-refused-header-children = Couldn't merge: blocks under the header in { $file } would lose their parent. Move them out from under the header, then try again. Nothing was merged.

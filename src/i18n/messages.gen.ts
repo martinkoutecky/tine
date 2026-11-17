@@ -2415,6 +2415,8 @@ export interface MessageArgs {
   "rename-alias-choice-title": { "to": string | number };
   "rename-recovery-failed": { "error": string | number };
   "rename-refused-alias-held": { "alias": string | number; "page": string | number };
+  "rename-refused-alias-spelling": { "alias": string | number; "file": string | number };
+  "rename-refused-body-layout": { "file": string | number };
   "rename-refused-busy": {};
   "rename-refused-capture": { "image": string | number; "name": string | number; "page": string | number };
   "rename-refused-check-failed": { "file": string | number };
@@ -2422,11 +2424,13 @@ export interface MessageArgs {
   "rename-refused-contested": { "files": string | number; "name": string | number };
   "rename-refused-day": { "name": string | number };
   "rename-refused-different-formats": { "source": string | number; "target": string | number };
+  "rename-refused-directive-escape": { "file": string | number };
   "rename-refused-duplicate-files": { "files": string | number };
   "rename-refused-file-taken": { "file": string | number; "page": string | number };
   "rename-refused-first-save": { "file": string | number };
   "rename-refused-header-children": { "file": string | number };
   "rename-refused-hidden-occurrence": { "file": string | number };
+  "rename-refused-indented-body": { "file": string | number };
   "rename-refused-merge-conflict-markers": { "file": string | number };
   "rename-refused-not-a-page": { "name": string | number };
   "rename-refused-own-child": { "new": string | number; "old": string | number };

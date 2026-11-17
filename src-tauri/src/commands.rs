@@ -2251,7 +2251,7 @@ pub(crate) async fn rename_file_to_page(
     new_name: String,
     app: tauri::AppHandle,
     state: GraphContext<'_>,
-) -> Result<(), String> {
+) -> Result<(), rename::RewriteError> {
     let slot = slot_for_context(&state)?;
     tauri::async_runtime::spawn_blocking(move || {
         crate::git_settings::around(
@@ -2264,13 +2264,13 @@ pub(crate) async fn rename_file_to_page(
                     &path,
                     &new_name,
                 )
-                .map_err(|error| error.to_string())
+                .map_err(rename::RewriteError::of)
             },
         )
         .inspect(|()| crate::seen::page_gone(&app, &slot, None, &[path.as_str()]))
     })
     .await
-    .map_err(|error| error.to_string())?
+    .map_err(|error| rename::RewriteError::from(error.to_string()))?
 }
 
 #[tauri::command]

@@ -1,4 +1,5 @@
 import { msg, t, type Msg } from "../i18n";
+import { showRewriteRefusal } from "../renameRefusal";
 // Concord in-page resolver (og family 8c): resolve a conflict AT the page.
 //
 // The derived queue (`conflictQueue`) says which pages need judgement; this
@@ -427,6 +428,7 @@ export function PageConflictResolution(props: { conflict: ConflictObject }): JSX
       if (result.kind === "stale" || !owner()) return;
       pushToast(ok, "success");
     } catch (e) {
+      if (!owner() || showRewriteRefusal(e)) return;
       pushToast(msg("conflict-resolution-couldn-t-do-that", { error: String(errorDetail(e)) }), "error");
     }
   };

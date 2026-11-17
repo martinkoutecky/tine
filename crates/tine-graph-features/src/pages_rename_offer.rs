@@ -102,8 +102,8 @@ pub enum RenameOffer {
 }
 
 /// [`super::rename_or_merge_page`] with the user's answer to the rename question
-/// ([`rename_offer`]) as a [`RenameChoice`]. Every refusal the user can act
-/// on carries a [`RenameBlocked`] (`RenameBlocked::of`).
+/// ([`rename_offer`]) as a [`RenameChoice`]. Planner, file-context, check and
+/// realization refusals retain their types inside the returned I/O error.
 pub fn rename_page_as(
     store: &Store,
     host: &PageHost,

@@ -40,7 +40,7 @@ impl RewriteBlocked {
         io::Error::new(kind, self)
     }
 
-    /// This boundary's refusal, if the operation stopped before writing.
+    /// This boundary's refusal before renaming or merging files.
     pub fn of(error: &io::Error) -> Option<&Self> {
         error.get_ref().and_then(|cause| cause.downcast_ref())
     }
@@ -63,7 +63,8 @@ impl std::fmt::Display for RewriteBlocked {
 impl std::error::Error for RewriteBlocked {}
 
 /// The file whose rename or merge was refused, retaining the writer's
-/// reason for diagnostics. User-facing writer faults use the P2 explanation.
+/// reason for diagnostics. Ordinary limitations have their own explanations;
+/// internal writer faults use the P2 explanation.
 #[derive(Debug)]
 pub struct MergeRefused {
     pub file: String,
@@ -82,32 +83,30 @@ impl MergeRefused {
     }
 
     pub(super) fn error(
-        reason: merge_payload::RealizationError,
+        failure: merge_payload::RealizationFailure,
         src: &PageId,
         dst: &PageId,
     ) -> io::Error {
-        use merge_payload::RealizationError as M;
-        let file = match reason {
-            M::HeaderChildren
-            | M::HiddenOccurrence
-            | M::Trace(tine_core::text_trace::TraceError::TitleIdentity) => src,
-            _ => dst,
+        let file = match failure.part {
+            merge_payload::MergePart::Source => src,
+            merge_payload::MergePart::Survivor | merge_payload::MergePart::Output => dst,
         };
         io::Error::new(
             io::ErrorKind::InvalidData,
             Self {
                 file: file.as_str().into(),
-                reason,
+                reason: failure.reason,
             },
         )
     }
 
-    /// A merge's refusal before any write, if this error carries one.
+    /// A refusal before merging files; preparation may have saved pending edits.
     pub fn of(error: &io::Error) -> Option<&Self> {
         error.get_ref().and_then(|cause| cause.downcast_ref())
     }
 
-    /// The writer failed to realize O6, rather than a named model refusal.
+    /// An internal writer fault; ordinary limitations and model refusals have
+    /// their own explanations.
     /// O(file path bytes), no I/O; names the input the user can inspect.
     pub fn check_refused(&self) -> Option<CheckRefused> {
         use merge_payload::RealizationError as M;
@@ -115,12 +114,12 @@ impl MergeRefused {
             M::HeaderChildren
             | M::HiddenOccurrence
             | M::SurvivorIdentity
-            | M::Trace(tine_core::text_trace::TraceError::TitleIdentity) => None,
-            M::Trace(_)
             | M::BodyLaw
+            | M::IndentedBody
             | M::DirectiveEscape
-            | M::FusedLineEnding
-            | M::MissingNativeNameRange => Some(CheckRefused {
+            | M::MissingNativeNameRange { .. }
+            | M::Trace(tine_core::text_trace::TraceError::TitleIdentity) => None,
+            M::Trace(_) | M::FusedLineEnding => Some(CheckRefused {
                 guarantee: tine_store::Guarantee::P2,
                 file: self.file.clone(),
             }),
@@ -135,11 +134,15 @@ impl std::fmt::Display for MergeRefused {
         }
         use merge_payload::RealizationError as M;
         let file = &self.file;
-        match self.reason {
+        match &self.reason {
             M::HeaderChildren => write!(f, "cannot merge: blocks under the header in {file} would lose their parent; move them out from under the header and try again; nothing was merged"),
             M::HiddenOccurrence => write!(f, "cannot merge: references in the page properties of {file} would stop working in the merged page; move those references into ordinary blocks and try again; nothing was merged"),
             M::SurvivorIdentity => write!(f, "cannot merge: the title in the first block of {file} would give the remaining page a different name; save that file once with its intended page title and try again; nothing was merged"),
-            M::Trace(tine_core::text_trace::TraceError::TitleIdentity) => write!(f, "cannot rename or merge: changing the references inside the title of {file} would give the page a different name; edit that title so its references do not name the page being renamed, then try again; nothing was changed"),
+            M::Trace(tine_core::text_trace::TraceError::TitleIdentity) => write!(f, "cannot rename or merge: changing the references inside the title of {file} would give the page a different name; edit that title so its references do not name the page being renamed, then try again; nothing was renamed or merged"),
+            M::BodyLaw => write!(f, "cannot merge: Tine cannot preserve the block structure of {file} when joining the files; align the top-level blocks with the left edge in that file, save it and try again; nothing was merged"),
+            M::IndentedBody => write!(f, "cannot merge: the first block of {file} is indented, so Tine cannot keep its blocks at the top level when joining the files; align the top-level blocks with the left edge in that file, save it and try again; nothing was merged"),
+            M::DirectiveEscape => write!(f, "cannot merge: {file} contains a #+END_QUOTE line outside a quote, which would end the merged page's quote early; move that line into a quote or remove it in that file, then try again; nothing was merged"),
+            M::MissingNativeNameRange { declaration } => write!(f, "cannot merge: Tine cannot move the alias declaration “{declaration}” in {file} without losing its spelling; replace that declaration with plain alias names separated by commas in that file, save it and try again; nothing was merged"),
             _ => unreachable!("writer faults use the check explanation"),
         }
     }
