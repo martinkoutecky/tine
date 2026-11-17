@@ -6,22 +6,26 @@
 //! lines. Rebuilding the whole page from the DTO would rewrite that layout in
 //! blocks the save never touched. Instead, every DTO block that is an old block
 //! (by runtime id, when the caller knows the old blocks' ids) or, failing
-//! identity, has an old block's raw text (by a pre-order LCS, then by equal text
-//! for moved blocks) reuses that block's physical lines; only new or changed
+//! identity, has an old block's raw text (by LCS, then by equal text for moved
+//! blocks; parent scopes when lineage is ambiguous) reuses that block's physical
+//! lines; only new or changed
 //! blocks, and the page-property preamble when it changed, are rendered; a
 //! changed block still keeps the bytes of the continuation lines its edit did
 //! not touch. A block known to stay with its original parent retains its
 //! offset from that parent, so it carries the parent's prefix change; a known
 //! block joining another parent takes its new siblings' prefix (or one indent
 //! step below its parent). A block matched by text alone keeps its old prefix
-//! wherever the parse rule allows it.
+//! wherever the parse rule allows it. When runtime lineage is ambiguous, text
+//! matching pairs parent subtrees first so repeated children cannot borrow
+//! physical lines from a different subtree.
 //!
 //! Cost: borrows the caller's single old-source parse; one output parse (two,
 //! plus a full serialization, when the
 //! DTO itself does not round-trip) and an LCS over the changed middle of the
 //! pre-order block sequence (common prefix and suffix are trimmed first),
 //! capped at 4,000,000 table cells (about 16 MB); a larger middle skips the
-//! LCS and matches blocks by equal text only.
+//! LCS and matches blocks by equal text only. Ambiguous lineage adds linear
+//! subtree classification inside the matcher, without another parse.
 
 use std::collections::{HashMap, VecDeque};
 
@@ -155,7 +159,7 @@ pub(super) fn restore_org(
             let len = block.raw().split('\n').count();
             start += len;
             OldBlock {
-                raw: block.raw(),
+                block,
                 start: start - len,
                 len,
                 bulleted: true,
@@ -189,7 +193,7 @@ pub(super) fn restore_org(
         let text = emitted_lines(block.raw());
         let b: Vec<&str> = text.split('\n').collect();
         if let Some(o) = keep[j].or(hint[j]).map(|o| &olds[o]) {
-            place(at, o.start, o.raw, &b);
+            place(at, o.start, o.block.raw(), &b);
         }
         at += b.len();
     }
@@ -246,7 +250,7 @@ fn is_unbulleted_heading_line(line: &str) -> bool {
 
 /// An old block's pre-order position and its physical lines.
 struct OldBlock<'a> {
-    raw: &'a str,
+    block: &'a DocBlock,
     start: usize,
     len: usize,
     /// Written as `- …`; false for an unbulleted ATX heading (lsdoc), whose
@@ -306,7 +310,7 @@ fn map_old_blocks<'a>(old: &'a Document, lines: &[&str]) -> Option<Vec<OldBlock<
         }
         parents.push((olds.len(), block.children.len()));
         olds.push(OldBlock {
-            raw,
+            block,
             start,
             len,
             bulleted,
@@ -329,6 +333,43 @@ fn subtree_len(block: &DocBlock) -> usize {
     1 + block.children.iter().map(subtree_len).sum::<usize>()
 }
 
+/// Exact subtree classes shared by old and new trees, and sibling groups
+/// (group zero is the roots, group i+1 is block i's children). Interning
+/// (raw, child classes) compares structure without projections, hash collisions or
+/// repeatedly walking descendants. O(bytes + blocks) time and O(blocks) space.
+fn text_tree<'a>(
+    blocks: &[&'a DocBlock],
+    classes: &mut HashMap<(&'a str, Vec<usize>), usize>,
+) -> (Vec<usize>, Vec<Vec<usize>>) {
+    let mut tags = vec![0; blocks.len()];
+    let mut ends = vec![0; blocks.len()];
+    for i in (0..blocks.len()).rev() {
+        let mut next = i + 1;
+        let children = blocks[i]
+            .children
+            .iter()
+            .map(|_| {
+                let tag = tags[next];
+                next = ends[next];
+                tag
+            })
+            .collect();
+        ends[i] = next;
+        let fresh = classes.len();
+        tags[i] = *classes.entry((blocks[i].raw(), children)).or_insert(fresh);
+    }
+    let mut parents: Vec<usize> = Vec::new();
+    let mut groups = vec![Vec::new(); blocks.len() + 1];
+    for i in 0..blocks.len() {
+        while parents.last().is_some_and(|&p| ends[p] <= i) {
+            parents.pop();
+        }
+        groups[parents.last().map_or(0, |p| p + 1)].push(i);
+        parents.push(i);
+    }
+    (tags, groups)
+}
+
 /// For each new block: the old block whose lines it reuses (equal raw); for
 /// unmatched ones an old block whose indentation and terminators it should
 /// prefer (a changed block); and whether that old block is its identity.
@@ -344,9 +385,12 @@ struct Matches {
 /// `model::page_parse::identify_old_blocks`). Text only for the rest, among
 /// the old blocks no identity kept: equal raw by an LCS over the changed middle, unpaired blocks by
 /// position inside each gap between matches (a changed block), then equal raw
-/// anywhere (a moved block). A text match is never identity, so it keeps its
-/// old lines and prefix but does not carry a parent's re-indentation
-/// ([`Emitter::preferred_prefix`]). O(old + new blocks) plus the capped LCS.
+/// anywhere (a moved block). Where old identities are ambiguous, pair whole
+/// subtrees before equal parent text, then match children within the paired
+/// parents. A text match is never identity, so it keeps its old lines and
+/// prefix but does not carry a parent's
+/// re-indentation ([`Emitter::preferred_prefix`]). O(old + new bytes and blocks)
+/// plus the capped LCS.
 fn match_blocks(olds: &[OldBlock], news: &[&DocBlock]) -> Matches {
     #[cfg(test)]
     BLOCK_MATCHES.with(|n| n.set(n.get() + 1));
@@ -370,16 +414,112 @@ fn match_blocks(olds: &[OldBlock], news: &[&DocBlock]) -> Matches {
             known[j] = true;
             // A changed block's old lines stay free for a block that kept
             // their text (text matching below), as they always were.
-            if olds[o].raw == new.raw() {
+            if olds[o].block.raw() == new.raw() {
                 (keep[j], used[o]) = (Some(o), true);
             } else {
                 hint[j] = Some(o);
             }
         }
     }
-    let a: Vec<usize> = (0..n).filter(|&o| !used[o]).collect();
-    let b: Vec<usize> = (0..m).filter(|&j| !known[j]).collect();
-    let eq = |i: usize, j: usize| olds[a[i]].raw == news[b[j]].raw();
+    let mut matched = Matches { keep, hint, known };
+    if matched.known.iter().all(|known| *known) {
+        return matched;
+    }
+    let mut budget = 4_000_000;
+    if olds.iter().any(|o| o.id.is_empty()) && matched.known.iter().any(|known| !known) {
+        let mut classes = HashMap::new();
+        let (old_tags, mut old_groups) = text_tree(
+            &olds.iter().map(|o| o.block).collect::<Vec<_>>(),
+            &mut classes,
+        );
+        let (new_tags, mut new_groups) = text_tree(news, &mut classes);
+        drop(classes);
+        // Unclaimed old roots may move under another parent. Descendants
+        // belong to their paired parent's sibling group, never a global pool.
+        let mut roots: HashMap<usize, VecDeque<usize>> = HashMap::new();
+        for &o in &old_groups[0] {
+            roots.entry(old_tags[o]).or_default().push_back(o);
+        }
+        let mut groups = vec![(
+            std::mem::take(&mut old_groups[0]),
+            std::mem::take(&mut new_groups[0]),
+        )];
+        while let Some((old_group, new_group)) = groups.pop() {
+            let mut exact: HashMap<usize, VecDeque<usize>> = HashMap::new();
+            for &o in &old_group {
+                exact.entry(old_tags[o]).or_default().push_back(o);
+            }
+            for &j in &new_group {
+                if !matched.known[j] {
+                    let take = |pool: &mut HashMap<usize, VecDeque<usize>>| {
+                        let queue = pool.get_mut(&new_tags[j])?;
+                        while queue.front().is_some_and(|&o| used[o]) {
+                            queue.pop_front();
+                        }
+                        queue.pop_front()
+                    };
+                    if let Some(o) = take(&mut exact).or_else(|| take(&mut roots)) {
+                        matched.keep[j] = Some(o);
+                        used[o] = true;
+                    }
+                }
+            }
+            match_text(
+                olds,
+                news,
+                &old_group,
+                &new_group,
+                &mut matched,
+                &mut used,
+                &mut budget,
+            );
+            for j in new_group.into_iter().rev() {
+                if !new_groups[j + 1].is_empty() {
+                    let old_group = matched.keep[j]
+                        .or(matched.hint[j])
+                        .map(|o| std::mem::take(&mut old_groups[o + 1]))
+                        .unwrap_or_default();
+                    groups.push((old_group, std::mem::take(&mut new_groups[j + 1])));
+                }
+            }
+        }
+    } else {
+        match_text(
+            olds,
+            news,
+            &(0..n).collect::<Vec<_>>(),
+            &(0..m).collect::<Vec<_>>(),
+            &mut matched,
+            &mut used,
+            &mut budget,
+        );
+    }
+    matched
+}
+
+/// The text fallback over one scope: the whole flat page when identity is
+/// unambiguous, otherwise a paired parent's direct children. All scopes share
+/// one LCS cell budget, so partitioning never multiplies the cost cap.
+fn match_text(
+    olds: &[OldBlock],
+    news: &[&DocBlock],
+    old_group: &[usize],
+    new_group: &[usize],
+    matched: &mut Matches,
+    used: &mut [bool],
+    budget: &mut usize,
+) {
+    let Matches { keep, hint, known } = matched;
+    let b: Vec<usize> = new_group
+        .iter()
+        .copied()
+        .filter(|&j| !known[j] && keep[j].is_none())
+        .collect();
+    if b.is_empty() {
+        return;
+    }
+    let a: Vec<usize> = old_group.iter().copied().filter(|&o| !used[o]).collect();
+    let eq = |i: usize, j: usize| olds[a[i]].block.raw() == news[b[j]].raw();
     let (n2, m2) = (a.len(), b.len());
     let mut head = 0;
     while head < n2.min(m2) && eq(head, head) {
@@ -394,34 +534,48 @@ fn match_blocks(olds: &[OldBlock], news: &[&DocBlock]) -> Matches {
     // Quadratic LCS only over the changed middle; a huge middle keeps the
     // unchanged prefix/suffix and re-renders the rest.
     let (mid_a, mid_b) = (n2 - tail - head, m2 - tail - head);
-    if mid_a * mid_b <= 4_000_000 {
+    if mid_a * mid_b <= *budget {
+        *budget -= mid_a * mid_b;
         for (i, j) in lcs(mid_a, mid_b, |i, j| eq(head + i, head + j)) {
             keep[b[head + j]] = Some(a[head + i]);
         }
     }
-    keep.iter().flatten().for_each(|&o| used[o] = true);
+    new_group
+        .iter()
+        .filter_map(|&j| keep[j])
+        .for_each(|o| used[o] = true);
     // Changed blocks: pair unmatched old and new blocks positionally inside
     // each gap between matched anchors.
+    let positions: HashMap<usize, usize> =
+        old_group.iter().enumerate().map(|(i, &o)| (o, i)).collect();
     let mut next_old = 0;
-    for j in 0..m {
+    for &j in new_group {
         if let Some(o) = keep[j].or(hint[j]) {
-            next_old = o + 1;
-        } else if next_old < n && !used[next_old] {
-            hint[j] = Some(next_old);
+            if let Some(i) = positions.get(&o) {
+                next_old = i + 1;
+            }
+        } else if next_old < old_group.len() && !used[old_group[next_old]] {
+            hint[j] = Some(old_group[next_old]);
             next_old += 1;
         }
     }
     // Moved blocks: unmatched new blocks with the text of an unmatched old block.
     let mut free: HashMap<&str, VecDeque<usize>> = HashMap::new();
-    (0..n)
+    old_group
+        .iter()
+        .copied()
         .filter(|&o| !used[o])
-        .for_each(|o| free.entry(olds[o].raw).or_default().push_back(o));
-    for j in 0..m {
+        .for_each(|o| {
+            free.entry(olds[o].block.raw()).or_default().push_back(o);
+        });
+    for &j in new_group {
         if keep[j].is_none() && !known[j] {
             keep[j] = free.get_mut(news[j].raw()).and_then(VecDeque::pop_front);
+            if let Some(o) = keep[j] {
+                used[o] = true;
+            }
         }
     }
-    Matches { keep, hint, known }
 }
 
 #[cfg(test)]
@@ -732,9 +886,8 @@ impl Emitter<'_> {
         let Some(old) = hint.filter(|&o| self.old_prefix(o) == prefix) else {
             return HashMap::new();
         };
-        let OldBlock {
-            raw: was, start, ..
-        } = self.olds[old];
+        let OldBlock { block, start, .. } = self.olds[old];
+        let was = block.raw();
         let (a, b): (Vec<_>, Vec<_>) = (was.split('\n').collect(), raw.split('\n').collect());
         let head = a.iter().zip(&b).take_while(|(x, y)| x == y).count();
         let tail = a[head.min(a.len())..]

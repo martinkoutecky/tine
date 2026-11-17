@@ -8,6 +8,10 @@ The format follows [Keep a Changelog](https://keepachangelog.com/); versions use
 
 ## [Unreleased]
 
+### Fixed
+
+- After swapping repeated parent blocks and reopening the page, moving one parent keeps the other parent's child indentation unchanged (#960 follow-up).
+
 ## [0.10.0-beta.1] - 2026-11-16
 
 The first Tine 0.10 Beta, with every fix in stable 0.9.0. CodeMirror becomes the default editor; margin comments gain dated messages, folding and review; notes and the interface support right-to-left writing, with Persian available; and phones gain full-screen Settings and a toolbar you can customize. This release also improves page names, aliases, queries and renames, expands the command line, and reduces work and memory use on large graphs.

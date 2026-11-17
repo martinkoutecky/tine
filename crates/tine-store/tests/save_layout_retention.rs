@@ -312,6 +312,75 @@ fn a_repeated_parent_text_keeps_each_parents_children() {
     );
 }
 
+/// PagePlan control for the editor-submit regression in binding_tests: the
+/// operation path reparses its publication instead of retaining swapped ids.
+#[test]
+fn a_move_after_swapping_repeated_parents_keeps_the_other_subtree() {
+    let _integration_guard = crate::exclusive_integration_lock();
+    let mut failures = Vec::new();
+    let mut cases = 0;
+    for unit in ["\t", "  ", "\x0c", " \t"] {
+        for newline in ["\n", "\r\n", "\r"] {
+            let first = format!("- dup\n{}- x\n{}- a\n", unit.repeat(2), unit.repeat(2));
+            let second = format!("- dup\n{}- x\n{}- b\n", unit.repeat(3), unit.repeat(3));
+            for at in ["under", "before", "after"] {
+                let page = Page::new(&format!("{first}{second}- target\n").replace('\n', newline));
+                // Exercise the operation path with a built cache too.
+                let _ = page.store.whole_graph().unwrap();
+                let swapped = page.save(EditKind::MoveBlocks, |doc| doc.blocks.swap(0, 1));
+                assert_eq!(
+                    swapped,
+                    format!("{second}{first}- target\n").replace('\n', newline)
+                );
+                // Page mail parses the owner's bytes rather than serving the
+                // cached DTO. page_of uses that same parser and id assignment.
+                let read = page.store.page_of(&page.id, swapped.as_bytes()).unwrap();
+                let mut doc = read.doc;
+                let moving = doc.blocks.remove(0);
+                match at {
+                    "under" => doc.blocks[1].children.push(moving),
+                    "before" => doc.blocks.insert(1, moving),
+                    _ => doc.blocks.push(moving),
+                }
+                page.writer
+                    .save(
+                        EditKind::MoveBlocks,
+                        &page.id,
+                        SaveBase::Existing(read.rev),
+                        &doc,
+                    )
+                    .unwrap();
+                let written = fs::read_to_string(page.root.join("pages/p.md")).unwrap();
+                cases += 1;
+                // Ambiguous moved blocks may retain their previous prefix;
+                // the untouched subtree must always remain byte-identical.
+                if !written.starts_with(&first.replace('\n', newline)) {
+                    failures.push(format!("{unit:?} {newline:?} {at}: {written:?}"));
+                }
+                let parsed = tine_core::doc::parse(&written);
+                assert_eq!(parsed.roots[0].children[0].raw(), "x");
+                assert_eq!(parsed.roots[0].children[1].raw(), "a");
+                let moved = if at == "under" {
+                    &parsed.roots[1].children[0]
+                } else if at == "before" {
+                    &parsed.roots[1]
+                } else {
+                    &parsed.roots[2]
+                };
+                assert_eq!(moved.children[0].raw(), "x");
+                assert_eq!(moved.children[1].raw(), "b");
+            }
+        }
+    }
+    assert_eq!(cases, 36);
+    assert!(
+        failures.is_empty(),
+        "{} of {cases} failed:\n{}",
+        failures.len(),
+        failures.join("\n")
+    );
+}
+
 /// Review F1 of #960, insertion: a new subtree with an existing parent's text
 /// lands before it while that parent gains a property (as `tine add --before`
 /// does). The existing parent's child keeps its bytes; add-under and add-after

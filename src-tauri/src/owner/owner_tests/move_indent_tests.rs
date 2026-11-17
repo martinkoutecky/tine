@@ -274,3 +274,38 @@ fn cli_move_and_add_beside_repeated_children_keep_untouched_bytes() {
         failures.join("\n")
     );
 }
+
+/// Review of the 0.9.1 port (2026-11-17, F1): after two same-shaped parents
+/// swap places, moving one of them leaves the other's bytes untouched.
+#[test]
+fn cli_move_after_a_swap_of_repeated_parents_keeps_the_other_parent() {
+    let handle = |read: &Value, i: usize| {
+        let handle = read["page"]["blocks"][i]["handle"].as_str().unwrap();
+        format!("proof/{}", handle.split('~').next().unwrap())
+    };
+    let p1 = "- dup\n\t\t- x\n\t\t- a\n";
+    let p2 = "- dup\n\t\t\t- x\n\t\t\t- b\n";
+    let mut failures = Vec::new();
+    for at in ["under", "after", "before"] {
+        let (graph, slot, path) = fixture(&format!("{p1}{p2}- target\n"), false);
+        let read = verb(&slot, "page.show", json!({"name": "proof"})).unwrap();
+        let args = json!({"handle": handle(&read, 0), "to": handle(&read, 1), "at": "after", "rev": read["rev"]});
+        verb(&slot, "block.move", args).unwrap();
+        let swapped = std::fs::read_to_string(&path).unwrap();
+        assert_eq!(swapped, format!("{p2}{p1}- target\n"), "swap");
+        let read = verb(&slot, "page.show", json!({"name": "proof"})).unwrap();
+        let args = json!({"handle": handle(&read, 0), "to": handle(&read, 2), "at": at, "rev": read["rev"]});
+        verb(&slot, "block.move", args).unwrap();
+        let after = std::fs::read_to_string(&path).unwrap();
+        let expected = match at {
+            "under" => format!("{p1}- target\n\t- dup\n\t\t\t\t- x\n\t\t\t\t- b\n"),
+            "after" => format!("{p1}- target\n{p2}"),
+            _ => format!("{p1}{p2}- target\n"),
+        };
+        if after != expected {
+            failures.push(format!("{at}: expected {expected:?}, got {after:?}"));
+        }
+        drop(graph);
+    }
+    assert!(failures.is_empty(), "{}", failures.join("\n"));
+}

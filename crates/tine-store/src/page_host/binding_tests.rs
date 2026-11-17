@@ -574,6 +574,112 @@ fn open_submit_and_mail_round_trip_through_a_real_store() {
     live.host.stop();
 }
 
+/// #960 follow-up: editor submits publish their live ids; reopening delivers
+/// position-derived ids. A permutation makes those lineages ambiguous.
+#[test]
+fn editor_move_after_swapping_repeated_parents_keeps_the_other_subtree() {
+    let mut failures = Vec::new();
+    let mut cases = 0;
+    for unit in ["\t", "  ", "\x0c", " \t"] {
+        for newline in ["\n", "\r\n", "\r"] {
+            let first = format!("- dup\n{}- x\n{}- a\n", unit.repeat(2), unit.repeat(2));
+            let second = format!("- dup\n{}- x\n{}- b\n", unit.repeat(3), unit.repeat(3));
+            for at in ["under", "before", "after", "edit-child"] {
+                let source = format!("{first}{second}- target\n").replace('\n', newline);
+                let live = Live::new(&[("pages/a.md", &source)]);
+                let (key, page) = live.open("pages/a.md");
+                let MailText::Page { mut dto } = page.text else {
+                    panic!("open DTO")
+                };
+                dto.blocks.swap(0, 1);
+                let id = live.id();
+                live.host
+                    .submit(
+                        live.host.session(),
+                        id,
+                        &key,
+                        &dto,
+                        page.version,
+                        None,
+                        &[EditKind::MoveBlocks],
+                    )
+                    .unwrap();
+                live.answer(&key, id);
+                live.host.flush_input(&[PageId::from(key.clone())]).unwrap();
+                let swapped = format!("{second}{first}- target\n").replace('\n', newline);
+                assert_eq!(fs::read_to_string(live.root.join(&key)).unwrap(), swapped);
+                let (_, page) = live.open(&key);
+                let MailText::Page { mut dto } = page.text else {
+                    panic!("reopen DTO")
+                };
+                if at == "edit-child" {
+                    dto.blocks[1].children[1].raw.push('!');
+                } else {
+                    let moving = dto.blocks.remove(0);
+                    match at {
+                        "under" => dto.blocks[1].children.push(moving),
+                        "before" => dto.blocks.insert(1, moving),
+                        _ => dto.blocks.push(moving),
+                    }
+                }
+                let kind = if at == "edit-child" {
+                    EditKind::SaveBlock
+                } else {
+                    EditKind::MoveBlocks
+                };
+                let id = live.id();
+                live.host
+                    .submit(
+                        live.host.session(),
+                        id,
+                        &key,
+                        &dto,
+                        page.version,
+                        None,
+                        &[kind],
+                    )
+                    .unwrap();
+                live.answer(&key, id);
+                live.host.flush_input(&[PageId::from(key.clone())]).unwrap();
+                let written = fs::read_to_string(live.root.join(&key)).unwrap();
+                cases += 1;
+                let step = if unit == "  " { "  " } else { "\t" };
+                let expected = match at {
+                    "under" => format!("{first}- target\n{step}{second}"),
+                    "before" => format!("{first}{second}- target\n"),
+                    "edit-child" => {
+                        format!("{second}{}- target\n", first.replace("- a\n", "- a!\n"))
+                    }
+                    _ => format!("{first}- target\n{second}"),
+                }
+                .replace('\n', newline);
+                // With ambiguous lineage a moved child may retain its old
+                // prefix or follow its parent's rebase; both keep its origin.
+                let rebased = if at == "under" {
+                    format!(
+                        "{first}- target\n{step}- dup\n{step}{}- x\n{step}{}- b\n",
+                        unit.repeat(3),
+                        unit.repeat(3)
+                    )
+                    .replace('\n', newline)
+                } else {
+                    expected.clone()
+                };
+                if written != expected && written != rebased {
+                    failures.push(format!("{unit:?} {newline:?} {at}: {written:?}"));
+                }
+            }
+        }
+    }
+    assert_eq!(cases, 48);
+    assert!(
+        failures.is_empty(),
+        "{} of {cases} failed:\n{}",
+        failures.len(),
+        failures.join("\n")
+    );
+}
+
 /// Q-P2b-3 (GH #538): the save-failure notice names the failed platform
 /// step and its OS error, and a later published save clears both.
 #[cfg(unix)]
