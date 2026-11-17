@@ -4561,7 +4561,6 @@ impl Graph {
                     cached.as_deref(),
                     &doc,
                 );
-                prime_projections(&old);
                 (Some(old), opts)
             },
         );
