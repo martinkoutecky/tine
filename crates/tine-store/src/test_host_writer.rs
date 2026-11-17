@@ -75,6 +75,22 @@ struct Running {
     _app_data: tempfile::TempDir,
 }
 
+/// This thread's `for_store` writer. Windows runs thread-local destructors
+/// under the loader lock, and dropping the last writer joins the page-host
+/// thread, whose own exit needs that lock: the test thread then never ends.
+/// The last writer is dropped on a fresh thread instead.
+struct Current(Option<HostWriter>);
+
+impl Drop for Current {
+    fn drop(&mut self) {
+        if let Some(writer) = self.0.take() {
+            let _ = std::thread::Builder::new()
+                .name("test-host-drop".into())
+                .spawn(move || drop(writer));
+        }
+    }
+}
+
 /// A running host for one test, under disposable app data. Clones share it, so
 /// a test's writer thread uses the same host. Drop it before removing the graph.
 #[derive(Clone)]
@@ -102,10 +118,10 @@ impl HostWriter {
     /// one host: a helper that has no writer to hand takes it from here.
     pub(crate) fn for_store(store: &Arc<Store>) -> Self {
         thread_local! {
-            static CURRENT: std::cell::RefCell<Option<HostWriter>> = const { std::cell::RefCell::new(None) };
+            static CURRENT: std::cell::RefCell<Current> = const { std::cell::RefCell::new(Current(None)) };
         }
         CURRENT.with(|current| {
-            let mut current = current.borrow_mut();
+            let current = &mut current.borrow_mut().0;
             match current.as_ref() {
                 Some(writer) if Arc::ptr_eq(&writer.0.store, store) => writer.clone(),
                 _ => current.insert(Self::start(store)).clone(),
