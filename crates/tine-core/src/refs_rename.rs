@@ -853,7 +853,8 @@ fn block_edits(
     let projection = block.projection();
     let mut edits = Vec::new();
     for (index, reference) in source.explicit.iter().enumerate() {
-        if reference.slot.encoding {
+        // A property member in a macro is rewritten as its macro argument.
+        if reference.slot.encoding || reference.slot.in_macro {
             continue;
         }
         let range = reference.range.clone();
@@ -1277,6 +1278,40 @@ mod tests {
         let text = "- [[2026 10 26]]\n  2026-10-26:: value\n";
         let got = crate::refs::rename_proposal(text, false, &pages, &HashMap::new(), format);
         assert_eq!(got.unwrap().text, "- [[New]]\n  2026-10-26:: value\n");
+    }
+
+    /// A rename rewrites exactly a property value's members (the one owner).
+    /// `**[[a]]**` is no member (OG's property references are top level), so
+    /// it names no page and OG's rename (`page.cljs` `rename-update-refs!`,
+    /// which rewrites only the blocks in the page's `:block/_refs`) leaves it;
+    /// a macro's link is a member and follows as the macro's argument.
+    #[test]
+    fn a_rename_rewrites_exactly_the_property_members() {
+        let pages = HashMap::from([("a".into(), "New".into())]);
+        for (org, text, want) in [
+            (
+                false,
+                "alias:: **[[a]]**\n\n- b\n",
+                "alias:: **[[a]]**\n\n- b\n",
+            ),
+            (true, "#+alias: /[[a]]/\n* b\n", "#+alias: /[[a]]/\n* b\n"),
+            (
+                false,
+                "- b\n  foo:: {{renderer [[a]]}}, {{embed [[a]]}}\n  tags:: x, [[a]]\n",
+                "- b\n  foo:: {{renderer [[New]]}}, {{embed [[New]]}}\n  tags:: x, [[New]]\n",
+            ),
+        ] {
+            let got = crate::refs::rename_proposal(
+                text,
+                org,
+                &pages,
+                &HashMap::new(),
+                FileNameFormat::TripleLowbar,
+            )
+            .unwrap();
+            assert_eq!(got.text, want, "{text:?}");
+            assert!(got.unrealized.is_empty(), "{text:?}: {:?}", got.unrealized);
+        }
     }
 
     #[test]

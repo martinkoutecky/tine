@@ -129,7 +129,13 @@ const MAGIC: &[u8; 8] = b"TINECKPT";
 // search and URL links in property values name no page; page aliases come
 // from that reader. Cached reference evidence and alias relations change for
 // unchanged files; the body schema is unchanged and older caches rebuild.
-pub(crate) const FORMAT: u32 = 35;
+// 36 (CM property members): a property value's members are its top-level
+// references with macros read in place (OG `parse-property-refs`), from one
+// owner: a link inside emphasis or a nested link's inner page is no longer a
+// member, a macro's link is, and a comma member's range is its native bytes.
+// Cached reference evidence and alias relations change for unchanged files;
+// the body schema is unchanged and older caches rebuild.
+pub(crate) const FORMAT: u32 = 36;
 /// The lsdoc release tine-core parses with (`crates/tine-core/Cargo.toml`;
 /// `checkpoint_tests::the_parser_tag_matches_the_lsdoc_pin` keeps them equal).
 pub(crate) const PARSER: &str = "lsdoc v0.5.11";

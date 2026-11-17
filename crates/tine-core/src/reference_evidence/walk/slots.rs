@@ -25,6 +25,11 @@ pub struct NameSlot {
     /// This link is the native wrapper spelling a tag's same name, rather
     /// than an independent rename site.
     pub encoding: bool,
+    /// A property value's member inside a macro other than `embed` (mldoc
+    /// reads property references with macros skipped). It names a page, but
+    /// its rename site is the macro argument the walk reports as a rewrite
+    /// target, so rename and observation skip it here.
+    pub in_macro: bool,
     /// Only file labels need a second extent for the unique name run. A
     /// split label has no run; ordinary references allocate no extra record.
     pub label: Option<Box<LabelRun>>,
@@ -41,6 +46,7 @@ impl NameSlot {
             extent,
             nested: false,
             encoding: false,
+            in_macro: false,
             label: None,
         }
     }
@@ -51,48 +57,6 @@ impl NameSlot {
             || (!self.extent.is_empty()).then_some(&self.extent),
             |label| label.0.as_ref(),
         )
-    }
-}
-
-/// A forward cursor mapping decoded Plain offsets to its accepted source
-/// span. Each source byte is visited at most once, with no allocation.
-pub(super) struct PlainOffsets<'a> {
-    raw: &'a str,
-    native: usize,
-    decoded: usize,
-    unchanged: bool,
-}
-
-impl<'a> PlainOffsets<'a> {
-    pub(super) fn new(raw: &'a str, text: &str) -> Self {
-        work();
-        Self {
-            raw,
-            native: 0,
-            decoded: 0,
-            unchanged: raw == text,
-        }
-    }
-
-    pub(super) fn at(&mut self, target: usize) -> usize {
-        if self.unchanged {
-            return target;
-        }
-        while self.decoded < target {
-            if self.raw.as_bytes()[self.native] == b'\\'
-                && self
-                    .raw
-                    .as_bytes()
-                    .get(self.native + 1)
-                    .is_some_and(u8::is_ascii_punctuation)
-            {
-                self.native += 1;
-            }
-            let n = self.raw[self.native..].chars().next().unwrap().len_utf8();
-            self.native += n;
-            self.decoded += n;
-        }
-        self.native
     }
 }
 
@@ -108,26 +72,15 @@ pub(super) fn link(
     let range = &reference.range;
     let node = &raw[range.clone()];
     let label_name = matches!(url, Url::File { .. });
-    let local = if org {
-        let split = node.find("][");
-        if label_name {
-            split.map(|at| at + 2..node.len() - 2)
-        } else {
-            Some(2..split.unwrap_or(node.len() - 2))
-        }
+    let local = if !label_name {
+        tine_outline::property_refs::page_link_run(node, org)
+    } else if org {
+        node.find("][").map(|at| at + 2..node.len() - 2)
     } else if node.starts_with("[[") {
         Some(2..node.len() - 2)
     } else {
-        node.rfind("](").map(|split| {
-            if label_name {
-                usize::from(node.starts_with('!')) + 1..split
-            } else {
-                let target = &node[split + 2..node.len() - 1];
-                let lead = target.len() - target.trim_start().len();
-                let start = split + 2 + lead + 2;
-                start..start + target.trim().len() - 4
-            }
-        })
+        node.rfind("](")
+            .map(|split| usize::from(node.starts_with('!')) + 1..split)
     };
     let Some(local) = local else {
         return NameSlot::whole(range.clone());
@@ -187,6 +140,7 @@ pub(super) fn link(
         extent,
         nested: false,
         encoding: false,
+        in_macro: false,
         label: Some(Box::new(LabelRun(run))),
     }
 }

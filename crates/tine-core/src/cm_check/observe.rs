@@ -442,7 +442,8 @@ fn reference_sites(
         .collect();
     let mut sites: Vec<(Range<usize>, Site)> = Vec::new();
     for p in source {
-        if p.slot.encoding {
+        // A property member in a macro is observed as its macro argument.
+        if p.slot.encoding || p.slot.in_macro {
             continue;
         }
         let node = &raw[p.range.clone()];

@@ -534,6 +534,37 @@ fn pre_document_grammar_property_checkpoints_are_rebuilt() {
 }
 
 #[test]
+fn pre_top_level_property_member_checkpoints_are_rebuilt() {
+    let root = graph();
+    fs::write(
+        root.path().join("pages/D.md"),
+        "alias:: **[[Bold]]**\n\n- body\n  tags:: [[Outer [[Inner]]]]\n",
+    )
+    .unwrap();
+    let cp = root.path().join("launch.bin");
+    write_checkpoint(root.path(), &cp);
+    // Format 35 can retain `Inner` (a nested link's inner page) as a property
+    // reference and `Bold` (a link inside emphasis) as an alias.
+    let mut bytes = fs::read(&cp).unwrap();
+    bytes[8..12].copy_from_slice(&35_u32.to_le_bytes());
+    fs::write(&cp, bytes).unwrap();
+    let store = open_cp(root.path(), &cp);
+    let graph = store.whole_graph_reconciled().unwrap();
+    assert_eq!(load_outcome(&store), "format");
+    assert!(
+        parse_passes(&store) > 0,
+        "old reference evidence must rebuild"
+    );
+    assert!(graph.backlinks("Inner").unwrap().is_empty());
+    assert_eq!(graph.backlinks("Outer [[Inner]]").unwrap().len(), 1);
+    assert!(graph
+        .graph
+        .alias_owner_paths("bold", None)
+        .is_none_or(|owners| owners.is_empty()));
+    store.close();
+}
+
+#[test]
 fn pre_priority_reference_checkpoints_are_rebuilt() {
     let root = graph();
     fs::write(root.path().join("pages/D.md"), "- [#C] low\n- plain\n").unwrap();
@@ -1395,7 +1426,7 @@ fn the_golden_body_is_pinned_to_format() {
     let digest: String = sha256(&bytes).iter().map(|b| format!("{b:02x}")).collect();
     assert_eq!(
         (FORMAT, digest.as_str()),
-        (35, GOLDEN),
+        (36, GOLDEN),
         "ADR 0070: the checkpoint body changed; bump FORMAT and re-pin GOLDEN"
     );
 }
