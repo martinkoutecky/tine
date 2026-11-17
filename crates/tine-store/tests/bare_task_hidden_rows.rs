@@ -94,6 +94,7 @@ fn bare_task_read_edit_save_budget_and_checkpoint_bytes() {
                 after.save_path_resolutions - before.save_path_resolutions,
             );
             assert_eq!(cost.1, 2, "page and guarded draft: {cost:?}");
+            assert!(cost.2 <= 5, "a save flushes at most five times: {cost:?}");
             let checkpoint_write = store.write_checkpoint_now().unwrap();
             let tine_store::CheckpointWrite::Written {
                 raw_bytes,
@@ -118,7 +119,11 @@ fn bare_task_read_edit_save_budget_and_checkpoint_bytes() {
         for (label, mut samples, budget_ms) in [
             ("read", reads, if blocks == 1 { 3.0 } else { 5.0 }),
             ("edit", edits, 1.0),
-            ("save", saves, if blocks == 1 { 20.0 } else { 80.0 }),
+            (
+                "save",
+                saves,
+                (if blocks == 1 { 20.0 } else { 80.0 }) + PLATFORM_FLUSH_MS * 5.0,
+            ),
         ] {
             samples.sort_by(f64::total_cmp);
             eprintln!(
@@ -137,6 +142,12 @@ fn bare_task_read_edit_save_budget_and_checkpoint_bytes() {
         store.close();
     }
 }
+
+/// What one flush adds to a save's time on top of the Linux budget, per flush
+/// the save is counted to make (at most five, asserted above). The budget was set
+/// on Linux; the first hosted Windows run (2026-11-17) measured a 1-block save
+/// median of 24.7 ms against Linux's 3.8 ms, all of it in its five flushes.
+const PLATFORM_FLUSH_MS: f64 = if cfg!(windows) { 5.0 } else { 0.0 };
 
 /// Raw text of every block `(task TODO DONE)` returns, as a `{{query}}` runs it.
 fn tasks(store: &Store) -> BTreeSet<String> {
