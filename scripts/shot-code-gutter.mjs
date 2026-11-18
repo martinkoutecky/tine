@@ -77,9 +77,12 @@ try {
   const wrapRule = sel => `${sel} { white-space: pre-wrap !important; overflow-wrap: anywhere !important; }`;
   // "live": a theme switch after the card is shown, changing the code's font while it wraps (review of 3764978ba).
   const themeWrap = { themed: [wrapRule("pre code")], child: [wrapRule("pre > code")],
-    live: [wrapRule("pre > code"), "pre > code { font-family: serif !important; }"] };
+    live: [wrapRule("pre > code"), "pre > code { font-family: serif !important; }"],
+    // white-space modes that collapse a whitespace-only line, or break a long run of spaces (review of 50aea73ba).
+    preline: ["pre > code { white-space: pre-line !important; }"],
+    breakspaces: ["pre > code { white-space: break-spaces !important; }"] };
   const aligned = [];
-  for (const wrap of [false, true]) for (const kind of ["view", "textarea", "cm6"]) for (const name of ["long", "themed", "child", "live"]) {
+  for (const wrap of [false, true]) for (const kind of ["view", "textarea", "cm6"]) for (const name of ["long", "themed", "child", "live", "preline", "breakspaces"]) {
     if (name !== "long" && kind !== "view") continue; // a theme's `pre code` rule never reaches an editor
     // The classic editor paints no per-line boxes; its height is compared with the numbers' only
     // unwrapped, because its font stack differs from the gutter's on a host without the mono fonts.
@@ -106,7 +109,9 @@ try {
             if (node.data[i] === "\n") atStart = true;
           }
         }
-        rows = starts.map(([n, i]) => { const range = document.createRange(); range.setStart(n, i); range.setEnd(n, i + 1); return top(range); });
+        // A whitespace-only line whose spaces collapse (pre-line) has no glyph box to measure: null, not compared.
+        rows = starts.map(([n, i]) => { const range = document.createRange(); range.setStart(n, i); range.setEnd(n, i + 1);
+          return range.getBoundingClientRect().height ? top(range) : null; });
       } else {
         // A textarea paints no per-line boxes: its content height must equal the numbered height.
         const ta = document.querySelector("textarea.block-editor"), s = getComputedStyle(ta);
@@ -115,7 +120,8 @@ try {
           gutterH: g.height, textH: ta.scrollHeight };
       }
       // A number's ink sits at a constant offset inside its row's box, so compare spacing from the first.
-      return { numbers: nums.length, lines: rows.length, drift: nums.map((n, i) => Math.round(top(n) - rows[i] - (top(nums[0]) - rows[0]))) };
+      return { numbers: nums.length, lines: rows.length,
+        drift: nums.map((n, i) => rows[i] == null ? 0 : Math.round(top(n) - rows[i] - (top(nums[0]) - rows[0]))) };
     }, [kind]);
     aligned.push({ wrap, kind, name, ...r });
     await page.screenshot({ path: `${out}/aligned-${wrap ? "wrap" : "nowrap"}-${kind}-${name}.png` });
