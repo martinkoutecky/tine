@@ -49,7 +49,7 @@ const raws = (path: string): string[] => {
   return out;
 };
 let shares: QuickShareListed[];
-const listing = (): QuickShareListing => ({ enabled: true, account: { login: "octo", accountId: 7 }, shares, error: null });
+const listing = (): QuickShareListing => ({ account: { login: "octo", accountId: 7 }, shares, error: null });
 const pendingRow = (state: "pending" | "live"): QuickShareListed => ({ shareId: RECORD, state, login: "octo",
   gistId: state === "live" ? GIST : null, createdAt: "2026-10-19T10:00:00Z", title: "Notes", pages: 1, accountMatches: true });
 

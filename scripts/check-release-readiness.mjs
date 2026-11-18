@@ -11,11 +11,11 @@ import {
 } from "./release-readiness-lib.mjs";
 import { checkQuickShareReadiness } from "./check-quick-share-readiness.mjs";
 
-// A first viewer deployment does not require a new app version or release
-// metadata. The manager runs this mode before the trial app is built.
+// The release preflight runs this mode before any build: it needs no version
+// or release metadata.
 if (process.argv.includes("--quick-share-only")) {
   await checkQuickShareReadiness();
-  console.log("Quick share viewer-first gate passed");
+  console.log("Quick share viewer gate passed");
   process.exit(0);
 }
 
@@ -31,9 +31,9 @@ for (const inventory of regressionIndex.inventories ?? []) {
   for (const entry of catalog.entries ?? []) catalogIds.add(entry.id);
 }
 const problems = [];
-// Not a release blocker: without a deployed viewer the build keeps the writer disabled.
+// Every build offers quick share links (D-20261117-QSG): the deployed viewer must read them.
 try { await checkQuickShareReadiness(); }
-catch { console.warn("note: generation 1 quick share viewer is unavailable or incompatible at https://tine.page/s/1/; this build will not offer quick share"); }
+catch (error) { problems.push(`the quick share viewer at https://tine.page/s/1/ does not render this writer's links (${error instanceof Error ? error.message : error}); deploy the viewer first`); }
 
 if (!section) problems.push(`CHANGELOG.md has no released section for ${version}`);
 if (!fs.existsSync(impactPath)) problems.push(`missing docs/releases/v${version}-impact.json`);

@@ -93,7 +93,7 @@ function BatchDialog(props: { close: () => void; target: object }): JSX.Element 
         const gist = shareGistId(value);
         const row = listed.value.shares.find(row => row.gistId === gist);
         const title = row?.title || `${group.page} (${value})`;
-        if (!listed.value.enabled || !listed.value.account || listed.value.error) { add({ title, note: listed.value.error || t("quick-share-all-no-key") }); continue; }
+        if (!listed.value.account || listed.value.error) { add({ title, note: listed.value.error || t("quick-share-all-no-key") }); continue; }
         if (pendingRecordId(value)) { add({ title, note: t("quick-share-all-pending") }); continue; }
         if (!row) { add({ title, note: t("quick-share-all-no-key") }); continue; }
         if (seen.has(gist)) { add({ title, note: t("quick-share-all-duplicate") }); continue; }

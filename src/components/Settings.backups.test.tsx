@@ -13,7 +13,7 @@ const backupBackend = vi.hoisted(() => ({
   restoreBackup: vi.fn(),
   deleteOldBackups: vi.fn(),
   // Settings reads the quick share gate on mount (the Sharing tab); off here.
-  quickShareList: vi.fn(async () => ({ enabled: false, account: null, shares: [], error: null })),
+  quickShareList: vi.fn(async () => { throw { kind: "disabled" }; }),
 }));
 
 vi.mock("../backend", async (importOriginal) => {

@@ -19,7 +19,7 @@ afterEach(() => { dispose?.(); dispose = undefined; resetStore(); vi.restoreAllM
 async function mount(keyHere = true, value = `octo/${GIST}`, matches = true) {
   loadSingle({ name: "Exports", title: "Exports", kind: "page", pre_block: "tine/exports:: true\npublic:: false\n",
     blocks: [{ id: "definition", raw: `${MACRO}\n  tine.share:: ${value}`, properties: [["tine.share", value]], collapsed: false, children: [] }] });
-  vi.spyOn(backend(), "quickShareList").mockResolvedValue({ enabled: true, error: null, account: { login: "octo", accountId: 42 },
+  vi.spyOn(backend(), "quickShareList").mockResolvedValue({ error: null, account: { login: "octo", accountId: 42 },
     shares: keyHere ? [{ shareId: "record", state: "live", login: "octo", gistId: GIST, title: "Project", pages: 1,
       createdAt: "2026-10-25T00:00:00Z", accountMatches: matches }] : [] });
   const root = document.createElement("div"); document.body.append(root);
@@ -122,10 +122,10 @@ it("a graph cleanup failure stays visible even if the query result disappears", 
 it("returning from Settings refreshes an export's account and key availability", async () => {
   const root = await mount();
   const list = vi.mocked(backend().quickShareList);
-  list.mockResolvedValue({ enabled: true, account: null, shares: [], error: null });
+  list.mockResolvedValue({ account: null, shares: [], error: null });
   setSettingsOpen(true); setSettingsOpen(false);
   await vi.waitFor(() => expect(root.querySelector<HTMLButtonElement>(".quick-share-export-delete")!.disabled).toBe(true));
-  list.mockResolvedValue({ enabled: true, account: { login: "octo", accountId: 42 }, shares: [], error: null });
+  list.mockResolvedValue({ account: { login: "octo", accountId: 42 }, shares: [], error: null });
   setSettingsOpen(true); setSettingsOpen(false);
   await vi.waitFor(() => expect(root.querySelector<HTMLButtonElement>(".quick-share-export-delete")!.disabled).toBe(false));
 });
