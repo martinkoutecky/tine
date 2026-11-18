@@ -135,7 +135,8 @@ export function preserveAboveViewport(el: Element, change: () => void, root?: El
   for (const inset of [2, 32, 64]) {
     const hit = elementFromPointIn(root, viewport.left + viewport.width / 2, viewport.top + inset);
     const candidate = hit?.closest(".block-main, h1, .query-header") ?? hit;
-    if (candidate && root.contains(candidate) && !candidate.contains(el) && !el.contains(candidate)) {
+    // A pinned ancestor header never moves with the content, so it measures nothing.
+    if (candidate && root.contains(candidate) && !candidate.contains(el) && !el.contains(candidate) && !candidate.closest(".sticky-ancestor")) {
       anchor = candidate;
       break;
     }
