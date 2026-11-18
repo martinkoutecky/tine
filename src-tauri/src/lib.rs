@@ -316,6 +316,24 @@ fn reopen_stuck(app: &tauri::AppHandle, stuck: Vec<std::path::PathBuf>) {
     }
 }
 
+/// GH #967: a window-manager close request (Alt+F4, Cmd+W, a taskbar or
+/// task-switcher close) on Quick Capture hides the window like losing focus
+/// does, so the draft stays and the next capture shortcut shows it again. A
+/// real close would destroy the window, lose the text, and leave `show_capture`
+/// a no-op until restart (the window exists only from `tauri.conf.json`).
+/// Quitting is unaffected: it ends through `app.exit` and `destroy`, neither of
+/// which sends a close request, and the process exits when the last graph
+/// window goes, not when Quick Capture does.
+#[cfg(desktop)]
+fn capture_window_event<R: tauri::Runtime>(window: &tauri::Window<R>, event: &tauri::WindowEvent) {
+    if let tauri::WindowEvent::CloseRequested { api, .. } = event {
+        if window.label() == "capture" {
+            api.prevent_close();
+            let _ = window.hide();
+        }
+    }
+}
+
 /// Show + focus the always-on-top quick-capture mini window (created hidden at
 /// startup). Each show resets it to the small base size and anchors it near the
 /// top of the screen so the frontend can grow it downward (multiple blocks, an
@@ -871,6 +889,8 @@ pub fn run() {
             workspace_windows::window_event(window, event);
             #[cfg(desktop)]
             tray::window_event(window, event);
+            #[cfg(desktop)]
+            capture_window_event(window, event);
             let label = window.label();
             if !graph_window(label) {
                 return;
@@ -1320,6 +1340,74 @@ mod window_state_policy_tests {
                 }
             }
         }
+    }
+
+    /// Closes a one-window mock app's only window and reports whether the
+    /// window is still there after the close request: the mock loop ends as soon
+    /// as a close request leaves no window, and keeps ticking while one remains.
+    #[cfg(desktop)]
+    fn survives_a_close_request(label: &str) -> bool {
+        use std::sync::atomic::{AtomicBool, Ordering};
+        use std::sync::Arc;
+        use tauri::{Manager, WebviewUrl, WebviewWindowBuilder};
+
+        let app = tauri::test::mock_builder()
+            .build(tauri::test::mock_context(tauri::test::noop_assets()))
+            .unwrap();
+        let window = WebviewWindowBuilder::new(&app, label, WebviewUrl::default())
+            .build()
+            .unwrap();
+        let handle = app.handle().clone();
+        let survived = Arc::new(AtomicBool::new(false));
+        let survived_in_loop = survived.clone();
+        let mut tick = 0;
+        app.run(move |_, event| match event {
+            tauri::RunEvent::Ready => window.close().unwrap(),
+            // The mock runtime hands window events to the run callback instead
+            // of the builder's window-event hook, so deliver them to the same
+            // handler the app registers.
+            tauri::RunEvent::WindowEvent { label, event, .. } => {
+                if let Some(window) = handle
+                    .get_webview_window(&label)
+                    .map(|window| window.as_ref().window())
+                {
+                    crate::capture_window_event(&window, &event);
+                }
+            }
+            tauri::RunEvent::MainEventsCleared => {
+                tick += 1;
+                if tick == 2 {
+                    survived_in_loop.store(true, Ordering::SeqCst);
+                    // Ends the mock loop: destroy sends no close request.
+                    if let Some(window) = handle.webview_windows().into_values().next() {
+                        window.destroy().unwrap();
+                    }
+                }
+            }
+            _ => {}
+        });
+        survived.load(Ordering::SeqCst)
+    }
+
+    /// GH #967: Alt+F4 on Quick Capture used to destroy the window (draft lost,
+    /// capture dead until restart). Drives the real handler with the mock
+    /// runtime's close request: `capture` must survive it, every other window
+    /// must close as before.
+    #[cfg(desktop)]
+    #[test]
+    fn a_close_request_leaves_quick_capture_alive_and_closes_others() {
+        assert!(survives_a_close_request("capture"));
+        for label in ["main", "graph-1"] {
+            assert!(!survives_a_close_request(label), "{label}");
+        }
+    }
+
+    #[cfg(desktop)]
+    #[test]
+    fn the_app_routes_window_events_through_the_capture_close_guard() {
+        // The needle is split so this test's own text cannot satisfy it.
+        let wired = concat!("capture_window_event", "(window, event);");
+        assert!(include_str!("lib.rs").contains(wired));
     }
 
     #[test]

@@ -639,6 +639,21 @@ try {
   await browser.switchToWindow(restartedCapture);
   await expectAutocompleteValue(`${CANCELLED}${PREEDIT}`, "the draft was not kept when Quick Capture was dismissed mid-composition");
   console.log(`INFO: DOM focus events seen across the native dismissal: ${JSON.stringify(await browser.execute(() => window.__imeFocusLog ?? null))}`);
+  // UI-CAPTURE-WM-CLOSE-967: the window manager's close request (Alt+F4 under
+  // openbox, the same request a close button or Cmd+W sends) must hide Quick
+  // Capture with its draft instead of destroying it. Hidden proves the request
+  // arrived (nothing else dismisses a focused window); a destroyed window
+  // would make the reopen below time out.
+  xdo("key", "alt+F4");
+  const wmCloseDeadline = Date.now() + 10_000;
+  while (captureVisible() && Date.now() < wmCloseDeadline) await sleep(50);
+  if (captureVisible()) throw new Error("Quick Capture stayed visible after a window-manager close request");
+  const wmReopen = spawn(APP, ["--capture"], { env, stdio: ["ignore", driverLog, driverLog], detached: true });
+  await waitForForwarderExit(wmReopen, 5_000);
+  wmReopen.unref();
+  await waitForWindow("Quick Capture", 10_000);
+  await browser.switchToWindow(restartedCapture);
+  await expectAutocompleteValue(`${CANCELLED}${PREEDIT}`, "a window-manager close request lost the Quick Capture draft or left it unusable");
   for (const key of AFTER) await browser.keys([key]);
   await expectAutocompleteValue(`${CANCELLED}${PREEDIT}${AFTER}`, "ordinary typing after the cancelled composition did not reach Quick Capture");
   await browser.saveScreenshot(path.join(ARTIFACT_DIR, "quick-capture-ime-2-reopened-typed.png"));
@@ -649,6 +664,7 @@ try {
   });
   if (filed.split(CANCELLED).length !== 2) throw new Error("the capture after a cancelled composition was filed more than once");
   console.log("PASS: Quick Capture filed its text after a composition cancelled by losing native focus (synthetic composition events, real focus loss)");
+  console.log("PASS: a window-manager close request hid Quick Capture with its draft and the next --capture showed it again");
   console.log(`PASS: cold Quick Capture exposed a focused bullet and saved keyboard input without a click; dom=${JSON.stringify(domFocus)}`);
 } catch (error) {
   try { await browser?.saveScreenshot(path.join(ARTIFACT_DIR, "failure.png")); } catch {}
