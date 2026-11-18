@@ -109,7 +109,8 @@ try {
   await waitForFileText(path.join(graph, "journals/2026_10_26.md"), (text) => text === "alias:: new/sub\n\n- day\n", { timeoutMs: 15_000 });
   await waitForFileText(path.join(graph, "pages/journal referrer.md"), (text) => text === "- see [[new/sub]]\n", { timeoutMs: 15_000 });
   await waitForFileText(path.join(graph, "pages/new.md"), (text) => text === "- source\n", { timeoutMs: 15_000 });
-  assert.ok(!fs.existsSync(path.join(graph, "pages/old.md")), "old.md moved");
+  // The transaction removes the source after writing its new files: wait for it (old.md moved).
+  await waitForFileText(path.join(graph, "pages/old.md"), (text) => text === "<absent>", { timeoutMs: 15_000 });
   await browser.waitUntil(async () => (await currentPageTitle(browser)) === "new", { timeout: 15_000, timeoutMsg: "the renamed page is not open as new" });
 
   stage = "O3: a name that is only another page's alias opens the alias dialog, which shows the component";
@@ -151,7 +152,8 @@ try {
   await waitForFileText(path.join(graph, "pages/ML.md"), (text) => text === "- notes body\n", { timeoutMs: 15_000 });
   await waitForFileText(path.join(graph, "pages/Machine Learning.md"), (text) => text === "alias:: AI\n\n- ml body\n", { timeoutMs: 15_000 });
   await waitForFileText(path.join(graph, "pages/q.md"), (text) => text === "- see [[ML]]\n- also [[ML]] here\n", { timeoutMs: 15_000 });
-  assert.ok(!fs.existsSync(path.join(graph, "pages/ML notes.md")), "ML notes.md moved");
+  // The transaction removes the source after writing its new files: wait for it (ML notes.md moved).
+  await waitForFileText(path.join(graph, "pages/ML notes.md"), (text) => text === "<absent>", { timeoutMs: 15_000 });
 
   stage = "O3 helper: for a source without a file, the dialog's merge repoints its references";
   await openPageByName(browser, "Ghost");
@@ -170,7 +172,8 @@ try {
   await waitForFileText(path.join(graph, "pages/Tag Kept.md"), (text) => text.startsWith("tags:: b, c, a\n") && text.includes("- tag kept") && text.includes("- tag old"), { timeoutMs: 15_000 });
   const kept = fs.readFileSync(path.join(graph, "pages/Tag Kept.md"), "utf8");
   assert.equal(kept.match(/tags::/g)?.length, 1, kept);
-  assert.ok(!fs.existsSync(path.join(graph, "pages/Tag Old.md")), "the merged source went to the trash");
+  // The transaction removes the source after writing its new files: wait for it (the merged source went to the trash).
+  await waitForFileText(path.join(graph, "pages/Tag Old.md"), (text) => text === "<absent>", { timeoutMs: 15_000 });
 
   stage = "O3: rename an alias-only link through the context menu";
   await openPageByName(browser, "Alias journey");

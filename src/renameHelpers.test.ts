@@ -1,14 +1,15 @@
 import { afterEach, beforeAll, beforeEach, expect, it, vi } from "vitest";
 import { backend } from "./backend";
 import { renameOrMergePage } from "./graph";
-import { resetStore } from "./document";
+import { pageByName, resetStore, setPageProperty, setRaw } from "./document";
 import { loadSingle } from "./document/workingSet";
+import { doc } from "./document/model";
 import { bindTestHost } from "./document/host/wiring.test.support";
 import { installDiskHost, type FakeDisk } from "./diskHost.test.support";
 import { initParser } from "./render/parse";
 import { setGraphMeta } from "./graphSession";
 import { setToasts, toasts } from "./toasts";
-import { aliasDialogRequest } from "./renameAliasDialog";
+import { aliasDialogRequest, type AliasDialogAnswer } from "./renameAliasDialog";
 import { renderEnglish } from "./i18n";
 import type { AliasDialogOffer, GraphMeta, PageDto, RenameOffer } from "./types";
 
@@ -20,6 +21,9 @@ import type { AliasDialogOffer, GraphMeta, PageDto, RenameOffer } from "./types"
 /** Page files on "disk": header line and body, with a revision. */
 let files: Map<string, { pre: string | null; body: string; rev: number }>;
 let saveFails = false;
+/** Runs inside the next file write (then cleared): a graph switch or typing
+ *  while a helper's save is in flight. */
+let onWrite: (() => void) | null = null;
 const dto = (name: string): PageDto | null => {
   const file = files.get(name);
   return file ? { name, kind: "page", title: name, id: `pages/${name}.md`, rev: `r${file.rev}`, pre_block: file.pre,
@@ -28,6 +32,9 @@ const dto = (name: string): PageDto | null => {
 const disk: FakeDisk = {
   read: (_key, name) => dto(name),
   write: (_key, page) => {
+    const during = onWrite;
+    onWrite = null;
+    during?.();
     if (saveFails) throw new Error("disk full");
     const file = files.get(page.name)!;
     files.set(page.name, { pre: page.pre_block ?? null, body: page.blocks[0]?.raw ?? "", rev: file.rev + 1 });
@@ -48,6 +55,7 @@ beforeEach(async () => {
   resetStore();
   files = new Map();
   saveFails = false;
+  onWrite = null;
   setGraphMeta({ root: "/g", pages_dir: "pages", journals_dir: "journals", assets_dir: "assets", preferred_format: "md" } as unknown as GraphMeta);
   installDiskHost(await bindTestHost(), disk);
 });
@@ -116,10 +124,10 @@ const dialog = (over: Partial<AliasDialogOffer> = {}): AliasDialogOffer => ({
   reason: { kind: "aliasHeld", alias: "ML", page: "Machine Learning", path: "pages/Machine Learning.md" },
   message: "",
   opens: { name: "Machine Learning", path: "pages/Machine Learning.md", journal: false, aliases: ["AI", "ML"] },
-  declarers: [{ name: "Machine Learning", path: "pages/Machine Learning.md", journal: false, aliases: ["AI", "ML"] }],
+  component: [{ name: "Machine Learning", path: "pages/Machine Learning.md", journal: false, aliases: ["AI", "ML"] }],
   source: { name: "ML notes", path: "pages/ML notes.md", journal: false, aliases: [] },
-  merge: { into: "pages/Machine Learning.md", name: "Machine Learning", journal: false, tags: null, effect: { pages: ["ML notes", "Machine Learning", "q"], pageCount: 3, retargeted: [] } },
-  mergeRefused: null,
+  merges: [{ into: "pages/Machine Learning.md", name: "Machine Learning", journal: false, tags: null, effect: { pages: ["ML notes", "Machine Learning", "q"], pageCount: 3, retargeted: [] } }],
+  mergesRefused: [],
   own: {
     edits: [{ page: "Machine Learning", path: "pages/Machine Learning.md", journal: false, key: "alias", before: "AI, ML", after: "AI" }],
     effect: { pages: ["Machine Learning", "ML notes"], pageCount: 2, retargeted: [{ name: "ML", before: "Machine Learning", after: "ML", pages: ["q"], pageCount: 1 }] },
@@ -127,7 +135,7 @@ const dialog = (over: Partial<AliasDialogOffer> = {}): AliasDialogOffer => ({
   ownRefused: null,
   ...over,
 });
-const answer = async (choice: "merge" | "own" | null) => {
+const answer = async (choice: AliasDialogAnswer) => {
   await vi.waitFor(() => expect(aliasDialogRequest()).not.toBeNull());
   aliasDialogRequest()!.finish(choice);
 };
@@ -154,7 +162,7 @@ it("the dialog's merge is the ordinary merge into the page the name opens, with 
   const confirm = vi.spyOn(backend(), "confirm");
   const rename = vi.spyOn(backend(), "renamePage").mockResolvedValue({ outcome: "merged", renamed: [{ from: "ML notes", to: "Machine Learning", path: "pages/ML notes.md" }], touched: [] });
   const done = renameOrMergePage("ML notes", "ML", { name: "ML notes", pageKind: "page", path: "pages/ML notes.md" });
-  await answer("merge");
+  await answer({ merge: "pages/Machine Learning.md" });
   expect(await done).toBe("merged");
   expect(rename).toHaveBeenCalledWith("ML notes", "Machine Learning", "rename-page", "pages/ML notes.md", "pages/Machine Learning.md", []);
   expect(confirm).not.toHaveBeenCalled();
@@ -205,4 +213,58 @@ it("a helper edit whose save fails is put back and nothing is renamed", async ()
   expect(header("New")).toBe("tags:: b, c");
   expect(header("Old")).toBe("tags:: a, b");
   expect(errors().some((text) => text.includes("could not be saved, so it was put back"))).toBe(true);
+});
+
+/** The page's header and first block as the window holds them. */
+const held = (name: string) => {
+  const found = pageByName(name);
+  return found ? { pre: found.preBlock ?? null, body: doc.byId[found.roots[0]]?.raw ?? null } : null;
+};
+
+it("a graph switch during a helper's save puts nothing into the new graph", async () => {
+  page("New", "tags:: b, c", "- OLD GRAPH kept");
+  page("Old", "tags:: a, b", "- gone");
+  offer(tagged);
+  vi.spyOn(backend(), "confirm").mockResolvedValue(true);
+  const rename = vi.spyOn(backend(), "renamePage");
+  onWrite = () => {
+    // The user switches graphs; the new graph also has a page "New".
+    resetStore();
+    files = new Map();
+    page("New", null, "- NEW GRAPH kept");
+    saveFails = true;
+  };
+  expect(await renameOrMergePage("Old", "New", { name: "Old", pageKind: "page", path: "pages/Old.md" })).toBe("cancelled");
+  saveFails = false;
+  expect(rename).not.toHaveBeenCalled();
+  expect(held("New")).toEqual({ pre: null, body: "- NEW GRAPH kept" });
+  expect(files.get("New")).toMatchObject({ pre: null, body: "- NEW GRAPH kept" });
+});
+
+it("typing admitted during the helper's saves survives the put-back", async () => {
+  page("New", "tags:: b, c", "- kept");
+  page("Old", "tags:: a, b", "- gone");
+  offer(tagged);
+  vi.spyOn(backend(), "confirm").mockResolvedValue(true);
+  vi.spyOn(backend(), "renamePage").mockRejectedValue(new Error("disk full"));
+  onWrite = () => setRaw("New-b", "- kept, typed meanwhile");
+  await expect(renameOrMergePage("Old", "New", { name: "Old", pageKind: "page", path: "pages/Old.md" })).rejects.toThrow("disk full");
+  expect(held("New")).toEqual({ pre: "tags:: b, c", body: "- kept, typed meanwhile" });
+  expect(header("Old")).toBe("tags:: a, b");
+});
+
+it("a property changed while a later page loads is not written over", async () => {
+  page("New", "tags:: b, c", "- kept");
+  files.set("Old", { pre: "tags:: a, b", body: "- gone", rev: 1 });
+  offer(tagged);
+  vi.spyOn(backend(), "confirm").mockResolvedValue(true);
+  vi.spyOn(backend(), "getPage").mockImplementation(async () => {
+    setPageProperty("New", "tags", "b, z");
+    return { ...dto("Old")!, id: "pages/Old.md" };
+  });
+  const rename = vi.spyOn(backend(), "renamePage");
+  expect(await renameOrMergePage("Old", "New", { name: "Old", pageKind: "page", path: "pages/Old.md" })).toBe("cancelled");
+  expect(rename).not.toHaveBeenCalled();
+  expect(held("New")?.pre).toBe("tags:: b, z");
+  expect(header("Old")).toBe("tags:: a, b");
 });

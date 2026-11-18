@@ -1,9 +1,10 @@
 import { clearOnBindingInvalidated, graphScopedSignal } from "./binding";
 import type { AliasDialogOffer } from "./types";
 
-/** The user's answer in the alias dialog (D-20261115-HELP): the merge the
- *  backend offered, "use the name for this page", or cancel (null). */
-export type AliasDialogAnswer = "merge" | "own" | null;
+/** The user's answer in the alias dialog (D-20261115-HELP): one of the merges
+ *  the backend offered (by its `into` file), "use the name for this page", or
+ *  cancel (null). */
+export type AliasDialogAnswer = { merge: string } | "own" | null;
 
 export type AliasDialogRequest = {
   from: string;
@@ -25,7 +26,7 @@ export function askAliasDialog(from: string, to: string, offer: AliasDialogOffer
   return new Promise((resolve) => {
     const request: AliasDialogRequest = { from, to, offer, finish(answer) {
       if (pendingRequest !== request) return;
-      if ((answer === "own" && !offer.own) || (answer === "merge" && !offer.merge)) return;
+      if ((answer === "own" && !offer.own) || (typeof answer === "object" && answer && !offer.merges.some((merge) => merge.into === answer.merge))) return;
       pendingRequest = null;
       setAliasDialogRequest(null);
       resolve(answer);

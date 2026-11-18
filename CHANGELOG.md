@@ -9,7 +9,7 @@ The format follows [Keep a Changelog](https://keepachangelog.com/); versions use
 ## [Unreleased]
 
 ### Added
-- Renaming a page to a name that is only another page's alias opens a rename dialog instead of refusing outright: it shows the pages that declare the name, their `alias::` lines and which page the name opens now, and offers only what Tine would carry out, each with what it changes, including links that will open a different page with their text unchanged. **Merge into** merges the page there; **Use the name for this page** removes the alias from the other page's `alias::` line, then renames, and puts the line back if the rename does not happen (UI-CM-ALIAS-RENAME-DIALOG).
+- Renaming a page to a name that is only another page's alias opens a rename dialog instead of refusing outright: it shows the pages linked by that name's aliases, their `alias::` lines and which page the name opens now, and offers only what Tine would carry out, each with what it changes, including links that will open a different page with their text unchanged. **Merge into** (one per page Tine can merge into) merges the page there; **Use the name for this page** removes the alias from the other page's `alias::` line, then renames, and puts the line back if the rename does not happen, keeping anything typed meanwhile (UI-CM-ALIAS-RENAME-DIALOG).
 - Merging two pages that both have a `tags::` line leaves the remaining page with one `tags::` line holding both pages' tags; the merge question shows them. If the merge does not happen, both lines stay as they were (UI-CM-MERGE-UNITED-TAGS).
 
 ### Fixed

@@ -35,6 +35,7 @@ fn rename_merge_and_journal_rename_proposals_are_documented_in_the_bundled_guide
         // D-20261115-HELP: the alias dialog; D-20261116-TAGH: united tags.
         "opens the **rename dialog** instead of renaming",
         "and which one the name opens now (**Machine Learning**)",
+        "has its own **Merge into** choice",
         "including links whose text stays the same but which will open a different page",
         "**Use the name for this page** first removes `ML`",
         "If the rename cannot happen, the alias line is put back",

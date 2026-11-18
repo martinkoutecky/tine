@@ -4,12 +4,13 @@
 //! edits that the window performs through its normal save path; nothing here
 //! writes, and the model's decision of each request is the planner's
 //! (`rename_plan`), never re-derived. Split from `pages_rename_offer.rs`.
+use std::collections::HashSet;
 use std::io;
 
 use tine_core::doc::native::{NativeAlias, NativeDocument};
 use tine_core::model::Format;
 use tine_core::refs;
-use tine_store::{PageId, Store};
+use tine_store::{PageId, Resolved, Store};
 
 use super::rename_plan::{name_of, RenamePlan};
 
@@ -115,14 +116,23 @@ fn member_line(
     }
     let value = text[line.value.clone()].to_owned();
     // Nothing but the members and their separators: removing or adding a
-    // member then loses no other text.
-    let mut rest = text[line.value.clone()].to_owned();
-    for token in members.tokens.iter().rev() {
-        let (start, end) = (token.start - line.value.start, token.end - line.value.start);
-        rest.replace_range(start..end, "");
-    }
-    if rest.chars().any(|c| c != ',' && !c.is_whitespace()) {
-        return None;
+    // member then loses no other text. The gaps between tokens are read in
+    // place, once each (linear in the value).
+    let mut at = line.value.start;
+    for gap in members
+        .tokens
+        .iter()
+        .map(|token| (token.start, token.end))
+        .chain([(line.value.end, line.value.end)])
+    {
+        if gap.0 < at
+            || text[at..gap.0]
+                .chars()
+                .any(|c| c != ',' && !c.is_whitespace())
+        {
+            return None;
+        }
+        at = gap.1;
     }
     let members = members
         .names
@@ -174,14 +184,22 @@ pub(super) fn tag_union(
     let (Some(kept), Some(gone)) = (read_text(store, survivor)?, read_text(store, source)?) else {
         return Ok(None);
     };
+    Ok(unite(&kept, &gone, org))
+}
+
+/// [`tag_union`] over the two files' texts. Linear in the tags: each line is
+/// read once, membership is a set lookup. O(header bytes).
+fn unite(kept: &str, gone: &str, org: bool) -> Option<TagUnion> {
     let tags = |text: &str| member_line(text, org, |line| line.tags.as_ref());
-    let (Some(kept), Some(gone)) = (tags(&kept), tags(&gone)) else {
-        return Ok(None);
+    let (Some(kept), Some(gone)) = (tags(kept), tags(gone)) else {
+        return None;
     };
     let mut keys: Vec<String> = kept.members.iter().map(|(k, _)| k.clone()).collect();
+    // Membership in a set, order in `keys`: linear in the tags.
+    let mut seen: HashSet<String> = keys.iter().cloned().collect();
     let mut united = kept.value.trim_end().to_owned();
     for (key, token) in &gone.members {
-        if keys.contains(key) {
+        if !seen.insert(key.clone()) {
             continue;
         }
         keys.push(key.clone());
@@ -190,11 +208,11 @@ pub(super) fn tag_union(
         }
         united.push_str(token);
     }
-    Ok(reads_as(&kept.key, &united, org, &keys).then(|| TagUnion {
+    reads_as(&kept.key, &united, org, &keys).then(|| TagUnion {
         survivor: kept.value,
         source: gone.value,
         united,
-    }))
+    })
 }
 
 /// The alias dialog's first step for one declaring page: drop `alias` from
@@ -263,24 +281,93 @@ pub(super) fn effect(plan: &RenamePlan, retargeted: Vec<Retarget>) -> Effect {
     }
 }
 
-/// Links to `name` that open `after` instead of `before` once the request
-/// is done, their text unchanged; None when no page links it. The pages in
-/// `own` (the request's own files, whose alias lines name it) are not
-/// listed. Cost: one referrers lookup.
+/// What a planned request does to the files a name's alias declarations
+/// can give it (r6 "Outside the model": each helper step is one request).
+pub(super) enum Request<'a> {
+    /// Merge `source` into `survivor` (named `name`): the source's file goes
+    /// and its aliases join the survivor.
+    Merge {
+        source: &'a PageId,
+        survivor: &'a PageId,
+        name: &'a str,
+    },
+    /// "Use the name": every other declarer drops `name` from its alias
+    /// line, then `source` is renamed to `name`, its file moving to `to`.
+    Own {
+        source: &'a PageId,
+        to: &'a PageId,
+        name: &'a str,
+    },
+}
+
+/// Links to `name` that open another page once `request` is done, their
+/// text unchanged; None when the page `name` opens does not change, or no
+/// page links it. The page before is what `resolve` answers now; after, a
+/// real file claiming `name` still wins (the requests here move or remove
+/// only the source, whose own name they rewrite), the own rename's moved
+/// file claims `name`, and otherwise the declarer with the least path wins,
+/// the alias relation's rule (`owner_path`), over the declarers as the
+/// request leaves them. A page declaring `name` is not listed: its
+/// reference is that declaration, which the request keeps, moves or removes
+/// (a declarer that also links the name in its body is not listed either).
+/// Cost: one resolve and one referrers lookup.
 pub(super) fn retarget(
     graph: &tine_store::WholeGraph,
     name: &str,
-    before: &str,
-    after: &str,
-    own: &[&PageId],
+    request: &Request<'_>,
 ) -> Option<Retarget> {
+    let Resolved::Alias { owners } = graph.resolve(name, false) else {
+        return None;
+    };
+    let before = owners.first()?;
+    let (source, mine, mine_name) = match request {
+        Request::Merge {
+            source,
+            survivor,
+            name,
+        } => (*source, *survivor, *name),
+        Request::Own { source, to, name } => (*source, *to, *name),
+    };
+    let after = match request {
+        Request::Own { name: own, .. } if refs::same_page(name, own) => mine.clone(),
+        Request::Own { source, to, .. } => owners
+            .iter()
+            .map(|id| if id == *source { *to } else { id })
+            .min_by(|a, b| a.as_str().cmp(b.as_str()))?
+            .clone(),
+        Request::Merge {
+            source, survivor, ..
+        } => owners
+            .iter()
+            .filter(|id| *id != *source)
+            .chain([*survivor])
+            .min_by(|a, b| a.as_str().cmp(b.as_str()))?
+            .clone(),
+    };
+    // The own rename moves the source (the same page); a merge's source goes.
+    let own = matches!(request, Request::Own { .. });
+    let still = if own && before == source {
+        mine
+    } else {
+        before
+    };
+    if after == *still {
+        return None;
+    }
+    let shown = |id: &PageId| {
+        if id == mine {
+            mine_name.to_owned()
+        } else {
+            name_of(graph, id).unwrap_or_else(|| id.as_str().to_owned())
+        }
+    };
     let mut referrers = graph.explicit_referrers(&[name.to_owned()]);
-    referrers.retain(|id| !own.contains(&id));
+    referrers.retain(|id| id != source && !owners.contains(id));
     let (pages, page_count) = names(graph, referrers.iter());
     (page_count > 0).then(|| Retarget {
         name: name.to_owned(),
-        before: before.to_owned(),
-        after: after.to_owned(),
+        before: name_of(graph, before).unwrap_or_else(|| before.as_str().to_owned()),
+        after: shown(&after),
         pages,
         page_count,
     })
@@ -299,4 +386,34 @@ fn names<'a>(
         }
     }
     (listed, count)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::unite;
+
+    /// PC-1: the union and its line checks are linear in the tags. At
+    /// 16,384 tags per page the quadratic version (token removal that
+    /// shifted the rest of the value, membership by vector scan) took about
+    /// 2.7 s in a debug build; the linear one about 0.3 s.
+    #[test]
+    fn the_tag_union_is_linear_in_the_tags() {
+        let n = 16_384;
+        let line = |prefix: &str| {
+            (0..n)
+                .map(|i| format!("{prefix}{i}"))
+                .collect::<Vec<_>>()
+                .join(", ")
+        };
+        let kept = format!("tags:: {}, shared\n\n- kept\n", line("k"));
+        let gone = format!("tags:: shared, {}\n\n- gone\n", line("g"));
+        let started = std::time::Instant::now();
+        let united = unite(&kept, &gone, false).expect("a union").united;
+        let elapsed = started.elapsed();
+        assert_eq!(united.matches(", ").count(), 2 * n);
+        assert!(
+            elapsed < std::time::Duration::from_millis(1_200),
+            "{elapsed:?} for {n} tags per page"
+        );
+    }
 }

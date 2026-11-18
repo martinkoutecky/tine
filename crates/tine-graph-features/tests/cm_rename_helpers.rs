@@ -88,14 +88,15 @@ fn the_alias_dialog_shows_the_component_and_each_requests_effect() {
         }
     );
     assert_eq!(dialog.opens.name, "Machine Learning");
-    assert_eq!(dialog.declarers.len(), 1);
-    let mut aliases = dialog.declarers[0].aliases.clone();
+    assert_eq!(dialog.component.len(), 1);
+    let mut aliases = dialog.component[0].aliases.clone();
     aliases.sort();
     assert_eq!(aliases, ["AI", "ML", "Stats"]);
     assert_eq!(dialog.source.name, "ML notes");
     assert_eq!(dialog.source.aliases, ["Notes"]);
 
-    let merge = dialog.merge.as_ref().expect("the merge is offered");
+    assert_eq!(dialog.merges.len(), 1);
+    let merge = dialog.merges.first().expect("the merge is offered");
     assert_eq!(merge.into, "pages/Machine Learning.md");
     assert_eq!(merge.name, "Machine Learning");
     assert!(
@@ -179,7 +180,7 @@ fn the_dialogs_merge_is_the_ordinary_merge_request() {
     let _guard = crate::integration_lock();
     let (root, store) = fixture("merge", ML);
     let dialog = alias_dialog(&store, "ML notes", "ML");
-    let merge = dialog.merge.unwrap();
+    let merge = dialog.merges.into_iter().next().unwrap();
     assert_eq!(
         rename(
             &store,
@@ -223,7 +224,7 @@ fn a_refused_step_is_not_offered_and_says_why() {
             path: "pages/Machine Learning.md".into(),
         })
     );
-    assert!(dialog.merge.is_some());
+    assert_eq!(dialog.merges.len(), 1);
 
     // The rename after the edit would capture an existing page (O4).
     let (_root, store) = fixture(
@@ -257,7 +258,11 @@ fn a_fileless_source_is_offered_the_reference_merge() {
     );
     let dialog = alias_dialog(&store, "Ghost", "Short Two");
     assert_eq!(dialog.source.path, None);
-    let merge = dialog.merge.expect("the reference merge is offered");
+    let merge = dialog
+        .merges
+        .into_iter()
+        .next()
+        .expect("the reference merge is offered");
     assert_eq!(merge.into, "pages/Owner Two.md");
     assert_eq!(merge.effect.pages, ["ghost referrer"]);
     assert_eq!(
@@ -377,16 +382,16 @@ fn the_dialog_and_the_union_keep_the_windows_wire_names() {
     for key in [
         "message",
         "opens",
-        "declarers",
+        "component",
         "source",
-        "merge",
-        "mergeRefused",
+        "merges",
+        "mergesRefused",
         "own",
         "ownRefused",
     ] {
         assert!(wire.get(key).is_some(), "missing {key}: {wire}");
     }
-    assert_eq!(wire["merge"]["effect"]["retargeted"][0]["pageCount"], 1);
+    assert_eq!(wire["merges"][0]["effect"]["retargeted"][0]["pageCount"], 1);
     assert_eq!(wire["own"]["edits"][0]["after"], "AI, Stats");
     assert!(wire["own"]["effect"]["pageCount"].is_u64());
     let (_root, store) = fixture(
@@ -415,4 +420,171 @@ fn the_dialog_and_the_union_keep_the_windows_wire_names() {
         wire["tags"],
         serde_json::json!({"survivor": "b", "source": "a", "united": "b, a"})
     );
+}
+
+fn resolved_name(store: &Store, name: &str) -> String {
+    let graph = store.whole_graph().unwrap();
+    let id = match graph.resolve(name, false) {
+        tine_store::Resolved::Existing { id, .. } => id,
+        tine_store::Resolved::Alias { owners } => owners[0].clone(),
+        other => panic!("{name} resolves to {other:?}"),
+    };
+    id.as_str().to_owned()
+}
+
+fn retargets(
+    effect: &tine_graph_features::pages::Effect,
+) -> Vec<(String, String, String, Vec<String>)> {
+    effect
+        .retargeted
+        .iter()
+        .map(|r| {
+            (
+                r.name.clone(),
+                r.before.clone(),
+                r.after.clone(),
+                r.pages.clone(),
+            )
+        })
+        .collect()
+}
+
+/// D-20261106-R13-UI / D-20261115-HELP: the dialog shows the alias
+/// component, not only the direct declarers, and offers the ordinary merge
+/// into every component page the model allows (each its own request).
+#[test]
+fn the_dialog_offers_a_merge_into_every_component_page() {
+    let _guard = crate::integration_lock();
+    let files: &[(&str, &str)] = &[
+        ("pages/A.md", "alias:: ML\n\n- a body\n"),
+        ("pages/B.md", "alias:: ML, Stats\n\n- b body\n"),
+        ("pages/C.md", "alias:: Stats\n\n- c body\n"),
+        ("pages/Source.md", "- source body\n"),
+    ];
+    let (_root, store) = fixture("component", files);
+    let dialog = alias_dialog(&store, "Source", "ML");
+    let component: Vec<&str> = dialog.component.iter().map(|p| p.name.as_str()).collect();
+    assert_eq!(component, ["A", "B", "C"]);
+    let into: Vec<&str> = dialog.merges.iter().map(|m| m.into.as_str()).collect();
+    assert_eq!(into, ["pages/A.md", "pages/B.md", "pages/C.md"]);
+    assert!(
+        dialog.merges_refused.is_empty(),
+        "{:?}",
+        dialog.merges_refused
+    );
+    for target in ["B", "C"] {
+        let (root, store) = fixture(&format!("component-{target}"), files);
+        let dialog = alias_dialog(&store, "Source", "ML");
+        let merge = dialog.merges.iter().find(|m| m.name == target).unwrap();
+        assert_eq!(
+            rename(
+                &store,
+                "Source",
+                &merge.name,
+                RenameChoice::MergeInto(&merge.into)
+            ),
+            RenameOutcome::Merged,
+            "{target}"
+        );
+        let after = snapshot(&root);
+        assert!(!after.contains_key("pages/Source.md"));
+        assert!(after[&format!("pages/{target}.md")].contains("source body"));
+    }
+}
+
+/// Each "links open a different page" row is the owner the name resolves to
+/// before and after the request: a declarer with a lesser path keeps a
+/// shared alias, and a real file keeps its own name.
+#[test]
+fn a_merge_retargets_only_names_whose_owner_changes() {
+    let _guard = crate::integration_lock();
+    let files: &[(&str, &str)] = &[
+        ("pages/A.md", "alias:: Shared\n\n- a body\n"),
+        ("pages/Real.md", "- the real page\n"),
+        (
+            "pages/Source.md",
+            "alias:: Shared, Real, Mine\n\n- source body\n",
+        ),
+        ("pages/Z.md", "alias:: ML\n\n- z links [[Mine]]\n"),
+        ("pages/q.md", "- [[Shared]] [[Real]] [[Mine]]\n"),
+    ];
+    let (root, store) = fixture("merge-owners", files);
+    let dialog = alias_dialog(&store, "Source", "ML");
+    let merge = dialog.merges.iter().find(|m| m.name == "Z").unwrap();
+    // Shared opens A before and after; Real is a real file; only Mine moves,
+    // and the survivor's own link to it is listed.
+    assert_eq!(
+        retargets(&merge.effect),
+        [(
+            "Mine".to_owned(),
+            "Source".to_owned(),
+            "Z".to_owned(),
+            vec!["Z".to_owned(), "q".to_owned()]
+        )]
+    );
+    let (shared, real) = (
+        resolved_name(&store, "Shared"),
+        resolved_name(&store, "Real"),
+    );
+    assert_eq!(
+        rename(&store, "Source", "Z", RenameChoice::MergeInto(&merge.into)),
+        RenameOutcome::Merged
+    );
+    // The prediction is what the merge does.
+    assert_eq!(resolved_name(&store, "Shared"), shared);
+    assert_eq!(resolved_name(&store, "Real"), real);
+    assert_eq!(resolved_name(&store, "Mine"), "pages/Z.md");
+    assert!(snapshot(&root).contains_key("pages/A.md"));
+}
+
+/// "Use the name": the typed name moves to the source, and a shared alias
+/// whose least-path declarer was the source passes to another declarer when
+/// the source's file moves.
+#[test]
+fn use_the_name_retargets_shared_aliases_that_change_owner() {
+    let _guard = crate::integration_lock();
+    let files: &[(&str, &str)] = &[
+        ("pages/Aa.md", "alias:: Shared, Kept\n\n- source body\n"),
+        ("pages/B.md", "alias:: Shared, ML\n\n- b body\n"),
+        ("pages/q.md", "- [[Shared]] [[Kept]] [[ML]]\n"),
+    ];
+    let (root, store) = fixture("own-owners", files);
+    let dialog = alias_dialog(&store, "Aa", "ML");
+    let own = dialog.own.as_ref().expect("use the name is offered");
+    let mut rows = retargets(&own.effect);
+    rows.sort();
+    assert_eq!(
+        rows,
+        [
+            (
+                "ML".to_owned(),
+                "B".to_owned(),
+                "ML".to_owned(),
+                vec!["q".to_owned()]
+            ),
+            (
+                "Shared".to_owned(),
+                "Aa".to_owned(),
+                "B".to_owned(),
+                vec!["q".to_owned()]
+            ),
+        ]
+    );
+    let edit = &own.edits[0];
+    fs::write(
+        root.join(&edit.path),
+        format!(
+            "{}:: {}\n\n- b body\n",
+            edit.key,
+            edit.after.as_deref().unwrap()
+        ),
+    )
+    .unwrap();
+    assert_eq!(
+        rename(&store, "Aa", "ML", RenameChoice::Rename),
+        RenameOutcome::Renamed
+    );
+    assert_eq!(resolved_name(&store, "Shared"), "pages/B.md");
+    assert_eq!(resolved_name(&store, "Kept"), "pages/ML.md");
+    assert_eq!(resolved_name(&store, "ML"), "pages/ML.md");
 }

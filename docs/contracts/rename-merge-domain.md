@@ -106,6 +106,47 @@ rename refuses, fails, or the app closes between the two steps. P2 says Tine's
 own check failed, names the file, and asks for a bug report without a retry.
 The plain toast surface names files as text; it does not support inline links.
 
+**Rename helpers** (D-20261115-HELP, D-20261116-TAGH) are the window performing
+ordinary page edits before one ordinary rename or merge request; the model is
+unchanged. The rename question (`rename_offer`) is the only source of what a helper
+may write: for a merge of two pages with `tags::` lines, the kept page's `tags`
+value (the union, source spellings appended in order) and the removal of the
+source's `tags::` line; for the alias dialog's "use the name for this page", one
+`alias` value per other declaring page, the typed name removed. The dialog lists
+the typed name's alias component (`InventoryScope::AliasGroup`) and offers one
+ordinary merge per component page other than the source that the planner allows,
+plus "use the name"; a refused request is listed with its reason, never offered.
+Each "links open a different page" row compares the page the name opens now
+(`resolve`) with the page it opens after the request: a real file keeps its name,
+the "use the name" rename's moved file holds the typed name, otherwise the declarer
+with the least path wins over the declarers as the request leaves them. Pages that
+declare the name are not listed.
+
+A helper writes only through `setPageProperty` and the page host's guarded save
+(`flushPage`); there is no other write path. Before writing, every page must still
+read the value the question read, and the graph binding must be current; the check
+and the writes happen with no wait between them. After each save the binding is
+checked again. If a save fails, the binding retires, or the request does not happen
+(refused, busy, an unsaved page, an error), the helper puts back its own values:
+each property that still holds the helper's value gets its old value back and is
+saved; anything else typed meanwhile stays. A retired binding puts nothing back
+(the window no longer holds that graph). An `uncertain` request keeps the edits,
+since it may have committed.
+
+| Helper refusal | In-scope threat |
+| --- | --- |
+| A page changed since the question (`rename-helper-page-changed`) | Typing in the window, an external editor, or a concurrent honest instance changed the property after the plan. |
+| A save failed, put back (`rename-helper-unsaved`) | A disk error or a sync conflict during the helper's save. |
+| Put-back failed (`rename-helper-not-restored`, sticky, names the pages) | A disk error during the put-back save. |
+
+The helpers are not atomic. A crash, a closed window or a graph switch between the
+helper's saves and the request leaves the helper's edits saved and the request not
+done; each edit is then an ordinary property edit, readable by Logseq, and the user
+can repeat the rename. Cost: one page read per helper page not loaded, one
+property write and one guarded save per page, then the request; the question adds
+two plans per offered merge and one for "use the name", with linear header reads
+(each tag line read once, union membership by set lookup).
+
 The CLI has no standalone unchanged-save verb. Its P3 human message names the
 file and asks the user to open it in the app, save once and repeat the rename.
 P2 asks for a report. Both keep `code: refused`, `detail.reason: rename-refused`
