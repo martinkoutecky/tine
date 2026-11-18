@@ -55,8 +55,6 @@ export interface QuickShareListed {
   accountMatches: boolean;
 }
 export interface QuickShareListing {
-  /** Quick share is on in this build (DESIGN §5: off until the viewer is deployed). */
-  enabled: boolean;
   /** Native debug builds only; never initiates a request by itself. */
   connectionTestAvailable?: boolean;
   account: { login: string; accountId: number } | null;
@@ -69,8 +67,8 @@ export type QuickShareCheckOutcome = "live" | "notFoundYet" | { current: { title
 export type QuickShareDeleteOutcome = "deleted" | "gone";
 export interface QuickShareFound { gistId: string; createdAt: string }
 
-/** The disabled listing: what a backend without quick share answers. */
-export const QUICK_SHARE_OFF: QuickShareListing = Object.freeze({ enabled: false, account: null, shares: [], error: null });
+/** The empty listing: the fallback while the listing is unread or failed. */
+export const QUICK_SHARE_OFF: QuickShareListing = Object.freeze({ account: null, shares: [], error: null });
 
 /** GitHub's page for revoking Tine's grant (DESIGN §3.9; OAUTH-APP.md client id). */
 export const GITHUB_APPLICATION_SETTINGS = "https://github.com/settings/connections/applications/Ov23liMHqsgTkxqKqFG6";
