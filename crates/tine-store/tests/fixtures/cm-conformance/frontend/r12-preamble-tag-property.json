@@ -1,0 +1,792 @@
+{
+  "backlinks": {
+    "Header": [],
+    "Header Org": [],
+    "Markdown": [],
+    "Org": [],
+    "Target": [
+      {
+        "blocks": [
+          {
+            "children": [],
+            "collapsed": false,
+            "id": "page-property:Page:header",
+            "raw": "related:: [[Target]]\ntags:: Topic",
+            "tags": []
+          }
+        ],
+        "kind": "page",
+        "page": "Header"
+      },
+      {
+        "blocks": [
+          {
+            "children": [],
+            "collapsed": false,
+            "id": "page-property:Page:header org",
+            "raw": ":PROPERTIES:\n:related: [[Target]]\n:tags: Topic\n:END:",
+            "tags": []
+          }
+        ],
+        "kind": "page",
+        "page": "Header Org"
+      },
+      {
+        "blocks": [
+          {
+            "children": [],
+            "collapsed": false,
+            "id": "page-preamble:Page:markdown",
+            "raw": "Prose [[Target]] #Topic\nstatus:: [[Linked]]",
+            "tags": []
+          },
+          {
+            "children": [],
+            "collapsed": false,
+            "id": "d124f509-11d8-89b8-b1f6-be793cb35146",
+            "raw": "child [[Target]]",
+            "tags": []
+          }
+        ],
+        "kind": "page",
+        "page": "Markdown"
+      },
+      {
+        "blocks": [
+          {
+            "children": [],
+            "collapsed": false,
+            "id": "page-preamble:Page:org",
+            "raw": "Prose [[Target]] #Topic\n:status: [[Linked]]",
+            "tags": []
+          },
+          {
+            "children": [],
+            "collapsed": false,
+            "id": "b30d677c-33e1-821d-825a-8360c47c396a",
+            "raw": "child [[Target]]",
+            "tags": []
+          }
+        ],
+        "kind": "page",
+        "page": "Org"
+      }
+    ],
+    "Topic": [
+      {
+        "blocks": [
+          {
+            "children": [],
+            "collapsed": false,
+            "id": "page-property:Page:header",
+            "raw": "related:: [[Target]]\ntags:: Topic",
+            "tags": []
+          },
+          {
+            "children": [],
+            "collapsed": false,
+            "id": "page-preamble:Page:header",
+            "raw": "Prose #Topic",
+            "tags": []
+          }
+        ],
+        "kind": "page",
+        "page": "Header"
+      },
+      {
+        "blocks": [
+          {
+            "children": [],
+            "collapsed": false,
+            "id": "page-property:Page:header org",
+            "raw": ":PROPERTIES:\n:related: [[Target]]\n:tags: Topic\n:END:",
+            "tags": []
+          },
+          {
+            "children": [],
+            "collapsed": false,
+            "id": "page-preamble:Page:header org",
+            "raw": "Prose #Topic",
+            "tags": []
+          }
+        ],
+        "kind": "page",
+        "page": "Header Org"
+      },
+      {
+        "blocks": [
+          {
+            "children": [],
+            "collapsed": false,
+            "id": "page-preamble:Page:markdown",
+            "raw": "Prose [[Target]] #Topic\nstatus:: [[Linked]]",
+            "tags": []
+          }
+        ],
+        "kind": "page",
+        "page": "Markdown"
+      },
+      {
+        "blocks": [
+          {
+            "children": [],
+            "collapsed": false,
+            "id": "page-preamble:Page:org",
+            "raw": "Prose [[Target]] #Topic\n:status: [[Linked]]",
+            "tags": []
+          }
+        ],
+        "kind": "page",
+        "page": "Org"
+      }
+    ],
+    "linked": [
+      {
+        "blocks": [
+          {
+            "children": [],
+            "collapsed": false,
+            "id": "page-preamble:Page:markdown",
+            "raw": "Prose [[Target]] #Topic\nstatus:: [[Linked]]",
+            "tags": []
+          }
+        ],
+        "kind": "page",
+        "page": "Markdown"
+      }
+    ],
+    "related": [
+      {
+        "blocks": [
+          {
+            "children": [],
+            "collapsed": false,
+            "id": "page-property:Page:header",
+            "raw": "related:: [[Target]]\ntags:: Topic",
+            "tags": []
+          }
+        ],
+        "kind": "page",
+        "page": "Header"
+      },
+      {
+        "blocks": [
+          {
+            "children": [],
+            "collapsed": false,
+            "id": "page-property:Page:header org",
+            "raw": ":PROPERTIES:\n:related: [[Target]]\n:tags: Topic\n:END:",
+            "tags": []
+          }
+        ],
+        "kind": "page",
+        "page": "Header Org"
+      }
+    ],
+    "status": [
+      {
+        "blocks": [
+          {
+            "children": [],
+            "collapsed": false,
+            "id": "page-preamble:Page:markdown",
+            "raw": "Prose [[Target]] #Topic\nstatus:: [[Linked]]",
+            "tags": []
+          }
+        ],
+        "kind": "page",
+        "page": "Markdown"
+      }
+    ]
+  },
+  "conflicts": [],
+  "counts": [
+    [
+      [
+        "pages/Target.md",
+        6
+      ],
+      [
+        "pages/Topic.md",
+        6
+      ],
+      [
+        "pages/Header Org.org",
+        0
+      ],
+      [
+        "pages/Org.org",
+        0
+      ],
+      [
+        "pages/Header.md",
+        0
+      ],
+      [
+        "pages/Markdown.md",
+        0
+      ]
+    ],
+    [
+      [
+        "Linked",
+        1
+      ],
+      [
+        "related",
+        2
+      ],
+      [
+        "status",
+        1
+      ]
+    ]
+  ],
+  "inventory": [
+    {
+      "day": null,
+      "is_journal": false,
+      "key": "header",
+      "name": "Header",
+      "target": {
+        "id": "pages/Header.md",
+        "kind": "existing",
+        "others": []
+      }
+    },
+    {
+      "day": null,
+      "is_journal": false,
+      "key": "header org",
+      "name": "Header Org",
+      "target": {
+        "id": "pages/Header Org.org",
+        "kind": "existing",
+        "others": []
+      }
+    },
+    {
+      "day": null,
+      "is_journal": false,
+      "key": "linked",
+      "name": "Linked",
+      "target": {
+        "id": "pages/Linked.md",
+        "kind": "absent"
+      }
+    },
+    {
+      "day": null,
+      "is_journal": false,
+      "key": "markdown",
+      "name": "Markdown",
+      "target": {
+        "id": "pages/Markdown.md",
+        "kind": "existing",
+        "others": []
+      }
+    },
+    {
+      "day": null,
+      "is_journal": false,
+      "key": "org",
+      "name": "Org",
+      "target": {
+        "id": "pages/Org.org",
+        "kind": "existing",
+        "others": []
+      }
+    },
+    {
+      "day": null,
+      "is_journal": false,
+      "key": "related",
+      "name": "related",
+      "target": {
+        "id": "pages/related.md",
+        "kind": "absent"
+      }
+    },
+    {
+      "day": null,
+      "is_journal": false,
+      "key": "status",
+      "name": "status",
+      "target": {
+        "id": "pages/status.md",
+        "kind": "absent"
+      }
+    },
+    {
+      "day": null,
+      "is_journal": false,
+      "key": "target",
+      "name": "Target",
+      "target": {
+        "id": "pages/Target.md",
+        "kind": "existing",
+        "others": []
+      }
+    },
+    {
+      "day": null,
+      "is_journal": false,
+      "key": "topic",
+      "name": "Topic",
+      "target": {
+        "id": "pages/Topic.md",
+        "kind": "existing",
+        "others": []
+      }
+    }
+  ],
+  "journalFileFormat": null,
+  "journalTitleFormat": null,
+  "keyOf": {
+    "Header": "header",
+    "Header Org": "header org",
+    "Linked": "linked",
+    "Markdown": "markdown",
+    "Org": "org",
+    "Target": "target",
+    "Topic": "topic",
+    "related": "related",
+    "status": "status"
+  },
+  "namespaceTree": [],
+  "open": {
+    "Header": {
+      "journal": [
+        "journal",
+        "header"
+      ],
+      "page": [
+        "page",
+        "header"
+      ]
+    },
+    "Header Org": {
+      "journal": [
+        "journal",
+        "header org"
+      ],
+      "page": [
+        "page",
+        "header org"
+      ]
+    },
+    "Linked": {
+      "journal": [
+        "journal",
+        "linked"
+      ],
+      "page": [
+        "page",
+        "linked"
+      ]
+    },
+    "Markdown": {
+      "journal": [
+        "journal",
+        "markdown"
+      ],
+      "page": [
+        "page",
+        "markdown"
+      ]
+    },
+    "Org": {
+      "journal": [
+        "journal",
+        "org"
+      ],
+      "page": [
+        "page",
+        "org"
+      ]
+    },
+    "Target": {
+      "journal": [
+        "journal",
+        "target"
+      ],
+      "page": [
+        "page",
+        "target"
+      ]
+    },
+    "Topic": {
+      "journal": [
+        "journal",
+        "topic"
+      ],
+      "page": [
+        "page",
+        "topic"
+      ]
+    },
+    "related": {
+      "journal": [
+        "journal",
+        "related"
+      ],
+      "page": [
+        "page",
+        "related"
+      ]
+    },
+    "status": {
+      "journal": [
+        "journal",
+        "status"
+      ],
+      "page": [
+        "page",
+        "status"
+      ]
+    }
+  },
+  "owner": {
+    "Header": {
+      "journal": null,
+      "page": "pages/Header.md"
+    },
+    "Header Org": {
+      "journal": null,
+      "page": "pages/Header Org.org"
+    },
+    "Linked": {
+      "journal": null,
+      "page": null
+    },
+    "Markdown": {
+      "journal": null,
+      "page": "pages/Markdown.md"
+    },
+    "Org": {
+      "journal": null,
+      "page": "pages/Org.org"
+    },
+    "Target": {
+      "journal": null,
+      "page": "pages/Target.md"
+    },
+    "Topic": {
+      "journal": null,
+      "page": "pages/Topic.md"
+    },
+    "related": {
+      "journal": null,
+      "page": null
+    },
+    "status": {
+      "journal": null,
+      "page": null
+    }
+  },
+  "pages": [
+    {
+      "key": "header",
+      "kind": "page",
+      "linkedRefs": 0,
+      "name": "Header",
+      "owner": "pages/Header.md",
+      "parent": null
+    },
+    {
+      "key": "header org",
+      "kind": "page",
+      "linkedRefs": 0,
+      "name": "Header Org",
+      "owner": "pages/Header Org.org",
+      "parent": null
+    },
+    {
+      "key": "linked",
+      "kind": "page",
+      "linkedRefs": 1,
+      "name": "linked",
+      "owner": null,
+      "parent": null
+    },
+    {
+      "key": "markdown",
+      "kind": "page",
+      "linkedRefs": 0,
+      "name": "Markdown",
+      "owner": "pages/Markdown.md",
+      "parent": null
+    },
+    {
+      "key": "org",
+      "kind": "page",
+      "linkedRefs": 0,
+      "name": "Org",
+      "owner": "pages/Org.org",
+      "parent": null
+    },
+    {
+      "key": "related",
+      "kind": "page",
+      "linkedRefs": 2,
+      "name": "related",
+      "owner": null,
+      "parent": null
+    },
+    {
+      "key": "status",
+      "kind": "page",
+      "linkedRefs": 1,
+      "name": "status",
+      "owner": null,
+      "parent": null
+    },
+    {
+      "key": "target",
+      "kind": "page",
+      "linkedRefs": 6,
+      "name": "Target",
+      "owner": "pages/Target.md",
+      "parent": null
+    },
+    {
+      "key": "topic",
+      "kind": "page",
+      "linkedRefs": 6,
+      "name": "Topic",
+      "owner": "pages/Topic.md",
+      "parent": null
+    }
+  ],
+  "spellings": {
+    "Header": {
+      "backend": [
+        "page",
+        "header"
+      ],
+      "day": null,
+      "model": [
+        "page",
+        "header"
+      ]
+    },
+    "Header Org": {
+      "backend": [
+        "page",
+        "header org"
+      ],
+      "day": null,
+      "model": [
+        "page",
+        "header org"
+      ]
+    },
+    "Linked": {
+      "backend": [
+        "page",
+        "linked"
+      ],
+      "day": null,
+      "model": [
+        "page",
+        "linked"
+      ]
+    },
+    "Markdown": {
+      "backend": [
+        "page",
+        "markdown"
+      ],
+      "day": null,
+      "model": [
+        "page",
+        "markdown"
+      ]
+    },
+    "Org": {
+      "backend": [
+        "page",
+        "org"
+      ],
+      "day": null,
+      "model": [
+        "page",
+        "org"
+      ]
+    },
+    "Target": {
+      "backend": [
+        "page",
+        "target"
+      ],
+      "day": null,
+      "model": [
+        "page",
+        "target"
+      ]
+    },
+    "Topic": {
+      "backend": [
+        "page",
+        "topic"
+      ],
+      "day": null,
+      "model": [
+        "page",
+        "topic"
+      ]
+    },
+    "related": {
+      "backend": [
+        "page",
+        "related"
+      ],
+      "day": null,
+      "model": [
+        "page",
+        "related"
+      ]
+    },
+    "status": {
+      "backend": [
+        "page",
+        "status"
+      ],
+      "day": null,
+      "model": [
+        "page",
+        "status"
+      ]
+    }
+  },
+  "tree": [
+    {
+      "children": [],
+      "page": [
+        "page",
+        "header org"
+      ]
+    },
+    {
+      "children": [],
+      "page": [
+        "page",
+        "header"
+      ]
+    },
+    {
+      "children": [],
+      "page": [
+        "page",
+        "markdown"
+      ]
+    },
+    {
+      "children": [],
+      "page": [
+        "page",
+        "org"
+      ]
+    },
+    {
+      "children": [],
+      "page": [
+        "page",
+        "target"
+      ]
+    },
+    {
+      "children": [],
+      "page": [
+        "page",
+        "topic"
+      ]
+    },
+    {
+      "children": [],
+      "page": [
+        "page",
+        "related"
+      ]
+    },
+    {
+      "children": [],
+      "page": [
+        "page",
+        "status"
+      ]
+    },
+    {
+      "children": [],
+      "page": [
+        "page",
+        "linked"
+      ]
+    }
+  ],
+  "treeParent": [
+    {
+      "page": [
+        "page",
+        "header"
+      ],
+      "parent": null
+    },
+    {
+      "page": [
+        "page",
+        "header org"
+      ],
+      "parent": null
+    },
+    {
+      "page": [
+        "page",
+        "linked"
+      ],
+      "parent": null
+    },
+    {
+      "page": [
+        "page",
+        "markdown"
+      ],
+      "parent": null
+    },
+    {
+      "page": [
+        "page",
+        "org"
+      ],
+      "parent": null
+    },
+    {
+      "page": [
+        "page",
+        "related"
+      ],
+      "parent": null
+    },
+    {
+      "page": [
+        "page",
+        "status"
+      ],
+      "parent": null
+    },
+    {
+      "page": [
+        "page",
+        "target"
+      ],
+      "parent": null
+    },
+    {
+      "page": [
+        "page",
+        "topic"
+      ],
+      "parent": null
+    }
+  ]
+}

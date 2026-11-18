@@ -1,0 +1,18 @@
+{
+  "files": {
+    "pages/Target.md": "- target body\n",
+    "pages/Topic.md": "- topic body\n",
+    "pages/Markdown.md": "Prose [[Target]] #Topic\nstatus:: [[Linked]]\n\n- ordinary body\n  - child [[Target]]\n",
+    "pages/Org.org": "Prose [[Target]] #Topic\n:status: [[Linked]]\n* ordinary body\n** child [[Target]]\n",
+    "pages/Header.md": "related:: [[Target]]\ntags:: Topic\n\nProse #Topic\n\n- ordinary body\n",
+    "pages/Header Org.org": "#+RELATED: [[Target]]\n#+TAGS: Topic\n\nProse #Topic\n* ordinary body\n"
+  },
+  "queries": [
+    { "anchor": "block", "q": { "refs": "Target" } },
+    { "anchor": "block", "q": { "refs": "Topic" } },
+    { "anchor": "block", "q": { "refs": "Linked" } },
+    { "anchor": "block", "q": { "and": [{ "refs": "Topic" }, { "page": { "name": "Header" } }] } },
+    { "anchor": "block", "q": { "or": [{ "refs": "Linked" }, { "page": { "name": "Header Org" } }] } },
+    { "anchor": "page", "q": { "refs": "Topic" } }
+  ]
+}
