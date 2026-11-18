@@ -24,7 +24,7 @@ import { setChangeSummaryBaseline } from "./changeSummary";
 import { applyCustomCss, customCssVersion } from "./customCss";
 import { flushCssEditor, loadGlobalCss, checkCssEditorDisk, retireGraphCssEditor } from "./cssEditor";
 import { isMobile, platformKind } from "./platform";
-import type { BlockDto, GraphMeta, RenameOffer, RenameRefusal, ResolvedPage } from "./types";
+import type { BlockDto, GraphMeta, RenameOffer, RenameRefusal } from "./types";
 import type { DraftStatus } from "./document";
 import { maybeShowGuideAnnouncement } from "./guide";
 import { endEdit } from "./editorController";
@@ -632,7 +632,7 @@ export async function ensureJournalTemplateForDay(
       });
       // An unclaimed journal day resolves without the graph-wide parse
       // (BqbeQ, `absent_journal_id`); the alias refusal stays the backstop.
-      const resolution = existing?.id ? null : await readOwned(graphOwner(), resolveJournalDay(owner.handle));
+      const resolution = existing?.id ? null : await readOwned(graphOwner(), backend().resolvePage(owner.handle, "journal"));
       if (resolution?.kind === "stale" || !templateOwnerCurrent(owner)) return "stale";
       if (!canWrite()) return "deferred";
       const resolved = resolution?.value ?? null;
@@ -893,15 +893,6 @@ export async function createNewGraph(): Promise<LoadGraphPathOutcome> {
   return loaded;
 }
 
-/** What a journal day asked by `handle` (`journalHandle`) resolves to before a
- *  save: for a day with no file, the file it is created as. The save callers'
- *  one resolve of a day (template, demo seed, `admitPageFile`), each inside its
- *  own owned read; an unclaimed day resolves without the graph-wide parse
- *  (BqbeQ, `absent_journal_id`). */
-export function resolveJournalDay(handle: string): Promise<ResolvedPage> {
-  return backend().resolvePage(handle, "journal");
-}
-
 /** Give a freshly-created demo graph a friendly today's-journal entry so the
  *  Journals view isn't empty on first open. The caller awaits this best-effort seed. */
 async function seedTodayJournal(): Promise<void> {
@@ -915,7 +906,7 @@ async function seedTodayJournal(): Promise<void> {
     if (page.kind === "stale") return;
     const existing = page.value;
     if (existing && journalHasContent(existing.blocks)) return;
-    const resolution = existing?.id ? null : await readOwned(owner, resolveJournalDay(title));
+    const resolution = existing?.id ? null : await readOwned(owner, backend().resolvePage(title, "journal"));
     if (resolution?.kind === "stale") return;
     const resolved = resolution?.value ?? null;
     if (resolved?.kind === "alias") throw new Error("conflict: journal alias");

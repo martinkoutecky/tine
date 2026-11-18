@@ -1104,7 +1104,7 @@
       "contracts": [
         {
           "class": "core-operation",
-          "userOutcome": "With :journal/page-title-format MM-dd, clicking a rendered [[2026-11-02]] and picking 2 November 2026 in the calendar each open the 2026-11-02 journal, titled 11-02, with its body and neither the page named 11-02 nor the 2025 day; clicking [[11-02]] opens the page named 11-02; navigation creates no file and changes no bytes.",
+          "userOutcome": "With :journal/page-title-format MM-dd, clicking a rendered [[2026-11-02]] and picking 2 November 2026 in the calendar each open the 2026-11-02 journal, titled 11-02, with its body and neither the page named 11-02 nor the 2025 day; clicking [[11-02]] opens the page named 11-02; the Journals feed shows today and the same day a year ago as two days titled by the shared label, each with its own body; shift-clicking [[2026-11-02]] opens the 2026 day in the right sidebar, titled 11-02, with its body; navigation creates no file and changes no bytes.",
           "blocking": true
         }
       ],

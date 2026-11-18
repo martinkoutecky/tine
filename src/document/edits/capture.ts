@@ -1,4 +1,4 @@
-import { journalHandle, journalTitle, appNow } from "../../journal";
+import { journalHandle, appNow } from "../../journal";
 import { outlineMaxDepth, outlineDepth, parseOutline, type OutlineNode } from "../../editor/outline";
 import { type Format, type PageKind } from "../../types";
 import { bindingOwner } from "../../owned";
@@ -27,16 +27,15 @@ export async function appendToTodayJournal(
   inserted?: (name: string) => void,
   shape?: (nodes: OutlineNode[]) => OutlineNode[],
 ): Promise<boolean> {
-  const now = appNow();
-  const name = journalTitle(now);
+  // Today by the name the store gives its page (`journalHandle`), never a
+  // year-less label an ordinary page holds (CM SPEC §2.1).
+  const name = journalHandle(appNow());
   const nodes = parseOutline(markdown);
-  // Today is asked by the spelling that identifies it (`journalHandle`), never
-  // by a year-less label an ordinary page holds (CM SPEC §2.1).
-  return captureOutlineInto(name, "journal", shape ? shape(nodes) : nodes, () => inserted?.(name), undefined, journalHandle(now));
+  return captureOutlineInto(name, "journal", shape ? shape(nodes) : nodes, () => inserted?.(name));
 }
 
-/** Append `markdown` at the END of journal `day` exactly (never a recomputed
- *  "today"), through the same single writer as {@link appendToTodayJournal}.
+/** Append `markdown` at the END of journal `day` (its `journalHandle`) exactly
+ *  (never a recomputed "today"), through the same single writer as {@link appendToTodayJournal}.
  *  `arm` runs inside the admitted read, after the page is loaded and writable
  *  and before anything is inserted, with the revision the loaded copy is based
  *  on (`null` when the day has no file yet); it may await (the share inbox
@@ -51,10 +50,6 @@ export async function appendToJournalDay(
   arm: (before: string | null) => Promise<boolean>,
   inserted?: (ids: string[]) => void,
 ): Promise<boolean> {
-  // `day` is a title frozen when the item was prepared; while it is still
-  // today's, today is asked by its handle (see `appendToTodayJournal`).
-  const today = appNow();
-  const ask = day === journalTitle(today) ? journalHandle(today) : day;
   return captureOutlineInto(day, "journal", parseOutline(markdown), inserted, async () => {
     let before = baseRevFor(day);
     for (let attempt = 0; before !== undefined && attempt < 3; attempt++) {
@@ -64,7 +59,7 @@ export async function appendToJournalDay(
       before = now;
     }
     return false;
-  }, ask);
+  });
 }
 
 /** In-app quick capture into a (new or existing) named PAGE — the heading-filled
@@ -114,7 +109,6 @@ async function captureOutlineInto(
   built: OutlineNode[] | ((format: Format, roots: readonly string[]) => OutlineNode[] | null),
   inserted?: (ids: string[]) => void,
   gate?: () => Promise<boolean>,
-  ask = name,
 ): Promise<boolean> {
   // Captured blocks land at root level, so the outline's own depth is the result's (I-22).
   const fits = (list: OutlineNode[]) => list.length > 0 && outlineDepth(list) <= outlineMaxDepth();
@@ -125,7 +119,7 @@ async function captureOutlineInto(
   // into it: the capture would land where the feed does not show it and be
   // reported as saved (GH #254 family, master 7bd793bd0). Returning false keeps
   // the text in the capture window, which says so.
-  const admitted = await admitPageFile(name, kind, owner, captureEmptyPage(name, kind), ask);
+  const admitted = await admitPageFile(name, kind, owner, captureEmptyPage(name, kind));
   if (admitted === "stale") return false;
   if (admitted) {
     reportPageLoadRefusal(admitted, "Nothing was captured into it.");

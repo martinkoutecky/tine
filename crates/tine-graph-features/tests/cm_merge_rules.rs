@@ -693,7 +693,10 @@ fn selected_spelling_identifies_a_day_with_an_ambiguous_label() {
     for year in [2026, 2027] {
         let id = tine_core::model::PageId::from(format!("journals/{year}_10_26.md").as_str());
         let page = fresh.page(&id).unwrap();
-        assert_eq!(page.doc.name, "10-26");
+        // Named by the spelling that identifies the day, titled by its label
+        // (REG-CM-YEARLESS-DAY-KEY round 3).
+        assert_eq!(page.doc.name, format!("{year}_10_26"));
+        assert_eq!(page.doc.title, "10-26");
         assert_eq!(page.doc.blocks[0].raw, year.to_string());
     }
 }

@@ -539,7 +539,7 @@ pub(super) fn execute_pages(
                         entry.rel_path_str().to_owned(),
                         tine_core::query::ir::PageRow {
                             path: entry.rel_path_str().to_owned(),
-                            name: entry.name.clone(),
+                            name: graph.page_name(entry),
                             kind: entry.kind,
                             journal_day: entry.date_key,
                             properties,

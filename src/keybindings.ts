@@ -109,11 +109,10 @@ import { bindPluginBlockSnapshot, capturePluginGraphOwner, isPluginGraphOwnerCur
 export function goAdjacentJournal(dir: 1 | -1): void {
   const current = route();
   const anchor = current.kind === "page" && current.pageKind === "journal"
-    ? parseJournalTitle(current.name) ?? (current.path ? parseJournalTitle(current.path.replace(/^.*\//, "").replace(/\.[^.]*$/, "")) : null) ?? appNow()
+    ? parseJournalTitle(current.name) ?? appNow()
     : appNow();
-  // A day's route under a year-less title format is its label pinned to the
-  // day's file, so the day is read from the file's stem; the next day is
-  // opened by the spelling that identifies it (CM SPEC §2.1).
+  // A day's route names it by its handle (`journalHandle`), which parses
+  // back to the day under every title format (CM SPEC §2.1).
   openPage(journalHandle(new Date(anchor.getFullYear(), anchor.getMonth(), anchor.getDate() + dir)), "journal");
 }
 function pluginFocusedBlock(): OwnedPluginBlockSnapshot | undefined {

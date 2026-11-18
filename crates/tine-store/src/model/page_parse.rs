@@ -198,10 +198,14 @@ pub(super) fn identify_old_blocks(
 
 /// Build a page DTO from a cached document. `read_only` is left false here (the
 /// on-disk bytes aren't known at this point); `load_page` sets it from the file
-/// it reads.
-pub(super) fn page_dto(entry: &PageEntry, doc: &Document) -> PageDto {
+/// it reads. `name` is the page's operational key, the name that identifies
+/// it (`page_handle`); `title` is its name. They differ only for a day whose
+/// name does not identify it (`MM-dd`'s label `11-02`, CM SPEC §2.1): the app
+/// keys, asks and saves the day by `2026_11_02` and shows `11-02`. O(name +
+/// parse list) for a day, O(1) otherwise.
+pub(super) fn page_dto(entry: &PageEntry, doc: &Document, format: &JournalFormat) -> PageDto {
     PageDto {
-        name: entry.name.clone(),
+        name: crate::query::page_handle(format, &entry.name, entry.date_key).into_owned(),
         kind: entry.kind,
         title: entry.name.clone(),
         pre_block: doc.pre_block.clone(),

@@ -24,7 +24,7 @@ import "../graph"; // installs the document rename's navigation refresh handler
 import { backend } from "../backend";
 import { setPageProperty } from "../document";
 import { carryDay } from "../carry";
-import { journalTitle, appNow } from "../journal";
+import { journalHandle, appNow } from "../journal";
 import { BLOCK_COLOR_NAMES, BLOCK_COLOR_SWATCH } from "../blockColors";
 import { blockSubtreeMarkdown, deleteBlock, deleteSelection, selectionMarkdown, withUndoUnit, setBlockProperty, toggleBlockProperty, toggleOwnNumberedList, blockProperty, setSelectionHeading, blockWritable, setCollapsedTrees, flushPage, deletePage, restoreTodayJournalInFeed, reportPageLoadRefusal, selectedIds, blockPageReadOnly, pageByName, buildClipboardPayload, insertOutlineBefore, blockExternalId, node as docNode } from "../document";
 import { renameOrMergePage, renameOutcomeMessage } from "../graph";
@@ -943,7 +943,7 @@ function PageMenu(props: {
     ...(props.fileActions && touchPrimary() ? [{ id: "find-in-page", label: msg("context-menu-ui-find-in-page"), run: () => openInPageFind() }] : []),
     ...(!readOnly() ? [{ id: "page-properties", label: msg("context-menu-ui-page-properties"), run: () => openPageProps(props.name, props.x, props.y) }] : []),
     // Carry a past day's unfinished tasks to today (journal days only, not today).
-    ...(!readOnly() && props.pageKind === "journal" && props.name !== journalTitle(appNow())
+    ...(!readOnly() && props.pageKind === "journal" && props.name !== journalHandle(appNow())
       ? [{ id: "carry-unfinished", label: msg("context-menu-ui-carry-unfinished-tasks-today"), run: () => void carryDay(props.name) }]
       : []),
   ];

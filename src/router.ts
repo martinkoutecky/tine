@@ -13,6 +13,7 @@ import { pushRecent } from "./ui";
 import { navigationTarget, ownerPath, resolvedTarget } from "./pageIndex";
 import { blockRef, resolveBlockRef, settleBlockRef, expandAncestors, extendFeedForScroll, type HistoryRouteContext, node as docNode, loadedPage } from "./document";
 import { backend } from "./backend";
+import { pageLabel } from "./journal";
 import { captureBinding, stillBound } from "./binding";
 import { graphOwner, readOwned } from "./owned";
 import { renderedBlocks } from "./lazyObserve";
@@ -207,7 +208,7 @@ export function routeTitle(r: Route): string {
   if (r.name.startsWith("hls__")) return r.name.slice(5);
   if (r.name === `${GUIDE_DISPLAY_PREFIX}Tine Guide`) return translate("navigation-prose-guide");
   if (isGuideRouteName(r.name)) return r.name.slice(GUIDE_DISPLAY_PREFIX.length);
-  return r.name;
+  return pageLabel(r.name);
 }
 
 /** The live store key of the block a page route zooms into, or null while it is not

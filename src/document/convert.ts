@@ -7,13 +7,13 @@ import { BLOCK_SCOPED_PROPERTY_KEYS, canonicalPageHeaderDraft, hides, isProperti
 import { commentEditorHide } from "../editor/commentProperties";
 import { blockRegions } from "../render/parse";
 import { utf8ByteLength } from "../render/spans";
-import { journalTitle, appNow } from "../journal";
+import { journalHandle, pageLabel, appNow } from "../journal";
 import { pageHeaderDraftProblem, rawWithCollapsed } from "./edits/properties";
 import { existingBlockId, orgRawWithProperty } from "./edits/identity";
 
 /** Wire DTO constructors live here; callers choose the intent and supply content. */
 export function emptyPage(name: string, kind: "journal" | "page", format?: Format): PageDto {
-  return { name, kind, title: name, pre_block: null, blocks: [{ id: `new-${name}`, raw: "", collapsed: false, children: [] }],
+  return { name, kind, title: pageLabel(name), pre_block: null, blocks: [{ id: `new-${name}`, raw: "", collapsed: false, children: [] }],
     ...(format ? { format } : {}) };
 }
 
@@ -33,8 +33,10 @@ export function inFileFormat(dto: PageDto, path: string): PageDto {
 }
 
 export function withToday(js: PageDto[]): PageDto[] {
-  const title = journalTitle(appNow());
-  return js.some((p) => p.name === title) ? js : [emptyPage(title, "journal"), ...js];
+  // Today by the name the store gives its page (`journalHandle`): under a
+  // year-less title format another year's day has the same title (CM SPEC §2.1).
+  const today = journalHandle(appNow());
+  return js.some((p) => p.name === today) ? js : [emptyPage(today, "journal"), ...js];
 }
 
 export function toLoadablePage(dto: PageDto, name: string): PageDto {
@@ -51,15 +53,15 @@ export function captureScratchPage(name: string, blockId: string): PageDto {
 }
 
 export function captureEmptyPage(name: string, kind: "journal" | "page"): PageDto {
-  return { name, kind, title: name, pre_block: null, blocks: [], rev: null };
+  return { name, kind, title: pageLabel(name), pre_block: null, blocks: [], rev: null };
 }
 
 export function journalTemplatePage(title: string, blocks: BlockDto[], existing?: PageDto | null): PageDto {
-  return { name: title, kind: "journal", title, pre_block: existing?.pre_block ?? null, blocks, format: existing?.format };
+  return { name: title, kind: "journal", title: pageLabel(title), pre_block: existing?.pre_block ?? null, blocks, format: existing?.format };
 }
 
 export function demoJournalPage(title: string): PageDto {
-  return { name: title, kind: "journal", title, pre_block: null, blocks: [{ id: "", raw: "👋 This is **today's journal** — your daily notes land here. Try your quick-capture hotkey, or open [[Welcome to Tine]] for the tour.", collapsed: false, children: [] }] };
+  return { name: title, kind: "journal", title: pageLabel(title), pre_block: null, blocks: [{ id: "", raw: "👋 This is **today's journal** — your daily notes land here. Try your quick-capture hotkey, or open [[Welcome to Tine]] for the tour.", collapsed: false, children: [] }] };
 }
 
 export function switcherPage(name: string): PageDto {

@@ -961,6 +961,7 @@ pub(crate) fn execute_cancellable(
                 let mut last: Option<usize> = None;
                 for (at, block) in rows {
                     let entry = groups[at].0;
+                    let name = graph.page_name(entry);
                     let facts = &groups[at].1;
                     if !budget.admit_estimated(&entry.name, shallow_dto_estimated_bytes(block, &[]))
                     {
@@ -968,7 +969,7 @@ pub(crate) fn execute_cancellable(
                     }
                     let same = match (last, out.last()) {
                         (Some(previous), Some(group)) if sorted => {
-                            group.page == entry.name && group.kind == entry.kind || previous == at
+                            group.page == name && group.kind == entry.kind || previous == at
                         }
                         (Some(previous), Some(_)) => previous == at,
                         _ => false,
@@ -980,7 +981,7 @@ pub(crate) fn execute_cancellable(
                             .push(row_dto(facts, block));
                     } else {
                         out.push(RefGroup {
-                            page: entry.name.clone(),
+                            page: name,
                             kind: entry.kind,
                             blocks: vec![row_dto(facts, block)],
                             evidence: Vec::new(),
@@ -1090,7 +1091,7 @@ pub(crate) fn execute_cancellable(
                     }
                     rows.push(PageRow {
                         path: entry.rel_path_str().to_owned(),
-                        name: entry.name.clone(),
+                        name: graph.page_name(entry),
                         kind: entry.kind,
                         journal_day: entry.date_key,
                         properties: facts.properties().to_vec(),

@@ -133,8 +133,10 @@ fn marker_entry(store: &Store, file: &FileId) -> io::Result<Option<VcsMarkerConf
     // The row names the page as the store does from the bytes just read (a
     // day in pages/ is a journal, K SPEC §2.1; no further read). Bytes the
     // store cannot name keep the file-name answer.
-    let (kind, name) = page_answer_of(store, &PageId::from(file.as_str()), &bytes)
-        .unwrap_or_else(|| (kind, marker_row_name(store, kind, &stem)));
+    let (kind, name) = page_answer_of(store, &PageId::from(file.as_str()), &bytes).map_or_else(
+        || (kind, marker_row_name(store, kind, &stem)),
+        |(kind, name, _)| (kind, name),
+    );
     Ok(Some(VcsMarkerConflict {
         path: file.as_str().to_owned(),
         name,

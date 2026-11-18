@@ -5,12 +5,16 @@
 // on [[2026-11-02]] and a calendar pick of 2 November 2026 must open the 2026
 // day with its body (not the label page, not the 2025 day); [[11-02]] opens
 // the label page; navigating creates no file and changes no bytes.
+// Round 3 (the day key): the journals feed shows today and the same day a
+// year ago as two days, each with its own body and the shared label; a
+// shift-click on [[2026-11-02]] opens the 2026 day in the right sidebar with
+// its body, titled by the label.
 import { spawn } from "node:child_process";
 import fs from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { remote } from "webdriverio";
-import { currentPageTitle, openPageByName } from "./lib/e2e-navigation.mjs";
+import { currentPageTitle, openJournals, openPageByName } from "./lib/e2e-navigation.mjs";
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const APP = process.env.TINE_APP || path.join(ROOT, "target/debug/tine");
@@ -24,7 +28,14 @@ for (const dir of ["data", "config", "cache", "state"]) fs.mkdirSync(path.join(T
 fs.mkdirSync(ARTIFACT, { recursive: true });
 fs.writeFileSync(path.join(GRAPH, "logseq", "config.edn"),
   "{:journal/page-title-format \"MM-dd\"\n :tine/guide-announced? true}\n");
+const pad = (n) => String(n).padStart(2, "0");
+const TODAY = new Date();
+const stem = (year) => `${year}_${pad(TODAY.getMonth() + 1)}_${pad(TODAY.getDate())}`;
+const LABEL = `${pad(TODAY.getMonth() + 1)}-${pad(TODAY.getDate())}`;
+const [THIS_YEAR, LAST_YEAR] = [stem(TODAY.getFullYear()), stem(TODAY.getFullYear() - 1)];
 const files = {
+  [`journals/${THIS_YEAR}.md`]: "- Body of today\n",
+  [`journals/${LAST_YEAR}.md`]: "- Body of today a year ago\n",
   "journals/2025_11_02.md": "- Body of the 2025 day\n",
   "journals/2026_11_02.md": "- Body of the 2026 day\n",
   "pages/11-02.md": "- Body of the label page\n",
@@ -61,7 +72,7 @@ async function clickLink(text) {
   await browser.releaseActions();
 }
 
-const BODIES = ["Body of the 2025 day", "Body of the 2026 day", "Body of the label page"];
+const BODIES = ["Body of the 2025 day", "Body of the 2026 day", "Body of the label page", "Body of today"];
 
 /** The routed page is titled `title` and shows `body`, and no other fixture body. */
 async function expectShown(what, title, body) {
@@ -114,6 +125,56 @@ async function pickNovemberSecond() {
   await nativeClick('.calendar-jump-pop .dp-cell[data-e2e-pick="1"]');
 }
 
+/** The journals feed shows today and last year's same day as two days. */
+async function expectFeedYearsApart() {
+  await openJournals(browser);
+  const days = () => browser.execute(() => [...document.querySelectorAll(".journal-feed-day")]
+    .map((node) => ({ name: node.dataset.feedDay, text: node.textContent ?? "" })));
+  try {
+    await browser.waitUntil(async () => {
+      const shown = await days();
+      const today = shown.find((day) => day.name === THIS_YEAR), last = shown.find((day) => day.name === LAST_YEAR);
+      return shown.filter((day) => day.text.includes(LABEL)).length >= 2
+        && today?.text.includes("Body of today") && !today.text.includes("a year ago")
+        && last?.text.includes("Body of today a year ago") && last.text.includes(LABEL);
+    }, { timeout: 20_000, interval: 200 });
+  } catch {
+    throw new Error(`journals feed: ${JSON.stringify((await days()).map((day) => [day.name, day.text.slice(0, 80)]))}`);
+  }
+  proof.steps.push(`the journals feed shows ${THIS_YEAR} and ${LAST_YEAR} as two days titled ${LABEL}`);
+}
+
+/** Shift-click [[2026-11-02]] opens the 2026 day in the right sidebar. */
+async function expectSidebarDay() {
+  await openPageByName(browser, "Source");
+  const point = await browser.waitUntil(() => browser.execute(() => {
+    const link = [...document.querySelectorAll(".main-content .page-blocks a.page-ref")]
+      .find((node) => node.textContent.replace(/[[\]]/g, "").trim() === "2026-11-02");
+    if (!link) return false;
+    const rect = link.getClientRects()[0];
+    return { x: Math.round(rect.x + rect.width / 2), y: Math.round(rect.y + rect.height / 2) };
+  }), { timeout: 15_000, interval: 150, timeoutMsg: "no [[2026-11-02]] link" });
+  await browser.performActions([
+    { type: "key", id: "keyboard", actions: [{ type: "keyDown", value: "\uE008" }, { type: "pause", duration: 0 }, { type: "pause", duration: 0 }, { type: "pause", duration: 0 }, { type: "keyUp", value: "\uE008" }] },
+    { type: "pointer", id: "mouse", parameters: { pointerType: "mouse" }, actions: [{ type: "pointerMove", origin: "viewport", ...point }, { type: "pointerDown", button: 0 }, { type: "pointerUp", button: 0 }, { type: "pause", duration: 0 }] },
+  ]);
+  await browser.releaseActions();
+  const sidebar = () => browser.execute(() => ({
+    titles: [...document.querySelectorAll(".right-sidebar .rs-item-title")].map((node) => node.textContent.trim()),
+    text: document.querySelector(".right-sidebar")?.textContent ?? "",
+  }));
+  try {
+    await browser.waitUntil(async () => {
+      const shown = await sidebar();
+      return shown.titles.includes("11-02") && shown.text.includes("Body of the 2026 day")
+        && !shown.text.includes("Body of the label page") && !shown.text.includes("Body of the 2025 day");
+    }, { timeout: 20_000, interval: 200 });
+  } catch {
+    throw new Error(`sidebar after shift-click: ${JSON.stringify(await sidebar()).slice(0, 400)}`);
+  }
+  proof.steps.push("shift-click [[2026-11-02]] opens the 2026 day in the sidebar, titled 11-02, with its body");
+}
+
 try {
   browser = await remote({ hostname: "127.0.0.1", port, path: "/", logLevel: "error", connectionRetryCount: 2, connectionRetryTimeout: 30_000,
     capabilities: { browserName: "wry", "wdio:enforceWebDriverClassic": true, "tauri:options": { application: APP } } });
@@ -127,6 +188,8 @@ try {
   await openPageByName(browser, "Source");
   await pickNovemberSecond();
   await expectShown("the calendar's 2 November 2026", "11-02", "Body of the 2026 day");
+  await expectFeedYearsApart();
+  await expectSidebarDay();
   const listed = (dir) => fs.readdirSync(path.join(GRAPH, dir)).sort().map((name) => `${dir}/${name}`);
   const now = [...listed("journals"), ...listed("pages")].sort();
   if (JSON.stringify(now) !== JSON.stringify(original)) throw new Error(`navigation changed the file set: ${now}`);

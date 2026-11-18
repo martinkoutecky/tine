@@ -1,6 +1,7 @@
 import { t } from "../i18n";
 import { For, type JSX } from "solid-js";
 import { EmojiText } from "../render/emoji";
+import { pageLabel } from "../journal";
 import type { MatchSpan } from "../types";
 
 export type SearchMatchSpan = MatchSpan;
@@ -138,7 +139,7 @@ export function SearchResultRow(props: {
   spans: SearchMatchSpan[];
   isComment?: boolean;
 }): JSX.Element {
-  const context = () => [props.page, ...props.breadcrumb].filter(Boolean).join(" › ");
+  const context = () => [props.page && pageLabel(props.page), ...props.breadcrumb].filter(Boolean).join(" › ");
   const segments = () => buildSearchExcerpt(props.text, props.spans);
   return (
     <>

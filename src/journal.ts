@@ -194,6 +194,18 @@ export function journalHandle(d: Date): string {
   return journal_identifying_spelling(d.getFullYear(), d.getMonth() + 1, d.getDate(), fileFormat, titleFormat);
 }
 
+/** What a page named `name` is shown as: the title of the day it names when
+ * `name` is that day's `journalHandle` and the title is another spelling
+ * (`MM-dd`: `2026_11_02` is shown `11-02`, CM SPEC §2.1), else `name`. The
+ * store names a day's page by its handle and titles it so (`page_dto`), so
+ * this is the display of a name the app holds without its page. Every title
+ * format with a year answers `name`. O(parse list), no I/O. */
+export function pageLabel(name: string): string {
+  const day = /\d/.test(name) ? parseJournalTitle(name) : null;
+  const title = day ? journalTitle(day) : name;
+  return title !== name && journalHandle(day!) === name ? title : name;
+}
+
 /// Try to parse `s` as a date in pattern `fmt` (the inverse of formatJournal, for
 /// the token subset Logseq uses). Mirrors the Rust `Format::parse` so a
 /// `[[journal title]]` link can be routed to the journal page rather than opened

@@ -848,6 +848,13 @@ impl ReadSnapshot {
     pub(crate) fn reference_real_page_names(&self) -> Option<Arc<crate::query::RealPageNames>> {
         Some(Arc::clone(&self.real_page_names))
     }
+    /// The name `entry`'s page crosses to the app by (`PageDto.name`,
+    /// `RefGroup.page`, query rows): its handle under the snapshot's format,
+    /// so a year-less day is named by its identifying spelling (CM SPEC
+    /// §2.1). O(name + parse list) for a day, O(name) otherwise.
+    pub(crate) fn page_name(&self, entry: &PageEntry) -> String {
+        self.real_page_names.entry_handle(entry)
+    }
     /// The real-name table ranked by the claimant order (OW-1).
     pub(crate) fn real_page_owners(&self) -> crate::query::RealPageOwners {
         crate::query::RealPageOwners::new(

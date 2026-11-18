@@ -14,7 +14,7 @@ import { focusedRouter, focusedPaneId } from "./panes";
 import { pushToast } from "./toasts";
 import { parseTineLink, parseAppRoute, type AppRoute } from "./deepLinks";
 import { admitPageFile, captureEmptyPage, pageByName, reportPageLoadRefusal } from "./document";
-import { journalHandle, journalTitle, appNow } from "./journal";
+import { journalHandle, appNow } from "./journal";
 import { openSwitcher } from "./ui";
 import { platformKind } from "./nativeChrome";
 import { activeElement, isElementTag, isHTMLElementNode, nextFrame } from "./windowRealm";
@@ -116,11 +116,7 @@ async function openAppRoute(app: AppRoute, current: () => boolean): Promise<void
     await showKeyboardForFocusedInput(current);
     return;
   }
-  const now = appNow();
-  const today = journalTitle(now);
-  // Today is opened and asked for by the spelling that identifies it, never by
-  // a year-less label an ordinary page holds (CM SPEC §2.1).
-  const todayHandle = journalHandle(now);
+  const today = journalHandle(appNow());
   if (app.route === "page") {
     // The one frontend name answerer (pageIndex.ts); a cold launch waits for it.
     const fileId = () => (["page", "journal"] as const).map((kind) => resolvedTarget(app.page, kind))
@@ -135,11 +131,11 @@ async function openAppRoute(app: AppRoute, current: () => boolean): Promise<void
     router.openInNewTab({ kind: "page", name: read.value.name, pageKind: read.value.kind, path: read.value.id }, true);
     return;
   }
-  router.openPage(todayHandle, "journal");
+  router.openPage(today, "journal");
   if (app.route === "today") return;
   // Quick capture: the same "continue writing below" as the page's trailing
   // target, in the pane that shows the journal.
-  const admitted = await admitPageFile(today, "journal", owner, captureEmptyPage(today, "journal"), todayHandle);
+  const admitted = await admitPageFile(today, "journal", owner, captureEmptyPage(today, "journal"));
   if (admitted && admitted !== "stale") reportPageLoadRefusal(admitted, "Nothing was opened for writing.");
   if (admitted || !owner()) return;
   const pane = focusedPaneId();

@@ -122,6 +122,10 @@ impl RealPageNames {
         self.day_key(&entry.name, entry.date_key)
             .unwrap_or_else(|| refs::page_key(&entry.name))
     }
+    /// [`page_handle`] of `entry` under this table's format.
+    pub(crate) fn entry_handle(&self, entry: &PageEntry) -> String {
+        page_handle(&self.format, &entry.name, entry.date_key).into_owned()
+    }
     /// The key of day `day` (`yyyymmdd`) when its name `name` does not
     /// identify it (the `MM-dd` label `11-02`); `None` when `name` names the
     /// day itself or there is no day, so a caller keeps its own fold of

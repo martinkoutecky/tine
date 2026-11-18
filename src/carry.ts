@@ -7,20 +7,14 @@ import { msg } from "./i18n";
 import { backend } from "./backend";
 import { readOwned, type Owner, bindingOwner } from "./owned";
 import { admitRead, pageByName, admitPageFile, ensurePageLoaded, carryUnfinished, flushPage, carryTodayPage, refuseConflictedMove, reportPageLoadRefusal } from "./document";
-import { journalHandle, journalTitle, appNow } from "./journal";
+import { journalHandle, appNow } from "./journal";
 import { carryKeepsContext, carryHeaderText } from "./ui";
 import { pushToast } from "./toasts";
 import { openJournals } from "./router";
 
-/** Load the day `name` names into its slot. `ask` is the name the store is
- *  asked by (`journalHandle` of a known day): under a year-less title format
- *  the slot name is a label whose page by name is the ordinary page (CM SPEC
- *  §2.1), so a loaded slot is trusted only when it holds the file the day's
- *  own spelling opens, and carry never takes tasks from the label's page. */
-async function ensureLoaded(name: string, kind: "journal" | "page", owner: Owner, ask = name): Promise<boolean> {
-  if (ask === name && pageByName(name)) return true;
-  const result = await admitRead(owner, () => backend().getPage(ask, kind), dto => [name, ...(ask === name ? [] : [ask]), ...(dto ? [dto.name] : [])],
-    dto => dto && (ask === name || dto.name === name) ? ensurePageLoaded(dto) : "missing");
+async function ensureLoaded(name: string, kind: "journal" | "page", owner: Owner): Promise<boolean> {
+  if (pageByName(name)) return true;
+  const result = await admitRead(owner, () => backend().getPage(name, kind), dto => [name, ...(dto ? [dto.name] : [])], dto => dto ? ensurePageLoaded(dto) : "missing");
   if (result.kind === "stale" || result.value === "missing") return false;
   const refusal = result.value;
   if (refusal) reportPageLoadRefusal(refusal, "Nothing was carried.");
@@ -35,9 +29,8 @@ async function ensureLoaded(name: string, kind: "journal" | "page", owner: Owner
  *  with unsaved input carry refuses, naming both files (og I1e, og J1; GH #254
  *  family, master 7bd793bd0; `admitPageFile`). One page read. */
 async function ensureToday(owner: Owner): Promise<string | null> {
-  const now = appNow();
-  const t = journalTitle(now);
-  const admitted = await admitPageFile(t, "journal", owner, carryTodayPage(t), journalHandle(now));
+  const t = journalHandle(appNow());
+  const admitted = await admitPageFile(t, "journal", owner, carryTodayPage(t));
   if (admitted === "stale") return null;
   if (admitted) {
     reportPageLoadRefusal(admitted, "Nothing was carried.");
@@ -87,7 +80,7 @@ export async function carryPrevDay(): Promise<void> {
     return;
   }
   const d = new Date(Math.floor(prevKey / 10000), (Math.floor(prevKey / 100) % 100) - 1, prevKey % 100);
-  await carryDay(journalTitle(d), journalHandle(d));
+  await carryDay(journalHandle(d));
 }
 
 /** Carry unfinished tasks from a named journal to today. A missing source or
@@ -95,13 +88,13 @@ export async function carryPrevDay(): Promise<void> {
  * and saves today's page; failed saves retain the moved tasks in the editor and
  * toast. Page-read failures also toast. Cost follows the source/day blocks
  * plus any page load and grouped save. */
-export async function carryDay(pageName: string, ask = pageName): Promise<void> {
+export async function carryDay(pageName: string): Promise<void> {
   const owner = bindingOwner();
   try {
     const today = await ensureToday(owner);
     if (!today || !owner()) return;
     if (pageName === today) return;
-    if (!(await ensureLoaded(pageName, "journal", owner, ask))) return;
+    if (!(await ensureLoaded(pageName, "journal", owner))) return;
     if (!owner()) return;
     if (refuseConflictedMove([today, pageName])) return;
     await report(carryUnfinished([pageName], carryKeepsContext(), carryHeaderText()), today, owner);
@@ -121,15 +114,13 @@ export async function carryDaysBack(days: number): Promise<void> {
     if (!today || !owner()) return;
     const base = appNow();
     const candidates: string[] = [];
-    const asks: string[] = [];
     for (let i = 1; i <= days; i++) {
       const d = new Date(base);
       d.setDate(d.getDate() - i);
-      candidates.push(journalTitle(d));
-      asks.push(journalHandle(d));
+      candidates.push(journalHandle(d));
     }
     // Load all the day files in parallel rather than one IPC round-trip at a time.
-    const loaded = await Promise.all(candidates.map((t, i) => ensureLoaded(t, "journal", owner, asks[i])));
+    const loaded = await Promise.all(candidates.map((t) => ensureLoaded(t, "journal", owner)));
     if (!owner()) return;
     const titles = candidates.filter((_, i) => loaded[i]); // skip days with no file
     if (refuseConflictedMove([today, ...titles])) return;

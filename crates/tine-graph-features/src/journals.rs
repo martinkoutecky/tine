@@ -117,12 +117,14 @@ fn feed_read(read: tine_store::PageRead) -> FeedRead {
 
 fn virtual_day(store: &Store, day: Day) -> FeedRead {
     let config = store.config();
-    let title = format(store).title(JournalDate::from_ordinal(day.0));
+    // Named as the store names a day's DTO: by the spelling that identifies
+    // it, shown by its title (`page_dto`; CM SPEC §2.1).
+    let (format, date) = (format(store), JournalDate::from_ordinal(day.0));
     FeedRead {
         id: store.journal_id(day, true),
         doc: tine_core::model::PageDto {
-            name: title.clone(),
-            title,
+            name: format.identifying_spelling(date),
+            title: format.title(date),
             kind: tine_core::model::PageKind::Journal,
             pre_block: None,
             blocks: Vec::new(),

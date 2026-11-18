@@ -21,7 +21,7 @@ import { clearParseCache } from "../render/parse";
 import { notifyModeReset } from "../modeHooks";
 import { deferExternalReload, replayDeferredExternalReloads } from "./deferredReload";
 import { isBlockMoving } from "./edits/moves";
-import { journalTitle, appNow, parseJournalTitle } from "../journal";
+import { journalHandle, appNow, parseJournalTitle } from "../journal";
 import { graphRewriteFrozen } from "./graphRewriteState";
 import { pushToastUnique } from "../toasts";
 import { renderEnglish } from "../i18n";
@@ -324,21 +324,9 @@ export function ensurePageLoaded(dto: PageDto & { id?: string }): PageLoadRefusa
  * `ensurePageLoaded`, so another file holding the name is replaced when it has
  * no uncommitted input and refused (`"unsaved-work"`) when it has: the write
  * never lands in a file other than the one the name resolves to. "stale" when
- * `owner` retired; a failed read rejects.
- * `ask` is the name the store is asked by when it differs from the slot name:
- * a day's `journalHandle`, under a year-less title format whose label (the
- * slot) by name opens the ordinary page of that label (CM SPEC §2.1). A day
- * with no file then gets the file it would be created as (one more read), so
- * its first save lands in that day and never in the label's page. */
-export async function admitPageFile(name: string, kind: PageKind, owner: Owner, absent: PageDto, ask = name): Promise<PageLoadRefusal | "stale" | null> {
-  // graph.ts holds the save callers' one resolve of a day; imported on use, as
-  // graph.ts imports this module.
-  const result = await admitRead(owner, () => backend().getPage(ask, kind).then(async (dto) => {
-    if (dto || ask === name) return { dto, at: undefined };
-    const target = await (await import("../graph")).resolveJournalDay(ask);
-    return { dto, at: target.kind === "absent" ? target.id || undefined : undefined };
-  }), ({ dto }) => [name, ...(ask === name ? [] : [ask]), ...(dto ? [dto.name] : [])],
-    ({ dto, at }) => ensurePageLoaded(dto ?? (at ? { ...absent, id: at } : absent)));
+ * `owner` retired; a failed read rejects. */
+export async function admitPageFile(name: string, kind: PageKind, owner: Owner, absent: PageDto): Promise<PageLoadRefusal | "stale" | null> {
+  const result = await admitRead(owner, () => backend().getPage(name, kind), dto => [name, ...(dto ? [dto.name] : [])], dto => ensurePageLoaded(dto ?? absent));
   if (result.kind === "stale") return "stale";
   return result.value;
 }
@@ -740,7 +728,7 @@ export function appendFeed(dtos: (PageDto & { id?: string })[]): PageLoadRefusal
  *  today's name has unsaved input, nothing is published and the refusal is
  *  returned. */
 export function restoreTodayJournalInFeed(): PageLoadRefusal | null {
-  const title = journalTitle(appNow());
+  const title = journalHandle(appNow());
   if (doc.feed.includes(title)) return null;
   const refusal = upsertUnlessDirty(emptyPage(title, "journal"));
   if (refusal) return refusal;

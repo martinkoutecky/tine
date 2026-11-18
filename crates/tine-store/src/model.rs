@@ -3113,7 +3113,8 @@ impl Graph {
     /// triggers a (synchronous, whole-graph) build. `None` on a cold cache or a
     /// page not yet cached, so latency-path callers can parse just one file.
     fn peek_cached_page(&self, entry: &PageEntry) -> Option<PageDto> {
-        self.with_cached(&entry.path, |row| row.map(|(e, d)| page_dto(e, d)))?
+        let format = self.current_journal_format();
+        self.with_cached(&entry.path, |row| row.map(|(e, d)| page_dto(e, d, &format)))?
     }
 
     /// Read and validate the current page file on every call, then reconcile a
@@ -3173,7 +3174,7 @@ impl Graph {
         }
         // Cache miss: parse the bytes we already read (propagate the original read
         // error if it failed).
-        Ok(Self::dto_of(entry, &content))
+        Ok(self.dto_of(entry, &content))
     }
 
     /// Directly read the caller-selected file, including a duplicate-day stray;
@@ -3189,7 +3190,7 @@ impl Graph {
             Err(e) if e.kind() == io::ErrorKind::NotFound => return Ok(None),
             Err(e) => return Err(e),
         };
-        Ok(Some(Self::dto_of(&entry, &content)))
+        Ok(Some(self.dto_of(&entry, &content)))
     }
 
     /// The DTO of `bytes` as the page file at `abs`, as a read of that file
@@ -3212,15 +3213,15 @@ impl Graph {
         // other guard, and a parser or projection panic must reach it as an
         // unreadable page, never unwind through its driver (merge review F1).
         std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-            Self::dto_of(&entry, content)
+            self.dto_of(&entry, content)
         }))
         .map(Some)
         .map_err(|_| io::Error::new(io::ErrorKind::InvalidData, ParserPanicked))
     }
 
-    fn dto_of(entry: &PageEntry, content: &str) -> PageDto {
+    fn dto_of(&self, entry: &PageEntry, content: &str) -> PageDto {
         let (doc, observed) = parse_page_content(entry, content);
-        let mut dto = page_dto(entry, &doc);
+        let mut dto = page_dto(entry, &doc, &self.current_journal_format());
         dto.read_only = read_only_org(&entry.path, content);
         dto.rev = Some(observed.rev);
         dto

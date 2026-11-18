@@ -343,7 +343,7 @@ fn collect_bounded(
                 groups.push((
                     entry.date_key,
                     RefGroup {
-                        page: entry.name.clone(),
+                        page: graph.page_name(entry),
                         kind: entry.kind,
                         blocks: matched,
                         evidence: Vec::new(),
@@ -1079,7 +1079,8 @@ fn collect_reference_occurrences_bounded(
                 evidence.push(hit);
             }
             if !blocks.is_empty() {
-                let key = refs::normalize(&entry.name);
+                let name = graph.page_name(entry);
+                let key = refs::normalize(&name);
                 if let Some(&index) = by_name.get(&key) {
                     let (date_key, group) = &mut groups[index];
                     *date_key = match (*date_key, entry.date_key) {
@@ -1094,7 +1095,7 @@ fn collect_reference_occurrences_bounded(
                     groups.push((
                         entry.date_key,
                         RefGroup {
-                            page: entry.name.clone(),
+                            page: name,
                             kind: entry.kind,
                             blocks,
                             evidence,
@@ -2074,7 +2075,8 @@ pub(crate) fn resolve_blocks_bounded(
     let mut resolved: HashMap<&str, RefGroup> = HashMap::new();
     let mut resolved_budget = ConstructionBudget::new(max_rows, max_bytes);
     for ((entry, doc), want) in by_page.values() {
-        resolve_ids_in_page(entry, doc, want, &mut resolved, &mut resolved_budget);
+        let name = graph.page_name(entry);
+        resolve_ids_in_page(entry, &name, doc, want, &mut resolved, &mut resolved_budget);
     }
 
     let mut output_budget = ConstructionBudget::new(max_rows, max_bytes);
@@ -2368,7 +2370,7 @@ pub(crate) fn preview_block_with_budget(
     let emitted = max_nodes - remaining_nodes;
     Some(BlockPreview {
         group: RefGroup {
-            page: entry.name.clone(),
+            page: graph.page_name(entry),
             kind: entry.kind,
             blocks,
             evidence: Vec::new(),
@@ -2434,6 +2436,7 @@ pub(crate) fn block_pages_walked() -> usize {
 /// block's uuid or persisted `id::`. First block in walk order wins per id.
 fn resolve_ids_in_page<'a>(
     entry: &PageEntry,
+    name: &str,
     doc: &Document,
     want: &std::collections::HashSet<&'a str>,
     resolved: &mut std::collections::HashMap<&'a str, RefGroup>,
@@ -2460,7 +2463,7 @@ fn resolve_ids_in_page<'a>(
                 resolved.insert(
                     id,
                     RefGroup {
-                        page: entry.name.clone(),
+                        page: name.to_owned(),
                         kind: entry.kind,
                         blocks: vec![result_dto(b)],
                         evidence: Vec::new(),
