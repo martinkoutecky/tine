@@ -125,12 +125,10 @@ pub enum TrashIf {
 /// inside `alias::`, `title::`, and query arguments are rewritten because the
 /// raw-text rewriter scans those regions too.
 ///
-/// The second list overrides the first for a query's page-name arguments
-/// only (`tine_core::refs::rename_rewrite_with_queries`). The page planner
-/// supplies the selected-member substitution in the first list and leaves
-/// overrides empty, so every site follows the same destination.
+/// The page planner supplies the selected-member substitution, so every site
+/// follows the same destination.
 #[derive(Debug, Default)]
-pub struct RenameMap(pub Vec<(String, String)>, pub Vec<(String, String)>);
+pub struct RenameMap(pub Vec<(String, String)>);
 
 // Copying a map is O(entries), so a plan's steps share one through an `Arc`
 // (PC-3); the count lets a test pin that no step copies it.
@@ -138,7 +136,7 @@ impl Clone for RenameMap {
     fn clone(&self) -> Self {
         #[cfg(feature = "test-faults")]
         crate::cost_counters::rename_map_clone();
-        Self(self.0.clone(), self.1.clone())
+        Self(self.0.clone())
     }
 }
 
@@ -836,7 +834,6 @@ impl<'a> PagePlan<'a> {
                     text,
                     is_org,
                     &keyed(&renames.0),
-                    &keyed(&renames.1),
                     tine_core::refs::RenameFormat {
                         names: name_format,
                         days: Some(&days),

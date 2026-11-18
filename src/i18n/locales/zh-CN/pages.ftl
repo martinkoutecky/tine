@@ -69,12 +69,6 @@ pages-namespaces-matches = { $count ->
     }
 
 pages-namespaces-count = { NUMBER($pages, useGrouping: 0) } 个页面，{ NUMBER($namespaces, useGrouping: 0) } 个命名空间
-rename-alias-choice-title = “{ $to }”是另一个页面的别名
-rename-alias-choice-body = “{ $to }”是“{ $owner }”的别名。要把“{ $from }”合并到“{ $owner }”，还是让“{ $to }”成为独立页面？独立页面仍是“{ $owner }”的别名，因此指向“{ $to }”的链接仍会显示在“{ $owner }”的链接引用中。
-rename-alias-choice-fileless = “{ $to }”是“{ $owner }”的别名。要将指向“{ $from }”的引用合并到“{ $owner }”吗？“{ $from }”没有可成为独立页面的文件。
-rename-alias-choice-no-merge = 不提供合并：“{ $owner }”位于“{ $from }”之下，会随它一起移动。
-rename-alias-choice-merge = 合并到“{ $owner }”
-rename-alias-choice-own-page = 让“{ $to }”成为独立页面（仍是“{ $owner }”的别名）
 rename-refused-own-child = 无法将“{ $old }”重命名为“{ $new }”：“{ $new }”已是“{ $old }”下的页面或别名，而“{ $old }”下的所有页面都会随之移动。
 rename-refused-file-taken = 无法重命名：文件 { $file } 属于页面“{ $page }”。请先重命名或合并该页面。
 rename-refused-not-a-page = 无法重命名“{ $name }”：没有页面或别名使用这个名称。
@@ -96,4 +90,3 @@ rename-refused-indented-body = 无法合并：{ $file } 的第一个块有缩进
 rename-refused-directive-escape = 无法合并：{ $file } 在引用块之外含有 #+END_QUOTE 行，会提前结束合并页面中的引用块。请在该文件中将此行移入引用块或删除此行，然后重试。未合并任何页面。
 rename-refused-alias-spelling = 无法合并：Tine 无法在保留原有写法的情况下移动 { $file } 中的别名声明“{ $alias }”。请在该文件中将该声明改为用逗号分隔的普通别名名称，保存后重试。未合并任何页面。
 rename-refused-duplicate-files = 无法重命名：这些文件声明了同一个页面：{ $files }。请先将其中一个合并到另一个，或移除其中一个，再重试。
-rename-alias-choice-stale-what = 重命名

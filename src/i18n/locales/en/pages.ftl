@@ -51,12 +51,6 @@ pages-namespaces-count = { $pages ->
     [one] { NUMBER($namespaces, useGrouping: 0) } namespace
    *[other] { NUMBER($namespaces, useGrouping: 0) } namespaces
     }
-rename-alias-choice-title = “{ $to }” is another page's alias
-rename-alias-choice-body = “{ $to }” is an alias of “{ $owner }”. Merge “{ $from }” into “{ $owner }”, or make “{ $to }” a page of its own? A page of its own stays an alias of “{ $owner }” too, so links to “{ $to }” still show in the Linked References of “{ $owner }”.
-rename-alias-choice-fileless = “{ $to }” is an alias of “{ $owner }”. Merge references to “{ $from }” into “{ $owner }”? “{ $from }” has no file to make into a page of its own.
-rename-alias-choice-no-merge = Merging is not offered: “{ $owner }” is inside “{ $from }” and would move with it.
-rename-alias-choice-merge = Merge into “{ $owner }”
-rename-alias-choice-own-page = Make “{ $to }” its own page (still an alias of “{ $owner }”)
 rename-refused-own-child = Couldn't rename “{ $old }” to “{ $new }”: “{ $new }” is already a page or an alias inside “{ $old }”, and every page under “{ $old }” moves with it.
 rename-refused-file-taken = Couldn't rename: the file { $file } belongs to the page “{ $page }”. Rename or merge that page first.
 rename-refused-not-a-page = Couldn't rename “{ $name }”: no page or alias has that name.
@@ -65,7 +59,6 @@ rename-refused-alias-held = Couldn't rename: “{ $alias }” is an alias of the
 rename-refused-conflict-markers = Couldn't rename: { $file } has unresolved conflict markers and would need changes to move. Resolve the conflict first.
 rename-refused-capture = Couldn't rename: “{ $name }” would become “{ $image }”, which is already the page “{ $page }”. Rename or merge that page first.
 rename-refused-contested = Couldn't rename: several files claim “{ $name }” ({ $files }). Merge one into the other or remove one first.
-rename-alias-choice-stale-what = The rename
 rename-refused-stale-merge = Cannot merge: { $file } no longer holds the name you chose. Start the rename again to choose the remaining page.
 rename-refused-unindexed = Cannot rename or merge: Tine cannot read { $file } safely. Repair its encoding or simplify the file in another editor, then try again.
 rename-refused-read-only-org = Cannot rename or merge: Tine cannot save { $file } without changing its content. Edit it in another Org editor or move the notes into a new page, then try again.

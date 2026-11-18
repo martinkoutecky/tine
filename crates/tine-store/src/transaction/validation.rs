@@ -118,9 +118,8 @@ fn rewrite_proposal(
             .map(|(a, b)| (tine_core::refs::page_key(a), b.clone()))
             .collect()
     };
-    let proposal =
-        tine_core::refs::rename_proposal(text, is_org, &keyed(&map.0), &keyed(&map.1), format)
-            .map_err(|e| Why::Refused(Refusal::TextRealization(e)))?;
+    let proposal = tine_core::refs::rename_proposal(text, is_org, &keyed(&map.0), format)
+        .map_err(|e| Why::Refused(Refusal::TextRealization(e)))?;
     Ok(proposal)
 }
 

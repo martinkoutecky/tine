@@ -4,8 +4,10 @@
 //! the confirmed model (path in `CM_STATIC_BRIDGE`; its answers carry
 //! `"round": "k"`) and compares the static answers Tine gives: pages,
 //! conflicts, active files, owners, navigation, Linked References and their
-//! counts, raw query rows and the link table. Real operation witnesses run in
-//! `tine-graph-features/tests/cm_witness.rs` without an operation bridge.
+//! counts, raw query rows, the link table, the namespace tree (`tree`,
+//! `namespaceTree`) and the alias classes (`aliasEdges`). Real operation
+//! witnesses run in `tine-graph-features/tests/cm_witness.rs` without an
+//! operation bridge.
 //!
 //! What the model needs beyond the older protocol:
 //! - **Day values, not labels.** A date is the identity `(journal, day)`
@@ -368,6 +370,9 @@ pub fn compare(view: &WholeGraph, spec: &GraphSpec, input: &Value, model: &Value
             }
         }
     }
+    // The namespace tree and the alias classes (SPEC §6.3 views).
+    diffs.extend(compare_trees(&journal, &real, &actual, model));
+    diffs.extend(compare_alias_classes(&ctx, view, model));
     // Raw query rows (SPEC §6.2), requested queries only.
     let (queries, unrequested) = requested_queries(spec);
     diffs.extend(compare_queries(&ctx, &queries));
@@ -379,6 +384,142 @@ pub fn compare(view: &WholeGraph, spec: &GraphSpec, input: &Value, model: &Value
                 q.tine
             ),
         ));
+    }
+    diffs
+}
+
+/// The page an inventory row's parent link names, as the model's (kind, key).
+fn link_page(journal: &JournalFormat, link: &super::super::store_crate::LinkTarget) -> Page {
+    if link.is_journal {
+        ("journal".to_owned(), key(journal, &link.name))
+    } else {
+        ("page".to_owned(), page_key(&link.name))
+    }
+}
+
+/// The model's tree rows (a page and its children) as a map.
+fn tree_rows(rows: &Value) -> BTreeMap<Page, BTreeSet<Page>> {
+    rows.as_array()
+        .unwrap()
+        .iter()
+        .map(|row| {
+            (
+                page_pair(&row["page"]),
+                row["children"]
+                    .as_array()
+                    .unwrap()
+                    .iter()
+                    .map(page_pair)
+                    .collect(),
+            )
+        })
+        .collect()
+}
+
+/// The namespace tree as the inventory gives it: a row's parent is its typed
+/// `parent` (set when it is not the textual prefix's own page), else the page
+/// of its immediate namespace prefix; the edge counts only when the parent is
+/// a listed page. Against the model's `tree` (every page with its children)
+/// and `namespaceTree` (the rows with a parent or a child).
+fn compare_trees(
+    journal: &JournalFormat,
+    real: &[&super::super::store_crate::InventoryEntry],
+    pages: &BTreeSet<Page>,
+    model: &Value,
+) -> Vec<Diff> {
+    let mut tine: BTreeMap<Page, BTreeSet<Page>> =
+        pages.iter().map(|p| (p.clone(), BTreeSet::new())).collect();
+    for e in real {
+        let page = entry_page(journal, e);
+        let parent = match &e.parent {
+            Some(link) => Some(link_page(journal, link)),
+            None => tine_core::refs::namespace_refs(&e.name)
+                .filter(|prefix| prefix.len() < e.name.len())
+                .map(page_key)
+                .filter(|key| !key.is_empty())
+                .last()
+                .map(|key| ("page".to_owned(), key)),
+        };
+        if let Some(parent) = parent.filter(|parent| pages.contains(parent)) {
+            tine.entry(parent).or_default().insert(page);
+        }
+    }
+    let has_edge = |tree: &BTreeMap<Page, BTreeSet<Page>>, page: &Page| {
+        !tree[page].is_empty() || tree.values().any(|children| children.contains(page))
+    };
+    let namespace = |tree: &BTreeMap<Page, BTreeSet<Page>>| -> BTreeMap<Page, BTreeSet<Page>> {
+        tree.iter()
+            .filter(|(page, _)| has_edge(tree, page))
+            .map(|(page, children)| (page.clone(), children.clone()))
+            .collect()
+    };
+    let mut diffs = Vec::new();
+    for (class, expected, actual) in [
+        ("tree", tree_rows(&model["tree"]), tine.clone()),
+        (
+            "namespace tree",
+            tree_rows(&model["namespaceTree"]),
+            namespace(&tine),
+        ),
+    ] {
+        for page in expected
+            .keys()
+            .chain(actual.keys())
+            .collect::<BTreeSet<_>>()
+        {
+            let (model_children, tine_children) = (expected.get(page), actual.get(page));
+            if model_children != tine_children {
+                let mut diff = Diff::new(
+                    class,
+                    format!("{page:?}: model {model_children:?}, Tine {tine_children:?}"),
+                )
+                .at_key(&page.1);
+                for child in model_children.into_iter().chain(tine_children).flatten() {
+                    diff = diff.at_key(&child.1);
+                }
+                diffs.push(diff);
+            }
+        }
+    }
+    diffs
+}
+
+/// Alias classes: the model's alias edges (a declaring page and each page its
+/// aliases name) close to classes; the inventory's alias group of a name is
+/// Tine's class. Compared per page that an edge names.
+fn compare_alias_classes(ctx: &Ctx, view: &WholeGraph, model: &Value) -> Vec<Diff> {
+    let typed = model["typedAliasEdges"].as_array().unwrap();
+    let mut diffs = Vec::new();
+    let mut class: BTreeMap<Page, BTreeSet<Page>> = BTreeMap::new();
+    for edge in typed {
+        let (a, b) = (page_pair(&edge[0]), page_pair(&edge[1]));
+        let mut merged = BTreeSet::from([a.clone(), b.clone()]);
+        for member in [&a, &b] {
+            merged.extend(class.get(member).cloned().unwrap_or_default());
+        }
+        for member in merged.clone() {
+            class.insert(member, merged.clone());
+        }
+    }
+    for (page, expected) in &class {
+        let name = spelling(ctx, page);
+        let mut actual = BTreeSet::from([page.clone()]);
+        actual.extend(
+            view.inventory(InventoryScope::AliasGroup(&name))
+                .0
+                .iter()
+                .map(|e| entry_page(&ctx.journal, e)),
+        );
+        if &actual != expected {
+            let mut diff = Diff::new(
+                "alias classes",
+                format!("{page:?}: model {expected:?}, Tine {actual:?}"),
+            );
+            for member in expected.iter().chain(&actual) {
+                diff = diff.at_key(&member.1);
+            }
+            diffs.push(diff);
+        }
     }
     diffs
 }
