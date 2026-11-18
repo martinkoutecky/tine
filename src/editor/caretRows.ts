@@ -290,3 +290,35 @@ export function textareaCaretRow(ta: HTMLTextAreaElement, offset: number): { top
     div.remove();
   }
 }
+
+/** The offset one visual row above (`-1`) or below (`1`) `offset`, nearest in x;
+ *  the start or end of the text when there is no such row, as a native Up / Down
+ *  does. `points` is `textareaCaretPoints` (one point per offset). */
+export function caretRowTarget(points: Array<{ x: number; y: number }>, offset: number, dir: -1 | 1): number {
+  const here = points[offset];
+  let rowY: number | null = null;
+  for (const p of points) {
+    if (dir < 0 ? p.y < here.y - 1 && (rowY === null || p.y > rowY) : p.y > here.y + 1 && (rowY === null || p.y < rowY)) rowY = p.y;
+  }
+  if (rowY === null) return dir < 0 ? 0 : points.length - 1;
+  let best = -1;
+  points.forEach((p, i) => {
+    if (Math.abs(p.y - rowY!) <= 1 && (best < 0 || Math.abs(p.x - here.x) < Math.abs(points[best].x - here.x))) best = i;
+  });
+  return best;
+}
+
+/** Move the caret one visual row, where the browser has no Emacs Ctrl+P / Ctrl+N of its own
+ *  (everywhere but macOS). A selection collapses to its start (up) or end (down), as the arrow
+ *  keys do. A no-op when layout is unavailable. */
+export function moveCaretRow(ta: HTMLTextAreaElement, dir: -1 | 1): void {
+  if (ta.selectionStart !== ta.selectionEnd) {
+    const to = dir < 0 ? ta.selectionStart : ta.selectionEnd;
+    ta.setSelectionRange(to, to);
+    return;
+  }
+  const points = textareaCaretPoints(ta);
+  if (!points) return;
+  const to = caretRowTarget(points, ta.selectionStart, dir);
+  ta.setSelectionRange(to, to);
+}

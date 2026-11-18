@@ -42,6 +42,7 @@ src/components/pdfRenderQueue.ts isMobilePlatform x1  # why: memory-cap; prefetc
 src/components/pdfTiles.ts isMobilePlatform x1  # why: memory-cap; tile count cap
 src/components/pdfViewerPrimitives.ts isMobilePlatform x3  # why: memory-cap; canvas pixel, cache and page caps
 src/components/pdfViewerView.tsx isMac x1  # why: os-convention; the area-highlight modifier hint names the OS key
+src/ctrlArrowAlias.ts isMac x1  # why: os-convention; macOS text fields already bind Ctrl+P / Ctrl+N to line movement, other platforms do not (GH #986)
 src/debug.ts navigator.userAgent x1  # why: native-api; diagnostic log line names the host
 src/debug.ts platformKind x1  # why: native-api; diagnostic log line names the host
 src/deepLinkNavigation.ts platform-literal x1  # why: native-api; asks the Android host to raise the soft keyboard
