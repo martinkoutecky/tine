@@ -227,3 +227,61 @@ fn preamble_query_rows_survive_reload_and_follow_edits_and_promotion() {
         store.close();
     }
 }
+
+/// The preamble's tag and a property-like line after its first prose line are
+/// that block's references in block queries (K SPEC §6.2: the block anchor
+/// universe includes the preamble), Markdown and Org alike; a child of an
+/// outline block is still suppressed only by its own matching parent, never
+/// by the preamble (header and preamble blocks are not body ancestors).
+#[test]
+fn preamble_tag_and_property_like_line_are_query_references() {
+    use crate::{QueryDialect, QueryResult};
+    let _integration_guard = crate::test_transactions::integration_lock();
+    for (ext, text) in [
+        (
+            "md",
+            "Prose [[Target]] #Topic\nstatus:: [[Linked]]\n\n- ordinary body\n  - child [[Target]]\n",
+        ),
+        (
+            "org",
+            "Prose [[Target]] #Topic\n:status: [[Linked]]\n* ordinary body\n** child [[Target]]\n:status: [[Linked]]\n",
+        ),
+    ] {
+        let dir = tempfile::tempdir().unwrap();
+        std::fs::create_dir(dir.path().join("pages")).unwrap();
+        std::fs::write(dir.path().join(format!("pages/Source.{ext}")), text).unwrap();
+        let store = Store::open(dir.path(), Default::default()).unwrap().0;
+        let graph = store.whole_graph().unwrap();
+        let rows = |q: &str| -> Vec<(String, bool)> {
+            let groups = match graph.query(q, QueryDialect::Simple).unwrap() {
+                QueryResult::Simple(groups) => (*groups).clone(),
+                QueryResult::Advanced(result) => result.groups,
+            };
+            groups
+                .into_iter()
+                .flat_map(|g| g.blocks)
+                .map(|b| (b.raw.lines().next().unwrap_or("").to_owned(), preamble(&b)))
+                .collect()
+        };
+        let prose = ("Prose [[Target]] #Topic".to_owned(), true);
+        for q in ["[[Topic]]", "(page-ref Topic)"] {
+            assert_eq!(rows(q), [prose.clone()], "{ext}: {q}");
+        }
+        // Markdown: the `status::` line is preamble text holding a link. Org:
+        // a bare `:status:` line outside a drawer yields no reference in any
+        // block (the parser's rule, the same in an outline block), so the
+        // preamble answers as an outline block would.
+        let linked: &[(String, bool)] = if ext == "md" {
+            std::slice::from_ref(&prose)
+        } else {
+            &[]
+        };
+        assert_eq!(rows("[[Linked]]"), linked, "{ext}: [[Linked]]");
+        assert_eq!(
+            rows("[[Target]]"),
+            [prose.clone(), ("child [[Target]]".to_owned(), false)],
+            "{ext}: the preamble is no body ancestor of the child"
+        );
+        store.close();
+    }
+}
