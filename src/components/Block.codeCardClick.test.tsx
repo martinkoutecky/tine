@@ -54,10 +54,11 @@ function clickCode(
   return { root, dispose };
 }
 
+// A real engine's hit test never lands in the gutter's hidden line copies (aria-hidden, invisible, no pointer events).
 function textNodeContaining(code: Element, needle: string): Text {
   const walker = document.createTreeWalker(code, NodeFilter.SHOW_TEXT);
   for (let n = walker.nextNode(); n; n = walker.nextNode()) {
-    if ((n.textContent ?? "").includes(needle)) return n as Text;
+    if ((n.textContent ?? "").includes(needle) && !n.parentElement?.closest("[aria-hidden]")) return n as Text;
   }
   throw new Error(`no text node contains ${needle}`);
 }
