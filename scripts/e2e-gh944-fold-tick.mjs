@@ -232,6 +232,9 @@ try {
     await deliver(phase, id);
     // A keyboard action ends when the user leaves the block; saves and query refreshes follow that.
     if (phase.route === 'key') { await sleep(700); await browser.keys('Escape'); }
+    const reached = st => phase.kind === 'fold' ? (st.children > 0) !== phase.collapsed : st.done === phase.done;
+    await browser.waitUntil(async () => reached(await state(id)), { timeout: 10_000, timeoutMsg: `${phase.name}: the ${phase.kind} never took effect` });
+    // The measurement window: query reruns and their layout land after the action.
     await sleep(SETTLE_MS);
     const recorded = await browser.execute(() => window.__gh944fold.stop());
     const summary = summarizeFold(recorded);
@@ -245,6 +248,11 @@ try {
     await browser.keys('Escape');
     fs.writeFileSync(path.join(out, 'gh944-fold-probe.json'), JSON.stringify(results, null, 2));
   }
+  // The journey passes only if every measured phase held the reader (C837's fits-the-window cases are by design).
+  const measured = results.phases.filter(p => p.classification);
+  if (!measured.length) throw new Error('no phase was measured');
+  const moved = measured.filter(p => /^jump|^target-gone/.test(p.classification));
+  if (moved.length) throw new Error(`the reader moved: ${moved.map(p => `${p.phase}=${p.classification} final=${p.summary.finalDisplacement?.toFixed(1)}`).join(', ')}`);
   results.semanticPassed = true;
 } catch (error) {
   try { await browser?.saveScreenshot(path.join(run, 'failure.png')); } catch {}
