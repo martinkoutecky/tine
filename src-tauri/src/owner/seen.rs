@@ -107,19 +107,21 @@ fn relative(path: &str) -> Result<(), String> {
 }
 
 /// git_run's discovery and graph prefix, without its write-side checks
-/// (detached HEAD and index.lock do not prevent a read).
+/// (detached HEAD and index.lock do not prevent a read). Every way the graph
+/// has no usable repository (none, a `.git` file naming a missing directory, a
+/// bare one, a work tree that does not hold the graph, a repository another
+/// user owns) is one `Err` reason: the one classification of "git has nothing
+/// to say" that seen changes and bullet dates share (GH #980).
 fn open(root: &Path) -> Result<(Repository, PathBuf), String> {
-    open_if_repository(root)?.ok_or_else(|| "The graph is not in a git repository.".into())
-}
-
-fn open_if_repository(root: &Path) -> Result<Option<(Repository, PathBuf)>, String> {
     let repo = match super::git_run::discover(root) {
         Ok(repo) => repo,
-        Err(e) if e.code() == ErrorCode::NotFound => return Ok(None),
+        Err(e) if e.code() == ErrorCode::NotFound => {
+            return Err("The graph is not in a git repository.".into())
+        }
         Err(e) => return Err(e.to_string()),
     };
     let prefix = super::git_run::graph_prefix(&repo, root)?;
-    Ok(Some((repo, prefix)))
+    Ok((repo, prefix))
 }
 
 fn head(repo: &Repository) -> Result<Option<Oid>, String> {

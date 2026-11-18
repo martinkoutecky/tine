@@ -196,3 +196,24 @@ it("does not scroll when a containing spacer absorbs the nested group's growth",
     expect(root.scrollTop).toBe(500);
   } finally { Reflect.deleteProperty(document, "elementFromPoint"); }
 });
+
+it("anchors on flowing content, not on a pinned ancestor header at the top of the view (GH #944)", async () => {
+  const root = document.createElement("div"), host = document.createElement("div"), pinned = document.createElement("button"), reader = document.createElement("div");
+  const sticky = document.createElement("div"); sticky.className = "sticky-ancestor"; sticky.append(pinned);
+  reader.className = "block-main";
+  root.append(host, sticky, reader); document.body.append(root);
+  let scroll = 500, shrink = 0;
+  Object.defineProperty(root, "scrollTop", { configurable: true, get: () => scroll, set: value => { scroll = value; } });
+  vi.spyOn(root, "getBoundingClientRect").mockReturnValue({ top: 0, left: 0, width: 400 } as DOMRect);
+  vi.spyOn(host, "getBoundingClientRect").mockReturnValue({ bottom: -100 } as DOMRect);
+  vi.spyOn(pinned, "getBoundingClientRect").mockReturnValue({ top: 48 } as DOMRect);
+  vi.spyOn(reader, "getBoundingClientRect").mockImplementation(() => ({ top: 200 - shrink - (scroll - 500) }) as DOMRect);
+  // WebKit hands back the pinned header at the top, the reader a little lower.
+  Object.defineProperty(document, "elementFromPoint", { configurable: true, value: (_x: number, y: number) => y < 10 ? pinned : reader });
+  try {
+    preserveAboveViewport(host, () => {}, root, true);
+    shrink = 84; // the answer above shrank; the reader moved up by 84
+    await Promise.resolve();
+    expect(scroll).toBe(416);
+  } finally { Reflect.deleteProperty(document, "elementFromPoint"); }
+});
