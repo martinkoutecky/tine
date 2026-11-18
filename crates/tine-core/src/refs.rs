@@ -264,44 +264,29 @@ pub fn rename_rewrite<'f>(
     renames: &[(String, String)],
     file_name_format: impl Into<RenameFormat<'f>>,
 ) -> String {
-    rename_rewrite_with_queries(text, is_org, renames, &[], file_name_format, None)
+    rename_rewrite_recording(text, is_org, renames, file_name_format, None)
 }
 
-/// [`rename_rewrite`] where a query's page-name arguments naming a key of
-/// `queries` take that name instead (links and namespace children keep
-/// `renames`' name; a day-spelled argument stays, [`pinned_site`]). Empty
-/// `queries` is [`rename_rewrite`]; the planner supplies none, since a merge
-/// onto another page's alias is refused (model r6 O3).
-/// If supplied, `rewritten` receives distinct old/new logical-name pairs of edits
-/// actually spliced into the text (including macro/query/file-link targets).
-/// Rejected, overlapping and byte-identical edits contribute nothing. Recording
-/// costs O(name bytes) per proposed edit and retains unique pairs, with no
-/// additional parse or I/O.
-pub fn rename_rewrite_with_queries<'f>(
+/// [`rename_rewrite`] that also records its edits: if supplied, `rewritten`
+/// receives distinct old/new logical-name pairs of edits actually spliced into
+/// the text (including macro/query/file-link targets). Rejected, overlapping
+/// and byte-identical edits contribute nothing. Recording costs O(name bytes)
+/// per proposed edit and retains unique pairs, with no additional parse or I/O.
+pub fn rename_rewrite_recording<'f>(
     text: &str,
     is_org: bool,
     renames: &[(String, String)],
-    queries: &[(String, String)],
     file_name_format: impl Into<RenameFormat<'f>>,
     rewritten: Option<&mut std::collections::HashSet<(String, String)>>,
 ) -> String {
-    let keyed = |pairs: &[(String, String)]| -> std::collections::HashMap<String, String> {
-        pairs
-            .iter()
-            .map(|(from, to)| (normalize(from), to.clone()))
-            .collect()
-    };
-    let renames = keyed(renames);
-    let queries = keyed(queries);
+    let renames: std::collections::HashMap<String, String> = renames
+        .iter()
+        .map(|(from, to)| (normalize(from), to.clone()))
+        .collect();
     rename::rewrite_page(
         text,
         is_org,
-        &rename::Renames::new(
-            &renames,
-            Some(&queries),
-            file_name_format.into(),
-            rewritten.is_some(),
-        ),
+        &rename::Renames::new(&renames, file_name_format.into(), rewritten.is_some()),
         rewritten,
     )
 }
@@ -339,13 +324,12 @@ pub fn rename_proposal<'f>(
     text: &str,
     is_org: bool,
     renames: &std::collections::HashMap<String, String>,
-    queries: &std::collections::HashMap<String, String>,
     format: impl Into<RenameFormat<'f>>,
 ) -> Result<RenameProposal, crate::text_trace::TraceError> {
     rename::proposal(
         text,
         is_org,
-        &rename::Renames::new(renames, Some(queries), format.into(), true),
+        &rename::Renames::new(renames, format.into(), true),
     )
 }
 
@@ -356,13 +340,12 @@ pub fn rename_described_proposal<'f>(
     text: &str,
     is_org: bool,
     renames: &std::collections::HashMap<String, String>,
-    queries: &std::collections::HashMap<String, String>,
     format: impl Into<RenameFormat<'f>>,
 ) -> Result<(RenameProposal, crate::doc::native::NativeDocument), crate::text_trace::TraceError> {
     rename::described_proposal(
         text,
         is_org,
-        &rename::Renames::new(renames, Some(queries), format.into(), true),
+        &rename::Renames::new(renames, format.into(), true),
     )
 }
 
@@ -376,56 +359,42 @@ pub fn rename_rewrite_keyed<'f>(
     rename::rewrite_page(
         text,
         is_org,
-        &rename::Renames::new(renames, None, file_name_format.into(), false),
+        &rename::Renames::new(renames, file_name_format.into(), false),
         None,
     )
 }
 
-/// [`rename_rewrite_keyed`] for one held block's raw body;
-/// `queries` as [`rename_rewrite_with_queries`].
-/// `rewritten` records applied edits as in that function.
+/// [`rename_rewrite_keyed`] for one held block's raw body.
+/// `rewritten` records applied edits as [`rename_rewrite_recording`] does.
 pub fn rename_block_raw<'f>(
     raw: &str,
     is_org: bool,
     renames: &std::collections::HashMap<String, String>,
-    queries: Option<&std::collections::HashMap<String, String>>,
     file_name_format: impl Into<RenameFormat<'f>>,
     rewritten: Option<&mut std::collections::HashSet<(String, String)>>,
 ) -> String {
     rename::rewrite_block(
         raw,
         is_org,
-        &rename::Renames::new(
-            renames,
-            queries,
-            file_name_format.into(),
-            rewritten.is_some(),
-        ),
+        &rename::Renames::new(renames, file_name_format.into(), rewritten.is_some()),
         rewritten,
     )
 }
 
 /// [`rename_rewrite_keyed`] for a held page DTO's `pre_block`: its page
-/// properties; `queries` as
-/// [`rename_rewrite_with_queries`].
-/// `rewritten` records applied edits as in that function.
+/// properties. `rewritten` records applied edits as
+/// [`rename_rewrite_recording`] does.
 pub fn rename_pre_block<'f>(
     pre: &str,
     is_org: bool,
     renames: &std::collections::HashMap<String, String>,
-    queries: Option<&std::collections::HashMap<String, String>>,
     file_name_format: impl Into<RenameFormat<'f>>,
     rewritten: Option<&mut std::collections::HashSet<(String, String)>>,
 ) -> String {
     rename::rewrite_pre_block(
         pre,
         is_org,
-        &rename::Renames::new(
-            renames,
-            queries,
-            file_name_format.into(),
-            rewritten.is_some(),
-        ),
+        &rename::Renames::new(renames, file_name_format.into(), rewritten.is_some()),
         rewritten,
     )
 }
@@ -442,7 +411,7 @@ pub fn rename_target_needs_report_or_write(
     pages: &std::collections::HashMap<String, String>,
     format: RenameFormat<'_>,
 ) -> bool {
-    let renames = rename::Renames::new(pages, None, format, false);
+    let renames = rename::Renames::new(pages, format, false);
     rename::target_needs_report_or_write(raw, org, pre_block, &renames)
 }
 
@@ -513,7 +482,7 @@ mod tests {
     fn rename_in_block(raw: &str, from: &str, to: &str, is_org: bool) -> String {
         let mut map = std::collections::HashMap::with_capacity(1);
         map.insert(normalize(from), to.to_string());
-        rename_block_raw(raw, is_org, &map, None, FileNameFormat::TripleLowbar, None)
+        rename_block_raw(raw, is_org, &map, FileNameFormat::TripleLowbar, None)
     }
 
     /// The rewrite of a page whose text starts with page properties.
@@ -777,7 +746,7 @@ mod tests {
                 crate::model::encode_page_name(new_title, format)
             );
             assert_eq!(
-                rename_block_raw(&raw, true, &renames, None, format, None),
+                rename_block_raw(&raw, true, &renames, format, None),
                 expected
             );
         }

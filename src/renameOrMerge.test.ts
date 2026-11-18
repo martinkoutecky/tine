@@ -6,7 +6,6 @@ import { bumpGraphEpoch } from "./graphSession";
 import { invalidateBinding } from "./binding";
 import { resetStore } from "./document";
 import { recentPages, setRecentPages, rightSidebar, setRightSidebar } from "./ui";
-import { aliasRenameRequest } from "./renameAliasChoice";
 import { renderEnglish, type Msg } from "./i18n";
 import type { RenameOffer, RenameRefusal } from "./types";
 
@@ -92,7 +91,6 @@ it("an alias-only name is refused naming the page it opens", async () => {
   offer({ kind: "refused", reason, message: "" });
   const result = await renameOrMergePage("ML notes", "ML", { name: "ML notes", pageKind: "page", path: "pages/ML notes.md" });
   expect(result).toEqual({ refused: reason });
-  expect(aliasRenameRequest()).toBeNull();
   expect(renderEnglish(renameOutcomeMessage(result, "ML notes", "ML") as Msg)).toBe("Couldn't rename: “ML” is an alias of the page “Machine Learning”. Pick another name, or remove that alias from “Machine Learning” first.");
   expect(confirm).not.toHaveBeenCalled();
   expect(rename).not.toHaveBeenCalled();

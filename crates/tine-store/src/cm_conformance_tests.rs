@@ -21,7 +21,8 @@ use tine_core::model::PageKind;
 /// The store names the shared code uses (`super::store_crate` there).
 mod store_crate {
     pub(crate) use crate::{
-        Cancel, InventoryEntry, InventoryScope, IrAnswer, IrRequest, Resolved, Store, WholeGraph,
+        Cancel, InventoryEntry, InventoryScope, IrAnswer, IrRequest, LinkTarget, Resolved, Store,
+        WholeGraph,
     };
 }
 

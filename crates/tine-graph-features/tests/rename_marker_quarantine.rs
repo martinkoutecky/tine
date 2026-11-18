@@ -246,7 +246,7 @@ fn the_store_refuses_a_reference_rewrite_inside_a_marker_bearing_file() {
         &id,
         rev,
         None,
-        &std::sync::Arc::new(RenameMap(vec![("alpha".into(), "Beta".into())], Vec::new())),
+        &std::sync::Arc::new(RenameMap(vec![("alpha".into(), "Beta".into())])),
         TitleRebind::Keep,
     );
     assert!(tx.plan().is_err());
