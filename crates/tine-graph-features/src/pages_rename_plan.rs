@@ -44,8 +44,6 @@ pub(super) struct RenamePlan {
     pub(super) days: tine_core::date::JournalFormat,
     pub(super) map: RenameMap,
     pub(super) lookup: HashMap<String, String>,
-    /// Optional query overrides from `map.1`, keyed like `lookup`.
-    pub(super) query_lookup: HashMap<String, String>,
     pub(super) moves: HashMap<PageId, FileId>,
     /// Planned identities (including a fileless primary), in `map.0` order.
     /// The transaction adds reference-only identities from its applied edits.
@@ -96,11 +94,10 @@ impl RenamePlan {
             let text = std::str::from_utf8(bytes).map_err(|_| unwritable(store, id))?;
             let format = Format::from_path(id.as_str().as_ref());
             let changed = std::panic::catch_unwind(|| {
-                refs::rename_rewrite_with_queries(
+                refs::rename_rewrite_recording(
                     text,
                     format == Format::Org,
                     &self.map.0,
-                    &self.map.1,
                     self.spelling(),
                     None,
                 )
@@ -156,9 +153,8 @@ impl RenamePlan {
             let syntax = Format::from_path(id.as_str().as_ref());
             let org = syntax == Format::Org;
             let format = refs::RenameFormat::new(self.config.file_name_format, &self.days);
-            let rewritten =
-                refs::rename_proposal(&content, org, &self.lookup, &self.query_lookup, format)
-                    .map_err(|e| MergeRefused::trace(e, id.as_str()))?;
+            let rewritten = refs::rename_proposal(&content, org, &self.lookup, format)
+                .map_err(|e| MergeRefused::trace(e, id.as_str()))?;
             let changed = rewritten.text != content;
             let marked =
                 !tine_core::concord_queue::vcs_conflict_markers(&content, syntax).is_empty();
@@ -243,7 +239,7 @@ fn may_hold_reference(
         return text_mentions_a_name(&text, map);
     }
     std::panic::catch_unwind(|| {
-        refs::rename_rewrite_with_queries(&text, org, &map.0, &map.1, format, None) != text
+        refs::rename_rewrite_recording(&text, org, &map.0, format, None) != text
     })
     .unwrap_or_else(|_| text_mentions_a_name(&text, map))
 }
@@ -620,7 +616,7 @@ pub struct RenamedPage {
 
 /// Extend file identities with names carried by applied edits, not a second
 /// reference walk. Namespace parents follow the same lookup; the full target
-/// uses the rewriter's answer (including a query's override).
+/// uses the rewriter's answer.
 pub(super) fn report_rewritten_names(
     renamed: &mut Vec<RenamedPage>,
     names: HashSet<(String, String)>,
@@ -818,9 +814,8 @@ pub(super) fn plan_rename(
             graph,
             config,
             days: journal_format,
-            map: RenameMap(Vec::new(), Vec::new()),
+            map: RenameMap(Vec::new()),
             lookup: HashMap::new(),
-            query_lookup: HashMap::new(),
             moves: HashMap::new(),
             renamed: Vec::new(),
             moved_titles_to_rebind: HashSet::new(),
@@ -1025,7 +1020,7 @@ pub(super) fn plan_rename(
         .iter()
         .map(|page| (page.from.clone(), page.to.clone()))
         .collect();
-    let map = RenameMap(pairs, Vec::new());
+    let map = RenameMap(pairs);
     let keyed = |pairs: &[(String, String)]| -> HashMap<String, String> {
         pairs
             .iter()
@@ -1033,7 +1028,6 @@ pub(super) fn plan_rename(
             .collect()
     };
     let lookup = keyed(&map.0);
-    let query_lookup = keyed(&map.1);
     // v0.6.5 model.rs 3681-3690 (warm index) and OG `:block/refs`: the
     // pages that explicitly reference a renamed name, plus every moved page.
     // The pages with a rewrite target no reference selects are read too: a
@@ -1071,7 +1065,6 @@ pub(super) fn plan_rename(
         days: journal_format,
         map,
         lookup,
-        query_lookup,
         moves,
         renamed,
         moved_titles_to_rebind,

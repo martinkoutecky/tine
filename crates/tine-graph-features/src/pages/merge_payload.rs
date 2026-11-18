@@ -404,7 +404,7 @@ fn reading(name: &str, format: &refs::RenameFormat<'_>) -> String {
 }
 
 /// Realize a merge from the exact bytes guarded by the caller's revisions.
-/// `links` and `queries` are the span writer's already-keyed substitutions.
+/// `links` is the span writer's already-keyed substitution.
 /// The survivor keeps its header and blocks; the source header is allocated
 /// as O6 says, in input order. Failure returns no writable proposal.
 /// O(changed bytes), no graph scan/I/O.
@@ -414,16 +414,15 @@ pub fn propose<'f>(
     _source: &PageDto,
     source_text: &str,
     links: &HashMap<String, String>,
-    queries: &HashMap<String, String>,
     org: bool,
     format: impl Into<refs::RenameFormat<'f>>,
 ) -> Result<MergeProposal, RealizationFailure> {
     let format = format.into();
     let (target_proposal, target_read) =
-        refs::rename_described_proposal(target_text, org, links, queries, format)
+        refs::rename_described_proposal(target_text, org, links, format)
             .map_err(|e| RealizationError::Trace(e).at(MergePart::Survivor))?;
     let (source_proposal, source_read) =
-        refs::rename_described_proposal(source_text, org, links, queries, format)
+        refs::rename_described_proposal(source_text, org, links, format)
             .map_err(|e| RealizationError::Trace(e).at(MergePart::Source))?;
     let mut headers = [target_read, source_read];
     let prefixes = headers.each_ref().map(|h| body_prefixes(h, org));

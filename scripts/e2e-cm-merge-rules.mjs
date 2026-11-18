@@ -102,7 +102,6 @@ try {
   await waitForFileText(path.join(graph, "pages/journal referrer.md"), (text) => text === "- see [[new/sub]]\n", { timeoutMs: 15_000 });
   await waitForFileText(path.join(graph, "pages/new.md"), (text) => text === "- source\n", { timeoutMs: 15_000 });
   assert.ok(!fs.existsSync(path.join(graph, "pages/old.md")), "old.md moved");
-  assert.equal(await browser.$(".tine-rename-alias-choice").isExisting(), false, "a rename asks nothing");
   await browser.waitUntil(async () => (await currentPageTitle(browser)) === "new", { timeout: 15_000, timeoutMsg: "the renamed page is not open as new" });
 
   stage = "O3: a name that is only another page's alias is refused naming that page";
@@ -112,7 +111,6 @@ try {
   await browser.waitUntil(() => browser.execute(() =>
     [...document.querySelectorAll(".toast-error .toast-msg")].some((toast) => /“ML” is an alias of the page “Machine Learning”/.test(toast.textContent ?? ""))),
   { timeout: 15_000, timeoutMsg: "no refusal naming Machine Learning" });
-  assert.equal(await browser.$(".tine-rename-alias-choice").isExisting(), false, "a refusal offers no choice");
   assert.equal(await currentPageTitle(browser), "ML notes");
   assert.deepEqual(snapshot(), beforeAliasHeld, "the alias-held refusal changed a file");
 
@@ -122,7 +120,6 @@ try {
   await browser.waitUntil(() => browser.execute(() =>
     [...document.querySelectorAll(".toast-error .toast-msg")].some((toast) => /“Short Two” is an alias of the page “Owner Two”/.test(toast.textContent ?? ""))),
   { timeout: 15_000, timeoutMsg: "no refusal naming Owner Two" });
-  assert.equal(await browser.$(".tine-rename-alias-choice").isExisting(), false, "a refusal offers no choice");
   assert.deepEqual(snapshot(), beforeAliasHeld, "the file-less refusal changed a file");
 
   stage = "O3: rename an alias-only link through the context menu";
@@ -139,7 +136,6 @@ try {
   const declaration = path.join(graph, "pages/Alias Source Owner.md");
   await waitForFileText(declaration, text => text === "alias:: Alias Renamed\n\n- alias owner body\n", { timeoutMs: 15_000 });
   await waitForFileText(path.join(graph, "pages/Alias journey.md"), text => text === '- [[Alias Renamed]]\n- {{query (page "Alias Renamed")}}\n', { timeoutMs: 15_000 });
-  assert.equal(await browser.$(".tine-rename-alias-choice").isExisting(), false, "a rename asks nothing");
   assert.ok(!fs.existsSync(path.join(graph, "pages/Alias Renamed.md")), "no file is created for an alias");
   assert.ok(!fs.existsSync(path.join(graph, "pages/Alias Source.md")));
 
@@ -159,7 +155,6 @@ try {
   await browser.waitUntil(() => browser.execute(() =>
     [...document.querySelectorAll(".toast-error .toast-msg")].some((toast) => /already a page or an alias inside “Foo”/.test(toast.textContent ?? ""))),
   { timeout: 15_000, timeoutMsg: "no error toast saying why the rename was refused" });
-  assert.equal(await browser.$(".tine-rename-alias-choice").isExisting(), false, "a refusal offers no choice");
   assert.deepEqual(snapshot(), beforeRefusal, "the refused rename changed a file");
 
   ownerFixture.verify();

@@ -435,7 +435,6 @@ fn valid_merge(
         &before_src,
         src,
         &Default::default(),
-        &Default::default(),
         org,
         store.config().file_name_format,
     )
@@ -1143,7 +1142,6 @@ fn tag_alias_name_cuts_keep_hash_and_existing_wrappers() {
                         &store.page(&source_id).unwrap().doc,
                         &source,
                         &map,
-                        &map,
                         org,
                         tine_core::config::FileNameFormat::Legacy,
                     )
@@ -1302,7 +1300,6 @@ fn merge(
         dst,
         &store.page(&src_id).unwrap().doc,
         src,
-        &Default::default(),
         &Default::default(),
         org,
         store.config().file_name_format,
@@ -1663,7 +1660,6 @@ fn invalid_merge_certificate_refuses_before_the_survivor_or_source_changes() {
         target,
         &store.page(&src).unwrap().doc,
         source,
-        &Default::default(),
         &Default::default(),
         false,
         store.config().file_name_format,

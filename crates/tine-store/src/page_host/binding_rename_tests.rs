@@ -60,7 +60,6 @@ impl PageHost {
                     std::str::from_utf8(&old).unwrap(),
                     id.as_str().ends_with(".org"),
                     &keyed(&map.0),
-                    &keyed(&map.1),
                     view.config.file_name_format,
                 )
                 .unwrap()
@@ -150,7 +149,7 @@ fn rename_cost_is_independent_of_registered_keys() {
 use crate::RenameMap;
 
 fn map(from: &str, to: &str) -> RenameMap {
-    RenameMap(vec![(from.into(), to.into())], Vec::new())
+    RenameMap(vec![(from.into(), to.into())])
 }
 
 /// Retry stale planning contexts as the feature does (B2).

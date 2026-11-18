@@ -249,9 +249,6 @@ fn common_suffix_len(a: &str, b: &str) -> usize {
 /// whose name folds to it, `reference_evidence::visit_reference_targets`).
 pub(crate) struct Renames<'a> {
     pages: &'a HashMap<String, String>,
-    /// A query's page-name arguments that name one of these keys take this
-    /// name instead of `pages`'; every other query argument follows `pages`.
-    queries: Option<&'a HashMap<String, String>>,
     keys: HashMap<String, &'a str>,
     file_name_format: FileNameFormat,
     /// The graph's journal format: a site spelled as a day stays (O2).
@@ -276,11 +273,9 @@ pub(crate) fn target_needs_report_or_write(
 }
 
 impl<'a> Renames<'a> {
-    /// `pages` maps `page_key(old)` to the new display name; `queries` (keyed
-    /// the same way) overrides it for query page-name arguments only.
+    /// `pages` maps `page_key(old)` to the new display name.
     pub(crate) fn new(
         pages: &'a HashMap<String, String>,
-        queries: Option<&'a HashMap<String, String>>,
         format: crate::refs::RenameFormat<'a>,
         record: bool,
     ) -> Self {
@@ -290,7 +285,6 @@ impl<'a> Renames<'a> {
             .collect();
         Self {
             pages,
-            queries: queries.filter(|queries| !queries.is_empty()),
             keys,
             file_name_format: format.names,
             days: format.days,
@@ -301,17 +295,6 @@ impl<'a> Renames<'a> {
 
     fn page(&self, name: &str) -> Option<Cow<'a, str>> {
         crate::refs::renamed_site_name(name, self.pages, self.days)
-    }
-
-    /// The new name of a query's page-name argument.
-    fn query_page(&self, name: &str) -> Option<Cow<'a, str>> {
-        let queries = self.queries;
-        crate::refs::pinned_site(name, self.days, || {
-            queries
-                .and_then(|queries| queries.get(&page_key(name)))
-                .map(|to| Cow::Borrowed(to.as_str()))
-        })
-        .or_else(|| self.page(name))
     }
 
     /// The new name of a property key: the page it names is the one whose
@@ -499,7 +482,7 @@ fn proposal_read<T>(
     };
     let observed =
         crate::cm_check::observe_with_readings(&doc, format, renames.file_name_format, &readings);
-    let edits = if renames.pages.is_empty() && renames.queries.is_none() {
+    let edits = if renames.pages.is_empty() {
         Vec::new()
     } else {
         page_edits(&lf, is_org, renames, &readings, Some((&headers, &doc)))
@@ -1095,7 +1078,7 @@ fn query_edits(
         let (family, argument_start) = (query.family, query.argument_start);
         let mut local: Vec<Edit> = Vec::new();
         for (range, name) in query.names {
-            let Some(to) = renames.query_page(&name) else {
+            let Some(to) = renames.page(&name) else {
                 continue;
             };
             let token = &raw[range.clone()];
@@ -1267,16 +1250,16 @@ mod tests {
     use std::time::{Duration, Instant};
 
     /// O2 per site (round 2 finding 1): page `2026 10 26` is no day, but its
-    /// property-key spelling `2026-10-26` is, and a query override naming a day
-    /// is a day site too. Both keep their spelling, as a `[[2026-10-26]]` link
-    /// does; the ordinary sites around them follow the rename.
+    /// property-key spelling `2026-10-26` is, and a query argument spelled as a
+    /// day is a day site too. Both keep their spelling, as a `[[2026-10-26]]`
+    /// link does; the ordinary sites around them follow the rename.
     #[test]
     fn a_day_spelled_property_key_stays() {
         let days = crate::date::JournalFormat::default();
         let format = crate::refs::RenameFormat::new(FileNameFormat::TripleLowbar, &days);
         let pages = HashMap::from([("2026 10 26".into(), "New".into())]);
         let text = "- [[2026 10 26]]\n  2026-10-26:: value\n";
-        let got = crate::refs::rename_proposal(text, false, &pages, &HashMap::new(), format);
+        let got = crate::refs::rename_proposal(text, false, &pages, format);
         assert_eq!(got.unwrap().text, "- [[New]]\n  2026-10-26:: value\n");
     }
 
@@ -1301,27 +1284,23 @@ mod tests {
                 "- b\n  foo:: {{renderer [[New]]}}, {{embed [[New]]}}\n  tags:: x, [[New]]\n",
             ),
         ] {
-            let got = crate::refs::rename_proposal(
-                text,
-                org,
-                &pages,
-                &HashMap::new(),
-                FileNameFormat::TripleLowbar,
-            )
-            .unwrap();
+            let got = crate::refs::rename_proposal(text, org, &pages, FileNameFormat::TripleLowbar)
+                .unwrap();
             assert_eq!(got.text, want, "{text:?}");
             assert!(got.unrealized.is_empty(), "{text:?}: {:?}", got.unrealized);
         }
     }
 
     #[test]
-    fn a_day_spelled_query_override_stays() {
+    fn a_day_spelled_query_argument_stays() {
         let days = crate::date::JournalFormat::default();
         let format = || crate::refs::RenameFormat::new(FileNameFormat::TripleLowbar, &days);
-        let pages = HashMap::from([("other".into(), "New".into())]);
-        let queries = HashMap::from([("2026-10-26".into(), "New".into())]);
+        let pages = HashMap::from([
+            ("other".into(), "New".into()),
+            ("2026-10-26".into(), "New".into()),
+        ]);
         let text = "- {{query [[2026-10-26]]}} [[Other]]\n";
-        let got = crate::refs::rename_proposal(text, false, &pages, &queries, format());
+        let got = crate::refs::rename_proposal(text, false, &pages, format());
         assert_eq!(got.unwrap().text, "- {{query [[2026-10-26]]}} [[New]]\n");
     }
 
@@ -1331,14 +1310,8 @@ mod tests {
             let text = "- [[Old]]\n".repeat(n);
             let map = HashMap::from([("old".into(), "New".into())]);
             let start = Instant::now();
-            let p = crate::refs::rename_proposal(
-                &text,
-                false,
-                &map,
-                &HashMap::new(),
-                FileNameFormat::TripleLowbar,
-            )
-            .unwrap();
+            let p = crate::refs::rename_proposal(&text, false, &map, FileNameFormat::TripleLowbar)
+                .unwrap();
             assert_eq!(p.text, "- [[New]]\n".repeat(n));
             assert_eq!(p.trace.inputs.len(), 1);
             assert_eq!(
@@ -1377,7 +1350,6 @@ mod tests {
                 text,
                 org,
                 &HashMap::new(),
-                &HashMap::new(),
                 FileNameFormat::TripleLowbar,
             )
             .unwrap();
@@ -1407,14 +1379,8 @@ mod tests {
             ),
         ] {
             let map = HashMap::from([("old".into(), "old".into())]);
-            let mut p = crate::refs::rename_proposal(
-                text,
-                org,
-                &map,
-                &HashMap::new(),
-                FileNameFormat::TripleLowbar,
-            )
-            .unwrap();
+            let mut p = crate::refs::rename_proposal(text, org, &map, FileNameFormat::TripleLowbar)
+                .unwrap();
             p.rebind_title(org, "old/[[old]]").unwrap();
             assert_eq!(p.text, want);
         }
@@ -1447,14 +1413,9 @@ mod tests {
                 (&new, "Old/[[Old]]", "New/[[Old]]", None),
             ] {
                 let text = page(title);
-                let mut p = crate::refs::rename_proposal(
-                    &text,
-                    org,
-                    map,
-                    &HashMap::new(),
-                    FileNameFormat::TripleLowbar,
-                )
-                .unwrap();
+                let mut p =
+                    crate::refs::rename_proposal(&text, org, map, FileNameFormat::TripleLowbar)
+                        .unwrap();
                 let to = map["old"].clone();
                 match want {
                     Some(want) => {
@@ -1485,7 +1446,6 @@ mod tests {
             "title:: Old/[[Old]]\n- body\n",
             false,
             &links,
-            &links,
             crate::config::FileNameFormat::TripleLowbar,
         )
         .unwrap();
@@ -1508,26 +1468,14 @@ mod tests {
         for target in ["file:x.md", "../pages/x.md"] {
             let text = format!("- see [Old]({target})\n");
             let map = HashMap::from([(crate::refs::page_key("Old"), "New".to_owned())]);
-            let p = crate::refs::rename_proposal(
-                &text,
-                false,
-                &map,
-                &HashMap::new(),
-                FileNameFormat::TripleLowbar,
-            )
-            .unwrap();
+            let p = crate::refs::rename_proposal(&text, false, &map, FileNameFormat::TripleLowbar)
+                .unwrap();
             assert_eq!(p.text, format!("- see [New]({target})\n"), "{target}");
             assert!(p.unrealized.is_empty(), "{target}: {:?}", p.unrealized);
             let proposal = |to: &str| {
                 let map = HashMap::from([(crate::refs::page_key("Old"), to.to_owned())]);
-                crate::refs::rename_proposal(
-                    &text,
-                    false,
-                    &map,
-                    &HashMap::new(),
-                    FileNameFormat::TripleLowbar,
-                )
-                .unwrap()
+                crate::refs::rename_proposal(&text, false, &map, FileNameFormat::TripleLowbar)
+                    .unwrap()
             };
             let p = proposal("a]b");
             assert_eq!(p.text, format!("- see [a\\]b]({target})\n"), "{target}");
@@ -1559,14 +1507,7 @@ mod tests {
     fn a_formatted_file_link_label_is_respelled_in_its_run_or_reported() {
         let proposal = |text: &str, org: bool, to: &str| {
             let map = HashMap::from([(crate::refs::page_key("Old"), to.to_owned())]);
-            crate::refs::rename_proposal(
-                text,
-                org,
-                &map,
-                &HashMap::new(),
-                FileNameFormat::TripleLowbar,
-            )
-            .unwrap()
+            crate::refs::rename_proposal(text, org, &map, FileNameFormat::TripleLowbar).unwrap()
         };
         for (text, org, to, after) in [
             (
@@ -1671,14 +1612,8 @@ mod tests {
                 "New",
             ] {
                 let map = HashMap::from([(crate::refs::page_key("Old"), to.to_owned())]);
-                let p = crate::refs::rename_proposal(
-                    text,
-                    org,
-                    &map,
-                    &HashMap::new(),
-                    FileNameFormat::TripleLowbar,
-                )
-                .unwrap();
+                let p = crate::refs::rename_proposal(text, org, &map, FileNameFormat::TripleLowbar)
+                    .unwrap();
                 if p.text == text {
                     let [site] = p.unrealized.as_slice() else {
                         panic!("{text} -> {to}: left, so one report: {:?}", p.unrealized);
@@ -1720,14 +1655,8 @@ mod tests {
                 .iter()
                 .any(|reference| reference.name == "Old");
             let map = HashMap::from([(crate::refs::page_key("Old"), "New".to_owned())]);
-            let p = crate::refs::rename_proposal(
-                &text,
-                false,
-                &map,
-                &HashMap::new(),
-                FileNameFormat::TripleLowbar,
-            )
-            .unwrap();
+            let p = crate::refs::rename_proposal(&text, false, &map, FileNameFormat::TripleLowbar)
+                .unwrap();
             let want = if named {
                 format!("- ![New]({target})\n")
             } else {
@@ -1788,14 +1717,8 @@ mod tests {
             ),
         ] {
             let map = HashMap::from([(crate::refs::page_key(old), to.to_owned())]);
-            let p = crate::refs::rename_proposal(
-                text,
-                org,
-                &map,
-                &HashMap::new(),
-                FileNameFormat::TripleLowbar,
-            )
-            .unwrap();
+            let p = crate::refs::rename_proposal(text, org, &map, FileNameFormat::TripleLowbar)
+                .unwrap();
             assert!(
                 p.unrealized
                     .iter()
@@ -1813,22 +1736,20 @@ mod tests {
         for n in [1, 64, 512] {
             let text = "- [[Old/link]] #Old/tag {{renderer [[Old/macro]]}} {{query (page [[Old/query]])}}\n".repeat(n);
             super::BLOCK_WALKS.with(|walks| walks.set(0));
-            let plain = crate::refs::rename_rewrite_with_queries(
+            let plain = crate::refs::rename_rewrite_recording(
                 &text,
                 false,
                 &map,
-                &[],
                 FileNameFormat::TripleLowbar,
                 None,
             );
             let walks = super::BLOCK_WALKS.with(|walks| walks.replace(0));
             let mut names = HashSet::new();
             let start = Instant::now();
-            let recorded = crate::refs::rename_rewrite_with_queries(
+            let recorded = crate::refs::rename_rewrite_recording(
                 &text,
                 false,
                 &map,
-                &[],
                 FileNameFormat::TripleLowbar,
                 Some(&mut names),
             );
@@ -1852,7 +1773,6 @@ mod tests {
                 &text,
                 false,
                 &HashMap::from([("old".into(), "New family".into())]),
-                &HashMap::new(),
                 FileNameFormat::TripleLowbar,
             )
             .unwrap();
@@ -1873,11 +1793,10 @@ mod tests {
         let mut names = HashSet::new();
         let text = "- {{renderer [[Old/macro]]}} {{query (page [[Old/query]])}}\n";
         assert_eq!(
-            crate::refs::rename_rewrite_with_queries(
+            crate::refs::rename_rewrite_recording(
                 text,
                 false,
                 &[("Old".into(), "Bad}name".into())],
-                &[],
                 FileNameFormat::TripleLowbar,
                 Some(&mut names)
             ),

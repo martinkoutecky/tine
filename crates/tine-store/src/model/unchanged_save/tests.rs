@@ -101,43 +101,117 @@ fn an_org_file_that_does_not_round_trip_is_refused() {
     assert_eq!(refused.kind(), io::ErrorKind::PermissionDenied);
 }
 
+/// How a save refuses, as the real save's `Why` and the pure function's
+/// `io::Error` both say it: the family of refusal and its message.
+#[derive(Debug, PartialEq)]
+enum Refused {
+    /// Read-only: VCS conflict markers, an Org file that does not round-trip,
+    /// a parser panic.
+    ReadOnly(String),
+    /// The content cannot be parsed safely: size, nesting.
+    Unparseable(String),
+    /// The bytes are not UTF-8.
+    Undecodable,
+}
+
+fn pure_refusal(rel: &str, text: &str) -> Option<Refused> {
+    let error = pure(rel, text).err()?;
+    let message = error.to_string();
+    let not_utf8 = error.get_ref().is_some_and(|e| e.is::<NotUtf8>());
+    let panicked = error.get_ref().is_some_and(|e| e.is::<ParserPanicked>());
+    Some(match error.kind() {
+        _ if not_utf8 => Refused::Undecodable,
+        io::ErrorKind::PermissionDenied => Refused::ReadOnly(message),
+        _ if panicked => Refused::ReadOnly(message),
+        io::ErrorKind::InvalidData => Refused::Unparseable(message),
+        kind => panic!("unexpected refusal kind {kind:?}: {message}"),
+    })
+}
+
+/// What the real unchanged save says of page bytes `old` at `rel`: the
+/// transaction's own serializer (`serialize_host_input`, the one place that
+/// serializes page bytes for a save) over `old`, given the DTO of a loadable
+/// page of the same format (every refusal below is a verdict on `old`).
+fn real_refusal(rel: &str, old: &[u8]) -> Option<Refused> {
+    use crate::transaction::{Refusal, Why};
+    let dir = crate::test_support::fresh_dir("tine-unchanged-save-");
+    fs::create_dir_all(dir.join("pages")).unwrap();
+    let ext = Path::new(rel).extension().unwrap().to_str().unwrap();
+    let good = format!("pages/Good.{ext}");
+    let content = if ext == "org" {
+        "* editable\n"
+    } else {
+        "- editable\n"
+    };
+    fs::write(dir.join(&good), content).unwrap();
+    let store = Arc::new(Store::open(&dir, Default::default()).unwrap().0);
+    let id = PageId::from(good.as_str());
+    let doc = store.page(&id).unwrap().doc;
+    let out = store
+        .page_plan(None)
+        .serialize_host_input(&id.file(), &doc, Some(old));
+    store.close();
+    let _ = fs::remove_dir_all(&dir);
+    match out {
+        Ok(_) => None,
+        Err(Why::Refused(Refusal::ReadOnly(message))) => Some(Refused::ReadOnly(message)),
+        Err(Why::Refused(Refusal::InvalidTarget(message))) => Some(Refused::Unparseable(
+            message
+                .strip_prefix("page content cannot be parsed safely: ")
+                .expect("the content refusal's wording")
+                .to_owned(),
+        )),
+        Err(Why::Refused(Refusal::Undecodable)) => Some(Refused::Undecodable),
+        Err(other) => panic!("not a refusal: {other:?}"),
+    }
+}
+
 /// Review round 2, finding 3: the pure function refuses what the real
-/// unchanged save refuses, family by family, with the same refusal kind:
-/// unresolved VCS conflict markers (Markdown and Org), an outline nested past
-/// the parse limit, an Org headline past it, and an Org file that does not
-/// round-trip.
+/// unchanged save refuses, family by family, with the same refusal and the
+/// same message (both run `guarded_save`'s firewalls and `parser_unwind`):
+/// unresolved VCS conflict markers (Markdown and Org), the parse size limit,
+/// an outline nested past the parse limit, an Org headline past it, a parser
+/// panic, and an Org file that does not round-trip. Text that is not UTF-8
+/// reaches the real save only (the pure function takes `&str`, and the check
+/// refuses such bytes before it, `model_check::check`).
 #[test]
 fn every_refusal_family_of_the_real_save_is_the_pure_functions() {
     let deep: String = (0..130)
         .map(|d| format!("{}- d{d}\n", "  ".repeat(d)))
         .collect();
     let deep_org: String = format!("{} deep\n", "*".repeat(130));
-    use io::ErrorKind::{InvalidData, PermissionDenied};
-    let cases: &[(&str, &str, io::ErrorKind)] = &[
+    let huge = format!("- {}", "a".repeat(PARSE_INPUT_MAX_BYTES as usize));
+    let panics = format!("- {}\n", tine_core::doc::TEST_PROJECTION_PANIC_SENTINEL);
+    let cases: Vec<(&str, &str)> = vec![
         (
             "pages/R.md",
             "<<<<<<< ours\nx\n=======\ny\n>>>>>>> theirs\n- kept\n",
-            PermissionDenied,
         ),
         (
             "pages/R.md",
             "- a\n<<<<<<< ours\n- x\n=======\n- y\n>>>>>>> theirs\n",
-            PermissionDenied,
         ),
         (
             "pages/R.org",
             "* a\n<<<<<<< ours\n* x\n=======\n* y\n>>>>>>> theirs\n",
-            PermissionDenied,
         ),
-        ("pages/R.md", &deep, InvalidData),
-        ("pages/R.org", &deep_org, InvalidData),
-        ("pages/R.org", "* a\n*** c\n", PermissionDenied),
+        ("pages/R.md", &deep),
+        ("pages/R.org", &deep_org),
+        ("pages/R.md", &huge),
+        ("pages/R.md", &panics),
+        ("pages/R.org", "* a\n*** c\n"),
     ];
-    for (rel, text, kind) in cases {
-        assert_eq!(real(rel, text), None, "the real save takes {text:?}");
-        let refused = pure(rel, text).expect_err(text);
-        assert_eq!(refused.kind(), *kind, "{text:?}");
+    for (rel, text) in cases {
+        let shown: String = text.chars().take(60).collect();
+        let real = real_refusal(rel, text.as_bytes());
+        assert!(real.is_some(), "the real save takes {shown:?}");
+        assert_eq!(pure_refusal(rel, text), real, "{shown:?}");
     }
+    // Not UTF-8: the real save's answer, which no `&str` can ask the pure one.
+    assert_eq!(
+        real_refusal("pages/R.md", b"- a\xff\n"),
+        Some(Refused::Undecodable)
+    );
 }
 
 /// Per call, on top of the caller's one parse of the candidate: Markdown

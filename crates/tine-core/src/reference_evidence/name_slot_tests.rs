@@ -181,7 +181,6 @@ fn nested_candidate_confirmation_keeps_one_source_parse_per_block() {
                 &text,
                 org,
                 &std::collections::HashMap::from([("a [[x]]".to_owned(), "b [[Y]]".to_owned())]),
-                &std::collections::HashMap::new(),
                 crate::config::FileNameFormat::TripleLowbar,
             )
             .unwrap();
@@ -390,7 +389,6 @@ fn rename_proposal_keeps_one_source_parse_per_block() {
                 &text,
                 false,
                 &std::collections::HashMap::from([("old".to_owned(), "New".to_owned())]),
-                &std::collections::HashMap::new(),
                 crate::config::FileNameFormat::TripleLowbar,
             )
             .unwrap();

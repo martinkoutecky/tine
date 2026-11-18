@@ -349,7 +349,7 @@ impl<F: HostIo> Host<F> {
             let org = syntax == Format::Org;
             let none = std::collections::HashMap::new();
             let mut proposal =
-                tine_core::refs::rename_proposal(text, org, &none, &none, format).map_err(drop)?;
+                tine_core::refs::rename_proposal(text, org, &none, format).map_err(drop)?;
             proposal.rebind_title(org, to).map_err(drop)?;
             Ok(Some(Arc::from(proposal.text.into_bytes())))
         })

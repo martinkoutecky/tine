@@ -97,7 +97,6 @@ fn reader_redesign_preserves_parent_bytes_and_refusal_provenance() {
                         &pages[j],
                         source,
                         &Default::default(),
-                        &Default::default(),
                         org,
                         store.config().file_name_format,
                     );
@@ -217,7 +216,6 @@ fn merge_reads_each_input_and_the_output_outline_once() {
                     &page,
                     &text,
                     &links,
-                    &Default::default(),
                     org,
                     store.config().file_name_format,
                 )
@@ -290,7 +288,6 @@ fn reader_redesign_preserves_drawer_context_and_mapped_titles() {
                                 &src,
                                 &source,
                                 &links,
-                                &Default::default(),
                                 true,
                                 store.config().file_name_format,
                             ) {
@@ -380,7 +377,6 @@ fn identical_clashing_directive_merges_as_a_leftover_quote() {
             &page("pages/Src.org"),
             text,
             &Default::default(),
-            &Default::default(),
             true,
             names,
         )
@@ -428,7 +424,6 @@ fn a_no_break_space_header_line_is_content_for_insertion() {
             &target,
             &page("pages/Src.md", &source),
             &source,
-            &Default::default(),
             &Default::default(),
             false,
             names,

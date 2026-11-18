@@ -396,13 +396,10 @@ fn wrong_output(row: &Value) {
         trace.check_shadow(new).unwrap();
         let id = tine_core::model::PageId::from(before[1]["path"].as_str().unwrap());
         let (_, rev) = store.read(&id.file(), None).unwrap();
-        let map = Arc::new(tine_store::RenameMap(
-            vec![(
-                row[2].as_str().unwrap().into(),
-                row[3].as_str().unwrap().into(),
-            )],
-            vec![],
-        ));
+        let map = Arc::new(tine_store::RenameMap(vec![(
+            row[2].as_str().unwrap().into(),
+            row[3].as_str().unwrap().into(),
+        )]));
         let mut tx = store.page_plan(Some(tine_store::EditKind::RenamePage));
         tx.rewrite_refs_prepared(
             &[tine_store::EditKind::RenamePage],

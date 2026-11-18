@@ -37,7 +37,6 @@ fn parent_success_header_bytes_are_preserved() {
             &src,
             source,
             &Default::default(),
-            &Default::default(),
             false,
             store.config().file_name_format,
         )
@@ -131,7 +130,6 @@ fn prose_uses_the_readers_content_end_and_excludes_only_layout() {
             &src,
             source,
             &Default::default(),
-            &Default::default(),
             org,
             store.config().file_name_format,
         )
@@ -197,7 +195,6 @@ fn prose_content_comparison_visits_each_observed_byte_once() {
                 &src,
                 source,
                 &Default::default(),
-                &Default::default(),
                 org,
                 store.config().file_name_format,
             )
@@ -229,7 +226,6 @@ fn org_final_breaks_are_only_consumed_join_layout() {
             &target,
             &page("pages/source.org", &source),
             &source,
-            &Default::default(),
             &Default::default(),
             true,
             store.config().file_name_format,
@@ -283,7 +279,6 @@ fn source_indentation_work_is_one_visit_per_line_and_bounded_by_merge_work() {
                 target,
                 doc,
                 text,
-                &Default::default(),
                 &Default::default(),
                 false,
                 store.config().file_name_format,
@@ -360,7 +355,6 @@ fn source_and_survivor_trace_context_survive_the_io_boundary() {
             &store.page_of(&src, source.as_bytes()).unwrap().doc,
             source,
             &links,
-            &Default::default(),
             false,
             store.config().file_name_format,
         )
@@ -415,7 +409,6 @@ fn ordinary_line_endings_never_require_an_internal_trace_refusal() {
                         &page("source", &source),
                         &source,
                         &Default::default(),
-                        &Default::default(),
                         org,
                         store.config().file_name_format,
                     ) {
@@ -459,7 +452,6 @@ mod drawer_cost_tests {
             target,
             &src,
             source,
-            &Default::default(),
             &Default::default(),
             true,
             store.config().file_name_format,
