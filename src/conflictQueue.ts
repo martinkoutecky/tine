@@ -68,6 +68,14 @@ export function conflictForPage(path: string | undefined): ConflictObject | unde
   return path ? conflictQueue().find((conflict) => conflict.source !== "duplicate-name" && conflict.page_path === path) : undefined;
 }
 
+/** Whether the page file at `path` is one of several files claiming one name
+ *  (the queue's duplicate-name object): its delete names the file (GH #978).
+ *  O(queue). */
+export function sharesPageName(path: string | undefined): boolean {
+  return !!path && conflictQueue().some((conflict) => conflict.source === "duplicate-name"
+    && conflict.sides.some((side) => side.path === path));
+}
+
 /** Retire one object a guarded resolve just proved gone, without waiting for a
  *  graph walk; the follow-up refresh reconciles anything else. */
 export function settleArtifactConflict(id: string): void {

@@ -18,6 +18,7 @@ context-menu-delete-page-label =
         [journal] حذف روزنوشت
        *[page] حذف صفحه
     }
+context-menu-delete-file-label = حذف فایل «{ $path }»
 context-menu-ui-couldn-t-copy-clipboard-write-failed = کپی نشد: نوشتن در کلیپ‌بورد ناموفق بود.
 context-menu-ui-page-actions = عملیات صفحه
 context-menu-ui-show-children-as = نمایش فرزندان به‌صورت ←

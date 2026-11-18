@@ -1221,6 +1221,7 @@ pub fn run() {
             page_commands::page_discard,
             page_commands::page_close,
             page_commands::page_delete,
+            page_commands::page_delete_file,
             page_commands::page_wait,
             page_commands::page_save_now,
             page_commands::page_owed,

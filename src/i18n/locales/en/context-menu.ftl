@@ -21,6 +21,8 @@ context-menu-delete-page-label =
         [journal] Delete journal
        *[page] Delete page
     }
+# GH #978: the page's file shares its name with other files; the item deletes this one file.
+context-menu-delete-file-label = Delete file “{ $path }”
 context-menu-ui-couldn-t-copy-clipboard-write-failed = Couldn't copy: clipboard write failed.
 context-menu-ui-page-actions = Page actions
 context-menu-ui-show-children-as = Show children as →

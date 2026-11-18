@@ -24,6 +24,7 @@ import "../graph"; // installs the document rename's navigation refresh handler
 import { backend } from "../backend";
 import { setPageProperty } from "../document";
 import { carryDay } from "../carry";
+import { sharesPageName } from "../conflictQueue";
 import { journalTitle, appNow } from "../journal";
 import { BLOCK_COLOR_NAMES, BLOCK_COLOR_SWATCH } from "../blockColors";
 import { blockSubtreeMarkdown, deleteBlock, deleteSelection, selectionMarkdown, withUndoUnit, setBlockProperty, toggleBlockProperty, toggleOwnNumberedList, blockProperty, setSelectionHeading, blockWritable, setCollapsedTrees, flushPage, deletePage, restoreTodayJournalInFeed, reportPageLoadRefusal, selectedIds, blockPageReadOnly, pageByName, buildClipboardPayload, insertOutlineBefore, blockExternalId, node as docNode } from "../document";
@@ -811,6 +812,8 @@ function PageMenu(props: {
   const path = props.path ?? openedPage?.id;
   const target = (): PageTarget => ({ name: props.name, pageKind: props.pageKind, ...(path ? { path } : {}) });
   const fav = () => isFavorite(props.name, props.pageKind);
+  // GH #978: a file sharing its name with others is deleted as that file.
+  const twinFile = () => sharesPageName(path) ? path : undefined;
   const readOnly = () => {
     const page = pageByName(props.name);
     return !pageTargetMatchesLoaded(target(), page) || pageReadOnly(page);
@@ -865,11 +868,12 @@ function PageMenu(props: {
     const name = props.name;
     const kind = props.pageKind;
     const captured = target();
+    const file = twinFile(); // the pinned target's own path: `target()` carries `path`
     // Native GTK confirm — window.confirm silently returns true here, which would
     // delete the page with no prompt.
     // A conflicted page is deleted through its conflict (master parity): the
     // prompt says the unsaved changes go too.
-    const confirmed = await readOwned(owner, backend().confirm(t("context-menu-ui-delete-the-file-moves-to-the-graph-s-tine", { name, unsaved: isConflicted(name) ? "discard" : "none" }), { okLabel: t("confirm-delete"), cancelLabel: t("confirm-cancel") }));
+    const confirmed = await readOwned(owner, backend().confirm(t("context-menu-ui-delete-the-file-moves-to-the-graph-s-tine", { name: file ?? name, unsaved: isConflicted(name) ? "discard" : "none" }), { okLabel: t("confirm-delete"), cancelLabel: t("confirm-cancel") }));
     if (confirmed.kind === "stale" || !confirmed.value) return;
     if (!captured.path && (pageByName(name) !== openedPage || pageInstanceGeneration(name) !== openedInstance || pageByName(name)?.id !== path)) {
       pushToast(msg("context-menu-ui-this-page-target-changed-reopen-the-page-actions-menu"), "error");
@@ -881,7 +885,7 @@ function PageMenu(props: {
     // Pane routes are retired inside the durable delete, before the page leaves
     // the working set, so no pane renders a route to a purged page (GH #376).
     let failure: UiText = msg("delete-reason-refused");
-    void writeOwned(owner, deletePage(name, kind, captured.path, () => removePageTargetAcrossPanes(captured), reason => { failure = reason; }))
+    void writeOwned(owner, deletePage(name, kind, captured.path, () => removePageTargetAcrossPanes(captured), reason => { failure = reason; }, !!file))
       .then((result) => {
         if (result.kind === "stale") return;
         const ok = result.value;
@@ -896,7 +900,7 @@ function PageMenu(props: {
           const refused = restoreTodayJournalInFeed();
           if (refused) reportPageLoadRefusal(refused);
         }
-        pushToast(msg("context-menu-ui-deleted", { name: name }), "success");
+        pushToast(msg("context-menu-ui-deleted", { name: file ?? name }), "success");
       })
       .catch(error => { if (owner()) pushToast(msg("delete-failed", { reason: String(error) }), "error"); });
   };
@@ -982,10 +986,10 @@ function PageMenu(props: {
           class="ctx-item ctx-page-item danger"
           role="menuitem"
           tabIndex={-1}
-          data-page-action-id={props.pageKind === "journal" ? "delete-journal" : "delete-page"}
+          data-page-action-id={twinFile() ? "delete-file" : props.pageKind === "journal" ? "delete-journal" : "delete-page"}
           onClick={() => { void remove(); props.close(false); }}
         >
-          {deletePageMenuLabel(props.pageKind)}
+          {twinFile() ? t("context-menu-delete-file-label", { path: twinFile()! }) : deletePageMenuLabel(props.pageKind)}
         </button>
       </Show>
     </>

@@ -21,6 +21,8 @@ context-menu-delete-page-label = { $kind ->
    *[page] 删除页面
     }
 
+context-menu-delete-file-label = 删除文件“{ $path }”
+
 context-menu-ui-couldn-t-copy-clipboard-write-failed = 无法复制：写入剪贴板失败。
 
 context-menu-ui-page-actions = 页面操作
