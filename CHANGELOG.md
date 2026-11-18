@@ -12,6 +12,7 @@ The format follows [Keep a Changelog](https://keepachangelog.com/); versions use
 - With a year-less journal title format such as `MM-dd`, a page named `11-02` and the journal days titled `11-02` are no longer shown as one conflicted name, and each day is its own: `[[2026-11-02]]` queries find the day's blocks, its Linked References and link graph include links written as `[[2026-11-02]]`, and `[[11-02]]` means only the page named `11-02` (REG-CM-YEARLESS-DAY-KEY).
 - On Windows, a graph on a file system without file IDs (a WSL share such as `\\wsl.localhost`, a FAT32 or exFAT drive, a Samba share) can be saved again; since 0.9.0 every save failed with "The request is not supported (os error 50)" (reported by redstreet in #973; REG-973-WINDOWS-NO-FILE-ID).
 
+- A code block whose text wraps because of a theme or custom.css (not Tine's wrap setting) keeps its line numbers level with their lines: the numbers after a wrapped line sat one row too high and the last line had none (reported by BeyondTheJob in #970; UI-GH970-CODE-GUTTER-WRAP).
 - Closing Quick Capture with the window manager (Alt+F4, Cmd+W) no longer loses the text you typed or stops Quick Capture from opening until Tine is restarted: it hides like losing focus does, and the next capture shortcut shows the draft again (reported by corefusion in #967; UI-CAPTURE-WM-CLOSE-967).
 - Quick share links are offered in every build of Tine, including the Flatpak
   and builds from source. They used to show "Coming soon" in any build made
