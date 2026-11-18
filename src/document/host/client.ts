@@ -98,8 +98,8 @@ interface Page {
   held: { content: Content; version: number } | null;
   /** The latest version the host took from this window: what must publish (S1). */
   needed: number | null;
-  /** Latest nonconflicted input's loaded instance and authoring version. */
-  pendingBase: { instance: number; version: number } | null;
+  /** Nonconflicted inputs the host took and no proof has published yet. */
+  pending: PendingBases;
   /** Last installed or witnessed-publication version on a loaded instance. */
   reviewBase: { instance: number; version: number } | null;
   /** The highest taken version a publication wait answered true for (J6). */
@@ -133,6 +133,44 @@ const SEND_MAX_WAIT_MS = 1000;
 /** After a false publication answer no terminal notice explains (a failed call,
  * a host that ended), the window asks again this much later. */
 const PUBLICATION_RETRY_MS = 1000;
+
+/** A nonconflicted input the host took: loaded instance, taken version, buffer revision. */
+type PendingBase = { instance: number; version: number; rev: string };
+
+/** Pending review ancestors, oldest (lowest version) first. A proof settles a
+ * prefix, so each entry is inspected a bounded number of times; a disk
+ * revision is matched by a count per revision, never by a scan (PRINCIPLES 2). */
+export class PendingBases {
+  private list: PendingBase[] = [];
+  private head = 0;
+  private revs = new Map<string, number>();
+
+  push(base: PendingBase): void {
+    this.list.push(base);
+    this.revs.set(base.rev, (this.revs.get(base.rev) ?? 0) + 1);
+  }
+
+  /** The oldest pending entry with these bytes, settled with every older one. */
+  takeRev(rev: string): PendingBase | null {
+    if (!this.revs.has(rev)) return null;
+    for (;;) { const base = this.shift(); if (base.rev === rev) return base; }
+  }
+
+  /** The newest pending entry at or below `version`, settled with every older one. */
+  takeVersion(version: number): PendingBase | null {
+    let base: PendingBase | null = null;
+    while (this.head < this.list.length && this.list[this.head].version <= version) base = this.shift();
+    return base;
+  }
+
+  private shift(): PendingBase {
+    const base = this.list[this.head++];
+    const left = this.revs.get(base.rev)! - 1;
+    if (left) this.revs.set(base.rev, left); else this.revs.delete(base.rev);
+    if (this.head * 2 >= this.list.length) { this.list = this.list.slice(this.head); this.head = 0; }
+    return base;
+  }
+}
 
 function sameToken(a: DiskToken | null | undefined, b: DiskToken | null | undefined): boolean {
   return !!a && !!b && a.kind === b.kind && (a.kind === "no-file" || a.rev === (b as { rev: string }).rev);
@@ -550,7 +588,7 @@ export class HostClient {
     const session = this.session;
     const covered = new Map(needs.map(({ key, version }) => {
       const page = this.byKey.get(key);
-      return [key, { version, page, base: page?.pendingBase }];
+      return [key, { version, page }];
     }));
     while (!this.retired) {
       const result = await Promise.race([this.host.waitPublished(session, needs), this.retirement]);
@@ -565,17 +603,11 @@ export class HostClient {
         for (const { key, version, rev } of result) {
           const saved = covered.get(key);
           if (!saved) continue;
-          const { page, base } = saved;
-          // Review uses the newest revision the host witnessed published on this
-          // loaded instance, never an unpublished submission or an ancestor older
-          // than installed disk content (including an identical-content reload).
-          if (page && this.byKey.get(key) === page && base && base.instance === this.instanceOf(page)
-            && base.version <= version
-            && (page.reviewBase?.instance !== base.instance || page.reviewBase.version < version)) {
-            this.doc.published(page.name, rev);
-            page.reviewBase = { instance: base.instance, version };
-          }
-          if (page && base && page.pendingBase === base && base.version <= version) page.pendingBase = null;
+          const { page } = saved;
+          // The host's own-publication witness settles every pending revision
+          // at or below the version it published, whenever the wait started.
+          const base = page && this.byKey.get(key) === page ? page.pending.takeVersion(version) : null;
+          if (page && base) this.proved(page, base.instance, version, rev);
         }
         this.onChange();
       }
@@ -627,7 +659,6 @@ export class HostClient {
       return;
     }
     if (request === "open") page.on = true;
-    this.observe(page, mail.page);
     // A took answer is this request's text: it is the baseline of the page
     // instance that sent it, never of a same-name replacement loaded since.
     if (answer.took && instance === this.instanceOf(page)) {
@@ -637,11 +668,13 @@ export class HostClient {
       if (rev) {
         this.doc.took(page.name);
         if (!mail.page.conflict && instance !== null)
-          page.pendingBase = { instance, version: answer.version };
+          page.pending.push({ instance, version: answer.version, rev });
       }
     } else if (answer.took) {
       page.needed = answer.version;
     }
+    // After the took revision is pending, so a disk that already holds it proves it.
+    this.observe(page, mail.page);
     const content = this.contentOf(mail.page);
     const newer = page.editSeq > page.sentSeq;
     if (newer || this.holds(page)) {
@@ -698,7 +731,7 @@ export class HostClient {
     let page = this.pages.get(name);
     if (!page) {
       page = { name, key: null, on: false, version: null, editSeq: 0, sentSeq: 0, phase: { kind: "idle" }, stash: [],
-        baseline: null, observed: null, notice: null, held: null, needed: null, pendingBase: null, reviewBase: null, waited: null, waiting: null, retry: null, refusal: null, refs: new Set(),
+        baseline: null, observed: null, notice: null, held: null, needed: null, pending: new PendingBases(), reviewBase: null, waited: null, waiting: null, retry: null, refusal: null, refs: new Set(),
         kinds: [], timer: null, burst: null, waiters: [], answered: [] };
       this.pages.set(name, page);
     }
@@ -767,7 +800,26 @@ export class HostClient {
   }
 
   private observe(page: Page, mail: MailPage): void {
+    const fresh = !sameToken(page.observed?.disk, mail.disk);
     page.observed = { disk: mail.disk ?? null, conflict: mail.conflict };
+    // A new disk observation holding a pending revision's bytes proves the
+    // oldest such revision published; it and every older one are settled. A
+    // repeated token is the host's retained observation, which a completed save
+    // does not refresh: it may predate the input whose bytes it matches.
+    const disk = mail.disk;
+    if (!fresh || disk?.kind !== "file") return;
+    const base = page.pending.takeRev(disk.rev);
+    if (base) this.proved(page, base.instance, base.version, base.rev);
+  }
+
+  /** Review uses the newest revision proven published on this loaded instance,
+   * never an unpublished submission or an ancestor older than installed disk
+   * content (including an identical-content reload). */
+  private proved(page: Page, instance: number, version: number, rev: string | null): void {
+    if (instance !== this.instanceOf(page)) return;
+    if (page.reviewBase?.instance === instance && page.reviewBase.version >= version) return;
+    this.doc.published(page.name, rev);
+    page.reviewBase = { instance, version };
   }
 
   private contentOf(mail: MailPage): Content | null {
@@ -780,7 +832,7 @@ export class HostClient {
     this.doc.install(page.name, content);
     page.version = version;
     page.held = null;
-    page.pendingBase = null;
+    page.pending = new PendingBases();
     const instance = this.instanceOf(page);
     page.reviewBase = instance === null ? null : { instance, version };
     this.remember(page, content.kind === "no-file" ? null : content.dto.rev ?? undefined, version);

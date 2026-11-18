@@ -1012,6 +1012,12 @@ impl<'a> PagePlan<'a> {
                 }));
             }
         }
+        let source = moving_from.map(|source| self.path(source)).transpose()?;
+        if let Some(held) = (self.store.graph).unindexed_held_claimant(&entry, source.as_deref()) {
+            return Err(Why::Refused(Refusal::Twin {
+                existing: PageId::from(self.store.graph.rel_path(&held)),
+            }));
+        }
         let _ = id;
         Ok(())
     }
