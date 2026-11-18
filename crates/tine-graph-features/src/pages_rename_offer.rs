@@ -5,10 +5,9 @@
 //! (CM step 2 batch 12, PARITY-CAMPAIGN §3).
 use std::io;
 
-use tine_core::refs;
 use tine_store::{PageHost, PageId, Store};
 
-use super::rename_helpers::{self, AliasEdit, Effect, Request, TagUnion};
+use super::rename_helpers::{self, AliasEdit, Effect, TagUnion};
 use super::rename_plan::{name_of, plan_released_rename, plan_rename, RenameBlocked, RenameChoice};
 use super::{error, existing, refreshed_view, rename_page_after_inventory, view, RenameReport};
 
@@ -304,22 +303,8 @@ fn alias_dialog(
                 &|| {},
             ) {
                 Ok(plan) => {
-                    let survivor = PageId::from(into.clone());
-                    let retargeted = source_id.iter().flat_map(|source_id| {
-                        let request = Request::Merge {
-                            source: source_id,
-                            survivor: &survivor,
-                            name: &name,
-                        };
-                        source
-                            .aliases
-                            .iter()
-                            .filter_map(|alias| {
-                                rename_helpers::retarget(&plan.graph, alias, &request)
-                            })
-                            .collect::<Vec<_>>()
-                    });
-                    let effect = rename_helpers::effect(&plan, retargeted.collect());
+                    let retargeted = rename_helpers::retargets(store, &plan, &name, &[])?;
+                    let effect = rename_helpers::effect(&plan, retargeted);
                     merges.push(MergeChoice {
                         into,
                         name,
@@ -365,31 +350,11 @@ fn alias_dialog(
     if own_refused.is_none() {
         match plan_released_rename(store, old, new, expected_path) {
             Ok(plan) if !plan.unchanged => {
-                // A file-less source has no file to move: an id no file has.
-                let (from, to) = match &source_id {
-                    Some(id) => (
-                        id.clone(),
-                        plan.moves
-                            .get(id)
-                            .map_or_else(|| id.clone(), |to| PageId::from(to.as_str())),
-                    ),
-                    None => (PageId::from(""), PageId::from("")),
-                };
-                let request = Request::Own {
-                    source: &from,
-                    to: &to,
-                    name: new,
-                };
-                let retargeted = std::iter::once(new)
-                    .chain(
-                        source
-                            .aliases
-                            .iter()
-                            .map(String::as_str)
-                            .filter(|alias| !refs::same_page(alias, new)),
-                    )
-                    .filter_map(|name| rename_helpers::retarget(&plan.graph, name, &request))
+                let released: Vec<PageId> = edits
+                    .iter()
+                    .map(|edit| PageId::from(edit.path.as_str()))
                     .collect();
+                let retargeted = rename_helpers::retargets(store, &plan, new, &released)?;
                 let mut effect = rename_helpers::effect(&plan, retargeted);
                 for edit in &edits {
                     if !effect.pages.contains(&edit.page) {

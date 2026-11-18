@@ -588,3 +588,313 @@ fn use_the_name_retargets_shared_aliases_that_change_owner() {
     assert_eq!(resolved_name(&store, "Kept"), "pages/ML.md");
     assert_eq!(resolved_name(&store, "ML"), "pages/ML.md");
 }
+
+/// One request of the alias dialog: rename `old` to `typed` (only an alias),
+/// answered by merging into `into` (`Some`) or by "use the name" (`None`).
+struct Case {
+    label: &'static str,
+    files: &'static [(&'static str, &'static str)],
+    old: &'static str,
+    typed: &'static str,
+    into: Option<&'static str>,
+    /// The rows the dialog must show: (name, before, after, pages).
+    rows: &'static [(
+        &'static str,
+        &'static str,
+        &'static str,
+        &'static [&'static str],
+    )],
+    /// (row name, a spelling links use) for every name a surviving link
+    /// names, and the files the request moves (before, after).
+    probes: &'static [(&'static str, &'static str)],
+    moves: &'static [(&'static str, &'static str)],
+}
+
+const SOURCE_PLAIN: (&str, &str) = ("pages/Source.md", "- s\n");
+const Z_ML: (&str, &str) = ("pages/Z.md", "alias:: ML\n\n- z\n");
+const MINE: &[(&str, &str, &str, &[&str])] = &[("Mine", "Source", "Z", &["Z"])];
+const ML_TO_Z: &[(&str, &str, &str, &[&str])] = &[("ML", "Z", "ML", &["Z"])];
+const OWN_MOVES: &[(&str, &str)] = &[("pages/Source.md", "pages/ML.md")];
+
+/// The review of 88a0ab211 (finding 1): eight executed requests whose
+/// surviving links change page, which the earlier prediction missed.
+const CASES: &[Case] = &[
+    Case {
+        label: "merge-declarer-body",
+        files: &[
+            ("pages/Source.md", "alias:: Mine\n\n- s\n"),
+            ("pages/Z.md", "alias:: ML, Mine\n\n- z links [[Mine]]\n"),
+        ],
+        old: "Source",
+        typed: "ML",
+        into: Some("pages/Z.md"),
+        rows: MINE,
+        probes: &[("Mine", "Mine")],
+        moves: &[],
+    },
+    Case {
+        label: "merge-source-body",
+        files: &[
+            ("pages/Source.md", "alias:: Mine\n\n- s links [[Mine]]\n"),
+            Z_ML,
+        ],
+        old: "Source",
+        typed: "ML",
+        into: Some("pages/Z.md"),
+        rows: MINE,
+        probes: &[("Mine", "Mine")],
+        moves: &[],
+    },
+    Case {
+        label: "own-declarer-body",
+        files: &[
+            SOURCE_PLAIN,
+            ("pages/Z.md", "alias:: ML\n\n- z links [[ML]]\n"),
+        ],
+        old: "Source",
+        typed: "ML",
+        into: None,
+        rows: ML_TO_Z,
+        probes: &[("ML", "ML")],
+        moves: OWN_MOVES,
+    },
+    Case {
+        label: "own-source-body",
+        files: &[("pages/Source.md", "- s links [[ML]]\n"), Z_ML],
+        old: "Source",
+        typed: "ML",
+        into: None,
+        rows: &[("ML", "Z", "ML", &["ML"])],
+        probes: &[("ML", "ML")],
+        moves: OWN_MOVES,
+    },
+    Case {
+        label: "own-declarer-body-crlf",
+        files: &[
+            SOURCE_PLAIN,
+            ("pages/Z.md", "alias:: ML\r\n\r\n- z links [[ML]]\r\n"),
+        ],
+        old: "Source",
+        typed: "ML",
+        into: None,
+        rows: ML_TO_Z,
+        probes: &[("ML", "ML")],
+        moves: OWN_MOVES,
+    },
+    Case {
+        label: "own-declarer-body-page-link",
+        files: &[
+            SOURCE_PLAIN,
+            ("pages/Z.md", "alias:: ML\n\n- z [see]([[ML]])\n"),
+        ],
+        old: "Source",
+        typed: "ML",
+        into: None,
+        rows: ML_TO_Z,
+        probes: &[("ML", "ML")],
+        moves: OWN_MOVES,
+    },
+    Case {
+        label: "own-declarer-body-tag",
+        files: &[SOURCE_PLAIN, ("pages/Z.md", "alias:: ML\n\n- z #ML\n")],
+        old: "Source",
+        typed: "ML",
+        into: None,
+        rows: ML_TO_Z,
+        probes: &[("ML", "ML")],
+        moves: OWN_MOVES,
+    },
+    Case {
+        label: "own-declarer-body-embed",
+        files: &[
+            SOURCE_PLAIN,
+            ("pages/Z.md", "alias:: ML\n\n- z {{embed [[ML]]}}\n"),
+        ],
+        old: "Source",
+        typed: "ML",
+        into: None,
+        rows: ML_TO_Z,
+        probes: &[("ML", "ML")],
+        moves: OWN_MOVES,
+    },
+    Case {
+        label: "merge-survivor-body-org",
+        files: &[
+            ("pages/Source.org", "#+alias: Mine\n\n* s\n"),
+            ("pages/Z.org", "#+alias: ML, Mine\n\n* z links [[Mine]]\n"),
+        ],
+        old: "Source",
+        typed: "ML",
+        into: Some("pages/Z.org"),
+        rows: MINE,
+        probes: &[("Mine", "Mine")],
+        moves: &[],
+    },
+    Case {
+        label: "merge-day-spelling",
+        files: &[
+            ("pages/Source.md", "alias:: 2026-11-18\n\n- s\n"),
+            Z_ML,
+            ("pages/q.md", "- [[Nov 18th, 2026]]\n"),
+        ],
+        old: "Source",
+        typed: "ML",
+        into: Some("pages/Z.md"),
+        rows: &[("2026-11-18", "Source", "Z", &["q"])],
+        probes: &[("2026-11-18", "Nov 18th, 2026")],
+        moves: &[],
+    },
+    Case {
+        label: "own-moved-child",
+        files: &[
+            ("pages/Aa.md", "- a\n"),
+            ("pages/Aa%2Fx.md", "alias:: Shared\n\n- x\n"),
+            ("pages/B.md", "alias:: Shared\n\n- b\n"),
+            Z_ML,
+            ("pages/q.md", "- [[Shared]]\n"),
+        ],
+        old: "Aa",
+        typed: "ML",
+        into: None,
+        rows: &[("Shared", "Aa/x", "B", &["q"])],
+        probes: &[("Shared", "Shared")],
+        moves: &[
+            ("pages/Aa.md", "pages/ML.md"),
+            ("pages/Aa%2Fx.md", "pages/ML%2Fx.md"),
+        ],
+    },
+];
+
+/// The effect the dialog shows for the case's request.
+fn case_effect(store: &Store, case: &Case) -> tine_graph_features::pages::Effect {
+    let dialog = alias_dialog(store, case.old, case.typed);
+    match case.into {
+        Some(into) => {
+            let merge = dialog.merges.iter().find(|m| m.into == into);
+            merge
+                .unwrap_or_else(|| panic!("{}: {dialog:?}", case.label))
+                .effect
+                .clone()
+        }
+        None => {
+            dialog
+                .own
+                .unwrap_or_else(|| panic!("{}", case.label))
+                .effect
+        }
+    }
+}
+
+/// D-20261106-R13-UI: every surviving link that opens another page is
+/// shown, wherever it is (a declarer's or the survivor's body, the source's
+/// own body, a day's other spelling, a moved child's alias).
+#[test]
+fn every_surviving_link_that_opens_another_page_is_listed() {
+    let _guard = crate::integration_lock();
+    let mut wrong = Vec::new();
+    for case in CASES {
+        let (_root, store) = fixture(case.label, case.files);
+        let expected: Vec<_> = (case.rows.iter())
+            .map(|(name, before, after, pages)| {
+                let pages = pages.iter().map(|page| page.to_string()).collect();
+                (
+                    name.to_string(),
+                    before.to_string(),
+                    after.to_string(),
+                    pages,
+                )
+            })
+            .collect();
+        let shown = retargets(&case_effect(&store, case));
+        if shown != expected {
+            wrong.push((case.label, shown, expected));
+        }
+    }
+    assert!(wrong.is_empty(), "{wrong:#?}");
+}
+
+fn page_at(graph: &tine_store::WholeGraph, spelling: &str) -> (String, String) {
+    let id = match graph.resolve(spelling, false) {
+        tine_store::Resolved::Existing { id, .. } => id,
+        tine_store::Resolved::Alias { owners } => owners[0].clone(),
+        other => panic!("{spelling} resolves to {other:?}"),
+    };
+    let name = graph.inventory(tine_store::InventoryScope::File(&id)).0[0]
+        .name
+        .clone();
+    (id.as_str().to_owned(), name)
+}
+
+/// Apply the dialog's alias edit the way the window's property write does.
+fn release(root: &Path, edit: &tine_graph_features::pages::AliasEdit) {
+    let path = root.join(&edit.path);
+    let text = fs::read_to_string(&path).unwrap();
+    let org = edit.path.ends_with(".org");
+    let line = |value: &str| match org {
+        true => format!("#+{}: {value}", edit.key),
+        false => format!("{}:: {value}", edit.key),
+    };
+    let old = line(&edit.before);
+    let text = match &edit.after {
+        Some(after) => text.replacen(&old, &line(after), 1),
+        None => {
+            let at = text.find(&old).unwrap();
+            let end = text[at..].find('\n').map_or(text.len(), |n| at + n + 1);
+            format!("{}{}", &text[..at], &text[end..])
+        }
+    };
+    fs::write(path, text).unwrap();
+}
+
+/// The rows are the store's own answer: executing each request and asking
+/// `resolve` before and after changes exactly the rows' names, from the
+/// rows' page to the rows' page (a moved file is the same page).
+#[test]
+fn each_cases_rows_are_the_executed_resolution_diff() {
+    let _guard = crate::integration_lock();
+    let mut wrong = Vec::new();
+    for case in CASES {
+        let (root, store) = fixture(&format!("{}-run", case.label), case.files);
+        let predicted: Vec<_> = (retargets(&case_effect(&store, case)).into_iter())
+            .map(|(name, before, after, _)| (name, before, after))
+            .collect();
+        let before = store.whole_graph().unwrap();
+        let was: Vec<_> = case
+            .probes
+            .iter()
+            .map(|(_, s)| page_at(&before, s))
+            .collect();
+        let outcome = match case.into {
+            Some(into) => {
+                let dialog = alias_dialog(&store, case.old, case.typed);
+                let name = &dialog.merges.iter().find(|m| m.into == into).unwrap().name;
+                rename(&store, case.old, name, RenameChoice::MergeInto(into))
+                    == RenameOutcome::Merged
+            }
+            None => {
+                for edit in &alias_dialog(&store, case.old, case.typed)
+                    .own
+                    .unwrap()
+                    .edits
+                {
+                    release(&root, edit);
+                }
+                rename(&store, case.old, case.typed, RenameChoice::Rename) == RenameOutcome::Renamed
+            }
+        };
+        assert!(outcome, "{}", case.label);
+        let after = store.whole_graph().unwrap();
+        let executed: Vec<_> = (case.probes.iter().zip(was))
+            .filter_map(|((label, spelling), (was_path, was_name))| {
+                let (path, name) = page_at(&after, spelling);
+                let moved = case.moves.iter().find(|(from, _)| *from == was_path);
+                let same = moved.map_or(was_path.as_str(), |(_, to)| to) == path;
+                (!same).then(|| (label.to_string(), was_name, name))
+            })
+            .collect();
+        if predicted != executed {
+            wrong.push((case.label, predicted, executed));
+        }
+    }
+    assert!(wrong.is_empty(), "{wrong:#?}");
+}

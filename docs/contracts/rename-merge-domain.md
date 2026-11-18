@@ -116,11 +116,21 @@ source's `tags::` line; for the alias dialog's "use the name for this page", one
 the typed name's alias component (`InventoryScope::AliasGroup`) and offers one
 ordinary merge per component page other than the source that the planner allows,
 plus "use the name"; a refused request is listed with its reason, never offered.
-Each "links open a different page" row compares the page the name opens now
-(`resolve`) with the page it opens after the request: a real file keeps its name,
-the "use the name" rename's moved file holds the typed name, otherwise the declarer
-with the least path wins over the declarers as the request leaves them. Pages that
-declare the name are not listed.
+Each "links open a different page" row is a name whose page changes under the
+planned request, asked through the store's one owner rule (`NameOwners::opens`:
+the first real-file claimant, else the declarer with the least path), which
+`resolve` itself uses. The request changes a name's owner inputs only through its
+files: each moved file (children included) claims its new name and declares its
+aliases from its new path, a merge's source goes and its declarations join the
+survivor, and "use the name" drops the typed name from the other declarers. The
+names asked are the aliases the moved and merged files declare and the names the
+moves give, minus the names the request rewrites. A moved page is the same page; a
+merged source is not. The row lists the pages whose links name the name in any
+spelling (a day: every rendering of it), found through the reference index, under
+the names they have after the request; a page's own alias declaration is the owner
+input, not a link, so a declaring page (or the merge source) is listed only when it
+names the name elsewhere. Cost per name: one owner-inputs read, two rule calls, one
+referrer lookup over its spellings, and one file read per referrer that declares it.
 
 A helper writes only through `setPageProperty` and the page host's guarded save
 (`flushPage`); there is no other write path. Before writing, every page must still

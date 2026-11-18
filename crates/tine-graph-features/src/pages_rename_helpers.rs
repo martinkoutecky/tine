@@ -10,7 +10,7 @@ use std::io;
 use tine_core::doc::native::{NativeAlias, NativeDocument};
 use tine_core::model::Format;
 use tine_core::refs;
-use tine_store::{PageId, Resolved, Store};
+use tine_store::{PageId, Store};
 
 use super::rename_plan::{name_of, RenamePlan};
 
@@ -273,7 +273,10 @@ pub(super) fn effect(plan: &RenamePlan, retargeted: Vec<Retarget>) -> Effect {
         .collect();
     ids.sort_unstable_by(|a, b| a.as_str().cmp(b.as_str()));
     ids.dedup();
-    let (pages, page_count) = names(&plan.graph, ids.into_iter());
+    let shown = ids
+        .into_iter()
+        .map(|id| name_of(&plan.graph, id).unwrap_or_else(|| id.as_str().to_owned()));
+    let (pages, page_count) = names(shown);
     Effect {
         pages,
         page_count,
@@ -281,108 +284,162 @@ pub(super) fn effect(plan: &RenamePlan, retargeted: Vec<Retarget>) -> Effect {
     }
 }
 
-/// What a planned request does to the files a name's alias declarations
-/// can give it (r6 "Outside the model": each helper step is one request).
-pub(super) enum Request<'a> {
-    /// Merge `source` into `survivor` (named `name`): the source's file goes
-    /// and its aliases join the survivor.
-    Merge {
-        source: &'a PageId,
-        survivor: &'a PageId,
-        name: &'a str,
-    },
-    /// "Use the name": every other declarer drops `name` from its alias
-    /// line, then `source` is renamed to `name`, its file moving to `to`.
-    Own {
-        source: &'a PageId,
-        to: &'a PageId,
-        name: &'a str,
-    },
-}
-
-/// Links to `name` that open another page once `request` is done, their
-/// text unchanged; None when the page `name` opens does not change, or no
-/// page links it. The page before is what `resolve` answers now; after, a
-/// real file claiming `name` still wins (the requests here move or remove
-/// only the source, whose own name they rewrite), the own rename's moved
-/// file claims `name`, and otherwise the declarer with the least path wins,
-/// the alias relation's rule (`owner_path`), over the declarers as the
-/// request leaves them. A page declaring `name` is not listed: its
-/// reference is that declaration, which the request keeps, moves or removes
-/// (a declarer that also links the name in its body is not listed either).
-/// Cost: one resolve and one referrers lookup.
-pub(super) fn retarget(
-    graph: &tine_store::WholeGraph,
-    name: &str,
-    request: &Request<'_>,
-) -> Option<Retarget> {
-    let Resolved::Alias { owners } = graph.resolve(name, false) else {
-        return None;
+/// The links that open another page once the planned request is done, their
+/// text unchanged: one row per name whose owner the plan changes. The plan
+/// changes a name's owner inputs only through its files: a moved file
+/// (`plan.moves`, children included) claims its new name and declares its
+/// aliases from its new path, the merge's source goes and its declarations
+/// join the survivor, and `released` (the "use the name" edits) stop
+/// declaring `typed`. So the affected names are the aliases the moved and
+/// merged files declare and the names the moves give; each one's
+/// [`tine_store::NameOwners`] is patched and asked the store's one owner rule
+/// before and after. A name the plan rewrites is skipped (its sites are
+/// rewritten). The sites are the reference index's referrers of the name's
+/// spellings (a day: every rendering); a page's alias declaration is the
+/// owner input, not a link, so a declarer or the merge source counts only
+/// when it names the name elsewhere. Cost: per affected name one
+/// `name_owners`, two rule calls and one referrer lookup over its spellings,
+/// plus one file read and two parses per referrer that declares it.
+pub(super) fn retargets(
+    store: &Store,
+    plan: &RenamePlan,
+    typed: &str,
+    released: &[PageId],
+) -> io::Result<Vec<Retarget>> {
+    let graph = &plan.graph;
+    let (source, survivor) = match &plan.merge {
+        Some((source, survivor)) => (Some(source), Some(survivor)),
+        None => (None, None),
     };
-    let before = owners.first()?;
-    let (source, mine, mine_name) = match request {
-        Request::Merge {
-            source,
-            survivor,
-            name,
-        } => (*source, *survivor, *name),
-        Request::Own { source, to, name } => (*source, *to, *name),
+    let moved = |id: &PageId| plan.moves.get(id).map(|to| PageId::from(to.as_str()));
+    // Where a page's text is once the request is done.
+    let lands = |id: &PageId| match survivor.filter(|_| Some(id) == source) {
+        Some(survivor) => survivor.clone(),
+        None => moved(id).unwrap_or_else(|| id.clone()),
     };
-    let after = match request {
-        Request::Own { name: own, .. } if refs::same_page(name, own) => mine.clone(),
-        Request::Own { source, to, .. } => owners
-            .iter()
-            .map(|id| if id == *source { *to } else { id })
-            .min_by(|a, b| a.as_str().cmp(b.as_str()))?
-            .clone(),
-        Request::Merge {
-            source, survivor, ..
-        } => owners
-            .iter()
-            .filter(|id| *id != *source)
-            .chain([*survivor])
-            .min_by(|a, b| a.as_str().cmp(b.as_str()))?
-            .clone(),
-    };
-    // The own rename moves the source (the same page); a merge's source goes.
-    let own = matches!(request, Request::Own { .. });
-    let still = if own && before == source {
-        mine
-    } else {
-        before
-    };
-    if after == *still {
-        return None;
-    }
     let shown = |id: &PageId| {
-        if id == mine {
-            mine_name.to_owned()
-        } else {
-            name_of(graph, id).unwrap_or_else(|| id.as_str().to_owned())
-        }
+        let renamed = plan.renamed.iter().find(|page| {
+            page.path
+                .as_ref()
+                .is_some_and(|path| moved(&PageId::from(path.as_str())).as_ref() == Some(id))
+        });
+        renamed.map_or_else(
+            || name_of(graph, id).unwrap_or_else(|| id.as_str().to_owned()),
+            |page| page.to.clone(),
+        )
     };
-    let mut referrers = graph.explicit_referrers(&[name.to_owned()]);
-    referrers.retain(|id| id != source && !owners.contains(id));
-    let (pages, page_count) = names(graph, referrers.iter());
-    (page_count > 0).then(|| Retarget {
-        name: name.to_owned(),
-        before: name_of(graph, before).unwrap_or_else(|| before.as_str().to_owned()),
-        after: shown(&after),
-        pages,
-        page_count,
-    })
+    let aliases = |id: &PageId| {
+        graph
+            .inventory(tine_store::InventoryScope::AliasesOf(id))
+            .0
+            .iter()
+            .map(|entry| entry.name.clone())
+            .collect::<Vec<_>>()
+    };
+    let gained: Vec<(&str, PageId)> = (plan.renamed.iter())
+        .filter_map(|page| {
+            Some((
+                page.to.as_str(),
+                moved(&PageId::from(page.path.as_deref()?))?,
+            ))
+        })
+        .collect();
+    let affected = (plan.moves.keys().chain(source))
+        .flat_map(aliases)
+        .chain(gained.iter().map(|(name, _)| (*name).to_owned()));
+    let (mut seen, mut rows) = (HashSet::new(), Vec::new());
+    for name in affected {
+        if refs::renamed_page_name(&name, &plan.lookup).is_some() {
+            continue;
+        }
+        let before = graph.name_owners(&name);
+        if !seen.insert(before.spellings[0].clone()) {
+            continue;
+        }
+        let mut after = before.clone();
+        after.claimants.retain(|entry| {
+            entry
+                .rel_path
+                .as_ref()
+                .is_none_or(|id| !plan.moves.contains_key(id) && Some(id) != source)
+        });
+        for (to, id) in gained.iter().filter(|(to, _)| refs::same_page(to, &name)) {
+            after.claimants.push(tine_core::model::PageEntry {
+                name: (*to).to_owned(),
+                kind: tine_core::model::PageKind::Page,
+                date_key: None,
+                rel_path: Some(id.clone()),
+                path: Default::default(),
+            });
+        }
+        let dropped = refs::same_page(&name, typed);
+        after.declarers = (before.declarers.iter())
+            .filter(|id| !(dropped && released.contains(id)))
+            .map(lands)
+            .collect();
+        after.declarers.sort_unstable();
+        after.declarers.dedup();
+        let (Some(was), Some(will)) = (before.opens(), after.opens()) else {
+            continue;
+        };
+        // A moved page is the same page; a merged source is not.
+        if moved(was).as_ref().unwrap_or(was) == will {
+            continue;
+        }
+        let mut pages = std::collections::BTreeSet::new();
+        for id in graph.explicit_referrers(&before.spellings) {
+            let declares = before.declarers.contains(&id) || Some(&id) == source;
+            if !declares || names_outside_aliases(store, plan, &id, &before.spellings)? {
+                pages.insert(lands(&id));
+            }
+        }
+        let (listed, page_count) = names(pages.iter().map(shown));
+        if page_count > 0 {
+            rows.push(Retarget {
+                name,
+                before: name_of(graph, was).unwrap_or_else(|| was.as_str().to_owned()),
+                after: shown(will),
+                pages: listed,
+                page_count,
+            });
+        }
+    }
+    Ok(rows)
 }
 
-fn names<'a>(
-    graph: &tine_store::WholeGraph,
-    ids: impl Iterator<Item = &'a PageId>,
-) -> (Vec<String>, usize) {
+/// Whether `id`'s file names any of `keys` outside its alias lines: the
+/// alias values are blanked, and the rename's own site reader (respelling
+/// the keys) finds any other site. O(file bytes).
+fn names_outside_aliases(
+    store: &Store,
+    plan: &RenamePlan,
+    id: &PageId,
+    keys: &[String],
+) -> io::Result<bool> {
+    let Some(text) = read_text(store, id)? else {
+        return Ok(false);
+    };
+    let org = is_org(id);
+    let mut bytes = text.clone().into_bytes();
+    for line in NativeDocument::read_with_tags(&text, org).lines {
+        if line.alias.is_some() {
+            bytes[line.value.clone()].fill(b' ');
+        }
+    }
+    let blanked = String::from_utf8(bytes).expect("whole values blanked");
+    let renames: Vec<(String, String)> = (keys.iter())
+        .map(|key| (key.clone(), "tine preview site".to_owned()))
+        .collect();
+    Ok(refs::rename_rewrite(&blanked, org, &renames, plan.spelling()) != blanked)
+}
+
+fn names(shown: impl Iterator<Item = String>) -> (Vec<String>, usize) {
     let mut count = 0;
     let mut listed = Vec::new();
-    for id in ids {
+    for name in shown {
         count += 1;
         if listed.len() < LISTED {
-            listed.push(name_of(graph, id).unwrap_or_else(|| id.as_str().to_owned()));
+            listed.push(name);
         }
     }
     (listed, count)
