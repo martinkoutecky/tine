@@ -14,7 +14,6 @@ share-dialog-where = کجا به اشتراک گذاشته شود
 share-dialog-folder = پوشه
 share-dialog-folder-note = یک سایت ایستا و برنامهٔ فقط‌خواندنی را در پوشهٔ گراف شما خروجی می‌گیرد. نامش را در مرحلهٔ بعد تعیین می‌کنید.
 share-dialog-link = پیوند
-share-dialog-link-soon = به‌زودی: اشتراک سریع گام بعدی است.
 share-dialog-link-note = یک نسخهٔ رمزگذاری‌شده در gist مخفی حساب GitHub شما بارگذاری می‌شود؛ هر کس پیوند را داشته باشد می‌تواند آن را بخواند.
 share-dialog-create-link = ساختن پیوند…
 share-dialog-saved-as-definition = پس از خروجی، Tine آن را به‌صورت تعریفی در صفحهٔ Exports ذخیره می‌کند تا بتوان تکرارش کرد.
