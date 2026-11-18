@@ -1,6 +1,7 @@
 import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 import { render } from "solid-js/web";
 import { Block } from "./Block";
+import { QueryMacro } from "./Macro";
 import { initParser } from "../render/parse";
 import { backend } from "../backend";
 import { resetStore } from "../document";
@@ -95,6 +96,35 @@ describe("GH #944: a rerun that replaces an answer holds the reader", () => {
       await vi.waitFor(() => expect(snapshots).toEqual([true]), { timeout: 4000 });
       await settle();
       expect(snapshots).toEqual([true]);
+    } finally { dispose(); }
+  });
+
+  // Review round 1 (d5dcd0549): the Journals sections hide while empty, so the last tick that empties one removes its
+  // host, and the tick that refills it adds a new one. The snapshot is taken on the section's slot, which stays.
+  it("a section hidden while empty holds the reader when its answer empties and refills", async () => {
+    load("{{query (task TODO)}}");
+    const real = scrollContainer.preserveAboveViewport;
+    const snapshots: Element[] = [];
+    vi.spyOn(scrollContainer, "preserveAboveViewport").mockImplementation((el, change, ...rest) => {
+      if (String(change).replace(/\s+/g, "") === "()=>{}") snapshots.push(el);
+      real(el, change, ...rest);
+    });
+    const root = document.createElement("div");
+    document.body.appendChild(root);
+    const dispose = render(() => <QueryMacro body="query (task TODO)" title="Scheduled & Deadline" hideWhenEmpty builtIn />, root);
+    try {
+      await vi.waitFor(() => expect(root.querySelector(".query-slot .query-block")).not.toBeNull(), { timeout: 4000 });
+      const slot = root.querySelector(".query-slot")!;
+      vi.spyOn(backend(), "queryRun").mockImplementation(async () => blockRunResult([]));
+      bumpDataRev(true);
+      await vi.waitFor(() => expect(root.querySelector(".query-block")).toBeNull(), { timeout: 4000 });
+      vi.spyOn(backend(), "queryRun").mockImplementation(async () => blockRunResult([{ page: "Tasks", kind: "page", blocks: [{
+        id: "todo", raw: "TODO Result row", marker: "TODO", collapsed: false, children: [] }] }]));
+      bumpDataRev(true);
+      await vi.waitFor(() => expect(root.querySelector(".query-slot .query-block")).not.toBeNull(), { timeout: 4000 });
+      await settle();
+      expect(snapshots).toEqual([slot, slot]);
+      expect(slot.isConnected).toBe(true);
     } finally { dispose(); }
   });
 });
