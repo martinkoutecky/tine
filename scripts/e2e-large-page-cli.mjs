@@ -101,18 +101,10 @@ try {
   await type(" typed-alone");
   await waitForFileText(file, text => text.includes("typed-alone"));
   evidence.steps.push("literal typing without CLI saved on the large routed page");
-  const writer = (async () => {
-    for (let i = 0; i < 6; i++) {
-      const result = await cli(["add", "--page", "Large", `- cli-marker-${i}`]);
-      assert([0, 6].includes(result.code), JSON.stringify(result));
-    }
-    const handle = before.reply.page.blocks[1].handle;
-    return cli(["edit", `Large/${handle}`, "cli-edited-other-block"]);
-  })();
-  await type(" concurrent-typing-marker");
-  await writer;
-  // A deterministic sibling refusal: composition text is DOM-local and must
-  // keep the CLI out until it commits. This is distinct from the version race.
+  // A deterministic sibling refusal, checked in a clean state before the race
+  // (the race may leave a retained conflict, which its contract permits, and
+  // then nothing typed afterwards reaches disk): composition text is DOM-local
+  // and must keep the CLI out until it commits.
   await browser.execute(() => {
     const editor = document.activeElement;
     if (!(editor instanceof HTMLTextAreaElement)) throw new Error("editor lost focus");
@@ -127,6 +119,16 @@ try {
   await browser.execute(() => document.activeElement.dispatchEvent(new CompositionEvent("compositionend", { bubbles: true })));
   await waitForFileText(file, text => text.includes("composition-marker"));
   evidence.steps.push("owner refuses unsaved DOM-local composition; composition later saves");
+  const writer = (async () => {
+    for (let i = 0; i < 6; i++) {
+      const result = await cli(["add", "--page", "Large", `- cli-marker-${i}`]);
+      assert([0, 6].includes(result.code), JSON.stringify(result));
+    }
+    const handle = before.reply.page.blocks[1].handle;
+    return cli(["edit", `Large/${handle}`, "cli-edited-other-block"]);
+  })();
+  await type(" concurrent-typing-marker");
+  await writer;
   const visible = await browser.execute(() => ({ text: document.querySelector(".page")?.textContent,
     editors: [...document.querySelectorAll("textarea")].map(el => el.value), errors: window.__gh964Errors,
     inputMs: window.__gh964InputMs }));
