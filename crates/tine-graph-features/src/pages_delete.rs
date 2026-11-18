@@ -5,7 +5,7 @@
 use std::io;
 
 use tine_core::model::PageKind;
-use tine_store::{FileRev, PageHost, PageOperation, Store, StoreError};
+use tine_store::{Area, FileRev, PageHost, PageOperation, Store, StoreError};
 
 use super::{error, existing, refreshed_view, text_file, validate_target};
 use crate::store_error;
@@ -73,7 +73,10 @@ pub fn delete_page_file(
     path: &str,
     base_rev: &str,
 ) -> io::Result<PageOperation> {
-    let file = text_file(store, path)?;
+    // Any graph text file can claim a page, not only files under the configured pages and journals folders.
+    let file = store
+        .file_id(Area::Graph, path)
+        .map_err(|_| error(io::ErrorKind::InvalidInput, "invalid file path"))?;
     let page = store
         .as_page(&file)
         .ok_or_else(|| error(io::ErrorKind::InvalidInput, "invalid file path"))?;
