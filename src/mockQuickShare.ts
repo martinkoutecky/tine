@@ -1,12 +1,13 @@
 // Quick share needs the native app (DESIGN §3.9): the browser preview and the
-// test mock report it off, and refuse every action with the `disabled` kind.
-import { QUICK_SHARE_OFF, type QuickShareError, type QuickShareListing } from "./quickShare/commands";
+// test mock refuse every action, the listing included, with the `disabled` kind;
+// a refused listing is how the interface knows links are not offered.
+import type { QuickShareError, QuickShareListing } from "./quickShare/commands";
 import type { Backend } from "./backendInterface";
 
 const off = async (): Promise<never> => { throw { kind: "disabled" } satisfies QuickShareError; };
 
 export const mockQuickShareCommands = {
-  async quickShareList(): Promise<QuickShareListing> { return QUICK_SHARE_OFF; },
+  quickShareList: off as () => Promise<QuickShareListing>,
   async quickShareTestConnection() { return "disabled" as const; },
   async quickShareDiscard(): Promise<void> {},
   async quickShareConnectCancel(): Promise<void> {},

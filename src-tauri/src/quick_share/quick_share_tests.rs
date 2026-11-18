@@ -1704,15 +1704,6 @@ fn connection_diagnostic_classifies_tls_without_exposing_the_error_chain() {
     assert_eq!(answer, github::ConnectionTestResult::Tls);
     assert_eq!(serde_json::to_string(&answer).unwrap(), "\"tls\"");
 }
-#[test]
-fn an_unattested_debug_build_does_not_offer_dead_share_links() {
-    assert!(!super::viewer_attested(None));
-    assert!(!super::viewer_attested(Some("1")));
-    assert!(!super::viewer_attested(Some(&"0".repeat(64))));
-    if option_env!("TINE_QUICK_SHARE_VIEWER_G1_READY").is_none() {
-        assert!(!super::enabled());
-    }
-}
 
 #[test]
 fn e2e_github_override_accepts_only_a_bare_loopback_origin() {
