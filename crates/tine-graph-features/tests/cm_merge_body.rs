@@ -22,8 +22,9 @@ fn run_pinned(cases: Vec<Case>, survivor: &dyn Fn(&Case) -> Option<String>) {
     assert_eq!(failures, 0, "unexpected matrix outcomes");
 }
 
+// Callers hold the shared integration lock: a second read guard here would
+// deadlock behind a waiting cost probe (std's RwLock prefers writers).
 fn run_batch(cases: &[Case], survivor: &dyn Fn(&Case) -> Option<String>) -> usize {
-    let _guard = crate::integration_lock();
     let root = tempfile::tempdir().unwrap();
     fs::create_dir(root.path().join("pages")).unwrap();
     let files: Vec<_> = cases
