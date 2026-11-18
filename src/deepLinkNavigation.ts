@@ -14,7 +14,7 @@ import { focusedRouter, focusedPaneId } from "./panes";
 import { pushToast } from "./toasts";
 import { parseTineLink, parseAppRoute, type AppRoute } from "./deepLinks";
 import { admitPageFile, captureEmptyPage, pageByName, reportPageLoadRefusal } from "./document";
-import { journalTitle, appNow } from "./journal";
+import { journalHandle, appNow } from "./journal";
 import { openSwitcher } from "./ui";
 import { platformKind } from "./nativeChrome";
 import { activeElement, isElementTag, isHTMLElementNode, nextFrame } from "./windowRealm";
@@ -116,7 +116,7 @@ async function openAppRoute(app: AppRoute, current: () => boolean): Promise<void
     await showKeyboardForFocusedInput(current);
     return;
   }
-  const today = journalTitle(appNow());
+  const today = journalHandle(appNow());
   if (app.route === "page") {
     // The one frontend name answerer (pageIndex.ts); a cold launch waits for it.
     const fileId = () => (["page", "journal"] as const).map((kind) => resolvedTarget(app.page, kind))

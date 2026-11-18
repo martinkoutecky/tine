@@ -7,7 +7,7 @@ import { msg } from "./i18n";
 import { backend } from "./backend";
 import { readOwned, type Owner, bindingOwner } from "./owned";
 import { admitRead, pageByName, admitPageFile, ensurePageLoaded, carryUnfinished, flushPage, carryTodayPage, refuseConflictedMove, reportPageLoadRefusal } from "./document";
-import { journalTitle, appNow } from "./journal";
+import { journalHandle, appNow } from "./journal";
 import { carryKeepsContext, carryHeaderText } from "./ui";
 import { pushToast } from "./toasts";
 import { openJournals } from "./router";
@@ -29,7 +29,7 @@ async function ensureLoaded(name: string, kind: "journal" | "page", owner: Owner
  *  with unsaved input carry refuses, naming both files (og I1e, og J1; GH #254
  *  family, master 7bd793bd0; `admitPageFile`). One page read. */
 async function ensureToday(owner: Owner): Promise<string | null> {
-  const t = journalTitle(appNow());
+  const t = journalHandle(appNow());
   const admitted = await admitPageFile(t, "journal", owner, carryTodayPage(t));
   if (admitted === "stale") return null;
   if (admitted) {
@@ -80,7 +80,7 @@ export async function carryPrevDay(): Promise<void> {
     return;
   }
   const d = new Date(Math.floor(prevKey / 10000), (Math.floor(prevKey / 100) % 100) - 1, prevKey % 100);
-  await carryDay(journalTitle(d));
+  await carryDay(journalHandle(d));
 }
 
 /** Carry unfinished tasks from a named journal to today. A missing source or
@@ -117,7 +117,7 @@ export async function carryDaysBack(days: number): Promise<void> {
     for (let i = 1; i <= days; i++) {
       const d = new Date(base);
       d.setDate(d.getDate() - i);
-      candidates.push(journalTitle(d));
+      candidates.push(journalHandle(d));
     }
     // Load all the day files in parallel rather than one IPC round-trip at a time.
     const loaded = await Promise.all(candidates.map((t) => ensureLoaded(t, "journal", owner)));

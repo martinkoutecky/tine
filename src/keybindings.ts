@@ -50,7 +50,7 @@ import {
   activatePrevTab,
   route,
 } from "./router";
-import { journalTitle, parseJournalTitle, appNow } from "./journal";
+import { journalHandle, parseJournalTitle, appNow } from "./journal";
 import { undo, redo, hasSelection, moveSelection, cycleSelectionTasks, expandBlockSelection, moveSelectionItems, indentSelection, outdentSelection, deleteSelection, selectionMarkdown, selectionScope, clearSelection, selectedIds, singleSelectedId, topSelected, blockIsGridView, pageVisibleOrder, selectBlock, visibleOrder, toggleUndoRedoMode, buildClipboardPayload, node as docNode, loadedPage } from "./document";
 import { editingId, startEditing } from "./editorController";
 import { copyBlockOutline } from "./clipboard";
@@ -112,7 +112,9 @@ export function goAdjacentJournal(dir: 1 | -1): void {
   const anchor = current.kind === "page" && current.pageKind === "journal"
     ? parseJournalTitle(current.name) ?? appNow()
     : appNow();
-  openPage(journalTitle(new Date(anchor.getFullYear(), anchor.getMonth(), anchor.getDate() + dir)), "journal");
+  // A day's route names it by its handle (`journalHandle`), which parses
+  // back to the day under every title format (CM SPEC §2.1).
+  openPage(journalHandle(new Date(anchor.getFullYear(), anchor.getMonth(), anchor.getDate() + dir)), "journal");
 }
 function pluginFocusedBlock(): OwnedPluginBlockSnapshot | undefined {
   const owner = capturePluginGraphOwner();

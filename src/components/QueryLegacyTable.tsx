@@ -1,4 +1,5 @@
 import { t } from "../i18n";
+import { pageLabel } from "../journal";
 import { TableWrap } from "./TableWrap";
 import { For, Match, Switch, type JSX } from "solid-js";
 import { openPageTarget, openPageTargetInNewTab } from "../router";
@@ -68,7 +69,7 @@ export function QueryLegacyTable(props: {
                         openPageContextMenu(e.clientX, e.clientY, { name: r.page, pageKind: r.kind, ...(r.path ? { path: r.path } : {}) });
                       }}
                     >
-                      {r.page}
+                      {pageLabel(r.page)}
                     </td>
                   </Match>
                 </Switch>

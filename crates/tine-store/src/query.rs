@@ -343,7 +343,7 @@ fn collect_bounded(
                 groups.push((
                     entry.date_key,
                     RefGroup {
-                        page: entry.name.clone(),
+                        page: graph.page_name(entry),
                         kind: entry.kind,
                         blocks: matched,
                         evidence: Vec::new(),
@@ -417,10 +417,12 @@ fn sorted_alias_owners(
 }
 
 mod page_names;
-pub(crate) use page_names::{real_page_names, RealPageNames, RealPageOwners};
+pub(crate) use page_names::{day_key, page_handle, real_page_names, RealPageNames, RealPageOwners};
 
 mod alias_relation;
-pub(crate) use alias_relation::{alias_group_members, AliasEdges, AliasRelation, AliasRow};
+pub(crate) use alias_relation::{
+    alias_group_members, owner_handle, AliasEdges, AliasRelation, AliasRow,
+};
 
 /// Resolve a requested page/alias to its canonical display name, the complete
 /// alias-connected component, and the real page to exclude as self. The
@@ -666,7 +668,12 @@ pub(crate) fn graph_equivalent_page_names_with(
 /// ([`JournalFormat::spellings`]), as page keys. Looser spellings a link may
 /// use (`2026-10-2`) are added where references are known
 /// ([`referenced_day_keys`]); scoped invalidation reads them from the changed
-/// page itself.
+/// page itself. A spelling that parses as no day is not the day's name: a
+/// year-less title (`MM-dd`'s `11-02`) is a label shared by every year and by
+/// an ordinary page, and selects no day (CM SPEC §2.1). Spellings that parse
+/// as some day stay as before, also a short-year one read back as another
+/// century (`yy_MM_dd`'s `20_01_01` for 1920). O(parse list²) for the parse
+/// list's few patterns.
 pub(crate) fn journal_spelling_keys(
     format: &JournalFormat,
     day: JournalDate,
@@ -674,6 +681,7 @@ pub(crate) fn journal_spelling_keys(
 ) -> Vec<String> {
     std::iter::once(journal_name.to_string())
         .chain(format.spellings(day))
+        .filter(|spelling| format.parse(spelling).is_some())
         .map(|spelling| refs::page_key(&spelling))
         .collect()
 }
@@ -1071,7 +1079,8 @@ fn collect_reference_occurrences_bounded(
                 evidence.push(hit);
             }
             if !blocks.is_empty() {
-                let key = refs::normalize(&entry.name);
+                let name = graph.page_name(entry);
+                let key = refs::normalize(&name);
                 if let Some(&index) = by_name.get(&key) {
                     let (date_key, group) = &mut groups[index];
                     *date_key = match (*date_key, entry.date_key) {
@@ -1086,7 +1095,7 @@ fn collect_reference_occurrences_bounded(
                     groups.push((
                         entry.date_key,
                         RefGroup {
-                            page: entry.name.clone(),
+                            page: name,
                             kind: entry.kind,
                             blocks,
                             evidence,
@@ -2066,7 +2075,8 @@ pub(crate) fn resolve_blocks_bounded(
     let mut resolved: HashMap<&str, RefGroup> = HashMap::new();
     let mut resolved_budget = ConstructionBudget::new(max_rows, max_bytes);
     for ((entry, doc), want) in by_page.values() {
-        resolve_ids_in_page(entry, doc, want, &mut resolved, &mut resolved_budget);
+        let name = graph.page_name(entry);
+        resolve_ids_in_page(entry, &name, doc, want, &mut resolved, &mut resolved_budget);
     }
 
     let mut output_budget = ConstructionBudget::new(max_rows, max_bytes);
@@ -2360,7 +2370,7 @@ pub(crate) fn preview_block_with_budget(
     let emitted = max_nodes - remaining_nodes;
     Some(BlockPreview {
         group: RefGroup {
-            page: entry.name.clone(),
+            page: graph.page_name(entry),
             kind: entry.kind,
             blocks,
             evidence: Vec::new(),
@@ -2426,6 +2436,7 @@ pub(crate) fn block_pages_walked() -> usize {
 /// block's uuid or persisted `id::`. First block in walk order wins per id.
 fn resolve_ids_in_page<'a>(
     entry: &PageEntry,
+    name: &str,
     doc: &Document,
     want: &std::collections::HashSet<&'a str>,
     resolved: &mut std::collections::HashMap<&'a str, RefGroup>,
@@ -2452,7 +2463,7 @@ fn resolve_ids_in_page<'a>(
                 resolved.insert(
                     id,
                     RefGroup {
-                        page: entry.name.clone(),
+                        page: name.to_owned(),
                         kind: entry.kind,
                         blocks: vec![result_dto(b)],
                         evidence: Vec::new(),

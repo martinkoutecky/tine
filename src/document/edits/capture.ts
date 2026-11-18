@@ -1,4 +1,4 @@
-import { journalTitle, appNow } from "../../journal";
+import { journalHandle, appNow } from "../../journal";
 import { outlineMaxDepth, outlineDepth, parseOutline, type OutlineNode } from "../../editor/outline";
 import { type Format, type PageKind } from "../../types";
 import { bindingOwner } from "../../owned";
@@ -27,13 +27,15 @@ export async function appendToTodayJournal(
   inserted?: (name: string) => void,
   shape?: (nodes: OutlineNode[]) => OutlineNode[],
 ): Promise<boolean> {
-  const name = journalTitle(appNow());
+  // Today by the name the store gives its page (`journalHandle`), never a
+  // year-less label an ordinary page holds (CM SPEC §2.1).
+  const name = journalHandle(appNow());
   const nodes = parseOutline(markdown);
   return captureOutlineInto(name, "journal", shape ? shape(nodes) : nodes, () => inserted?.(name));
 }
 
-/** Append `markdown` at the END of journal `day` exactly (never a recomputed
- *  "today"), through the same single writer as {@link appendToTodayJournal}.
+/** Append `markdown` at the END of journal `day` (its `journalHandle`) exactly
+ *  (never a recomputed "today"), through the same single writer as {@link appendToTodayJournal}.
  *  `arm` runs inside the admitted read, after the page is loaded and writable
  *  and before anything is inserted, with the revision the loaded copy is based
  *  on (`null` when the day has no file yet); it may await (the share inbox

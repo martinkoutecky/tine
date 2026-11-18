@@ -19,7 +19,7 @@ import { resetStore, pageByName, node, appendToTodayJournal } from "./document";
 import { loadSingle } from "./document/workingSet";
 import { graphMeta, setGraphMeta } from "./graphSession";
 import { setToasts, toasts } from "./toasts";
-import { journalTitle, appNow } from "./journal";
+import { journalTitle, journalHandle, appNow, setJournalTitleFormat } from "./journal";
 import { initParser } from "./render/parse";
 import { ingestShares, CAPTURED_TOAST, resetShareIngestForTests } from "./shareIngest";
 import type { NativeShareInbox, ShareInboxItem } from "./nativeTineLinks";
@@ -117,7 +117,7 @@ beforeEach(async () => {
   mainPaneRouter.openPage("Other");
 });
 
-afterEach(() => { resetStore(); resetPageIndex(); setGraphMeta(null); setToasts([]); delete backend().tineLinks; vi.restoreAllMocks(); });
+afterEach(() => { setJournalTitleFormat(null); resetStore(); resetPageIndex(); setGraphMeta(null); setToasts([]); delete backend().tineLinks; vi.restoreAllMocks(); });
 
 function share(id: string, text: string, extra: Partial<ShareInboxItem> = {}) {
   inbox.set(id, { id, source: "android", created: Date.UTC(2026, 9, 10, 8, 30), text, resources: [], ...extra });
@@ -452,5 +452,31 @@ it("files are imported into the recorded graph once, and a retry reuses them", a
   await ingestShares();
   expect(imports).toEqual([expect.stringMatching(/^\/g:/)]);
   expect(journal().filter((raw) => raw.includes("p.png"))).toHaveLength(1);
+  expect(inbox.size).toBe(0);
+});
+
+// REG-CM-YEARLESS-DAY-KEY (round 3): under a year-less title format the label
+// `11-02` names an ordinary page, so a share freezes the day's identifying
+// spelling and lands in today's journal, not in the label page; the {date}
+// template still shows the label. A record frozen before the fix holds the
+// label of the day it was taken on, and still lands in that day's journal.
+it("under a year-less title a share freezes and lands in today's journal, not the label page", async () => {
+  setJournalTitleFormat("MM-dd");
+  const label = journalTitle(appNow());
+  const handle = journalHandle(appNow());
+  expect(handle).not.toBe(label);
+  writeFile(label, ["a label page"]);
+  setGraphMeta({ ...graphMeta()!, quick_capture_template_text: "{date}: {text}" } as any);
+  share("a", "dated");
+  commitFails = true;
+  await ingestShares();
+  expect(inbox.get("a")?.prepared?.day).toBe(handle);
+  expect(journal(handle)).toEqual([`${label}: dated`]);
+  expect(journal(label)).toEqual(["a label page"]);
+  await restart(); commitFails = false;
+  share("old", "legacy", { prepared: { graph: "/g", day: label, markdown: "- legacy record", assets: [], armed: null, written: false } as any });
+  await ingestShares();
+  expect(journal(handle)).toEqual([`${label}: dated`, "legacy record"]);
+  expect(journal(label)).toEqual(["a label page"]);
   expect(inbox.size).toBe(0);
 });

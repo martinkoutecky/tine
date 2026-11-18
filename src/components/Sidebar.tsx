@@ -6,6 +6,7 @@ import { goHome, isHomeRouteName, journalsReplacementHome } from "../homePage";
 import { ReferenceDisclosure } from "./ReferenceDisclosure";
 import { openAllGraphs, openAllPages, openNamespaces, openConflicts, openPage, openPageInNewTab, openInNewTab, openPageTarget, openPageTargetInNewTab, route, type PageTarget } from "../router";
 import { openJournalsFromClick } from "../journalsNavigation";
+import { pageLabel } from "../journal";
 import { openSwitcher, recentPages, openPageContextMenu, openActionContextMenu, openPageInSidebar, favoritesSectionExpanded, recentSectionExpanded, toggleFavoritesSection, toggleRecentSection } from "../ui";
 import { pendingConflictCount } from "../liveConflicts";
 import { graphMeta } from "../graphSession";
@@ -218,7 +219,7 @@ export function Sidebar(props: {
                           openPageContextMenu(e.clientX, e.clientY, target());
                         }}
                       >
-                        <SidebarTitle icon={pageIcon(r.name)} pageName={r.name} text={r.name.startsWith("hls__") ? r.name.slice(5) : r.name} fullTitle={r.name.startsWith("hls__") ? r.name.slice(5) : r.name} />
+                        <SidebarTitle icon={pageIcon(r.name)} pageName={r.name} text={r.name.startsWith("hls__") ? r.name.slice(5) : pageLabel(r.name)} fullTitle={r.name.startsWith("hls__") ? r.name.slice(5) : pageLabel(r.name)} />
                       </div>
                     );
                   }}

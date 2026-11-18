@@ -80,6 +80,10 @@ impl WholeGraph {
         let mut entries: Vec<_> = [PageKind::Page, PageKind::Journal]
             .into_iter()
             .flat_map(|kind| name_claimants(&self.claimants, name, kind).iter().cloned())
+            .inspect(|_| {
+                #[cfg(feature = "test-faults")]
+                crate::cost_counters::claimant_visit();
+            })
             .collect();
         let journals_dir = &self.config.config.journals_dir;
         entries.sort_by(|a, b| crate::model::compare_page_claimants(journals_dir, a, b));
@@ -233,12 +237,8 @@ impl Snapshot {
                 // A demoted file or removed opening with a replacement is
                 // represented by the new opening file's event, not deletion
                 // of a logical page that still exists.
-                if self
-                    .graph
-                    .real_page_owners()
-                    .opening_entry(&tine_core::refs::page_key(&entry.name))
-                    .is_none()
-                {
+                let owners = self.graph.real_page_owners();
+                if owners.opening_entry(&owners.claim_key(entry)).is_none() {
                     pages.push((
                         FileId::from(path),
                         ChangeKind::Removed,

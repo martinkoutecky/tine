@@ -499,3 +499,413 @@ fn a_year_less_retitle_to_another_year_moves_the_day() {
     assert_eq!(store.journal_id(NOV_2, false).as_str(), rels[1]);
     assert_eq!(store.journal_id(nov_2_2027, false).as_str(), rels[2]);
 }
+
+/// Every block a page-reference query or a Linked References panel lists,
+/// as raw text, sorted (`groups` name the source page only by its label).
+fn raws(groups: &[tine_core::model::RefGroup]) -> Vec<String> {
+    let mut out: Vec<String> = (groups.iter())
+        .flat_map(|group| group.blocks.iter().map(|block| block.raw.clone()))
+        .collect();
+    out.sort();
+    out
+}
+
+/// The block rows of the OG query `[[name]]`.
+fn ref_query(store: &Store, name: &str) -> Vec<String> {
+    use tine_core::query::ir::{ExecutionContext, QueryRows};
+    let (query, view) = tine_core::query::parse_query_text(
+        &format!("[[{name}]]"),
+        tine_core::query::QueryDialect::Og,
+        tine_core::date::JournalDate::today(),
+    );
+    let answer = (store.whole_graph().unwrap())
+        .query_ir(
+            tine_store::IrRequest::Run {
+                query: &query,
+                view: &view,
+                context: &ExecutionContext::default(),
+            },
+            &tine_store::Cancel::default(),
+        )
+        .unwrap()
+        .expect("never cancelled");
+    let tine_store::IrAnswer::Result(result) = answer else {
+        panic!("{name}: result rows")
+    };
+    match &result.rows {
+        QueryRows::Block { groups } => raws(groups),
+        other => panic!("{name}: block rows, got {other:?}"),
+    }
+}
+
+/// What the store answers about the year-less label graph: each file's
+/// conflict twins, the `[[name]]` query, the Linked References panel and the
+/// incoming links of each name.
+fn label_answers(store: &Store, names: &[&str]) -> Vec<String> {
+    let view = store.whole_graph().unwrap();
+    let mut out = Vec::new();
+    for entry in view.inventory(InventoryScope::All).0.iter() {
+        if let Resolved::Existing { id, others } = &entry.target {
+            out.push(format!("{} {}: others {others:?}", entry.name, id.as_str()));
+        }
+    }
+    for name in names {
+        out.push(format!("[[{name}]] query: {:?}", ref_query(store, name)));
+        out.push(format!(
+            "{name} panel: {:?}",
+            raws(&view.backlinks(name).unwrap())
+        ));
+    }
+    out
+}
+
+/// CM SPEC §2.1 (approved label limitation) and §2.2: with a year-less title
+/// format, the label `11-02` names the ordinary page `11-02`, and each day
+/// is its own identity, reached by a spelling that names it. Conformance
+/// fixture `d7-year-less-title-label` pins the model's answers for one day;
+/// this adds another year and the incremental reading. Before the fix the
+/// real-name index filed every day under its label: the ordinary page and
+/// both days were one conflicted name, `[[11-02]]` matched the journals'
+/// blocks, `[[2026-11-02]]` missed its own journal, and the day's panel was
+/// the label page's.
+#[test]
+fn a_year_less_label_is_the_ordinary_page_and_each_day_is_its_own() {
+    let _guard = crate::integration_lock();
+    let files = [
+        (
+            "logseq/config.edn",
+            "{:journal/page-title-format \"MM-dd\"}\n",
+        ),
+        ("journals/2025_11_02.md", "- last year\n"),
+        ("journals/2026_11_02.md", "- the day\n"),
+        ("pages/11-02.md", "- a label page\n"),
+        (
+            "pages/Notes.md",
+            "- label [[11-02]]\n- day [[2026-11-02]]\n- year before [[2025-11-02]]\n",
+        ),
+    ];
+    let (dir, store) = graph(&files);
+    let before = bytes(dir.path(), &files);
+    let names = ["11-02", "2026-11-02", "2025-11-02"];
+    let expected = vec![
+        "11-02 journals/2025_11_02.md: others []".to_owned(),
+        "11-02 journals/2026_11_02.md: others []".to_owned(),
+        "11-02 pages/11-02.md: others []".to_owned(),
+        "Notes pages/Notes.md: others []".to_owned(),
+        r#"[[11-02]] query: ["a label page", "label [[11-02]]"]"#.to_owned(),
+        r#"11-02 panel: ["label [[11-02]]"]"#.to_owned(),
+        r#"[[2026-11-02]] query: ["day [[2026-11-02]]", "the day"]"#.to_owned(),
+        r#"2026-11-02 panel: ["day [[2026-11-02]]"]"#.to_owned(),
+        r#"[[2025-11-02]] query: ["last year", "year before [[2025-11-02]]"]"#.to_owned(),
+        r#"2025-11-02 panel: ["year before [[2025-11-02]]"]"#.to_owned(),
+    ];
+    let mut answers = label_answers(&store, &names);
+    answers[..4].sort();
+    assert_eq!(answers, expected);
+    // The incremental reading after an outside edit answers the same.
+    fs::write(
+        dir.path().join("journals/2026_11_02.md"),
+        "- the day, edited\n",
+    )
+    .unwrap();
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(10);
+    let edited: Vec<String> = (expected.iter())
+        .map(|line| line.replace("\"the day\"", "\"the day, edited\""))
+        .collect();
+    loop {
+        store.refresh(tine_store::Depth::Stamps).unwrap();
+        let mut answers = label_answers(&store, &names);
+        answers[..4].sort();
+        if answers == edited || std::time::Instant::now() >= deadline {
+            assert_eq!(answers, edited, "incremental answers");
+            break;
+        }
+        std::thread::sleep(std::time::Duration::from_millis(50));
+    }
+    assert_eq!(
+        bytes(dir.path(), &files)[..2],
+        before[..2],
+        "nothing else is written"
+    );
+}
+
+/// REG-CM-YEARLESS-DAY-KEY (review item 4): a day's expansion holds only the
+/// spellings that identify it. Under `MM-dd` the label `11-02` names no day,
+/// so with no label page `[[11-02]]` is the reference-only ordinary page and
+/// never the day's blocks, and `[[2026-11-02]]` never the label's links; the
+/// same for an alias that is a date (`alias:: 2026-11-03`), whose label
+/// `11-03` joins nothing. Before the fix the day's spelling keys included
+/// its label, so both queries and panels mixed the two. Markdown and Org day
+/// files, a day in journals/ and in pages/.
+#[test]
+fn a_year_less_label_without_its_page_joins_no_day() {
+    let _guard = crate::integration_lock();
+    for (day_rel, day_text) in [
+        ("journals/2026_11_02.md", "- the day\n"),
+        ("journals/2026_11_02.org", "* the day\n"),
+        ("pages/2026-11-02.md", "- the day\n"),
+    ] {
+        let files = [
+            (
+                "logseq/config.edn",
+                "{:journal/page-title-format \"MM-dd\"}\n",
+            ),
+            (day_rel, day_text),
+            ("pages/Meeting.md", "alias:: 2026-11-03\n\n- the meeting\n"),
+            (
+                "pages/Notes.md",
+                "- label [[11-02]]\n- day [[2026-11-02]]\n- other label [[11-03]]\n- other day [[2026-11-03]]\n",
+            ),
+        ];
+        let (_dir, store) = graph(&files);
+        let view = store.whole_graph().unwrap();
+        let panel = |name: &str| raws(&view.backlinks(name).unwrap());
+        assert_eq!(
+            ref_query(&store, "2026-11-02"),
+            ["day [[2026-11-02]]", "the day"],
+            "{day_rel}"
+        );
+        assert_eq!(ref_query(&store, "11-02"), ["label [[11-02]]"], "{day_rel}");
+        assert_eq!(panel("2026-11-02"), ["day [[2026-11-02]]"], "{day_rel}");
+        assert_eq!(panel("11-02"), ["label [[11-02]]"], "{day_rel}");
+        assert_eq!(
+            ref_query(&store, "11-03"),
+            ["other label [[11-03]]"],
+            "{day_rel}: an alias-date label"
+        );
+        assert!(
+            !ref_query(&store, "2026-11-03").contains(&"other label [[11-03]]".to_owned()),
+            "{day_rel}: the alias day holds no label link"
+        );
+        assert_eq!(panel("11-03"), ["other label [[11-03]]"], "{day_rel}");
+    }
+}
+
+/// REG-CM-YEARLESS-DAY-KEY (review item 3): the page inventory partitions a
+/// name's claimant bucket by identity once per question, so a graph of D
+/// years of `11-02` under `MM-dd` costs O(D) claimant visits, not the D² of
+/// reading every file that shares the label for each row.
+#[test]
+fn year_less_inventory_claimant_work_is_linear_in_the_days() {
+    let _guard = crate::integration_lock();
+    let visits = |years: i32| {
+        let mut files: Vec<(String, String)> = vec![
+            (
+                "logseq/config.edn".into(),
+                "{:journal/page-title-format \"MM-dd\"}\n".into(),
+            ),
+            ("pages/11-02.md".into(), "- a label page\n".into()),
+        ];
+        for year in 1990..1990 + years {
+            let ext = if year % 2 == 0 { "md" } else { "org" };
+            files.push((format!("journals/{year}_11_02.{ext}"), "- a day\n".into()));
+        }
+        let borrowed: Vec<(&str, &str)> = (files.iter())
+            .map(|(rel, text)| (rel.as_str(), text.as_str()))
+            .collect();
+        let (_dir, store) = graph(&borrowed);
+        let view = store.whole_graph().unwrap();
+        let before = tine_store::cost_counters::claimant_visits();
+        let rows = view.inventory(InventoryScope::All).0.len();
+        assert_eq!(rows, years as usize + 1);
+        tine_store::cost_counters::claimant_visits() - before
+    };
+    let (small, large) = (visits(8), visits(32));
+    assert!(large <= 2 * 32 + 2, "claimant visits for 32 days: {large}");
+    assert!(
+        large <= 4 * small + 4,
+        "claimant work grows linearly: 8 days {small}, 32 days {large}"
+    );
+}
+
+/// REG-CM-YEARLESS-DAY-KEY (round 3, the owner fix): the page a read hands
+/// the app is named by the spelling that identifies it (`name`, what the app
+/// keys its working set, feed, sidebar, reference requests and saves by) and
+/// titled by its name (`title`, what it shows). Under `MM-dd` two years of
+/// `11-02` and the label page are three names; a day reached by its `title::`
+/// in pages/ is named so its date can be read back, and its reference panel
+/// asked by that name is its own. Every title format with a year names each
+/// page by its title, as before. Before the fix every year read back as
+/// `11-02`, the label page's name.
+#[test]
+fn a_page_read_names_a_year_less_day_by_the_spelling_that_identifies_it() {
+    let _guard = crate::integration_lock();
+    let config = "{:journal/page-title-format \"MM-dd\"}\n";
+    for (ext, bullet) in [("md", "-"), ("org", "*")] {
+        for label_page in [true, false] {
+            let older = format!("journals/2025_11_02.{ext}");
+            let newer = format!("journals/2026_11_02.{ext}");
+            let (older_text, newer_text) = (
+                format!("{bullet} last year\n"),
+                format!("{bullet} the day\n"),
+            );
+            let mut files = vec![
+                ("logseq/config.edn", config),
+                (older.as_str(), older_text.as_str()),
+                (newer.as_str(), newer_text.as_str()),
+                ("pages/Meeting.md", "title:: 2026-11-04\n\n- the meeting\n"),
+                (
+                    "pages/Notes.md",
+                    "- day [[2026-11-02]]\n- label [[11-02]]\n- meeting [[2026-11-04]]\n",
+                ),
+            ];
+            if label_page {
+                files.push(("pages/11-02.md", "- a label page\n"));
+            }
+            let (_dir, store) = graph(&files);
+            let case = format!("{ext}, label page {label_page}");
+            let read = |rel: &str| store.page(&PageId::from(rel)).unwrap().doc;
+            let names = |rel: &str| {
+                let doc = read(rel);
+                (doc.name, doc.title, doc.kind)
+            };
+            assert_eq!(
+                names(&newer),
+                ("2026_11_02".into(), "11-02".into(), PageKind::Journal),
+                "{case}"
+            );
+            assert_eq!(
+                names(&older),
+                ("2025_11_02".into(), "11-02".into(), PageKind::Journal),
+                "{case}"
+            );
+            assert_eq!(
+                names("pages/Meeting.md"),
+                ("2026_11_04".into(), "11-04".into(), PageKind::Journal),
+                "{case}"
+            );
+            // The name a read gives is the name the store opens it by.
+            for rel in [newer.as_str(), older.as_str(), "pages/Meeting.md"] {
+                let name = read(rel).name;
+                assert_eq!(
+                    opens(&store, &name, PageKind::Journal).map(|(id, _)| id),
+                    Some(rel.to_owned()),
+                    "{case}: {name}"
+                );
+            }
+            let view = store.whole_graph().unwrap();
+            assert_eq!(
+                raws(&view.backlinks(&read(&newer).name).unwrap()),
+                ["day [[2026-11-02]]"],
+                "{case}"
+            );
+            assert_eq!(
+                raws(&view.backlinks(&read("pages/Meeting.md").name).unwrap()),
+                ["meeting [[2026-11-04]]"],
+                "{case}"
+            );
+            if label_page {
+                assert_eq!(
+                    names("pages/11-02.md"),
+                    ("11-02".into(), "11-02".into(), PageKind::Page),
+                    "{case}"
+                );
+            }
+        }
+    }
+    // A title format with a year: name and title are the title, as before.
+    let (_dir, store) = graph(&[
+        ("journals/2026_11_02.md", "- the day\n"),
+        ("pages/Meeting.md", "title:: 2026-11-04\n\n- the meeting\n"),
+    ]);
+    for (rel, title) in [
+        ("journals/2026_11_02.md", "Nov 2nd, 2026"),
+        ("pages/Meeting.md", "Nov 4th, 2026"),
+    ] {
+        let doc = store.page(&PageId::from(rel)).unwrap().doc;
+        assert_eq!(
+            (doc.name.as_str(), doc.title.as_str()),
+            (title, title),
+            "{rel}"
+        );
+    }
+}
+
+/// REG-CM-YEARLESS-DAY-KEY (round 3): a reference panel, a block reference
+/// and a query name each source page as a page read names it, so the app
+/// loads and edits the source by that name. Under `MM-dd` the two years of
+/// `11-02` and the label page are three groups, not one. Before the fix the
+/// groups were merged and named `11-02`, which opens the label page (or one
+/// year) and is not the name the day's own read gives.
+#[test]
+fn reference_groups_name_a_year_less_source_day_as_its_read_does() {
+    let _guard = crate::integration_lock();
+    for (ext, bullet) in [("md", "-"), ("org", "*")] {
+        for label_page in [true, false] {
+            let older = format!("journals/2025_11_02.{ext}");
+            let newer = format!("journals/2026_11_02.{ext}");
+            let older_text = format!("{bullet} last year [[Topic]]\n");
+            let id = "6a000000-0000-4000-8000-000000000001";
+            let newer_text = match ext {
+                "md" => format!("- the day [[Topic]]\n  id:: {id}\n"),
+                _ => format!("* the day [[Topic]]\n:PROPERTIES:\n:id: {id}\n:END:\n"),
+            };
+            let mut files = vec![
+                (
+                    "logseq/config.edn",
+                    "{:journal/page-title-format \"MM-dd\"}\n",
+                ),
+                (older.as_str(), older_text.as_str()),
+                (newer.as_str(), newer_text.as_str()),
+                (
+                    "pages/Meeting.md",
+                    "title:: 2026-11-04\n\n- meeting [[Topic]]\n",
+                ),
+                ("pages/Topic.md", "- topic\n"),
+            ];
+            if label_page {
+                files.push(("pages/11-02.md", "- a label page [[Topic]]\n"));
+            }
+            let (_dir, store) = graph(&files);
+            let case = format!("{ext}, label page {label_page}");
+            let view = store.whole_graph().unwrap();
+            let mut expected = vec!["2026_11_04", "2026_11_02", "2025_11_02"];
+            if label_page {
+                expected.push("11-02");
+            }
+            let pages = |groups: &[tine_core::model::RefGroup]| {
+                let mut pages: Vec<String> =
+                    groups.iter().map(|group| group.page.clone()).collect();
+                pages.sort_by(|a, b| b.cmp(a));
+                pages
+            };
+            assert_eq!(
+                pages(&view.backlinks("Topic").unwrap()),
+                expected,
+                "{case}: backlinks"
+            );
+            let tine_store::QueryResult::Simple(groups) = view
+                .query("[[Topic]]", tine_store::QueryDialect::Simple)
+                .unwrap()
+            else {
+                panic!("block query")
+            };
+            // The query also answers the topic page's own block, as before.
+            assert_eq!(
+                pages(&groups),
+                [&["Topic"][..], &expected].concat(),
+                "{case}: query"
+            );
+            let preview = view.preview_block(id, 8).unwrap().expect(&case);
+            assert_eq!(preview.group.page, "2026_11_02", "{case}: block preview");
+            let resolved = view.blocks(&[id.to_owned()], true).unwrap();
+            assert_eq!(
+                resolved[0].as_ref().map(|group| group.page.as_str()),
+                Some("2026_11_02"),
+                "{case}: block reference"
+            );
+            for group in view.backlinks("Topic").unwrap().iter() {
+                let doc = store
+                    .page_named(&group.page, group.kind)
+                    .unwrap()
+                    .unwrap()
+                    .doc;
+                assert_eq!(
+                    (doc.name.as_str(), doc.kind),
+                    (group.page.as_str(), group.kind),
+                    "{case}"
+                );
+            }
+        }
+    }
+}

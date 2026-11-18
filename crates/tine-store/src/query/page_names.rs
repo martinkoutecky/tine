@@ -5,14 +5,28 @@ use super::*;
 /// publication and the query fallback. Each normalized name owns a persistent
 /// claimant tree keyed by path, so removing a claimant costs O(log D), where D
 /// is its duplicates, without scanning unrelated pages (I-12/I-25). The tree
-/// is persisted in the launch checkpoint; it does not decide which claimant
-/// owns the name: [`RealPageOwners::get`] asks the claimant order.
-#[derive(Clone, Default, serde::Serialize, serde::Deserialize)]
+/// is persisted in the launch checkpoint (and rebuilt when one is installed);
+/// it does not decide which claimant owns the name: [`RealPageOwners::get`]
+/// asks the claimant order.
+///
+/// A day's files are keyed by the day, not by a label other days share
+/// ([`Self::claim_key`]; CM SPEC §2.1: "the identity of a date is
+/// `(journal, dayValue)`", and under `MM-dd` "typing the ambiguous,
+/// non-identifying label cannot select one").
+#[derive(Clone, serde::Serialize, serde::Deserialize)]
 pub(crate) struct RealPageNames {
     claimants: crate::model::persistent::Map<
         String,
         crate::model::persistent::Map<std::path::PathBuf, PageEntry>,
     >,
+    /// The format the keys were made with: not persisted, a checkpoint's
+    /// table is rebuilt on install.
+    #[serde(skip, default = "default_format")]
+    format: std::sync::Arc<JournalFormat>,
+}
+
+fn default_format() -> std::sync::Arc<JournalFormat> {
+    std::sync::Arc::new(JournalFormat::default())
 }
 
 /// The real-name table with what ranks its twins: the owner of a normalized
@@ -35,7 +49,30 @@ impl RealPageOwners {
     }
     /// No real pages (a scope that cannot change membership).
     pub(crate) fn empty() -> Self {
-        Self::new(std::sync::Arc::new(RealPageNames::new()), "journals")
+        Self::new(
+            std::sync::Arc::new(RealPageNames::new(default_format())),
+            "journals",
+        )
+    }
+    /// The key `entry` is claimed under ([`RealPageNames::claim_key`]).
+    pub(crate) fn claim_key(&self, entry: &PageEntry) -> String {
+        self.names.claim_key(entry)
+    }
+    /// [`page_handle`] under this table's format.
+    pub(crate) fn handle<'a>(&self, name: &'a str, day: Option<i64>) -> std::borrow::Cow<'a, str> {
+        page_handle(&self.names.format, name, day)
+    }
+    /// [`RealPageNames::day_key`].
+    pub(crate) fn day_key(&self, name: &str, day: Option<i64>) -> Option<String> {
+        self.names.day_key(name, day)
+    }
+    /// The opening claimant of `day`, by the day's identifying spelling.
+    /// O(log P + claimants of that key); no document reads.
+    pub(crate) fn day_entry(&self, day: JournalDate) -> Option<&PageEntry> {
+        self.opening_entry(&refs::page_key(
+            &self.names.format.identifying_spelling(day),
+        ))
+        .filter(|entry| entry.date_key == Some(day.ordinal_key()))
     }
     /// The owner of a normalized real page name, with its stored name.
     pub(crate) fn get(&self, key: &str) -> Option<(&std::path::PathBuf, &String)> {
@@ -69,8 +106,33 @@ impl RealPageOwners {
     }
 }
 impl RealPageNames {
-    pub(crate) fn new() -> Self {
-        Self::default()
+    pub(crate) fn new(format: std::sync::Arc<JournalFormat>) -> Self {
+        Self {
+            claimants: Default::default(),
+            format,
+        }
+    }
+    /// The key a claimant is filed under: its normalized name, except that a
+    /// day's file whose name does not identify its day (the `MM-dd` label
+    /// `11-02`) is filed under the day's identifying spelling
+    /// ([`JournalFormat::claim_spelling`]). For a title format with a year
+    /// this is `page_key(name)`. O(name + parse list) for a day, O(name)
+    /// otherwise.
+    pub(crate) fn claim_key(&self, entry: &PageEntry) -> String {
+        self.day_key(&entry.name, entry.date_key)
+            .unwrap_or_else(|| refs::page_key(&entry.name))
+    }
+    /// [`page_handle`] of `entry` under this table's format.
+    pub(crate) fn entry_handle(&self, entry: &PageEntry) -> String {
+        page_handle(&self.format, &entry.name, entry.date_key).into_owned()
+    }
+    /// The key of day `day` (`yyyymmdd`) when its name `name` does not
+    /// identify it (the `MM-dd` label `11-02`); `None` when `name` names the
+    /// day itself or there is no day, so a caller keeps its own fold of
+    /// `name` and a title format with a year answers exactly as before.
+    /// O(name + parse list) for a day.
+    pub(crate) fn day_key(&self, name: &str, day: Option<i64>) -> Option<String> {
+        day_key(&self.format, name, day)
     }
     /// Every physical owner of this normalized name, including duplicates.
     /// Reuses the publication's claimant tree; no new query index is built.
@@ -101,7 +163,7 @@ impl RealPageNames {
         })
     }
     fn update(&mut self, entry: &PageEntry, added: bool) {
-        let key = refs::page_key(&entry.name);
+        let key = self.claim_key(entry);
         let mut bucket = self.claimants.get(&key).cloned().unwrap_or_default();
         if added {
             bucket.insert(entry.path.clone(), entry.clone());
@@ -114,11 +176,18 @@ impl RealPageNames {
             self.claimants.remove(&key);
         }
     }
+    /// `format`: the graph's journal format, which keys days. An `old` table
+    /// made with other date patterns is rebuilt, not patched.
     pub(crate) fn capture(
         old: Option<(&Self, &crate::model::persistent::Pages)>,
         pages: &crate::model::persistent::Pages,
         paths: &[String],
+        format: std::sync::Arc<JournalFormat>,
     ) -> Self {
+        let old = old.filter(|(old, _)| {
+            old.format.title_format() == format.title_format()
+                && old.format.file_format() == format.file_format()
+        });
         if let Some((old, before)) = old {
             let mut next = old.clone();
             for path in paths {
@@ -144,12 +213,43 @@ impl RealPageNames {
             }
             next
         } else {
-            let mut next = Self::new();
+            let mut next = Self::new(format);
             for (entry, _) in pages {
                 next.update(entry, true);
             }
             next
         }
+    }
+}
+
+/// The name that identifies a page named `name` with day `day` (`yyyymmdd`,
+/// `None` for an ordinary page) when it is asked a name-keyed question: `name`
+/// itself, except for a day whose name does not identify it under `format`
+/// (the `MM-dd` label `11-02`, CM SPEC §2.1: "typing the ambiguous,
+/// non-identifying label cannot select one"), which is asked by
+/// [`JournalFormat::identifying_spelling`]. For a title format with a year
+/// it is always `name`. The one answer behind [`day_key`]. O(name + parse
+/// list) for a day, O(1) otherwise.
+pub(crate) fn page_handle<'a>(
+    format: &JournalFormat,
+    name: &'a str,
+    day: Option<i64>,
+) -> std::borrow::Cow<'a, str> {
+    match day {
+        Some(day) => format.claim_spelling(JournalDate::from_ordinal(day), name),
+        None => std::borrow::Cow::Borrowed(name),
+    }
+}
+
+/// The page key of [`page_handle`] when it is not `name` (a day its name does
+/// not identify); `None` otherwise, so a caller keeps its own fold of `name`
+/// and a title format with a year answers exactly as before. The one answer
+/// to "what key does this day's page have" ([`RealPageNames::claim_key`],
+/// the query row's page key, the link table's node key).
+pub(crate) fn day_key(format: &JournalFormat, name: &str, day: Option<i64>) -> Option<String> {
+    match page_handle(format, name, day) {
+        std::borrow::Cow::Borrowed(_) => None,
+        std::borrow::Cow::Owned(spelling) => Some(refs::page_key(&spelling)),
     }
 }
 

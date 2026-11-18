@@ -827,6 +827,7 @@ impl ReadSnapshot {
             old.map(|old| (old.real_page_names.as_ref(), old.physical_pages.as_ref())),
             &physical_pages,
             changed_paths,
+            Arc::new(config.journal_format()),
         ));
         let physical_changed_paths = changed_paths;
         let (pages, semantic_paths) = active_pages::capture(
@@ -1505,19 +1506,19 @@ impl ReadSnapshot {
     pub(crate) fn config(&self) -> &Config {
         &self.config
     }
-    /// Journal entries are named by the configured date title (page_identity's
-    /// listed_entry). Probe only claimants of that name, not every journal.
+    /// The name of `day`'s opening journal, as a name that identifies it
+    /// ([`crate::query::page_handle`]: its title, unless the title is a
+    /// label other days share). Probes only the claimants of the day's key
+    /// ([`crate::query::RealPageOwners::day_entry`]), not every journal.
     pub(crate) fn reference_journal_name(
         &self,
         day: tine_core::date::JournalDate,
     ) -> Option<String> {
-        let title = self.config.journal_format().title(day);
-        self.real_page_owners()
-            .opening_entry(&tine_core::refs::page_key(&title))
-            .filter(|entry| {
-                entry.kind == PageKind::Journal && entry.date_key == Some(day.ordinal_key())
-            })
-            .map(|entry| entry.name.clone())
+        let owners = self.real_page_owners();
+        let entry = owners
+            .day_entry(day)
+            .filter(|entry| entry.kind == PageKind::Journal)?;
+        Some(owners.handle(&entry.name, entry.date_key).into_owned())
     }
     pub(crate) fn reference_candidate_pages(
         &self,
@@ -3112,7 +3113,8 @@ impl Graph {
     /// triggers a (synchronous, whole-graph) build. `None` on a cold cache or a
     /// page not yet cached, so latency-path callers can parse just one file.
     fn peek_cached_page(&self, entry: &PageEntry) -> Option<PageDto> {
-        self.with_cached(&entry.path, |row| row.map(|(e, d)| page_dto(e, d)))?
+        let format = self.current_journal_format();
+        self.with_cached(&entry.path, |row| row.map(|(e, d)| page_dto(e, d, &format)))?
     }
 
     /// Read and validate the current page file on every call, then reconcile a
@@ -3172,7 +3174,7 @@ impl Graph {
         }
         // Cache miss: parse the bytes we already read (propagate the original read
         // error if it failed).
-        Ok(Self::dto_of(entry, &content))
+        Ok(self.dto_of(entry, &content))
     }
 
     /// Directly read the caller-selected file, including a duplicate-day stray;
@@ -3188,7 +3190,7 @@ impl Graph {
             Err(e) if e.kind() == io::ErrorKind::NotFound => return Ok(None),
             Err(e) => return Err(e),
         };
-        Ok(Some(Self::dto_of(&entry, &content)))
+        Ok(Some(self.dto_of(&entry, &content)))
     }
 
     /// The DTO of `bytes` as the page file at `abs`, as a read of that file
@@ -3211,15 +3213,15 @@ impl Graph {
         // other guard, and a parser or projection panic must reach it as an
         // unreadable page, never unwind through its driver (merge review F1).
         std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-            Self::dto_of(&entry, content)
+            self.dto_of(&entry, content)
         }))
         .map(Some)
         .map_err(|_| io::Error::new(io::ErrorKind::InvalidData, ParserPanicked))
     }
 
-    fn dto_of(entry: &PageEntry, content: &str) -> PageDto {
+    fn dto_of(&self, entry: &PageEntry, content: &str) -> PageDto {
         let (doc, observed) = parse_page_content(entry, content);
-        let mut dto = page_dto(entry, &doc);
+        let mut dto = page_dto(entry, &doc, &self.current_journal_format());
         dto.read_only = read_only_org(&entry.path, content);
         dto.rev = Some(observed.rev);
         dto

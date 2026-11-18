@@ -95,7 +95,23 @@ fn conflict_and_merge_names() {
                         continue;
                     }
                 };
-            for (field, got) in [("name", &reverted.doc.name), ("title", &reverted.doc.title)] {
+            // `title` is the page's name; `name` is the key the app holds the
+            // page by, the name a plain read of the file gives (`page_dto`:
+            // the day's identifying spelling for a year-less day, else the
+            // page's name; REG-CM-YEARLESS-DAY-KEY round 3).
+            let key = store
+                .page(&PageId::from(rel.as_str()))
+                .map(|read| read.doc.name);
+            if key.as_ref().ok() != Some(&reverted.doc.name) {
+                diffs.push(Diff::new(
+                    "file name: conflicts.rs dto name differs from the page's read name",
+                    format!(
+                        "{rel}: merged/reverted PageDto name {:?}, read {key:?}",
+                        reverted.doc.name
+                    ),
+                ));
+            }
+            for (field, got) in [("title", &reverted.doc.title)] {
                 if *got != answer {
                     diffs.push(Diff::new(
                         format!("file name: conflicts.rs dto {field} differs from the answer"),

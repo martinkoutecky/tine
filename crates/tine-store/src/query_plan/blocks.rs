@@ -133,7 +133,7 @@ pub(super) fn execute_blocks(
                         .map(|ancestor| crate::query::crumb_line(ancestor))
                         .collect();
                     QueryHit::Block {
-                        page: winner.page.name.clone(),
+                        page: graph.page_name(winner.page),
                         kind: winner.page.kind,
                         path: winner.page.rel_path.clone().unwrap(),
                         block: dto,

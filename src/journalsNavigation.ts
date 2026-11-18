@@ -1,4 +1,4 @@
-import { appNow, journalTitle } from "./journal";
+import { appNow, journalHandle } from "./journal";
 import { openJournals } from "./router";
 import { openPageInSidebar } from "./ui";
 
@@ -6,7 +6,7 @@ import { openPageInSidebar } from "./ui";
  *  and the Journals Shift-click. Nothing is written here; a day with no file
  *  yet gets one when it is first typed in, as in the Journals feed. */
 export function openTodayInSidebar(): void {
-  openPageInSidebar(journalTitle(appNow()), "journal");
+  openPageInSidebar(journalHandle(appNow()), "journal");
 }
 
 /** OG's Journals click gesture: Shift opens today beside the current page. */

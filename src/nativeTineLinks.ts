@@ -13,7 +13,8 @@ export type CurrentPage =
 export interface CurrentPageRequest { id: number; binding_generation: number; graph_id: string }
 export interface ShareInboxResource { path: string; name?: string | null; type?: string | null }
 /** The ingest's durable record for an item (share_inbox.rs `Prepared`, ADR 0073):
- * the graph and frozen journal day it is bound to, its shaped Markdown (null
+ * the graph and frozen journal day it is bound to (the day's `journalHandle`;
+ * older records hold its title, `withDayHandle`), its shaped Markdown (null
  * while its files are imported), the asset names imported for it, the day
  * file's revision recorded inside the admitted read just before the append,
  * and `written` once that append reached disk. */

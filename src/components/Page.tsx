@@ -46,7 +46,7 @@ import { NamespaceCrumb, NamespaceHierarchy } from "./Namespace";
 import { visibleBody, isRenderHiddenPageProp } from "../render/block";
 import { InlineText, PageRef } from "../render/inline";
 import { EmojiText } from "../render/emoji";
-import { journalTitle, currentDayKey, localDateFromDayKey, localDayKey, appNow, parseJournalTitle } from "../journal";
+import { journalHandle, currentDayKey, localDateFromDayKey, localDayKey, appNow, parseJournalTitle } from "../journal";
 import { editingId, endEditForSurface, startEditing } from "../editorController";
 import type { PageRead, PageReadSource } from "../types";
 import { tagRef } from "../tags";
@@ -204,7 +204,7 @@ async function refreshJournalFeedForCurrentDay(owner: JournalsFeedOwner): Promis
   const flight = { graphEpoch: owner.graphEpoch, day, owner, promise: Promise.resolve<unknown | null>(null) };
   flight.promise = (async () => {
     const ensured = await ensureJournalTemplateForDay(date, () => ownerIsLive(flight.owner)
-      && !pageHasActiveEdit(journalTitle(date)) && (rollover || !feedHasActiveEdit()));
+      && !pageHasActiveEdit(journalHandle(date)) && (rollover || !feedHasActiveEdit()));
     const liveOwner = flight.owner;
     if (typeof ensured === "object") {
       // One day's template step never blanks the feed (GH #811): say that the
@@ -786,7 +786,7 @@ export function PageView(): JSX.Element {
   };
   const renderDay = (p: FeedPage) => <PageSection page={p} seen={currentRoute().kind === "page"}>
     {/* OG page/today-queries and journal: queries precede agenda. */}
-    <Show when={p.kind === "journal" && p.name === journalTitle(localDateFromDayKey(currentDayKey()))}>
+    <Show when={p.kind === "journal" && p.name === journalHandle(localDateFromDayKey(currentDayKey()))}>
       <TodaySections today={p.name} upcoming={<UpcomingSection feed={currentRoute().kind === "journals"} />} />
     </Show>
     <Show when={currentRoute().kind === "journals"}><JournalLinkedReferences name={p.name} /></Show>
@@ -878,7 +878,7 @@ function UpcomingJournals(props: { pages: PageRead[] }): JSX.Element {
       <For each={props.pages}>{day => {
         const [expanded, setExpanded] = createSignal(false);
         return <details onToggle={event => setExpanded(event.currentTarget.open)}>
-          <summary><PageRef name={day.name} /></summary>
+          <summary><PageRef name={day.name} alias={day.title} /></summary>
           <Show when={expanded()}><JournalLinkedReferences name={day.name} /></Show>
         </details>;
       }}</For>
@@ -1119,7 +1119,7 @@ function PageSection(props: { page: FeedPage; seen?: boolean; children?: JSX.Ele
   // task summary apply to today's journal only. og marks the title row, not
   // the section (whose opening tag the I-20 async-ownership guard anchors on).
   const isTodayJournal = () => props.page.kind === "journal"
-    && props.page.name === journalTitle(localDateFromDayKey(currentDayKey()));
+    && props.page.name === journalHandle(localDateFromDayKey(currentDayKey()));
   return (
     <div class="page-section" data-page-name={props.page.name}>
       <Show when={props.page.kind === "page"}>
@@ -1409,7 +1409,7 @@ export function TagPageTable(props: { pageName: string }): JSX.Element {
   const addRow = async () => {
     const ok = await appendToTodayJournal(`${tagRef(props.pageName)} `);
     if (!ok) return;
-    const today = pageByName(journalTitle(appNow()));
+    const today = pageByName(journalHandle(appNow()));
     const id = today?.roots[today.roots.length - 1];
     if (id && docNode(id)) startEditing(id, docNode(id).raw.length);
   };
@@ -1439,7 +1439,7 @@ export function TagPageTable(props: { pageName: string }): JSX.Element {
  * validated. */
 export function CarryActions(props: { page: FeedPage }): JSX.Element {
   const isJournal = () => props.page.kind === "journal";
-  const isToday = () => isJournal() && props.page.name === journalTitle(localDateFromDayKey(currentDayKey()));
+  const isToday = () => isJournal() && props.page.name === journalHandle(localDateFromDayKey(currentDayKey()));
   return (
     <Show when={isJournal() && showCarryButtons()}>
       <div class="page-carry-actions">

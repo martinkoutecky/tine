@@ -52,7 +52,7 @@ import { PAGES_AND_BLOCKS, RESULT_KINDS_PROPERTY, type BothFamilies } from "./qu
 import { bothFamilies } from "../queryTwin";
 import { graphEpoch, graphMeta } from "../graphSession";
 import { createQuerySubscription } from "../querySubscription";
-import { createAnswerDay } from "../journal";
+import { createAnswerDay, pageLabel } from "../journal";
 import { SearchResultRow } from "./SearchResultRow";
 import { QueryPageResults, type QueryPageHit } from "./QueryPageResults";
 import { QueryResultSections, type ResultFamily } from "./QueryResultSections";
@@ -1201,7 +1201,7 @@ export function QueryWorkspace(props: QueryWorkspaceProps): JSX.Element {
               const group = () => boardByKey().get(key)!;
               return (
               <section class="query-board-column">
-                <h2>{group().page}<span class="query-board-count">{group().hits.length}</span></h2>
+                <h2>{pageLabel(group().page)}<span class="query-board-count">{group().hits.length}</span></h2>
                 <div role="list"><For each={group().hits}>{(hit) => (
                   <div role="listitem">{hit.entity === "block" && task(hit)}<button type="button" class="query-board-card" data-inpage-find-surface={hitSurfaceId(hit)} {...resultActions(hit)}>
                     <span class={hit.is_comment ? "switcher-kind" : "sr-only"}>{hitKind(hit)}: </span><MarkedText text={hit.display_text} spans={hitSpans(hit)} />

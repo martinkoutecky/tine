@@ -190,8 +190,12 @@ impl FilelessName {
         real: &crate::query::RealPageOwners,
         spelling: &str,
     ) -> Option<Self> {
-        if self.day.is_some() {
-            if let Some(entry) = real.opening_entry(&refs::page_key(&self.name)) {
+        if let Some(day) = self.day {
+            // The day's own key: a year-less title is a label the ordinary
+            // page of that name and other days share (`page_handle`).
+            let key = (real.day_key(&self.name, Some(day.ordinal_key())))
+                .unwrap_or_else(|| refs::page_key(&self.name));
+            if let Some(entry) = real.opening_entry(&key) {
                 if entry.kind == PageKind::Journal {
                     return None;
                 }

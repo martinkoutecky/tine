@@ -433,6 +433,37 @@ function __tine_raw_journal_day_json(name, file_format, title_format) {
 }
 
 /**
+ * The spelling that names the day `year-month-day` itself:
+ * `JournalFormat::identifying_spelling` (its title when that reads back as
+ * the day, else the first parse-list spelling that does). The app asks the
+ * store for a known day by it, never by a year-less label (`MM-dd`'s
+ * `11-02`) other days and an ordinary page share (CM SPEC §2.1). For a
+ * title format with a year it is the title. O(parse list) warm.
+ * @param {number} year
+ * @param {number} month
+ * @param {number} day
+ * @param {string} file_format
+ * @param {string} title_format
+ * @returns {string}
+ */
+function __tine_raw_journal_identifying_spelling(year, month, day, file_format, title_format) {
+    let deferred3_0;
+    let deferred3_1;
+    try {
+        const ptr0 = passStringToWasm0(file_format, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+        const len0 = WASM_VECTOR_LEN;
+        const ptr1 = passStringToWasm0(title_format, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+        const len1 = WASM_VECTOR_LEN;
+        const ret = wasm.journal_identifying_spelling(year, month, day, ptr0, len0, ptr1, len1);
+        deferred3_0 = ret[0];
+        deferred3_1 = ret[1];
+        return getStringFromWasm0(ret[0], ret[1]);
+    } finally {
+        wasm.__wbindgen_free(deferred3_0, deferred3_1, 1);
+    }
+}
+
+/**
  * The message of the most recent panic in this instance ("" if none). A trapped
  * instance still answers small calls; the glue reads this before reinstantiating.
  * @returns {string}
@@ -1765,6 +1796,7 @@ export const is_og_built_in_property = __tineGuard("is_og_built_in_property", __
 export const is_query_macro_name = __tineGuard("is_query_macro_name", __tine_raw_is_query_macro_name);
 export const is_render_hidden_prop = __tineGuard("is_render_hidden_prop", __tine_raw_is_render_hidden_prop);
 export const journal_day_json = __tineGuard("journal_day_json", __tine_raw_journal_day_json);
+export const journal_identifying_spelling = __tineGuard("journal_identifying_spelling", __tine_raw_journal_identifying_spelling);
 export const last_panic = __tineGuard("last_panic", __tine_raw_last_panic);
 export const linkable_property_names = __tineGuard("linkable_property_names", __tine_raw_linkable_property_names);
 export const logbook_apply_marker_transition = __tineGuard("logbook_apply_marker_transition", __tine_raw_logbook_apply_marker_transition);

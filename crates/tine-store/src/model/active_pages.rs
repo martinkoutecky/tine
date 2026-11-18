@@ -34,14 +34,14 @@ pub(super) fn capture(
     if let Some(old) = old {
         let mut affected: BTreeSet<String> = paths.iter().cloned().collect();
         let mut keys = BTreeSet::new();
+        let previous = old.real_page_owners();
         for path in paths {
-            for pages in [&old.physical_pages, physical] {
+            for (pages, names) in [(&old.physical_pages, &previous), (physical, &owners)] {
                 if let Some((entry, _)) = snapshot_page_by_rel(pages, None, path) {
-                    keys.insert(tine_core::refs::page_key(&entry.name));
+                    keys.insert(names.claim_key(entry));
                 }
             }
         }
-        let previous = old.real_page_owners();
         for key in keys {
             for names in [&previous, &owners] {
                 if let Some(entry) = names.opening_entry(&key) {
@@ -60,7 +60,7 @@ pub(super) fn capture(
             if let Some(&slot) = physical.positions.get(path) {
                 if let Some((entry, doc)) = physical.get(slot) {
                     if owners
-                        .get(&tine_core::refs::page_key(&entry.name))
+                        .get(&owners.claim_key(entry))
                         .is_some_and(|(winner, _)| winner == &entry.path)
                     {
                         active.set(slot, (entry.clone(), Arc::clone(doc)));

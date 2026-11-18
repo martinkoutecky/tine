@@ -1,4 +1,5 @@
 import { createReferenceGroupCollapse } from "../referenceGroupCollapse";
+import { pageLabel } from "../journal";
 import { bulkCollapseTarget } from "../collapseToggle";
 import { t } from "../i18n";
 import { For, Show, createResource, createSignal, createMemo, createEffect, mergeProps, on, onCleanup, onMount, type JSX } from "solid-js";
@@ -606,7 +607,7 @@ export function ReferenceSection(input: { name: string; unlinked?: boolean; jour
                       openPageContextMenu(e.clientX, e.clientY, group().page, group().kind);
                     }}
                   >
-                    {group().page}
+                    {pageLabel(group().page)}
                   </button>
                 </div>
                 <Show when={!groupCollapsed(group())}>

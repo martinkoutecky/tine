@@ -21,7 +21,7 @@ import { clearParseCache } from "../render/parse";
 import { notifyModeReset } from "../modeHooks";
 import { deferExternalReload, replayDeferredExternalReloads } from "./deferredReload";
 import { isBlockMoving } from "./edits/moves";
-import { journalTitle, appNow, parseJournalTitle } from "../journal";
+import { journalHandle, appNow, parseJournalTitle } from "../journal";
 import { graphRewriteFrozen } from "./graphRewriteState";
 import { pushToastUnique } from "../toasts";
 import { renderEnglish } from "../i18n";
@@ -735,7 +735,7 @@ export function appendFeed(dtos: (PageDto & { id?: string })[]): PageLoadRefusal
  *  today's name has unsaved input, nothing is published and the refusal is
  *  returned. */
 export function restoreTodayJournalInFeed(): PageLoadRefusal | null {
-  const title = journalTitle(appNow());
+  const title = journalHandle(appNow());
   if (doc.feed.includes(title)) return null;
   const refusal = upsertUnlessDirty(emptyPage(title, "journal"));
   if (refusal) return refusal;

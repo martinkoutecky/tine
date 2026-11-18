@@ -6,7 +6,7 @@
 // page the query block renders on (og 14 Q2 follow-up; master binds the
 // focused pane's page the same way).
 import { configuredHomePage } from "./homePage";
-import { journalTitle, currentDayKey, localDateFromDayKey } from "./journal";
+import { journalHandle, currentDayKey, localDateFromDayKey } from "./journal";
 import { focusedRouter } from "./panes";
 
 /** OG's `current-page-fn`: focused pane's routed page → default home → today.
@@ -15,7 +15,7 @@ import { focusedRouter } from "./panes";
 export function queryCurrentPage(): string {
   const route = focusedRouter().route();
   if (route.kind === "page" && route.name.trim()) return route.name;
-  return configuredHomePage() ?? journalTitle(localDateFromDayKey(currentDayKey()));
+  return configuredHomePage() ?? journalHandle(localDateFromDayKey(currentDayKey()));
 }
 
 // Recognize the typed Logseq input without treating an example in a string or

@@ -241,8 +241,10 @@ fn marker_row_name(store: &Store, kind: PageKind, stem: &str) -> String {
 /// a day, in either directory, is a journal named by its date (K SPEC §2.1).
 /// `None` only when the store cannot name `id` as a page file. Cost
 /// O(bytes + blocks), no disk read.
-fn page_answer_of(store: &Store, id: &PageId, bytes: &[u8]) -> Option<(PageKind, String)> {
-    (store.page_of(id, bytes).ok()).map(|read| (read.doc.kind, read.doc.name))
+/// The name is the page's (`PageDto::title`); its operational key
+/// (`PageDto::name`) is the third field.
+fn page_answer_of(store: &Store, id: &PageId, bytes: &[u8]) -> Option<(PageKind, String, String)> {
+    (store.page_of(id, bytes).ok()).map(|read| (read.doc.kind, read.doc.title, read.doc.name))
 }
 
 /// The kind and name a sync copy is listed under: its winner's, read from
@@ -267,7 +269,10 @@ fn sync_copy_base(
         Err(_) => None,
     };
     read.or_else(|| page_answer_of(store, &id, b""))
-        .unwrap_or_else(|| (kind, base_stem.to_owned()))
+        .map_or_else(
+            || (kind, base_stem.to_owned()),
+            |(kind, name, _)| (kind, name),
+        )
 }
 
 /// The winner a graph page or journal file shadows when it is a
@@ -680,7 +685,7 @@ pub(crate) fn dto(store: &Store, id: &PageId, mut doc: Document) -> PageDto {
     // §2.1). A target the store cannot name keeps its directory's kind and raw
     // stem.
     let pre = doc.pre_block.as_deref().unwrap_or("");
-    let (kind, name) = page_answer_of(store, id, pre.as_bytes()).unwrap_or_else(|| {
+    let (kind, title, name) = page_answer_of(store, id, pre.as_bytes()).unwrap_or_else(|| {
         let journals = format!("{}/", store.config().journals_dir);
         let kind = if id.as_str().starts_with(&journals) {
             PageKind::Journal
@@ -694,10 +699,10 @@ pub(crate) fn dto(store: &Store, id: &PageId, mut doc: Document) -> PageDto {
             .unwrap_or(id.as_str())
             .rsplit_once('.')
             .map_or("", |(stem, _)| stem);
-        (kind, stem.to_owned())
+        (kind, stem.to_owned(), stem.to_owned())
     });
     PageDto {
-        title: name.clone(),
+        title,
         name,
         kind,
         pre_block: doc.pre_block,

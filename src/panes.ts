@@ -22,7 +22,7 @@ import { authorizeExternalPdf, type ExternalPdfRead } from "./externalPdfSource"
 import { registerPaneFocusSetter } from "./ui";
 import { setCellSel } from "./sheet/selection";
 import { clearSelection, pageByName, registerPaneRouteProvider, installHistoryRouteContextAdapter, node as docNode, feedNames } from "./document";
-import { journalTitle, appNow } from "./journal";
+import { journalHandle, appNow } from "./journal";
 import { isSinglePaneShell, pdfTakesOverPane } from "./viewportClass";
 import {
   nearestPane,
@@ -304,7 +304,7 @@ export function closeLayoutPane(
 
 function routeForJournalsDuplicate(anchor: string | null): Route {
   const selectedDay = anchor ? docNode(anchor)?.page : undefined;
-  const today = journalTitle(appNow());
+  const today = journalHandle(appNow());
   const name =
     (selectedDay && feedNames().includes(selectedDay) ? selectedDay : undefined) ??
     (feedNames().includes(today) ? today : feedNames()[0] ?? today);

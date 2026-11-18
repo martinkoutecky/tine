@@ -211,3 +211,44 @@ fn a_date_named_pages_file_is_a_journal_row_and_query_only_dates_are_not() {
     assert!(!root.path().join("journals/2000_01_01.md").exists());
     store.close();
 }
+
+/// REG-CM-YEARLESS-DAY-KEY (round 3): under a year-less title format the
+/// feed names each day by the spelling that identifies it and titles it by
+/// its label, for a day file (Markdown and Org) and a referenced day with no
+/// file alike, so two years of `11-02` are two feed days the app keys apart.
+/// Before the fix both read back as `11-02`.
+#[test]
+fn a_year_less_feed_names_each_day_by_the_spelling_that_identifies_it() {
+    let _integration_guard = crate::integration_lock();
+    for ext in ["md", "org"] {
+        let root = tempfile::tempdir().unwrap();
+        for directory in ["pages", "journals", "logseq"] {
+            std::fs::create_dir(root.path().join(directory)).unwrap();
+        }
+        let file = |rel: &str, text: &str| std::fs::write(root.path().join(rel), text).unwrap();
+        file(
+            "logseq/config.edn",
+            "{:journal/page-title-format \"MM-dd\"}\n",
+        );
+        file(&format!("journals/2026_11_02.{ext}"), "- the day\n");
+        file(&format!("journals/2025_11_02.{ext}"), "- last year\n");
+        file("pages/11-02.md", "- a label page\n");
+        file("pages/Plan.md", "- [[2024-11-02]]\n");
+        let store = Store::open(root.path(), Default::default()).unwrap().0;
+        store.whole_graph().unwrap();
+        let feed = completed_feed(&store, 10, None).unwrap();
+        let names: Vec<_> = (feed.pages.iter())
+            .map(|p| (p.doc.name.as_str(), p.doc.title.as_str()))
+            .collect();
+        assert_eq!(
+            names,
+            [
+                ("2026_11_02", "11-02"),
+                ("2025_11_02", "11-02"),
+                ("2024_11_02", "11-02")
+            ],
+            "{ext}"
+        );
+        store.close();
+    }
+}

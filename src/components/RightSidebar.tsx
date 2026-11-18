@@ -22,6 +22,7 @@ import { nearestAncestors } from "../render/blockTrail";
 import { openRouteInOtherPane } from "../panes";
 import { internalLinkAuxClick, internalLinkDest, internalLinkMouseDown } from "../linkGesture";
 import { EmojiText } from "../render/emoji";
+import { pageLabel } from "../journal";
 import { pageIcon } from "../pageIconBatch";
 import { PageIcon } from "./PageIcon";
 import { backend } from "../backend";
@@ -439,7 +440,7 @@ function PageItem(props: {
           else openPageTarget(target);
         }} onAuxClick={(e) => internalLinkAuxClick(e, () =>
           openPageTargetInNewTab({ name: props.item.name, pageKind: props.item.pageKind, path: props.item.path }))}>
-          <Show when={pageIcon(props.item.name)}>{icon => <><PageIcon value={icon()} name={props.item.name} />{" "}</>}</Show><EmojiText text={props.item.name} />
+          <Show when={pageIcon(props.item.name)}>{icon => <><PageIcon value={icon()} name={props.item.name} />{" "}</>}</Show><EmojiText text={pageLabel(props.item.name)} />
         </a>
         <ItemActions index={props.row.index} surfaceKey={props.surfaceKey} page={props.item} collapsed={props.collapsed} onClose={props.onClose} />
       </div>

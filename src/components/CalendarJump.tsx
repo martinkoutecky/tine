@@ -2,7 +2,7 @@ import { t } from "../i18n";
 import { stepMonth } from "./primitives";
 import { For, Show, createEffect, createMemo, createSignal, createUniqueId, onCleanup, onMount, type JSX } from "solid-js";
 import { openPage } from "../router";
-import { journalTitle, appNow } from "../journal";
+import { journalHandle, appNow } from "../journal";
 import { graphEpoch } from "../graphSession";
 import { changed } from "../changeKeys";
 import { firstDayOfWeek } from "../ui";
@@ -62,7 +62,9 @@ export function CalendarJump(props: { onOpenReady?: (open: () => void) => void; 
   // OG container.cljs sidebar-nav -> route/sidebar-journals!: Shift opens
   // today's journal beside the current page. The grid applies it to its day.
   const pickDate = (date: Date, event: MouseEvent) => {
-    const name = journalTitle(date);
+    // The day by the spelling that identifies it: under a year-less title
+    // format its label names the ordinary page (CM SPEC §2.1).
+    const name = journalHandle(date);
     if (event.shiftKey) openPageInSidebar(name, "journal");
     else openPage(name, "journal");
     setOpen(false);

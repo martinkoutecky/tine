@@ -183,11 +183,11 @@ impl PageFacts {
 
     /// Whether any block of this page (or the page itself, which is in every
     /// block's path-refs closure) can reference one of `names` (normalized).
-    pub(crate) fn may_reference(&self, entry: &PageEntry, names: &[String]) -> bool {
-        let own = tine_core::refs::normalize(&entry.name);
+    /// `own`: the page's own key (`EvalCache::page_key`).
+    pub(crate) fn may_reference(&self, own: &str, names: &[String]) -> bool {
         names
             .iter()
-            .any(|name| *name == own || self.refs.binary_search(name).is_ok())
+            .any(|name| name == own || self.refs.binary_search(name).is_ok())
     }
 
     /// Every normalized reference name of the page's blocks (namespace

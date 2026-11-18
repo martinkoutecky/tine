@@ -38,7 +38,7 @@ import { clearOnBindingInvalidated } from "./binding";
 import { graphMeta } from "./graphSession";
 import { onAppReturn } from "./windowRealm";
 import { pushToast } from "./toasts";
-import { journalTitle, appNow } from "./journal";
+import { journalHandle, journalTitle, pageLabel, appNow } from "./journal";
 import { appendToJournalDay, flushPage, formatForPage, pageByName, trackAssetWrite } from "./document";
 import { assetFileName, assetMarkdown } from "./media";
 import { asOutlineBlock, captureTime, shapeShare } from "./shareShape";
@@ -92,7 +92,7 @@ async function shape(item: ShareInboxItem, day: string, live: () => boolean): Pr
   const meta = graphMeta();
   const content = shapeShare({ source: item.source, text: item.text, title: item.title, url: item.url, assets: links }, {
     time: captureTime(item.created ? new Date(item.created) : appNow()),
-    date: day,
+    date: pageLabel(day),
     format,
     textTemplate: meta?.quick_capture_template_text,
     mediaTemplate: meta?.quick_capture_template_media,
@@ -106,7 +106,7 @@ async function ingestOne(inbox: NativeShareInbox, item: ShareInboxItem, owner: (
   // Android's share Activity brings Tine forward. iOS shares/App Intents
   // save without opening it. Recovery is deliberately silent navigation-wise.
   const reveal = item.source === "android" && !item.prepared;
-  let prepared: SharePrepared | null = item.prepared ?? null;
+  let prepared: SharePrepared | null = item.prepared ? withDayHandle(item.prepared) : null;
   if (prepared?.written) {
     // Its block reached disk before this record did: flush whatever of that
     // day is still pending here (in its own graph only), then acknowledge.
@@ -121,7 +121,7 @@ async function ingestOne(inbox: NativeShareInbox, item: ShareInboxItem, owner: (
   if (prepared && prepared.graph !== graph) return "elsewhere";
   if (!prepared) {
     // 1. Bind the item to this graph and freeze its day before any graph write.
-    prepared = { graph, day: journalTitle(appNow()), markdown: null, assets: [], armed: null, written: false };
+    prepared = { graph, day: journalHandle(appNow()), markdown: null, assets: [], armed: null, written: false };
     await inbox.prepare(item.id, prepared);
     if (!owner()) return "stale";
   }
@@ -168,6 +168,15 @@ async function ingestOne(inbox: NativeShareInbox, item: ShareInboxItem, owner: (
   return reveal && entry.ids.length
     ? { name: entry.day, pageKind: "journal", block: entry.ids[0], path: pageByName(entry.day)?.id }
     : "done";
+}
+
+/** `prepared` with its frozen `day` as the day's `journalHandle`, the name
+ *  the store gives the day's page. A record frozen before records held
+ *  handles holds the day's title; while that is today's title it is today
+ *  (under a year-less title format a title names no day, CM SPEC §2.1). */
+function withDayHandle(prepared: SharePrepared): SharePrepared {
+  const today = appNow();
+  return prepared.day === journalTitle(today) ? { ...prepared, day: journalHandle(today) } : prepared;
 }
 
 /** Save journal `day` of the bound graph through the audited path: "done"

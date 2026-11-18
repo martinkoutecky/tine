@@ -487,7 +487,11 @@ impl BacklinkMembership {
         {
             return Arc::from([]);
         }
-        let source = refs::page_key(&entry.name);
+        let source = refs::page_key(&crate::query::page_handle(
+            self.resolver.format(),
+            &entry.name,
+            entry.date_key,
+        ));
         let mut rows = Vec::new();
         let mut collect = |block: &DocBlock, ordinal| {
             for reference in block.projection().reference_source().explicit {
@@ -558,7 +562,10 @@ impl BacklinkMembership {
             snapshot_reads: std::sync::atomic::AtomicUsize::new(0),
         };
         for (entry, _) in graph.pages.iter() {
-            answer.register(&entry.name, entry.kind == PageKind::Journal, &entry.name);
+            // A day by the name that identifies it (`page_handle`).
+            let handle =
+                crate::query::page_handle(answer.resolver.format(), &entry.name, entry.date_key);
+            answer.register(&handle, entry.kind == PageKind::Journal, &handle);
         }
         for (entry, doc) in graph.pages.iter() {
             answer.register_source_targets(graph, entry, doc);
@@ -623,13 +630,18 @@ impl BacklinkMembership {
                     (
                         entry.kind,
                         entry.name.clone(),
+                        entry.date_key,
                         crate::query::document_alias_spellings(doc),
                     )
                 })
             };
             if identity(&before) != identity(&after) {
                 for (_, (entry, doc)) in before.iter().chain(&after) {
-                    seeds.insert(entry.name.clone());
+                    // A day by the name that identifies it (`page_handle`).
+                    let format = next.resolver.format();
+                    seeds.insert(
+                        crate::query::page_handle(format, &entry.name, entry.date_key).into_owned(),
+                    );
                     seeds.extend(crate::query::document_alias_spellings(doc));
                 }
             }
@@ -676,9 +688,14 @@ impl BacklinkMembership {
                     .get_path(path)
                     .filter(|entry| graph.pages.positions.contains_key(entry.rel_path_str()))
                 {
+                    let handle = crate::query::page_handle(
+                        next.resolver.format(),
+                        &entry.name,
+                        entry.date_key,
+                    );
                     wanted.insert(
-                        (entry.kind == PageKind::Journal, refs::page_key(&entry.name)),
-                        entry.name.clone(),
+                        (entry.kind == PageKind::Journal, refs::page_key(&handle)),
+                        handle.into_owned(),
                     );
                 }
             }
@@ -830,6 +847,13 @@ impl ReadSnapshot {
     }
     pub(crate) fn reference_real_page_names(&self) -> Option<Arc<crate::query::RealPageNames>> {
         Some(Arc::clone(&self.real_page_names))
+    }
+    /// The name `entry`'s page crosses to the app by (`PageDto.name`,
+    /// `RefGroup.page`, query rows): its handle under the snapshot's format,
+    /// so a year-less day is named by its identifying spelling (CM SPEC
+    /// §2.1). O(name + parse list) for a day, O(name) otherwise.
+    pub(crate) fn page_name(&self, entry: &PageEntry) -> String {
+        self.real_page_names.entry_handle(entry)
     }
     /// The real-name table ranked by the claimant order (OW-1).
     pub(crate) fn real_page_owners(&self) -> crate::query::RealPageOwners {
