@@ -122,6 +122,7 @@ jobs:
         env:
           NAV: ${{ matrix.nav }}
           IME: ${{ matrix.ime }}
+          NIGHT: ${{ matrix.night }}
           SEED: ${{ matrix.seed }}
         with:
           api-level: ${{ matrix.api }}

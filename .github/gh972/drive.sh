@@ -17,6 +17,7 @@ pkg=$("$aapt2" dump badging "$apk" | sed -n "s/^package: name='\([^']*\)'.*/\1/p
 echo "package=$pkg ref=$label" | tee "$out/package.txt"
 adb install -r "$apk" > "$out/install.txt" 2>&1 || { cat "$out/install.txt"; exit 1; }
 adb shell settings put global hide_error_dialogs 1 || true
+if [ "${NIGHT:-0}" = "1" ]; then adb shell cmd uimode night yes > "$out/night.txt" 2>&1 || true; fi
 nav="${NAV:-3button}"
 if [ "$nav" = "gestural" ]; then adb shell cmd overlay enable com.android.internal.systemui.navbar.gestural > "$out/nav.txt" 2>&1 || true; sleep 3; fi
 adb shell settings get secure navigation_mode >> "$out/nav.txt" 2>&1 || true
@@ -72,7 +73,7 @@ PY
 read -r wl wt wr wb <<< "$(webview_bounds start)"
 echo "webview=[$wl,$wt][$wr,$wb]" | tee -a "$out/taps.txt"
 
-for n in $(seq 1 14); do
+for n in $(seq 1 20); do
   waitfor "GH972 [0-9.]+ (TARGET|KEY|TARGET-NONE) step=$n( |$)" 90 || { echo "step $n: nothing announced" >&2; continue; }
   line=$(grep -aE "GH972 [0-9.]+ (TARGET|KEY) step=$n " "$log" | tail -1)
   [ -z "$line" ] && { echo "step $n: no target"; continue; }
@@ -85,7 +86,13 @@ for n in $(seq 1 14); do
     dpr=$(echo "$line" | sed -n 's/.* dpr=\([0-9.]*\).*/\1/p')
     x=$(python3 -I -c "print(int($wl + $cx * $dpr))"); y=$(python3 -I -c "print(int($wt + $cy * $dpr))")
     echo "step $n: css=($cx,$cy) dpr=$dpr -> tap ($x,$y)" | tee -a "$out/taps.txt"
-    adb shell input tap "$x" "$y"
+    mode=$(echo "$line" | sed -n 's/.* mode=\([a-z]*\).*/\1/p')
+    case "$mode" in
+      drift) adb shell input swipe "$x" "$y" $((x - 4)) $((y + 6)) 140 ;;
+      long) adb shell input swipe "$x" "$y" "$x" "$y" 600 ;;
+      *) adb shell input tap "$x" "$y" ;;
+    esac
+    echo "  mode=$mode" >> "$out/taps.txt"
   fi
   sleep 2.2; shot "s$n-1-after"
   waitfor "GH972 [0-9.]+ (STEP-DONE|STEP-TIMEOUT) step=$n( |$)" 40 || true

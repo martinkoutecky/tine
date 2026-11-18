@@ -98,6 +98,13 @@
     { name: "R-button", find: closeR, until: closedNow },
     { name: "R-open3", find: openR, until: function () { return isOpen("right"); } },
     { name: "R-back", find: BACK, until: closedNow },
+    // a real finger drifts a few pixels and may rest longer than a synthetic tap
+    { name: "L-open5", find: openL, until: function () { return isOpen("left"); } },
+    { name: "L-scrim-drift", find: scrimL, mode: "drift", until: closedNow },
+    { name: "L-open6", find: openL, until: function () { return isOpen("left"); } },
+    { name: "L-scrim-long", find: scrimL, mode: "long", until: closedNow },
+    { name: "R-open4", find: openR, until: function () { return isOpen("right"); } },
+    { name: "R-scrim-drift", find: scrimR, mode: "drift", until: closedNow },
   ];
   var created = false, confirmed = false, state = "boot", idx = 0, lastLog = 0;
 
@@ -111,7 +118,7 @@
     if (!tg) { log("TARGET-NONE step=" + n + " name=" + s.name); snap("no-target-" + s.name); idx++; setTimeout(runStep, 800); return; }
     snap("pre-" + s.name);
     if (tg === BACK) log("KEY step=" + n + " name=" + s.name + " code=4");
-    else log("TARGET step=" + n + " name=" + s.name, "cx=" + r1(tg.cx), "cy=" + r1(tg.cy), "dpr=" + devicePixelRatio);
+    else log("TARGET step=" + n + " name=" + s.name, "cx=" + r1(tg.cx), "cy=" + r1(tg.cy), "dpr=" + devicePixelRatio, "mode=" + (s.mode || "tap"));
     var waited = 0;
     var iv = setInterval(function () {
       waited += 250;
