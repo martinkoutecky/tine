@@ -14,7 +14,10 @@ it does not advance that ancestor before publication. The existing publication
 wait returns the host's actual own-publication revision and version, including
 when a newer save covers a skipped version. Overlapping replies install that
 evidence on the same loaded instance without regressing an installed disk
-revision, including reloads whose parsed content is identical. The wait keeps
+revision, including reloads whose parsed content is identical. A disk token in
+the host's mail that names a taken revision's bytes proves that revision too,
+so an older save stays the ancestor when only a newer save's wait runs. Pending
+revisions are kept only until such a proof or an install. The wait keeps
 its bounded timeout and session checks and does O(requested pages) bookkeeping;
 it adds no file reads or IPC calls. Review is
 three-way when the optional Concord ledger still holds the ancestor's bytes;
