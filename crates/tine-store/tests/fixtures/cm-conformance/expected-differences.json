@@ -303,7 +303,12 @@
     "randomGraphs": 0
   },
   "frontend": {
-    "fixtures": {}
+    "fixtures": {
+      "d7-year-less-title-label": [
+        "frontend navigate [[2026-11-02]]: model (\"journal\", \"Day 2026-11-02\"), frontend (\"page\", \"11-02\") via (journal, 11-02); backend (\"journal\", \"Day 2026-11-02\")",
+        "frontend owner ownerPath journal [[11-02]]: backend opens pages/11-02.md, ownerPath gives journals/2026_11_02.md"
+      ]
+    }
   },
   "frontendCounts": {
     "fixtures": {
@@ -329,6 +334,9 @@
         "frontend all pages: file pages/A.md has no row (hidden as an OG built-in page, A11)",
         "frontend all pages: model page (\"page\", \"b\") is reference-only and has no row (hidden as an OG built-in page, A11)",
         "frontend all pages: model page (\"page\", \"todo\") is reference-only and has no row (hidden as an OG built-in page, A11)"
+      ],
+      "d7-year-less-title-label": [
+        "frontend page list: model page \"Day 2026-11-02\" is not listed"
       ],
       "n1-legacy-codec": [
         "frontend all pages: model page (\"page\", \"a\") is reference-only and has no row (hidden as an OG built-in page, A11)"
@@ -752,6 +760,7 @@
       "d4-date-named-page-file-format": [],
       "d5-lenient-spellings": [],
       "d6-fileless-date-parent": [],
+      "d7-year-less-title-label": [],
       "n1-legacy-codec": [],
       "n2-triple-lowbar-codec": [],
       "n3-org-file-links-legacy": [],

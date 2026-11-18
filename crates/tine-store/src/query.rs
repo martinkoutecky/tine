@@ -417,7 +417,7 @@ fn sorted_alias_owners(
 }
 
 mod page_names;
-pub(crate) use page_names::{real_page_names, RealPageNames, RealPageOwners};
+pub(crate) use page_names::{day_key, page_handle, real_page_names, RealPageNames, RealPageOwners};
 
 mod alias_relation;
 pub(crate) use alias_relation::{alias_group_members, AliasEdges, AliasRelation, AliasRow};

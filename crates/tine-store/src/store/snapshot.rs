@@ -233,12 +233,8 @@ impl Snapshot {
                 // A demoted file or removed opening with a replacement is
                 // represented by the new opening file's event, not deletion
                 // of a logical page that still exists.
-                if self
-                    .graph
-                    .real_page_owners()
-                    .opening_entry(&tine_core::refs::page_key(&entry.name))
-                    .is_none()
-                {
+                let owners = self.graph.real_page_owners();
+                if owners.opening_entry(&owners.claim_key(entry)).is_none() {
                     pages.push((
                         FileId::from(path),
                         ChangeKind::Removed,

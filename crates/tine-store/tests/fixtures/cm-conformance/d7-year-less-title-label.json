@@ -1,0 +1,14 @@
+{
+  "config": {
+    "journalTitleFormat": "MM-dd"
+  },
+  "files": {
+    "journals/2026_11_02.md": "- the day\n",
+    "pages/11-02.md": "- a label page\n",
+    "pages/Notes.md": "- label [[11-02]]\n- day [[2026-11-02]]\n"
+  },
+  "queries": [
+    {"anchor": "block", "q": {"refs": "11-02"}},
+    {"anchor": "block", "q": {"refs": "2026-11-02"}}
+  ]
+}

@@ -116,13 +116,16 @@ impl LinkGraph {
                 if cancelled() {
                     return false;
                 }
-                let key = refs::page_key(&entry.name);
+                // A day is asked by the name that identifies it, not by a
+                // label other days or an ordinary page share (`page_handle`).
+                let handle = super::page_handle(format, &entry.name, entry.date_key);
+                let key = refs::page_key(&handle);
                 let kind = usize::from(entry.kind == tine_core::model::PageKind::Journal);
                 if table.by_key[kind].contains_key(&key) {
                     continue;
                 }
                 let node = node_keys.len() as u32;
-                let (_, names, self_page) = resolve(&entry.name);
+                let (_, names, self_page) = resolve(&handle);
                 register(node, &names, &mut by_name, &mut by_property_key);
                 table.by_key[kind].insert(key.clone(), node);
                 node_keys.push(key);
@@ -135,7 +138,7 @@ impl LinkGraph {
                 }
                 let source = table.by_key
                     [usize::from(entry.kind == tine_core::model::PageKind::Journal)]
-                    [&refs::page_key(&entry.name)];
+                    [&refs::page_key(&super::page_handle(format, &entry.name, entry.date_key))];
                 if favorites
                     .as_deref()
                     .is_some_and(|favorites| refs::page_key(&entry.name) == favorites)

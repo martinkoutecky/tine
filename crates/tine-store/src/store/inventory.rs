@@ -204,11 +204,13 @@ fn with_link(
         Resolved::Alias { owners } => owners.first().and_then(|id| owner_link(graph, id.as_str())),
         _ => None,
     };
+    // A day is looked up by the name that identifies it (`page_handle`).
+    let handle = crate::query::page_handle(format, &entry.name, entry.day.map(|day| day.0));
     let link = entry
         .link
         .take()
         .or(alias)
-        .unwrap_or_else(|| link_target_in(claimants, graph, format, &entry.name, declared));
+        .unwrap_or_else(|| link_target_in(claimants, graph, format, &handle, declared));
     if link.is_journal != entry.is_journal || link.name != entry.name {
         entry.link = Some(link);
     }
@@ -606,8 +608,9 @@ impl WholeGraph {
         // Declared alias keys supplied to the shared link answerer.
         let declared: HashSet<&str> = aliases.iter().map(|(key, _, _)| key.as_str()).collect();
         let mut claimed = Vec::new();
+        let owners = self.graph.real_page_owners();
         for page in self.list.iter() {
-            let key = tine_core::refs::page_key(&page.name);
+            let key = owners.claim_key(page);
             if !visited.insert(key.clone()) {
                 continue;
             }
@@ -714,12 +717,13 @@ impl WholeGraph {
         let prefix = format!("{key}/");
         let mut entries = Vec::new();
         let mut visited = HashSet::new();
+        let owners = self.graph.real_page_owners();
         for page in self.list.iter() {
             let page_key = tine_core::refs::page_key(&page.name);
             if (page_key != key
                 && !(page_key.starts_with(&prefix)
                     && tine_core::refs::is_namespace_name(&page.name)))
-                || !visited.insert(page_key.clone())
+                || !visited.insert(owners.claim_key(page))
             {
                 continue;
             }
@@ -790,9 +794,16 @@ impl WholeGraph {
 
     /// One entry per spelling of `page`'s claimant bucket (`key` is its page
     /// key), each with the target `resolve` gives: the bucket's first
-    /// claimant, then every other claimant.
+    /// claimant, then every other claimant. Claimants compete at the full
+    /// identity (CM SPEC §2.2): a day's files only with that day's, so the
+    /// `MM-dd` label's ordinary page and other years are no twins
+    /// ([`crate::query::RealPageOwners::claim_key`]). O(claimants of the name).
     fn claimed_entries(&self, page: &PageEntry, _key: String) -> Vec<InventoryEntry> {
-        let claimants = self.all_name_claimants(&page.name);
+        let owners = self.graph.real_page_owners();
+        let identity = owners.claim_key(page);
+        let claimants: Vec<_> = (self.all_name_claimants(&page.name).into_iter())
+            .filter(|claimant| owners.claim_key(claimant) == identity)
+            .collect();
         let winner = claimants.first().unwrap_or(page);
         let is_journal = winner.kind == PageKind::Journal;
         let mut names: Vec<String> = Vec::new();

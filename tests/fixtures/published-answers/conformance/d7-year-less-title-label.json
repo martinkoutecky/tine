@@ -1,0 +1,135 @@
+{
+  "aliases": [],
+  "answers": {
+    "alias_groups": [],
+    "inventory": [
+      {
+        "day": null,
+        "is_journal": false,
+        "key": "11-02",
+        "name": "11-02",
+        "target": {
+          "id": "pages/11-02.md",
+          "kind": "existing",
+          "others": []
+        }
+      },
+      {
+        "day": 20261102,
+        "is_journal": true,
+        "key": "11-02",
+        "name": "11-02",
+        "target": {
+          "id": "journals/2026_11_02.md",
+          "kind": "existing",
+          "others": []
+        }
+      },
+      {
+        "day": null,
+        "is_journal": false,
+        "key": "2026-11-02",
+        "link": {
+          "kind": "journal",
+          "name": "2026-11-02"
+        },
+        "name": "2026-11-02",
+        "target": {
+          "id": "journals/2026_11_02.md",
+          "kind": "existing",
+          "others": []
+        }
+      },
+      {
+        "day": null,
+        "is_journal": false,
+        "key": "notes",
+        "name": "Notes",
+        "target": {
+          "id": "pages/Notes.md",
+          "kind": "existing",
+          "others": []
+        }
+      }
+    ],
+    "journals": {
+      "content_days": [
+        20261102
+      ],
+      "file_name_format": "yyyy_MM_dd",
+      "title_format": "MM-dd"
+    },
+    "resolve": [
+      {
+        "kind": "journal",
+        "name": "2026-11-02",
+        "target": {
+          "id": "journals/2026_11_02.md",
+          "kind": "existing",
+          "others": []
+        }
+      }
+    ],
+    "v": 1
+  },
+  "backlinks": {},
+  "block_ref_counts": {},
+  "entries": [
+    {
+      "date_key": null,
+      "kind": "page",
+      "name": "11-02",
+      "path": "pages/11-02.md"
+    },
+    {
+      "date_key": 20261102,
+      "kind": "journal",
+      "name": "11-02",
+      "path": "journals/2026_11_02.md"
+    },
+    {
+      "date_key": null,
+      "kind": "page",
+      "name": "Notes",
+      "path": "pages/Notes.md"
+    }
+  ],
+  "exported_at": "",
+  "home": "11-02",
+  "icons": {},
+  "name": "Site",
+  "pages": [
+    {
+      "blocks": [],
+      "format": "md",
+      "kind": "page",
+      "name": "11-02",
+      "path": "pages/11-02.md",
+      "pre_block": null,
+      "read_only": true,
+      "title": "11-02"
+    },
+    {
+      "blocks": [],
+      "format": "md",
+      "kind": "journal",
+      "name": "11-02",
+      "path": "journals/2026_11_02.md",
+      "pre_block": null,
+      "read_only": true,
+      "title": "11-02"
+    },
+    {
+      "blocks": [],
+      "format": "md",
+      "kind": "page",
+      "name": "Notes",
+      "path": "pages/Notes.md",
+      "pre_block": null,
+      "read_only": true,
+      "title": "Notes"
+    }
+  ],
+  "queries": [],
+  "schema": 1
+}

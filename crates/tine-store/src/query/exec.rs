@@ -422,7 +422,7 @@ impl Plan {
                 return None;
             }
             let Some(node) = table.node(
-                &refs::normalize(&entry.name),
+                &atoms.page_key(&entry.name, entry.date_key, config),
                 entry.kind == PageKind::Journal,
             ) else {
                 continue;
@@ -621,16 +621,15 @@ impl Plan {
                 let classes = cache
                     .ref_classes()
                     .unwrap_or_else(|| self.known_ref_classes());
+                let own = cache.page_key(&entry.name, entry.date_key, config);
                 !operands.iter().any(|operand| match classes.class(operand) {
-                    None => facts.may_reference(entry, &[refs::normalize(operand)]),
+                    None => facts.may_reference(&own, &[refs::normalize(operand)]),
                     Some(class) => {
-                        facts.may_reference(entry, class.key_list())
+                        facts.may_reference(&own, class.key_list())
                             || class.has_days()
-                                && std::iter::once(&refs::normalize(&entry.name))
-                                    .chain(facts.refs())
-                                    .any(|name| {
-                                        class.holds(name, |key| cache.reference_day(key, config))
-                                    })
+                                && std::iter::once(&own).chain(facts.refs()).any(|name| {
+                                    class.holds(name, |key| cache.reference_day(key, config))
+                                })
                     }
                 })
             }) || required_reference_days(&self.filter).is_some_and(|preds| {

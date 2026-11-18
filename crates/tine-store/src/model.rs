@@ -827,6 +827,7 @@ impl ReadSnapshot {
             old.map(|old| (old.real_page_names.as_ref(), old.physical_pages.as_ref())),
             &physical_pages,
             changed_paths,
+            Arc::new(config.journal_format()),
         ));
         let physical_changed_paths = changed_paths;
         let (pages, semantic_paths) = active_pages::capture(
@@ -1505,19 +1506,19 @@ impl ReadSnapshot {
     pub(crate) fn config(&self) -> &Config {
         &self.config
     }
-    /// Journal entries are named by the configured date title (page_identity's
-    /// listed_entry). Probe only claimants of that name, not every journal.
+    /// The name of `day`'s opening journal, as a name that identifies it
+    /// ([`crate::query::page_handle`]: its title, unless the title is a
+    /// label other days share). Probes only the claimants of the day's key
+    /// ([`crate::query::RealPageOwners::day_entry`]), not every journal.
     pub(crate) fn reference_journal_name(
         &self,
         day: tine_core::date::JournalDate,
     ) -> Option<String> {
-        let title = self.config.journal_format().title(day);
-        self.real_page_owners()
-            .opening_entry(&tine_core::refs::page_key(&title))
-            .filter(|entry| {
-                entry.kind == PageKind::Journal && entry.date_key == Some(day.ordinal_key())
-            })
-            .map(|entry| entry.name.clone())
+        let owners = self.real_page_owners();
+        let entry = owners
+            .day_entry(day)
+            .filter(|entry| entry.kind == PageKind::Journal)?;
+        Some(owners.handle(&entry.name, entry.date_key).into_owned())
     }
     pub(crate) fn reference_candidate_pages(
         &self,

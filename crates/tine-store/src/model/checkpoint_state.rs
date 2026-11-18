@@ -283,6 +283,7 @@ impl Graph {
             None,
             &physical_pages,
             &[],
+            Arc::new(config.journal_format()),
         ));
         let (pages, _) = active_pages::capture(
             &physical_pages,
