@@ -11,6 +11,7 @@ import { remote } from 'webdriverio';
 import { startWebdriverApplication, stopWebdriverApplication, tauriCapabilities, webdriverServerArgs } from './e2e-capabilities.mjs';
 import { ensureMainWindow } from './lib/e2e-main-window.mjs';
 import { openJournals } from './lib/e2e-navigation.mjs';
+import { generateRealisticGraph } from './generate-realistic-graph.mjs';
 import { installFoldProbe, summarizeFold, classifyFold } from './lib/gh944-fold-probe.mjs';
 import { accountHomeFixture, assertAppLease } from './lib/e2e-account-home.mjs';
 import { ensurePrivateSessionBus } from './lib/e2e-session-bus.mjs';
@@ -22,6 +23,9 @@ const out = path.resolve(process.env.E2E_ARTIFACT_DIR || path.join(root, 'target
 fs.mkdirSync(out, { recursive: true });
 const run = fs.mkdtempSync(path.join(out, 'run-'));
 const graph = path.join(run, 'graph');
+// A realistic graph (hub pages with backlinks, tags, tasks, queries in recent journals) under the fixed days below,
+// so the feed's Linked References and query sections are as heavy as a real graph's.
+const manifest = await generateRealisticGraph({ root: graph, pages: Number(process.env.E2E_PAGES || 300), journals: Number(process.env.E2E_JOURNALS || 120) });
 for (const dir of ['pages', 'journals', 'logseq']) fs.mkdirSync(path.join(graph, dir), { recursive: true });
 for (const dir of ['home', 'data', 'config', 'cache', 'state', 'appdata', 'localappdata', 'app-tmp']) fs.mkdirSync(path.join(run, dir));
 const pad = n => String(n).padStart(2, '0');
@@ -30,7 +34,9 @@ const stem = d => `${d.getFullYear()}_${pad(d.getMonth() + 1)}_${pad(d.getDate()
 const org = d => `<${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())} ${d.toLocaleString('en-US', { weekday: 'short' })}>`;
 const ordinal = n => `${n}${n % 100 >= 11 && n % 100 <= 13 ? 'th' : ({ 1: 'st', 2: 'nd', 3: 'rd' }[n % 10] ?? 'th')}`;
 const title = d => `${d.toLocaleString('en-US', { month: 'short' })} ${ordinal(d.getDate())}, ${d.getFullYear()}`;
-fs.writeFileSync(path.join(graph, 'logseq/config.edn'), '{:tine/guide-announced? true}\n');
+// The reporter's "query window (ToDos)" is a journals default query above the built-in Scheduled & Deadline list.
+fs.writeFileSync(path.join(graph, 'logseq/config.edn'),
+  '{:tine/guide-announced? true\n :default-queries {:journals [{:title "ToDos" :query (task TODO DOING)}]}}\n');
 const FILLER = Array.from({ length: 30 }, (_, i) => `- today filler ${i}`);
 fs.writeFileSync(path.join(graph, 'journals', `${stem(date(0))}.md`), [
   ...FILLER,
@@ -81,7 +87,7 @@ const PHASES = [
 ];
 const only = process.env.E2E_PHASES ? new RegExp(process.env.E2E_PHASES) : null;
 const SETTLE_MS = Number(process.env.E2E_SETTLE_MS || 1600);
-const results = { commit: process.env.TINE_SOURCE_REVISION || 'working-tree', app, platform: process.platform, graph,
+const results = { commit: process.env.TINE_SOURCE_REVISION || 'working-tree', app, platform: process.platform, graph, manifest,
   phases: [], captureFailures: [] };
 let browser, target, driver, log;
 let stage = 'startup';
@@ -166,6 +172,11 @@ try {
   try { await browser.setWindowRect(0, 0, 1280, 800); } catch (error) { results.windowRectError = String(error); }
   await browser.waitUntil(() => browser.execute(() => !!document.querySelector('.nav-item')), { timeout: 60_000 });
   await openJournals(browser);
+  // The built-in list starts collapsed on a busy graph; the reporter's was open.
+  await browser.waitUntil(() => browser.execute(() => !!document.querySelector('.agenda-block .query-collapse')), { timeout: 30_000 });
+  await browser.execute(() => { const toggle = document.querySelector('.agenda-block .query-collapse'); if (toggle.classList.contains('collapsed')) toggle.click(); });
+  // Rows mount only near the viewport, and the reporter-like ToDos list pushes the agenda far down.
+  await browser.waitUntil(() => browser.execute(() => { document.querySelector('.agenda-block')?.scrollIntoView(); return true; }), { timeout: 30_000 });
   await browser.waitUntil(() => browser.execute(() => [...document.querySelectorAll('.agenda-block .ls-block')]
     .some(row => row.textContent.includes('TICK today agenda'))), { timeout: 30_000, timeoutMsg: 'agenda never listed the scheduled task' });
   await assertAppLease(owner);
@@ -203,6 +214,9 @@ try {
   results.semanticPassed = true;
 } catch (error) {
   try { await browser?.saveScreenshot(path.join(run, 'failure.png')); } catch {}
+  try { results.failureState = await browser?.execute(() => ({ agenda: document.querySelector('.agenda-block')?.textContent.slice(0, 600),
+    rows: document.querySelectorAll('.agenda-block .ls-block').length, queries: [...document.querySelectorAll('.default-journal-query')].map(q => q.textContent.slice(0, 120)),
+    sections: [...document.querySelectorAll('.today-sections, .today-queries')].map(q => q.className) })); } catch {}
   results.failure = { stage, observed: String(error) };
   throw error;
 } finally {
