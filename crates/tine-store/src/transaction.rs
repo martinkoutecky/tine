@@ -26,6 +26,8 @@ pub(crate) use faults::FaultPoint;
 
 mod faults;
 mod io_helpers;
+mod model_check;
+pub use model_check::{CheckPlan, Guarantee, RenameCheck};
 mod move_file;
 mod plan;
 mod preflight;
@@ -250,47 +252,8 @@ pub enum StepResult {
     },
 }
 
-/// A transaction step rejected without authorization to overwrite user data.
-#[derive(Debug)]
-pub enum Refusal {
-    /// Malformed writer evidence could lose imported/externally edited text.
-    TextRealization(tine_core::text_trace::TraceError),
-    /// Source page cannot be round-tripped safely; reason is for display.
-    ReadOnly(String),
-    /// Invalid or unsafe destination or page content; reason is for display.
-    InvalidTarget(String),
-    /// Another page file claims the same name or journal day.
-    Twin {
-        /// Existing claimant.
-        existing: PageId,
-    },
-    /// Page bytes are not UTF-8.
-    Undecodable,
-    /// `logseq/config.edn` could not be read when the graph last loaded it
-    /// (not UTF-8, too large to parse, or an undownloaded iCloud
-    /// placeholder), so the graph is read-only: its `:file/name-format` is
-    /// unknown and a page file would be written under another name. The
-    /// cause is the read error, for diagnostics and logs, never for display.
-    /// Fixing or replacing config.edn lifts it. Every transaction is refused
-    /// with this before anything changes (`PagePlan::config_write_failure`).
-    ConfigUnreadable(IoError),
-    /// A name-only page creation was refused because a graph-text file Tine
-    /// cannot read (`file`) could already be that page
-    /// (R-CREATE-UNREADABLE-OWNER, docs/storage-contract.md).
-    UnreadableOwner {
-        /// The unreadable file or directory that could own the name.
-        file: FileId,
-    },
-    /// A transaction named the same file more than once. Editing a page and
-    /// moving that same file require separate transactions.
-    RepeatedFile(FileId),
-    /// The store was closed before commit.
-    Closed,
-    /// An orphan-only asset trash found the published graph still references
-    /// the asset. The asset is kept; callers report this as a normal outcome
-    /// (the block edit that dropped one reference stands), not as a failure.
-    AssetReferenced,
-}
+mod refusal;
+pub use refusal::Refusal;
 
 /// Reason a transaction did not commit.
 #[derive(Debug)]
@@ -428,6 +391,8 @@ enum Step {
         renames: Arc<RenameMap>,
         rebind_title: bool,
         prepared: Option<Box<PreparedRewrite>>,
+        /// The model's check of the final bytes ([`PagePlan::check`]).
+        check: Option<Box<RenameCheck>>,
     },
     Move {
         file: FileId,
@@ -435,6 +400,8 @@ enum Step {
         to: FileId,
         renames: Option<Arc<RenameMap>>,
         prepared: Option<Box<PreparedRewrite>>,
+        /// The model's check of the final bytes ([`PagePlan::check`]).
+        check: Option<Box<RenameCheck>>,
     },
     Trash {
         file: FileId,
@@ -854,7 +821,9 @@ impl<'a> PagePlan<'a> {
         let effect = match read {
             None => RewriteEffect::Changes,
             Some(text) => {
-                let name_format = self.store.config().file_name_format;
+                let config = self.store.config();
+                let name_format = config.file_name_format;
+                let days = config.config.journal_format();
                 let is_org = tine_core::model::Format::from_path(Path::new(file.as_str()))
                     == tine_core::model::Format::Org;
                 let keyed = |pairs: &[(String, String)]| {
@@ -868,7 +837,10 @@ impl<'a> PagePlan<'a> {
                     is_org,
                     &keyed(&renames.0),
                     &keyed(&renames.1),
-                    name_format,
+                    tine_core::refs::RenameFormat {
+                        names: name_format,
+                        days: Some(&days),
+                    },
                 );
                 let Ok(proposal) = proposal else {
                     self.steps.push(Step::Rewrite {
@@ -877,6 +849,7 @@ impl<'a> PagePlan<'a> {
                         renames: Arc::clone(renames),
                         rebind_title: title == TitleRebind::Own,
                         prepared: None,
+                        check: None,
                     });
                     return RewriteEffect::Changes;
                 };
@@ -905,6 +878,7 @@ impl<'a> PagePlan<'a> {
                 renames: Arc::clone(renames),
                 rebind_title: title == TitleRebind::Own,
                 prepared,
+                check: None,
             });
         }
         effect
@@ -966,6 +940,7 @@ impl<'a> PagePlan<'a> {
             to: to.clone(),
             renames,
             prepared,
+            check: None,
         });
         self
     }

@@ -3,6 +3,400 @@ use std::{fs, sync::Arc};
 use tine_graph_features::pages;
 use tine_store::Store;
 
+#[path = "cm_merge_body.rs"]
+mod body_redesign;
+
+#[test]
+fn round15k_first_spelling_and_native_drawer_remnants_survive_saves() {
+    let _guard = crate::integration_lock();
+    for (src, dst, org, names, protected) in [
+        (
+            "- source\n",
+            "alias:: C\\#, C#\n- target\n",
+            false,
+            vec!["C#"],
+            "C\\#",
+        ),
+        (
+            "alias:: C#\n- source\n",
+            "alias:: C\\#\n- target\n",
+            false,
+            vec!["C#"],
+            // O6: the source's `C#` reads as the kept `C\#` and is dropped.
+            "C\\#",
+        ),
+        (
+            "- source\n",
+            "alias:: a, \"literal\"\naliases:: b\n- target\n",
+            false,
+            vec!["a", "\"literal\"", "b"],
+            "\"literal\"",
+        ),
+        (
+            ":PROPERTIES:\n:ALIAS: a, a\n:END:\n* source\n",
+            "* target\n",
+            true,
+            vec!["a"],
+            ":ALIAS:",
+        ),
+        (
+            "\u{c}:PROPERTIES:\n:S: value\n\u{1a}:END:\n* source\n",
+            "* target\n",
+            true,
+            vec![],
+            ":S: value",
+        ),
+    ] {
+        valid_merge(src, dst, org, |doc, proof| {
+            assert_eq!(header_aliases(doc, org), names);
+            assert!(proof.text.contains(protected), "{}", proof.text);
+            if !org && names == ["C#"] {
+                // O6: a member that reads as a kept one is dropped; P4 lets
+                // the merge drop exactly it, so no block keeps the spelling.
+                assert_eq!(proof.text, "alias:: C\\#\n- target\n- source\n");
+            }
+        })
+        .unwrap();
+    }
+}
+
+#[test]
+fn round15k_org_directive_remnants_keep_native_alias_owners() {
+    let _guard = crate::integration_lock();
+    // O6: a member that reads as a kept one (`#a` beside `a`) is dropped, and
+    // the syntax of combined declarations with it: no leftover remains.
+    for (source, target, expected, dropped) in [
+        (
+            "#+alias: #a, b\n* source\n",
+            ":PROPERTIES:\n:ALIAS: a\n:K: target\n:END:\n* target\n",
+            vec!["a", "b"],
+            "#a",
+        ),
+        (
+            ":PROPERTIES:\r:END:\r\n#+aliases: #[[c d]], ns/e\r\n* src body 0\r",
+            "#+alias: #a, c d\r* dst body 0\r* dst body 1\r** dst deep 1\r",
+            vec!["a", "c d", "ns/e"],
+            "#[[c d]]",
+        ),
+    ] {
+        valid_merge(source, target, true, |doc, proof| {
+            assert_eq!(header_aliases(doc, true), expected);
+            assert!(!proof.text.contains("#+BEGIN_QUOTE"), "{}", proof.text);
+            assert!(!proof.text.contains(dropped), "{}", proof.text);
+        })
+        .unwrap();
+    }
+    // O6 `leftoverReference`: the clashing drawer entry `:TAGS: t` and the
+    // repeated `#+type: [[k]]` are property lines with references, which the
+    // quote cannot keep.
+    let reason = valid_merge(
+        ":PROPERTIES:\n:TYPE: [[k]]\n:TAGS: t\n:END:\n#+type: [[k]]\n\n* src body 0\n* src body 1\n",
+        "#+alias:  a,#b,b, \\[x\n#+tags: t\n#+aliases: a, A,  #a\n#+title: dst\n* dst body 0\n",
+        true,
+        |_, _| {},
+    )
+    .unwrap_err();
+    assert!(reason.ends_with("HiddenOccurrence"), "{reason}");
+}
+
+#[test]
+fn round15k_stationary_title_conflicts_refuse_before_writing() {
+    let _guard = crate::integration_lock();
+    for org in [false, true] {
+        for merge in [false, true] {
+            for title in ["Elm/[[Old]]", "Old/[[Old]]", "Old/[[X]] [[Old]]"] {
+                let reason = rename_with_titled_child("New", title, org, merge).unwrap_err();
+                assert_eq!(reason, "Q-TITLE", "the retained exact trace reason");
+            }
+        }
+    }
+}
+
+#[test]
+fn round15k_stationary_title_case_only_twin_keeps_its_identity() {
+    let _guard = crate::integration_lock();
+    for org in [false, true] {
+        let (dir, files) = rename_with_titled_child("old", "Elm/[[Old]]", org, false).unwrap();
+        let (_, title) = renamed_child(dir.path(), &files, "old");
+        assert_eq!(title, "Elm/[[old]]");
+    }
+}
+
+#[test]
+fn round15k_source_drawer_properties_keep_their_native_owner() {
+    let _guard = crate::integration_lock();
+    // O6: a clashing drawer entry is a leftover line inside the quote, where
+    // a property line keeps none of its references (its key is one), so the
+    // merge is refused (`leftoverReference`), both files unchanged.
+    let reason = valid_merge(
+        ":PROPERTIES:\n:K: source\n:END:\n* source\n",
+        ":PROPERTIES:\n:K: target\n:END:\n* target\n",
+        true,
+        |_, _| {},
+    )
+    .unwrap_err();
+    assert!(reason.ends_with("HiddenOccurrence"), "{reason}");
+}
+
+#[test]
+fn round15k_selected_drawer_alias_can_be_rebuilt() {
+    let _guard = crate::integration_lock();
+    valid_merge(
+        "* source\n",
+        ":PROPERTIES:\n:ALIAS: a, a\n:END:\n* target\n",
+        true,
+        |doc, _| {
+            assert_eq!(header_aliases(doc, true), ["a"]);
+        },
+    )
+    .unwrap();
+}
+
+#[test]
+fn round15k_empty_source_drawer_is_consumed_without_hiding_its_title() {
+    let _guard = crate::integration_lock();
+    valid_merge(
+        ":PROPERTIES:\n:END:\n#+title: src\n* source\n",
+        "#+alias: x\n* target\n",
+        true,
+        |doc, proof| {
+            assert!(!proof.text.contains(":PROPERTIES:"));
+            assert!(proof.text.contains("#+title: src"));
+            assert_eq!(doc.name, "dst");
+        },
+    )
+    .unwrap();
+}
+
+#[test]
+fn round15k_rebuilt_source_field_keeps_its_selected_ending() {
+    let _guard = crate::integration_lock();
+    for org in [false, true] {
+        let (key, bullet) = if org {
+            ("#+alias: ", "*")
+        } else {
+            ("alias:: ", "-")
+        };
+        let source = format!("{key}[[a]], [[a]]\r\n{bullet} source\r\n");
+        let target = format!("{bullet} target\r\n");
+        valid_merge(&source, &target, org, |_, proof| {
+            assert!(
+                proof.text.starts_with(&format!("{key}[[a]]\r\n")),
+                "{}",
+                proof.text
+            )
+        })
+        .unwrap();
+    }
+}
+
+#[test]
+fn round15k_alias_first_owners_cannot_cross_fixed_target_frames() {
+    let _guard = crate::integration_lock();
+    // O6: the declarations with members become one, written on the first;
+    // its placement is the writer's. The survivor's drawer frames stay.
+    valid_merge(
+        "* source\n",
+        ":PROPERTIES:\n:ALIAS: a\n:END:\n:PROPERTIES:\n:ALIAS: b\n:END:\n* target\n",
+        true,
+        |doc, proof| {
+            assert_eq!(header_aliases(doc, true), ["a", "b"]);
+            assert_eq!(
+                proof.text,
+                ":PROPERTIES:\n:ALIAS: a, b\n:END:\n:PROPERTIES:\n:END:\n* target\n* source\n"
+            );
+        },
+    )
+    .unwrap();
+    // The equal-name case consumes only lawful duplicates and keeps both
+    // physical frames. It is also admitted by the complete native matrix.
+    valid_merge(
+        "* source\n",
+        ":PROPERTIES:\n:ALIAS: a\n:END:\n:PROPERTIES:\n:ALIAS: a\n:END:\n* target\n",
+        true,
+        |_, proof| {
+            assert_eq!(proof.text.matches(":PROPERTIES:").count(), 2);
+            assert_eq!(proof.text.matches(":END:").count(), 2);
+        },
+    )
+    .unwrap();
+}
+
+#[test]
+fn round15k_missing_link_name_coordinates_refuse_unchanged() {
+    let _guard = crate::integration_lock();
+    // A Markdown tag with an escape, `#a\_b`, declares the member `a_b`, but
+    // no contiguous native run spells that name: no guessed coordinates are
+    // used. Org reads the same bytes as the member `a\_b`, its own run.
+    for (source, target, org) in [
+        ("alias:: #a\\_b\n- source\n", "- target\n", false),
+        ("- source\n", "alias:: #a\\_b\n- target\n", false),
+        ("- alias:: #a\\_b\n- source\n", "- target\n", false),
+        ("- source\n", "- alias:: #a\\_b\n- target\n", false),
+    ] {
+        let reason = valid_merge(source, target, org, |_, _| {}).unwrap_err();
+        assert!(reason.ends_with("F-LINK"), "{reason}");
+    }
+}
+
+#[test]
+fn round15k_file_link_alias_lines_merge_as_header_text() {
+    let _guard = crate::integration_lock();
+    // A native file link declares no alias member (Logseq's reading), so the
+    // declaration is other header text: the survivor keeps its own, and the
+    // source's is a leftover line (O6). Nothing is lost or duplicated (P4).
+    for (source, target, org, survivor) in [
+        (
+            "alias:: [**x**_y_](A.md)\n- source\n",
+            "- target\n",
+            false,
+            "- target\n-\n  alias:: [**x**_y_](A.md)\n- source\n",
+        ),
+        (
+            "- source\n",
+            "alias:: [**x**_y_](A.md)\n- target\n",
+            false,
+            "alias:: [**x**_y_](A.md)\n- target\n- source\n",
+        ),
+        (
+            "alias:: [**x**_y_](A.md)\n- source\n",
+            "alias:: kept\n- target\n",
+            false,
+            "alias:: kept\n- target\n-\n  alias:: [**x**_y_](A.md)\n- source\n",
+        ),
+        (
+            "#+alias: [[file:A.org][*x* /y/]]\n* source\n",
+            "#+alias: kept\n* target\n",
+            true,
+            "#+alias: kept\n* target\n*\n#+BEGIN_QUOTE\n#+alias: [[file:A.org][*x* /y/]]\n#+END_QUOTE\n* source\n",
+        ),
+        // An embed reads macros skipped (Logseq's property parse), so
+        // `{{embed x}}` declares no member either.
+        (
+            "alias:: {{embed x}}\n- source\n",
+            "- target\n",
+            false,
+            "- target\n-\n  alias:: {{embed x}}\n- source\n",
+        ),
+        (
+            "- source\n",
+            "alias:: {{embed x}}\n- target\n",
+            false,
+            "alias:: {{embed x}}\n- target\n- source\n",
+        ),
+        (
+            "#+alias: {{embed x}}\n* source\n",
+            "* target\n",
+            true,
+            "* target\n*\n#+BEGIN_QUOTE\n#+alias: {{embed x}}\n#+END_QUOTE\n* source\n",
+        ),
+        (
+            "* source\n",
+            "#+alias: {{embed x}}\n* target\n",
+            true,
+            "#+alias: {{embed x}}\n* target\n* source\n",
+        ),
+    ] {
+        valid_merge(source, target, org, |doc, proof| {
+            assert_eq!(proof.text, survivor);
+            let kept: &[&str] = if target.contains("kept") { &["kept"] } else { &[] };
+            assert_eq!(header_aliases(doc, org), kept);
+        })
+        .unwrap();
+    }
+}
+
+#[test]
+fn round15k_native_delimiter_indentation_is_admitted() {
+    let _guard = crate::integration_lock();
+    for indentation in ["\u{c}", "\u{1a}"] {
+        let source =
+            format!("{indentation}:PROPERTIES:\n:S: value\n{indentation}:END:\n* source\n");
+        valid_merge(&source, "* target\n", true, |_, proof| {
+            assert!(
+                proof.text.starts_with(":PROPERTIES:\n:S: value\n:END:\n"),
+                "{}",
+                proof.text
+            );
+            for marker in [":PROPERTIES:", ":END:"] {
+                assert!(proof
+                    .trace
+                    .consumed
+                    .iter()
+                    .any(|id| proof.trace.original(*id) == format!("{indentation}{marker}\n")));
+            }
+        })
+        .unwrap();
+    }
+}
+
+#[test]
+fn round15k_merge_measures_real_writer_bytes_on_one_and_sixty_blocks() {
+    let _guard = crate::exclusive_integration_lock();
+    let settle = |host: &tine_store::PageHost| {
+        let started = std::time::Instant::now();
+        while !host.quiescent_for_tests() {
+            assert!(started.elapsed().as_secs() < 30, "host did not settle");
+            std::thread::yield_now();
+        }
+    };
+    for blocks in [1, 60] {
+        let dir = tempfile::tempdir().unwrap();
+        fs::create_dir(dir.path().join("pages")).unwrap();
+        let source = "- source\n".repeat(blocks);
+        let target = format!("alias:: C\\#, C#\n{}", "- target\n".repeat(blocks));
+        fs::write(dir.path().join("pages/src.md"), &source).unwrap();
+        fs::write(dir.path().join("pages/dst.md"), &target).unwrap();
+        let old = std::time::SystemTime::now() - std::time::Duration::from_secs(3600);
+        for file in ["pages/src.md", "pages/dst.md"] {
+            fs::File::options()
+                .write(true)
+                .open(dir.path().join(file))
+                .unwrap()
+                .set_modified(old)
+                .unwrap();
+        }
+        let store = Arc::new(Store::open(dir.path(), Default::default()).unwrap().0);
+        let host = crate::test_host(&store);
+        store.whole_graph().unwrap();
+        settle(&host);
+        tine_store::cost_counters::reset();
+        pages::merge_pages(&store, &host, "pages/src.md", "pages/dst.md").unwrap();
+        settle(&host);
+        let cost = tine_store::cost_counters::snapshot();
+        let output = fs::read_to_string(dir.path().join("pages/dst.md")).unwrap();
+        // O6: `C#` reads as the kept `C\#` and is dropped, nowhere kept.
+        assert!(output.starts_with("alias:: C\\#\n- target\n"));
+        let loaded = store
+            .page(&tine_core::model::PageId::from("pages/dst.md"))
+            .unwrap();
+        assert!(!loaded.doc.blocks.iter().any(|b| b.raw.contains("alias")));
+        assert_eq!(output.matches("- source\n").count(), blocks);
+        assert_eq!(output.matches("- target\n").count(), blocks);
+        let arguments =
+            serde_json::to_vec(&serde_json::json!({"src":"pages/src.md","dst":"pages/dst.md"}))
+                .unwrap()
+                .len();
+        let reply = serde_json::to_vec(&()).unwrap().len();
+        eprintln!("I-25 blocks={blocks} survivor_payload={} operation_args={arguments} operation_reply={reply} page_dto_bytes={} source_bytes={} target_bytes={} writer={cost:?}", output.len(), serde_json::to_vec(&loaded.doc).unwrap().len(), source.len(), target.len());
+        assert_eq!(reply, 4, "merge_pages returns the unchanged unit reply");
+        assert_eq!(cost.files_written, if cfg!(windows) { 2 } else { 3 });
+        assert_eq!(cost.readdir, 0);
+        assert_eq!(cost.snapshot_rebuilds, 0);
+        if cfg!(target_os = "linux") {
+            assert_eq!(
+                cost.fsyncs, 16,
+                "includes the completed host reconciliation"
+            );
+            assert!(cost.bytes_written <= if blocks == 1 { 304 } else { 3493 });
+            assert!(output.len() <= if blocks == 1 { 47 } else { 1109 });
+        }
+        assert!(!dir.path().join("pages/src.md").exists());
+        drop(host);
+        store.close();
+    }
+}
+
 // Exercise the user operation first, then inspect its provenance and ordinary
 // save closure independently against the same original inputs.
 fn valid_merge(
@@ -27,8 +421,10 @@ fn valid_merge(
     if let Err(error) = pages::merge_pages(&store, &host, &source, &target) {
         assert_eq!(fs::read_to_string(dir.path().join(&source)).unwrap(), src);
         assert_eq!(fs::read_to_string(dir.path().join(&target)).unwrap(), dst);
+        let reason = pages::MergeRefused::of(&error)
+            .map_or_else(|| error.to_string(), |refusal| refusal.reason.to_string());
         return Err(format!(
-            "org={org}, source={src:?}, target={dst:?}: {error}"
+            "org={org}, source={src:?}, target={dst:?}: {reason}"
         ));
     }
     assert!(!dir.path().join(&source).exists());
@@ -95,7 +491,8 @@ fn valid_merge_deduplicates_retained_alias_members() {
             ("#a, #a", vec!["a"]),
             ("#[[a]], #[[a]]", vec!["a"]),
             ("[[a]], a, #a, [[b]], [[a]]", vec!["a", "b"]),
-            ("[[a]], [[A]], [[a]]", vec!["a", "A"]),
+            // O6: members compare as the reader identifies the page.
+            ("[[a]], [[A]], [[a]]", vec!["a"]),
         ] {
             for retained_target in [false, true] {
                 for ending in ["\n", "\r\n"] {
@@ -159,9 +556,16 @@ fn valid_merge_keeps_source_header_children_under_leftover() {
                         "",
                     )
                 } else {
+                    // O6: the children hang under the leftover block, so the
+                    // header needs a leftover line (`title::`); without one
+                    // the merge is refused (`headerChildren`).
+                    let without = "- alias:: Former\n  - child\n- source\n".replace('\n', ending);
+                    let reason = valid_merge(&without, "alias:: Kept\n- target\n", org, |_, _| {})
+                        .unwrap_err();
+                    assert!(reason.ends_with("HeaderChildren"), "{reason}");
                     (
                         format!(
-                            "- alias:: Former\n  - child\n{}  - sibling\n- source\n",
+                            "- alias:: Former\n  title:: src\n  - child\n{}  - sibling\n- source\n",
                             if nested { "    - deep\n" } else { "" }
                         ),
                         "alias:: Kept\n- target\n",
@@ -271,12 +675,11 @@ fn valid_merge_keeps_every_line_ending() {
             ] {
                 let src = src.replace('\n', src_end);
                 let dst = dst.replace('\n', dst_end);
-                // The model's active field ending (`mergeField`): the
-                // survivor's first declaration's, else LF.
+                // The selected declaration keeps its own physical ending.
                 let alias_end = if dst.starts_with(key) {
                     Some(dst_end)
                 } else {
-                    src.starts_with(key).then_some("\n")
+                    src.starts_with(key).then_some(src_end)
                 };
                 // Collect every witness rather than stopping at the first.
                 let run = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
@@ -449,16 +852,10 @@ fn valid_merge_keeps_lone_cr_line_endings() {
         for (src, dst, aliases, exact) in cases {
             let all_cr = !format!("{src}{dst}").contains('\n');
             let no_crlf = !format!("{src}{dst}").contains("\r\n");
-            // Org's quote frame would end `#+BEGIN_QUOTE` with the survivor's
-            // CR right before the source's blank LF line: one CRLF, two lines
-            // joined. It refuses, files unchanged (RECEIPT-cm-b4-fix3 Q4).
-            if org && src.starts_with('\n') && dst.ends_with('\r') {
-                match valid_merge(&src, &dst, org, |_, _| {}) {
-                    Err(e) if e.contains("FusedLineEnding") => {}
-                    other => failures.push(format!("expected FusedLineEnding: {other:?}")),
-                }
-                continue;
-            }
+            // The source's blank LF header line is no leftover line (O6), so
+            // no quote frame stands between the survivor's CR and it, and
+            // the merge no longer refuses as FusedLineEnding (it did while a
+            // blank header made a leftover: RECEIPT-cm-b4-fix3 Q4).
             let run = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
                 valid_merge(&src, &dst, org, |doc, proof| {
                     let text = &proof.text;
@@ -789,7 +1186,7 @@ fn tag_alias_name_cuts_keep_hash_and_existing_wrappers() {
                             token.contains("[["),
                             destination.contains(' ')
                         );
-                        fs::write(std::path::Path::new(&output).join(label), serde_json::to_vec(&serde_json::json!({"text": proof.text, "org": org, "name": destination})).unwrap()).unwrap();
+                        fs::write(std::path::Path::new(&output).join(label), serde_json::to_vec(&serde_json::json!({"source":source,"target":target,"text": proof.text, "org": org,"renames":{"src":destination},"document":store.page(&target_id).unwrap().doc})).unwrap()).unwrap();
                     }
                 }
             }
@@ -800,11 +1197,36 @@ fn tag_alias_name_cuts_keep_hash_and_existing_wrappers() {
 #[test]
 fn survivor_first_root_headers_keep_native_save_closure() {
     let _guard = crate::integration_lock();
-    for target in [
-        "- alias:: Kept\n",
-        "- title:: other\n",
-        "- alias:: Kept\n  - child\n",
-    ] {
+    // O6: the survivor keeps its header, so a childless first-root `title::`
+    // is not moved out; written as the preamble the next save would read it
+    // as another title, and the merge is refused, files unchanged
+    // (`cm_merge_o6::o6_survivor_first_root_header_keeps_its_entries_or_refuses`).
+    {
+        let dir = tempfile::tempdir().unwrap();
+        fs::create_dir(dir.path().join("pages")).unwrap();
+        fs::write(dir.path().join("pages/src.md"), "- source\n").unwrap();
+        fs::write(dir.path().join("pages/dst.md"), "- title:: other\n").unwrap();
+        let store = Arc::new(Store::open(dir.path(), Default::default()).unwrap().0);
+        let host = crate::test_host(&store);
+        let error = pages::merge_pages(&store, &host, "pages/src.md", "pages/dst.md").unwrap_err();
+        assert_eq!(
+            pages::MergeRefused::of(&error).map(|refusal| &refusal.reason),
+            Some(&pages::merge_payload::RealizationError::SurvivorIdentity)
+        );
+        assert_eq!(
+            pages::MergeRefused::of(&error).unwrap().file,
+            "pages/dst.md"
+        );
+        assert_eq!(
+            fs::read_to_string(dir.path().join("pages/src.md")).unwrap(),
+            "- source\n"
+        );
+        assert_eq!(
+            fs::read_to_string(dir.path().join("pages/dst.md")).unwrap(),
+            "- title:: other\n"
+        );
+    }
+    for target in ["- alias:: Kept\n", "- alias:: Kept\n  - child\n"] {
         let dir = tempfile::tempdir().unwrap();
         fs::create_dir(dir.path().join("pages")).unwrap();
         fs::write(dir.path().join("pages/src.md"), "- source\n").unwrap();
@@ -926,7 +1348,7 @@ fn merge(
         fs::write(
             std::path::Path::new(&output).join(format!("merge-{}.json", hash.finish())),
             serde_json::to_vec(
-                &serde_json::json!({"source":src,"target":dst,"text":text,"org":org,"nextSave":next_save}),
+                &serde_json::json!({"source":src,"target":dst,"text":text,"org":org,"nextSave":next_save,"document":store.page(&dst_id).unwrap().doc}),
             )
             .unwrap(),
         )
@@ -959,7 +1381,6 @@ fn merge_preserves_equal_differing_title_unknown_and_blank_header_lines() {
             "- target\n",
             "unknown prose",
         ),
-        ("\n\n- source\n", "- target\n", "\n  \n"),
     ] {
         merge(src, dst, false, |text, _, _| {
             assert!(text.starts_with(dst), "survivor bytes: {text:?}");
@@ -968,6 +1389,11 @@ fn merge_preserves_equal_differing_title_unknown_and_blank_header_lines() {
             assert!(after.ends_with("- source\n"));
         });
     }
+    // O6: "A blank line and a bare bullet are not leftover lines", so blank
+    // header lines alone make no leftover block (P4: blank lines are free).
+    merge("\n\n- source\n", "- target\n", false, |text, _, _| {
+        assert_eq!(text, "- target\n- source\n");
+    });
 }
 
 #[test]
@@ -1047,22 +1473,38 @@ fn merge_empty_survivor_keeps_its_name_and_org_directives_are_nested() {
 }
 
 #[test]
-fn unrealizable_body_or_escaping_org_directives_refuse_without_partial_writes() {
+fn indented_source_blocks_merge_at_their_original_outline_depths() {
     let _guard = crate::integration_lock();
-    for (src, dst, org, reason) in [
-        (
+    for eol in ["\n", "\r\n"] {
+        for source in [
             "  - indented source\n",
-            "- target\n",
-            false,
-            pages::merge_payload::RealizationError::BodyLaw,
-        ),
-        (
-            "#+END_QUOTE\n#+title: src\n* source\n",
-            "#+title: dst\n* target\n",
-            true,
-            pages::merge_payload::RealizationError::DirectiveEscape,
-        ),
-    ] {
+            "  - source\n    continuation\n    - child\n  - sibling\n",
+            "  - title:: src\n    - child\n  - source\n",
+            "    - source\n      - child\n    - sibling\n",
+            "\t- source\n\t  - child\n\t- sibling\n",
+            "  - first\n- second\n    code\n",
+            "  - first\n- second\n  ```\n    code\n  ```\n",
+        ] {
+            valid_merge(
+                &source.replace('\n', eol),
+                &format!("- target{eol}"),
+                false,
+                |_, _| {},
+            )
+            .unwrap();
+        }
+    }
+}
+
+#[test]
+fn escaping_org_directives_refuse_without_partial_writes() {
+    let _guard = crate::integration_lock();
+    for (src, dst, org, reason) in [(
+        "#+END_QUOTE: s\n#+title: src\n* source\n",
+        "#+END_QUOTE: t\n#+title: dst\n* target\n",
+        true,
+        pages::merge_payload::RealizationError::DirectiveEscape,
+    )] {
         let dir = tempfile::tempdir().unwrap();
         fs::create_dir(dir.path().join("pages")).unwrap();
         let ext = if org { "org" } else { "md" };
@@ -1077,9 +1519,15 @@ fn unrealizable_body_or_escaping_org_directives_refuse_without_partial_writes() 
             error
                 .get_ref()
                 .unwrap()
-                .downcast_ref::<pages::merge_payload::RealizationError>(),
+                .downcast_ref::<pages::MergeRefused>()
+                .map(|refusal| &refusal.reason),
             Some(&reason)
         );
+        let refusal = pages::MergeRefused::of(&error).unwrap();
+        assert_eq!(refusal.file, a);
+        assert!(refusal.check_refused().is_none(), "{error}");
+        assert!(error.to_string().contains("nothing was merged"), "{error}");
+        assert!(!error.to_string().contains("bug in Tine"), "{error}");
         assert_eq!(fs::read_to_string(dir.path().join(a)).unwrap(), src);
         assert_eq!(fs::read_to_string(dir.path().join(b)).unwrap(), dst);
     }
@@ -1094,13 +1542,17 @@ fn alias_union_uses_exact_spelling_and_protects_non_native_remainders() {
         } else {
             ("alias:: ", "-")
         };
-        for (source, target, active, leftover) in [
-            ("b, c", "a, b", "a, b, c", None),
-            ("x", "X", "X, x", None),
-            ("b, b, c", "a, a, b", "a, b, c", None),
-            ("[[a, b]]", "kept", "kept, [[a, b]]", None),
-            ("[[a]]", "kept", "kept, [[a]]", None),
-            (" a", "kept", "kept, a", Some(" ")),
+        // O6: no combined declaration leaves a leftover (the old ` a` row
+        // kept its extra space there).
+        for (source, target, active) in [
+            ("b, c", "a, b", "a, b, c"),
+            // O6: `x` reads as the kept `X` and is dropped.
+            ("x", "X", "X"),
+            ("b, b, c", "a, a, b", "a, b, c"),
+            ("[[a, b]]", "kept", "kept, [[a, b]]"),
+            ("[[a]]", "kept", "kept, [[a]]"),
+            // O6/P4: the spacing of a combined declaration is its syntax.
+            (" a", "kept", "kept, a"),
         ] {
             let src = format!("{key}{source}\n{bullet} source\n");
             let dst = format!("{key}{target}\n{bullet} target\n");
@@ -1118,15 +1570,10 @@ fn alias_union_uses_exact_spelling_and_protects_non_native_remainders() {
                         "only the approved source syntax and duplicate member are consumed"
                     );
                 }
-                assert!(text.starts_with(&format!("{key}{active}\n")), "{text:?}");
-                if let Some(leftover) = leftover {
-                    let expected = if org {
-                        format!("*\n#+BEGIN_QUOTE\n{leftover}\n#+END_QUOTE\n")
-                    } else {
-                        format!("- {leftover}\n")
-                    };
-                    assert!(text.contains(&expected), "{text:?}");
-                }
+                assert_eq!(
+                    text,
+                    format!("{key}{active}\n{bullet} target\n{bullet} source\n")
+                );
                 assert!(
                     proof.trace.output.iter().all(|p| match p {
                         tine_core::text_trace::Placement::Original(_) => true,
@@ -1143,7 +1590,7 @@ fn alias_union_uses_exact_spelling_and_protects_non_native_remainders() {
                     panic!()
                 };
                 let doc = store.page(&id).unwrap().doc;
-                assert_eq!(doc.blocks.len(), 2 + usize::from(leftover.is_some()));
+                assert_eq!(doc.blocks.len(), 2);
                 let names = tine_core::page_header::page_alias_spellings(
                     doc.pre_block.as_deref(),
                     doc.blocks.first().map(|b| b.raw.as_str()),
@@ -1163,6 +1610,9 @@ fn alias_union_uses_exact_spelling_and_protects_non_native_remainders() {
 #[test]
 fn org_quote_preserves_clashing_property_reference_occurrences() {
     let _guard = crate::integration_lock();
+    // O6 `leftoverReference`, observed by Tine's reader: the clashing
+    // directives keep their references (the link and each key) inside the
+    // quote, so the merge is done and the leftover block still reads them.
     merge(
         "#+tags: [[x]]\n#+CATEGORY: source\n* source\n",
         "#+tags: [[y]]\n#+CATEGORY: target\n* target\n",
@@ -1248,8 +1698,8 @@ fn invalid_merge_certificate_refuses_before_the_survivor_or_source_changes() {
         assert!(matches!(
             tx.plan(),
             Err(tine_store::Why::Refused(
-                tine_store::Refusal::TextRealization(_)
-            ))
+                tine_store::Refusal::FileTextRealization { ref file, .. }
+            )) if file.as_str() == dst.as_str()
         ));
         assert_eq!(
             fs::read_to_string(dir.path().join("pages/src.md")).unwrap(),
@@ -1332,6 +1782,18 @@ fn alias_looking_examples_are_protected_in_both_formats() {
 #[test]
 fn org_title_after_a_clashing_directive_stays_inside_the_leftover_quote() {
     let _guard = crate::integration_lock();
+    // A title carries no reference, so it stays inside the quote; prose
+    // before it is the source's opening text, its own block after the quote
+    // (REG-CM-ORG-TEXT-BETWEEN-DIRECTIVES).
+    merge(
+        "free text\n#+TITLE: src\n* source\n",
+        "#+TITLE: dst\n#+CATEGORY: target\n* target\n",
+        true,
+        |text, _, _| {
+            assert_eq!(text,"#+TITLE: dst\n#+CATEGORY: target\n* target\n*\n#+BEGIN_QUOTE\n#+TITLE: src\n#+END_QUOTE\n* free text\n* source\n");
+        },
+    );
+    // A clashing directive before the title: both stay in the quote, in order.
     merge(
         "#+CATEGORY: source\n#+TITLE: src\n* source\n",
         "#+TITLE: dst\n#+CATEGORY: target\n* target\n",
@@ -1382,7 +1844,8 @@ pub(crate) fn org_drawer_cases(
             None,
         ),
         // The review's F2 witnesses: a source drawer joins the target header
-        // as a whole container.
+        // with a fresh container; with no leftover lines there is no
+        // leftover block (O6; the empty quote of the old rule is gone).
         (
             drawer(&[":TYPE: x"]) + &src,
             dst.clone(),
@@ -1484,57 +1947,51 @@ fn valid_merge_reads_org_head_drawers_as_page_properties() {
     assert!(failures.is_empty(), "{}", failures.join("\n"));
 }
 
-/// Where the model has no answer for a head drawer yet, the merge refuses and
-/// both pages stay as they were (RECEIPT-cm-b4-fix4 Q5-Q7): a clashing or
-/// equal source drawer entry, or a drawer alias's protected duplicate member,
-/// would lose its property occurrence inside the leftover quote; leftover
-/// drawer delimiters would turn a following title into a tag; and a rebuilt
-/// field's `#+alias: ` key cannot sit in a drawer.
+/// O6: a clashing drawer entry is a leftover line, its own line inside the
+/// quote, where a property line keeps none of its references (its key is
+/// one): refused (`leftoverReference`). Drawer aliases unite, and a drawer
+/// whose entries all join or unite leaves no frame behind.
 #[test]
-fn org_drawer_merges_the_model_does_not_settle_refuse_unchanged() {
+fn round15k_org_drawer_remnants_and_selected_prefixes_are_admitted() {
     let _guard = crate::integration_lock();
     let drawer = |entry: &str| format!(":PROPERTIES:\n{entry}\n:END:\n");
-    for (src, dst, error) in [
+    for (src, dst) in [
         (
             drawer(":TYPE: x") + "* source\n",
             drawer(":TYPE: y") + "* target\n",
-            "HiddenOccurrence",
         ),
         (
             drawer(":TYPE: y") + "* source\n",
             drawer(":TYPE: y") + "* target\n",
-            "HiddenOccurrence",
         ),
         (
             drawer(":TYPE: x") + "* source\n",
             "#+type: y\n* target\n".to_string(),
-            "HiddenOccurrence",
         ),
+    ] {
+        let reason = valid_merge(&src, &dst, true, |_, _| {}).unwrap_err();
+        assert!(reason.ends_with("HiddenOccurrence"), "{reason}");
+    }
+    for (src, dst) in [
         (
             drawer(":ALIAS: #[[a]], b") + "* source\n",
             "#+alias: a\n* target\n".to_string(),
-            "HiddenOccurrence",
         ),
         (
             "* source\n".to_string(),
             drawer(":ALIAS: a, a") + "* target\n",
-            "AliasField",
         ),
-        // Leftover drawer delimiters make the reader take the source title
-        // that follows them for a `#+title` tag (Q7).
+        // The following title retains its directive interpretation.
         (
             drawer(":ALIAS: c d") + "#+title: src\n* source\n",
             drawer(":TAGS: t") + "* target\n",
-            "AddedOccurrence",
         ),
         (
             ":PROPERTIES:\n:END:\n#+title: src\n* source\n".to_string(),
             "#+alias: x\n* target\n".to_string(),
-            "AddedOccurrence",
         ),
     ] {
-        let error_text = valid_merge(&src, &dst, true, |_, _| {}).unwrap_err();
-        assert!(error_text.ends_with(error), "{error_text}");
+        valid_merge(&src, &dst, true, |_, _| {}).unwrap();
     }
 }
 
@@ -1589,6 +2046,14 @@ fn unchanged_after(
         );
         store.page(id).expect("every page still opens");
     }
+    let mut paths: Vec<_> = fs::read_dir(dir.path().join("pages"))
+        .unwrap()
+        .map(|entry| entry.unwrap().file_name().into_string().unwrap())
+        .collect();
+    let mut expected_paths: Vec<_> = files.iter().map(|(name, _)| name.to_string()).collect();
+    paths.sort();
+    expected_paths.sort();
+    assert_eq!(paths, expected_paths, "a refusal creates no new page file");
     drop(host);
     error
 }
@@ -1642,8 +2107,8 @@ fn a_rename_never_publishes_a_page_the_store_cannot_open() {
 
 /// Markdown decodes a backslash before ASCII punctuation in a plain alias
 /// member (`C\#` is the alias `C#`); Org keeps the backslash. A member moves
-/// with its own bytes, escapes included, deduplicates by those bytes (SPEC
-/// §5.1) and reads back as the parser's decoded name.
+/// with its own bytes, escapes included. Equal decoded names use the first
+/// spelling; physically different later spellings retain native block owners.
 #[test]
 fn escaped_alias_members_move_with_their_bytes() {
     let _guard = crate::integration_lock();
@@ -1682,13 +2147,8 @@ fn escaped_alias_members_move_with_their_bytes() {
             "x\\\\, C\\#, b".into(),
             vec!["x\\".into(), "C#".into(), "b".into()],
         ),
-        // Different bytes are different spellings, even when they read the same.
-        (
-            "C\\#".into(),
-            "C#".into(),
-            "C#, C\\#".into(),
-            vec!["C#".into(), "C#".into()],
-        ),
+        // Equal decoded names retain only the first active spelling.
+        ("C\\#".into(), "C#".into(), "C#".into(), vec!["C#".into()]),
     ];
     let mut other = Vec::new();
     for c in punctuation.chars() {
@@ -1845,7 +2305,14 @@ fn rename_with_titled_child(
     );
     if let Err(error) = result {
         assert_eq!(files(dir.path()), before, "a refused rename writes nothing");
-        return Err(error.to_string());
+        let reason = pages::MergeRefused::of(&error).map_or_else(
+            || error.to_string(),
+            |refusal| match &refusal.reason {
+                pages::merge_payload::RealizationError::Trace(reason) => reason.to_string(),
+                reason => reason.to_string(),
+            },
+        );
+        return Err(reason);
     }
     let after = files(dir.path());
     Ok((dir, after))

@@ -1111,43 +1111,49 @@ mod tests {
                 ..modified("pages/A.md", "Shared", PageKind::Page)
             }]
         );
-        // Claim transitions also promote/demote an unchanged journal across
-        // kinds without calling its retained physical file a removal.
+        // A pages file titled by a date claims that day, and the journals
+        // file keeps it (CM-DAYFILE, CM-ORDER): the journal stays active
+        // across the pages file's claim transitions, and the pages file
+        // enters and leaves the day as a losing twin. (Superseded: before CM
+        // step 2 the titled pages file masked the journal.)
         events_after(&slot, || {
             atomic_write(
                 root,
                 "pages/A.md",
-                "title:: Jul 10th, 2026\n- ordinary date\n",
+                "title:: Jul 10th, 2026\n- a date title\n",
             )
         });
-        assert!(events_after(&slot, || atomic_write(
-            root,
-            "journals/2026_07_10.md",
-            "- inactive journal edit\n"
-        ))
-        .is_empty());
+        assert_eq!(
+            events_after(&slot, || atomic_write(
+                root,
+                "journals/2026_07_10.md",
+                "- active journal edit\n"
+            )),
+            vec![modified(
+                "journals/2026_07_10.md",
+                "Jul 10th, 2026",
+                PageKind::Journal
+            )]
+        );
         assert_eq!(
             events_after(&slot, || atomic_write(
                 root,
                 "pages/A.md",
                 "title:: Elsewhere\n- away\n"
             )),
-            vec![
-                modified("pages/A.md", "Elsewhere", PageKind::Page),
-                modified(
-                    "journals/2026_07_10.md",
-                    "Jul 10th, 2026",
-                    PageKind::Journal
-                ),
-            ]
+            vec![modified("pages/A.md", "Elsewhere", PageKind::Page)]
         );
         assert_eq!(
             events_after(&slot, || atomic_write(
                 root,
                 "pages/A.md",
-                "title:: Jul 10th, 2026\n- ordinary date again\n"
+                "title:: Jul 10th, 2026\n- a date title again\n"
             )),
-            vec![modified("pages/A.md", "Jul 10th, 2026", PageKind::Page)]
+            // As a loser retitle above: the page leaves under its old name.
+            vec![GraphChange {
+                removed: true,
+                ..modified("pages/A.md", "Elsewhere", PageKind::Page)
+            }]
         );
     }
 

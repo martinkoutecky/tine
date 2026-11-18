@@ -142,16 +142,6 @@
     "note": "note",
     "ten": "ten"
   },
-  "namespaceNodes": [
-    [
-      "page",
-      "a/b"
-    ],
-    [
-      "page",
-      "a"
-    ]
-  ],
   "namespaceTree": [
     {
       "children": [],
@@ -276,7 +266,10 @@
       "linkedRefs": 0,
       "name": "a/b",
       "owner": "pages/a.b.org",
-      "parent": "a"
+      "parent": [
+        "page",
+        "a"
+      ]
     },
     {
       "key": "ab",
@@ -321,17 +314,6 @@
       "model": [
         "page",
         "ten___child"
-      ]
-    },
-    "a": {
-      "backend": [
-        "page",
-        "a"
-      ],
-      "day": null,
-      "model": [
-        "page",
-        "a"
       ]
     },
     "a/b": {
@@ -428,37 +410,11 @@
       ]
     }
   ],
-  "treeNodes": [
-    [
-      "page",
-      "ten___child"
-    ],
-    [
-      "page",
-      "a/b"
-    ],
-    [
-      "page",
-      "note"
-    ],
-    [
-      "page",
-      "ten"
-    ],
-    [
-      "page",
-      "ab"
-    ],
-    [
-      "page",
-      "a"
-    ]
-  ],
   "treeParent": [
     {
       "page": [
         "page",
-        "ten___child"
+        "a"
       ],
       "parent": null
     },
@@ -471,6 +427,13 @@
         "page",
         "a"
       ]
+    },
+    {
+      "page": [
+        "page",
+        "ab"
+      ],
+      "parent": null
     },
     {
       "page": [
@@ -489,14 +452,7 @@
     {
       "page": [
         "page",
-        "ab"
-      ],
-      "parent": null
-    },
-    {
-      "page": [
-        "page",
-        "a"
+        "ten___child"
       ],
       "parent": null
     }

@@ -13,6 +13,8 @@ use std::path::Path;
 const ENTRIES: &[&str] = &[
     "parse",
     "parse_format",
+    "parse_format_without_property_page_refs",
+    "property_references",
     "parse_outline",
     "refs",
     "inline",

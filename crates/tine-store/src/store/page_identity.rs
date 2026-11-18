@@ -10,17 +10,17 @@ fn in_directory(path: &str, directory: &str) -> bool {
 }
 
 impl Store {
-    /// The file-name listing answer: read an ordinary page by effective name, or a journal by its file
-    /// stem or parseable display title (falling back to an ordinary file of
-    /// the requested date name when no journal exists), without waiting for the initial
-    /// parse. A page some file is named for is found from a listing of file
-    /// names and the matching files; otherwise the first lookup or
-    /// invalidation builds a live O(P) file/preamble index, seeing files
-    /// created after `open`, and warm lookups reuse it. This remains available after a
-    /// failed initial parse; aliases require a successful graph view and are
-    /// not resolved here. When files claim the same name or journal day, it
-    /// uses the same claimant ranking as `WholeGraph::resolve` (ordinary
-    /// kind first, then unsigned UTF-8 relative paths). A missing name
+    /// The file-name listing answer: read a page by effective name, or a day
+    /// by any accepted spelling (its files in any directory, CM SPEC §2.1),
+    /// without waiting for the initial parse. A page some file is named for
+    /// is found from a listing of file names and the matching files;
+    /// otherwise the first lookup or invalidation builds a live O(P)
+    /// file/preamble index, seeing files created after `open`, and warm
+    /// lookups reuse it. This remains available after a failed initial
+    /// parse; aliases require a successful graph view and are not resolved
+    /// here. When files claim the same name or day, it uses the same
+    /// claimant order as `WholeGraph::resolve` (journals directory first,
+    /// then unsigned UTF-8 relative paths, SPEC §2.2). A missing name
     /// returns `None`, also while a file's name is undecodable: that file is
     /// listed in `unreadable_files()` and one bad file never blocks the graph.
     /// The selected file is read through `page()`, with the same safety, revision, and publication
@@ -32,36 +32,28 @@ impl Store {
     ) -> Result<Option<PageRead>, StoreError> {
         // The ready view's lookup rule, without reclassifying the file.
         let lookup = crate::model::claim_lookup(&self.graph.current_journal_format(), name, kind);
-        let literal = lookup
-            .page_fallback
-            .filter(|name| self.graph.find_entry(name, PageKind::Page).is_some());
-        let claim_name = literal.unwrap_or(&lookup.name);
-        let entry = self
-            .graph
-            .find_entry(
-                claim_name,
-                if literal.is_some() {
-                    PageKind::Page
-                } else {
-                    kind
-                },
-            )
-            .and_then(|_| {
-                [PageKind::Page, PageKind::Journal]
-                    .into_iter()
-                    .filter_map(|kind| self.graph.find_entry(claim_name, kind))
-                    .min_by(|a, b| crate::model::compare_page_claimants(a, b))
-            });
+        let held = |kind| {
+            (self.graph.find_claimants(&lookup.name, kind).into_iter())
+                .find(|entry| lookup.holds(entry))
+        };
+        // A day a pages file's `title::` names (CM-DAYFILE) is read only by
+        // the pages listing; a journals listing keeps the rows it found.
+        if lookup.day.is_some() {
+            self.graph.find_claimants(&lookup.name, PageKind::Page);
+        }
+        let journals_dir = &self.graph.current_config().journals_dir;
+        // A name that is no day is one identity across both kinds (a
+        // journals-directory file whose name is no date, SPEC §2.1).
+        let entry = held(lookup.kind).and_then(|_| {
+            [PageKind::Page, PageKind::Journal]
+                .into_iter()
+                .filter(|kind| lookup.day.is_none() || *kind == PageKind::Journal)
+                .filter_map(held)
+                .min_by(|a, b| crate::model::compare_page_claimants(journals_dir, a, b))
+        });
         let Some(entry) = entry else {
             return Ok(None);
         };
-        if kind == PageKind::Journal
-            && literal.is_none()
-            && tine_core::refs::page_key(name) != tine_core::refs::page_key(claim_name)
-            && entry.kind == PageKind::Page
-        {
-            return Ok(None);
-        }
         let id = PageId::from(self.graph.rel_path(&entry.path));
         match self.page(&id) {
             Ok(read) => Ok(Some(read)),

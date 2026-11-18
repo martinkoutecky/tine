@@ -38,6 +38,9 @@ mod page_tests;
 #[path = "owner_tests/rename_date_tests.rs"]
 mod rename_dates;
 
+#[path = "owner_tests/cm_rename_cli_tests.rs"]
+mod cm_rename_cli;
+
 #[path = "owner_tests/cm_favorites_tests.rs"]
 mod cm_favorites;
 

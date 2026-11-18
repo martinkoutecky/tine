@@ -270,7 +270,12 @@ fn org_title_rename_refuses_a_page_that_does_not_round_trip() {
         pages::rename_page_expected(&store, host, "Effective", "Renamed", None)
     })
     .expect_err("a non-round-tripping Org title must not be rewritten");
-    assert!(error.to_string().contains("round-trip"), "{error}");
+    assert_eq!(
+        pages::RewriteBlocked::of(&error),
+        Some(&pages::RewriteBlocked::ReadOnlyOrg {
+            file: "pages/Physical.org".into()
+        })
+    );
     assert_eq!(
         fs::read_to_string(root.join("pages/Physical.org")).unwrap(),
         source

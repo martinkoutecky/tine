@@ -150,21 +150,11 @@
   "journalTitleFormat": null,
   "keyOf": {
     "Bar": "bar",
-    "Oct 26th, 2026": "oct 26th, 2026",
+    "Oct 26th, 2026": "Day 2026-10-26",
     "a": "a",
     "a/b": "a/b",
     "linker": "linker"
   },
-  "namespaceNodes": [
-    [
-      "page",
-      "a/b"
-    ],
-    [
-      "page",
-      "a"
-    ]
-  ],
   "namespaceTree": [
     {
       "children": [],
@@ -200,11 +190,11 @@
     "Oct 26th, 2026": {
       "journal": [
         "journal",
-        "oct 26th, 2026"
+        "Day 2026-10-26"
       ],
       "page": [
-        "page",
-        "oct 26th, 2026"
+        "journal",
+        "Day 2026-10-26"
       ]
     },
     "a": {
@@ -245,7 +235,7 @@
     },
     "Oct 26th, 2026": {
       "journal": "journals/2026_10_26.md",
-      "page": null
+      "page": "journals/2026_10_26.md"
     },
     "a": {
       "journal": null,
@@ -262,7 +252,7 @@
   },
   "pages": [
     {
-      "key": "oct 26th, 2026",
+      "key": "Day 2026-10-26",
       "kind": "journal",
       "linkedRefs": 1,
       "name": "Oct 26th, 2026",
@@ -283,7 +273,10 @@
       "linkedRefs": 1,
       "name": "a/b",
       "owner": "pages/a.b.md",
-      "parent": "a"
+      "parent": [
+        "page",
+        "a"
+      ]
     },
     {
       "key": "bar",
@@ -317,7 +310,7 @@
     "Oct 26th, 2026": {
       "backend": [
         "journal",
-        "oct 26th, 2026"
+        "Day 2026-10-26"
       ],
       "day": [
         2026,
@@ -326,18 +319,7 @@
       ],
       "model": [
         "journal",
-        "oct 26th, 2026"
-      ]
-    },
-    "a": {
-      "backend": [
-        "page",
-        "a"
-      ],
-      "day": null,
-      "model": [
-        "page",
-        "a"
+        "Day 2026-10-26"
       ]
     },
     "a/b": {
@@ -368,7 +350,7 @@
       "children": [],
       "page": [
         "journal",
-        "oct 26th, 2026"
+        "Day 2026-10-26"
       ]
     },
     {
@@ -405,33 +387,18 @@
       ]
     }
   ],
-  "treeNodes": [
-    [
-      "journal",
-      "oct 26th, 2026"
-    ],
-    [
-      "page",
-      "a/b"
-    ],
-    [
-      "page",
-      "bar"
-    ],
-    [
-      "page",
-      "linker"
-    ],
-    [
-      "page",
-      "a"
-    ]
-  ],
   "treeParent": [
     {
       "page": [
         "journal",
-        "oct 26th, 2026"
+        "Day 2026-10-26"
+      ],
+      "parent": null
+    },
+    {
+      "page": [
+        "page",
+        "a"
       ],
       "parent": null
     },
@@ -456,13 +423,6 @@
       "page": [
         "page",
         "linker"
-      ],
-      "parent": null
-    },
-    {
-      "page": [
-        "page",
-        "a"
       ],
       "parent": null
     }

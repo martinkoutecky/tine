@@ -66,9 +66,16 @@ const UNPARSED_BUILT_IN_PROPERTIES: &[&str] = &[
 /// OG `gp-property/editable-linkable-built-in-properties` (`property.cljs:46-48`).
 pub(super) const EDITABLE_LINKABLE_BUILT_IN_PROPERTIES: &[&str] = &["alias", "aliases", "tags"];
 
-fn contains_key(list: &[&str], key: &str) -> bool {
-    list.iter()
-        .any(|candidate| property_key_norm(candidate) == key)
+type Normalized = std::sync::OnceLock<Vec<String>>;
+static UNPARSED: Normalized = Normalized::new();
+static LINKABLE: Normalized = Normalized::new();
+
+/// `key` (normalized) is in a built-in list, which `cell` holds normalized
+/// once, so the walk's per-property key tests allocate nothing.
+fn contains_key(cell: &'static Normalized, list: &[&str], key: &str) -> bool {
+    cell.get_or_init(|| list.iter().map(|k| property_key_norm(k)).collect())
+        .iter()
+        .any(|candidate| candidate == key)
 }
 
 /// True for OG's built-in keys whose values are page references
@@ -80,6 +87,7 @@ fn contains_key(list: &[&str], key: &str) -> bool {
 /// [`separated_by_commas`] where config applies.
 pub fn is_editable_linkable_built_in(key: &str) -> bool {
     contains_key(
+        &LINKABLE,
         EDITABLE_LINKABLE_BUILT_IN_PROPERTIES,
         &property_key_norm(key),
     )
@@ -92,13 +100,13 @@ fn contains_config_key(list: &[String], key: &str) -> bool {
 
 /// OG `separated-by-commas?` (`text.cljs:141-146`).
 pub(crate) fn separated_by_commas(key: &str, config: &ParseConfig) -> bool {
-    contains_key(EDITABLE_LINKABLE_BUILT_IN_PROPERTIES, key)
+    contains_key(&LINKABLE, EDITABLE_LINKABLE_BUILT_IN_PROPERTIES, key)
         || contains_config_key(&config.separated_by_commas, key)
 }
 
 /// Step 1's key test: OG `parse-property`'s first `cond` branch
 /// (`text.cljs:169-176`).
 pub(crate) fn reference_parsing_suppressed(key: &str, config: &ParseConfig) -> bool {
-    contains_key(UNPARSED_BUILT_IN_PROPERTIES, key)
+    contains_key(&UNPARSED, UNPARSED_BUILT_IN_PROPERTIES, key)
         || contains_config_key(&config.ignored_page_references_keywords, key)
 }

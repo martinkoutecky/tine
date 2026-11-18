@@ -46,6 +46,7 @@ mod macro_names;
 pub mod macro_text;
 #[allow(missing_docs)]
 pub mod og;
+pub(crate) mod page_names;
 #[allow(missing_docs)]
 mod parse;
 #[cfg(test)]

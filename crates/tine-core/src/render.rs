@@ -38,7 +38,14 @@ pub fn block_refs(raw: &str, is_org: bool) -> lsdoc::ast::Refs {
 /// both (as `projection()` did) parses the same block twice; this parses once and the
 /// caller takes `.blocks` (facets / visible / body) and `.refs` (backlinks).
 pub fn parse_projection(raw: &str, is_org: bool) -> lsdoc::ast::Projection {
+    #[cfg(test)]
+    BLOCK_PARSES.with(|n| n.set(n.get() + 1));
     lsdoc_block_parse::parse_projection(raw, is_org)
+}
+
+#[cfg(test)]
+thread_local! {
+    pub(crate) static BLOCK_PARSES: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
 }
 
 /// Free text that is not a block body (a property value), parsed without

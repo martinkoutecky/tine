@@ -178,17 +178,30 @@ impl ReadSnapshot {
             .get(&self.pages, &positions, &self.config, self.cache_generation)
     }
     pub(crate) fn physical_explicit_referrers(&self, names: &[String]) -> Vec<crate::PageId> {
+        // O(postings · log P): each posting's page by its slot; the index is
+        // built from the physical pages, so a name with no postings costs a
+        // shard lookup and examines no page.
         let paths = self.explicit_index.candidates(names);
-        self.physical_pages
+        paths
             .iter()
-            .filter(|(entry, _)| paths.contains(&entry.path))
-            .filter_map(|(entry, _)| entry.rel_path.clone())
+            .inspect(|_| {
+                #[cfg(test)]
+                REFERRER_VISITS.with(|count| count.set(count.get() + 1));
+            })
+            .filter_map(|path| {
+                let rel = self.rel_of(path)?;
+                let &slot = self.physical_pages.positions.get(rel.as_str())?;
+                self.physical_pages.get(slot)?.0.rel_path.clone()
+            })
             .collect()
     }
 }
 
 #[cfg(test)]
 thread_local! { static PAGES: std::cell::Cell<usize> = const { std::cell::Cell::new(0) }; }
+/// Pages or postings [`ReadSnapshot::physical_explicit_referrers`] examined.
+#[cfg(test)]
+thread_local! { static REFERRER_VISITS: std::cell::Cell<usize> = const { std::cell::Cell::new(0) }; }
 
 #[cfg(test)]
 #[path = "path_membership_tests.rs"]

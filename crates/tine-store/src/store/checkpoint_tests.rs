@@ -168,6 +168,91 @@ fn pre_ecmascript_editor_trim_checkpoints_are_rebuilt() {
     store.close();
 }
 
+#[test]
+fn pre_native_header_checkpoints_rebuild_once_then_load() {
+    let root = tempfile::tempdir().unwrap();
+    fs::create_dir(root.path().join("pages")).unwrap();
+    let path = root.path().join("pages/Empty.org");
+    let text = ":PROPERTIES:\n:END:\n";
+    fs::write(&path, text).unwrap();
+    set_mtime(&path, old());
+    let dir = tempfile::tempdir().unwrap();
+    let cp = dir.path().join("graph.bin");
+    write_checkpoint(root.path(), &cp);
+    // The unchanged envelope/body schema lets us stamp a valid checkpoint as
+    // generation 31. Rejection must happen before its derived state is served.
+    let mut bytes = fs::read(&cp).unwrap();
+    bytes[8..12].copy_from_slice(&31_u32.to_le_bytes());
+    fs::write(&cp, bytes).unwrap();
+
+    let rebuilt = open_cp(root.path(), &cp);
+    rebuilt.whole_graph_reconciled().unwrap();
+    assert_eq!(load_outcome(&rebuilt), "format");
+    assert_eq!(
+        parse_passes(&rebuilt),
+        1,
+        "rebuild parses the one page once"
+    );
+    let check_header = |store: &Store| {
+        let view = store.whole_graph_reconciled().unwrap();
+        let (_, doc) = view
+            .graph
+            .pages
+            .slots()
+            .map(|(_, page)| page)
+            .find(|(entry, _)| entry.rel_path_str() == "pages/Empty.org")
+            .unwrap();
+        let pre = doc.pre_block.as_deref().unwrap();
+        let rows = tine_core::page_properties::pre_block_projections(pre, true);
+        assert_eq!(rows.len(), 1);
+        assert_eq!(
+            rows[0].0,
+            tine_core::page_properties::PreBlockKind::Properties
+        );
+        assert_eq!(rows[0].1.raw(), ":PROPERTIES:\n:END:");
+        assert!(doc.roots.is_empty());
+    };
+    check_header(&rebuilt);
+    warm(&rebuilt);
+    let image = captured(&rebuilt);
+    let fresh = Store::open(root.path(), Default::default()).unwrap().0;
+    warm(&fresh);
+    check_header(&fresh);
+    assert_eq!(
+        image,
+        captured(&fresh),
+        "rebuilt indexes equal a cold build"
+    );
+    assert_eq!(
+        rebuilt
+            .whole_graph_reconciled()
+            .unwrap()
+            .graph
+            .block_index_image(),
+        fresh
+            .whole_graph_reconciled()
+            .unwrap()
+            .graph
+            .block_index_image()
+    );
+    fresh.close();
+    assert!(matches!(
+        rebuilt.write_checkpoint_now(),
+        Some(CheckpointWrite::Written { .. })
+    ));
+    rebuilt.close();
+
+    let loaded = open_cp(root.path(), &cp);
+    loaded.whole_graph_reconciled().unwrap();
+    assert_eq!(load_outcome(&loaded), "loaded");
+    assert_eq!(parse_passes(&loaded), 0, "the rebuild happens only once");
+    check_header(&loaded);
+    warm(&loaded);
+    assert_eq!(image, captured(&loaded));
+    loaded.close();
+    assert_eq!(fs::read_to_string(path).unwrap(), text);
+}
+
 /// FORMAT 22 (D-20261102-CM4 CM-REFONLY): a format-21 referenced-name index
 /// lacks property-key and task-marker (and priority) pages; it must rebuild, so the
 /// reference-only pages appear on a warm launch over unchanged files.
@@ -390,6 +475,175 @@ fn gh699_old_property_extraction_checkpoints_are_rebuilt() {
         panic!("simple rows")
     };
     assert_eq!(groups.len(), 1);
+    store.close();
+}
+
+#[test]
+fn pre_escaped_plain_property_checkpoints_are_rebuilt() {
+    let root = graph();
+    fs::write(
+        root.path().join("pages/D.md"),
+        "tags:: \\#x, a\\[b\n- body\n",
+    )
+    .unwrap();
+    let cp = root.path().join("launch.bin");
+    write_checkpoint(root.path(), &cp);
+    let mut bytes = fs::read(&cp).unwrap();
+    bytes[8..12].copy_from_slice(&33_u32.to_le_bytes());
+    fs::write(&cp, bytes).unwrap();
+    let store = open_cp(root.path(), &cp);
+    let graph = store.whole_graph_reconciled().unwrap();
+    assert_eq!(load_outcome(&store), "format");
+    assert!(
+        parse_passes(&store) > 0,
+        "old reference evidence must rebuild"
+    );
+    assert_eq!(graph.backlinks("#x").unwrap().len(), 1);
+    store.close();
+}
+
+#[test]
+fn pre_document_grammar_property_checkpoints_are_rebuilt() {
+    let root = graph();
+    fs::write(
+        root.path().join("pages/D.md"),
+        "alias:: {{embed [[Embedded]]}}\n\n- body\n  tags:: # x\n",
+    )
+    .unwrap();
+    let cp = root.path().join("launch.bin");
+    write_checkpoint(root.path(), &cp);
+    // Format 34 can retain the heading member `# x` and the alias relation
+    // built by the value-only alias reader.
+    let mut bytes = fs::read(&cp).unwrap();
+    bytes[8..12].copy_from_slice(&34_u32.to_le_bytes());
+    fs::write(&cp, bytes).unwrap();
+    let store = open_cp(root.path(), &cp);
+    let graph = store.whole_graph_reconciled().unwrap();
+    assert_eq!(load_outcome(&store), "format");
+    assert!(
+        parse_passes(&store) > 0,
+        "old reference evidence must rebuild"
+    );
+    assert!(graph.backlinks("# x").unwrap().is_empty());
+    assert!(!graph
+        .graph
+        .alias_owner_paths("embedded", None)
+        .unwrap()
+        .is_empty());
+    store.close();
+}
+
+#[test]
+fn pre_top_level_property_member_checkpoints_are_rebuilt() {
+    let root = graph();
+    fs::write(
+        root.path().join("pages/D.md"),
+        "alias:: **[[Bold]]**\n\n- body\n  tags:: [[Outer [[Inner]]]]\n",
+    )
+    .unwrap();
+    let cp = root.path().join("launch.bin");
+    write_checkpoint(root.path(), &cp);
+    // Format 35 can retain `Inner` (a nested link's inner page) as a property
+    // reference and `Bold` (a link inside emphasis) as an alias.
+    let mut bytes = fs::read(&cp).unwrap();
+    bytes[8..12].copy_from_slice(&35_u32.to_le_bytes());
+    fs::write(&cp, bytes).unwrap();
+    let store = open_cp(root.path(), &cp);
+    let graph = store.whole_graph_reconciled().unwrap();
+    assert_eq!(load_outcome(&store), "format");
+    assert!(
+        parse_passes(&store) > 0,
+        "old reference evidence must rebuild"
+    );
+    assert!(graph.backlinks("Inner").unwrap().is_empty());
+    assert_eq!(graph.backlinks("Outer [[Inner]]").unwrap().len(), 1);
+    assert!(graph
+        .graph
+        .alias_owner_paths("bold", None)
+        .is_none_or(|owners| owners.is_empty()));
+    store.close();
+}
+
+#[test]
+fn pre_header_boundary_checkpoints_are_rebuilt() {
+    let root = graph();
+    fs::write(
+        root.path().join("pages/D.md"),
+        "alias:: One\n\nalias:: Two\n- body\n",
+    )
+    .unwrap();
+    let cp = root.path().join("launch.bin");
+    write_checkpoint(root.path(), &cp);
+    // Format 37 read both property nodes of a Markdown preamble as page
+    // properties. OG reads only the first node, so `Two` is no alias.
+    let mut bytes = fs::read(&cp).unwrap();
+    bytes[8..12].copy_from_slice(&37_u32.to_le_bytes());
+    fs::write(&cp, bytes).unwrap();
+    let store = open_cp(root.path(), &cp);
+    let graph = store.whole_graph_reconciled().unwrap();
+    assert_eq!(load_outcome(&store), "format");
+    assert!(parse_passes(&store) > 0, "old page properties must rebuild");
+    assert!(graph
+        .graph
+        .alias_owner_paths("one", None)
+        .is_some_and(|owners| !owners.is_empty()));
+    assert!(graph
+        .graph
+        .alias_owner_paths("two", None)
+        .is_none_or(|owners| owners.is_empty()));
+    store.close();
+}
+
+#[test]
+fn pre_opening_text_checkpoints_are_rebuilt() {
+    let root = graph();
+    let pages = root.path().join("pages");
+    let o = "#+TITLE: O\n[[Opening X]]\n#+ALIAS: y\n* Head\n";
+    fs::write(pages.join("O.org"), o).unwrap();
+    fs::write(pages.join("M.md"), "k:: x\n#+b: [[Opening Y]]\n- b\n").unwrap();
+    let cp = root.path().join("launch.bin");
+    write_checkpoint(root.path(), &cp);
+    // Format 38 read neither link: the Org text sat inside the header, and a
+    // Markdown `#+b:` line was no property OG-style (REG-CM-ORG-TEXT-BETWEEN-
+    // DIRECTIVES, REG-CM-MD-DIRECTIVE-LINK).
+    let mut bytes = fs::read(&cp).unwrap();
+    bytes[8..12].copy_from_slice(&38_u32.to_le_bytes());
+    fs::write(&cp, bytes).unwrap();
+    let store = open_cp(root.path(), &cp);
+    let graph = store.whole_graph_reconciled().unwrap();
+    assert_eq!(load_outcome(&store), "format");
+    assert!(parse_passes(&store) > 0, "old references must rebuild");
+    assert_eq!(graph.backlinks("Opening X").unwrap().len(), 1);
+    assert_eq!(graph.backlinks("Opening Y").unwrap().len(), 1);
+    store.close();
+}
+
+#[test]
+fn pre_whole_value_property_parse_checkpoints_are_rebuilt() {
+    let root = graph();
+    fs::write(
+        root.path().join("pages/D.md"),
+        "- body\n  foo:: {{x **[[Inside]]}} [[Value]]**\n",
+    )
+    .unwrap();
+    let cp = root.path().join("launch.bin");
+    write_checkpoint(root.path(), &cp);
+    // Format 36 read the macro's bytes in place and referenced both pages.
+    // mldoc's macro-disabled parse keeps no member, so OG keeps the value as a
+    // string and references only its ordinary parse's top-level `[[Value]]`
+    // (fixture row `foo` / `{{x **[[a]]}} [[b]]**`: `b`).
+    let mut bytes = fs::read(&cp).unwrap();
+    bytes[8..12].copy_from_slice(&36_u32.to_le_bytes());
+    fs::write(&cp, bytes).unwrap();
+    let store = open_cp(root.path(), &cp);
+    let graph = store.whole_graph_reconciled().unwrap();
+    assert_eq!(load_outcome(&store), "format");
+    assert!(
+        parse_passes(&store) > 0,
+        "old reference evidence must rebuild"
+    );
+    assert!(graph.backlinks("Inside").unwrap().is_empty());
+    assert_eq!(graph.backlinks("Value").unwrap().len(), 1);
     store.close();
 }
 
@@ -1255,7 +1509,7 @@ fn the_golden_body_is_pinned_to_format() {
     let digest: String = sha256(&bytes).iter().map(|b| format!("{b:02x}")).collect();
     assert_eq!(
         (FORMAT, digest.as_str()),
-        (31, GOLDEN),
+        (39, GOLDEN),
         "ADR 0070: the checkpoint body changed; bump FORMAT and re-pin GOLDEN"
     );
 }

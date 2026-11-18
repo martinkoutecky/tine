@@ -89,7 +89,10 @@ impl Store {
     }
 
     pub(crate) fn refresh_journal_ids(&self) {
-        let found = journal_ids_from_entries(self.graph.list_pages_shared().as_ref());
+        let found = journal_ids_from_entries(
+            &self.graph.current_config().journals_dir,
+            self.graph.list_pages_shared().as_ref(),
+        );
         *self.journal_ids.lock().unwrap() = found;
     }
 }
@@ -104,8 +107,10 @@ impl ChangeFeed {
 
     /// The day index from the journal directory's file names (no file opened).
     fn refresh_journal_names(&self) {
-        *self.journal_ids.lock().unwrap() =
-            journal_ids_from_entries(&self.graph.scan_journal_names());
+        *self.journal_ids.lock().unwrap() = journal_ids_from_entries(
+            &self.graph.current_config().journals_dir,
+            &self.graph.scan_journal_names(),
+        );
     }
 
     /// Defer a publication (see the module doc): a transaction's, or a
@@ -226,7 +231,11 @@ impl ChangeFeed {
     }
 }
 
+/// Each day's opening file among `entries` (a journal-kind entry with a
+/// day, in any directory, CM SPEC §2.1), by the claimant order with the
+/// configured `journals_dir` first.
 pub(crate) fn journal_ids_from_entries<'a>(
+    journals_dir: &str,
     entries: impl IntoIterator<Item = &'a PageEntry>,
 ) -> HashMap<Day, PageId> {
     let mut claimants: HashMap<Day, Vec<PageEntry>> = HashMap::new();
@@ -240,7 +249,7 @@ pub(crate) fn journal_ids_from_entries<'a>(
     claimants
         .into_iter()
         .filter_map(|(day, mut entries)| {
-            entries.sort_by(|a, b| crate::model::compare_page_claimants(a, b));
+            entries.sort_by(|a, b| crate::model::compare_page_claimants(journals_dir, a, b));
             entries.into_iter().next()?.rel_path.map(|id| (day, id))
         })
         .collect()

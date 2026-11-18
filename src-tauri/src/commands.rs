@@ -551,6 +551,7 @@ mod graph_wide_command_boundary_tests {
         let source = [
             include_str!("commands.rs"),
             include_str!("commands/rename.rs"),
+            include_str!("commands/file_merge.rs"),
         ]
         .concat();
         for name in [
@@ -2211,36 +2212,8 @@ pub(crate) async fn get_page_by_path(
     .map_err(|error| error.to_string())?
 }
 
-/// Reconcile a duplicate-day pair: append the blocks of `src` to `dst`, then trash
-/// `src` (both graph-root-relative paths). The merged `dst` is written through the
-/// normal round-tripping save path (#21).
-#[tauri::command]
-pub(crate) async fn merge_pages(
-    src: String,
-    dst: String,
-    app: tauri::AppHandle,
-    state: GraphContext<'_>,
-) -> Result<(), String> {
-    let slot = slot_for_context(&state)?;
-    tauri::async_runtime::spawn_blocking(move || {
-        crate::git_settings::around(
-            &slot.root_key,
-            || format!("Merge \"{src}\" into \"{dst}\""),
-            || {
-                tine_graph_features::pages::merge_pages(
-                    &slot.store,
-                    slot.host_slot()?.running()?,
-                    &src,
-                    &dst,
-                )
-                .map_err(graph_write_error_to_wire)
-            },
-        )
-        .inspect(|()| crate::seen::page_gone(&app, &slot, None, &[src.as_str()]))
-    })
-    .await
-    .map_err(|error| error.to_string())?
-}
+mod file_merge;
+pub(crate) use file_merge::*;
 
 fn graph_write_error_to_wire(error: std::io::Error) -> String {
     error.to_string()
@@ -2271,7 +2244,7 @@ pub(crate) async fn rename_file_to_page(
     new_name: String,
     app: tauri::AppHandle,
     state: GraphContext<'_>,
-) -> Result<(), String> {
+) -> Result<(), rename::RewriteError> {
     let slot = slot_for_context(&state)?;
     tauri::async_runtime::spawn_blocking(move || {
         crate::git_settings::around(
@@ -2284,13 +2257,13 @@ pub(crate) async fn rename_file_to_page(
                     &path,
                     &new_name,
                 )
-                .map_err(|error| error.to_string())
+                .map_err(rename::RewriteError::of)
             },
         )
         .inspect(|()| crate::seen::page_gone(&app, &slot, None, &[path.as_str()]))
     })
     .await
-    .map_err(|error| error.to_string())?
+    .map_err(|error| rename::RewriteError::from(error.to_string()))?
 }
 
 #[tauri::command]

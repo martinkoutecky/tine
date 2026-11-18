@@ -264,6 +264,7 @@ pub fn page_dto_document(page: &PageDto, is_org: bool) -> doc::Document {
             .iter()
             .map(|b| dto_block_to_doc(b, is_org))
             .collect(),
+        org: is_org,
     }
 }
 

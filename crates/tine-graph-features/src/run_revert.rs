@@ -116,7 +116,11 @@ pub(crate) fn revert_doc(
             &decisions,
         )?;
         let pre_block = revert_pre(&base, &doc, &theirs, &mut kept);
-        doc = Document { pre_block, roots };
+        doc = Document {
+            pre_block,
+            roots,
+            org: fmt == Format::Org,
+        };
     }
     let changed = !same_doc(&start, &doc);
     Ok((doc, changed, kept))

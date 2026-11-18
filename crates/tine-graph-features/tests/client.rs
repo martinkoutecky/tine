@@ -1783,7 +1783,7 @@ fn page_rename_refusals_match_legacy_and_keep_disk() {
         let client = hosted(&store, |host| {
             pages::rename_page_expected(&store, host, "x", to, None)
         });
-        assert_eq!(format!("{:?}", operation_result(&client, &a)), match index { 0 => "\"AlreadyExists: target page identity already exists elsewhere in the graph\"", 1 => "\"PermissionDenied: cannot rename: <root>/pages/ref.org is a read-only .org file (does not round-trip)\"", _ => unreachable!() });
+        assert_eq!(format!("{:?}", operation_result(&client, &a)), match index { 0 => "\"AlreadyExists: cannot rename: pages/y.md now owns that name; start the rename again to review the merge choice\"", 1 => "\"PermissionDenied: cannot rename or merge: Tine cannot save pages/ref.org without changing its content; edit it in another Org editor or move the notes into a new page, then try again\"", _ => unreachable!() });
         assert_eq!(disk_tree(&a), before, "{label} client changed disk");
         assert_disk_tree(
             &a,

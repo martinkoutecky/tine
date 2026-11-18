@@ -308,16 +308,26 @@ fn per_unit(few: &Bill, many: &Bill, units: u64) -> [(&'static str, u64); 10] {
         ("files written", d(f.files_written, m.files_written)),
         ("fsyncs", d(f.fsyncs, m.fsyncs)),
         ("file renames", d(f.file_renames, m.file_renames)),
-        ("parses", d(f.parses, m.parses)),
+        // The model check's own parse of each changed file is billed apart
+        // ([`the_model_check_reads_each_changed_file_once`] pins it).
+        (
+            "parses",
+            d(
+                f.parses - f.model_check_parses,
+                m.parses - m.model_check_parses,
+            ),
+        ),
         // An observation re-read (the host re-reading a held page the
         // watcher saw change, contract 5.4) is billed apart from `reads`; its
         // input check is one of `parse_input_checks`, so it leaves that count
         // too (it made a run come out one over, in about one run in five).
+        // The model check's own input checks (the unchanged save's scans of
+        // the candidate and its render) are billed apart likewise.
         (
             "parse input checks",
             d(
-                f.parse_input_checks - f.observation_reads,
-                m.parse_input_checks - m.observation_reads,
+                f.parse_input_checks - f.observation_reads - f.model_check_input_checks,
+                m.parse_input_checks - m.observation_reads - m.model_check_input_checks,
             ),
         ),
         ("reference walks", d(few.walks, many.walks)),
@@ -392,6 +402,71 @@ fn a_rename_costs_a_bounded_constant_per_referrer() {
     );
 }
 
+/// CM step 2 P2/P3: count store parses, serializations and page-byte input
+/// scans inside the check, for 1, 10 and 100 referrers plus the moved page.
+/// Each has two store parses (new text and the save's re-read of its render)
+/// and one serialization. These counters do not count the old reading's
+/// observation/projection work or label-candidate projection parses.
+/// Its time is billed apart and stays below
+/// the rest of the operation's (the design's stop line: the warm check must
+/// not cost more than the operation it checks).
+#[test]
+fn the_model_check_reads_each_changed_file_once() {
+    let _integration_guard = crate::exclusive_integration_lock();
+    let bills: Vec<(u64, Bill)> = [1u64, 10, 100]
+        .into_iter()
+        .map(|n| (n, rename(n as usize)))
+        .collect();
+    for (n, bill) in &bills {
+        let c = bill.io;
+        eprintln!(
+            "rename, {n} referrers: {} checks, {} store parses, {} serializations, {} input scans, {:?} checking of {:?}",
+            c.model_checks,
+            c.model_check_parses,
+            c.model_check_serializations,
+            c.model_check_input_checks,
+            Duration::from_nanos(c.model_check_nanos),
+            bill.call
+        );
+        assert_eq!(
+            c.model_checks,
+            n + 1,
+            "every referrer and the move: {bill:?}"
+        );
+        // Per check: the save path's own parse of what it rendered, inside
+        // the unchanged save P3 runs (`unchanged_save`), and the one parse of
+        // the new text, shared by P2 and P3. Core observation/projection work
+        // is outside this store-parse counter.
+        assert_eq!(
+            c.model_check_save_parses,
+            n + 1,
+            "one save re-read per check: {bill:?}"
+        );
+        assert_eq!(
+            c.model_check_serializations,
+            n + 1,
+            "one serialization per check: {bill:?}"
+        );
+        assert_eq!(
+            c.model_check_parses - c.model_check_save_parses,
+            n + 1,
+            "one parse of the new text per check: {bill:?}"
+        );
+        // And at most two page-byte input checks per check: the unchanged
+        // save scans the candidate and its own render.
+        assert!(
+            c.model_check_input_checks <= 2 * (n + 1),
+            "at most two input checks per check: {bill:?}"
+        );
+        let checking = Duration::from_nanos(c.model_check_nanos);
+        assert!(
+            checking <= bill.call.saturating_sub(checking),
+            "PC-3: the check took {checking:?} of a {:?} rename of {n} referrers",
+            bill.call
+        );
+    }
+}
+
 #[test]
 fn a_merge_with_referrers_costs_a_rename_per_referrer() {
     let _integration_guard = crate::exclusive_integration_lock();
@@ -404,11 +479,18 @@ fn a_merge_with_referrers_costs_a_rename_per_referrer() {
         REFERRER_BOUND,
     );
     // The survivor and source once: each read for the proposal and guarded,
-    // one certified survivor, no in-transaction rewrite.
+    // one certified survivor, no in-transaction rewrite. The model check's
+    // parses (one check per referrer and the survivor) are billed apart.
     assert_eq!(few.io.transaction_rewrites, 0, "{few:?}");
     assert!(
-        few.certificates <= 8 && few.reads() <= 22 && few.io.parses <= 5,
+        few.certificates <= 8
+            && few.reads() <= 22
+            && few.io.parses - few.io.model_check_parses <= 5,
         "{few:?}"
+    );
+    assert_eq!(
+        few.io.model_checks, 3,
+        "both referrers and the survivor: {few:?}"
     );
 }
 
@@ -499,10 +581,15 @@ fn a_plain_merge_costs_a_constant() {
         "no name changes, no reference walk: {bill:?}"
     );
     assert_eq!(c.transaction_rewrites, 0, "{bill:?}");
+    // The model check of the one changed file, the survivor: one check, the
+    // parse of its new text and the unchanged save's re-parse of its render
+    // (billed apart from `parses`).
+    assert_eq!(c.model_checks, 1, "{bill:?}");
+    assert!((1..=2).contains(&c.model_check_parses), "{bill:?}");
     for (name, got, pinned, lower) in [
         ("reads", bill.reads(), 11, 4),
         ("certificate checks", bill.certificates, 4, 1),
-        ("parses", c.parses, 3, 2),
+        ("parses", c.parses - c.model_check_parses, 3, 2),
         ("files written", c.files_written, 3, 1),
         ("file renames", c.file_renames, 4, 2),
         ("fsyncs", c.fsyncs, 16, 3),

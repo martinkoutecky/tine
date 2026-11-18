@@ -148,13 +148,12 @@ fn bhkru_today_is_the_evaluation_day_not_a_day_pinned_in_the_query() {
 
 /// The condition and `{{upcoming}}` on date spellings, pinned so a change to
 /// either is a reviewed decision (notes: og-tql-upcoming.md).
-/// 1. They DIFFER on a date-named ORDINARY page (`pages/Oct 30th, 2026.md`):
-///    it keeps ordinary identity in Upcoming (`referenced_journal_days`); the
-///    condition reads the reference name alone. This ordinary identity is a
-///    Tine divergence: OG 0.10.9 `convert-page-if-journal-impl` treats a
-///    parseable page name as a journal regardless of its directory, so its
-///    `:block/journal-day` join also includes that page. (A different question
-///    from 2: which file owns a name; CM step 2 P2, pending Martin.)
+/// 1. They AGREE on a date-named pages file (`pages/Oct 30th, 2026.md`): it
+///    is that day's journal (CM-DAYFILE, D-20261111-CMR14), in Upcoming as in
+///    the condition, as OG 0.10.9 `convert-page-if-journal-impl` treats a
+///    parseable page name as a journal regardless of its directory.
+///    (Superseded: before CM step 2 it kept an ordinary identity and Upcoming
+///    left it out.)
 /// 2. They AGREE on a spelling only in the configured FILENAME format: both
 ///    ask the graph's one date answerer (`Config::journal_format`, the native
 ///    list; D-20261102-JDL, a deliberate OG deviation). Until CM step 2 the
@@ -190,7 +189,7 @@ fn bhkru_where_the_condition_and_upcoming_differ() {
     );
     assert_eq!(
         upcoming_days(&graph, TODAY),
-        BTreeSet::from([20261101, 20261102])
+        BTreeSet::from([20261030, 20261101, 20261102])
     );
     store.close();
 }

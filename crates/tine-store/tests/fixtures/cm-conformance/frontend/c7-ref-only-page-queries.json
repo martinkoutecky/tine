@@ -152,16 +152,6 @@
     "proj": "proj",
     "proj/sub": "proj/sub"
   },
-  "namespaceNodes": [
-    [
-      "page",
-      "proj/sub"
-    ],
-    [
-      "page",
-      "proj"
-    ]
-  ],
   "namespaceTree": [
     {
       "children": [],
@@ -288,7 +278,10 @@
       "linkedRefs": 1,
       "name": "proj/sub",
       "owner": null,
-      "parent": "proj"
+      "parent": [
+        "page",
+        "proj"
+      ]
     },
     {
       "key": "todo",
@@ -331,17 +324,6 @@
       "model": [
         "page",
         "todo"
-      ]
-    },
-    "proj": {
-      "backend": [
-        "page",
-        "proj"
-      ],
-      "day": null,
-      "model": [
-        "page",
-        "proj"
       ]
     },
     "proj/sub": {
@@ -398,28 +380,6 @@
       ]
     }
   ],
-  "treeNodes": [
-    [
-      "page",
-      "a"
-    ],
-    [
-      "page",
-      "b"
-    ],
-    [
-      "page",
-      "proj/sub"
-    ],
-    [
-      "page",
-      "proj"
-    ],
-    [
-      "page",
-      "todo"
-    ]
-  ],
   "treeParent": [
     {
       "page": [
@@ -438,19 +398,19 @@
     {
       "page": [
         "page",
+        "proj"
+      ],
+      "parent": null
+    },
+    {
+      "page": [
+        "page",
         "proj/sub"
       ],
       "parent": [
         "page",
         "proj"
       ]
-    },
-    {
-      "page": [
-        "page",
-        "proj"
-      ],
-      "parent": null
     },
     {
       "page": [

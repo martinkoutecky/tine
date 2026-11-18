@@ -157,28 +157,6 @@
     "n": "n",
     "n/y": "n/y"
   },
-  "namespaceNodes": [
-    [
-      "page",
-      "n/y"
-    ],
-    [
-      "page",
-      "a/b/c"
-    ],
-    [
-      "page",
-      "a"
-    ],
-    [
-      "page",
-      "a/b"
-    ],
-    [
-      "page",
-      "n"
-    ]
-  ],
   "namespaceTree": [
     {
       "children": [],
@@ -334,7 +312,10 @@
       "linkedRefs": 1,
       "name": "a/b",
       "owner": null,
-      "parent": "a"
+      "parent": [
+        "page",
+        "a"
+      ]
     },
     {
       "key": "a/b/c",
@@ -342,7 +323,10 @@
       "linkedRefs": 1,
       "name": "a/b/c",
       "owner": null,
-      "parent": "a/b"
+      "parent": [
+        "page",
+        "a/b"
+      ]
     },
     {
       "key": "n",
@@ -358,7 +342,10 @@
       "linkedRefs": 0,
       "name": "n/y",
       "owner": "pages/n%2Fy.md",
-      "parent": "n"
+      "parent": [
+        "page",
+        "n"
+      ]
     },
     {
       "key": "notes",
@@ -381,28 +368,6 @@
         "notes"
       ]
     },
-    "a": {
-      "backend": [
-        "page",
-        "a"
-      ],
-      "day": null,
-      "model": [
-        "page",
-        "a"
-      ]
-    },
-    "a/b": {
-      "backend": [
-        "page",
-        "a/b"
-      ],
-      "day": null,
-      "model": [
-        "page",
-        "a/b"
-      ]
-    },
     "a/b/c": {
       "backend": [
         "page",
@@ -412,17 +377,6 @@
       "model": [
         "page",
         "a/b/c"
-      ]
-    },
-    "n": {
-      "backend": [
-        "page",
-        "n"
-      ],
-      "day": null,
-      "model": [
-        "page",
-        "n"
       ]
     },
     "n/y": {
@@ -496,37 +450,38 @@
       ]
     }
   ],
-  "treeNodes": [
-    [
-      "page",
-      "notes"
-    ],
-    [
-      "page",
-      "n/y"
-    ],
-    [
-      "page",
-      "a/b/c"
-    ],
-    [
-      "page",
-      "a"
-    ],
-    [
-      "page",
-      "a/b"
-    ],
-    [
-      "page",
-      "n"
-    ]
-  ],
   "treeParent": [
     {
       "page": [
         "page",
-        "notes"
+        "a"
+      ],
+      "parent": null
+    },
+    {
+      "page": [
+        "page",
+        "a/b"
+      ],
+      "parent": [
+        "page",
+        "a"
+      ]
+    },
+    {
+      "page": [
+        "page",
+        "a/b/c"
+      ],
+      "parent": [
+        "page",
+        "a/b"
+      ]
+    },
+    {
+      "page": [
+        "page",
+        "n"
       ],
       "parent": null
     },
@@ -543,34 +498,7 @@
     {
       "page": [
         "page",
-        "a/b/c"
-      ],
-      "parent": [
-        "page",
-        "a/b"
-      ]
-    },
-    {
-      "page": [
-        "page",
-        "a"
-      ],
-      "parent": null
-    },
-    {
-      "page": [
-        "page",
-        "a/b"
-      ],
-      "parent": [
-        "page",
-        "a"
-      ]
-    },
-    {
-      "page": [
-        "page",
-        "n"
+        "notes"
       ],
       "parent": null
     }

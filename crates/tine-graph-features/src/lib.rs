@@ -174,6 +174,9 @@ fn why_error(why: Why) -> io::Error {
         Why::Failed(error) => io::Error::new(error.kind, error.message),
         Why::Refused(refusal) => match refusal {
             Refusal::TextRealization(error) => io::Error::new(io::ErrorKind::InvalidData, error),
+            Refusal::FileTextRealization { reason, file } => {
+                pages::MergeRefused::trace(reason, file.as_str())
+            }
             Refusal::ReadOnly(message) | Refusal::InvalidTarget(message) => {
                 io::Error::new(io::ErrorKind::InvalidInput, message)
             }
@@ -187,6 +190,13 @@ fn why_error(why: Why) -> io::Error {
             Refusal::AssetReferenced => {
                 io::Error::new(io::ErrorKind::InvalidInput, assets::AssetReferenced)
             }
+            // The rename's or merge's model check (R-RENAME-CHECK), before
+            // any write: the reason the rename reports.
+            Refusal::ModelCheck { guarantee, file } => pages::CheckRefused {
+                guarantee,
+                file: file.as_str().to_owned(),
+            }
+            .error(),
             Refusal::UnreadableOwner { file } => io::Error::new(
                 io::ErrorKind::InvalidData,
                 format!(

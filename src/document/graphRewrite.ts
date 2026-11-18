@@ -11,6 +11,7 @@ import { invalidateUndoForPage } from "./history";
 import { toLoadablePage } from "./convert";
 import { graphRewriteFrozen, tryFreezeGraphRewrite } from "./graphRewriteState";
 import { pushToast } from "../toasts";
+import { showRewriteRefusal } from "../renameRefusal";
 import { pageIdentityKey } from "../ui";
 import type { RenameDone, RenamedPage, RenameProbeText, RenameTouchedPage } from "../types";
 import { graphMeta, setGraphMeta } from "../graphSession";
@@ -59,7 +60,7 @@ export type DiskRename = RenameDone["outcome"] | "busy" | { unsaved: string; men
  * through `onRefreshed`. Navigation in that
  * callback shares the refresh batch, so views read only the final route. */
 export async function renamePageOnDisk(
-  from: string, to: string, target?: PageTarget, mergeInto?: string, onRefreshed?: (owner: Owner) => void, ownPage = false,
+  from: string, to: string, target?: PageTarget, mergeInto?: string, onRefreshed?: (owner: Owner) => void, saveFirst?: string,
 ): Promise<DiskRename> {
   if (graphRewriteFrozen()) return "busy";
   // Blur is synchronous: commit the current editor buffer before closing the
@@ -77,11 +78,9 @@ export async function renamePageOnDisk(
     if (!owner()) return "stale";
     let result;
     try {
-      result = await writeOwned(owner, (ownPage
-        ? backend().renamePage(from, to, "rename-page", target?.path, undefined, prepared, true)
-        : backend().renamePage(from, to, "rename-page", target?.path, mergeInto, prepared)));
+      result = await writeOwned(owner, backend().renamePage(from, to, "rename-page", target?.path, mergeInto, prepared, ...(saveFirst ? [saveFirst] : [])));
     } catch (error) {
-      if (!owner()) pushToast(msg("graph-rewrite-rename-failed", { error: String(error) }), "error");
+      if (!owner() && !showRewriteRefusal(error)) pushToast(msg("graph-rewrite-rename-failed", { error: String(error) }), "error");
       throw error;
     }
     if (result.kind === "stale") return "uncertain";
@@ -96,6 +95,22 @@ export async function renamePageOnDisk(
  * same working-set and navigation refresh as a rename initiated here. */
 export async function applyOwnerPageRename(rename: import("../types").OwnerPageRename): Promise<void> {
   await refreshAfterRename(rename.old, undefined, rename.report);
+}
+
+/** Model r6 O7: say how many sites the rename of `from` left as they were
+ *  because they cannot spell their new name, and how many property keys it
+ *  wrote in key spelling, with their files. A site may name a page under
+ *  `from` (`A/x` in a rename of `A`), so the message names the rename, never
+ *  a name per site. The backend's report is the one answer; nothing is
+ *  re-derived here. One sticky toast per disposition, naming each file once. */
+function reportSiteExceptions(from: string, report: RenameDone): void {
+  const sites = report.site_exceptions ?? [];
+  for (const [disposition, id] of [["unspellable", "graph-rewrite-unspellable-sites"], ["normalizedKey", "graph-rewrite-respelled-keys"]] as const) {
+    const these = sites.filter((site) => site.disposition === disposition);
+    if (!these.length) continue;
+    const files = [...new Set(these.map((site) => site.path))].join(", ");
+    pushToast(msg(id, { count: these.length, page: from, files }), "warn", { sticky: true });
+  }
 }
 
 /** Take in the rename's config step (one answerer, `pages::commit_config`):
@@ -127,6 +142,7 @@ export async function followPageIdentity(path: string, old: string): Promise<voi
 /** `target`: the page the initiating dialog reopens under its new name (a CLI
  *  rename has no such control: every view of it follows instead). */
 async function refreshAfterRename(from: string, target: PageTarget | undefined, report: RenameDone, onRefreshed?: (owner: Owner) => void): Promise<void> {
+    reportSiteExceptions(from, report);
     if (report.outcome === "unchanged") return;
     // og 21a (master a8fd4230d): files mid-merge keep their old references.
     const skipped = report.skipped_conflicted_referrers ?? [];

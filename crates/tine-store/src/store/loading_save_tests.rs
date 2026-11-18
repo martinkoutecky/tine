@@ -401,6 +401,119 @@ fn an_own_save_while_the_launch_pass_installs_keeps_the_install() {
     store.close();
 }
 
+/// The day answers B1 is about, for the launch-patch case below.
+fn day_answers(store: &Store) -> Vec<String> {
+    let view = store.whole_graph().unwrap();
+    let mut days = store.journal_days();
+    days.sort();
+    let mut out = vec![format!("indexed days {days:?}")];
+    for day in [Day(20261102), Day(20261103)] {
+        out.push(format!(
+            "{day:?}: active {}, index {}",
+            store.journal_id(day, true).as_str(),
+            store.journal_id(day, false).as_str()
+        ));
+    }
+    for name in ["Nov 2nd, 2026", "Nov 3rd, 2026"] {
+        for is_journal in [false, true] {
+            out.push(format!(
+                "{name} ({is_journal}): {:?}",
+                view.resolve(name, is_journal)
+            ));
+        }
+    }
+    out
+}
+
+/// CM SPEC §2.1 on the launch patch (BqbeQ): a pages file named by one date
+/// and titled by another, held from mid-parse through the install, so the
+/// pass re-derives it from its path without reading it ("listed, never
+/// read"). Pinned: what the day answers say while it is held, and that they
+/// equal a cold open once the hold is released and the file is read. Nothing
+/// is written to the file at any point.
+#[test]
+fn a_date_titled_pages_file_held_through_the_launch_install_reads_its_title_day() {
+    let root = tempfile::tempdir().unwrap();
+    for dir in ["pages", "journals", "logseq"] {
+        fs::create_dir_all(root.path().join(dir)).unwrap();
+    }
+    fs::write(
+        root.path().join("logseq/config.edn"),
+        "{:preferred-format :markdown}\n",
+    )
+    .unwrap();
+    let rel = "pages/2026-11-02.md";
+    let file = root.path().join(rel);
+    fs::write(&file, "title:: 2026-11-03\n\n- notes\n").unwrap();
+    File::options()
+        .write(true)
+        .open(&file)
+        .unwrap()
+        .set_modified(old())
+        .unwrap();
+    let before = fs::read(&file).unwrap();
+    let cold = {
+        let store = Store::open(root.path(), Default::default()).unwrap().0;
+        let answers = day_answers(&store);
+        store.close();
+        answers
+    };
+    let store = held_open(root.path());
+    let listed = pause();
+    let installing = pause();
+    *store.graph.warm_after_first_page_pause.lock().unwrap() = Some(Arc::clone(&listed));
+    *store.graph.install_lock_pause.lock().unwrap() = Some(Arc::clone(&installing));
+    store.graph.held.spellings().spell(rel, rel);
+    go(root.path());
+    wait_hook(&listed);
+    {
+        let _writer = store.writer.lock().unwrap();
+        store.watch.hold_current(rel.into());
+        store.publish_retired();
+    }
+    release_hook(&listed);
+    wait_hook(&installing);
+    release_hook(&installing);
+    let held = day_answers(&store);
+    assert_eq!(fs::read(&file).unwrap(), before, "held: nothing written");
+    {
+        let _writer = store.writer.lock().unwrap();
+        store.watch.release_hold(rel);
+        store.publish_retired();
+    }
+    let deadline = Instant::now() + Duration::from_secs(20);
+    while day_answers(&store) != cold && Instant::now() < deadline {
+        store.refresh(Depth::Stamps).unwrap();
+        std::thread::sleep(Duration::from_millis(50));
+    }
+    let released = day_answers(&store);
+    assert_eq!(
+        fs::read(&file).unwrap(),
+        before,
+        "released: nothing written"
+    );
+    store.close();
+    assert_eq!(released, cold, "once read, the file holds its title's day");
+    // OPEN (pinned as observed, receipt round 2): a bare hold has no owner to
+    // supply the page's row, so while held the file holds no day (as any
+    // held page here is absent, `pages/A.md` in the helper above included),
+    // Nov 3 names the journals path a new file would take, and the name
+    // resolves to nothing. An add by Nov 3 in this window would make
+    // `journals/2026_11_03.md` beside the file that holds the day; the file
+    // itself is never written.
+    let absent = |day: &str| format!("Absent {{ id: PageId(\"journals/{day}.md\") }}");
+    let expected_held = vec![
+        "indexed days []".to_owned(),
+        "Day(20261102): active journals/2026_11_02.md, index journals/2026_11_02.md".to_owned(),
+        "Day(20261103): active journals/2026_11_03.md, index journals/2026_11_03.md".to_owned(),
+        format!("Nov 2nd, 2026 (false): {}", absent("2026_11_02")),
+        format!("Nov 2nd, 2026 (true): {}", absent("2026_11_02")),
+        format!("Nov 3rd, 2026 (false): {}", absent("2026_11_03")),
+        format!("Nov 3rd, 2026 (true): {}", absent("2026_11_03")),
+    ];
+    assert_eq!(held, expected_held, "while held through the install");
+}
+
 #[test]
 fn an_unexplained_cache_move_during_the_parse_still_rebuilds_correctly() {
     let root = graph();

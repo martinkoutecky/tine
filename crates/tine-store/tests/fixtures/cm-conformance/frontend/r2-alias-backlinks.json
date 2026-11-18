@@ -106,10 +106,9 @@
   "keyOf": {
     "ML": "ml",
     "Machine Learning": "machine learning",
-    "Oct 26th, 2026": "oct 26th, 2026",
+    "Oct 26th, 2026": "Day 2026-10-26",
     "notes": "notes"
   },
-  "namespaceNodes": [],
   "namespaceTree": [],
   "open": {
     "ML": {
@@ -135,11 +134,11 @@
     "Oct 26th, 2026": {
       "journal": [
         "journal",
-        "oct 26th, 2026"
+        "Day 2026-10-26"
       ],
       "page": [
-        "page",
-        "oct 26th, 2026"
+        "journal",
+        "Day 2026-10-26"
       ]
     },
     "notes": {
@@ -164,7 +163,7 @@
     },
     "Oct 26th, 2026": {
       "journal": "journals/2026_10_26.md",
-      "page": null
+      "page": "journals/2026_10_26.md"
     },
     "notes": {
       "journal": null,
@@ -173,7 +172,7 @@
   },
   "pages": [
     {
-      "key": "oct 26th, 2026",
+      "key": "Day 2026-10-26",
       "kind": "journal",
       "linkedRefs": 0,
       "name": "Oct 26th, 2026",
@@ -223,7 +222,7 @@
     "Oct 26th, 2026": {
       "backend": [
         "journal",
-        "oct 26th, 2026"
+        "Day 2026-10-26"
       ],
       "day": [
         2026,
@@ -232,7 +231,7 @@
       ],
       "model": [
         "journal",
-        "oct 26th, 2026"
+        "Day 2026-10-26"
       ]
     },
     "notes": {
@@ -252,7 +251,7 @@
       "children": [],
       "page": [
         "journal",
-        "oct 26th, 2026"
+        "Day 2026-10-26"
       ]
     },
     {
@@ -270,25 +269,11 @@
       ]
     }
   ],
-  "treeNodes": [
-    [
-      "journal",
-      "oct 26th, 2026"
-    ],
-    [
-      "page",
-      "machine learning"
-    ],
-    [
-      "page",
-      "notes"
-    ]
-  ],
   "treeParent": [
     {
       "page": [
         "journal",
-        "oct 26th, 2026"
+        "Day 2026-10-26"
       ],
       "parent": null
     },

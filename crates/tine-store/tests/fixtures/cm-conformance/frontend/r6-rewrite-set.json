@@ -187,7 +187,6 @@
     "ref": "ref",
     "rel": "rel"
   },
-  "namespaceNodes": [],
   "namespaceTree": [],
   "open": {
     "A": {
@@ -424,33 +423,11 @@
       ]
     }
   ],
-  "treeNodes": [
-    [
-      "page",
-      "tasks"
-    ],
-    [
-      "page",
-      "ref"
-    ],
-    [
-      "page",
-      "rel"
-    ],
-    [
-      "page",
-      "todo"
-    ],
-    [
-      "page",
-      "a"
-    ]
-  ],
   "treeParent": [
     {
       "page": [
         "page",
-        "tasks"
+        "a"
       ],
       "parent": null
     },
@@ -471,14 +448,14 @@
     {
       "page": [
         "page",
-        "todo"
+        "tasks"
       ],
       "parent": null
     },
     {
       "page": [
         "page",
-        "a"
+        "todo"
       ],
       "parent": null
     }

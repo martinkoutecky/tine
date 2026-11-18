@@ -390,6 +390,7 @@ fn manual_tree_serialization() {
     let doc = doc::Document {
         pre_block: None,
         roots: vec![parent],
+        org: false,
     };
     let out = doc::serialize(&doc);
     assert_eq!(out, "- parent\n\t- child one\n\t- child two\n\t\t- deep\n");

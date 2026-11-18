@@ -958,10 +958,12 @@ fn property_atoms_compare_by_their_keys_effective_type() {
     );
 }
 
-/// R13 OWN2/G1: the ordinary opening claimant alone supplies query blocks
-/// when a journal and an ordinary file carry the same literal name.
+/// R13 OWN2/G1, under CM-ORDER (D-20261110-CM): the one active claimant
+/// alone supplies query blocks when two files claim a day, and the journals
+/// file is that claimant. (Superseded: the ordinary file won before CM step
+/// 2; a date-named page file is now the day, CM-DAYFILE.)
 #[test]
-fn a_cross_kind_name_has_only_its_active_ordinary_query_group() {
+fn a_cross_kind_name_has_only_its_active_journal_query_group() {
     let _integration_guard = crate::integration_lock();
     let fixture = open(&[
         ("journals/2026_07_29.md", "- TODO from the journal\n"),
@@ -977,9 +979,21 @@ fn a_cross_kind_name_has_only_its_active_ordinary_query_group() {
     assert_eq!(
         groups
             .iter()
-            .map(|group| (group.page.as_str(), group.kind))
+            .map(|group| (
+                group.page.as_str(),
+                group.kind,
+                group
+                    .blocks
+                    .iter()
+                    .map(|b| b.raw.as_str())
+                    .collect::<Vec<_>>()
+            ))
             .collect::<Vec<_>>(),
-        vec![("Jul 29th, 2026", PageKind::Page)]
+        vec![(
+            "Jul 29th, 2026",
+            PageKind::Journal,
+            vec!["TODO from the journal"]
+        )]
     );
 }
 

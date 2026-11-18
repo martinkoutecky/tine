@@ -5,6 +5,5 @@
     "pages/two.md": "alias:: AI\n\n- two\n",
     "pages/AI.md": "",
     "pages/c.md": "- [[ML]]\n"
-  },
-  "renames": [{"old": "ML", "new": "AI"}]
+  }
 }

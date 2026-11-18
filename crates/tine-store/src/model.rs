@@ -37,6 +37,7 @@ mod parse_depth;
 mod path_membership;
 pub(crate) mod referenced_names;
 mod template_names;
+pub(crate) mod unchanged_save;
 #[cfg(test)]
 use calendar_days::doc_has_content;
 pub(crate) mod write_target;
@@ -411,6 +412,7 @@ fn rel_under_dir(rel_dir: &str, dir: &Path, path: &Path) -> String {
 fn parse_doc(path: &Path, content: &str) -> Document {
     #[cfg(feature = "test-faults")]
     crate::cost_counters::parse();
+    unchanged_save::counted_parse();
     match Format::from_path(path) {
         Format::Md => doc::parse(content),
         Format::Org => tine_core::org::parse_org(content),
@@ -478,9 +480,10 @@ pub(crate) fn bytes_hold_block_id(path: &Path, bytes: &[u8], id: &str) -> bool {
     found
 }
 
-fn parse_doc_with_opts(path: &Path, source: &str) -> (Document, doc::SerializeOpts) {
+pub(crate) fn parse_doc_with_opts(path: &Path, source: &str) -> (Document, doc::SerializeOpts) {
     #[cfg(feature = "test-faults")]
     crate::cost_counters::parse();
+    unchanged_save::counted_parse();
     match Format::from_path(path) {
         Format::Md => doc::parse_with_opts(source),
         Format::Org => (
@@ -760,6 +763,14 @@ impl ReadSnapshot {
             .cloned()
     }
 
+    /// The alias spellings the page file at `path` (absolute) declares, from
+    /// the per-page spelling index the alias relation is built from. O(log P).
+    pub(crate) fn declared_alias_spellings(&self, path: &Path) -> &[String] {
+        self.alias_spelling_index()
+            .get(path)
+            .map_or(&[], |spellings| spellings.as_slice())
+    }
+
     #[cfg(test)]
     pub(crate) fn from_page_snapshot(pages: Vec<(PageEntry, Arc<Document>)>) -> Self {
         let graph = Graph::from_page_snapshot("", pages);
@@ -818,8 +829,12 @@ impl ReadSnapshot {
             changed_paths,
         ));
         let physical_changed_paths = changed_paths;
-        let (pages, semantic_paths) =
-            active_pages::capture(&physical_pages, &real_page_names, old, changed_paths);
+        let (pages, semantic_paths) = active_pages::capture(
+            &physical_pages,
+            (&real_page_names, &config.journals_dir),
+            old,
+            changed_paths,
+        );
         let changed_paths = semantic_paths.as_slice();
         let initial = old.is_none().then(|| {
             let explicit =
@@ -1898,7 +1913,7 @@ fn visit_document_referenced_names(
     }
     if let Some(pre) = &doc.pre_block {
         let mut block = DocBlock::new(pre);
-        block.set_org(crate::query::page_properties::page_document_is_org(doc));
+        block.set_org(doc.org);
         visit_block_property_and_evidence_names(&block, config, f);
     }
     // CM step 2, batch 8: the prose before the first block is the page's
@@ -2927,7 +2942,7 @@ impl Graph {
         // a `yyyy_MM_dd` file) must appear ONCE — both files resolve to the same
         // page name, so otherwise the day renders twice. The stray stays visible
         // via tine_graph_features::journals::journal_conflicts for reconciliation.
-        let mut js = dedup_journal_days(raw);
+        let mut js = dedup_journal_days(&self.current_config().journals_dir, raw);
         js.sort_by_key(|e| std::cmp::Reverse(e.date_key.unwrap_or(0)));
         js
     }
@@ -3340,7 +3355,10 @@ impl Graph {
             HashMap::with_capacity(listed.len() + tracked_only.len());
         let mut racy = std::collections::HashSet::new();
         // Ordinary-page names and discovery failures, taken from the reads.
-        let mut names: HashMap<PathBuf, String> = HashMap::new();
+        // A file outside the journals directory claims what its bytes name
+        // (its kind too: a `title::` date is that day, `name_from`).
+        let journals = self.journals_path();
+        let mut names: HashMap<PathBuf, (String, PageKind, Option<i64>)> = HashMap::new();
         let mut discovery: Vec<(crate::FileId, crate::IoError)> = Vec::new();
         // Per-file phase time accumulates across the worker threads (atomics, no
         // allocation): read/parse/stat are summed THREAD time, so with N workers
@@ -3369,9 +3387,8 @@ impl Graph {
             let mut name_failure = None;
             let parsed = match read {
                 Ok(content) => {
-                    match self.name_from(&e, &content) {
-                        Ok(name) => e.name = name,
-                        Err(error) => name_failure = Some(error),
+                    if let Err(error) = self.name_from(&mut e, &content) {
+                        name_failure = Some(error);
                     }
                     clock.crlf(line_endings::convention(Some(&content)) == "\r\n");
                     let phase = std::time::Instant::now();
@@ -3385,7 +3402,7 @@ impl Graph {
                 // launch diff reconciles whatever is there now.
                 Err(error) if error.kind() == io::ErrorKind::NotFound => Ok(None),
                 Err(error) => {
-                    if e.kind == PageKind::Page {
+                    if !e.path.starts_with(&journals) {
                         name_failure = Some(io::Error::new(error.kind(), error.to_string()));
                     }
                     PageParseFailure::unreadable(
@@ -3418,8 +3435,9 @@ impl Graph {
             PageParseResult,
         )| {
             if let Ok(Some((entry, _, rev))) = &parsed {
-                if entry.kind == PageKind::Page {
-                    names.insert(path.clone(), entry.name.clone());
+                if !entry.path.starts_with(&journals) {
+                    let claim = (entry.name.clone(), entry.kind, entry.date_key);
+                    names.insert(path.clone(), claim);
                 }
                 if let Some(created) = since_open {
                     announce.push((path.clone(), created, entry.kind, entry.name.clone()));
@@ -3517,8 +3535,8 @@ impl Graph {
         let named: Vec<PageEntry> = listed
             .into_iter()
             .map(|mut entry| {
-                if let Some(name) = names.get(&entry.path) {
-                    entry.name = name.clone();
+                if let Some((name, kind, date_key)) = names.get(&entry.path) {
+                    (entry.name, entry.kind, entry.date_key) = (name.clone(), *kind, *date_key);
                 }
                 entry
             })
@@ -3910,15 +3928,14 @@ impl Graph {
                 path: path.to_path_buf(),
             }
         } else {
+            let name =
+                self.discover_page_name(path, stem, self.current_config().file_name_format, text)?;
+            let (name, kind, date_key) =
+                page_identity::page_file_claim(&self.current_journal_format(), name);
             PageEntry {
-                name: self.discover_page_name(
-                    path,
-                    stem,
-                    self.current_config().file_name_format,
-                    text,
-                )?,
-                kind: PageKind::Page,
-                date_key: None,
+                name,
+                kind,
+                date_key,
                 rel_path: Some(self.rel_path(path).into()),
                 path: path.to_path_buf(),
             }
@@ -4295,11 +4312,8 @@ impl Graph {
         path: &Path,
         existing: Option<&str>,
     ) -> io::Result<(Vec<u8>, Document)> {
-        std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-            self.prepare_page_content(page, path, existing)
-        }))
-        .map_err(|_| io::Error::new(io::ErrorKind::InvalidData, ParserPanicked))?
-        .map(|(content, doc)| (content.into_bytes(), doc))
+        unchanged_save::parser_unwind(|| self.prepare_page_content(page, path, existing))
+            .map(|(content, doc)| (content.into_bytes(), doc))
     }
 
     pub(crate) fn transaction_note_page(&self, path: &Path, bytes: &[u8]) {
@@ -4316,12 +4330,9 @@ impl Graph {
         self.recent_writes.lock().unwrap().remove(path);
     }
 
-    /// Bytes a save writes for `page`. Markdown reuses every unchanged block's
-    /// lines (`layout_retention`), else re-serializes in the file's detected
-    /// style (no Syncthing churn); equal parses keep the disk bytes and revision
-    /// (A5); CRLF and lone-CR files keep their terminators (`line_endings`). The
-    /// bytes re-parse to `page`, except a DTO that cannot round-trip (blocks
-    /// after an unterminated fence): it gets the whole-page serializer's meaning.
+    /// Bytes a save writes for `page` over `existing`: the one answer
+    /// [`unchanged_save::save_content`], given the disk bytes' parse with the
+    /// cache's runtime ids.
     fn prepare_page_content(
         &self,
         page: &PageDto,
@@ -4332,129 +4343,30 @@ impl Graph {
         // `:journal/file-name-format` — so custom-format graphs create the correct
         // file for the day instead of a misplaced default-named duplicate.)
         let dto_is_org = matches!(Format::from_path(path), Format::Org);
-        let mut doc = tine_core::projection::page_dto_document(page, dto_is_org);
-        let (old, opts) = existing.map_or_else(
-            || (None, doc::SerializeOpts::default()),
-            |source| {
-                #[cfg(feature = "test-faults")]
-                crate::cost_counters::old_source_parse();
-                let (mut old, opts) = parse_doc_with_opts(path, source);
-                let cached = self
-                    .with_cached(path, |row| row.map(|(_, cached)| Arc::clone(cached)))
-                    .flatten();
-                identify_old_blocks(
-                    &mut old,
-                    path.strip_prefix(&self.root).ok().and_then(Path::to_str),
-                    cached.as_deref(),
-                    &doc,
-                );
-                prime_projections(&old);
-                (Some(old), opts)
-            },
-        );
-        // Data-preservation firewall for page-header properties (GH #163).
-        // A frontend/store bug once reclassified a suffix of the page pre-block
-        // as the first outline block (`A::` stayed in the header while `B::` and
-        // `C::` were serialized as `- B::` / indented continuation text).  The
-        // string helper used by the gear panel was correct, so helper tests could
-        // not protect the actual DTO -> disk boundary.  No Tine editing command
-        // intentionally moves an existing page-header property line into the
-        // outline; promotion keeps property lines in the pre-block.  Refuse both
-        // normal and force writes that do so, leaving the original bytes intact.
-        if let Some(existing_doc) = old.as_ref() {
-            // A nonempty disk preamble is authoritative. If a contradictory DTO
-            // drops it while presenting a first-root header candidate, refusing
-            // the save is safer than either overwriting the preamble or silently
-            // keeping the candidate as a bullet. The same validator protects
-            // the Store-backed keep-mine path.
-            if existing_doc
-                .pre_block
-                .as_deref()
-                .is_some_and(|pre| !pre.is_empty())
-                && doc.pre_block.as_deref().unwrap_or("").is_empty()
-                && first_root_is_promotable_page_header(&doc)
-            {
-                return Err(io::Error::new(
-                    io::ErrorKind::InvalidData,
-                    "refusing to drop an existing page preamble while authoring page-header properties",
-                ));
-            }
-            if let Some(line) =
-                newly_reclassified_page_property_line(existing_doc, &doc, dto_is_org)
-            {
-                return Err(io::Error::new(
-                    io::ErrorKind::InvalidData,
-                    format!("refusing to move page-header property into outline content: {line}"),
-                ));
-            }
-        }
-        // Match OG's pre-block serialization decision at one native boundary:
-        // a genuinely headerless Markdown page may author a qualifying first
-        // root through the ordinary editor, but the persisted/cache shape is an
-        // unbulleted page header. Existing nonempty preambles were rejected above.
-        if !dto_is_org
-            && page.pre_block.as_deref().unwrap_or("").is_empty()
-            && old
-                .as_ref()
-                .and_then(|parsed| parsed.pre_block.as_deref())
-                .as_deref()
-                .unwrap_or("")
-                .is_empty()
-        {
-            promote_first_root_page_header(&mut doc);
-        }
-        // Own the caller's resolved+locked path (M2: never re-resolve path_for here).
-        let path = path.to_path_buf();
-        let (content, mut parsed) = match Format::from_path(&path) {
-            Format::Md => {
-                let retained = existing.zip(old.as_ref()).and_then(|(source, old)| {
-                    layout_retention::serialize(&doc, source, old, &opts)
-                });
-                // Retained lines carry their own terminators; only a
-                // whole-page rewrite takes the file's convention.
-                let (mut content, reparsed) = retained.unwrap_or_else(|| {
-                    let content = line_endings::restore(doc::serialize_with(&doc, &opts), existing);
-                    let parsed = parse_doc(&path, &content);
-                    (content, parsed)
-                });
-                if let Some(e) = existing {
-                    if e != content && old.as_ref() == Some(&reparsed) {
-                        content = e.to_string(); // A5
-                    }
-                }
-                (content, reparsed)
-            }
-            Format::Org => {
-                // Corruption firewall: never write a .org file Tine cannot
-                // reproduce byte-for-byte. Such a page is served read-only (the
-                // editor blocks edits), but defend the write path too — a stale
-                // editor or a direct save must not rewrite it. The org model is
-                // LF-canonical and its bodies are verbatim, so the serializer is
-                // byte-exact up to line terminators, which
-                // `layout_retention::restore_org` puts back line by line (K01a).
-                if let Some(e) = existing {
-                    if tine_core::org::serialize_org_detect(old.as_ref().unwrap(), Some(e))
-                        != tine_core::doc::normalize_line_endings(e)
-                    {
-                        return Err(io::Error::new(
-                            io::ErrorKind::PermissionDenied,
-                            "org file is read-only (does not round-trip)",
-                        ));
-                    }
-                }
-                let content = tine_core::org::serialize_org_detect(&doc, existing);
-                let content = match existing.zip(old.as_ref()) {
-                    Some((source, old)) => {
-                        layout_retention::restore_org(content, &doc, source, old)
-                    }
-                    None => content,
-                };
-                let parsed = parse_doc(&path, &content);
-                (content, parsed)
-            }
-        };
-        carry_saved_runtime_ids(&mut parsed.roots, &doc.roots);
-        Ok((content, parsed))
+        let doc = tine_core::projection::page_dto_document(page, dto_is_org);
+        let old = existing.map(|source| {
+            #[cfg(feature = "test-faults")]
+            crate::cost_counters::old_source_parse();
+            let (mut old, opts) = parse_doc_with_opts(path, source);
+            let cached = self
+                .with_cached(path, |row| row.map(|(_, cached)| Arc::clone(cached)))
+                .flatten();
+            identify_old_blocks(
+                &mut old,
+                path.strip_prefix(&self.root).ok().and_then(Path::to_str),
+                cached.as_deref(),
+                &doc,
+            );
+            prime_projections(&old);
+            (old, opts)
+        });
+        unchanged_save::save_content(
+            doc,
+            path,
+            existing
+                .zip(old.as_ref())
+                .map(|(source, (old, opts))| (source, old, opts)),
+        )
     }
 }
 
@@ -4646,6 +4558,12 @@ pub(crate) const TEST_EXTERNAL_SYNC_PARSE_PANIC_SENTINEL: &str =
 /// page move runs under the writer lock (og-gh644 F3).
 #[cfg(any(test, feature = "test-faults"))]
 pub(crate) const TEST_TITLE_READ_PANIC_SENTINEL: &str = "__TINE_TEST_TITLE_READ_PANIC__";
+
+/// Test-only: a rename or merge step whose final bytes hold this loses it
+/// before the model's check, as a writer bug would (feature `test-faults`).
+#[cfg(any(test, feature = "test-faults"))]
+/// Letters only, so it reads as plain text inside any site (an alias name).
+pub const TEST_RENAME_WRITER_BUG_SENTINEL: &str = "TineTestRenameWriterBug";
 /// Test-only: graph roots whose next whole-graph explicit-reference index
 /// build (not an incremental update) panics, so a test can fail exactly the
 /// full rebuild a Settings rescan publishes (`publish_rebuilt`).
@@ -4661,14 +4579,14 @@ pub(crate) const TEST_INDEX_PANIC_SENTINEL: &str = "__TINE_TEST_INDEX_PANIC__";
 /// canonical `yyyy_MM_dd` file) — a leftover title-named duplicate must not show
 /// the day twice in the feed, quick-switch, or All-Pages. Non-journal entries and
 /// the input order are preserved.
-fn dedup_journal_days(entries: Vec<PageEntry>) -> Vec<PageEntry> {
+fn dedup_journal_days(journals_dir: &str, entries: Vec<PageEntry>) -> Vec<PageEntry> {
     let mut idx_of: std::collections::HashMap<i64, usize> = std::collections::HashMap::new();
     let mut out: Vec<PageEntry> = Vec::new();
     for e in entries {
         match e.date_key {
             Some(k) if e.kind == PageKind::Journal => {
                 if let Some(&i) = idx_of.get(&k) {
-                    if compare_page_claimants(&e, &out[i]).is_lt() {
+                    if compare_page_claimants(journals_dir, &e, &out[i]).is_lt() {
                         out[i] = e;
                     }
                 } else {
@@ -8535,7 +8453,7 @@ mod tests {
             blocks: vec![
                 BlockDto {
                     id: "transient-header".into(),
-                    raw: "alias:: book\n\nklíč:: hodnota".into(),
+                    raw: "alias:: book\nklíč:: hodnota".into(),
                     ..Default::default()
                 },
                 BlockDto {
@@ -8554,14 +8472,14 @@ mod tests {
         let path = dir.join("pages").join("Property Authoring.md");
         assert_eq!(
             fs::read_to_string(&path).unwrap(),
-            "alias:: book\n\nklíč:: hodnota\n\n- Reading list\n"
+            "alias:: book\nklíč:: hodnota\n\n- Reading list\n"
         );
 
         let id = tine_store::PageId::from("pages/Property Authoring.md");
         let warm = store.page(&id).unwrap().doc;
         assert_eq!(
             warm.pre_block.as_deref(),
-            Some("alias:: book\n\nklíč:: hodnota")
+            Some("alias:: book\nklíč:: hodnota")
         );
         assert_eq!(warm.blocks.len(), 1);
         assert_eq!(warm.blocks[0].raw, "Reading list");
@@ -8677,12 +8595,17 @@ mod tests {
 
     #[test]
     fn page_header_authoring_is_bounded_and_preserves_existing_preambles() {
-        assert!(tine_core::block_regions::page_header_only(
-            "alias:: book\n\ne\u{301}/plugin.key:: value"
-        )
-        .is_some());
+        // An indented property line is a page property to OG (mldoc 1.5.9).
+        for valid in ["alias:: book\ne\u{301}/plugin.key:: value", " alias:: x"] {
+            assert!(
+                tine_core::block_regions::page_header_only(valid).is_some(),
+                "refused {valid:?}"
+            );
+        }
         for invalid in [
-            " alias:: x",
+            // OG reads only the first property node: promoting this would turn
+            // the line after the blank one into prose, so it stays a block.
+            "alias:: book\n\ne\u{301}/plugin.key:: value",
             "#alias:: x",
             "alias key:: x",
             "alias:: x\nprose",

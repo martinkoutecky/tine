@@ -73,17 +73,14 @@ pub fn lone_cr_to_lf(content: &str) -> std::borrow::Cow<'_, str> {
 /// depth (the store's reader does). Pure, infallible; one lsdoc parse, O(n).
 pub fn parse_org(content: &str) -> Document {
     let content = &*normalize_line_endings(content);
-    let body = content.trim_end_matches('\n');
-    if body.is_empty() {
-        return Document::default();
+    if content.trim_end_matches('\n').is_empty() {
+        return Document {
+            org: true,
+            ..Document::default()
+        };
     }
-    let lines: Vec<&str> = body.split('\n').collect();
     let headers = outline::headers_or_none(content, OutlineFormat::Org);
-    let first = headers.first().map_or(lines.len(), |header| header.line);
-    Document {
-        pre_block: (first > 0).then(|| lines[..first].join("\n")),
-        roots: outline::blocks(&lines, &headers, true),
-    }
+    crate::doc::document_of(content, &headers, true, None).0
 }
 
 /// Serialize a [`Document`] to org text with one trailing newline (the common
@@ -293,6 +290,7 @@ mod tests {
         let pre_only = Document {
             pre_block: Some("#+TITLE: Notes\n".into()),
             roots: Vec::new(),
+            org: true,
         };
         assert_eq!(serialize_org(&pre_only), "#+TITLE: Notes\n");
     }

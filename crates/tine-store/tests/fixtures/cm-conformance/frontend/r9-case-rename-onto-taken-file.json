@@ -124,16 +124,6 @@
     "N/y": "n/y",
     "p": "p"
   },
-  "namespaceNodes": [
-    [
-      "page",
-      "n/y"
-    ],
-    [
-      "page",
-      "n"
-    ]
-  ],
   "namespaceTree": [
     {
       "children": [],
@@ -238,7 +228,10 @@
       "linkedRefs": 1,
       "name": "N/y",
       "owner": "pages/N%2Fy.md",
-      "parent": "n"
+      "parent": [
+        "page",
+        "n"
+      ]
     },
     {
       "key": "p",
@@ -259,17 +252,6 @@
       "model": [
         "page",
         "b"
-      ]
-    },
-    "N": {
-      "backend": [
-        "page",
-        "n"
-      ],
-      "day": null,
-      "model": [
-        "page",
-        "n"
       ]
     },
     "N/y": {
@@ -330,25 +312,21 @@
       ]
     }
   ],
-  "treeNodes": [
-    [
-      "page",
-      "n/y"
-    ],
-    [
-      "page",
-      "b"
-    ],
-    [
-      "page",
-      "p"
-    ],
-    [
-      "page",
-      "n"
-    ]
-  ],
   "treeParent": [
+    {
+      "page": [
+        "page",
+        "b"
+      ],
+      "parent": null
+    },
+    {
+      "page": [
+        "page",
+        "n"
+      ],
+      "parent": null
+    },
     {
       "page": [
         "page",
@@ -362,21 +340,7 @@
     {
       "page": [
         "page",
-        "b"
-      ],
-      "parent": null
-    },
-    {
-      "page": [
-        "page",
         "p"
-      ],
-      "parent": null
-    },
-    {
-      "page": [
-        "page",
-        "n"
       ],
       "parent": null
     }

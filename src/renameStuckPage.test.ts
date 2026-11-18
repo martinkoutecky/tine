@@ -7,6 +7,7 @@ import { afterEach, beforeAll, expect, it, vi } from "vitest";
 import { initParser } from "./render/parse";
 import { backend } from "./backend";
 import { renameOrMergePage, renameOutcomeMessage } from "./graph";
+import { renderEnglish } from "./i18n";
 import { doc, setDoc } from "./document/model";
 import { conflicts, isDirty, resetStore } from "./document";
 import { activatePageInstance } from "./document/instance";
@@ -95,7 +96,7 @@ it.each(cases)("a stuck page blocks a rename only when the rename would touch it
     expect(rename).not.toHaveBeenCalled();
     const blocker = itself ? "Old" : "Other";
     expect(outcome).toEqual({ unsaved: blocker, mentions });
-    const message = renameOutcomeMessage(outcome, "Old", "New")!;
+    const message = renderEnglish(renameOutcomeMessage(outcome, "Old", "New")!);
     expect(message).toContain(`“${blocker}”`);
     if (mentions) expect(message).toContain("mention “Old”");
     expect(doc.byId[itself ? "old" : "other"].raw).toBe(mentions ? "draft about [[old]]" : "Other draft");

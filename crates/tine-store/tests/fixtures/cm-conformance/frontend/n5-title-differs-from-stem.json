@@ -208,14 +208,13 @@
   "journalTitleFormat": null,
   "keyOf": {
     "Caps Title": "caps title",
-    "Oct 27th, 2026": "oct 27th, 2026",
+    "Oct 27th, 2026": "Day 2026-10-27",
     "Org Title": "org title",
     "Release day": "release day",
     "Shown Title": "shown title",
     "linker": "linker",
     "stem-name": "stem-name"
   },
-  "namespaceNodes": [],
   "namespaceTree": [],
   "open": {
     "Caps Title": {
@@ -231,11 +230,11 @@
     "Oct 27th, 2026": {
       "journal": [
         "journal",
-        "oct 27th, 2026"
+        "Day 2026-10-27"
       ],
       "page": [
-        "page",
-        "oct 27th, 2026"
+        "journal",
+        "Day 2026-10-27"
       ]
     },
     "Org Title": {
@@ -296,7 +295,7 @@
     },
     "Oct 27th, 2026": {
       "journal": "journals/2026_10_27.md",
-      "page": null
+      "page": "journals/2026_10_27.md"
     },
     "Org Title": {
       "journal": null,
@@ -321,7 +320,7 @@
   },
   "pages": [
     {
-      "key": "oct 27th, 2026",
+      "key": "Day 2026-10-27",
       "kind": "journal",
       "linkedRefs": 1,
       "name": "Oct 27th, 2026",
@@ -392,7 +391,7 @@
     "Oct 27th, 2026": {
       "backend": [
         "journal",
-        "oct 27th, 2026"
+        "Day 2026-10-27"
       ],
       "day": [
         2026,
@@ -401,7 +400,7 @@
       ],
       "model": [
         "journal",
-        "oct 27th, 2026"
+        "Day 2026-10-27"
       ]
     },
     "Org Title": {
@@ -465,7 +464,7 @@
       "children": [],
       "page": [
         "journal",
-        "oct 27th, 2026"
+        "Day 2026-10-27"
       ]
     },
     {
@@ -511,41 +510,11 @@
       ]
     }
   ],
-  "treeNodes": [
-    [
-      "journal",
-      "oct 27th, 2026"
-    ],
-    [
-      "page",
-      "caps title"
-    ],
-    [
-      "page",
-      "linker"
-    ],
-    [
-      "page",
-      "org title"
-    ],
-    [
-      "page",
-      "shown title"
-    ],
-    [
-      "page",
-      "stem-name"
-    ],
-    [
-      "page",
-      "release day"
-    ]
-  ],
   "treeParent": [
     {
       "page": [
         "journal",
-        "oct 27th, 2026"
+        "Day 2026-10-27"
       ],
       "parent": null
     },
@@ -573,6 +542,13 @@
     {
       "page": [
         "page",
+        "release day"
+      ],
+      "parent": null
+    },
+    {
+      "page": [
+        "page",
         "shown title"
       ],
       "parent": null
@@ -581,13 +557,6 @@
       "page": [
         "page",
         "stem-name"
-      ],
-      "parent": null
-    },
-    {
-      "page": [
-        "page",
-        "release day"
       ],
       "parent": null
     }

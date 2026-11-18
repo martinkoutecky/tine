@@ -81,6 +81,7 @@ fn sides(
         || Document {
             pre_block: None,
             roots: Vec::new(),
+            org: fmt == Format::Org,
         },
         |(text, _)| parse(text, fmt),
     );
@@ -177,5 +178,14 @@ pub fn merge_live_conflict(
     )
     .map_err(merge_refused)?;
     let pre_block = choose_pre(pre_choice, fmt, &mine, &theirs)?;
-    Ok(dto(store, &page, Document { pre_block, roots }))
+    let org = fmt == Format::Org;
+    Ok(dto(
+        store,
+        &page,
+        Document {
+            pre_block,
+            roots,
+            org,
+        },
+    ))
 }

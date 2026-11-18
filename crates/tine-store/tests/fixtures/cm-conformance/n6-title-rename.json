@@ -4,15 +4,5 @@
     "pages/stem-name.md": "title:: Shown Title\n\n- body\n",
     "pages/custom.md": "title:: Custom Name\n\n- body\n",
     "pages/linker.md": "- [[Shown Title]] [[Custom Name]]\n"
-  },
-  "renames": [
-    {
-      "old": "Shown Title",
-      "new": "Renamed"
-    },
-    {
-      "old": "Custom Name",
-      "new": "custom"
-    }
-  ]
+  }
 }

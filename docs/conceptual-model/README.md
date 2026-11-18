@@ -1,71 +1,78 @@
-# Tine's conceptual model: specification and Lean proofs
+# Conceptual model and conformance
 
-This directory holds the formal model of what a Logseq graph *means* to Tine: which file a page name opens, which
-blocks reference a page, what an alias group is, what a query returns, and what renaming or merging a page does to
-all of that. It is a pure model of meaning. How Tine writes files safely is the separate
-[storage model](../storage-model/README.md).
+The confirmed model is K (D-20261116-CM536). Rename and merge compare their
+prepared output with its input-derived expected observations before publishing
+anything. Safe publication remains the [storage model's](../storage-model/README.md)
+responsibility.
 
-- [`SPEC.md`](SPEC.md): the rules, in prose. Section 1 is written for Logseq users; the later sections are precise
-  enough to implement against. The spec states the rules as they currently are; what changed, and when, is in git
-  history.
-- [`GUARANTEES.md`](GUARANTEES.md): what is proved, the hypotheses each headline theorem needs, where those may be
-  too strong, and the exhaustive comparison with the previous model round.
-- [`lean/`](lean/): a Lake project with the [Lean 4](https://lean-lang.org/) model and its proofs (77 modules,
-  1,480 named theorems). The current reader and operations are `Date13.lean` with the `*14` modules
-  (`DateOperations14`, `DateProofs14`, `Journal14`, `DateEffects14`, `DateSafety14`, `DateTwins14`), and
-  `Alias14.lean` for alias fields and complete-text accounting. The `*13` and earlier modules are libraries the
-  current ones build on; theorems there that carry extra hypotheses are special cases, not guarantees of the current
-  model (GUARANTEES.md lists which).
+A rename onto one physical holder asks once to merge; a destination held only
+as another page's alias is refused. The source's own alias permits a direct
+rename. A source without a file never creates one. Days and task/priority sites
+stay fixed. The same substitution covers namespace children, references,
+aliases and stored query/macro names. Settings follow in a separate step.
 
-## What the model guarantees
+The text promises are exact bytes outside rewritten name spans (P1), the
+intended parser observations (P2), unchanged-save stability (P3), and merge
+content conservation (P4). Merge header order and parser-unobserved layout are
+writer conventions. Unspellable sites and conflicted referrers stay and are
+reported at their original locations. A physical file merge uses the same
+writer and checks, and rewrites no outside reference or setting.
 
-Rename and merge are a choice for the user. A request offers every candidate that passes one finite safety check:
-rename literally, merge into any real page of the destination's alias group, or make an alias name its own page.
-The dialog shows the whole group and a preview; a caller without a dialog (the CLI, plugins, agents) succeeds only
-when exactly one candidate is safe, and is refused otherwise. For every offered candidate, Lean proves:
+The parser, name/site spelling readers and real save are trusted boundaries.
+The finite model fixture uses a toy reader and an identity save callback; it
+does not prove production parser fidelity or that every admitted candidate can
+be written. A production check refusal writes nothing.
 
-- no user text is lost, and text outside the edited spans is unchanged (given the writer obligations in SPEC.md §5.1).
-  The one exception: merging two pages that both declare the same alias may drop the redundant declaration (SPEC.md §5.2);
-- file paths stay unique and the operation creates no new claim collision;
-- journal dates and task/priority markers never change;
-- no page is captured as somebody else's namespace child;
-- when two files claim one name, the operation never changes which file is active;
-- every reference whose target changes appears in the preview;
-- the after-state's aliases, references, Linked References, counts, query results, links and navigation are
-  computed exactly (they may change; the guarantee is that every change is characterized, not that nothing
-  changes);
-- cancel changes nothing.
+## Executable checks
 
-These hold for every candidate the model offers, under the named boundaries below and the hypotheses GUARANTEES.md
-lists for each headline. One rule is still open: how a date page may be renamed inside Tine. The model keeps that
-policy as an explicit parameter, and its rename theorems hold for every choice of it.
-An exhaustive comparison with the previous model round classifies every request as unchanged or as one of a named
-list of differences.
+- `tine-core/src/cm_check`: independent expected observations and comparison.
+- `tine-store/src/transaction/model_check.rs`: P2/P3 on final staged bytes,
+  before any guarded write.
+- `tine-graph-features/tests/cm_witness.rs`: K's requests through the real
+  offer, host and writers; expected paths and observations come from the model
+  fixture. Refusals preserve file bytes. Deliberately wrong output rows are
+  injected into the checker rather than treated as refused user requests.
+- The shared fixture is `crates/tine-core/src/cm_check/witness-fixtures-r6.json`,
+  a byte copy of K's generated header-key matrix: 35 name requests, one physical
+  merge control, 17 negatives, and four negative-answer annotations.
+- `cm_requests`, `cm_touched`, `cm_report`, `cm_settings`, `cm_merge_o6`,
+  `cm_model_check`, and the witness gap tests cover decisions, whole-graph
+  safety, byte preservation, located reports, Settings, and physical merge.
+- `tine-store/src/cm_conformance_tests.rs`: 435 static graphs against K's
+  exporter, selected only by `CM_STATIC_BRIDGE`. This path also produces the
+  frontend cases used by navigation, counts, namespace and published tests.
+  Retired operation bridges and their frozen difference sections are removed.
 
-## Boundaries
-
-- **The parser and writer.** The model takes the parser's answers (names, keys, dates, occurrences, outlines) as
-  input, and its text guarantees assume a writer that does what SPEC.md §5.1 says. Whether Tine's code does is
-  checked by the conformance tests (`crates/tine-store/src/cm_conformance*`), not proved.
-- **Storage.** Publishing the result to disk (crash safety, locking, sync) is the storage model's job.
-- **Status of the code.** Tine is being changed to follow this version of the model. Until that work is finished,
-  some behaviour (notably rename/merge options, which file opens for a name two files claim, and date-named pages)
-  still follows the previous model. `CHANGELOG.md` records what has shipped.
-
-## How this was made
-
-The model, the proofs and the code are written by AI agents. Each model round was checked by an independent
-verifier agent (axiom audit, rebuilt counterexamples, a review of every hypothesis). Tine's maintainer decides the
-product rules but does not read the code or the proofs. Keep backups of your graph.
-
-## Checking it yourself
+The witness runner counts every row. `source_preamble`, `bare_bullet_header`
+and `header_children_leftover` are explicitly listed toy-reader differences,
+with separate transaction controls using Tine-readable observations.
+`key_spelling` uses an identity save: its original text is refused with P3,
+and an ordinary first block makes its two key sites stable and admissible.
+`org_leftover_reference` loses a reference only under the toy reader; Tine
+keeps it in the quote, while a native drawer control refuses real loss.
+`folded_occupant` probes its fixture's filesystem: a folded-path occupant
+refuses on a folding filesystem and permits the distinct path otherwise.
+No unlisted skip or zero-row run passes. The lane receipt records totals and
+the clause-to-test map, including the separate title-with-new-inner-link P2
+refusal in Markdown and Org rename and merge controls.
 
 ```bash
-cd docs/conceptual-model/lean
-LEAN_NUM_THREADS=2 lake build     # toolchain pinned in lean-toolchain
-python3 audit.py                  # no sorry, every theorem uses only the standard axioms
+cargo test -p tine-graph-features --test integration cm_witness
+cargo test -p tine-core cm_check
+CM_REQUIRE_BRIDGE=1 CM_STATIC_BRIDGE=/path/to/cm-bridge-k \
+  cargo test -p tine-store --lib conceptual_model_conformance
 ```
 
-`audit.py` imports every module, prints the axioms of every named theorem, and fails on anything beyond
-`propext`, `Quot.sound` and `Classical.choice`. Comments in the model files sometimes cite internal working records
-or decision identifiers; those records are not part of this repository.
+The focused gate must run all three, reject zero matched tests and unaccounted
+rows, and run frontend consumers on the generated cases. No operation bridge
+environment variable is needed.
+
+## Model sources
+
+The checked-in `SPEC.md`, `GUARANTEES.md` and `lean/` are the older model
+snapshot awaiting the separate K documentation sync. Their candidate menus,
+operation adapters and proof counts describe that snapshot, not the current
+implementation contract. This conformance change does not modify or build Lean.
+
+The models, proofs and application are written by AI agents. The maintainer
+decides product rules without reading the code or proofs. Keep backups.

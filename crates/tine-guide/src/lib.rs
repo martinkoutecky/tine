@@ -223,6 +223,17 @@ mod journal_guide_tests {
         assert!(journals.contains("A plain click or **g j** still opens the multi-day feed"));
     }
 
+    /// CM-DAYFILE (D-20261111-CMR14): a date-named page file is its day.
+    #[test]
+    fn a_date_named_page_file_is_documented_as_its_day() {
+        let journals = include_str!("templates/journals-tasks-scheduling.md");
+        assert!(journals.contains("A date is always a day's journal, never an ordinary page."));
+        assert!(journals.contains("is that day's journal where it lies"));
+        assert!(journals.contains("your edits of the day are saved into that file"));
+        assert!(journals.contains("the one in `journals/` is shown"));
+        assert!(journals.contains("A day without a file gets its new file in `journals/`."));
+    }
+
     #[test]
     fn sidebar_commands_are_documented() {
         let journals = include_str!("templates/journals-tasks-scheduling.md");

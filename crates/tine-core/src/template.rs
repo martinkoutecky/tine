@@ -221,8 +221,12 @@ mod tests {
     }
 
     fn names_and_raws(text: &str) -> Vec<(String, Vec<String>)> {
+        names_and_raws_of(&crate::doc::parse(text))
+    }
+
+    fn names_and_raws_of(doc: &Document) -> Vec<(String, Vec<String>)> {
         let mut out = Vec::new();
-        templates_in_document(&crate::doc::parse(text), &mut |name, blocks| {
+        templates_in_document(doc, &mut |name, blocks| {
             out.push((name, blocks.into_iter().map(|b| b.raw).collect()));
         });
         out
@@ -265,16 +269,18 @@ mod tests {
 
     #[test]
     fn org_header_templates_insert_the_header_without_the_template_key() {
-        // `#+KEY:` directives and the head drawer are the Org page properties.
+        // `#+KEY:` directives and the head drawer are the Org page properties
+        // of an Org file (parsed as one: a page's format is its file's).
+        let org = |text: &str| names_and_raws_of(&crate::org::parse_org(text));
         assert_eq!(
-            names_and_raws("#+TITLE: T\n#+TEMPLATE: Org one\n\n* Row\n"),
+            org("#+TITLE: T\n#+TEMPLATE: Org one\n\n* Row\n"),
             [(
                 "Org one".to_string(),
                 vec![":PROPERTIES:\n:title: T\n:END:".to_string()]
             )]
         );
         assert_eq!(
-            names_and_raws(":PROPERTIES:\n:template: Drawer\n:END:\n\n* Row\n"),
+            org(":PROPERTIES:\n:template: Drawer\n:END:\n\n* Row\n"),
             [("Drawer".to_string(), vec![String::new()])]
         );
     }

@@ -519,3 +519,52 @@ fn realistic_graph_feed_restart() {
     );
     store.close();
 }
+
+/// CM-DAYFILE (D-20261111-CMR14): a date-named pages file is its day's
+/// journal, so the Journals feed shows that day from that file, on the first
+/// page and when scrolling, and once when a journals-directory file holds
+/// the same day (that one shows; the other is a conflict).
+#[test]
+fn the_feed_shows_a_day_held_by_a_date_named_pages_file_once() {
+    for journal in [false, true] {
+        let root = tempfile::tempdir().unwrap();
+        for dir in ["journals", "pages"] {
+            std::fs::create_dir(root.path().join(dir)).unwrap();
+        }
+        std::fs::write(root.path().join("pages/2020-01-02.md"), "- page day\n").unwrap();
+        std::fs::write(root.path().join("journals/2020_01_03.md"), "- later\n").unwrap();
+        if journal {
+            std::fs::write(
+                root.path().join("journals/2020_01_02.md"),
+                "- journal day\n",
+            )
+            .unwrap();
+        }
+        let expected = if journal {
+            "journals/2020_01_02.md"
+        } else {
+            "pages/2020-01-02.md"
+        };
+        let store = Store::open(root.path(), Default::default()).unwrap().0;
+        store.stop_watcher_for_tests();
+        let ids = |page: FeedPage<FeedRead>| -> Vec<String> {
+            page.pages
+                .iter()
+                .map(|read| read.id.as_str().to_owned())
+                .collect()
+        };
+        for wait in [false, true] {
+            assert_eq!(
+                ids(feed_page_through(&store, 5, None, None, wait).unwrap()),
+                ["journals/2020_01_03.md", expected],
+                "first page, waiting {wait}, journal file present {journal}"
+            );
+        }
+        assert_eq!(
+            ids(feed_page_through(&store, 5, Some(20200103), None, true).unwrap()),
+            [expected],
+            "scrolled page, journal file present {journal}"
+        );
+        store.close();
+    }
+}

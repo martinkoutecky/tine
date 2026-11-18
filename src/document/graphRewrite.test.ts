@@ -54,7 +54,7 @@ it("routes both rename controls through the document intent", () => {
     expect(source).not.toContain("backend().renamePage(");
   }
   // The one app-layer rename entry resolves the collision, then uses the intent.
-  expect(readFileSync("src/graph.ts", "utf8")).toContain("renamePageOnDisk(from, to, target, into, onRefreshed, ownPage)");
+  expect(readFileSync("src/graph.ts", "utf8")).toContain("renamePageOnDisk(from, to, target, into, onRefreshed)");
 });
 
 it("reports a durable rename failure after the graph owner retires", async () => {
@@ -111,6 +111,50 @@ it("names the referrers a rename left untouched because they are mid-merge (og 2
   const note = toasts().find((toast) => toast.message.includes("pages/Conflicted.md"));
   expect(note).toMatchObject({ kind: "warn", sticky: true });
   expect(note!.message).toContain("“A”");
+  setToasts([]);
+});
+
+// Model r6 O7: "the report lists every site it could not spell (left as it
+// was) and every property key it respelled, each with its typed location".
+it("names the files where a rename left sites unchanged or respelled a property key (model r6 O7)", async () => {
+  setToasts([]);
+  // An admitted rename that changed no page bytes is still `renamed`
+  // (review round 2, finding 2).
+  vi.spyOn(backend(), "renamePage").mockResolvedValueOnce({ outcome: "renamed", renamed: [], touched: [],
+    site_exceptions: [
+      { path: "pages/r.org", start: 11, end: 14, kind: "tag", disposition: "unspellable" },
+      { path: "pages/r.org", start: 30, end: 33, kind: "tag", disposition: "unspellable" },
+      { path: "pages/k.md", start: 2, end: 5, kind: "propertyKey", disposition: "normalizedKey" },
+    ] });
+  installRenameRefreshHandler(() => {});
+  expect(await renamePageOnDisk("Old", "two words")).toBe("renamed");
+  const left = toasts().find((toast) => toast.message.includes("pages/r.org"));
+  expect(left).toMatchObject({ kind: "warn", sticky: true });
+  expect(left!.message).toContain("2");
+  expect(left!.message).toContain("“Old”");
+  expect(left!.message.match(/pages\/r\.org/g)).toHaveLength(1);
+  const keys = toasts().find((toast) => toast.message.includes("pages/k.md"));
+  expect(keys!.message).toContain("key spelling");
+  setToasts([]);
+});
+
+// Review round 2 follow-up: a site may name a page under the source (`A/x`
+// in a rename of `A`), so the message names the rename and claims no
+// per-site old or new name.
+it("names the rename, not a per-site name, for a site under the renamed page", async () => {
+  setToasts([]);
+  vi.spyOn(backend(), "renamePage").mockResolvedValueOnce({ outcome: "renamed", renamed: [{ from: "A", to: "B", path: "pages/A.md" }], touched: [{ path: "pages/A.md", moved: true }],
+    site_exceptions: [
+      { path: "pages/k.md", start: 2, end: 5, kind: "propertyKey", disposition: "normalizedKey" },
+      { path: "pages/t.org", start: 4, end: 9, kind: "tag", disposition: "unspellable" },
+    ] });
+  installRenameRefreshHandler(() => {});
+  expect(await renamePageOnDisk("A", "B")).toBe("renamed");
+  for (const file of ["pages/k.md", "pages/t.org"]) {
+    const note = toasts().find((toast) => toast.message.includes(file));
+    expect(note!.message).toContain("“A”");
+    expect(note!.message).not.toContain("“B”");
+  }
   setToasts([]);
 });
 

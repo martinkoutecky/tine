@@ -219,16 +219,15 @@ fn page(rng: &mut Rng, org: bool, name: &str) -> Vec<GenLine> {
     // Escaped plain members (REG-CM-MERGE-ESCAPED-ALIAS), from their own
     // stream: a backslash before any ASCII punctuation, which Markdown
     // decodes and Org keeps, and one unescaped twin of an escaped spelling.
-    // A wholly quoted value stays memberless: appending would turn its quoted
-    // text into a member, a different case than the one drawn.
+    // Appending also draws mixed quoted members. The native parser decides
+    // whether the original quoted token is now a member or a whole literal.
     let mut e = Rng::new(rng.0 ^ 0xE5CA_9E00);
     for l in lines.iter_mut().filter(|l| l.header) {
         let lower = l.content.to_ascii_lowercase();
         let alias = ["alias::", "aliases::", "#+alias:", "#+aliases:", ":alias:"]
             .iter()
             .any(|k| lower.starts_with(k));
-        let quoted = l.content.trim_end().ends_with('"');
-        if alias && e.chance(1, 3) && !quoted {
+        if alias && e.chance(1, 3) {
             let c = char::from(e.pick(PUNCTUATION));
             let member = match e.below(4) {
                 0 => "C\\#".to_owned(),
@@ -252,27 +251,6 @@ fn page(rng: &mut Rng, org: bool, name: &str) -> Vec<GenLine> {
     lines
 }
 
-/// A hand-written Org pair as generated lines: the header runs to the first
-/// heading, so the oracle reads it as it reads a generated one.
-pub fn org_case(src: &str, dst: &str) -> Case {
-    let lines = |text: &str| {
-        let mut header = true;
-        physical_lines(text)
-            .into_iter()
-            .map(|l| {
-                header &= !l.starts_with('*');
-                let end = ending(l);
-                line("", &l[..l.len() - end.len()], end, header)
-            })
-            .collect()
-    };
-    Case {
-        org: true,
-        src: lines(src),
-        dst: lines(dst),
-    }
-}
-
 /// `count` cases from `seed`; the same seed always yields the same cases.
 pub fn cases(seed: u64, count: usize) -> Vec<Case> {
     let mut rng = Rng::new(seed);
@@ -291,21 +269,17 @@ pub fn cases(seed: u64, count: usize) -> Vec<Case> {
 /// One alias declaration as the parser reads its own line.
 pub struct Decl {
     pub names: Vec<String>,
-    /// Each member's rendered spelling, the union's deduplication key
-    /// (SPEC §5.1): a plain member's own bytes, escapes included, else its
-    /// name.
-    pub spellings: Vec<String>,
     pub end: &'static str,
     pub quoted: Option<String>,
+    /// Each member's decoded name and, where the parser maps it, its token.
+    pub tokens: Vec<(String, Option<String>)>,
 }
 
-/// One page property as the parser reads it: its generated line, key, value,
-/// and whether it sits in the Org head drawer.
+/// One page property as the parser reads it: generated line, key and value.
 pub struct Entry {
     pub line: usize,
     pub key: String,
     pub value: String,
-    pub drawer: bool,
 }
 
 /// Page properties as the parser reads them: a Markdown line on its own, the
@@ -322,7 +296,6 @@ pub fn header_entries(lines: &[GenLine], org: bool) -> Vec<Entry> {
                         line: n,
                         key,
                         value,
-                        drawer: false,
                     })
             })
             .collect();
@@ -335,7 +308,6 @@ pub fn header_entries(lines: &[GenLine], org: bool) -> Vec<Entry> {
         text.push('\n');
     }
     let regions = tine_core::block_regions::parse_document(&text, org);
-    let boxes = regions.property_drawer_boundaries(&text);
     regions
         .page_properties()
         .filter_map(|p| {
@@ -343,108 +315,20 @@ pub fn header_entries(lines: &[GenLine], org: bool) -> Vec<Entry> {
                 line: starts.iter().rposition(|&s| s <= p.line.0)?,
                 key: p.key.to_ascii_lowercase(),
                 value: p.value.clone(),
-                drawer: boxes
-                    .iter()
-                    .any(|&(open, end)| open < p.line.0 && p.line.0 < end),
             })
         })
         .collect()
 }
 
-/// Which generated lines declare an alias.
+/// Which generated lines declare an alias with members (O6 unites exactly
+/// these; a memberless declaration is header text like any other).
 fn alias_lines(lines: &[GenLine], org: bool) -> Vec<bool> {
     let mut out = vec![false; lines.len()];
     for e in header_entries(lines, org) {
-        out[e.line] |= tine_core::page_header::is_alias_key(&e.key);
+        out[e.line] |= tine_core::page_header::is_alias_key(&e.key)
+            && !tine_core::property_refs::linkable_names(&e.value, org).is_empty();
     }
     out
-}
-
-/// A drawer entry that stays leftover text: a source key the survivor header
-/// already has (or an earlier source line declares), or an alias declaration
-/// other than the retained one keeping a duplicate member (§5.2: it retains
-/// its property owner). Inside the leftover quote a drawer line is no
-/// property, so the merge refuses `HiddenOccurrence`; the model does not place
-/// it yet (Q6 of RECEIPT-cm-b4-fix4).
-pub fn drawer_leftover(case: &Case) -> bool {
-    let (target, source) = (
-        header_entries(&case.dst, case.org),
-        header_entries(&case.src, case.org),
-    );
-    let alias = |e: &Entry| tine_core::page_header::is_alias_key(&e.key);
-    let members = |e: &Entry| spellings(&e.value, case.org);
-    let all: Vec<_> = target
-        .iter()
-        .map(|e| (false, e))
-        .chain(source.iter().map(|e| (true, e)))
-        .collect();
-    let retained = all
-        .iter()
-        .position(|(_, e)| alias(e) && !members(e).is_empty());
-    let mut keys: std::collections::HashSet<_> = target.iter().map(|e| e.key.clone()).collect();
-    let mut names = std::collections::HashSet::new();
-    all.iter().enumerate().any(|(n, &(from_source, e))| {
-        if alias(e) {
-            let duplicate = members(e)
-                .into_iter()
-                .fold(false, |d, name| !names.insert(name) || d);
-            duplicate && e.drawer && retained != Some(n)
-        } else {
-            from_source && e.drawer && e.key != "title" && !keys.insert(e.key.clone())
-        }
-    })
-}
-
-/// The Org header's head drawers as the parser finds them: whether each is
-/// empty (Tine's reader takes an empty one for prose, mldoc for an empty
-/// property list).
-pub fn drawers(lines: &[GenLine], org: bool) -> Vec<bool> {
-    if !org {
-        return Vec::new();
-    }
-    let header: String = lines
-        .iter()
-        .take_while(|l| l.header)
-        .map(|l| format!("{}\n", l.content))
-        .collect();
-    tine_core::block_regions::parse_document(&header, org)
-        .property_drawer_boundaries(&header)
-        .into_iter()
-        .map(|(open, end)| header[open..end].matches('\n').count() == 1)
-        .collect()
-}
-
-/// The source has a head drawer, whose delimiters may become leftover text.
-/// In the leftover quote they can make the reader take a following line for a
-/// tag, so the merge refuses a leftover reading a reference none of its lines
-/// has (`AddedOccurrence`, or `HiddenOccurrence` for a directive it hides).
-/// The guard is coarse and may refuse a sound merge: Q7 of RECEIPT-cm-b4-fix4.
-pub fn leftover_delimiters(case: &Case) -> bool {
-    !drawers(&case.src, case.org).is_empty()
-}
-
-/// The retained declaration sits in a drawer: a rebuilt field's `#+alias: `
-/// key cannot, so the merge refuses `AliasField` (Q5 of RECEIPT-cm-b4-fix4).
-pub fn retained_in_drawer(case: &Case) -> bool {
-    let entries = header_entries(&case.dst, case.org)
-        .into_iter()
-        .chain(header_entries(&case.src, case.org));
-    entries
-        .filter(|e| tine_core::page_header::is_alias_key(&e.key))
-        .find(|e| !tine_core::property_refs::linkable_names(&e.value, case.org).is_empty())
-        .is_some_and(|e| e.drawer)
-}
-
-/// Two member spellings with different bytes that read as one name (`C#`,
-/// `C\#`): §5.1 keeps both, Native15c rejects the survivor
-/// (`mergeBodyOccurrences`; model question Q8 of RECEIPT-cm-b4-fix5).
-pub fn same_name_spellings(case: &Case) -> bool {
-    let mut seen = BTreeMap::<String, String>::new();
-    decls(&case.dst, case.org)
-        .into_iter()
-        .chain(decls(&case.src, case.org))
-        .flat_map(|d| d.names.into_iter().zip(d.spellings))
-        .any(|(name, spelling)| seen.entry(name).or_insert(spelling.clone()) != &spelling)
 }
 
 /// lsdoc's debug-build span tripwire on a CRLF quote holding an empty drawer
@@ -452,30 +336,22 @@ pub fn same_name_spellings(case: &Case) -> bool {
 /// trips it too).
 pub const LSDOC_TRIPWIRE: &str = "OriginCursor queried backwards";
 
-/// A value's member spellings, in [`Decl::spellings`]'s sense.
-pub fn spellings(value: &str, org: bool) -> Vec<String> {
-    let mut out = Vec::new();
-    tine_core::property_refs::for_each_linkable_member(value, org, |name, range, plain| {
-        out.push(match range.filter(|_| plain) {
-            Some(r) => value[r].to_owned(),
-            None => name,
-        })
-    });
-    out
-}
-
 pub fn decls(lines: &[GenLine], org: bool) -> Vec<Decl> {
     header_entries(lines, org)
         .into_iter()
         .filter(|e| tine_core::page_header::is_alias_key(&e.key))
         .map(|Entry { line, value, .. }| {
             let trimmed = value.trim();
+            let mut tokens = Vec::new();
+            tine_core::property_refs::for_each_linkable_member(&value, org, |name, range, _| {
+                tokens.push((name, range.map(|r| value[r].to_owned())));
+            });
             Decl {
                 names: tine_core::property_refs::linkable_names(&value, org),
-                spellings: spellings(&value, org),
                 end: lines[line].end,
                 quoted: (trimmed.len() > 1 && trimmed.starts_with('"') && trimmed.ends_with('"'))
                     .then(|| trimmed.to_owned()),
+                tokens,
             }
         })
         .collect()
@@ -483,46 +359,34 @@ pub fn decls(lines: &[GenLine], org: bool) -> Vec<Decl> {
 
 /// What the model says the survivor must be.
 pub struct Expected {
-    /// Survivor-first union, deduplicated by exact rendered bytes (§5.1).
+    /// Survivor-first union, one member per reading (O6; the pool has no
+    /// journal days, so a name reads as its page key).
     pub aliases: Vec<String>,
-    /// Round 15c's field ending: the survivor's first declaration's, else LF.
-    pub end_15c: &'static str,
-    /// The retained declaration's own ending (round 15f, pending).
+    /// The kept members' tokens as written (wrappers, tag marks, escapes),
+    /// with multiplicity: P4 lets a merge drop only the others.
+    pub tokens: BTreeMap<String, usize>,
+    /// The selected declaration's own ending.
     pub end_own: &'static str,
 }
-impl Expected {
-    /// Q1 of RECEIPT-cm-b4-fix2: 15c and 15f disagree on the field ending.
-    pub fn pending_15f(&self) -> bool {
-        !self.aliases.is_empty() && self.end_15c != self.end_own
-    }
-}
-
-/// Declarations exist but none has members: whether they stay in the
-/// survivor's header is Q2 of RECEIPT-cm-b4-gen (Native15c rejects every
-/// output that keeps one there).
-pub fn memberless_only(case: &Case) -> bool {
-    let all: Vec<_> = decls(&case.dst, case.org)
-        .into_iter()
-        .chain(decls(&case.src, case.org))
-        .collect();
-    !all.is_empty() && all.iter().all(|d| d.names.is_empty())
-}
-
 pub fn expected(case: &Case) -> Expected {
     let target = decls(&case.dst, case.org);
     let source = decls(&case.src, case.org);
     let mut aliases = Vec::new();
+    let mut tokens = BTreeMap::new();
     let mut seen = std::collections::HashSet::new();
     for d in target.iter().chain(&source) {
-        for (name, spelling) in d.names.iter().zip(&d.spellings) {
-            if seen.insert(spelling) {
+        for (name, token) in &d.tokens {
+            if seen.insert(tine_core::refs::page_key(name)) {
                 aliases.push(name.clone());
+                if let Some(token) = token {
+                    *tokens.entry(token.clone()).or_default() += 1;
+                }
             }
         }
     }
     Expected {
         aliases,
-        end_15c: target.first().map_or("\n", |d| d.end),
+        tokens,
         end_own: target
             .iter()
             .chain(&source)
@@ -620,7 +484,10 @@ fn header_alias_lines<'a>(output: &'a str, org: bool) -> Vec<&'a str> {
         let body = content.trim_end_matches(['\r', '\n']);
         if tine_core::page_header::page_property_lines(body, org)
             .iter()
-            .any(|(k, _)| tine_core::page_header::is_alias_key(k))
+            .any(|(k, v)| {
+                tine_core::page_header::is_alias_key(k)
+                    && !tine_core::property_refs::linkable_names(v, org).is_empty()
+            })
         {
             found.push(*line);
         }
@@ -639,25 +506,16 @@ fn count(haystack: &str, needle: &str) -> usize {
         .count()
 }
 
-/// Tag marks: a `#` opening a token. A `#` inside a plain member (`C#`, an
-/// escaped `\#`) is member text, which §5.1 deduplicates with its member.
-fn hashes(text: &str) -> usize {
-    text.match_indices('#')
-        .filter(|(at, _)| !text[at + 1..].starts_with('+'))
-        .filter(|(at, _)| {
-            text[..*at]
-                .chars()
-                .next_back()
-                .is_none_or(|c| c.is_whitespace() || c == ',')
-        })
-        .count()
-}
-
 /// A failed model obligation: its class and a readable detail.
 pub type Failure = (&'static str, String);
 
 /// Checks one actual survivor against the model, independently of the writer.
-pub fn check_output(case: &Case, out: &str, doc: &tine_core::model::PageDto) -> Vec<Failure> {
+pub fn check_output(
+    case: &Case,
+    out: &str,
+    doc: &tine_core::model::PageDto,
+    trace: &tine_core::text_trace::TextTrace,
+) -> Vec<Failure> {
     let org = case.org;
     let want = expected(case);
     let mut failures = Vec::new();
@@ -678,10 +536,12 @@ pub fn check_output(case: &Case, out: &str, doc: &tine_core::model::PageDto) -> 
             );
         } else {
             let end = ending(fields[0]);
-            if !want.pending_15f() && end != want.end_15c {
+            let eof_completion =
+                want.end_own.is_empty() && end == tine_core::doc::line_convention(&case.dst_text());
+            if end != want.end_own && !eof_completion {
                 fail(
                     "field-ending",
-                    format!("{:?} ends {end:?}, model {:?}", fields[0], want.end_15c),
+                    format!("{:?} ends {end:?}, model {:?}", fields[0], want.end_own),
                 );
             }
         }
@@ -689,6 +549,42 @@ pub fn check_output(case: &Case, out: &str, doc: &tine_core::model::PageDto) -> 
     // Every non-alias line survives with its own terminator, multiplicity kept.
     let (dst_alias, src_alias) = (alias_lines(&case.dst, org), alias_lines(&case.src, org));
     let mut needles = BTreeMap::<String, usize>::new();
+    // The old retained-line oracle now accounts separately for the approved
+    // native source-boundary exception. Neither a target marker nor an entry
+    // is exempted, and the complete trace still checks every original byte.
+    let mut approved = BTreeMap::<String, usize>::new();
+    if org {
+        let source = case.src_text();
+        let head_end: usize = case
+            .src
+            .iter()
+            .take_while(|l| l.header)
+            .map(|l| l.prefix.len() + l.content.len() + l.end.len())
+            .sum();
+        let view = tine_core::org::lone_cr_to_lf(&source[..head_end]);
+        let regions = tine_core::block_regions::parse_document(&view, true);
+        let mut at = 0;
+        let physical: BTreeMap<_, _> = tine_core::doc::physical_lines(&source[..head_end])
+            .map(|line| {
+                let start = at;
+                at += line.len();
+                (start, (at, line))
+            })
+            .collect();
+        let consumed: std::collections::HashSet<_> = trace.consumed.iter().copied().collect();
+        for (open, close) in regions.property_drawer_boundaries(&view) {
+            for start in [open, close] {
+                let (end, line) = physical[&start];
+                let ids = trace.interval(1, start..end).unwrap();
+                if ids.len() == 1
+                    && consumed.contains(&ids[0])
+                    && trace.pieces[ids[0]].role == tine_core::text_trace::Role::Layout
+                {
+                    *approved.entry(line.to_owned()).or_default() += 1;
+                }
+            }
+        }
+    }
     let kept = case
         .dst
         .iter()
@@ -700,19 +596,18 @@ pub fn check_output(case: &Case, out: &str, doc: &tine_core::model::PageDto) -> 
             .or_default() += 1;
     }
     for (needle, n) in needles {
-        if count(out, &needle) < n {
+        if count(out, &needle) + approved.get(&needle).copied().unwrap_or(0) < n {
             fail("line-lost", format!("{needle:?} x{n}"));
         }
     }
-    // Protected syntax is never consumed (§5.2): wrappers, quotes, tag marks.
+    // O6/P4: a merge drops only members that read as a kept one and the
+    // syntax of combined declarations. Every kept member keeps its token as
+    // written; every other line is checked above.
     let input = format!("{}{}", case.dst_text(), case.src_text());
-    for w in ["[[", "]]", "\""] {
-        if count(out, w) < count(&input, w) {
-            fail("protected-lost", format!("{w:?}"));
+    for (token, n) in &want.tokens {
+        if count(out, token) < *n {
+            fail("protected-lost", format!("{token:?} x{n}"));
         }
-    }
-    if hashes(out) < hashes(&input) {
-        fail("protected-lost", "\"#\"".into());
     }
     for d in decls(&case.dst, org).iter().chain(&decls(&case.src, org)) {
         if let Some(q) = &d.quoted {
@@ -721,8 +616,7 @@ pub fn check_output(case: &Case, out: &str, doc: &tine_core::model::PageDto) -> 
             }
         }
     }
-    // A uniform pair stays uniform (inserted lines follow it); an Org CRLF
-    // survivor takes LF for inserted lines (its codec, RECEIPT-cm-b4-fix2).
+    // A uniform pair stays uniform in both formats.
     let uniform = |lines: &[GenLine]| {
         let ends: Vec<_> = lines
             .iter()
@@ -734,11 +628,10 @@ pub fn check_output(case: &Case, out: &str, doc: &tine_core::model::PageDto) -> 
             .filter(|e| ends.iter().all(|x| x == e))
     };
     if let (Some(a), Some(b)) = (uniform(&case.dst), uniform(&case.src)) {
-        if a == b && !(org && a == "\r\n") {
+        if a == b {
             for line in physical_lines(out) {
-                let is_field = fields.first() == Some(&line);
                 let end = ending(line);
-                if !end.is_empty() && end != a && !(is_field && want.pending_15f()) {
+                if !end.is_empty() && end != a {
                     fail("mixed-endings", format!("{line:?} in a {a:?} pair"));
                 }
             }
@@ -770,6 +663,92 @@ pub fn check_output(case: &Case, out: &str, doc: &tine_core::model::PageDto) -> 
     failures
 }
 
+/// The refusal O6 names for this pair, decided from the inputs as the parser
+/// reads them: `headerChildren` (blocks under the source's header and no
+/// leftover line) or, in Org, `leftoverReference` (the quote does not read
+/// the references the leftover lines had, Tine's reader being the model's
+/// observation).
+pub fn model_refusal(case: &Case) -> Option<&'static str> {
+    let org = case.org;
+    let mut keys: std::collections::HashSet<_> = header_entries(&case.dst, org)
+        .into_iter()
+        .map(|e| e.key)
+        .collect();
+    let entries = header_entries(&case.src, org);
+    let mut leftover = false;
+    let mut hidden = false;
+    let mut drawer = false;
+    let mut quoted = String::new();
+    let mut required = std::collections::HashMap::new();
+    let refs_of =
+        |block: &tine_core::DocBlock,
+         counts: &mut std::collections::HashMap<(&'static str, String), usize>| {
+            for r in block.projection().reference_source().explicit {
+                if !matches!(r.rule, "explicit_task_marker" | "explicit_priority") {
+                    *counts
+                        .entry((r.rule, tine_core::refs::page_key(&r.name)))
+                        .or_default() += 1;
+                }
+            }
+        };
+    for (n, l) in case.src.iter().enumerate().take_while(|(_, l)| l.header) {
+        let content = l.content.trim();
+        if content.eq_ignore_ascii_case(":PROPERTIES:") || content.eq_ignore_ascii_case(":END:") {
+            drawer = content.eq_ignore_ascii_case(":PROPERTIES:");
+            continue;
+        }
+        if content.is_empty() {
+            continue;
+        }
+        let entry = entries.iter().find(|e| e.line == n);
+        let joins = entry.is_some_and(|e| {
+            if tine_core::page_header::is_alias_key(&e.key) {
+                !tine_core::property_refs::linkable_names(&e.value, org).is_empty()
+            } else {
+                e.key != "title" && keys.insert(e.key.clone())
+            }
+        });
+        if joins {
+            continue;
+        }
+        leftover = true;
+        if org {
+            let text = if drawer && entry.is_some() {
+                format!(":PROPERTIES:\n{content}\n:END:\n")
+            } else {
+                format!("{content}\n")
+            };
+            for (_, block) in tine_core::page_properties::pre_block_projections(&text, true) {
+                refs_of(&block, &mut required);
+            }
+            quoted.push_str(&format!("{content}\n"));
+        }
+    }
+    if org && leftover {
+        // The model's `leftoverUnkeepable` with Tine's reader as the
+        // observation: the quote must read the references the lines had.
+        let read =
+            tine_core::org::parse_org(&format!("* x\n*\n#+BEGIN_QUOTE\n{quoted}#+END_QUOTE\n"));
+        let mut actual = std::collections::HashMap::new();
+        if let Some(block) = read.roots.get(1) {
+            refs_of(block, &mut actual);
+        }
+        hidden = actual != required;
+    }
+    let children = case
+        .src
+        .iter()
+        .find(|l| !l.header)
+        .is_some_and(|l| l.prefix == "  - ");
+    if !leftover && children {
+        Some("HeaderChildren")
+    } else if hidden {
+        Some("HiddenOccurrence")
+    } else {
+        None
+    }
+}
+
 /// The outcome of one generated case through the real host.
 pub enum Run {
     Merged { failures: Vec<Failure> },
@@ -789,6 +768,7 @@ pub fn run(case: &Case) -> Run {
     let host = crate::test_host(&store);
     let dst_id = tine_core::model::PageId::from(target.as_str());
     let mut failures = Vec::new();
+    let mut inputs = Vec::new();
     // The oracle reads each input with the parser line by line; the reader's
     // whole-header projection must agree, or the oracle itself is wrong.
     for (path, lines) in [(&source, &case.src), (&target, &case.dst)] {
@@ -803,12 +783,25 @@ pub fn run(case: &Case) -> Run {
         if header_aliases(&doc, case.org) != own {
             failures.push(("oracle-context", format!("{path}: {own:?}")));
         }
+        inputs.push(doc);
     }
+    let proof = pages::merge_payload::propose(
+        &inputs[1],
+        &dst,
+        &inputs[0],
+        &src,
+        &Default::default(),
+        &Default::default(),
+        case.org,
+        store.config().file_name_format,
+    );
     if let Err(error) = pages::merge_pages(&store, &host, &source, &target) {
         let unchanged = fs::read_to_string(dir.path().join(&source)).ok() == Some(src)
             && fs::read_to_string(dir.path().join(&target)).ok() == Some(dst);
+        let reason = pages::MergeRefused::of(&error)
+            .map_or_else(|| error.to_string(), |refusal| refusal.reason.to_string());
         return Run::Refused(format!(
-            "{error}{}",
+            "{reason}{}",
             if unchanged { "" } else { " (FILES CHANGED)" }
         ));
     }
@@ -816,8 +809,14 @@ pub fn run(case: &Case) -> Run {
         failures.push(("source-kept", source.clone()));
     }
     let bytes = fs::read_to_string(dir.path().join(&target)).unwrap();
+    let proof = proof.expect("a successful operation has a complete text certificate");
+    assert_eq!(proof.text, bytes);
+    proof
+        .trace
+        .check(&bytes, &proof.trace.substitution)
+        .unwrap();
     let loaded = store.page(&dst_id).unwrap();
-    failures.extend(check_output(case, &bytes, &loaded.doc));
+    failures.extend(check_output(case, &bytes, &loaded.doc, &proof.trace));
     for _ in 0..2 {
         let loaded = store.page(&dst_id).unwrap();
         if let Err(e) = crate::test_host_writer::save_on(
@@ -868,15 +867,15 @@ pub fn run(case: &Case) -> Run {
     Run::Merged { failures }
 }
 
-/// Every failing class with its smallest witness, plus the pending count.
+/// Every failing class with its smallest witness.
 pub struct Report {
     pub merged: usize,
-    pub pending: usize,
     /// Refused, files unchanged, because a CR would fuse with a following
     /// LF into one CRLF (model question Q4 of RECEIPT-cm-b4-fix3).
     pub fused: usize,
-    /// Refused, files unchanged, or tripped, where RECEIPT-cm-b4-fix4 reports
-    /// instead of asserting: Q5, Q6 and the lsdoc tripwire, with a witness.
+    /// Refused, files unchanged, exactly where O6 refuses (`model_refusal`).
+    pub model_refused: usize,
+    /// Native extraction tripwires with their witnesses.
     pub reported: BTreeMap<&'static str, (usize, String)>,
     pub classes: BTreeMap<String, (usize, String)>,
 }
@@ -884,15 +883,18 @@ pub struct Report {
 pub fn report(cases: &[Case]) -> Report {
     let mut r = Report {
         merged: 0,
-        pending: 0,
         fused: 0,
+        model_refused: 0,
         reported: BTreeMap::new(),
         classes: BTreeMap::new(),
     };
     for case in cases {
-        let pending = expected(case).pending_15f();
         let outcome = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| run(case)));
+        let refusal = model_refusal(case);
         let failures = match outcome {
+            Ok(Run::Merged { .. }) if refusal.is_some() => {
+                vec![("model-refuses", refusal.unwrap().to_owned())]
+            }
             Ok(Run::Merged { failures, .. }) => {
                 r.merged += 1;
                 failures
@@ -901,20 +903,11 @@ pub fn report(cases: &[Case]) -> Report {
                 r.fused += 1;
                 Vec::new()
             }
-            Ok(Run::Refused(e)) => match e.as_str() {
-                "merge realization: HiddenOccurrence" if drawer_leftover(case) => {
-                    vec![("Q6 drawer leftover", e)]
-                }
-                "merge realization: HiddenOccurrence" | "merge realization: AddedOccurrence"
-                    if leftover_delimiters(case) =>
-                {
-                    vec![("Q7 leftover drawer delimiters", e)]
-                }
-                "merge realization: AliasField" if retained_in_drawer(case) => {
-                    vec![("Q5 retained drawer alias", e)]
-                }
-                _ => vec![("refused", e)],
-            },
+            Ok(Run::Refused(e)) if refusal.is_some_and(|reason| e.ends_with(reason)) => {
+                r.model_refused += 1;
+                Vec::new()
+            }
+            Ok(Run::Refused(e)) => vec![("refused", e)],
             Err(p) => {
                 let message = p
                     .downcast_ref::<String>()
@@ -929,9 +922,6 @@ pub fn report(cases: &[Case]) -> Report {
                 vec![(class, message)]
             }
         };
-        if pending {
-            r.pending += 1;
-        }
         for (class, detail) in failures {
             let witness = format!(
                 "org={} {detail}\n    source={:?}\n    target={:?}",
@@ -961,8 +951,8 @@ pub fn report(cases: &[Case]) -> Report {
 
 fn assert_clean(r: &Report, total: usize) {
     eprintln!(
-        "generated merges: {total} cases, {} merged, {} pending 15f (field ending not asserted), {} fused-ending refusals (Q4, files unchanged)",
-        r.merged, r.pending, r.fused
+        "generated merges: {total} cases, {} merged, {} fused-ending refusals (Q4, files unchanged), {} O6 refusals (files unchanged)",
+        r.merged, r.fused, r.model_refused
     );
     for (group, (n, witness)) in &r.reported {
         eprintln!("  reported {group}: {n}\n    {witness}");

@@ -1,0 +1,1449 @@
+{
+  "fixtures": [
+    {
+      "name": "plain_rename",
+      "before": [
+        {
+          "path": "pages/A.md",
+          "text": "- notes\n",
+          "format": "md"
+        },
+        {
+          "path": "pages/R.md",
+          "text": "- [[A]]\n",
+          "format": "md"
+        }
+      ],
+      "after": [
+        {
+          "path": "pages/B.md",
+          "text": "- notes\n",
+          "format": "md"
+        },
+        {
+          "path": "pages/R.md",
+          "text": "- [[B]]\n",
+          "format": "md"
+        }
+      ],
+      "old": "A",
+      "new": "B",
+      "merge": false,
+      "attended": false,
+      "filemerge": false
+    },
+    {
+      "name": "plain_merge",
+      "before": [
+        {
+          "path": "pages/A.md",
+          "text": "- source\n",
+          "format": "md"
+        },
+        {
+          "path": "pages/B.md",
+          "text": "- target\n",
+          "format": "md"
+        }
+      ],
+      "after": [
+        {
+          "path": "pages/B.md",
+          "text": "- target\n- source\n",
+          "format": "md"
+        }
+      ],
+      "old": "A",
+      "new": "B",
+      "merge": true,
+      "attended": true,
+      "filemerge": false
+    },
+    {
+      "name": "join_clash",
+      "before": [
+        {
+          "path": "pages/A.md",
+          "text": "clash:: source\njoin:: value\n- s\n",
+          "format": "md"
+        },
+        {
+          "path": "pages/B.md",
+          "text": "clash:: target\n- t\n",
+          "format": "md"
+        }
+      ],
+      "after": [
+        {
+          "path": "pages/B.md",
+          "text": "clash:: target\njoin:: value\n- t\n- \n  clash:: source\n- s\n",
+          "format": "md"
+        }
+      ],
+      "old": "A",
+      "new": "B",
+      "merge": true,
+      "attended": true,
+      "filemerge": false
+    },
+    {
+      "name": "org_title",
+      "before": [
+        {
+          "path": "pages/A.org",
+          "text": "#+title: A\n* source\n",
+          "format": "org"
+        },
+        {
+          "path": "pages/B.org",
+          "text": "#+title: B\n* target\n",
+          "format": "org"
+        }
+      ],
+      "after": [
+        {
+          "path": "pages/B.org",
+          "text": "#+title: B\n* target\n* \n#+BEGIN_QUOTE\n#+title: B\n#+END_QUOTE\n* source\n",
+          "format": "org"
+        }
+      ],
+      "old": "A",
+      "new": "B",
+      "merge": true,
+      "attended": true,
+      "filemerge": false
+    },
+    {
+      "name": "mixed_exceptions",
+      "before": [
+        {
+          "path": "pages/Old.md",
+          "text": "- notes\n",
+          "format": "md"
+        },
+        {
+          "path": "pages/Conflict.md",
+          "text": "<<<<<<< a\n=======\n>>>>>>> b\n- [[Old]]\n",
+          "format": "md"
+        },
+        {
+          "path": "pages/Org.org",
+          "text": "* h :Old:\n",
+          "format": "org"
+        },
+        {
+          "path": "pages/OrgConflict.org",
+          "text": "<<<<<<< a\n=======\n>>>>>>> b\n* h :Old:\n",
+          "format": "org"
+        },
+        {
+          "path": "pages/Tag.md",
+          "text": "- #Old\n",
+          "format": "md"
+        }
+      ],
+      "after": [
+        {
+          "path": "pages/Two Words.md",
+          "text": "- notes\n",
+          "format": "md"
+        },
+        {
+          "path": "pages/Conflict.md",
+          "text": "<<<<<<< a\n=======\n>>>>>>> b\n- [[Old]]\n",
+          "format": "md"
+        },
+        {
+          "path": "pages/Org.org",
+          "text": "* h :Old:\n",
+          "format": "org"
+        },
+        {
+          "path": "pages/OrgConflict.org",
+          "text": "<<<<<<< a\n=======\n>>>>>>> b\n* h :Old:\n",
+          "format": "org"
+        },
+        {
+          "path": "pages/Tag.md",
+          "text": "- #[[Two Words]]\n",
+          "format": "md"
+        }
+      ],
+      "old": "Old",
+      "new": "Two Words",
+      "merge": false,
+      "attended": true,
+      "filemerge": false
+    },
+    {
+      "name": "unterminated",
+      "before": [
+        {
+          "path": "pages/A.md",
+          "text": "- source\n",
+          "format": "md"
+        },
+        {
+          "path": "pages/B.md",
+          "text": "- target",
+          "format": "md"
+        }
+      ],
+      "after": [
+        {
+          "path": "pages/B.md",
+          "text": "- target\n- source\n",
+          "format": "md"
+        }
+      ],
+      "old": "A",
+      "new": "B",
+      "merge": true,
+      "attended": true,
+      "filemerge": false
+    },
+    {
+      "name": "alias_spellings",
+      "before": [
+        {
+          "path": "pages/A.md",
+          "text": "alias:: C#\n- source\n",
+          "format": "md"
+        },
+        {
+          "path": "pages/B.md",
+          "text": "alias:: C\\#\n- target\n",
+          "format": "md"
+        }
+      ],
+      "after": [
+        {
+          "path": "pages/B.md",
+          "text": "alias:: C\\#\n- target\n- source\n",
+          "format": "md"
+        }
+      ],
+      "old": "A",
+      "new": "B",
+      "merge": true,
+      "attended": true,
+      "filemerge": false
+    },
+    {
+      "name": "md_tag",
+      "before": [
+        {
+          "path": "pages/Old.md",
+          "text": "- notes\n",
+          "format": "md"
+        },
+        {
+          "path": "pages/R.md",
+          "text": "- #Old\n",
+          "format": "md"
+        }
+      ],
+      "after": [
+        {
+          "path": "pages/Two Words.md",
+          "text": "- notes\n",
+          "format": "md"
+        },
+        {
+          "path": "pages/R.md",
+          "text": "- #[[Two Words]]\n",
+          "format": "md"
+        }
+      ],
+      "old": "Old",
+      "new": "Two Words",
+      "merge": false,
+      "attended": true,
+      "filemerge": false
+    },
+    {
+      "name": "key_spelling",
+      "before": [
+        {
+          "path": "pages/Old.md",
+          "text": "- notes\n",
+          "format": "md"
+        },
+        {
+          "path": "pages/R.md",
+          "text": "- Old:: value\n- Old:: another\n",
+          "format": "md"
+        }
+      ],
+      "after": [
+        {
+          "path": "pages/Two Words.md",
+          "text": "- notes\n",
+          "format": "md"
+        },
+        {
+          "path": "pages/R.md",
+          "text": "- two-words:: value\n- two-words:: another\n",
+          "format": "md"
+        }
+      ],
+      "old": "Old",
+      "new": "Two Words",
+      "merge": false,
+      "attended": true,
+      "filemerge": false
+    },
+    {
+      "name": "self_alias_true",
+      "before": [
+        {
+          "path": "pages/A.md",
+          "text": "alias:: X\n- source\n",
+          "format": "md"
+        }
+      ],
+      "after": [
+        {
+          "path": "pages/X.md",
+          "text": "alias:: X\n- source\n",
+          "format": "md"
+        }
+      ],
+      "old": "A",
+      "new": "X",
+      "merge": false,
+      "attended": true,
+      "filemerge": false
+    },
+    {
+      "name": "self_alias_false",
+      "before": [
+        {
+          "path": "pages/A.md",
+          "text": "alias:: X\n- source\n",
+          "format": "md"
+        }
+      ],
+      "after": [
+        {
+          "path": "pages/X.md",
+          "text": "alias:: X\n- source\n",
+          "format": "md"
+        }
+      ],
+      "old": "A",
+      "new": "X",
+      "merge": false,
+      "attended": false,
+      "filemerge": false
+    },
+    {
+      "name": "file_twins",
+      "before": [
+        {
+          "path": "pages/1.md",
+          "text": "title:: X\n- source\n",
+          "format": "md"
+        },
+        {
+          "path": "pages/2.md",
+          "text": "title:: X\n- target\n",
+          "format": "md"
+        }
+      ],
+      "after": [
+        {
+          "path": "pages/2.md",
+          "text": "title:: X\n- target\n- \n  title:: X\n- source\n",
+          "format": "md"
+        }
+      ],
+      "old": "pages/1.md",
+      "new": "pages/2.md",
+      "merge": true,
+      "attended": true,
+      "filemerge": true
+    },
+    {
+      "name": "repeated_key",
+      "before": [
+        {
+          "path": "pages/A.md",
+          "text": "x:: one\nx:: two\n- source\n",
+          "format": "md"
+        },
+        {
+          "path": "pages/B.md",
+          "text": "- target\n",
+          "format": "md"
+        }
+      ],
+      "after": [
+        {
+          "path": "pages/B.md",
+          "text": "x:: one\n- target\n- \n  x:: two\n- source\n",
+          "format": "md"
+        }
+      ],
+      "old": "A",
+      "new": "B",
+      "merge": true,
+      "attended": true,
+      "filemerge": false
+    },
+    {
+      "name": "fileless",
+      "before": [
+        {
+          "path": "pages/R.md",
+          "text": "- [[A]]\n",
+          "format": "md"
+        }
+      ],
+      "after": [
+        {
+          "path": "pages/R.md",
+          "text": "- [[B]]\n",
+          "format": "md"
+        }
+      ],
+      "old": "A",
+      "new": "B",
+      "merge": false,
+      "attended": false,
+      "filemerge": false
+    },
+    {
+      "name": "fileless_merge",
+      "before": [
+        {
+          "path": "pages/R.md",
+          "text": "- [[A]]\n",
+          "format": "md"
+        },
+        {
+          "path": "pages/B.md",
+          "text": "- target\n",
+          "format": "md"
+        }
+      ],
+      "after": [
+        {
+          "path": "pages/R.md",
+          "text": "- [[B]]\n",
+          "format": "md"
+        },
+        {
+          "path": "pages/B.md",
+          "text": "- target\n",
+          "format": "md"
+        }
+      ],
+      "old": "A",
+      "new": "B",
+      "merge": true,
+      "attended": true,
+      "filemerge": false
+    },
+    {
+      "name": "alias_only",
+      "before": [
+        {
+          "path": "pages/C.md",
+          "text": "alias:: A\n- owner\n",
+          "format": "md"
+        }
+      ],
+      "after": [
+        {
+          "path": "pages/C.md",
+          "text": "alias:: B\n- owner\n",
+          "format": "md"
+        }
+      ],
+      "old": "A",
+      "new": "B",
+      "merge": false,
+      "attended": false,
+      "filemerge": false
+    },
+    {
+      "name": "date_title",
+      "before": [
+        {
+          "path": "pages/A.md",
+          "text": "- source\n",
+          "format": "md"
+        },
+        {
+          "path": "pages/physical.md",
+          "text": "title:: 2026-11-02\n- target\n",
+          "format": "md"
+        }
+      ],
+      "after": [
+        {
+          "path": "pages/physical.md",
+          "text": "title:: 2026-11-02\n- target\n- source\n",
+          "format": "md"
+        }
+      ],
+      "old": "A",
+      "new": "2026-11-02",
+      "merge": true,
+      "attended": true,
+      "filemerge": false
+    },
+    {
+      "name": "child_title_nonconflicting",
+      "before": [
+        {
+          "path": "pages/Old.md",
+          "text": "- notes\n",
+          "format": "md"
+        },
+        {
+          "path": "pages/New.md",
+          "text": "- target\n",
+          "format": "md"
+        },
+        {
+          "path": "pages/child.md",
+          "text": "title:: Old/[[New]] [[X]]\n- child\n",
+          "format": "md"
+        }
+      ],
+      "after": [
+        {
+          "path": "pages/New.md",
+          "text": "- target\n- notes\n",
+          "format": "md"
+        },
+        {
+          "path": "pages/New%2F[[New]] [[X]].md",
+          "text": "title:: New/[[New]] [[X]]\n- child\n",
+          "format": "md"
+        }
+      ],
+      "old": "Old",
+      "new": "New",
+      "merge": true,
+      "attended": true,
+      "filemerge": false
+    },
+    {
+      "name": "child_title_case_only",
+      "before": [
+        {
+          "path": "pages/Old.md",
+          "text": "- notes\n",
+          "format": "md"
+        },
+        {
+          "path": "pages/childcase.md",
+          "text": "title:: Old/[[Old]]\n- child\n",
+          "format": "md"
+        }
+      ],
+      "after": [
+        {
+          "path": "pages/old.md",
+          "text": "- notes\n",
+          "format": "md"
+        },
+        {
+          "path": "pages/old%2F[[Old]].md",
+          "text": "title:: old/[[old]]\n- child\n",
+          "format": "md"
+        }
+      ],
+      "old": "Old",
+      "new": "old",
+      "merge": false,
+      "attended": true,
+      "filemerge": false
+    },
+    {
+      "name": "empty_alias",
+      "before": [
+        {
+          "path": "pages/A.md",
+          "text": "- source\n",
+          "format": "md"
+        },
+        {
+          "path": "pages/B.md",
+          "text": "alias::\n- target\n",
+          "format": "md"
+        }
+      ],
+      "after": [
+        {
+          "path": "pages/B.md",
+          "text": "alias::\n- target\n- source\n",
+          "format": "md"
+        }
+      ],
+      "old": "A",
+      "new": "B",
+      "merge": true,
+      "attended": true,
+      "filemerge": false
+    },
+    {
+      "name": "source_preamble",
+      "before": [
+        {
+          "path": "pages/A.md",
+          "text": "source prose\n\n- source\n",
+          "format": "md"
+        },
+        {
+          "path": "pages/B.md",
+          "text": "target prose\n\n- target\n",
+          "format": "md"
+        }
+      ],
+      "after": [
+        {
+          "path": "pages/B.md",
+          "text": "- target prose\n  \n  \n- target\n- source prose\n  \n  \n- source\n",
+          "format": "md"
+        }
+      ],
+      "old": "A",
+      "new": "B",
+      "merge": true,
+      "attended": true,
+      "filemerge": false
+    },
+    {
+      "name": "header_children_leftover",
+      "before": [
+        {
+          "path": "pages/A.md",
+          "text": "title:: A\n- alias:: X\n  - kid\n- source\n",
+          "format": "md"
+        },
+        {
+          "path": "pages/B.md",
+          "text": "- target\n",
+          "format": "md"
+        }
+      ],
+      "after": [
+        {
+          "path": "pages/B.md",
+          "text": "alias:: X\n- target\n- \n  title:: B\n  - kid\n- source\n",
+          "format": "md"
+        }
+      ],
+      "old": "A",
+      "new": "B",
+      "merge": true,
+      "attended": true,
+      "filemerge": false
+    },
+    {
+      "name": "child_title_no_holder",
+      "before": [
+        {
+          "path": "pages/Old.md",
+          "text": "- notes\n",
+          "format": "md"
+        },
+        {
+          "path": "pages/child.md",
+          "text": "title:: Old/[[New]] [[X]]\n- child\n",
+          "format": "md"
+        }
+      ],
+      "after": [
+        {
+          "path": "pages/New.md",
+          "text": "- notes\n",
+          "format": "md"
+        },
+        {
+          "path": "pages/New%2F[[New]] [[X]].md",
+          "text": "title:: New/[[New]] [[X]]\n- child\n",
+          "format": "md"
+        }
+      ],
+      "old": "Old",
+      "new": "New",
+      "merge": false,
+      "attended": true,
+      "filemerge": false
+    },
+    {
+      "name": "coincident",
+      "before": [
+        {
+          "path": "pages/A.md",
+          "text": "- notes\n",
+          "format": "md"
+        },
+        {
+          "path": "pages/T.md",
+          "text": "title:: [[X]]\n- notes\n",
+          "format": "md"
+        }
+      ],
+      "after": [
+        {
+          "path": "pages/B.md",
+          "text": "- notes\n",
+          "format": "md"
+        },
+        {
+          "path": "pages/T.md",
+          "text": "title:: [[X]]\n- notes\n",
+          "format": "md"
+        }
+      ],
+      "old": "A",
+      "new": "B",
+      "merge": false,
+      "attended": true,
+      "filemerge": false
+    },
+    {
+      "name": "reference_destination",
+      "before": [
+        {
+          "path": "pages/A.md",
+          "text": "- notes\n",
+          "format": "md"
+        },
+        {
+          "path": "pages/R.md",
+          "text": "- [[B]]\n",
+          "format": "md"
+        }
+      ],
+      "after": [
+        {
+          "path": "pages/B.md",
+          "text": "- notes\n",
+          "format": "md"
+        },
+        {
+          "path": "pages/R.md",
+          "text": "- [[B]]\n",
+          "format": "md"
+        }
+      ],
+      "old": "A",
+      "new": "B",
+      "merge": false,
+      "attended": true,
+      "filemerge": false
+    },
+    {
+      "name": "day_under_source",
+      "before": [
+        {
+          "path": "pages/2026.md",
+          "text": "- notes\n",
+          "format": "md"
+        },
+        {
+          "path": "pages/dayphysical.md",
+          "text": "title:: 2026/10/26\n- day\n",
+          "format": "md"
+        },
+        {
+          "path": "pages/R.md",
+          "text": "- [[2026/10/26]] [[2026/x]]\n",
+          "format": "md"
+        }
+      ],
+      "after": [
+        {
+          "path": "pages/B.md",
+          "text": "- notes\n",
+          "format": "md"
+        },
+        {
+          "path": "pages/dayphysical.md",
+          "text": "title:: 2026/10/26\n- day\n",
+          "format": "md"
+        },
+        {
+          "path": "pages/R.md",
+          "text": "- [[2026/10/26]] [[B/x]]\n",
+          "format": "md"
+        }
+      ],
+      "old": "2026",
+      "new": "B",
+      "merge": false,
+      "attended": true,
+      "filemerge": false
+    },
+    {
+      "name": "joined_before_survivor",
+      "before": [
+        {
+          "path": "pages/A.md",
+          "text": "join:: value\n- s\n",
+          "format": "md"
+        },
+        {
+          "path": "pages/B.md",
+          "text": "clash:: target\n- t\n",
+          "format": "md"
+        }
+      ],
+      "after": [
+        {
+          "path": "pages/B.md",
+          "text": "join:: value\nclash:: target\n- t\n- s\n",
+          "format": "md"
+        }
+      ],
+      "old": "A",
+      "new": "B",
+      "merge": true,
+      "attended": true,
+      "filemerge": false
+    },
+    {
+      "name": "blank_header",
+      "before": [
+        {
+          "path": "pages/A.md",
+          "text": "\n- source\n",
+          "format": "md"
+        },
+        {
+          "path": "pages/B.md",
+          "text": "- target\n",
+          "format": "md"
+        }
+      ],
+      "after": [
+        {
+          "path": "pages/B.md",
+          "text": "- target\n- source\n",
+          "format": "md"
+        }
+      ],
+      "old": "A",
+      "new": "B",
+      "merge": true,
+      "attended": true,
+      "filemerge": false
+    },
+    {
+      "name": "bare_bullet_header",
+      "before": [
+        {
+          "path": "pages/A.md",
+          "text": "- \n- source\n",
+          "format": "md"
+        },
+        {
+          "path": "pages/B.md",
+          "text": "- target\n",
+          "format": "md"
+        }
+      ],
+      "after": [
+        {
+          "path": "pages/B.md",
+          "text": "- target\n- source\n",
+          "format": "md"
+        }
+      ],
+      "old": "A",
+      "new": "B",
+      "merge": true,
+      "attended": true,
+      "filemerge": false
+    },
+    {
+      "name": "org_tag_spellable",
+      "before": [
+        {
+          "path": "pages/Old.md",
+          "text": "- notes\n",
+          "format": "md"
+        },
+        {
+          "path": "pages/Org.org",
+          "text": "* h :Old:\n",
+          "format": "org"
+        }
+      ],
+      "after": [
+        {
+          "path": "pages/New.md",
+          "text": "- notes\n",
+          "format": "md"
+        },
+        {
+          "path": "pages/Org.org",
+          "text": "* h :New:\n",
+          "format": "org"
+        }
+      ],
+      "old": "Old",
+      "new": "New",
+      "merge": false,
+      "attended": true,
+      "filemerge": false
+    },
+    {
+      "name": "header_permutation",
+      "before": [
+        {
+          "path": "pages/A.md",
+          "text": "j:: J\nk:: K\n- source\n",
+          "format": "md"
+        },
+        {
+          "path": "pages/B.md",
+          "text": "x:: X\ny:: Y\n- target\n",
+          "format": "md"
+        }
+      ],
+      "after": [
+        {
+          "path": "pages/B.md",
+          "text": "k:: K\nx:: X\nj:: J\ny:: Y\n- target\n- source\n",
+          "format": "md"
+        }
+      ],
+      "old": "A",
+      "new": "B",
+      "merge": true,
+      "attended": true,
+      "filemerge": false
+    },
+    {
+      "name": "leftover_reference_md",
+      "before": [
+        {
+          "path": "pages/A.md",
+          "text": "key:: [[X]]\n- source\n",
+          "format": "md"
+        },
+        {
+          "path": "pages/B.md",
+          "text": "key:: target\n- target\n",
+          "format": "md"
+        }
+      ],
+      "after": [
+        {
+          "path": "pages/B.md",
+          "text": "key:: target\n- target\n- \n  key:: [[X]]\n- source\n",
+          "format": "md"
+        }
+      ],
+      "old": "A",
+      "new": "B",
+      "merge": true,
+      "attended": true,
+      "filemerge": false
+    },
+    {
+      "name": "builtin_distinct_join",
+      "before": [
+        {
+          "path": "pages/A.md",
+          "text": "icon:: star\npublic:: true\n- source\n",
+          "format": "md"
+        },
+        {
+          "path": "pages/B.md",
+          "text": "- target\n",
+          "format": "md"
+        }
+      ],
+      "after": [
+        {
+          "path": "pages/B.md",
+          "text": "icon:: star\npublic:: true\n- target\n- source\n",
+          "format": "md"
+        }
+      ],
+      "old": "A",
+      "new": "B",
+      "merge": true,
+      "attended": true,
+      "filemerge": false
+    },
+    {
+      "name": "builtin_same_leftover",
+      "before": [
+        {
+          "path": "pages/A.md",
+          "text": "icon:: star\n- source\n",
+          "format": "md"
+        },
+        {
+          "path": "pages/B.md",
+          "text": "icon:: moon\n- target\n",
+          "format": "md"
+        }
+      ],
+      "after": [
+        {
+          "path": "pages/B.md",
+          "text": "icon:: moon\n- target\n- \n  icon:: star\n- source\n",
+          "format": "md"
+        }
+      ],
+      "old": "A",
+      "new": "B",
+      "merge": true,
+      "attended": true,
+      "filemerge": false
+    },
+    {
+      "name": "builtin_different_survivor",
+      "before": [
+        {
+          "path": "pages/A.md",
+          "text": "icon:: star\n- source\n",
+          "format": "md"
+        },
+        {
+          "path": "pages/B.md",
+          "text": "public:: true\n- target\n",
+          "format": "md"
+        }
+      ],
+      "after": [
+        {
+          "path": "pages/B.md",
+          "text": "public:: true\nicon:: star\n- target\n- source\n",
+          "format": "md"
+        }
+      ],
+      "old": "A",
+      "new": "B",
+      "merge": true,
+      "attended": true,
+      "filemerge": false
+    },
+    {
+      "name": "renamed_key_clash",
+      "before": [
+        {
+          "path": "pages/Old.md",
+          "text": "Old:: source\n- source\n",
+          "format": "md"
+        },
+        {
+          "path": "pages/Two Words.md",
+          "text": "two-words:: target\n- target\n",
+          "format": "md"
+        }
+      ],
+      "after": [
+        {
+          "path": "pages/Two Words.md",
+          "text": "two-words:: target\n- target\n- \n  two-words:: source\n- source\n",
+          "format": "md"
+        }
+      ],
+      "old": "Old",
+      "new": "Two Words",
+      "merge": true,
+      "attended": true,
+      "filemerge": false
+    }
+  ],
+  "negative": [
+    [
+      "alias_held",
+      [
+        {
+          "path": "pages/A.md",
+          "text": "- notes\n",
+          "format": "md"
+        },
+        {
+          "path": "pages/C.md",
+          "text": "alias:: X\n- owner\n",
+          "format": "md"
+        }
+      ],
+      "A",
+      "X",
+      ".aliasHeld \"pages/C.md\"",
+      null
+    ],
+    [
+      "unchanged_alias_contested",
+      [
+        {
+          "path": "pages/A.md",
+          "text": "alias:: X\n- source\n",
+          "format": "md"
+        },
+        {
+          "path": "pages/P.md",
+          "text": "title:: X\n- p\n",
+          "format": "md"
+        },
+        {
+          "path": "pages/Q.md",
+          "text": "title:: X\n- q\n",
+          "format": "md"
+        }
+      ],
+      "A",
+      "B",
+      ".contested",
+      null
+    ],
+    [
+      "unchanged_child_contested",
+      [
+        {
+          "path": "pages/A.md",
+          "text": "- notes\n",
+          "format": "md"
+        },
+        {
+          "path": "pages/P.md",
+          "text": "title:: A/x\n- p\n",
+          "format": "md"
+        },
+        {
+          "path": "pages/Q.md",
+          "text": "title:: A/x\n- q\n",
+          "format": "md"
+        }
+      ],
+      "A",
+      "A",
+      ".contested",
+      null
+    ],
+    [
+      "folded_occupant",
+      [
+        {
+          "path": "pages/A.md",
+          "text": "- notes\n",
+          "format": "md"
+        },
+        {
+          "path": "pages/b.md",
+          "text": "title:: C\n- occupied\n",
+          "format": "md"
+        }
+      ],
+      "A",
+      "B",
+      ".pathTaken",
+      null
+    ],
+    [
+      "header_children_no_leftover",
+      [
+        {
+          "path": "pages/A.md",
+          "text": "- alias:: X\n  - kid\n- source\n",
+          "format": "md"
+        },
+        {
+          "path": "pages/B.md",
+          "text": "- target\n",
+          "format": "md"
+        }
+      ],
+      "A",
+      "B",
+      ".headerChildren",
+      "some .confirm"
+    ],
+    [
+      "child_title_conflict",
+      [
+        {
+          "path": "pages/Old.md",
+          "text": "- notes\n",
+          "format": "md"
+        },
+        {
+          "path": "pages/badchild.md",
+          "text": "title:: Old/[[Old]]\n- child\n",
+          "format": "md"
+        }
+      ],
+      "Old",
+      "New",
+      ".titleIdentity",
+      [
+        {
+          "path": "pages/New.md",
+          "text": "- notes\n",
+          "format": "md"
+        },
+        {
+          "path": "pages/New%2F[[Old]].md",
+          "text": "title:: New/[[New]]\n- child\n",
+          "format": "md"
+        }
+      ]
+    ],
+    [
+      "reference_child_capture",
+      [
+        {
+          "path": "pages/A.md",
+          "text": "- notes\n",
+          "format": "md"
+        },
+        {
+          "path": "pages/R.md",
+          "text": "- [[A/x]]\n",
+          "format": "md"
+        },
+        {
+          "path": "pages/B%2Fx.md",
+          "text": "- bx\n",
+          "format": "md"
+        }
+      ],
+      "A",
+      "B",
+      ".capture",
+      null
+    ],
+    [
+      "alias_child_capture",
+      [
+        {
+          "path": "pages/A.md",
+          "text": "- notes\n",
+          "format": "md"
+        },
+        {
+          "path": "pages/C.md",
+          "text": "alias:: A/sub\n- owner\n",
+          "format": "md"
+        },
+        {
+          "path": "pages/B%2Fsub.md",
+          "text": "- bs\n",
+          "format": "md"
+        }
+      ],
+      "A",
+      "B",
+      ".capture",
+      null
+    ],
+    [
+      "claimed_own_child",
+      [
+        {
+          "path": "pages/A.md",
+          "text": "- notes\n",
+          "format": "md"
+        },
+        {
+          "path": "pages/A%2Fsub.md",
+          "text": "- child\n",
+          "format": "md"
+        }
+      ],
+      "A",
+      "A/sub",
+      ".ownChild",
+      null
+    ],
+    [
+      "conflicted_merge_source",
+      [
+        {
+          "path": "pages/A.md",
+          "text": "<<<<<<< a\n=======\n>>>>>>> b\n- source\n",
+          "format": "md"
+        },
+        {
+          "path": "pages/B.md",
+          "text": "- target\n",
+          "format": "md"
+        }
+      ],
+      "A",
+      "B",
+      ".conflictPair",
+      "some .confirm"
+    ],
+    [
+      "conflicted_merge_target",
+      [
+        {
+          "path": "pages/A.md",
+          "text": "- source\n",
+          "format": "md"
+        },
+        {
+          "path": "pages/B.md",
+          "text": "<<<<<<< a\n=======\n>>>>>>> b\n- target\n",
+          "format": "md"
+        }
+      ],
+      "A",
+      "B",
+      ".conflictPair",
+      "some .confirm"
+    ],
+    [
+      "split_alias",
+      [
+        {
+          "path": "pages/A.md",
+          "text": "alias:: X\n- source\n",
+          "format": "md"
+        },
+        {
+          "path": "pages/B.md",
+          "text": "alias:: Y\n- target\n",
+          "format": "md"
+        }
+      ],
+      "A",
+      "B",
+      ".observationsP2",
+      [
+        {
+          "path": "pages/B.md",
+          "text": "alias:: Y\nalias:: X\n- target\n- source\n",
+          "format": "md"
+        }
+      ]
+    ],
+    [
+      "own_alias_child_capture",
+      [
+        {
+          "path": "pages/A.md",
+          "text": "alias:: B/sub\n- source\n",
+          "format": "md"
+        },
+        {
+          "path": "pages/A%2Fsub.md",
+          "text": "- child\n",
+          "format": "md"
+        }
+      ],
+      "A",
+      "B",
+      ".capture",
+      null
+    ],
+    [
+      "org_leftover_reference",
+      [
+        {
+          "path": "pages/A.org",
+          "text": "#+key: [[X]]\n* source\n",
+          "format": "org"
+        },
+        {
+          "path": "pages/B.org",
+          "text": "#+key: target\n* target\n",
+          "format": "org"
+        }
+      ],
+      "A",
+      "B",
+      ".leftoverReference",
+      "some .confirm"
+    ],
+    [
+      "header_missing_entry",
+      [
+        {
+          "path": "pages/A.md",
+          "text": "j:: J\nk:: K\n- source\n",
+          "format": "md"
+        },
+        {
+          "path": "pages/B.md",
+          "text": "x:: X\ny:: Y\n- target\n",
+          "format": "md"
+        }
+      ],
+      "A",
+      "B",
+      ".observationsP2",
+      [
+        {
+          "path": "pages/B.md",
+          "text": "k:: K\nx:: X\ny:: Y\n- target\n- source\n",
+          "format": "md"
+        }
+      ]
+    ],
+    [
+      "leftover_changed_text",
+      [
+        {
+          "path": "pages/A.org",
+          "text": "#+key: [[X]]\n* source\n",
+          "format": "org"
+        },
+        {
+          "path": "pages/B.org",
+          "text": "#+key: target\n* target\n",
+          "format": "org"
+        }
+      ],
+      "A",
+      "B",
+      ".leftoverReference",
+      [
+        {
+          "path": "pages/B.org",
+          "text": "#+key: target\n* target\n* \n#+BEGIN_QUOTE\n#+key: X\n#+END_QUOTE\n* source\n",
+          "format": "org"
+        }
+      ]
+    ],
+    [
+      "leftover_changed_text_md",
+      [
+        {
+          "path": "pages/A.md",
+          "text": "key:: [[X]]\n- source\n",
+          "format": "md"
+        },
+        {
+          "path": "pages/B.md",
+          "text": "key:: target\n- target\n",
+          "format": "md"
+        }
+      ],
+      "A",
+      "B",
+      ".observationsP2",
+      [
+        {
+          "path": "pages/B.md",
+          "text": "key:: target\n- target\n- \n  key:: X\n- source\n",
+          "format": "md"
+        }
+      ]
+    ]
+  ],
+  "negative_answers": {
+    "split_alias": "some .confirm",
+    "header_missing_entry": "some .confirm",
+    "leftover_changed_text": "some .confirm",
+    "leftover_changed_text_md": "some .confirm"
+  },
+  "native_records": 181,
+  "file_merge_outside_model": true
+}

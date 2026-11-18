@@ -185,16 +185,6 @@
     "a/b": "a/b",
     "https://a.b/c": "https://a.b/c"
   },
-  "namespaceNodes": [
-    [
-      "page",
-      "a/b"
-    ],
-    [
-      "page",
-      "a"
-    ]
-  ],
   "namespaceTree": [
     {
       "children": [],
@@ -335,7 +325,10 @@
       "linkedRefs": 1,
       "name": "a/b",
       "owner": null,
-      "parent": "a"
+      "parent": [
+        "page",
+        "a"
+      ]
     },
     {
       "key": "https://a.b/c",
@@ -386,17 +379,6 @@
       "model": [
         "page",
         "notes"
-      ]
-    },
-    "a": {
-      "backend": [
-        "page",
-        "a"
-      ],
-      "day": null,
-      "model": [
-        "page",
-        "a"
       ]
     },
     "a/b": {
@@ -471,37 +453,11 @@
       ]
     }
   ],
-  "treeNodes": [
-    [
-      "page",
-      "notes"
-    ],
-    [
-      "page",
-      "./x"
-    ],
-    [
-      "page",
-      "../x/y"
-    ],
-    [
-      "page",
-      "https://a.b/c"
-    ],
-    [
-      "page",
-      "a/b"
-    ],
-    [
-      "page",
-      "a"
-    ]
-  ],
   "treeParent": [
     {
       "page": [
         "page",
-        "notes"
+        "../x/y"
       ],
       "parent": null
     },
@@ -515,14 +471,7 @@
     {
       "page": [
         "page",
-        "../x/y"
-      ],
-      "parent": null
-    },
-    {
-      "page": [
-        "page",
-        "https://a.b/c"
+        "a"
       ],
       "parent": null
     },
@@ -539,7 +488,14 @@
     {
       "page": [
         "page",
-        "a"
+        "https://a.b/c"
+      ],
+      "parent": null
+    },
+    {
+      "page": [
+        "page",
+        "notes"
       ],
       "parent": null
     }

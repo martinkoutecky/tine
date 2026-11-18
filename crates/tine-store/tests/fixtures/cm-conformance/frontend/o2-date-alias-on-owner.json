@@ -79,10 +79,9 @@
   "keyOf": {
     "A": "a",
     "Notes": "notes",
-    "Oct 26th, 2026": "oct 26th, 2026",
+    "Oct 26th, 2026": "Day 2026-10-26",
     "a": "a"
   },
-  "namespaceNodes": [],
   "namespaceTree": [],
   "open": {
     "2026-10-26": {
@@ -233,16 +232,6 @@
         "notes"
       ]
     }
-  ],
-  "treeNodes": [
-    [
-      "page",
-      "a"
-    ],
-    [
-      "page",
-      "notes"
-    ]
   ],
   "treeParent": [
     {

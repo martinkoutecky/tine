@@ -93,6 +93,8 @@ const PREVIEW_MAX_BYTES: usize = RESULT_BRIDGE_MAX_BYTES - 4 * 1024;
 /// [`Self::open`]. `Store` is `Send + Sync`; callers can share it through `Arc`.
 pub struct Store {
     #[cfg(test)]
+    pub(crate) host_publication_pause: Mutex<Option<TestPause>>,
+    #[cfg(test)]
     pub(crate) marker_copy_pause: Mutex<Option<TestPause>>,
     /// Tests: a held page's read waits this long for its owner instead of
     /// `OPERATION_WAIT` (A-H1).
@@ -904,6 +906,7 @@ impl Store {
         let writer = Arc::new(Mutex::new(()));
         let load = Arc::new(LoadState::new(LoadStatus::Ready));
         let journal_ids = Arc::new(Mutex::new(journal_ids_from_entries(
+            &graph.current_config().journals_dir,
             graph.list_pages_shared().as_ref(),
         )));
         let config_state = Arc::new(RwLock::new(ConfigState::of(
@@ -938,6 +941,8 @@ impl Store {
             watch,
             faults: Mutex::new(std::collections::HashSet::new()),
             marker_copy_pause: Mutex::new(None),
+            #[cfg(test)]
+            host_publication_pause: Mutex::new(None),
             held_read_wait: Mutex::new(None),
         }
     }
@@ -1150,7 +1155,7 @@ impl Store {
                 })?;
         graph.install_live_config();
         let journals = graph.scan_journal_names();
-        let journal_ids = journal_ids_from_entries(&journals);
+        let journal_ids = journal_ids_from_entries(&graph.current_config().journals_dir, &journals);
         let problem = graph.config_read_problem.clone();
         let graph = Arc::new(graph);
         let config = ConfigState::of(&graph, Arc::new(graph.config.clone()), problem);
@@ -1293,6 +1298,8 @@ impl Store {
                 faults: Mutex::new(std::collections::HashSet::new()),
                 #[cfg(test)]
                 marker_copy_pause: Mutex::new(None),
+                #[cfg(test)]
+                host_publication_pause: Mutex::new(None),
                 #[cfg(test)]
                 held_read_wait: Mutex::new(None),
             },
@@ -1462,8 +1469,8 @@ impl Store {
     /// load returns an error but leaves the last published `WholeGraph` view
     /// available.
     ///
-    /// Returns the change-feed revision through which this refresh's changes
-    /// are published: a subscriber that has received it has received them all.
+    /// Waits for forwarded owner observations after releasing the writer; I/O
+    /// errors or the held-read deadline fail. Returns their published revision.
     pub fn refresh(&self, depth: Depth) -> Result<GraphRev, LoadError> {
         match depth {
             Depth::Stamps => {
@@ -1504,22 +1511,23 @@ impl Store {
     /// may return `NotFound`. Invalid `Day` is not rejected and may yield nonsense.
     /// Use guarded `CreateNew` saves; handle conflicts, twins, I/O and target-safety
     /// refusals, including unreadable destination directories.
-    /// `active_only` selects the day's opening claimant across kinds, including
-    /// an ordinary owner. False retains the physical journal identity for guarded
-    /// mutations and exact-file inspection. Active lookup uses the published
+    /// `active_only` selects the day's opening claimant in any directory (a
+    /// date-named pages file is the day, D-20261111-CMR14 CM-DAYFILE). False
+    /// retains the day index for guarded mutations and exact-file inspection.
+    /// Active lookup uses the published
     /// names, or the live preamble index before a view exists (one O(P) discovery
     /// per invalidation, then indexed lookups); it never reads journal bodies.
     pub fn journal_id(&self, day: Day, active_only: bool) -> PageId {
         let date = JournalDate::from_ordinal(day.0);
         if active_only {
             let title = self.graph.current_journal_format().title(date);
-            // Use the same comparator as every name opening, over both physical
-            // claim buckets. The lookup also works before Ready and after a
-            // contained load failure, without waiting or reading journal bodies.
-            if let Some(entry) = [PageKind::Page, PageKind::Journal]
-                .into_iter()
-                .filter_map(|kind| self.move_claimant(&title, kind))
-                .min_by(crate::model::compare_page_claimants)
+            // The day's claimants in any directory, in the one claimant order
+            // (CM SPEC §§2.1–2.2); a year-less title shares its bucket with
+            // other days, which do not hold this one. The lookup also works
+            // before Ready and after a contained load failure, without
+            // waiting or reading journal bodies.
+            if let Some(entry) =
+                (self.day_claimants(&title).into_iter()).find(|entry| entry.date_key == Some(day.0))
             {
                 return PageId::from(self.graph.rel_path(&entry.path));
             }
@@ -1531,6 +1539,20 @@ impl Store {
             &self.graph.current_config(),
             self.graph.current_journal_format().file_stem(date),
         )
+    }
+    /// Every day the day index holds a file for, in any directory (a
+    /// date-named pages file is its day, CM SPEC §2.1), unordered. The index
+    /// [`Self::journal_id`] reads with `active_only = false`. O(D) for D
+    /// indexed days (one copy of the keys), no I/O.
+    ///
+    /// The journals feed's first page needs it because that page is served
+    /// before the first view exists and without waiting for it
+    /// (`feed_page_through` with references off): the journals-directory
+    /// listing it walks cannot see a day a pages file holds, and
+    /// `InventoryScope::JournalFilesBefore` / the indexed feed window answer
+    /// only from a view (`WholeGraph`). Later scroll steps use that window.
+    pub fn journal_days(&self) -> Vec<Day> {
+        self.journal_ids.lock().unwrap().keys().copied().collect()
     }
     /// Count entries and bytes by kind in graph trash. `scan_area(Area::Trash)`
     /// can list files and `move_file` can move one to a live area with a guard,
@@ -2774,7 +2796,6 @@ pub struct WholeGraph {
     claimants: Arc<SharedMap<(bool, String), Vec<PageEntry>>>,
 }
 
-mod journal_rename;
 mod template_names;
 fn bounded(result: BoundedRefGroups, what: Budget) -> Result<Arc<Vec<RefGroup>>, QueryError> {
     if result.exceeded {
@@ -2851,8 +2872,8 @@ impl WholeGraph {
     /// excludes arguments of
     /// `{{query}}` or other macros, so a page that mentions a name only inside a
     /// query is not a referrer. The answer comes from this snapshot's parse, not
-    /// from disk. Cost ranges from O(P + matching references) to O(P + B) over the
-    /// parsed snapshot.
+    /// from disk. Cost: O(matching referrers · log P) from this snapshot's
+    /// explicit-reference postings; a name nobody references examines no page.
     pub fn explicit_referrers(&self, names: &[String]) -> Vec<PageId> {
         let keys: Vec<String> = names
             .iter()
@@ -2867,13 +2888,14 @@ impl WholeGraph {
     }
 
     /// Resolve a name in this captured view. The caller supplies whether the
-    /// name is a journal title. For a parseable date with no journal file,
-    /// an ordinary file of the requested name is a navigation fallback;
-    /// its storage identity stays ordinary. This intentionally differs from
-    /// OG 0.10.9 `convert-page-if-journal-impl`, which classifies by name.
-    /// Other wrong-kind lookups may propose a new file. Real files win over aliases.
-    /// Claimants prefer ordinary kind, then unsigned UTF-8 graph-relative
-    /// paths; the extension and matching filename have no separate rank.
+    /// name is a journal title; a name that parses as a date is that day
+    /// whatever the caller says (CM SPEC §2.1, D-20261110-CM CM-DATE), held
+    /// by its files in any directory, and a day with no file proposes one in
+    /// the journals directory (CM-DAYFILE). A non-date name the caller calls
+    /// a journal may propose a new journal file. Real files win over aliases.
+    /// Claimants rank the journals directory first, then unsigned UTF-8
+    /// graph-relative paths (SPEC §2.2); the extension and matching filename
+    /// have no separate rank.
     /// Ordinary page claims use a preamble `title::` or Org title
     /// directive when present, then the decoded filename. After a
     /// journal-format change, a new view uses the new title format for date
@@ -2891,34 +2913,15 @@ impl WholeGraph {
         } else {
             PageKind::Page
         };
+        // A date in any accepted spelling is that day, held by its files in
+        // any directory (CM SPEC §2.1, D-20261110-CM CM-DATE).
         let lookup = crate::model::claim_lookup(&self.journal_format, name, kind);
-        // KD: a real ordinary date spelling keeps its own identity before
-        // the typed journal fallback normalizes that spelling to a day title.
-        let literal = lookup
-            .page_fallback
-            .filter(|name| !self.name_claimants(name, PageKind::Page).is_empty());
-        let claim_name = literal.unwrap_or(&lookup.name);
-        let mut entries = self.name_claimants(
-            claim_name,
-            if literal.is_some() {
-                PageKind::Page
-            } else {
-                kind
-            },
-        );
-        if !entries.is_empty() {
-            entries = self.all_name_claimants(claim_name);
-        }
-        // A normalized journal fallback cannot inherit a masked journal's
-        // ordinary opening claimant: that file claims only its literal key.
-        if is_journal
-            && literal.is_none()
-            && tine_core::refs::page_key(name) != tine_core::refs::page_key(claim_name)
-            && entries
-                .first()
-                .is_some_and(|entry| entry.kind == PageKind::Page)
-        {
-            entries.clear();
+        let mut entries = self.name_claimants(&lookup.name, lookup.kind);
+        entries.retain(|entry| lookup.holds(entry));
+        if !entries.is_empty() && lookup.day.is_none() {
+            // A name that is no day is one identity across both kinds.
+            entries = self.all_name_claimants(&lookup.name);
+            entries.retain(|entry| lookup.holds(entry));
         }
         if !entries.is_empty() {
             let mut ids = entries
@@ -2943,7 +2946,9 @@ impl WholeGraph {
             }
         }
         let config = &self.config.config;
-        if is_journal {
+        // A day with no file gets a new one in the journals directory
+        // (D-20261111-CMR14 CM-DAYFILE).
+        if lookup.kind == PageKind::Journal {
             let stem = self
                 .journal_format
                 .parse(name)

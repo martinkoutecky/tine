@@ -86,7 +86,6 @@
     "Machine Learning": "machine learning",
     "notes": "notes"
   },
-  "namespaceNodes": [],
   "namespaceTree": [],
   "open": {
     "ML": {
@@ -202,16 +201,6 @@
         "notes"
       ]
     }
-  ],
-  "treeNodes": [
-    [
-      "page",
-      "machine learning"
-    ],
-    [
-      "page",
-      "notes"
-    ]
   ],
   "treeParent": [
     {

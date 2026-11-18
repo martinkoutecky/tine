@@ -155,7 +155,6 @@
     "keep": "keep",
     "other": "other"
   },
-  "namespaceNodes": [],
   "namespaceTree": [],
   "open": {
     "ML": {
@@ -337,32 +336,18 @@
       ]
     }
   ],
-  "treeNodes": [
-    [
-      "page",
-      "machine learning"
-    ],
-    [
-      "page",
-      "c"
-    ],
-    [
-      "page",
-      "other"
-    ]
-  ],
   "treeParent": [
     {
       "page": [
         "page",
-        "machine learning"
+        "c"
       ],
       "parent": null
     },
     {
       "page": [
         "page",
-        "c"
+        "machine learning"
       ],
       "parent": null
     },

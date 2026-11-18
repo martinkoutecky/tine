@@ -455,6 +455,12 @@ impl AliasRelation {
         self.owners.get(key)?.values().map(|(rel, _)| rel).min()
     }
 
+    /// The declared alias keys at least `from`, in key order: O(log A) to
+    /// start, A declared keys.
+    pub(crate) fn keys_from(&self, from: &str) -> impl Iterator<Item = &String> {
+        self.owners.iter_from(from).map(|(key, _)| key)
+    }
+
     /// Absolute paths of the pages declaring `key` (keys of the per-page
     /// indexes), in map order.
     pub(crate) fn owner_files(&self, key: &str) -> impl Iterator<Item = &PathBuf> {

@@ -153,6 +153,11 @@ use tine_outline::lsdoc_block_parse::parse_inline_bounded;
 #[path = "../../tine-core/src/reference_evidence/walk.rs"]
 mod walk;
 
+/// The name `page_header.rs` asks for the alias members, as in tine-core.
+mod reference_evidence {
+    pub(crate) use super::walk::header_alias_members;
+}
+
 /// Every page name one block's source references, in source order (may
 /// repeat): the reference evidence's own walk (`reference_evidence/walk.rs`)
 /// over the same block parse, under the default parse config. O(block bytes)
@@ -240,7 +245,8 @@ pub fn header_tokens_json(raw: &str, is_org: bool) -> String {
     serde_json::to_string(&block_regions::header_tokens(raw, is_org)).unwrap()
 }
 
-/// Markdown page header (leading accepted properties, see `block_regions::page_header`).
+/// Markdown page header (the parser's page properties, whether they are the
+/// whole text and its first stray line; see `block_regions::page_header`).
 /// O(preamble bytes); no I/O.
 #[wasm_bindgen]
 pub fn page_header_json(raw: &str) -> String {

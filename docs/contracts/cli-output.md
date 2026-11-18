@@ -596,11 +596,28 @@ An absent page cannot match `--rev` (`stale`). `--run` uses the existing commits
 ### `page.rename`
 
 `tine page rename OLD NEW` calls the app's rename operation, including references,
-namespaces, titles, the home page and favorites. A sole alias resolves to its canonical page.
-A reference-only source or fileless namespace parent uses the same operation:
+namespaces, titles, the home page and favorites. An alias typed as the source is renamed
+itself: its declarations and references are respelled and the page declaring it keeps its
+name and file. A reference-only source or fileless namespace parent uses the same operation:
 references and physical descendants move without creating a placeholder page.
-A destination owned by a file or alias refuses as `refused:page-exists`; merging
-requires confirmation in the app. A date whose day has a journal file is owned by that
+Renaming a page to an alias it declares itself is one step, and the declaration stays.
+A destination another file holds, or an alias another page declares, refuses as
+`refused:page-exists` (for an alias, the message names the page it opens); merging
+requires confirmation in the app. The same refusal covers every other name the rename
+touches (each name under the source, from a file, a reference or any page's alias, and
+the aliases the source declares): one that would become a name another page already
+holds (the message names both spellings and that page), or one several files claim (the
+message names the files). Every other refusal of the app's rename planner (a name no
+page or alias has, a journal day as the source, a name inside the source's own namespace, a
+moved file with conflict markers that would need a rewrite) refuses as
+`refused:rename-refused` with the planner's message. All of these come before any change
+(`detail.admitted: false`). The rename's check of every file it would write (the
+conceptual model's P2 and P3, R-RENAME-CHECK) also refuses as `refused:rename-refused`,
+before any change, naming the file as it is on disk: either Tine's next save of that
+file would rewrite its header, so the rename cannot write it as it is (the message says
+to open the file in the Tine app, save it once, then repeat the rename; no `tine` verb
+saves a page without changing it), or Tine's rewrite of it would not read back as the
+rename intends, which is a bug in Tine (the message asks for a bug report). A date whose day has a journal file is owned by that
 journal under every spelling the app accepts for the day (`2026_11_02`, `2026-11-02`,
 `Nov 2nd, 2026`), so it refuses the same way and writes nothing. A date no file claims is
 an ordinary page under `pages/` with exactly that name: `[[NAME]]` then opens it, and the
@@ -627,13 +644,19 @@ unchanged without failing the rename: `report.config_skipped` says why.
 | `old` | string | always | no | canonical file title, or trimmed source name for a fileless source |
 | `name` | string | always | no | requested destination title, trimmed |
 | `report` | `tine_graph_features::pages::RenameReport` | always | no | app operation report |
-| `report.outcome` | string | always | no | `renamed` or `unchanged` |
+| `report.outcome` | string | always | no | `renamed` for every admitted rename, also one that changes no page bytes (every referrer left unspellable, already reading the new name, or conflicted); its config.edn step runs either way. `unchanged` only when the request names the page's own spelling: nothing is written |
 | `report.touched` | array | always | no | old paths and whether they moved |
 | `report.renamed` | array | always | no | every page identity the rename moved: the renamed page (one with no file too), each file-backed namespace descendant, and each reference-only namespace member named by an applied rewrite (links, tags, macro/query arguments and Org file links, including namespace parents; `path` is `null`). Skipped conflicted files contribute no reference-only members. Once per page, in no promised order. The app's window moves its tabs (closed ones too), Recent and sidebar by exactly this list. Empty for `unchanged` |
 | `report.renamed[].from` | string | always | no | the page's name before the rename |
 | `report.renamed[].to` | string | always | no | the name the rename gave it (its file name or title, and the references that followed) |
 | `report.renamed[].path` | string | nullable | no | graph-relative path of its file before the rename; `null` for a renamed page with no file and for a reference-only member |
 | `report.skipped_conflicted_referrers` | array of string | always | yes | referrers carrying VCS markers left unchanged; text prints each path |
+| `report.site_exceptions` | array | always | yes | every name site the rename left unchanged because it cannot spell the new name there, and every property key it wrote in key spelling (lower-cased, whitespace hyphenated) that differs from the new name; sorted by `path`, then `start`; empty when there are none; text prints one line per site |
+| `report.site_exceptions[].path` | string | always | no | graph-relative path of the file before the rename |
+| `report.site_exceptions[].start` | integer | always | no | byte offset where the site starts in that file before the rename |
+| `report.site_exceptions[].end` | integer | always | no | byte offset where the site ends (exclusive) |
+| `report.site_exceptions[].kind` | string | always | no | `link`, `tag`, `embed`, `propertyKey`, `propertyValue`, `query` or `macroArg` |
+| `report.site_exceptions[].disposition` | string | always | no | `unspellable` (left as it was) or `normalizedKey` (the key was rewritten in key spelling) |
 | `report.home_page` | string | nullable | no | new home-page title when changed |
 | `report.favorites` | object | optional | no | config.edn's favorites after the rename, present only when they changed: `names` (`:favorites`, in order) and `page` (`:tine/favorites-page`, nullable). A merged-away page's favorite moves to the survivor (deduplicated); an alias spelling stays |
 | `report.config_skipped` | string | optional | yes | why the config step left config.edn unchanged (unreadable, or a value it cannot edit safely); home and favorites may still name the old page; text prints the reason |
@@ -852,6 +875,7 @@ whose reply is lost reports `uncertain` (exit 8) and is never resent automatical
 | `cross-page` | `move` between two pages (not supported yet) |
 | `broken-ref` | `add` content names a `((uuid))` no block has (`detail.uuid`) |
 | `page-exists` | page creation or rename would replace an existing file or alias |
+| `rename-refused` | `page rename` refused by the app's rename planner for another reason, or by the rename's check of a file it would write (message says why and names the file); nothing changed |
 | `confirmation` | `page delete`, or `delete` of a block whose removal would break incoming references, needs `--yes` or `--force` |
 | `rename-options` | graph-wide `page rename` cannot use the single-file `--rev` guard or run commits |
 | `revision-required` | `block.edit` supplies a parser-owned LOGBOOK drawer without the read's `--rev`; reread and pass that revision |

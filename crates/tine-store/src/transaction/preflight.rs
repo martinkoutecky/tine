@@ -78,16 +78,51 @@ impl<'a> PagePlan<'a> {
             // sync delivery or an import wrote bytes lsdoc cannot take) refuses
             // this transaction and leaves the file untouched; unwound, it would
             // poison the writer lock and fail every later save and read of the
-            // graph until restart (og-gh644 F3).
+            // graph until restart (og-gh644 F3). The model's check of a
+            // rename's or merge's step runs here, per step, on its final bytes
+            // (the parse it makes is under the same isolation).
             let next = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-                self.preflight(step, &allocated, &mut titles)
+                let mut observed = None;
+                #[allow(unused_mut)]
+                let mut next = self.preflight(step, &allocated, &mut titles, &mut observed)?;
+                #[cfg(any(test, feature = "test-faults"))]
+                model_check::writer_bug(step, &mut next);
+                if let Step::Rewrite {
+                    check: Some(check), ..
+                }
+                | Step::Move {
+                    check: Some(check), ..
+                } = step
+                {
+                    let run = || model_check::check(check, &next, observed);
+                    #[cfg(feature = "test-faults")]
+                    let run = || crate::cost_counters::model_check(run);
+                    run()?;
+                }
+                Ok(next)
             }))
             .unwrap_or_else(|_| {
                 Err(Why::Refused(Refusal::ReadOnly(
                     "page could not be parsed; Tine will not rewrite it".into(),
                 )))
             })
-            .map_err(|why| (index, why))?;
+            .map_err(|why| {
+                let why = match why {
+                    Why::Refused(Refusal::TextRealization(reason)) => {
+                        let file = match step {
+                            Step::Rewrite { id, .. } => Some(id.file()),
+                            Step::Move { file, .. } => Some(file.clone()),
+                            _ => None,
+                        };
+                        Why::Refused(match file {
+                            Some(file) => Refusal::FileTextRealization { reason, file },
+                            None => Refusal::TextRealization(reason),
+                        })
+                    }
+                    why => why,
+                };
+                (index, why)
+            })?;
             // File IDs and configured directories are dynamic. The public
             // commit builder may inspect pages, but may never mutate one.
             if self.non_page && !matches!(step, Step::Expect { .. }) {
@@ -122,6 +157,7 @@ impl<'a> PagePlan<'a> {
         step: &Step,
         allocated: &HashSet<FileId>,
         titles: &mut validation::TitleIndexes,
+        observed: &mut Option<Arc<tine_core::cm_check::Content>>,
     ) -> Result<Prepared, Why> {
         let unsupported_config_step = match step {
             Step::Trash { file, .. } => file.as_str() == "logseq/config.edn",
@@ -304,35 +340,62 @@ impl<'a> PagePlan<'a> {
                 renames,
                 rebind_title,
                 prepared,
+                check,
             } => {
                 let file = id.file();
                 if !self.page(&file) {
                     return Err(Why::Refused(Refusal::InvalidTarget(file.as_str().into())));
                 }
+                let carried = check.as_ref().and_then(|check| check.observed.clone());
                 let old = self.stage(&file, expected)?;
                 let path = self.path(&file)?;
-                let name_format = self.store.config().file_name_format;
+                let config = self.store.config();
+                let name_format = config.file_name_format;
+                let days = config.config.journal_format();
+                let format = tine_core::refs::RenameFormat {
+                    names: name_format,
+                    days: Some(&days),
+                };
                 let reused = prepared
                     .as_ref()
                     .map(|prepared| prepared.reuse(&file, &old, name_format))
                     .transpose()?
                     .flatten();
                 let new = if *rebind_title {
-                    rewrite_move(&old, &path, renames, titles, name_format, None)?
+                    let (new, read) = rewrite_move(&old, &path, renames, titles, format, None)?;
+                    *observed = read;
+                    new
                 } else if let Some(new) = reused.map(String::into_bytes) {
                     let is_org = Format::from_path(&path) == Format::Org;
                     refuse_read_only_org(&old, &new, is_org)?;
+                    *observed = carried;
                     new
                 } else {
-                    rewrite(&old, &path, renames, name_format)?
+                    let (new, read) = rewrite(&old, &path, renames, format)?;
+                    *observed = read;
+                    new
                 };
+                // Reject an unreadable replacement before further native
+                // validation walks; its byte bound is already known.
+                validation::page_bytes(&file, &new)?;
+                if file
+                    .as_str()
+                    .starts_with(&format!("{}/", self.store.config().pages_dir))
+                    && !prepared.as_ref().is_some_and(|p| p.is_merge())
+                {
+                    validation::title_identity(
+                        &old,
+                        &new,
+                        Format::from_path(&path),
+                        renames,
+                        titles,
+                        &days,
+                    )?;
+                }
                 refuse_marker_rewrite(&old, &new, Format::from_path(&path))?;
                 if prepared.as_ref().is_some_and(|p| p.is_merge()) {
                     refuse_marker_rewrite(&new, &old, Format::from_path(&path))?;
                 }
-                // A rewrite (a merge survivor, a referrer, a retitled page) can
-                // grow: publish only bytes the store will open again, as a save does.
-                validation::page_bytes(&file, &new)?;
                 Ok(Prepared {
                     src: file,
                     dst: None,
@@ -348,6 +411,7 @@ impl<'a> PagePlan<'a> {
                 to,
                 renames,
                 prepared,
+                check,
             } => {
                 if to.as_str().starts_with("logseq/.tine-") {
                     return Err(Why::Refused(Refusal::InvalidTarget(to.as_str().into())));
@@ -364,10 +428,16 @@ impl<'a> PagePlan<'a> {
                 };
                 let absent = self.available_move_destination(file, to)?;
                 self.twin_with_absence(to, Some(file), absent)?;
+                let config = self.store.config();
+                let days = config.config.journal_format();
                 let new = match (&old, renames) {
                     (Some(old), Some(map)) => {
                         let path = self.spelled_path(to)?;
-                        let name_format = self.store.config().file_name_format;
+                        let name_format = config.file_name_format;
+                        let format = tine_core::refs::RenameFormat {
+                            names: name_format,
+                            days: Some(&days),
+                        };
                         // The planning read's rewrite, when it was made from
                         // these staged bytes, this format and this syntax.
                         let same_syntax =
@@ -378,13 +448,32 @@ impl<'a> PagePlan<'a> {
                             }
                             _ => None,
                         };
-                        Some(rewrite_move(old, &path, map, titles, name_format, reused)?)
+                        let carried = reused
+                            .as_ref()
+                            .and(check.as_ref())
+                            .and_then(|check| check.observed.clone());
+                        let (new, read) = rewrite_move(old, &path, map, titles, format, reused)?;
+                        *observed = read.or(carried);
+                        Some(new)
                     }
                     (Some(old), None) => Some(old.clone()),
                     (None, None) => None,
                     (None, Some(_)) => unreachable!(),
                 };
                 if let (Some(old), Some(new)) = (&old, &new) {
+                    if let Some(map) = renames.as_ref().filter(|_| {
+                        file.as_str()
+                            .starts_with(&format!("{}/", self.store.config().pages_dir))
+                    }) {
+                        validation::title_identity(
+                            old,
+                            new,
+                            Format::from_path(&self.path(file)?),
+                            map,
+                            titles,
+                            &days,
+                        )?;
+                    }
                     refuse_marker_rewrite(old, new, Format::from_path(&self.path(file)?))?;
                     if renames.is_some() {
                         validation::page_bytes(to, new)?;
@@ -563,9 +652,11 @@ impl PagePlan<'_> {
     }
 
     /// Serialize `doc` at `path` over `old`, the bytes it replaces (None
-    /// creates), with every content firewall: parse validation of both sides,
-    /// VCS markers (unless `resolving` them), the page-header and Org
-    /// round-trip firewalls in `prepare_page_bytes`.
+    /// creates), with every content firewall: `guarded_save`'s (parse
+    /// validation of both sides, VCS markers unless `resolving` them, the
+    /// refusal R-VCS-MARKERS), and the page-header and Org round-trip
+    /// firewalls in `prepare_page_bytes`. This is the one place og serializes
+    /// page bytes for a save.
     fn serialize_page_at(
         &self,
         path: &Path,
@@ -573,38 +664,12 @@ impl PagePlan<'_> {
         old: Option<&[u8]>,
         resolving: bool,
     ) -> Result<(Vec<u8>, Document), Why> {
-        if let Some(old) = old {
-            crate::model::validate_parse_bytes_for_path(old, path).map_err(content_refusal)?;
-        }
-        let text = match old {
-            Some(bytes) => Some(std::str::from_utf8(bytes).map_err(|error| {
-                content_refusal(io::Error::new(io::ErrorKind::InvalidData, error))
-            })?),
-            None => None,
-        };
-        // Refusal R-VCS-MARKERS (docs/storage-contract.md). Threat
-        // scenario: a VCS merge by an external writer left unresolved
-        // markers; a rewrite would re-indent them and silently lose a
-        // side. This is the one place og serializes page bytes for a
-        // save (ordinary, forced, merged and PDF-highlight page saves
-        // all reach it, and the page host's submits). Only a resolving save
-        // passes.
-        let found = text
-            .map(|text| {
-                tine_core::concord_queue::vcs_conflict_markers(text, Format::from_path(&path))
-            })
-            .unwrap_or_default();
-        if !found.is_empty() && !resolving {
-            return Err(Why::Refused(Refusal::ReadOnly(format!(
-                "unresolved VCS merge conflict markers ({}); resolve them first",
-                found.join(" ")
-            ))));
-        }
-        let (new, saved_page) = self
-            .store
-            .graph
-            .prepare_page_bytes(doc, &path, text)
-            .map_err(|error| {
+        use crate::model::unchanged_save::{guarded_save, Guard};
+        let prepare = |text: Option<&str>| self.store.graph.prepare_page_bytes(doc, path, text);
+        guarded_save(old, path, resolving, prepare).map_err(|guard| match guard {
+            Guard::Content(error) => content_refusal(error),
+            Guard::Markers(why) => Why::Refused(Refusal::ReadOnly(why)),
+            Guard::Prepare(error) => {
                 if error.kind() == io::ErrorKind::PermissionDenied
                     || error
                         .get_ref()
@@ -614,8 +679,7 @@ impl PagePlan<'_> {
                 } else {
                     Why::Failed(error.into())
                 }
-            })?;
-        crate::model::validate_parse_bytes_for_path(&new, &path).map_err(content_refusal)?;
-        Ok((new, saved_page))
+            }
+        })
     }
 }

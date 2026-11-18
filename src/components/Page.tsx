@@ -1040,7 +1040,7 @@ function PageSection(props: { page: FeedPage; seen?: boolean; children?: JSX.Ele
   // root rendered as an ordinary block (being edited, or not a header) is excluded.
   const headerProperties = () => pageHeaderProperties(props.page, firstPropertiesId() ? null : props.page.roots[0] ?? null);
   const rootsToRender = () => firstPropertiesId() ? props.page.roots.slice(1) : props.page.roots;
-  const preambleContent = () => props.page.format === "md" ? splitPagePreamble(props.page.preBlock).content : null;
+  const preambleContent = () => splitPagePreamble(props.page.preBlock, props.page.format).content;
   const editSurface = () => pane.paneId === "main" ? "main" : `pane:${pane.paneId}`;
   // Every page section (including each journal day) owns its margin;
   // the available pane width chooses the tier, independent of route or split.

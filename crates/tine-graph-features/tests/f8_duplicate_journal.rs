@@ -16,8 +16,12 @@ use tine_store::{FileId, Store};
 const KEEPER: &str = "journals/2026_06_26.md";
 const STRAY: &str = "journals/Friday, 26-06-2026.md";
 
+/// CM-ORDER and CM-DAYFILE (D-20261110-CM, D-20261111-CMR14): a pages file
+/// titled by a date claims that day, the journals file wins it and shows in
+/// the feed, and the pages file is a visible conflict, both files untouched.
+/// (Superseded: before CM step 2 the titled pages file masked the journal.)
 #[test]
-fn f8_cross_kind_feed_masks_inactive_journal() {
+fn f8_cross_kind_feed_shows_the_journal_over_a_date_titled_page() {
     let _guard = crate::integration_lock();
     let dir = tempfile::tempdir().unwrap();
     for folder in ["pages", "journals"] {
@@ -27,8 +31,7 @@ fn f8_cross_kind_feed_masks_inactive_journal() {
     let journal = "- HIDDEN_JOURNAL_SENTINEL\n";
     fs::write(dir.path().join("pages/A.md"), ordinary).unwrap();
     fs::write(dir.path().join("journals/2026_11_06.md"), journal).unwrap();
-    // This also exercises referenced-day insertion when the physical journal
-    // is masked, rather than only file-backed feed membership.
+    // A referenced day as well as a file-backed one.
     fs::write(dir.path().join("pages/Refs.md"), "- [[Nov 6th, 2026]]\n").unwrap();
     let options = || tine_store::OpenOptions {
         watch: tine_store::WatchMode::Poll,
@@ -36,12 +39,14 @@ fn f8_cross_kind_feed_masks_inactive_journal() {
     };
     let store = Store::open(dir.path(), options()).unwrap().0;
     store.whole_graph().unwrap();
-    let check = |store: &Store, visible: bool| {
+    let check = |store: &Store, twin: bool| {
+        let visible = true;
         let view = store.whole_graph().unwrap();
         assert_eq!(view.corpus(None, false).pages.len(), 3);
         assert_eq!(
             view.corpus(None, true).pages.len(),
-            if visible { 3 } else { 2 }
+            if twin { 2 } else { 3 },
+            "the losing pages file is not an active page"
         );
         let mut answers = Vec::new();
         for include_references in [false, true] {
@@ -64,12 +69,8 @@ fn f8_cross_kind_feed_masks_inactive_journal() {
                     .pages
                     .iter()
                     .all(|page| page.doc.kind == PageKind::Journal));
-                if !visible {
-                    assert!(
-                        feed.pages.is_empty(),
-                        "an ordinary owner is not a virtual journal"
-                    );
-                }
+                assert_eq!(feed.pages.len(), 1, "the day shows once");
+                assert!(!format!("{bodies:?}").contains("ordinary opening file"));
                 answers.push(
                     serde_json::to_value(
                         feed.pages
@@ -93,32 +94,56 @@ fn f8_cross_kind_feed_masks_inactive_journal() {
         );
         answers
     };
-    check(&store, false);
-    let conflicts = ConflictQueue::default().inventory(&store).unwrap();
-    assert!(conflicts.queue.iter().any(|object| {
-        object.source == ConflictSource::DuplicateName
-            && object
-                .sides
-                .iter()
-                .any(|side| side.kind == Some(PageKind::Journal))
-    }));
-    for (text, visible) in [
-        ("title:: Elsewhere\n- ordinary opening file\n", true),
-        (ordinary, false),
+    check(&store, true);
+    let conflict_files = |store: &Store| -> Vec<Vec<String>> {
+        let conflicts = ConflictQueue::default().inventory(store).unwrap();
+        conflicts
+            .queue
+            .iter()
+            .filter(|object| {
+                matches!(
+                    object.source,
+                    ConflictSource::DuplicateName | ConflictSource::DuplicateJournal
+                )
+            })
+            .map(|object| {
+                assert_eq!(object.source, ConflictSource::DuplicateName);
+                object.sides.iter().map(|side| side.label.clone()).collect()
+            })
+            .collect()
+    };
+    let both = vec![vec![
+        "journals/2026_11_06.md".to_owned(),
+        "pages/A.md".to_owned(),
+    ]];
+    assert_eq!(conflict_files(&store), both);
+    for (text, twin) in [
+        ("title:: Elsewhere\n- ordinary opening file\n", false),
+        (ordinary, true),
     ] {
         fs::write(dir.path().join("pages/A.md"), text).unwrap();
         store.refresh(tine_store::Depth::Bytes).unwrap();
-        let incremental = check(&store, visible);
+        let incremental = check(&store, twin);
         let fresh = Store::open(dir.path(), options()).unwrap().0;
         fresh.whole_graph().unwrap();
-        assert_eq!(incremental, check(&fresh, visible));
+        assert_eq!(incremental, check(&fresh, twin));
+        assert_eq!(
+            conflict_files(&fresh),
+            if twin { both.clone() } else { Vec::new() }
+        );
         fresh.close();
     }
+    assert_eq!(
+        fs::read_to_string(dir.path().join("pages/A.md")).unwrap(),
+        ordinary
+    );
     store.close();
 }
 
+/// Before Ready the journals file wins the day too (CM-ORDER). (Superseded:
+/// before CM step 2 the titled pages file masked it.)
 #[test]
-fn f8_cross_kind_loading_feed_masks_inactive_journal() {
+fn f8_cross_kind_loading_feed_shows_the_journal_over_a_date_titled_page() {
     let _guard = crate::integration_lock();
     let dir = tempfile::tempdir().unwrap();
     for folder in ["pages", "journals"] {
@@ -154,10 +179,8 @@ fn f8_cross_kind_loading_feed_masks_inactive_journal() {
         .expect("file-only feed must not wait for Ready")
         .unwrap();
     assert!(feed.references_pending);
-    assert!(
-        feed.pages.is_empty(),
-        "the title-only ordinary owner masks the journal before Ready"
-    );
+    assert_eq!(feed.pages.len(), 1);
+    assert_eq!(feed.pages[0].doc.blocks[0].raw, "HIDDEN_JOURNAL_SENTINEL");
     store.close();
 }
 
@@ -198,16 +221,30 @@ fn name_conflicts_list_ordinary_and_cross_kind_files_without_writing() {
             .find(|o| o.source == ConflictSource::DuplicateName)
             .unwrap();
         assert_eq!(object.sides.len(), count);
-        assert_eq!(object.page_path, "pages/A.org");
-        assert_eq!(object.sides[0].kind, Some(PageKind::Page));
+        // CM-ORDER: the journals directory first, then path; every file of
+        // the day is a side, as a journal (CM-DAYFILE). (Superseded: before
+        // CM step 2 the titled pages file `pages/A.org` won.)
+        assert_eq!(object.page_path, "journals/2026-11-06.md");
         assert!(object
             .sides
             .iter()
-            .any(|side| side.kind == Some(PageKind::Journal)));
+            .all(|side| side.kind == Some(PageKind::Journal)));
+        assert!(object
+            .sides
+            .iter()
+            .any(|side| side.path.as_deref() == Some("pages/A.org")));
     };
     check(4);
     let days = tine_graph_features::journals::journal_conflicts(&store).unwrap();
-    assert!(days[0].files.iter().all(|file| !file.canonical));
+    assert_eq!(
+        days[0]
+            .files
+            .iter()
+            .filter(|file| file.canonical)
+            .map(|file| file.path.as_str())
+            .collect::<Vec<_>>(),
+        ["journals/2026-11-06.md"]
+    );
     fs::remove_file(dir.path().join("pages/Z.md")).unwrap();
     store.refresh(tine_store::Depth::Stamps).unwrap();
     queue
@@ -222,7 +259,8 @@ fn name_conflicts_list_ordinary_and_cross_kind_files_without_writing() {
         fs::read_to_string(dir.path().join("journals/2026_11_06.md")).unwrap(),
         journal
     );
-    // Ordinary-only events can restore or mask the journal conflict too.
+    // Events outside the journals directory can restore or mask the
+    // all-journals conflict too.
     fs::remove_file(dir.path().join("pages/A.org")).unwrap();
     store.refresh(tine_store::Depth::Stamps).unwrap();
     queue

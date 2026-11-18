@@ -1,6 +1,6 @@
 {
   "backlinks": {
-    "25-10-2026": [
+    "Oct 25th, 2026": [
       {
         "blocks": [
           {
@@ -8,6 +8,13 @@
             "collapsed": false,
             "id": "cc27b5e9-7374-8e8c-8d3b-c1cd0851767c",
             "raw": "see [[25-10-2026]]",
+            "tags": []
+          },
+          {
+            "children": [],
+            "collapsed": false,
+            "id": "591b40f9-1313-8058-85a5-172df7260d78",
+            "raw": "see [[Oct 25th, 2026]]",
             "tags": []
           }
         ],
@@ -22,40 +29,25 @@
     [
       [
         "pages/25-10-2026.md",
-        1
+        2
       ],
       [
         "pages/x.md",
         0
       ]
     ],
-    [
-      [
-        "Oct 25th, 2026",
-        1
-      ]
-    ]
+    []
   ],
   "inventory": [
-    {
-      "day": null,
-      "is_journal": false,
-      "key": "25-10-2026",
-      "name": "25-10-2026",
-      "target": {
-        "id": "pages/25-10-2026.md",
-        "kind": "existing",
-        "others": []
-      }
-    },
     {
       "day": 20261025,
       "is_journal": true,
       "key": "oct 25th, 2026",
       "name": "Oct 25th, 2026",
       "target": {
-        "id": "journals/25-10-2026.md",
-        "kind": "absent"
+        "id": "pages/25-10-2026.md",
+        "kind": "existing",
+        "others": []
       }
     },
     {
@@ -73,31 +65,29 @@
   "journalFileFormat": "dd-MM-yyyy",
   "journalTitleFormat": null,
   "keyOf": {
-    "25-10-2026": "oct 25th, 2026",
-    "Oct 25th, 2026": "oct 25th, 2026",
+    "Oct 25th, 2026": "Day 2026-10-25",
     "x": "x"
   },
-  "namespaceNodes": [],
   "namespaceTree": [],
   "open": {
     "25-10-2026": {
       "journal": [
-        "page",
-        "oct 25th, 2026"
+        "journal",
+        "Day 2026-10-25"
       ],
       "page": [
-        "page",
-        "oct 25th, 2026"
+        "journal",
+        "Day 2026-10-25"
       ]
     },
     "Oct 25th, 2026": {
       "journal": [
         "journal",
-        "oct 25th, 2026"
+        "Day 2026-10-25"
       ],
       "page": [
-        "page",
-        "oct 25th, 2026"
+        "journal",
+        "Day 2026-10-25"
       ]
     },
     "x": {
@@ -117,8 +107,8 @@
       "page": "pages/25-10-2026.md"
     },
     "Oct 25th, 2026": {
-      "journal": null,
-      "page": null
+      "journal": "pages/25-10-2026.md",
+      "page": "pages/25-10-2026.md"
     },
     "x": {
       "journal": null,
@@ -127,10 +117,10 @@
   },
   "pages": [
     {
-      "key": "oct 25th, 2026",
-      "kind": "page",
+      "key": "Day 2026-10-25",
+      "kind": "journal",
       "linkedRefs": 2,
-      "name": "25-10-2026",
+      "name": "Oct 25th, 2026",
       "owner": "pages/25-10-2026.md",
       "parent": null
     },
@@ -146,8 +136,8 @@
   "spellings": {
     "25-10-2026": {
       "backend": [
-        "page",
-        "oct 25th, 2026"
+        "journal",
+        "Day 2026-10-25"
       ],
       "day": [
         2026,
@@ -155,14 +145,14 @@
         25
       ],
       "model": [
-        "page",
-        "oct 25th, 2026"
+        "journal",
+        "Day 2026-10-25"
       ]
     },
     "Oct 25th, 2026": {
       "backend": [
         "journal",
-        "oct 25th, 2026"
+        "Day 2026-10-25"
       ],
       "day": [
         2026,
@@ -170,8 +160,8 @@
         25
       ],
       "model": [
-        "page",
-        "oct 25th, 2026"
+        "journal",
+        "Day 2026-10-25"
       ]
     },
     "x": {
@@ -190,8 +180,8 @@
     {
       "children": [],
       "page": [
-        "page",
-        "oct 25th, 2026"
+        "journal",
+        "Day 2026-10-25"
       ]
     },
     {
@@ -202,21 +192,11 @@
       ]
     }
   ],
-  "treeNodes": [
-    [
-      "page",
-      "oct 25th, 2026"
-    ],
-    [
-      "page",
-      "x"
-    ]
-  ],
   "treeParent": [
     {
       "page": [
-        "page",
-        "oct 25th, 2026"
+        "journal",
+        "Day 2026-10-25"
       ],
       "parent": null
     },

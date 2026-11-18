@@ -23,6 +23,16 @@ use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 
 mod preservation;
+mod property_drawers;
+
+/// Validate the content of an already native-owned physical drawer marker.
+/// Matching uses mldoc's exact indentation alphabet; this does not establish
+/// ownership. The caller removes one physical terminator. O(line bytes).
+pub fn is_property_drawer_marker(content: &str, opening: bool) -> bool {
+    content
+        .trim_start_matches([' ', '\t', '\u{c}', '\u{1a}'])
+        .eq_ignore_ascii_case(if opening { ":PROPERTIES:" } else { ":END:" })
+}
 
 /// OG linkable-property member separator, shared by native references and wasm.
 /// `graph_parser/text.cljs::sep-by-comma` at Logseq c67b8b5fa splits both commas.
@@ -52,8 +62,7 @@ pub fn reference_target_name(
     legacy_file_names: bool,
 ) -> Option<String> {
     let path = value.strip_prefix("file:").unwrap_or(value);
-    let local_asset =
-        path.trim_start_matches(['.', '/']).starts_with("assets") || path.starts_with("draws");
+    let local_asset = local_asset_target(path);
     match kind {
         "page_ref" if !local_asset => Some(value.to_owned()),
         "search" if value.trim().starts_with("[[") && value.trim().ends_with("]]") => {
@@ -74,6 +83,13 @@ pub fn reference_target_name(
         "file" if !label.trim().is_empty() && label != value => Some(label.to_owned()),
         _ => None,
     }
+}
+
+/// A link target naming a local asset or a drawing, never a page: OG
+/// `config.cljs` `local-asset?` (`^[./]*assets`) and `draw?` (`draws` prefix),
+/// which `mldoc.cljc` `ast-link?` excludes. O(1).
+pub fn local_asset_target(path: &str) -> bool {
+    path.trim_start_matches(['.', '/']).starts_with("assets") || path.starts_with("draws")
 }
 
 pub fn unbracket(value: &str) -> &str {
@@ -347,12 +363,6 @@ pub(crate) fn raw_range(raw: &str, span: &Option<Span>, document: bool) -> Optio
     let r = Range(at(*start), at(*end));
     (r.0 < r.1 && raw.is_char_boundary(r.0) && raw.is_char_boundary(r.1)).then_some(r)
 }
-fn is_properties_drawer(raw: &str, r: &Range) -> bool {
-    r.slice(raw)
-        .lines()
-        .next()
-        .is_some_and(|line| line.trim().eq_ignore_ascii_case(":PROPERTIES:"))
-}
 fn whole_line(raw: &str, r: Range) -> Range {
     let start = raw[..r.0].rfind('\n').map_or(0, |p| p + 1);
     let end = if r.1 > start && raw.as_bytes()[r.1 - 1] == b'\n' {
@@ -493,8 +503,57 @@ fn mapped_regions(raw: &str, is_org: bool, blocks: &[Block], document: bool) -> 
     exclude_literals(&mut result.planning, &result.literals, |p| p.line.0);
     exclude_literals(&mut result.drawers, &result.literals, |p| p.range.0);
     let own = result.own_org_region(raw);
+    // The one owner of where a page header ends (OG `block.cljs
+    // extract-blocks`): only top-level nodes before the first block count.
+    // Org's: the directives there and the head drawer, outside its text.
+    // A Markdown file's are the property lines of the first property node
+    // there (a later node is prose, as in OG), up to the node's first line
+    // that is no property, and only when nothing but blank lines precedes the
+    // node. Tine shows a page as a header plus a prose row, so every other
+    // byte must be prose: two named differences from OG, which also reads a
+    // node after opening text and the lines after a folded one. A `#` key
+    // stays a property, as in a block (OG's `valid-property-name?` drops it).
+    let (mut top, mut first_node) = (Vec::new(), None);
+    for b in blocks
+        .iter()
+        .take_while(|b| !matches!(b, Block::Bullet { .. } | Block::Heading { .. }))
+    {
+        if let Block::Properties { span, .. } | Block::Directive { span, .. } = b {
+            let r = raw_range(raw, span, true).map(|r| whole_line(raw, r));
+            top.extend(r);
+            first_node = first_node.or(r.filter(|_| matches!(b, Block::Properties { .. })));
+        }
+    }
+    let first_node = first_node.filter(|r| {
+        raw[..r.0]
+            .chars()
+            .all(|c| c.is_whitespace() || c == '\u{feff}')
+    });
+    let cut = first_node.map_or(0, |node| {
+        let regions = &result.property_regions;
+        let mut lines = (result.properties.iter())
+            .filter(|p| p.primary && regions[p.region] == node)
+            .map(|p| p.line.0)
+            .peekable();
+        let stray = line_ranges(raw, node)
+            .into_iter()
+            .find(|line| lines.next_if_eq(&line.0).is_none());
+        stray.map_or(node.1, |line| line.0)
+    });
     for p in &mut result.properties {
-        p.primary = p.primary && (!is_org || Some(p.region) == own);
+        let region = result.property_regions[p.region];
+        p.directive &= !(document && is_org)
+            || top
+                .binary_search_by_key(&region.0, |r| r.0)
+                .is_ok_and(|i| top[i] == region);
+        p.primary &= if is_org {
+            Some(p.region) == own
+        } else {
+            !document || (Some(region) == first_node && p.line.0 < cut)
+        };
+    }
+    if document && is_org {
+        result.demote_org_properties_inside_text(raw, blocks);
     }
     result.id = result
         .properties
@@ -592,8 +651,8 @@ fn visit_blocks(raw: &str, org: bool, blocks: &[Block], document: bool, out: &mu
                         } else {
                             [markdown, directive, drawer]
                         };
-                        // Accepted entries of the other format still own spans
-                        // (e.g. template id removal), but are not active metadata.
+                        // Other-format entries own spans (template id removal), not
+                        // metadata; a `#+` line's references count (OG hoists it).
                         let Some((key, value, prefix, delim, appropriate)) = candidates
                             .into_iter()
                             .flatten()
@@ -614,7 +673,7 @@ fn visit_blocks(raw: &str, org: bool, blocks: &[Block], document: bool, out: &mu
                             region: index,
                             primary: appropriate,
                             directive: org && prefix == 2,
-                            applicable: appropriate || (org && prefix == 2),
+                            applicable: appropriate || prefix == 2,
                         });
                     }
                 }
@@ -714,38 +773,9 @@ fn visit_inline(raw: &str, inline: &[Inline], document: bool, out: &mut BlockReg
     }
 }
 
-/// One Markdown page-header property: the parser's accepted key and value, its
-/// 0-based line index, and the byte range of its line without the newline.
-#[derive(Debug, Clone, PartialEq, Serialize)]
-pub struct HeaderEntry {
-    pub key: String,
-    pub value: String,
-    pub line: usize,
-    pub start: usize,
-    pub end: usize,
-}
-
-/// Leading Markdown page-header properties (see [`page_header`]).
-#[derive(Debug, Clone, Default, PartialEq, Serialize)]
-pub struct PageHeader {
-    /// Byte end of the last header line, newline excluded; 0 with no entries.
-    pub end: usize,
-    pub entries: Vec<HeaderEntry>,
-}
-
-pub use crate::page_preamble::{page_header, page_header_in};
-
-/// The page header of `raw` when the text is nothing but header properties (no
-/// leading or trailing newline, at least one entry). Single answerer (I-12) for
-/// "is this first block a page-properties block": a header line is a parser
-/// property, so `key::value` (no space) and literal-fence content are prose.
-pub fn page_header_only(raw: &str) -> Option<PageHeader> {
-    if raw.is_empty() || raw.starts_with('\n') || raw.ends_with('\n') {
-        return None;
-    }
-    let header = page_header(raw);
-    (!header.entries.is_empty() && header.end == raw.len()).then_some(header)
-}
+pub use crate::page_preamble::{
+    page_header, page_header_in, page_header_only, HeaderEntry, PageHeader,
+};
 
 #[derive(Debug, Deserialize)]
 #[serde(tag = "kind", rename_all = "snake_case")]
@@ -912,36 +942,6 @@ impl BlockRegions {
             }
         }
         at
-    }
-    fn own_org_region(&self, raw: &str) -> Option<usize> {
-        let at = self.head_end(raw, true);
-        self.property_regions
-            .iter()
-            .position(|r| (r.0 == at || r.0 == 0) && is_properties_drawer(raw, r))
-    }
-    /// Whether a `:PROPERTIES:` drawer region starts at `at`.
-    pub fn properties_drawer_at(&self, raw: &str, at: usize) -> bool {
-        self.property_regions
-            .iter()
-            .any(|r| r.0 == at && is_properties_drawer(raw, r))
-    }
-    /// Delimiter byte offsets inside parser-accepted property regions. Used by
-    /// the page form to remove an emptied drawer without reading literal text.
-    pub fn property_drawer_boundaries(&self, raw: &str) -> Vec<(usize, usize)> {
-        let mut out = Vec::new();
-        for region in &self.property_regions {
-            let mut open = None;
-            for line in line_ranges(raw, *region) {
-                if is_properties_drawer(raw, &line) {
-                    open = Some(line.0);
-                } else if line.slice(raw).trim().eq_ignore_ascii_case(":END:") {
-                    if let Some(start) = open.take() {
-                        out.push((start, line.0));
-                    }
-                }
-            }
-        }
-        out
     }
     fn inserted(&self, raw: &str, at: usize, text: &str) -> String {
         let nl = newline(raw);

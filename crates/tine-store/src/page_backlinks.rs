@@ -394,7 +394,7 @@ mod tests {
     /// UI-CM-ALLPAGES-COUNT-ZERO-FOR-ALIAS-GROUP (batch 5 regression): every
     /// All pages count equals the size of the panel its name opens, also for
     /// a page reached through an alias, an alias chain or a journal-date
-    /// spelling. Runs without the model bridge (`CM_BRIDGE`).
+    /// spelling. Runs without the static model bridge (`CM_STATIC_BRIDGE`).
     #[test]
     fn every_count_is_its_panel_size_through_aliases_and_date_spellings() {
         let root = tempfile::tempdir().unwrap();

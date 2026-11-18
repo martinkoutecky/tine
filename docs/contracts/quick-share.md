@@ -255,7 +255,12 @@ both frozen before `answers`; `answers` (the `pages` selection written with
 `answers` v1); `page-queries` (`Dashboard` and `Notes ü`, written with the query
 in `Dashboard`'s page properties baked). The frozen-document comparison ignores
 only `answers` and that page-property query record, each only for a frozen
-document written without it; `writer.json` pins both exactly. Order (design
+document written without it, and, for a frozen document written before CM-DATE
+(D-20261110-CM), the `resolve` entries it does not hold that ask a day's row of
+the same document as a page and answer that row's own target (a date names the
+day whatever kind is asked; the table and its meaning are unchanged); any other
+added, missing or different `resolve` entry fails. `writer.json` pins all three
+exactly. Order (design
 Q13): the viewer that passes a new case is deployed with the new fixture as
 current, old builds retained, before a writer emitting it creates shares; the
 build gate's fixture digest enforces that (a writer built with the new fixture

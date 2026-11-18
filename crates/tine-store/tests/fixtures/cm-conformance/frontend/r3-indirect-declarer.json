@@ -136,7 +136,6 @@
     "Notes": "notes",
     "X": "x"
   },
-  "namespaceNodes": [],
   "namespaceTree": [],
   "open": {
     "A": {
@@ -292,20 +291,6 @@
         "notes"
       ]
     }
-  ],
-  "treeNodes": [
-    [
-      "page",
-      "a"
-    ],
-    [
-      "page",
-      "b"
-    ],
-    [
-      "page",
-      "notes"
-    ]
   ],
   "treeParent": [
     {

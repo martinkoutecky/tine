@@ -64,7 +64,6 @@
     "Notes": "notes",
     "foo": "foo"
   },
-  "namespaceNodes": [],
   "namespaceTree": [],
   "open": {
     "Foo": {
@@ -172,16 +171,6 @@
         "notes"
       ]
     }
-  ],
-  "treeNodes": [
-    [
-      "page",
-      "foo"
-    ],
-    [
-      "page",
-      "notes"
-    ]
   ],
   "treeParent": [
     {

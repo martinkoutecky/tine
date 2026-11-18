@@ -36,6 +36,10 @@ impl Sink for Bridge {
             || !delivery.publications.is_empty()
             || !delivery.evicted.is_empty()
             || !delivery.confirmed.is_empty();
+        #[cfg(test)]
+        if !delivery.publications.is_empty() {
+            crate::store::pause_at_hook(&store.host_publication_pause);
+        }
         // All or nothing: a delivery whose writer is held comes back whole.
         let writer = match indexes {
             false => None,

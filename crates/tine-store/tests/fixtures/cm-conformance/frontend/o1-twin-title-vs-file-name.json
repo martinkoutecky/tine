@@ -64,7 +64,6 @@
     "ZED": "zed",
     "zed": "zed"
   },
-  "namespaceNodes": [],
   "namespaceTree": [],
   "open": {
     "Notes": {
@@ -172,16 +171,6 @@
         "zed"
       ]
     }
-  ],
-  "treeNodes": [
-    [
-      "page",
-      "notes"
-    ],
-    [
-      "page",
-      "zed"
-    ]
   ],
   "treeParent": [
     {

@@ -5,32 +5,6 @@
       "pages/A.md": "- source\n",
       "pages/B.md": "alias:: X\n\n- B body\n",
       "pages/C.md": "alias:: X\n\n- C body\n"
-    },
-    "renames": [
-      {
-        "old": "A",
-        "new": "X"
-      }
-    ],
-    "expect": {
-      "operations": [
-        {
-          "offers": [
-            {
-              "destination": "X",
-              "survivor": null
-            },
-            {
-              "destination": "B",
-              "survivor": "pages/B.md"
-            },
-            {
-              "destination": "C",
-              "survivor": "pages/C.md"
-            }
-          ]
-        }
-      ]
     }
   },
   {
@@ -39,32 +13,6 @@
       "pages/A.md": "- source\n",
       "pages/B.md": "alias:: X, Y\n\n- B body\n",
       "pages/C.md": "alias:: Y\n\n- C body\n"
-    },
-    "renames": [
-      {
-        "old": "A",
-        "new": "X"
-      }
-    ],
-    "expect": {
-      "operations": [
-        {
-          "offers": [
-            {
-              "destination": "X",
-              "survivor": null
-            },
-            {
-              "destination": "B",
-              "survivor": "pages/B.md"
-            },
-            {
-              "destination": "C",
-              "survivor": "pages/C.md"
-            }
-          ]
-        }
-      ]
     }
   },
   {
@@ -73,31 +21,6 @@
       "pages/A.md": "- source [[A/x]]\n",
       "pages/B.md": "alias:: X\n\n- B body\n",
       "pages/X%2Fx.md": "- stationary\n"
-    },
-    "renames": [
-      {
-        "old": "A",
-        "new": "X"
-      }
-    ],
-    "expect": {
-      "operations": [
-        {
-          "offers": [
-            {
-              "destination": "B",
-              "survivor": "pages/B.md"
-            }
-          ],
-          "preferred": null,
-          "failedChecks": [
-            [
-              "noCapture"
-            ],
-            []
-          ]
-        }
-      ]
     }
   },
   {
@@ -106,32 +29,6 @@
       "pages/R.md": "- [[A]]\n",
       "pages/B.md": "alias:: X\n\n- B\n",
       "pages/C.md": "alias:: X\n\n- C\n"
-    },
-    "renames": [
-      {
-        "old": "A",
-        "new": "X"
-      }
-    ],
-    "expect": {
-      "operations": [
-        {
-          "offers": [
-            {
-              "destination": "X",
-              "survivor": null
-            },
-            {
-              "destination": "B",
-              "survivor": null
-            },
-            {
-              "destination": "C",
-              "survivor": null
-            }
-          ]
-        }
-      ]
     }
   },
   {
@@ -139,24 +36,6 @@
     "files": {
       "pages/A.md": "- first\n",
       "pages/B.md": "- second\n"
-    },
-    "renames": [
-      {
-        "old": "A",
-        "new": "B"
-      }
-    ],
-    "expect": {
-      "operations": [
-        {
-          "offers": [
-            {
-              "destination": "B",
-              "survivor": "pages/B.md"
-            }
-          ]
-        }
-      ]
     }
   },
   {
@@ -164,24 +43,6 @@
     "files": {
       "pages/A.md": "- root\n",
       "pages/A%2Fx.md": "- child [[A/x/y]]\n"
-    },
-    "renames": [
-      {
-        "old": "A",
-        "new": "A/x"
-      }
-    ],
-    "expect": {
-      "operations": [
-        {
-          "offers": [
-            {
-              "destination": "A/x",
-              "survivor": null
-            }
-          ]
-        }
-      ]
     }
   },
   {
@@ -189,24 +50,6 @@
     "files": {
       "pages/A.md": "- [[A/x]]\n",
       "pages/B%2Fx.md": "- stationary\n"
-    },
-    "renames": [
-      {
-        "old": "A",
-        "new": "B"
-      }
-    ],
-    "expect": {
-      "operations": [
-        {
-          "offers": [],
-          "failedChecks": [
-            [
-              "noCapture"
-            ]
-          ]
-        }
-      ]
     }
   },
   {
@@ -214,24 +57,6 @@
     "files": {
       "pages/A.md": "- [[A/x/y]]\n",
       "pages/A%2Fx%2Fy.md": "- moving\n"
-    },
-    "renames": [
-      {
-        "old": "A",
-        "new": "A/x"
-      }
-    ],
-    "expect": {
-      "operations": [
-        {
-          "offers": [
-            {
-              "destination": "A/x",
-              "survivor": null
-            }
-          ]
-        }
-      ]
     }
   },
   {
@@ -239,24 +64,6 @@
     "files": {
       "pages/TODO.md": "- page\n",
       "pages/R.md": "- TODO [[TODO]]\n"
-    },
-    "renames": [
-      {
-        "old": "TODO",
-        "new": "Work"
-      }
-    ],
-    "expect": {
-      "operations": [
-        {
-          "offers": [],
-          "failedChecks": [
-            [
-              "consistent"
-            ]
-          ]
-        }
-      ]
     }
   },
   {
@@ -264,24 +71,6 @@
     "files": {
       "pages/A.md": "- page\n",
       "pages/R.md": "- [#A] [[A]]\n"
-    },
-    "renames": [
-      {
-        "old": "A",
-        "new": "Work"
-      }
-    ],
-    "expect": {
-      "operations": [
-        {
-          "offers": [],
-          "failedChecks": [
-            [
-              "consistent"
-            ]
-          ]
-        }
-      ]
     }
   },
   {
@@ -289,25 +78,6 @@
     "files": {
       "pages/P.md": "title:: Oct 26th, 2026\n\n- active\n",
       "journals/2026_10_26.md": "- inactive\n"
-    },
-    "renames": [
-      {
-        "old": "Oct 26th, 2026",
-        "new": "Later"
-      }
-    ],
-    "expect": {
-      "operations": [
-        {
-          "offers": [],
-          "failedChecks": [
-            [
-              "consistent",
-              "localClean"
-            ]
-          ]
-        }
-      ]
     }
   },
   {
@@ -315,24 +85,6 @@
     "files": {
       "pages/A.md": "- first\n",
       "pages/Z.md": "title:: A\n\n- second\n"
-    },
-    "renames": [
-      {
-        "old": "A",
-        "new": "B"
-      }
-    ],
-    "expect": {
-      "operations": [
-        {
-          "offers": [],
-          "failedChecks": [
-            [
-              "localClean"
-            ]
-          ]
-        }
-      ]
     }
   },
   {
@@ -342,24 +94,6 @@
       "pages/O.md": "alias:: A/x\n\n- O\n",
       "pages/P.md": "title:: B/x\n\n- first\n",
       "pages/Q.md": "title:: B/x\n\n- second\n"
-    },
-    "renames": [
-      {
-        "old": "A",
-        "new": "B"
-      }
-    ],
-    "expect": {
-      "operations": [
-        {
-          "offers": [],
-          "failedChecks": [
-            [
-              "localClean"
-            ]
-          ]
-        }
-      ]
     }
   },
   {
@@ -369,24 +103,6 @@
       "pages/R.md": "- {{query (page \"A/x\")}}\n",
       "pages/P.md": "title:: B/x\n\n- first\n",
       "pages/Q.md": "title:: B/x\n\n- second\n"
-    },
-    "renames": [
-      {
-        "old": "A",
-        "new": "B"
-      }
-    ],
-    "expect": {
-      "operations": [
-        {
-          "offers": [],
-          "failedChecks": [
-            [
-              "localClean"
-            ]
-          ]
-        }
-      ]
     }
   },
   {
@@ -396,27 +112,10 @@
       "pages/P.md": "title:: B/x\n\n- first\n",
       "pages/Q.md": "title:: B/x\n\n- second\n"
     },
+
     "config": {
       "edn": [
         ":favorites [\"A/x\"]"
-      ]
-    },
-    "renames": [
-      {
-        "old": "A",
-        "new": "B"
-      }
-    ],
-    "expect": {
-      "operations": [
-        {
-          "offers": [],
-          "failedChecks": [
-            [
-              "localClean"
-            ]
-          ]
-        }
       ]
     }
   },
@@ -426,28 +125,6 @@
       "pages/A.md": "- source\n",
       "pages/P.md": "title:: Z\n\n- first [[Visible]]\n",
       "pages/Q.md": "title:: Z\nalias:: Hidden\n\n- second [[Masked]]\n"
-    },
-    "renames": [
-      {
-        "old": "A",
-        "new": "B"
-      }
-    ],
-    "expect": {
-      "operations": [
-        {
-          "offers": [
-            {
-              "destination": "B",
-              "survivor": null
-            }
-          ]
-        }
-      ],
-      "activeFiles": [
-        "pages/A.md",
-        "pages/P.md"
-      ]
     }
   },
   {
@@ -458,63 +135,19 @@
     },
     "navigate": [
       "B"
-    ],
-    "expect": {
-      "navigate": {
-        "B": [
-          "page",
-          "b"
-        ]
-      }
-    }
+    ]
   },
   {
     "name": "r13-empty-child-gains-parent",
     "files": {
       "pages/A.md": "- source\n",
       "pages/B%2Fx.md": ""
-    },
-    "renames": [
-      {
-        "old": "A",
-        "new": "B/x"
-      }
-    ],
-    "expect": {
-      "operations": [
-        {
-          "offers": [
-            {
-              "destination": "B/x",
-              "survivor": "pages/B%2Fx.md"
-            }
-          ]
-        }
-      ]
     }
   },
   {
     "name": "r13-same-key-nested-org",
     "files": {
       "pages/nested/physical.org": "#+TITLE: Alpha\n* prose `[[Alpha]]` [[Alpha]]\n"
-    },
-    "renames": [
-      {
-        "old": "Alpha",
-        "new": "ALPHA"
-      }
-    ],
-    "expect": {
-      "operations": [
-        {
-          "offers": [
-            {
-              "destination": "ALPHA",
-              "survivor": null
-            }
-          ]
-        }
-      ]
     }
   },
   {
@@ -523,32 +156,6 @@
       "pages/A.md": "alias:: Z\n\n- source\n",
       "pages/B.md": "alias:: X\n\n- B\n",
       "pages/R.md": "- [[Z]]\n"
-    },
-    "renames": [
-      {
-        "old": "A",
-        "new": "X"
-      }
-    ],
-    "expect": {
-      "operations": [
-        {
-          "offers": [
-            {
-              "destination": "X",
-              "survivor": null
-            },
-            {
-              "destination": "B",
-              "survivor": "pages/B.md"
-            }
-          ],
-          "unchangedPreview": [
-            "pages/R.md",
-            0
-          ]
-        }
-      ]
     }
   },
   {
@@ -556,24 +163,6 @@
     "files": {
       "journals/2026_10_26.md": "alias:: A/x\n\n- [[A/x]]\n",
       "pages/R.md": "- [[A]]\n"
-    },
-    "renames": [
-      {
-        "old": "A",
-        "new": "B"
-      }
-    ],
-    "expect": {
-      "operations": [
-        {
-          "offers": [
-            {
-              "destination": "B",
-              "survivor": null
-            }
-          ]
-        }
-      ]
     }
   },
   {
@@ -581,18 +170,6 @@
     "files": {
       "pages/A.md": "same:: equal\nalias:: X\n\n- source `[[A]]`\n",
       "pages/B.md": "same:: equal\n\n- destination\n"
-    },
-    "renames": [
-      {
-        "old": "A",
-        "new": "B"
-      }
-    ],
-    "expect": {
-      "protectedText": [
-        "same:: equal",
-        "`[[A]]`"
-      ]
     }
   },
   {
@@ -616,14 +193,7 @@
           "name": "A"
         }
       }
-    ],
-    "renames": [
-      {
-        "old": "A",
-        "new": "B"
-      }
-    ],
-    "expect": {}
+    ]
   },
   {
     "name": "r13-configured-date-literal",
@@ -636,43 +206,13 @@
       "2026-11-06",
       "Nov 6th, 2026",
       "Today"
-    ],
-    "expect": {
-      "navigate": {
-        "2026-11-06": [
-          "page",
-          "2026-11-06"
-        ],
-        "Nov 6th, 2026": [
-          "journal",
-          "nov 6th, 2026"
-        ]
-      }
-    }
+    ]
   },
   {
     "name": "r13-org-merge-nested",
     "files": {
       "pages/nested/A.org": "#+TITLE: A\n* source [[A]]\n",
       "pages/nested/B.org": "#+TITLE: B\n* destination\n"
-    },
-    "renames": [
-      {
-        "old": "A",
-        "new": "B"
-      }
-    ],
-    "expect": {
-      "operations": [
-        {
-          "offers": [
-            {
-              "destination": "B",
-              "survivor": "pages/nested/B.org"
-            }
-          ]
-        }
-      ]
     }
   },
   {
@@ -680,27 +220,9 @@
     "files": {
       "pages/R.md": "- {{query (page \"Absent\")}}\n"
     },
-    "renames": [
-      {
-        "old": "Absent",
-        "new": "Other"
-      }
-    ],
     "config": {
       "edn": [
         ":favorites [\"Absent\"]"
-      ]
-    },
-    "expect": {
-      "operations": [
-        {
-          "offers": [],
-          "failedChecks": [
-            [
-              "supported"
-            ]
-          ]
-        }
       ]
     }
   },
@@ -714,18 +236,7 @@
       "Same",
       "Visible",
       "Hidden"
-    ],
-    "expect": {
-      "activeFiles": [
-        "pages/A.org"
-      ],
-      "navigate": {
-        "Same": [
-          "page",
-          "same"
-        ]
-      }
-    }
+    ]
   },
   {
     "name": "r13-fixed-favorites-setting",
@@ -737,24 +248,6 @@
     "config": {
       "edn": [
         ":favorites [\"Favorites\" \"Favorites/virtual\"]"
-      ]
-    },
-    "renames": [
-      {
-        "old": "Favorites",
-        "new": "Saved"
-      }
-    ],
-    "expect": {
-      "operations": [
-        {
-          "offers": [
-            {
-              "destination": "Saved",
-              "survivor": null
-            }
-          ]
-        }
       ]
     }
   },
@@ -777,42 +270,24 @@
         },
         "tine": "[[Target]] {:remove-block-children? false}"
       }
-    ],
-    "expect": {
-      "querySizes": [
-        3,
-        4
-      ]
-    }
+    ]
   },
   {
     "name": "r13-empty-namespace-output",
     "files": {
       "pages/A.md": ""
-    },
-    "renames": [
-      { "old": "A", "new": "Z/w" }
-    ],
-    "expect": {
-      "operations": [{ "afterPages": [["page", "z/w"]] }]
     }
   },
   {
     "name": "r13-whitespace-namespace-output",
     "files": {
       "pages/A.md": " \n\t"
-    },
-    "renames": [
-      { "old": "A", "new": "Z/w" }
-    ],
-    "expect": {
-      "operations": [{ "afterPages": [["page", "z/w"]] }]
     }
   },
-  {"name": "r13-rename-onto-date-underscore-free", "files": {"pages/Foo.md": "- foo body\n", "pages/r.md": "- see [[Foo]]\n- day [[2026_11_02]] [[2026-11-02]] [[Nov 2nd, 2026]]\n"}, "navigate": ["2026_11_02", "2026-11-02", "Nov 2nd, 2026"], "renames": [{"old": "Foo", "new": "2026_11_02"}], "expect": {"navigate": {"2026_11_02": ["journal", "nov 2nd, 2026"], "2026-11-02": ["journal", "nov 2nd, 2026"], "Nov 2nd, 2026": ["journal", "nov 2nd, 2026"]}, "operations": [{"offers": [{"destination": "2026_11_02", "survivor": null}]}]}},
-  {"name": "r13-rename-onto-date-iso-free", "files": {"pages/Foo.md": "- foo body\n", "pages/r.md": "- see [[Foo]]\n- day [[2026_11_02]] [[2026-11-02]] [[Nov 2nd, 2026]]\n"}, "navigate": ["2026_11_02", "2026-11-02", "Nov 2nd, 2026"], "renames": [{"old": "Foo", "new": "2026-11-02"}], "expect": {"navigate": {"2026_11_02": ["journal", "nov 2nd, 2026"], "2026-11-02": ["journal", "nov 2nd, 2026"], "Nov 2nd, 2026": ["journal", "nov 2nd, 2026"]}, "operations": [{"offers": [{"destination": "2026-11-02", "survivor": null}]}]}},
-  {"name": "r13-rename-onto-date-title-free", "files": {"pages/Foo.md": "- foo body\n", "pages/r.md": "- see [[Foo]]\n- day [[2026_11_02]] [[2026-11-02]] [[Nov 2nd, 2026]]\n"}, "navigate": ["2026_11_02", "2026-11-02", "Nov 2nd, 2026"], "renames": [{"old": "Foo", "new": "Nov 2nd, 2026"}], "expect": {"navigate": {"2026_11_02": ["journal", "nov 2nd, 2026"], "2026-11-02": ["journal", "nov 2nd, 2026"], "Nov 2nd, 2026": ["journal", "nov 2nd, 2026"]}, "operations": [{"offers": [{"destination": "Nov 2nd, 2026", "survivor": null}]}]}},
-  {"name": "r13-rename-onto-date-underscore-journal", "files": {"pages/Foo.md": "- foo body\n", "pages/r.md": "- see [[Foo]]\n- day [[2026_11_02]] [[2026-11-02]] [[Nov 2nd, 2026]]\n", "journals/2026_11_02.md": "- day body\n"}, "navigate": ["2026_11_02", "2026-11-02", "Nov 2nd, 2026"], "renames": [{"old": "Foo", "new": "2026_11_02"}], "expect": {"navigate": {"2026_11_02": ["journal", "nov 2nd, 2026"], "2026-11-02": ["journal", "nov 2nd, 2026"], "Nov 2nd, 2026": ["journal", "nov 2nd, 2026"]}, "operations": [{"offers": [{"destination": "2026_11_02", "survivor": null}, {"destination": "Nov 2nd, 2026", "survivor": "journals/2026_11_02.md"}]}]}},
-  {"name": "r13-rename-onto-date-iso-journal", "files": {"pages/Foo.md": "- foo body\n", "pages/r.md": "- see [[Foo]]\n- day [[2026_11_02]] [[2026-11-02]] [[Nov 2nd, 2026]]\n", "journals/2026_11_02.md": "- day body\n"}, "navigate": ["2026_11_02", "2026-11-02", "Nov 2nd, 2026"], "renames": [{"old": "Foo", "new": "2026-11-02"}], "expect": {"navigate": {"2026_11_02": ["journal", "nov 2nd, 2026"], "2026-11-02": ["journal", "nov 2nd, 2026"], "Nov 2nd, 2026": ["journal", "nov 2nd, 2026"]}, "operations": [{"offers": [{"destination": "2026-11-02", "survivor": null}, {"destination": "Nov 2nd, 2026", "survivor": "journals/2026_11_02.md"}]}]}},
-  {"name": "r13-rename-onto-date-title-journal", "files": {"pages/Foo.md": "- foo body\n", "pages/r.md": "- see [[Foo]]\n- day [[2026_11_02]] [[2026-11-02]] [[Nov 2nd, 2026]]\n", "journals/2026_11_02.md": "- day body\n"}, "navigate": ["2026_11_02", "2026-11-02", "Nov 2nd, 2026"], "renames": [{"old": "Foo", "new": "Nov 2nd, 2026"}], "expect": {"navigate": {"2026_11_02": ["journal", "nov 2nd, 2026"], "2026-11-02": ["journal", "nov 2nd, 2026"], "Nov 2nd, 2026": ["journal", "nov 2nd, 2026"]}, "operations": [{"offers": [{"destination": "Nov 2nd, 2026", "survivor": "journals/2026_11_02.md"}]}]}}
+  {"name": "r13-rename-onto-date-underscore-free", "files": {"pages/Foo.md": "- foo body\n", "pages/r.md": "- see [[Foo]]\n- day [[2026_11_02]] [[2026-11-02]] [[Nov 2nd, 2026]]\n"}, "navigate": ["2026_11_02", "2026-11-02", "Nov 2nd, 2026"]},
+  {"name": "r13-rename-onto-date-iso-free", "files": {"pages/Foo.md": "- foo body\n", "pages/r.md": "- see [[Foo]]\n- day [[2026_11_02]] [[2026-11-02]] [[Nov 2nd, 2026]]\n"}, "navigate": ["2026_11_02", "2026-11-02", "Nov 2nd, 2026"]},
+  {"name": "r13-rename-onto-date-title-free", "files": {"pages/Foo.md": "- foo body\n", "pages/r.md": "- see [[Foo]]\n- day [[2026_11_02]] [[2026-11-02]] [[Nov 2nd, 2026]]\n"}, "navigate": ["2026_11_02", "2026-11-02", "Nov 2nd, 2026"]},
+  {"name": "r13-rename-onto-date-underscore-journal", "files": {"pages/Foo.md": "- foo body\n", "pages/r.md": "- see [[Foo]]\n- day [[2026_11_02]] [[2026-11-02]] [[Nov 2nd, 2026]]\n", "journals/2026_11_02.md": "- day body\n"}, "navigate": ["2026_11_02", "2026-11-02", "Nov 2nd, 2026"]},
+  {"name": "r13-rename-onto-date-iso-journal", "files": {"pages/Foo.md": "- foo body\n", "pages/r.md": "- see [[Foo]]\n- day [[2026_11_02]] [[2026-11-02]] [[Nov 2nd, 2026]]\n", "journals/2026_11_02.md": "- day body\n"}, "navigate": ["2026_11_02", "2026-11-02", "Nov 2nd, 2026"]},
+  {"name": "r13-rename-onto-date-title-journal", "files": {"pages/Foo.md": "- foo body\n", "pages/r.md": "- see [[Foo]]\n- day [[2026_11_02]] [[2026-11-02]] [[Nov 2nd, 2026]]\n", "journals/2026_11_02.md": "- day body\n"}, "navigate": ["2026_11_02", "2026-11-02", "Nov 2nd, 2026"]}
 ]

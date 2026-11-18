@@ -137,7 +137,6 @@
     "Notes": "notes",
     "Shared": "shared"
   },
-  "namespaceNodes": [],
   "namespaceTree": [],
   "open": {
     "Alpha": {
@@ -293,20 +292,6 @@
         "notes"
       ]
     }
-  ],
-  "treeNodes": [
-    [
-      "page",
-      "alpha"
-    ],
-    [
-      "page",
-      "beta"
-    ],
-    [
-      "page",
-      "notes"
-    ]
   ],
   "treeParent": [
     {

@@ -98,13 +98,21 @@ Renaming the page `:default-home` names, or a namespace parent of it, rewrites
 `:default-home {:page …}` to the new name (OG `rename-page-aux`). A merge does
 not (OG `merge-pages!`). A case-only rename updates `:default-home :page` to the new spelling too.
 
-The same config step moves `:favorites` (one answerer, CM step 2 batch 4): a
-favorite naming the renamed page or a namespace descendant, under any case
-spelling, takes the new name in its place (OG `rename-page-aux`); a merged-away
-page's favorite moves to the survivor, deduplicated (a deliberate OG difference:
-OG drops it); an alias spelling stays (it still opens the page); a renamed
-arrangement page moves `:tine/favorites-page`. Home and favorites are edited
-independently and written together. A title:: change that renames a page moves
+The same config step moves `:favorites` (one answerer, CM step 2 batch 4;
+model r6 O8): every stored name follows the rename's one name answer
+(`refs::renamed_site_name`: the renamed page and every name under it, whether
+that name has a file, only a reference, or exists only in the settings, under
+any case spelling, takes the new name in its place, OG `rename-page-aux`; a
+day spelling stays). After a merge the list keeps only the first entry of each
+name, by the page or day it opens, over the whole list (favorites `A, X, B`
+with "merge A into B" give `B, X`; a deliberate OG difference: OG drops the
+merged-away entry); a plain rename drops no entry. An alias spelling stays (it
+still opens the page); a renamed arrangement page moves
+`:tine/favorites-page`. Home and favorites are edited together and written in
+one step after the pages, all of it or none: if any value cannot be edited,
+nothing is written and the report says the settings were not updated. The step
+follows every admitted rename, also one whose page step changes no bytes (every
+site left unspellable); only a request for the page's own spelling skips it. A title:: change that renames a page moves
 both the same way, as the backend observes it (`follow_page_identity`: called by
 the window on an identity change, and by the CLI owner's page write). The rename
 report and the follow reply carry the new list; the window adopts it and never
@@ -184,7 +192,10 @@ lists the favorite under its old name, as OG never follows title:: edits.
 - src/document/graphRewrite.test.ts
 - crates/tine-graph-features/tests/home_rename.rs::a_home_rename_killed_at_each_step_reopens_whole
 - crates/tine-graph-features/tests/home_rename.rs::home_and_favorites_move_together_in_the_config_step
-- crates/tine-graph-features/tests/home_rename.rs::a_favorite_renamed_onto_another_favorite_is_deduplicated
+- crates/tine-graph-features/tests/home_rename.rs::a_favorite_renamed_onto_another_favorite_keeps_both_entries
+- crates/tine-graph-features/tests/cm_settings.rs::o8_after_a_merge_each_page_is_listed_once_and_the_first_entry_stays
+- crates/tine-graph-features/tests/cm_settings.rs::o8_settings_under_the_source_follow_by_namespace_prefix
+- crates/tine-graph-features/tests/cm_settings.rs::o8_after_a_merge_every_repeated_favorite_is_listed_once
 - crates/tine-graph-features/tests/home_rename.rs::home_and_favorites_follow_independently
 - crates/tine-graph-features/tests/cm_favorites_rename.rs::favorites_after_rename_through_the_rust_entry
 - src-tauri/src/owner/owner_tests/cm_favorites_tests.rs::favorites_after_a_headless_cli_rename

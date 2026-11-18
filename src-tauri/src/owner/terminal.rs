@@ -420,6 +420,20 @@ pub(super) fn render(ok: &Value, out: &mut String) {
                     path.as_str().unwrap_or("")
                 );
             }
+            for site in list(&ok["report"], "site_exceptions") {
+                let what = match site["disposition"].as_str() {
+                    Some("normalizedKey") => "property key respelled in key spelling",
+                    _ => "left unchanged, cannot spell the new name",
+                };
+                let _ = writeln!(
+                    out,
+                    "{what}: {} {} at bytes {}..{}",
+                    text(site, "path"),
+                    text(site, "kind"),
+                    count(site, "start"),
+                    count(site, "end")
+                );
+            }
             if let Some(reason) = ok["report"]["config_skipped"].as_str() {
                 let _ = writeln!(
                     out,

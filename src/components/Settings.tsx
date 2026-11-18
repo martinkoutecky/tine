@@ -1,4 +1,5 @@
 import { settings } from "./settingDefinitions";
+import { showRewriteRefusal } from "../renameRefusal";
 import { Rich } from "../i18n/Rich";
 import { codeWrapping, changeCodeWrapping } from "../codeDisplay";
 import { stickyParents, changeStickyParents } from "../stickyParents";
@@ -1244,14 +1245,15 @@ function BackupsTab(): JSX.Element {
 // Duplicate journal days expose per-file reconcile actions.
 function JournalConflictsPanel(): JSX.Element {
   void refreshJournalConflicts(); // refresh when the Backups tab opens
-  const reconcile = async (op: () => Promise<void>, ok: Msg) => {
+  const reconcile = async (op: (saveFirst?: string) => Promise<void>, ok: Msg, saveFirst?: string) => {
     const owner = bindingOwner();
     try {
-      const result = await writeOwned(owner, op());
+      const result = await writeOwned(owner, op(saveFirst));
       if (result.kind === "stale") return;
       pushToast(ok, "success");
       await refreshJournalConflicts();
     } catch (e) {
+      if (!owner() || showRewriteRefusal(e, async (file) => { if (owner()) await reconcile(op, ok, file); })) return;
       pushToast(msg("settings-ui-couldn-t-do-that", { value1: String(e) }), "error");
     }
   };
@@ -1290,7 +1292,7 @@ function JournalConflictsPanel(): JSX.Element {
                     file={f}
                     onOpen={() => openFileRow(f, c.title)}
                     onMerge={!f.canonical && canonical ? () => void reconcile(
-                      () => backend().mergePages(f.path, canonical.path, ["insert-blocks", "delete-page"]),
+                      (file) => backend().mergePages(f.path, canonical.path, ["insert-blocks", "delete-page"], file),
                       msg("settings-journal-file-merged", { name: f.name, canonical: canonical.name }),
                     ) : undefined}
                     onRename={(n) => void reconcile(

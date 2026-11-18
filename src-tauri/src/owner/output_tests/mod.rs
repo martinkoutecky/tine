@@ -798,6 +798,20 @@ const DISCLOSURES: &[Disclosure] = &[
     },
     Disclosure {
         section: "page.rename",
+        field: "report.site_exceptions",
+        base: |f| f.ok("page.rename", json!({"old":"a","new":"a"})),
+        on: |p| {
+            set(
+                p,
+                "report.site_exceptions",
+                json!([{"path":"pages/site-qv83.org","start":10,"end":13,
+                        "kind":"tag","disposition":"unspellable"}]),
+            )
+        },
+        words: &["pages/site-qv83.org", "cannot spell the new name"],
+    },
+    Disclosure {
+        section: "page.rename",
         field: "report.config_skipped",
         base: |f| f.ok("page.rename", json!({"old":"a","new":"a"})),
         on: |p| set(p, "report.config_skipped", json!("cannot edit :favorites")),

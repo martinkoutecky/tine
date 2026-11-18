@@ -113,10 +113,52 @@ const MAGIC: &[u8; 8] = b"TINECKPT";
 // 31 (REG-BARE-TASK-HIDDEN-ROWS review r6; release/0.9 shipped it as 22):
 // block regions carry lsdoc's headline end where it is not the first line's
 // end (`headline_end`); the body gains that one optional field.
-pub(crate) const FORMAT: u32 = 31;
+// 32 (CM B5): empty Org page drawers are native headers, and native Ctrl-Z
+// delimiter mapping changes derived ownership for unchanged graph files.
+// Older indexes rebuild; the serialized body schema is unchanged.
+// 33 (CM step 2 day files, D-20261111-CMR14 CM-DAYFILE): a file outside the
+// journals directory whose effective name is a date is that day's journal,
+// and claimants rank the journals directory first, so the persisted list,
+// claimants, `name_by_path` and real-name owners change for unchanged graph
+// files. The serialized body schema is unchanged; older ones rebuild.
+// 34 (CM merge header allocation): parser-classified Plain property members
+// retain escaped # and bracket characters, changing cached reference evidence
+// for unchanged files. The body schema is unchanged; older caches rebuild.
+// 35 (CM reader slice): property members follow OG's value grammar (comma
+// members from the value's document parse, so `# x` names nothing) and file,
+// search and URL links in property values name no page; page aliases come
+// from that reader. Cached reference evidence and alias relations change for
+// unchanged files; the body schema is unchanged and older caches rebuild.
+// 36 (CM property members): a property value's members are its top-level
+// references with macros read in place (OG `parse-property-refs`), from one
+// owner: a link inside emphasis or a nested link's inner page is no longer a
+// member, a macro's link is, and a comma member's range is its native bytes.
+// Cached reference evidence and alias relations change for unchanged files;
+// the body schema is unchanged and older caches rebuild.
+// 37 (CM property parse): a property value's references come from lsdoc's
+// whole-value, macro-disabled parse (mldoc `Property.property_references`), so
+// a link crossing a macro's end (`{{x [[a}} b]]`) is a member, a value whose
+// parse keeps no member reads its ordinary parse (`{{x **[[a]]}} [[b]]**`
+// names `b`), and a block's page references take property values from that
+// owner alone. Cached reference evidence, page references and alias relations
+// change for unchanged files; the body schema is unchanged and older caches
+// rebuild.
+// 38 (CM header boundary): a Markdown page's properties are its first
+// top-level property node before the first block (OG `extract-blocks`); an
+// Org page's directives are those at the top level
+// before the first headline. A later node is prose, so its references become
+// the preamble block's and a key there stops being a page property. Cached
+// page properties, aliases and references change for unchanged files; the
+// body schema is unchanged and older caches rebuild.
+// 39 (CM opening text): Org text between opening directives is prose (a
+// directive between two text lines too), a Markdown `#+key: value` line's
+// references count (OG hoists it into the page's properties), and a page's
+// format is its file's, never read from its text. Cached references, page
+// properties and aliases change for unchanged files; older caches rebuild.
+pub(crate) const FORMAT: u32 = 39;
 /// The lsdoc release tine-core parses with (`crates/tine-core/Cargo.toml`;
 /// `checkpoint_tests::the_parser_tag_matches_the_lsdoc_pin` keeps them equal).
-pub(crate) const PARSER: &str = "lsdoc v0.5.11";
+pub(crate) const PARSER: &str = "lsdoc v0.5.12";
 /// Quiet time after the last dirtying publication before a checkpoint.
 pub(crate) const IDLE: Duration = Duration::from_secs(60);
 /// Least time between two checkpoint writes (Martin, 2026-10-02): at most 12
@@ -634,7 +676,8 @@ impl ChangeFeed {
         let (evaluator, list) = self
             .graph
             .checkpoint_install(graph, (*config.config).clone())?;
-        *self.journal_ids.lock().unwrap() = journal_ids_from_entries(list.iter());
+        *self.journal_ids.lock().unwrap() =
+            journal_ids_from_entries(&config.config.journals_dir, list.iter());
         let mut state = self.state.lock().unwrap();
         state.rev += 1;
         let mut snapshot = Snapshot {

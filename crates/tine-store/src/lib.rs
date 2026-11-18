@@ -120,6 +120,8 @@ pub use page_host::{
 };
 pub use root_binding::BoundDirectory;
 #[cfg(test)]
+mod merge_reader_guard_tests;
+#[cfg(test)]
 mod page_state;
 mod path_identity;
 mod platform_step;
@@ -169,8 +171,8 @@ pub use store::{QueryDialect, QueryResult};
 #[cfg(any(test, feature = "test-faults"))]
 pub use transaction::FaultPoint;
 pub use transaction::{
-    Content, IoError, MoveRewrite, PagePlan, Refusal, RenameMap, RewriteEffect, Rollback,
-    StepResult, TitleRebind, Transaction, TrashIf, TxOutcome, Why,
+    CheckPlan, Content, Guarantee, IoError, MoveRewrite, PagePlan, Refusal, RenameCheck, RenameMap,
+    RewriteEffect, Rollback, StepResult, TitleRebind, Transaction, TrashIf, TxOutcome, Why,
 };
 #[cfg(test)]
 mod block_pages_work_tests;

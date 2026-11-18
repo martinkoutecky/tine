@@ -19,15 +19,22 @@ describe("D05: the Markdown page header is the parser's", () => {
     expect(isPageHeaderPropertiesOnly("klic::value")).toBe(false);
     expect(splitPagePreamble("klic::value")).toEqual({ properties: null, content: "klic::value", remainder: "klic::value" });
   });
-  it("Unicode keys, empty-line gaps and a UTF-16 end offset agree with the parser", () => {
-    const raw = "klíč:: hodnota\n\nžluť:: 値";
+  it("Unicode keys, a UTF-16 end offset and OG's blank-line boundary agree with the parser", () => {
+    const raw = "klíč:: hodnota\nžluť:: 値";
     expect(isPageHeaderPropertiesOnly(raw)).toBe(true);
     expect(splitPagePreamble(`${raw}\n\nprose`)).toEqual({ properties: raw, content: "prose", remainder: "\n\nprose" });
+    // OG reads only the first property node: a property line after a blank one is opening text.
+    expect(isPageHeaderPropertiesOnly("klíč:: hodnota\n\nžluť:: 値")).toBe(false);
+    expect(pagePropertyEntries("klíč:: hodnota\n\nžluť:: 値", "md").map((e) => e.key)).toEqual(["klíč"]);
   });
-  it("fenced property-shaped lines, indented lines and `#tag::` lines are not header properties", () => {
+  it("fenced property-shaped lines are not header properties; indented and `#tag::` lines are", () => {
     expect(pagePropertyEntries("title:: A\n```\nx:: y\n```", "md").map((e) => e.key)).toEqual(["title"]);
-    expect(pagePropertyEntries(" indented:: x", "md")).toEqual([]);
-    expect(pagePropertyEntries("#tag:: x", "md")).toEqual([]);
+    // OG (mldoc 1.5.9) reads an indented property line as a page property.
+    expect(pagePropertyEntries(" indented:: x", "md").map((e) => e.key)).toEqual(["indented"]);
+    // A `#` key stays a property, as in a block (OG drops it: a named difference), but no header is
+    // complete with it.
+    expect(pagePropertyEntries("#tag:: x", "md").map((e) => e.key)).toEqual(["#tag"]);
+    expect(isPageHeaderPropertiesOnly("#tag:: x")).toBe(false);
     expect(caretOnPropertyLine("klic::value", 3)).toBe(false);
   });
 });

@@ -833,7 +833,10 @@ impl ReadSnapshot {
     }
     /// The real-name table ranked by the claimant order (OW-1).
     pub(crate) fn real_page_owners(&self) -> crate::query::RealPageOwners {
-        crate::query::RealPageOwners::new(Arc::clone(&self.real_page_names))
+        crate::query::RealPageOwners::new(
+            Arc::clone(&self.real_page_names),
+            &self.config.journals_dir,
+        )
     }
     pub(crate) fn resident_backlink_memberships(&self) -> Option<&BacklinkMembership> {
         self.backlink_membership.get()

@@ -38,6 +38,8 @@ mod production;
 #[cfg(test)]
 mod production_tests;
 mod progress;
+#[cfg(test)]
+mod recovery_tests;
 mod save;
 #[cfg(test)]
 mod state_census_tests;

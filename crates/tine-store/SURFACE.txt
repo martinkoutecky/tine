@@ -125,15 +125,13 @@ field store::WatchBatch.reconcile_started
 # private transaction module).
 fn transaction::Store::read_is_current
 
-## Identity (ceiling: 13)
-# REG-CM-MERGE-LOSES-ALIASES: a merge must keep both pages' aliases, which the
-# alias answer reads from the page header (pre-block, else a properties-only
-# first root) under the keys alias/aliases. No existing item answers either
-# question for a page the caller holds as text (`resolve` answers names in the
-# published graph, not a merge's two parsed pages); exposing the answer's own
-# two rules keeps the merge from restating them (I-12).
-fn query::page_header_text
-fn query::is_alias_key
+## Identity (ceiling: 12)
+# CM step 2 (CM-DAYFILE, D-20261111-CMR14): a date-named pages file is its day,
+# so the feed before the first view must list days the journals directory
+# listing cannot see. `journal_id` answers one given day and a parameter cannot
+# make it enumerate days without probing every date; `journal_days` lists the
+# keys of the same in-memory day index `journal_id` reads (O(D), no I/O).
+fn store::Store::journal_days
 # GS-FIX2: is_graph_text/is_asset_sidecar classify file types, not spelling
 # candidates. Expose the existing Unicode case-only predicate so the pull
 # planner and host/transaction publication share one candidate policy;
@@ -224,7 +222,7 @@ fn directory_durability::sync_private_directory
 enum store::SaveBase
 enum store::StoreError
 
-## Transaction steps (ceiling: 40)
+## Transaction steps (ceiling: 53)
 # GS-FIX: commit cannot validate a mixed host/non-page pull without writing.
 # validate runs its read-only preflight before the first host publication;
 # commit still repeats the checks under its own locks at publication time.
@@ -296,6 +294,28 @@ fn transaction::PagePlan::expect_view
 # refuses pages; a mode on `create` would give one step two guards.
 fn transaction::PagePlan::replace_page_bytes
 fn transaction::IoError::kind
+# CM step 2 P2/P3 (40 -> 53): a rename's or merge's every changed file is
+# checked on its final bytes against the conceptual model before any write
+# (R-RENAME-CHECK). No existing step carries the rename the model checks
+# against: `rewrite_refs_prepared` carries pure text and `move_file` a
+# reference proposal, neither the plan, the file's old page name nor the
+# writer's reading. One `check` attaches to the step already queued for the
+# file (rewrite, move or survivor save) instead of widening three doors' parameters;
+# the plan and the per-step check are plain carriers graph-features builds,
+# and `Guarantee` names the promise in the `ModelCheck` refusal.
+fn transaction::PagePlan::check
+struct transaction::CheckPlan
+field transaction::CheckPlan.old
+field transaction::CheckPlan.destination
+field transaction::CheckPlan.days
+field transaction::CheckPlan.names
+struct transaction::RenameCheck
+field transaction::RenameCheck.plan
+field transaction::RenameCheck.page
+field transaction::RenameCheck.fixed
+field transaction::RenameCheck.observed
+field transaction::RenameCheck.source
+enum transaction::Guarantee
 
 ## Trash admin (ceiling: 3)
 enum store::TrashKind
@@ -432,11 +452,7 @@ struct store::Inventory
 struct store::InventoryEntry
 struct store::WholeGraph
 
-## WholeGraph: References (ceiling: 5)
-# CM3-1: explicit_referrers returns files, not per-occurrence lost closure
-# keys or direct journal ownership. This read-only rename guard needs both;
-# corpus exposes physical documents but not the shared claimant/owner rule.
-fn store::WholeGraph::journal_rewrite_risks
+## WholeGraph: References (ceiling: 4)
 fn store::WholeGraph::backlink_filter_context
 fn store::WholeGraph::backlinks
 fn store::WholeGraph::explicit_referrers
@@ -608,7 +624,7 @@ field page_host::HostRead.bytes
 field page_host::HostRead.revision
 enum page_host::HostReadError
 # SB1-ACCEPT2 merge with SB2-DIAG: both branches added one re-export (13 -> 14).
-## Re-exports (ceiling: 15)
+## Re-exports (ceiling: 17)
 # SB1's existing app-facing directory identity/containment witness, above.
 use crate::root_binding::BoundDirectory
 use crate::storage_diag::DraftAdoptionReason
@@ -619,7 +635,13 @@ use crate::page_host::{ApplyRefusal,DiskToken,DraftStatus,EffectasHostEffect,Exp
 use crate::edit_kind::EditKind
 use crate::file_kind::{is_asset_sidecar,is_graph_text}
 use crate::model::{not_utf8,parse_input_depth_within_limit,PARSE_INPUT_MAX_BYTES}
-use crate::transaction::{Content,IoError,MoveRewrite,PagePlan,Refusal,RenameMap,RewriteEffect,Rollback,StepResult,TitleRebind,Transaction,TrashIf,TxOutcome,Why,}
+use crate::transaction::{CheckPlan,Content,Guarantee,IoError,MoveRewrite,PagePlan,Refusal,RenameCheck,RenameMap,RewriteEffect,Rollback,StepResult,TitleRebind,Transaction,TrashIf,TxOutcome,Why,}
+# CM step 2 P2/P3 (15 -> 16): the check's carriers live beside the check in
+# transaction/model_check.rs (size ratchet seam); the same items, re-exported by transaction.
+use transaction::model_check::{CheckPlan,Guarantee,RenameCheck}
+# Refusal moved to its own module so transaction.rs shrinks while retaining
+# the same type and root re-export path; this adds no operation, only an internal re-export.
+use transaction::refusal::Refusal
 use crate::publish::{PublishDest,PublishFailed,PublishReceipt,SiteWriter}
 use crate::restore::{RestoreFailed,RestoreFile,RestoreReport}
 use crate::store::{Area,Budget,Cancel,Change,ChangeKind,ConfigState,CorpusScope,Day,Depth,FacetPolicy,FileEntry,FileId,FileMeta,FileRev,GraphAccessInspection,GraphRev,Inventory,InventoryEntry,InventoryScope,IrAnswer,IrRequest,LinkTarget,Listing,LoadError,OpenError,OpenOptions,Origin,PageId,PageRead,PageReadSource,QueryError,Resolved,SaveBase,SearchRequest,Store,StoreError,Subscription,SubscriptionEnd,TrashKind,WatchBatch,WatchMode,WholeGraph,}

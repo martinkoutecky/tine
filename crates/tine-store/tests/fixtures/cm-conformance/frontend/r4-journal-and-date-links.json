@@ -16,7 +16,7 @@
         "page": "Notes"
       }
     ],
-    "oct 27th, 2026": [
+    "Oct 27th, 2026": [
       {
         "blocks": [
           {
@@ -89,30 +89,29 @@
   "journalTitleFormat": null,
   "keyOf": {
     "Notes": "notes",
-    "Oct 26th, 2026": "oct 26th, 2026",
-    "Oct 27th, 2026": "oct 27th, 2026"
+    "Oct 26th, 2026": "Day 2026-10-26",
+    "Oct 27th, 2026": "Day 2026-10-27"
   },
-  "namespaceNodes": [],
   "namespaceTree": [],
   "open": {
     "2026-10-26": {
       "journal": [
         "journal",
-        "oct 26th, 2026"
+        "Day 2026-10-26"
       ],
       "page": [
-        "page",
-        "oct 26th, 2026"
+        "journal",
+        "Day 2026-10-26"
       ]
     },
     "2026-10-27": {
       "journal": [
         "journal",
-        "oct 27th, 2026"
+        "Day 2026-10-27"
       ],
       "page": [
         "page",
-        "oct 27th, 2026"
+        "2026-10-27"
       ]
     },
     "Notes": {
@@ -128,17 +127,17 @@
     "Oct 26th, 2026": {
       "journal": [
         "journal",
-        "oct 26th, 2026"
+        "Day 2026-10-26"
       ],
       "page": [
-        "page",
-        "oct 26th, 2026"
+        "journal",
+        "Day 2026-10-26"
       ]
     },
     "Oct 27th, 2026": {
       "journal": [
         "journal",
-        "oct 27th, 2026"
+        "Day 2026-10-27"
       ],
       "page": [
         "page",
@@ -149,7 +148,7 @@
   "owner": {
     "2026-10-26": {
       "journal": "journals/2026_10_26.md",
-      "page": null
+      "page": "journals/2026_10_26.md"
     },
     "2026-10-27": {
       "journal": null,
@@ -161,7 +160,7 @@
     },
     "Oct 26th, 2026": {
       "journal": "journals/2026_10_26.md",
-      "page": null
+      "page": "journals/2026_10_26.md"
     },
     "Oct 27th, 2026": {
       "journal": null,
@@ -170,7 +169,7 @@
   },
   "pages": [
     {
-      "key": "oct 26th, 2026",
+      "key": "Day 2026-10-26",
       "kind": "journal",
       "linkedRefs": 1,
       "name": "Oct 26th, 2026",
@@ -178,10 +177,10 @@
       "parent": null
     },
     {
-      "key": "oct 27th, 2026",
+      "key": "Day 2026-10-27",
       "kind": "journal",
       "linkedRefs": 1,
-      "name": "oct 27th, 2026",
+      "name": "Oct 27th, 2026",
       "owner": null,
       "parent": null
     },
@@ -198,7 +197,7 @@
     "2026-10-26": {
       "backend": [
         "journal",
-        "oct 26th, 2026"
+        "Day 2026-10-26"
       ],
       "day": [
         2026,
@@ -207,13 +206,13 @@
       ],
       "model": [
         "journal",
-        "oct 26th, 2026"
+        "Day 2026-10-26"
       ]
     },
     "2026-10-27": {
       "backend": [
         "journal",
-        "oct 27th, 2026"
+        "Day 2026-10-27"
       ],
       "day": [
         2026,
@@ -222,7 +221,7 @@
       ],
       "model": [
         "journal",
-        "oct 27th, 2026"
+        "Day 2026-10-27"
       ]
     },
     "Notes": {
@@ -239,7 +238,7 @@
     "Oct 26th, 2026": {
       "backend": [
         "journal",
-        "oct 26th, 2026"
+        "Day 2026-10-26"
       ],
       "day": [
         2026,
@@ -248,7 +247,7 @@
       ],
       "model": [
         "journal",
-        "oct 26th, 2026"
+        "Day 2026-10-26"
       ]
     }
   },
@@ -257,7 +256,7 @@
       "children": [],
       "page": [
         "journal",
-        "oct 26th, 2026"
+        "Day 2026-10-26"
       ]
     },
     {
@@ -271,29 +270,22 @@
       "children": [],
       "page": [
         "journal",
-        "oct 27th, 2026"
+        "Day 2026-10-27"
       ]
     }
-  ],
-  "treeNodes": [
-    [
-      "journal",
-      "oct 26th, 2026"
-    ],
-    [
-      "page",
-      "notes"
-    ],
-    [
-      "journal",
-      "oct 27th, 2026"
-    ]
   ],
   "treeParent": [
     {
       "page": [
         "journal",
-        "oct 26th, 2026"
+        "Day 2026-10-26"
+      ],
+      "parent": null
+    },
+    {
+      "page": [
+        "journal",
+        "Day 2026-10-27"
       ],
       "parent": null
     },
@@ -301,13 +293,6 @@
       "page": [
         "page",
         "notes"
-      ],
-      "parent": null
-    },
-    {
-      "page": [
-        "journal",
-        "oct 27th, 2026"
       ],
       "parent": null
     }

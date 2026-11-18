@@ -75,6 +75,8 @@ export function pushToast(
   return id;
 }
 /** Return the existing ID for an identical visible status, or create one.
+ * A notice with an action replaces its identical predecessor: equal text does
+ * not mean equal operation, so the visible button is the newest request's.
  * Cost O(visible toasts); no failure beyond pushToast's signal update. */
 export function pushToastUnique(
   content: ToastText,
@@ -83,7 +85,9 @@ export function pushToastUnique(
 ): number {
   const key = textKey(toUiText(content));
   const existing = toasts().find((toast) => toast.key === key && toast.kind === kind);
-  return existing?.id ?? pushToast(content, kind, opts);
+  if (existing && !opts.action) return existing.id;
+  if (existing) dismissToast(existing.id);
+  return pushToast(content, kind, opts);
 }
 export function dismissToast(id: number) {
   const toast = toasts().find((t) => t.id === id);

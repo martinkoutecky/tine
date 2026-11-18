@@ -129,6 +129,25 @@ pub(crate) type Forward = Box<dyn Fn(Vec<String>, Option<Observed>) + Send + Syn
 /// nothing to publish (`Ok`), or the owner's read failed (that error).
 pub(crate) type Observed = Sender<std::io::Result<()>>;
 
+/// One explicit refresh's observation debt, using the existing owner replies.
+/// The count distinguishes completion from a driver dropping its reply senders.
+struct Observations {
+    done: Observed,
+    observed: Receiver<std::io::Result<()>>,
+    count: usize,
+}
+
+impl Observations {
+    fn new() -> Self {
+        let (done, observed) = mpsc::channel();
+        Self {
+            done,
+            observed,
+            count: 0,
+        }
+    }
+}
+
 /// The read error an owner's failed observation answers (A-H1): its OS
 /// error when it has one, else one naming the failed operation.
 pub(crate) fn observation_failed(
@@ -1021,9 +1040,16 @@ impl WatchHandle {
                     });
                 }
                 let _writer = self.core.writer.lock().unwrap();
-                let result = self
-                    .core
-                    .reconcile_locked(None, true, true, DiffTrigger::Recovery);
+                let mut observed = Observations::new();
+                let result = self.core.reconcile_timed(
+                    None,
+                    true,
+                    true,
+                    None,
+                    DiffTrigger::Recovery,
+                    None,
+                    Some(&mut observed),
+                );
                 #[cfg(test)]
                 crate::store::pause_at_hook(&self.core.recovery_reconcile_pause);
                 if let Err(error) = result {
@@ -1061,19 +1087,64 @@ impl WatchHandle {
                 let _ = self.wake.send(());
                 // A stylesheet edited while the load was failed was never seen.
                 drop(_writer);
+                self.await_observations(observed)?;
                 self.core.observe_custom_css();
                 return Ok(());
             }
             LoadStatus::Ready => drop(status),
             LoadStatus::Loading => unreachable!(),
         }
-        let result = self.core.reconcile(None, true, true, trigger);
+        let result = self.reconcile_refresh(trigger);
         if result.is_ok() && assets {
             self.core.observe_custom_css();
             self.core.observe_assets(&HashSet::new(), true);
         }
         let _ = self.wake.send(());
         result
+    }
+
+    /// A refresh settles its forwarded owner reads before returning. The
+    /// existing observation acknowledgements follow index delivery; waiting
+    /// here, outside the writer, adds no scan or second read by the watcher.
+    fn reconcile_refresh(&self, trigger: DiffTrigger) -> Result<(), LoadError> {
+        let mut observed = Observations::new();
+        self.core
+            .reconcile_full(true, true, None, trigger, Some(&mut observed))?;
+        self.await_observations(observed)
+    }
+
+    fn await_observations(&self, observations: Observations) -> Result<(), LoadError> {
+        let Observations {
+            done,
+            observed,
+            count,
+        } = observations;
+        drop(done);
+        let deadline = Instant::now()
+            + if on_observer_thread() {
+                Duration::ZERO
+            } else {
+                OBSERVED_WAIT
+            };
+        for _ in 0..count {
+            let failure =
+                match observed.recv_timeout(deadline.saturating_duration_since(Instant::now())) {
+                    Ok(Ok(())) => continue,
+                    Err(mpsc::RecvTimeoutError::Disconnected) => {
+                        "page owner stopped before observation".into()
+                    }
+                    Ok(Err(error)) => error.to_string(),
+                    Err(mpsc::RecvTimeoutError::Timeout) => {
+                        "page owner observation did not finish".into()
+                    }
+                };
+            return Err(if self.core.closed.load(Ordering::Acquire) {
+                LoadError::Closed
+            } else {
+                LoadError::Failed { reason: failure }
+            });
+        }
+        Ok(())
     }
 
     pub(crate) fn note_own(&self, files: &[(FileId, Option<FileRev>)]) -> HashSet<PathBuf> {
@@ -1173,6 +1244,19 @@ impl WatchHandle {
         };
         forward(vec![key], Some(done));
         true
+    }
+
+    #[cfg(test)]
+    pub(crate) fn observe_forward_for_tests(
+        &self,
+        observed: impl Fn(bool) + Send + Sync + 'static,
+    ) {
+        let mut forward = self.core.forward.lock().unwrap();
+        let owner = forward.take().unwrap();
+        *forward = Some(Box::new(move |keys, done| {
+            observed(done.is_some());
+            owner(keys, done);
+        }));
     }
 
     /// Hand `key`'s index to its owner (STEP3 §5). The caller holds the
@@ -1373,6 +1457,28 @@ fn watch_external_assets(
 mod tests {
     use super::*;
     use crate::store::{OpenOptions, Store};
+
+    #[test]
+    fn refresh_reports_an_owner_that_drops_its_observation_reply() {
+        let root = tempfile::tempdir().unwrap();
+        fs::create_dir(root.path().join("pages")).unwrap();
+        fs::write(root.path().join("pages/A.md"), "- present\n").unwrap();
+        let store = Store::open(root.path(), Default::default()).unwrap().0;
+        store.whole_graph_reconciled().unwrap();
+        store.watch.stop_background_for_test();
+        {
+            let _writer = store.writer.lock().unwrap();
+            store.graph.hold_unhosted("pages/A.md");
+            store.publish_retired();
+        }
+        // The owner vanishes after accepting the forward, with no reply.
+        *store.watch.core.forward.lock().unwrap() = Some(Box::new(|_, _| {}));
+        let result = store.refresh(crate::Depth::PageStamps);
+        store.close();
+        assert!(
+            matches!(result, Err(LoadError::Failed { reason }) if reason == "page owner stopped before observation")
+        );
+    }
 
     fn temp_root(tag: &str) -> PathBuf {
         let root = crate::test_support::fresh_dir(&format!("tine-{tag}-"));

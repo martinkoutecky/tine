@@ -78,7 +78,10 @@ fn pdf_open_reads_state_without_a_graph_write() {
 
 #[test]
 fn every_tauri_page_writer_reaches_a_kind_taking_store_entry() {
-    const COMMANDS: &str = include_str!("commands.rs");
+    const COMMANDS: &str = concat!(
+        include_str!("commands.rs"),
+        include_str!("commands/file_merge.rs")
+    );
     const CONCORD: &str = include_str!("commands/concord.rs");
     const RENAME: &str = include_str!("commands/rename.rs");
     // The backup module is two files since the og-B seam split; scan both so
@@ -86,6 +89,8 @@ fn every_tauri_page_writer_reaches_a_kind_taking_store_entry() {
     const BACKUP: &str = include_str!("backup/restore.rs");
     const BACKUP_SNAPSHOT: &str = include_str!("backup.rs");
     const PAGES: &str = include_str!("../../crates/tine-graph-features/src/pages.rs");
+    const PAGE_RECOVERY: &str =
+        include_str!("../../crates/tine-graph-features/src/pages_refusal.rs");
     const RENAME_ANSWER: &str =
         include_str!("../../crates/tine-graph-features/src/pages_rename_offer.rs");
     const CONFLICTS: &str = include_str!("../../crates/tine-graph-features/src/conflicts.rs");
@@ -151,6 +156,7 @@ fn every_tauri_page_writer_reaches_a_kind_taking_store_entry() {
         assert!(calls(body(CONCORD, name), route), "OG-RULES Rule 8: {name} changed its page-write route; exemplar src-tauri/src/commands/concord.rs");
     }
     let destinations = [
+        (PAGE_RECOVERY, "save_page_unchanged", "page_plan(Some(tine_store::EditKind::SaveBlock))"),
         // Every rename plans rename_transaction as one HostOp through
         // multi_rename; folded entry moves run on the host driver.
         (RENAME_ANSWER, "rename_page_as", "rename_page_after_inventory("),

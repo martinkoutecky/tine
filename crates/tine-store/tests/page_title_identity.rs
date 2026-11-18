@@ -405,15 +405,17 @@ fn page_name_agrees_with_the_outline_preamble() {
         graph.resolve("Not The Page", false),
         Resolved::Absent { .. }
     ));
+    // Opening text (the fence) before the property node makes it opening
+    // text: no title (named difference; OG reads it; REG-CM-HEADER-TEXT-HIDDEN).
     assert!(matches!(
         graph.resolve("Fenced Title", false),
-        Resolved::Existing { .. }
+        Resolved::Absent { .. }
     ));
     let heading = store.page(&PageId::from("pages/Physical.md")).unwrap();
     assert_eq!(heading.doc.name, "Physical");
     assert_eq!(heading.doc.pre_block, None, "the heading is a block");
     let fenced = store.page(&PageId::from("pages/Fenced.md")).unwrap();
-    assert_eq!(fenced.doc.name, "Fenced Title");
+    assert_eq!(fenced.doc.name, "Fenced");
     drop(store);
     fs::remove_dir_all(root).unwrap();
 }

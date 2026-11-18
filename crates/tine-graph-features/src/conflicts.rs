@@ -949,7 +949,16 @@ fn folded(
     )
     .map_err(merge_refused)?;
     let pre_block = choose_pre(pre_choice, fmt, &mine_doc, &their_doc)?;
-    let doc = dto(store, page, Document { pre_block, roots });
+    let org = fmt == Format::Org;
+    let doc = dto(
+        store,
+        page,
+        Document {
+            pre_block,
+            roots,
+            org,
+        },
+    );
     Ok(Folded {
         doc,
         win_rev,
@@ -1281,5 +1290,14 @@ fn marker_resolution(
     )
     .map_err(merge_refused)?;
     let pre_block = choose_pre(pre_choice, fmt, &mine, &theirs)?;
-    Ok(dto(store, page, Document { pre_block, roots }))
+    let org = fmt == Format::Org;
+    Ok(dto(
+        store,
+        page,
+        Document {
+            pre_block,
+            roots,
+            org,
+        },
+    ))
 }

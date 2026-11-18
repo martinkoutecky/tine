@@ -1,7 +1,7 @@
 {
   "backlinks": {
     "Notes": [],
-    "oct 26th, 2026": [
+    "Oct 26th, 2026": [
       {
         "blocks": [
           {
@@ -92,20 +92,19 @@
   "keyOf": {
     "A": "a",
     "Notes": "notes",
-    "Oct 26th, 2026": "oct 26th, 2026",
+    "Oct 26th, 2026": "Day 2026-10-26",
     "a": "a"
   },
-  "namespaceNodes": [],
   "namespaceTree": [],
   "open": {
     "2026-10-26": {
       "journal": [
         "journal",
-        "oct 26th, 2026"
+        "Day 2026-10-26"
       ],
       "page": [
         "page",
-        "oct 26th, 2026"
+        "2026-10-26"
       ]
     },
     "A": {
@@ -131,7 +130,7 @@
     "Oct 26th, 2026": {
       "journal": [
         "journal",
-        "oct 26th, 2026"
+        "Day 2026-10-26"
       ],
       "page": [
         "page",
@@ -173,10 +172,10 @@
   },
   "pages": [
     {
-      "key": "oct 26th, 2026",
+      "key": "Day 2026-10-26",
       "kind": "journal",
       "linkedRefs": 1,
-      "name": "oct 26th, 2026",
+      "name": "Oct 26th, 2026",
       "owner": null,
       "parent": null
     },
@@ -193,7 +192,7 @@
     "2026-10-26": {
       "backend": [
         "journal",
-        "oct 26th, 2026"
+        "Day 2026-10-26"
       ],
       "day": [
         2026,
@@ -202,7 +201,7 @@
       ],
       "model": [
         "journal",
-        "oct 26th, 2026"
+        "Day 2026-10-26"
       ]
     },
     "A": {
@@ -258,25 +257,18 @@
       "children": [],
       "page": [
         "journal",
-        "oct 26th, 2026"
+        "Day 2026-10-26"
       ]
     }
   ],
-  "treeNodes": [
-    [
-      "page",
-      "a"
-    ],
-    [
-      "page",
-      "notes"
-    ],
-    [
-      "journal",
-      "oct 26th, 2026"
-    ]
-  ],
   "treeParent": [
+    {
+      "page": [
+        "journal",
+        "Day 2026-10-26"
+      ],
+      "parent": null
+    },
     {
       "page": [
         "page",
@@ -288,13 +280,6 @@
       "page": [
         "page",
         "notes"
-      ],
-      "parent": null
-    },
-    {
-      "page": [
-        "journal",
-        "oct 26th, 2026"
       ],
       "parent": null
     }

@@ -1,5 +1,5 @@
 import { beforeEach, describe, expect, it } from "vitest";
-import { pushReferenceChangeNotice, setToasts, toasts } from "./toasts";
+import { pushReferenceChangeNotice, pushToastUnique, setToasts, toasts } from "./toasts";
 
 beforeEach(() => setToasts([]));
 describe("reference-change notices", () => {
@@ -14,5 +14,18 @@ describe("reference-change notices", () => {
   it("an unavailable count is described without inventing a number", () => {
     pushReferenceChangeNotice(null, true, () => {});
     expect(toasts()[0].message).toBe("References may now point to this block");
+  });
+});
+describe("identical notices", () => {
+  it("keeps one notice, and its action is the newest request's", () => {
+    const ran: string[] = [];
+    const plain = pushToastUnique("Same text", "error");
+    expect(pushToastUnique("Same text", "error")).toBe(plain);
+    pushToastUnique("Refused", "error", { action: { label: "Retry", run: () => ran.push("first") } });
+    pushToastUnique("Refused", "error", { action: { label: "Retry", run: () => ran.push("second") } });
+    const refused = toasts().filter((toast) => toast.action);
+    expect(refused).toHaveLength(1);
+    refused[0].action!.run();
+    expect(ran).toEqual(["second"]);
   });
 });

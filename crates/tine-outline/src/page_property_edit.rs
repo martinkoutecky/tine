@@ -1,24 +1,16 @@
 //! The page-properties form's text edit, shared by the window and owner verbs.
 //! Parser-owned entries only; unrelated lines and preamble prose retain bytes.
-use crate::block_regions::{page_header, parse_document};
+use crate::block_regions::parse_document;
 
 fn entries(raw: &str, org: bool) -> Result<Vec<(usize, String)>, String> {
     let regions = parse_document(raw, org);
     if regions.quarantined {
         return Err("page properties could not be parsed".into());
     }
-    Ok(if org {
-        regions
-            .page_properties()
-            .map(|p| (raw[..p.line.0].matches('\n').count(), p.key.to_lowercase()))
-            .collect()
-    } else {
-        page_header(raw)
-            .entries
-            .into_iter()
-            .map(|p| (p.line, p.key))
-            .collect()
-    })
+    Ok(regions
+        .page_properties()
+        .map(|p| (raw[..p.line.0].matches('\n').count(), p.key.clone()))
+        .collect())
 }
 
 /// Replace the first match, remove duplicate matches, or prepend a new property
@@ -123,10 +115,19 @@ pub fn set(
             {
                 return Err("Invalid page property key".into());
             }
-            out[0] = if out[0].is_empty() {
-                line
+            // A Markdown header may follow blank lines; the new line joins
+            // it there, since a blank line below it would end the header.
+            let headed = !org && !entries(&out[0], org)?.is_empty();
+            let head: usize = out[0]
+                .split_inclusive('\n')
+                .take_while(|l| headed && l.ends_with('\n') && l.trim().is_empty())
+                .map(str::len)
+                .sum();
+            let (blank, rest) = out[0].split_at(head);
+            out[0] = if rest.is_empty() {
+                format!("{blank}{line}")
             } else {
-                format!("{line}\n{}", out[0])
+                format!("{blank}{line}\n{rest}")
             };
         }
     }
@@ -140,13 +141,25 @@ mod tests {
     fn form_policy_keeps_prose_and_removes_duplicate_and_empty_drawer() {
         assert_eq!(
             set(
+                &["Tags:: old\ntags:: duplicate\n\nprose".into()],
+                false,
+                "tags",
+                Some("new")
+            )
+            .unwrap(),
+            ["Tags:: new\n\nprose"]
+        );
+        // A property node after a blank line is prose, not a page property
+        // (OG reads only the first node): it keeps its bytes.
+        assert_eq!(
+            set(
                 &["Tags:: old\n\ntags:: duplicate\n\nprose".into()],
                 false,
                 "tags",
                 Some("new")
             )
             .unwrap(),
-            ["Tags:: new\n\n\nprose"]
+            ["Tags:: new\n\ntags:: duplicate\n\nprose"]
         );
         assert_eq!(
             set(
@@ -158,5 +171,55 @@ mod tests {
             .unwrap(),
             ["prose"]
         );
+    }
+
+    /// The page properties and the prose `raw` reads as.
+    fn reading(raw: &str) -> (Vec<String>, Option<&str>) {
+        let header = crate::page_preamble::page_header(raw);
+        let prose = crate::page_preamble::preamble_content_range(raw, false);
+        (
+            header.entries.into_iter().map(|e| e.key).collect(),
+            prose.map(|r| &raw[r.0..r.1]),
+        )
+    }
+
+    /// Review F2: editing one key keeps every other line's role and bytes.
+    #[test]
+    fn an_edit_keeps_the_other_lines_reading() {
+        // Opening text before a property line: no page property, all prose. A
+        // new key goes on top; the alias line stays prose, never a declaration.
+        let before = "Intro [[X]]\nalias:: y";
+        assert_eq!(reading(before), (vec![], Some(before)));
+        let out = set(&[before.into()], false, "tags", Some("new")).unwrap();
+        assert_eq!(out, ["tags:: new\nIntro [[X]]\nalias:: y"]);
+        assert_eq!(reading(&out[0]), (vec!["tags".into()], Some(before)));
+        // Removing the only page property leaves a later node first, so it
+        // becomes the page's properties. OG does the same: its removal
+        // (`batch-set-block-property!` → `property/remove-properties`, which
+        // drops the leading `key:: value` lines of the pre-block's content)
+        // saves `\nalias:: Surprise` (left-trimmed by `wrap-parse-block`), and
+        // mldoc 1.5.9 reads `alias` from that text. Tine keeps the newline.
+        let out = set(&["a:: 1\n\nalias:: Surprise".into()], false, "a", None).unwrap();
+        assert_eq!(out, ["\nalias:: Surprise"]);
+        assert_eq!(reading(&out[0]), (vec!["alias".into()], None));
+        // A header after blank lines stays one header when a key is added.
+        for (before, after) in [
+            (
+                "\ntitle:: Existing\nalias:: y",
+                "\ntags:: new\ntitle:: Existing\nalias:: y",
+            ),
+            (
+                "\r\n \r\ntitle:: Existing\r\nalias:: y",
+                "\r\n \r\ntags:: new\ntitle:: Existing\r\nalias:: y",
+            ),
+        ] {
+            assert_eq!(reading(before).0, ["title", "alias"]);
+            let out = set(&[before.into()], false, "tags", Some("new")).unwrap();
+            assert_eq!(out, [after]);
+            assert_eq!(reading(after).0, ["tags", "title", "alias"]);
+        }
+        let out = set(&["\n\nprose".into()], false, "tags", Some("new")).unwrap();
+        assert_eq!(out, ["tags:: new\n\n\nprose"]);
+        assert_eq!(reading(&out[0]), (vec!["tags".into()], Some("prose")));
     }
 }

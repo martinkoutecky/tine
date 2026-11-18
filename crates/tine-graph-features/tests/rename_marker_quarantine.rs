@@ -1,5 +1,7 @@
-//! R-VCS-MARKERS (og 21a): marked pages stay byte-identical, including an
-//! explicit source title. The report lists each skipped rewrite once.
+//! R-VCS-MARKERS (og 21a): marked pages stay byte-identical. The report lists
+//! each skipped rewrite once. A marked file that moves moves verbatim when it
+//! needs no rewrite; one that needs a rewrite (its own title, its own
+//! reference) refuses the rename before any write (model r6 O4; r3 #13).
 use std::fs;
 use std::path::PathBuf;
 use tine_graph_features::pages::{self, RenameOutcome};
@@ -47,7 +49,12 @@ fn single_rename_refuses_its_marked_org_source_that_does_not_round_trip() {
     })
     .unwrap_err();
     assert_eq!(refusal.kind(), std::io::ErrorKind::PermissionDenied);
-    assert!(refusal.to_string().contains("read-only .org file"));
+    assert_eq!(
+        pages::RewriteBlocked::of(&refusal),
+        Some(&pages::RewriteBlocked::ReadOnlyOrg {
+            file: "pages/Old.org".into()
+        })
+    );
     assert_eq!(
         fs::read_to_string(root.join("pages/Old.org")).unwrap(),
         source
@@ -79,10 +86,55 @@ fn single_rename_refuses_a_held_marked_org_referrer_that_does_not_round_trip() {
     );
 }
 
+fn snapshot(root: &std::path::Path) -> Vec<(String, String)> {
+    let mut out: Vec<_> = fs::read_dir(root.join("pages"))
+        .unwrap()
+        .flatten()
+        .map(|entry| {
+            let name = entry.file_name().to_string_lossy().into_owned();
+            (name, fs::read_to_string(entry.path()).unwrap())
+        })
+        .collect();
+    out.sort();
+    out
+}
+
+/// O4: "a moved file with conflict markers needs no rewrite (it moves
+/// verbatim)". A marked source whose own `title::` the move would respell
+/// needs a rewrite, so the rename refuses and writes nothing. (Before model
+/// r6 it moved verbatim and kept `title:: Alpha` at `pages/Beta.md`, so the
+/// page kept its old name at the new path.)
+#[test]
+fn a_marked_source_whose_title_would_change_refuses_the_rename() {
+    let _integration_guard = crate::integration_lock();
+    let source = "title:: Alpha\n\n- alpha\n<<<<<<< ours\n- x\n=======\n- y\n>>>>>>> theirs\n";
+    let (root, store) = graph(
+        "titled-source",
+        &[
+            ("pages/Alpha.md", source),
+            ("pages/Clean.md", "- clean sees [[Alpha]]\n"),
+        ],
+    );
+    let before = snapshot(&root);
+    let refusal = hosted(&store, |host| {
+        pages::rename_or_merge_page(&store, host, "Alpha", "Beta", None, None, &[])
+    })
+    .unwrap_err();
+    assert_eq!(
+        pages::RenameBlocked::of(&refusal),
+        Some(&pages::RenameBlocked::ConflictMarkers {
+            file: "pages/Alpha.md".to_owned()
+        }),
+        "{refusal}"
+    );
+    assert_eq!(snapshot(&root), before, "nothing written");
+    let _ = fs::remove_dir_all(root);
+}
+
 #[test]
 fn rename_skips_marker_bearing_referrers_and_reports_them() {
     let _integration_guard = crate::integration_lock();
-    let source = "title:: Alpha\n\n- alpha\n<<<<<<< ours\n- x\n=======\n- y\n>>>>>>> theirs\n";
+    let source = "- alpha\n<<<<<<< ours\n- x\n=======\n- y\n>>>>>>> theirs\n";
     let (root, store) = graph(
         "referrer",
         &[
@@ -111,10 +163,7 @@ fn rename_skips_marker_bearing_referrers_and_reports_them() {
     );
     assert_eq!(
         report.skipped_conflicted_referrers,
-        vec![
-            "pages/Alpha.md".to_owned(),
-            "pages/Conflicted.md".to_owned()
-        ]
+        vec!["pages/Conflicted.md".to_owned()]
     );
     assert!(report
         .touched
@@ -125,12 +174,38 @@ fn rename_skips_marker_bearing_referrers_and_reports_them() {
 
 /// A namespace cascade hits one quarantined referrer with several pairs: it
 /// still comes out byte-identical and is reported once. A marker-bearing
-/// descendant that moves keeps its bytes exactly.
+/// descendant that moves and needs no rewrite keeps its bytes exactly (O4);
+/// one that references the renamed page would need a rewrite, so the rename
+/// refuses and writes nothing (before model r6 it moved with `[[Parent]]`
+/// left pointing at the old name).
 #[test]
 fn namespace_rename_also_skips_marker_bearing_referrers_and_moves_them_verbatim() {
     let _integration_guard = crate::integration_lock();
     let conflicted = "- intro\n<<<<<<< HEAD\n- [[Parent]] and [[Parent/Child]]\n=======\n- [[Parent/Child]] only\n>>>>>>> branch\n";
-    let child = "- child of [[Parent]]\n<<<<<<< HEAD\n- a\n=======\n- b\n>>>>>>> x\n";
+    let referring = "- child of [[Parent]]\n<<<<<<< HEAD\n- a\n=======\n- b\n>>>>>>> x\n";
+    let (root, store) = graph(
+        "namespace-referring",
+        &[
+            ("pages/Parent.md", "- parent\n"),
+            ("pages/Parent___Child.md", referring),
+            ("pages/Conflicted.md", conflicted),
+        ],
+    );
+    let before = snapshot(&root);
+    let refusal = hosted(&store, |host| {
+        pages::rename_or_merge_page(&store, host, "Parent", "Ancestor", None, None, &[])
+    })
+    .unwrap_err();
+    assert_eq!(
+        pages::RenameBlocked::of(&refusal),
+        Some(&pages::RenameBlocked::ConflictMarkers {
+            file: "pages/Parent___Child.md".to_owned()
+        }),
+        "{refusal}"
+    );
+    assert_eq!(snapshot(&root), before, "nothing written");
+    let _ = fs::remove_dir_all(root);
+    let child = "- child\n<<<<<<< HEAD\n- a\n=======\n- b\n>>>>>>> x\n";
     let (root, store) = graph(
         "namespace",
         &[
@@ -154,13 +229,7 @@ fn namespace_rename_also_skips_marker_bearing_referrers_and_moves_them_verbatim(
     assert!(!root.join("pages/Parent___Child.md").exists());
     let mut skipped = report.skipped_conflicted_referrers.clone();
     skipped.sort();
-    assert_eq!(
-        skipped,
-        vec![
-            "pages/Conflicted.md".to_owned(),
-            "pages/Parent___Child.md".to_owned()
-        ]
-    );
+    assert_eq!(skipped, vec!["pages/Conflicted.md".to_owned()]);
     let _ = fs::remove_dir_all(root);
 }
 

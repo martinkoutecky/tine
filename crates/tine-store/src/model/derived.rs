@@ -294,6 +294,20 @@ impl Graph {
         matches!(self.authority(path), Authority::Disk)
     }
 
+    /// Held pages with no owner publication yet. A disk stamp cannot certify
+    /// their missing rows: reconciliation asks their owners even when no file
+    /// changed. O(held keys), no file reads or page/graph walk.
+    pub(crate) fn unindexed_held_keys(&self) -> Vec<String> {
+        self.held
+            .keys
+            .read()
+            .unwrap()
+            .iter()
+            .filter(|(_, indexed)| indexed.is_none())
+            .map(|(key, _)| key.clone())
+            .collect()
+    }
+
     /// [`Self::disk_sourced`] within the pass whose memo is `memo`.
     pub(crate) fn disk_sourced_in(&self, memo: &mut Memo, path: &Path) -> bool {
         matches!(self.authority_in(memo, path), Authority::Disk)
@@ -312,9 +326,7 @@ impl Graph {
         let mut entry = self.owned_listing(key)?;
         validate_parse_bytes_for_path(bytes, &entry.path).ok()?;
         let content = std::str::from_utf8(bytes).ok()?;
-        if let Ok(name) = self.name_from(&entry, content) {
-            entry.name = name;
-        }
+        let _ = self.name_from(&mut entry, content);
         Some(entry)
     }
 
@@ -350,9 +362,7 @@ impl Graph {
         validate_parse_bytes_for_path(bytes, &entry.path)?;
         let content = std::str::from_utf8(bytes)
             .map_err(|error| io::Error::new(io::ErrorKind::InvalidData, error))?;
-        if let Ok(name) = self.name_from(&entry, content) {
-            entry.name = name;
-        }
+        let _ = self.name_from(&mut entry, content);
         let (mut doc, disk) = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
             parse_page_content(&entry, content)
         }))
@@ -563,9 +573,22 @@ impl Graph {
         entries.retain(|entry| self.disk_sourced_in(&mut memo, &entry.path));
         #[cfg(test)]
         crate::store::pause_at_hook(&self.certify_pause);
+        let formats = (
+            self.current_journal_format(),
+            self.journals_path(),
+            self.current_config().file_name_format,
+        );
         for (key, bytes) in self.held.published() {
             if let Some(entry) = self.owned_entry(&key, &bytes) {
-                if kind.is_none_or(|kind| kind == entry.kind) {
+                // As the listing: an ordinary-kind listing keeps a day only a
+                // `title::` names.
+                let title_day = kind == Some(PageKind::Page)
+                    && entry.kind == PageKind::Journal
+                    && !super::page_identity::journal_listing_covers(
+                        (&formats.0, &formats.1, formats.2),
+                        &entry.path,
+                    );
+                if kind.is_none_or(|kind| kind == entry.kind) || title_day {
                     entries.push(entry);
                 }
             }
@@ -598,25 +621,6 @@ impl Graph {
                 None => Named::Absent,
             },
             Authority::Withheld => Named::Absent,
-        }
-    }
-
-    /// The entry a snapshot removes for `path`, which it named `old` (R2): a
-    /// tombstone named by the path alone, with no file read and no cache.
-    pub(crate) fn tombstone(&self, path: &Path, (kind, name): &(PageKind, String)) -> PageEntry {
-        let format = self.current_journal_format();
-        let journals = self.journals_path();
-        let listed = listed_entry(
-            self,
-            (&format, &journals, self.current_config().file_name_format),
-            path.to_path_buf(),
-        );
-        PageEntry {
-            name: name.clone(),
-            kind: *kind,
-            date_key: listed.and_then(|entry| entry.date_key),
-            rel_path: Some(self.rel_path(path).into()),
-            path: path.to_path_buf(),
         }
     }
 
@@ -924,7 +928,7 @@ impl Graph {
     /// page list memo and the first publication's name inventory.
     pub(super) fn install_launch_listing(&self, gen: u64, named: Vec<PageEntry>) {
         let named = self.certify(named, None);
-        let deduped = dedup_journal_days(named.0.clone());
+        let deduped = dedup_journal_days(&self.current_config().journals_dir, named.0.clone());
         *self.derived.page_list_cache.write().unwrap() =
             Some((gen, Arc::new(EntryList::from(deduped.as_slice()))));
         *self.derived.launch_listing.write().unwrap() = Some((gen, named));

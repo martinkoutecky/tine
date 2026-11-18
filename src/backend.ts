@@ -168,7 +168,11 @@ class TauriBackend implements Backend {
       // family plus the read error. Every caller prints the rejection as it
       // prints any other (a string, as Tauri rejects), so it carries the sentence
       // the open-time notice gives, not the raw read error.
-      throw errorFamily(error) === "config-unreadable" ? configUnreadableText(error) : error;
+      const family = errorFamily(error);
+      if (family === "title-identity") throw t("page-rename-title-identity");
+      if (family === "missing-native-name-range") throw t("page-merge-missing-name-range");
+      if (family === "alias-owner") throw t("page-merge-alias-owner");
+      throw family === "config-unreadable" ? configUnreadableText(error) : error;
     } finally {
       clearTimeout(slowTimer);
       settleSlow?.();
@@ -427,10 +431,10 @@ class TauriBackend implements Backend {
   getBlockReferrers(uuid: string) {
     return this.call<RefGroup[]>("block_referrers", { uuid });
   }
-  renamePage(old: string, next: string, _kind: "rename-page", expectedPath?: string, mergeInto?: string, unsavedPaths?: string[], ownPage?: boolean) {
+  renamePage(old: string, next: string, _kind: "rename-page", expectedPath?: string, mergeInto?: string, unsavedPaths?: string[], saveFirst?: string) {
     dropDisplayedFor({ name: old });
-    if (mergeInto && !ownPage) dropDisplayedFor({ name: mergeInto });
-    return this.call<import("./types").RenameDone>("rename_page", { old, new: next, expectedPath, mergeInto: ownPage ? undefined : mergeInto, ownPage: ownPage || undefined, unsavedPaths });
+    if (mergeInto) dropDisplayedFor({ name: mergeInto });
+    return this.call<import("./types").RenameDone>("rename_page", { old, new: next, expectedPath, mergeInto, unsavedPaths, saveFirst });
   }
   renameOffer(old: string, next: string, expectedPath?: string) {
     return this.call<import("./types").RenameOffer>("rename_offer", { old, new: next, expectedPath });
@@ -692,10 +696,10 @@ class TauriBackend implements Backend {
     source?.(answer.source);
     return answer.page;
   }
-  mergePages(src: string, dst: string) {
+  mergePages(src: string, dst: string, _kinds?: EditKinds, saveFirst?: string) {
     dropDisplayedFor({ name: src });
     dropDisplayedFor({ name: dst });
-    return this.call<void>("merge_pages", { src, dst });
+    return this.call<void>("merge_pages", { src, dst, saveFirst });
   }
   renameFileToPage(path: string, newName: string) {
     dropDisplayedFor({ path });

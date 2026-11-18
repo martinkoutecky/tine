@@ -13,7 +13,10 @@ use std::sync::Arc;
 /// in O(1) rather than by a scan of the map (PC-3: a namespace rename moves
 /// K pages of one K-entry map). Built once per map in a preflight.
 #[derive(Default)]
-pub(crate) struct TitleIndexes(HashMap<*const RenameMap, HashMap<(String, String), usize>>);
+pub(crate) struct TitleIndexes {
+    moves: HashMap<*const RenameMap, HashMap<(String, String), usize>>,
+    links: HashMap<*const RenameMap, HashMap<String, String>>,
+}
 
 impl TitleIndexes {
     /// `map`'s new name for a page titled `title` moved to `destination`: the
@@ -25,7 +28,7 @@ impl TitleIndexes {
         title: &str,
         destination: &str,
     ) -> Option<&'m str> {
-        let index = self.0.entry(Arc::as_ptr(map)).or_insert_with(|| {
+        let index = self.moves.entry(Arc::as_ptr(map)).or_insert_with(|| {
             #[cfg(feature = "test-faults")]
             crate::cost_counters::rename_title_probes(map.0.len());
             let mut index = HashMap::new();
@@ -49,23 +52,61 @@ impl TitleIndexes {
     }
 }
 
+/// A rewrite's new bytes, with the model's reading of `old` from the parse
+/// the rewrite read (the rename check's old observation).
+pub(crate) type Rewritten = (Vec<u8>, Option<Arc<tine_core::cm_check::Content>>);
+
 pub(crate) fn rewrite(
     old: &[u8],
     path: &Path,
     map: &RenameMap,
-    name_format: tine_core::config::FileNameFormat,
-) -> Result<Vec<u8>, Why> {
-    let proposal = rewrite_proposal(old, path, map, name_format)?;
+    format: tine_core::refs::RenameFormat<'_>,
+) -> Result<Rewritten, Why> {
+    let proposal = rewrite_proposal(old, path, map, format)?;
     let is_org = Format::from_path(path) == Format::Org;
     refuse_read_only_org(old, proposal.text.as_bytes(), is_org)?;
-    Ok(proposal.text.into_bytes())
+    Ok((proposal.text.into_bytes(), proposal.observed))
+}
+
+/// Check the actual title image, including a stationary namespace and reused
+/// prepared bytes. Titles and namespace images retain their existing owners.
+/// O(affected page bytes), no I/O; journals keep their filename identity,
+/// and a title that is a day stays (`days`, O2).
+pub(super) fn title_identity(
+    old: &[u8],
+    new: &[u8],
+    format: Format,
+    map: &Arc<RenameMap>,
+    titles: &mut TitleIndexes,
+    days: &tine_core::date::JournalFormat,
+) -> Result<(), Why> {
+    let old = std::str::from_utf8(old).map_err(|_| Why::Refused(Refusal::Undecodable))?;
+    let new = std::str::from_utf8(new).map_err(|_| Why::Refused(Refusal::Undecodable))?;
+    if let Some(title) = tine_core::model::page_title_from_header(old, format) {
+        let keyed = titles.links.entry(Arc::as_ptr(map)).or_insert_with(|| {
+            map.0
+                .iter()
+                .map(|(a, b)| (tine_core::refs::page_key(a), b.clone()))
+                .collect()
+        });
+        let expected = tine_core::refs::renamed_site_name(&title, keyed, Some(days));
+        let actual = tine_core::model::page_title_from_header(new, format);
+        if actual.as_deref().is_none_or(|actual| {
+            !tine_core::refs::same_page(actual, expected.as_deref().unwrap_or(&title))
+        }) {
+            return Err(Why::Refused(Refusal::TextRealization(
+                tine_core::text_trace::TraceError::TitleIdentity,
+            )));
+        }
+    }
+    Ok(())
 }
 
 fn rewrite_proposal(
     old: &[u8],
     path: &Path,
     map: &RenameMap,
-    name_format: tine_core::config::FileNameFormat,
+    format: tine_core::refs::RenameFormat<'_>,
 ) -> Result<tine_core::refs::RenameProposal, Why> {
     #[cfg(feature = "test-faults")]
     crate::cost_counters::transaction_rewrite();
@@ -78,7 +119,7 @@ fn rewrite_proposal(
             .collect()
     };
     let proposal =
-        tine_core::refs::rename_proposal(text, is_org, &keyed(&map.0), &keyed(&map.1), name_format)
+        tine_core::refs::rename_proposal(text, is_org, &keyed(&map.0), &keyed(&map.1), format)
             .map_err(|e| Why::Refused(Refusal::TextRealization(e)))?;
     Ok(proposal)
 }
@@ -95,7 +136,7 @@ pub(super) fn refuse_read_only_org(old: &[u8], new: &[u8], is_org: bool) -> Resu
 }
 
 /// A rename move changes a file's logical identity as well as its path. Keep
-/// the own preamble title (Markdown `title::`, Org `#+title:` or `:title:`) in
+/// the own header title (Markdown `title::`, Org `#+title:` or `:title:`) in
 /// the same guarded transaction when it still names the old identity; a custom
 /// title remains untouched. A non-round-tripping Org file is refused rather
 /// than rewritten.
@@ -104,36 +145,40 @@ pub(crate) fn rewrite_move(
     path: &Path,
     map: &Arc<RenameMap>,
     titles: &mut TitleIndexes,
-    name_format: tine_core::config::FileNameFormat,
+    spelling: tine_core::refs::RenameFormat<'_>,
     proposed: Option<tine_core::refs::RenameProposal>,
-) -> Result<Vec<u8>, Why> {
+) -> Result<Rewritten, Why> {
     // `proposed`: the reference rewrite already proposed for these `old`
     // bytes (carried from the caller's planning read and checked by
     // `PreparedRewrite::reuse_proposal`), so the page is not walked again.
     let mut proposal = match proposed {
         Some(proposal) => proposal,
-        None => rewrite_proposal(old, path, map, name_format)?,
+        None => rewrite_proposal(old, path, map, spelling)?,
     };
+    let observed = proposal.observed.take();
     refuse_read_only_org(
         old,
         proposal.text.as_bytes(),
         Format::from_path(path) == Format::Org,
     )?;
     let format = tine_core::model::Format::from_path(path);
-    let Some(stem) = path.file_stem().and_then(|stem| stem.to_str()) else {
-        return Ok(proposal.text.into_bytes());
+    let done = |proposal: tine_core::refs::RenameProposal| {
+        Ok((proposal.text.into_bytes(), observed.clone()))
     };
-    let destination_name = tine_core::model::decode_page_name(stem, name_format);
+    let Some(stem) = path.file_stem().and_then(|stem| stem.to_str()) else {
+        return done(proposal);
+    };
+    let destination_name = tine_core::model::decode_page_name(stem, spelling.names);
     let source = std::str::from_utf8(old).map_err(|_| Why::Refused(Refusal::Undecodable))?;
     #[cfg(any(test, feature = "test-faults"))]
     if source.contains(crate::model::TEST_TITLE_READ_PANIC_SENTINEL) {
         panic!("deterministic test sentinel for a rename title-read panic");
     }
-    let Some(title) = tine_core::model::page_title_from_preamble(source, format) else {
-        return Ok(proposal.text.into_bytes());
+    let Some(title) = tine_core::model::page_title_from_header(source, format) else {
+        return done(proposal);
     };
     let Some(new_name) = titles.new_name(map, &title, &destination_name) else {
-        return Ok(proposal.text.into_bytes());
+        return done(proposal);
     };
     proposal
         .rebind_title(format == Format::Org, new_name)
@@ -143,7 +188,7 @@ pub(crate) fn rewrite_move(
             "org file is read-only (does not round-trip)".into(),
         )));
     }
-    Ok(proposal.text.into_bytes())
+    done(proposal)
 }
 
 pub(super) fn validate_stream(source: &File, max_bytes: u64) -> Result<(), Why> {

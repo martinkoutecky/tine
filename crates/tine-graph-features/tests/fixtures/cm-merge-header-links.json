@@ -1,0 +1,458 @@
+[
+  {
+    "source": "alias:: [label](../pages/A.md)\n",
+    "target": "- plain\n",
+    "refusal": null
+  },
+  {
+    "source": "alias:: [label](../pages/A.md)\r\n",
+    "target": "- plain\r\n",
+    "refusal": null
+  },
+  {
+    "source": "alias:: [label](../pages/A.md)\r",
+    "target": "- plain\r",
+    "refusal": null
+  },
+  {
+    "source": "alias:: [label](../pages/A.md)\r\n",
+    "target": "- plain\r\n",
+    "refusal": null
+  },
+  {
+    "source": "alias:: [label](../pages/A.md)\n",
+    "target": "alias:: [label](../pages/A.md)\n",
+    "refusal": null
+  },
+  {
+    "source": "alias:: [label](../pages/A.md)\r\n",
+    "target": "alias:: [label](../pages/A.md)\r\n",
+    "refusal": null
+  },
+  {
+    "source": "alias:: [label](../pages/A.md)\r",
+    "target": "alias:: [label](../pages/A.md)\r",
+    "refusal": null
+  },
+  {
+    "source": "alias:: [label](../pages/A.md)\r\n",
+    "target": "alias:: [label](../pages/A.md)\r\n",
+    "refusal": null
+  },
+  {
+    "source": "alias:: [label](../pages/A.md)\nk:: again\n- body\n",
+    "target": "- plain\n",
+    "refusal": null
+  },
+  {
+    "source": "alias:: [label](../pages/A.md)\r\nk:: again\r\n- body\r\n",
+    "target": "- plain\r\n",
+    "refusal": null
+  },
+  {
+    "source": "alias:: [label](../pages/A.md)\rk:: again\r- body\r",
+    "target": "- plain\r",
+    "refusal": null
+  },
+  {
+    "source": "alias:: [label](../pages/A.md)\r\nk:: again\r- body\n",
+    "target": "- plain\r\n",
+    "refusal": null
+  },
+  {
+    "source": "alias:: [label](../pages/A.md)\nk:: again\n- body\n",
+    "target": "alias:: [label](../pages/A.md)\nk:: again\n- body\n",
+    "refusal": null
+  },
+  {
+    "source": "alias:: [label](../pages/A.md)\r\nk:: again\r\n- body\r\n",
+    "target": "alias:: [label](../pages/A.md)\r\nk:: again\r\n- body\r\n",
+    "refusal": null
+  },
+  {
+    "source": "alias:: [label](../pages/A.md)\rk:: again\r- body\r",
+    "target": "alias:: [label](../pages/A.md)\rk:: again\r- body\r",
+    "refusal": null
+  },
+  {
+    "source": "alias:: [label](../pages/A.md)\r\nk:: again\r- body\n",
+    "target": "alias:: [label](../pages/A.md)\r\nk:: again\r- body\n",
+    "refusal": null
+  },
+  {
+    "source": "alias:: [label](../pages/A.md)\n\nalias:: [label](../pages/A.md)\n- body\n",
+    "target": "- plain\n",
+    "refusal": null
+  },
+  {
+    "source": "alias:: [label](../pages/A.md)\r\n\r\nalias:: [label](../pages/A.md)\r\n- body\r\n",
+    "target": "- plain\r\n",
+    "refusal": null
+  },
+  {
+    "source": "alias:: [label](../pages/A.md)\r\ralias:: [label](../pages/A.md)\r- body\r",
+    "target": "- plain\r",
+    "refusal": null
+  },
+  {
+    "source": "alias:: [label](../pages/A.md)\r\n\ralias:: [label](../pages/A.md)\n- body\r\n",
+    "target": "- plain\r\n",
+    "refusal": null
+  },
+  {
+    "source": "- plain\n",
+    "target": "alias:: [label](../pages/A.md)\n\nalias:: [label](../pages/A.md)\n- body\n",
+    "refusal": null
+  },
+  {
+    "source": "- plain\r\n",
+    "target": "alias:: [label](../pages/A.md)\r\n\r\nalias:: [label](../pages/A.md)\r\n- body\r\n",
+    "refusal": null
+  },
+  {
+    "source": "- plain\r",
+    "target": "alias:: [label](../pages/A.md)\r\ralias:: [label](../pages/A.md)\r- body\r",
+    "refusal": null
+  },
+  {
+    "source": "- plain\r\n",
+    "target": "alias:: [label](../pages/A.md)\r\n\ralias:: [label](../pages/A.md)\n- body\r\n",
+    "refusal": null
+  },
+  {
+    "source": "alias:: [label](../pages/A.md)\n\nalias:: [label](../pages/A.md)\n- body\n",
+    "target": "alias:: [label](../pages/A.md)\n\nalias:: [label](../pages/A.md)\n- body\n",
+    "refusal": null
+  },
+  {
+    "source": "alias:: [label](../pages/A.md)\r\n\r\nalias:: [label](../pages/A.md)\r\n- body\r\n",
+    "target": "alias:: [label](../pages/A.md)\r\n\r\nalias:: [label](../pages/A.md)\r\n- body\r\n",
+    "refusal": null
+  },
+  {
+    "source": "alias:: [label](../pages/A.md)\r\ralias:: [label](../pages/A.md)\r- body\r",
+    "target": "alias:: [label](../pages/A.md)\r\ralias:: [label](../pages/A.md)\r- body\r",
+    "refusal": null
+  },
+  {
+    "source": "alias:: [label](../pages/A.md)\r\n\ralias:: [label](../pages/A.md)\n- body\r\n",
+    "target": "alias:: [label](../pages/A.md)\r\n\ralias:: [label](../pages/A.md)\n- body\r\n",
+    "refusal": null
+  },
+  {
+    "source": "- alias:: [label](../pages/A.md)\n    - child\n",
+    "target": "- plain\n",
+    "refusal": null,
+    "survivor": "- plain\n-\n  alias:: [label](../pages/A.md)\n    - child\n"
+  },
+  {
+    "source": "- alias:: [label](../pages/A.md)\r\n    - child\r\n",
+    "target": "- plain\r\n",
+    "refusal": null,
+    "survivor": "- plain\r\n-\r\n  alias:: [label](../pages/A.md)\r\n    - child\r\n"
+  },
+  {
+    "source": "- alias:: [label](../pages/A.md)\r    - child\r",
+    "target": "- plain\r",
+    "refusal": null,
+    "survivor": "- plain\r-\r  alias:: [label](../pages/A.md)\r    - child\r"
+  },
+  {
+    "source": "- alias:: [label](../pages/A.md)\r\n    - child\r",
+    "target": "- plain\r\n",
+    "refusal": null,
+    "survivor": "- plain\r\n-\r\n  alias:: [label](../pages/A.md)\r\n    - child\r"
+  },
+  {
+    "source": "- alias:: [label](../pages/A.md)\n    - child\n",
+    "target": "- alias:: [label](../pages/A.md)\n    - child\n",
+    "refusal": null,
+    "survivor": "- alias:: [label](../pages/A.md)\n    - child\n-\n  alias:: [label](../pages/A.md)\n    - child\n"
+  },
+  {
+    "source": "- alias:: [label](../pages/A.md)\r\n    - child\r\n",
+    "target": "- alias:: [label](../pages/A.md)\r\n    - child\r\n",
+    "refusal": null,
+    "survivor": "- alias:: [label](../pages/A.md)\r\n    - child\r\n-\r\n  alias:: [label](../pages/A.md)\r\n    - child\r\n"
+  },
+  {
+    "source": "- alias:: [label](../pages/A.md)\r    - child\r",
+    "target": "- alias:: [label](../pages/A.md)\r    - child\r",
+    "refusal": null,
+    "survivor": "- alias:: [label](../pages/A.md)\r    - child\r-\r  alias:: [label](../pages/A.md)\r    - child\r"
+  },
+  {
+    "source": "- alias:: [label](../pages/A.md)\r\n    - child\r",
+    "target": "- alias:: [label](../pages/A.md)\r\n    - child\r",
+    "refusal": null,
+    "survivor": "- alias:: [label](../pages/A.md)\r\n    - child\r-\r\n  alias:: [label](../pages/A.md)\r\n    - child\r"
+  },
+  {
+    "source": "alias:: [label](../pages/A.md)\nprose [[A]]\n- body\n",
+    "target": "- plain\n",
+    "refusal": null
+  },
+  {
+    "source": "alias:: [label](../pages/A.md)\r\nprose [[A]]\r\n- body\r\n",
+    "target": "- plain\r\n",
+    "refusal": null
+  },
+  {
+    "source": "alias:: [label](../pages/A.md)\rprose [[A]]\r- body\r",
+    "target": "- plain\r",
+    "refusal": null
+  },
+  {
+    "source": "alias:: [label](../pages/A.md)\r\nprose [[A]]\r- body\n",
+    "target": "- plain\r\n",
+    "refusal": null
+  },
+  {
+    "source": "alias:: [label](../pages/A.md)\nprose [[A]]\n- body\n",
+    "target": "alias:: [label](../pages/A.md)\nprose [[A]]\n- body\n",
+    "refusal": null
+  },
+  {
+    "source": "alias:: [label](../pages/A.md)\r\nprose [[A]]\r\n- body\r\n",
+    "target": "alias:: [label](../pages/A.md)\r\nprose [[A]]\r\n- body\r\n",
+    "refusal": null
+  },
+  {
+    "source": "alias:: [label](../pages/A.md)\rprose [[A]]\r- body\r",
+    "target": "alias:: [label](../pages/A.md)\rprose [[A]]\r- body\r",
+    "refusal": null
+  },
+  {
+    "source": "alias:: [label](../pages/A.md)\r\nprose [[A]]\r- body\n",
+    "target": "alias:: [label](../pages/A.md)\r\nprose [[A]]\r- body\n",
+    "refusal": null
+  },
+  {
+    "source": "aliases:: [label](../pages/A.md)\n",
+    "target": "- plain\n",
+    "refusal": null
+  },
+  {
+    "source": "aliases:: [label](../pages/A.md)\r\n",
+    "target": "- plain\r\n",
+    "refusal": null
+  },
+  {
+    "source": "aliases:: [label](../pages/A.md)\r",
+    "target": "- plain\r",
+    "refusal": null
+  },
+  {
+    "source": "aliases:: [label](../pages/A.md)\r\n",
+    "target": "- plain\r\n",
+    "refusal": null
+  },
+  {
+    "source": "aliases:: [label](../pages/A.md)\n",
+    "target": "aliases:: [label](../pages/A.md)\n",
+    "refusal": null
+  },
+  {
+    "source": "aliases:: [label](../pages/A.md)\r\n",
+    "target": "aliases:: [label](../pages/A.md)\r\n",
+    "refusal": null
+  },
+  {
+    "source": "aliases:: [label](../pages/A.md)\r",
+    "target": "aliases:: [label](../pages/A.md)\r",
+    "refusal": null
+  },
+  {
+    "source": "aliases:: [label](../pages/A.md)\r\n",
+    "target": "aliases:: [label](../pages/A.md)\r\n",
+    "refusal": null
+  },
+  {
+    "source": "aliases:: [label](../pages/A.md)\nk:: again\n- body\n",
+    "target": "- plain\n",
+    "refusal": null
+  },
+  {
+    "source": "aliases:: [label](../pages/A.md)\r\nk:: again\r\n- body\r\n",
+    "target": "- plain\r\n",
+    "refusal": null
+  },
+  {
+    "source": "aliases:: [label](../pages/A.md)\rk:: again\r- body\r",
+    "target": "- plain\r",
+    "refusal": null
+  },
+  {
+    "source": "aliases:: [label](../pages/A.md)\r\nk:: again\r- body\n",
+    "target": "- plain\r\n",
+    "refusal": null
+  },
+  {
+    "source": "aliases:: [label](../pages/A.md)\nk:: again\n- body\n",
+    "target": "aliases:: [label](../pages/A.md)\nk:: again\n- body\n",
+    "refusal": null
+  },
+  {
+    "source": "aliases:: [label](../pages/A.md)\r\nk:: again\r\n- body\r\n",
+    "target": "aliases:: [label](../pages/A.md)\r\nk:: again\r\n- body\r\n",
+    "refusal": null
+  },
+  {
+    "source": "aliases:: [label](../pages/A.md)\rk:: again\r- body\r",
+    "target": "aliases:: [label](../pages/A.md)\rk:: again\r- body\r",
+    "refusal": null
+  },
+  {
+    "source": "aliases:: [label](../pages/A.md)\r\nk:: again\r- body\n",
+    "target": "aliases:: [label](../pages/A.md)\r\nk:: again\r- body\n",
+    "refusal": null
+  },
+  {
+    "source": "aliases:: [label](../pages/A.md)\n\naliases:: [label](../pages/A.md)\n- body\n",
+    "target": "- plain\n",
+    "refusal": null
+  },
+  {
+    "source": "aliases:: [label](../pages/A.md)\r\n\r\naliases:: [label](../pages/A.md)\r\n- body\r\n",
+    "target": "- plain\r\n",
+    "refusal": null
+  },
+  {
+    "source": "aliases:: [label](../pages/A.md)\r\raliases:: [label](../pages/A.md)\r- body\r",
+    "target": "- plain\r",
+    "refusal": null
+  },
+  {
+    "source": "aliases:: [label](../pages/A.md)\r\n\raliases:: [label](../pages/A.md)\n- body\r\n",
+    "target": "- plain\r\n",
+    "refusal": null
+  },
+  {
+    "source": "- plain\n",
+    "target": "aliases:: [label](../pages/A.md)\n\naliases:: [label](../pages/A.md)\n- body\n",
+    "refusal": null
+  },
+  {
+    "source": "- plain\r\n",
+    "target": "aliases:: [label](../pages/A.md)\r\n\r\naliases:: [label](../pages/A.md)\r\n- body\r\n",
+    "refusal": null
+  },
+  {
+    "source": "- plain\r",
+    "target": "aliases:: [label](../pages/A.md)\r\raliases:: [label](../pages/A.md)\r- body\r",
+    "refusal": null
+  },
+  {
+    "source": "- plain\r\n",
+    "target": "aliases:: [label](../pages/A.md)\r\n\raliases:: [label](../pages/A.md)\n- body\r\n",
+    "refusal": null
+  },
+  {
+    "source": "aliases:: [label](../pages/A.md)\n\naliases:: [label](../pages/A.md)\n- body\n",
+    "target": "aliases:: [label](../pages/A.md)\n\naliases:: [label](../pages/A.md)\n- body\n",
+    "refusal": null
+  },
+  {
+    "source": "aliases:: [label](../pages/A.md)\r\n\r\naliases:: [label](../pages/A.md)\r\n- body\r\n",
+    "target": "aliases:: [label](../pages/A.md)\r\n\r\naliases:: [label](../pages/A.md)\r\n- body\r\n",
+    "refusal": null
+  },
+  {
+    "source": "aliases:: [label](../pages/A.md)\r\raliases:: [label](../pages/A.md)\r- body\r",
+    "target": "aliases:: [label](../pages/A.md)\r\raliases:: [label](../pages/A.md)\r- body\r",
+    "refusal": null
+  },
+  {
+    "source": "aliases:: [label](../pages/A.md)\r\n\raliases:: [label](../pages/A.md)\n- body\r\n",
+    "target": "aliases:: [label](../pages/A.md)\r\n\raliases:: [label](../pages/A.md)\n- body\r\n",
+    "refusal": null
+  },
+  {
+    "source": "- aliases:: [label](../pages/A.md)\n    - child\n",
+    "target": "- plain\n",
+    "refusal": null,
+    "survivor": "- plain\n-\n  aliases:: [label](../pages/A.md)\n    - child\n"
+  },
+  {
+    "source": "- aliases:: [label](../pages/A.md)\r\n    - child\r\n",
+    "target": "- plain\r\n",
+    "refusal": null,
+    "survivor": "- plain\r\n-\r\n  aliases:: [label](../pages/A.md)\r\n    - child\r\n"
+  },
+  {
+    "source": "- aliases:: [label](../pages/A.md)\r    - child\r",
+    "target": "- plain\r",
+    "refusal": null,
+    "survivor": "- plain\r-\r  aliases:: [label](../pages/A.md)\r    - child\r"
+  },
+  {
+    "source": "- aliases:: [label](../pages/A.md)\r\n    - child\r",
+    "target": "- plain\r\n",
+    "refusal": null,
+    "survivor": "- plain\r\n-\r\n  aliases:: [label](../pages/A.md)\r\n    - child\r"
+  },
+  {
+    "source": "- aliases:: [label](../pages/A.md)\n    - child\n",
+    "target": "- aliases:: [label](../pages/A.md)\n    - child\n",
+    "refusal": null,
+    "survivor": "- aliases:: [label](../pages/A.md)\n    - child\n-\n  aliases:: [label](../pages/A.md)\n    - child\n"
+  },
+  {
+    "source": "- aliases:: [label](../pages/A.md)\r\n    - child\r\n",
+    "target": "- aliases:: [label](../pages/A.md)\r\n    - child\r\n",
+    "refusal": null,
+    "survivor": "- aliases:: [label](../pages/A.md)\r\n    - child\r\n-\r\n  aliases:: [label](../pages/A.md)\r\n    - child\r\n"
+  },
+  {
+    "source": "- aliases:: [label](../pages/A.md)\r    - child\r",
+    "target": "- aliases:: [label](../pages/A.md)\r    - child\r",
+    "refusal": null,
+    "survivor": "- aliases:: [label](../pages/A.md)\r    - child\r-\r  aliases:: [label](../pages/A.md)\r    - child\r"
+  },
+  {
+    "source": "- aliases:: [label](../pages/A.md)\r\n    - child\r",
+    "target": "- aliases:: [label](../pages/A.md)\r\n    - child\r",
+    "refusal": null,
+    "survivor": "- aliases:: [label](../pages/A.md)\r\n    - child\r-\r\n  aliases:: [label](../pages/A.md)\r\n    - child\r"
+  },
+  {
+    "source": "aliases:: [label](../pages/A.md)\nprose [[A]]\n- body\n",
+    "target": "- plain\n",
+    "refusal": null
+  },
+  {
+    "source": "aliases:: [label](../pages/A.md)\r\nprose [[A]]\r\n- body\r\n",
+    "target": "- plain\r\n",
+    "refusal": null
+  },
+  {
+    "source": "aliases:: [label](../pages/A.md)\rprose [[A]]\r- body\r",
+    "target": "- plain\r",
+    "refusal": null
+  },
+  {
+    "source": "aliases:: [label](../pages/A.md)\r\nprose [[A]]\r- body\n",
+    "target": "- plain\r\n",
+    "refusal": null
+  },
+  {
+    "source": "aliases:: [label](../pages/A.md)\nprose [[A]]\n- body\n",
+    "target": "aliases:: [label](../pages/A.md)\nprose [[A]]\n- body\n",
+    "refusal": null
+  },
+  {
+    "source": "aliases:: [label](../pages/A.md)\r\nprose [[A]]\r\n- body\r\n",
+    "target": "aliases:: [label](../pages/A.md)\r\nprose [[A]]\r\n- body\r\n",
+    "refusal": null
+  },
+  {
+    "source": "aliases:: [label](../pages/A.md)\rprose [[A]]\r- body\r",
+    "target": "aliases:: [label](../pages/A.md)\rprose [[A]]\r- body\r",
+    "refusal": null
+  },
+  {
+    "source": "aliases:: [label](../pages/A.md)\r\nprose [[A]]\r- body\n",
+    "target": "aliases:: [label](../pages/A.md)\r\nprose [[A]]\r- body\n",
+    "refusal": null
+  }
+]

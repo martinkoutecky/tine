@@ -40,9 +40,7 @@ impl Graph {
                 )
             }
         };
-        if let Ok(name) = self.name_from(&e, &content) {
-            e.name = name;
-        }
+        let _ = self.name_from(&mut e, &content);
         isolate_page_parse(e, |entry| Some(parse_page_content(entry, &content)))
     }
 }

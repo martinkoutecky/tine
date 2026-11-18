@@ -137,7 +137,6 @@
     "other": "other",
     "owner": "owner"
   },
-  "namespaceNodes": [],
   "namespaceTree": [],
   "open": {
     "ML": {
@@ -293,20 +292,6 @@
         "owner"
       ]
     }
-  ],
-  "treeNodes": [
-    [
-      "page",
-      "c"
-    ],
-    [
-      "page",
-      "other"
-    ],
-    [
-      "page",
-      "owner"
-    ]
   ],
   "treeParent": [
     {

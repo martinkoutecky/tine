@@ -1,6 +1,6 @@
 use super::property_key_norm;
 use tine_core::doc::Document;
-pub(crate) use tine_core::page_properties::{page_document_is_org, page_property_lines};
+pub(crate) use tine_core::page_properties::page_property_lines;
 
 /// Extract property pairs and parser-tokenized tags from the document preblock.
 /// A properties-only first root is excluded, unlike document_aliases. Malformed
@@ -9,9 +9,9 @@ pub(crate) fn page_facets(doc: &Document) -> (Vec<(String, String)>, Vec<String>
     let mut props = Vec::new();
     let mut tags = Vec::new();
     if let Some(pre) = doc.pre_block.as_deref() {
-        for (k, v) in page_property_lines(pre, page_document_is_org(doc)) {
+        for (k, v) in page_property_lines(pre, doc.org) {
             if property_key_norm(&k) == "tags" {
-                tags = tine_core::property_refs::linkable_names(&v, page_document_is_org(doc));
+                tags = tine_core::property_refs::linkable_names(&v, doc.org);
             }
             props.push((k, v));
         }
@@ -34,6 +34,7 @@ mod tests {
             let doc = Document {
                 pre_block: Some(format!("tags:: {value}")),
                 roots: Vec::new(),
+                org: false,
             };
             assert_eq!(
                 page_facets(&doc).1,
@@ -44,6 +45,7 @@ mod tests {
         let doc = Document {
             pre_block: Some("tags:: #a plain text #b".into()),
             roots: Vec::new(),
+            org: false,
         };
         let mut tags = page_facets(&doc).1;
         tags.sort();
@@ -64,6 +66,7 @@ mod tests {
         let doc = Document {
             pre_block: Some("tags:: Alpha，Beta, Gamma".into()),
             roots: Vec::new(),
+            org: false,
         };
         assert_eq!(
             page_facets(&doc).1,
@@ -77,6 +80,7 @@ mod tests {
         let doc = Document {
             pre_block: Some(":PROPERTIES:\n:alias: Vacant\n:END:".into()),
             roots: Vec::new(),
+            org: true,
         };
         assert_eq!(
             page_facets(&doc).0,

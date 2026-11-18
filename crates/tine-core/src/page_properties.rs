@@ -6,25 +6,101 @@ use std::collections::HashMap;
 
 use crate::doc::{DocBlock, Document};
 
-pub use crate::page_header::page_property_lines;
+#[cfg(test)]
+mod empty_header_tests {
+    use super::*;
 
-/// The first root carries the format; an empty document's parser-owned Org
-/// metadata distinguishes an Org drawer/directive preamble from Markdown.
-pub fn page_document_is_org(doc: &Document) -> bool {
-    doc.roots.first().map(DocBlock::is_org).unwrap_or_else(|| {
-        doc.pre_block.as_deref().is_some_and(|pre| {
-            crate::block_regions::parse_document(pre, true)
-                .page_properties()
-                .next()
-                .is_some()
-        })
-    })
+    #[test]
+    fn empty_org_page_drawers_are_metadata_and_keep_one_header_origin() {
+        for ending in ["\n", "\r\n", "\r"] {
+            for indent in ["", " \t", "\u{c}", "\u{1a}"] {
+                let bytes = format!("{indent}:PROPERTIES:{ending}{indent}:END:{ending}");
+                let doc = crate::org::parse_org(&bytes);
+                assert!(doc.org);
+                let pre = doc.pre_block.as_deref().unwrap();
+                let (header, prose) = pre_block_parts(pre, true);
+                assert_eq!(header, ":PROPERTIES:\n:END:");
+                assert!(prose.is_none(), "{bytes:?}");
+                let rows = pre_block_projections(pre, true);
+                assert_eq!(rows.len(), 1);
+                assert_eq!(rows[0].0, PreBlockKind::Properties);
+            }
+        }
+        let quote = "#+BEGIN_QUOTE\n:PROPERTIES:\n:END:\n#+END_QUOTE";
+        let (header, prose) = pre_block_parts(quote, true);
+        assert!(header.is_empty());
+        assert!(prose.is_some(), "a quoted drawer remains quote content");
+    }
+
+    /// The links OG counts in a page's opening text and in Markdown `#+`
+    /// lines are the page's references here too. Rows: mldoc 1.5.9 under
+    /// og-0.10.9's rule (every top-level directive hoisted into the page
+    /// properties, values read by `get-references`; other nodes' inline
+    /// links), never Tine (generator: target/cm-leftovers/oracle/refs.cjs).
+    #[test]
+    fn opening_text_and_directive_links_are_ogs_references() {
+        #[derive(serde::Deserialize)]
+        struct Row {
+            format: String,
+            input: String,
+            refs: Vec<String>,
+        }
+        fn walk(blocks: &[DocBlock], out: &mut Vec<String>) {
+            for block in blocks {
+                out.extend(block.projection().refs_page().iter().cloned());
+                walk(&block.children, out);
+            }
+        }
+        let rows: Vec<Row> =
+            serde_json::from_str(include_str!("reference_evidence/og_opening_refs.json")).unwrap();
+        let mut wrong = Vec::new();
+        for row in rows {
+            let doc = if row.format == "org" {
+                crate::org::parse_org(&row.input)
+            } else {
+                crate::doc::parse(&row.input)
+            };
+            let mut refs = Vec::new();
+            for block in document_pre_blocks(&doc) {
+                refs.extend(block.projection().refs_page().iter().cloned());
+            }
+            walk(&doc.roots, &mut refs);
+            refs.retain(|r| ["x", "w"].contains(&r.to_lowercase().as_str()));
+            refs.sort();
+            refs.dedup();
+            let og: Vec<String> = row.refs.iter().map(|r| r.to_lowercase()).collect();
+            let tine: Vec<String> = refs.iter().map(|r| r.to_lowercase()).collect();
+            if tine != og {
+                wrong.push(format!("{:?}: Tine {tine:?}, OG {og:?}", row.input));
+            }
+        }
+        assert!(wrong.is_empty(), "{wrong:#?}");
+    }
+
+    /// REG-CM-MD-PAGE-READ-AS-ORG: a Markdown page with no blocks is read as
+    /// Markdown although its text holds a `#+` line: the page property `b`
+    /// is OG's hoisted directive, never an Org page property, and `[[X]]` is
+    /// the prose's reference.
+    #[test]
+    fn a_rootless_markdown_page_with_a_directive_line_is_markdown() {
+        let doc = crate::doc::parse("[[X]]\n#+b: y");
+        assert!(!doc.org && doc.roots.is_empty());
+        assert!(document_page_property_block(&doc).is_none());
+        let prose = document_preamble_block(&doc).expect("the text is prose");
+        assert_eq!(prose.raw(), "[[X]]\n#+b: y");
+        assert!(!prose.is_org());
+        assert_eq!(document_pre_blocks(&doc).count(), 1);
+        let org = crate::org::parse_org("[[X]]\n#+b: y");
+        assert!(org.org && document_page_property_block(&org).is_some());
+    }
 }
+
+pub use crate::page_header::page_property_lines;
 
 /// Project only parser-owned page properties into native block syntax. Keeping
 /// the whole Org drawer preserves parser ownership for reference evidence.
 pub fn page_property_raw(pre: &str, is_org: bool) -> String {
-    raw_from_lines(&page_property_lines(pre, is_org), is_org)
+    pre_block_parts(pre, is_org).0
 }
 
 fn raw_from_lines(entries: &[(String, String)], is_org: bool) -> String {
@@ -74,7 +150,7 @@ pub fn property_projection_with_config(
 /// the same block with a page-scoped identity for the DTO-producing walkers.
 pub fn document_page_property_block(doc: &Document) -> Option<DocBlock> {
     let pre = doc.pre_block.as_deref()?;
-    let is_org = page_document_is_org(doc);
+    let is_org = doc.org;
     let raw = page_property_raw(pre, is_org);
     if raw.is_empty() {
         return None;
@@ -93,12 +169,11 @@ pub fn document_page_property_block(doc: &Document) -> Option<DocBlock> {
 /// the page properties as the header block ([`document_page_property_block`])
 /// and reads this prose as the page's first block, which is also what the
 /// page shows (`Page.tsx`) and what editing it promotes it to (GH #85). The
-/// one answer (I-12; CM step 2, batch 8):
-/// - Markdown: `tine_outline::page_preamble::page_preamble_content` (after the leading run
-///   of page properties; the window asks the same function through wasm).
-/// - Org: after the last line of the parser's page properties (directives and
-///   the head drawer). Text between two directives is not read (recorded in
-///   the batch 8 design note).
+/// one answer (I-12) is `tine_outline::page_preamble::preamble_content_range`,
+/// for both formats and the window (through wasm): the text from the first
+/// non-blank byte that is no page-property line to the last (Org: a drawer
+/// counts whole). Every non-blank byte is a page-property line or prose,
+/// exactly once; an Org directive or drawer between two text lines is prose.
 ///
 /// O(pre-block bytes); `None` when there is no prose.
 pub fn preamble_content_range(pre: &str, is_org: bool) -> Option<std::ops::Range<usize>> {
@@ -116,16 +191,19 @@ pub fn preamble_content_range(pre: &str, is_org: bool) -> Option<std::ops::Range
 /// parse of the pre-block.
 pub fn pre_block_parts(pre: &str, is_org: bool) -> (String, Option<std::ops::Range<usize>>) {
     let regions = crate::block_regions::parse_document(pre, is_org);
-    (
-        raw_from_lines(
-            &crate::page_header::page_property_lines_in(&regions, is_org),
-            is_org,
-        ),
-        preamble_range_in(pre, is_org, &regions),
-    )
+    let mut raw = raw_from_lines(
+        &crate::page_header::page_property_lines_in(&regions, is_org),
+        is_org,
+    );
+    if raw.is_empty() && is_org && regions.find_org_preamble_property_region(pre).is_some() {
+        raw = ":PROPERTIES:\n:END:".into();
+    }
+    (raw, preamble_range_in(pre, is_org, &regions))
 }
 
-fn preamble_range_in(
+/// [`preamble_content_range`] using the caller's parsed regions. O(pre-block
+/// bytes), without a second parse, allocation or I/O.
+pub fn preamble_range_in(
     pre: &str,
     is_org: bool,
     regions: &crate::block_regions::BlockRegions,
@@ -158,7 +236,7 @@ pub fn preamble_block_with_config(
 /// sibling of [`document_page_property_block`] for the same walkers.
 pub fn document_preamble_block(doc: &Document) -> Option<DocBlock> {
     let pre = doc.pre_block.as_deref()?;
-    preamble_block(pre, page_document_is_org(doc))
+    preamble_block(pre, doc.org)
 }
 
 /// The pre-block's blocks every reference question reads, in page order:
@@ -166,9 +244,7 @@ pub fn document_preamble_block(doc: &Document) -> Option<DocBlock> {
 pub fn document_pre_blocks(doc: &Document) -> impl Iterator<Item = DocBlock> {
     doc.pre_block
         .as_deref()
-        .map_or_else(Vec::new, |pre| {
-            pre_block_projections(pre, page_document_is_org(doc))
-        })
+        .map_or_else(Vec::new, |pre| pre_block_projections(pre, doc.org))
         .into_iter()
         .map(|(_, block)| block)
 }

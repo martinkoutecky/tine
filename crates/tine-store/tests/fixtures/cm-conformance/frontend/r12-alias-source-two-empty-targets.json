@@ -185,7 +185,6 @@
     "one": "one",
     "two": "two"
   },
-  "namespaceNodes": [],
   "namespaceTree": [],
   "open": {
     "AI": {
@@ -326,7 +325,7 @@
       "day": null,
       "model": [
         "page",
-        "one"
+        "ai"
       ]
     },
     "ML": {
@@ -422,28 +421,6 @@
       ]
     }
   ],
-  "treeNodes": [
-    [
-      "page",
-      "ai"
-    ],
-    [
-      "page",
-      "machine learning"
-    ],
-    [
-      "page",
-      "c"
-    ],
-    [
-      "page",
-      "one"
-    ],
-    [
-      "page",
-      "two"
-    ]
-  ],
   "treeParent": [
     {
       "page": [
@@ -455,14 +432,14 @@
     {
       "page": [
         "page",
-        "machine learning"
+        "c"
       ],
       "parent": null
     },
     {
       "page": [
         "page",
-        "c"
+        "machine learning"
       ],
       "parent": null
     },

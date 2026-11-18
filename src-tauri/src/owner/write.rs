@@ -1250,6 +1250,7 @@ fn removed_fragment(root: &BlockDto, org: bool) -> (String, usize) {
     let doc = tine_core::Document {
         pre_block: None,
         roots: vec![block(root)],
+        org,
     };
     // Reuse the graph serializers so properties, multiline bodies and child
     // structure can be pasted back as a standalone fragment of the same format.

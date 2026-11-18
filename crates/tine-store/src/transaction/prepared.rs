@@ -43,7 +43,32 @@ impl PagePlan<'_> {
                 certificate,
                 renames.is_none(),
             ))),
+            check: None,
         });
+    }
+
+    /// Check the step just queued for `file` (its rewrite, or its move from
+    /// `file`) with the conceptual model ([`RenameCheck`]): preflight refuses
+    /// the transaction, before any write, when the step's final bytes break
+    /// P2 or P3. Every rename and merge step is queued with one.
+    ///
+    /// # Panics
+    /// When the last queued step is not a rewrite or move of `file` (a
+    /// caller's bug: the check would otherwise land on another file).
+    pub fn check(&mut self, file: &FileId, check: RenameCheck) {
+        match self.steps.last_mut() {
+            Some(Step::Rewrite {
+                id, check: slot, ..
+            }) if id.file() == *file => {
+                *slot = Some(Box::new(check));
+            }
+            Some(Step::Move {
+                file: from,
+                check: slot,
+                ..
+            }) if from == file => *slot = Some(Box::new(check)),
+            _ => panic!("no queued rewrite or move of {} to check", file.as_str()),
+        }
     }
 }
 
@@ -141,6 +166,7 @@ impl PreparedRewrite {
                 trace: self.certificate.clone(),
                 unrealized: Vec::new(),
                 rewritten: Default::default(),
+                observed: None,
             }))
     }
 }

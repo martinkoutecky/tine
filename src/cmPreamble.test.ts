@@ -3,7 +3,7 @@
 //   names, drawings), one answer for file rows and reference-only rows;
 // - the prose a Markdown page shows as its first block row is the same text
 //   the store reads as that page's first block for Linked References, counts
-//   and rename (`page_preamble::page_preamble_content`).
+//   and rename (`page_preamble::preamble_content_range`).
 import { beforeAll, describe, expect, it } from "vitest";
 import { initParser } from "./render/parse";
 import { hidden_from_all_pages } from "./render/wasm/lsdoc_wasm";

@@ -111,6 +111,9 @@ pub(crate) fn answers(
                 continue;
             }
             let target = ResolvedWire::from(graph.resolve(&row.name, is_journal));
+            // Every non-absent wrong-kind answer, also a day asked as a page
+            // (CM-DATE): the frozen v1 reader reads only the asked kind's
+            // row and this table (`docs/contracts/quick-share.md`).
             if !matches!(target, ResolvedWire::Absent { .. }) {
                 resolve.push(json!({ "name": row.name,
                     "kind": if is_journal { "journal" } else { "page" }, "target": target }));

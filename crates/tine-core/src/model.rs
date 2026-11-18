@@ -33,6 +33,23 @@ pub fn decode_page_name(stem: &str, fmt: crate::config::FileNameFormat) -> Strin
     page_filename::decode_page_name(stem, fmt == crate::config::FileNameFormat::Legacy)
 }
 
+/// The stem of an Org `file:` link's path, the part that names a page through
+/// the file-name codec ([`decode_page_name`]): its range in `link`, the link's
+/// whole text (`[[file:dir/stem.ext]]` or `[[file:…][label]]`). `None` for a
+/// link with no `file:` path or an empty stem. The one reading for the rename
+/// writer and the model check. Cost O(link bytes).
+pub fn org_file_link_stem(link: &str) -> Option<std::ops::Range<usize>> {
+    let body = link
+        .get(2..link.len().saturating_sub(2))?
+        .strip_prefix("file:")?;
+    let path = &body[..body.find("][").unwrap_or(body.len())];
+    let slash = path.rfind('/').map_or(0, |at| at + 1);
+    let file = &path[slash..];
+    let stem_len = file.rfind('.').unwrap_or(file.len());
+    let start = "[[file:".len() + slash;
+    (stem_len > 0).then(|| start..start + stem_len)
+}
+
 /// First nonempty `title::` in the preamble; Org also accepts `#+title:` and
 /// `:title:`. The preamble is exactly the page model's `pre_block`: the text
 /// before the first block-opening line as the outline authority
@@ -112,7 +129,7 @@ fn org_meta_line(trimmed: &str) -> bool {
     directive || drawer
 }
 
-/// The span of the preamble title's name value (as [`page_title_from_preamble`]
+/// The span of the page header title's name value (as [`page_title_from_header`]
 /// reads it: a `title::` property, Org `#+title:` directive or `:title:`
 /// drawer line) when that title still names `old` (`refs::same_page`). `None`:
 /// no title, or a title naming another page (user content a rename must not
@@ -120,11 +137,29 @@ fn org_meta_line(trimmed: &str) -> bool {
 /// `refs::RenameProposal::rebind_title`; this only answers whether the title
 /// is the page's own. Cost O(content bytes); no I/O or error.
 pub fn own_title_span(content: &str, format: Format, old: &str) -> Option<std::ops::Range<usize>> {
-    let line = page_title_line(content, format)?;
-    crate::refs::same_page(&content[line.value.clone()], old).then_some(line.value)
+    let value = title_name_span(content, format)?;
+    crate::refs::same_page(&content[value.clone()], old).then_some(value)
 }
 
-/// The preamble title's value. Both title readers and the rebind share it.
+/// The title in the parser-owned page header, before the outline or in its
+/// first properties-only root. Uses the same header selection as the model
+/// observation and the alias reader. Cost O(content bytes), one outline parse;
+/// no I/O. `None` when the selected header has no nonempty title.
+pub fn page_title_from_header(content: &str, format: Format) -> Option<String> {
+    title_name_span(content, format).map(|value| content[value].to_owned())
+}
+
+/// The title field in an already selected and read page header. Coordinate
+/// consumers use the same selection as the existing title/span readers.
+pub(crate) fn title_property_in(
+    regions: &crate::block_regions::BlockRegions,
+) -> Option<&crate::block_regions::Property> {
+    regions
+        .page_properties()
+        .find(|p| p.key.eq_ignore_ascii_case("title") && !p.value.is_empty())
+}
+
+/// Preamble-only title, used by file classification and streaming reads.
 struct TitleLine {
     value: std::ops::Range<usize>,
 }
@@ -146,15 +181,34 @@ fn page_title_line(content: &str, format: Format) -> Option<TitleLine> {
 }
 
 pub(crate) fn title_name_span(content: &str, format: Format) -> Option<std::ops::Range<usize>> {
-    page_title_line(content, format).map(|line| line.value)
+    // A necessary token, not header recognition: avoid parsing ordinary
+    // referrers with no title key. The parser still owns every candidate.
+    if !content
+        .as_bytes()
+        .windows(5)
+        .any(|token| token.eq_ignore_ascii_case(b"title"))
+    {
+        return None;
+    }
+    let read = crate::doc::parse_outlined(content, format == Format::Org, true);
+    let doc = &read.document;
+    let raw = crate::page_header::page_header_text(
+        doc.pre_block.as_deref(),
+        doc.roots.first().map(crate::doc::DocBlock::raw),
+    )?;
+    let regions = crate::block_regions::parse_document(raw, format == Format::Org);
+    let value = &title_property_in(&regions)?.value_range;
+    let (from, to) = (value.0, value.1);
+    // The parser owns the header selection and property recognition; the
+    // reader's source map places its offset. A native property value is one line.
+    let start = read.map?.native(doc.pre_block.is_none().then_some(0), from);
+    Some(start..start + to - from)
 }
 
 fn page_title_line_before(content: &str, format: Format, end: usize) -> Option<TitleLine> {
     let text = crate::org::lone_cr_to_lf(content);
     let regions = crate::block_regions::parse_document(&text[..end], format == Format::Org);
-    let p = regions
-        .page_properties()
-        .find(|p| p.key.eq_ignore_ascii_case("title") && !p.value.is_empty())?;
+    let p = title_property_in(&regions)?;
     Some(TitleLine {
         value: p.value_range.0..p.value_range.1,
     })
@@ -413,12 +467,32 @@ impl PageEntry {
     }
 }
 
-/// The opening claimant order (R13 OWN2): ordinary kind preference, then
-/// unsigned UTF-8 graph-relative path bytes. Configured filename/date formats
-/// and a file's text do not rank valid, distinct physical paths.
-pub fn compare_page_claimants(a: &PageEntry, b: &PageEntry) -> std::cmp::Ordering {
-    (a.kind == PageKind::Journal)
-        .cmp(&(b.kind == PageKind::Journal))
+/// The opening claimant order (CM SPEC §2.2; D-20261110-CM CM-ORDER: "file
+/// path (unsigned UTF-8 …), with one extra line: a journal wins over an
+/// ordinary page"): among the claimants of one identity, a file in the
+/// journals directory `journals_dir` (graph-relative, as configured) first,
+/// then unsigned UTF-8 graph-relative path bytes. Configured filename/date
+/// formats and a file's text do not rank valid, distinct physical paths.
+///
+/// Name-keyed tables (`page_key` alone) can hold two identities under one
+/// key only when a year-less title format gives a day the label of an
+/// ordinary name (`MM-dd`: the page `11-02` and the day 2026-11-02, SPEC §2.1
+/// label limitation). The ordinary claim ranks first there: it is the real
+/// file of the typed name, and the label identifies no day.
+pub fn compare_page_claimants(
+    journals_dir: &str,
+    a: &PageEntry,
+    b: &PageEntry,
+) -> std::cmp::Ordering {
+    let rank = |entry: &PageEntry| {
+        let in_journals = entry
+            .rel_path_str()
+            .strip_prefix(journals_dir.trim_end_matches('/'))
+            .is_some_and(|tail| tail.starts_with('/'));
+        (entry.date_key.is_some(), !in_journals)
+    };
+    rank(a)
+        .cmp(&rank(b))
         .then_with(|| a.rel_path_str().as_bytes().cmp(b.rel_path_str().as_bytes()))
 }
 

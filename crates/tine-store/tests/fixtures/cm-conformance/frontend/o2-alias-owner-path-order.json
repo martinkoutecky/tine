@@ -137,7 +137,6 @@
     "shared": "shared",
     "x": "x"
   },
-  "namespaceNodes": [],
   "namespaceTree": [],
   "open": {
     "Notes": {
@@ -294,32 +293,18 @@
       ]
     }
   ],
-  "treeNodes": [
-    [
-      "page",
-      "notes"
-    ],
-    [
-      "page",
-      "a b"
-    ],
-    [
-      "page",
-      "x"
-    ]
-  ],
   "treeParent": [
     {
       "page": [
         "page",
-        "notes"
+        "a b"
       ],
       "parent": null
     },
     {
       "page": [
         "page",
-        "a b"
+        "notes"
       ],
       "parent": null
     },

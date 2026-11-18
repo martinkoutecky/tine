@@ -26,7 +26,7 @@ pub fn rename_offer(
     if new.is_empty() {
         return Err(error(io::ErrorKind::InvalidInput, "empty name"));
     }
-    if old.is_empty() || old == new {
+    if old.is_empty() {
         return Ok(RenameOffer::Rename);
     }
     let plan = || {
@@ -73,16 +73,6 @@ pub fn rename_offer(
                 journal,
             }
         }
-        RenameBlocked::AliasOf {
-            owner,
-            merge,
-            own_page,
-        } => RenameOffer::AliasOf {
-            name: entry(&owner).map_or_else(|| owner.clone(), |(name, _)| name),
-            owner,
-            merge,
-            own_page,
-        },
         refused => RenameOffer::Refused {
             message: refused.to_string(),
             reason: refused,
@@ -104,18 +94,6 @@ pub enum RenameOffer {
         name: String,
         journal: bool,
     },
-    /// M-Q5 (D-20261102-MC5): the name is only an alias of `owner` (its
-    /// file; `name` its own name). Ask: merge into it (when `merge`), make
-    /// the name its own page (when `own_page`, still an alias of the owner),
-    /// or cancel. Sources without files, including alias-only names, cannot
-    /// become their own page (CM11/CM12).
-    AliasOf {
-        owner: String,
-        name: String,
-        merge: bool,
-        #[serde(rename = "ownPage")]
-        own_page: bool,
-    },
     /// Refused before anything is written, with the reason to show.
     Refused {
         reason: RenameBlocked,
@@ -124,11 +102,8 @@ pub enum RenameOffer {
 }
 
 /// [`super::rename_or_merge_page`] with the user's answer to the rename question
-/// ([`rename_offer`]) as a [`RenameChoice`]; `RenameChoice::OwnPage` is
-/// M-Q5's "make it its own page": the new name is only an alias of another
-/// page, the renamed page moves to that name as a plain rename, and the
-/// owner's `alias::` stays (D-20261102-MC5). Every refusal the user can act
-/// on carries a [`RenameBlocked`] (`RenameBlocked::of`).
+/// ([`rename_offer`]) as a [`RenameChoice`]. Planner, file-context, check and
+/// realization refusals retain their types inside the returned I/O error.
 pub fn rename_page_as(
     store: &Store,
     host: &PageHost,

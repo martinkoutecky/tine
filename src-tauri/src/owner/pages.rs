@@ -6,7 +6,7 @@ use tine_core::block_regions::{self, Edit};
 use tine_core::model::{Format, PageDto};
 use tine_store::{EditKind, HostReadError, PageId, PageOperation, Resolved};
 
-use super::verbs::{parse, resolve_write_page, whole_graph, write_claimant, Named};
+use super::verbs::{parse, rename_source, resolve_write_page, whole_graph, Named};
 use super::wire::{ok, ErrorBody};
 use super::write::{self, apply_refused, host_failed, refused, store_refused, Planned};
 use crate::state::GraphSlot;
@@ -32,11 +32,6 @@ fn name_valid(name: &str) -> Result<(), ErrorBody> {
 /// (`verbs::write_claimant`, CLI-DUPNAME).
 fn unique_page(slot: &GraphSlot, name: &str) -> Result<PageId, ErrorBody> {
     resolve_write_page(slot, &whole_graph(slot)?, name)
-}
-
-/// A rename can also start from a reference-only name or fileless namespace.
-fn unique_source(slot: &GraphSlot, name: &str) -> Result<Option<PageId>, ErrorBody> {
-    write_claimant(slot, &whole_graph(slot)?, name)
 }
 
 pub(super) fn create_named_page(slot: &GraphSlot, args: &Value) -> Result<Value, ErrorBody> {
@@ -81,14 +76,14 @@ fn flush_window(slot: &GraphSlot, page: Option<&str>) -> Result<(), ErrorBody> {
                 return Err(refused(
                     "unsaved",
                     None,
-                    "the window has text it could not save; nothing changed",
+                    "the window has text it could not save; save or discard the remaining edits and try again",
                 ))
             }
             super::window::Flushed::NoAnswer => {
                 return Err(refused(
                     "page-busy",
                     None,
-                    "the window did not save its typed text in time; nothing changed",
+                    "the window did not save its typed text in time; check the pending edits and try again",
                 ))
             }
         }
@@ -247,45 +242,30 @@ pub(super) fn rename_named_page(slot: &GraphSlot, args: &Value) -> Result<Value,
         return Err(refused(
             "rename-options",
             None,
-            "page rename does not support --rev or --run; nothing changed",
+            "page rename does not support --rev or --run; nothing was renamed",
         ));
     }
     // It rewrites referrers too, so no command writes the graph meanwhile, and
     // its name resolves after the commands ahead of it have landed (GH #842).
     let _turn = write::graph_turn(slot)?;
-    let page = unique_source(slot, &args.old)?;
+    let page = rename_source(slot, &whole_graph(slot)?, &args.old)?;
     flush_window(slot, None)?;
     let parsed = page
         .as_ref()
         .map(|page| slot.store.page(page).map_err(|e| store_refused(e, page)))
         .transpose()?;
-    let old = parsed.as_ref().map_or_else(
-        || args.old.trim().to_owned(),
-        |parsed| parsed.doc.name.clone(),
-    );
+    // The planner is asked about the name the user typed, as every request
+    // check (O0, O2) is: a journal's display title can be yearless (`10-26`)
+    // and no longer reads as the day the user named. The page's own name is
+    // what the window and the reply show.
+    let typed = args.old.trim();
+    let old = parsed
+        .as_ref()
+        .map_or_else(|| typed.to_owned(), |parsed| parsed.doc.name.clone());
     let kind = parsed
         .as_ref()
         .map_or(tine_core::model::PageKind::Page, |parsed| parsed.doc.kind);
     let new = args.new.trim();
-    // This inventory check proves an occupied destination refusal before
-    // entering the shared operation. Errors from that operation alone do not
-    // establish whether it already published files.
-    // The holder is the rename planner's own answer, so a journal holds
-    // every spelling of its day here as in the app's dialog (M-Q7).
-    let graph = whole_graph(slot)?;
-    let holders = tine_graph_features::pages::rename_destination_holders(
-        &slot.store,
-        &graph,
-        new,
-        page.as_ref(),
-    );
-    if !holders.is_empty() {
-        return Err(refused(
-            "page-exists",
-            page.as_ref(),
-            "a page or alias already owns the destination; nothing changed",
-        ));
-    }
     let path = page.as_ref().map(PageId::as_str);
     let notify = |report: &tine_graph_features::pages::RenameReport| {
         if let Some(window) = slot.window.get() {
@@ -296,7 +276,7 @@ pub(super) fn rename_named_page(slot: &GraphSlot, args: &Value) -> Result<Value,
         tine_graph_features::pages::rename_or_merge_page(
             &slot.store,
             host,
-            &old,
+            typed,
             new,
             path,
             None,
@@ -309,6 +289,35 @@ pub(super) fn rename_named_page(slot: &GraphSlot, args: &Value) -> Result<Value,
         if let Some(report) = tine_graph_features::pages::RenameReport::applied_before_error(&e) {
             notify(report);
             body.detail = Some(json!({"admitted":true,"page":path,"report":report}));
+        } else if let Some(blocked) = tine_graph_features::pages::RenameBlocked::of(&e) {
+            // The planner's refusal, before any write (O4, O5): no dialog
+            // here, so a held destination is refused, never merged.
+            return rename_refused(blocked, page.as_ref());
+        } else if let Some(blocked) = tine_graph_features::pages::RewriteBlocked::of(&e) {
+            return refused(
+                "rename-refused",
+                page.as_ref(),
+                format!("{blocked}; nothing was renamed or merged"),
+            );
+        } else if let Some(check) = tine_graph_features::pages::CheckRefused::of(&e)
+            .cloned()
+            .or_else(|| {
+                tine_graph_features::pages::MergeRefused::of(&e)
+                    .and_then(|merge| merge.check_refused())
+            })
+        {
+            // The model's check of a file the rename would write (P2, P3),
+            // before renaming: `rename-refused`, with its message. Pending
+            // edits may already have been saved by the preparation flush.
+            let mut body = refused("rename-refused", page.as_ref(), check.to_string());
+            let detail = body.detail.as_mut().expect("refused carries detail");
+            detail["guarantee"] = json!(check.guarantee);
+            detail["file"] = json!(check.file);
+            return body;
+        } else if let Some(merge) = tine_graph_features::pages::MergeRefused::of(&e) {
+            let mut body = refused("rename-refused", page.as_ref(), merge.to_string());
+            body.detail.as_mut().expect("refused carries detail")["file"] = json!(merge.file);
+            return body;
         } else {
             // Any I/O kind can also follow admission or incomplete rollback.
             body.detail = Some(json!({"admitted":null,"page":path}));
@@ -320,6 +329,28 @@ pub(super) fn rename_named_page(slot: &GraphSlot, args: &Value) -> Result<Value,
         "page-renamed",
         json!({"old":old,"name":new,"report":report}),
     ))
+}
+
+/// A rename the planner refused before writing, as a `refused` reply
+/// (`admitted: false`). A destination another page holds (a file, or an
+/// alias another page declares) is `page-exists`; every other model refusal
+/// (no such page, a day, the page's own namespace, conflict markers) is
+/// `rename-refused`, with the model's message.
+fn rename_refused(
+    blocked: &tine_graph_features::pages::RenameBlocked,
+    page: Option<&PageId>,
+) -> ErrorBody {
+    use tine_graph_features::pages::RenameBlocked as B;
+    let (reason, message) = match blocked {
+        B::Taken { .. } => ("page-exists", blocked.to_string()),
+        B::FileTaken { .. } | B::AliasHeld { .. } | B::Capture { .. } | B::Contested { .. } => {
+            ("page-exists", blocked.to_string())
+        }
+        B::OwnChild { .. } | B::NotAPage { .. } | B::Day { .. } | B::ConflictMarkers { .. } => {
+            ("rename-refused", blocked.to_string())
+        }
+    };
+    refused(reason, page, format!("{message}; nothing was renamed"))
 }
 
 #[derive(Deserialize)]

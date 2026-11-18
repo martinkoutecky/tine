@@ -1,18 +1,17 @@
-// Native journey for CM step 2 batch 12 (rename and merge follow model round
-// 9). Two user paths through the page title, on one disposable graph:
-//  1. M-Q5 (D-20261102-MC5, divergence R4): renaming "ML notes" to "ML", a
-//     name that is only an alias of Machine Learning, opens Tine's own dialog
-//     with three choices. Cancel writes nothing. "Make ML its own page" moves
-//     the page to pages/ML.md as a real page, leaves Machine Learning's
-//     alias:: ML in place, and [[ML]] still shows in Machine Learning's
-//     Linked References.
-//  2. M-Q6 / CM-OWN-CHILD (divergence R12): renaming Foo to Foo/bar, where
-//     Foo/bar is already a page, is refused; the user sees why in an error
-//     toast, and no file changes.
-// Written by the cm-merge-rules lane.
-// Sources and alias targets without files, including alias-only context-menu
-// rename, owner selection and reload. R13-C4 real targets have separate coverage.
-// Batch 18: CM3-1 journal-reference-loss refusal explains itself and writes nothing.
+// Native journey: rename requests follow the confirmed conceptual model
+// (D-20261116-CM536, r6 O0 to O4), through the page title and the context
+// menu, on one disposable graph:
+//  1. O4: renaming old moves old/sub, which a journal declares as its alias;
+//     the journal keeps its file and day, and its alias and every link follow.
+//  2. O3: a name that is only another page's alias is refused naming that
+//     page, for a source with a file and for one without; no dialog, no write.
+//  3. O3: an alias-only source renamed through the context menu rewrites its
+//     declaration, links and stored queries, creates no file, and stays
+//     attached after a reload.
+//  4. O4: renaming Foo onto its own claimed child Foo/bar is refused with the
+//     reason; no file changes.
+// The one-holder merge confirms in a native dialog the driver cannot answer;
+// its file outcome is covered in crates/tine-graph-features/tests/cm_merge_rules.rs.
 import { spawn, execFileSync } from "node:child_process";
 import fs from "node:fs";
 import path from "node:path";
@@ -36,10 +35,8 @@ const seeded = {
   "pages/Machine Learning.md": "alias:: ML\n\n- ml body\n",
   "pages/ML notes.md": "- notes body\n",
   "pages/Owner Two.md": "alias:: Short Two\n\n- owner two\n",
-  "pages/Source Two.md": "- source two\n",
-  "pages/queries.md": '- {{query (page "Source Two")}}\n- [[Source Two]] [[Ghost]]\n',
+  "pages/ghost referrer.md": "- [[Ghost]]\n",
   "pages/Alias Source Owner.md": "alias:: Alias Source\n\n- alias owner body\n",
-  "pages/Alias Target Owner.md": "alias:: Alias Target\n\n- target owner body\n",
   "pages/Alias journey.md": '- [[Alias Source]]\n- {{query (page "Alias Source")}}\n',
   "pages/q.md": "- see [[ML notes]]\n- also [[ML]] here\n",
   "pages/Foo.md": "- foo body\n",
@@ -89,9 +86,6 @@ async function renameTitle(next) {
   }, next);
 }
 
-const dialogChoices = () => browser.execute(() =>
-  [...document.querySelectorAll(".tine-rename-alias-choice button")].map((button) => [button.dataset.choice, button.textContent.trim()]));
-
 try {
   driver = spawn(process.env.TAURI_DRIVER || "tauri-driver", webdriverServerArgs(port, port + 1, process.env.WEBKIT_DRIVER || "/usr/bin/WebKitWebDriver"), { env, stdio: ["ignore", log, log], detached: true });
   browser = await remote({ hostname: "127.0.0.1", port, path: "/", logLevel: "error", connectionRetryCount: 5,
@@ -101,74 +95,37 @@ try {
   await assertAppLease(ownerFixture);
   const before = snapshot();
 
-  stage = "CM3-1: the post's namespace rename names the journal at risk and writes nothing";
+  stage = "O4: renaming old moves old/sub, which a journal declares; the journal keeps its file and day";
   await openPageByName(browser, "old");
   await renameTitle("new");
-  await browser.waitUntil(() => browser.execute(() =>
-    [...document.querySelectorAll(".toast-error .toast-msg")].some((toast) =>
-      /links reach the journal/.test(toast.textContent ?? "") && /Oct 26th, 2026/.test(toast.textContent ?? ""))),
-  { timeout: 15_000, timeoutMsg: "no refusal explaining the lost references to Oct 26th, 2026" });
-  assert.equal(await browser.$(".tine-rename-alias-choice").isExisting(), false);
-  assert.equal(await currentPageTitle(browser), "old");
-  assert.deepEqual(snapshot(), before, "the journal-risk refusal changed a file");
+  await waitForFileText(path.join(graph, "journals/2026_10_26.md"), (text) => text === "alias:: new/sub\n\n- day\n", { timeoutMs: 15_000 });
+  await waitForFileText(path.join(graph, "pages/journal referrer.md"), (text) => text === "- see [[new/sub]]\n", { timeoutMs: 15_000 });
+  await waitForFileText(path.join(graph, "pages/new.md"), (text) => text === "- source\n", { timeoutMs: 15_000 });
+  assert.ok(!fs.existsSync(path.join(graph, "pages/old.md")), "old.md moved");
+  assert.equal(await browser.$(".tine-rename-alias-choice").isExisting(), false, "a rename asks nothing");
+  await browser.waitUntil(async () => (await currentPageTitle(browser)) === "new", { timeout: 15_000, timeoutMsg: "the renamed page is not open as new" });
 
-  stage = "M-Q5: the alias-only name asks three ways";
+  stage = "O3: a name that is only another page's alias is refused naming that page";
+  const beforeAliasHeld = snapshot();
   await openPageByName(browser, "ML notes");
   await renameTitle("ML");
-  await browser.$(".tine-rename-alias-choice").waitForExist({ timeout: 15_000, timeoutMsg: "the M-Q5 dialog never appeared" });
-  const choices = await dialogChoices();
-  const labels = Object.fromEntries(choices);
-  assert.deepEqual(Object.keys(labels).sort(), ["cancel", "merge", "own-page"], JSON.stringify(choices));
-  assert.match(labels.merge, /Merge into “Machine Learning”/);
-  assert.match(labels["own-page"], /Make “ML” its own page \(still an alias of “Machine Learning”\)/);
-  assert.equal(labels.cancel, "Cancel");
-
-  stage = "M-Q5: Cancel writes nothing";
-  await browser.$('.tine-rename-alias-choice button[data-choice="cancel"]').click();
-  await browser.$(".tine-rename-alias-choice").waitForExist({ reverse: true, timeout: 4000, timeoutMsg: "the dialog stayed open after Cancel" });
-  assert.deepEqual(snapshot(), before, "Cancel changed a file");
-
-  stage = "M-Q5: make ML its own page";
-  await openPageByName(browser, "ML notes");
-  await renameTitle("ML");
-  await browser.$('.tine-rename-alias-choice button[data-choice="own-page"]').waitForExist({ timeout: 15_000, timeoutMsg: "the M-Q5 dialog never reappeared" });
-  await browser.$('.tine-rename-alias-choice button[data-choice="own-page"]').click();
-  // A fileless alias retains the legacy owner/own-page choice. R13-C4 real
-  // targets use the ordinary merge flow (covered in cm_merge_rules.rs).
-  await waitForFileText(path.join(graph, "pages/ML.md"), (text) => text === "- notes body\n", { timeoutMs: 15_000 });
-  await waitForFileText(path.join(graph, "pages/q.md"), (text) => text === "- see [[ML]]\n- also [[ML]] here\n", { timeoutMs: 15_000 });
-  assert.ok(!fs.existsSync(path.join(graph, "pages/ML notes.md")), "ML notes.md moved");
-  assert.equal(fs.readFileSync(path.join(graph, "pages/Machine Learning.md"), "utf8"), seeded["pages/Machine Learning.md"], "the owner keeps alias:: ML");
-  await browser.waitUntil(async () => (await currentPageTitle(browser)) === "ML", { timeout: 15_000, timeoutMsg: "the renamed page is not open as ML" });
-
-  stage = "M-Q5: [[ML]] still in Machine Learning's Linked References";
-  await openPageByName(browser, "Machine Learning");
   await browser.waitUntil(() => browser.execute(() =>
-    [...document.querySelectorAll(".linked-references")].some((section) => /also/.test(section.textContent ?? "") && /ML/.test(section.textContent ?? ""))),
-  { timeout: 15_000, timeoutMsg: "q's [[ML]] block is missing from Machine Learning's Linked References" });
+    [...document.querySelectorAll(".toast-error .toast-msg")].some((toast) => /“ML” is an alias of the page “Machine Learning”/.test(toast.textContent ?? ""))),
+  { timeout: 15_000, timeoutMsg: "no refusal naming Machine Learning" });
+  assert.equal(await browser.$(".tine-rename-alias-choice").isExisting(), false, "a refusal offers no choice");
+  assert.equal(await currentPageTitle(browser), "ML notes");
+  assert.deepEqual(snapshot(), beforeAliasHeld, "the alias-held refusal changed a file");
 
-  stage = "r11: merging into a fileless alias owner rewrites queries";
-  await openPageByName(browser, "Source Two");
-  await renameTitle("Short Two");
-  await browser.$('.tine-rename-alias-choice button[data-choice="merge"]').waitForExist({ timeout: 15_000 });
-  await browser.$('.tine-rename-alias-choice button[data-choice="merge"]').click();
-  await waitForFileText(path.join(graph, "pages/Owner Two.md"), (text) => text.includes("source two"), { timeoutMs: 15_000 });
-  await waitForFileText(path.join(graph, "pages/queries.md"), (text) => text.includes('(page "Owner Two")') && text.includes("[[Owner Two]]") && !text.includes("Source Two"), { timeoutMs: 15_000 });
-  // CM SPEC §4.1: the chosen member spelling (here the owner, Owner Two) drives the whole substitution, links and
-  // stored queries alike; the old split (links kept the typed alias Short Two) predates B4's single substitution.
-  assert.ok(!fs.existsSync(path.join(graph, "pages/Short Two.md")));
-  assert.ok(!fs.existsSync(path.join(graph, "pages/Source Two.md")));
-
-  stage = "r11: a file-less source offers merge into the owner and Cancel";
+  stage = "O3: a source without a file is refused the same way";
   await openPageByName(browser, "Ghost");
   await renameTitle("Short Two");
-  await browser.$(".tine-rename-alias-choice").waitForExist({ timeout: 15_000 });
-  assert.deepEqual(Object.keys(Object.fromEntries(await dialogChoices())).sort(), ["cancel", "merge"]);
-  const beforeFilelessCancel = snapshot();
-  await browser.$('.tine-rename-alias-choice button[data-choice="cancel"]').click();
-  assert.deepEqual(snapshot(), beforeFilelessCancel);
+  await browser.waitUntil(() => browser.execute(() =>
+    [...document.querySelectorAll(".toast-error .toast-msg")].some((toast) => /“Short Two” is an alias of the page “Owner Two”/.test(toast.textContent ?? ""))),
+  { timeout: 15_000, timeoutMsg: "no refusal naming Owner Two" });
+  assert.equal(await browser.$(".tine-rename-alias-choice").isExisting(), false, "a refusal offers no choice");
+  assert.deepEqual(snapshot(), beforeAliasHeld, "the file-less refusal changed a file");
 
-  stage = "r12: rename an alias-only link through the real context menu and owner dialog";
+  stage = "O3: rename an alias-only link through the context menu";
   await openPageByName(browser, "Alias journey");
   await browser.$('a.page-ref[data-ref="alias source"]').waitForExist({ timeout: 15_000 });
   await browser.execute(() => {
@@ -177,30 +134,25 @@ try {
   });
   await browser.$('[data-page-action-id="rename-page"]').waitForExist({ timeout: 4000 });
   await browser.$('[data-page-action-id="rename-page"]').click();
-  await browser.$('.ctx-rename-name').setValue("Alias Target");
+  await browser.$('.ctx-rename-name').setValue("Alias Renamed");
   await browser.keys("Enter");
-  await browser.$('.tine-rename-alias-choice').waitForExist({ timeout: 15_000 });
-  const aliasChoices = Object.fromEntries(await dialogChoices());
-  assert.deepEqual(Object.keys(aliasChoices).sort(), ["cancel", "merge"]);
-  assert.match(aliasChoices.merge, /Alias Target Owner/);
-  await browser.$('.tine-rename-alias-choice button[data-choice="merge"]').click();
   const declaration = path.join(graph, "pages/Alias Source Owner.md");
-  // CM SPEC §4.1: the chosen member (Alias Target Owner) is the one spelling for the alias line, links and queries.
-  await waitForFileText(declaration, text => text === "alias:: Alias Target Owner\n\n- alias owner body\n", { timeoutMs: 15_000 });
-  await waitForFileText(path.join(graph, "pages/Alias journey.md"), text => text.includes("[[Alias Target Owner]]") && text.includes('(page "Alias Target Owner")') && !text.includes("Alias Source"), { timeoutMs: 15_000 });
-  assert.ok(!fs.existsSync(path.join(graph, "pages/Alias Target.md")));
+  await waitForFileText(declaration, text => text === "alias:: Alias Renamed\n\n- alias owner body\n", { timeoutMs: 15_000 });
+  await waitForFileText(path.join(graph, "pages/Alias journey.md"), text => text === '- [[Alias Renamed]]\n- {{query (page "Alias Renamed")}}\n', { timeoutMs: 15_000 });
+  assert.equal(await browser.$(".tine-rename-alias-choice").isExisting(), false, "a rename asks nothing");
+  assert.ok(!fs.existsSync(path.join(graph, "pages/Alias Renamed.md")), "no file is created for an alias");
   assert.ok(!fs.existsSync(path.join(graph, "pages/Alias Source.md")));
 
-  stage = "r12: reload preserves the rewritten declaration and alias group";
+  stage = "O3: reload keeps the renamed alias attached";
   await browser.refresh();
   await browser.$(".graph-switch-btn").waitForExist({ timeout: 30_000 });
   await openPageByName(browser, "Alias Source Owner");
   await browser.waitUntil(() => browser.execute(() =>
-    [...document.querySelectorAll('[data-alias-names] a.page-ref, [data-alias-group-pages] a.page-ref')].some(link => link.textContent.trim() === "Alias Target Owner")),
+    [...document.querySelectorAll('[data-alias-names] a.page-ref, [data-alias-group-pages] a.page-ref')].some(link => link.textContent.trim() === "Alias Renamed")),
   { timeout: 15_000, timeoutMsg: "renamed alias detached after reload" });
-  assert.equal(fs.readFileSync(declaration, "utf8"), "alias:: Alias Target Owner\n\n- alias owner body\n");
+  assert.equal(fs.readFileSync(declaration, "utf8"), "alias:: Alias Renamed\n\n- alias owner body\n");
 
-  stage = "M-Q6: renaming Foo to its own used child Foo/bar is refused with the reason";
+  stage = "O4: renaming Foo onto its own claimed child Foo/bar is refused with the reason";
   const beforeRefusal = snapshot();
   await openPageByName(browser, "Foo");
   await renameTitle("Foo/bar");
@@ -211,7 +163,7 @@ try {
   assert.deepEqual(snapshot(), beforeRefusal, "the refused rename changed a file");
 
   ownerFixture.verify();
-  fs.writeFileSync(path.join(run, "receipt.json"), JSON.stringify({ commit, workingDiff: true, outcome: "PASS", journey: "CM3-1 journal-risk refusal names the journal and writes nothing; fileless M-Q5 dialog and own-page outcome; fileless alias owner merge and Cancel; alias-only context-menu owner merge creates no placeholder, rewrites declarations and queries and survives reload; M-Q6 own-child refusal writes nothing", graph }, null, 2));
+  fs.writeFileSync(path.join(run, "receipt.json"), JSON.stringify({ commit, workingDiff: true, outcome: "PASS", journey: "O4 rename moves a journal-declared alias under the source and keeps the journal; O3 alias-held refusal names the page, with and without a source file, and writes nothing; O3 alias-only context-menu rename rewrites declaration, links and queries, creates no file and survives reload; O4 own-child refusal writes nothing", graph }, null, 2));
   console.log(`PASS CM merge rules. ${run}`);
 } catch (error) {
   try { await browser?.saveScreenshot(path.join(run, "failure.png")); } catch {}

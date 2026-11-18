@@ -78,7 +78,6 @@
     "Favs": "favs",
     "x": "x"
   },
-  "namespaceNodes": [],
   "namespaceTree": [],
   "open": {
     "A": {
@@ -209,20 +208,6 @@
         "x"
       ]
     }
-  ],
-  "treeNodes": [
-    [
-      "page",
-      "a"
-    ],
-    [
-      "page",
-      "favs"
-    ],
-    [
-      "page",
-      "x"
-    ]
   ],
   "treeParent": [
     {

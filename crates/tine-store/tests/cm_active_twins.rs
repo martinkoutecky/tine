@@ -189,8 +189,13 @@ fn inactive_namespace_files_supply_no_parents_or_completion_names() {
     store.close();
 }
 
+/// CM-ORDER and CM-DAYFILE (D-20261110-CM, D-20261111-CMR14; CM SPEC §2.2):
+/// a pages file titled by a date claims that day, the journals directory
+/// wins it (hyphen before underscore by path), only the winner contributes,
+/// and every physical file stays. (Superseded: before CM step 2 the titled
+/// pages file won, and a date title made an ordinary page, D-20261107-KD.)
 #[test]
-fn cross_kind_claims_prefer_pages_and_keep_all_physical_files() {
+fn cross_kind_claims_prefer_the_journals_directory_and_keep_all_physical_files() {
     let _guard = super::integration_lock();
     let dir = tempfile::tempdir().unwrap();
     for folder in ["pages", "journals"] {
@@ -226,36 +231,49 @@ fn cross_kind_claims_prefer_pages_and_keep_all_physical_files() {
         let Resolved::Existing { id, others } = view.resolve("Nov 6th, 2026", is_journal) else {
             panic!("real file")
         };
-        assert_eq!(id.as_str(), "pages/A.org");
-        assert_eq!(others.len(), 2);
+        assert_eq!(id.as_str(), "journals/2026-11-06.org");
+        assert_eq!(
+            others,
+            [
+                tine_store::PageId::from("journals/2026_11_06.md".to_owned()),
+                tine_store::PageId::from("pages/A.org".to_owned()),
+            ]
+        );
     }
-    assert!(!view.link_target("Nov 6th, 2026").is_journal);
+    assert!(view.link_target("Nov 6th, 2026").is_journal);
     assert_eq!(view.corpus(None, false).pages.len(), 3);
+    assert_eq!(rows(&store, "[[OtherTarget]]").len(), 1);
     assert_eq!(rows(&store, "[[JournalTarget]]").len(), 0);
-    assert_eq!(rows(&store, "[[PageTarget]]").len(), 1);
+    assert_eq!(rows(&store, "[[PageTarget]]").len(), 0);
     drop(view);
-    std::fs::remove_file(&ordinary).unwrap();
-    store.refresh(Depth::Stamps).unwrap();
-    // Within journals, hyphen sorts before underscore, regardless of format.
-    assert_eq!(rows(&store, "[[OtherTarget]]").len(), 1);
-    assert_eq!(rows(&store, "[[JournalTarget]]").len(), 0);
-    // KD: an ordinary date spelling is a distinct page, including when a
-    // caller initially classified its spelling as a journal date.
-    std::fs::write(
-        &ordinary,
-        "#+title: 2026-11-06\n* ordinary [[PageTarget]]\n",
-    )
-    .unwrap();
-    store.refresh(Depth::Stamps).unwrap();
-    let view = store.whole_graph().unwrap();
-    for is_journal in [false, true] {
-        let Resolved::Existing { id, .. } = view.resolve("2026-11-06", is_journal) else {
-            panic!("ordinary date file")
-        };
-        assert_eq!(id.as_str(), "pages/A.org");
+    // Without the journals files the titled pages file is the day; a date
+    // title in another spelling (`2026-11-06`) is the same day.
+    for journal in ["journals/2026_11_06.md", "journals/2026-11-06.org"] {
+        std::fs::remove_file(dir.path().join(journal)).unwrap();
     }
-    assert!(!view.link_target("2026-11-06").is_journal);
-    assert_eq!(rows(&store, "[[OtherTarget]]").len(), 1);
+    for title in ["Nov 6th, 2026", "2026-11-06"] {
+        std::fs::write(
+            &ordinary,
+            format!("#+title: {title}\n* ordinary [[PageTarget]]\n"),
+        )
+        .unwrap();
+        store.refresh(Depth::Stamps).unwrap();
+        let view = store.whole_graph().unwrap();
+        for spelling in ["Nov 6th, 2026", "2026-11-06", "2026_11_06"] {
+            for is_journal in [false, true] {
+                let Resolved::Existing { id, others } = view.resolve(spelling, is_journal) else {
+                    panic!("the day file")
+                };
+                assert_eq!(
+                    (id.as_str(), others.len()),
+                    ("pages/A.org", 0),
+                    "{title}: {spelling}"
+                );
+            }
+            assert!(view.link_target(spelling).is_journal);
+        }
+        assert_eq!(rows(&store, "[[PageTarget]]").len(), 1);
+    }
     store.close();
 }
 

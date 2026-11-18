@@ -4,11 +4,5 @@
     "pages/ML notes.md": "- notes\n",
     "pages/ML notes%2Fx.md": "- child\n",
     "pages/q.md": "- {{query (page \"ML notes\")}}\n- see [[ML notes]]\n- see [[ML notes/x]]\n"
-  },
-  "renames": [
-    {
-      "old": "ML notes",
-      "new": "ML"
-    }
-  ]
+  }
 }

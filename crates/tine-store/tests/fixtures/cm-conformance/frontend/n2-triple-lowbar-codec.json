@@ -285,24 +285,6 @@
     "x": "x",
     "x/y": "x/y"
   },
-  "namespaceNodes": [
-    [
-      "page",
-      "a/b"
-    ],
-    [
-      "page",
-      "x/y"
-    ],
-    [
-      "page",
-      "a"
-    ],
-    [
-      "page",
-      "x"
-    ]
-  ],
   "namespaceTree": [
     {
       "children": [],
@@ -532,7 +514,10 @@
       "linkedRefs": 1,
       "name": "a/b",
       "owner": "pages/a___b.md",
-      "parent": "a"
+      "parent": [
+        "page",
+        "a"
+      ]
     },
     {
       "key": "bad%e9",
@@ -588,7 +573,10 @@
       "linkedRefs": 1,
       "name": "x/y",
       "owner": "pages/x______y.md",
-      "parent": "x"
+      "parent": [
+        "page",
+        "x"
+      ]
     }
   ],
   "spellings": {
@@ -601,17 +589,6 @@
       "model": [
         "page",
         "%e9"
-      ]
-    },
-    "a": {
-      "backend": [
-        "page",
-        "a"
-      ],
-      "day": null,
-      "model": [
-        "page",
-        "a"
       ]
     },
     "a.b": {
@@ -689,17 +666,6 @@
       "model": [
         "page",
         "trail"
-      ]
-    },
-    "x": {
-      "backend": [
-        "page",
-        "x"
-      ],
-      "day": null,
-      "model": [
-        "page",
-        "x"
       ]
     },
     "x/y": {
@@ -803,52 +769,6 @@
       ]
     }
   ],
-  "treeNodes": [
-    [
-      "page",
-      "%e9"
-    ],
-    [
-      "page",
-      "lead"
-    ],
-    [
-      "page",
-      "a.b"
-    ],
-    [
-      "page",
-      "a/b"
-    ],
-    [
-      "page",
-      "bad%e9"
-    ],
-    [
-      "page",
-      "café"
-    ],
-    [
-      "page",
-      "links"
-    ],
-    [
-      "page",
-      "trail"
-    ],
-    [
-      "page",
-      "x/y"
-    ],
-    [
-      "page",
-      "a"
-    ],
-    [
-      "page",
-      "x"
-    ]
-  ],
   "treeParent": [
     {
       "page": [
@@ -860,7 +780,7 @@
     {
       "page": [
         "page",
-        "lead"
+        "a"
       ],
       "parent": null
     },
@@ -898,6 +818,13 @@
     {
       "page": [
         "page",
+        "lead"
+      ],
+      "parent": null
+    },
+    {
+      "page": [
+        "page",
         "links"
       ],
       "parent": null
@@ -912,26 +839,19 @@
     {
       "page": [
         "page",
+        "x"
+      ],
+      "parent": null
+    },
+    {
+      "page": [
+        "page",
         "x/y"
       ],
       "parent": [
         "page",
         "x"
       ]
-    },
-    {
-      "page": [
-        "page",
-        "a"
-      ],
-      "parent": null
-    },
-    {
-      "page": [
-        "page",
-        "x"
-      ],
-      "parent": null
     }
   ]
 }

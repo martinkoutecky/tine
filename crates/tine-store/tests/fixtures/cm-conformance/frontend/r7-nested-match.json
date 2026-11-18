@@ -68,7 +68,6 @@
     "A": "a",
     "p": "p"
   },
-  "namespaceNodes": [],
   "namespaceTree": [],
   "open": {
     "A": {
@@ -160,28 +159,18 @@
       ]
     }
   ],
-  "treeNodes": [
-    [
-      "page",
-      "p"
-    ],
-    [
-      "page",
-      "a"
-    ]
-  ],
   "treeParent": [
     {
       "page": [
         "page",
-        "p"
+        "a"
       ],
       "parent": null
     },
     {
       "page": [
         "page",
-        "a"
+        "p"
       ],
       "parent": null
     }

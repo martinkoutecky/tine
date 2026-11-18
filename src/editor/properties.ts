@@ -61,17 +61,20 @@ export function isEditablePropertyKey(key: string): boolean {
   return /^[\p{L}\p{M}\p{N}_./-]+$/u.test(key);
 }
 
-/** A Markdown page header the parser accepted (Rust `block_regions::page_header`): the leading run of
- * accepted `key:: value` properties, joined only by empty lines. Named Tine policies over lsdoc's
- * answer: the run starts at the first byte, lines start at column zero, and a key does not start
- * with `#` (a `#tag::` line is prose that happens to parse). No-space `key::value`, indented lines
- * and fenced lines are not properties because lsdoc says so (I-12). Offsets here are UTF-16: `end`
- * is the end of the last header line (newline excluded), `line` is the 0-based line index. */
+/** A Markdown page header as the parser's one owner answers it (Rust `page_preamble::page_header`,
+ * from `block_regions::mapped_regions`): the property lines of the first property node, when only
+ * blank lines precede it, up to its first line that is no property; everything else is prose.
+ * Offsets here are UTF-16: `end` is the end of the last header line (newline excluded), `line` is
+ * the 0-based line index. */
 interface PageHeader {
   end: number;
   entries: { key: string; value: string; line: number }[];
+  /** Every line is a page property (Rust `PageHeader::whole`). */
+  whole: boolean;
+  /** The first non-blank line that is no page property (Rust `PageHeader::stray`). */
+  stray: number | null;
 }
-const NO_HEADER: PageHeader = { end: 0, entries: [] };
+const NO_HEADER: PageHeader = { end: 0, entries: [], whole: false, stray: null };
 let lastHeader: { raw: string; header: PageHeader } | undefined;
 
 function pageHeader(raw: string): PageHeader {
@@ -87,34 +90,34 @@ function pageHeader(raw: string): PageHeader {
     reportUiFailure("page-header-read", error);
     return NO_HEADER;
   }
-  const parsed = JSON.parse(json) as { end: number; entries: PageHeader["entries"] };
-  const header = { end: utf8ToUtf16Cursor(raw)(parsed.end), entries: parsed.entries.map(({ key, value, line }) => ({ key, value, line })) };
+  const parsed = JSON.parse(json) as PageHeader;
+  const header = { end: utf8ToUtf16Cursor(raw)(parsed.end), entries: parsed.entries.map(({ key, value, line }) => ({ key, value, line })), whole: parsed.whole, stray: parsed.stray };
   lastHeader = { raw, header };
   return header;
 }
 
-/** A complete page header: the whole text is header properties, with empty lines permitted only
- * between properties (never at either edge). */
+/** A complete page header: every line is a page property (Rust `page_header_only`; an empty
+ * line ends the header, as in Logseq). */
 export function isPageHeaderPropertiesOnly(raw: string): boolean {
-  const header = pageHeader(raw);
-  return header.entries.length > 0 && header.end === raw.length;
+  return pageHeader(raw).whole;
 }
 
 /** The first line that keeps `raw` from being a complete page header, as
  * `{ line, text }` (1-based line number, trimmed text), or null when `raw` is a
- * complete header or has no such line. The line is the first non-empty one after
- * the leading run of accepted properties (the whole first line when `raw` does
- * not start with one): the same boundary {@link isPageHeaderPropertiesOnly}
- * judges, so a message built from it names what that predicate refused. */
-export function pageHeaderBadLine(raw: string): { line: number; text: string } | null {
+ * complete header or has no such line: the parser's first non-blank line that is
+ * no page property (Rust `PageHeader::stray`, the line
+ * {@link isPageHeaderPropertiesOnly} refuses), so a message built from it names
+ * what that predicate refused. Unread (no `::`, or no parser) it is the first non-blank line.
+ * `afterBlank`: the line is itself a `key:: value` property, kept out only by the blank line
+ * before it, which ends the page properties. */
+export function pageHeaderBadLine(raw: string): { line: number; text: string; afterBlank: boolean } | null {
   const header = pageHeader(raw);
-  if (header.entries.length > 0 && header.end === raw.length) return null;
-  let offset = header.entries.length > 0 ? header.end : 0;
-  for (const line of raw.slice(offset).split("\n")) {
-    if (line.trim() !== "") return { line: raw.slice(0, offset).split("\n").length, text: line.trim() };
-    offset += line.length + 1;
-  }
-  return null;
+  if (header.whole) return null;
+  const lines = raw.split("\n");
+  const bad = header === NO_HEADER ? lines.findIndex((line) => line.trim() !== "") : header.stray;
+  if (bad === null || bad < 0) return null;
+  const afterBlank = bad > 0 && lines[bad - 1].trim() === "" && acceptedPropertyLine(lines[bad].replace(/\r$/, "")) !== null;
+  return { line: bad + 1, text: lines[bad].trim(), afterBlank };
 }
 
 /** Properties that describe the block they sit on, never a page: a first
@@ -194,7 +197,8 @@ export function withoutLeadingBlankLines(raw: string): string {
 /** Whether the textarea caret is on a complete `key:: value` line. This is
  * deliberately line-local: an empty line after a run of page properties is the
  * double-Enter exit sentinel, not another property line. The line is lsdoc's accepted
- * property line under the page-header policies (column zero, no `#` key). */
+ * property line, under an editor-gesture policy of its own (column zero, no `#` key) that
+ * decides only what Enter does; where the page header ends is `pageHeader`'s answer. */
 export function caretOnPropertyLine(raw: string, caret: number): boolean {
   const c = Math.max(0, Math.min(caret, raw.length));
   const lineStart = raw.lastIndexOf("\n", c - 1) + 1;
@@ -207,7 +211,7 @@ export function caretOnPropertyLine(raw: string, caret: number): boolean {
 /** Split a Markdown page preamble into real page-property lines and ordinary
  * content. Property-looking text inside a fenced code block stays content.
  * `content` is the prose the page shows as its first block row: the Rust
- * answer (`page_preamble::page_preamble_content`), which the store's Linked
+ * answer (`page_preamble::preamble_content_range`), which the store's Linked
  * References, All pages counts and rename read as that block too (CM step 2
  * batch 8, I-12). */
 export function splitPagePreamble(raw: string | null | undefined, format: Format = "md"): {
@@ -223,8 +227,15 @@ export function splitPagePreamble(raw: string | null | undefined, format: Format
     const range = JSON.parse(page_preamble_content_json(raw, true)) as [number, number] | null;
     if (!range) return { properties: raw, content: null, remainder: null };
     const at = utf8ToUtf16Cursor(raw);
-    const start = at(range[0]);
-    return { properties: raw.slice(0, start) || null, content: raw.slice(start, at(range[1])), remainder: raw.slice(start) };
+    const [start, end] = [at(range[0]), at(range[1])];
+    // Page properties can follow the prose (REG-CM-ORG-TEXT-BETWEEN-DIRECTIVES):
+    // `properties` is then the pre-block without it, so promoting the prose
+    // keeps every header line.
+    const before = raw.slice(0, start);
+    const properties = raw.slice(end).trim()
+      ? (before.replace(/\n+$/, "") + raw.slice(end)).replace(/^\n+/, "")
+      : before;
+    return { properties: properties || null, content: raw.slice(start, end), remainder: raw.slice(start) };
   }
   const { end, entries } = pageHeader(raw);
   const remainder = entries.length ? raw.slice(end) || null : raw;

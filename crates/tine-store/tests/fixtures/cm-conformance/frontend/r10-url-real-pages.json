@@ -93,7 +93,6 @@
     "https:": "https:",
     "https://a.b/c": "https://a.b/c"
   },
-  "namespaceNodes": [],
   "namespaceTree": [],
   "open": {
     "cc": {
@@ -224,20 +223,6 @@
         "https://a.b/c"
       ]
     }
-  ],
-  "treeNodes": [
-    [
-      "page",
-      "cc"
-    ],
-    [
-      "page",
-      "https:"
-    ],
-    [
-      "page",
-      "https://a.b/c"
-    ]
   ],
   "treeParent": [
     {

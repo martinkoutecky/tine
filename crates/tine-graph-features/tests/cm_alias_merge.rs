@@ -12,9 +12,8 @@
 //!
 //! Runs without the bridge (every gate). Differences: part `aliasMerge` of
 //! `crates/tine-store/tests/fixtures/cm-conformance/expected-differences.json`;
-//! `CM_REFRESH=1` rewrites it. No model-side check yet: the bridge runs model
-//! r6, whose rename onto a real page is refused by the base guard
-//! (`r6-onto-real-page`); merge semantics arrive with the r7 bridge.
+//! `CM_REFRESH=1` rewrites it. K's witness runner and the production P2 check
+//! cover model-side conservation; this census also checks alias opening.
 
 use std::fs;
 use std::path::Path;

@@ -136,10 +136,13 @@ fn journal_reads_the_active_cross_kind_opening_file() {
         ],
     );
     let slot = graph.slot();
+    // CM-ORDER (D-20261110-CM): the journals-directory file wins the day over
+    // a pages file whose title is that date, whatever the title does.
+    // (Superseded: before CM step 2 the ordinary file opened first.)
     for (text, expected) in [
-        (ordinary, ordinary),
+        (ordinary, journal),
         ("title:: Elsewhere\n- ordinary opening file\n", journal),
-        (ordinary, ordinary),
+        (ordinary, journal),
     ] {
         std::fs::write(graph.root.join("pages/A.md"), text).unwrap();
         graph.store.refresh(tine_store::Depth::Bytes).unwrap();
@@ -150,6 +153,11 @@ fn journal_reads_the_active_cross_kind_opening_file() {
         std::fs::read_to_string(graph.root.join("journals/2026_11_06.md")).unwrap(),
         journal
     );
+    // Without the journals file the titled pages file is the day (CM-DAYFILE).
+    std::fs::remove_file(graph.root.join("journals/2026_11_06.md")).unwrap();
+    graph.store.refresh(tine_store::Depth::Bytes).unwrap();
+    let read = verb(&slot, "journal", json!({"date":"2026-11-06"})).unwrap();
+    assert_eq!(read["text"], ordinary);
 }
 
 #[test]
@@ -381,8 +389,11 @@ fn rename_fileless_sources_rewrites_references_and_moves_namespace_children() {
     }
 }
 
+/// The title identity and namespace descendants. (Before model r6 the source
+/// was typed as the alias `Shortcut` and renamed its owner; an alias is now
+/// renamed itself, `cm_rename_cli_tests`.)
 #[test]
-fn rename_uses_title_identity_aliases_and_namespace_descendants_in_both_formats() {
+fn rename_uses_title_identity_and_namespace_descendants_in_both_formats() {
     for (ext, header, block) in [
         ("md", "title:: Project\nalias:: Shortcut\n\n", "- "),
         ("org", "#+TITLE: Project\n#+ALIAS: Shortcut\n", "* "),
@@ -403,7 +414,7 @@ fn rename_uses_title_identity_aliases_and_namespace_descendants_in_both_formats(
         let result = verb(
             &slot,
             "page.rename",
-            json!({"old":"Shortcut","new":"New/Project"}),
+            json!({"old":"Project","new":"New/Project"}),
         )
         .unwrap();
         assert_eq!(result["old"], "Project");

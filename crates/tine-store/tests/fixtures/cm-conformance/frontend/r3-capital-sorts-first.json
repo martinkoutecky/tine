@@ -137,7 +137,6 @@
     "Zed": "zed",
     "alpha": "alpha"
   },
-  "namespaceNodes": [],
   "namespaceTree": [],
   "open": {
     "Notes": {
@@ -294,21 +293,14 @@
       ]
     }
   ],
-  "treeNodes": [
-    [
-      "page",
-      "notes"
-    ],
-    [
-      "page",
-      "zed"
-    ],
-    [
-      "page",
-      "alpha"
-    ]
-  ],
   "treeParent": [
+    {
+      "page": [
+        "page",
+        "alpha"
+      ],
+      "parent": null
+    },
     {
       "page": [
         "page",
@@ -320,13 +312,6 @@
       "page": [
         "page",
         "zed"
-      ],
-      "parent": null
-    },
-    {
-      "page": [
-        "page",
-        "alpha"
       ],
       "parent": null
     }

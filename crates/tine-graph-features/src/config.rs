@@ -208,52 +208,56 @@ pub struct FavoritesAfter {
     pub page: Option<String>,
 }
 
+/// What a page a setting names is, for O8's one-entry rule: a day, or a page
+/// by key (the model's `target`).
+#[derive(PartialEq, Eq, PartialOrd, Ord)]
+enum Target {
+    Day(tine_core::date::JournalDate),
+    Page(String),
+}
+
 /// The favorites a rename carries, or `None` when it changes nothing.
-/// `renamed` maps a stored name to its new name (the rename plan's own map:
-/// the page, its namespace descendants, a merged-away source onto the typed
-/// survivor name). OG `rename-page-aux` (page.cljs:507 at 6e7afa8eb) moves a
-/// favorite with its page; Tine keeps its position and the new spelling.
-/// Deliberate OG difference (FAV-MERGE, manager ruling 2026-11-03): OG's
-/// `merge-pages!` drops the merged-away page's favorite (`delete!` ->
-/// `unfavorite-page!`); here it moves to the survivor, because a favorite is
-/// a link and a merge rewrites links. An entry the rename maps onto a name
-/// another entry already holds (by page key) is dropped, so the survivor's own
-/// favorite keeps its place. A stored alias spelling is not a renamed name and
-/// stays (FAV-ALIAS: the alias still opens the page). Pre-existing duplicates
-/// are left alone. O(favorites) page-key folds.
+/// `renamed` maps a stored name to its new name (model r6 O1: the namespace
+/// prefix substitution, days pinned). OG `rename-page-aux` (page.cljs:507 at
+/// 6e7afa8eb) moves a favorite with its page; Tine keeps its position and the
+/// new spelling. Deliberate OG difference (FAV-MERGE, manager ruling
+/// 2026-11-03): OG's `merge-pages!` drops the merged-away page's favorite
+/// (`delete!` -> `unfavorite-page!`); here it moves to the survivor, because
+/// a favorite is a link and a merge rewrites links. After a merge
+/// (`merged_days`: the graph's day format) the list keeps only the first
+/// entry of each page or day (O8, Lean `uniqueNames`); a plain rename drops
+/// none (Lean `favorites_rename`). A stored alias spelling is not a renamed
+/// name and stays (FAV-ALIAS: the alias still opens the page). O(favorites)
+/// page-key folds and day parses.
 pub(crate) fn favorites_after_rename(
     config: &tine_core::config::Config,
     renamed: &dyn Fn(&str) -> Option<String>,
+    merged_days: Option<&tine_core::date::JournalFormat>,
 ) -> Option<FavoritesAfter> {
-    let mapped: Vec<(String, bool)> = config
+    let mut names: Vec<String> = config
         .favorites
         .iter()
-        .map(|name| match renamed(name) {
-            Some(new) => (new, true),
-            None => (name.clone(), false),
-        })
+        .map(|name| renamed(name).unwrap_or_else(|| name.clone()))
         .collect();
     let page = config
         .favorites_page
         .as_deref()
         .and_then(|page| renamed(page));
-    if page.is_none() && !mapped.iter().any(|(_, moved)| *moved) {
+    // After a merge the one-entry rule covers the whole list, entries the
+    // merge did not move too (Lean `favoritesAfter`).
+    if let Some(days) = merged_days {
+        let target = |name: &str| {
+            days.parse(name).map_or_else(
+                || Target::Page(tine_core::refs::page_key(name)),
+                Target::Day,
+            )
+        };
+        let mut seen = std::collections::BTreeSet::new();
+        names.retain(|name| seen.insert(target(name)));
+    }
+    if page.is_none() && names == config.favorites {
         return None;
     }
-    let kept: std::collections::HashSet<String> = mapped
-        .iter()
-        .filter(|(_, moved)| !moved)
-        .map(|(name, _)| tine_core::refs::page_key(name))
-        .collect();
-    let mut emitted = std::collections::HashSet::new();
-    let names = mapped
-        .into_iter()
-        .filter(|(name, moved)| {
-            let key = tine_core::refs::page_key(name);
-            !*moved || (!kept.contains(&key) && emitted.insert(key))
-        })
-        .map(|(name, _)| name)
-        .collect();
     Some(FavoritesAfter {
         names,
         page: page.or_else(|| config.favorites_page.clone()),
@@ -262,17 +266,18 @@ pub(crate) fn favorites_after_rename(
 
 /// The config.edn step a page rename carries (one guarded replacement, after
 /// the page operation): home (OG `rename-page-aux`, page.cljs:491 at
-/// 6e7afa8eb) via `home_renamed`, favorites via `renamed`. Nothing is written
-/// when config.edn is absent or nothing moves. A config.edn that cannot be
-/// read or edited safely never blocks the rename (refusal scenario:
-/// external-editor race / sync delivery, docs/contracts/config-live-reload.md):
-/// the edit that would need it is skipped and reported in `skipped`; home
-/// and favorites are edited independently, so one uneditable value does not
-/// stop the other.
+/// 6e7afa8eb) via `home_renamed`, favorites via `renamed` (deduplicated after
+/// a merge, `merged_days`). Nothing is written when config.edn is absent or
+/// nothing moves. All of it or none (model r6 O8): a config.edn that cannot
+/// be read, or any value of it that cannot be edited safely, leaves the whole
+/// file unchanged and is reported in `skipped` ("pages done, settings not
+/// updated"); it never blocks the rename (refusal scenario: external-editor
+/// race / sync delivery, docs/contracts/config-live-reload.md).
 pub(crate) fn config_after_rename(
     store: &Store,
     home_renamed: &dyn Fn(&str) -> Option<String>,
     renamed: &dyn Fn(&str) -> Option<String>,
+    merged_days: Option<&tine_core::date::JournalFormat>,
 ) -> ConfigAfterRename {
     let Ok(id) = config_id(store) else {
         return ConfigAfterRename::default();
@@ -290,30 +295,31 @@ pub(crate) fn config_after_rename(
     let config = tine_core::config::Config::parse(&text);
     let mut step = ConfigAfterRename::default();
     let mut next = text.clone();
-    if let Some(new) = config.default_home.as_deref().and_then(home_renamed) {
-        match edit_default_home(&next, Some(&new)) {
-            Ok(edited) => {
-                if edited != next {
-                    next = edited;
-                    step.home = Some(new);
-                }
+    let mut edit = || -> io::Result<()> {
+        if let Some(new) = config.default_home.as_deref().and_then(home_renamed) {
+            let edited = edit_default_home(&next, Some(&new))?;
+            if edited != next {
+                next = edited;
+                step.home = Some(new);
             }
-            Err(error) => step.skipped = Some(error.to_string()),
         }
-    }
-    if let Some(after) = favorites_after_rename(&config, renamed) {
-        let page = (after.page != config.favorites_page)
-            .then_some(after.page.as_deref())
-            .flatten();
-        match edit_favorites(&next, &after.names, page) {
-            Ok(edited) => {
-                if edited != next {
-                    next = edited;
-                    step.favorites = Some(after);
-                }
+        if let Some(after) = favorites_after_rename(&config, renamed, merged_days) {
+            let page = (after.page != config.favorites_page)
+                .then_some(after.page.as_deref())
+                .flatten();
+            let edited = edit_favorites(&next, &after.names, page)?;
+            if edited != next {
+                next = edited;
+                step.favorites = Some(after);
             }
-            Err(error) => step.skipped = Some(error.to_string()),
         }
+        Ok(())
+    };
+    if let Err(error) = edit() {
+        return ConfigAfterRename {
+            skipped: Some(error.to_string()),
+            ..Default::default()
+        };
     }
     if next != text {
         step.write = Some((id, rev, next.into_bytes()));

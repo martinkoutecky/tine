@@ -99,16 +99,6 @@
     "old/child": "old/child",
     "p": "p"
   },
-  "namespaceNodes": [
-    [
-      "page",
-      "old"
-    ],
-    [
-      "page",
-      "old/child"
-    ]
-  ],
   "namespaceTree": [
     {
       "children": [
@@ -191,7 +181,10 @@
       "linkedRefs": 1,
       "name": "old/child",
       "owner": null,
-      "parent": "old"
+      "parent": [
+        "page",
+        "old"
+      ]
     },
     {
       "key": "p",
@@ -265,32 +258,11 @@
       ]
     }
   ],
-  "treeNodes": [
-    [
-      "page",
-      "old"
-    ],
-    [
-      "page",
-      "p"
-    ],
-    [
-      "page",
-      "old/child"
-    ]
-  ],
   "treeParent": [
     {
       "page": [
         "page",
         "old"
-      ],
-      "parent": null
-    },
-    {
-      "page": [
-        "page",
-        "p"
       ],
       "parent": null
     },
@@ -303,6 +275,13 @@
         "page",
         "old"
       ]
+    },
+    {
+      "page": [
+        "page",
+        "p"
+      ],
+      "parent": null
     }
   ]
 }

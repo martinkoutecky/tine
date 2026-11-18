@@ -1573,6 +1573,184 @@ fn page_aliases_resolve_and_collect_backlinks() {
     std::fs::remove_dir_all(&root).ok();
 }
 
+/// The index reads property members as OG does (og-0.10.9 `text.cljs`
+/// `parse-property-refs`): comma members come from the value's DOCUMENT parse,
+/// so the heading `# x` has none while escaped Plain names stay members, and a
+/// file, search, URL or asset link is no member (`mldoc.cljc` `ast-link?`).
+/// Aliases come from the same reader. OG's page-level scalar fallback
+/// (`extract.cljc` `extract-page-alias-and-tags`: a value with no members is
+/// one page alias/tag) is not Tine's: such a header declares nothing here.
+#[test]
+fn property_members_and_aliases_follow_ogs_value_grammar() {
+    use tine_core::model::PageKind;
+    let root = crate::test_support::fresh_dir("tine-property-members-");
+    std::fs::create_dir_all(root.join("pages")).unwrap();
+    let w = |name: &str, text: &str| std::fs::write(root.join("pages").join(name), text).unwrap();
+    w("D.md", "- body\n  tags:: # x\n");
+    w(
+        "E.md",
+        "- body\n  tags:: \\#x, a\\[b\n- b\n  tags:: [[a\n- c\n  tags:: a]] b\n",
+    );
+    w("H.md", "tags:: # y\n\n- body\n");
+    w("M1.md", "alias:: [x1](A.md)\n\n- body\n");
+    w("M2.md", "alias:: [x2](A.org)\n\n- body\n");
+    w("M3.md", "alias:: [[../assets/x3.png]]\n\n- body\n");
+    w("M4.md", "alias:: [[x4 [[y4]]]]\n\n- body\n");
+    w("M5.md", "alias:: {{embed [[x5]]}}\n\n- body\n");
+    w("M6.md", "alias:: # x6\n\n- body\n");
+    w("M7.md", "alias:: \\# x7, [[x8]]\n\n- body\n");
+    w("Org1.org", "#+alias: [[file:A.org][o1]]\n* body\n");
+    w("Org2.org", "#+alias: [[O2target][o2]]\n* body\n");
+    w("Org3.org", "#+alias: o3, [[o4]]\n* body\n");
+
+    let graph = store_at(&root).whole_graph_reconciled().unwrap();
+    let backlinks = |name: &str| graph.backlinks(name).unwrap().len();
+    assert_eq!(backlinks("# x"), 0);
+    for name in ["#x", "a[b", "[[a", "a]] b"] {
+        assert_eq!(backlinks(name), 1, "{name}");
+    }
+    assert_eq!(backlinks("# y"), 0);
+
+    let g = Graph::open(&root);
+    let owner = |alias: &str| {
+        g.load_named(alias, PageKind::Page)
+            .unwrap()
+            .map(|page| page.name)
+    };
+    for (alias, page) in [
+        ("x4 [[y4]]", "M4"),
+        ("x5", "M5"),
+        ("# x7", "M7"),
+        ("x8", "M7"),
+        ("o3", "Org3"),
+        ("o4", "Org3"),
+    ] {
+        assert_eq!(owner(alias).as_deref(), Some(page), "{alias}");
+    }
+    for alias in [
+        "x1",
+        "x2",
+        "A.org",
+        "../assets/x3.png",
+        "[[x4 [[y4]]]]",
+        "# x6",
+        "[x1](A.md)",
+        "o1",
+        "O2target",
+        "o2",
+    ] {
+        assert_eq!(owner(alias), None, "{alias}");
+    }
+    std::fs::remove_dir_all(&root).ok();
+}
+
+/// OG's property members are the value's top-level references, macros
+/// skipped (og-0.10.9 `text.cljs` `parse-property-refs` over mldoc
+/// `Property.property_references`): a link inside emphasis is no member, a
+/// macro's link is one, a nested link names only its outermost page.
+#[test]
+fn property_members_are_top_level_with_macros_skipped() {
+    use tine_core::model::PageKind;
+    let root = crate::test_support::fresh_dir("tine-property-top-level-");
+    std::fs::create_dir_all(root.join("pages")).unwrap();
+    let w = |name: &str, text: &str| std::fs::write(root.join("pages").join(name), text).unwrap();
+    w("Q1.md", "alias:: **[[p1]]**\n\n- body\n");
+    w("Q2.md", "alias:: {{renderer [[p2]]}}\n\n- body\n");
+    w("Q3.org", "#+alias: /[[p3]]/\n* body\n");
+    w(
+        "B.md",
+        "- body\n  tags:: **[[b1]]**, [[b2 [[b3]]]]\n- x\n  foo:: {{embed [[b4]]}}, _[[b5]]_\n",
+    );
+
+    let graph = store_at(&root).whole_graph_reconciled().unwrap();
+    let backlinks = |name: &str| graph.backlinks(name).unwrap().len();
+    for (name, want) in [("b1", 0), ("b2 [[b3]]", 1), ("b3", 0), ("b4", 1), ("b5", 0)] {
+        assert_eq!(backlinks(name), want, "{name}");
+    }
+    let g = Graph::open(&root);
+    let owner = |alias: &str| {
+        g.load_named(alias, PageKind::Page)
+            .unwrap()
+            .map(|page| page.name)
+    };
+    assert_eq!(owner("p1"), None);
+    assert_eq!(owner("p2").as_deref(), Some("Q2"));
+    assert_eq!(owner("p3"), None);
+    std::fs::remove_dir_all(&root).ok();
+}
+
+/// REG-CM-HEADER-TEXT-HIDDEN (review F1): Markdown text before a page's
+/// property line, or after a folded non-property line, is the page's opening
+/// text: its links are backlinks, and no alias is declared from after it.
+#[test]
+fn opening_text_around_page_properties_is_indexed() {
+    use tine_core::model::PageKind;
+    let root = crate::test_support::fresh_dir("tine-header-text-");
+    std::fs::create_dir_all(root.join("pages")).unwrap();
+    let w = |name: &str, text: &str| std::fs::write(root.join("pages").join(name), text).unwrap();
+    w("Lead.md", "Intro [[X]]\nalias:: y\n- b\n");
+    w("Folded.md", "k:: x\n#+b: y\nm:: [[X]]\nalias:: z\n- b\n");
+    w("X.md", "- x\n");
+    let graph = store_at(&root).whole_graph_reconciled().unwrap();
+    let mut pages: Vec<_> = graph
+        .backlinks("X")
+        .unwrap()
+        .iter()
+        .map(|b| b.page.clone())
+        .collect();
+    pages.sort();
+    assert_eq!(pages, ["Folded", "Lead"]);
+    let g = Graph::open(&root);
+    for alias in ["y", "z"] {
+        let owner = g.load_named(alias, PageKind::Page).unwrap();
+        assert_eq!(owner.map(|p| p.name), None, "{alias}");
+    }
+    std::fs::remove_dir_all(&root).ok();
+}
+
+/// REG-CM-ORG-TEXT-BETWEEN-DIRECTIVES, REG-CM-MD-DIRECTIVE-LINK,
+/// REG-CM-MD-PAGE-READ-AS-ORG: every link Logseq counts in opening text is a
+/// backlink (mldoc oracle, target/cm-leftovers/oracle/refs-rows.jsonl), and
+/// the Org title and alias around the text stay the page's.
+#[test]
+fn opening_text_between_directives_and_directive_lines_is_indexed() {
+    let root = crate::test_support::fresh_dir("tine-opening-directives-");
+    std::fs::create_dir_all(root.join("pages")).unwrap();
+    let w = |name: &str, text: &str| std::fs::write(root.join("pages").join(name), text).unwrap();
+    w("Org.org", "#+TITLE: Direct\n[[X]]\n#+ALIAS: Ali\n* Head\n");
+    w("Folded.md", "k:: x\n#+b: [[X]]\n- b\n");
+    w("Alone.md", "#+b: [[X]]\n- b\n");
+    w("Inner.md", "- a\n  #+b: [[X]]\n- c\n  > #+b: [[X]]\n");
+    w("Rootless.md", "[[X]]\n#+b: y");
+    // A Markdown page with no blocks keeps its Markdown page properties.
+    w("RootAlias.md", "alias:: Ra\n#+b: y");
+    w("X.md", "- x\n");
+    let graph = store_at(&root).whole_graph_reconciled().unwrap();
+    let mut pages: Vec<_> = graph
+        .backlinks("X")
+        .unwrap()
+        .iter()
+        .map(|b| b.page.clone())
+        .collect();
+    pages.sort();
+    let alias = |name| {
+        matches!(
+            graph.resolve(name, false),
+            tine_store::Resolved::Alias { .. }
+        )
+    };
+    assert_eq!(
+        (pages, [alias("Ali"), alias("Ra")]),
+        (
+            ["Alone", "Direct", "Folded", "Inner", "Rootless"]
+                .map(String::from)
+                .to_vec(),
+            [true, true]
+        )
+    );
+    std::fs::remove_dir_all(&root).ok();
+}
+
 fn page_row_names(answer: tine_store::IrAnswer) -> Vec<String> {
     let tine_store::IrAnswer::Result(answer) = answer else {
         panic!("query result");

@@ -2,10 +2,11 @@
 // persisting the choice so it reopens next launch.
 
 import { closeAllWorkspaceWindows } from "./workspaceWindows";
+import { renameRefusalMessage, showRenameNotice, showRewriteRefusal } from "./renameRefusal";
 import { refreshRootRecovery } from "./rootRecoveryState";
 import { backend, type CustomCssChange, type GraphConfigChange } from "./backend";
 import { captureBinding, bindingCurrent } from "./binding";
-import { bindingOwner, graphOwner, readOwned, writeOwned, type Owner } from "./owned";
+import { bindingOwner, graphOwner, readOwned, writeOwned, type Owned, type Owner } from "./owned";
 import { setGraphMeta, bumpGraphEpoch, bumpPageInventoryRev, graphMeta, graphEpoch } from "./graphSession";
 import { applyTaskWorkflow, setRightSidebar, seedFavorites, favorites, pruneSidebarBlocks, refreshJournalConflicts, refreshSyncConflicts, clearRecent, graphTransitioning, setGraphTransitioning, followPagesInNavigation, resetLeftSidebarSections, closePageProps, setAudioPlayer } from "./ui";
 import { dismissToast, pushToast } from "./toasts";
@@ -23,7 +24,7 @@ import { setChangeSummaryBaseline } from "./changeSummary";
 import { applyCustomCss, customCssVersion } from "./customCss";
 import { flushCssEditor, loadGlobalCss, checkCssEditorDisk, retireGraphCssEditor } from "./cssEditor";
 import { isMobile, platformKind } from "./platform";
-import type { BlockDto, GraphMeta, RenameRefusal } from "./types";
+import type { BlockDto, GraphMeta, RenameOffer, RenameRefusal } from "./types";
 import type { DraftStatus } from "./document";
 import { maybeShowGuideAnnouncement } from "./guide";
 import { endEdit } from "./editorController";
@@ -38,7 +39,6 @@ import { reportGraphOpenFailure } from "./graphOpenFailure";
 import { activeElement, isHTMLElementNode } from "./windowRealm";
 import { askGraphName } from "./graphNamePrompt";
 import { msg, t, type Msg } from "./i18n";
-import { chooseAliasRename } from "./renameAliasChoice";
 import { APP_IOS_DISPLAY_NAME } from "./appIdentity";
 import { primeQuickShareGate } from "./quickShareGate";
 import { setGraphConfigProblem } from "./graphConfig";
@@ -486,26 +486,32 @@ export type RenameOutcome = Exclude<Awaited<ReturnType<typeof renamePageOnDisk>>
  *    `merge-pages!`): the backend appends the source's blocks, unites aliases,
  *    rewrites references and trashes the source in one transaction; a `from`
  *    with no file only has its references repointed.
- *  - `to` is only another page's alias (M-Q5, D-20261102-MC5): the in-app
- *    dialog offers Merge into the owner / Make `to` its own page (still an
- *    alias of the owner) / Cancel; the merge only when the backend allows it.
- *  - refused (CM-OWN-CHILD, R14): `{ refused }`, worded by
- *    `renameOutcomeMessage`; nothing is written.
- *  `cancelled`: the user declined or the graph changed before anything was
- *  written. The other outcomes are `renamePageOnDisk`'s. `onRefreshed`
+ *  - refused (model r6 O0 to O4, e.g. `to` is only another page's alias):
+ *    `{ refused }`, worded by `renameOutcomeMessage`; nothing is written.
+ *  `cancelled`: the user declined, the graph changed, or a typed refusal was
+ *  already shown with its recovery action. The other outcomes are
+ *  `renamePageOnDisk`'s. `onRefreshed`
  *  receives the graph owner captured after the rename's refresh. The answer is
  *  not re-asked after the dialog: the rename re-plans and refuses if the graph
- *  changed. Backend errors reject. Cost: one rename plan for the question,
- *  a dialog when merging, plus the rename. */
+ *  changed. Other backend errors reject. `onRecovered` finishes the initiating
+ *  surface after a later recovery click succeeds. Cost: one rename plan for
+ *  the question, a dialog when merging, plus the rename; a recovery click
+ *  adds one ordinary exact-file save before repeating that same request. */
 export async function renameOrMergePage(
   from: string, to: string, target?: PageTarget, onRefreshed?: (owner: Owner) => void,
+  onRecovered?: (outcome: "renamed" | "merged") => void,
 ): Promise<RenameOutcome> {
   const owner = bindingOwner();
-  const asked = await readOwned(owner, backend().renameOffer(from, to, target?.path));
+  let asked: Owned<RenameOffer>;
+  try {
+    asked = await readOwned(owner, backend().renameOffer(from, to, target?.path));
+  } catch (error) {
+    if (!owner() || showRewriteRefusal(error)) return "cancelled";
+    throw error;
+  }
   if (asked.kind === "stale") return "cancelled";
   const offer = asked.value;
   let into: string | undefined;
-  let ownPage = false;
   switch (offer.kind) {
     case "refused": return { refused: offer.reason };
     case "merge": {
@@ -514,43 +520,45 @@ export async function renameOrMergePage(
       into = offer.into;
       break;
     }
-    case "aliasOf": {
-      const answer = await chooseAliasRename(from, to, offer.name, offer.merge, offer.ownPage);
-      if (!answer || !owner()) return "cancelled";
-      if (answer === "merge") into = offer.owner;
-      else ownPage = true;
-      break;
-    }
     case "rename": break;
   }
-  const done = await renamePageOnDisk(from, to, target, into, onRefreshed, ownPage);
-  return done === "stale" ? "cancelled" : done;
+  const retry = async (file: string) => {
+    if (!owner()) return;
+    try {
+      const done = await renamePageOnDisk(from, to, target, into, onRefreshed, file);
+      if (done === "stale") return;
+      const message = renameOutcomeMessage(done, from, to);
+      if (message) showRenameNotice(message, done === "unchanged" ? "info" : "error");
+      else if (done === "renamed" || done === "merged") onRecovered?.(done);
+    } catch (error) { if (owner()) throw error; }
+  };
+  try {
+    const done = await renamePageOnDisk(from, to, target, into, onRefreshed);
+    return done === "stale" ? "cancelled" : done;
+  } catch (error) {
+    if (owner() && showRewriteRefusal(error, retry)) return "cancelled";
+    throw error;
+  }
 }
 
 /** The user-facing message for a rename that did not rename, or null (for
  *  `renamed`, `merged` and `cancelled`). `unchanged` is worded by its cause: a
  *  spelling already in use, or a name no file and no reference uses. */
-export function renameOutcomeMessage(outcome: RenameOutcome, from: string, to: string): string | Msg | null {
+export function renameOutcomeMessage(outcome: RenameOutcome, from: string, to: string): Msg | null {
   if (typeof outcome === "object" && "refused" in outcome) {
-    const reason = outcome.refused;
-    if (reason.kind === "journalReferenceLoss") {
-      return msg("rename-refused-journal-reference-loss", { journals: reason.journals.join(", ") });
-    }
-    return reason.kind === "ownChild"
-      ? msg("rename-refused-own-child", { old: reason.old, new: reason.new })
-      : msg("rename-refused-file-taken", { file: reason.file, page: reason.page });
+    return renameRefusalMessage(outcome.refused);
   }
   if (typeof outcome === "object") {
     return outcome.mentions
-      ? `Couldn't rename: “${outcome.unsaved}” has changes Tine could not save, and they mention “${from}”, so the rename could not update them. Save or discard those changes, then rename again. Your pending edits are still here.`
-      : `Couldn't rename: “${outcome.unsaved}” has changes Tine could not save. Save or discard them, then rename again. Your pending edits are still here.`;
+      ? msg("rename-refused-unsaved-mention", { page: outcome.unsaved, from })
+      : msg("rename-refused-unsaved", { page: outcome.unsaved });
   }
   switch (outcome) {
     case "unchanged": return from.trim() === to.trim()
-      ? `Nothing renamed: “${to}” already has that spelling.`
-      : `Nothing renamed: no page file or reference uses “${from}” yet.`;
-    case "busy": return "Another rename is still rewriting the graph. Try again when it finishes.";
-    case "uncertain": return `The graph changed while renaming “${from}”. Check whether “${to}” exists before trying again.`;
+      ? msg("rename-unchanged-spelling", { to })
+      : msg("rename-unchanged-unused", { from });
+    case "busy": return msg("rename-refused-busy");
+    case "uncertain": return msg("rename-uncertain", { from, to });
     default: return null;
   }
 }

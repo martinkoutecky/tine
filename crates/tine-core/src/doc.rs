@@ -14,6 +14,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::outline::{self, OutlineFormat};
 
+pub mod native;
 mod search;
 
 /// Recognized task markers (leading keyword of a block).
@@ -47,6 +48,11 @@ pub struct Document {
     pub pre_block: Option<String>,
     /// Top-level blocks in document order.
     pub roots: Vec<DocBlock>,
+    /// Whether the file is Org: the reader's format, set by the one that
+    /// read it ([`parse`] or [`crate::org::parse_org`]), never inferred from
+    /// the text (a Markdown page can hold `#+` lines; REG-CM-MD-PAGE-READ-AS-ORG).
+    #[serde(default)]
+    pub org: bool,
 }
 
 /// One parsed block with raw text and nested children.
@@ -81,6 +87,7 @@ pub struct DocBlock {
 }
 
 mod compact_projection;
+mod projection;
 pub use compact_projection::BlockProjection;
 use compact_projection::{PlainRanges, VisibleTexts};
 
@@ -335,99 +342,7 @@ impl DocBlock {
     /// Visible text, references, and facets derived from the current raw body.
     /// [`Self::set_raw`] clears this cache when the body changes.
     pub fn projection(&self) -> &BlockProjection {
-        self.proj.get_or_init(|| {
-            // Test-only fault: a block projection (the lsdoc parse every index
-            // reads) that panics, for the load's one-bad-file isolation tests.
-            #[cfg(feature = "test-faults")]
-            if self.raw.contains(TEST_PROJECTION_PANIC_SENTINEL) {
-                panic!("deterministic test sentinel for a block projection panic");
-            }
-            // ONE lsdoc parse of the block body yields every header facet (marker,
-            // heading level, properties, scheduled/deadline) AND the visible text —
-            // so `doc.rs`, the TS `blockView`, and lsdoc can no longer disagree
-            // about a block's grammar.
-            // ONE lsdoc parse yields AST, facets and refs; region ownership also
-            // recovers an author swallowed by a final quote (GH #895).
-            let proj = crate::render::parse_projection(&self.raw, self.is_org);
-            let (marker, priority, heading_level, mut properties) = header_facets(&proj.blocks);
-            let (scheduled, deadline) = planning_dates(&proj.blocks, &self.raw);
-            let tags = tags_from_blocks(&proj.blocks);
-            let regions = crate::block_regions::from_blocks(&self.raw, self.is_org, &proj.blocks);
-            crate::block_regions::extend_author_facet(&mut properties, &regions);
-            let visible = regions
-                .apply(&self.raw, self.is_org, crate::block_regions::Edit::Visible)
-                .expect("parsed regions");
-            let regions = shared_regions(regions);
-            let visible_lower = crate::search_query::canonical_fold(&visible);
-            let reference_source = crate::reference_evidence::project_with_config(
-                &self.raw,
-                self.is_org,
-                &proj.blocks,
-                &regions,
-                self.property_ref_config
-                    .as_deref()
-                    .unwrap_or_else(|| crate::query::atom::ParseConfig::default_ref()),
-            );
-            // OG 0.10.9 with-page-refs includes headline tags and linkable
-            // property atoms. Queries use the same evidence as backlinks.
-            let mut refs_page = proj.refs.page;
-            let tag_refs = reference_source
-                .explicit
-                .iter()
-                .filter(|r| r.rule == "explicit_tag" || r.rule == "implicit_linkable_property");
-            if tag_refs.clone().next().is_some() {
-                refs_page.extend(tag_refs.map(|r| r.name.clone()));
-                refs_page.sort();
-                refs_page.dedup();
-            }
-            // OG `with-page-refs` also puts the block's marker and priority in its
-            // refs, so `[[A]]` / `[[TODO]]` queries find them. They stay out of
-            // `refs_page`, the virtual-page list behind `[[` autocomplete: Tine
-            // does not offer a page per marker or priority letter.
-            let mut refs_norm: Vec<String> = refs_page
-                .iter()
-                .map(|r| crate::refs::normalize(r))
-                .collect();
-            for r in reference_source
-                .explicit
-                .iter()
-                .filter(|r| r.rule == "explicit_task_marker" || r.rule == "explicit_priority")
-            {
-                let key = crate::refs::normalize(&r.name);
-                if !refs_norm.contains(&key) {
-                    refs_norm.push(key);
-                }
-            }
-            // These lists never grow after publication. Boxed slices trim the
-            // build's slack and avoid retaining a capacity word per list; serde
-            // keeps the same sequence encoding, including in checkpoints.
-            let plain_ranges = PlainRanges::from(reference_source.plain_ranges);
-            let extra = ProjectionExtra {
-                search: std::sync::OnceLock::new(),
-                refs_norm: refs_norm.into_boxed_slice(),
-                refs_page: refs_page.into_boxed_slice(),
-                block_refs: proj.refs.block.into_boxed_slice(),
-                marker: marker.map(String::into_boxed_str),
-                priority: priority.map(String::into_boxed_str),
-                heading_level,
-                properties: properties.into_boxed_slice(),
-                scheduled: scheduled.map(String::into_boxed_str),
-                deadline: deadline.map(String::into_boxed_str),
-                tags: tags.into_boxed_slice(),
-                explicit: reference_source.explicit.into_boxed_slice(),
-                withheld_ranges: reference_source.withheld_ranges.into_boxed_slice(),
-            };
-            let extra = (!extra.is_empty()).then(|| Box::new(extra));
-            let visible_lower = (visible_lower != visible).then(|| visible_lower.into_boxed_str());
-            let visible = (*visible != *self.raw).then(|| visible.into_boxed_str());
-            BlockProjection {
-                regions,
-                texts: VisibleTexts::boxed(visible, visible_lower),
-                visible_literal: std::sync::OnceLock::new(),
-                plain_ranges,
-                extra,
-            }
-        })
+        self.projection_with_slots(None)
     }
 
     /// `key:: value` block properties as lsdoc projects them (md trailer / org
@@ -946,7 +861,7 @@ pub fn line_terminator(line: &str) -> &'static str {
 /// text is the pre-block, so a save writes it back unchanged. Pure,
 /// infallible; one lsdoc parse, O(page bytes).
 pub fn parse(content: &str) -> Document {
-    parse_document_with(content, |_, _, _| ()).0
+    parse_outlined(content, false, false).document
 }
 
 /// Parse a Markdown page and infer its serialization layout from the SAME
@@ -955,34 +870,84 @@ pub fn parse(content: &str) -> Document {
 /// Pure, infallible; one lsdoc outline parse, O(page bytes). Line terminators
 /// are normalized for parsing; the store restores them when writing.
 pub fn parse_with_opts(content: &str) -> (Document, SerializeOpts) {
-    parse_document_with(content, SerializeOpts::from_outline)
+    let content = &normalize_line_endings(content);
+    let headers = outline::headers_or_none(content, OutlineFormat::Markdown);
+    let (document, lines, _) = document_of(content, &headers, false, None);
+    (
+        document,
+        SerializeOpts::from_outline(content, &lines, &headers),
+    )
 }
 
-fn parse_document_with<T>(
-    content: &str,
-    layout: impl FnOnce(&str, &[&str], &[outline::Header]) -> T,
-) -> (Document, T) {
+pub use crate::outline::SourceMap;
+
+/// One read of native page text: [`parse`] (or, `is_org`,
+/// [`crate::org::parse_org`]), the outline headers it found and, when
+/// `mapped`, the reader's [`SourceMap`] of the same pass. The rename writer
+/// reads the same outline and blocks, and a physical writer places the mapped
+/// ranges, so one outline parse serves all three. O(page bytes).
+pub(crate) struct Outlined<'a> {
+    pub lf: std::borrow::Cow<'a, str>,
+    pub document: Document,
+    pub headers: Vec<outline::Header>,
+    pub map: Option<SourceMap>,
+}
+
+pub(crate) fn parse_outlined(text: &str, is_org: bool, mapped: bool) -> Outlined<'_> {
     // A stray `\r` in the model would pollute property / `id::` values.
-    let normalized = normalize_line_endings(content);
-    let content: &str = &normalized;
-    let body = content.strip_suffix('\n').unwrap_or(content);
+    let lf = normalize_line_endings(text);
+    let format = if is_org {
+        OutlineFormat::Org
+    } else {
+        OutlineFormat::Markdown
+    };
+    let headers = outline::headers_or_none(&lf, format);
+    let mut removed = Vec::new();
+    let (document, lines, pre) = document_of(&lf, &headers, is_org, mapped.then_some(&mut removed));
+    let map = mapped.then(|| SourceMap::new(text, &lines, removed, &headers, pre));
+    Outlined {
+        lf,
+        document,
+        headers,
+        map,
+    }
+}
+
+/// The reader's split of LF `content` with its outline `headers`: the
+/// document, its lines and the pre-block's line count. Markdown reads the
+/// text without its final line break and drops the pre-block's trailing blank
+/// lines; Org reads it without any final line breaks. `removed` collects the
+/// bytes removed in front of each line (see [`SourceMap`]).
+pub(crate) fn document_of<'a>(
+    content: &'a str,
+    headers: &[outline::Header],
+    is_org: bool,
+    removed: Option<&mut Vec<usize>>,
+) -> (Document, Vec<&'a str>, usize) {
+    let body = if is_org {
+        content.trim_end_matches('\n')
+    } else {
+        content.strip_suffix('\n').unwrap_or(content)
+    };
     let lines: Vec<&str> = if body.is_empty() {
         Vec::new()
     } else {
         body.split('\n').collect()
     };
-    let headers = outline::headers_or_none(content, OutlineFormat::Markdown);
-    let first = headers.first().map_or(lines.len(), |header| header.line);
-    let mut pre_end = first;
-    while pre_end > 0 && lines[pre_end - 1].trim().is_empty() {
-        pre_end -= 1;
+    let mut pre = headers.first().map_or(lines.len(), |header| header.line);
+    while !is_org && pre > 0 && lines[pre - 1].trim().is_empty() {
+        pre -= 1;
     }
-    let opts = layout(content, &lines, &headers);
+    let removed = removed.map(|r| {
+        r.resize(lines.len(), 0);
+        r.as_mut_slice()
+    });
     let document = Document {
-        pre_block: (pre_end > 0).then(|| lines[..pre_end].join("\n")),
-        roots: outline::blocks(&lines, &headers, false),
+        pre_block: (pre > 0).then(|| lines[..pre].join("\n")),
+        roots: outline::blocks(&lines, headers, is_org, removed),
+        org: is_org,
     };
-    (document, opts)
+    (document, lines, pre)
 }
 
 /// Whether lsdoc reads `line` alone as an unbulleted Markdown ATX heading

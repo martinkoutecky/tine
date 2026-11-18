@@ -8,7 +8,7 @@ import { resetStore } from "./document";
 import { recentPages, setRecentPages, rightSidebar, setRightSidebar } from "./ui";
 import { aliasRenameRequest } from "./renameAliasChoice";
 import { renderEnglish, type Msg } from "./i18n";
-import type { RenameOffer } from "./types";
+import type { RenameOffer, RenameRefusal } from "./types";
 
 const offer = (value: RenameOffer) => vi.spyOn(backend(), "renameOffer").mockResolvedValue(value);
 
@@ -83,41 +83,19 @@ it("offers a merge into a journal day reached by another date spelling", async (
   expect(rename).toHaveBeenLastCalledWith("meeting", "2026-10-26", "rename-page", undefined, "journals/2026_10_26.md", []);
 });
 
-// M-Q5 (D-20261102-MC5): a name that is only an alias asks three ways, in
-// the app's own dialog: merge into the owner, make it its own page, cancel.
-it("an alias-only name asks merge / own page / cancel and sends the answer", async () => {
-  offer({ kind: "aliasOf", owner: "pages/Machine Learning.md", name: "Machine Learning", merge: true, ownPage: true });
+// Model r6 O3: a name that is only another page's alias is refused, naming
+// the page it opens; no dialog opens and nothing is sent to rename.
+it("an alias-only name is refused naming the page it opens", async () => {
   const confirm = vi.spyOn(backend(), "confirm");
-  const rename = vi.spyOn(backend(), "renamePage").mockResolvedValue({ outcome: "renamed", renamed: [{ from: "ML notes", to: "ML", path: "pages/ML notes.md" }], touched: [] });
-  const answer = async (choice: "merge" | "own-page" | null) => {
-    const pending = renameOrMergePage("ML notes", "ML", { name: "ML notes", pageKind: "page", path: "pages/ML notes.md" });
-    await vi.waitFor(() => expect(aliasRenameRequest()).not.toBeNull());
-    const request = aliasRenameRequest()!;
-    expect([request.from, request.to, request.owner, request.merge]).toEqual(["ML notes", "ML", "Machine Learning", true]);
-    request.finish(choice);
-    return pending;
-  };
-  expect(await answer(null)).toBe("cancelled");
-  expect(rename).not.toHaveBeenCalled();
-  await answer("own-page");
-  expect(rename).toHaveBeenLastCalledWith("ML notes", "ML", "rename-page", "pages/ML notes.md", undefined, [], true);
-  await answer("merge");
-  expect(rename).toHaveBeenLastCalledWith("ML notes", "ML", "rename-page", "pages/ML notes.md", "pages/Machine Learning.md", []);
+  const rename = vi.spyOn(backend(), "renamePage");
+  const reason = { kind: "aliasHeld" as const, alias: "ML", page: "Machine Learning", path: "pages/Machine Learning.md" };
+  offer({ kind: "refused", reason, message: "" });
+  const result = await renameOrMergePage("ML notes", "ML", { name: "ML notes", pageKind: "page", path: "pages/ML notes.md" });
+  expect(result).toEqual({ refused: reason });
+  expect(aliasRenameRequest()).toBeNull();
+  expect(renderEnglish(renameOutcomeMessage(result, "ML notes", "ML") as Msg)).toBe("Couldn't rename: “ML” is an alias of the page “Machine Learning”. Pick another name, or remove that alias from “Machine Learning” first.");
   expect(confirm).not.toHaveBeenCalled();
-});
-
-it("an alias-only source uses Rust's merge-only offer and submits no source file", async () => {
-  const asked = offer({ kind: "aliasOf", owner: "pages/Artificial Intelligence.md", name: "Artificial Intelligence", merge: true, ownPage: false });
-  const rename = vi.spyOn(backend(), "renamePage").mockResolvedValue({ outcome: "merged", renamed: [{ from: "ML", to: "AI", path: null }], touched: [] });
-  const pending = renameOrMergePage("ML", "AI", { name: "ML", pageKind: "page" });
-  await vi.waitFor(() => expect(aliasRenameRequest()).not.toBeNull());
-  const request = aliasRenameRequest()!;
-  expect(request.ownPage).toBe(false);
-  expect(request.owner).toBe("Artificial Intelligence");
-  request.finish("merge");
-  expect(await pending).toBe("merged");
-  expect(asked).toHaveBeenCalledWith("ML", "AI", undefined);
-  expect(rename).toHaveBeenCalledWith("ML", "AI", "rename-page", undefined, "pages/Artificial Intelligence.md", []);
+  expect(rename).not.toHaveBeenCalled();
 });
 
 // CM-OWN-CHILD / M-Q6 and R14: the backend's refusal reaches the user with
@@ -134,14 +112,23 @@ it("a refused rename writes nothing and words the backend's reason", async () =>
   expect(rename).not.toHaveBeenCalled();
 });
 
-it("explains journal reference loss with every affected journal and submits no rename", async () => {
+// Model r6 O0, O2 and O4: no such page, a day source, and a moved file with
+// conflict markers are each worded by their reason, and nothing is renamed.
+it("words the O0, O2 and O4 refusals and submits no rename", async () => {
   const rename = vi.spyOn(backend(), "renamePage");
-  const reason = { kind: "journalReferenceLoss" as const, journals: ["Oct 26th, 2026", "Oct 27th, 2026"] };
-  offer({ kind: "refused", reason, message: "" });
-  const result = await renameOrMergePage("old", "new");
-  const message = renderEnglish(renameOutcomeMessage(result, "old", "new") as Msg);
-  expect(message).toContain("links reach the journal");
-  for (const journal of reason.journals) expect(message).toContain(journal);
+  const cases: [RenameRefusal, string][] = [
+    [{ kind: "notAPage", name: "Ghost" }, "Couldn't rename “Ghost”: no page or alias has that name."],
+    [{ kind: "day", name: "Oct 26th, 2026" }, "Couldn't rename “Oct 26th, 2026”: it is a journal day, and days keep their names."],
+    [{ kind: "conflictMarkers", file: "pages/Old.md" }, "Couldn't rename: pages/Old.md has unresolved conflict markers and would need changes to move. Resolve the conflict first."],
+    // O4 over every touched name (slice 2): capture and contested.
+    [{ kind: "capture", name: "old/x", image: "new/x", page: "new/x" }, "Couldn't rename: “old/x” would become “new/x”, which is already the page “new/x”. Rename or merge that page first."],
+    [{ kind: "contested", name: "X", files: ["pages/P.md", "pages/Q.md"] }, "Couldn't rename: several files claim “X” (pages/P.md, pages/Q.md). Merge one into the other or remove one first."],
+  ];
+  for (const [reason, text] of cases) {
+    offer({ kind: "refused", reason, message: "" });
+    const result = await renameOrMergePage("old", "new");
+    expect(renderEnglish(renameOutcomeMessage(result, "old", "new") as Msg)).toBe(text);
+  }
   expect(rename).not.toHaveBeenCalled();
 });
 
@@ -160,8 +147,8 @@ it("distinguishes a busy rewrite from an unsaved edit and an uncertain commit", 
   invalidateBinding();
   finish();
   expect(await pending).toBe("uncertain");
-  expect(renameOutcomeMessage("uncertain", "Old", "New")).toContain("Check whether");
-  expect(renameOutcomeMessage("busy", "Old", "New")).not.toContain("pending edits");
+  expect(renderEnglish(renameOutcomeMessage("uncertain", "Old", "New")!)).toContain("Check whether");
+  expect(renderEnglish(renameOutcomeMessage("busy", "Old", "New")!)).not.toContain("pending edits");
 });
 
 // R4 / I-20 (og-flow3): a display repaint (here: another page's rename bumping
@@ -185,11 +172,11 @@ it("words unchanged spelling and absent source truthfully", async () => {
   vi.spyOn(backend(), "renamePage").mockResolvedValue({ outcome: "unchanged", renamed: [], touched: [] });
   const outcome = await renameOrMergePage("Draft", "Other");
   expect(outcome).toBe("unchanged");
-  const message = renameOutcomeMessage(outcome, "Draft", "Other")!;
+  const message = renderEnglish(renameOutcomeMessage(outcome, "Draft", "Other")!);
   expect(message).not.toContain("same page name");
   expect(message).toContain("“Draft”");
-  expect(renameOutcomeMessage("unchanged", "Old", "Old")).toContain("already has that spelling");
-  expect(renameOutcomeMessage("unchanged", "Old", "old")).toContain("no page file or reference");
+  expect(renderEnglish(renameOutcomeMessage("unchanged", "Old", "Old")!)).toContain("already has that spelling");
+  expect(renderEnglish(renameOutcomeMessage("unchanged", "Old", "old")!)).toContain("no page file or reference");
 });
 
 it("a case-only rename refreshes recent and right-sidebar names through the ordinary intent", async () => {

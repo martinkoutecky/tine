@@ -151,6 +151,11 @@ export interface RenameDone {
   /** Referrers left byte-identical because they carry VCS conflict markers
    *  (og 21a, master a8fd4230d): their references still name the old page. */
   skipped_conflicted_referrers?: string[];
+  /** Model r6 O7 (`RenameReport::site_exceptions`): every site the rename
+   *  left as it was because it cannot spell the new name there
+   *  (`unspellable`), and every property key it wrote in key spelling
+   *  (`normalizedKey`), at its typed location. */
+  site_exceptions?: RenameSiteException[];
   /** The new `:default-home` page when the rename moved the home page with it
    *  (og 22b, OG `rename-page-aux`); null otherwise. */
   home_page?: string | null;
@@ -160,6 +165,16 @@ export interface RenameDone {
   /** Why the config step left config.edn alone (malformed or unreadable
    *  config); the page operation itself is complete. */
   config_skipped?: string;
+}
+
+/** One O7 site exception (`pages::SiteException`): byte span in `path`'s
+ *  text before the rename. */
+export interface RenameSiteException {
+  path: string;
+  start: number;
+  end: number;
+  kind: "link" | "tag" | "embed" | "propertyKey" | "propertyValue" | "query" | "macroArg";
+  disposition: "unspellable" | "normalizedKey";
 }
 
 /** Favorites membership and arrangement page as the backend computed them. */
@@ -227,23 +242,37 @@ export interface AliasGroup {
 }
 
 /** Why the backend refused a rename the user can act on
- *  (`pages::RenameBlocked`): the new name is inside the page's own namespace
- *  and used (CM-OWN-CHILD, M-Q6), its file belongs to another page (R14),
- *  or rewriting an occurrence would lose a journal-owned key (CM3-1). */
+ *  (`pages::RenameBlocked`, model r6): the new name is inside the page's own
+ *  namespace and used (CM-OWN-CHILD, M-Q6), its file belongs to another page
+ *  (R14), the source is no page and no alias (O0) or a day (O2), the new name
+ *  is another page's alias and opens `page` (O3), a moved file with
+ *  conflict markers would need a rewrite (O4), a touched name would become
+ *  `image`, which the page `page` already holds (O4 capture), or several
+ *  files claim a touched name (O4 contested). */
 export type RenameRefusal =
+  | { kind: "taken"; into: string }
+  | { kind: "checkRefused"; guarantee: "P2" | "P3"; file: string }
+  | { kind: "headerChildren" | "hiddenOccurrence" | "survivorIdentity" | "titleIdentity" | "bodyLayout" | "indentedBody" | "directiveEscape"; file: string }
+  | { kind: "aliasSpelling"; file: string; alias: string }
   | { kind: "ownChild"; old: string; new: string }
   | { kind: "fileTaken"; file: string; page: string }
-  | { kind: "journalReferenceLoss"; journals: string[] };
+  | { kind: "notAPage"; name: string }
+  | { kind: "day"; name: string }
+  | { kind: "aliasHeld"; alias: string; page: string; path: string }
+  | { kind: "conflictMarkers"; file: string }
+  | { kind: "capture"; name: string; image: string; page: string }
+  | { kind: "contested"; name: string; files: string[] }
+  | { kind: "staleMerge" | "unindexed" | "readOnlyOrg" | "mergeConflictMarkers" | "sameFile" | "staleSource"; file: string }
+  | { kind: "duplicateFiles"; files: string[] }
+  | { kind: "differentFormats"; source: string; target: string };
 
 /** What renaming a page asks of the user, answered by the rename's own planner
  *  (`pages::rename_offer`; the window never re-derives it). `merge`: the new
- *  name is one other page's (its file `into`, display `name`); `aliasOf`: the
- *  new name is only `owner`'s alias (M-Q5): merge / own page / cancel, the
- *  merge offered only when `merge`. */
+ *  name is one other page's (its file `into`, display `name`), confirmed or
+ *  cancelled (model r6 O3: the only answers). */
 export type RenameOffer =
   | { kind: "rename" }
   | { kind: "merge"; into: string; name: string; journal: boolean }
-  | { kind: "aliasOf"; owner: string; name: string; merge: boolean; ownPage: boolean }
   | { kind: "refused"; reason: RenameRefusal; message: string };
 
 export type ResolvedPage =
