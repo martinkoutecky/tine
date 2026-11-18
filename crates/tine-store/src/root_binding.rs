@@ -288,10 +288,11 @@ fn unsupported(error: &io::Error) -> bool {
 fn identity(path: &Path) -> io::Result<Identity> {
     use std::os::windows::{ffi::OsStrExt, fs::OpenOptionsExt, io::AsRawHandle};
     use windows_sys::Win32::Storage::FileSystem::{
-        FileIdInfo, GetFileAttributesW, GetFileInformationByHandle, GetFileInformationByHandleEx,
-        BY_HANDLE_FILE_INFORMATION, FILE_ATTRIBUTE_DIRECTORY, FILE_FLAG_BACKUP_SEMANTICS,
-        FILE_ID_INFO, FILE_READ_ATTRIBUTES, FILE_SHARE_DELETE, FILE_SHARE_READ, FILE_SHARE_WRITE,
-        INVALID_FILE_ATTRIBUTES,
+        FileBasicInfo, FileIdInfo, GetFileAttributesExW, GetFileExInfoStandard,
+        GetFileInformationByHandle, GetFileInformationByHandleEx, BY_HANDLE_FILE_INFORMATION,
+        FILE_ATTRIBUTE_DIRECTORY, FILE_BASIC_INFO, FILE_FLAG_BACKUP_SEMANTICS, FILE_ID_INFO,
+        FILE_READ_ATTRIBUTES, FILE_SHARE_DELETE, FILE_SHARE_READ, FILE_SHARE_WRITE,
+        WIN32_FILE_ATTRIBUTE_DATA,
     };
     #[cfg(test)]
     let forced = NO_FILE_ID.with(|forced| forced.get());
@@ -343,13 +344,43 @@ fn identity(path: &Path) -> io::Result<Identity> {
     if !unsupported(&error) {
         return Err(error);
     }
-    // Neither handle query answers. `File::metadata` makes the same older
-    // call, so the folder check asks by path instead.
-    let wide: Vec<u16> = path.as_os_str().encode_wide().chain(Some(0)).collect();
-    let attributes = unsafe { GetFileAttributesW(wide.as_ptr()) };
-    if attributes == INVALID_FILE_ATTRIBUTES {
-        return Err(io::Error::last_os_error());
-    }
+    // Neither identity query answers. `File::metadata` makes the same older
+    // call, so the folder check asks for the basic attributes, then by path
+    // (`GetFileAttributesW` fails on a share root; the Ex form does not). If
+    // nothing answers, the open above is the only evidence: a weaker check,
+    // never a refusal.
+    let mut basic = FILE_BASIC_INFO::default();
+    let attributes = if forced < 3
+        && unsafe {
+            GetFileInformationByHandleEx(
+                file.as_raw_handle(),
+                FileBasicInfo,
+                (&mut basic as *mut FILE_BASIC_INFO).cast(),
+                std::mem::size_of::<FILE_BASIC_INFO>() as u32,
+            )
+        } != 0
+    {
+        basic.FileAttributes
+    } else {
+        let wide: Vec<u16> = path.as_os_str().encode_wide().chain(Some(0)).collect();
+        let mut data = WIN32_FILE_ATTRIBUTE_DATA::default();
+        let ok = unsafe {
+            GetFileAttributesExW(
+                wide.as_ptr(),
+                GetFileExInfoStandard,
+                (&mut data as *mut WIN32_FILE_ATTRIBUTE_DATA).cast(),
+            )
+        } != 0;
+        if !ok {
+            let error = io::Error::last_os_error();
+            return if unsupported(&error) || error.raw_os_error() == Some(53) {
+                Ok(Identity(IdentityKind::Present))
+            } else {
+                Err(error)
+            };
+        }
+        data.dwFileAttributes
+    };
     if attributes & FILE_ATTRIBUTE_DIRECTORY == 0 {
         return Err(moved());
     }
@@ -436,13 +467,16 @@ mod tests {
         // would make the last fallback unreachable (merge review, 11/18).
         let arm = &windows[..windows.find("fn current(").unwrap()];
         assert!(!arm.contains(".metadata()"));
-        assert!(arm.contains("GetFileAttributesW(wide.as_ptr())"));
+        // `GetFileAttributesW` fails on a share root (`\\server\share`).
+        assert!(!arm.contains("GetFileAttributesW("));
+        assert!(arm.contains("FileBasicInfo,"));
+        assert!(arm.contains("GetFileAttributesExW("));
     }
 
     #[cfg(target_os = "windows")]
     #[test]
     fn gh973_binding_without_file_ids_saves_and_still_sees_a_moved_folder() {
-        for mode in [1u8, 2] {
+        for mode in [1u8, 2, 3] {
             NO_FILE_ID.with(|forced| forced.set(mode));
             let dir = tempfile::tempdir().unwrap();
             let root = dir.path().join("graph");

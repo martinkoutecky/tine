@@ -327,7 +327,9 @@ file system answers FileIdInfo. Where it refuses that call as unsupported
 compares the older call's volume serial and that a directory is still there, but
 not its file index: nothing pins the root, and as with SMB/FUSE inode numbers
 there is no evidence the index survives eviction. Where neither call answers,
-Windows is vanish-only like Android. Same-volume replacement at the same path is
+Windows is vanish-only like Android: it checks that a directory is still there
+(basic attributes from the handle, else by path), and where even that cannot be
+asked, only that the folder still opens. Same-volume replacement at the same path is
 not detected on those file systems. Android
 uses the approved vanish-only fallback until shared-storage FUSE identity is
 device-verified: same-path directory replacement is not detected there.
