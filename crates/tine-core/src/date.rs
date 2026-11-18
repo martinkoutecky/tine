@@ -699,6 +699,18 @@ impl JournalFormat {
         out
     }
 
+    /// A spelling that names `d` itself: the first of [`Self::spellings`]
+    /// that [`Self::parse`] reads back as `d`. A title format without a year
+    /// (`MM-dd`) renders a label that names no day (CM SPEC §2.1, the
+    /// approved label limitation), so a lookup of a known day goes by this
+    /// spelling, never by its title. The title only when no spelling reads
+    /// back (a format that misreads every fallback). O(parse list).
+    pub fn identifying_spelling(&self, d: JournalDate) -> String {
+        (self.spellings(d).into_iter())
+            .find(|s| self.parse(s) == Some(d))
+            .unwrap_or_else(|| self.title(d))
+    }
+
     /// The names [`Self::parse`] reads as `d` that differ from
     /// [`Self::spellings`] only in numeric field width (`2026-11-1`,
     /// `2026_11_01`), spellings first, deduplicated, each checked to parse

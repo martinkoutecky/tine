@@ -966,6 +966,16 @@ fn migration_source(store: &Store, entry: &FileId) -> io::Result<(Vec<u8>, tine_
 /// a closed store is an error. Cost O(J log J + bytes of duplicate files), plus
 /// one page read per duplicate day.
 pub fn journal_conflicts(store: &Store) -> io::Result<Vec<JournalConflict>> {
+    Ok(journal_conflict_days(store)?
+        .into_iter()
+        .map(|(_, day)| day)
+        .collect())
+}
+
+/// [`journal_conflicts`], each with a spelling that names its day: under a
+/// year-less title format the title is a label of several days (CM SPEC §2.1),
+/// so a caller asking the store about the day uses this spelling.
+pub(crate) fn journal_conflict_days(store: &Store) -> io::Result<Vec<(String, JournalConflict)>> {
     let mut groups: BTreeMap<Day, Vec<FileEntry>> = BTreeMap::new();
     for entry in listing(store)?.0 {
         if let Some(day) = entry.day.filter(|_| stem(&entry).is_some()) {
@@ -998,11 +1008,16 @@ pub fn journal_conflicts(store: &Store) -> io::Result<Vec<JournalConflict>> {
                 preview_error,
             });
         }
-        let title = fmt.title(JournalDate::from_ordinal(day.0));
-        // The file the day opens. A read error here only loses the ranking
+        let date = JournalDate::from_ordinal(day.0);
+        let title = fmt.title(date);
+        // The file the day opens, asked by a spelling that names the day (a
+        // year-less title names none). A read error here only loses the ranking
         // (recovery, not refusal): the listing order below still names a keeper.
         let opened = store
-            .page_named(&title, tine_core::model::PageKind::Journal)
+            .page_named(
+                &fmt.identifying_spelling(date),
+                tine_core::model::PageKind::Journal,
+            )
             .ok()
             .flatten()
             .map(|read| read.id.as_str().to_owned());
@@ -1023,10 +1038,13 @@ pub fn journal_conflicts(store: &Store) -> io::Result<Vec<JournalConflict>> {
         for (i, file) in journal_files.iter_mut().enumerate() {
             file.canonical = opened.as_deref().map_or(i == 0, |path| path == file.path);
         }
-        conflicts.push(JournalConflict {
-            title,
-            files: journal_files,
-        });
+        conflicts.push((
+            fmt.identifying_spelling(date),
+            JournalConflict {
+                title,
+                files: journal_files,
+            },
+        ));
     }
     Ok(conflicts)
 }
