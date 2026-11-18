@@ -193,8 +193,11 @@ impl Unreadable {
     }
 }
 
-/// The page kind and file stem of a page/journal file, or `None` for any
-/// other path. Pure path arithmetic, shared by both conflict listings.
+/// The directory's page kind and file stem of a page/journal file, or `None`
+/// for any other path. Pure path arithmetic, shared by both conflict
+/// listings. The kind is only the directory's: a row labels its page with
+/// the store's answer ([`page_answer_of`]), which makes a pages-directory day
+/// a journal (K SPEC §2.1).
 fn graph_text_stem(store: &Store, file: &FileId) -> Option<(PageKind, String)> {
     let config = store.config();
     let (kind, rel) = if let Some(rel) = file
@@ -215,15 +218,10 @@ fn graph_text_stem(store: &Store, file: &FileId) -> Option<(PageKind, String)> {
     Some((kind, stem))
 }
 
-/// A VCS-marker row's page name from its file name alone: the journal date
-/// title, else the stem decoded under the graph's file-name format. This is
-/// the store's answer only for a page without `title::`; a titled
-/// marker-bearing page is listed by its file name. Deliberately NOT routed
-/// through [`page_name_of`]: `Store::page_of` re-reads the preamble from disk,
-/// which would add a read per marked page to every listing
-/// (`perf3_vcs_anchor_reads`). Interim second owner of census Q2, pending a
-/// read-free naming path in the store (follow-up recorded in
-/// RECEIPT-cm-filenames.md).
+/// A VCS-marker row's page name from its file name alone, for bytes the
+/// store cannot name ([`page_answer_of`] answers every other row from the
+/// bytes the listing already read): the journal date title, else the stem
+/// decoded under the graph's file-name format.
 fn marker_row_name(store: &Store, kind: PageKind, stem: &str) -> String {
     let config = store.config();
     if kind == PageKind::Journal {
@@ -237,33 +235,39 @@ fn marker_row_name(store: &Store, kind: PageKind, stem: &str) -> String {
     }
 }
 
-/// The name page file `id` has when it holds `bytes`: the store's one answer
-/// (census Q2, `Store::page_of` over the `effective_page_name` family): the
-/// `title::` when the text has one, else the decoded file name; a journal by
-/// its date. `None` only when the store cannot name `id` as a page file.
-/// Cost O(bytes + blocks) plus the store's preamble read of `id`.
-fn page_name_of(store: &Store, id: &PageId, bytes: &[u8]) -> Option<String> {
-    store.page_of(id, bytes).ok().map(|read| read.doc.name)
+/// The kind and name page file `id` has when it holds `bytes`: the store's
+/// one answer (census Q2, `Store::page_of` over the `effective_page_name`
+/// family): the `title::` when the text has one, else the decoded file name;
+/// a day, in either directory, is a journal named by its date (K SPEC §2.1).
+/// `None` only when the store cannot name `id` as a page file. Cost
+/// O(bytes + blocks), no disk read.
+fn page_answer_of(store: &Store, id: &PageId, bytes: &[u8]) -> Option<(PageKind, String)> {
+    (store.page_of(id, bytes).ok()).map(|read| (read.doc.kind, read.doc.name))
 }
 
-/// The name a sync copy is listed under: its winner's page name, read from
+/// The kind and name a sync copy is listed under: its winner's, read from
 /// the winner's bytes now. A winner the store cannot read (gone, too large,
 /// a disk error) is named as the store names a file it cannot read
 /// (`discover_page_name`): from its file name alone, which `Store::page_of`
 /// answers for empty text. Its bytes are never taken as empty content: the
 /// file-name answer is the store's rule for that case, and the copy stays
 /// listed (I-22) with its own preview read reporting its own failures. A
-/// path the store cannot name as a page keeps the raw stem. Cost O(winner
+/// path the store cannot name as a page keeps the directory's kind and the
+/// raw stem. Cost O(winner
 /// bytes + blocks), once per copy per listing.
-fn sync_copy_base_name(store: &Store, winner: &str, base_stem: &str) -> String {
+fn sync_copy_base(
+    store: &Store,
+    winner: &str,
+    kind: PageKind,
+    base_stem: &str,
+) -> (PageKind, String) {
     let id = PageId::from(winner);
-    let read_name = match store.read(&id.file(), Some(tine_store::PARSE_INPUT_MAX_BYTES)) {
-        Ok((bytes, _)) => page_name_of(store, &id, &bytes),
+    let read = match store.read(&id.file(), Some(tine_store::PARSE_INPUT_MAX_BYTES)) {
+        Ok((bytes, _)) => page_answer_of(store, &id, &bytes),
         Err(_) => None,
     };
-    read_name
-        .or_else(|| page_name_of(store, &id, b""))
-        .unwrap_or_else(|| base_stem.to_owned())
+    read.or_else(|| page_answer_of(store, &id, b""))
+        .unwrap_or_else(|| (kind, base_stem.to_owned()))
 }
 
 /// The winner a graph page or journal file shadows when it is a
@@ -305,7 +309,7 @@ fn sync_copy_entry(
     let Some(winner) = sync_copy_winner(file.as_str()) else {
         return Ok(None);
     };
-    let base_name = sync_copy_base_name(store, &winner, base_stem);
+    let (kind, base_name) = sync_copy_base(store, &winner, kind, base_stem);
     let tag = stem[base_stem.len()..]
         .trim_matches(|ch: char| matches!(ch, '.' | ' ' | '(' | ')'))
         .to_owned();
@@ -669,29 +673,28 @@ pub(crate) fn dto(store: &Store, id: &PageId, mut doc: Document) -> PageDto {
     // A merge keeps the draft's live keys beside freshly parsed blocks: never
     // hand the window two blocks under one key (GH #800).
     assign_doc_runtime_ids_unique(&mut doc.roots, id.as_str());
-    let config = store.config();
-    let kind = if id
-        .as_str()
-        .starts_with(&format!("{}/", config.journals_dir))
-    {
-        PageKind::Journal
-    } else {
-        PageKind::Page
-    };
-    // The page is named as the store will name it once this document is
-    // saved: its name depends only on the preamble (the `title::`), so the
-    // store's answer reads it from the merged pre-block (census Q2,
-    // REG-CM-MERGED-PAGE-DTO-NAME). A target the store cannot name keeps its
-    // raw stem.
+    // The page is named and kinded as the store will once this document is
+    // saved: both depend only on the path and the preamble (the `title::`),
+    // so the store's answer reads them from the merged pre-block (census Q2,
+    // REG-CM-MERGED-PAGE-DTO-NAME; a day in pages/ is a journal, K SPEC
+    // §2.1). A target the store cannot name keeps its directory's kind and raw
+    // stem.
     let pre = doc.pre_block.as_deref().unwrap_or("");
-    let name = page_name_of(store, id, pre.as_bytes()).unwrap_or_else(|| {
-        id.as_str()
+    let (kind, name) = page_answer_of(store, id, pre.as_bytes()).unwrap_or_else(|| {
+        let journals = format!("{}/", store.config().journals_dir);
+        let kind = if id.as_str().starts_with(&journals) {
+            PageKind::Journal
+        } else {
+            PageKind::Page
+        };
+        let stem = id
+            .as_str()
             .rsplit('/')
             .next()
             .unwrap_or(id.as_str())
             .rsplit_once('.')
-            .map_or("", |(stem, _)| stem)
-            .to_owned()
+            .map_or("", |(stem, _)| stem);
+        (kind, stem.to_owned())
     });
     PageDto {
         title: name.clone(),

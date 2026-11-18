@@ -308,6 +308,31 @@ impl Graph {
             .collect()
     }
 
+    /// The file of a held page with no owner publication yet (the launch
+    /// install) that claims `entry`'s name or day, other than `except`. Such
+    /// a page is in no name index, yet its file claims its name: a creation
+    /// must see it (R-CREATE-TWIN). O(unindexed held keys) preamble reads,
+    /// none when every held page is published.
+    pub(crate) fn unindexed_held_claimant(
+        &self,
+        entry: &PageEntry,
+        except: Option<&Path>,
+    ) -> Option<PathBuf> {
+        let claim = |e: &PageEntry| claimant_key(&(e.kind, tine_core::refs::page_key(&e.name)));
+        self.unindexed_held_keys().into_iter().find_map(|key| {
+            let path = self.root.join(self.held.spellings().spelling(&key));
+            if path == entry.path || except == Some(path.as_path()) {
+                return None;
+            }
+            let other = self.page_entry_in(&path, None)?;
+            let same = match (entry.date_key, other.date_key) {
+                (Some(day), Some(other_day)) => day == other_day,
+                _ => claim(entry) == claim(&other),
+            };
+            same.then_some(path)
+        })
+    }
+
     /// [`Self::disk_sourced`] within the pass whose memo is `memo`.
     pub(crate) fn disk_sourced_in(&self, memo: &mut Memo, path: &Path) -> bool {
         matches!(self.authority_in(memo, path), Authority::Disk)

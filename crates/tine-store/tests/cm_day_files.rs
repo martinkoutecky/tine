@@ -253,17 +253,23 @@ fn a_date_named_org_file_is_the_day() {
 
 /// The approved label limitation (SPEC §2.1): with a title format without a
 /// year, a label like `11-02` is no date, so a page of that name stays an
-/// ordinary page beside the day it looks like.
+/// ordinary page beside the day it looks like, in either directory.
 #[test]
 fn a_year_less_title_format_leaves_a_label_named_page_ordinary() {
     let _guard = crate::integration_lock();
+    for day_file in ["journals/2026_11_02.md", "pages/2026-11-02.md"] {
+        year_less_label_page(day_file);
+    }
+}
+
+fn year_less_label_page(day_file: &str) {
     let files = [
         (
             "logseq/config.edn",
             "{:journal/page-title-format \"MM-dd\"}\n",
         ),
         ("pages/11-02.md", "- a label page\n"),
-        ("journals/2026_11_02.md", "- the day\n"),
+        (day_file, "- the day\n"),
     ];
     let (dir, store) = graph(&files);
     let before = bytes(dir.path(), &files);
@@ -277,22 +283,17 @@ fn a_year_less_title_format_leaves_a_label_named_page_ordinary() {
             .map(|e| (&e.name, e.is_journal))
             .collect::<Vec<_>>()
     );
-    // Pinned as it is: the label page opens, and the journal whose displayed
-    // title is the same label is listed as a second physical file of that
-    // name (K says the label selects no day; see the receipt's question).
+    // Typed, the label is the ordinary page alone: "typing the ambiguous,
+    // non-identifying label cannot select" the day (SPEC §2.1), so the day's
+    // file is no second claimant of it (re-pinned: it was listed second).
+    assert_eq!(existing(&view.resolve("11-02", false)), ["pages/11-02.md"]);
     assert_eq!(
-        existing(&view.resolve("11-02", false)),
-        ["pages/11-02.md", "journals/2026_11_02.md"]
+        opens(&store, "11-02", PageKind::Page),
+        Some(("pages/11-02.md".to_owned(), PageKind::Page))
     );
     // The day itself is still reached by a spelling that names it.
-    assert_eq!(
-        existing(&view.resolve("2026-11-02", false)),
-        ["journals/2026_11_02.md"]
-    );
-    assert_eq!(
-        store.journal_id(NOV_2, true).as_str(),
-        "journals/2026_11_02.md"
-    );
+    assert_eq!(existing(&view.resolve("2026-11-02", false)), [day_file]);
+    assert_eq!(store.journal_id(NOV_2, true).as_str(), day_file);
     assert_eq!(bytes(dir.path(), &files), before);
 }
 
@@ -447,4 +448,54 @@ fn a_day_with_no_file_is_created_in_the_journals_directory() {
         store.journal_id(NOV_2, true).as_str(),
         "journals/2026_11_02.md"
     );
+}
+
+/// Re-scan until the incremental answers equal a cold open's, or fail with
+/// both (an outside change may publish in parts; a wrong incremental answer
+/// never converges).
+fn settle_to_cold(store: &Store, root: &Path, rels: &[&str], days: &[Day], names: &[&str]) {
+    let cold = cold_answers(root, rels, days, names);
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(10);
+    loop {
+        store.refresh(tine_store::Depth::Stamps).unwrap();
+        let incremental = day_answers(store, days, names);
+        if incremental == cold || std::time::Instant::now() >= deadline {
+            assert_eq!(incremental, cold, "incremental equals a cold open");
+            return;
+        }
+        std::thread::sleep(std::time::Duration::from_millis(50));
+    }
+}
+
+/// CM leftovers item 6 (SPEC §2.1, approved label limitation): with a
+/// year-less title format, 2026-11-02 and 2027-11-02 both display `11-02`
+/// and stay distinct days. An outside retitle from one to the other keeps
+/// the displayed name and kind, yet moves the file to the other day; a
+/// second file titled with the other year adds that day beside the first.
+/// The incremental reading answers as a cold open does.
+#[test]
+fn a_year_less_retitle_to_another_year_moves_the_day() {
+    let _guard = crate::integration_lock();
+    let config = "{:journal/page-title-format \"MM-dd\"}\n";
+    let nov_2_2027 = Day(20271102);
+    let rels = ["logseq/config.edn", "pages/A.md", "pages/B.md"];
+    let (days, names) = ([NOV_2, nov_2_2027], ["2026-11-02", "2027-11-02"]);
+    // One file, retitled to the other year.
+    let (dir, store) = graph(&[(rels[0], config), (rels[1], "title:: 2026-11-02\n\n- a\n")]);
+    store.whole_graph().unwrap();
+    assert_eq!(store.journal_id(NOV_2, false).as_str(), rels[1]);
+    fs::write(
+        dir.path().join(rels[1]),
+        "title:: 2027-11-02\n\n- a, retitled\n",
+    )
+    .unwrap();
+    settle_to_cold(&store, dir.path(), &rels, &days, &names);
+    assert_eq!(store.journal_id(nov_2_2027, false).as_str(), rels[1]);
+    // A second file whose title is the same label of another year.
+    let (dir, store) = graph(&[(rels[0], config), (rels[1], "title:: 2026-11-02\n\n- a\n")]);
+    store.whole_graph().unwrap();
+    fs::write(dir.path().join(rels[2]), "title:: 2027-11-02\n\n- b\n").unwrap();
+    settle_to_cold(&store, dir.path(), &rels, &days, &names);
+    assert_eq!(store.journal_id(NOV_2, false).as_str(), rels[1]);
+    assert_eq!(store.journal_id(nov_2_2027, false).as_str(), rels[2]);
 }
