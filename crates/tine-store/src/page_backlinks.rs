@@ -394,6 +394,185 @@ mod tests {
         assert_eq!(references, vec![("Ref only".to_owned(), 1)]);
     }
 
+    /// CM D3: Question A ("which blocks reference page P") has one answerer,
+    /// the snapshot membership. Every All pages row, file or reference-only,
+    /// shows the size of the panel its name opens, on a graph with an alias,
+    /// date spellings, the Favorites page, self references and a property
+    /// key that folds to another page's title.
+    #[test]
+    fn counts_equal_panel_blocks_with_favorites_self_refs_and_folded_keys() {
+        let root = tempfile::tempdir().unwrap();
+        for dir in ["pages", "journals", "logseq"] {
+            std::fs::create_dir(root.path().join(dir)).unwrap();
+        }
+        let write = |path: &str, text: &str| std::fs::write(root.path().join(path), text).unwrap();
+        write("logseq/config.edn", "{:tine/favorites-page \"Favs\"}");
+        write("pages/Favs.md", "- [[Hub]]\n- [[H]]\n- [[Ref only]]\n");
+        write(
+            "pages/Hub.md",
+            "alias:: H\n\n- [[Hub]] self\n- [[H]] self by alias\n- [[Other]]\n",
+        );
+        write("pages/H.md", "- [[Hub]] from the alias file\n");
+        write("pages/Other.md", "- [[Other]] self\n- [[Hub]]\n");
+        write("pages/Done At.md", "- done at\n");
+        write(
+            "journals/2026_10_27.md",
+            "- [[Oct 27th, 2026]] self\n- [[Hub]]\n",
+        );
+        write(
+            "pages/Notes.md",
+            concat!(
+                "- [[H]] and [[Hub]]\n",
+                "- on [[Oct 27th, 2026]] and [[2026-10-27]]\n",
+                "- task\n  done-at:: today\n",
+                "- [[Ref only]] #[[Ref only]]\n",
+            ),
+        );
+        let store = Arc::new(
+            crate::Store::open(root.path(), Default::default())
+                .unwrap()
+                .0,
+        );
+        store.stop_watcher_for_tests();
+        // Cold: every row (file or reference-only) is its panel's size.
+        assert_membership_fresh(&store);
+        let view = store.whole_graph().unwrap();
+        let (files, references) = view.page_backlink_counts();
+        let files: HashMap<_, _> = files.into_iter().collect();
+        assert_eq!(files["pages/Favs.md"], 0, "nothing links to Favorites");
+        assert_eq!(
+            files["pages/Hub.md"], 4,
+            "Notes (once), Other, the day and H.md; not Favorites, not its own blocks"
+        );
+        assert_eq!(files["pages/Done At.md"], 1, "done-at:: folds to Done At");
+        assert_eq!(files["journals/2026_10_27.md"], 1, "both spellings, once");
+        assert_eq!(
+            references,
+            vec![("done-at".to_owned(), 1), ("Ref only".to_owned(), 1)],
+            "the property key's own page counts its block (was 0, panel 1)"
+        );
+        drop(view);
+        // Incremental: removing and re-adding the key patches both panels.
+        save(&store, "pages/Notes.md", |page| {
+            page.blocks[2].raw = "task".to_owned()
+        });
+        assert_membership_fresh(&store);
+        let (files, references) = store.whole_graph().unwrap().page_backlink_counts();
+        assert_eq!(
+            files
+                .iter()
+                .find(|(p, _)| p == "pages/Done At.md")
+                .unwrap()
+                .1,
+            0
+        );
+        assert!(!references
+            .iter()
+            .any(|(name, n)| name == "done-at" && *n > 0));
+        save(&store, "pages/Notes.md", |page| {
+            page.blocks[2].raw = "task\ndone-at:: later".to_owned()
+        });
+        assert_membership_fresh(&store);
+        let (_, references) = store.whole_graph().unwrap().page_backlink_counts();
+        assert_eq!(references[0], ("done-at".to_owned(), 1));
+    }
+
+    /// CM D3: an opening no panel is registered for (`done_at`: no file, no
+    /// reference spells it, `done-at::` reaches it by its property fold) reads
+    /// the panels its names and folds reach, filtered by the parser evidence,
+    /// so it lists exactly what the reference rule names, including a block
+    /// on a reached panel's own page that the panel itself excludes. Before,
+    /// these openings took a second, parser-evidence-only scan.
+    #[test]
+    fn an_unregistered_opening_reads_the_reached_memberships_exactly() {
+        let root = tempfile::tempdir().unwrap();
+        std::fs::create_dir(root.path().join("pages")).unwrap();
+        let write = |path: &str, text: &str| std::fs::write(root.path().join(path), text).unwrap();
+        write(
+            "pages/done-at.md",
+            "- own\n  done-at:: yesterday\n- [[done-at]] self\n",
+        );
+        write(
+            "pages/Source.md",
+            "- task\n  done-at:: today\n- [[done-at]] direct\n- other\n",
+        );
+        let (store, _, _) = crate::Store::open(root.path(), Default::default()).unwrap();
+        let view = store.whole_graph().unwrap();
+        let listed = |name: &str| -> Vec<(String, String)> {
+            let mut rows: Vec<_> = view
+                .backlinks(name)
+                .unwrap()
+                .iter()
+                .flat_map(|group| {
+                    group
+                        .blocks
+                        .iter()
+                        .map(|block| {
+                            (
+                                group.page.clone(),
+                                block.raw.lines().next().unwrap().to_owned(),
+                            )
+                        })
+                        .collect::<Vec<_>>()
+                })
+                .collect();
+            rows.sort();
+            rows
+        };
+        assert_eq!(
+            listed("done_at"),
+            vec![
+                ("Source".to_owned(), "task".to_owned()),
+                ("done-at".to_owned(), "own".to_owned()),
+            ],
+            "both property-key blocks, not the direct [[done-at]] links"
+        );
+        assert_eq!(
+            listed("done-at"),
+            vec![
+                ("Source".to_owned(), "[[done-at]] direct".to_owned()),
+                ("Source".to_owned(), "task".to_owned()),
+            ],
+            "the registered page excludes its own blocks"
+        );
+        assert!(listed("nothing names this").is_empty());
+    }
+
+    /// CM D3 cost counter: one membership build per snapshot serves both
+    /// surfaces. A panel open after the counts (or the counts after a panel)
+    /// builds nothing, hands its materializer only the sources the selected
+    /// panel names (1 of 104 pages here) and constructs evidence only for the
+    /// listed blocks; an unregistered opening reads only the reached panels'
+    /// sources and own pages.
+    #[test]
+    fn one_membership_build_serves_the_panel_and_the_counts() {
+        use std::sync::atomic::Ordering::Relaxed;
+        let (_root, store) = fixture(100, 60);
+        let view = store.whole_graph().unwrap();
+        let work = view.graph.resident_backlink_memberships().unwrap();
+        assert_eq!(work.full_builds, 1, "the fixture's counts read built it");
+        assert_eq!(work.source_visits, view.graph.pages.len());
+        tine_core::reference_evidence::reset_occurrence_constructions();
+        let groups = view.backlinks("Target").unwrap();
+        assert_eq!(
+            groups.iter().map(|g| g.blocks.len()).sum::<usize>(),
+            1,
+            "Source's one block; Target's own block is excluded"
+        );
+        let work = view.graph.resident_backlink_memberships().unwrap();
+        assert_eq!(work.full_builds, 1, "the panel reuses the counts' build");
+        assert_eq!(work.candidate_sources.load(Relaxed), 1, "only Source.md");
+        assert_eq!(
+            tine_core::reference_evidence::occurrence_constructions(),
+            2,
+            "evidence for the listed block's two names only"
+        );
+        let _ = view.backlinks("never named");
+        assert_eq!(work.candidate_sources.load(Relaxed), 1, "nothing reached");
+        let _ = view.page_backlink_counts();
+        assert_eq!(work.full_builds, 1);
+    }
+
     /// UI-CM-ALLPAGES-COUNT-ZERO-FOR-ALIAS-GROUP (batch 5 regression): every
     /// All pages count equals the size of the panel its name opens, also for
     /// a page reached through an alias, an alias chain or a journal-date

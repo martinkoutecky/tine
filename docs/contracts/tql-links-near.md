@@ -145,8 +145,13 @@ day answers to.
 unfiltered Linked References panel lists: a block once however many of the
 page's names it uses, never a block of the page's own panel or of the Favorites
 arrangement page (`WholeGraph::page_backlink_counts`). The snapshot membership
-owner supplies both panel selection and cardinalities. Every listed page is
-registered under the names its panel resolver gives it. Parser-owned reference
+owner is the one answerer of "which blocks reference this page": it supplies
+both panel selection and cardinalities. Every listed page, and every spelling a
+reference target names (a property key whose fold another title also reaches
+included), is registered under the names its panel resolver gives it. An
+opening with no registered panel (a name only a property key fold reaches)
+reads the panels its names and folds reach, plus those panels' own pages,
+filtered by the parser-owned evidence. Parser-owned reference
 evidence contributes one source/block membership per reached panel, deduplicated
 across names. Source arrays and reverse panel leaves share immutable snapshots;
 publications replace changed contributions and registrations. A target can reach

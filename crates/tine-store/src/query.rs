@@ -966,16 +966,14 @@ fn collect_reference_occurrences_bounded(
     let mut budget = ConstructionBudget::new(max_rows, max_bytes);
     // Folded once per query, shared by every block (GH #623, I-25).
     let needles = tine_core::reference_evidence::ReferenceNeedles::new(names_norm);
+    // Explicit references: the snapshot membership is the one answerer of
+    // "which blocks reference P" (CM D3); the evidence below filters it.
     let membership =
         (kind == ReferenceKind::Explicit).then(|| graph.scan_all_backlink_memberships());
-    let panel = membership.and_then(|answer| answer.selection(names_norm, self_page));
-    // A spelling with no exact panel (a property key folding to another title)
-    // takes the parser-evidence path rather than an empty selection.
-    let membership = membership.filter(|_| panel.is_some());
-    let candidate_pages = if membership.is_some() {
-        graph.explicit_panel_candidate_pages(panel)
-    } else {
-        graph.reference_candidate_pages(names_norm, kind)
+    let selection = membership.map(|answer| answer.selection(graph, names_norm, self_page));
+    let candidate_pages = match &selection {
+        Some(selection) => graph.explicit_panel_candidate_pages(selection),
+        None => graph.reference_candidate_pages(names_norm, kind),
     };
     let groups = {
         let pages = candidate_pages.pages.as_slice();
@@ -1006,10 +1004,9 @@ fn collect_reference_occurrences_bounded(
                 })
                 .enumerate()
             {
-                if let Some(answer) = membership {
+                if let (Some(answer), Some(selection)) = (membership, &selection) {
                     let slot = *graph.pages.positions.get(entry.rel_path_str()).unwrap();
-                    if !panel.is_some_and(|panel| answer.contains(slot, panel, pre_ordinal as u32))
-                    {
+                    if !answer.admits(selection, slot, pre_ordinal as u32) {
                         continue;
                     }
                 }
@@ -1041,11 +1038,10 @@ fn collect_reference_occurrences_bounded(
                 &mut path,
                 &mut |block, _| {
                     ordinal.set(ordinal.get() + 1);
-                    let admitted = if let Some(answer) = membership {
+                    let admitted = if let (Some(answer), Some(selection)) = (membership, &selection)
+                    {
                         let slot = *graph.pages.positions.get(entry.rel_path_str()).unwrap();
-                        panel.is_some_and(|panel| {
-                            answer.contains(slot, panel, ordinal.get() as u32 + 1)
-                        })
+                        answer.admits(selection, slot, ordinal.get() as u32 + 1)
                     } else {
                         candidate_pages.admits(page, ordinal.get())
                     };

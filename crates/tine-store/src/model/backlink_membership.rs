@@ -245,6 +245,15 @@ impl Reach {
     }
 }
 
+/// The memberships one Linked References opening reads
+/// ([`BacklinkMembership::selection`]).
+pub(crate) struct PanelSelection {
+    panels: Vec<u32>,
+    /// Source slots read whole: own pages of reached panels (never set for a
+    /// registered opening).
+    whole: BTreeSet<usize>,
+}
+
 pub(crate) struct BacklinkMembership {
     sources: Chunks<Contributions>,
     panels: Chunks<Option<Panel>>,
@@ -261,6 +270,9 @@ pub(crate) struct BacklinkMembership {
     pub(crate) full_builds: usize,
     #[cfg(test)]
     pub(crate) snapshot_reads: std::sync::atomic::AtomicUsize,
+    /// Source pages handed to panel materializers (cost counter).
+    #[cfg(test)]
+    pub(crate) candidate_sources: std::sync::atomic::AtomicUsize,
 }
 
 impl BacklinkMembership {
@@ -276,23 +288,31 @@ impl BacklinkMembership {
         visit_source_blocks(entry, doc, config, |block, _| {
             for reference in block.projection().reference_source().explicit {
                 visit_reference_targets(reference, config, |target| {
-                    let (key, flag) = match target {
-                        ReferenceTarget::PageKey(key) => (key, DIRECT),
-                        ReferenceTarget::PropertyKey(key) => (key, PROPERTY),
-                    };
-                    if self
-                        .names
-                        .get(key)
-                        .is_some_and(|reach| reach.ids(flag).next().is_some())
-                    {
-                        return false;
-                    }
                     let spelling = match target {
                         ReferenceTarget::PageKey(key) if key != refs::page_key(&reference.name) => {
                             key
                         }
                         _ => reference.name.trim(),
                     };
+                    // The spelling's own panel, not any panel its fold reaches:
+                    // `done-at::` also reaches `Done At` (property folding), but
+                    // the `done-at` page is a row of its own and needs its
+                    // panel (CM D3, one answerer for every row).
+                    let own_key;
+                    let key = match target {
+                        ReferenceTarget::PageKey(key) => key,
+                        ReferenceTarget::PropertyKey(_) => {
+                            own_key = refs::page_key(spelling);
+                            own_key.as_str()
+                        }
+                    };
+                    if self
+                        .names
+                        .get(key)
+                        .is_some_and(|reach| reach.ids(DIRECT).next().is_some())
+                    {
+                        return false;
+                    }
                     let (canonical, _, _) = self.resolver.resolve(spelling);
                     let journal = self.resolver.format().parse(spelling).is_some();
                     self.register(&canonical, journal, spelling);
@@ -432,28 +452,76 @@ impl BacklinkMembership {
             }
         }
     }
-    /// Resolve the requested panel to its already registered membership.
-    /// Alias-only openings share a real panel only when its self exclusion
-    /// and complete name set agree. O(names and reached panels).
-    pub(crate) fn selection(&self, names: &[String], own: &str) -> Option<u32> {
+    /// The memberships an opening reads. An opening registered as a panel
+    /// (its complete name set and self exclusion agree) reads exactly that
+    /// panel. Any other opening (a name no file claims and no reference
+    /// spells, reached only through a property key fold, or an alias whose
+    /// self exclusion differs) reads every panel its names and their property
+    /// folds reach, plus those panels' own pages, whose blocks they exclude
+    /// but this opening does not. The panel's parser evidence then keeps the
+    /// blocks that name the opening (CM D3: the membership is the one
+    /// answerer; the panel filters it). O(names + reached panels).
+    pub(crate) fn selection(
+        &self,
+        graph: &ReadSnapshot,
+        names: &[String],
+        own: &str,
+    ) -> PanelSelection {
         let own = refs::page_key(own);
-        self.names
-            .get(names.first()?.as_str())?
-            .ids(DIRECT)
-            .find(|&id| {
+        let exact = names.first().and_then(|first| {
+            self.names.get(first.as_str())?.ids(DIRECT).find(|&id| {
                 self.panel(id).is_some_and(|panel| {
                     panel.own.as_ref() == own
                         && panel.names.len() == names.len()
                         && panel.names.iter().zip(names).all(|(a, b)| a.as_ref() == b)
                 })
             })
+        });
+        if let Some(id) = exact {
+            return PanelSelection {
+                panels: vec![id],
+                whole: BTreeSet::new(),
+            };
+        }
+        let mut panels = BTreeSet::new();
+        for name in names {
+            for (key, flag) in [(name.clone(), DIRECT), (property_key_norm(name), PROPERTY)] {
+                if let Some(reach) = self.names.get(key.as_str()) {
+                    panels.extend(reach.ids(flag));
+                }
+            }
+        }
+        let mut whole = BTreeSet::new();
+        for &id in &panels {
+            let Some(panel) = self.panel(id) else {
+                continue;
+            };
+            for path in graph.real_page_names.paths(&panel.own) {
+                if let Some(&slot) = graph
+                    .list
+                    .get_path(path)
+                    .and_then(|entry| graph.pages.positions.get(entry.rel_path_str()))
+                {
+                    whole.insert(slot);
+                }
+            }
+        }
+        PanelSelection {
+            panels: panels.into_iter().collect(),
+            whole,
+        }
     }
-    /// One source/block membership lookup; ordinals 0/1 are the header and
-    /// preamble, roots start at 2. Binary search over one source's pairs.
-    pub(crate) fn contains(&self, slot: usize, panel: u32, ordinal: u32) -> bool {
-        self.sources
-            .get(slot as u32)
-            .is_some_and(|rows| rows.binary_search(&(panel, ordinal)).is_ok())
+    /// Whether the selection admits one source block; ordinals 0/1 are the
+    /// header and preamble, roots start at 2. One binary search over the
+    /// source's pairs per selected panel (one for a registered opening).
+    pub(crate) fn admits(&self, selection: &PanelSelection, slot: usize, ordinal: u32) -> bool {
+        selection.whole.contains(&slot)
+            || self.sources.get(slot as u32).is_some_and(|rows| {
+                selection
+                    .panels
+                    .iter()
+                    .any(|&panel| rows.binary_search(&(panel, ordinal)).is_ok())
+            })
     }
     /// Cardinalities by the existing CM-COUNT panel identity. O(panels).
     pub(crate) fn scan_all_counts(&self) -> HashMap<(bool, String), u32> {
@@ -560,6 +628,8 @@ impl BacklinkMembership {
             full_builds: 1,
             #[cfg(test)]
             snapshot_reads: std::sync::atomic::AtomicUsize::new(0),
+            #[cfg(test)]
+            candidate_sources: std::sync::atomic::AtomicUsize::new(0),
         };
         for (entry, _) in graph.pages.iter() {
             // A day by the name that identifies it (`page_handle`).
@@ -609,6 +679,8 @@ impl BacklinkMembership {
             full_builds: 0,
             #[cfg(test)]
             snapshot_reads: std::sync::atomic::AtomicUsize::new(0),
+            #[cfg(test)]
+            candidate_sources: std::sync::atomic::AtomicUsize::new(0),
         };
         let mut seeds = BTreeSet::new();
         let mut sources = BTreeSet::new();
@@ -865,21 +937,26 @@ impl ReadSnapshot {
     pub(crate) fn resident_backlink_memberships(&self) -> Option<&BacklinkMembership> {
         self.backlink_membership.get()
     }
-    /// Candidate source pages from the panel's reverse membership evidence.
-    /// O(source pages in the panel), with keyed access to the held documents.
+    /// Candidate source pages from the selection's reverse membership
+    /// evidence. O(source pages in the selected panels), with keyed access to
+    /// the held documents.
     pub(crate) fn explicit_panel_candidate_pages(
         &self,
-        panel: Option<u32>,
+        selection: &PanelSelection,
     ) -> ReferenceCandidatePages {
-        let rows = panel
-            .map(|panel| {
-                self.scan_all_backlink_memberships()
-                    .sources_for_panel(panel)
-            })
-            .unwrap_or_default();
+        let answer = self.scan_all_backlink_memberships();
+        let mut slots = selection.whole.clone();
+        for &panel in &selection.panels {
+            slots.extend(answer.sources_for_panel(panel).into_keys());
+        }
+        #[cfg(test)]
+        answer
+            .candidate_sources
+            .fetch_add(slots.len(), std::sync::atomic::Ordering::Relaxed);
         ReferenceCandidatePages::unfiltered(
-            rows.keys()
-                .filter_map(|&slot| self.pages.get(slot).cloned())
+            slots
+                .into_iter()
+                .filter_map(|slot| self.pages.get(slot).cloned())
                 .collect(),
             true,
             #[cfg(test)]
