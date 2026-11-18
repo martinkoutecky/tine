@@ -207,6 +207,44 @@ pub(crate) async fn page_delete(
     .await
 }
 
+/// Delete exactly the page file `path`, loaded at `base_rev` (GH #978,
+/// `pages::delete_page_file`): one of several files claiming one name. The
+/// name survives in the other files, so only this path's seen record goes.
+#[tauri::command]
+pub(crate) async fn page_delete_file(
+    session: u64,
+    path: String,
+    base_rev: String,
+    app: tauri::AppHandle,
+    ctx: GraphContext<'_>,
+) -> Result<PageOperation, String> {
+    let slot = slot_for_context(&ctx)?;
+    off_ui(move || {
+        crate::git_settings::around(
+            &slot.root_key,
+            || format!("Delete file \"{path}\""),
+            || {
+                with_host(&slot, |host| {
+                    tine_graph_features::pages::delete_page_file(
+                        &slot.store,
+                        host,
+                        session,
+                        &path,
+                        &base_rev,
+                    )
+                    .map_err(|error| error.to_string())
+                })?
+            },
+        )
+        .inspect(|operation| {
+            if !matches!(operation, PageOperation::Refused | PageOperation::Waiting) {
+                crate::seen::page_gone(&app, &slot, None, &[path.as_str()]);
+            }
+        })
+    })
+    .await
+}
+
 /// One `page_wait` entry (`protocol.ts` `PublishedNeed`).
 #[derive(serde::Deserialize)]
 pub(crate) struct PublishedNeed {

@@ -10,7 +10,7 @@ import { invalidateUndoForPage, clearUndoHistory } from "./history";
 import { captureBinding, bindingCurrent, invalidateBinding } from "../binding";
 import { type Owner } from "../owned";
 import { backend } from "../backend";
-import { removeDeletedPageFromNavigation, rightSidebar } from "../ui";
+import { removeDeletedFileFromNavigation, removeDeletedPageFromNavigation, rightSidebar } from "../ui";
 import { bumpPageInventoryRev } from "../graphSession";
 import { type Route } from "../routeTypes";
 import { type PageTarget } from "../routeTypes";
@@ -389,25 +389,30 @@ export function forgetPage(name: string) {
  *  a route that names an already-purged page (GH #376: a black frame on
  *  Android). It must do UI-only work such as closing pane routes; if it throws,
  *  the delete still completes and the page is still retired. It never runs when
- *  the delete is refused or fails. */
+ *  the delete is refused or fails.
+ *
+ *  `file`: delete exactly the loaded file `expectedPath`, one of several files
+ *  claiming this name (GH #978), at the revision this window holds. The name
+ *  lives on in the other files, so its favorite stays. */
 export async function deletePage(
   name: string,
   kind: PageKind,
   expectedPath?: string,
   retireRoutes?: () => void,
   reportFailure?: (reason: UiText) => void,
+  file = false,
 ): Promise<boolean> {
   const refused = (reason: UiText) => { reportFailure?.(reason); return false; };
   if (graphRewriteFrozen()) return refused(msg("delete-reason-rewrite"));
   const binding = captureBinding();
   const loaded = pageByName(name);
-  if (expectedPath && loaded?.id !== expectedPath) return refused(msg("delete-reason-target"));
+  if ((expectedPath || file) && loaded?.id !== expectedPath) return refused(msg("delete-reason-target"));
   if (pageReadOnly(loaded) || loaded?.guide) return refused(msg("delete-reason-read-only"));
   // L2-04, D-20261022-JJ6: a delete consumes local input only after Applied.
   // Every other outcome leaves the conflicted draft available for recovery.
   let deleted = false;
   try {
-    deleted = await deletePageOnDisk(name, kind, expectedPath ?? loaded?.id ?? undefined, reportFailure);
+    deleted = await deletePageOnDisk(name, kind, expectedPath ?? loaded?.id ?? undefined, reportFailure, file);
   } catch (error) {
     // Keep the raw storage cause in both the debug log and the caller's toast.
     dbg(`page delete failed for ${name}: ${String(error)}`);
@@ -421,7 +426,9 @@ export async function deletePage(
     dbg(`route retirement after deleting ${name} failed: ${String(error)}`);
   }
   forgetPage(name); // success — now drop it from the working set + feed
-  removeDeletedPageFromNavigation({ name, pageKind: kind, ...(expectedPath ? { path: expectedPath } : {}) });
+  const target = { name, pageKind: kind, ...(expectedPath ? { path: expectedPath } : {}) };
+  if (file) removeDeletedFileFromNavigation(target);
+  else removeDeletedPageFromNavigation(target);
   // The delete's publication carries a precise change summary (its page, its
   // blocks, the names it linked and the mounted queries it touched; full when
   // aliases regroup), which releases those readers like any publication

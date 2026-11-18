@@ -493,6 +493,7 @@ export interface MessageArgs {
   "content-width-fields-wide-page-width-in-pixels": {};
   "content-width-fields-wide-page-width-mode": {};
   "context-menu-child-view": { "active": string | number; "view": string | number };
+  "context-menu-delete-file-label": { "path": string | number };
   "context-menu-delete-page-label": { "kind": string | number };
   "context-menu-file-not-saved": {};
   "context-menu-file-open-failed": { "action": string | number; "error": string | number };

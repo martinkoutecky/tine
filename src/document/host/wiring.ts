@@ -864,8 +864,10 @@ async function drainForDelete(c: HostClient, name: string): Promise<boolean> {
  * waits for the deletion to publish (Finding B), so only `applied` means the
  * file is gone; `pending`, `uncertain` and `superseded` keep the page and say
  * why. The backend's identity checks reject a twin or a stale `path`; the
- * rejection reaches the caller, which logs it and can report it (I-9). */
-export async function deletePageOnDisk(name: string, kind: PageKind, path?: string, reportFailure?: (reason: UiText) => void): Promise<boolean> {
+ * rejection reaches the caller, which logs it and can report it (I-9). With
+ * `file`, the host deletes exactly `path` at the revision this window holds once
+ * its own input has published (GH #978); a twin does not refuse it. */
+export async function deletePageOnDisk(name: string, kind: PageKind, path?: string, reportFailure?: (reason: UiText) => void, file = false): Promise<boolean> {
   const c = host();
   const conflicted = !!c?.conflicted(name);
   if (!c || (!conflicted && !await settle(c, [name], { noConflict: true }))) {
@@ -891,7 +893,12 @@ export async function deletePageOnDisk(name: string, kind: PageKind, path?: stri
       return false;
     }
     // A stale delete command deleted nothing the window can count on.
-    const remove = () => writeOwned(owner, backend().pageDelete(c.session, name, kind, path))
+    // The revision is read per attempt: the settle above published own input.
+    const exact = () => {
+      const rev = baseRev.get(name);
+      return path && rev ? backend().pageDeleteFile(c.session, path, rev) : Promise.resolve("refused" as const);
+    };
+    const remove = () => writeOwned(owner, file ? exact() : backend().pageDelete(c.session, name, kind, path))
       .then((done) => done.kind === "current" ? done.value : "refused" as const);
     operation = await remove();
     // The host is still answering this page: once it is clean, once more.

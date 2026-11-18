@@ -7,7 +7,8 @@
  *  exactly: a setter toggled twice ends at the second value. The page host
  *  admits a window's requests only in id order (`page_open` … `page_close`
  *  carry ids); its queries (`page_wait`, which blocks, `page_owed`,
- *  `page_save_now`) and `page_delete` carry none and stay out of the lane.
+ *  `page_save_now`), `page_delete` and `page_delete_file` carry none and stay
+ *  out of the lane.
  *  The list must equal `ORDERED_WRITES` in
  *  src-tauri/src/load_wait_guard_tests.rs (checked there). */
 export const ORDERED_COMMANDS: ReadonlySet<string> = new Set([
