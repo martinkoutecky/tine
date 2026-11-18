@@ -10,6 +10,7 @@ The format follows [Keep a Changelog](https://keepachangelog.com/); versions use
 
 ### Fixed
 
+- A code block whose text wraps because of a theme or custom.css (not Tine's wrap setting) keeps its line numbers level with their lines: the numbers after a wrapped line sat one row too high and the last line had none (reported by BeyondTheJob in #970; UI-GH970-CODE-GUTTER-WRAP).
 - Quick share links are offered in every build of Tine, including the Flatpak
   and builds from source. They used to show "Coming soon" in any build made
   outside Tine's release workflow. A release is now refused instead while

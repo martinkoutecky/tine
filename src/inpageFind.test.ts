@@ -277,7 +277,7 @@ describe("in-page find model", () => {
     document.body.innerHTML = `
       <main data-pane-id="main">
         <div class="reference-blocks" data-inpage-find-surface="unlinked:Source">
-          <pre class="code-block"><div class="calc-gutter code-gutter" aria-hidden="true"><div class="gutter-row"><span class="calc-lineno">1</span><span class="gutter-mirror">let needle = 1;</span></div></div><code class="hljs">let needle = 1;</code></pre>
+          <pre class="code-block"><div class="calc-gutter code-gutter" aria-hidden="true"><div class="gutter-row"><span class="calc-lineno">1</span><code class="hljs gutter-mirror">let needle = 1;</code></div></div><code class="hljs">let needle = 1;</code></pre>
         </div>
       </main>`;
 

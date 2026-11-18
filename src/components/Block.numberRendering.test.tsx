@@ -71,6 +71,18 @@ describe.each<EditorKind>(["textarea", "cm6"])("routed number rendering (%s)", k
     } finally { view.dispose(); }
   });
 
+  it("breaks lines in the gutter under the same rules as the card's code (GH #970)", async () => {
+    const view = await open("```js\nconst a = 1;\nconst b = 2;\n```");
+    try {
+      // A theme or custom.css that wraps the card's `code` must reach each mirrored line too, or the
+      // numbers drift from their lines: the mirror is a `code` element of the card, as `pre code` selects.
+      const mirrors = [...view.root.querySelectorAll("pre.code-block .code-gutter .gutter-mirror")];
+      expect(mirrors.map(el => el.tagName)).toEqual(["CODE", "CODE"]);
+      expect(mirrors.map(el => el.textContent)).toEqual(["const a = 1;", "const b = 2;"]);
+      expect(mirrors.every(el => el.matches("pre.code-block code.hljs"))).toBe(true);
+    } finally { view.dispose(); }
+  });
+
   it.each(["md", "org"] as const)("uses explicit numbers for nested and checkbox list items (%s)", async format => {
     const view = await open("Intro\n3. Third\n9. Ninth\n  5. Nested\n11. [ ] Task", format);
     try {
