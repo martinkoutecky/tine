@@ -358,8 +358,33 @@ fn a_merge_refusal_after_flush_saves_pending_edits_but_merges_nothing() {
     }
 }
 
+/// The counters are process-global (a parallel rename test runs model
+/// checks): the case runs in a child process of its own.
 #[test]
 fn unchanged_save_recovery_cost_is_one_page_and_no_graph_walk() {
+    const CHILD: &str = "TINE_UNCHANGED_SAVE_COST_CHILD";
+    if std::env::var_os(CHILD).is_none() {
+        let output = std::process::Command::new(tine_store::test_binary::own_test_binary())
+            .args([
+                "--exact",
+                "commands::rename::tests::unchanged_save_recovery_cost_is_one_page_and_no_graph_walk",
+                "--nocapture",
+                "--test-threads=1",
+            ])
+            .env(CHILD, "1")
+            .output()
+            .unwrap();
+        let (out, err) = (
+            String::from_utf8_lossy(&output.stdout),
+            String::from_utf8_lossy(&output.stderr),
+        );
+        assert!(output.status.success(), "{out}\n{err}");
+        assert!(
+            out.contains("1 passed"),
+            "the child ran no case:\n{out}\n{err}"
+        );
+        return;
+    }
     let root = tempfile::tempdir().unwrap();
     std::fs::create_dir_all(root.path().join("pages")).unwrap();
     std::fs::write(root.path().join("pages/r.md"), "- tags:: [[Old]]\n").unwrap();
