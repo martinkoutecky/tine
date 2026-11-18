@@ -7,6 +7,7 @@
 import { afterEach, expect, it, vi } from "vitest";
 import { mail, mailPage, opened, setup, tick, took } from "./fakes.test.support";
 import type { PublishedRevision } from "./protocol";
+import { PendingBases } from "./client";
 
 afterEach(() => vi.useRealTimers());
 
@@ -108,5 +109,82 @@ it("an older save whose publication is observed only after a newer acknowledgmen
   client.receive(mail(host.session, host.keyOf("P"), mailPage(5, { kind: "unchanged" }, { disk: { kind: "file", rev: "r4" } })));
   cliConflict(ctx, 5);
   expect(doc.publishedRevs).toEqual([["P", "r4"]]);
+  client.retire();
+});
+
+// Review round 2 (f49cff162): the host's disk token is its retained observation,
+// which a completed save does not refresh. A repeated token is not news, and a
+// new one proves the oldest pending revision with those bytes.
+it("an input returning to the loaded bytes is not proved by the repeated load-time disk token", async () => {
+  vi.useFakeTimers();
+  const ctx = await setup();
+  const { host, doc, client } = ctx;
+  await opened(ctx, "P", 3);
+  await save(ctx, 4, "r4", { disk: "r3" });
+  await save(ctx, 5, "r3", { disk: "r3" });
+  client.receive(mail(host.session, host.keyOf("P"), mailPage(5, { kind: "unchanged" }, { disk: { kind: "file", rev: "r4" } })));
+  cliConflict(ctx, 5);
+  expect(doc.publishedRevs).toEqual([["P", "r4"]]);
+  client.retire();
+});
+
+it("a new disk token proves the oldest pending input with its bytes, so a later one still settles the next", async () => {
+  vi.useFakeTimers();
+  const ctx = await setup();
+  const { host, doc, client } = ctx;
+  await opened(ctx, "P", 3);
+  await save(ctx, 4, "r4", { disk: "r3" });
+  await save(ctx, 5, "r5", { disk: "r3" });
+  await save(ctx, 6, "r4", { disk: "r4" });
+  client.receive(mail(host.session, host.keyOf("P"), mailPage(6, { kind: "unchanged" }, { disk: { kind: "file", rev: "r5" } })));
+  cliConflict(ctx, 6);
+  expect(doc.publishedRevs).toEqual([["P", "r4"], ["P", "r5"]]);
+  client.retire();
+});
+
+it("an input returning to already proved bytes is not proved by the repeated token", async () => {
+  vi.useFakeTimers();
+  const ctx = await setup();
+  const { host, doc, client } = ctx;
+  await opened(ctx, "P", 3);
+  await save(ctx, 4, "r4", { disk: "r4" });
+  await save(ctx, 5, "r5", { disk: "r4" });
+  await save(ctx, 6, "r4", { disk: "r4" });
+  client.receive(mail(host.session, host.keyOf("P"), mailPage(6, { kind: "unchanged" }, { disk: { kind: "file", rev: "r5" } })));
+  cliConflict(ctx, 6);
+  expect(doc.publishedRevs).toEqual([["P", "r4"], ["P", "r5"]]);
+  client.retire();
+});
+
+it("a wait started after a newer acknowledgment still proves the older save it asked for", async () => {
+  vi.useFakeTimers();
+  const ctx = await setup();
+  const { host, doc, client } = ctx;
+  const key = host.keyOf("P");
+  await opened(ctx, "P", 3);
+  await save(ctx, 4, "r4", { disk: "r3" });
+  await save(ctx, 5, "r5", { disk: "r3" });
+  const finish = heldWait(ctx);
+  const late = client.published([{ key, version: 4 }]);
+  cliConflict(ctx, 5);
+  finish([{ key, version: 4, rev: "r4" }]);
+  expect(await late).toBe(true);
+  expect(doc.publishedRevs).toEqual([["P", "r4"]]);
+  client.retire();
+});
+
+it("acknowledgments while saves fail cost constant work each; a proof settles the prefix once", async () => {
+  vi.useFakeTimers();
+  const ctx = await setup();
+  const { host, doc, client } = ctx;
+  const key = host.keyOf("P");
+  await opened(ctx, "P", 3);
+  const shift = vi.spyOn(PendingBases.prototype as unknown as { shift: () => unknown }, "shift");
+  for (let version = 4; version < 204; version++) await save(ctx, version, `r${version}`, { disk: "r3" });
+  expect(shift).toHaveBeenCalledTimes(0);
+  host.onWait = () => [{ key, version: 203, rev: "r203" }];
+  expect(await client.published([{ key, version: 203 }])).toBe(true);
+  expect(shift).toHaveBeenCalledTimes(200);
+  expect(doc.publishedRevs).toEqual([["P", "r203"]]);
   client.retire();
 });
