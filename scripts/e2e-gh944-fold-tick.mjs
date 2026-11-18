@@ -85,6 +85,10 @@ const PHASES = [
       { name: `untick-${day}-${member}-${route}`, ...TICK(day, route, text), done: false }];
   }))),
 ];
+// GH #987 (Jioqls): after scrolling down and typing (or adding a block), the first mouse click anywhere jumped the
+// Journals page to the top. Type in block A, press Enter and type again, then click block B; B must stay put.
+PHASES.push({ name: 'typeclick-today', kind: 'typeclick', textA: 'today last 0', textB: 'today last 2' },
+  { name: 'typeclick-older', kind: 'typeclick', textA: 'day 1 row 2', textB: 'FOLD older parent' });
 const only = process.env.E2E_PHASES ? new RegExp(process.env.E2E_PHASES) : null;
 const SETTLE_MS = Number(process.env.E2E_SETTLE_MS || 1600);
 const results = { commit: process.env.TINE_SOURCE_REVISION || 'working-tree', app, platform: process.platform, graph, manifest,
@@ -153,6 +157,35 @@ async function deliver(phase, id) {
   await browser.keys([mod, 'Enter']);
   if (phase.done) { await sleep(150); await browser.keys([mod, 'Enter']); }
 }
+async function typeThenClick(phase) {
+  const idA = await blockId(phase.textA), idB = await blockId(phase.textB);
+  if (!idA || !idB) throw new Error(`blocks ${phase.textA} / ${phase.textB} not found`);
+  for (let i = 0; i < 2; i++) { await center(idA); await sleep(700); }
+  await pointerClick(await textPoint(idA));
+  await browser.waitUntil(() => browser.execute(() => document.activeElement?.matches('textarea.block-editor, .cm-content')), { timeout: 10_000 });
+  await browser.keys(['End']);
+  await browser.keys('typed gh987');
+  await browser.keys('Enter');
+  await browser.keys('added gh987');
+  await sleep(300);
+  results.typeclickState = await browser.execute(id => { const sc = document.querySelector('.main-content'); const own = [...sc.querySelectorAll(`[data-block-id="${id}"]`)].find(e => !e.closest('.agenda-block, .journal-linked-references, .query-block')); return { scrollTop: sc.scrollTop, scrollHeight: sc.scrollHeight, bTop: own?.getBoundingClientRect().top, viewport: sc.getBoundingClientRect().height }; }, idB);
+  // The reporter's click lands anywhere; the neighbour block is the one a user would click next.
+  const init = await browser.execute(installFoldProbe, idB);
+  await sleep(120);
+  const t0 = Date.now();
+  await pointerClick(await textPoint(idB));
+  await sleep(SETTLE_MS);
+  const recorded = await browser.execute(() => window.__gh944fold.stop());
+  const summary = summarizeFold(recorded);
+  const classification = classifyFold(summary);
+  results.phases.push({ phase: phase.name, kind: phase.kind, init, classification, summary, queries: recorded.queries,
+    actionStartedMsAfterInstall: t0, frames: recorded.frames });
+  console.log(`GH987 ${phase.name}: ${classification} maxExcursion=${summary.maxExcursion?.toFixed(1)} final=${summary.finalDisplacement?.toFixed(1)} `
+    + `scrollTop=${summary.scrollTopDelta.toFixed(1)} initialScrollTop=${recorded.frames[0].scrollTop.toFixed(0)} stillScrolls=${summary.stillScrolls} `
+    + `sections=${JSON.stringify(summary.sectionHeightChanges)}`);
+  await browser.keys('Escape');
+  fs.writeFileSync(path.join(out, 'gh944-fold-probe.json'), JSON.stringify(results, null, 2));
+}
 try {
   target = await startWebdriverApplication(app, env, nativePort);
   log = fs.openSync(path.join(run, 'driver.log'), 'w');
@@ -185,6 +218,7 @@ try {
   for (const phase of PHASES) {
     if (only && !only.test(phase.name)) continue;
     stage = phase.name;
+    if (phase.kind === 'typeclick') { await typeThenClick(phase); continue; }
     const id = await blockId(phase.text);
     if (!id) throw new Error(`block ${phase.text} not found`);
     // Scroll so the target is mid-screen with the agenda above it; let lazy sections mount; recentre.
