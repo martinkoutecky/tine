@@ -7,6 +7,9 @@ export function codeGutterStyle(lineCount: number): JSX.CSSProperties {
 
 /** Calculator/code line gutter. Code mirrors line heights, including soft wraps,
  * without measuring layout; numbers stay on the first visual row of each line.
+ * A code card renders its gutter inside its `code` element, so the mirror inherits
+ * whatever text layout styles the code (Tine's wrap setting, a theme, custom.css,
+ * live or not) and cannot break a line elsewhere (GH #970).
  * O(lines of the displayed payload); callers supply already-parsed content.
  */
 export function LineGutter(props: { lines: string[]; code?: boolean }): JSX.Element {

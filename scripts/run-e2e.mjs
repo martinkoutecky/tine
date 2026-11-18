@@ -223,6 +223,8 @@ const suites = {
     ["textarea-native", "scripts/e2e-editor-native.mjs", { E2E_EDITOR: "textarea" }],
     // GH #745 reopened: opt-in hosted WebView2 proof, outside the default fan-out.
     ["gh745-outdent", "scripts/e2e-gh745-windows-probe.mjs", { GH745_STRICT: "1" }, BY_NAME],
+    // GH #944 comment 11: fold/unfold and task ticks on the Journals feed; dispatch by name.
+    ["gh944-fold-tick", "scripts/e2e-gh944-fold-tick.mjs", {}, BY_NAME],
     // og-parity-references is a HARD gate on Linux (linux-release + og-parity-pilot
     // suites), where adaptive page completion is byte-exact with OG. It is dropped
     // from the advisory Windows suite only: on WebView2 the completion yields a

@@ -790,6 +790,20 @@ function QueryMacroContent(props: Parameters<typeof QueryMacro>[0]): JSX.Element
       else setAnswerShell(true);
     });
   });
+  // GH #944: a rerun that changes this answer's height while it sits above the reader (the Journals feed's agenda and
+  // default queries, after a task tick) moves everything below it. Engines without native scroll anchoring (WebKit)
+  // would jump; Chromium already compensated, which preserveAboveViewport detects. The snapshot is taken here, in a pure
+  // computation, before Solid commits the new rows; the restore runs in the microtask after that commit.
+  // A section hidden while empty snapshots its slot, which stays in the DOM when the answer hides or reveals it.
+  let slotEl: HTMLDivElement | undefined;
+  let adoptedAnswer: QueryOperation | undefined;
+  createComputed(() => {
+    const shown = displayed();
+    const previous = adoptedAnswer;
+    adoptedAnswer = shown;
+    const host = slotEl ?? queryEl;
+    if (previous && shown && previous !== shown && host?.isConnected && queryAlive) preserveAboveViewport(host, () => {}, undefined, true);
+  });
   /** GH #850: the gear closes the builder's inline editor when it is already open. */
   const closeEdit = () => setEditRequest({ n: (editRequest()?.n ?? 0) + 1, tab: editRequest()?.tab ?? "filter", close: true });
   const closeDisplay = () => {
@@ -983,7 +997,7 @@ function QueryMacroContent(props: Parameters<typeof QueryMacro>[0]): JSX.Element
     </Show>
   );
 
-  return (
+  const view = (
     <Show when={!hidden()}>
       <div ref={queryEl} class="query-block" classList={{ "query-sheet-block": sheetFace(), "query-stale": paneStale() }}
         data-find-host={props.findHost ?? props.blockId} data-find-answered={!!displayed()
@@ -1339,6 +1353,8 @@ function QueryMacroContent(props: Parameters<typeof QueryMacro>[0]): JSX.Element
       </div>
     </Show>
   );
+  // GH #944: a section hidden while empty keeps a stable slot, so a rerun that hides or reveals it can hold the reader.
+  return props.hideWhenEmpty ? <div ref={slotEl} class="query-slot">{view}</div> : view;
 }
 
 // A {{embed ((uuid))}} or {{embed [[Page]]}} block.
