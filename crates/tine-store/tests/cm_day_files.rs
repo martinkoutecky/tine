@@ -628,3 +628,92 @@ fn a_year_less_label_is_the_ordinary_page_and_each_day_is_its_own() {
         "nothing else is written"
     );
 }
+
+/// REG-CM-YEARLESS-DAY-KEY (review item 4): a day's expansion holds only the
+/// spellings that identify it. Under `MM-dd` the label `11-02` names no day,
+/// so with no label page `[[11-02]]` is the reference-only ordinary page and
+/// never the day's blocks, and `[[2026-11-02]]` never the label's links; the
+/// same for an alias that is a date (`alias:: 2026-11-03`), whose label
+/// `11-03` joins nothing. Before the fix the day's spelling keys included
+/// its label, so both queries and panels mixed the two. Markdown and Org day
+/// files, a day in journals/ and in pages/.
+#[test]
+fn a_year_less_label_without_its_page_joins_no_day() {
+    let _guard = crate::integration_lock();
+    for (day_rel, day_text) in [
+        ("journals/2026_11_02.md", "- the day\n"),
+        ("journals/2026_11_02.org", "* the day\n"),
+        ("pages/2026-11-02.md", "- the day\n"),
+    ] {
+        let files = [
+            (
+                "logseq/config.edn",
+                "{:journal/page-title-format \"MM-dd\"}\n",
+            ),
+            (day_rel, day_text),
+            ("pages/Meeting.md", "alias:: 2026-11-03\n\n- the meeting\n"),
+            (
+                "pages/Notes.md",
+                "- label [[11-02]]\n- day [[2026-11-02]]\n- other label [[11-03]]\n- other day [[2026-11-03]]\n",
+            ),
+        ];
+        let (_dir, store) = graph(&files);
+        let view = store.whole_graph().unwrap();
+        let panel = |name: &str| raws(&view.backlinks(name).unwrap());
+        assert_eq!(
+            ref_query(&store, "2026-11-02"),
+            ["day [[2026-11-02]]", "the day"],
+            "{day_rel}"
+        );
+        assert_eq!(ref_query(&store, "11-02"), ["label [[11-02]]"], "{day_rel}");
+        assert_eq!(panel("2026-11-02"), ["day [[2026-11-02]]"], "{day_rel}");
+        assert_eq!(panel("11-02"), ["label [[11-02]]"], "{day_rel}");
+        assert_eq!(
+            ref_query(&store, "11-03"),
+            ["other label [[11-03]]"],
+            "{day_rel}: an alias-date label"
+        );
+        assert!(
+            !ref_query(&store, "2026-11-03").contains(&"other label [[11-03]]".to_owned()),
+            "{day_rel}: the alias day holds no label link"
+        );
+        assert_eq!(panel("11-03"), ["other label [[11-03]]"], "{day_rel}");
+    }
+}
+
+/// REG-CM-YEARLESS-DAY-KEY (review item 3): the page inventory partitions a
+/// name's claimant bucket by identity once per question, so a graph of D
+/// years of `11-02` under `MM-dd` costs O(D) claimant visits, not the D² of
+/// reading every file that shares the label for each row.
+#[test]
+fn year_less_inventory_claimant_work_is_linear_in_the_days() {
+    let _guard = crate::integration_lock();
+    let visits = |years: i32| {
+        let mut files: Vec<(String, String)> = vec![
+            (
+                "logseq/config.edn".into(),
+                "{:journal/page-title-format \"MM-dd\"}\n".into(),
+            ),
+            ("pages/11-02.md".into(), "- a label page\n".into()),
+        ];
+        for year in 1990..1990 + years {
+            let ext = if year % 2 == 0 { "md" } else { "org" };
+            files.push((format!("journals/{year}_11_02.{ext}"), "- a day\n".into()));
+        }
+        let borrowed: Vec<(&str, &str)> = (files.iter())
+            .map(|(rel, text)| (rel.as_str(), text.as_str()))
+            .collect();
+        let (_dir, store) = graph(&borrowed);
+        let view = store.whole_graph().unwrap();
+        let before = tine_store::cost_counters::claimant_visits();
+        let rows = view.inventory(InventoryScope::All).0.len();
+        assert_eq!(rows, years as usize + 1);
+        tine_store::cost_counters::claimant_visits() - before
+    };
+    let (small, large) = (visits(8), visits(32));
+    assert!(large <= 2 * 32 + 2, "claimant visits for 32 days: {large}");
+    assert!(
+        large <= 4 * small + 4,
+        "claimant work grows linearly: 8 days {small}, 32 days {large}"
+    );
+}

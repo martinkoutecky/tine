@@ -303,12 +303,7 @@
     "randomGraphs": 0
   },
   "frontend": {
-    "fixtures": {
-      "d7-year-less-title-label": [
-        "frontend navigate [[2026-11-02]]: model (\"journal\", \"Day 2026-11-02\"), frontend (\"page\", \"11-02\") via (journal, 11-02); backend (\"journal\", \"Day 2026-11-02\")",
-        "frontend owner ownerPath journal [[11-02]]: backend opens pages/11-02.md, ownerPath gives journals/2026_11_02.md"
-      ]
-    }
+    "fixtures": {}
   },
   "frontendCounts": {
     "fixtures": {

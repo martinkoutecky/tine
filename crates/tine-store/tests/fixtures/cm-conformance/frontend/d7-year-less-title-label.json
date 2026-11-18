@@ -65,7 +65,11 @@
     {
       "day": 20261102,
       "is_journal": true,
-      "key": "11-02",
+      "key": "2026_11_02",
+      "link": {
+        "kind": "journal",
+        "name": "2026_11_02"
+      },
       "name": "11-02",
       "target": {
         "id": "journals/2026_11_02.md",
@@ -89,6 +93,7 @@
   "journalTitleFormat": "MM-dd",
   "keyOf": {
     "11-02": "11-02",
+    "2026_11_02": "Day 2026-11-02",
     "Notes": "notes"
   },
   "namespaceTree": [],
@@ -104,6 +109,16 @@
       ]
     },
     "2026-11-02": {
+      "journal": [
+        "journal",
+        "Day 2026-11-02"
+      ],
+      "page": [
+        "journal",
+        "Day 2026-11-02"
+      ]
+    },
+    "2026_11_02": {
       "journal": [
         "journal",
         "Day 2026-11-02"
@@ -130,6 +145,10 @@
       "page": "pages/11-02.md"
     },
     "2026-11-02": {
+      "journal": "journals/2026_11_02.md",
+      "page": "journals/2026_11_02.md"
+    },
+    "2026_11_02": {
       "journal": "journals/2026_11_02.md",
       "page": "journals/2026_11_02.md"
     },

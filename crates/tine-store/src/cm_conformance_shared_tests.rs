@@ -1138,7 +1138,7 @@ pub fn frontend_case(
         .iter()
         .map(|e| {
             let mut wire = json!({
-                "key": page_key(&e.name),
+                "key": e.key(),
                 "name": e.name,
                 "is_journal": e.is_journal,
                 "day": e.day.map(|d| d.0),
@@ -1253,7 +1253,8 @@ pub fn frontend_case(
     let key_of: BTreeMap<String, String> = inventory
         .0
         .iter()
-        .map(|e| (e.name.clone(), k::key(journal, &e.name)))
+        .flat_map(|e| std::iter::once(&e.name).chain(&e.handle))
+        .map(|name| (name.clone(), k::key(journal, name)))
         .collect();
     json!({
         "treeParent": tree_parent,

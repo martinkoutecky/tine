@@ -15,10 +15,14 @@
         }
       },
       {
-        "day": 20261102,
-        "is_journal": true,
-        "key": "11-02",
-        "name": "11-02",
+        "day": null,
+        "is_journal": false,
+        "key": "2026-11-02",
+        "link": {
+          "kind": "journal",
+          "name": "2026_11_02"
+        },
+        "name": "2026-11-02",
         "target": {
           "id": "journals/2026_11_02.md",
           "kind": "existing",
@@ -26,14 +30,14 @@
         }
       },
       {
-        "day": null,
-        "is_journal": false,
-        "key": "2026-11-02",
+        "day": 20261102,
+        "is_journal": true,
+        "key": "2026_11_02",
         "link": {
           "kind": "journal",
-          "name": "2026-11-02"
+          "name": "2026_11_02"
         },
-        "name": "2026-11-02",
+        "name": "11-02",
         "target": {
           "id": "journals/2026_11_02.md",
           "kind": "existing",
@@ -62,7 +66,27 @@
     "resolve": [
       {
         "kind": "journal",
+        "name": "11-02",
+        "target": {
+          "id": "pages/11-02.md",
+          "kind": "existing",
+          "others": [
+            "journals/2026_11_02.md"
+          ]
+        }
+      },
+      {
+        "kind": "journal",
         "name": "2026-11-02",
+        "target": {
+          "id": "journals/2026_11_02.md",
+          "kind": "existing",
+          "others": []
+        }
+      },
+      {
+        "kind": "page",
+        "name": "2026_11_02",
         "target": {
           "id": "journals/2026_11_02.md",
           "kind": "existing",

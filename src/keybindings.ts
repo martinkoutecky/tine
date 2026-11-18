@@ -50,7 +50,7 @@ import {
   activatePrevTab,
   route,
 } from "./router";
-import { journalTitle, parseJournalTitle, appNow } from "./journal";
+import { journalHandle, parseJournalTitle, appNow } from "./journal";
 import { undo, redo, hasSelection, moveSelection, cycleSelectionTasks, expandBlockSelection, moveSelectionItems, indentSelection, outdentSelection, deleteSelection, selectionMarkdown, selectionScope, clearSelection, selectedIds, singleSelectedId, topSelected, blockIsGridView, pageVisibleOrder, selectBlock, visibleOrder, toggleUndoRedoMode, buildClipboardPayload, node as docNode, loadedPage } from "./document";
 import { editingId, startEditing } from "./editorController";
 import { copyBlockOutline } from "./clipboard";
@@ -109,9 +109,12 @@ import { bindPluginBlockSnapshot, capturePluginGraphOwner, isPluginGraphOwnerCur
 export function goAdjacentJournal(dir: 1 | -1): void {
   const current = route();
   const anchor = current.kind === "page" && current.pageKind === "journal"
-    ? parseJournalTitle(current.name) ?? appNow()
+    ? parseJournalTitle(current.name) ?? (current.path ? parseJournalTitle(current.path.replace(/^.*\//, "").replace(/\.[^.]*$/, "")) : null) ?? appNow()
     : appNow();
-  openPage(journalTitle(new Date(anchor.getFullYear(), anchor.getMonth(), anchor.getDate() + dir)), "journal");
+  // A day's route under a year-less title format is its label pinned to the
+  // day's file, so the day is read from the file's stem; the next day is
+  // opened by the spelling that identifies it (CM SPEC §2.1).
+  openPage(journalHandle(new Date(anchor.getFullYear(), anchor.getMonth(), anchor.getDate() + dir)), "journal");
 }
 function pluginFocusedBlock(): OwnedPluginBlockSnapshot | undefined {
   const owner = capturePluginGraphOwner();

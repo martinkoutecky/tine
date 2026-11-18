@@ -22,7 +22,7 @@ import { authorizeExternalPdf, type ExternalPdfRead } from "./externalPdfSource"
 import { registerPaneFocusSetter } from "./ui";
 import { setCellSel } from "./sheet/selection";
 import { clearSelection, pageByName, registerPaneRouteProvider, installHistoryRouteContextAdapter, node as docNode, feedNames } from "./document";
-import { journalTitle, appNow } from "./journal";
+import { journalTitle, appNow, parseJournalTitle } from "./journal";
 import { isSinglePaneShell, pdfTakesOverPane } from "./viewportClass";
 import {
   nearestPane,
@@ -308,7 +308,11 @@ function routeForJournalsDuplicate(anchor: string | null): Route {
   const name =
     (selectedDay && feedNames().includes(selectedDay) ? selectedDay : undefined) ??
     (feedNames().includes(today) ? today : feedNames()[0] ?? today);
-  return { kind: "page", name, pageKind: pageByName(name)?.kind ?? "journal" };
+  const page = pageByName(name);
+  // A year-less day label (`MM-dd`'s `11-02`) by name opens the ordinary page
+  // of that label (CM SPEC §2.1): the duplicate keeps the day's exact file.
+  const path = page?.id && page.kind === "journal" && !parseJournalTitle(name) ? page.id : undefined;
+  return { kind: "page", name, pageKind: page?.kind ?? "journal", ...(path ? { path } : {}) };
 }
 
 function splitSnapshotForNewPane(source: PaneRouter): PaneSnapshot {

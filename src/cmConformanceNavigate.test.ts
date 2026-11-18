@@ -130,7 +130,13 @@ async function runCase(c: Case): Promise<string[]> {
     if (!want || index.resolvedTarget(name, "page")?.kind === "absent") continue;
     const named = index.navigationName(name);
     const wantName = index.pageNameForPath(want);
-    if (named !== wantName) {
+    // A year-less day is routed by its handle (`2026_11_02`): the name differs
+    // from its display label (`11-02`, which names the label page) but opens
+    // the same file (CM SPEC §2.1). What must agree is the file it opens.
+    const namedTarget = index.resolvedTarget(named, "journal");
+    const opensWant = named !== wantName && !!namedTarget && namedTarget.kind !== "absent"
+      && index.ownerPath(namedTarget) === want && index.pageNameForPath(want) === wantName;
+    if (named !== wantName && !opensWant) {
       diffs.push(`frontend owner navigationName [[${name}]]: backend opens ${want} (${wantName}), frontend names ${named}`);
     }
     const format = model.formatForPage(name);

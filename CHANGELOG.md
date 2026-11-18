@@ -9,7 +9,7 @@ The format follows [Keep a Changelog](https://keepachangelog.com/); versions use
 ## [Unreleased]
 
 ### Fixed
-- With a year-less journal title format such as `MM-dd`, a page named `11-02` and the journal days titled `11-02` are no longer shown as one conflicted name, and each day is its own: `[[2026-11-02]]` queries find the day's blocks, its Linked References and link graph include links written as `[[2026-11-02]]`, and `[[11-02]]` means only the page named `11-02` (REG-CM-YEARLESS-DAY-KEY).
+- With a year-less journal title format such as `MM-dd`, a page named `11-02` and the journal days titled `11-02` are no longer shown as one conflicted name, and each day is its own: `[[2026-11-02]]` queries find the day's blocks, its Linked References and link graph include links written as `[[2026-11-02]]`, and `[[11-02]]` means only the page named `11-02`. Clicking `[[2026-11-02]]` and picking the day in **Go to date** now open that year's day instead of the page `11-02`, a day's aliases join only that day, and day lists no longer slow down quadratically with the number of years (REG-CM-YEARLESS-DAY-KEY, UI-CM-YEARLESS-DAY-OPENS-LABEL-PAGE).
 - On Windows, a graph on a file system without file IDs (a WSL share such as `\\wsl.localhost`, a FAT32 or exFAT drive, a Samba share) can be saved again; since 0.9.0 every save failed with "The request is not supported (os error 50)" (reported by redstreet in #973; REG-973-WINDOWS-NO-FILE-ID).
 
 - A code block whose text wraps because of a theme or custom.css (not Tine's wrap setting) keeps its line numbers level with their lines: the numbers after a wrapped line sat one row too high and the last line had none (reported by BeyondTheJob in #970; UI-GH970-CODE-GUTTER-WRAP).

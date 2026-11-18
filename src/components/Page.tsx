@@ -545,7 +545,8 @@ export function PageView(): JSX.Element {
           // everything else resolves by name as before.
           // This is a snapshot for the route request, not an effect dependency:
           // loadRoutedPage publishes loadedPage below and must not restart us.
-          const loadedPath = r.path ? undefined : untrack(() => loadedPage(r.name)?.id);
+          const loadedPath = r.path ? undefined : untrack(() => { // other kind, no day: a year-less day's label (CM §2.1)
+            const slot = loadedPage(r.name); return slot && (slot.kind === r.pageKind || parseJournalTitle(r.name)) ? slot.id : undefined; });
           let readSource: PageReadSource | null = null;
           const result = await admitRead(routeOwner, () => r.path
             ? backend().getPageByPath(r.path, source => { readSource = source; }).catch((error: unknown) => { pathRefusal = "unreadable"; throw error; })
@@ -588,6 +589,11 @@ export function PageView(): JSX.Element {
             if (dto && !r.path && r.pageKind === "page" && dto.name !== r.name) {
               adoptResolvedPageName(r.name, dto.name);
               router.replaceActiveRoute({ ...r, name: dto.name });
+              return;
+            }
+            // A day asked by its handle reads back by a year-less label (`11-02`) naming the ordinary page (CM SPEC §2.1): pin the label to the day's file.
+            if (dto?.id && !r.path && r.pageKind === "journal" && dto.kind === "journal" && dto.name !== r.name && !parseJournalTitle(dto.name)) {
+              router.replaceActiveRoute({ ...r, name: dto.name, path: dto.id });
               return;
             }
             // null = page doesn't exist yet → start a fresh empty page. A failed

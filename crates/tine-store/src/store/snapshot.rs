@@ -80,6 +80,10 @@ impl WholeGraph {
         let mut entries: Vec<_> = [PageKind::Page, PageKind::Journal]
             .into_iter()
             .flat_map(|kind| name_claimants(&self.claimants, name, kind).iter().cloned())
+            .inspect(|_| {
+                #[cfg(feature = "test-faults")]
+                crate::cost_counters::claimant_visit();
+            })
             .collect();
         let journals_dir = &self.config.config.journals_dir;
         entries.sort_by(|a, b| crate::model::compare_page_claimants(journals_dir, a, b));
