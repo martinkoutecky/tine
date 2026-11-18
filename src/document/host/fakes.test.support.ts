@@ -6,7 +6,7 @@ import type { Format, PageDto, PageKind } from "../../types";
 import { HostClient, type AssetWrites, type BaselineRev, type Content, type DocumentPort, type PageFacts } from "./client";
 import type { EditKinds } from "../../editKind";
 import type { DiskToken, HostPort, MailAnswer, MailNotice, MailPage, MailText, OwedPage, PageMail,
-  PageRefusal, PublishedNeed } from "./protocol";
+  PageRefusal, PublishedNeed, PublishedRevision } from "./protocol";
 
 export function page(name: string, text = "", rev?: string | null): PageDto {
   return { name, kind: "page", title: name, pre_block: null, format: "md", rev,
@@ -41,8 +41,10 @@ export class FakeHost implements HostPort {
   baselineEntry = true;
   refuse: PageRefusal | null = null;
   owedPages: OwedPage[] = [];
-  /** Runs inside `waitPublished` before it resolves (to model work arriving meanwhile). */
-  onWait: ((needs: PublishedNeed[]) => boolean | null | void | Promise<boolean | null | void>) | null = null;
+  /** Runs inside `waitPublished` before it resolves (to model work arriving meanwhile).
+   * A revision list is a true answer carrying the host's own-publication witnesses. */
+  onWait: ((needs: PublishedNeed[]) => PublishedRevision[] | boolean | null | void
+    | Promise<PublishedRevision[] | boolean | null | void>) | null = null;
   /** Runs inside the second and later `owed` reads. */
   onOwed: (() => void) | null = null;
   /** Answers admitted commands with these mails (see `autoAnswer`). */
@@ -122,7 +124,7 @@ export class FakeHost implements HostPort {
     // A publication proven here is no longer debt, as `page_owed` says.
     if (result !== false) this.owedPages = this.owedPages.filter((owed) =>
       !needs.some((need) => need.key === owed.key && need.version >= owed.version));
-    return result === false ? false : [];
+    return result === false ? false : Array.isArray(result) ? result : [];
   }
 
   async owed(session: number, paths: readonly string[] | null) {
