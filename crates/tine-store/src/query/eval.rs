@@ -247,6 +247,19 @@ impl EvalCache {
         atoms
     }
 
+    /// A page row's own key: `refs::normalize(name)`, or for a day its name
+    /// does not identify the day's key ([`crate::query::day_key`]).
+    pub(crate) fn page_key(&self, name: &str, day: Option<i64>, config: &ParseConfig) -> String {
+        crate::query::day_key(self.journal_format(config), name, day)
+            .unwrap_or_else(|| refs::normalize(name))
+    }
+
+    /// The graph's journal format, compiled once per execution.
+    pub(crate) fn journal_format(&self, config: &ParseConfig) -> &tine_core::date::JournalFormat {
+        self.reference_format
+            .get_or_init(|| config.journal_format())
+    }
+
     /// The journal day reference `name` denotes, read as [`reference_day`]
     /// reads it, each distinct digit-bearing name parsed once per execution
     /// (at most [`Self::MAX_ENTRIES`] retained; the rest are re-parsed).
@@ -257,10 +270,7 @@ impl EvalCache {
         if let Some(day) = self.reference_days.borrow().get(name) {
             return *day;
         }
-        let format = self
-            .reference_format
-            .get_or_init(|| config.journal_format());
-        let day = reference_day(name, format);
+        let day = reference_day(name, self.journal_format(config));
         let mut days = self.reference_days.borrow_mut();
         if days.len() < Self::MAX_ENTRIES {
             days.insert(name.to_owned(), day);
@@ -293,7 +303,9 @@ pub(crate) struct EvalCtx<'a> {
     pub(crate) journal: Option<i64>,
     pub(crate) is_journal: bool,
     pub(crate) page_name: &'a str,
-    /// `refs::normalize(page_name)`, hoisted out of every `refs` leaf.
+    /// `refs::normalize(page_name)`, hoisted out of every `refs` leaf; for a
+    /// day whose name does not identify it, the day's key
+    /// ([`crate::query::day_key`]).
     pub(crate) page_key: String,
     pub(crate) page_props: &'a [(String, String)],
     /// Every ordinary block physically owned by this page; the preamble is
@@ -349,7 +361,7 @@ impl<'a> EvalCtx<'a> {
             journal,
             is_journal: kind == PageKind::Journal,
             page_name: name,
-            page_key: refs::normalize(name),
+            page_key: cache.page_key(name, journal, config),
             page_props,
             page_roots,
             today,

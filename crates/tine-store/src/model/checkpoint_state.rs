@@ -283,6 +283,7 @@ impl Graph {
             None,
             &physical_pages,
             &[],
+            Arc::new(config.journal_format()),
         ));
         let (pages, _) = active_pages::capture(
             &physical_pages,
@@ -312,19 +313,23 @@ impl Graph {
         let alias_relation = derived
             .aliases
             .and_then(|state| match state {
-                AliasListState::In(list) => crate::query::AliasRelation::from_list(
-                    &list,
-                    |rel| {
-                        let slot = *pages.positions.get(rel)?;
-                        pages.get(slot).map(|(entry, doc)| {
-                            (
-                                entry.path.clone(),
-                                crate::query::document_alias_spellings(doc),
-                            )
-                        })
-                    },
-                    &config.journal_format(),
-                ),
+                AliasListState::In(list) => {
+                    let format = config.journal_format();
+                    crate::query::AliasRelation::from_list(
+                        &list,
+                        |rel| {
+                            let slot = *pages.positions.get(rel)?;
+                            pages.get(slot).map(|(entry, doc)| {
+                                (
+                                    entry.path.clone(),
+                                    crate::query::owner_handle(entry, &format),
+                                    crate::query::document_alias_spellings(doc),
+                                )
+                            })
+                        },
+                        &format,
+                    )
+                }
                 AliasListState::Out(_) => None,
             })
             .map(Arc::new);

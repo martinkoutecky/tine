@@ -188,8 +188,16 @@ pub fn resolved_page(
     }
 }
 
-/// A spelling of model page `p` that Tine's name-keyed APIs accept.
+/// A spelling of model page `p` that Tine's name-keyed APIs accept. A day
+/// is asked by a spelling that identifies it: under a year-less title format
+/// (`MM-dd`) its displayed name is a label other days and an ordinary page
+/// share, and "typing the ambiguous, non-identifying label cannot select
+/// one" (SPEC §2.1). With a year in the title that spelling is the title.
 pub fn spelling(ctx: &Ctx, p: &Page) -> String {
+    let day = (p.0 == "journal")
+        .then(|| p.1.strip_prefix("Day "))
+        .flatten()
+        .and_then(|day| JournalFormat::new(None, None).parse(day));
     if let Some(path) = ctx.owner_of_page.get(p) {
         if let Some(e) = ctx
             .view
@@ -197,15 +205,16 @@ pub fn spelling(ctx: &Ctx, p: &Page) -> String {
             .0
             .first()
         {
-            return e.name.clone();
+            return match day {
+                Some(d) if ctx.journal.parse(&e.name) != Some(d) => {
+                    ctx.journal.identifying_spelling(d)
+                }
+                _ => e.name.clone(),
+            };
         }
     }
-    if p.0 == "journal" {
-        if let Some(day) = p.1.strip_prefix("Day ") {
-            if let Some(d) = JournalFormat::new(None, None).parse(day) {
-                return ctx.journal.title(d);
-            }
-        }
+    if let Some(d) = day {
+        return ctx.journal.identifying_spelling(d);
     }
     p.1.clone()
 }

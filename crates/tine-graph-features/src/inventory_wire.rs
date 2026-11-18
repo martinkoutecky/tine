@@ -39,7 +39,10 @@ impl From<&Resolved> for ResolvedWire {
 
 #[derive(Clone, Debug, Serialize)]
 pub struct PageInventoryEntryWire {
-    /// `refs::page_key(name)`: the frontend looks names up by this key only.
+    /// `InventoryEntry::key`: `refs::page_key` of the name, or of the
+    /// identifying spelling of a day its name does not identify (`MM-dd`'s
+    /// `11-02` is keyed `2026_11_02`). The frontend looks names up by this
+    /// key only.
     pub key: String,
     pub name: String,
     pub is_journal: bool,
@@ -83,7 +86,7 @@ pub struct LinkWire {
 /// One inventory row in its wire shape.
 pub fn entry_wire(entry: &InventoryEntry) -> PageInventoryEntryWire {
     PageInventoryEntryWire {
-        key: tine_core::refs::page_key(&entry.name),
+        key: entry.key(),
         name: entry.name.clone(),
         is_journal: entry.is_journal,
         day: entry.day.map(|day| day.0),

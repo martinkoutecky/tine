@@ -38,6 +38,20 @@ pub struct InventoryEntry {
     /// Retired live answer, always false (R13-C4). Frozen published v1 rows
     /// can still carry their historical answer.
     pub empty_alias: bool,
+    /// The spelling that identifies a day's file when its name does not: a
+    /// title format without a year names every year's file by the shared
+    /// label `11-02` (CM SPEC §2.1), and the file is keyed and opened by
+    /// `JournalFormat::identifying_spelling` (`2026_11_02`). `None` for every
+    /// other entry, so a title format with a year carries nothing new.
+    pub handle: Option<String>,
+}
+
+impl InventoryEntry {
+    /// The page key this entry is looked up by: of its [`Self::handle`] when
+    /// it has one, else of its name. The wire's `key`. O(name).
+    pub fn key(&self) -> String {
+        tine_core::refs::page_key(self.handle.as_deref().unwrap_or(&self.name))
+    }
 }
 
 /// The page a link opens: its name and kind, as the router takes them.
@@ -65,6 +79,7 @@ fn fileless_entry(
         namespace_parent: answer.namespace_parent,
         parent: None,
         empty_alias: false,
+        handle: None,
     }
 }
 
@@ -87,10 +102,18 @@ fn alias_owner_link(
 fn owner_link(graph: &ReadSnapshot, path: &str) -> Option<LinkTarget> {
     let slot = *graph.pages.positions.get(path)?;
     let (entry, _) = graph.pages.get(slot)?;
-    Some(LinkTarget {
-        name: entry.name.clone(),
+    Some(opening(&graph.real_page_owners(), entry))
+}
+
+/// A link to the page file `entry`: by its handle
+/// ([`crate::query::RealPageOwners::handle`]), so a day whose year-less label
+/// names other years and an ordinary page too opens by a spelling that
+/// names it. O(name + parse list) for a day, O(name) otherwise.
+fn opening(owners: &crate::query::RealPageOwners, entry: &PageEntry) -> LinkTarget {
+    LinkTarget {
+        name: owners.handle(&entry.name, entry.date_key).into_owned(),
         is_journal: entry.kind == PageKind::Journal,
-    })
+    }
 }
 
 /// What `[[name]]` opens: the one answer (CM step 2, census Q8), used for the
@@ -128,20 +151,17 @@ pub(crate) fn link_target_in(
     };
     let owners = graph.real_page_owners();
     if let Some(entry) = owners.opening_entry(&key) {
-        return LinkTarget {
-            name: entry.name.clone(),
-            is_journal: entry.kind == PageKind::Journal,
-        };
+        return opening(&owners, entry);
     }
     // A date in any spelling is its day, held by journal-kind files in any
-    // directory; no ordinary file claims a date (CM SPEC §2.1).
-    if fallback.day.is_some() {
-        if let Some(journals) = claimed(true, tine_core::refs::page_key(&fallback.name)) {
-            if let Some(entry) = owners.opening_entry(&tine_core::refs::page_key(&fallback.name)) {
-                if entry.kind == PageKind::Journal {
-                    return opens(journals, true);
-                }
-            }
+    // directory; no ordinary file claims a date (CM SPEC §2.1). The day is
+    // found by its identity, never by a year-less label it shares.
+    if let Some(day) = fallback.day {
+        if let Some(entry) = owners
+            .day_entry(day)
+            .filter(|entry| entry.kind == PageKind::Journal)
+        {
+            return opening(&owners, entry);
         }
         if let Some(owner) = owner() {
             return owner;
@@ -153,7 +173,7 @@ pub(crate) fn link_target_in(
             {
                 name.to_owned()
             } else {
-                fallback.name
+                format.claim_spelling(day, &fallback.name).into_owned()
             },
             is_journal: true,
         };
@@ -182,10 +202,7 @@ fn with_link(
         let owners = graph.real_page_owners();
         let target = owners
             .opening_entry(&key)
-            .map(|parent| LinkTarget {
-                name: parent.name.clone(),
-                is_journal: parent.kind == PageKind::Journal,
-            })
+            .map(|parent| opening(&owners, parent))
             .unwrap_or_else(|| {
                 let fallback = crate::model::fileless_names::FilelessName::new(format, prefix);
                 LinkTarget {
@@ -204,11 +221,13 @@ fn with_link(
         Resolved::Alias { owners } => owners.first().and_then(|id| owner_link(graph, id.as_str())),
         _ => None,
     };
+    // A day is looked up by the name that identifies it (`page_handle`).
+    let handle = crate::query::page_handle(format, &entry.name, entry.day.map(|day| day.0));
     let link = entry
         .link
         .take()
         .or(alias)
-        .unwrap_or_else(|| link_target_in(claimants, graph, format, &entry.name, declared));
+        .unwrap_or_else(|| link_target_in(claimants, graph, format, &handle, declared));
     if link.is_journal != entry.is_journal || link.name != entry.name {
         entry.link = Some(link);
     }
@@ -411,36 +430,47 @@ impl WholeGraph {
                                 namespace_parent: false,
                                 parent: None,
                                 empty_alias: false,
+                                handle: None,
                             })
                         })
                         .collect(),
                 ))
             }
-            InventoryScope::JournalFilesBefore { before, limit } => Arc::new(Inventory(
-                self.list
-                    .journal_days_before(before.0)
-                    .filter_map(|page| {
-                        self.claimed_entries(page, tine_core::refs::page_key(&page.name))
-                            .into_iter()
-                            .next()
-                            // A lossy title can make several source days open
-                            // one winner day. Emit it at its own indexed day.
-                            .filter(|entry| entry.day == page.date_key.map(Day))
-                    })
-                    .filter(|entry| entry.is_journal)
-                    .take(limit)
-                    .collect(),
-            )),
+            InventoryScope::JournalFilesBefore { before, limit } => {
+                let mut buckets = Buckets::default();
+                Arc::new(Inventory(
+                    self.list
+                        .journal_days_before(before.0)
+                        .filter_map(|page| {
+                            self.claimed_entries(page, &mut buckets)
+                                .into_iter()
+                                .next()
+                                // A lossy title can make several source days open
+                                // one winner day. Emit it at its own indexed day.
+                                .filter(|entry| entry.day == page.date_key.map(Day))
+                        })
+                        .filter(|entry| entry.is_journal)
+                        .take(limit)
+                        .collect(),
+                ))
+            }
             InventoryScope::JournalFile(id) => {
                 let stem = std::path::Path::new(id.as_str())
                     .file_stem()
                     .and_then(|stem| stem.to_str());
+                // The file's own identity's claimants: under `MM-dd` its name
+                // is a label shared with other years and an ordinary page.
+                let mut buckets = Buckets::default();
                 let entry = stem.and_then(|stem| {
                     let (name, _) = crate::model::journal_stem_name(&self.journal_format, stem);
-                    let claimants = self.all_name_claimants(&name);
+                    let file = self
+                        .all_name_claimants(&name)
+                        .into_iter()
+                        .find(|claimant| claimant.rel_path.as_ref() == Some(id))?;
+                    let claimants = self.identity_claimants(&file, &mut buckets);
                     let winner = claimants.first()?;
                     (winner.kind == PageKind::Journal && winner.rel_path.as_ref() == Some(id))
-                        .then(|| self.claimed_entries(winner, tine_core::refs::page_key(&name)))?
+                        .then(|| self.claimed_entries(winner, &mut buckets))?
                         .into_iter()
                         .next()
                 });
@@ -461,6 +491,7 @@ impl WholeGraph {
                         namespace_parent: false,
                         parent: None,
                         empty_alias: false,
+                        handle: None,
                     })
                     .into_iter()
                     .collect(),
@@ -483,6 +514,7 @@ impl WholeGraph {
                             namespace_parent: false,
                             parent: None,
                             empty_alias: false,
+                            handle: None,
                         })
                     })
                     .collect(),
@@ -513,6 +545,7 @@ impl WholeGraph {
                                     namespace_parent: false,
                                     parent: None,
                                     empty_alias: false,
+                                    handle: None,
                                 },
                                 None,
                             )
@@ -525,9 +558,13 @@ impl WholeGraph {
                     .referenced_journal_days()
                     .into_iter()
                     .map(|day| {
-                        let name = self.journal_format.title(JournalDate::from_ordinal(day.0));
+                        let date = JournalDate::from_ordinal(day.0);
+                        let name = self.journal_format.title(date);
                         InventoryEntry {
-                            target: self.resolve(&name, true),
+                            // Resolved by the spelling that names the day: a
+                            // year-less title is a label other days share.
+                            target: self
+                                .resolve(&self.journal_format.claim_spelling(date, &name), true),
                             name,
                             is_journal: true,
                             day: Some(day),
@@ -535,6 +572,7 @@ impl WholeGraph {
                             namespace_parent: false,
                             parent: None,
                             empty_alias: false,
+                            handle: None,
                         }
                     })
                     .collect();
@@ -563,14 +601,11 @@ impl WholeGraph {
             )),
             #[cfg(any(test, feature = "test-faults"))]
             InventoryScope::JournalFiles => {
+                let mut buckets = Buckets::default();
                 let mut entries: Vec<_> = self
                     .list
                     .journal_days()
-                    .filter_map(|page| {
-                        self.claimed_entries(page, tine_core::refs::page_key(&page.name))
-                            .into_iter()
-                            .next()
-                    })
+                    .filter_map(|page| self.claimed_entries(page, &mut buckets).into_iter().next())
                     .collect();
                 sort_inventory(&mut entries);
                 Arc::new(Inventory(entries))
@@ -606,12 +641,14 @@ impl WholeGraph {
         // Declared alias keys supplied to the shared link answerer.
         let declared: HashSet<&str> = aliases.iter().map(|(key, _, _)| key.as_str()).collect();
         let mut claimed = Vec::new();
+        let owners = self.graph.real_page_owners();
+        let mut buckets = Buckets::default();
         for page in self.list.iter() {
-            let key = tine_core::refs::page_key(&page.name);
+            let key = owners.claim_key(page);
             if !visited.insert(key.clone()) {
                 continue;
             }
-            for entry in self.claimed_entries(page, key) {
+            for entry in self.claimed_entries(page, &mut buckets) {
                 let key = tine_core::refs::page_key(&entry.name);
                 if !entry.is_journal {
                     page_claimed_names.insert(key.clone());
@@ -678,6 +715,7 @@ impl WholeGraph {
                 namespace_parent: false,
                 parent: None,
                 empty_alias: false,
+                handle: None,
             });
         }
         entries.extend(self.graph.reference_only_pages().into_iter().map(|answer| {
@@ -714,16 +752,18 @@ impl WholeGraph {
         let prefix = format!("{key}/");
         let mut entries = Vec::new();
         let mut visited = HashSet::new();
+        let owners = self.graph.real_page_owners();
+        let mut buckets = Buckets::default();
         for page in self.list.iter() {
             let page_key = tine_core::refs::page_key(&page.name);
             if (page_key != key
                 && !(page_key.starts_with(&prefix)
                     && tine_core::refs::is_namespace_name(&page.name)))
-                || !visited.insert(page_key.clone())
+                || !visited.insert(owners.claim_key(page))
             {
                 continue;
             }
-            entries.extend(self.claimed_entries(page, page_key));
+            entries.extend(self.claimed_entries(page, &mut buckets));
         }
         sort_inventory(&mut entries);
         entries
@@ -738,7 +778,7 @@ impl WholeGraph {
                 .opening_entry(&key)
                 .filter(|page| (page.kind == PageKind::Journal) == journal);
             match claimant {
-                Some(page) => entries.extend(self.claimed_entries(page, key)),
+                Some(page) => entries.extend(self.claimed_entries(page, &mut Buckets::default())),
                 None => entries.push(self.named_entry(&spelling)),
             }
         }
@@ -788,11 +828,42 @@ impl WholeGraph {
             .collect()
     }
 
-    /// One entry per spelling of `page`'s claimant bucket (`key` is its page
-    /// key), each with the target `resolve` gives: the bucket's first
-    /// claimant, then every other claimant.
-    fn claimed_entries(&self, page: &PageEntry, _key: String) -> Vec<InventoryEntry> {
-        let claimants = self.all_name_claimants(&page.name);
+    /// The claimants of `page`'s full identity (CM SPEC §2.2), in claimant
+    /// order: its name's bucket in the physical claimant table (every file of
+    /// that name, also an unreadable one), kept to the files at `page`'s
+    /// identity ([`crate::query::RealPageOwners::claim_key`]), so a day's files
+    /// meet only that day's, never the `MM-dd` label's ordinary page or other
+    /// years. `buckets` keeps the name buckets one inventory question already
+    /// partitioned: D files sharing a label read their bucket once, O(D) for
+    /// the name instead of O(D) per file (D²). A map local to the question,
+    /// no index.
+    fn identity_claimants(&self, page: &PageEntry, buckets: &mut Buckets) -> Vec<PageEntry> {
+        let owners = self.graph.real_page_owners();
+        let groups = buckets
+            .entry(tine_core::refs::page_key(&page.name))
+            .or_insert_with(|| {
+                let mut groups: HashMap<String, Vec<PageEntry>> = HashMap::new();
+                for claimant in self.all_name_claimants(&page.name) {
+                    groups
+                        .entry(owners.claim_key(&claimant))
+                        .or_default()
+                        .push(claimant);
+                }
+                groups
+            });
+        groups
+            .get(&owners.claim_key(page))
+            .cloned()
+            .unwrap_or_default()
+    }
+
+    /// One entry per spelling of `page`'s identity claimants
+    /// ([`Self::identity_claimants`]), each with the target `resolve` gives:
+    /// the first claimant, then every other claimant. O(C) for the
+    /// identity's C claimants once its name's bucket is partitioned.
+    fn claimed_entries(&self, page: &PageEntry, buckets: &mut Buckets) -> Vec<InventoryEntry> {
+        let owners = self.graph.real_page_owners();
+        let claimants = self.identity_claimants(page, buckets);
         let winner = claimants.first().unwrap_or(page);
         let is_journal = winner.kind == PageKind::Journal;
         let mut names: Vec<String> = Vec::new();
@@ -810,6 +881,9 @@ impl WholeGraph {
         names
             .into_iter()
             .map(|name| InventoryEntry {
+                handle: owners
+                    .day_key(&name, winner.date_key)
+                    .map(|_| owners.handle(&name, winner.date_key).into_owned()),
                 name,
                 target: Resolved::Existing {
                     id: ids[0].clone(),
@@ -890,6 +964,7 @@ impl Snapshot {
                 namespace_parent: false,
                 parent: None,
                 empty_alias: false,
+                handle: None,
             }));
         }
         let fallback = crate::model::fileless_names::FilelessName::new(
@@ -956,9 +1031,12 @@ pub(crate) fn proposed_page_id(config: &tine_core::config::Config, name: &str) -
     PageId::from(format!("{dir}/{stem}.{}", config.preferred_format.ext()))
 }
 
+/// One inventory question's claimant buckets: page key of a name, then its
+/// claimants grouped by full identity ([`WholeGraph::identity_claimants`]).
+type Buckets = HashMap<String, HashMap<String, Vec<PageEntry>>>;
+
 fn sort_inventory(entries: &mut [InventoryEntry]) {
     #[cfg(feature = "test-faults")]
     crate::cost_counters::inventory_sort();
-    entries
-        .sort_by_cached_key(|entry| (tine_core::refs::page_key(&entry.name), entry.name.clone()));
+    entries.sort_by_cached_key(|entry| (entry.key(), entry.name.clone()));
 }

@@ -27,7 +27,7 @@
 //!   whose journal has content (`WholeGraph::journal_content_days`).
 use crate::inventory_wire::{alias_group_wire, entry_wire, PageInventoryEntryWire, ResolvedWire};
 use serde_json::{json, Value};
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 use std::io;
 use tine_core::model::GraphMeta;
 use tine_core::refs::page_key;
@@ -76,6 +76,14 @@ pub(crate) fn answers(
     // including their ordinary target and the shared answer for their link.
     // This compatibility shape retires with answers v2, not in live All.
     let spellings = graph.inventory(InventoryScope::PublishedV1Spellings(inventory));
+    // The name a row's identity is asked by: its handle (a year-less day's
+    // identifying spelling, whose key is the row's `key`), else its name.
+    let mut asks: HashMap<String, String> = HashMap::new();
+    for entry in inventory.0.iter().chain(&spellings.0) {
+        if let Some(handle) = &entry.handle {
+            asks.insert(page_key(handle), handle.clone());
+        }
+    }
     let mut rows: Vec<PageInventoryEntryWire> = inventory
         .0
         .iter()
@@ -110,12 +118,13 @@ pub(crate) fn answers(
             {
                 continue;
             }
-            let target = ResolvedWire::from(graph.resolve(&row.name, is_journal));
+            let name = asks.get(&row.key).unwrap_or(&row.name);
+            let target = ResolvedWire::from(graph.resolve(name, is_journal));
             // Every non-absent wrong-kind answer, also a day asked as a page
             // (CM-DATE): the frozen v1 reader reads only the asked kind's
             // row and this table (`docs/contracts/quick-share.md`).
             if !matches!(target, ResolvedWire::Absent { .. }) {
-                resolve.push(json!({ "name": row.name,
+                resolve.push(json!({ "name": name,
                     "kind": if is_journal { "journal" } else { "page" }, "target": target }));
             }
         }

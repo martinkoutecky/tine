@@ -699,16 +699,33 @@ impl JournalFormat {
         out
     }
 
-    /// A spelling that names `d` itself: the first of [`Self::spellings`]
-    /// that [`Self::parse`] reads back as `d`. A title format without a year
-    /// (`MM-dd`) renders a label that names no day (CM SPEC §2.1, the
-    /// approved label limitation), so a lookup of a known day goes by this
-    /// spelling, never by its title. The title only when no spelling reads
-    /// back (a format that misreads every fallback). O(parse list).
+    /// A spelling that names `d` itself: its title when [`Self::parse`]
+    /// reads the title back as `d`, else the first of [`Self::spellings`]
+    /// that it does. A title format without a year (`MM-dd`) renders a label
+    /// that names no day (CM SPEC §2.1, the approved label limitation), so a
+    /// known day is looked up, and keyed in the real-name index, by this
+    /// spelling, never by a label it shares. The title only when no spelling
+    /// reads back (a format that misreads every fallback). O(parse list).
     pub fn identifying_spelling(&self, d: JournalDate) -> String {
+        let title = self.title(d);
+        if self.parse(&title) == Some(d) {
+            return title;
+        }
         (self.spellings(d).into_iter())
             .find(|s| self.parse(s) == Some(d))
-            .unwrap_or_else(|| self.title(d))
+            .unwrap_or(title)
+    }
+
+    /// The spelling a day's file is claimed by: its effective name `name`
+    /// when that names `d` itself, else [`Self::identifying_spelling`]. A
+    /// day's file is named by its title (`page_file_claim`), so for a title
+    /// format with a year this is `name` unchanged. O(name + parse list).
+    pub fn claim_spelling<'a>(&self, d: JournalDate, name: &'a str) -> std::borrow::Cow<'a, str> {
+        if self.parse(name) == Some(d) {
+            std::borrow::Cow::Borrowed(name)
+        } else {
+            std::borrow::Cow::Owned(self.identifying_spelling(d))
+        }
     }
 
     /// The names [`Self::parse`] reads as `d` that differ from

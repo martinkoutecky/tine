@@ -619,6 +619,164 @@ fn pre_opening_text_checkpoints_are_rebuilt() {
 }
 
 #[test]
+fn pre_year_less_day_key_checkpoints_are_rebuilt() {
+    let root = graph();
+    fs::write(
+        root.path().join("logseq/config.edn"),
+        "{:journal/page-title-format \"MM-dd\"}\n",
+    )
+    .unwrap();
+    fs::write(root.path().join("journals/2026_11_02.md"), "- the day\n").unwrap();
+    fs::write(root.path().join("pages/11-02.md"), "- a label page\n").unwrap();
+    fs::write(root.path().join("pages/Notes.md"), "- see [[2026-11-02]]\n").unwrap();
+    let cp = root.path().join("launch.bin");
+    write_checkpoint(root.path(), &cp);
+    // Format 39 keyed a year-less day by its label: its restored query memos
+    // answered `[[2026-11-02]]` without the day's own blocks and its alias
+    // rows joined every year sharing `11-02` (REG-CM-YEARLESS-DAY-KEY).
+    let mut bytes = fs::read(&cp).unwrap();
+    bytes[8..12].copy_from_slice(&39_u32.to_le_bytes());
+    fs::write(&cp, bytes).unwrap();
+    let store = open_cp(root.path(), &cp);
+    let graph = store.whole_graph_reconciled().unwrap();
+    assert_eq!(load_outcome(&store), "format");
+    assert!(parse_passes(&store) > 0, "old answers must rebuild");
+    assert_eq!(graph.backlinks("2026-11-02").unwrap().len(), 1);
+    assert!(graph.backlinks("11-02").unwrap().is_empty());
+    store.close();
+}
+
+/// What the alias rows answer in a year-less graph: the files each alias and
+/// the label open, and every alias group's file pages.
+fn year_less_alias_answers(store: &Store) -> Vec<String> {
+    let view = store.whole_graph_reconciled().unwrap();
+    let ids = |target: &crate::Resolved| match target {
+        crate::Resolved::Existing { id, others } => std::iter::once(id)
+            .chain(others)
+            .map(|id| id.as_str().to_owned())
+            .collect::<Vec<_>>(),
+        crate::Resolved::Alias { owners } => owners
+            .iter()
+            .map(|id| format!("alias of {}", id.as_str()))
+            .collect(),
+        other => vec![format!("{other:?}")],
+    };
+    let mut out = Vec::new();
+    for name in ["Older", "Current", "11-02"] {
+        out.push(format!(
+            "{name} opens {:?}",
+            ids(&view.resolve(name, false))
+        ));
+        let mut group: Vec<String> = (view.inventory(crate::InventoryScope::AliasGroup(name)).0)
+            .iter()
+            .map(|entry| format!("{} {:?}", entry.name, ids(&entry.target)))
+            .collect();
+        group.sort();
+        out.push(format!("{name} group {group:?}"));
+    }
+    out
+}
+
+/// REG-CM-YEARLESS-DAY-KEY (review item 5): under a year-less title format
+/// the journals of 2025-11-02 and 2026-11-02 share the label `11-02`. Their
+/// alias rows are each day's own node (its handle), so `Older` opens the
+/// 2025 day alone, `Current` the 2026 day alone, and neither joins the label
+/// page `11-02`, live and after a checkpoint restore, which rebuilds the
+/// owner node from the restored page instead of the stored label. Before the
+/// fix both rows were the one node `11-02`: the aliases joined each other
+/// and the label page. Markdown and Org day files, a day in pages/, label
+/// page present and absent.
+#[test]
+fn year_less_alias_rows_are_keyed_by_the_day_and_restore_so() {
+    let cases: [(&str, &str, &str, bool); 4] = [
+        (
+            "journals/2026_11_02.md",
+            "alias:: Current\n\n- the day\n",
+            "md",
+            true,
+        ),
+        (
+            "journals/2026_11_02.md",
+            "alias:: Current\n\n- the day\n",
+            "md",
+            false,
+        ),
+        (
+            "journals/2026_11_02.org",
+            "#+ALIAS: Current\n\n* the day\n",
+            "org",
+            true,
+        ),
+        (
+            "pages/2026-11-02.md",
+            "alias:: Current\n\n- the day\n",
+            "pages",
+            false,
+        ),
+    ];
+    for (day_rel, day_text, label, label_page) in cases {
+        let root = tempfile::tempdir().unwrap();
+        for dir in ["pages", "journals", "logseq"] {
+            fs::create_dir_all(root.path().join(dir)).unwrap();
+        }
+        let mut files = vec![
+            (
+                "logseq/config.edn",
+                "{:journal/page-title-format \"MM-dd\"}\n",
+            ),
+            ("journals/2025_11_02.md", "alias:: Older\n\n- last year\n"),
+            (day_rel, day_text),
+        ];
+        if label_page {
+            files.push(("pages/11-02.md", "- a label page\n"));
+        }
+        for (rel, text) in &files {
+            let path = root.path().join(rel);
+            fs::write(&path, text).unwrap();
+            set_mtime(&path, old());
+        }
+        let label_opens = if label_page {
+            r#"["pages/11-02.md"]"#
+        } else {
+            ""
+        };
+        let expected = vec![
+            r#"Older opens ["alias of journals/2025_11_02.md"]"#.to_owned(),
+            r#"Older group ["11-02 [\"journals/2025_11_02.md\"]"]"#.to_owned(),
+            format!("Current opens [\"alias of {day_rel}\"]"),
+            format!("Current group [\"11-02 [\\\"{day_rel}\\\"]\"]"),
+        ];
+        let case = format!("{label} label page {label_page}");
+        let cp = root.path().join("launch.bin");
+        let store = open_cp(root.path(), &cp);
+        let live = year_less_alias_answers(&store);
+        assert_eq!(live[..4], expected[..], "{case}: live");
+        if label_page {
+            assert_eq!(
+                live[4],
+                format!("11-02 opens {label_opens}"),
+                "{case}: label"
+            );
+        }
+        assert!(
+            !live[5].contains("journals/") && !live[5].contains(day_rel),
+            "{case}: the label joins no day: {}",
+            live[5]
+        );
+        assert!(matches!(
+            store.write_checkpoint_now(),
+            Some(CheckpointWrite::Written { .. })
+        ));
+        store.close();
+        let store = open_cp(root.path(), &cp);
+        let restored = year_less_alias_answers(&store);
+        assert_eq!(load_outcome(&store), "loaded", "{case}");
+        assert_eq!(restored, live, "{case}: after restore");
+        store.close();
+    }
+}
+
+#[test]
 fn pre_whole_value_property_parse_checkpoints_are_rebuilt() {
     let root = graph();
     fs::write(
@@ -1509,7 +1667,7 @@ fn the_golden_body_is_pinned_to_format() {
     let digest: String = sha256(&bytes).iter().map(|b| format!("{b:02x}")).collect();
     assert_eq!(
         (FORMAT, digest.as_str()),
-        (39, GOLDEN),
+        (40, GOLDEN),
         "ADR 0070: the checkpoint body changed; bump FORMAT and re-pin GOLDEN"
     );
 }

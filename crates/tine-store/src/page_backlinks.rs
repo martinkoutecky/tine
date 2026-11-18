@@ -26,11 +26,14 @@ impl WholeGraph {
                 .map_or(0, |&n| n as usize)
         };
         let mut files = Vec::new();
+        let owners = self.graph.real_page_owners();
         for entry in self.list.iter() {
             let Some(path) = entry.rel_path.as_ref() else {
                 continue;
             };
-            let owner = match self.resolve(&entry.name, entry.kind == PageKind::Journal) {
+            // A day by the name that identifies it (`page_handle`).
+            let handle = owners.handle(&entry.name, entry.date_key);
+            let owner = match self.resolve(&handle, entry.kind == PageKind::Journal) {
                 crate::Resolved::Existing { id, .. } => id,
                 _ => continue,
             };
@@ -39,7 +42,7 @@ impl WholeGraph {
             }
             files.push((
                 path.to_string(),
-                count(&entry.name, entry.kind == PageKind::Journal),
+                count(&handle, entry.kind == PageKind::Journal),
             ));
         }
         let references = self

@@ -16,7 +16,7 @@ import { installFavoritesPageDoor } from "./favorites";
 import { clearAssetBlobCache } from "./assetCache";
 import { resetTabsToJournals, openPage, restoreSession, flushSession, type PageFollower, type PageTarget } from "./router";
 import { resetPaneLayoutToSingle, removePageTargetAcrossPanes, rewritePagesAcrossPanes } from "./panes";
-import { journalTitle, localDayKey, setJournalFormats, appNow } from "./journal";
+import { journalHandle, journalTitle, localDayKey, setJournalFormats, appNow } from "./journal";
 import { setFileNameFormat } from "./render/pageRefs";
 import { applyTemplateVars, prepareTemplateVars } from "./editor/templateVars";
 import { resetPageIndex } from "./pageIndex";
@@ -24,7 +24,7 @@ import { setChangeSummaryBaseline } from "./changeSummary";
 import { applyCustomCss, customCssVersion } from "./customCss";
 import { flushCssEditor, loadGlobalCss, checkCssEditorDisk, retireGraphCssEditor } from "./cssEditor";
 import { isMobile, platformKind } from "./platform";
-import type { BlockDto, GraphMeta, RenameOffer, RenameRefusal } from "./types";
+import type { BlockDto, GraphMeta, RenameOffer, RenameRefusal, ResolvedPage } from "./types";
 import type { DraftStatus } from "./document";
 import { maybeShowGuideAnnouncement } from "./guide";
 import { endEdit } from "./editorController";
@@ -565,7 +565,11 @@ export function renameOutcomeMessage(outcome: RenameOutcome, from: string, to: s
 
 export type JournalTemplateEnsureResult = "ready" | "deferred" | "stale" | { kind: "error"; error: unknown };
 
-type JournalTemplateOwner = { root: string; epoch: number; day: number; title: string; template: string };
+/** `title` is the day's display title (template variables read it); `handle`
+ *  the name the store is asked for the day by (`journalHandle`: the title,
+ *  except under a year-less title format, whose label `11-02` names the
+ *  ordinary page, CM SPEC §2.1). */
+type JournalTemplateOwner = { root: string; epoch: number; day: number; title: string; handle: string; template: string };
 let journalTemplateFlight: { owner: JournalTemplateOwner; promise: Promise<JournalTemplateEnsureResult> } | null = null;
 
 function templateOwnerCurrent(owner: JournalTemplateOwner): boolean {
@@ -594,7 +598,7 @@ export async function ensureJournalTemplateForDay(
   const template = meta?.default_journal_template;
   if (!meta || !template) return "ready";
   const owner: JournalTemplateOwner = {
-    root: meta.root, epoch: graphEpoch(), day: localDayKey(date), title: journalTitle(date), template,
+    root: meta.root, epoch: graphEpoch(), day: localDayKey(date), title: journalTitle(date), handle: journalHandle(date), template,
   };
   if (!templateOwnerCurrent(owner)) return "stale";
   try { if (!canWrite()) return "deferred"; }
@@ -608,7 +612,7 @@ export async function ensureJournalTemplateForDay(
   const binding = captureBinding();
   const promise = (async (): Promise<JournalTemplateEnsureResult> => {
     try {
-      const page = await readOwned(graphOwner(), backend().getPage(owner.title, "journal"));
+      const page = await readOwned(graphOwner(), backend().getPage(owner.handle, "journal"));
       if (page.kind === "stale" || !templateOwnerCurrent(owner)) return "stale";
       const existing = page.value;
       if (existing && journalHasContent(existing.blocks)) return "ready";
@@ -628,12 +632,12 @@ export async function ensureJournalTemplateForDay(
       });
       // An unclaimed journal day resolves without the graph-wide parse
       // (BqbeQ, `absent_journal_id`); the alias refusal stays the backstop.
-      const resolution = existing?.id ? null : await readOwned(graphOwner(), backend().resolvePage(owner.title, "journal"));
+      const resolution = existing?.id ? null : await readOwned(graphOwner(), resolveJournalDay(owner.handle));
       if (resolution?.kind === "stale" || !templateOwnerCurrent(owner)) return "stale";
       if (!canWrite()) return "deferred";
       const resolved = resolution?.value ?? null;
       if (resolved?.kind === "alias") return "deferred";
-      await createPage(owner.title, journalTemplatePage(owner.title, tmpl.blocks.map(resolve), existing), {
+      await createPage(owner.handle, journalTemplatePage(owner.handle, tmpl.blocks.map(resolve), existing), {
         baseRev: existing?.rev ?? null,
         bindingGeneration: binding.backendGeneration,
       });
@@ -889,18 +893,29 @@ export async function createNewGraph(): Promise<LoadGraphPathOutcome> {
   return loaded;
 }
 
+/** What a journal day asked by `handle` (`journalHandle`) resolves to before a
+ *  save: for a day with no file, the file it is created as. The save callers'
+ *  one resolve of a day (template, demo seed, `admitPageFile`), each inside its
+ *  own owned read; an unclaimed day resolves without the graph-wide parse
+ *  (BqbeQ, `absent_journal_id`). */
+export function resolveJournalDay(handle: string): Promise<ResolvedPage> {
+  return backend().resolvePage(handle, "journal");
+}
+
 /** Give a freshly-created demo graph a friendly today's-journal entry so the
  *  Journals view isn't empty on first open. The caller awaits this best-effort seed. */
 async function seedTodayJournal(): Promise<void> {
   const binding = captureBinding();
   const owner = bindingOwner();
   try {
-    const title = journalTitle(appNow());
+    // The day by the spelling that identifies it (`journalHandle`), never a
+    // year-less label an ordinary page holds (CM SPEC §2.1).
+    const title = journalHandle(appNow());
     const page = await readOwned(owner, backend().getPage(title, "journal"));
     if (page.kind === "stale") return;
     const existing = page.value;
     if (existing && journalHasContent(existing.blocks)) return;
-    const resolution = existing?.id ? null : await readOwned(owner, backend().resolvePage(title, "journal"));
+    const resolution = existing?.id ? null : await readOwned(owner, resolveJournalDay(title));
     if (resolution?.kind === "stale") return;
     const resolved = resolution?.value ?? null;
     if (resolved?.kind === "alias") throw new Error("conflict: journal alias");

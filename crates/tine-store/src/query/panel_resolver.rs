@@ -36,11 +36,14 @@ impl PanelResolver {
         // The panel's `find` over the page list, once: the FIRST journal page
         // of each day in page-list order.
         let mut first_journal = crate::model::persistent::Map::new();
+        // A day by its day, named by the spelling that identifies it
+        // (`page_handle`): a year-less title is shared by other days.
         for (entry, _) in graph.pages.iter() {
             if entry.kind == PageKind::Journal {
-                if let Some(day) = format.parse(&entry.name) {
-                    if !first_journal.contains_key(&day.ordinal_key()) {
-                        first_journal.insert(day.ordinal_key(), entry.name.clone());
+                if let Some(day) = entry.date_key {
+                    if !first_journal.contains_key(&day) {
+                        let handle = page_handle(&format, &entry.name, Some(day));
+                        first_journal.insert(day, handle.into_owned());
                     }
                 }
             }
@@ -115,8 +118,8 @@ impl PanelResolver {
                     continue;
                 };
                 if entry.kind == PageKind::Journal {
-                    if let Some(day) = self.format.parse(&entry.name) {
-                        days.insert(day);
+                    if let Some(day) = entry.date_key {
+                        days.insert(JournalDate::from_ordinal(day));
                     }
                 }
                 keys.extend(document_explicit_reference_names(

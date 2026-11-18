@@ -391,7 +391,7 @@ field restore::RestoreFailed.phase
 field restore::RestoreFailed.cause
 field restore::RestoreFailed.done
 
-## WholeGraph: Names (ceiling: 26)
+## WholeGraph: Names (ceiling: 28)
 # CLI export extends corpus's selection parameter to indexed block-ID candidate
 # pages. A page name cannot identify those pages; CorpusScope types that existing
 # parameter. No Store operation or WholeGraph question is added.
@@ -422,6 +422,15 @@ field store::InventoryEntry.parent
 # Retired EMPTY-ALIAS compatibility field: live entries always set false
 # under R13-C4. Frozen published v1 readers retain their stored answer.
 field store::InventoryEntry.empty_alias
+# REG-CM-YEARLESS-DAY-KEY (CM SPEC 2.1): under a year-less title format a
+# day's displayed name (`11-02`) is a label that by name opens the ordinary
+# page of that label, so the entry carries the spelling that identifies the
+# day (set only for such a day), and `key` is the page key that entry is
+# looked up by. Both are properties of the same entry, not a sibling method:
+# no InventoryScope can carry them, and the wire row and the published v1 rows
+# key by them. 26 -> 28.
+field store::InventoryEntry.handle
+fn store::InventoryEntry::key
 struct store::LinkTarget
 field store::LinkTarget.name
 field store::LinkTarget.is_journal

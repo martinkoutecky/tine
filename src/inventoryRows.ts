@@ -7,7 +7,7 @@
 // Kept free of the backend so the published backend can import it without a
 // module cycle.
 import { pageIdentityKey } from "./pageIdentity";
-import { absentLinkIsJournal, journalTitle, parseJournalTitle } from "./journal";
+import { absentLinkIsJournal, journalHandle, parseJournalTitle } from "./journal";
 import type { PageInventoryEntry, PageKind, ResolvedPage } from "./types";
 
 /** Page-kind and journal-kind rows by `key` (the last row of a key wins, as
@@ -43,12 +43,15 @@ export function ownerPath(
 export interface LinkDestination { readonly name: string; readonly kind: PageKind }
 
 /** Configured day lookup over the held typed rows; literal claims are checked first.
- *  `readKey` tracks the canonical bucket, including a currently missing row. */
+ *  A day's row is keyed by the spelling that identifies it (`journalHandle`:
+ *  its title, except under a year-less title format, whose label names the
+ *  ordinary page; CM SPEC §2.1). `readKey` tracks the canonical bucket,
+ *  including a currently missing row. */
 export function journalRowIn(index: InventoryRowIndex | null | undefined, name: string, readKey?: (key: string) => void): PageInventoryEntry | undefined {
   if (!/\d/.test(name)) return undefined;
   const day = parseJournalTitle(name);
   if (!day) return undefined;
-  const key = pageIdentityKey(journalTitle(day));
+  const key = pageIdentityKey(journalHandle(day));
   readKey?.(key);
   return index?.journals.get(key);
 }

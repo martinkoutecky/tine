@@ -1100,6 +1100,23 @@
       ],
       "stability": "burn-in"
     },
+    "scripts/e2e-cm-yearless-day.mjs": {
+      "contracts": [
+        {
+          "class": "core-operation",
+          "userOutcome": "With :journal/page-title-format MM-dd, clicking a rendered [[2026-11-02]] and picking 2 November 2026 in the calendar each open the 2026-11-02 journal, titled 11-02, with its body and neither the page named 11-02 nor the 2025 day; clicking [[11-02]] opens the page named 11-02; navigation creates no file and changes no bytes.",
+          "blocking": true
+        }
+      ],
+      "acceptableVariations": [
+        "Navigation timing and title decoration may vary while the routed page is the expected day or page and shows its body."
+      ],
+      "nonRequirements": [
+        "Windows WebView2 or macOS/mobile runtime certification from a Linux WebKitGTK run.",
+        "Exact pixels or incidental DOM nesting."
+      ],
+      "stability": "burn-in"
+    },
     "scripts/e2e-cm-date-links.mjs": {
       "contracts": [
         {

@@ -132,9 +132,15 @@ fn date_keys(spellings: &[String], format: &JournalFormat) -> Vec<(String, i64)>
         .iter()
         .filter_map(|name| {
             let day = format.parse(name)?;
+            // The day's own name beside the alias spelling: the one that
+            // identifies it, never a year-less label other days share
+            // (`MM-dd`'s `11-02`, CM SPEC §2.1).
             Some([
                 (refs::page_key(name), day.ordinal_key()),
-                (refs::page_key(&format.title(day)), day.ordinal_key()),
+                (
+                    refs::page_key(&format.identifying_spelling(day)),
+                    day.ordinal_key(),
+                ),
             ])
         })
         .flatten()
@@ -267,6 +273,15 @@ pub(crate) struct AliasRow {
     dates: Vec<(String, i64)>,
 }
 
+/// The name an alias row knows its owner by: the owner's handle
+/// ([`page_handle`]), so the journals of different years that share a
+/// year-less label (`MM-dd`'s `11-02`) are different alias nodes, and none is
+/// the ordinary page of that label. For a title format with a year it is the
+/// owner's name. O(name + parse list) for a day.
+pub(crate) fn owner_handle(entry: &PageEntry, format: &JournalFormat) -> String {
+    super::page_names::page_handle(format, &entry.name, entry.date_key).into_owned()
+}
+
 impl AliasRow {
     /// The row of `entry` declaring `spellings`; `None` when it declares none.
     #[cfg(test)]
@@ -285,7 +300,7 @@ impl AliasRow {
         let mut sorted: Vec<&String> = spellings.iter().collect();
         sorted.sort();
         Some(Self {
-            name: entry.name.clone(),
+            name: owner_handle(entry, format),
             rel: entry.rel_path_str().to_owned(),
             keys: sorted.into_iter().map(|s| refs::page_key(s)).collect(),
             dates: date_keys(spellings, format),
@@ -355,24 +370,26 @@ impl AliasRelation {
     }
 
     /// The relation a checkpoint's alias list describes. `path_of` names the
-    /// page at a relative path; one the graph no longer has gives `None`
-    /// (the relation is then rebuilt on first use, never guessed).
+    /// page at a relative path with its owner handle ([`owner_handle`],
+    /// rebuilt from the restored page, not read from the list) and its alias
+    /// spellings; one the graph no longer has gives `None` (the relation is
+    /// then rebuilt on first use, never guessed).
     pub(crate) fn from_list(
         list: &[(String, String, String)],
-        path_of: impl Fn(&str) -> Option<(PathBuf, Vec<String>)>,
+        path_of: impl Fn(&str) -> Option<(PathBuf, String, Vec<String>)>,
         format: &JournalFormat,
     ) -> Option<Self> {
         let mut rows: Vec<(PathBuf, AliasRow)> = Vec::new();
         let mut at: std::collections::HashMap<&str, usize> = Default::default();
-        for (key, name, rel) in list {
+        for (key, _, rel) in list {
             let slot = match at.get(rel.as_str()) {
                 Some(slot) => *slot,
                 None => {
-                    let (path, spellings) = path_of(rel)?;
+                    let (path, name, spellings) = path_of(rel)?;
                     rows.push((
                         path,
                         AliasRow {
-                            name: name.clone(),
+                            name,
                             rel: rel.clone(),
                             keys: Vec::new(),
                             dates: date_keys(&spellings, format),
@@ -687,7 +704,10 @@ mod tests {
         let relation = AliasRelation::build(rows);
         let back = AliasRelation::from_list(
             &relation.list(),
-            |rel| Some((PathBuf::from(format!("/g/{rel}")), Vec::new())),
+            |rel| {
+                let name = if rel == "pages/A.md" { "Alpha" } else { "Beta" };
+                Some((PathBuf::from(format!("/g/{rel}")), name.into(), Vec::new()))
+            },
             &JournalFormat::new(None, None),
         )
         .unwrap();

@@ -905,6 +905,19 @@ pub fn journal_day_json(name: &str, file_format: &str, title_format: &str) -> St
     })
 }
 
+/// The spelling that names the day `year-month-day` itself:
+/// `JournalFormat::identifying_spelling` (its title when that reads back as
+/// the day, else the first parse-list spelling that does). The app asks the
+/// store for a known day by it, never by a year-less label (`MM-dd`'s
+/// `11-02`) other days and an ordinary page share (CM SPEC §2.1). For a
+/// title format with a year it is the title. O(parse list) warm.
+#[wasm_bindgen]
+pub fn journal_identifying_spelling(year: i32, month: u32, day: u32, file_format: &str, title_format: &str) -> String {
+    with_journal_format(file_format, title_format, |format| {
+        format.identifying_spelling(date::JournalDate { year, month, day })
+    })
+}
+
 /// The kind of a link target nothing claims: `JournalFormat::absent_link_is_journal`.
 #[wasm_bindgen]
 pub fn absent_link_is_journal(name: &str, file_format: &str, title_format: &str) -> bool {

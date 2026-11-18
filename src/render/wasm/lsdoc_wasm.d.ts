@@ -121,6 +121,16 @@ export function is_render_hidden_prop(key: string, user_hidden: string[], pre_bl
 export function journal_day_json(name: string, file_format: string, title_format: string): string;
 
 /**
+ * The spelling that names the day `year-month-day` itself:
+ * `JournalFormat::identifying_spelling` (its title when that reads back as
+ * the day, else the first parse-list spelling that does). The app asks the
+ * store for a known day by it, never by a year-less label (`MM-dd`'s
+ * `11-02`) other days and an ordinary page share (CM SPEC §2.1). For a
+ * title format with a year it is the title. O(parse list) warm.
+ */
+export function journal_identifying_spelling(year: number, month: number, day: number, file_format: string, title_format: string): string;
+
+/**
  * The message of the most recent panic in this instance ("" if none). A trapped
  * instance still answers small calls; the glue reads this before reinstantiating.
  */
@@ -397,6 +407,7 @@ export interface InitOutput {
     readonly is_query_macro_name: (a: number, b: number) => number;
     readonly is_render_hidden_prop: (a: number, b: number, c: number, d: number, e: number) => number;
     readonly journal_day_json: (a: number, b: number, c: number, d: number, e: number, f: number) => [number, number];
+    readonly journal_identifying_spelling: (a: number, b: number, c: number, d: number, e: number, f: number, g: number) => [number, number];
     readonly last_panic: () => [number, number];
     readonly linkable_property_names: (a: number, b: number, c: number) => [number, number];
     readonly logbook_apply_marker_transition: (a: number, b: number, c: number, d: number, e: number, f: number, g: number) => [number, number];

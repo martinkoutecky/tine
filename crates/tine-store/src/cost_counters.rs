@@ -148,6 +148,19 @@ pub(crate) fn lifecycle_probe() {
     LIFECYCLE_WORK.with(|work| work.set(work.get() + 1));
 }
 
+thread_local! {
+    static CLAIMANT_VISITS: std::cell::Cell<u64> = const { std::cell::Cell::new(0) };
+}
+
+/// Calling thread's page claimants read from a name's bucket
+/// (`WholeGraph::all_name_claimants`): the inventory's claimant work.
+pub fn claimant_visits() -> u64 {
+    CLAIMANT_VISITS.with(std::cell::Cell::get)
+}
+pub(crate) fn claimant_visit() {
+    CLAIMANT_VISITS.with(|visits| visits.set(visits.get() + 1));
+}
+
 /// Calling thread's journal day visits, inventory sorts, and reference-name visits.
 pub fn journal_work() -> (usize, usize, usize) {
     JOURNAL_WORK.with(std::cell::Cell::get)

@@ -1,5 +1,5 @@
 import { createEffect, createSignal, untrack } from "solid-js";
-import { absent_link_is_journal, format_journal_date, journal_day_json, parse_journal_format_json } from "./render/wasm/lsdoc_wasm.js";
+import { absent_link_is_journal, format_journal_date, journal_day_json, journal_identifying_spelling, parse_journal_format_json } from "./render/wasm/lsdoc_wasm.js";
 import { onAppReturn } from "./windowRealm";
 
 /** Journal dates and title formatting. `journalTitle` and `parseJournalTitle`
@@ -182,6 +182,16 @@ export function localCalendarDate(y: number, m: number, d: number): Date | null 
 /// The journal page title for a date, in the graph's configured title format.
 export function journalTitle(d: Date): string {
   return formatJournal(d, titleFormat);
+}
+
+/** The name the app asks the store for the day `d` by: the Rust
+ * `JournalFormat::identifying_spelling` through wasm. It is `journalTitle(d)`
+ * whenever the title reads back as that day (every format with a year); under
+ * a year-less title (`MM-dd`) the label `11-02` names the ordinary page, not a
+ * day (CM SPEC §2.1), so a known day is addressed by a spelling that carries
+ * its year. Display keeps `journalTitle`. O(parse list), no I/O. */
+export function journalHandle(d: Date): string {
+  return journal_identifying_spelling(d.getFullYear(), d.getMonth() + 1, d.getDate(), fileFormat, titleFormat);
 }
 
 /// Try to parse `s` as a date in pattern `fmt` (the inverse of formatJournal, for

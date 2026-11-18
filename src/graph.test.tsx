@@ -167,6 +167,8 @@ async function loadHarness(
   vi.doMock("./panes", () => ({ resetPaneLayoutToSingle: vi.fn(), removePageTargetAcrossPanes: vi.fn(), rewritePagesAcrossPanes: vi.fn(), focusedRouter: () => focused }));
   vi.doMock("./journal", () => ({
     journalTitle: journal?.journalTitle ?? (() => "Jul 10th, 2026"),
+    // A year-bearing title identifies its day, so the handle is the title (CM SPEC §2.1).
+    journalHandle: journal?.journalTitle ?? (() => "Jul 10th, 2026"),
     appNow: () => new Date(),
     localDayKey: (date = new Date()) => date.getFullYear() * 10_000 + (date.getMonth() + 1) * 100 + date.getDate(),
     setJournalFormats: journal ? (title: string | null | undefined) => journal.setJournalTitleFormat(title) : vi.fn(),
