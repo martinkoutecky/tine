@@ -33,8 +33,11 @@ export function ctrlArrowAlias(e: KeyboardEvent): KeyboardEvent {
 
 /** The textarea editor's half of the alias: when the handler left the key alone (the caret is
  * not at the block's edge), macOS text fields move the caret on Ctrl+P / Ctrl+N themselves;
- * elsewhere there is no such binding, so the caret moves a row as Up would. */
+ * elsewhere there is no such binding, so the caret moves a row as Up would (a selection collapses
+ * to its start or end) and the key is consumed. Composition and commands bound to the chord never
+ * reach here: the caller keeps IME events and configured commands on the original event. */
 export function ctrlArrowCaret(ta: HTMLTextAreaElement, e: KeyboardEvent, alias: KeyboardEvent): void {
   if (alias === e || isMac || e.defaultPrevented) return;
   moveCaretRow(ta, alias.key === "ArrowUp" ? -1 : 1);
+  e.preventDefault();
 }

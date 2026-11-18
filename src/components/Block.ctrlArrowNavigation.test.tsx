@@ -17,7 +17,8 @@ beforeAll(() => initParser());
 let dispose = () => {};
 let keys = () => {};
 afterEach(() => {
-  dispose(); keys(); closeDatePicker(); endEdit("page-navigation"); resetStore(); clearTransientLayersForTest();
+  dispose(); keys(); installKeybindings()(); // the defaults again: bindings outlive their listener
+  closeDatePicker(); endEdit("page-navigation"); resetStore(); clearTransientLayersForTest();
   document.body.innerHTML = ""; vi.restoreAllMocks();
 });
 
@@ -125,5 +126,71 @@ describe("Ctrl+P / Ctrl+N move between blocks like Up / Down (GH #986)", () => {
     document.body.dispatchEvent(new KeyboardEvent("keydown", { ...UP, bubbles: true, cancelable: true }));
     document.body.dispatchEvent(new KeyboardEvent("keydown", { ...UP, bubbles: true, cancelable: true }));
     expect(selectedIds()).toEqual(["a"]);
+  });
+  // Merge review of the develop merge, round 2.
+  it("leaves IME key events alone (legacy keyCode 229, isComposing)", () => {
+    const root = mountPage(["foo", "bar"], 1, 0);
+    const editor = editorIn(root);
+    editor.select(0, 0);
+    for (const extra of [{ keyCode: 229 }, { isComposing: true }]) {
+      for (const chord of [UP, DOWN]) {
+        const event = editor.keydown({ ...chord, ...extra });
+        expect(editingId()).toBe("b1");
+        expect(event.defaultPrevented).toBe(false);
+      }
+    }
+  });
+
+  it("does not move a textarea selection while composing", () => {
+    const root = mountPage(["a\nb\nc"], 0, 2);
+    const editor = editorIn(root);
+    if (editor.kind === "cm6") return;
+    editor.select(2, 3);
+    editor.keydown({ ...UP, isComposing: true });
+    editor.keydown({ ...DOWN, isComposing: true });
+    expect(editor.selection()).toEqual([2, 3]);
+  });
+
+  it.each([[UP, "editor/bold", "**bar**"], [DOWN, "editor/italics", "*bar*"]] as const)("lets %o bound to %s keep working", (chord, command, expected) => {
+    keys = installKeybindings({ [command]: "ctrl+" + chord.key });
+    const root = mountPage(["foo", "bar"], 1, 0);
+    const editor = editorIn(root);
+    editor.select(0, 3);
+    editor.keydown(chord);
+    expect(editorIn(root).value()).toBe(expected);
+    expect(editingId()).toBe("b1");
+  });
+
+  it("reveals a fence at the body edge as Up / Down do", () => {
+    const prefix = "pref\n```js\n", body = "one\ntwo", suffix = "\n```\nafter";
+    const raw = prefix + body + suffix;
+    const root = mountPage([raw], 0, prefix.length);
+    const editor = editorIn(root);
+    expect(editor.value()).toBe(body);
+    editor.select(0, 0);
+    expect(editor.keydown(UP).defaultPrevented).toBe(true);
+    expect(editorIn(root).value()).toBe(raw);
+    expect(editorIn(root).selection()[0]).toBe(prefix.length - 1);
+    expect(editingId()).toBe("b0");
+
+    resetStore(); dispose(); document.body.innerHTML = "";
+    const again = mountPage([raw], 0, prefix.length);
+    const down = editorIn(again);
+    down.select(body.length, body.length);
+    expect(down.keydown(DOWN).defaultPrevented).toBe(true);
+    expect(editorIn(again).value()).toBe(raw);
+    expect(editorIn(again).selection()[0]).toBe(prefix.length + body.length + 1);
+  });
+
+  it("collapses a textarea selection to the arrow key's endpoint off macOS", () => {
+    const root = mountPage(["a\nb\nc"], 0, 2);
+    const editor = editorIn(root);
+    if (editor.kind === "cm6") return; // CodeMirror's own keymap owns this
+    editor.select(2, 3, "forward");
+    expect(editor.keydown(UP).defaultPrevented).toBe(true);
+    expect(editor.selection()).toEqual([2, 2]);
+    editor.select(2, 3, "backward");
+    expect(editor.keydown(DOWN).defaultPrevented).toBe(true);
+    expect(editor.selection()).toEqual([3, 3]);
   });
 });

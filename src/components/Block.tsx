@@ -1550,14 +1550,14 @@ function EditorEngine(props: { id: string; propertySession?: ReturnType<typeof p
   };
 
   const onKeyDown = (e: KeyboardEvent) => runGridOutline(sheetCell, () => {
-    const key = ctrlArrowAlias(e); // GH #986: Ctrl+P / Ctrl+N are Up / Down
+    // IME owns its key events until compositionend commits the finalized value.
+    if (compositionActive || e.isComposing || e.keyCode === 229) return;
+    // GH #986: Ctrl+P / Ctrl+N are Up / Down, unless the user bound the chord to a command.
+    const key = editorCommandFor(e) ? e : ctrlArrowAlias(e);
     handleOutlineKey(key);
     ctrlArrowCaret(ref, e, key);
   });
   const handleOutlineKey = (e: KeyboardEvent) => {
-    // IME owns its key events until compositionend commits the finalized value.
-    if (compositionActive || e.isComposing || e.keyCode === 229) return;
-
     if (codeView.leaveOnKey(e, ref)) { autosize(); return; }
     const start = ref.selectionStart;
     const end = ref.selectionEnd;

@@ -418,14 +418,15 @@ export function Cm6BlockEditor(props: { id: string; surface: string; scope: Outl
         && !(isWebviewReloadChord(event) && editorCommandFor(event))) return;
       // Run before CM's target handler: desktop WebKit suppresses its keymaps
       // just after compositionend, including an already committed plain Enter.
-      const arrow = ctrlArrowAlias(event); // GH #986: Ctrl+P / Ctrl+N are Up / Down
+      const id = editorCommandFor(event);
+      // GH #986: Ctrl+P / Ctrl+N are Up / Down, unless the user bound the chord to a command.
+      const arrow = id ? event : ctrlArrowAlias(event);
       if (completion.keydown(arrow)) {
         event.preventDefault(); event.stopImmediatePropagation(); return;
       }
       if (commentKey(event, props.id, () => view!.dispatch(view!.state.replaceSelection("\n"), { userEvent: "input" }), () => { commit(view!.state.doc.toString()); endEdit("page-navigation"); })) {
         event.stopImmediatePropagation(); return;
       }
-      const id = editorCommandFor(event);
       const intent = captureKeyIntent(event, id, capture);
       if (intent) {
         if (intent === "submit") submitCapture();
@@ -441,7 +442,7 @@ export function Cm6BlockEditor(props: { id: string; surface: string; scope: Outl
         }
       }
       const s = view.state.selection.main;
-      const leave = codeView.leaveRange(event, view.state.doc.toString(), s.from, s.to);
+      const leave = codeView.leaveRange(arrow, view.state.doc.toString(), s.from, s.to);
       if (leave) showText(view, visible(), leave.anchor, leave.head);
       let handled: boolean;
       try {
