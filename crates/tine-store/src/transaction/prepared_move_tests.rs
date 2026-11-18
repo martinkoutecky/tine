@@ -18,20 +18,13 @@ fn graph(text: &str) -> (tempfile::TempDir, std::sync::Arc<Store>) {
 }
 
 fn map() -> RenameMap {
-    RenameMap(vec![("Old".into(), "New".into())], Vec::new())
+    RenameMap(vec![("Old".into(), "New".into())])
 }
 
 /// The proposal the rename planner makes for `text`.
 fn proposal(store: &Store, text: &str) -> tine_core::refs::RenameProposal {
     let keyed = std::collections::HashMap::from([(tine_core::refs::page_key("Old"), "New".into())]);
-    tine_core::refs::rename_proposal(
-        text,
-        false,
-        &keyed,
-        &Default::default(),
-        store.config().file_name_format,
-    )
-    .unwrap()
+    tine_core::refs::rename_proposal(text, false, &keyed, store.config().file_name_format).unwrap()
 }
 
 /// Move `pages/Old.md` to `pages/New.md`, carrying a proposal prepared from

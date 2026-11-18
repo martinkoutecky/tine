@@ -34,10 +34,7 @@ fn transaction_case_move_failures() {
             &src,
             rev,
             &dst,
-            Some(&crate::RenameMap(
-                vec![("old".into(), "Old".into())],
-                Vec::new(),
-            )),
+            Some(&crate::RenameMap(vec![("old".into(), "Old".into())])),
         );
         assert!(matches!(tx.commit(), crate::TxOutcome::NotCommitted { .. }));
         assert_eq!(

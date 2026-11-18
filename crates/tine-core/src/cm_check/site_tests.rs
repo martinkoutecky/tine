@@ -158,7 +158,7 @@ fn accepts(old: &str, new: &str, before: &str, after: &str, format: Format) -> b
 /// The rename writer's text for `before` (`refs::rename_proposal`).
 fn written(old: &str, new: &str, before: &str, format: Format) -> String {
     let map = HashMap::from([(crate::refs::page_key(old), new.to_owned())]);
-    crate::refs::rename_proposal(before, format == ORG, &map, &HashMap::new(), NAMES)
+    crate::refs::rename_proposal(before, format == ORG, &map, NAMES)
         .unwrap()
         .text
 }

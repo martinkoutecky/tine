@@ -1422,10 +1422,10 @@ fn a_fallback_rewrite_move_is_checked() {
         &src,
         rev,
         &dst,
-        tine_store::MoveRewrite::Rewrite(Arc::new(tine_store::RenameMap(
-            vec![("A".into(), "C".into())],
-            vec![],
-        ))),
+        tine_store::MoveRewrite::Rewrite(Arc::new(tine_store::RenameMap(vec![(
+            "A".into(),
+            "C".into(),
+        )]))),
     );
     tx.check(
         &src,

@@ -62,9 +62,9 @@ function CodeBlock(props: { code: string; lang: string; spanAttrs?: SpanDomAttrs
   return (
     <pre class="code-block" style={codeGutterStyle(lines().length)} classList={{ "code-wrapping": codeWrapping() }} {...(props.spanAttrs ?? {})}>
       <CodeLanguage lang={props.lang} onEdit={props.spanAttrs && editSource?.() ? () => editSource()?.(Number(props.spanAttrs!["data-so"])) : undefined} />
-      <LineGutter lines={lines()} code />
       <CopyButton text={props.code} title={t("render-copy-code")} class="code-copy" />
-      <code class="hljs" innerHTML={html()} />
+      {/* GH #970: the gutter lives inside the code, so its mirror inherits the code's text layout. */}
+      <code class="hljs"><LineGutter lines={lines()} code /><span class="code-text" innerHTML={html()} /></code>
     </pre>
   );
 }

@@ -791,7 +791,6 @@ pub fn run(case: &Case) -> Run {
         &inputs[0],
         &src,
         &Default::default(),
-        &Default::default(),
         case.org,
         store.config().file_name_format,
     );

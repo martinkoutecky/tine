@@ -308,9 +308,9 @@ pub fn rename_would_change(
         .iter()
         .map(|text| {
             let after = if text.pre_block {
-                refs::rename_pre_block(&text.raw, text.org, &renames, None, format, None)
+                refs::rename_pre_block(&text.raw, text.org, &renames, format, None)
             } else {
-                refs::rename_block_raw(&text.raw, text.org, &renames, None, format, None)
+                refs::rename_block_raw(&text.raw, text.org, &renames, format, None)
             };
             after != text.raw
         })
@@ -796,7 +796,6 @@ fn rename_transaction<'s>(
         days,
         map,
         lookup,
-        query_lookup,
         moves,
         mut renamed,
         moved_titles_to_rebind,
@@ -824,7 +823,6 @@ fn rename_transaction<'s>(
             dst,
             Some(MergeNames {
                 links: &lookup,
-                queries: &query_lookup,
                 rewritten: &rewritten_names,
             }),
         )?),
@@ -910,7 +908,7 @@ fn rename_transaction<'s>(
         // the transaction's rewrite, computed once here, reused (GH #623).
         let mut names = HashSet::new();
         let rewrite = |names: &mut HashSet<_>| {
-            refs::rename_rewrite_with_queries(&content, org, &map.0, &map.1, spelling, Some(names))
+            refs::rename_rewrite_recording(&content, org, &map.0, spelling, Some(names))
         };
         let mut proposed = None;
         let changed = if moved && !marked {
@@ -919,7 +917,7 @@ fn rename_transaction<'s>(
             // still checked there) instead of walking the page again. One
             // that cannot be certified is left to the move step, which
             // refuses it as before.
-            match refs::rename_proposal(&content, org, &lookup, &query_lookup, spelling) {
+            match refs::rename_proposal(&content, org, &lookup, spelling) {
                 Ok(proposal) => {
                     names.clone_from(&proposal.rewritten);
                     sites.extend(site_exceptions(id.as_str(), &proposal.unrealized));
@@ -932,7 +930,7 @@ fn rename_transaction<'s>(
         } else if moved || marked {
             rewrite(&mut names) != content || (!org && marked && own_title)
         } else if rebind {
-            let new = match refs::rename_proposal(&content, org, &lookup, &query_lookup, spelling) {
+            let new = match refs::rename_proposal(&content, org, &lookup, spelling) {
                 Ok(proposal) => {
                     names.clone_from(&proposal.rewritten);
                     sites.extend(site_exceptions(id.as_str(), &proposal.unrealized));
@@ -947,7 +945,7 @@ fn rename_transaction<'s>(
             let prepared = match rewritten.remove(&id) {
                 Some(p) => Some(p),
                 None if !planned => Some(
-                    refs::rename_proposal(&content, org, &lookup, &query_lookup, spelling)
+                    refs::rename_proposal(&content, org, &lookup, spelling)
                         .map_err(|e| MergeRefused::trace(e, id.as_str()))?,
                 ),
                 None => None,
@@ -1422,7 +1420,6 @@ fn merged_survivor(
         &source,
         &src_text,
         renames.map_or(&empty, |n| n.links),
-        renames.map_or(&empty, |n| n.queries),
         org,
         refs::RenameFormat::new(config.file_name_format, &days),
     )
@@ -1451,12 +1448,11 @@ fn merged_survivor(
     })
 }
 
-/// A merge's selected-member substitution and optional query overrides,
-/// passed to the shared reference encoder.
+/// A merge's selected-member substitution, passed to the shared reference
+/// encoder.
 #[derive(Clone, Copy)]
 struct MergeNames<'a> {
     links: &'a HashMap<String, String>,
-    queries: &'a HashMap<String, String>,
     rewritten: &'a std::cell::RefCell<HashSet<(String, String)>>,
 }
 

@@ -149,9 +149,10 @@ the old name is therefore not what the definition shares.
 - Code is literal. A macro inside an inline code span, a fence or an Org
   `=…=`/`~…~` span is no macro, in a block's text and in a property's value
   (the outline parser keeps a property line as one node, so
-  `refs_rename::PropertyValueCode` asks the parser for the value read as
-  text, the way the app shows it, once per value that holds a macro, however
-  many it holds); the same macro outside code follows.
+  `query::page_names`, the one reader the rename writer and the model check
+  share, asks the parser for the value read as text, the way the app shows
+  it, once per value that holds a macro, however many it holds); the same
+  macro outside code follows.
 - A name in **double quotes** is not a name in TQL: as in SQLite, `"Old"` is
   an identifier, so `name = "Old"` is an invalid query (it shares nothing) and
   has no literal to follow. The selector's spelling is the single-quoted one

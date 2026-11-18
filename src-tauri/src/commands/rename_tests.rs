@@ -234,7 +234,6 @@ fn merge_input_trace_failures_keep_their_own_file() {
             &page("pages/source.md", source),
             source,
             &links,
-            &Default::default(),
             false,
             store.config().file_name_format,
         )

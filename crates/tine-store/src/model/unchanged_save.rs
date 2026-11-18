@@ -93,7 +93,9 @@ pub(super) fn parser_unwind<T>(prepare: impl FnOnce() -> io::Result<T>) -> io::R
 /// publish if loaded and saved with no edit, or that save's refusal: the
 /// content firewalls of [`guarded_save`] (a VCS-marker refusal is
 /// `PermissionDenied`, as the save's read-only refusals are) around
-/// [`save_content`]. `parsed` is `candidate` parsed by the store
+/// [`save_content`], whose preparation (runtime ids, projections, the page
+/// as an editor holds it) runs inside the parser-panic boundary, after the
+/// firewalls, as every save's does. `parsed` is `candidate` parsed by the store
 /// (`parse_doc_with_opts`), so a caller that also reads the text for P2
 /// parses it once.
 ///
@@ -110,22 +112,26 @@ pub(crate) fn unchanged_save(
 ) -> io::Result<String> {
     let (mut old, opts) = parsed;
     let is_org = matches!(Format::from_path(path), Format::Org);
-    if let Some(owner) = owner.filter(|owner| !owner.is_empty()) {
-        assign_doc_runtime_ids(&mut old.roots, owner);
-    }
-    prime_projections(&old);
-    // The page an editor holds after loading `candidate`: its DTO, back.
-    let page = Document {
-        pre_block: old.pre_block.clone(),
-        roots: old
-            .roots
-            .iter()
-            .map(|b| tine_core::projection::dto_block_to_doc(&block_to_dto(b), is_org))
-            .collect(),
-        org: is_org,
-    };
+    // Everything after the validation of `candidate` runs where a save's
+    // preparation runs: after the firewalls, inside the parser-panic boundary.
     let save = |_: Option<&str>| {
-        parser_unwind(|| save_content(page, path, Some((candidate, &old, &opts))))
+        parser_unwind(|| {
+            if let Some(owner) = owner.filter(|owner| !owner.is_empty()) {
+                assign_doc_runtime_ids(&mut old.roots, owner);
+            }
+            prime_projections(&old);
+            // The page an editor holds after loading `candidate`: its DTO, back.
+            let page = Document {
+                pre_block: old.pre_block.clone(),
+                roots: old
+                    .roots
+                    .iter()
+                    .map(|b| tine_core::projection::dto_block_to_doc(&block_to_dto(b), is_org))
+                    .collect(),
+                org: is_org,
+            };
+            save_content(page, path, Some((candidate, &old, &opts)))
+        })
     };
     match guarded_save(Some(candidate.as_bytes()), path, false, save) {
         Ok((content, _)) => Ok(content),
