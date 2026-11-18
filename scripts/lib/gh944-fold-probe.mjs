@@ -105,8 +105,9 @@ export function summarizeFold(run) {
 // the scroller did not just clamp to the new, shorter maximum.
 export function classifyFold(summary) {
   if (summary.missingTargetFrames === summary.frames) return 'target-gone';
-  if (summary.maxExcursion === null || summary.maxExcursion <= 0.5) return 'no-movement';
+  // WebKit's scrollTop is an integer and layout heights are fractional: each compensation can leave up to a pixel.
+  if (summary.maxExcursion === null || summary.maxExcursion <= 2.5) return 'no-movement';
   if (!summary.stillScrolls) return 'c837-fits-window';
   if (summary.scrollTopDelta < -0.5 && summary.scrollDistanceToEnd <= 0.5) return 'c837-clamped-to-end';
-  return Math.abs(summary.finalDisplacement ?? 0) > 2 ? 'jump-persistent' : 'jump-transient';
+  return Math.abs(summary.finalDisplacement ?? 0) > 2.5 ? 'jump-persistent' : 'jump-transient';
 }

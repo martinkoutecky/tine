@@ -790,6 +790,17 @@ function QueryMacroContent(props: Parameters<typeof QueryMacro>[0]): JSX.Element
       else setAnswerShell(true);
     });
   });
+  // GH #944: a rerun that changes this answer's height while it sits above the reader (the Journals feed's agenda and
+  // default queries, after a task tick) moves everything below it. Engines without native scroll anchoring (WebKit)
+  // would jump; Chromium already compensated, which preserveAboveViewport detects. The snapshot is taken here, in a pure
+  // computation, before Solid commits the new rows; the restore runs in the microtask after that commit.
+  let adoptedAnswer: QueryOperation | undefined;
+  createComputed(() => {
+    const shown = displayed();
+    const previous = adoptedAnswer;
+    adoptedAnswer = shown;
+    if (previous && shown && previous !== shown && queryEl && queryAlive) preserveAboveViewport(queryEl, () => {}, undefined, true);
+  });
   /** GH #850: the gear closes the builder's inline editor when it is already open. */
   const closeEdit = () => setEditRequest({ n: (editRequest()?.n ?? 0) + 1, tab: editRequest()?.tab ?? "filter", close: true });
   const closeDisplay = () => {
