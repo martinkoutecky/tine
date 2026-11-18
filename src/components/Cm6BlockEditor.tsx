@@ -2,7 +2,8 @@
 import { createEffect, createMemo, createSignal, For, Show, getOwner, onCleanup, onMount, untrack, useContext, type JSX } from "solid-js";
 import { Annotation, Compartment, EditorSelection, EditorState, StateEffect, StateField } from "@codemirror/state";
 import { Decoration, EditorView, keymap, type DecorationSet } from "@codemirror/view";
-import { defaultKeymap } from "@codemirror/commands";
+import { cursorLineDown, cursorLineUp, defaultKeymap } from "@codemirror/commands";
+import { ctrlArrowAlias } from "../ctrlArrowAlias";
 import { blockWritable, depthOf, finishPageHeaderEdit, isBlockMoving, node, pageByName, rawToWrite, setRaw, type OutlineScope, type PendingEdit } from "../document";
 import { captureEditIntent, editingId, editingOwner, endEdit, noteSurfaceFocused, registerHistoryEditorTarget, takeCaretFor, takeHistoryEditorSelectionFor, type CaretPos } from "../editorController";
 import { focusMountedEditor } from "../editor/surfaceFocus";
@@ -322,7 +323,9 @@ export function Cm6BlockEditor(props: { id: string; surface: string; scope: Outl
         spellcheck.of(EditorView.contentAttributes.of({ spellcheck: String(spellcheckEnabled()) })),
         EditorView.editorAttributes.of({ "data-block-editor": "cm6" }),
         EditorView.contentAttributes.of({ "data-cm6-editor": props.id, "aria-label": "" }),
-        keymap.of(defaultKeymap), cm6EmptyCaret(),
+        keymap.of([...defaultKeymap,
+          // GH #986: macOS has Ctrl-p / Ctrl-n in defaultKeymap; Logseq binds them everywhere.
+          { linux: "Ctrl-p", win: "Ctrl-p", run: cursorLineUp }, { linux: "Ctrl-n", win: "Ctrl-n", run: cursorLineDown }]), cm6EmptyCaret(),
         EditorView.domEventHandlers({
           focus: () => { noteSurfaceFocused(props.surface); registerCommandBridge(); return false; },
           blur: (event, v) => {
@@ -415,7 +418,8 @@ export function Cm6BlockEditor(props: { id: string; surface: string; scope: Outl
         && !(isWebviewReloadChord(event) && editorCommandFor(event))) return;
       // Run before CM's target handler: desktop WebKit suppresses its keymaps
       // just after compositionend, including an already committed plain Enter.
-      if (completion.keydown(event)) {
+      const arrow = ctrlArrowAlias(event); // GH #986: Ctrl+P / Ctrl+N are Up / Down
+      if (completion.keydown(arrow)) {
         event.preventDefault(); event.stopImmediatePropagation(); return;
       }
       if (commentKey(event, props.id, () => view!.dispatch(view!.state.replaceSelection("\n"), { userEvent: "input" }), () => { commit(view!.state.doc.toString()); endEdit("page-navigation"); })) {
@@ -441,7 +445,7 @@ export function Cm6BlockEditor(props: { id: string; surface: string; scope: Outl
       if (leave) showText(view, visible(), leave.anchor, leave.head);
       let handled: boolean;
       try {
-        handled = !!runGridOutline(cell, () => leave || clipboard.keydown(event, view!) || sheet?.keydown(event, view!) || id && command(id) || formatting.keydown(event) || structure.keydown(event, view!));
+        handled = !!runGridOutline(cell, () => leave || clipboard.keydown(event, view!) || sheet?.keydown(arrow, view!) || id && command(id) || formatting.keydown(event) || structure.keydown(arrow, view!));
       } catch (error) {
         // A command that threw (a refused commit, a parser trap before the kernel answered) still
         // owns its key: CodeMirror's own binding would put the Enter or Tab into the text, and the

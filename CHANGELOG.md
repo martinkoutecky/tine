@@ -10,6 +10,7 @@ The format follows [Keep a Changelog](https://keepachangelog.com/); versions use
 
 ### Fixed
 
+- Ctrl+P and Ctrl+N move to the previous and the next block from the edge of a block, as Up and Down do, and likewise move the autocomplete highlight, the date picker by a week and the block selection, as in Logseq; they did nothing (reported by mtravers in #986; UI-GH986-CTRL-NP-NAVIGATION).
 - Closing Quick Capture with the window manager (Alt+F4, Cmd+W) no longer loses the text you typed or stops Quick Capture from opening until Tine is restarted: it hides like losing focus does, and the next capture shortcut shows the draft again (reported by corefusion in #967; UI-CAPTURE-WM-CLOSE-967).
 - Quick share links are offered in every build of Tine, including the Flatpak
   and builds from source. They used to show "Coming soon" in any build made
