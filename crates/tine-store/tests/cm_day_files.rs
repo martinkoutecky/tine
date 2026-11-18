@@ -512,12 +512,19 @@ fn raws(groups: &[tine_core::model::RefGroup]) -> Vec<String> {
 
 /// The block rows of the OG query `[[name]]`.
 fn ref_query(store: &Store, name: &str) -> Vec<String> {
-    use tine_core::query::ir::{ExecutionContext, QueryRows};
-    let (query, view) = tine_core::query::parse_query_text(
+    query_rows(
+        store,
         &format!("[[{name}]]"),
         tine_core::query::QueryDialect::Og,
-        tine_core::date::JournalDate::today(),
-    );
+    )
+}
+
+/// The rows of query `text`: each block's raw text, or each page's path.
+fn query_rows(store: &Store, text: &str, dialect: tine_core::query::QueryDialect) -> Vec<String> {
+    use tine_core::query::ir::{ExecutionContext, QueryRows};
+    let name = text;
+    let (query, view) =
+        tine_core::query::parse_query_text(text, dialect, tine_core::date::JournalDate::today());
     let answer = (store.whole_graph().unwrap())
         .query_ir(
             tine_store::IrRequest::Run {
@@ -534,7 +541,7 @@ fn ref_query(store: &Store, name: &str) -> Vec<String> {
     };
     match &result.rows {
         QueryRows::Block { groups } => raws(groups),
-        other => panic!("{name}: block rows, got {other:?}"),
+        QueryRows::Page { pages } => pages.iter().map(|page| page.path.clone()).collect(),
     }
 }
 
@@ -906,6 +913,187 @@ fn reference_groups_name_a_year_less_source_day_as_its_read_does() {
                     "{case}"
                 );
             }
+        }
+    }
+}
+
+/// REG-CM-YEARLESS-DAY-KEY (round 4, review item 1): a page-name query
+/// condition finds a year-less day by every spelling that identifies it.
+/// Under `MM-dd` the candidate probe asked by the day's label `11-02`, which
+/// names no day, so `(page [[2026-11-02]])`, the TQL `page.name` and the
+/// page-anchored `name` condition answered nothing although the day exists.
+/// Markdown and Org, journals/ and pages/ day files, label page present and
+/// absent.
+#[test]
+fn a_page_name_query_finds_a_year_less_day_by_any_identifying_spelling() {
+    use tine_core::query::QueryDialect::{Og, Tql};
+    let _guard = crate::integration_lock();
+    for (day_rel, day_text, blocks) in [
+        ("journals/2026_11_02.md", "- the day\n", &["the day"][..]),
+        ("journals/2026_11_02.org", "* the day\n", &["the day"][..]),
+        (
+            "pages/Meeting.md",
+            "title:: 2026-11-02\n\n- the day\n",
+            &["the day", "title:: 2026-11-02"][..],
+        ),
+    ] {
+        for label_page in [true, false] {
+            let mut files = vec![
+                (
+                    "logseq/config.edn",
+                    "{:journal/page-title-format \"MM-dd\"}\n",
+                ),
+                (day_rel, day_text),
+                ("journals/2025_11_02.md", "- last year\n"),
+            ];
+            if label_page {
+                files.push(("pages/11-02.md", "- a label page\n"));
+            }
+            let (_dir, store) = graph(&files);
+            let case = format!("{day_rel}, label page {label_page}");
+            for spelling in ["2026-11-02", "2026-11-2", "2026_11_2", "Nov 2nd, 2026"] {
+                assert_eq!(
+                    query_rows(&store, &format!("(page [[{spelling}]])"), Og),
+                    blocks,
+                    "{case}: (page [[{spelling}]])"
+                );
+            }
+            assert_eq!(
+                query_rows(&store, "page.name = '2026-11-02'", Tql),
+                blocks,
+                "{case}: TQL page.name"
+            );
+            assert_eq!(
+                query_rows(&store, "@page and name = '2026-11-02'", Tql),
+                [day_rel],
+                "{case}: @page and name"
+            );
+        }
+    }
+}
+
+/// An inventory row as `name handle journal? day -> target`.
+fn inventory_row(entry: &tine_store::InventoryEntry) -> String {
+    let target = match &entry.target {
+        Resolved::Existing { id, .. } => format!("file {}", id.as_str()),
+        Resolved::Alias { owners } => format!("alias {owners:?}"),
+        Resolved::Absent { id } => format!("absent {}", id.as_str()),
+        #[allow(unreachable_patterns)]
+        other => format!("{other:?}"),
+    };
+    format!(
+        "{} {:?} {} {:?} -> {target}",
+        entry.name,
+        entry.handle,
+        if entry.is_journal { "journal" } else { "page" },
+        entry.day.map(|day| day.0),
+    )
+}
+
+/// REG-CM-YEARLESS-DAY-KEY (round 4, review item 2): under `MM-dd` each
+/// fileless day (only referenced, or only declared as an alias) is its own
+/// inventory row, carrying the spelling that identifies it as its handle
+/// and targeting that day, never the label `11-02` it shares with the other
+/// years, the existing day and the label page. Before the fix two referenced
+/// years collapsed into one row whose target was the existing day or the
+/// label page, and two date aliases into one ordinary alias named `11-02`.
+/// Markdown and Org, journals/ and pages/ day files, label page present and
+/// absent.
+#[test]
+fn year_less_fileless_days_and_date_aliases_are_each_their_own_row() {
+    let _guard = crate::integration_lock();
+    for (day_rel, day_text) in [
+        ("journals/2026_11_02.md", "- the day\n"),
+        ("journals/2026_11_02.org", "* the day\n"),
+        ("pages/Day.md", "title:: 2026-11-02\n\n- the day\n"),
+    ] {
+        for label_page in [true, false] {
+            let mut files = vec![
+                (
+                    "logseq/config.edn",
+                    "{:journal/page-title-format \"MM-dd\"}\n",
+                ),
+                (day_rel, day_text),
+                ("pages/Notes.md", "- [[2024-11-02]] and [[2025-11-02]]\n"),
+                ("pages/Meeting.md", "alias:: 2023-11-02\n\n- meeting\n"),
+                ("pages/Other.org", "#+alias: 2022-11-02\n\n* other\n"),
+            ];
+            if label_page {
+                files.push(("pages/11-02.md", "- a label page\n"));
+            }
+            let (_dir, store) = graph(&files);
+            let case = format!("{day_rel}, label page {label_page}");
+            let view = store.whole_graph().unwrap();
+            let rows: Vec<String> = (view.inventory(InventoryScope::All).0.iter())
+                .filter(|entry| entry.name == "11-02")
+                .map(inventory_row)
+                .collect();
+            let mut expected = vec![
+                r#"11-02 Some("2022_11_02") journal Some(20221102) -> alias [PageId("pages/Other.org")]"#.to_owned(),
+                r#"11-02 Some("2023_11_02") journal Some(20231102) -> alias [PageId("pages/Meeting.md")]"#.to_owned(),
+                r#"11-02 Some("2024_11_02") journal Some(20241102) -> absent journals/2024_11_02.md"#.to_owned(),
+                r#"11-02 Some("2025_11_02") journal Some(20251102) -> absent journals/2025_11_02.md"#.to_owned(),
+            ];
+            expected.push(format!(
+                r#"11-02 Some("2026_11_02") journal Some(20261102) -> file {day_rel}"#
+            ));
+            if label_page {
+                expected.push("11-02 None page None -> file pages/11-02.md".to_owned());
+            }
+            let mut rows = rows;
+            rows.sort();
+            expected.sort();
+            assert_eq!(rows, expected, "{case}");
+        }
+    }
+}
+
+/// REG-CM-YEARLESS-DAY-KEY (round 4, final search): under `MM-dd` a page's
+/// alias group lists each date alias as its own day, carrying the handle that
+/// identifies it, never one row under the label `11-02` the years share (or
+/// the label page's). Markdown and Org owners, label page present and absent.
+#[test]
+fn a_year_less_alias_group_keeps_each_date_alias_its_own_day() {
+    let _guard = crate::integration_lock();
+    for (owner, rel, text) in [
+        (
+            "Meeting",
+            "pages/Meeting.md",
+            "alias:: 2023-11-02, 2024-11-02\n\n- meeting\n",
+        ),
+        (
+            "Other",
+            "pages/Other.org",
+            "#+alias: 2023-11-02, 2024-11-02\n\n* other\n",
+        ),
+    ] {
+        for label_page in [true, false] {
+            let mut files = vec![
+                (
+                    "logseq/config.edn",
+                    "{:journal/page-title-format \"MM-dd\"}\n",
+                ),
+                (rel, text),
+            ];
+            if label_page {
+                files.push(("pages/11-02.md", "- a label page\n"));
+            }
+            let (_dir, store) = graph(&files);
+            let view = store.whole_graph().unwrap();
+            let mut rows: Vec<String> =
+                (view.inventory(InventoryScope::AliasGroup(owner)).0.iter())
+                    .map(inventory_row)
+                    .collect();
+            rows.sort();
+            let owners = format!("[PageId({rel:?})]");
+            assert_eq!(
+                rows,
+                vec![
+                    format!(r#"11-02 Some("2023_11_02") journal Some(20231102) -> alias {owners}"#),
+                    format!(r#"11-02 Some("2024_11_02") journal Some(20241102) -> alias {owners}"#),
+                ],
+                "{rel}, label page {label_page}"
+            );
         }
     }
 }

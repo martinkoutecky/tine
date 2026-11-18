@@ -65,13 +65,15 @@ async function runCase(snapshot: PublishedSnapshot, c: Case): Promise<string[]> 
     // The page shown: the file read, or the empty page of that name and kind,
     // keyed as the case keys pages (the model key, `keyOf`).
     const key = (name: string) => c.keyOf[name] ?? pageIdentityKey(name);
-    // A page read whose file is the one live opens for the route name is
-    // keyed by that name: a year-less day reads back displayed by a label
-    // (`11-02`) the page of that label shares (CM SPEC §2.1).
-    const sameFile = !!page && c.owner[route.name]?.[route.kind] === page.id;
-    const opened: Page = page ? [page.kind, key(sameFile ? route.name : page.name)] : [route.kind, key(route.name)];
+    const opened: Page = page ? [page.kind, key(page.name)] : [route.kind, key(route.name)];
     if (opened[0] !== want.backend[0] || opened[1] !== want.backend[1]) {
       diffs.push(`published navigate [[${s}]]: live ${show(want.backend)}, published ${show(opened)}`);
+    }
+    // The app installs a page read under its name and the route looks it up
+    // by the route's: a read of the route's file is named by the route
+    // (a year-less day by its handle, never by its label `11-02`).
+    if (page && page.id === c.owner[route.name]?.[route.kind] && pageIdentityKey(page.name) !== pageIdentityKey(route.name)) {
+      diffs.push(`published getPage ${route.kind} [[${route.name}]]: the page read is named ${page.name}`);
     }
   }
   for (const [name, at] of Object.entries(c.owner)) {

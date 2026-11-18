@@ -232,19 +232,17 @@ impl Snapshot {
                     .get(path.as_str())
                     .copied()
                     .unwrap_or(ChangeKind::Modified);
-                pages.push((FileId::from(path), change, entry.kind, entry.name.clone()));
+                let name = self.graph.page_name(entry);
+                pages.push((FileId::from(path), change, entry.kind, name));
             } else if let Some((entry, _)) = before {
                 // A demoted file or removed opening with a replacement is
                 // represented by the new opening file's event, not deletion
                 // of a logical page that still exists.
                 let owners = self.graph.real_page_owners();
                 if owners.opening_entry(&owners.claim_key(entry)).is_none() {
-                    pages.push((
-                        FileId::from(path),
-                        ChangeKind::Removed,
-                        entry.kind,
-                        entry.name.clone(),
-                    ));
+                    // Named as the previous generation named it.
+                    let name = old.expect("a page before").graph.page_name(entry);
+                    pages.push((FileId::from(path), ChangeKind::Removed, entry.kind, name));
                 }
             }
         }

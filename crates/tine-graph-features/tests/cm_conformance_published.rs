@@ -175,3 +175,140 @@ fn published_conformance_snapshots_match_the_writer() {
         "published conformance snapshots are stale: {stale:?}; rerun with CM_REFRESH=1 and review"
     );
 }
+
+/// REG-CM-YEARLESS-DAY-KEY (round 4, review item 4): the published site
+/// names a year-less day as the app does. Its page DTO and entry are named by
+/// the day's handle (`2026_11_02`) with its label `11-02` as the title, its
+/// reference panel is keyed by that name and holds its own references, and a
+/// day's blocks stay in another page's panel. Before the fix the DTO was
+/// named `11-02`, so the viewer loaded the label's slot while the route
+/// rendered the handle's (a blank day), and the backlink closure dropped the
+/// journal sources. Markdown and Org, journals/ and pages/ day files, label
+/// page present and absent.
+#[test]
+fn a_published_year_less_day_is_named_by_its_handle() {
+    let _integration_guard = crate::integration_lock();
+    for (day_rel, day_text) in [
+        ("journals/2026_11_02.md", "- the day [[Topic]]\n"),
+        ("journals/2026_11_02.org", "* the day [[Topic]]\n"),
+        (
+            "pages/Day.md",
+            "title:: 2026-11-02\n\n- the day [[Topic]]\n",
+        ),
+    ] {
+        for label_page in [true, false] {
+            let root = tempfile::tempdir().unwrap();
+            let graph = root.path().join("graph");
+            let mut files = vec![
+                (
+                    "logseq/config.edn",
+                    "{:journal/page-title-format \"MM-dd\"}\n",
+                ),
+                (day_rel, day_text),
+                ("journals/2025_11_02.md", "- last year [[Topic]]\n"),
+                (
+                    "pages/Notes.md",
+                    "- day [[2026-11-02]]\n- label [[11-02]]\n",
+                ),
+                ("pages/Topic.md", "- topic\n"),
+            ];
+            if label_page {
+                files.push(("pages/11-02.md", "- a label page [[Topic]]\n"));
+            }
+            for (rel, text) in &files {
+                let path = graph.join(rel);
+                fs::create_dir_all(path.parent().unwrap()).unwrap();
+                fs::write(path, text).unwrap();
+            }
+            let case = format!("{day_rel}, label page {label_page}");
+            let output = root.path().join("output");
+            fs::create_dir_all(&output).unwrap();
+            let store = Store::open(&graph, Default::default()).unwrap().0;
+            publish_live(&store, &output, "Site", true, true, &bundle()).expect(&case);
+            // A query export owns each result group by the name the group
+            // gives; the day's host page is the day.
+            let request = tine_graph_features::publish_query::QueryExportRequest {
+                argument: "[[Topic]]".into(),
+                dialect: tine_core::query::wire_parse::QueryTextDialect::MacroQuery,
+                properties: Vec::new(),
+                current_page: Some("2026_11_02".into()),
+                name: "Topic export".into(),
+                host_block_id: None,
+                folder: Some("probe".into()),
+                replace: false,
+                asset_budget_bytes: None,
+                include_query_text: false,
+                include_comments: None,
+            };
+            let plan =
+                tine_graph_features::publish_query::plan_query(&store, &request).expect(&case);
+            let mut exported: Vec<_> = plan.pages.iter().map(|page| page.path.as_str()).collect();
+            exported.sort();
+            assert!(
+                exported.contains(&day_rel) && exported.contains(&"journals/2025_11_02.md"),
+                "{case}: {exported:?}"
+            );
+            assert!(plan.selects_host_page, "{case}");
+            store.close();
+            let snapshot: Value =
+                serde_json::from_slice(&fs::read(output.join("site/app/snapshot.json")).unwrap())
+                    .unwrap();
+            let named = |list: &str, path: &str| {
+                (snapshot[list].as_array().unwrap().iter())
+                    .find(|page| page["path"] == path)
+                    .map(|page| (page["name"].clone(), page.get("title").cloned()))
+            };
+            for (path, handle) in [
+                (day_rel, "2026_11_02"),
+                ("journals/2025_11_02.md", "2025_11_02"),
+            ] {
+                assert_eq!(
+                    named("pages", path),
+                    Some((json!(handle), Some(json!("11-02")))),
+                    "{case}: {path} page"
+                );
+                assert_eq!(
+                    named("entries", path).map(|(name, _)| name),
+                    Some(json!(handle)),
+                    "{case}"
+                );
+            }
+            let panel = |name: &str| -> Vec<(String, String)> {
+                let mut rows: Vec<_> =
+                    (snapshot["backlinks"][name].as_array().into_iter().flatten())
+                        .flat_map(|group| {
+                            (group["blocks"].as_array().unwrap().iter()).map(move |block| {
+                                (
+                                    group["page"].as_str().unwrap().to_owned(),
+                                    block["raw"].as_str().unwrap().to_owned(),
+                                )
+                            })
+                        })
+                        .collect();
+                rows.sort();
+                rows
+            };
+            let mut topic = vec![
+                ("2025_11_02".to_owned(), "last year [[Topic]]".to_owned()),
+                ("2026_11_02".to_owned(), "the day [[Topic]]".to_owned()),
+            ];
+            if label_page {
+                topic.push(("11-02".to_owned(), "a label page [[Topic]]".to_owned()));
+            }
+            topic.sort();
+            assert_eq!(panel("Topic"), topic, "{case}: Topic panel");
+            assert_eq!(
+                panel("2026_11_02"),
+                [("Notes".to_owned(), "day [[2026-11-02]]".to_owned())],
+                "{case}: the day's panel"
+            );
+            if label_page {
+                assert_eq!(
+                    panel("11-02"),
+                    [("Notes".to_owned(), "label [[11-02]]".to_owned())],
+                    "{case}: the label page's panel"
+                );
+            }
+        }
+    }
+}

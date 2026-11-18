@@ -834,8 +834,8 @@ pub struct SyncConflict {
 #[deny(missing_docs)]
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct PageDto {
-    /// Display name decoded from the file claim when loaded. On save this
-    /// field does not rename the target or inject a `title::` property.
+    /// Operational name (a year-less day's handle; `title` is shown). On save
+    /// it does not rename the target or inject a `title::` property.
     pub name: String,
     /// Journal or ordinary page. The target file area determines save identity.
     pub kind: PageKind,

@@ -108,7 +108,7 @@
     {
       "date_key": 20261102,
       "kind": "journal",
-      "name": "11-02",
+      "name": "2026_11_02",
       "path": "journals/2026_11_02.md"
     },
     {
@@ -137,7 +137,7 @@
       "blocks": [],
       "format": "md",
       "kind": "journal",
-      "name": "11-02",
+      "name": "2026_11_02",
       "path": "journals/2026_11_02.md",
       "pre_block": null,
       "read_only": true,

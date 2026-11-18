@@ -161,14 +161,15 @@ pub(crate) fn answers(
             },
         );
     }
+    let handles = crate::publish_query::day_handles(inventory);
     let alias_groups: Vec<Value> = corpus
         .pages
         .iter()
         .filter_map(|page| {
-            let group = alias_group_wire(graph, &page.name);
-            (!group.aliases.is_empty() || !group.pages.is_empty()).then(
-                || json!({ "name": page.name, "aliases": group.aliases, "pages": group.pages }),
-            )
+            let name = crate::publish_query::app_name(&handles, page);
+            let group = alias_group_wire(graph, name);
+            (!group.aliases.is_empty() || !group.pages.is_empty())
+                .then(|| json!({ "name": name, "aliases": group.aliases, "pages": group.pages }))
         })
         .collect();
     let mut content_days: Vec<i64> = graph

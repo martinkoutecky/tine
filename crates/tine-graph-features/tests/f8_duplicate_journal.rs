@@ -873,3 +873,57 @@ fn a_pages_directory_day_is_labelled_a_journal_in_conflict_data() {
     );
     let _ = fs::remove_dir_all(&root);
 }
+
+/// REG-CM-YEARLESS-DAY-KEY (round 4, final search): under a year-less title
+/// (`MM-dd`) each day's file conflict is its own queue object. Two years' day
+/// files with a date-titled pages twin each, and the label page `11-02`, all
+/// named `11-02`, are never one conflict whose sides mix different days.
+/// Markdown and Org twins, label page present and absent.
+#[test]
+fn a_year_less_day_conflict_never_mixes_two_years() {
+    let _guard = crate::integration_lock();
+    for (twin_2025, twin_2026) in [("pages/A.md", "pages/B.md"), ("pages/A.org", "pages/B.org")] {
+        for label_page in [true, false] {
+            let dir = tempfile::tempdir().unwrap();
+            for folder in ["pages", "journals", "logseq"] {
+                fs::create_dir(dir.path().join(folder)).unwrap();
+            }
+            let write = |rel: &str, text: &str| fs::write(dir.path().join(rel), text).unwrap();
+            write(
+                "logseq/config.edn",
+                "{:journal/page-title-format \"MM-dd\"}\n",
+            );
+            write("journals/2025_11_02.md", "- 2025\n");
+            write("journals/2026_11_02.md", "- 2026\n");
+            let title = |day: &str| {
+                if twin_2025.ends_with(".org") {
+                    format!("#+title: {day}\n\n* twin\n")
+                } else {
+                    format!("title:: {day}\n\n- twin\n")
+                }
+            };
+            write(twin_2025, &title("2025-11-02"));
+            write(twin_2026, &title("2026-11-02"));
+            if label_page {
+                write("pages/11-02.md", "- a label page\n");
+            }
+            let store = Store::open(dir.path(), Default::default()).unwrap().0;
+            store.whole_graph().unwrap();
+            let conflicts = ConflictQueue::default().inventory(&store).unwrap();
+            let mut objects: Vec<Vec<String>> = (conflicts.queue.iter())
+                .filter(|object| object.source == ConflictSource::DuplicateName)
+                .map(|object| object.sides.iter().map(|side| side.label.clone()).collect())
+                .collect();
+            objects.sort();
+            assert_eq!(
+                objects,
+                vec![
+                    vec!["journals/2025_11_02.md".to_owned(), twin_2025.to_owned()],
+                    vec!["journals/2026_11_02.md".to_owned(), twin_2026.to_owned()],
+                ],
+                "{twin_2025}, label page {label_page}"
+            );
+            store.close();
+        }
+    }
+}

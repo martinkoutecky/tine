@@ -1,6 +1,7 @@
 import { afterEach, expect, it } from "vitest";
 import { render } from "solid-js/web";
 import { QueryPageResults, type QueryPageHit } from "./QueryPageResults";
+import { journalHandle, journalTitle, setJournalTitleFormat } from "../journal";
 
 afterEach(() => { document.body.innerHTML = ""; });
 
@@ -57,4 +58,20 @@ it.each(["list", "search"] as const)("%s page rows show a query answer's propert
       expect(root.querySelector("button")?.contains(strip!)).toBe(false);
     } finally { dispose(); }
   }
+});
+
+// REG-CM-YEARLESS-DAY-KEY (round 4): under a year-less title (`MM-dd`) a day's
+// page is named by its handle (`2026_11_02`); its result row shows the label.
+it("a year-less day's page result shows its label, not its handle", () => {
+  setJournalTitleFormat("MM-dd");
+  const day = new Date(2026, 10, 2), name = journalHandle(day);
+  const hit: QueryPageHit = { entity: "page", page: { name, kind: "journal", path: "journals/2026_11_02.md", date_key: 20261102 },
+    display_text: name, evidence: [{ clause_id: 1, field: "page_name", mode: "contains", spans: [{ start: 0, end: 4 }] }], score: 0 };
+  const root = document.createElement("div");
+  const dispose = render(() => <QueryPageResults hits={[hit]} presentation="search" surfaceId={() => name} onOpen={() => {}} />, root);
+  try {
+    const shown = root.querySelector(".search-result-excerpt")?.textContent;
+    expect(shown).toBe(journalTitle(day));
+    expect(shown).not.toContain(name);
+  } finally { dispose(); setJournalTitleFormat(null); }
 });

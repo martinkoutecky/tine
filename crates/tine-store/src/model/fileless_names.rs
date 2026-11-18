@@ -169,6 +169,24 @@ impl FilelessName {
         }
     }
 
+    /// The spelling that identifies this row's day when its name, the day's
+    /// title, does not (the `MM-dd` label `11-02`, `page_handle`); `None`
+    /// for every other row, so a title format with a year carries nothing.
+    /// O(name + parse list) for a day.
+    pub(crate) fn handle(&self, format: &JournalFormat) -> Option<String> {
+        let day = self.day.map(|day| day.ordinal_key());
+        match crate::query::page_handle(format, &self.name, day) {
+            std::borrow::Cow::Owned(handle) => Some(handle),
+            std::borrow::Cow::Borrowed(_) => None,
+        }
+    }
+
+    /// The page key this row is listed and looked up by: of its handle when
+    /// it has one, else of its name (`InventoryEntry::key`).
+    pub(crate) fn key(&self, format: &JournalFormat) -> String {
+        refs::page_key(self.handle(format).as_deref().unwrap_or(&self.name))
+    }
+
     pub(crate) fn page_entry(&self) -> PageEntry {
         PageEntry {
             name: self.name.clone(),
@@ -243,11 +261,11 @@ impl ReadSnapshot {
             let Some(answer) = self.reference_only_row(&format, table, name) else {
                 continue;
             };
-            rows.insert(refs::page_key(&answer.name), answer);
+            rows.insert(answer.key(&format), answer);
         }
         for (day, _) in support.days.iter() {
             if let Some(answer) = self.fileless_page_for_day(*day) {
-                rows.insert(refs::page_key(&answer.name), answer);
+                rows.insert(answer.key(&format), answer);
             }
         }
         rows.into_values().collect()

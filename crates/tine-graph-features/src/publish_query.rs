@@ -218,6 +218,18 @@ fn resolve_plan_review(
         result.matched_total = Some(result.total);
     }
     let corpus = graph.corpus(None, true);
+    // Each day file's handle from its own row: O(journal pages · log P), no
+    // graph inventory (a year-bearing day's handle is its name).
+    let owned: HashMap<String, String> = (corpus.pages.iter())
+        .filter(|page| page.kind == PageKind::Journal)
+        .filter_map(|page| {
+            let rows = graph.inventory(tine_store::InventoryScope::File(&page.id));
+            Some((page.id.as_str().to_owned(), rows.0.first()?.handle.clone()?))
+        })
+        .collect();
+    let handles: HashMap<&str, &str> = (owned.iter())
+        .map(|(id, handle)| (id.as_str(), handle.as_str()))
+        .collect();
     // Owner files by (kind, page_key), built once rather than per group. Page
     // identity is `page_key` everywhere here (census Q1), as in the reader
     // (`publishedBackend.ts pageByName`): two files claiming one key are an
@@ -225,7 +237,8 @@ fn resolve_plan_review(
     let ambiguous = render::ambiguous_source_keys(&graph);
     let mut owners: HashMap<_, Vec<&str>> = HashMap::new();
     for page in &corpus.pages {
-        (owners.entry((page.kind, page_key(&page.name))).or_default()).push(page.id.as_str());
+        let key = page_key(app_name(&handles, page));
+        (owners.entry((page.kind, key)).or_default()).push(page.id.as_str());
     }
     let mut paths = HashSet::new();
     let anchor = match &result.rows {
@@ -290,7 +303,7 @@ fn resolve_plan_review(
     let selects_host_page = request.current_page.as_deref().is_some_and(|host| {
         chosen
             .iter()
-            .any(|page| page_key(&page.name) == page_key(host))
+            .any(|page| page_key(app_name(&handles, page)) == page_key(host))
     });
     let selected = tine_core::Corpus { pages: chosen };
     // The answer is closed to the exported pages too, so neither a ticked
@@ -300,7 +313,7 @@ fn resolve_plan_review(
         let names: HashSet<_> = selected
             .pages
             .iter()
-            .map(|p| (p.kind, page_key(&p.name)))
+            .map(|p| (p.kind, page_key(app_name(&handles, p))))
             .collect();
         result = close_query_result(result, &paths, &names);
     }
@@ -441,6 +454,27 @@ fn collect_static(
     Ok(files)
 }
 
+/// Each day file's handle, by path: the name a year-less day crosses to the
+/// app by (`PageDto.name`, `RefGroup.page`, query rows: `2026_11_02`) where
+/// its name is the label `11-02` (CM SPEC §2.1). Every other page crosses by
+/// its name ([`app_name`]). One pass over the inventory.
+pub(crate) fn day_handles(inventory: &tine_store::Inventory) -> HashMap<&str, &str> {
+    (inventory.0.iter())
+        .filter_map(|entry| match (&entry.target, &entry.handle) {
+            (Resolved::Existing { id, .. }, Some(handle)) => Some((id.as_str(), handle.as_str())),
+            _ => None,
+        })
+        .collect()
+}
+
+/// The name `page` crosses to the app by; its `name` stays its title.
+pub(crate) fn app_name<'a>(
+    handles: &HashMap<&str, &'a str>,
+    page: &'a tine_core::CorpusPage,
+) -> &'a str {
+    handles.get(page.id.as_str()).copied().unwrap_or(&page.name)
+}
+
 fn close_query_result(
     mut result: QueryResult,
     paths: &HashSet<&str>,
@@ -485,16 +519,21 @@ fn display_only_property(key: &str) -> bool {
 /// their host block's `tine.*` properties, and those in a page's properties
 /// (the page header, which the reader renders with no host block and so no
 /// properties).
-fn baked_queries(graph: &WholeGraph, corpus: &tine_core::Corpus) -> io::Result<Vec<Value>> {
+fn baked_queries(
+    graph: &WholeGraph,
+    corpus: &tine_core::Corpus,
+    handles: &HashMap<&str, &str>,
+) -> io::Result<Vec<Value>> {
     let paths: HashSet<_> = corpus.pages.iter().map(|page| page.id.as_str()).collect();
     let names: HashSet<_> = corpus
         .pages
         .iter()
-        .map(|page| (page.kind, page_key(&page.name)))
+        .map(|page| (page.kind, page_key(app_name(handles, page))))
         .collect();
     let mut records = Vec::new();
     let registry = ir_registry(graph)?;
     for page in &corpus.pages {
+        let name = app_name(handles, page);
         let mut bake = |raw: &str, properties: Vec<(String, String)>| -> io::Result<()> {
             // The raw-extent reader is quadratic with many malformed starts;
             // bound its input before calling it (I-22).
@@ -516,16 +555,16 @@ fn baked_queries(graph: &WholeGraph, corpus: &tine_core::Corpus) -> io::Result<V
                     .cloned()
                     .collect();
                 let context = ExecutionContext {
-                    current_page: Some(page.name.clone()),
+                    current_page: Some(name.to_owned()),
                 };
                 let parsed = parse_query_pair(&extent.argument, dialect, &properties, &registry);
-                let execution = substitute_current_page(&extent.argument, &page.name);
+                let execution = substitute_current_page(&extent.argument, name);
                 let executed = execution.as_deref().unwrap_or(&extent.argument);
                 let (run_parsed, result) =
                     parse_and_run(graph, executed, dialect, &properties, &context, false)?;
                 let view = anchored_view(&run_parsed, run_parsed.query.anchor);
                 let result = close_query_result(result, &paths, &names);
-                let mut record = json!({ "host": page.name, "argument": extent.argument,
+                let mut record = json!({ "host": name, "argument": extent.argument,
                     "dialect": dialect, "properties": properties, "parsed": parsed,
                     "context": context, "executed_context": context,
                     "view": view, "result": result });
@@ -586,12 +625,15 @@ pub(crate) fn snapshot_at(
 ) -> io::Result<Vec<u8>> {
     let mut pages: Vec<Value> = Vec::new();
     let mut entries: Vec<Value> = Vec::new();
-    let selected: HashSet<_> = corpus
-        .pages
-        .iter()
-        .map(|p| (p.kind, page_key(&p.name)))
-        .collect();
     let inventory = graph.inventory(tine_store::InventoryScope::All);
+    let handles = day_handles(&inventory);
+    // Each page as the app names it; its label stays its `title`.
+    let names: Vec<&str> = (corpus.pages.iter())
+        .map(|page| app_name(&handles, page))
+        .collect();
+    let selected: HashSet<_> = (corpus.pages.iter().zip(&names))
+        .map(|(p, name)| (p.kind, page_key(name)))
+        .collect();
     // One pass over the inventory, not one per page (I-15).
     let mut days = HashMap::new();
     for entry in &inventory.0 {
@@ -599,14 +641,14 @@ pub(crate) fn snapshot_at(
             days.entry(id.as_str()).or_insert(day.0);
         }
     }
-    for page in &corpus.pages {
+    for (page, name) in corpus.pages.iter().zip(&names) {
         let blocks: Vec<_> = page
             .document
             .roots
             .iter()
             .map(tine_core::projection::block_to_dto)
             .collect();
-        let mut value = json!({ "name": page.name, "kind": page.kind, "title": page.name,
+        let mut value = json!({ "name": name, "kind": page.kind, "title": page.name,
             "pre_block": page.document.pre_block, "blocks": blocks,
             "format": tine_core::model::Format::from_path(Path::new(page.id.as_str())),
             "read_only": true, "guide": false });
@@ -615,9 +657,11 @@ pub(crate) fn snapshot_at(
         value["activation"] = Value::Null;
         pages.push(value);
         let day = days.get(page.id.as_str());
-        entries.push(json!({ "name": page.name, "kind": page.kind, "date_key": day, "path": page.id.as_str() }));
+        entries.push(
+            json!({ "name": name, "kind": page.kind, "date_key": day, "path": page.id.as_str() }),
+        );
     }
-    let mut queries = baked_queries(graph, corpus)?;
+    let mut queries = baked_queries(graph, corpus, &handles)?;
     if let Some((request, parsed, result)) = home_query {
         let macro_name = match request.dialect {
             QueryTextDialect::MacroTql | QueryTextDialect::Tql => "tine-query",
@@ -646,9 +690,9 @@ pub(crate) fn snapshot_at(
         } else {
             Vec::new()
         };
-        for (index, page) in corpus.pages.iter().enumerate() {
+        for (index, name) in names.iter().enumerate() {
             home_blocks.push(json!({ "id": format!("published-page:{index}"),
-                "raw": format!("[[{}]]", page.name), "collapsed": false,
+                "raw": format!("[[{name}]]"), "collapsed": false,
                 "children": [], "breadcrumb": [] }));
         }
         pages.insert(
@@ -670,11 +714,9 @@ pub(crate) fn snapshot_at(
         let executed_context = ExecutionContext {
             current_page: request.current_page.as_deref().and_then(|host| {
                 let key = page_key(host);
-                corpus
-                    .pages
-                    .iter()
-                    .find(|page| page_key(&page.name) == key)
-                    .map(|page| page.name.clone())
+                (names.iter())
+                    .find(|name| page_key(name) == key)
+                    .map(|name| (*name).to_owned())
             }),
         };
         if with_query {
@@ -694,9 +736,9 @@ pub(crate) fn snapshot_at(
     // Only selected sources may cross into a published answer. The whole-graph
     // backlink answerer supplies rows; this projection closes them by owner.
     let mut backlinks = BTreeMap::new();
-    for page in &corpus.pages {
+    for name in &names {
         let groups = graph
-            .backlinks(&page.name)
+            .backlinks(name)
             .map_err(|e| io::Error::other(format!("{e:?}")))?;
         let closed: Vec<_> = groups
             .iter()
@@ -704,14 +746,14 @@ pub(crate) fn snapshot_at(
             .cloned()
             .collect();
         if !closed.is_empty() {
-            backlinks.insert(page.name.clone(), closed);
+            backlinks.insert(name.to_string(), closed);
         }
     }
-    let names: Vec<_> = corpus.pages.iter().map(|p| p.name.clone()).collect();
+    let names: Vec<String> = names.iter().map(|name| name.to_string()).collect();
     let icons = graph.page_icons(&names);
     let mut owner_names = HashMap::new();
-    for page in &corpus.pages {
-        owner_names.entry(page.id.as_str()).or_insert(&page.name);
+    for (page, name) in corpus.pages.iter().zip(&names) {
+        owner_names.entry(page.id.as_str()).or_insert(name);
     }
     let aliases: Vec<_> = inventory
         .0

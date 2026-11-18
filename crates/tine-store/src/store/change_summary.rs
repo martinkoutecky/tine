@@ -455,7 +455,7 @@ fn fileless_changes(
             #[cfg(feature = "test-faults")]
             crate::cost_counters::lifecycle_probe();
             if let Some(row) = graph.resident_reference_only_page(name)? {
-                rows.insert(page_key(&row.name), row);
+                rows.insert(row.key(&graph.config().journal_format()), row);
             }
         }
         Some(rows)
@@ -534,7 +534,9 @@ impl Snapshot {
             })
         };
         let fileless_keys = fileless.as_ref().map(|rows| {
-            let mut keys: Vec<_> = rows.iter().map(|(_, row)| page_key(&row.name)).collect();
+            let mut keys: Vec<_> = (rows.iter())
+                .map(|(_, row)| row.key(&self.journal_format))
+                .collect();
             keys.dedup();
             keys
         });
@@ -574,7 +576,9 @@ impl Snapshot {
         // reference queries hold (`ref_classes.rs`), so those plans renew.
         let mut day_keys = Vec::new();
         for (_, entry) in lifecycle.iter().flat_map(|l| &l.names) {
-            let key = page_key(&entry.name);
+            // The name the app knows the page by (a year-less day's handle).
+            let name = self.graph.page_name(entry);
+            let key = page_key(&name);
             summary.full |= [&old.graph, &self.graph]
                 .iter()
                 .any(|graph| graph.alias_edges().neighbors(&key).next().is_some());
@@ -589,7 +593,7 @@ impl Snapshot {
             summary.days |= day;
             summary.pages.insert(key);
             for graph in [&old.graph, &self.graph] {
-                for name in crate::query::reference_invalidation_names(graph, &entry.name) {
+                for name in crate::query::reference_invalidation_names(graph, &name) {
                     summary.links_to.insert(name.clone());
                     summary.text_to.insert(name.clone());
                     summary.tags_to.insert(name);
@@ -680,7 +684,8 @@ impl Snapshot {
             if before == after && !moved(i) {
                 continue;
             }
-            let key = page_key(&entry.name);
+            let name = self.graph.page_name(entry);
+            let key = page_key(&name);
             summary.pages.insert(key.clone());
             let day = entry.kind == PageKind::Journal;
             // `journals` means journal files (the calendar dots); a fileless
@@ -705,7 +710,7 @@ impl Snapshot {
             // namespace ancestors. Backlinks exclude self; keep these keys
             // separate so typing in P does not refresh P's reference sections.
             for graph in [&old.graph, &self.graph] {
-                for name in tine_core::refs::namespace_refs(&entry.name) {
+                for name in tine_core::refs::namespace_refs(&name) {
                     summary
                         .tag_table_to
                         .extend(crate::query::reference_invalidation_names(graph, &name));
@@ -744,7 +749,7 @@ impl Snapshot {
             if !keys.is_empty() {
                 // Icon inheritance and tag readers may use an alias of the
                 // source page. Reuse the answerer's component/day closure.
-                let names = crate::query::reference_invalidation_names(&self.graph, &entry.name);
+                let names = crate::query::reference_invalidation_names(&self.graph, &name);
                 for name in names {
                     summary
                         .props
