@@ -74,20 +74,22 @@ try {
   // GH #970: one number per source line, level with that line's first row, when a line wraps: by the
   // wrap setting, or because a theme or custom.css wraps `code` while the setting is off.
   // A theme's rule may select the code by descendant or by child; both must reach the numbers (review of fb13bd95d).
-  const themeWrap = { themed: "pre code", child: "pre > code" };
+  const wrapRule = sel => `${sel} { white-space: pre-wrap !important; overflow-wrap: anywhere !important; }`;
+  // "live": a theme switch after the card is shown, changing the code's font while it wraps (review of 3764978ba).
+  const themeWrap = { themed: [wrapRule("pre code")], child: [wrapRule("pre > code")],
+    live: [wrapRule("pre > code"), "pre > code { font-family: serif !important; }"] };
   const aligned = [];
-  for (const wrap of [false, true]) for (const kind of ["view", "textarea", "cm6"]) for (const name of ["long", "themed", "child"]) {
+  for (const wrap of [false, true]) for (const kind of ["view", "textarea", "cm6"]) for (const name of ["long", "themed", "child", "live"]) {
     if (name !== "long" && kind !== "view") continue; // a theme's `pre code` rule never reaches an editor
     // The classic editor paints no per-line boxes; its height is compared with the numbers' only
     // unwrapped, because its font stack differs from the gutter's on a host without the mono fonts.
     if (kind === "textarea" && wrap) continue;
     await page.evaluate(([k, w]) => window.showLong(k, w), [kind, wrap]);
     await page.locator(".code-gutter .calc-lineno").nth(1).waitFor();
-    const themed = themeWrap[name]
-      ? await page.addStyleTag({ content: `${themeWrap[name]} { white-space: pre-wrap !important; overflow-wrap: anywhere !important; }` })
-      : null;
-    // Settled when the fonts are in and two frames have run (ResizeObserver delivers before the frame's paint).
-    await page.evaluate(() => document.fonts.ready.then(() => new Promise(r => requestAnimationFrame(() => requestAnimationFrame(r)))));
+    const settle = () => page.evaluate(() => document.fonts.ready.then(() => new Promise(r => requestAnimationFrame(() => requestAnimationFrame(r)))));
+    const themed = [];
+    for (const content of themeWrap[name] ?? []) { await settle(); themed.push(await page.addStyleTag({ content })); }
+    await settle();
     const r = await page.evaluate(([kind]) => {
       const nums = [...document.querySelectorAll(".code-gutter .calc-lineno")];
       const top = el => el.getBoundingClientRect().top;
@@ -95,7 +97,7 @@ try {
       if (kind === "cm6") rows = [...document.querySelectorAll(".cm-content > .cm-line")].map(top);
       else if (kind === "view") {
         // First painted row of every line of the code text, by walking its text to each line start.
-        const code = document.querySelector(".code-block > code");
+        const code = document.querySelector(".code-block > code > .code-text") ?? document.querySelector(".code-block > code");
         const walker = document.createTreeWalker(code, NodeFilter.SHOW_TEXT);
         const starts = []; let atStart = true, node;
         while ((node = walker.nextNode())) {
@@ -117,7 +119,7 @@ try {
     }, [kind]);
     aligned.push({ wrap, kind, name, ...r });
     await page.screenshot({ path: `${out}/aligned-${wrap ? "wrap" : "nowrap"}-${kind}-${name}.png` });
-    await themed?.evaluate(el => el.remove());
+    for (const el of themed) await el.evaluate(node => node.remove());
   }
   writeFileSync(`${out}/aligned.json`, JSON.stringify(aligned, null, 2) + "\n");
   const misaligned = aligned.filter(r => r.kind === "textarea" ? r.numbers !== 14 || !r.textareaOk

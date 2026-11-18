@@ -4222,7 +4222,9 @@ html[data-mobile-editing-dock] .app-container[data-mobile-drawer-mode="true"] :i
 .code-gutter { position: absolute; top: 30px; inset-inline-start: var(--code-content-inset); inset-inline-end: 12px; pointer-events: none; font: inherit; white-space: pre; }
 .gutter-row { position: relative; }
 .code-gutter .calc-lineno { position: absolute; inset-inline-end: calc(100% + 14px); white-space: pre; overflow-wrap: normal; }
-.gutter-mirror { visibility: hidden; font: inherit; white-space: inherit; overflow-wrap: inherit; }
+.gutter-mirror { visibility: hidden; }
+/* A card's gutter sits inside its `code` and takes the code's text layout from it (GH #970). */
+.code-block .code-gutter { white-space: inherit; }
 .code-editor-region > .code-gutter { top: calc(35px + var(--ls-block-content-pad-y)); inset-inline-start: calc(var(--code-content-inset) + 1px); inset-inline-end: 13px; font-family: var(--tine-mono-font, var(--ls-font-mono)); font-size: 0.86em; line-height: 1.5; }
 .code-editor-region > .code-language { top: calc(14px + var(--ls-block-content-pad-y)); }
 .code-editor-region { display: contents; }
