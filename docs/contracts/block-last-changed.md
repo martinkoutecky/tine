@@ -17,7 +17,13 @@ loaded live references and embeds use their source page's current snapshot.
 existing unsaved-inclusive page snapshot. It returns tagged facts keyed by
 structural block paths into that snapshot. Fold properties and trailing spaces
 normalize as in seen-state. First-parent merges belong to the merge commit.
-Malformed/non-UTF-8 history is unknown; I/O errors remain command failures.
+Malformed/non-UTF-8 history is unknown. A graph with no usable repository (none,
+a `.git` file naming a missing directory, a bare repository, a work tree that
+does not hold the graph, a repository another user owns) has no dates and
+raises no error: the user may never have used git (GH #980; threats: sync and
+copies leave such folders behind). I/O errors inside a usable repository
+remain command failures; the interface shows a failed read once per graph
+binding, not on every hover.
 
 The read runs off the UI thread and reuses the seen owner's bounded Walk,
 History and structural aligner. The graph binding owns one page/HEAD cache,

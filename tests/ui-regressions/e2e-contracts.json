@@ -10,6 +10,13 @@
       "stability":"quarantined",
       "quarantineReason":"WebKitWebDriver screenshot GET times out on the individually routed journal after folding. Presence/input assertions remain intact; capture errors are rethrown after collecting all four semantic phases. See RECEIPT-fix-944-agenda.md."
     },
+    "scripts/e2e-gh944-fold-tick.mjs": {
+      "setup":"Synthetic graph (today plus eight older days, a Tasks page, a Refs page linking every older day), scratch HOME/XDG and account-home shim; embedded origin, 1280x800 window.",
+      "contracts":[{"class":"stateful-ux","userOutcome":"Folding, unfolding or ticking a block on the Journals feed does not move the block under the pointer while the page still scrolls, by bullet-side toggle or checkbox click and by keyboard, in today's journal and in an older day, whether or not the task is listed in Scheduled & Deadline.","blocking":false,"authority":"GH #944 comment 11"}],
+      "acceptableVariations":["Movement because the page no longer needs to scroll (D-20261112-C837) or scrolls to its new end; lines inserted by the action itself below the block."],
+      "nonRequirements":["No typing jitter (scripts/e2e-gh944-journal-agenda.mjs), no release burn-in."],
+      "stability":"burn-in"
+    },
     "scripts/e2e-cli-query-export.mjs": {
       "setup":"Synthetic graph and scratch HOME/XDG with account-home shim; native Linux app owns the graph.",
       "contracts":[{"class":"stateful-ux","userOutcome":"UUID, inline and page query sources publish the selected page, refuse existing output and preserve previous output on force without changing source bytes.","blocking":false,"authority":"D-20261114-588; GH #588"}],
