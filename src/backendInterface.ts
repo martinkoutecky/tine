@@ -235,7 +235,7 @@ export interface Backend {
    *  clipboard natively; the link is not returned. */
   quickShareCreate(prepareId: string): Promise<QuickShareCreated>;
   quickShareDiscard(prepareId: string): Promise<void>;
-  /** This device's shares and the connected account; `enabled` is the build gate. */
+  /** This device's shares and the connected account. A backend without quick share (the browser preview) refuses it with `disabled`. */
   quickShareList(): Promise<QuickShareListing>;
   /** Development-only, unauthenticated HTTPS GET; returns only a fixed diagnostic code. */
   quickShareTestConnection(): Promise<import("./quickShare/commands").QuickShareConnectionTest>;

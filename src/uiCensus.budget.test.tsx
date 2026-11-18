@@ -53,7 +53,7 @@ async function measureSettings() {
     counts["settings.tabs"] = nav;
     // Keep the ordinary navigation budget, then expose gated tab bodies too.
     resetQuickShareGateForTest();
-    vi.spyOn(backend(), "quickShareList").mockResolvedValue({ enabled: true, account: null, shares: [], error: null });
+    vi.spyOn(backend(), "quickShareList").mockResolvedValue({ account: null, shares: [], error: null });
     await primeQuickShareGate();
     await settled(() => root.querySelectorAll(".settings-nav-item").length);
     const tabs = [...root.querySelectorAll<HTMLElement>(".settings-nav-item")].map(item => item.dataset.settingsTab as SettingsTabId);

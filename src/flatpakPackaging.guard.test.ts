@@ -112,7 +112,7 @@ describe("Flatpak identity derivation", () => {
 });
 
 describe("Flatpak workflows", () => {
-  it("builds the checkout with locked dependencies and carries readiness into the sandbox", () => {
+  it("builds the checkout with locked dependencies and no build-time quick share switch", () => {
     const manifest = read(`flatpak/${RELEASED}.yml`);
     expect(manifest).toContain("- type: dir\n        path: ..");
     expect(manifest).toContain("build-args:\n        - --share=network");
@@ -121,12 +121,8 @@ describe("Flatpak workflows", () => {
     expect(manifest).not.toMatch(/--offline|sources\.json|NET_OFFLINE/);
     const root = scratch("release");
     try {
-      for (const viewerReady of ["", "a".repeat(64)]) {
-        const derived = deriveFlatpak({ root, identity: "release", date: "2026-01-01", version: "1.2.3", viewerReady });
-        expect(derived.files[`flatpak/${RELEASED}.ci.yml`]).toContain(
-          `TINE_QUICK_SHARE_VIEWER_G1_READY: ${JSON.stringify(viewerReady)}`,
-        );
-      }
+      const derived = deriveFlatpak({ root, identity: "release", date: "2026-01-01", version: "1.2.3" });
+      expect(derived.files[`flatpak/${RELEASED}.ci.yml`]).not.toContain("TINE_QUICK_SHARE");
     } finally {
       fs.rmSync(root, { recursive: true, force: true });
     }

@@ -20,7 +20,7 @@ const REQUEST: QueryPublicationRequest = { argument: "@page and name = 'Project'
   currentPage: "Project", hostBlockId: null, name: "Project", includeQueryText: false };
 const ACCOUNT = { login: "octo", accountId: 7 };
 const listing = (extra: Partial<QuickShareListing> = {}): QuickShareListing =>
-  ({ enabled: true, account: ACCOUNT, shares: [], error: null, ...extra });
+  ({ account: ACCOUNT, shares: [], error: null, ...extra });
 let prepared = 0;
 const preparedOf = (): QuickSharePrepared => ({ prepareId: `p${++prepared}`, shareId: `Rec0rd-id_0123456789x${prepared}`, preview: { title: "Project",
   pages: [{ name: "Project", path: "pages/Project.md", journal: false }], leftOut: [{ name: "Secret", path: "pages/Secret.md", reason: "private" }],
@@ -288,7 +288,7 @@ it("a revoked token sends the user back to Connect GitHub", async () => {
 });
 
 it("in a build without quick share it says so and prepares nothing", async () => {
-  api.list.mockResolvedValue(listing({ enabled: false, account: null }));
+  api.list.mockRejectedValue({ kind: "disabled" });
   const root = await open();
   expect(root.querySelector("[role=alert]")!.textContent).toBe("Quick share is not available in this build yet.");
   expect(api.prepare).not.toHaveBeenCalled();

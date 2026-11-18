@@ -10,7 +10,7 @@ const fake = vi.hoisted(() => ({
   setBackupKeep: vi.fn(),
   setAppBool: vi.fn(async () => undefined),
   getAppBool: vi.fn(async () => false),
-  quickShareList: vi.fn(async () => ({ enabled: false, account: null, shares: [], error: null })),
+  quickShareList: vi.fn(async () => { throw { kind: "disabled" }; }),
 }));
 
 vi.mock("../backend", async (importOriginal) => {
