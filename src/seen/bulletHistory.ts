@@ -3,11 +3,25 @@ import { t } from "../i18n";
 import { backend } from "../backend";
 import { node, seenPageSnapshot } from "../document";
 import { touchPrimary } from "../inputCapability";
+import { bindingIdentity } from "../binding";
 import { graphOwner, readOwned } from "../owned";
+import { dbg } from "../debug";
 import { reportUiFailure } from "../uiFailure";
 import { nodeAtPath } from "./marks";
 import type { BlockLastChanged } from "../backendTypes";
 import "../styles/bulletHistory.css";
+
+let reportedBinding: string | null = null;
+/** A failed history read is shown once per graph binding (GH #980): hovering
+ * the next bullet repeats the same cause, so the later failures only go to the
+ * opt-in debug log. Absent history (no git, no repository, an untracked page)
+ * is not a failure and never arrives here. O(1). */
+export function reportBlockHistoryFailure(error: unknown): void {
+  const binding = bindingIdentity();
+  if (reportedBinding === binding) { dbg(`block-history (already reported): ${String(error)}`); return; }
+  reportedBinding = binding;
+  reportUiFailure("block-history", error);
+}
 
 /** Add git history to an existing bullet title, in live and fallback rows.
  * One page snapshot/IPC on mouse enter; no reads during render. A fallback
@@ -37,7 +51,7 @@ export function createBulletHistory(id: () => string | null, help: () => string)
       if (answer.kind === "stale") return;
       const at = answer.value.find(row => nodeAtPath(snapshot.roots, row.block_path)?.id === sourceId);
       setChanged(at?.changed ?? { kind: "unknown" });
-    }, error => { if (owner()) reportUiFailure("block-history", error); });
+    }, error => { if (owner()) reportBlockHistoryFailure(error); });
   };
   const text = () => {
     const date = changed?.[0]();

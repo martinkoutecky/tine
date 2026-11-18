@@ -42,7 +42,9 @@ impl Cache {
         current: &str,
     ) -> Result<Arc<Vec<BlockChanged>>, String> {
         relative(path)?;
-        let Some((repo, prefix)) = open_if_repository(root)? else {
+        // No usable repository is no dates, silently: the user may never have
+        // used git (GH #980). Failures past this point are real errors.
+        let Ok((repo, prefix)) = open(root) else {
             return Ok(Arc::new(Vec::new()));
         };
         let tip = head(&repo)?;
