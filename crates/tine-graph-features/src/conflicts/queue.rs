@@ -9,12 +9,12 @@ use tine_core::concord_queue::{
     ConflictSource, MarkerConflictDiff, SideRole, VcsMarkerConflict,
 };
 use tine_core::model::{sync_conflict_base, PageKind, SyncConflict};
-use tine_store::{Area, FileId, Store};
+use tine_store::{Area, FileId, PageId, Store};
 
 use super::{
     area_listing, duplicate_journal_diff, format, graph_text_stem, id, marker_row_name,
-    sort_copies, store_failed, sync_conflict_diff, sync_copies, sync_copy_entry, sync_copy_winner,
-    vcs_marker_conflict_diff, Unreadable,
+    page_answer_of, sort_copies, store_failed, sync_conflict_diff, sync_copies, sync_copy_entry,
+    sync_copy_winner, vcs_marker_conflict_diff, Unreadable,
 };
 
 /// Queue objects for every duplicate journal day: the keeper is Mine, each
@@ -27,7 +27,7 @@ fn journal_objects(store: &Store, bad: &mut Unreadable) -> io::Result<Vec<Confli
     bad.journal_days.clear();
     let journals = format!("{}/", store.config().config.journals_dir);
     let mut view = None;
-    for day in crate::journals::journal_conflicts(store)? {
+    for (day_name, day) in crate::journals::journal_conflict_days(store)? {
         // A file outside the journals directory can claim this day too
         // (CM-DAYFILE). Its complete bucket is listed as a name conflict
         // instead ([`name_objects`]); only all-journals days are folded here.
@@ -39,7 +39,9 @@ fn journal_objects(store: &Store, bad: &mut Unreadable) -> io::Result<Vec<Confli
                     .map_err(|error| io::Error::other(format!("{error:?}")))?,
             ),
         };
-        if let tine_store::Resolved::Existing { id, others } = view.resolve(&day.title, true) {
+        // By the day, never its title: a year-less title is a label several
+        // days share, which names none of them (CM SPEC §2.1).
+        if let tine_store::Resolved::Existing { id, others } = view.resolve(&day_name, true) {
             if std::iter::once(&id)
                 .chain(&others)
                 .any(|id| !id.as_str().starts_with(&journals))
@@ -125,9 +127,17 @@ fn marker_entry(store: &Store, file: &FileId) -> io::Result<Option<VcsMarkerConf
     }
     let text = std::str::from_utf8(&bytes).map_err(|_| tine_store::not_utf8())?;
     let markers = vcs_conflict_markers(text, format(file));
-    Ok((!markers.is_empty()).then(|| VcsMarkerConflict {
+    if markers.is_empty() {
+        return Ok(None);
+    }
+    // The row names the page as the store does from the bytes just read (a
+    // day in pages/ is a journal, K SPEC §2.1; no further read). Bytes the
+    // store cannot name keep the file-name answer.
+    let (kind, name) = page_answer_of(store, &PageId::from(file.as_str()), &bytes)
+        .unwrap_or_else(|| (kind, marker_row_name(store, kind, &stem)));
+    Ok(Some(VcsMarkerConflict {
         path: file.as_str().to_owned(),
-        name: marker_row_name(store, kind, &stem),
+        name,
         kind,
         markers: markers.iter().map(|m| m.to_string()).collect(),
     }))

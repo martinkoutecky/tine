@@ -315,9 +315,15 @@ impl Snapshot {
                 if kind == ChangeKind::Modified && path.starts_with(graph.journals_path()) {
                     return None;
                 }
+                // Unchanged only if the day is too: a year-less title shows
+                // two days one name (SPEC §2.1), so kind and name do not
+                // settle it.
                 if kind == ChangeKind::Modified
                     && old_name
                         .is_some_and(|(kind, name)| *kind == entry.kind && *name == entry.name)
+                    && old
+                        .and_then(|snapshot| snapshot.held_entry(&path))
+                        .is_some_and(|held| held.date_key == entry.date_key)
                 {
                     return None;
                 }
@@ -390,25 +396,23 @@ impl Snapshot {
                 }
                 let list = Arc::make_mut(&mut list);
                 list.remove_path(&path);
+                // A day's winner is the first claimant of its title that
+                // holds that day: a year-less title is shared by other days.
+                let day_winner = |name: &str, day: i64| {
+                    (buckets.get(&(true, tine_core::refs::page_key(name))))
+                        .and_then(|bucket| bucket.iter().find(|e| e.date_key == Some(day)))
+                };
                 if let Some((old, old_name)) = old_day {
                     let day = old.date_key.unwrap();
                     list.remove_day(day);
-                    if let Some(winner) = buckets
-                        .get(&(true, tine_core::refs::page_key(&old_name)))
-                        .and_then(|bucket| bucket.first())
-                    {
+                    if let Some(winner) = day_winner(&old_name, day) {
                         list.push(winner.clone());
                     }
                 }
                 if entry.kind == PageKind::Journal && entry.date_key.is_some() {
-                    list.remove_day(entry.date_key.unwrap());
-                    if let Some(winner) = buckets
-                        .get(&(
-                            entry.kind == PageKind::Journal,
-                            tine_core::refs::page_key(&entry.name),
-                        ))
-                        .and_then(|bucket| bucket.first())
-                    {
+                    let day = entry.date_key.unwrap();
+                    list.remove_day(day);
+                    if let Some(winner) = day_winner(&entry.name, day) {
                         list.push(winner.clone());
                     }
                 } else if kind != ChangeKind::Removed {

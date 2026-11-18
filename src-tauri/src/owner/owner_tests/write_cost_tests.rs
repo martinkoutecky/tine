@@ -350,9 +350,11 @@ fn a_block_edit_spends_its_lower_bound() {
             c.preamble_reads,
             c.readdir,
         );
+        // No name read: `Store::page_of` names the page from the bytes the
+        // edit already read (was 1 until CM leftovers C, item 2).
         assert_eq!(
             counts,
-            (4, 1, 4, 1, 1, 0),
+            (4, 1, 4, 1, 0, 0),
             "{label}: parses, old-source parses, full reads, store reads, name reads, listings"
         );
         assert_eq!((c.fsyncs, c.files_written), (5, 2), "{label}: syncs, files");
