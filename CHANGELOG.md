@@ -10,6 +10,7 @@ The format follows [Keep a Changelog](https://keepachangelog.com/); versions use
 
 ### Fixed
 
+- Hovering a bullet no longer raises the red "Could not read this block's git history" toast in a graph that has no usable git repository (none, a broken or moved `.git`, a bare repository, one that does not hold the graph); the bullet just says Unknown. A history read that really fails inside a repository is shown once per graph, not on every hover (reported by EllisMorrow in #980; UI-GH980-NO-GIT-NO-ERROR).
 - Closing Quick Capture with the window manager (Alt+F4, Cmd+W) no longer loses the text you typed or stops Quick Capture from opening until Tine is restarted: it hides like losing focus does, and the next capture shortcut shows the draft again (reported by corefusion in #967; UI-CAPTURE-WM-CLOSE-967).
 - Quick share links are offered in every build of Tine, including the Flatpak
   and builds from source. They used to show "Coming soon" in any build made

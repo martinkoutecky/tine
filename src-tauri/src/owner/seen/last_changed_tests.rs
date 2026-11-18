@@ -301,3 +301,112 @@ fn block_dates_page_attribution_releases_older_snapshots() {
         .iter()
         .all(|f| matches!(f, Changed::Committed(_))));
 }
+
+// GH #980: a graph the user never put under git raised "Could not read this
+// block's git history" on bullet hover. Every state where git has nothing to
+// say about the page (no repository, an unusable one, an untracked file, an
+// unborn HEAD) answers "no dates" silently (threat: malformed input, external
+// editors and sync leave such repositories behind; none of it is the user's
+// failure). Only a failure inside a usable repository is a command error.
+fn no_dates(root: &Path, path: &str, text: &str) {
+    let rows = Cache::default()
+        .read_page_dates(root, path, text)
+        .unwrap_or_else(|e| panic!("hover must stay silent, got error: {e}"));
+    assert!(rows.is_empty());
+}
+
+/// An untracked page in a usable repository answers its blocks as "not yet
+/// committed", never as an error.
+fn uncommitted(root: &Path, path: &str, text: &str) {
+    let rows = Cache::default()
+        .read_page_dates(root, path, text)
+        .unwrap_or_else(|e| panic!("hover must stay silent, got error: {e}"));
+    assert!(!rows.is_empty() && rows.iter().all(|r| r.changed == Changed::Uncommitted));
+}
+
+#[test]
+fn no_repository_has_no_dates() {
+    let root = tempfile::tempdir().unwrap();
+    std::fs::create_dir_all(root.path().join("pages")).unwrap();
+    std::fs::write(root.path().join("pages/p.md"), "- a\n").unwrap();
+    no_dates(root.path(), "pages/p.md", "- a\n");
+}
+
+#[test]
+fn untracked_page_and_unborn_head_have_no_dates() {
+    let g = Graph::new();
+    uncommitted(g.root.path(), "pages/new.md", "- a\n"); // unborn HEAD
+    g.commit("p.md", "- a\n", 100);
+    uncommitted(g.root.path(), "pages/untracked.md", "- b\n"); // untracked
+}
+
+#[test]
+fn non_ascii_folder_is_read_like_any_other() {
+    let g = Graph::new();
+    let tree = |name: &str, g: &Graph| {
+        let blob = g.repo.blob(b"- \xe7\xac\x94\xe8\xae\xb0\n").unwrap();
+        let mut dir = g.repo.treebuilder(None).unwrap();
+        dir.insert(name, blob, 0o100644).unwrap();
+        dir.write().unwrap()
+    };
+    let inner = tree("页.md", &g);
+    let mut pages = g.repo.treebuilder(None).unwrap();
+    pages.insert("笔记集", inner, 0o040000).unwrap();
+    let mut top = g.repo.treebuilder(None).unwrap();
+    top.insert("pages", pages.write().unwrap(), 0o040000)
+        .unwrap();
+    let tree = g.repo.find_tree(top.write().unwrap()).unwrap();
+    let sig = git2::Signature::new("W", "w@example.invalid", &git2::Time::new(100, 0)).unwrap();
+    g.repo
+        .commit(Some("HEAD"), &sig, &sig, "x", &tree, &[])
+        .unwrap();
+    let mut cache = Cache::default();
+    let rows = cache
+        .read_page_dates(g.root.path(), "pages/笔记集/页.md", "- 笔记\n")
+        .unwrap();
+    assert_eq!(facts(&rows), [Changed::Committed(100)]);
+    uncommitted(g.root.path(), "pages/笔记集/新.md", "- 笔记\n");
+}
+
+#[test]
+fn unusable_repository_has_no_dates() {
+    // A `.git` file naming a git directory that is gone (a graph copied or
+    // synced out of its repository, or a repository on another device's path).
+    let root = tempfile::tempdir().unwrap();
+    std::fs::write(root.path().join(".git"), "gitdir: ../no-such-git-dir\n").unwrap();
+    no_dates(root.path(), "pages/p.md", "- a\n");
+    // A repository whose work tree does not contain the graph (core.worktree
+    // pointing elsewhere, as after a synced move).
+    let g = Graph::new();
+    g.commit("p.md", "- a\n", 100);
+    let elsewhere = tempfile::tempdir().unwrap();
+    g.repo
+        .config()
+        .unwrap()
+        .set_str("core.worktree", elsewhere.path().to_str().unwrap())
+        .unwrap();
+    no_dates(g.root.path(), "pages/p.md", "- a\n");
+    // A bare repository.
+    let bare = tempfile::tempdir().unwrap();
+    Repository::init_bare(bare.path()).unwrap();
+    no_dates(bare.path(), "pages/p.md", "- a\n");
+}
+
+#[test]
+fn damaged_history_inside_a_usable_repository_is_still_an_error() {
+    // The contract keeps I/O and corruption failures as command errors.
+    let mut g = Graph::new();
+    let commit = g.commit("p.md", "- a\n", 100);
+    let tree = g.repo.find_commit(commit).unwrap().tree_id().to_string();
+    let object = g
+        .root
+        .path()
+        .join(".git/objects")
+        .join(&tree[..2])
+        .join(&tree[2..]);
+    std::fs::remove_file(object).ok();
+    assert!(g
+        .cache
+        .read_page_dates(g.root.path(), "pages/p.md", "- a\n")
+        .is_err());
+}
