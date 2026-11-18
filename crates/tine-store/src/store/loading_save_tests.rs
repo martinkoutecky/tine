@@ -498,9 +498,9 @@ fn a_date_titled_pages_file_held_through_the_launch_install_reads_its_title_day(
     // supply the page's row, so while held the file holds no day (as any
     // held page here is absent, `pages/A.md` in the helper above included),
     // Nov 3 names the journals path a new file would take, and the name
-    // resolves to nothing. An add by Nov 3 in this window would make
-    // `journals/2026_11_03.md` beside the file that holds the day; the file
-    // itself is never written.
+    // resolves to nothing. Creating that file in this window is refused as a
+    // twin (`a_page_held_unindexed_through_the_launch_install_still_refuses_a_twin`);
+    // the held file itself is never written.
     let absent = |day: &str| format!("Absent {{ id: PageId(\"journals/{day}.md\") }}");
     let expected_held = vec![
         "indexed days []".to_owned(),
@@ -512,6 +512,80 @@ fn a_date_titled_pages_file_held_through_the_launch_install_reads_its_title_day(
         format!("Nov 3rd, 2026 (true): {}", absent("2026_11_03")),
     ];
     assert_eq!(held, expected_held, "while held through the install");
+}
+
+/// R-CREATE-TWIN while a held page has no owner publication yet (the
+/// launch install): the held file is in no name index, but its file still
+/// claims its name, so a new file of that name or day is a twin. Before:
+/// both creations planned and wrote a second file beside the user's.
+#[test]
+fn a_page_held_unindexed_through_the_launch_install_still_refuses_a_twin() {
+    for (rel, text, id, name, kind) in [
+        (
+            "pages/2026-11-02.md",
+            "title:: 2026-11-03\n\n- notes\n",
+            "journals/2026_11_03.md",
+            "Nov 3rd, 2026",
+            PageKind::Journal,
+        ),
+        (
+            "pages/X.md",
+            "title:: Foo\n\n- notes\n",
+            "pages/Foo.md",
+            "Foo",
+            PageKind::Page,
+        ),
+    ] {
+        let root = tempfile::tempdir().unwrap();
+        for dir in ["pages", "journals", "logseq"] {
+            fs::create_dir_all(root.path().join(dir)).unwrap();
+        }
+        fs::write(
+            root.path().join("logseq/config.edn"),
+            "{:preferred-format :markdown}\n",
+        )
+        .unwrap();
+        let file = root.path().join(rel);
+        fs::write(&file, text).unwrap();
+        File::options()
+            .write(true)
+            .open(&file)
+            .unwrap()
+            .set_modified(old())
+            .unwrap();
+        let store = held_open(root.path());
+        let writer = HostWriter::start(&store);
+        let listed = pause();
+        let installing = pause();
+        *store.graph.warm_after_first_page_pause.lock().unwrap() = Some(Arc::clone(&listed));
+        *store.graph.install_lock_pause.lock().unwrap() = Some(Arc::clone(&installing));
+        store.graph.held.spellings().spell(rel, rel);
+        go(root.path());
+        wait_hook(&listed);
+        {
+            let _writer = store.writer.lock().unwrap();
+            store.watch.hold_current(rel.into());
+            store.publish_retired();
+        }
+        release_hook(&listed);
+        wait_hook(&installing);
+        release_hook(&installing);
+        let mut page = doc(name, "second");
+        page.kind = kind;
+        let refused = writer
+            .save(
+                crate::EditKind::ReplacePage,
+                &PageId::from(id),
+                SaveBase::CreateNew,
+                &page,
+            )
+            .expect_err("a twin of a held page was created");
+        let why = format!("{refused:?}");
+        assert!(why.contains("Twin") && why.contains(rel), "{rel}: {why}");
+        assert!(!root.path().join(id).exists(), "{rel}: no second file");
+        assert_eq!(fs::read_to_string(&file).unwrap(), text, "{rel}: untouched");
+        store.close();
+    }
 }
 
 #[test]
