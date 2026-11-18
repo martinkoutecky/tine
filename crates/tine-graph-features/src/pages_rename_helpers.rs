@@ -286,7 +286,7 @@ pub(super) fn retarget(
     })
 }
 
-fn names<'a>(
+pub(super) fn names<'a>(
     graph: &tine_store::WholeGraph,
     ids: impl Iterator<Item = &'a PageId>,
 ) -> (Vec<String>, usize) {

@@ -53,6 +53,11 @@ const seeded = {
   "pages/old.md": "- source\n",
   "pages/journal referrer.md": "- see [[old/sub]]\n",
   "journals/2026_10_26.md": "alias:: old/sub\n\n- day\n",
+  "journals/2026_11_18.md": "alias:: Launch day\n\n- day note\n- TODO call\n",
+  "pages/day referrer.md": "- see [[Nov 18th, 2026]]\n",
+  "pages/Twin.md": "- twin one\n",
+  "pages/twin copy.md": "title:: Twin\n\n- twin two\n",
+  "pages/Twin source.md": "- twin source\n",
 };
 for (const [rel, text] of Object.entries(seeded)) fs.writeFileSync(path.join(graph, rel), text);
 fs.writeFileSync(path.join(graph, "journals", "2026_11_04.md"), "- journal\n");
@@ -207,8 +212,51 @@ try {
   { timeout: 15_000, timeoutMsg: "no error toast saying why the rename was refused" });
   assert.deepEqual(snapshot(), beforeRefusal, "the refused rename changed a file");
 
+  stage = "CMDF: renaming a day opens the day-move dialog, which shows what moves and what stays; Cancel writes nothing";
+  const beforeDayMove = snapshot();
+  await openPageByName(browser, "Nov 18th, 2026");
+  await renameTitle("Trip");
+  const dayDialog = browser.$(".tine-rename-alias-dialog [data-day-move]");
+  await dayDialog.waitForExist({ timeout: 15_000, timeoutMsg: "the day-move dialog never opened" });
+  const day = await browser.execute(() => {
+    const dialog = document.querySelector(".tine-rename-alias-dialog");
+    return { heading: dialog.querySelector("h2")?.textContent ?? "", text: dialog.textContent ?? "",
+      move: dialog.querySelector('[data-choice="move"]')?.textContent ?? null };
+  });
+  assert.match(day.heading, /“Nov 18th, 2026” keeps its date\. Move its notes to “Trip”\?/);
+  assert.match(day.text, /Its blocks move to a new page, “Trip”/);
+  assert.match(day.text, /Its alias line stays on the day: alias:: Launch day/);
+  assert.match(day.text, /Links to “Nov 18th, 2026” keep opening the day, in 1 page: day referrer/);
+  assert.match(day.move ?? "", /Move the notes to “Trip”/);
+  await browser.$("[data-choice-cancel]").click();
+  await browser.$(".tine-rename-alias-dialog").waitForExist({ reverse: true, timeout: 4000, timeoutMsg: "the day-move dialog stayed after Cancel" });
+  assert.deepEqual(snapshot(), beforeDayMove, "cancelling the day move changed a file");
+
+  stage = "CMDF: moving the day's notes creates the page and leaves the day its header and one Moved to block";
+  await renameTitle("Trip");
+  await browser.$('[data-choice="move"]').waitForExist({ timeout: 15_000, timeoutMsg: "the day-move dialog never reopened" });
+  await browser.$('[data-choice="move"]').click();
+  await waitForFileText(path.join(graph, "pages/Trip.md"), (text) => text.includes("- day note") && text.includes("- TODO call"), { timeoutMs: 15_000 });
+  await waitForFileText(path.join(graph, "journals/2026_11_18.md"), (text) => text.startsWith("alias:: Launch day\n") && text.includes("- Moved to [[Trip]]") && !text.includes("day note"), { timeoutMs: 15_000 });
+  assert.equal(fs.readFileSync(path.join(graph, "pages/day referrer.md"), "utf8"), "- see [[Nov 18th, 2026]]\n", "a link to the day stays on the day");
+  await browser.waitUntil(async () => (await currentPageTitle(browser)) === "Trip", { timeout: 15_000, timeoutMsg: "the page that received the notes is not open" });
+
+  stage = "M2(6): a name two files claim opens the contested dialog; keeping one merges the other into it, then the rename asks again";
+  await openPageByName(browser, "Twin source");
+  await renameTitle("Twin");
+  await browser.$('[data-keep="pages/Twin.md"]').waitForExist({ timeout: 15_000, timeoutMsg: "the contested dialog never opened" });
+  const claimed = await browser.execute(() => [...document.querySelectorAll("[data-contested-file]")].map((li) => li.getAttribute("data-contested-file")));
+  assert.deepEqual(claimed, ["pages/Twin.md", "pages/twin copy.md"]);
+  await browser.$('[data-keep="pages/Twin.md"]').click();
+  await waitForFileText(path.join(graph, "pages/Twin.md"), (text) => text.includes("- twin one") && text.includes("- twin two"), { timeoutMs: 15_000 });
+  assert.ok(!fs.existsSync(path.join(graph, "pages/twin copy.md")), "the merged twin went to the trash");
+  // The rename is asked again: Twin now has one file, so it is the ordinary merge question.
+  await answerNativeDialog("yes", { env });
+  await waitForFileText(path.join(graph, "pages/Twin.md"), (text) => text.includes("- twin source"), { timeoutMs: 15_000 });
+  assert.ok(!fs.existsSync(path.join(graph, "pages/Twin source.md")), "the renamed source merged into Twin");
+
   ownerFixture.verify();
-  fs.writeFileSync(path.join(run, "receipt.json"), JSON.stringify({ commit, workingDiff: true, outcome: "PASS", journey: "O4 rename moves a journal-declared alias under the source and keeps the journal; O3 alias dialog shows the component and effects, Cancel writes nothing, use-the-name removes the alias then renames, the file-less merge repoints references; TAGH merge leaves one united tags line; O3 alias-only context-menu rename rewrites declaration, links and queries, creates no file and survives reload; O4 own-child refusal writes nothing", graph }, null, 2));
+  fs.writeFileSync(path.join(run, "receipt.json"), JSON.stringify({ commit, workingDiff: true, outcome: "PASS", journey: "O4 rename moves a journal-declared alias under the source and keeps the journal; O3 alias dialog shows the component and effects, Cancel writes nothing, use-the-name removes the alias then renames, the file-less merge repoints references; TAGH merge leaves one united tags line; O3 alias-only context-menu rename rewrites declaration, links and queries, creates no file and survives reload; O4 own-child refusal writes nothing; CMDF day move dialog (Cancel writes nothing; the move leaves the day its header and a Moved to block); M2(6) contested dialog keeps one file, merges the other, then the rename asks again", graph }, null, 2));
   console.log(`PASS CM merge rules. ${run}`);
 } catch (error) {
   try { await browser?.saveScreenshot(path.join(run, "failure.png")); } catch {}

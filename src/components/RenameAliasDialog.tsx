@@ -1,13 +1,11 @@
-import { For, onCleanup, onMount, Show } from "solid-js";
+import { For, Show } from "solid-js";
 import { render, t } from "../i18n";
-import { registerTransientLayer } from "../transientLayers";
 import { refuseStaleWrite } from "../binding";
-import { documentOf } from "../windowRealm";
 import { aliasDialogRequest, type AliasDialogAnswer, type AliasDialogRequest } from "../renameAliasDialog";
 import { renameRefusalMessage } from "../renameRefusal";
 import type { AliasDialogOffer, AliasDialogPage, RenameEffect } from "../types";
 import { DialogActions } from "./DialogActions";
-import "./RenameAliasDialog.css";
+import { RenameDialogFrame } from "./RenameDialogFrame";
 
 /** The alias dialog (D-20261106-R13-UI, D-20261115-HELP): the typed name is
  *  only another page's alias, which the model refuses (r6 O3). It shows what
@@ -59,30 +57,14 @@ function Dialog(props: { request: AliasDialogRequest }) {
   const request = props.request;
   const offer = request.offer;
   const owner = offer.opens.name;
-  let root!: HTMLElement;
-  onCleanup(() => request.finish(null));
   const answer = (choice: Exclude<AliasDialogAnswer, null>) => {
     if (aliasDialogRequest() !== request) return refuseStaleWrite(t("rename-alias-dialog-stale-what"));
     request.finish(choice);
   };
-  onMount(() => {
-    onCleanup(registerTransientLayer({ id: "tine-rename-alias-dialog", root: () => root,
-      dismiss: () => { request.finish(null); return true; } }));
-    root.querySelector<HTMLButtonElement>("button[data-choice]")?.focus();
-  });
   const sourceDeclares = offer.declarers.some((page) => page.path === offer.source.path && page.path !== null);
   const own = ownRefusal(offer, request.to);
   return (
-    <div class="modal-overlay tine-rename-alias-overlay" onKeyDown={(event) => {
-      if (event.key === "Escape") request.finish(null);
-      if (event.key === "Tab") {
-        const buttons = [...root.querySelectorAll<HTMLButtonElement>("button")];
-        const first = buttons[0], last = buttons.at(-1);
-        if (event.shiftKey && documentOf(event).activeElement === first) { event.preventDefault(); last?.focus(); }
-        else if (!event.shiftKey && documentOf(event).activeElement === last) { event.preventDefault(); first?.focus(); }
-      }
-    }}>
-      <section ref={root} class="tine-rename-alias-dialog" role="dialog" aria-modal="true" aria-label={t("rename-alias-dialog-title", { to: request.to, owner })}>
+    <RenameDialogFrame id="tine-rename-alias-dialog" label={t("rename-alias-dialog-title", { to: request.to, owner })} dismiss={() => request.finish(null)}>
         <h2>{t("rename-alias-dialog-title", { to: request.to, owner })}</h2>
         <p>{t("rename-alias-dialog-intro", { to: request.to, from: request.from })}</p>
         <ul class="tine-rename-alias-component">
@@ -125,7 +107,6 @@ function Dialog(props: { request: AliasDialogRequest }) {
           primary={<Show when={offer.own}>
             <button type="button" data-choice="own" onClick={() => answer("own")}>{t("rename-alias-dialog-own", { to: request.to })}</button></Show>}
         />
-      </section>
-    </div>
+    </RenameDialogFrame>
   );
 }

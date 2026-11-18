@@ -1097,6 +1097,10 @@ function RenamePage(props: {
       const target = { name: from, pageKind: kind, ...(path ? { path } : {}) };
       const renamed = await renameOrMergePage(from, next, target, (refreshed) => { current = ownedWhen(refreshed, live); }, (done) => finished(done === "merged"));
       if (renamed === "cancelled") return;
+      if (typeof renamed === "object" && "moved" in renamed) {
+        if (current()) openPage(renamed.moved, renamed.kind);
+        return;
+      }
       const message = renameOutcomeMessage(renamed, from, next);
       if (message) {
         // `uncertain` follows a reset that retired `current`; on the same graph

@@ -161,7 +161,9 @@ fn days_stay_and_only_a_day_source_is_refused() {
             ],
         );
         let wire = serde_json::to_value(rename_offer(&store, old, new, None).unwrap()).unwrap();
-        let kind = if day { "refused" } else { "rename" };
+        // A day is refused as a source (O2); the window offers the day move
+        // with that refusal (D-20261111-CMDF, D-20261115-HELP).
+        let kind = if day { "dayMove" } else { "rename" };
         assert_eq!(wire["kind"], kind, "{label}: {wire}");
         if day {
             assert_eq!(wire["reason"]["kind"], "day", "{label}: {wire}");
@@ -412,9 +414,10 @@ fn own_alias_renames_in_one_step_and_conflicted_empty_target_refuses() {
         name: "ML".into(),
         files: vec!["pages/ML.md".into(), "pages/ML.org".into()],
     };
+    // The window offers the file merge with it (D-20261019-M2(6)).
     assert!(matches!(
         rename_offer(&store, "source", "ML", None).unwrap(),
-        RenameOffer::Refused { reason, .. } if reason == contested
+        RenameOffer::Contested { reason, .. } if reason == contested
     ));
     for choice in [RenameChoice::Rename, RenameChoice::MergeInto("pages/ML.md")] {
         let error = rename(&store, "source", "ML", choice).unwrap_err();

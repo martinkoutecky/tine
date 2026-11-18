@@ -1,7 +1,7 @@
 import { leadingMarker, OPEN_MARKERS } from "../../markers";
-import { doc, pageByName, setDoc, freshId } from "../model";
+import { doc, pageByName, setDoc, freshId, writeRaw } from "../model";
 import { journalTitle, appNow } from "../../journal";
-import { pageWritable } from "./properties";
+import { pageHeaderRoot, pageWritable } from "./properties";
 import { pushUndo } from "../history";
 import { produce } from "solid-js/store";
 import { reassignPage } from "./moves";
@@ -108,4 +108,82 @@ export function carryUnfinished(
   );
   const persisted = persistTransfer(before, ["move-blocks", "insert-blocks", "delete-blocks"], sources.map((source) => [source, today] as const));
   return { moved: plan.length, persisted };
+}
+
+// ---------------------------------------------------------------------------
+// Move a day's notes to a page (D-20261111-CMDF, D-20261115-HELP)
+// ---------------------------------------------------------------------------
+
+/** A loaded page's header as it stands (its pre-block and Markdown header
+ *  root), to be written back by {@link moveDayBlocks}. O(1). */
+export type PageHeader = { preBlock: string | null; root: { id: string; raw: string; collapsed: boolean } | null };
+export function pageHeader(name: string): PageHeader | null {
+  const page = pageByName(name);
+  if (!page) return null;
+  const root = pageHeaderRoot(page);
+  return { preBlock: page.preBlock, root: root && { id: root.id, raw: root.raw, collapsed: root.collapsed } };
+}
+
+/** The blocks of `day` that a day move takes: every root but its page header
+ *  root, or none when they are all empty (nothing to move). O(roots). */
+export function dayMoveBlocks(day: string): string[] {
+  const page = pageByName(day);
+  if (!page) return [];
+  const header = pageHeaderRoot(page)?.id;
+  const roots = page.roots.filter((id) => id !== header);
+  const empty = (id: string): boolean => doc.byId[id]?.raw.trim() === "" && doc.byId[id].children.every(empty);
+  return roots.every(empty) ? [] : roots;
+}
+
+/** Move the day's blocks ({@link dayMoveBlocks}) after the last block of
+ *  `page` and leave `stub` as the day's one block; the day keeps its header,
+ *  or gets `header` back (the header before a helper edit, MOA). One undo
+ *  step, and one transfer through the page host: the day's and the page's new
+ *  text go to disk as one guarded two-page operation, a refused one is
+ *  restored (carry's `persistTransfer`). A page with no file gets it from that
+ *  operation. Both pages must be loaded and writable; an empty placeholder
+ *  block of `page` is dropped. `persisted`: the host applied it. O(blocks of
+ *  both pages). */
+export function moveDayBlocks(day: string, page: string, stub: string, header?: PageHeader): { moved: number; persisted: Promise<boolean> } {
+  const none = { moved: 0, persisted: Promise.resolve(false) };
+  const ids = dayMoveBlocks(day);
+  if (day === page || !ids.length || !pageWritable(day) || !pageWritable(page)) return none;
+  if (refuseConflictedMove([day, page])) return none;
+  pushUndo("move-day", [day, page]);
+  const before = capturePages([day, page]);
+  setDoc(
+    produce((s) => {
+      const from = s.pages.find((p) => p.name === day);
+      const to = s.pages.find((p) => p.name === page);
+      if (!from || !to) return;
+      if (to.roots.length === 1) {
+        const only = s.byId[to.roots[0]];
+        if (only && only.children.length === 0 && only.raw.trim() === "") {
+          delete s.byId[to.roots[0]];
+          to.roots = [];
+        }
+      }
+      for (const id of ids) {
+        s.byId[id].parent = null;
+        reassignPage(s, id, page);
+      }
+      to.roots.push(...ids);
+      const moving = new Set(ids);
+      const kept = from.roots.filter((id) => !moving.has(id));
+      if (header) {
+        from.preBlock = header.preBlock;
+        const root = header.root;
+        if (root && s.byId[root.id]) writeRaw(s, root.id, root.raw);
+        else if (root) {
+          s.byId[root.id] = { id: root.id, raw: root.raw, collapsed: root.collapsed, parent: null, page: day, children: [], originatedFromPageHeader: true };
+          kept.unshift(root.id);
+        }
+      }
+      const stubId = freshId();
+      s.byId[stubId] = { id: stubId, raw: stub, collapsed: false, parent: null, page: day, children: [] };
+      from.roots = [...kept, stubId];
+    })
+  );
+  const persisted = persistTransfer(before, ["move-blocks", "insert-blocks", "delete-blocks"], [[day, page]]);
+  return { moved: ids.length, persisted };
 }

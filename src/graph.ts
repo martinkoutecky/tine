@@ -4,7 +4,7 @@
 import { closeAllWorkspaceWindows } from "./workspaceWindows";
 import { renameRefusalMessage, showRenameNotice, showRewriteRefusal } from "./renameRefusal";
 import { askAliasDialog } from "./renameAliasDialog";
-import { applyHelperEdits, type AppliedEdits, type HelperEdit } from "./renameHelpers";
+import { applyHelperEdits, mergeContested, moveDayNotes, type AppliedEdits, type HelperEdit } from "./renameHelpers";
 import { refreshRootRecovery } from "./rootRecoveryState";
 import { backend, type CustomCssChange, type GraphConfigChange } from "./backend";
 import { captureBinding, bindingCurrent } from "./binding";
@@ -26,7 +26,7 @@ import { setChangeSummaryBaseline } from "./changeSummary";
 import { applyCustomCss, customCssVersion } from "./customCss";
 import { flushCssEditor, loadGlobalCss, checkCssEditorDisk, retireGraphCssEditor } from "./cssEditor";
 import { isMobile, platformKind } from "./platform";
-import type { BlockDto, GraphMeta, RenameOffer, RenameRefusal, TagUnion } from "./types";
+import type { BlockDto, GraphMeta, PageKind, RenameOffer, RenameRefusal, TagUnion } from "./types";
 import type { DraftStatus } from "./document";
 import { maybeShowGuideAnnouncement } from "./guide";
 import { endEdit } from "./editorController";
@@ -479,7 +479,8 @@ export function refreshAfterRename(follow: PageFollower, reopened?: PageTarget):
 installRenameRefreshHandler(refreshAfterRename);
 installFavoritesPageDoor({ createPage, favoritesArrangementPage, favoritesArrangementBlocks });
 
-export type RenameOutcome = Exclude<Awaited<ReturnType<typeof renamePageOnDisk>>, "stale"> | "cancelled" | { refused: RenameRefusal };
+export type RenameOutcome = Exclude<Awaited<ReturnType<typeof renamePageOnDisk>>, "stale"> | "cancelled" | { refused: RenameRefusal }
+  | { moved: string; kind: PageKind };
 
 /** Rename a page, asking first what the backend's rename planner says the
  *  rename needs (`rename_offer`; the window never re-derives it, M-Q6):
@@ -494,6 +495,12 @@ export type RenameOutcome = Exclude<Awaited<ReturnType<typeof renamePageOnDisk>>
  *    component and the requests the model allows, each with its effect
  *    (D-20261115-HELP); its merge choice is the merge's confirm, its "use the
  *    name for this page" removes the alias from the declaring pages first.
+ *  - `from` is a day (O0/O2): the day-move dialog offers to move its notes to
+ *    `to` instead (`moveDayNotes`, D-20261111-CMDF): `{ moved }` names the
+ *    page that received them.
+ *  - several files claim a touched name: the contested dialog offers the file
+ *    merge into the file the user keeps (`mergeContested`, D-20261019-M2(6)),
+ *    then this same rename is asked again.
  *  - refused otherwise (O0 to O4): `{ refused }`, worded by
  *    `renameOutcomeMessage`; nothing is written.
  *  A helper's edits are ordinary page edits through the guarded save; when the
@@ -534,6 +541,15 @@ export async function renameOrMergePage(
   ] : [];
   switch (offer.kind) {
     case "refused": return { refused: offer.reason };
+    case "dayMove": return (await moveDayNotes(from, offer)) ?? "cancelled";
+    case "contested": {
+      const merged = await mergeContested(from, to, offer);
+      if (!merged || "refused" in merged || !owner()) return "cancelled";
+      const kept = merged.kept;
+      // The renamed file may be one merged into the kept one.
+      const next = target?.path && target.path !== kept && offer.files.includes(target.path) ? { ...target, path: kept } : target;
+      return renameOrMergePage(from, to, next, onRefreshed, onRecovered);
+    }
     case "merge": {
       const question = t("graph-page-already-exists-merge-into", { to: offer.name, from: from });
       const text = offer.tags ? `${question}\n\n${t("graph-merge-unites-tags", { tags: offer.tags.united })}` : question;
@@ -606,6 +622,7 @@ export function renameOutcomeMessage(outcome: RenameOutcome, from: string, to: s
   if (typeof outcome === "object" && "refused" in outcome) {
     return renameRefusalMessage(outcome.refused);
   }
+  if (typeof outcome === "object" && "moved" in outcome) return null;
   if (typeof outcome === "object") {
     return outcome.mentions
       ? msg("rename-refused-unsaved-mention", { page: outcome.unsaved, from })

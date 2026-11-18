@@ -88,6 +88,8 @@ pub fn rename_offer(
         held @ RenameBlocked::AliasHeld { .. } => {
             RenameOffer::Alias(alias_dialog(store, &graph, old, new, expected_path, held)?)
         }
+        day @ RenameBlocked::Day { .. } => day_move(store, &graph, old, new, expected_path, day)?,
+        RenameBlocked::Contested { name, files } => contested(&graph, name, files),
         refused => RenameOffer::Refused {
             message: refused.to_string(),
             reason: refused,
@@ -114,6 +116,19 @@ pub enum RenameOffer {
     /// Model r6 O3 refuses the name: it is only another page's alias. The
     /// alias dialog shows its component and the requests the model allows.
     Alias(AliasDialog),
+    /// Model r6 O0/O2 refuses a day as a rename source; the window offers to
+    /// move the day's notes to the typed name instead ([`DayMove`]).
+    DayMove(DayMove),
+    /// Several files claim `name` (O3, O4 contested): the window shows them
+    /// and offers the file merge into the one the user keeps
+    /// (D-20261019-M2(6)). `opens`: the file the name opens now.
+    Contested {
+        reason: RenameBlocked,
+        message: String,
+        name: String,
+        files: Vec<String>,
+        opens: Option<String>,
+    },
     /// Refused before anything is written, with the reason to show.
     Refused {
         reason: RenameBlocked,
@@ -145,6 +160,35 @@ pub struct AliasDialog {
     pub merge_refused: Option<RenameBlocked>,
     pub own: Option<OwnChoice>,
     pub own_refused: Option<OwnRefusal>,
+}
+
+/// The day move (D-20261111-CMDF, -MA, -MOA, D-20261115-HELP): a day keeps
+/// its date, so renaming it to a name offers to move its blocks to the page
+/// `name` names, by the ordinary cross-page block move. The day keeps its
+/// header (its `alias::` line included) and gains one `Moved to [[name]]`
+/// block. Read-only; what the dialog shows:
+/// - `into`: the existing page that receives the blocks (the merge is then an
+///   explicit choice), or None: a new page `name`;
+/// - `references`/`reference_count`: the pages whose links to the day keep
+///   opening it (they do not follow the notes);
+/// - `release` (MOA, `name` is the day's own alias): the alias edit made before
+///   the move, so the new page can be opened, and put back by the move itself;
+///   `retargeted`: the links to `name` that will open the new page.
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct DayMove {
+    /// The model's refusal (`Day`, O0/O2) the move is offered instead of.
+    pub reason: RenameBlocked,
+    pub message: String,
+    pub day: DialogPage,
+    pub name: String,
+    /// The destination is a journal day.
+    pub journal: bool,
+    pub into: Option<DialogPage>,
+    pub references: Vec<String>,
+    pub reference_count: usize,
+    pub release: Option<AliasEdit>,
+    pub retargeted: Option<rename_helpers::Retarget>,
 }
 
 /// One page of the alias component: its name, file (None for a name with
@@ -357,6 +401,120 @@ fn alias_dialog(
         own,
         own_refused,
     })
+}
+
+/// The day move offer for the refused request `old` (a day) → `new`, or the
+/// refusal that stays: the day has no file, `new` is the same day, or `new`
+/// opens no single page the notes could go to. The destination is the store's
+/// one name answer (`resolve`): a file (the receiving page; several files: the
+/// contested dialog), the day's own alias (MOA: a new page), another page's
+/// alias (the page it opens), or absent (a new page). Cost: two name
+/// resolutions, one referrers lookup, and for MOA one file read.
+fn day_move(
+    store: &Store,
+    graph: &tine_store::WholeGraph,
+    old: &str,
+    new: &str,
+    expected_path: Option<&str>,
+    reason: RenameBlocked,
+) -> io::Result<RenameOffer> {
+    let refused = |reason: RenameBlocked| RenameOffer::Refused {
+        message: reason.to_string(),
+        reason,
+    };
+    let days = store.config().config.journal_format();
+    let same_day = days
+        .parse(new)
+        .is_some_and(|day| days.parse(old) == Some(day));
+    let Some(day_id) = existing(graph.resolve(old, true))
+        .into_iter()
+        .find(|id| expected_path.is_none_or(|path| id.as_str() == path))
+    else {
+        return Ok(refused(reason));
+    };
+    if same_day {
+        return Ok(refused(reason));
+    }
+    let day = dialog_page(graph, &day_id);
+    let mut release = None;
+    let mut retargeted = None;
+    let into = match graph.resolve(new, false) {
+        tine_store::Resolved::Existing { id, others } => {
+            if !others.is_empty() {
+                let mut files: Vec<String> = std::iter::once(&id)
+                    .chain(&others)
+                    .map(|id| id.as_str().to_owned())
+                    .collect();
+                files.sort_unstable();
+                return Ok(contested(graph, new.to_owned(), files));
+            }
+            if id == day_id {
+                return Ok(refused(reason));
+            }
+            Some(dialog_page(graph, &id))
+        }
+        tine_store::Resolved::Alias { owners } => match owners.first() {
+            // MOA: the day's own alias becomes a page; the day keeps the line.
+            Some(first) if *first == day_id => {
+                if owners.len() > 1 {
+                    let other = &owners[1];
+                    return Ok(refused(RenameBlocked::AliasHeld {
+                        alias: new.to_owned(),
+                        page: name_of(graph, other).unwrap_or_else(|| other.as_str().to_owned()),
+                        path: other.as_str().to_owned(),
+                    }));
+                }
+                match rename_helpers::alias_release(store, graph, &day_id, new)? {
+                    Some(edit) => release = Some(edit),
+                    None => return Ok(refused(reason)),
+                }
+                retargeted = rename_helpers::retarget(graph, new, &day.name, new, &[&day_id]);
+                None
+            }
+            Some(first) => Some(dialog_page(graph, first)),
+            None => None,
+        },
+        tine_store::Resolved::Absent { .. } => None,
+    };
+    let mut referrers = graph.explicit_referrers(std::slice::from_ref(&day.name));
+    referrers.retain(|id| *id != day_id);
+    let (references, reference_count) = rename_helpers::names(graph, referrers.iter());
+    Ok(RenameOffer::DayMove(DayMove {
+        journal: into
+            .as_ref()
+            .map_or_else(|| days.parse(new).is_some(), |page| page.journal),
+        name: into
+            .as_ref()
+            .map_or_else(|| new.to_owned(), |page| page.name.clone()),
+        message: reason.to_string(),
+        reason,
+        day,
+        into,
+        references,
+        reference_count,
+        release,
+        retargeted,
+    }))
+}
+
+/// The contested dialog's answer: the claiming files and the one `name`
+/// opens now. Cost: one name resolution.
+fn contested(graph: &tine_store::WholeGraph, name: String, files: Vec<String>) -> RenameOffer {
+    let opens = match graph.resolve(&name, false) {
+        tine_store::Resolved::Existing { id, .. } => Some(id.as_str().to_owned()),
+        _ => None,
+    };
+    let reason = RenameBlocked::Contested {
+        name: name.clone(),
+        files: files.clone(),
+    };
+    RenameOffer::Contested {
+        message: reason.to_string(),
+        reason,
+        name,
+        files,
+        opens,
+    }
 }
 
 /// [`super::rename_or_merge_page`] with the user's answer to the rename question

@@ -50,6 +50,13 @@ fn rename_merge_and_journal_rename_proposals_are_documented_in_the_bundled_guide
         // CM step 2 slice 2, model r6 O4 (touched names) and O7 (report).
         "and another page is already `B/x`, or when several files claim one",
         "Tine lists the files where that happened",
+        // D-20261111-CMDF/-MA/-MOA, D-20261115-HELP: the day move.
+        "type, say, `Trip`) offers to **move its notes** there instead",
+        "lists the pages whose links to the day keep opening the day",
+        "The day keeps its properties, including its `alias::` line, and gets one block, `Moved to [[Trip]]`",
+        "if the move cannot happen, neither changes",
+        // D-20261019-M2(6): the contested-name dialog.
+        "**Keep it, merge the others into it**",
     ] {
         assert!(
             tips.contains(control),
@@ -84,6 +91,7 @@ fn rename_merge_and_journal_rename_proposals_are_documented_in_the_bundled_guide
         "The label of a file link that names the page",
         "after a merge each page is listed once in Favorites, in its first place",
         "none of it changes and Tine says so",
+        "Renaming a day instead offers to move its notes to the page you typed",
     ] {
         assert!(pages.contains(control), "missing Guide control: {control}");
     }

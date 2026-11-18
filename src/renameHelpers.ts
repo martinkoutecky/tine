@@ -1,6 +1,11 @@
 import { backend } from "./backend";
-import { admitRead, captureTransferRollback, ensurePageLoaded, flushPage, pageByName, readPageProperty, setPageProperty } from "./document";
-import { bindingOwner } from "./owned";
+import { admitPageFile, admitRead, captureTransferRollback, dayMoveBlocks, emptyPage, ensurePageLoaded, flushPage, moveDayBlocks, pageByName, pageHeader, readPageProperty, reportPageLoadRefusal, setPageProperty } from "./document";
+import { msg } from "./i18n";
+import { bindingOwner, writeOwned, type Owner } from "./owned";
+import { askContested, askDayMove } from "./renameHelperDialogs";
+import { showRewriteRefusal } from "./renameRefusal";
+import { pushToast } from "./toasts";
+import type { ContestedOffer, DayMoveOffer, PageKind } from "./types";
 
 /** One page-property edit a rename helper makes before its request
  *  (D-20261115-HELP, D-20261116-TAGH): the backend read the file's `key` value
@@ -51,4 +56,97 @@ export async function applyHelperEdits(edits: readonly HelperEdit[]): Promise<Ap
     }
   }
   return { undo };
+}
+
+/** Load `name` into the working set (a page with no file as an empty page),
+ *  so its file is the one a write lands in (`admitPageFile`). False when the
+ *  graph changed or another file holding the name has unsaved input (said). */
+async function admit(owner: Owner, name: string, kind: PageKind): Promise<boolean> {
+  if (pageByName(name)) return true;
+  const refused = await admitPageFile(name, kind, owner, emptyPage(name, kind));
+  if (refused === "stale") return false;
+  if (refused) { reportPageLoadRefusal(refused); return false; }
+  return !!pageByName(name);
+}
+
+/** The day move (D-20261111-CMDF, -MA, -MOA, D-20261115-HELP): renaming the
+ *  day `day` is refused (a day keeps its date), so its notes move to the page
+ *  the offer names, after the user confirms in the day-move dialog, which
+ *  shows what stays on the day. The legal steps: for the day's own alias (MOA)
+ *  the alias is first removed from the day's alias line (a helper edit, saved),
+ *  so the new page can be opened under that name; then one cross-page block
+ *  move writes the day (header kept, the alias line back, one `Moved to
+ *  [[name]]` block) and the page (created if absent) as one guarded two-page
+ *  operation. If the move does not happen the helper edit is put back. Null:
+ *  cancelled, refused (said) or not done (said by the move). Cost: one dialog,
+ *  up to two page reads, the alias edit's save, and one two-page operation. */
+export async function moveDayNotes(day: string, offer: DayMoveOffer): Promise<{ moved: string; kind: PageKind } | null> {
+  const owner = bindingOwner();
+  if (!(await admit(owner, day, "journal")) || !owner()) return null;
+  if (!dayMoveBlocks(day).length) {
+    pushToast(msg("rename-day-nothing", { day }), "info");
+    return null;
+  }
+  if (!(await askDayMove(day, offer.name, offer)) || !owner()) return null;
+  const header = offer.release ? pageHeader(day) : null;
+  let applied: AppliedEdits | null = null;
+  if (offer.release) {
+    const made = await applyHelperEdits([offer.release]);
+    if ("refused" in made) {
+      if (owner()) pushToast(msg(made.refused === "changed" ? "rename-helper-page-changed" : "rename-helper-unsaved", { page: made.page }), "error");
+      return null;
+    }
+    applied = made;
+  }
+  const putBack = async () => {
+    if (applied && !(await applied.undo()) && owner()) pushToast(msg("rename-helper-not-restored", { pages: day }), "error");
+  };
+  const kind: PageKind = offer.journal ? "journal" : "page";
+  const name = offer.name;
+  try {
+    if (!(await admit(owner, name, kind)) || !owner()) { await putBack(); return null; }
+    const from = pageByName(day), to = pageByName(name);
+    if (!from || !to || (from.format ?? "md") !== (to.format ?? "md")) {
+      await putBack();
+      if (owner()) pushToast(msg("rename-refused-different-formats", { source: offer.day.path ?? day, target: offer.into?.path ?? name }), "error");
+      return null;
+    }
+    const moved = moveDayBlocks(day, name, `Moved to [[${name}]]`, header ?? undefined);
+    if (!moved.moved || !(await moved.persisted)) {
+      await putBack();
+      if (!moved.moved && owner()) pushToast(msg("rename-day-not-moved", { day }), "error");
+      return null;
+    }
+  } catch (error) {
+    await putBack();
+    throw error;
+  }
+  if (owner()) pushToast(msg("rename-day-moved", { day, name }), "success");
+  return { moved: name, kind };
+}
+
+/** The contested-name helper (D-20261019-M2(6), D-20261115-HELP): the dialog
+ *  shows the files claiming the name; the user keeps one and each other file
+ *  is merged into it by the existing file merge (blocks appended, aliases
+ *  united, the file to the trash, no reference rewritten). `kept`: the file
+ *  kept; `refused`: a merge's typed refusal was shown (with its "save and
+ *  retry" for unsaved input, which retries that merge); null: cancelled or the
+ *  graph changed. Merges done before a refusal stand, each complete. Another
+ *  error propagates to the rename's caller, which reports it. Cost: one dialog
+ *  and one guarded merge per other file. */
+export async function mergeContested(from: string, to: string, offer: ContestedOffer): Promise<{ kept: string } | { refused: true } | null> {
+  const owner = bindingOwner();
+  const keep = await askContested(from, to, offer);
+  if (!keep || !owner()) return null;
+  for (const file of offer.files.filter((f) => f !== keep)) {
+    const merge = (saveFirst?: string) => backend().mergePages(file, keep, ["insert-blocks", "delete-page"], saveFirst);
+    try {
+      const done = await writeOwned(owner, merge());
+      if (done.kind === "stale") return null;
+    } catch (error) {
+      if (!owner() || !showRewriteRefusal(error, async (saveFirst) => { if (owner()) await writeOwned(owner, merge(saveFirst)); })) throw error;
+      return { refused: true };
+    }
+  }
+  return { kept: keep };
 }

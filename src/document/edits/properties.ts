@@ -96,6 +96,14 @@ export function setBlockProperty(target: string | readonly string[], key: string
   for (const page of pages) markDirty(page, "save-block");
 }
 
+/** The first root of a Markdown page when it is the page header (a transient
+ *  header editor, or a properties-only root), else null: the one answer for
+ *  which root holds page properties. O(first root bytes). */
+export function pageHeaderRoot(page: ReadonlyFeedPage): Node | null {
+  const first = page.format === "md" ? doc.byId[page.roots[0]] : undefined;
+  return first && (first.originatedFromPageHeader || isPropertiesOnly(first.raw)) ? first : null;
+}
+
 /** Where a page's properties are read from and written to, in file order:
  *  Org → the pre-block; Markdown → the pre-block (when non-empty, or when there
  *  is no header root) then a first root that IS the page header (a transient
@@ -104,8 +112,8 @@ export function setBlockProperty(target: string | readonly string[], key: string
  *  `exclude` names a root the caller shows as an ordinary block instead. */
 type PropertyPart = { kind: "preBlock"; text: string } | { kind: "root"; id: string; text: string };
 function pagePropertyParts(page: ReadonlyFeedPage, exclude: string | null): PropertyPart[] {
-  const first = page.format === "md" ? doc.byId[page.roots[0]] : undefined;
-  const root = first && first.id !== exclude && (first.originatedFromPageHeader || isPropertiesOnly(first.raw)) ? first : null;
+  const first = pageHeaderRoot(page);
+  const root = first && first.id !== exclude ? first : null;
   // A header draft's leading blank lines (Enter at its start) are not part of
   // it, as the save drops them (`canonicalPageHeaderDraft`, GH #210 F1).
   const text = root?.originatedFromPageHeader ? withoutLeadingBlankLines(root.raw) : root?.raw ?? "";

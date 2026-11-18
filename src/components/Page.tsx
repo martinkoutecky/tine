@@ -1062,7 +1062,8 @@ function PageSection(props: { page: FeedPage; seen?: boolean; children?: JSX.Ele
   const startRename = () => {
     if (renameInFlight) return;
     if (props.page.guide || pageReadOnly(props.page)) return;
-    if (props.page.kind !== "page") return; // journals are named by their date
+    // A journal day keeps its date: its "rename" offers to move its notes to
+    // the typed page instead (D-20261111-CMDF; `renameOrMergePage`).
     renameSubmitted = false;
     renameCancelled = false;
     setNewName(props.page.name);
@@ -1103,6 +1104,10 @@ function PageSection(props: { page: FeedPage; seen?: boolean; children?: JSX.Ele
         if (stillOnRenameTab()) router.openPage(next, "page");
       });
       if (outcome === "cancelled") return;
+      if (typeof outcome === "object" && "moved" in outcome) {
+        if (stillOnRenameTab()) router.openPage(outcome.moved, outcome.kind);
+        return;
+      }
       const message = renameOutcomeMessage(outcome, from, next);
       if (message) {
         if (stillOnRenameTab()) pushToast(message, outcome === "unchanged" ? "info" : "error");

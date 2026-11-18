@@ -13,7 +13,7 @@ use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
 use tine_graph_features::pages::{
-    rename_offer, rename_page_as, AliasDialog, OwnRefusal, RenameBlocked, RenameChoice,
+    rename_offer, rename_page_as, AliasDialog, DayMove, OwnRefusal, RenameBlocked, RenameChoice,
     RenameOffer, RenameOutcome, TagUnion,
 };
 use tine_store::Store;
@@ -415,4 +415,131 @@ fn the_dialog_and_the_union_keep_the_windows_wire_names() {
         wire["tags"],
         serde_json::json!({"survivor": "b", "source": "a", "united": "b, a"})
     );
+}
+
+fn day_move(store: &Store, old: &str, new: &str) -> DayMove {
+    match rename_offer(store, old, new, None).unwrap() {
+        RenameOffer::DayMove(offer) => offer,
+        other => panic!("the day move for {old} -> {new}, got {other:?}"),
+    }
+}
+
+const DAY: &[(&str, &str)] = &[
+    (
+        "journals/2026_11_18.md",
+        "alias:: Launch day\n\n- day note\n",
+    ),
+    (
+        "pages/diary.md",
+        "- see [[Nov 18th, 2026]]\n- and [[Launch day]]\n",
+    ),
+    ("pages/Plans.md", "- plans body\n"),
+];
+
+/// D-20261111-CMDF, D-20261115-HELP: renaming a day is refused (a day keeps
+/// its date); the window is offered the day move instead, with what stays on
+/// the day: its alias line and the pages whose links keep opening it. The
+/// destination is a new page when the name is free, the existing page
+/// otherwise (an explicit merge choice). Reading it writes nothing.
+#[test]
+fn renaming_a_day_offers_to_move_its_notes_and_shows_what_stays() {
+    let _guard = crate::integration_lock();
+    let (root, store) = fixture("day-move", DAY);
+    let before = snapshot(&root);
+    let fresh = day_move(&store, "Nov 18th, 2026", "Trip");
+    assert_eq!(fresh.day.name, "Nov 18th, 2026");
+    assert_eq!(fresh.day.path.as_deref(), Some("journals/2026_11_18.md"));
+    assert_eq!(fresh.day.aliases, vec!["Launch day".to_owned()]);
+    assert_eq!((fresh.name.as_str(), fresh.journal), ("Trip", false));
+    assert_eq!(fresh.into, None);
+    assert_eq!(
+        (fresh.references.clone(), fresh.reference_count),
+        (vec!["diary".to_owned()], 1)
+    );
+    assert_eq!(
+        (fresh.release.clone(), fresh.retargeted.clone()),
+        (None, None)
+    );
+    let existing = day_move(&store, "Nov 18th, 2026", "plans");
+    assert_eq!(existing.name, "Plans");
+    assert_eq!(
+        existing.into.map(|page| page.path),
+        Some(Some("pages/Plans.md".to_owned()))
+    );
+    assert_eq!(snapshot(&root), before, "the offer wrote a file");
+}
+
+/// D-20261111-MOA: the day's own alias may become the page; the alias is
+/// released from the day's line for the move (and put back by it), and links
+/// to the name will open the new page. Another spelling of the same day stays
+/// the plain refusal.
+#[test]
+fn a_day_moved_to_its_own_alias_releases_it_and_names_the_links_that_follow() {
+    let _guard = crate::integration_lock();
+    let (_root, store) = fixture("day-move-own-alias", DAY);
+    let own = day_move(&store, "Nov 18th, 2026", "Launch day");
+    assert_eq!(own.into, None);
+    let release = own.release.expect("the alias edit");
+    assert_eq!(
+        (
+            release.path.as_str(),
+            release.key.as_str(),
+            release.before.as_str(),
+            release.after
+        ),
+        ("journals/2026_11_18.md", "alias", "Launch day", None)
+    );
+    let links = own
+        .retargeted
+        .expect("links to the alias follow the new page");
+    assert_eq!(
+        (links.name.as_str(), links.after.as_str(), links.pages),
+        ("Launch day", "Launch day", vec!["diary".to_owned()])
+    );
+    match rename_offer(&store, "Nov 18th, 2026", "2026-11-18", None).unwrap() {
+        RenameOffer::Refused {
+            reason: RenameBlocked::Day { .. },
+            ..
+        } => {}
+        other => panic!("the same day under another spelling, got {other:?}"),
+    }
+}
+
+/// D-20261019-M2(6), D-20261115-HELP: a name two files claim is not a bare
+/// refusal: the window gets the claiming files and the one the name opens,
+/// to offer the file merge. Also as a day move's destination.
+#[test]
+fn a_contested_name_offers_its_claiming_files() {
+    let _guard = crate::integration_lock();
+    let (root, store) = fixture(
+        "contested",
+        &[
+            ("pages/Twin.md", "- one\n"),
+            ("pages/twin copy.md", "title:: Twin\n\n- two\n"),
+            ("pages/Src.md", "- src\n"),
+            ("journals/2026_11_18.md", "- day note\n"),
+        ],
+    );
+    let before = snapshot(&root);
+    for old in ["Src", "Nov 18th, 2026"] {
+        match rename_offer(&store, old, "Twin", None).unwrap() {
+            RenameOffer::Contested {
+                name, files, opens, ..
+            } => {
+                assert_eq!(name, "Twin");
+                assert_eq!(
+                    files,
+                    vec!["pages/Twin.md".to_owned(), "pages/twin copy.md".to_owned()]
+                );
+                assert!(
+                    opens
+                        .as_deref()
+                        .is_some_and(|file| files.iter().any(|f| f == file)),
+                    "{opens:?}"
+                );
+            }
+            other => panic!("{old} -> Twin: the contested dialog, got {other:?}"),
+        }
+    }
+    assert_eq!(snapshot(&root), before);
 }

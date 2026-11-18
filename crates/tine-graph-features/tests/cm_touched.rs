@@ -12,7 +12,12 @@ use super::*;
 
 fn refusal(store: &Store, old: &str, new: &str) -> serde_json::Value {
     let offer = serde_json::to_value(rename_offer(store, old, new, None).unwrap()).unwrap();
-    assert_eq!(offer["kind"], "refused", "{old} → {new}: {offer}");
+    // The model's refusal; the window may offer a helper with it (a day move,
+    // the contested-name merge: D-20261115-HELP), carrying the same reason.
+    assert!(
+        ["refused", "contested", "dayMove"].contains(&offer["kind"].as_str().unwrap_or_default()),
+        "{old} → {new}: {offer}"
+    );
     offer["reason"].clone()
 }
 

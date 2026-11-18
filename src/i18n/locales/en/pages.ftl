@@ -105,3 +105,22 @@ rename-alias-dialog-stale-what = The rename choice
 rename-helper-page-changed = Couldn't rename: “{ $page }” changed since the rename was planned. Nothing was renamed. Start the rename again.
 rename-helper-unsaved = Couldn't rename: the change to “{ $page }” could not be saved, so it was put back. Nothing was renamed.
 rename-helper-not-restored = The rename did not happen, and Tine could not save the restored text of { $pages }. Check those pages.
+# The day move and the contested-name dialog (D-20261111-CMDF, D-20261019-M2(6), D-20261115-HELP).
+rename-day-dialog-title = “{ $day }” keeps its date. Move its notes to “{ $name }”?
+rename-day-dialog-new = Its blocks move to a new page, “{ $name }”.
+rename-day-dialog-into = Its blocks move into the existing page “{ $name }”, after that page's own blocks.
+rename-day-dialog-keeps = “{ $day }” keeps its page properties and gets one block: Moved to [[{ $name }]]
+rename-day-dialog-alias = Its alias line stays on the day: alias:: { $aliases }
+rename-day-dialog-references = { $count ->
+    [one] Links to “{ $day }” keep opening the day, in 1 page: { $pages }
+   *[other] Links to “{ $day }” keep opening the day, in { NUMBER($count, useGrouping: 0) } pages: { $pages }
+    }
+rename-day-dialog-no-references = No page links to “{ $day }”.
+rename-day-dialog-move = Move the notes to “{ $name }”
+rename-day-dialog-move-into = Move the notes into “{ $name }”
+rename-day-moved = Moved the notes of “{ $day }” to “{ $name }”.
+rename-day-nothing = “{ $day }” has no notes to move.
+rename-day-not-moved = The notes of “{ $day }” were not moved. Nothing changed.
+rename-contested-dialog-title = Several files claim “{ $name }”
+rename-contested-dialog-intro = “{ $from }” cannot be renamed to “{ $to }” while they do. Keep one file and merge the others into it: their blocks follow its own, their aliases join it, and the other files go to the trash. No link changes. Then the rename is tried again.
+rename-contested-dialog-keep = Keep { $file }, merge the others into it

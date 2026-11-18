@@ -300,8 +300,27 @@ export type AliasDialogOffer = {
   ownRefused: { kind: "plan"; reason: RenameRefusal } | { kind: "aliasLine"; page: string; path: string } | { kind: "other" } | null;
 };
 
+/** The day move (`pages::DayMove`, D-20261111-CMDF, D-20261115-HELP): a day
+ *  keeps its date; its blocks can move to the page `name` (`into` an existing
+ *  page, else a new one). `references`: pages whose links keep opening the
+ *  day. `release`/`retargeted`: the day's own alias becomes the page (MOA). */
+export type DayMoveOffer = {
+  kind: "dayMove";
+  reason: RenameRefusal; message: string;
+  day: AliasDialogPage; name: string; journal: boolean; into: AliasDialogPage | null;
+  references: string[]; referenceCount: number;
+  release: AliasEdit | null;
+  retargeted: RenameEffect["retargeted"][number] | null;
+};
+
+/** Several files claim `name` (`RenameOffer::Contested`): the file merge into
+ *  the one the user keeps is offered. `opens`: the file the name opens now. */
+export type ContestedOffer = { kind: "contested"; reason: RenameRefusal; message: string; name: string; files: string[]; opens: string | null };
+
 export type RenameOffer =
   | { kind: "rename" }
+  | DayMoveOffer
+  | ContestedOffer
   | { kind: "merge"; into: string; name: string; journal: boolean; tags?: TagUnion | null }
   | { kind: "refused"; reason: RenameRefusal; message: string }
   | AliasDialogOffer;
