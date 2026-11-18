@@ -251,41 +251,140 @@ impl Identity {
     }
 }
 
+/// Windows directory identity, decided by what the file system answers. NTFS and
+/// ReFS give the 128-bit FileIdInfo id. FAT32/exFAT, Samba shares and WSL's
+/// `\\wsl.localhost` share refuse FileIdInfo (GH #973). There the older call's
+/// volume serial counts, but its 64-bit file index does not: nothing pins the
+/// root, and as with SMB/FUSE inode numbers on Linux there is no evidence the
+/// index survives eviction on those file systems. Where neither call answers, the
+/// check is vanish-only, as on Android. A weaker check, never a false refusal.
 #[cfg(target_os = "windows")]
-#[derive(PartialEq, Eq)]
-struct Identity {
-    volume: u64,
-    id: [u8; 16],
+#[derive(Debug, PartialEq, Eq)]
+struct Identity(IdentityKind);
+
+#[cfg(target_os = "windows")]
+#[derive(Debug, PartialEq, Eq)]
+enum IdentityKind {
+    FileId { volume: u64, id: [u8; 16] },
+    Volume(u32),
+    Present,
+}
+
+#[cfg(all(test, target_os = "windows"))]
+thread_local! {
+    /// Test seam: answer the next identity queries as a file system without
+    /// FileIdInfo (1) or without either call (2) would.
+    pub(crate) static NO_FILE_ID: std::cell::Cell<u8> = const { std::cell::Cell::new(0) };
+}
+
+/// The answer of a file system that lacks an information class: not supported,
+/// invalid parameter, invalid function (FAT, SMB redirectors, 9P).
+#[cfg(target_os = "windows")]
+fn unsupported(error: &io::Error) -> bool {
+    matches!(error.raw_os_error(), Some(1 | 50 | 87))
 }
 
 #[cfg(target_os = "windows")]
 fn identity(path: &Path) -> io::Result<Identity> {
-    use std::os::windows::{fs::OpenOptionsExt, io::AsRawHandle};
+    use std::os::windows::{ffi::OsStrExt, fs::OpenOptionsExt, io::AsRawHandle};
     use windows_sys::Win32::Storage::FileSystem::{
-        FileIdInfo, GetFileInformationByHandleEx, FILE_FLAG_BACKUP_SEMANTICS, FILE_ID_INFO,
+        FileBasicInfo, FileIdInfo, GetFileAttributesExW, GetFileExInfoStandard,
+        GetFileInformationByHandle, GetFileInformationByHandleEx, BY_HANDLE_FILE_INFORMATION,
+        FILE_ATTRIBUTE_DIRECTORY, FILE_BASIC_INFO, FILE_FLAG_BACKUP_SEMANTICS, FILE_ID_INFO,
         FILE_READ_ATTRIBUTES, FILE_SHARE_DELETE, FILE_SHARE_READ, FILE_SHARE_WRITE,
+        WIN32_FILE_ATTRIBUTE_DATA,
     };
+    #[cfg(test)]
+    let forced = NO_FILE_ID.with(|forced| forced.get());
+    #[cfg(not(test))]
+    let forced = 0u8;
     let file = fs::OpenOptions::new()
         .access_mode(FILE_READ_ATTRIBUTES)
         .share_mode(FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE)
         .custom_flags(FILE_FLAG_BACKUP_SEMANTICS)
         .open(path)?;
     let mut info = FILE_ID_INFO::default();
-    let ok = unsafe {
-        GetFileInformationByHandleEx(
-            file.as_raw_handle(),
-            FileIdInfo,
-            (&mut info as *mut FILE_ID_INFO).cast(),
-            std::mem::size_of::<FILE_ID_INFO>() as u32,
-        )
-    };
-    if ok == 0 {
-        return Err(io::Error::last_os_error());
+    let ok = forced == 0
+        && unsafe {
+            GetFileInformationByHandleEx(
+                file.as_raw_handle(),
+                FileIdInfo,
+                (&mut info as *mut FILE_ID_INFO).cast(),
+                std::mem::size_of::<FILE_ID_INFO>() as u32,
+            )
+        } != 0;
+    if ok {
+        return Ok(Identity(IdentityKind::FileId {
+            volume: info.VolumeSerialNumber,
+            id: info.FileId.Identifier,
+        }));
     }
-    Ok(Identity {
-        volume: info.VolumeSerialNumber,
-        id: info.FileId.Identifier,
-    })
+    let error = if forced == 0 {
+        io::Error::last_os_error()
+    } else {
+        io::Error::from_raw_os_error(50)
+    };
+    if !unsupported(&error) {
+        return Err(error);
+    }
+    // The id above already tells a file from a folder; the older answers do
+    // not, so each fallback reads the directory attribute itself.
+    let mut info = BY_HANDLE_FILE_INFORMATION::default();
+    if forced < 2 && unsafe { GetFileInformationByHandle(file.as_raw_handle(), &mut info) } != 0 {
+        if info.dwFileAttributes & FILE_ATTRIBUTE_DIRECTORY == 0 {
+            return Err(moved());
+        }
+        return Ok(Identity(IdentityKind::Volume(info.dwVolumeSerialNumber)));
+    }
+    let error = if forced < 2 {
+        io::Error::last_os_error()
+    } else {
+        io::Error::from_raw_os_error(50)
+    };
+    if !unsupported(&error) {
+        return Err(error);
+    }
+    // Neither identity query answers. `File::metadata` makes the same older
+    // call, so the folder check asks for the basic attributes, then by path
+    // (`GetFileAttributesW` fails on a share root; the Ex form does not). If
+    // nothing answers, the open above is the only evidence: a weaker check,
+    // never a refusal.
+    let mut basic = FILE_BASIC_INFO::default();
+    let attributes = if forced < 3
+        && unsafe {
+            GetFileInformationByHandleEx(
+                file.as_raw_handle(),
+                FileBasicInfo,
+                (&mut basic as *mut FILE_BASIC_INFO).cast(),
+                std::mem::size_of::<FILE_BASIC_INFO>() as u32,
+            )
+        } != 0
+    {
+        basic.FileAttributes
+    } else {
+        let wide: Vec<u16> = path.as_os_str().encode_wide().chain(Some(0)).collect();
+        let mut data = WIN32_FILE_ATTRIBUTE_DATA::default();
+        let ok = unsafe {
+            GetFileAttributesExW(
+                wide.as_ptr(),
+                GetFileExInfoStandard,
+                (&mut data as *mut WIN32_FILE_ATTRIBUTE_DATA).cast(),
+            )
+        } != 0;
+        if !ok {
+            let error = io::Error::last_os_error();
+            return if unsupported(&error) || error.raw_os_error() == Some(53) {
+                Ok(Identity(IdentityKind::Present))
+            } else {
+                Err(error)
+            };
+        }
+        data.dwFileAttributes
+    };
+    if attributes & FILE_ATTRIBUTE_DIRECTORY == 0 {
+        return Err(moved());
+    }
+    Ok(Identity(IdentityKind::Present))
 }
 
 #[cfg(target_os = "windows")]
@@ -293,6 +392,9 @@ fn current(path: &Path) -> io::Result<Identity> {
     identity(path)
 }
 
+/// Each recheck takes the same branch as the open did on the same file system, so
+/// plain equality compares like with like; a different answer means a different
+/// file system or object at the path.
 #[cfg(target_os = "windows")]
 impl Identity {
     fn matches(&self, actual: &Self) -> bool {
@@ -346,6 +448,53 @@ mod tests {
         assert!(!code.contains("_directory:"));
         for target in ["linux", "macos", "ios", "android", "windows"] {
             assert!(code.contains(&format!("target_os = \"{target}\"")));
+        }
+    }
+
+    /// GH #973: a file system without FileIdInfo (WSL's share, FAT32/exFAT,
+    /// Samba) must not refuse every save; the fallbacks keep the moved check.
+    #[test]
+    fn gh973_windows_identity_falls_back_where_file_ids_are_unsupported() {
+        let source = include_str!("root_binding.rs");
+        let code = &source[..source.find("#[cfg(test)]\nmod tests").unwrap()];
+        let windows = &code[code
+            .find("enum IdentityKind {\n    FileId")
+            .expect("Windows identity has a file-id-free mode")..];
+        assert!(windows.contains("GetFileInformationByHandle(file.as_raw_handle()"));
+        assert!(windows.contains("Ok(Identity(IdentityKind::Present))"));
+        assert!(windows.contains("Some(1 | 50 | 87)"));
+        // `File::metadata` is GetFileInformationByHandle underneath: using it
+        // would make the last fallback unreachable (merge review, 11/18).
+        let arm = &windows[..windows.find("fn current(").unwrap()];
+        assert!(!arm.contains(".metadata()"));
+        // `GetFileAttributesW` fails on a share root (`\\server\share`).
+        assert!(!arm.contains("GetFileAttributesW("));
+        assert!(arm.contains("FileBasicInfo,"));
+        assert!(arm.contains("GetFileAttributesExW("));
+    }
+
+    #[cfg(target_os = "windows")]
+    #[test]
+    fn gh973_binding_without_file_ids_saves_and_still_sees_a_moved_folder() {
+        for mode in [1u8, 2, 3] {
+            NO_FILE_ID.with(|forced| forced.set(mode));
+            let dir = tempfile::tempdir().unwrap();
+            let root = dir.path().join("graph");
+            fs::create_dir(&root).unwrap();
+            let binding = RootBinding::new(&root);
+            binding
+                .check()
+                .unwrap_or_else(|e| panic!("mode {mode}: {e}"));
+            fs::rename(&root, dir.path().join("moved")).unwrap();
+            assert!(binding.check().is_err(), "mode {mode}: vanished folder");
+            fs::write(&root, b"replacement file").unwrap();
+            assert!(binding.check().is_err(), "mode {mode}: file in its place");
+            fs::remove_file(&root).unwrap();
+            fs::create_dir(&root).unwrap();
+            binding
+                .check()
+                .unwrap_or_else(|e| panic!("mode {mode}: recreated: {e}"));
+            NO_FILE_ID.with(|forced| forced.set(0));
         }
     }
 
