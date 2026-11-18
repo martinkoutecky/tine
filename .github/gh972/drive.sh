@@ -24,8 +24,32 @@ adb shell settings get secure navigation_mode >> "$out/nav.txt" 2>&1 || true
 waitfor() { local end=$((SECONDS + $2)); while [ $SECONDS -lt $end ]; do grep -aEq "$1" "$log" && return 0; sleep 1; done; return 1; }
 shot() { adb exec-out screencap -p > "$out/$1.png" 2>/dev/null || true; }
 
-adb shell monkey -p "$pkg" -c android.intent.category.LAUNCHER 1 > "$out/launch.txt" 2>&1
+launch() { adb shell monkey -p "$pkg" -c android.intent.category.LAUNCHER 1 >> "$out/launch.txt" 2>&1; }
+# Phase A: create the demo graph through the real dialog, then stop the app.
+launch
 waitfor 'GH972 .* BOOT ' 120 || { echo "probe never booted" >&2; shot no-boot; exit 1; }
+waitfor 'GH972 .* GRAPH-CREATED' 180 || { echo "graph not created" >&2; shot no-create; exit 1; }
+sleep 5; shot after-create
+adb shell am force-stop "$pkg"; sleep 2
+day=$(adb shell date +%Y_%m_%d | tr -d '\r')
+adb shell run-as "$pkg" find . -type d -name journals > "$out/journals-dirs.txt" 2>&1 || true
+jdir=$(grep -a '^\./' "$out/journals-dirs.txt" | head -1 | tr -d '\r')
+echo "journals dir: $jdir day: $day" | tee -a "$out/taps.txt"
+python3 -I - > "$out/journal.md" <<'PY2'
+words = "the quick brown fox jumps over a lazy dog while notes accumulate on every page of this scratch graph".split()
+for i in range(1, 91):
+    n = 6 + (i * 7) % 18
+    print("- Block %02d: %s" % (i, " ".join(words[(i + k) % len(words)] for k in range(n))))
+PY2
+adb shell "run-as $pkg sh -c 'cat > $jdir/$day.md'" < "$out/journal.md"
+adb shell run-as "$pkg" ls -l "$jdir" > "$out/journals-ls.txt" 2>&1 || true
+# Phase B: relaunch; the graph (with the long journal) loads.
+kill $lc 2>/dev/null; adb logcat -c || true
+log="$out/logcat-b.txt"
+adb logcat -v threadtime > "$log" 2>&1 &
+lc=$!
+launch
+waitfor 'GH972 .* BOOT ' 120 || { echo "probe never booted (B)" >&2; shot no-boot-b; exit 1; }
 waitfor 'GH972 .* READY' 240 || { echo "never ready" >&2; shot no-ready; exit 1; }
 sleep 2; shot ready
 

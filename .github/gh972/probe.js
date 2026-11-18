@@ -140,7 +140,11 @@
         var b2 = clickByText(/^\s*Create graph\s*$/i);
         if (b2) { confirmed = true; log("CLICKED confirm-create"); return; }
       }
-      if (q(".topbar") && q(".main-content") && document.querySelectorAll(".block-content").length > 5) {
+      if (created && confirmed && q(".topbar") && q(".main-content")) {
+        // phase A: the graph exists; the driver now seeds a long journal and relaunches
+        state = "idle"; setTimeout(function () { log("GRAPH-CREATED"); }, 6000); return;
+      }
+      if (!created && q(".topbar") && q(".main-content") && document.querySelectorAll(".block-content").length > 5) {
         state = "settle";
         setTimeout(function () { state = "running"; log("READY"); snap("ready"); runStep(); }, 4000);
       }
