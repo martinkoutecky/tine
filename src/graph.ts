@@ -3,6 +3,8 @@
 
 import { closeAllWorkspaceWindows } from "./workspaceWindows";
 import { renameRefusalMessage, showRenameNotice, showRewriteRefusal } from "./renameRefusal";
+import { askAliasDialog } from "./renameAliasDialog";
+import { applyHelperEdits, type AppliedEdits, type HelperEdit } from "./renameHelpers";
 import { refreshRootRecovery } from "./rootRecoveryState";
 import { backend, type CustomCssChange, type GraphConfigChange } from "./backend";
 import { captureBinding, bindingCurrent } from "./binding";
@@ -24,7 +26,7 @@ import { setChangeSummaryBaseline } from "./changeSummary";
 import { applyCustomCss, customCssVersion } from "./customCss";
 import { flushCssEditor, loadGlobalCss, checkCssEditorDisk, retireGraphCssEditor } from "./cssEditor";
 import { isMobile, platformKind } from "./platform";
-import type { BlockDto, GraphMeta, RenameOffer, RenameRefusal } from "./types";
+import type { BlockDto, GraphMeta, RenameOffer, RenameRefusal, TagUnion } from "./types";
 import type { DraftStatus } from "./document";
 import { maybeShowGuideAnnouncement } from "./guide";
 import { endEdit } from "./editorController";
@@ -485,18 +487,30 @@ export type RenameOutcome = Exclude<Awaited<ReturnType<typeof renamePageOnDisk>>
  *    spelling, M-Q7): confirm a merge into it as OG Logseq does (GH #327,
  *    `merge-pages!`): the backend appends the source's blocks, unites aliases,
  *    rewrites references and trashes the source in one transaction; a `from`
- *    with no file only has its references repointed.
- *  - refused (model r6 O0 to O4, e.g. `to` is only another page's alias):
- *    `{ refused }`, worded by `renameOutcomeMessage`; nothing is written.
- *  `cancelled`: the user declined, the graph changed, or a typed refusal was
- *  already shown with its recovery action. The other outcomes are
- *  `renamePageOnDisk`'s. `onRefreshed`
- *  receives the graph owner captured after the rename's refresh. The answer is
- *  not re-asked after the dialog: the rename re-plans and refuses if the graph
- *  changed. Other backend errors reject. `onRecovered` finishes the initiating
- *  surface after a later recovery click succeeds. Cost: one rename plan for
- *  the question, a dialog when merging, plus the rename; a recovery click
- *  adds one ordinary exact-file save before repeating that same request. */
+ *    with no file only has its references repointed. When both pages have a
+ *    `tags::` line, the confirm names the united tags, and the merge's helper
+ *    first writes them (D-20261116-TAGH, `renameHelpers.ts`).
+ *  - `to` is only other pages' alias (r6 O3): the alias dialog shows the
+ *    component and the requests the model allows, each with its effect
+ *    (D-20261115-HELP); its merge choice is the merge's confirm, its "use the
+ *    name for this page" removes the alias from the declaring pages first.
+ *  - refused otherwise (O0 to O4): `{ refused }`, worded by
+ *    `renameOutcomeMessage`; nothing is written.
+ *  A helper's edits are ordinary page edits through the guarded save; when the
+ *  request after them does not happen (refused, busy, an unsaved page, an
+ *  error), each edited page is put back exactly as it was and saved again, so
+ *  no half-done helper is left (an `uncertain` rename keeps them: it may have
+ *  committed). `cancelled`: the user declined, the graph changed, or a typed
+ *  refusal was already shown with its recovery action. The other outcomes are
+ *  `renamePageOnDisk`'s. `onRefreshed` receives the graph owner captured after
+ *  the rename's refresh. The answer is not re-asked after the dialog: the
+ *  helper checks each page still reads what the backend read, and the rename
+ *  re-plans and refuses if the graph changed. Other backend errors reject.
+ *  `onRecovered` finishes the initiating surface after a later recovery click
+ *  succeeds. Cost: one rename plan for the question (plus the dialog's plans),
+ *  a dialog when merging, the helper's edits, plus the rename; a recovery
+ *  click adds one ordinary exact-file save before repeating that same request
+ *  (helper edits included). */
 export async function renameOrMergePage(
   from: string, to: string, target?: PageTarget, onRefreshed?: (owner: Owner) => void,
   onRecovered?: (outcome: "renamed" | "merged") => void,
@@ -512,28 +526,72 @@ export async function renameOrMergePage(
   if (asked.kind === "stale") return "cancelled";
   const offer = asked.value;
   let into: string | undefined;
+  let name = to;
+  let edits: HelperEdit[] = [];
+  const tagEdits = (tags: TagUnion | null | undefined, survivor: string, journal: boolean): HelperEdit[] => tags ? [
+    { page: survivor, journal, key: "tags", before: tags.survivor, after: tags.united },
+    { page: from, journal: target?.pageKind === "journal", key: "tags", before: tags.source, after: null },
+  ] : [];
   switch (offer.kind) {
     case "refused": return { refused: offer.reason };
     case "merge": {
-      const confirmed = await readOwned(owner, backend().confirm(t("graph-page-already-exists-merge-into", { to: offer.name, from: from }), { okLabel: t("confirm-merge-pages"), cancelLabel: t("confirm-cancel") }));
+      const question = t("graph-page-already-exists-merge-into", { to: offer.name, from: from });
+      const text = offer.tags ? `${question}\n\n${t("graph-merge-unites-tags", { tags: offer.tags.united })}` : question;
+      const confirmed = await readOwned(owner, backend().confirm(text, { okLabel: t("confirm-merge-pages"), cancelLabel: t("confirm-cancel") }));
       if (confirmed.kind === "stale" || !confirmed.value) return "cancelled";
       into = offer.into;
+      edits = tagEdits(offer.tags, offer.name, offer.journal);
+      break;
+    }
+    case "alias": {
+      const answer = await askAliasDialog(from, to, offer);
+      if (!owner() || !answer) return "cancelled";
+      if (answer === "merge" && offer.merge) {
+        into = offer.merge.into;
+        name = offer.merge.name;
+        edits = tagEdits(offer.merge.tags, offer.merge.name, offer.merge.journal);
+      } else if (answer === "own" && offer.own) {
+        edits = offer.own.edits.map(({ page, journal, key, before, after }) => ({ page, journal, key, before, after }));
+      }
       break;
     }
     case "rename": break;
   }
+  // One request with its helper edits; a recovery click repeats both.
+  const perform = async (saveFirst?: string): Promise<Awaited<ReturnType<typeof renamePageOnDisk>> | "cancelled"> => {
+    let applied: AppliedEdits | null = null;
+    if (edits.length) {
+      const made = await applyHelperEdits(edits);
+      if ("refused" in made) {
+        if (owner()) pushToast(msg(made.refused === "changed" ? "rename-helper-page-changed" : "rename-helper-unsaved", { page: made.page }), "error");
+        return "cancelled";
+      }
+      applied = made;
+    }
+    const putBack = async () => {
+      if (applied && !(await applied.undo()) && owner()) pushToast(msg("rename-helper-not-restored", { pages: edits.map((edit) => edit.page).join(", ") }), "error");
+    };
+    try {
+      const done = await renamePageOnDisk(from, name, target, into, onRefreshed, saveFirst);
+      if (done !== "renamed" && done !== "merged" && done !== "uncertain") await putBack();
+      return done;
+    } catch (error) {
+      await putBack();
+      throw error;
+    }
+  };
   const retry = async (file: string) => {
     if (!owner()) return;
     try {
-      const done = await renamePageOnDisk(from, to, target, into, onRefreshed, file);
-      if (done === "stale") return;
-      const message = renameOutcomeMessage(done, from, to);
+      const done = await perform(file);
+      if (done === "stale" || done === "cancelled") return;
+      const message = renameOutcomeMessage(done, from, name);
       if (message) showRenameNotice(message, done === "unchanged" ? "info" : "error");
       else if (done === "renamed" || done === "merged") onRecovered?.(done);
     } catch (error) { if (owner()) throw error; }
   };
   try {
-    const done = await renamePageOnDisk(from, to, target, into, onRefreshed);
+    const done = await perform();
     return done === "stale" ? "cancelled" : done;
   } catch (error) {
     if (owner() && showRewriteRefusal(error, retry)) return "cancelled";

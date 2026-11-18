@@ -72,3 +72,36 @@ rename-refused-indented-body = Cannot merge: the first block of { $file } is ind
 rename-refused-directive-escape = Cannot merge: { $file } contains a #+END_QUOTE line outside a quote, which would end the merged page's quote early. Move that line into a quote or remove it in that file, then try again. Nothing was merged.
 rename-refused-alias-spelling = Cannot merge: Tine cannot move the alias declaration “{ $alias }” in { $file } without losing its spelling. Replace that declaration with plain alias names separated by commas in that file, save it and try again. Nothing was merged.
 rename-refused-duplicate-files = Cannot rename: these files claim the same page: { $files }. Merge one file into the other or remove one, then try again.
+# The rename dialog when the typed name is only another page's alias (D-20261115-HELP).
+rename-alias-dialog-title = “{ $to }” already opens “{ $owner }”
+rename-alias-dialog-intro = “{ $to }” is an alias, so renaming “{ $from }” to it is not allowed as it stands. These pages take part:
+# The page's alias line as the file has it (graph syntax, kept as written).
+rename-alias-dialog-aliases = alias:: { $aliases }
+rename-alias-dialog-opens-now = opens “{ $to }” now
+rename-alias-dialog-this-page = the page you are renaming
+rename-alias-dialog-merge = Merge “{ $from }” into “{ $owner }”
+rename-alias-dialog-merge-body = The blocks of “{ $from }” move to the end of “{ $owner }”, its aliases join those of “{ $owner }”, and links to “{ $from }” are changed to “{ $owner }”.
+rename-alias-dialog-tags = The tags of both pages are united first: tags:: { $united }
+rename-alias-dialog-merge-unavailable = Merging into “{ $owner }” is not possible: { $reason }
+rename-alias-dialog-own = Use the name “{ $to }” for this page
+rename-alias-dialog-own-edit = First, “{ $to }” is removed from the aliases of “{ $page }”: { $key }:: { $before } becomes { $key }:: { $after }
+rename-alias-dialog-own-edit-line = First, the line { $key }:: { $before } is removed from “{ $page }”.
+rename-alias-dialog-own-body = Then “{ $from }” is renamed to “{ $to }”.
+rename-alias-dialog-own-unavailable = Using “{ $to }” for this page is not possible: { $reason }
+rename-alias-dialog-alias-line = the alias line of “{ $page }” holds more than the aliases, or repeats. Remove “{ $to }” from it yourself, then rename again.
+rename-alias-dialog-other = Tine could not plan it. Start the rename again.
+rename-alias-dialog-none = Pick another name instead.
+rename-alias-dialog-pages = { $count ->
+    [one] Changes 1 page: { $pages }
+   *[other] Changes { NUMBER($count, useGrouping: 0) } pages: { $pages }
+    }
+rename-alias-dialog-retarget = { $count ->
+    [one] Links to “{ $name }” open “{ $after }” instead of “{ $before }”, their text unchanged, in 1 page: { $pages }
+   *[other] Links to “{ $name }” open “{ $after }” instead of “{ $before }”, their text unchanged, in { NUMBER($count, useGrouping: 0) } pages: { $pages }
+    }
+rename-alias-dialog-more = { $pages } and { NUMBER($more, useGrouping: 0) } more
+rename-alias-dialog-stale-what = The rename choice
+# A rename helper's own edits (D-20261116-TAGH, D-20261115-HELP).
+rename-helper-page-changed = Couldn't rename: “{ $page }” changed since the rename was planned. Nothing was renamed. Start the rename again.
+rename-helper-unsaved = Couldn't rename: the change to “{ $page }” could not be saved, so it was put back. Nothing was renamed.
+rename-helper-not-restored = The rename did not happen, and Tine could not save the restored text of { $pages }. Check those pages.

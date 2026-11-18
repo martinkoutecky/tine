@@ -8,6 +8,10 @@ The format follows [Keep a Changelog](https://keepachangelog.com/); versions use
 
 ## [Unreleased]
 
+### Added
+- Renaming a page to a name that is only another page's alias opens a rename dialog instead of refusing outright: it shows the pages that declare the name, their `alias::` lines and which page the name opens now, and offers only what Tine would carry out, each with what it changes, including links that will open a different page with their text unchanged. **Merge into** merges the page there; **Use the name for this page** removes the alias from the other page's `alias::` line, then renames, and puts the line back if the rename does not happen (UI-CM-ALIAS-RENAME-DIALOG).
+- Merging two pages that both have a `tags::` line leaves the remaining page with one `tags::` line holding both pages' tags; the merge question shows them. If the merge does not happen, both lines stay as they were (UI-CM-MERGE-UNITED-TAGS).
+
 ### Fixed
 - Adding to a page or a journal day while Tine is still loading the graph at launch no longer writes a second file for it beside your file; the add is refused as for any page that already has a file (REG-HELD-UNINDEXED-TWIN).
 - On Windows, a graph on a file system without file IDs (a WSL share such as `\\wsl.localhost`, a FAT32 or exFAT drive, a Samba share) can be saved again; since 0.9.0 every save failed with "The request is not supported (os error 50)" (reported by redstreet in #973; REG-973-WINDOWS-NO-FILE-ID).

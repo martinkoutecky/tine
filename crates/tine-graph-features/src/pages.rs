@@ -15,7 +15,10 @@ mod rename_plan;
 pub use rename_plan::{RenameBlocked, RenameChoice, RenamedPage};
 #[path = "pages_rename_offer.rs"]
 mod rename_offer;
-pub use rename_offer::{rename_offer, rename_page_as, RenameOffer};
+pub use rename_offer::{rename_offer, rename_page_as, AliasDialog, OwnRefusal, RenameOffer};
+#[path = "pages_rename_helpers.rs"]
+mod rename_helpers;
+pub use rename_helpers::{AliasEdit, Effect, Retarget, TagUnion};
 #[path = "pages_refusal.rs"]
 mod refusal;
 #[path = "pages_rename_report.rs"]

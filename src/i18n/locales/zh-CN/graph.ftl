@@ -109,3 +109,4 @@ root-recovery-lock-unavailable = Tine 无法为恢复操作独占此图谱。请
 root-recovery-moved-durability-unwitnessed = 未保存的编辑已移入当前图谱，但 Tine 无法确认这次移动已持久保存。请保持此窗口打开，并在关闭 Tine 前检查已恢复的编辑。
 graph-open-other-app = 此图谱已在另一个 Tine 窗口中打开。
 root-moved-draft-error = 图谱文件夹被移动、替换或断开连接，且无法写入恢复副本。请保持此窗口打开并复制未保存的文本，直到设备存储恢复正常。
+graph-merge-unites-tags = 两个页面都有标签。合并前，保留页面的标签将变为：{ $tags }

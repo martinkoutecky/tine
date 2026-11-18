@@ -367,7 +367,8 @@ fn fileless_or_empty_source_onto_an_alias_is_refused() {
             assert_eq!(snapshot(&root)["pages/refs.md"], "- [[ML]]\n");
             continue;
         }
-        assert_eq!(offer["kind"], "refused", "{label}: {offer}");
+        // The refusal reaches the alias dialog (D-20261115-HELP).
+        assert_eq!(offer["kind"], "alias", "{label}: {offer}");
         assert_eq!(offer["reason"]["kind"], "aliasHeld", "{label}: {offer}");
         assert_eq!(offer["reason"]["page"], "owner", "{label}: {offer}");
         for choice in [
@@ -432,9 +433,10 @@ fn alias_only_name_is_refused_naming_its_page() {
     let (root, store) = fixture("own-page", ML);
     let before = snapshot(&root);
     let offer = rename_offer(&store, "ML notes", "ML", None).unwrap();
-    let RenameOffer::Refused { reason, message } = &offer else {
-        panic!("refused, got {offer:?}");
+    let RenameOffer::Alias(dialog) = &offer else {
+        panic!("the alias dialog, got {offer:?}");
     };
+    let (reason, message) = (&dialog.reason, &dialog.message);
     assert_eq!(
         reason,
         &RenameBlocked::AliasHeld {
@@ -826,7 +828,7 @@ fn own_namespace_child_refuses_when_used() {
     };
     assert!(matches!(
         rename_offer(&store, "a", "a/x", None).unwrap(),
-        RenameOffer::Refused { reason, .. } if reason == held
+        RenameOffer::Alias(dialog) if dialog.reason == held
     ));
     for choice in [RenameChoice::Rename, RenameChoice::MergeInto("pages/o.md")] {
         let error = rename(&store, "a", "a/x", choice).unwrap_err();
@@ -883,6 +885,7 @@ fn relative_and_url_names_are_no_namespace_children() {
                 into: child_path.into(),
                 name: child.into(),
                 journal: false,
+                tags: None,
             },
             "{old} -> {child}"
         );

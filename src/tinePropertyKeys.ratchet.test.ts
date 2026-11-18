@@ -60,6 +60,7 @@ const PASS_THROUGH: Record<string, [number, string]> = {
   "src/document/edits/propertyDeclaration.ts": [1, "property declaration page: the user's key"],
   "src/editor/editorCompletions.ts": [1, "both editors' property autocomplete inserts the key the user picked"],
   "src/editor/exportProjection.ts": [1, "source export restores only parser-owned comment presentation keys when Remove properties is selected"],
+  "src/renameHelpers.ts": [1, "rename helpers rewrite the OG alias:: or tags:: line the backend's rename offer named (D-20261115-HELP, D-20261116-TAGH)"],
   "src/render/renderedText.ts": [1, "copy-as-text prints the block's own properties"],
   "src/sheet/conversions.ts": [1, "clears TINE_SHEET_PROPS, all `tine.*`"],
   "src/sheet/fields.ts": [1, "a sheet cell edit writes the column's user property"],

@@ -372,7 +372,8 @@ fn journal_files_follow_the_rename_like_any_other_file() {
                     assert_eq!(into, "pages/new.md", "{label}");
                     RenameChoice::MergeInto("pages/new.md")
                 }
-                (RenameOffer::Refused { reason, .. }, "alias") => {
+                (RenameOffer::Alias(dialog), "alias") => {
+                    let reason = dialog.reason;
                     assert!(
                         matches!(&reason, RenameBlocked::AliasHeld { page, .. } if page == "target"),
                         "{label}: {reason:?}"
@@ -520,9 +521,10 @@ fn o3_a_name_held_as_another_pages_alias_is_refused_naming_the_page_it_opens() {
         let (root, store) = fixture(&format!("alias-held-{label}"), files);
         let before = snapshot(&root);
         let offer = rename_offer(&store, old, "ML", None).unwrap();
-        let RenameOffer::Refused { reason, message } = &offer else {
+        let RenameOffer::Alias(dialog) = &offer else {
             panic!("{label}: {offer:?}");
         };
+        let (reason, message) = (&dialog.reason, &dialog.message);
         assert_eq!(
             reason,
             &RenameBlocked::AliasHeld {

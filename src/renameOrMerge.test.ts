@@ -82,8 +82,9 @@ it("offers a merge into a journal day reached by another date spelling", async (
   expect(rename).toHaveBeenLastCalledWith("meeting", "2026-10-26", "rename-page", undefined, "journals/2026_10_26.md", []);
 });
 
-// Model r6 O3: a name that is only another page's alias is refused, naming
-// the page it opens; no dialog opens and nothing is sent to rename.
+// Model r6 O3: an aliasHeld refusal (the offer now carries the alias dialog
+// instead, src/renameHelpers.test.ts; the rename itself still refuses this
+// way) is worded naming the page it opens, and nothing is sent to rename.
 it("an alias-only name is refused naming the page it opens", async () => {
   const confirm = vi.spyOn(backend(), "confirm");
   const rename = vi.spyOn(backend(), "renamePage");

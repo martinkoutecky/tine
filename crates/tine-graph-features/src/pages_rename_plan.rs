@@ -667,6 +667,52 @@ pub(super) fn plan_rename(
     choice: RenameChoice<'_>,
     #[cfg(test)] after_inventory: &dyn Fn(),
 ) -> io::Result<RenamePlan> {
+    plan_request(
+        store,
+        old,
+        new,
+        expected_path,
+        choice,
+        false,
+        #[cfg(test)]
+        after_inventory,
+    )
+}
+
+/// The alias dialog's read of its second step (D-20261115-HELP, r6
+/// "Outside the model"): the plain rename of `old` to `new` as it will be
+/// planned once every page other than the source has dropped `new` from its
+/// alias lines (the dialog's first step, ordinary edits). Only O3's
+/// alias-held refusal is not raised; every other rule decides as for the
+/// rename itself, on this view. Read-only: the plan is never committed (the
+/// rename after the edits plans again, on the edited files). Cost: one plan.
+pub(super) fn plan_released_rename(
+    store: &Store,
+    old: &str,
+    new: &str,
+    expected_path: Option<&str>,
+) -> io::Result<RenamePlan> {
+    plan_request(
+        store,
+        old,
+        new,
+        expected_path,
+        RenameChoice::Rename,
+        true,
+        #[cfg(test)]
+        &|| {},
+    )
+}
+
+fn plan_request(
+    store: &Store,
+    old: &str,
+    new: &str,
+    expected_path: Option<&str>,
+    choice: RenameChoice<'_>,
+    released: bool,
+    #[cfg(test)] after_inventory: &dyn Fn(),
+) -> io::Result<RenamePlan> {
     let merge_into = match choice {
         RenameChoice::MergeInto(into) => Some(into),
         _ => None,
@@ -747,7 +793,7 @@ pub(super) fn plan_rename(
             Some(id) => owners.iter().any(|owner| *owner != id),
             None => refs::normalize(new) != old_key,
         };
-        if held {
+        if held && !released {
             return Err(alias_held(&graph, new, owners).error());
         }
     }

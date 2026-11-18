@@ -87,3 +87,4 @@ root-recovery-lock-unavailable = Tine could not reserve this graph for recovery.
 root-recovery-moved-durability-unwitnessed = The unsaved edits were moved into this graph, but Tine could not confirm the move's durability. Keep this window open and check the recovered edits before closing Tine.
 graph-open-other-app = The graph is open in another Tine window.
 root-moved-draft-error = The graph folder was moved, replaced or disconnected, and its recovery copy could not be written. Keep this window open and copy your unsaved text until device storage is working again.
+graph-merge-unites-tags = Both pages have tags. Before the merge, the remaining page's tags become: { $tags }

@@ -368,6 +368,7 @@ describe("graph-scoped UI state (I-20)", () => {
       "src/components/FormulaEditor.tsx#formulaEditor",
       "src/components/GraphNamePrompt.tsx#graphNameRequest",
       "src/components/QuickShareAll.tsx#batchOwner",
+      "src/components/RenameAliasDialog.tsx#aliasDialogRequest",
       "src/components/RootRecoveryNotice.tsx#rootRecoveryOffers",
     ]);
     const picker = readFileSync("src/components/DatePicker.tsx", "utf8");
