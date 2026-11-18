@@ -352,3 +352,34 @@ fn an_add_after_a_year_less_day_winner_is_deleted_goes_to_its_twin() {
     assert!(!graph.root.join("pages/A.md").exists());
     assert!(!graph.root.join("journals/2026_11_02.md").exists());
 }
+
+/// CM leftovers item 1 (K SPEC §2.1, the year-less label limitation): with a
+/// year-less title format the same date in two years is two days, each with
+/// one file. An add to one day goes by the day, not by its shared label
+/// `11-02`: it lands in that day's file, is not refused as a name two files
+/// claim, and the other year's file is untouched.
+#[test]
+fn a_year_less_add_to_a_day_goes_by_the_day_not_its_label() {
+    let other = "journals/2025_11_02.md";
+    let graph = Graph::seeded(
+        Default::default(),
+        &[
+            (
+                "logseq/config.edn",
+                "{:journal/page-title-format \"MM-dd\"}\n",
+            ),
+            (other, "- last year\n"),
+            ("journals/2026_11_02.md", "- this year\n"),
+        ],
+    );
+    let slot = Arc::new(graph.slot());
+    let (_endpoint, _gate) = super::endpoint(&graph, slot);
+    assert_eq!(add_to_day(&graph, "2026-11-02"), "journals/2026_11_02.md");
+    assert_eq!(
+        disk(&graph, "journals/2026_11_02.md")
+            .matches("- added")
+            .count(),
+        1
+    );
+    assert_eq!(disk(&graph, other), "- last year\n");
+}

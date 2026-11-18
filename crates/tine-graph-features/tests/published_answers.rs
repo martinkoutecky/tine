@@ -89,29 +89,130 @@ fn a_date_alias_group_wire_names_the_day_and_its_file_once_one_holds_it() {
     }
 }
 
+/// The frozen v1 reader's admission (`admitPublishedAnswers` in
+/// `src/publishedAnswers.ts` as it shipped): `None` when `answers` is absent
+/// or of another `v` (the legacy reading applies); a recognized v1 that is
+/// malformed, or names a file the snapshot does not hold, panics as the
+/// viewer throws `DamagedAnswersError`.
+fn v1_admit(snapshot: &Value) -> Option<&Value> {
+    let answers = snapshot.get("answers")?;
+    assert!(answers.is_object(), "damaged: answers is not an object");
+    if answers["v"] != 1 {
+        return None;
+    }
+    let paths: Vec<&str> = (snapshot["pages"].as_array().into_iter().flatten())
+        .filter_map(|page| page["path"].as_str())
+        .collect();
+    let strings = |v: &Value| v.as_array().is_some_and(|a| a.iter().all(Value::is_string));
+    let held = |v: &Value| (v.as_str()).is_some_and(|id| paths.contains(&id));
+    let held_all = |v: &Value| strings(v) && v.as_array().unwrap().iter().all(held);
+    let kind = |v: &Value| *v == "page" || *v == "journal";
+    let target = |t: &Value| match t["kind"].as_str() {
+        Some("existing") => held(&t["id"]) && held_all(&t["others"]),
+        Some("alias") => held_all(&t["owners"]) && !t["owners"].as_array().unwrap().is_empty(),
+        Some("absent") => t["id"].is_string(),
+        _ => false,
+    };
+    let optional_bool = |v: Option<&Value>| v.is_none_or(Value::is_boolean);
+    let row = |r: &Value| {
+        r.is_object()
+            && r["key"].is_string()
+            && r["name"].is_string()
+            && r["is_journal"].is_boolean()
+            && (r["day"].is_null() || r["day"].is_i64() || r["day"].is_u64())
+            && target(&r["target"])
+            && (r.get("link")).is_none_or(|l| l["name"].is_string() && kind(&l["kind"]))
+            && optional_bool(r.get("namespace_parent"))
+            && optional_bool(r.get("empty_alias"))
+    };
+    let journals = &answers["journals"];
+    let ok = (answers["inventory"].as_array()).is_some_and(|rows| rows.iter().all(row))
+        && (answers["resolve"].as_array()).is_some_and(|entries| {
+            (entries.iter())
+                .all(|e| e["name"].is_string() && kind(&e["kind"]) && target(&e["target"]))
+        })
+        && (answers["alias_groups"].as_array()).is_some_and(|groups| {
+            (groups.iter())
+                .all(|g| g["name"].is_string() && strings(&g["aliases"]) && strings(&g["pages"]))
+        })
+        && journals["title_format"].is_string()
+        && journals["file_name_format"].is_string()
+        && (journals["content_days"].as_array())
+            .is_some_and(|days| days.iter().all(|d| d.is_i64() || d.is_u64()));
+    assert!(ok, "damaged: answers v1 is malformed");
+    Some(answers)
+}
+
 /// The frozen v1 reader's `resolve(name, kind)`, transcribed from
-/// `src/publishedAnswers.ts` as it shipped (`answersV1`): the asked kind's
-/// row, else the `resolve` table, else absent. No other fallback exists in
-/// a deployed `/s/1/` viewer.
+/// `src/publishedAnswers.ts` as it shipped (`answersV1`, through
+/// `indexInventoryRows`): rows keyed by their stored `key` per kind, the
+/// `resolve` table by kind and name key, the last entry winning in both; the
+/// asked kind's row, else the `resolve` table, else absent. No other fallback
+/// exists in a deployed `/s/1/` viewer. A snapshot the reader does not admit
+/// as v1 has no v1 answer.
 fn v1_resolve(snapshot: &Value, name: &str, kind: &str) -> Value {
+    let answers = v1_admit(snapshot).expect("a v1 snapshot");
     let key = tine_core::refs::page_key(name);
-    let answers = &snapshot["answers"];
-    let rows = answers["inventory"].as_array().unwrap();
-    let row = rows.iter().find(|row| {
-        row["is_journal"] == (kind == "journal")
-            && tine_core::refs::page_key(row["name"].as_str().unwrap()) == key
-    });
+    let row = (answers["inventory"].as_array().unwrap().iter())
+        .filter(|row| row["is_journal"] == (kind == "journal") && row["key"] == key.as_str())
+        .next_back();
     if let Some(row) = row {
         return row["target"].clone();
     }
-    let entries = answers["resolve"].as_array().unwrap();
-    (entries.iter())
-        .find(|entry| {
+    (answers["resolve"].as_array().unwrap().iter())
+        .filter(|entry| {
             entry["kind"] == kind
                 && tine_core::refs::page_key(entry["name"].as_str().unwrap()) == key
         })
+        .next_back()
         .map(|entry| entry["target"].clone())
         .unwrap_or_else(|| serde_json::json!({ "kind": "absent", "id": "" }))
+}
+
+/// The oracle reads as the shipped viewer does (CM leftovers item 9): a row
+/// is found by its stored key, not its name; a later row or `resolve` entry
+/// for one key wins; a snapshot without v1 answers is not read as v1, and a
+/// malformed one is damaged.
+#[test]
+fn the_v1_oracle_reads_as_the_shipped_viewer() {
+    let _integration_guard = crate::integration_lock();
+    let existing = |id: &str| serde_json::json!({ "kind": "existing", "id": id, "others": [] });
+    let row = |key: &str, name: &str, id: &str| serde_json::json!({ "key": key, "name": name, "is_journal": false, "target": existing(id) });
+    let snapshot = |inventory: Value, resolve: Value| {
+        serde_json::json!({
+            "pages": [{ "path": "pages/a.md" }, { "path": "pages/b.md" }],
+            "answers": {
+                "v": 1, "inventory": inventory, "resolve": resolve, "alias_groups": [],
+                "journals": { "title_format": "yyyy-MM-dd", "file_name_format": "yyyy_MM_dd", "content_days": [] },
+            },
+        })
+    };
+    let last_row = snapshot(
+        serde_json::json!([row("x", "X", "pages/a.md"), row("x", "X", "pages/b.md")]),
+        serde_json::json!([]),
+    );
+    assert_eq!(v1_resolve(&last_row, "X", "page")["id"], "pages/b.md");
+    let stored_key = snapshot(
+        serde_json::json!([row("k", "X", "pages/a.md")]),
+        serde_json::json!([]),
+    );
+    assert_eq!(v1_resolve(&stored_key, "X", "page")["kind"], "absent");
+    assert_eq!(v1_resolve(&stored_key, "k", "page")["id"], "pages/a.md");
+    let last_entry = snapshot(
+        serde_json::json!([]),
+        serde_json::json!([
+            { "name": "Y", "kind": "journal", "target": existing("pages/a.md") },
+            { "name": "y", "kind": "journal", "target": existing("pages/b.md") },
+        ]),
+    );
+    assert_eq!(v1_resolve(&last_entry, "Y", "journal")["id"], "pages/b.md");
+    assert!(v1_admit(&serde_json::json!({ "pages": [] })).is_none());
+    let mut later = last_row.clone();
+    later["answers"]["v"] = 2.into();
+    assert!(v1_admit(&later).is_none());
+    let mut outside = stored_key.clone();
+    outside["answers"]["inventory"][0]["target"]["id"] = "pages/elsewhere.md".into();
+    assert!(std::panic::catch_unwind(|| v1_admit(&outside).map(drop)).is_err());
 }
 
 /// A pages file whose `title::` is a date is that day (CM-DATE). A snapshot
