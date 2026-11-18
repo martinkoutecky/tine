@@ -154,3 +154,42 @@ fn a_file_delete_at_a_stale_revision_or_outside_the_pages_refuses_and_writes_not
     );
     assert!(!root.path().join("logseq/.tine-trash").exists());
 }
+
+/// A twin outside the configured pages and journals folders (the graph root, another folder) is a page file too:
+/// "Delete file" offered for it removes exactly that file (merge review of 384b3ad42, finding 1).
+#[test]
+fn a_twin_outside_the_pages_folder_is_deleted_by_its_path() {
+    let _integration_guard = crate::integration_lock();
+    for outside in [
+        "XX1.md",
+        "external/XX1.md",
+        "external/deep/XX1.org",
+        "笔记集/XX1.markdown",
+    ] {
+        let root = tempfile::tempdir().unwrap();
+        for dir in ["pages", "journals", "logseq"] {
+            fs::create_dir_all(root.path().join(dir)).unwrap();
+        }
+        let file = root.path().join(outside);
+        fs::create_dir_all(file.parent().unwrap()).unwrap();
+        fs::write(root.path().join(WINNER), WINNER_BYTES).unwrap();
+        fs::write(&file, "- outside copy\n").unwrap();
+        let store = Arc::new(Store::open(root.path(), Default::default()).unwrap().0);
+        store.whole_graph().unwrap();
+        assert_eq!(name_conflicts(&store), 1, "{outside} is a claimant");
+        let kept_rev = rev_of(&root, WINNER);
+        let base = rev_of(&root, outside);
+        let outcome = with_session(&store, |host, session| {
+            pages::delete_page_file(&store, host, session, outside, &base)
+        })
+        .unwrap();
+        assert_eq!(outcome, PageOperation::Applied, "{outside}");
+        assert!(!file.exists(), "{outside}");
+        assert_eq!(
+            rev_of(&root, WINNER),
+            kept_rev,
+            "nothing writes the kept file"
+        );
+        assert_eq!(name_conflicts(&store), 0, "{outside}");
+    }
+}
