@@ -56,7 +56,7 @@ impl std::fmt::Display for RewriteBlocked {
             Self::MergeConflictMarkers { file } => write!(f, "cannot merge: resolve the conflict markers in {file}, then try again; nothing was merged"),
             Self::SameFile { file } => write!(f, "cannot merge: {file} is both the source and the remaining file; choose two different files"),
             Self::StaleSource { file } => write!(f, "cannot rename: {file} no longer identifies the page you chose; reopen the page and start the rename again"),
-            Self::DuplicateFiles { files } => write!(f, "cannot rename: these files claim the same page: {}; merge one file into the other or remove one, then try again", files.join(", ")),
+            Self::DuplicateFiles { files } => write!(f, "these files claim the same page: {}; merge one file into the other or remove one (open it from Conflicts, Page name conflicts, and choose “Delete file” in its page menu), then try again", files.iter().map(|f| format!("“{f}”")).collect::<Vec<_>>().join(", ")),
         }
     }
 }

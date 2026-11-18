@@ -11,6 +11,7 @@ import { captureBinding, bindingCurrent, refuseStaleWrite } from "../binding";
 
 import { parseRepeater, type RepMode } from "../editor/repeat";
 import { appNow, journalTitle, localCalendarDate } from "../journal";
+import { ctrlArrowAlias } from "../ctrlArrowAlias";
 import { isHTMLElementNode, newResizeObserver, useOwnerWindow } from "../windowRealm";
 const MONTHS = [
   "January", "February", "March", "April", "May", "June",
@@ -194,7 +195,7 @@ function Picker(props: { bid: string; which: DatePickerTarget; x: number; y: num
             commitDraft(); return;
           }
           if (!(e.target as HTMLElement).matches(".dp-cell")) return;
-          const delta = ({ ArrowLeft: -1, ArrowRight: 1, ArrowUp: -7, ArrowDown: 7 } as Record<string, number>)[e.key];
+          const delta = ({ ArrowLeft: -1, ArrowRight: 1, ArrowUp: -7, ArrowDown: 7 } as Record<string, number>)[ctrlArrowAlias(e).key]; // GH #986: Ctrl+P / Ctrl+N
           if (delta !== undefined) { e.preventDefault(); e.stopPropagation(); moveDay(delta); }
         }}>
         <div class="dp-head">

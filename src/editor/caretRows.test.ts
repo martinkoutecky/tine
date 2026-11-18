@@ -1,7 +1,7 @@
 // @vitest-environment jsdom
 
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { caretAtFirstRow, caretAtLastRow, textareaCaretLineRect, textareaCaretPoints } from "./caretRows";
+import { caretAtFirstRow, caretAtLastRow, caretRowTarget, textareaCaretLineRect, textareaCaretPoints } from "./caretRows";
 
 afterEach(() => vi.restoreAllMocks());
 
@@ -48,5 +48,19 @@ describe("caret line rect for an anchored popup (GH #737)", () => {
     document.body.appendChild(textarea);
     expect(textareaCaretLineRect(textarea, 8)).toBeNull();
     textarea.remove();
+  });
+});
+
+// GH #986: Ctrl+P / Ctrl+N move the caret a visual row where the browser has no binding for them.
+describe("caretRowTarget", () => {
+  // "abcde" wrapped over rows "abcd" / "e": 4 chars of 10px per row, the wrap offset on the next row.
+  const points = Array.from({ length: 6 }, (_, i) => ({ x: (i % 4) * 10, y: i < 4 ? 0 : 20 }));
+  it("keeps the column on the neighbouring row", () => {
+    expect(caretRowTarget(points, 2, 1)).toBe(5);
+    expect(caretRowTarget(points, 5, -1)).toBe(1);
+  });
+  it("goes to the start or the end when there is no such row, as Up and Down do", () => {
+    expect(caretRowTarget(points, 2, -1)).toBe(0);
+    expect(caretRowTarget(points, 5, 1)).toBe(5);
   });
 });

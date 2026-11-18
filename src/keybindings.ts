@@ -67,6 +67,7 @@ import { cellBlockId, cellSel, handleCellSelectionKey, handleSheetPasteEvent, ou
 import { enterGridEdit, openGridTarget } from "./sheet/gridEditMove";
 import { containingGridCell } from "./sheet/gridNeighbour";
 import { decodeNavIntent } from "./navProtocol";
+import { ctrlArrowAlias } from "./ctrlArrowAlias";
 import {
   closePane,
   adjustPaneSize,
@@ -645,7 +646,7 @@ export const BUILTIN_KEYS: BuiltinKeyDef[] = [
   {
     id: "builtin/editor/arrow-cross-block",
     scope: "editor",
-    binding: "up / down",
+    binding: "up / down / ctrl+p / ctrl+n",
     label: msg("command-builtin-editor-arrow-cross-block"),
     details: msg("commands-from-the-first-or-last-visual-row"),
   },
@@ -667,7 +668,7 @@ export const BUILTIN_KEYS: BuiltinKeyDef[] = [
   {
     id: "builtin/editor/ac-nav",
     scope: "editor",
-    binding: "up / down",
+    binding: "up / down / ctrl+p / ctrl+n",
     label: msg("command-builtin-editor-ac-nav"),
   },
   {
@@ -691,7 +692,7 @@ export const BUILTIN_KEYS: BuiltinKeyDef[] = [
   {
     id: "builtin/select/move",
     scope: "select",
-    binding: "up / down",
+    binding: "up / down / ctrl+p / ctrl+n",
     label: msg("command-builtin-select-move"),
   },
   {
@@ -1023,8 +1024,9 @@ function handleSelectionKey(e: KeyboardEvent): boolean {
     }
     if (ids.length === 1 && editSelectedGridChild(ids[0], "end")) return true;
   }
-  if (e.key === "ArrowDown") return moveSelection(1, e.shiftKey), true;
-  if (e.key === "ArrowUp") return moveSelection(-1, e.shiftKey), true;
+  const arrow = ctrlArrowAlias(e).key; // GH #986: Ctrl+P / Ctrl+N are Up / Down
+  if (arrow === "ArrowDown") return moveSelection(1, e.shiftKey), true;
+  if (arrow === "ArrowUp") return moveSelection(-1, e.shiftKey), true;
   if (e.key === "Backspace" || e.key === "Delete") return deleteSelection(), true;
   const mod = isMac ? e.metaKey : e.ctrlKey;
   if (mod && shortcutKey(e) === "c") {

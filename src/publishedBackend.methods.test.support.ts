@@ -273,6 +273,7 @@ export const PUBLISHED_REFUSED_METHODS = [
   "pageDiscard",
   "pageClose",
   "pageDelete",
+  "pageDeleteFile",
   "pageWait",
   "pageSaveNow",
   "pageDraftsRetry",
