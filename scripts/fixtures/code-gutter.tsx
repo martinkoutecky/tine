@@ -39,6 +39,17 @@ Object.assign(window, {
     setCm6EditorEnabled(kind === "cm6");
     startEditing("code", 0);
   },
+  // A fixed body with a wrapping-length line 10 (GH #970): one number per source line, whatever the wrap.
+  showLong(kind: string, wrap: boolean) {
+    endEdit("page-navigation");
+    changeCodeWrapping(wrap);
+    const body = Array.from({ length: 14 }, (_, i) => i === 9
+      ? " AB  - Die Arbeit vergleicht verschiedene Klassifikationsverfahren für Kundenrezensionen und noch viel mehr Text"
+      : ` KW  - line ${i + 1}`).join("\n");
+    setRaw("code", `\`\`\`\n${body}\n\`\`\``);
+    setCm6EditorEnabled(kind === "cm6");
+    if (kind !== "view") startEditing("code", 4);
+  },
   showCode(count: number, kind: string, mixed: boolean, wrap: boolean, lang = "js") {
     endEdit("page-navigation");
     changeCodeWrapping(wrap);
