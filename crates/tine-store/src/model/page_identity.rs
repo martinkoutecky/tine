@@ -117,9 +117,15 @@ impl ClaimLookup<'_> {
     /// a title format without a year (`MM-dd`) gives two days one title, and
     /// they remain distinct days (cm-cut6k SPEC §2.1), so the title's other
     /// files do not hold it. A name that is no day (the shared label `10-26`
-    /// itself) keeps every claimant of the name. O(1) per claimant.
+    /// itself) asked as a page is the ordinary page of that name: "typing the
+    /// ambiguous, non-identifying label cannot select" a day (SPEC §2.1), so
+    /// no day's file holds it. Asked as a journal (the app's title handle) it
+    /// keeps every claimant of the name. O(1) per claimant.
     pub(crate) fn holds(&self, entry: &PageEntry) -> bool {
-        self.day.is_none() || entry.date_key == self.day
+        match self.day {
+            Some(day) => entry.date_key == Some(day),
+            None => self.kind == PageKind::Journal || entry.date_key.is_none(),
+        }
     }
 }
 

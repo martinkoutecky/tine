@@ -381,7 +381,11 @@ impl Store {
     /// [`Store::page`] reads the file itself. Writes nothing. Cost O(bytes
     /// + blocks).
     pub fn page_of(&self, id: &PageId, bytes: &[u8]) -> Result<PageRead, StoreError> {
-        let (id, path, _) = self.page_target(id)?;
+        // `page_target`'s checks without its read of the file's preamble:
+        // `bytes` name the page, so the file's own bytes are never consulted.
+        let (id, path) = self.page_spot(id)?;
+        (self.graph.page_entry_in(&path, Some("")))
+            .ok_or_else(|| StoreError::InvalidTarget(id.as_str().to_owned()))?;
         let doc = page_dto(|| self.graph.page_dto_for_bytes(&path, bytes))?;
         self.page_read(id, doc, PageReadSource::Disk)
     }

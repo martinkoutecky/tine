@@ -776,3 +776,100 @@ fn the_duplicate_day_keeper_is_the_file_the_day_opens() {
     drop(host);
     let _ = fs::remove_dir_all(&root);
 }
+
+/// CM leftovers item 1 (K SPEC §2.1, approved label limitation): under a
+/// year-less title format (`MM-dd`) the label `11-02` names no day, so the
+/// duplicate days of 2026-11-02 are found by the day, never by that label. A
+/// file of another year (`pages/2027-11-02.md`, also displayed `11-02`) and
+/// an earlier year's journal neither hide the conflict nor take the keeper.
+#[test]
+fn a_year_less_duplicate_day_is_queued_by_its_day_not_its_label() {
+    let _integration_guard = crate::integration_lock();
+    let root = crate::test_support::fresh_dir("tine-f8dj-year-less-");
+    for dir in ["pages", "journals", "logseq"] {
+        fs::create_dir_all(root.join(dir)).unwrap();
+    }
+    fs::write(
+        root.join("logseq/config.edn"),
+        "{:journal/page-title-format \"MM-dd\"}\n",
+    )
+    .unwrap();
+    fs::write(root.join("journals/2025_11_02.md"), "- last year\n").unwrap();
+    fs::write(root.join("journals/2026_11_02.md"), "- stray\n").unwrap();
+    fs::write(root.join("journals/2026-11-02.md"), "- keeper\n").unwrap();
+    fs::write(root.join("pages/2027-11-02.md"), "- next year\n").unwrap();
+    let store = open(&root);
+    store.whole_graph().unwrap();
+    let queue = conflicts::conflict_inventory(&store).unwrap().queue;
+    let object = day(&queue).expect("the 2026 duplicate day is queued");
+    assert_eq!(object.page_path, "journals/2026-11-02.md");
+    let days = tine_graph_features::journals::journal_conflicts(&store).unwrap();
+    assert_eq!(days.len(), 1, "{days:?}");
+    let canonical: Vec<_> = (days[0].files.iter())
+        .map(|file| (file.path.as_str(), file.canonical))
+        .collect();
+    assert_eq!(
+        canonical,
+        [
+            ("journals/2026-11-02.md", true),
+            ("journals/2026_11_02.md", false)
+        ],
+        "the claimant order's owner (unsigned UTF-8 paths) is the keeper"
+    );
+    let _ = fs::remove_dir_all(&root);
+}
+
+/// CM leftovers item 2 (CM-DAYFILE, K SPEC §2.1): a pages-directory file
+/// that is a day is labelled a journal wherever conflict data names its
+/// kind, as the store names it: the page handed back by a revert (and a
+/// conflict merge, which builds it the same way), its sync copy's row and
+/// its VCS-marker row. The directory decides nothing.
+#[test]
+fn a_pages_directory_day_is_labelled_a_journal_in_conflict_data() {
+    let _integration_guard = crate::integration_lock();
+    let root = crate::test_support::fresh_dir("tine-f8dj-pages-day-kind-");
+    for dir in ["pages", "journals", "logseq"] {
+        fs::create_dir_all(root.join(dir)).unwrap();
+    }
+    let day = "pages/2026-11-02.md";
+    let marked = "pages/2026-11-03.md";
+    fs::write(root.join(day), "- the day\n").unwrap();
+    fs::write(
+        root.join("pages/2026-11-02.sync-conflict-20261102-101010-ABCDEFG.md"),
+        "- the day, other device\n",
+    )
+    .unwrap();
+    fs::write(
+        root.join(marked),
+        "- a\n<<<<<<< HEAD\n- mine\n=======\n- theirs\n>>>>>>> other\n",
+    )
+    .unwrap();
+    let store = open(&root);
+    store.whole_graph().unwrap();
+    let reverted = tine_graph_features::run_revert::revert_page(
+        &store,
+        &tine_store::PageId::from(day),
+        "- the day\n",
+        &[],
+    )
+    .unwrap();
+    assert_eq!(
+        (reverted.doc.name.as_str(), reverted.doc.kind),
+        ("Nov 2nd, 2026", PageKind::Journal)
+    );
+    let copies = conflicts::list_sync_conflicts(&store).unwrap();
+    assert_eq!(
+        (copies.iter())
+            .map(|c| (c.base_name.as_str(), c.kind))
+            .collect::<Vec<_>>(),
+        [("Nov 2nd, 2026", PageKind::Journal)]
+    );
+    let inventory = conflicts::conflict_inventory(&store).unwrap();
+    assert_eq!(
+        (inventory.vcs_markers.iter())
+            .map(|m| (m.path.as_str(), m.name.as_str(), m.kind))
+            .collect::<Vec<_>>(),
+        [(marked, "Nov 3rd, 2026", PageKind::Journal)]
+    );
+    let _ = fs::remove_dir_all(&root);
+}
