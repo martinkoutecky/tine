@@ -53,6 +53,7 @@ export function mockPageHost(read: (path: string) => PageDto | null,
     // A close is never answered (model upClose), as on the native host.
     async pageClose(_session: number, id: number) { admit(id); return null; },
     async pageDelete() { return "applied" as const; },
+    async pageDeleteFile() { return "applied" as const; },
     async pageWait(_session: number, needs: readonly PublishedNeed[]) {
       return needs.flatMap(({ key }) => {
         const dto = taken.get(key);

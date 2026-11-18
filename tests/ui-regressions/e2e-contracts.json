@@ -1181,7 +1181,7 @@
     },
 
     "scripts/e2e-page-file-identity.mjs": {
-      "contracts": [{ "class": "core-operation", "userOutcome": "External namespace-file deletion removes its abandoned namespace, and accepting a pending page-menu Delete succeeds when that file is already gone.", "blocking": true }],
+      "contracts": [{ "class": "core-operation", "userOutcome": "External namespace-file deletion removes its abandoned namespace, and accepting a pending page-menu Delete succeeds when that file is already gone.", "blocking": true }, { "class": "exact-safety-interoperability", "userOutcome": "Of two files claiming one page name (one in a non-ASCII subfolder), the page menu's Delete file removes exactly the shown file, leaves the other byte-identical, and the name then opens the remaining file with an ordinary Delete page (GH #978).", "blocking": true, "authority": "docs/storage-contract.md page deletion by file (GH #978)" }],
       "acceptableVariations": ["Watcher latency, navigation destination after deletion and confirmation styling may vary."],
       "nonRequirements": ["Removing a namespace still needed by surviving descendants or references.", "Case-only rename behavior, which remains an unresolved QC1 product question."],
       "stability": "stable"

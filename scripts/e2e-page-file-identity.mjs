@@ -14,6 +14,11 @@ fs.writeFileSync(`${graph}/logseq/config.edn`, "{:file/name-format :triple-lowba
 fs.writeFileSync(`${graph}/pages/Example___Namespace.md`, "- namespace body\n");
 fs.writeFileSync(`${graph}/pages/Clean___Namespace.md`, "- clean body\n");
 fs.writeFileSync(`${graph}/pages/Untouched.md`, "- sibling survives\n");
+// GH #978: two files claim "XX1"; the top-level file opens for the name.
+const twinKept = "tags:: 笔记\n\n- 子文件夹里的副本\n";
+fs.mkdirSync(`${graph}/pages/笔记集`);
+fs.writeFileSync(`${graph}/pages/XX1.md`, "- top-level copy\n");
+fs.writeFileSync(`${graph}/pages/笔记集/XX1.md`, twinKept);
 const env = { ...process.env, TINE_GRAPH: graph, XDG_DATA_HOME: `${root}/xdg/data`,
   XDG_CONFIG_HOME: `${root}/xdg/config`, XDG_CACHE_HOME: `${root}/xdg/cache`,
   WEBKIT_DISABLE_DMABUF_RENDERER: "1", LIBGL_ALWAYS_SOFTWARE: "1",
@@ -69,6 +74,35 @@ try {
   if (fs.existsSync(`${graph}/pages/Example___Namespace.md`)) throw new Error("deleted namespace was recreated");
   if (fs.readFileSync(`${graph}/pages/Untouched.md`, "utf8") !== "- sibling survives\n") throw new Error("sibling changed");
   console.log("PASS GH #620: watcher deletion followed by page-menu deletion retires the page without writing siblings");
+  // GH #978: the page menu of one twin deletes exactly that file.
+  await browser.execute(() => document.querySelectorAll(".toast").forEach((e) => e.remove()));
+  await openPageByName(browser, "XX1");
+  await browser.execute(() => document.querySelector(".page-title")
+    .dispatchEvent(new MouseEvent("contextmenu", { bubbles: true, cancelable: true,
+      clientX: 300, clientY: 200 })));
+  await browser.$('[data-page-action-id="delete-file"]').waitForExist({ timeout: 8_000,
+    timeoutMsg: "GH #978: the twin page's menu does not offer Delete file" });
+  const label = await browser.execute(() => document.querySelector('[data-page-action-id="delete-file"]').textContent);
+  if (!label.includes("pages/XX1.md")) throw new Error(`GH #978: Delete file names the wrong file: ${label}`);
+  await browser.execute(() => document.querySelector('[data-page-action-id="delete-file"]').click());
+  await answerNativeDialog("yes", { env });
+  await browser.waitUntil(async () => browser.execute(() =>
+    [...document.querySelectorAll(".toast")].some((e) => e.textContent.includes("Deleted") && e.textContent.includes("pages/XX1.md"))),
+    { timeout: 8_000, timeoutMsg: "GH #978: deleting one twin file failed" });
+  if (fs.existsSync(`${graph}/pages/XX1.md`)) throw new Error("GH #978: the deleted twin file remains");
+  if (fs.readFileSync(`${graph}/pages/笔记集/XX1.md`, "utf8") !== twinKept) throw new Error("GH #978: the kept twin changed");
+  // The name now opens the remaining file, and its menu deletes by name again.
+  await openPageByName(browser, "XX1");
+  await browser.waitUntil(async () => browser.execute(() =>
+    [...document.querySelectorAll(".ls-block")].some((e) => e.textContent.includes("子文件夹里的副本"))),
+    { timeout: 8_000, timeoutMsg: "GH #978: the name does not open the remaining file" });
+  await browser.execute(() => document.querySelector(".page-title")
+    .dispatchEvent(new MouseEvent("contextmenu", { bubbles: true, cancelable: true,
+      clientX: 300, clientY: 200 })));
+  await browser.waitUntil(async () => browser.execute(() => !!document.querySelector('[data-page-action-id="delete-page"]')
+    && !document.querySelector('[data-page-action-id="delete-file"]')),
+    { timeout: 8_000, timeoutMsg: "GH #978: the name conflict did not clear" });
+  console.log("PASS GH #978: the page menu deletes one twin file and leaves the other byte-identical");
 } catch (error) {
   console.error(String(error));
   if (browser) {
