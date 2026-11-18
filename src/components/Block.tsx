@@ -95,6 +95,7 @@ import {
   caretOffsetOnLastRow,
   textareaCaretLineRect,
 } from "../editor/caretRows";
+import { ctrlArrowAlias, ctrlArrowCaret } from "../ctrlArrowAlias";
 import { revealCaretColumn, revealCaretSettled } from "../editor/caretReveal";
 import { selectionToolbarPlacement } from "./block/selectionToolbarPlacement";
 import { splitProps, BUILTIN_HIDE, SHEET_CELL_HIDE, HIDE_ALL, isEditorEmpty, caretOnPropertyLine, isPropertiesOnly, multilineExitTrim } from "../editor/properties";
@@ -1548,11 +1549,15 @@ function EditorEngine(props: { id: string; propertySession?: ReturnType<typeof p
     return false;
   };
 
-  const onKeyDown = (e: KeyboardEvent) => runGridOutline(sheetCell, () => handleOutlineKey(e));
-  const handleOutlineKey = (e: KeyboardEvent) => {
+  const onKeyDown = (e: KeyboardEvent) => runGridOutline(sheetCell, () => {
     // IME owns its key events until compositionend commits the finalized value.
     if (compositionActive || e.isComposing || e.keyCode === 229) return;
-
+    // GH #986: Ctrl+P / Ctrl+N are Up / Down, unless the user bound the chord to a command.
+    const key = editorCommandFor(e) ? e : ctrlArrowAlias(e);
+    handleOutlineKey(key);
+    ctrlArrowCaret(ref, e, key);
+  });
+  const handleOutlineKey = (e: KeyboardEvent) => {
     if (codeView.leaveOnKey(e, ref)) { autosize(); return; }
     const start = ref.selectionStart;
     const end = ref.selectionEnd;
