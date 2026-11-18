@@ -71,6 +71,20 @@ describe.each<EditorKind>(["textarea", "cm6"])("routed number rendering (%s)", k
     } finally { view.dispose(); }
   });
 
+  it("renders the gutter inside the card's code, so any rule that lays out the code lays out its mirror (GH #970)", async () => {
+    // A theme or custom.css may wrap the card's code by any selector, at any time; the hidden copy that positions
+    // the numbers inherits the code's text layout only as the code's descendant. jsdom does not inherit
+    // white-space, so the layout outcome itself is measured in a browser by scripts/shot-code-gutter.mjs.
+    const view = await open("```js\nconst a = 1;\nconst b = 2;\n```");
+    try {
+      const code = view.root.querySelector<HTMLElement>("pre.code-block > code")!;
+      const mirrors = [...view.root.querySelectorAll<HTMLElement>("pre.code-block .code-gutter .gutter-mirror")];
+      expect(mirrors.map(el => el.textContent)).toEqual(["const a = 1;", "const b = 2;"]);
+      expect(mirrors.every(el => el.closest("code") === code)).toBe(true);
+      expect(code.querySelector(".code-text")?.textContent).toBe("const a = 1;\nconst b = 2;\n");
+    } finally { view.dispose(); }
+  });
+
   it.each(["md", "org"] as const)("uses explicit numbers for nested and checkbox list items (%s)", async format => {
     const view = await open("Intro\n3. Third\n9. Ninth\n  5. Nested\n11. [ ] Task", format);
     try {
