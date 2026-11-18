@@ -268,7 +268,7 @@ export function codeCardOffsetFromRange(
   root: Element,
   range: Pick<Range, "startContainer" | "startOffset">,
 ): number | null {
-  const code = root.querySelector("pre.code-block > code");
+  const code = root.querySelector("pre.code-block > code > .code-text");
   if (!code) return null;
   const container = range.startContainer;
   if (code !== container && !code.contains(container)) return null;
