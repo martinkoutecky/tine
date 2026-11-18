@@ -308,10 +308,15 @@ export function caretRowTarget(points: Array<{ x: number; y: number }>, offset: 
   return best;
 }
 
-/** Move a collapsed caret one visual row, where the browser has no Emacs Ctrl+P / Ctrl+N
- *  of its own (everywhere but macOS). A no-op when layout is unavailable. */
+/** Move the caret one visual row, where the browser has no Emacs Ctrl+P / Ctrl+N of its own
+ *  (everywhere but macOS). A selection collapses to its start (up) or end (down), as the arrow
+ *  keys do. A no-op when layout is unavailable. */
 export function moveCaretRow(ta: HTMLTextAreaElement, dir: -1 | 1): void {
-  if (ta.selectionStart !== ta.selectionEnd) return;
+  if (ta.selectionStart !== ta.selectionEnd) {
+    const to = dir < 0 ? ta.selectionStart : ta.selectionEnd;
+    ta.setSelectionRange(to, to);
+    return;
+  }
   const points = textareaCaretPoints(ta);
   if (!points) return;
   const to = caretRowTarget(points, ta.selectionStart, dir);
