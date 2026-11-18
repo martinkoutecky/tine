@@ -73,17 +73,21 @@ try {
   if (process.argv[3]) await page.addStyleTag({ content: readFileSync(process.argv[3], "utf8") });
   // GH #970: one number per source line, level with that line's first row, when a line wraps: by the
   // wrap setting, or because a theme or custom.css wraps `code` while the setting is off.
-  const themeWrap = "pre code { white-space: pre-wrap !important; overflow-wrap: anywhere !important; }";
+  // A theme's rule may select the code by descendant or by child; both must reach the numbers (review of fb13bd95d).
+  const themeWrap = { themed: "pre code", child: "pre > code" };
   const aligned = [];
-  for (const wrap of [false, true]) for (const kind of ["view", "textarea", "cm6"]) for (const name of ["long", "themed"]) {
-    if (name === "themed" && kind !== "view") continue; // a theme's `pre code` rule never reaches an editor
+  for (const wrap of [false, true]) for (const kind of ["view", "textarea", "cm6"]) for (const name of ["long", "themed", "child"]) {
+    if (name !== "long" && kind !== "view") continue; // a theme's `pre code` rule never reaches an editor
     // The classic editor paints no per-line boxes; its height is compared with the numbers' only
     // unwrapped, because its font stack differs from the gutter's on a host without the mono fonts.
     if (kind === "textarea" && wrap) continue;
     await page.evaluate(([k, w]) => window.showLong(k, w), [kind, wrap]);
     await page.locator(".code-gutter .calc-lineno").nth(1).waitFor();
-    const themed = name === "themed" ? await page.addStyleTag({ content: themeWrap }) : null;
-    await page.waitForTimeout(300);
+    const themed = themeWrap[name]
+      ? await page.addStyleTag({ content: `${themeWrap[name]} { white-space: pre-wrap !important; overflow-wrap: anywhere !important; }` })
+      : null;
+    // Settled when the fonts are in and two frames have run (ResizeObserver delivers before the frame's paint).
+    await page.evaluate(() => document.fonts.ready.then(() => new Promise(r => requestAnimationFrame(() => requestAnimationFrame(r)))));
     const r = await page.evaluate(([kind]) => {
       const nums = [...document.querySelectorAll(".code-gutter .calc-lineno")];
       const top = el => el.getBoundingClientRect().top;

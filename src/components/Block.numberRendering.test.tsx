@@ -71,17 +71,24 @@ describe.each<EditorKind>(["textarea", "cm6"])("routed number rendering (%s)", k
     } finally { view.dispose(); }
   });
 
-  it("breaks lines in the gutter under the same rules as the card's code (GH #970)", async () => {
-    const view = await open("```js\nconst a = 1;\nconst b = 2;\n```");
-    try {
-      // A theme or custom.css that wraps the card's `code` must reach each mirrored line too, or the
-      // numbers drift from their lines: the mirror is a `code` element of the card, as `pre code` selects.
-      const mirrors = [...view.root.querySelectorAll("pre.code-block .code-gutter .gutter-mirror")];
-      expect(mirrors.map(el => el.tagName)).toEqual(["CODE", "CODE"]);
-      expect(mirrors.map(el => el.textContent)).toEqual(["const a = 1;", "const b = 2;"]);
-      expect(mirrors.every(el => el.matches("pre.code-block code.hljs"))).toBe(true);
-    } finally { view.dispose(); }
-  });
+  it.each(["pre > code", "pre code", ".code-block > code.hljs", "pre > .hljs"])(
+    "lays out the gutter's lines by the card's code when a stylesheet wraps it through %s (GH #970)", async selector => {
+      // A theme or custom.css may wrap the card's code by any selector; the hidden copy that positions the numbers
+      // must break lines where the code does, or the numbers drift from their lines.
+      const sheet = document.createElement("style");
+      sheet.textContent = `${selector} { white-space: pre-wrap; overflow-wrap: anywhere; }`;
+      document.head.append(sheet);
+      const view = await open("```js\nconst a = 1;\nconst b = 2;\n```");
+      try {
+        const code = view.root.querySelector<HTMLElement>("pre.code-block > code")!;
+        // jsdom inherits few properties, so read the gutter, whose mirror lines inherit its text layout in a browser
+        // (scripts/shot-code-gutter.mjs measures the rows themselves).
+        const gutter = view.root.querySelector<HTMLElement>("pre.code-block > .code-gutter")!;
+        expect(getComputedStyle(code).whiteSpace).toBe("pre-wrap");
+        expect(getComputedStyle(gutter).whiteSpace).toBe("pre-wrap");
+        expect(getComputedStyle(gutter).overflowWrap).toBe("anywhere");
+      } finally { view.dispose(); sheet.remove(); }
+    });
 
   it.each(["md", "org"] as const)("uses explicit numbers for nested and checkbox list items (%s)", async format => {
     const view = await open("Intro\n3. Third\n9. Ninth\n  5. Nested\n11. [ ] Task", format);

@@ -1,11 +1,11 @@
 import { t } from "../i18n";
 import { codeWrapping } from "../codeDisplay";
-import { codeGutterStyle, LineGutter } from "./LineGutter";
+import { codeGutterStyle, followCodeText, LineGutter } from "./LineGutter";
 import { TableWrap, longCellClass } from "../components/TableWrap";
 // Block-body rendering: splits a block's text lines into paragraphs, fenced
 // code blocks (syntax-highlighted), and markdown tables.
 
-import { For, Index, Show, createContext, createMemo, createResource, useContext, type Accessor, type JSX } from "solid-js";
+import { For, Index, Show, createContext, createMemo, createResource, onCleanup, onMount, useContext, type Accessor, type JSX } from "solid-js";
 import { Dynamic } from "solid-js/web";
 import { astText, renderInlines, renderRawHtml, renderSanitizedHtml, MathView, CopyButton } from "./inline";
 import { EmojiText } from "./emoji";
@@ -59,12 +59,14 @@ function CodeBlock(props: { code: string; lang: string; spanAttrs?: SpanDomAttrs
       return escapeHtml(props.code);
     }
   });
+  let code!: HTMLElement, gutter!: HTMLDivElement;
+  onMount(() => onCleanup(followCodeText(code, gutter)));
   return (
     <pre class="code-block" style={codeGutterStyle(lines().length)} classList={{ "code-wrapping": codeWrapping() }} {...(props.spanAttrs ?? {})}>
       <CodeLanguage lang={props.lang} onEdit={props.spanAttrs && editSource?.() ? () => editSource()?.(Number(props.spanAttrs!["data-so"])) : undefined} />
-      <LineGutter lines={lines()} code />
+      <LineGutter ref={el => (gutter = el)} lines={lines()} code />
       <CopyButton text={props.code} title={t("render-copy-code")} class="code-copy" />
-      <code class="hljs" innerHTML={html()} />
+      <code ref={code} class="hljs" innerHTML={html()} />
     </pre>
   );
 }
