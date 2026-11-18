@@ -286,11 +286,12 @@ fn unsupported(error: &io::Error) -> bool {
 
 #[cfg(target_os = "windows")]
 fn identity(path: &Path) -> io::Result<Identity> {
-    use std::os::windows::{fs::OpenOptionsExt, io::AsRawHandle};
+    use std::os::windows::{ffi::OsStrExt, fs::OpenOptionsExt, io::AsRawHandle};
     use windows_sys::Win32::Storage::FileSystem::{
-        FileIdInfo, GetFileInformationByHandle, GetFileInformationByHandleEx,
-        BY_HANDLE_FILE_INFORMATION, FILE_FLAG_BACKUP_SEMANTICS, FILE_ID_INFO, FILE_READ_ATTRIBUTES,
-        FILE_SHARE_DELETE, FILE_SHARE_READ, FILE_SHARE_WRITE,
+        FileIdInfo, GetFileAttributesW, GetFileInformationByHandle, GetFileInformationByHandleEx,
+        BY_HANDLE_FILE_INFORMATION, FILE_ATTRIBUTE_DIRECTORY, FILE_FLAG_BACKUP_SEMANTICS,
+        FILE_ID_INFO, FILE_READ_ATTRIBUTES, FILE_SHARE_DELETE, FILE_SHARE_READ, FILE_SHARE_WRITE,
+        INVALID_FILE_ATTRIBUTES,
     };
     #[cfg(test)]
     let forced = NO_FILE_ID.with(|forced| forced.get());
@@ -325,12 +326,13 @@ fn identity(path: &Path) -> io::Result<Identity> {
     if !unsupported(&error) {
         return Err(error);
     }
-    // The id above already tells a file from a folder; these two do not.
-    if !file.metadata()?.is_dir() {
-        return Err(moved());
-    }
+    // The id above already tells a file from a folder; the older answers do
+    // not, so each fallback reads the directory attribute itself.
     let mut info = BY_HANDLE_FILE_INFORMATION::default();
     if forced < 2 && unsafe { GetFileInformationByHandle(file.as_raw_handle(), &mut info) } != 0 {
+        if info.dwFileAttributes & FILE_ATTRIBUTE_DIRECTORY == 0 {
+            return Err(moved());
+        }
         return Ok(Identity(IdentityKind::Volume(info.dwVolumeSerialNumber)));
     }
     let error = if forced < 2 {
@@ -338,11 +340,20 @@ fn identity(path: &Path) -> io::Result<Identity> {
     } else {
         io::Error::from_raw_os_error(50)
     };
-    if unsupported(&error) {
-        Ok(Identity(IdentityKind::Present))
-    } else {
-        Err(error)
+    if !unsupported(&error) {
+        return Err(error);
     }
+    // Neither handle query answers. `File::metadata` makes the same older
+    // call, so the folder check asks by path instead.
+    let wide: Vec<u16> = path.as_os_str().encode_wide().chain(Some(0)).collect();
+    let attributes = unsafe { GetFileAttributesW(wide.as_ptr()) };
+    if attributes == INVALID_FILE_ATTRIBUTES {
+        return Err(io::Error::last_os_error());
+    }
+    if attributes & FILE_ATTRIBUTE_DIRECTORY == 0 {
+        return Err(moved());
+    }
+    Ok(Identity(IdentityKind::Present))
 }
 
 #[cfg(target_os = "windows")]
@@ -421,6 +432,11 @@ mod tests {
         assert!(windows.contains("GetFileInformationByHandle(file.as_raw_handle()"));
         assert!(windows.contains("Ok(Identity(IdentityKind::Present))"));
         assert!(windows.contains("Some(1 | 50 | 87)"));
+        // `File::metadata` is GetFileInformationByHandle underneath: using it
+        // would make the last fallback unreachable (merge review, 11/18).
+        let arm = &windows[..windows.find("fn current(").unwrap()];
+        assert!(!arm.contains(".metadata()"));
+        assert!(arm.contains("GetFileAttributesW(wide.as_ptr())"));
     }
 
     #[cfg(target_os = "windows")]
