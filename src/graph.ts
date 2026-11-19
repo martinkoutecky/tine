@@ -566,23 +566,26 @@ export async function renameOrMergePage(
     if (edits.length) {
       const made = await applyHelperEdits(edits);
       if ("refused" in made) {
-        if (owner()) pushToast(msg(made.refused === "changed" ? "rename-helper-page-changed" : "rename-helper-unsaved", { page: made.page }), "error");
+        if (owner() && made.refused === "unrestored") pushToast(msg("rename-helper-not-restored", { pages: edits.map((edit) => edit.page).join(", ") }), "error");
+        else if (owner()) pushToast(msg(made.refused === "changed" ? "rename-helper-page-changed" : "rename-helper-unsaved", { page: made.page }), "error");
         return "cancelled";
       }
       applied = made;
-      // The graph may have changed during the saves: no rename in another graph.
-      if (!owner()) return "cancelled";
     }
     const putBack = async () => {
       if (applied && !(await applied.undo()) && owner()) pushToast(msg("rename-helper-not-restored", { pages: edits.map((edit) => edit.page).join(", ") }), "error");
     };
     try {
+      // The graph may have changed during the saves: no rename in another graph.
+      if (!owner()) return "cancelled";
       const done = await renamePageOnDisk(from, name, target, into, onRefreshed, saveFirst);
       if (done !== "renamed" && done !== "merged" && done !== "uncertain") await putBack();
       return done;
     } catch (error) {
       await putBack();
       throw error;
+    } finally {
+      applied?.release(); // the helper's pages stay loaded through the request and its put-back
     }
   };
   const retry = async (file: string) => {

@@ -1,7 +1,7 @@
 import { afterEach, beforeAll, beforeEach, expect, it, vi } from "vitest";
 import { backend } from "./backend";
 import { renameOrMergePage } from "./graph";
-import { pageByName, resetStore, setPageProperty, setRaw } from "./document";
+import { ensurePageLoaded, pageByName, resetStore, setPageProperty, setRaw } from "./document";
 import { loadSingle } from "./document/workingSet";
 import { doc } from "./document/model";
 import { bindTestHost } from "./document/host/wiring.test.support";
@@ -212,6 +212,24 @@ it("a helper edit whose save fails is put back and nothing is renamed", async ()
   saveFails = false;
   expect(header("New")).toBe("tags:: b, c");
   expect(header("Old")).toBe("tags:: a, b");
+  // Every save fails, the put-back's too: the window says it could not save
+  // the restored text (finding 5), not that the edit was put back.
+  expect(errors().some((text) => text.includes("could not save the restored text"))).toBe(true);
+});
+
+it("a helper edit whose save fails is put back, and the put-back saved says so", async () => {
+  page("New", "tags:: b, c", "- kept");
+  page("Old", "tags:: a, b", "- gone");
+  offer(tagged);
+  vi.spyOn(backend(), "confirm").mockResolvedValue(true);
+  const rename = vi.spyOn(backend(), "renamePage");
+  // Only the first helper save fails; the put-back's saves succeed.
+  saveFails = true;
+  onWrite = () => { onWrite = () => { saveFails = false; }; };
+  expect(await renameOrMergePage("Old", "New", { name: "Old", pageKind: "page", path: "pages/Old.md" })).toBe("cancelled");
+  expect(rename).not.toHaveBeenCalled();
+  expect(header("New")).toBe("tags:: b, c");
+  expect(header("Old")).toBe("tags:: a, b");
   expect(errors().some((text) => text.includes("could not be saved, so it was put back"))).toBe(true);
 });
 
@@ -267,4 +285,96 @@ it("a property changed while a later page loads is not written over", async () =
   expect(rename).not.toHaveBeenCalled();
   expect(held("New")?.pre).toBe("tags:: b, z");
   expect(header("Old")).toBe("tags:: a, b");
+});
+
+/** Load `count` unrelated pages, as browsing or the request's own loads do:
+ *  more than the working set holds (80), so unpinned pages are evicted. */
+const browse = (count: number) => {
+  for (let i = 0; i < count; i++) {
+    files.set(`Filler ${i}`, { pre: null, body: "- filler", rev: 1 });
+    ensurePageLoaded(dto(`Filler ${i}`)!);
+  }
+};
+
+it("eviction during the request does not skip the tag put-back", async () => {
+  page("New", "tags:: b, c", "- kept");
+  page("Old", "tags:: a, b", "- gone");
+  offer(tagged);
+  vi.spyOn(backend(), "confirm").mockResolvedValue(true);
+  vi.spyOn(backend(), "renamePage").mockImplementation(async () => { browse(90); throw new Error("disk full"); });
+  await expect(renameOrMergePage("Old", "New", { name: "Old", pageKind: "page", path: "pages/Old.md" })).rejects.toThrow("disk full");
+  expect(header("New")).toBe("tags:: b, c");
+  expect(header("Old")).toBe("tags:: a, b");
+  expect(errors()).toEqual([]);
+});
+
+it("eviction during the request does not skip the alias put-back", async () => {
+  page("Machine Learning", "alias:: AI, ML", "- ml body");
+  page("ML notes", null, "- notes");
+  offer(dialog());
+  vi.spyOn(backend(), "renamePage").mockImplementation(async () => { browse(90); throw new Error("refused"); });
+  const done = renameOrMergePage("ML notes", "ML", { name: "ML notes", pageKind: "page", path: "pages/ML notes.md" });
+  await answer("own");
+  await expect(done).rejects.toThrow("refused");
+  expect(header("Machine Learning")).toBe("alias:: AI, ML");
+  expect(errors()).toEqual([]);
+});
+
+it.each([81, 82, 120])("%i declaring pages not loaded are all edited, then renamed", async (count) => {
+  const names = Array.from({ length: count }, (_, i) => `Declarer ${i}`);
+  for (const name of names) files.set(name, { pre: "alias:: AI, ML", body: "- body", rev: 1 });
+  const edits = names.map((page) => ({ page, path: `pages/${page}.md`, journal: false, key: "alias", before: "AI, ML", after: "AI" }));
+  offer(dialog({ own: { edits, effect: { pages: names, pageCount: count, retargeted: [] } } }));
+  vi.spyOn(backend(), "getPage").mockImplementation(async (name) => ({ ...dto(name)!, id: `pages/${name}.md` }));
+  const rename = vi.spyOn(backend(), "renamePage").mockResolvedValue({ outcome: "renamed", renamed: [{ from: "ML notes", to: "ML", path: "pages/ML notes.md" }], touched: [] });
+  const done = renameOrMergePage("ML notes", "ML", { name: "ML notes", pageKind: "page", path: "pages/ML notes.md" });
+  await answer("own");
+  expect(await done).toBe("renamed");
+  expect(rename).toHaveBeenCalledOnce();
+  expect(errors()).toEqual([]);
+  expect(names.filter((name) => header(name) !== "alias:: AI")).toEqual([]);
+});
+
+it.each([
+  ["a merge", () => vi.spyOn(backend(), "renamePage").mockResolvedValue({ outcome: "merged", renamed: [{ from: "Old", to: "New", path: "pages/Old.md" }], touched: [] }), "merged"],
+  ["a refused request", () => vi.spyOn(backend(), "renamePage").mockRejectedValue(new Error("disk full")), "error"],
+  ["a page changed since the plan", () => { files.set("New", { pre: "tags:: b, z", body: "- kept", rev: 2 }); ensurePageLoaded(dto("New")!); }, "cancelled"],
+] as const)("after %s the helper's pages can be evicted again", async (_, arrange, expected) => {
+  page("New", "tags:: b, c", "- kept");
+  page("Old", "tags:: a, b", "- gone");
+  offer(tagged);
+  vi.spyOn(backend(), "confirm").mockResolvedValue(true);
+  arrange();
+  const outcome = await renameOrMergePage("Old", "New", { name: "Old", pageKind: "page", path: "pages/Old.md" }).catch(() => "error");
+  expect(outcome).toBe(expected);
+  browse(90);
+  expect(pageByName("New")).toBeFalsy();
+});
+
+it("a failed put-back after a failed helper save says the edit was not restored", async () => {
+  page("New", "tags:: b, c", "- kept");
+  page("Old", "tags:: a, b", "- gone");
+  offer(tagged);
+  vi.spyOn(backend(), "confirm").mockResolvedValue(true);
+  const rename = vi.spyOn(backend(), "renamePage");
+  // The first helper save succeeds; the second fails, and so does every save
+  // after it (the put-back).
+  onWrite = () => { onWrite = () => { saveFails = true; }; };
+  expect(await renameOrMergePage("Old", "New", { name: "Old", pageKind: "page", path: "pages/Old.md" })).toBe("cancelled");
+  expect(rename).not.toHaveBeenCalled();
+  expect(errors().some((text) => text.includes("could not save the restored text"))).toBe(true);
+  expect(errors().some((text) => text.includes("so it was put back"))).toBe(false);
+});
+
+it("after a failed page read the helper's pages can be evicted again", async () => {
+  files.set("New", { pre: "tags:: b, c", body: "- kept", rev: 1 });
+  ensurePageLoaded(dto("New")!); // loaded, not the feed's page
+  files.set("Old", { pre: "tags:: a, b", body: "- gone", rev: 1 });
+  offer(tagged);
+  vi.spyOn(backend(), "confirm").mockResolvedValue(true);
+  vi.spyOn(backend(), "getPage").mockRejectedValue(new Error("io"));
+  await expect(renameOrMergePage("Old", "New", { name: "Old", pageKind: "page", path: "pages/Old.md" })).rejects.toThrow("io");
+  expect(pageByName("New")).toBeTruthy();
+  browse(90);
+  expect(pageByName("New")).toBeFalsy();
 });

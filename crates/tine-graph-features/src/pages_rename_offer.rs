@@ -227,8 +227,9 @@ fn dialog_page(graph: &tine_store::WholeGraph, id: &PageId) -> DialogPage {
 /// `held`: the alias, the page it opens and that page's file). Read-only:
 /// the component from the alias-group inventory, each merge request's plan,
 /// the released rename's plan ([`plan_released_rename`]), and one file read
-/// per other declarer. Cost: two plans per component page other than the
-/// source plus one, O(declarers) file reads and each merge's tag reads.
+/// per other declarer. Cost: one plan per component page other than the
+/// source plus one, on the view the typed request's refusal refreshed (no
+/// further walk), O(declarers) file reads and each merge's tag reads.
 fn alias_dialog(
     store: &Store,
     graph: &tine_store::WholeGraph,
@@ -280,55 +281,52 @@ fn alias_dialog(
         .cloned()
         .unwrap_or_else(|| dialog_page(graph, &PageId::from(opens_path.clone())));
     // Choice 1, per component page: the ordinary request "rename the source
-    // to that page's name".
+    // to that page's name", answered by merging into it. Planned exactly
+    // (`MergeInto`) on the view the typed request's refusal refreshed; a
+    // merge the planner would not ask about (the name opens another file)
+    // is no choice, as the rename's own question would not offer it.
     let (mut merges, mut merges_refused) = (Vec::new(), Vec::new());
     for target in component
         .iter()
         .filter(|page| page.path.is_some() && page.path != source.path)
     {
-        let path = target.path.clone().unwrap_or_default();
-        match rename_offer(store, old, &target.name, expected_path)? {
-            RenameOffer::Merge {
-                into,
-                name,
-                journal,
-                tags,
-            } if into == path => match plan_rename(
-                store,
-                old,
-                &name,
-                expected_path,
-                RenameChoice::MergeInto(&into),
-                #[cfg(test)]
-                &|| {},
-            ) {
-                Ok(plan) => {
-                    let retargeted = rename_helpers::retargets(store, &plan, &name, &[])?;
-                    let effect = rename_helpers::effect(&plan, retargeted);
-                    merges.push(MergeChoice {
-                        into,
-                        name,
-                        journal,
-                        tags,
-                        effect,
-                    });
-                }
-                Err(e) => {
-                    if let Some(reason) = RenameBlocked::of(&e) {
-                        merges_refused.push(RefusedMerge {
-                            name: target.name.clone(),
-                            path,
-                            reason: reason.clone(),
-                        });
+        let into = target.path.clone().unwrap_or_default();
+        match plan_rename(
+            store,
+            old,
+            &target.name,
+            expected_path,
+            RenameChoice::MergeInto(&into),
+            #[cfg(test)]
+            &|| {},
+        ) {
+            Ok(plan) => {
+                let tags = match &source_id {
+                    Some(source) => {
+                        rename_helpers::tag_union(store, &PageId::from(into.clone()), source)?
                     }
-                }
+                    None => None,
+                };
+                let retargeted = rename_helpers::retargets(store, &plan, &target.name, &[])?;
+                let effect = rename_helpers::effect(&plan, retargeted);
+                merges.push(MergeChoice {
+                    into,
+                    name: target.name.clone(),
+                    journal: target.journal,
+                    tags,
+                    effect,
+                });
+            }
+            Err(e) => match RenameBlocked::of(&e) {
+                Some(reason) => merges_refused.push(RefusedMerge {
+                    name: target.name.clone(),
+                    path: into,
+                    reason: reason.clone(),
+                }),
+                // Not offered: the merge's own refusal (O3 unasked, O4).
+                None if super::RewriteBlocked::of(&e).is_some() => {}
+                None => return Err(e),
             },
-            RenameOffer::Refused { reason, .. } => merges_refused.push(RefusedMerge {
-                name: target.name.clone(),
-                path,
-                reason,
-            }),
-            _ => {}
         }
     }
     // Choice 2: drop the alias from every other declarer, then rename.

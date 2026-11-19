@@ -116,24 +116,35 @@ source's `tags::` line; for the alias dialog's "use the name for this page", one
 the typed name's alias component (`InventoryScope::AliasGroup`) and offers one
 ordinary merge per component page other than the source that the planner allows,
 plus "use the name"; a refused request is listed with its reason, never offered.
+Each merge choice is planned as that exact merge on the view the typed request's
+refusal refreshed: one graph-wide stamp walk per dialog, whatever its choices.
 Each "links open a different page" row is a name whose page changes under the
 planned request, asked through the store's one owner rule (`NameOwners::opens`:
 the first real-file claimant, else the declarer with the least path), which
 `resolve` itself uses. The request changes a name's owner inputs only through its
 files: each moved file (children included) claims its new name and declares its
 aliases from its new path, a merge's source goes and its declarations join the
-survivor, and "use the name" drops the typed name from the other declarers. The
-names asked are the aliases the moved and merged files declare and the names the
-moves give, minus the names the request rewrites. A moved page is the same page; a
-merged source is not. The row lists the pages whose links name the name in any
+survivor, a declaration of a renamed name (a page with no file included) is
+respelled to declare the new name, and "use the name" drops the typed name from the
+other declarers. The names asked are the aliases the moved and merged files
+declare, the names the request gives, and the released typed name, minus the names
+the request rewrites. A moved page is the same page; a merged source is not. A name
+with no owner after the request opens its page with no file, and the row shows the
+name. The row lists the pages whose links name the name in any
 spelling (a day: every rendering of it), found through the reference index, under
 the names they have after the request; a page's own alias declaration is the owner
-input, not a link, so a declaring page (or the merge source) is listed only when it
-names the name elsewhere. Cost per name: one owner-inputs read, two rule calls, one
-referrer lookup over its spellings, and one file read per referrer that declares it.
+input, not a link, so a declaring page (or the merge source) is listed only when the
+parser's reading of its file (`cm_check::observe`: every site, Org headline tags
+included) has a site of the name outside its alias declarations. Cost per name: one
+owner-inputs read, two rule calls and one referrer lookup over its spellings; each
+declaring file is read and parsed once per request, however many of its names are
+asked.
 
 A helper writes only through `setPageProperty` and the page host's guarded save
-(`flushPage`); there is no other write path. Before writing, every page must still
+(`flushPage`); there is no other write path. Its pages are pinned in the working set
+(`pinPageNearViewport`) before the first is loaded and stay until the request and
+any put-back are over, on every exit, so neither many pages nor the request's own
+loads evict one; a put-back that finds a page gone counts as failed. Before writing, every page must still
 read the value the question read, and the graph binding must be current; the check
 and the writes happen with no wait between them. After each save the binding is
 checked again. If a save fails, the binding retires, or the request does not happen
@@ -147,14 +158,14 @@ since it may have committed.
 | --- | --- |
 | A page changed since the question (`rename-helper-page-changed`) | Typing in the window, an external editor, or a concurrent honest instance changed the property after the plan. |
 | A save failed, put back (`rename-helper-unsaved`) | A disk error or a sync conflict during the helper's save. |
-| Put-back failed (`rename-helper-not-restored`, sticky, names the pages) | A disk error during the put-back save. |
+| Put-back failed (`rename-helper-not-restored`, sticky, names the pages), after a failed request or a failed helper save | A disk error during the put-back save. |
 
 The helpers are not atomic. A crash, a closed window or a graph switch between the
 helper's saves and the request leaves the helper's edits saved and the request not
 done; each edit is then an ordinary property edit, readable by Logseq, and the user
 can repeat the rename. Cost: one page read per helper page not loaded, one
 property write and one guarded save per page, then the request; the question adds
-two plans per offered merge and one for "use the name", with linear header reads
+one plan per offered merge and one for "use the name", with linear header reads
 (each tag line read once, union membership by set lookup).
 
 The CLI has no standalone unchanged-save verb. Its P3 human message names the

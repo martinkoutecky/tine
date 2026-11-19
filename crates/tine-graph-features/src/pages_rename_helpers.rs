@@ -4,9 +4,10 @@
 //! edits that the window performs through its normal save path; nothing here
 //! writes, and the model's decision of each request is the planner's
 //! (`rename_plan`), never re-derived. Split from `pages_rename_offer.rs`.
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 use std::io;
 
+use tine_core::cm_check;
 use tine_core::doc::native::{NativeAlias, NativeDocument};
 use tine_core::model::Format;
 use tine_core::refs;
@@ -289,17 +290,21 @@ pub(super) fn effect(plan: &RenamePlan, retargeted: Vec<Retarget>) -> Effect {
 /// changes a name's owner inputs only through its files: a moved file
 /// (`plan.moves`, children included) claims its new name and declares its
 /// aliases from its new path, the merge's source goes and its declarations
-/// join the survivor, and `released` (the "use the name" edits) stop
-/// declaring `typed`. So the affected names are the aliases the moved and
-/// merged files declare and the names the moves give; each one's
+/// join the survivor, a declaration of a renamed name (`plan.renamed`, a
+/// page with no file included) is respelled to declare the new name, and
+/// `released` (the "use the name" edits) stop declaring `typed`. So the
+/// affected names are the aliases the moved and merged files declare, the
+/// names the plan gives, and `typed` when released; each one's
 /// [`tine_store::NameOwners`] is patched and asked the store's one owner rule
-/// before and after. A name the plan rewrites is skipped (its sites are
-/// rewritten). The sites are the reference index's referrers of the name's
-/// spellings (a day: every rendering); a page's alias declaration is the
-/// owner input, not a link, so a declarer or the merge source counts only
-/// when it names the name elsewhere. Cost: per affected name one
-/// `name_owners`, two rule calls and one referrer lookup over its spellings,
-/// plus one file read and two parses per referrer that declares it.
+/// before and after (no owner after: the link opens the name's page with no
+/// file, shown by the name). A name the plan rewrites is skipped (its sites
+/// are rewritten). The sites are the reference index's referrers of the
+/// name's spellings (a day: every rendering); a page's alias declaration is
+/// the owner input, not a link, so a declarer or the merge source counts
+/// only when the parser reads a site of the name elsewhere in it. Cost: per
+/// affected name one `name_owners` (plus one per renamed name it is given
+/// from), two rule calls and one referrer lookup over its spellings; one
+/// file read and parse per distinct declaring referrer.
 pub(super) fn retargets(
     store: &Store,
     plan: &RenamePlan,
@@ -344,10 +349,20 @@ pub(super) fn retargets(
             ))
         })
         .collect();
+    // The names each new name is given from: their declarations are
+    // respelled to declare it.
+    let mut given: HashMap<String, Vec<&str>> = HashMap::new();
+    for page in &plan.renamed {
+        given
+            .entry(refs::page_key(&page.to))
+            .or_default()
+            .push(&page.from);
+    }
     let affected = (plan.moves.keys().chain(source))
         .flat_map(aliases)
-        .chain(gained.iter().map(|(name, _)| (*name).to_owned()));
-    let (mut seen, mut rows) = (HashSet::new(), Vec::new());
+        .chain(plan.renamed.iter().map(|page| page.to.clone()))
+        .chain((!released.is_empty()).then(|| typed.to_owned()));
+    let (mut seen, mut rows, mut outside) = (HashSet::new(), Vec::new(), HashMap::new());
     for name in affected {
         if refs::renamed_page_name(&name, &plan.lookup).is_some() {
             continue;
@@ -373,32 +388,39 @@ pub(super) fn retargets(
             });
         }
         let dropped = refs::same_page(&name, typed);
-        after.declarers = (before.declarers.iter())
+        let respelled = (given.get(&refs::page_key(&name)).into_iter().flatten())
+            .flat_map(|from| graph.name_owners(from).declarers);
+        after.declarers = (before.declarers.iter().cloned())
             .filter(|id| !(dropped && released.contains(id)))
-            .map(lands)
+            .chain(respelled)
+            .map(|id| lands(&id))
             .collect();
         after.declarers.sort_unstable();
         after.declarers.dedup();
-        let (Some(was), Some(will)) = (before.opens(), after.opens()) else {
+        let Some(was) = before.opens() else {
             continue;
         };
+        let will = after.opens();
         // A moved page is the same page; a merged source is not.
-        if moved(was).as_ref().unwrap_or(was) == will {
+        if will.is_some_and(|will| moved(was).as_ref().unwrap_or(was) == will) {
             continue;
         }
         let mut pages = std::collections::BTreeSet::new();
         for id in graph.explicit_referrers(&before.spellings) {
             let declares = before.declarers.contains(&id) || Some(&id) == source;
-            if !declares || names_outside_aliases(store, plan, &id, &before.spellings)? {
+            if !declares || {
+                let named = sites_outside_aliases(store, plan, &mut outside, &id)?;
+                before.spellings.iter().any(|key| named.contains(key))
+            } {
                 pages.insert(lands(&id));
             }
         }
         let (listed, page_count) = names(pages.iter().map(shown));
         if page_count > 0 {
             rows.push(Retarget {
-                name,
                 before: name_of(graph, was).unwrap_or_else(|| was.as_str().to_owned()),
-                after: shown(will),
+                after: will.map_or_else(|| name.clone(), shown),
+                name,
                 pages: listed,
                 page_count,
             });
@@ -407,30 +429,63 @@ pub(super) fn retargets(
     Ok(rows)
 }
 
-/// Whether `id`'s file names any of `keys` outside its alias lines: the
-/// alias values are blanked, and the rename's own site reader (respelling
-/// the keys) finds any other site. O(file bytes).
-fn names_outside_aliases(
+#[cfg(test)]
+thread_local! {
+    /// Files [`sites_outside_aliases`] read and parsed on this thread.
+    static SITE_READS: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
+}
+
+/// The page keys of every site the parser reads in `id`'s file outside its
+/// alias declarations (the model's reading, `cm_check::observe`: links,
+/// tags, Org headline tags, embeds, property values, query and macro
+/// arguments). Read and parsed once per file; `outside` keeps the answer for
+/// the request's other names. A file with no text names nothing. O(file
+/// bytes) the first time, a lookup after.
+fn sites_outside_aliases<'a>(
     store: &Store,
     plan: &RenamePlan,
+    outside: &'a mut HashMap<PageId, HashSet<String>>,
     id: &PageId,
-    keys: &[String],
-) -> io::Result<bool> {
-    let Some(text) = read_text(store, id)? else {
-        return Ok(false);
-    };
-    let org = is_org(id);
-    let mut bytes = text.clone().into_bytes();
-    for line in NativeDocument::read_with_tags(&text, org).lines {
-        if line.alias.is_some() {
-            bytes[line.value.clone()].fill(b' ');
+) -> io::Result<&'a HashSet<String>> {
+    if !outside.contains_key(id) {
+        #[cfg(test)]
+        SITE_READS.with(|n| n.set(n.get() + 1));
+        let mut keys = HashSet::new();
+        if let Some(text) = read_text(store, id)? {
+            let format = Format::from_path(id.as_str().as_ref());
+            let content = cm_check::observe(&text, format, plan.config.file_name_format);
+            let headers = (content.header.iter())
+                .filter(|header| header.role != cm_check::HeaderRole::Aliases)
+                .map(|header| &header.text);
+            for atom in headers
+                .chain(content.blocks.iter().map(|block| &block.body))
+                .flatten()
+            {
+                match atom {
+                    cm_check::Atom::Text(_) => {}
+                    cm_check::Atom::Site(s) => site_keys(s, &mut keys),
+                    cm_check::Atom::Title(s, parts) => {
+                        site_keys(s, &mut keys);
+                        for part in parts {
+                            if let cm_check::Part::Site(s) = part {
+                                site_keys(s, &mut keys);
+                            }
+                        }
+                    }
+                }
+            }
         }
+        outside.insert(id.clone(), keys);
     }
-    let blanked = String::from_utf8(bytes).expect("whole values blanked");
-    let renames: Vec<(String, String)> = (keys.iter())
-        .map(|key| (key.clone(), "tine preview site".to_owned()))
-        .collect();
-    Ok(refs::rename_rewrite(&blanked, org, &renames, plan.spelling()) != blanked)
+    Ok(&outside[id])
+}
+
+/// A site's page key and those of the sites the parser reads inside it.
+fn site_keys(site: &cm_check::Site, keys: &mut HashSet<String>) {
+    keys.insert(refs::page_key(&site.name));
+    for (_, inner) in &site.inner {
+        site_keys(inner, keys);
+    }
 }
 
 fn names(shown: impl Iterator<Item = String>) -> (Vec<String>, usize) {
@@ -448,6 +503,78 @@ fn names(shown: impl Iterator<Item = String>) -> (Vec<String>, usize) {
 #[cfg(test)]
 mod tests {
     use super::unite;
+    use crate::pages::{rename_offer, RenameOffer};
+
+    fn store(files: &[(String, String)]) -> (tempfile::TempDir, tine_store::Store) {
+        let root = tempfile::tempdir().unwrap();
+        std::fs::create_dir_all(root.path().join("pages")).unwrap();
+        for (rel, body) in files {
+            std::fs::write(root.path().join(rel), body).unwrap();
+        }
+        let store = tine_store::Store::open(root.path(), Default::default())
+            .unwrap()
+            .0;
+        (root, store)
+    }
+
+    /// PC-1 (review of 0a3d95eae, finding 3): the alias dialog reads and
+    /// parses each declaring file once, however many of its aliases the
+    /// request moves: N aliases on the source once cost N rereads and
+    /// parses (69/261/1,029 outline reads at 32/128/512).
+    #[test]
+    fn the_dialogs_site_reads_are_per_file_not_per_alias() {
+        let mut reads = Vec::new();
+        for n in [32, 128, 512] {
+            let aliases: Vec<String> = (0..n).map(|i| format!("A{i}")).collect();
+            let (_root, store) = store(&[
+                (
+                    "pages/Source.md".into(),
+                    format!("alias:: {}\n\n- s\n", aliases.join(", ")),
+                ),
+                ("pages/Z.md".into(), "alias:: ML\n\n- z\n".into()),
+            ]);
+            super::SITE_READS.with(|c| c.set(0));
+            let RenameOffer::Alias(dialog) = rename_offer(&store, "Source", "ML", None).unwrap()
+            else {
+                panic!("the alias dialog");
+            };
+            assert_eq!(dialog.merges.len(), 1);
+            assert!(dialog.own.is_some());
+            reads.push(super::SITE_READS.with(|c| c.get()));
+            store.close();
+        }
+        // The source, once per request (its merge and "use the name").
+        assert_eq!(reads, [2, 2, 2], "site reads at 32/128/512 aliases");
+    }
+
+    /// PC-2, PC-4 (review of 0a3d95eae, finding 4): one graph-wide stamp
+    /// walk per dialog, the typed request's own, whatever the number of merge
+    /// choices (each choice once asked the whole rename question again).
+    #[test]
+    fn the_dialog_walks_the_graph_once_for_any_number_of_merge_choices() {
+        let mut walks = Vec::new();
+        for c in [1, 4, 16] {
+            let mut files: Vec<(String, String)> = (0..c)
+                .map(|i| {
+                    (
+                        format!("pages/P{i:02}.md"),
+                        "alias:: ML\n\n- p\n".to_owned(),
+                    )
+                })
+                .collect();
+            files.push(("pages/Source.md".into(), "- s\n".into()));
+            let (_root, store) = store(&files);
+            crate::pages::PAGE_STAMP_WALKS.with(|n| n.set(0));
+            let RenameOffer::Alias(dialog) = rename_offer(&store, "Source", "ML", None).unwrap()
+            else {
+                panic!("the alias dialog");
+            };
+            assert_eq!(dialog.merges.len(), c, "{:?}", dialog.merges_refused);
+            walks.push(crate::pages::PAGE_STAMP_WALKS.with(|n| n.get()));
+            store.close();
+        }
+        assert_eq!(walks, [1, 1, 1], "walks for 1/4/16 merge choices");
+    }
 
     /// PC-1: the union and its line checks are linear in the tags. At
     /// 16,384 tags per page the quadratic version (token removal that

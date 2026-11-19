@@ -763,6 +763,86 @@ const CASES: &[Case] = &[
             ("pages/Aa%2Fx.md", "pages/ML%2Fx.md"),
         ],
     },
+    // The review of 0a3d95eae (finding 2): "use the name" for a source with
+    // no file. The typed name's declarer releases it; the rename then gives
+    // it to a page with no file (its links open that page) or, through the
+    // respelled alias declaration, to the alias source's declarer.
+    Case {
+        label: "own-fileless-reference",
+        files: &[Z_ML, ("pages/q.md", "- [[X]] and [[ML]]\n")],
+        old: "X",
+        typed: "ML",
+        into: None,
+        rows: &[("ML", "Z", "ML", &["q"])],
+        probes: &[("ML", "ML")],
+        moves: &[],
+    },
+    Case {
+        label: "own-fileless-namespace",
+        files: &[Z_ML, ("pages/q.md", "- [[N/c]] and [[ML]]\n")],
+        old: "N",
+        typed: "ML",
+        into: None,
+        rows: &[("ML", "Z", "ML", &["q"])],
+        probes: &[("ML", "ML")],
+        moves: &[],
+    },
+    Case {
+        label: "own-fileless-alias",
+        files: &[
+            ("pages/W.md", "alias:: X\n\n- w\n"),
+            Z_ML,
+            ("pages/q.md", "- [[ML]]\n"),
+        ],
+        old: "X",
+        typed: "ML",
+        into: None,
+        rows: &[("ML", "Z", "W", &["q"])],
+        probes: &[("ML", "ML")],
+        moves: &[],
+    },
+    // The review of 0a3d95eae (finding 3): an Org headline tag is a site the
+    // rename cannot spell, in the source, the survivor and another declarer.
+    Case {
+        label: "merge-org-headline-tag-source",
+        files: &[
+            ("pages/Source.org", "#+alias: Mine\n\n* s :Mine:\n"),
+            ("pages/Z.org", "#+alias: ML\n\n* z\n"),
+        ],
+        old: "Source",
+        typed: "ML",
+        into: Some("pages/Z.org"),
+        rows: MINE,
+        probes: &[("Mine", "Mine")],
+        moves: &[],
+    },
+    Case {
+        label: "merge-org-headline-tag-survivor",
+        files: &[
+            ("pages/Source.org", "#+alias: Mine\n\n* s\n"),
+            ("pages/Z.org", "#+alias: ML, Mine\n\n* z :Mine:\n"),
+        ],
+        old: "Source",
+        typed: "ML",
+        into: Some("pages/Z.org"),
+        rows: MINE,
+        probes: &[("Mine", "Mine")],
+        moves: &[],
+    },
+    Case {
+        label: "merge-org-headline-tag-declarer",
+        files: &[
+            ("pages/Source.org", "#+alias: Mine\n\n* s\n"),
+            ("pages/Y.org", "#+alias: Mine\n\n* y :Mine:\n"),
+            ("pages/Z.org", "#+alias: ML\n\n* z\n"),
+        ],
+        old: "Source",
+        typed: "ML",
+        into: Some("pages/Z.org"),
+        rows: &[("Mine", "Source", "Y", &["Y"])],
+        probes: &[("Mine", "Mine")],
+        moves: &[],
+    },
 ];
 
 /// The effect the dialog shows for the case's request.
@@ -813,11 +893,13 @@ fn every_surviving_link_that_opens_another_page_is_listed() {
     assert!(wrong.is_empty(), "{wrong:#?}");
 }
 
+/// The file and name `spelling` opens; a name no file claims or declares
+/// opens its page with no file, shown by the name.
 fn page_at(graph: &tine_store::WholeGraph, spelling: &str) -> (String, String) {
     let id = match graph.resolve(spelling, false) {
         tine_store::Resolved::Existing { id, .. } => id,
         tine_store::Resolved::Alias { owners } => owners[0].clone(),
-        other => panic!("{spelling} resolves to {other:?}"),
+        tine_store::Resolved::Absent { .. } => return (String::new(), spelling.to_owned()),
     };
     let name = graph.inventory(tine_store::InventoryScope::File(&id)).0[0]
         .name
