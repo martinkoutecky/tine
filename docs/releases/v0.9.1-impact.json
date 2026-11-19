@@ -33,7 +33,7 @@
       },
       "docs": {
         "status": "update",
-        "reason": "The quick-share contract now describes link availability in every build and the release's viewer check. The Share pages Guide still describes the former Coming soon message in the app and on the web. Both copies need the corresponding correction.",
+        "reason": "The quick-share contract now describes link availability in every build and the release's viewer check. The Share pages Guide no longer describes build-dependent link availability (the Coming soon sentence, the mobile reader condition and the Settings tab condition are removed) and the web Guide is regenerated from it.",
         "refs": ["docs/contracts/quick-share.md", "crates/tine-core/src/templates/share-pages.md", "website/guide/features-share-pages.html"]
       },
       "website": {"status": "current", "reason": "The homepage's description of link sharing still applies.", "refs": ["website/index.html"]},
