@@ -22,7 +22,7 @@ import { EXPORTS_MARKER, JOURNAL_SECTIONS_MARKER, hasMarker } from "../tineKeys"
 import { captureBinding, clearOnBindingInvalidated, graphScopedSignal } from "../binding";
 import { createTagTableAvailabilityResource, createTagTableResource } from "../tagTable";
 import { graphOwner, latestOwner, readOwned, type Owner } from "../owned";
-import { blockRef, isConflicted, pageReadOnly, pageLoadRefusalMessage, reportPageLoadRefusal, whenPageReplaceable, type PageLoadRefusal } from "../document";
+import { blockRef, isConflicted, ownSelectionSurface, pageReadOnly, pageLoadRefusalMessage, reportPageLoadRefusal, whenPageReplaceable, type PageLoadRefusal } from "../document";
 import { carryDay, carryPrevDay, carryDaysBack } from "../carry";
 import { backend } from "../backend";
 import { recordFeedReason } from "../journalFeedDiagnostic";
@@ -73,7 +73,6 @@ import { SeenHeader, SeenRemoved, SeenRows } from "../seen/SeenHeader";
 import { createPageSeen } from "../seen/pageSeen";
 import { markSeenOnLeave } from "../seen/leave";
 import { createGraphResource } from "../graphResource";
-import { ownSelectionSurface } from "../document";
 
 installPageIdentityNavigation((from, to) => {
   // Rewrite both pinned and formerly pathless routes to the exact file owner.
@@ -785,7 +784,7 @@ export function PageView(): JSX.Element {
     const r = loadedRoute();
     return !!r && ready() && sameRoute(r, currentRoute()) && (r.kind !== "journals" || isLoaded() || !!feedRefusal());
   };
-  const renderDay = (p: FeedPage) => <PageSection page={p} seen={currentRoute().kind === "page"}>
+  const renderDay = (p: FeedPage) => <PageSection page={p} routed={currentRoute().kind === "page"}>
     {/* OG page/today-queries and journal: queries precede agenda. */}
     <Show when={p.kind === "journal" && p.name === journalTitle(localDateFromDayKey(currentDayKey()))}>
       <TodaySections today={p.name} upcoming={<UpcomingSection feed={currentRoute().kind === "journals"} />} />
@@ -941,7 +940,7 @@ function ZoomedView(props: { id: string }): JSX.Element {
   };
 
   return (
-    <div class="page zoomed-page" ref={el => bindOutlineSelection(el, () => ({ scope, surface: editSurface() }))}>
+    <div class="page zoomed-page" ref={el => bindOutlineSelection(el, { surface: editSurface(), read: () => ({ scope }) }, true)}>
       <div class="zoom-breadcrumb">
         <a
           class="crumb crumb-page"
@@ -1002,11 +1001,11 @@ function ZoomedView(props: { id: string }): JSX.Element {
   );
 }
 
-function PageSection(props: { page: FeedPage; seen?: boolean; children?: JSX.Element }): JSX.Element {
+function PageSection(props: { page: FeedPage; routed: boolean; children?: JSX.Element }): JSX.Element {
   const pane = paneContextFromContext();
   const router = pane.router;
   // "Changed since you last looked": the routed single page only (ADR 0079).
-  const seen = createPageSeen(() => (props.seen && !props.page.guide ? props.page : null));
+  const seen = createPageSeen(() => (props.routed && !props.page.guide ? props.page : null));
   const [renaming, setRenaming] = createSignal(false);
   const [newName, setNewName] = createSignal("");
   // An open title-rename draft pins its page: no reload may remount it (og 20b contract 2).
@@ -1123,8 +1122,7 @@ function PageSection(props: { page: FeedPage; seen?: boolean; children?: JSX.Ele
   const isTodayJournal = () => props.page.kind === "journal"
     && props.page.name === journalTitle(localDateFromDayKey(currentDayKey()));
   return (
-    <div class="page-section" data-page-name={props.page.name}
-      ref={el => bindOutlineSelection(el, () => ({ scope: { roots: rootsToRender() }, surface: editSurface() }))}>
+    <div class="page-section" data-page-name={props.page.name} ref={el => bindOutlineSelection(el, { surface: editSurface(), get page() { return props.page.name; }, read: () => ({ scope: { roots: rootsToRender() } }) }, props.routed)}>
       <Show when={props.page.kind === "page"}>
         <NamespaceCrumb name={props.page.name} />
       </Show>

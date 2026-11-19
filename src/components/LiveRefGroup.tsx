@@ -653,7 +653,7 @@ function MountedRefGroup(props: LiveRefGroupProps & { occurrence: RefOccurrence;
   onMount(() => {
     const target = { scope, surface, widen: props.widenSelection };
     const host = props.selectionHost ?? props.geometryHost();
-    if (host) onCleanup(bindOutlineSelection(host, () => target));
+    if (host) onCleanup(bindOutlineSelection(host, { surface, read: () => target }));
     if (props.registerSelection) onCleanup(props.registerSelection(target));
   });
   // GH #792: the one-level fold commands treat a query block's result rows as its children.

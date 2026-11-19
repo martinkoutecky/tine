@@ -28,7 +28,12 @@ ordinary outline windows and model-based reveal/navigation scope.
 From blank space, Ctrl/Cmd+A starts in the nearest rendered outline. In a
 Linked or Unlinked References group it first selects that group's live blocks.
 The next press selects the section's currently loaded groups in display order.
-That selection retires if a participating group closes or leaves the section.
+Expanded breadcrumb context can repeat a hit on screen. Whole-outline copy
+includes each source subtree once and keeps the other visible hits in order.
+A plain blank click in another outline retires the current selection, as does
+closing or removing a group that participates in the selection. Blank space in a
+routed page's scroller uses the page or zoom outline when no closer outline
+owns it. In the Journals feed, each day's outline owns its own blank space.
 Copy / export can include groups whose source was never loaded by the view.
 
 In-outline embeds and queries belong to Find's page scope. Find counts their

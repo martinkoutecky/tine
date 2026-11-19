@@ -476,7 +476,7 @@ export function ReferenceSection(input: { name: string; unlinked?: boolean; jour
         <ReferenceExportChooser subject={heading()} groups={shown()} onClose={() => setExportChooserOpen(false)} />
       </Show>
       <div ref={el => {
-        bindOutlineSelection(el, widenSelection);
+        bindOutlineSelection(el, { surface, read: widenSelection });
         onMount(() => onCleanup(trackViewportAnchor(el)));
       }} class={`${section}-references`}
         {...{

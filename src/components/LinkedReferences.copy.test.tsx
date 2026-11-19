@@ -2,7 +2,7 @@ import { afterEach, beforeAll, expect, it, vi } from "vitest";
 import { render } from "solid-js/web";
 import { backend } from "../backend";
 import { clearClipboardPayload } from "../clipboard";
-import { resetStore } from "../document";
+import { resetStore, selectedIds } from "../document";
 import { endEdit } from "../editorController";
 import { setGraphMeta } from "../graphSession";
 import { installKeybindings } from "../keybindings";
@@ -58,7 +58,7 @@ afterEach(() => {
   document.body.replaceChildren();
 });
 
-async function mountTarget(sourcePages = sources, referenceGroups = groups, visibleSources = ["Alpha"]) {
+async function mountTarget(sourcePages = sources, referenceGroups = groups, visibleSources = ["Alpha"], routedPage = target) {
   vi.stubGlobal("IntersectionObserver", class {
     constructor(private callback: IntersectionObserverCallback) {}
     observe(target: Element) {
@@ -69,7 +69,7 @@ async function mountTarget(sourcePages = sources, referenceGroups = groups, visi
     unobserve() {}
     disconnect() {}
   });
-  vi.spyOn(backend(), "getPage").mockImplementation(async name => name === target.name ? target : null);
+  vi.spyOn(backend(), "getPage").mockImplementation(async name => name === routedPage.name ? routedPage : sourcePages.find(source => source.name === name) ?? null);
   const readByPath = vi.spyOn(backend(), "getPageByPath").mockImplementation(async path => sourcePages.find(source => source.id === path) ?? null);
   const backlinks = vi.spyOn(backend(), "getBacklinks").mockResolvedValue(referenceGroups);
   const writeText = vi.spyOn(backend(), "writeText").mockResolvedValue(undefined);
@@ -343,4 +343,72 @@ it("selects the routed page outline from blank space and preserves native select
   expect(press("a", { ctrlKey: true }, dialog).defaultPrevented).toBe(false);
   expect(press("c", { ctrlKey: true }).defaultPrevented).toBe(true);
   expect(writeRich.mock.calls[0][0]).toBe("- Target page body");
+});
+
+it.each([false, true])("copies every reference root when expanded context repeats the first hit (trailing group: %s)", async (trailing) => {
+  const other = block("alpha-other", "Second top-level hit [[Target]]");
+  const trailingHit = block("alpha-trailing", "Trailing nested hit [[Target]]");
+  const blocks = [hit, other, ...(trailing ? [block("alpha-trail-parent", "Trailing context", [trailingHit])] : [])];
+  const hits = [hit, other, hit.children[0], ...(trailing ? [trailingHit] : [])];
+  const { root, liveRow, writeRich } = await mountTarget(
+    [{ ...sources[0], blocks }, ...sources.slice(1)],
+    [{ ...groups[0], blocks: hits.map(shallow) }, ...groups.slice(1)], ["Alpha", "Beta"],
+  );
+  await vi.waitFor(() => expect(liveRow(coldHit.id)).not.toBeNull());
+  const alpha = root.querySelector<HTMLElement>(".linked-references .reference-group")!;
+  alpha.querySelector<HTMLElement>(".ref-crumb[role=button]")!.click();
+  expect(alpha.querySelectorAll(`[data-block-id="${hit.id}"]`)).toHaveLength(2);
+  alpha.click();
+  const expected = [hit.raw, other.raw, ...(trailing ? [trailingHit.raw] : [])];
+  for (const roots of [expected, [...expected, coldHit.raw]]) {
+    expect(press("a", { ctrlKey: true }).defaultPrevented).toBe(true);
+    expect(press("c", { ctrlKey: true }).defaultPrevented).toBe(true);
+    const [plain, html] = writeRich.mock.lastCall!;
+    expect(plain.split("\n").filter(line => line.startsWith("- "))).toEqual(roots.map(raw => `- ${raw}`));
+    expect(plain).toContain(`\n\t- ${hit.children[0].raw}`);
+    const copied = new DOMParser().parseFromString(html, "text/html");
+    expect([...copied.querySelectorAll("body > ul > li")].map(li => li.firstChild?.textContent)).toEqual(roots);
+  }
+});
+
+it.each(["group to group", "Linked to Unlinked", "page to embed"])("starts in the newly clicked outline from %s", async (journey) => {
+  const embedded = page("Embedded", [block("embedded-root", "Embedded outline")]);
+  const embedHost = block("embed-host", "{{embed [[Embedded]]}}");
+  const withEmbed = { ...target, blocks: [...target.blocks, embedHost] };
+  vi.spyOn(backend(), "getUnlinkedRefs").mockResolvedValue([{ ...groups[2], blocks: [shallow(excludedHit)] }]);
+  const { root, liveRow, writeRich } = await mountTarget([...sources, embedded], groups, ["Alpha", "Beta", "Gamma"], withEmbed);
+  const [alpha, beta] = root.querySelectorAll<HTMLElement>(".linked-references .reference-group");
+  await vi.waitFor(() => expect(liveRow(coldHit.id)).not.toBeNull());
+  let from = alpha, to = beta, first = coldHit.raw;
+  let expected = [coldHit.id, coldHit.children[0].id, coldHit.children[0].children[0].id];
+  if (journey === "Linked to Unlinked") {
+    root.querySelector<HTMLElement>(".unlinked-references .references-header")!.click();
+    to = await vi.waitFor(() => {
+      const group = root.querySelector<HTMLElement>(".unlinked-references .reference-group");
+      expect(group?.textContent).toContain(excludedHit.raw);
+      return group!;
+    });
+    first = excludedHit.raw;
+    expected = [excludedHit.id];
+  } else if (journey === "page to embed") {
+    from = root.querySelector<HTMLElement>(".page-blocks")!;
+    to = await vi.waitFor(() => {
+      const embed = root.querySelector<HTMLElement>(".embed-block");
+      expect(embed?.textContent).toContain("Embedded outline");
+      return embed!;
+    });
+    first = "Embedded outline";
+    expected = [embedded.blocks[0].id];
+  }
+  root.tabIndex = -1;
+  root.focus();
+  from.click();
+  expect(press("a", { ctrlKey: true }, root).defaultPrevented).toBe(true);
+  expect(selectedIds().length).toBeGreaterThan(0);
+  to.click();
+  expect(selectedIds()).toEqual([]);
+  expect(press("a", { ctrlKey: true }, root).defaultPrevented).toBe(true);
+  expect(selectedIds()).toEqual(expected);
+  expect(press("c", { ctrlKey: true }, root).defaultPrevented).toBe(true);
+  expect(writeRich.mock.lastCall?.[0].split("\n")[0]).toBe(`- ${first}`);
 });

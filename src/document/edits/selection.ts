@@ -84,6 +84,7 @@ function selectionOrder(id: string | null, scope: OutlineScope | null = activeSe
 
 const [selAnchor, setSelAnchor] = createSignal<string | null>(null);
 const [selFocus, setSelFocus] = createSignal<string | null>(null);
+const [wholeOutlineGeneration, setWholeOutlineGeneration] = createSignal<number | null>(null);
 const [selectionView, setSelectionView] = createSignal<{ id: string; scope: OutlineScope | null } | null>(null);
 
 // View topology belongs to the selection, not its moving endpoints. Rebuild
@@ -135,20 +136,26 @@ const selectionState = createRoot(() => createMemo(() => {
   const f = selFocus();
   const topology = selectionTopology();
   const { order, index, end, duplicates } = topology;
-  const i = a ? index.get(a) : undefined;
-  const j = f ? index.get(f) : undefined;
+  // Whole-outline endpoints are positions in the topology they selected. On
+  // a tree change the endpoints follow their blocks, including a repeated root.
+  const wholeGeneration = wholeOutlineGeneration();
+  const whole = wholeGeneration === topology.generation;
+  const i = whole ? 0 : a ? (wholeGeneration !== null && duplicates ? order.indexOf(a) : index.get(a)) : undefined;
+  const j = whole ? order.length - 1 : f ? index.get(f) : undefined;
+  const hasInterval = i !== undefined && i >= 0 && j !== undefined;
   let lo = 0, hi = -1;
-  if (i !== undefined && j !== undefined) {
+  if (whole) hi = order.length - 1;
+  else if (hasInterval) {
     lo = Math.min(i, j);
-    let last = order[Math.max(i, j)];
+    let last = Math.max(i, j);
     // An endpoint can be inside a parent the range already selected. Complete
     // that outermost selected parent too, in either direction (GH #262/#941).
-    for (let parent = doc.byId[last]?.parent; parent; parent = doc.byId[parent]?.parent) {
+    for (let parent = doc.byId[order[last]]?.parent; parent; parent = doc.byId[parent]?.parent) {
       const at = index.get(parent);
       if (at === undefined || at < Math.min(i, j) || at > Math.max(i, j)) break;
-      last = parent;
+      last = at;
     }
-    hi = end[index.get(last)!];
+    hi = end[last];
   }
   if (!duplicates) return { topology, lo, hi, exact: null };
   // O(view rows in range): keep the selected roots only. Membership is an
@@ -156,7 +163,7 @@ const selectionState = createRoot(() => createMemo(() => {
   // endpoint step never pays for folded subtrees.
   const roots: string[] = [];
   const rootSet = new Set<string>();
-  if (i !== undefined && j !== undefined) {
+  if (hasInterval) {
     for (let at = Math.min(i, j); at <= Math.max(i, j); at = end[at] + 1) {
       if (doc.byId[order[at]] && !rootSet.has(order[at])) { rootSet.add(order[at]); roots.push(order[at]); }
     }
@@ -342,7 +349,9 @@ function startBlockSelection(id: string, scope: OutlineScope | null, surface: st
   keyboardTopology = null;
   batch(() => {
     setSelectionView({ id, scope });
-    const order = whole ? selectionTopology().order : undefined;
+    const topology = whole ? selectionTopology() : undefined;
+    const order = topology?.order;
+    setWholeOutlineGeneration(topology?.order.length ? topology.generation : null);
     setSelAnchor(order ? order[0] ?? null : id);
     setSelFocus(order ? order.at(-1) ?? null : id);
   });
@@ -350,12 +359,20 @@ function startBlockSelection(id: string, scope: OutlineScope | null, surface: st
 export function clearSelection() {
   selectedSurfaces = undefined;
   selectedSurfaceKey = undefined;
-  batch(() => { setSelAnchor(null); setSelFocus(null); setSelectionView(null); });
+  batch(() => { setSelAnchor(null); setSelFocus(null); setSelectionView(null); setWholeOutlineGeneration(null); });
   activeSelectionScope = null;
   selectAllHead = null;
   widenOutline = undefined;
   keyboardPath = [];
   keyboardTopology = null;
+}
+/** Retire structural selection when blank space belongs to another outline.
+ * Journals days share a pane surface but have separate source pages. Compare
+ * ownership in O(1), with the existing membership updates on retirement. */
+export function clearSelectionOutsideOutline(surface: string | undefined, page?: string) {
+  const anchor = selAnchor();
+  if (anchor && (surface === undefined || surface !== selectedSurfaceKey ||
+      (page !== undefined && doc.byId[anchor]?.page !== page))) clearSelection();
 }
 /** Extend the current block selection's focus to `id` (mouse-drag / shift-click).
  *  Starts a fresh selection anchored at `id` if none is active. */
@@ -370,7 +387,7 @@ export function extendSelectionTo(id: string, scope: OutlineScope | null = activ
   selectAllHead = null;
   widenOutline = undefined;
   keyboardPath = [];
-  setSelFocus(id);
+  batch(() => { setWholeOutlineGeneration(null); setSelFocus(id); });
 }
 export function hasSelection(): boolean {
   return selAnchor() !== null;
@@ -414,6 +431,7 @@ export function moveSelection(dir: 1 | -1, extend: boolean) {
   selectAllHead = null;
   widenOutline = undefined;
   batch(() => {
+    setWholeOutlineGeneration(null);
     setSelFocus(next);
     if (!extend) setSelAnchor(next);
   });
@@ -445,10 +463,11 @@ export function expandBlockSelection(target?: OutlineSelectionTarget) {
   const a = selAnchor();
   const f = selFocus();
   if (!a || !f) return;
-  const { order, index, end } = selectionTopology();
+  const { order, index, end, generation } = selectionTopology();
   if (order.length < 2 || !index.has(a) || !index.has(f)) return;
+  if (wholeOutlineGeneration() !== null && selectionState().lo === 0 && selectionState().hi === order.length - 1) return;
   // Whole-outline selection is the top of the ladder; further presses no-op.
-  if (a === order[0] && end[index.get(f)!] === order.length - 1) return;
+  if (index.get(a) === 0 && end[index.get(f)!] === order.length - 1) return;
   let head = selectAllHead;
   if (head === null || !index.has(head)) head = a;
   const idx = index.get(head);
@@ -462,7 +481,7 @@ export function expandBlockSelection(target?: OutlineSelectionTarget) {
     if (parent !== null && index.has(parent)) {
       head = parent;
     } else {
-      batch(() => { setSelAnchor(order[0]); setSelFocus(order[order.length - 1]); });
+      batch(() => { setWholeOutlineGeneration(generation); setSelAnchor(order[0]); setSelFocus(order[order.length - 1]); });
       selectAllHead = null;
       return;
     }

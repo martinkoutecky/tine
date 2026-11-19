@@ -50,6 +50,7 @@ carryTodayPage
 carryUnfinished
 childIds
 clearSelection
+clearSelectionOutsideOutline  # why: retire a selection when a blank click names another outline (GH #793); batch-fix-793-selall2
 collapseEpochOf  # why: query bulk-fold requests reject stale source collapse generations (GH #792); batch21c
 collapsibleDescendantIds
 commentMessageIds  # why: dated margin replies are messages with outline bodies (MC5/MC6, #891); batch-mc-messages-1111

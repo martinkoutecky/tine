@@ -30,6 +30,8 @@
  * and nested surfaces. O(1) registration/retirement plus selection notifications,
  * no I/O. `selectBlock`/`selectBlockSubtree` carry O(nesting) ancestry once; their optional
  * surface key defaults to the initiating editor's active surface.
+ * `clearSelectionOutsideOutline(surface, page?)` compares the blank click's
+ * ownership in O(1) before retiring the old selection and its notifications.
  *
  * Editing. Change a page only through an intent exported here (`setRaw`,
  * `splitBlock`, `moveBlock`, `setBlockProperty`, ...). An intent updates the
@@ -133,7 +135,7 @@ export { beginPageHeaderEdit, blockPageReadOnly, blockProperty, blockWritable, c
 export { ensurePagePropertyOnKeyPage } from "./edits/propertyDeclaration";
 export { authoredBlockId, blockExternalId, blockPositionRef, blockRef, ensureBlockId, existingBlockId, isBlockRefUuid, persistBlockRefTarget, resolveBlockRef, settleBlockRef } from "./edits/identity";
 export { blockSubtreeMarkdown, buildClipboardPayload, dtoSubtreeMarkdown, exportNodesFor } from "./edits/serialize";
-export { clearSelection, cycleSelectionTasks, deleteSelection, expandBlockSelection, extendSelectionTo, hasSelection, indentSelection, isSelected, mergeSelection, moveSelection, outdentSelection, ownSelectionSurface, selectBlock, selectBlockSubtree, selectedIds, selectionIncludesPage, selectionMarkdown, selectionScope, setSelectionHeading, singleSelectedId, topSelected } from "./edits/selection";
+export { clearSelection, clearSelectionOutsideOutline, cycleSelectionTasks, deleteSelection, expandBlockSelection, extendSelectionTo, hasSelection, indentSelection, isSelected, mergeSelection, moveSelection, outdentSelection, ownSelectionSurface, selectBlock, selectBlockSubtree, selectedIds, selectionIncludesPage, selectionMarkdown, selectionScope, setSelectionHeading, singleSelectedId, topSelected } from "./edits/selection";
 export { extendFeedForScroll, isBlockMoving, moveBlock, moveBlocksRelative, moveBlockFeed, moveItem, moveSelectionItems, nextVisibleOrExtend, setFeedExtender, withBlockMoving } from "./edits/moves";
 export { installPageIdentityNavigation, rekeyPageIdentityByPath } from "./workingSet";
 export { pageInstanceGeneration } from "./instance";
