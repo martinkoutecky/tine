@@ -108,17 +108,14 @@ impl DaySupport {
         let mut keys = BTreeSet::new();
         for path in paths {
             for (snapshot, add) in [(old, false), (next, true)] {
-                let Some((entry, _)) = super::snapshot_page_by_rel(&snapshot.pages, None, path)
+                let Some((entry, doc)) = super::snapshot_page_by_rel(&snapshot.pages, None, path)
                 else {
                     continue;
                 };
-                for name in snapshot
-                    .referenced_name_index()
-                    .get(&entry.path)
-                    .into_iter()
-                    .flatten()
-                {
-                    keys.insert(refs::page_key(name));
+                // The changed page's own names, not the graph-wide per-page
+                // index (whose cold build cost O(graph) on both snapshots).
+                for name in super::collect_document_referenced_names(doc, snapshot.config()) {
+                    keys.insert(refs::page_key(&name));
                 }
                 if entry.name.contains('/') && snapshot.file_supplies_parents(&entry.path) {
                     support.name(&format, Source::File(entry.path.clone()), &entry.name, add);
@@ -299,6 +296,12 @@ impl ReadSnapshot {
 
     pub(crate) fn day_support_built(&self) -> bool {
         self.day_support.get().is_some()
+    }
+
+    /// Whether the graph-wide per-page referenced-name index was built (probe).
+    #[cfg(test)]
+    pub(crate) fn referenced_name_index_built(&self) -> bool {
+        self.referenced_name_index.get().is_some()
     }
 
     /// The least namespace seed spelling of page key `key` (the answer

@@ -958,16 +958,13 @@ fn collect_reference_occurrences_bounded(
     let mut budget = ConstructionBudget::new(max_rows, max_bytes);
     // Folded once per query, shared by every block (GH #623, I-25).
     let needles = tine_core::reference_evidence::ReferenceNeedles::new(names_norm);
-    let membership =
-        (kind == ReferenceKind::Explicit).then(|| graph.scan_all_backlink_memberships());
-    let panel = membership.and_then(|answer| answer.selection(names_norm, self_page));
-    // A spelling with no exact panel (a property key folding to another title)
-    // takes the parser-evidence path rather than an empty selection.
-    let membership = membership.filter(|_| panel.is_some());
-    let candidate_pages = if membership.is_some() {
-        graph.explicit_panel_candidate_pages(panel)
+    // Explicit references: the panel's members (the one membership rule);
+    // unlinked references: the plain-text candidate prefilter.
+    let (membership, candidate_pages) = if kind == ReferenceKind::Explicit {
+        let (members, pages) = graph.explicit_panel(names_norm, self_page);
+        (Some(members), pages)
     } else {
-        graph.reference_candidate_pages(names_norm, kind)
+        (None, graph.reference_candidate_pages(names_norm, kind))
     };
     let groups = {
         let pages = candidate_pages.pages.as_slice();
@@ -998,10 +995,9 @@ fn collect_reference_occurrences_bounded(
                 })
                 .enumerate()
             {
-                if let Some(answer) = membership {
+                if let Some(members) = &membership {
                     let slot = *graph.pages.positions.get(entry.rel_path_str()).unwrap();
-                    if !panel.is_some_and(|panel| answer.contains(slot, panel, pre_ordinal as u32))
-                    {
+                    if !members.contains(slot, pre_ordinal as u32) {
                         continue;
                     }
                 }
@@ -1033,11 +1029,9 @@ fn collect_reference_occurrences_bounded(
                 &mut path,
                 &mut |block, _| {
                     ordinal.set(ordinal.get() + 1);
-                    let admitted = if let Some(answer) = membership {
+                    let admitted = if let Some(members) = &membership {
                         let slot = *graph.pages.positions.get(entry.rel_path_str()).unwrap();
-                        panel.is_some_and(|panel| {
-                            answer.contains(slot, panel, ordinal.get() as u32 + 1)
-                        })
+                        members.contains(slot, ordinal.get() as u32 + 1)
                     } else {
                         candidate_pages.admits(page, ordinal.get())
                     };
