@@ -75,23 +75,25 @@ function sameScheme(confirmed: string | undefined, scheme: string): boolean {
     && confirmed.replace(/[A-Z]/g, (c) => c.toLowerCase()) === scheme;
 }
 
-/** What an anchor in graph content does with its destination, in every renderer
- * and mode (GH #984). `relative`: site- or page-internal, a real href. `direct`:
- * web or mail, a real href. `defer`: any other scheme (another app's, `file:`,
- * `tine:`, a one-letter one): no href, so no browser default navigation, middle-
- * click or new tab; it opens only through the checked opener. `drop`: a refused
- * scheme, never opened. One URL parse, O(URL bytes). */
-export type AnchorDecision = "relative" | "direct" | "defer" | "drop";
+/** Route for a graph-authored destination (GH #984). Relative paths can name
+ * attachments or files. `file` and `drive` have dedicated file routes. Relative,
+ * web and mail links keep an href. Other schemes require the checked opener,
+ * which refuses `drop`. O(destination bytes), with no I/O. */
+export type AnchorDecision = "relative" | "web" | "mail" | "file" | "drive" | "defer" | "drop";
 export function anchorDecision(dest: string): AnchorDecision {
-  let scheme: string;
-  try {
-    scheme = new URL(dest).protocol.slice(0, -1);
-  } catch (error) {
-    if (!(error instanceof TypeError)) throw error;
-    return "relative";
-  }
+  // Apply the URL parser's whitespace rules before reading the scheme. Even
+  // a malformed absolute URL has a scheme and cannot become a relative path.
+  const match = /^[\u0000-\u0020]*([a-z][a-z0-9+.-]*):/i.exec(dest.replace(/[\t\n\r]/g, ""));
+  if (!match) return "relative";
+  const scheme = match[1].toLowerCase();
   if (refusedLinkScheme(scheme)) return "drop";
-  return isDirectExternalScheme(scheme) ? "direct" : "defer";
+  if (isDirectExternalScheme(scheme)) return scheme === schemes.mail ? "mail" : "web";
+  if (scheme === schemes.localFile) return "file";
+  return /^[a-z]:[/\\]/i.test(dest.trimStart()) ? "drive" : "defer";
+}
+
+export function anchorKeepsHref(decision: AnchorDecision): boolean {
+  return decision === "relative" || decision === "web" || decision === "mail";
 }
 
 /** Where a raw-HTML anchor keeps a deferred destination (GH #984). */
@@ -101,7 +103,7 @@ export const DEFERRED_HREF = "data-tine-href";
  * DEFERRED_HREF (still a focusable link), or drop a refused one. */
 export function deferAnchorHref(anchor: Element): void {
   const decision = anchorDecision(anchor.getAttribute("href") ?? "");
-  if (decision === "relative" || decision === "direct") return;
+  if (anchorKeepsHref(decision)) return;
   const dest = anchor.getAttribute("href")!;
   anchor.removeAttribute("href");
   if (decision === "drop") return;

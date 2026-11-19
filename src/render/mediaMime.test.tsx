@@ -19,7 +19,7 @@ it.each(["inline-audio", "inline-video", "overlay"])("%s fallback uses the share
   const root = document.createElement("div"); document.body.append(root);
   const ext = surface === "inline-video" ? "mkv" : "mp3";
   const url = `../assets/nested/track.${ext}`;
-  if (surface === "overlay") setAudioPlayer({ url, name: "Track" });
+  if (surface === "overlay") setAudioPlayer({ url, name: "Track", assetPath: `nested/track.${ext}` });
   const dispose = render(() => surface === "overlay" ? <AudioOverlay /> : <AstBody raw={`![Track](${url})`} />, root);
   try {
     await vi.waitFor(() => expect(root.querySelector("audio, video")?.getAttribute("src")).toBe("asset://stream"));

@@ -65,7 +65,7 @@ it("the audio player gets its stream after the epoch moves under the first strea
   const stream = vi.spyOn(backend(), "streamAsset")
     .mockImplementationOnce(() => first.promise)
     .mockResolvedValue("stream:track");
-  setAudioPlayer({ url: "../assets/track.mp3", name: "track" });
+  setAudioPlayer({ url: "../assets/track.mp3", name: "track", assetPath: "track.mp3" });
   const { root, dispose } = mount(() => <AudioOverlay />);
   try {
     await vi.waitFor(() => expect(stream).toHaveBeenCalledTimes(1));

@@ -1,6 +1,7 @@
 import type { JSX } from "solid-js";
 import { backend } from "../backend";
 import { openOutboundLink, outboundAnchorAttrs, reportLinkOpenFailure } from "../components/ExternalLink";
+import type { AnchorDecision } from "../linkSchemePolicy";
 import { graphOwner, readOwned } from "../owned";
 import { graphMeta } from "../graphSession";
 import { filePathUrl, resolvedFilePath, type FileLinkTarget } from "./relativeFileLink";
@@ -11,6 +12,7 @@ import type { SpanDomAttrs } from "./spans";
  * Cost: lexical path resolution on render, one native command per click. */
 export function RelativeFileLink(props: {
   dest: string;
+  decision: AnchorDecision;
   target: FileLinkTarget;
   spanAttrs?: SpanDomAttrs;
   children: JSX.Element;
@@ -30,7 +32,7 @@ export function RelativeFileLink(props: {
       class="external-link file-link"
       title={resolved()}
       {...(props.spanAttrs ?? {})}
-      {...outboundAnchorAttrs(props.dest, activate)}
+      {...outboundAnchorAttrs(props.dest, props.decision, activate)}
     >
       {props.children}
     </a>

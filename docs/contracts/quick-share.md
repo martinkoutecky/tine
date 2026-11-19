@@ -114,10 +114,12 @@ P        = gzip (RFC 1952) of the UTF-8 share document
   reader looks up. A document without it, or with an `answers.v` the viewer
   does not read, is read as before the field existed.
 
-The published reader checks each external URL before handing it to the browser.
-HTTP, HTTPS and mail links open directly. Other app links require consent for
-the exact scheme. The reader refuses script and browser-internal schemes, local
-file links, and Tine deep links at that handoff (GH #984).
+The reader classifies Markdown and Org destinations before selecting file or
+media routes. Only relative paths can name graph attachments. At the browser
+handoff, HTTP, HTTPS, mail and scheme-less links to the reader's own site open
+directly. Other app links require consent for the exact scheme. The reader
+refuses script and browser-internal schemes, local file links, and Tine deep
+links at that handoff (GH #984).
 
 ### Published answers (`answers`, version 1)
 

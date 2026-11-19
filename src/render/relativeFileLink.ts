@@ -1,3 +1,5 @@
+import { anchorDecision } from "../linkSchemePolicy";
+
 // GH #457: OG 0.10.9 block.cljs relative-assets-path->absolute-path joins
 // paths to the graph root, not the page directory. config.cljs
 // get-local-asset-absolute-path strips leading dots/slashes; Tine deliberately
@@ -7,12 +9,15 @@ export type FileLinkTarget =
   | { kind: "graph"; path: string }
   | { kind: "outside"; reason: "absolute" | "escapes"; path: string };
 
-/** Classify authored paths without touching the filesystem. Schemes and
- * page-like destinations stay with their existing renderer. O(dest bytes). */
-export function fileLinkTarget(dest: string): FileLinkTarget | null {
+/** Resolve relative paths and the policy's explicit file forms lexically.
+ * Page-like destinations stay with their existing renderer. O(dest bytes). */
+export function fileLinkTarget(dest: string, decision = anchorDecision(dest)): FileLinkTarget | null {
+  if (decision !== "relative" && decision !== "drive" && decision !== "file") return null;
   let path = dest.trim();
-  if (/^file:(?![/\\])/i.test(path)) path = path.slice("file:".length);
-  else if (/^[a-z][a-z0-9+.-]+:/i.test(path)) return null;
+  if (decision === "file") {
+    if (!/^file:(?![/\\])/i.test(path)) return null;
+    path = path.slice("file:".length);
+  }
   if (!path || /^[#*]/.test(path)) return null;
   path = path.replace(/\\/g, "/");
   try { path = decodeURIComponent(path); } catch { /* A stray % is a filename character. */ }

@@ -66,7 +66,7 @@ The format follows [Keep a Changelog](https://keepachangelog.com/); versions use
 - DOMPurify is updated to 3.4.18 and seroval to 1.6.12, which close published
   advisories. Tine used none of the affected DOMPurify modes, so no known
   exploit applied (reported by Dieterbe in #982).
-- Published exports check the URL scheme before opening an external link. Web and email links open directly, and custom app links require confirmation; a link to any other scheme, including one in raw HTML, no longer opens by itself when middle-clicked or opened in a new tab (#984).
+- Published exports check the URL scheme before opening an external link. Web and email links open directly, and custom app links require confirmation. Custom and refused schemes cannot open local graph files or attachments through Markdown or Org links. They also cannot bypass the scheme check by middle-clicking or opening the link in a new tab, including in raw HTML (#984).
 
 ## [0.10.0-beta.1] - 2026-11-16
 
