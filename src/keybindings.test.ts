@@ -285,10 +285,12 @@ afterEach(() => {
 });
 
 describe("mouse side-button navigation (#156)", () => {
-  const useTauriHistory = (platform: string) => Object.assign(window, {
-    __TAURI_INTERNALS__: {},
-    navigator: { userAgent: platform === "windows" ? "Mozilla/5.0 (Windows NT 10.0; Win64; x64)" : "" },
-  });
+  // The native build injects the history owner; the user agent no longer decides it (GH #948).
+  const useTauriHistory = (platform: string, userAgent = platform === "windows" ? "Mozilla/5.0 (Windows NT 10.0; Win64; x64)" : "") => {
+    Object.assign(globalThis, { __TINE_MOUSE_HISTORY__: platform === "windows" ? "webview2" : platform === "linux" ? "gtk" : "dom" });
+    return Object.assign(window, { __TAURI_INTERNALS__: {}, navigator: { userAgent } });
+  };
+  afterEach(() => { delete (globalThis as { __TINE_MOUSE_HISTORY__?: string }).__TINE_MOUSE_HISTORY__; });
 
   it.each(["windows", "linux"])("%s workspace popups keep their DOM history owner (GH #948)", async (platform) => {
     installFakeWindow();
@@ -374,7 +376,7 @@ describe("mouse side-button navigation (#156)", () => {
 
   it("Linux native presses wait while a selection, drag or moved side-button press holds the gesture, and never stay blocked (GH #948)", async () => {
     const fake = installFakeWindow();
-    Object.assign(window, { __TAURI_INTERNALS__: {} });
+    useTauriHistory("linux");
     nativeHistory.listener = undefined;
     const dispose = installKeybindings();
     try {
@@ -418,6 +420,23 @@ describe("mouse side-button navigation (#156)", () => {
       expect(back()).toMatchObject(at(2));
       expect(back()).toMatchObject(at(1));
       expect(back()).toMatchObject(at(0));
+    } finally {
+      dispose();
+    }
+  });
+
+  it("Windows with a custom WebView2 user agent still steps on DOM side-button clicks (GH #948)", async () => {
+    const fake = installFakeWindow();
+    useTauriHistory("windows", "TineCustomUA");
+    nativeHistory.listener = undefined;
+    const dispose = installKeybindings();
+    try {
+      await vi.waitFor(() => expect(nativeHistory.listener).toBeDefined());
+      for (let i = 0; i <= 2; i++) router.openPage(`Custom UA ${i}`, "page");
+      fake.dispatchMouse("mousedown", 3, 8);
+      fake.dispatchMouse("mouseup", 3);
+      fake.dispatchAuxClick(3);
+      expect(router.route()).toMatchObject({ name: "Custom UA 1" });
     } finally {
       dispose();
     }
