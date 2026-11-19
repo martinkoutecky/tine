@@ -8,9 +8,9 @@ Android keep their existing outside-link behavior and cannot call this reader.
 
 A relative file link to a PDF opens the same reader from the same Markdown `!` or
 Org position: `file:../x.pdf`, `../x.pdf`, `..\x.pdf`, `docs/x.pdf`, `./x.pdf` and
-`file:x.pdf`. It resolves with the one file-link resolver (`relativeFileLink.ts`,
-GH #457: from the graph root, authored `..` steps kept, lexical, no filesystem
-probe), and the reader receives the resulting absolute `file://` URL
+`file:x.pdf`. `anchorDecision` supplies the lexical file target (GH #457).
+`relativeFileLink.ts` resolves it from the graph root, preserving authored `..`
+steps without a filesystem probe. The reader receives the absolute `file://` URL
 (`relativePdfFileUrl` in `externalPdfPath.ts`), so every rule below applies to it
 unchanged. Spellings of one file share one reader tab. These keep their existing
 opener: an `assets/` link and a bare `x.pdf` (the graph-asset reader, with

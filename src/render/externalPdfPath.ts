@@ -19,14 +19,13 @@ export function externalPdfPath(dest: string): { kind: "pdf"; path: string } | {
  * the graph-asset reader (OG: assets-relative), a path that resolves into the
  * graph's `assets/` and an absolute plain path keep their openers, and an unknown
  * root cannot make a path absolute. O(path segments). */
-export function relativePdfFileUrl(dest: string, target: FileLinkTarget, root: string): string | null {
+export function relativePdfFileUrl(target: FileLinkTarget, root: string): string | null {
   if (!root || (target.kind === "outside" && target.reason === "absolute")) return null;
-  if (!/^file:|[/\\]/i.test(dest.trim())) return null;
+  if (!/\.pdf$/i.test(target.path) || target.path.includes("\0")) return null;
   const path = resolvedFilePath(target, root);
   const assets = `${resolvedFilePath({ kind: "graph", path: "assets" }, root)}/`.toLowerCase();
   if (path.toLowerCase().startsWith(assets)) return null;
-  const url = filePathUrl(path);
-  return externalPdfPath(url).kind === "pdf" ? url : null;
+  return filePathUrl(path);
 }
 
 /** Even an invalid/restored file: route must never reach graph annotation APIs. */

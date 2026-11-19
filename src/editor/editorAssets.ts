@@ -44,8 +44,7 @@ export function editorAssets(ctx: {
   const insertAssetBytes = async (token: AssetEditorToken, bytes: Uint8Array, origName?: string, captureExt?: string) => {
     const owner = bindingOwner(() => assetEditorCurrent(token));
     const candidate = captureExt !== undefined ? captureAssetFileName(captureExt) : assetFileName(origName);
-    // Cache key is the bare filename — assetRelPath() strips the `assets/` prefix
-    // before loadAssetBlob() (see render/inline.tsx). Seed it so the asset renders
+    // Seed the cache by its filename relative to `assets/` so the image renders
     // instantly, before the disk write lands.
     seedAssetBlob(candidate, bytes);
     let stored: string;

@@ -121,6 +121,11 @@ directly. Other app links require consent for the exact scheme. The reader
 refuses script and browser-internal schemes, local file links, and Tine deep
 links at that handoff (GH #984).
 
+Plain absolute Windows drive destinations resolve to a file path before link
+activation, regardless of extension. Literal and percent-encoded slashes and
+backslashes name the same file. The published reader and browser preview refuse
+the resulting `file:` URL. Quick Share shows a local-file placeholder.
+
 ### Published answers (`answers`, version 1)
 
 The published reader computes no name answer itself (CM step 2, census Q13).

@@ -13,7 +13,7 @@ export { expandTemplate } from "./expansionBudget";
 import { leadingMarker, matchLeadingMarker } from "../markers";
 import { For, Show, createEffect, createRenderEffect, createMemo, createResource, createSignal, onCleanup, useContext, type JSX } from "solid-js";
 import { Dynamic } from "solid-js/web";
-import { assetRelPath, extOf, mediaKind } from "../media";
+import { extOf, mediaKind } from "../media";
 import { openPage, openPageInNewTab, openPageTarget, openPageTargetInNewTab, openInNewTab } from "../router";
 import { internalLinkAuxClick, internalLinkDest, internalLinkMouseDown } from "../linkGesture";
 import { openRefTarget } from "../blockRefActions";
@@ -24,7 +24,7 @@ import { graphEpoch, graphMeta } from "../graphSession";
 import { changed, changedAny, pageChangeKey } from "../changeKeys";
 import { pushToast } from "../toasts";
 import { openOutboundLink, outboundAnchorAttrs, reportLinkOpenFailure } from "../components/ExternalLink";
-import { anchorDecision } from "../linkSchemePolicy";
+import { anchorDecision, type AnchorDecision } from "../linkSchemePolicy";
 import { copyImageFromSrc } from "../copyImage";
 import { parseBlock, parserReady } from "./parse";
 import { mime_from_path } from "./wasm/lsdoc_wasm";
@@ -55,7 +55,7 @@ import { acquireMediaBlobFallback, type MediaBlobLease } from "../mediaBlobFallb
 import { resolveMediaEditorCommand } from "../mediaEditorSettings";
 import { refreshAssetOnReturn } from "../assetRefresh";
 import { isQuickShareViewer } from "../publishedBackend";
-import { ShareMedia } from "../quickShare/ShareMedia";
+import { ShareLocalMedia, ShareMedia } from "../quickShare/ShareMedia";
 import { CopyButton } from "./CopyButton";
 export { CopyButton } from "./CopyButton";
 import { isMobilePlatform } from "../nativeChrome";
@@ -77,7 +77,7 @@ import { createLongPress, isLongPressContextMenu } from "./longPress";
 import { hiccupToHtml } from "./hiccup";
 import { LinkDepthContext, MAX_DEPTH_OF_LINKS } from "../components/linkDepth";
 import { readOr } from "../resourceRead";
-import { fileLinkTarget, fileUrlTitle } from "./relativeFileLink";
+import { fileUrlTitle } from "./relativeFileLink";
 import { externalPdfPath, relativePdfFileUrl } from "./externalPdfPath";
 import { ExternalPdfLink } from "./ExternalPdfLink";
 import { PdfAssetLink, pdfFilenameFromDest } from "./PdfAssetLink";
@@ -442,7 +442,7 @@ function renderLink(
   const orgImage = url.type === "page_ref" && format === "org" && isOgOrgPageRefImageTarget(url.v);
   const searchDecision = url.type === "search" ? anchorDecision(url.v) : undefined;
   if ((url.type === "page_ref" && !orgImage)
-      || (url.type === "search" && searchDecision === "relative" && searchTargetIsPage(url.v))) {
+      || (url.type === "search" && searchDecision?.kind === "relative" && searchTargetIsPage(url.v))) {
     // OG `page-reference` brackets a labelled link like a bare one (GH #966).
     const alias = s.label && s.label.length
       ? <PageReferenceLabel>{renderInlines(s.label, blockId, spanMode, macroExpansion, format)}</PageReferenceLabel>
@@ -453,40 +453,42 @@ function renderLink(
     const label = s.label && s.label.length ? astText(s.label) : undefined;
     return <BlockRefView id={url.v} label={label} spanAttrs={spanAttrs} blockId={blockId} span={hostSpan(s, spanMode, macroExpansion)} />;
   }
-  const dest = urlDest(url);
+  const dest = urlDest(url, format);
   const decision = searchDecision ?? anchorDecision(dest);
-  const relative = decision === "relative";
-  if (orgImage && relative) return <AssetImage url={dest} external={false} alt="" blockId={blockId} token={token} spanAttrs={spanAttrs} />;
-  const assetTarget = relative ? assetLinkRel(dest) : null;
-  const fileTarget = assetTarget === null ? fileLinkTarget(dest, decision) : null;
+  const relative = decision.kind === "relative" ? decision : null;
+  if (orgImage && relative) return <AssetImage source={relative} alt="" blockId={blockId} token={token} spanAttrs={spanAttrs} />;
+  const assetTarget = relative?.attachment ?? null;
+  const assetPdf = relative?.pdfAsset ?? null;
+  const fileTarget = "target" in decision ? decision.target : null;
   const quickShare = isQuickShareViewer();
-  if (quickShare && (assetTarget !== null || fileTarget !== null)) return <ShareMedia url={dest} />;
+  if (quickShare && fileTarget !== null) return <ShareLocalMedia path={fileTarget.path} />;
+  if (quickShare && assetTarget !== null) return <ShareLocalMedia path={assetTarget} label={dest} />;
   // OG 6e7afa8eb block.cljs show-link?/media-link: Markdown requires !, Org media does not.
   // GH #732: a relative file link reads as the absolute file: URL its resolver names.
-  if ((s.image || format === "org") && !isMobilePlatform && !quickShare && (fileTarget || decision === "file")) {
-    const readerDest = (fileTarget && relativePdfFileUrl(dest, fileTarget, graphMeta()?.root ?? "")) || dest;
-    const outsidePath = externalPdfPath(readerDest);
-    if (outsidePath.kind === "pdf") {
+  if ((s.image || format === "org") && !isMobilePlatform && !quickShare && decision.kind !== "drive") {
+    const readerDest = fileTarget && (!relative || relative.pathQualified) ? relativePdfFileUrl(fileTarget, graphMeta()?.root ?? "")
+      : decision.kind === "file" ? decision.url : null;
+    const outsidePath = readerDest === null ? null : externalPdfPath(readerDest);
+    if (readerDest !== null && outsidePath?.kind === "pdf") {
       const label = s.label?.length ? astText(s.label) : outsidePath.path.split("/").pop()!;
       return <ExternalPdfLink dest={readerDest} path={outsidePath.path} label={label} spanAttrs={spanAttrs} />;
     }
   }
-  const pdf = /\.pdf$/i.test(dest);
-  const assetPdf = relative && pdf && fileTarget?.kind !== "outside";
-  const web = decision === "web";
-  if (s.image && (assetPdf || (!pdf && (relative || web)))) {
+  const web = decision.kind === "web";
+  const media = web ? decision : relative;
+  if (s.image && media && (assetPdf !== null || !/\.pdf$/i.test(media.url))) {
     const { width, height } = parseImageMetaBrace(s.metadata);
     const alt = s.label && s.label.length ? astText(s.label) : "";
-    if (assetPdf) return <PdfAssetLink dest={dest} label={alt} spanAttrs={spanAttrs} />;
-    const k = mediaKind(dest);
+    if (assetPdf !== null) return <PdfAssetLink filename={assetPdf} label={alt} spanAttrs={spanAttrs} />;
+    const k = mediaKind(media.url);
     if (k === "video" || k === "audio")
-      return <MediaEmbed url={dest} external={web} kind={k} alt={alt} width={width} blockId={blockId} token={token} spanAttrs={spanAttrs} />;
-    return <AssetImage url={dest} external={web} alt={alt} width={width} height={height} blockId={blockId} token={token} spanAttrs={spanAttrs} />;
+      return <MediaEmbed source={media} kind={k} alt={alt} width={width} blockId={blockId} token={token} spanAttrs={spanAttrs} />;
+    return <AssetImage source={media} alt={alt} width={width} height={height} blockId={blockId} token={token} spanAttrs={spanAttrs} />;
   }
   // GH #457: a plain file path resolves from the graph folder, preserving
   // authored parent traversal (relativeFileLink.ts); an asset link
   // keeps the asset routes below and a bare `x.pdf` keeps the reader route.
-  if (fileTarget !== null && (!pdf || /[/\\]/.test(dest))) {
+  if (fileTarget !== null && !("useUrl" in decision && decision.useUrl)) {
     return (
       <span class="link-copy-wrap">
         <RelativeFileLink dest={dest} decision={decision} target={fileTarget} spanAttrs={spanAttrs}>
@@ -496,32 +498,33 @@ function renderLink(
       </span>
     );
   }
-  if (assetPdf) {
+  if (assetPdf !== null) {
     const labelStr = s.label && s.label.length ? astText(s.label) : pdfFilenameFromDest(dest);
-    return <PdfAssetLink dest={dest} label={labelStr} spanAttrs={spanAttrs} />;
+    return <PdfAssetLink filename={assetPdf} label={labelStr} spanAttrs={spanAttrs} />;
   }
   // OG parity (og-1.0.0 block.cljs:989-1011 show-link? -> :1213 media-link;
   // util/text.cljs:31 media-link?): a BARE http(s) URL ending in a media
   // extension auto-renders inline as media. Keyed on s.full (OG full_text) so a
   // labeled [text](x.png) — full_text not http-prefixed — stays a plain link.
   if (web && !s.image && /^https?:\/\//i.test(s.full.trimStart())) {
-    const k = mediaKind(dest);
+    const k = mediaKind(decision.url);
     if (k === "image")
-      return <AssetImage url={dest} external alt="" blockId={blockId} token={token} spanAttrs={spanAttrs} />;
+      return <AssetImage source={decision} alt="" blockId={blockId} token={token} spanAttrs={spanAttrs} />;
     if (k === "video" || k === "audio")
-      return <MediaEmbed url={dest} external kind={k} alt="" blockId={blockId} token={token} spanAttrs={spanAttrs} />;
+      return <MediaEmbed source={decision} kind={k} alt="" blockId={blockId} token={token} spanAttrs={spanAttrs} />;
   }
   const activate = () => {
     if (assetTarget !== null) void readOwned(graphOwner(), backend().openAsset(assetTarget, backend().graphBindingGeneration())).catch((error) => reportLinkOpenFailure(dest, error));
-    else void openOutboundLink(dest);
+    else if (decision.kind === "drop") reportLinkOpenFailure(dest, new Error(decision.error));
+    else if ("url" in decision) void openOutboundLink(decision.url);
   };
   return (
     <span class="link-copy-wrap">
       <a
         class="external-link"
-        title={fileUrlTitle(dest)}
+        title={decision.kind === "file" ? fileUrlTitle(decision.url) : undefined}
         {...(spanAttrs ?? {})}
-        {...outboundAnchorAttrs(dest, decision, activate)}
+        {...outboundAnchorAttrs(decision, activate)}
       >
         <Show when={s.label && s.label.length} fallback={dest}>{renderInlines(s.label!, blockId, spanMode, macroExpansion, format)}</Show>
       </a>
@@ -594,26 +597,6 @@ export function MathView(props: { tex: string; display: boolean; spanAttrs?: Spa
       </Show>
     </span>
   );
-}
-
-// `assetRelPath` lives in ../media (shared with the PDF annotation reader);
-// re-exported so existing importers keep one door.
-export { assetRelPath };
-
-// A relative link into `assets/` (file, nested directory, or the assets root)
-// decoded for the OS opener (GH #367); the root is "" (`[p](./assets/)` or bare
-// `./assets`). Null for other relative paths. Trailing slashes are
-// dropped so `./assets/dir/` names `dir`. The backend re-validates the name.
-function assetLinkRel(dest: string): string | null {
-  const normalized = dest.replace(/\\/g, "/").replace(/\/+$/, "");
-  if (/(^|\/)assets$/i.test(normalized)) return "";
-  const rel = assetRelPath(normalized);
-  if (rel === null) return null;
-  try {
-    return decodeURIComponent(rel);
-  } catch {
-    return rel;
-  }
 }
 
 // The width `%` CSS resolves against is the nearest BLOCK-level ancestor's
@@ -744,13 +727,20 @@ function mediaResizeGrip(
   };
 }
 
+type MediaSource = Extract<AnchorDecision, { kind: "web" }> | { kind: "relative"; url: string; mediaPath: string | null };
+
+function QuickShareMedia(props: { source: MediaSource; label?: string }) {
+  const source = props.source;
+  return source.kind === "web" ? <ShareMedia url={source.url} label={props.label} />
+    : <ShareLocalMedia path={source.mediaPath || source.url} label={props.label} />;
+}
+
 // Image embed: external URLs load directly; graph assets (`../assets/x.png`)
 // are read from disk via the backend and shown as a blob URL. When rendered
 // inside a real block (`blockId` set, not the lightbox/capture scratch), a
 // corner grip lets you drag-resize; the result is written back as a width %.
 export function AssetImage(props: {
-  url: string;
-  external: boolean;
+  source: MediaSource;
   alt: string;
   width?: string;
   height?: string;
@@ -759,7 +749,7 @@ export function AssetImage(props: {
   spanAttrs?: SpanDomAttrs;
   onClick?: (event: MouseEvent) => void;
 }): JSX.Element {
-  if (isQuickShareViewer()) return <ShareMedia url={props.url} label={props.alt} />;
+  if (isQuickShareViewer()) return <QuickShareMedia source={props.source} label={props.alt} />;
   // Width sizes the WRAPPER, not the <img>: an inline-block sized by a
   // percentage child doesn't shrink to it, so the grip (positioned against the
   // wrapper) would otherwise stay at full column width after a resize. With the
@@ -773,8 +763,8 @@ export function AssetImage(props: {
     ...(props.width ? { width: "100%" } : {}),
     ...(props.height ? { height: props.height } : {}),
   });
-  const external = props.external;
-  const rel = () => (external ? null : assetRelPath(props.url));
+  const external = props.source.kind === "web";
+  const rel = () => props.source.kind === "relative" ? props.source.mediaPath : null;
   // Served from a shared, graph-scoped blob cache so repeated references and
   // re-mounts don't re-read the file or mint duplicate blob URLs. The cache owns
   // the URL's lifetime (cleared on graph switch), so we don't revoke on unmount.
@@ -811,7 +801,7 @@ export function AssetImage(props: {
       release?.();
     });
   });
-  const src = () => (external ? props.url : diskSrc());
+  const src = () => (external ? props.source.url : diskSrc());
 
   let wrapEl: HTMLSpanElement | undefined;
   let imgEl: HTMLImageElement | undefined;
@@ -833,7 +823,7 @@ export function AssetImage(props: {
     e.stopPropagation();
     const binding = captureBinding();
     const owner = bindingOwner();
-    const name = assetRelPath(props.url);
+    const name = rel();
     if (!name || !props.blockId) return;
     const confirmed = await readOwned(owner, backend().confirm(
       t("render-move-to-the-trash-and-remove-it-from-this-block-it-stays-recoverable-in-logseq-tine-trash", { name: String(name) }),
@@ -881,12 +871,12 @@ export function AssetImage(props: {
   // the configured command (empty = OS opener) and marks the asset to refresh
   // when Tine regains focus after the edit.
   const editor = () =>
-    assetActions() && !isMobilePlatform ? mediaEditorForAsset(assetRelPath(props.url)) : undefined;
+    assetActions() && !isMobilePlatform ? mediaEditorForAsset(rel()) : undefined;
   const onEditAsset = async (e: MouseEvent) => {
     e.stopPropagation();
     const binding = captureBinding();
     const owner = bindingOwner();
-    const name = assetRelPath(props.url);
+    const name = rel();
     const ed = editor();
     if (!name || !ed) return;
     const command = await readOwned(owner, resolveMediaEditorCommand(ed));
@@ -899,7 +889,7 @@ export function AssetImage(props: {
   return (
     <Show
       when={external || src() || previewUnavailable()}
-      fallback={<span class="inline-image-missing">🖼 {props.alt || assetRelPath(props.url)}</span>}
+      fallback={<span class="inline-image-missing">🖼 {props.alt || rel()}</span>}
     >
       <span ref={wrapEl} class="inline-image-wrap" style={wrapStyle()} {...(props.spanAttrs ?? {})}>
         <Show when={src()} fallback={
@@ -955,8 +945,8 @@ function renderImgMacro(body: string, blockId?: string): JSX.Element {
   const toks = body.replace(/^img\s*/i, "").trim().split(/\s+/).filter(Boolean);
   const url = toks[0] ?? "";
   const decision = anchorDecision(url);
-  if (decision !== "relative" && decision !== "web") {
-    return isQuickShareViewer() ? <ShareMedia url={url} /> : <span class="macro">{`{{${body}}}`}</span>;
+  if (decision.kind !== "relative" && decision.kind !== "web") {
+    return isQuickShareViewer() ? <ShareLocalMedia path={decision.kind === "drive" ? decision.target.path : url} /> : <span class="macro">{`{{${body}}}`}</span>;
   }
   const ALIGN = new Set(["left", "right", "center"]);
   let width: string | undefined;
@@ -971,7 +961,7 @@ function renderImgMacro(body: string, blockId?: string): JSX.Element {
     if (toks[3]) (ALIGN.has(toks[3].toLowerCase()) ? (align = toks[3].toLowerCase()) : (cls = toks[3]));
   }
   const px = (v?: string) => (v ? (/^\d+$/.test(v) ? `${v}px` : v) : undefined);
-  const img = <AssetImage url={url} external={decision === "web"} alt="" width={px(width)} height={px(height)} blockId={blockId} />;
+  const img = <AssetImage source={decision} alt="" width={px(width)} height={px(height)} blockId={blockId} />;
   if (!align && !cls) return img;
   const classes: Record<string, boolean> = {};
   if (align) classes[`img-align-${align}`] = true;
@@ -988,8 +978,7 @@ function renderImgMacro(body: string, blockId?: string): JSX.Element {
 // codec — fall back to a click-to-open chip that launches the OS default player.
 // Matches the user's "inline when it works, otherwise open externally" intent.
 function MediaEmbed(props: {
-  url: string;
-  external: boolean;
+  source: MediaSource;
   kind: "video" | "audio";
   alt?: string;
   width?: string;
@@ -997,13 +986,14 @@ function MediaEmbed(props: {
   token?: MediaToken;
   spanAttrs?: SpanDomAttrs;
 }): JSX.Element {
-  if (isQuickShareViewer()) return <ShareMedia url={props.url} label={props.alt} />;
+  const source = props.source;
+  if (isQuickShareViewer()) return <QuickShareMedia source={source} label={props.alt} />;
   const [failed, setFailed] = createSignal(false);
   const [blobFallback, setBlobFallback] = createSignal("");
   // Audio has no fullscreen; the "Expand" button (below) opens a wide overlay
   // player with a waveform scrubber instead of stretching the inline control.
-  const external = props.external;
-  const assetPath = external ? null : assetRelPath(props.url);
+  const external = source.kind === "web";
+  const assetPath = source.kind === "relative" ? source.mediaPath : null;
   // Graph media uses native range requests; never copy a multi-GB file into a Blob.
   const [blobResource] = createGraphResource(() => assetPath || null, async (path) => {
     const result = await readOwned(graphOwner(), backend().streamAsset(path));
@@ -1012,16 +1002,16 @@ function MediaEmbed(props: {
   // An asset stream that fails leaves the native element without a src, which
   // is what `blobFallback()` above already exists to cover.
   const blob = () => readOr(blobResource, undefined, "inline audio asset");
-  const src = () => blobFallback() || (external ? props.url : blob());
+  const src = () => blobFallback() || (external ? source.url : blob());
   const label = () => {
-    const name = (assetPath || props.url).split("/").pop() || props.url;
+    const name = (assetPath || source.url).split("/").pop() || source.url;
     try { return decodeURIComponent(name); }
     catch { return name; /* An ordinary filename may contain a literal percent. */ }
   };
   const open = (e: MouseEvent) => {
     e.stopPropagation();
-    if (assetPath) void readOwned(graphOwner(), backend().openAsset(assetPath, backend().graphBindingGeneration())).catch((error) => reportLinkOpenFailure(props.url, error));
-    else void openOutboundLink(props.url);
+    if (assetPath) void readOwned(graphOwner(), backend().openAsset(assetPath, backend().graphBindingGeneration())).catch((error) => reportLinkOpenFailure(source.url, error));
+    else void openOutboundLink(source.url);
   };
   let tryingBlobFallback = false;
   let blobLease: MediaBlobLease | null = null;
@@ -1121,7 +1111,7 @@ function MediaEmbed(props: {
         <Show when={props.kind === "audio"}>
           <button
             class="media-audio-widen"
-            onClick={(e) => { e.stopPropagation(); setAudioPlayer({ url: props.url, name: label(), assetPath }); }}
+            onClick={(e) => { e.stopPropagation(); setAudioPlayer({ url: source.url, name: label(), assetPath }); }}
             title={t("render-open-the-expanded-player-waveform-precise-seeking")}
           >
             {t("render-expand")}</button>

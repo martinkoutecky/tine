@@ -12,7 +12,8 @@ import { AstBody } from "./body";
 import { applySidebarSession } from "../ui";
 import { graphMeta, setGraphMeta } from "../graphSession";
 import { setToasts, toasts } from "../toasts";
-import { fileLinkTarget, graphRelative, resolvedFilePath, filePathUrl, fileUrlTitle } from "./relativeFileLink";
+import { graphRelative, resolvedFilePath, filePathUrl, fileUrlTitle } from "./relativeFileLink";
+import { anchorDecision } from "../linkSchemePolicy";
 
 beforeAll(initParser);
 afterEach(() => {
@@ -127,6 +128,10 @@ describe("file links resolve from the graph folder (GH #457)", () => {
 });
 
 describe("file path classification and encoding", () => {
+  const fileLinkTarget = (dest: string) => {
+    const decision = anchorDecision(dest);
+    return "target" in decision ? decision.target : null;
+  };
   it("keeps schemes, file URLs, anchors and page destinations on their existing routes", () => {
     for (const dest of ["https://x/a.txt", "zotero://x", "tel:+42", "#anchor.x", "*heading.x", "Some Page", "files/report", "file:///tmp/a%20b.txt", "file://D:\\test.txt"]) expect(fileLinkTarget(dest), dest).toBeNull();
   });

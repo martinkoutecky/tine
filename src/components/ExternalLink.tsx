@@ -3,7 +3,7 @@ import { backend } from "../backend";
 import { pushToast } from "../toasts";
 import { msg } from "../i18n";
 import { graphOwner, ownedWhen, readOwned } from "../owned";
-import { DEFERRED_HREF, anchorKeepsHref, linkScheme, refusedLinkScheme, rememberableLinkScheme, type AnchorDecision } from "../linkSchemePolicy";
+import { DEFERRED_HREF, anchorHref, linkScheme, refusedLinkScheme, rememberableLinkScheme, type AnchorDecision } from "../linkSchemePolicy";
 import { loadLinkSchemeSettings, rememberedLinkSchemes, setLinkSchemeRemembered } from "../linkSchemeSettings";
 import { askLinkScheme } from "../linkSchemePrompt";
 export { linkScheme } from "../linkSchemePolicy";
@@ -79,15 +79,16 @@ export function reportLinkOpenFailure(dest: string, error: unknown): void {
  * policy is `anchorDecision`). Relative and web/mail destinations keep their
  * href; any other stays a focusable link whose Enter runs the same activation as
  * its click. Click and Enter run the caller's chosen route. */
-export function outboundAnchorAttrs(dest: string, decision: AnchorDecision, activate: () => void): JSX.AnchorHTMLAttributes<HTMLAnchorElement> {
+export function outboundAnchorAttrs(decision: AnchorDecision, activate: () => void): JSX.AnchorHTMLAttributes<HTMLAnchorElement> {
   const run = (event: Event) => {
     event.preventDefault();
     event.stopPropagation();
     activate();
   };
-  if (anchorKeepsHref(decision)) return { href: dest, onClick: run };
+  const href = anchorHref(decision);
+  if (href !== undefined) return { href, onClick: run };
   return {
-    ...(decision !== "drop" ? { [DEFERRED_HREF]: dest } : {}),
+    ...("url" in decision ? { [DEFERRED_HREF]: decision.url } : {}),
     role: "link", tabindex: 0, onClick: run, onKeyDown: (event) => { if (event.key === "Enter") run(event); },
   };
 }

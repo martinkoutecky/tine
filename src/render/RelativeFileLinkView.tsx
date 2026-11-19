@@ -32,7 +32,7 @@ export function RelativeFileLink(props: {
       class="external-link file-link"
       title={resolved()}
       {...(props.spanAttrs ?? {})}
-      {...outboundAnchorAttrs(props.dest, props.decision, activate)}
+      {...outboundAnchorAttrs(props.decision, activate)}
     >
       {props.children}
     </a>

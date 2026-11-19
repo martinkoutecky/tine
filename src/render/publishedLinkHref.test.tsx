@@ -1,4 +1,4 @@
-import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeAll, beforeEach, describe, expect, expectTypeOf, it, vi } from "vitest";
 import { render } from "solid-js/web";
 
 // GH #984 review (033c3cc8c): in a published reader, a link keeps a browser-navigable
@@ -15,7 +15,7 @@ import { AstBody } from "./body";
 import { initParser } from "./parse";
 import { rawHtmlPresentation } from "./htmlSanitize";
 import { renderSanitizedHtml } from "./rawHtml";
-import { anchorDecision, checkExternalLink, rememberableLinkScheme } from "../linkSchemePolicy";
+import { anchorDecision, checkExternalLink, rememberableLinkScheme, type AnchorDecision } from "../linkSchemePolicy";
 import { backend } from "../backend";
 import * as panes from "../panes";
 import * as router from "../router";
@@ -24,6 +24,7 @@ import { setToasts, toasts } from "../toasts";
 import { LinkSchemePrompt } from "../components/LinkSchemePrompt";
 import { AudioOverlay } from "../components/AudioOverlay";
 import { initLinkSchemeSettings } from "../linkSchemeSettings";
+import { publishedBackend } from "../publishedBackend";
 import { lightbox, setAudioPlayer, setLightbox } from "../ui";
 
 beforeAll(initParser);
@@ -165,7 +166,7 @@ describe("links keep an href only for relative, web and mail destinations (GH #9
 
   it("obfuscated refused schemes are dropped", () => {
     for (const dest of [" javascript:alert(1)", "java\tscript:alert(1)", "JAVASCRIPT:alert(1)", "vbscript:x"]) {
-      expect(anchorDecision(dest), JSON.stringify(dest)).toBe("drop");
+      expect(anchorDecision(dest).kind, JSON.stringify(dest)).toBe("drop");
     }
   });
 
@@ -218,6 +219,89 @@ describe("Windows drive links in the app (GH #984)", () => {
     await flush();
     expect(graph).not.toHaveBeenCalled();
     expect(toasts()).toHaveLength(1);
+  });
+});
+
+const driveSpellings = [
+  ["C:/docs/note", "note"],
+  ["C:\\docs\\note", "note"],
+  ["C:%2Fdocs%2Fnote", "note"],
+  ["C:%2fdocs%2fnote", "note"],
+  ["C:%5Cdocs%5Cnote", "note"],
+  ["C:%5cdocs%5cnote", "note"],
+  ["C:/docs/note%25", "note%25"],
+  ["C:%2Fdocs\\more%5cnote%252F", "more/note%252F"],
+] as const;
+
+it("a drive decision exposes only an absolute path to the renderer", () => {
+  expectTypeOf<Extract<AnchorDecision, { kind: "drive" }>>().toEqualTypeOf<{
+    kind: "drive"; target: { kind: "outside"; reason: "absolute"; path: string };
+  }>();
+  expect(anchorDecision("C:%5cdocs%2Fnote%252F.PDF")).toEqual({
+    kind: "drive", target: { kind: "outside", reason: "absolute", path: "C:/docs/note%2F.PDF" },
+  });
+});
+
+describe.each(["app", "published reader"] as const)("Windows drive links in the %s", (mode) => {
+  it.each(driveSpellings)("activates %s through the file opener for every format and suffix", async (stem, name) => {
+    published.on = mode === "published reader";
+    const handoff = vi.spyOn(window, "open").mockReturnValue(null);
+    const open = vi.spyOn(backend(), "openExternal");
+    if (published.on) open.mockImplementation(publishedBackend().openExternal);
+    else open.mockResolvedValue(undefined);
+    const graph = vi.spyOn(backend(), "openGraphFile").mockResolvedValue(undefined);
+    const asset = vi.spyOn(backend(), "openAsset").mockResolvedValue(undefined);
+    const stream = vi.spyOn(backend(), "streamAsset").mockResolvedValue("");
+    const read = vi.spyOn(backend(), "readAsset").mockResolvedValue(new Uint8Array());
+    const pdf = vi.spyOn(panes, "openPdf").mockReturnValue(null);
+
+    const expected = [];
+    for (const ext of ["txt", "pdf", "PDF"]) {
+      const dest = `${stem}.${ext}`;
+      for (const [source, format, how] of [
+        [`[note](${dest})`, "md", "click"],
+        [`![note](${dest})`, "md", "enter"],
+        [`[[${dest}][note]]`, "org", "click"],
+      ] as const) {
+        const anchor = mount(() => <InlineText text={source} format={format} />).querySelector("a");
+        expect(anchor, source).not.toBeNull();
+        expect(anchor!.getAttribute("href"), source).toBeNull();
+        const event = activationEvent(how);
+        anchor!.dispatchEvent(event);
+        expect(event.defaultPrevented, source).toBe(true);
+        expected.push([`file:///C:/docs/${name}.${ext}`]);
+      }
+    }
+    await flush();
+    expect(open.mock.calls).toEqual(expected);
+    for (const other of [graph, asset, stream, read, pdf, handoff]) expect(other).not.toHaveBeenCalled();
+    if (published.on) {
+      expect(toasts()).toHaveLength(3);
+      for (const toast of toasts()) {
+        expect(toast.message).toContain("file: links are never opened");
+        expect(toast.count).toBe(3);
+      }
+    }
+    else expect(toasts()).toHaveLength(0);
+  });
+
+  it("refuses unrecognized drive paths before any opener", () => {
+    published.on = mode === "published reader";
+    const open = vi.spyOn(backend(), "openExternal");
+    const graph = vi.spyOn(backend(), "openGraphFile");
+    const asset = vi.spyOn(backend(), "openAsset");
+    const stream = vi.spyOn(backend(), "streamAsset");
+    const read = vi.spyOn(backend(), "readAsset");
+    const pdf = vi.spyOn(panes, "openPdf");
+    for (const dest of ["C:assets/clip.mp3", "C:%252Fassets%2Fimage.png", "C:/docs/bad%.pdf", "C:%5Cassets%5Cnote%00.pdf"]) {
+      for (const [format, source] of [["md", `![label](${dest})`], ["org", `[[${dest}][label]]`]] as const) {
+        const host = mount(() => <InlineText text={source} format={format} />);
+        expect(host.querySelector("img, audio, video, a[href]"), source).toBeNull();
+        host.querySelector("a")!.click();
+      }
+    }
+    expect(toasts()).toHaveLength(4);
+    for (const other of [open, graph, asset, stream, read, pdf]) expect(other).not.toHaveBeenCalled();
   });
 });
 

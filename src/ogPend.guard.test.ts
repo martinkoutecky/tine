@@ -1,7 +1,7 @@
 import { readFileSync } from "node:fs";
 import { expect, it } from "vitest";
 const source = (path: string) => readFileSync(path, "utf8");
-const rule = "I-12: reuse the shared answerer; exemplars: inline.tsx::assetRelPath, tine-core/src/media_mime.rs, pageIdentityKey and blockRegions.id";
+const rule = "I-12: reuse the shared answerer; exemplars: linkSchemePolicy.ts::anchorDecision, tine-core/src/media_mime.rs, pageIdentityKey and blockRegions.id";
 
 it(rule + " for asset paths and MIME", () => {
   const overlay = source("src/components/AudioOverlay.tsx");
