@@ -18,11 +18,13 @@ import { renderSanitizedHtml } from "./rawHtml";
 import { anchorDecision, checkExternalLink, rememberableLinkScheme } from "../linkSchemePolicy";
 import { backend } from "../backend";
 import * as panes from "../panes";
+import * as router from "../router";
+import { clearAssetBlobCache } from "../assetCache";
 import { setToasts, toasts } from "../toasts";
 import { LinkSchemePrompt } from "../components/LinkSchemePrompt";
 import { AudioOverlay } from "../components/AudioOverlay";
 import { initLinkSchemeSettings } from "../linkSchemeSettings";
-import { setAudioPlayer } from "../ui";
+import { lightbox, setAudioPlayer, setLightbox } from "../ui";
 
 beforeAll(initParser);
 const disposers: (() => void)[] = [];
@@ -37,6 +39,8 @@ afterEach(() => {
   vi.restoreAllMocks();
   document.body.replaceChildren();
   setAudioPlayer(null);
+  setLightbox(null);
+  clearAssetBlobCache();
   setToasts([]);
   published.on = true;
 });
@@ -50,6 +54,16 @@ function mount(view: () => ReturnType<typeof InlineText>): HTMLElement {
   document.body.append(host);
   disposers.push(render(view, host));
   return host;
+}
+
+async function hoverLink(link: Element): Promise<void> {
+  vi.useFakeTimers();
+  try {
+    link.dispatchEvent(new PointerEvent("pointerenter", { pointerType: "mouse", isPrimary: true }));
+    await vi.advanceTimersByTimeAsync(1000);
+  } finally {
+    vi.useRealTimers();
+  }
 }
 
 /** Activate the link (click or Enter), confirm the prompt, return what reached the OS opener. */
@@ -175,8 +189,129 @@ it("expanded web audio uses the same remote source as inline playback", async ()
   expect([...host.querySelectorAll("audio")].map((audio) => audio.getAttribute("src"))).toEqual([url, url]);
 });
 
+describe("Windows drive links in the app (GH #984)", () => {
+  it.each([
+    "C:%2Fdocs%2Fnote.txt",
+    "C:%2fdocs%2fnote.txt",
+    "C:%2Fdocs/note.txt",
+    "C:%2fdocs\\note.txt",
+  ])("opens %s with the existing file opener", async (dest) => {
+    published.on = false;
+    const open = vi.spyOn(backend(), "openExternal").mockResolvedValue(undefined);
+    const graph = vi.spyOn(backend(), "openGraphFile").mockResolvedValue(undefined);
+    const link = mount(() => <InlineText text={`[note](${dest})`} />).querySelector("a");
+    expect(link).not.toBeNull();
+    link!.click();
+    await flush();
+    expect(open).toHaveBeenCalledExactlyOnceWith("file:///C:/docs/note.txt");
+    expect(graph).not.toHaveBeenCalled();
+  });
+
+  it("refuses an encoded drive path if decoding fails", async () => {
+    published.on = false;
+    const dest = "C:%2Fdocs%2Fbad%.txt";
+    vi.spyOn(backend(), "openExternal").mockRejectedValue(new Error("unsupported url scheme"));
+    const graph = vi.spyOn(backend(), "openGraphFile").mockResolvedValue(undefined);
+    const link = mount(() => <InlineText text={`[note](${dest})`} />).querySelector("a");
+    expect(link).not.toBeNull();
+    link!.click();
+    await flush();
+    expect(graph).not.toHaveBeenCalled();
+    expect(toasts()).toHaveLength(1);
+  });
+});
+
+describe.each(["md", "org"] as const)("%s image macros (GH #984)", (format) => {
+  beforeEach(() => { published.on = false; });
+
+  it.each([
+    "foo:assets/macro.png",
+    "JaVaScRiPt:assets/macro.png",
+    "data:assets/macro.png",
+    "blob:assets/macro.png",
+    "file:assets/macro.png",
+  ])("does not display or open %s as an image", async (dest) => {
+    const read = vi.spyOn(backend(), "readAsset").mockResolvedValue(new Uint8Array());
+    const open = vi.spyOn(backend(), "openExternal").mockResolvedValue(undefined);
+    const host = mount(() => <AstBody raw={`{{img ${dest}}}`} format={format} />);
+    await flush();
+    host.querySelector<HTMLElement>("img, .macro, .inline-image-unavailable, .inline-image-missing")?.click();
+    expect.soft(read).not.toHaveBeenCalled();
+    expect.soft(lightbox()).toBeNull();
+    expect(host.querySelector("img")).toBeNull();
+    expect(open).not.toHaveBeenCalled();
+  });
+
+  it.each(["HtTp://example.org/assets/macro.png", "HTTPS://example.org/assets/macro.png"])("opens the remote image %s on click", async (dest) => {
+    const read = vi.spyOn(backend(), "readAsset").mockResolvedValue(new Uint8Array());
+    const host = mount(() => <AstBody raw={`{{img ${dest}}}`} format={format} />);
+    await flush();
+    const image = host.querySelector("img");
+    image?.click();
+    expect.soft(read).not.toHaveBeenCalled();
+    expect(image?.getAttribute("src")).toBe(dest);
+    expect(lightbox()).toBe(dest);
+  });
+
+  it("keeps a Quick Share placeholder and a reader-activated web media link", () => {
+    const meta = document.createElement("meta");
+    meta.name = "tine-published";
+    meta.content = "quick-share:1";
+    document.head.append(meta);
+    const read = vi.spyOn(backend(), "readAsset").mockResolvedValue(new Uint8Array());
+    try {
+      const host = mount(() => <AstBody raw={"{{img foo:assets/macro.png}}\n\n{{img HTTPS://example.org/assets/macro.png}}"} format={format} />);
+      expect(host.textContent).toContain("macro.png — not included");
+      expect(host.querySelector("a")?.getAttribute("href")).toBe("https://example.org/assets/macro.png");
+      expect(host.querySelector("img")).toBeNull();
+      expect(read).not.toHaveBeenCalled();
+    } finally {
+      meta.remove();
+    }
+  });
+});
+
 describe.each([true, false])("scheme checks before local routes (published renderer: %s)", (publishedMode) => {
   beforeEach(() => { published.on = publishedMode; });
+
+  describe.each(["", "!"])("dotless Markdown destinations with prefix %j", (prefix) => {
+    it.each([
+      ["tel:123", "tel"],
+      ["sms:123", "sms"],
+      ["mailto:alice@localhost", null],
+      ["NoteApp:docs/note", "noteapp"],
+      ["Note\tApp:docs/note", "noteapp"],
+    ] as const)("routes %s through the opener and skips the page preview", async (dest, scheme) => {
+      const page = vi.spyOn(backend(), "getPage").mockResolvedValue(null);
+      const navigate = vi.spyOn(router, "openPage").mockImplementation(() => {});
+      const link = mount(() => <InlineText text={`${prefix}[open](${dest})`} />).querySelector("a");
+      expect(link).not.toBeNull();
+      await hoverLink(link!);
+      expect.soft(page).not.toHaveBeenCalled();
+      if (scheme) {
+        expect(await activateAndConfirm(link!, "click")).toEqual([[dest, scheme]]);
+      } else {
+        const open = vi.spyOn(backend(), "openExternal").mockResolvedValue(undefined);
+        link!.click();
+        await flush();
+        expect(open).toHaveBeenCalledExactlyOnceWith(dest);
+        expect(document.querySelector('[role="dialog"]')).toBeNull();
+      }
+      expect(navigate).not.toHaveBeenCalled();
+      expect(link!.getAttribute("href")).toBe(scheme ? null : dest);
+    });
+  });
+
+  it.each([["[[tel:123]]", "tel:123"], ["[open](Tine)", "Tine"]])("keeps %s as a page reference", async (source, name) => {
+    const page = vi.spyOn(backend(), "getPage").mockResolvedValue(null);
+    const navigate = vi.spyOn(router, "openPage").mockImplementation(() => {});
+    const link = mount(() => <InlineText text={source} />).querySelector("a");
+    expect(link).not.toBeNull();
+    await hoverLink(link!);
+    expect(page).toHaveBeenCalledExactlyOnceWith(name, "page");
+    link!.click();
+    expect(navigate).toHaveBeenCalledExactlyOnceWith(name, "page");
+  });
 
   it.each([
     ["asset PDF", "md", "foo:assets/manual.pdf", "[manual](foo:assets/manual.pdf)", "foo", "click"],

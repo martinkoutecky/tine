@@ -89,7 +89,7 @@ export function anchorDecision(dest: string): AnchorDecision {
   if (refusedLinkScheme(scheme)) return "drop";
   if (isDirectExternalScheme(scheme)) return scheme === schemes.mail ? "mail" : "web";
   if (scheme === schemes.localFile) return "file";
-  return /^[a-z]:[/\\]/i.test(dest.trimStart()) ? "drive" : "defer";
+  return /^[a-z]:(?:[/\\]|%2f)/i.test(dest.trimStart()) ? "drive" : "defer";
 }
 
 export function anchorKeepsHref(decision: AnchorDecision): boolean {

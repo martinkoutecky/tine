@@ -16,6 +16,6 @@ export function PdfAreaImage(props: {
 }): JSX.Element {
   const path = () => `../assets/${props.page.replace(/^hls__/, "")}/${props.hlPage}_${props.highlightId}_${props.stamp}.png`;
   return <span class="pdf-area-image" onMouseDown={e => e.stopPropagation()}>
-    <AssetImage url={path()} alt="" onClick={e => props.onClick?.(e)} />
+    <AssetImage url={path()} external={false} alt="" onClick={e => props.onClick?.(e)} />
   </span>;
 }

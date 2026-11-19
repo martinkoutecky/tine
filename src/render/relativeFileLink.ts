@@ -24,7 +24,7 @@ export function fileLinkTarget(dest: string, decision = anchorDecision(dest)): F
   if (path.startsWith("/") || /^[a-z]:\//i.test(path)) {
     return { kind: "outside", reason: "absolute", path };
   }
-  if (!path.includes(".")) return null;
+  if (decision === "drive" || !path.includes(".")) return null;
   return graphRelative(path);
 }
 

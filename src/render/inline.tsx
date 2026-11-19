@@ -440,7 +440,9 @@ function renderLink(
   const spanAttrs = spanMode ? coarseSpanAttrs(s.span) : undefined;
   const token: MediaToken = { full: s.full, metadata: s.metadata, span: spanMode ? s.span : undefined };
   const orgImage = url.type === "page_ref" && format === "org" && isOgOrgPageRefImageTarget(url.v);
-  if ((url.type === "page_ref" && !orgImage) || (url.type === "search" && searchTargetIsPage(url.v))) {
+  const searchDecision = url.type === "search" ? anchorDecision(url.v) : undefined;
+  if ((url.type === "page_ref" && !orgImage)
+      || (url.type === "search" && searchDecision === "relative" && searchTargetIsPage(url.v))) {
     // OG `page-reference` brackets a labelled link like a bare one (GH #966).
     const alias = s.label && s.label.length
       ? <PageReferenceLabel>{renderInlines(s.label, blockId, spanMode, macroExpansion, format)}</PageReferenceLabel>
@@ -452,7 +454,7 @@ function renderLink(
     return <BlockRefView id={url.v} label={label} spanAttrs={spanAttrs} blockId={blockId} span={hostSpan(s, spanMode, macroExpansion)} />;
   }
   const dest = urlDest(url);
-  const decision = anchorDecision(dest);
+  const decision = searchDecision ?? anchorDecision(dest);
   const relative = decision === "relative";
   if (orgImage && relative) return <AssetImage url={dest} external={false} alt="" blockId={blockId} token={token} spanAttrs={spanAttrs} />;
   const assetTarget = relative ? assetLinkRel(dest) : null;
@@ -748,7 +750,7 @@ function mediaResizeGrip(
 // corner grip lets you drag-resize; the result is written back as a width %.
 export function AssetImage(props: {
   url: string;
-  external?: boolean;
+  external: boolean;
   alt: string;
   width?: string;
   height?: string;
@@ -771,7 +773,7 @@ export function AssetImage(props: {
     ...(props.width ? { width: "100%" } : {}),
     ...(props.height ? { height: props.height } : {}),
   });
-  const external = props.external ?? /^(https?:|data:|blob:)/.test(props.url);
+  const external = props.external;
   const rel = () => (external ? null : assetRelPath(props.url));
   // Served from a shared, graph-scoped blob cache so repeated references and
   // re-mounts don't re-read the file or mint duplicate blob URLs. The cache owns
@@ -952,6 +954,10 @@ export function AssetImage(props: {
 function renderImgMacro(body: string, blockId?: string): JSX.Element {
   const toks = body.replace(/^img\s*/i, "").trim().split(/\s+/).filter(Boolean);
   const url = toks[0] ?? "";
+  const decision = anchorDecision(url);
+  if (decision !== "relative" && decision !== "web") {
+    return isQuickShareViewer() ? <ShareMedia url={url} /> : <span class="macro">{`{{${body}}}`}</span>;
+  }
   const ALIGN = new Set(["left", "right", "center"]);
   let width: string | undefined;
   let height: string | undefined;
@@ -965,7 +971,7 @@ function renderImgMacro(body: string, blockId?: string): JSX.Element {
     if (toks[3]) (ALIGN.has(toks[3].toLowerCase()) ? (align = toks[3].toLowerCase()) : (cls = toks[3]));
   }
   const px = (v?: string) => (v ? (/^\d+$/.test(v) ? `${v}px` : v) : undefined);
-  const img = <AssetImage url={url} alt="" width={px(width)} height={px(height)} blockId={blockId} />;
+  const img = <AssetImage url={url} external={decision === "web"} alt="" width={px(width)} height={px(height)} blockId={blockId} />;
   if (!align && !cls) return img;
   const classes: Record<string, boolean> = {};
   if (align) classes[`img-align-${align}`] = true;
