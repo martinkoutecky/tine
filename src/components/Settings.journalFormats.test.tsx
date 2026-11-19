@@ -86,3 +86,28 @@ it("offers the OG built-ins with the current custom format first and writes a se
   expect([...select.options].map(o => o.value)).toEqual(["E, yyyy/MM/dd", ...golden.formats.map(f => f.pattern).filter(p => p !== "E, yyyy/MM/dd")]);
   dispose();
 });
+
+it("D-20261119-YL: while config.edn's title format names no single day, Settings shows the format in use and why", async () => {
+  setGraphMeta({ root: "/fixture", journal_page_title_format: "MM-dd", journal_file_name_format: "yyyy_MM_dd", journal_config_diagnostics: [] } as unknown as GraphMeta);
+  const root = document.createElement("div");
+  document.body.append(root);
+  const dispose = render(() => <Settings />, root);
+  try {
+    openSettings("journals");
+    await new Promise(resolve => setTimeout(resolve, 0));
+    const notes = () => [...root.querySelectorAll(".config-diagnostic")].map(n => n.textContent ?? "");
+    expect(notes()).toEqual([
+      'Journal titles use "MMM do, yyyy", not "MM-dd" from config.edn: that format writes no year, so one title would name the same date in every year. Your files are unchanged.',
+    ]);
+    // The picker keeps the configured value, so the file round-trips.
+    expect([...root.querySelectorAll<HTMLSelectElement>("select")].some(s => s.value === "MM-dd")).toBe(true);
+    applyConfigDerivedState({ ...graphMeta()!, journal_page_title_format: "d.M.yy" }, graphMeta());
+    await new Promise(resolve => setTimeout(resolve, 0));
+    expect(notes()).toEqual([
+      'Journal titles use "MMM do, yyyy", not "d.M.yy" from config.edn: that format titles 1900-01-01 "1.1.00", which opens 2000-01-01. Your files are unchanged.',
+    ]);
+    applyConfigDerivedState({ ...graphMeta()!, journal_page_title_format: "dd.MM.yyyy" }, graphMeta());
+    await new Promise(resolve => setTimeout(resolve, 0));
+    expect(notes()).toEqual([]);
+  } finally { dispose(); }
+});

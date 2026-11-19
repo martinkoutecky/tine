@@ -525,6 +525,10 @@ within a column; merged cells are still v2+.
   `:journal/page-title-format` and recognizes/creates journal files in your format
   (e.g. `dd-MM-yyyy`, `yyyy-MM-dd`, `yyyyMMdd`), falling back to the defaults so
   old/foreign files still resolve. The display-title format is pickable in Settings.
+  A title format is used only if every day's title opens that day again; one that
+  names no single day (`MM-dd`, `d.M.yy`) is not used: titles use the default, a notice
+  says so once per graph load and Settings shows why. No file or setting is rewritten
+  (D-20261119-YL).
 - **Duplicate-day reconcile** — if two files ever resolve to the same day, Tine keeps
   **both** rather than silently dropping one, and Settings → *Backups & recovery* → **Duplicate
   journal days** lets you **Open** / **Merge** / **Rename** / **Trash** each. The file the day

@@ -1,0 +1,164 @@
+{
+  "aliases": [],
+  "answers": {
+    "alias_groups": [],
+    "inventory": [
+      {
+        "day": 20261102,
+        "is_journal": true,
+        "key": "02.11.2026",
+        "name": "02.11.2026",
+        "target": {
+          "id": "journals/2026_11_02.md",
+          "kind": "existing",
+          "others": []
+        }
+      },
+      {
+        "day": 20271102,
+        "is_journal": true,
+        "key": "02.11.2027",
+        "name": "02.11.2027",
+        "target": {
+          "id": "journals/2027_11_02.md",
+          "kind": "existing",
+          "others": []
+        }
+      },
+      {
+        "day": null,
+        "is_journal": false,
+        "key": "11-02",
+        "name": "11-02",
+        "target": {
+          "id": "pages/11-02.md",
+          "kind": "absent"
+        }
+      },
+      {
+        "day": null,
+        "is_journal": false,
+        "key": "notes",
+        "name": "Notes",
+        "target": {
+          "id": "pages/Notes.md",
+          "kind": "existing",
+          "others": []
+        }
+      },
+      {
+        "day": null,
+        "is_journal": false,
+        "key": "nov 2nd, 2026",
+        "link": {
+          "kind": "journal",
+          "name": "02.11.2026"
+        },
+        "name": "Nov 2nd, 2026",
+        "target": {
+          "id": "journals/2026_11_02.md",
+          "kind": "existing",
+          "others": []
+        }
+      }
+    ],
+    "journals": {
+      "content_days": [
+        20261102,
+        20271102
+      ],
+      "file_name_format": "yyyy_MM_dd",
+      "title_format": "dd.MM.yyyy"
+    },
+    "resolve": [
+      {
+        "kind": "page",
+        "name": "02.11.2026",
+        "target": {
+          "id": "journals/2026_11_02.md",
+          "kind": "existing",
+          "others": []
+        }
+      },
+      {
+        "kind": "page",
+        "name": "02.11.2027",
+        "target": {
+          "id": "journals/2027_11_02.md",
+          "kind": "existing",
+          "others": []
+        }
+      },
+      {
+        "kind": "journal",
+        "name": "Nov 2nd, 2026",
+        "target": {
+          "id": "journals/2026_11_02.md",
+          "kind": "existing",
+          "others": []
+        }
+      }
+    ],
+    "v": 1
+  },
+  "backlinks": {},
+  "block_ref_counts": {},
+  "entries": [
+    {
+      "date_key": 20261102,
+      "kind": "journal",
+      "name": "02.11.2026",
+      "path": "journals/2026_11_02.md"
+    },
+    {
+      "date_key": 20271102,
+      "kind": "journal",
+      "name": "02.11.2027",
+      "path": "journals/2027_11_02.md"
+    },
+    {
+      "date_key": null,
+      "kind": "page",
+      "name": "Notes",
+      "path": "pages/Notes.md"
+    }
+  ],
+  "exported_at": "",
+  "home": "02.11.2026",
+  "icons": {},
+  "name": "Site",
+  "pages": [
+    {
+      "blocks": [],
+      "format": "md",
+      "kind": "journal",
+      "name": "02.11.2026",
+      "path": "journals/2026_11_02.md",
+      "pre_block": null,
+      "read_only": true,
+      "title": "02.11.2026"
+    },
+    {
+      "blocks": [],
+      "format": "md",
+      "kind": "journal",
+      "name": "02.11.2027",
+      "path": "journals/2027_11_02.md",
+      "pre_block": null,
+      "read_only": true,
+      "title": "02.11.2027"
+    },
+    {
+      "blocks": [],
+      "format": "md",
+      "kind": "page",
+      "name": "Notes",
+      "path": "pages/Notes.md",
+      "pre_block": null,
+      "read_only": true,
+      "title": "Notes"
+    }
+  ],
+  "queries": [],
+  "schema": 1
+}

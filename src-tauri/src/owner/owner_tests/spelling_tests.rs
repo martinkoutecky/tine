@@ -324,11 +324,12 @@ fn an_add_to_a_day_is_saved_into_the_file_that_holds_it() {
     assert_eq!(add_to_day(&graph, "2026-11-09"), retitled);
 }
 
-/// With a year-less title format two pages files titled by one full date
-/// share the day; with the winner deleted outside the app, an add to that
-/// day is saved into the other, and the deleted file is not recreated.
+/// Two pages files titled by one full date share the day; with the winner
+/// deleted outside the app, an add to that day is saved into the other, and
+/// the deleted file is not recreated. Under a refused title format (`MM-dd`,
+/// D-20261119-YL fallback), so the day goes by its default title.
 #[test]
-fn an_add_after_a_year_less_day_winner_is_deleted_goes_to_its_twin() {
+fn an_add_after_a_day_winner_is_deleted_goes_to_its_twin_under_the_fallback_title() {
     let graph = Graph::seeded(
         Default::default(),
         &[
@@ -353,13 +354,12 @@ fn an_add_after_a_year_less_day_winner_is_deleted_goes_to_its_twin() {
     assert!(!graph.root.join("journals/2026_11_02.md").exists());
 }
 
-/// CM leftovers item 1 (K SPEC §2.1, the year-less label limitation): with a
-/// year-less title format the same date in two years is two days, each with
-/// one file. An add to one day goes by the day, not by its shared label
-/// `11-02`: it lands in that day's file, is not refused as a name two files
-/// claim, and the other year's file is untouched.
+/// D-20261119-YL fallback row: under a refused title format (`MM-dd`) the
+/// same date in two years is two days with two default titles, each with one
+/// file. An add to one day lands in that day's file, is not refused as a name
+/// two files claim, and the other year's file is untouched.
 #[test]
-fn a_year_less_add_to_a_day_goes_by_the_day_not_its_label() {
+fn an_add_to_a_day_goes_to_that_year_under_the_fallback_title() {
     let other = "journals/2025_11_02.md";
     let graph = Graph::seeded(
         Default::default(),

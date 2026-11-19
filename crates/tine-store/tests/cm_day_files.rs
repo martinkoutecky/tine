@@ -251,49 +251,80 @@ fn a_date_named_org_file_is_the_day() {
     assert_eq!(bytes(dir.path(), &files), before);
 }
 
-/// The approved label limitation (SPEC §2.1): with a title format without a
-/// year, a label like `11-02` is no date, so a page of that name stays an
-/// ordinary page beside the day it looks like, in either directory.
+/// D-20261119-YL fallback row: a configured title format that names no
+/// single day (`MM-dd`) is not used. Titles use the default, so 2026-11-02 and
+/// 2027-11-02 are two days with two titles, each opened by its text; `11-02`
+/// is an ordinary name (a page of that name stays an ordinary page, in either
+/// directory of the day file); nothing on disk changes on load or reload.
 #[test]
-fn a_year_less_title_format_leaves_a_label_named_page_ordinary() {
+fn a_title_format_without_a_year_falls_back_to_the_default_titles() {
     let _guard = crate::integration_lock();
     for day_file in ["journals/2026_11_02.md", "pages/2026-11-02.md"] {
-        year_less_label_page(day_file);
+        fallback_titles(day_file);
     }
 }
 
-fn year_less_label_page(day_file: &str) {
+fn fallback_titles(day_file: &str) {
     let files = [
         (
             "logseq/config.edn",
             "{:journal/page-title-format \"MM-dd\"}\n",
         ),
-        ("pages/11-02.md", "- a label page\n"),
-        (day_file, "- the day\n"),
+        ("pages/11-02.md", "- a page named 11-02\n"),
+        (day_file, "- the day in 2026\n"),
+        ("journals/2027_11_02.md", "- the day in 2027\n"),
+        ("pages/Notes.md", "- see [[11-02]] and [[Nov 2nd, 2027]]\n"),
     ];
+    let nov_2_2027 = Day(20271102);
     let (dir, store) = graph(&files);
     let before = bytes(dir.path(), &files);
-    let view = store.whole_graph().unwrap();
-    let row = view.inventory(InventoryScope::File(&PageId::from("pages/11-02.md")));
-    assert!(
-        (row.0.iter()).any(|entry| !entry.is_journal && entry.name == "11-02"),
-        "{:?}",
-        row.0
-            .iter()
-            .map(|e| (&e.name, e.is_journal))
-            .collect::<Vec<_>>()
-    );
-    // Typed, the label is the ordinary page alone: "typing the ambiguous,
-    // non-identifying label cannot select" the day (SPEC §2.1), so the day's
-    // file is no second claimant of it (re-pinned: it was listed second).
-    assert_eq!(existing(&view.resolve("11-02", false)), ["pages/11-02.md"]);
+    let fmt = store.config().journal_format();
     assert_eq!(
-        opens(&store, "11-02", PageKind::Page),
-        Some(("pages/11-02.md".to_owned(), PageKind::Page))
+        fmt.title_refusal(),
+        Some(&tine_core::date::TitleFormatRefusal::Missing(
+            tine_core::date::DateField::Year
+        ))
     );
-    // The day itself is still reached by a spelling that names it.
-    assert_eq!(existing(&view.resolve("2026-11-02", false)), [day_file]);
-    assert_eq!(store.journal_id(NOV_2, true).as_str(), day_file);
+    assert_eq!(fmt.configured_title_format(), "MM-dd");
+    let answers = |store: &Store| {
+        let view = store.whole_graph().unwrap();
+        let row = view.inventory(InventoryScope::File(&PageId::from(day_file)));
+        assert_eq!(
+            (row.0.iter())
+                .map(|e| (e.name.as_str(), e.is_journal))
+                .collect::<Vec<_>>(),
+            [("Nov 2nd, 2026", true)]
+        );
+        for (title, file) in [
+            ("Nov 2nd, 2026", day_file),
+            ("Nov 2nd, 2027", "journals/2027_11_02.md"),
+        ] {
+            assert_eq!(existing(&view.resolve(title, true)), [file], "{title}");
+            assert_eq!(
+                opens(store, title, PageKind::Journal),
+                Some((file.to_owned(), PageKind::Journal))
+            );
+        }
+        // `[[11-02]]` is the ordinary page alone: no day's file claims it.
+        assert_eq!(existing(&view.resolve("11-02", false)), ["pages/11-02.md"]);
+        assert_eq!(
+            opens(store, "11-02", PageKind::Page),
+            Some(("pages/11-02.md".to_owned(), PageKind::Page))
+        );
+        assert_eq!(store.journal_id(NOV_2, true).as_str(), day_file);
+        assert_eq!(
+            store.journal_id(nov_2_2027, true).as_str(),
+            "journals/2027_11_02.md"
+        );
+    };
+    answers(&store);
+    assert_eq!(bytes(dir.path(), &files), before);
+    // Reloaded: the same answers, the same bytes, paths and config.
+    store.refresh(tine_store::Depth::Rebuild).unwrap();
+    answers(&store);
+    drop(store);
+    let reopened = Store::open(dir.path(), Default::default()).unwrap().0;
+    answers(&reopened);
     assert_eq!(bytes(dir.path(), &files), before);
 }
 
@@ -400,12 +431,12 @@ fn an_outside_retitle_moves_a_file_off_the_day_it_held() {
     assert_eq!(store.journal_id(nov_4, false).as_str(), file);
 }
 
-/// With a year-less title format two pages files titled by one full date
-/// share that day; the winner deleted outside the app, the other takes the
-/// day as a cold open gives it, though the remembered label `11-02` names
-/// no day (the day is the entry's, never parsed back from its label).
+/// Two pages files titled by one full date share that day; the winner
+/// deleted outside the app, the other takes the day as a cold open gives it.
+/// Under a refused title format (`MM-dd`, D-20261119-YL fallback), so the day's
+/// remembered title is the default one.
 #[test]
-fn deleting_a_year_less_day_winner_promotes_its_twin() {
+fn deleting_a_day_winner_promotes_its_twin_under_the_fallback_title() {
     let _guard = crate::integration_lock();
     let config = "{:journal/page-title-format \"MM-dd\"}\n";
     let rels = ["logseq/config.edn", "pages/A.md", "pages/B.md"];
@@ -467,14 +498,13 @@ fn settle_to_cold(store: &Store, root: &Path, rels: &[&str], days: &[Day], names
     }
 }
 
-/// CM leftovers item 6 (SPEC §2.1, approved label limitation): with a
-/// year-less title format, 2026-11-02 and 2027-11-02 both display `11-02`
-/// and stay distinct days. An outside retitle from one to the other keeps
-/// the displayed name and kind, yet moves the file to the other day; a
-/// second file titled with the other year adds that day beside the first.
-/// The incremental reading answers as a cold open does.
+/// Under a refused title format (`MM-dd`, D-20261119-YL fallback),
+/// 2026-11-02 and 2027-11-02 have the default titles `Nov 2nd, 2026` and
+/// `Nov 2nd, 2027`. An outside retitle from one to the other moves the file
+/// to the other day; a second file titled with the other year adds that day
+/// beside the first. The incremental reading answers as a cold open does.
 #[test]
-fn a_year_less_retitle_to_another_year_moves_the_day() {
+fn a_retitle_to_another_year_moves_the_day_under_the_fallback_title() {
     let _guard = crate::integration_lock();
     let config = "{:journal/page-title-format \"MM-dd\"}\n";
     let nov_2_2027 = Day(20271102);
@@ -491,7 +521,7 @@ fn a_year_less_retitle_to_another_year_moves_the_day() {
     .unwrap();
     settle_to_cold(&store, dir.path(), &rels, &days, &names);
     assert_eq!(store.journal_id(nov_2_2027, false).as_str(), rels[1]);
-    // A second file whose title is the same label of another year.
+    // A second file titled by the same date of another year.
     let (dir, store) = graph(&[(rels[0], config), (rels[1], "title:: 2026-11-02\n\n- a\n")]);
     store.whole_graph().unwrap();
     fs::write(dir.path().join(rels[2]), "title:: 2027-11-02\n\n- b\n").unwrap();

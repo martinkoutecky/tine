@@ -793,7 +793,7 @@ export interface GraphMeta {
   quick_capture_insert_today: boolean;
   /** OG `:quick-capture-options {:redirect-page? true}`: open the page a capture landed on. */
   quick_capture_redirect_page: boolean;
-  journal_page_title_format: string; // :journal/page-title-format (default "MMM do, yyyy")
+  journal_page_title_format: string; // configured :journal/page-title-format (default "MMM do, yyyy"); titles render in journalTitleStatus().effective
   journal_file_name_format: string; // :journal/file-name-format (default "yyyy_MM_dd")
   /** Effective :file/name-format, resolved by Rust. */
   file_name_format: "legacy" | "triple-lowbar";

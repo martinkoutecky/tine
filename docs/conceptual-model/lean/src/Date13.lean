@@ -299,7 +299,9 @@ theorem active_handle_opening (D : Dates K) {G : Graph} {f : File}
   simp [openTarget,real_of_active P D hf]
 
 /-- Textual self-opening requires the displayed name to identify its day.
-The approved year-less-label limitation is explicit here, not assumed globally. -/
+Under D-20261119-YL every effective journal title does: a configured title
+format that names no single day is not used, and the default renders instead.
+The amended model derives this premise from that rule (`active_text_opening`). -/
 theorem active_text_opening_when_identifying (D : Dates K) {G : Graph} {f : File}
     (hf : f ∈ activeGraph P D G) (hn : target P D G (P.name f) = claim P D f) :
     resolve P D G (P.name f) = claim P D f := by

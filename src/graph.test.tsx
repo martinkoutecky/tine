@@ -170,6 +170,10 @@ async function loadHarness(
     appNow: () => new Date(),
     localDayKey: (date = new Date()) => date.getFullYear() * 10_000 + (date.getMonth() + 1) * 100 + date.getDate(),
     setJournalFormats: journal ? (title: string | null | undefined) => journal.setJournalTitleFormat(title) : vi.fn(),
+    // Every configured title format here is used (D-20261119-YL refusals are
+    // pinned in journalTitleRefusal.test.ts).
+    journalTitleStatus: () => ({ effective: "MMM do, yyyy", refusal: null }),
+    journalTitleRefusalMessage: () => null,
   }));
   vi.doMock("./editor/templateVars", () => ({ applyTemplateVars, prepareTemplateVars }));
   vi.doMock("./warmCache", () => ({ waitForWarmCache }));

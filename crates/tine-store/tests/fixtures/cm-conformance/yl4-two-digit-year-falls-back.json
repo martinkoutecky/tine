@@ -1,0 +1,23 @@
+{
+ "config": {
+  "journalTitleFormat": "d.M.yy"
+ },
+ "files": {
+  "journals/2026_01_05.md": "- day\n",
+  "pages/Notes.md": "- configured spelling [[5.1.26]]\n- default [[Jan 5th, 2026]]\n- century [[1.1.00]]\n"
+ },
+ "navigate": [
+  "5.1.26",
+  "Jan 5th, 2026",
+  "1.1.00",
+  "Jan 1st, 2000"
+ ],
+ "queries": [
+  {
+   "anchor": "block",
+   "q": {
+    "refs": "Jan 5th, 2026"
+   }
+  }
+ ]
+}

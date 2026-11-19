@@ -1,0 +1,165 @@
+{
+  "aliases": [],
+  "answers": {
+    "alias_groups": [],
+    "inventory": [
+      {
+        "day": null,
+        "is_journal": false,
+        "key": "2026",
+        "name": "2026",
+        "target": {
+          "id": "pages/2026.md",
+          "kind": "existing",
+          "others": []
+        }
+      },
+      {
+        "day": null,
+        "is_journal": false,
+        "key": "2026/10",
+        "name": "2026/10",
+        "namespace_parent": true,
+        "target": {
+          "id": "pages/2026%2F10.md",
+          "kind": "absent"
+        }
+      },
+      {
+        "day": null,
+        "is_journal": false,
+        "key": "2026/10/26",
+        "link": {
+          "kind": "journal",
+          "name": "26.10.2026"
+        },
+        "name": "2026/10/26",
+        "target": {
+          "id": "pages/dayphysical.md",
+          "kind": "existing",
+          "others": []
+        }
+      },
+      {
+        "day": null,
+        "is_journal": false,
+        "key": "2026/x",
+        "name": "2026/x",
+        "target": {
+          "id": "pages/2026%2Fx.md",
+          "kind": "absent"
+        }
+      },
+      {
+        "day": 20261026,
+        "is_journal": true,
+        "key": "26.10.2026",
+        "name": "26.10.2026",
+        "target": {
+          "id": "pages/dayphysical.md",
+          "kind": "existing",
+          "others": []
+        }
+      },
+      {
+        "day": null,
+        "is_journal": false,
+        "key": "r",
+        "name": "R",
+        "target": {
+          "id": "pages/R.md",
+          "kind": "existing",
+          "others": []
+        }
+      }
+    ],
+    "journals": {
+      "content_days": [
+        20261026
+      ],
+      "file_name_format": "yyyy/MM/dd",
+      "title_format": "dd.MM.yyyy"
+    },
+    "resolve": [
+      {
+        "kind": "journal",
+        "name": "2026/10/26",
+        "target": {
+          "id": "pages/dayphysical.md",
+          "kind": "existing",
+          "others": []
+        }
+      },
+      {
+        "kind": "page",
+        "name": "26.10.2026",
+        "target": {
+          "id": "pages/dayphysical.md",
+          "kind": "existing",
+          "others": []
+        }
+      }
+    ],
+    "v": 1
+  },
+  "backlinks": {},
+  "block_ref_counts": {},
+  "entries": [
+    {
+      "date_key": null,
+      "kind": "page",
+      "name": "2026",
+      "path": "pages/2026.md"
+    },
+    {
+      "date_key": 20261026,
+      "kind": "journal",
+      "name": "26.10.2026",
+      "path": "pages/dayphysical.md"
+    },
+    {
+      "date_key": null,
+      "kind": "page",
+      "name": "R",
+      "path": "pages/R.md"
+    }
+  ],
+  "exported_at": "",
+  "home": "2026",
+  "icons": {},
+  "name": "Site",
+  "pages": [
+    {
+      "blocks": [],
+      "format": "md",
+      "kind": "page",
+      "name": "2026",
+      "path": "pages/2026.md",
+      "pre_block": null,
+      "read_only": true,
+      "title": "2026"
+    },
+    {
+      "blocks": [],
+      "format": "md",
+      "kind": "journal",
+      "name": "26.10.2026",
+      "path": "pages/dayphysical.md",
+      "pre_block": null,
+      "read_only": true,
+      "title": "26.10.2026"
+    },
+    {
+      "blocks": [],
+      "format": "md",
+      "kind": "page",
+      "name": "R",
+      "path": "pages/R.md",
+      "pre_block": null,
+      "read_only": true,
+      "title": "R"
+    }
+  ],
+  "queries": [],
+  "schema": 1
+}

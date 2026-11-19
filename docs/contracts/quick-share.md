@@ -152,7 +152,9 @@ build graph (closure, below). The same field is written by the static export
 - `journals`: the effective `:journal/page-title-format` and
   `:journal/file-name-format` (the two configuration values a snapshot carries
   on purpose; the reader's date parser needs them) and the days whose journal
-  has content.
+  has content. The effective title format is the configured one unless it
+  names no single day, then the default `MMM do, yyyy` (D-20261119-YL), so a
+  reader renders the titles the rows name.
 - Reader: links and `[[` destinations use the rows' `link`
   (`inventoryRows.ts linkTargetIn`, the app's own reader); a named route uses
   `navigationTarget`; `getPage` / `resolvePage(name, kind)` read the row's

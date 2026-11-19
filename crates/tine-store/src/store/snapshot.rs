@@ -168,7 +168,7 @@ pub(super) static TEST_PATCH_PANIC_ROOTS: std::sync::Mutex<Vec<PathBuf>> =
 impl Snapshot {
     /// The entry this generation holds for `path`: its name, its kind and
     /// the day it actually claims (CM SPEC §2.1: a `title::` may name a day
-    /// other than its file name's, and a year-less title names none), as the
+    /// other than its file name's, and a title that is no date names none), as the
     /// claimant index recorded it from the file's bytes. An incremental
     /// update takes the day a file held from here, never from its path or
     /// its displayed name. O(claimants of that name).
@@ -315,15 +315,11 @@ impl Snapshot {
                 if kind == ChangeKind::Modified && path.starts_with(graph.journals_path()) {
                     return None;
                 }
-                // Unchanged only if the day is too: a year-less title shows
-                // two days one name (SPEC §2.1), so kind and name do not
-                // settle it.
+                // A journal title names one day (D-20261119-YL), so kind and
+                // name settle whether the claim changed.
                 if kind == ChangeKind::Modified
                     && old_name
                         .is_some_and(|(kind, name)| *kind == entry.kind && *name == entry.name)
-                    && old
-                        .and_then(|snapshot| snapshot.held_entry(&path))
-                        .is_some_and(|held| held.date_key == entry.date_key)
                 {
                     return None;
                 }
@@ -396,23 +392,21 @@ impl Snapshot {
                 }
                 let list = Arc::make_mut(&mut list);
                 list.remove_path(&path);
-                // A day's winner is the first claimant of its title that
-                // holds that day: a year-less title is shared by other days.
-                let day_winner = |name: &str, day: i64| {
+                // A day's winner is the first claimant of its title: the
+                // title names that day alone (D-20261119-YL).
+                let day_winner = |name: &str| {
                     (buckets.get(&(true, tine_core::refs::page_key(name))))
-                        .and_then(|bucket| bucket.iter().find(|e| e.date_key == Some(day)))
+                        .and_then(|bucket| bucket.first())
                 };
                 if let Some((old, old_name)) = old_day {
-                    let day = old.date_key.unwrap();
-                    list.remove_day(day);
-                    if let Some(winner) = day_winner(&old_name, day) {
+                    list.remove_day(old.date_key.unwrap());
+                    if let Some(winner) = day_winner(&old_name) {
                         list.push(winner.clone());
                     }
                 }
                 if entry.kind == PageKind::Journal && entry.date_key.is_some() {
-                    let day = entry.date_key.unwrap();
-                    list.remove_day(day);
-                    if let Some(winner) = day_winner(&entry.name, day) {
+                    list.remove_day(entry.date_key.unwrap());
+                    if let Some(winner) = day_winner(&entry.name) {
                         list.push(winner.clone());
                     }
                 } else if kind != ChangeKind::Removed {

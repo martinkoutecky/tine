@@ -1,0 +1,479 @@
+{
+  "backlinks": {
+    "2026": [
+      {
+        "blocks": [
+          {
+            "children": [],
+            "collapsed": false,
+            "id": "c25c98ca-4fad-8da5-9499-9330c83da40c",
+            "raw": "[[2026/10/26]] [[2026/x]]",
+            "tags": []
+          }
+        ],
+        "kind": "page",
+        "page": "R"
+      }
+    ],
+    "2026/10": [
+      {
+        "blocks": [
+          {
+            "children": [],
+            "collapsed": false,
+            "id": "c25c98ca-4fad-8da5-9499-9330c83da40c",
+            "raw": "[[2026/10/26]] [[2026/x]]",
+            "tags": []
+          }
+        ],
+        "kind": "page",
+        "page": "R"
+      }
+    ],
+    "2026/x": [
+      {
+        "blocks": [
+          {
+            "children": [],
+            "collapsed": false,
+            "id": "c25c98ca-4fad-8da5-9499-9330c83da40c",
+            "raw": "[[2026/10/26]] [[2026/x]]",
+            "tags": []
+          }
+        ],
+        "kind": "page",
+        "page": "R"
+      }
+    ],
+    "26.10.2026": [
+      {
+        "blocks": [
+          {
+            "children": [],
+            "collapsed": false,
+            "id": "c25c98ca-4fad-8da5-9499-9330c83da40c",
+            "raw": "[[2026/10/26]] [[2026/x]]",
+            "tags": []
+          }
+        ],
+        "kind": "page",
+        "page": "R"
+      }
+    ],
+    "R": []
+  },
+  "conflicts": [],
+  "counts": [
+    [
+      [
+        "pages/R.md",
+        0
+      ],
+      [
+        "pages/2026.md",
+        1
+      ],
+      [
+        "pages/dayphysical.md",
+        1
+      ]
+    ],
+    [
+      [
+        "2026/10",
+        1
+      ],
+      [
+        "2026/x",
+        1
+      ]
+    ]
+  ],
+  "inventory": [
+    {
+      "day": null,
+      "is_journal": false,
+      "key": "2026",
+      "name": "2026",
+      "target": {
+        "id": "pages/2026.md",
+        "kind": "existing",
+        "others": []
+      }
+    },
+    {
+      "day": null,
+      "is_journal": false,
+      "key": "2026/10",
+      "name": "2026/10",
+      "namespace_parent": true,
+      "target": {
+        "id": "pages/2026%2F10.md",
+        "kind": "absent"
+      }
+    },
+    {
+      "day": null,
+      "is_journal": false,
+      "key": "2026/x",
+      "name": "2026/x",
+      "target": {
+        "id": "pages/2026%2Fx.md",
+        "kind": "absent"
+      }
+    },
+    {
+      "day": 20261026,
+      "is_journal": true,
+      "key": "26.10.2026",
+      "name": "26.10.2026",
+      "target": {
+        "id": "pages/dayphysical.md",
+        "kind": "existing",
+        "others": []
+      }
+    },
+    {
+      "day": null,
+      "is_journal": false,
+      "key": "r",
+      "name": "R",
+      "target": {
+        "id": "pages/R.md",
+        "kind": "existing",
+        "others": []
+      }
+    }
+  ],
+  "journalFileFormat": "yyyy/MM/dd",
+  "journalTitleFormat": "dd.MM.yyyy",
+  "keyOf": {
+    "2026": "2026",
+    "2026/10": "2026/10",
+    "2026/x": "2026/x",
+    "26.10.2026": "Day 2026-10-26",
+    "R": "r"
+  },
+  "namespaceTree": [
+    {
+      "children": [
+        [
+          "page",
+          "2026/10"
+        ],
+        [
+          "page",
+          "2026/x"
+        ]
+      ],
+      "page": [
+        "page",
+        "2026"
+      ]
+    },
+    {
+      "children": [],
+      "page": [
+        "page",
+        "2026/10"
+      ]
+    },
+    {
+      "children": [],
+      "page": [
+        "page",
+        "2026/x"
+      ]
+    }
+  ],
+  "open": {
+    "2026": {
+      "journal": [
+        "journal",
+        "2026"
+      ],
+      "page": [
+        "page",
+        "2026"
+      ]
+    },
+    "2026/10": {
+      "journal": [
+        "journal",
+        "2026/10"
+      ],
+      "page": [
+        "page",
+        "2026/10"
+      ]
+    },
+    "2026/10/26": {
+      "journal": [
+        "journal",
+        "Day 2026-10-26"
+      ],
+      "page": [
+        "journal",
+        "Day 2026-10-26"
+      ]
+    },
+    "2026/x": {
+      "journal": [
+        "journal",
+        "2026/x"
+      ],
+      "page": [
+        "page",
+        "2026/x"
+      ]
+    },
+    "26.10.2026": {
+      "journal": [
+        "journal",
+        "Day 2026-10-26"
+      ],
+      "page": [
+        "journal",
+        "Day 2026-10-26"
+      ]
+    },
+    "R": {
+      "journal": [
+        "journal",
+        "r"
+      ],
+      "page": [
+        "page",
+        "r"
+      ]
+    }
+  },
+  "owner": {
+    "2026": {
+      "journal": null,
+      "page": "pages/2026.md"
+    },
+    "2026/10": {
+      "journal": null,
+      "page": null
+    },
+    "2026/10/26": {
+      "journal": "pages/dayphysical.md",
+      "page": "pages/dayphysical.md"
+    },
+    "2026/x": {
+      "journal": null,
+      "page": null
+    },
+    "26.10.2026": {
+      "journal": "pages/dayphysical.md",
+      "page": "pages/dayphysical.md"
+    },
+    "R": {
+      "journal": null,
+      "page": "pages/R.md"
+    }
+  },
+  "pages": [
+    {
+      "key": "Day 2026-10-26",
+      "kind": "journal",
+      "linkedRefs": 1,
+      "name": "26.10.2026",
+      "owner": "pages/dayphysical.md",
+      "parent": null
+    },
+    {
+      "key": "2026",
+      "kind": "page",
+      "linkedRefs": 1,
+      "name": "2026",
+      "owner": "pages/2026.md",
+      "parent": null
+    },
+    {
+      "key": "2026/10",
+      "kind": "page",
+      "linkedRefs": 1,
+      "name": "2026/10",
+      "owner": null,
+      "parent": [
+        "page",
+        "2026"
+      ]
+    },
+    {
+      "key": "2026/x",
+      "kind": "page",
+      "linkedRefs": 1,
+      "name": "2026/x",
+      "owner": null,
+      "parent": [
+        "page",
+        "2026"
+      ]
+    },
+    {
+      "key": "r",
+      "kind": "page",
+      "linkedRefs": 0,
+      "name": "R",
+      "owner": "pages/R.md",
+      "parent": null
+    }
+  ],
+  "spellings": {
+    "2026": {
+      "backend": [
+        "page",
+        "2026"
+      ],
+      "day": null,
+      "model": [
+        "page",
+        "2026"
+      ]
+    },
+    "2026/10/26": {
+      "backend": [
+        "journal",
+        "Day 2026-10-26"
+      ],
+      "day": [
+        2026,
+        10,
+        26
+      ],
+      "model": [
+        "journal",
+        "Day 2026-10-26"
+      ]
+    },
+    "2026/x": {
+      "backend": [
+        "page",
+        "2026/x"
+      ],
+      "day": null,
+      "model": [
+        "page",
+        "2026/x"
+      ]
+    },
+    "26.10.2026": {
+      "backend": [
+        "journal",
+        "Day 2026-10-26"
+      ],
+      "day": [
+        2026,
+        10,
+        26
+      ],
+      "model": [
+        "journal",
+        "Day 2026-10-26"
+      ]
+    },
+    "R": {
+      "backend": [
+        "page",
+        "r"
+      ],
+      "day": null,
+      "model": [
+        "page",
+        "r"
+      ]
+    }
+  },
+  "tree": [
+    {
+      "children": [
+        [
+          "page",
+          "2026/10"
+        ],
+        [
+          "page",
+          "2026/x"
+        ]
+      ],
+      "page": [
+        "page",
+        "2026"
+      ]
+    },
+    {
+      "children": [],
+      "page": [
+        "page",
+        "r"
+      ]
+    },
+    {
+      "children": [],
+      "page": [
+        "journal",
+        "Day 2026-10-26"
+      ]
+    },
+    {
+      "children": [],
+      "page": [
+        "page",
+        "2026/10"
+      ]
+    },
+    {
+      "children": [],
+      "page": [
+        "page",
+        "2026/x"
+      ]
+    }
+  ],
+  "treeParent": [
+    {
+      "page": [
+        "journal",
+        "Day 2026-10-26"
+      ],
+      "parent": null
+    },
+    {
+      "page": [
+        "page",
+        "2026"
+      ],
+      "parent": null
+    },
+    {
+      "page": [
+        "page",
+        "2026/10"
+      ],
+      "parent": [
+        "page",
+        "2026"
+      ]
+    },
+    {
+      "page": [
+        "page",
+        "2026/x"
+      ],
+      "parent": [
+        "page",
+        "2026"
+      ]
+    },
+    {
+      "page": [
+        "page",
+        "r"
+      ],
+      "parent": null
+    }
+  ]
+}

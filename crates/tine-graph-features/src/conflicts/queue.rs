@@ -27,7 +27,7 @@ fn journal_objects(store: &Store, bad: &mut Unreadable) -> io::Result<Vec<Confli
     bad.journal_days.clear();
     let journals = format!("{}/", store.config().config.journals_dir);
     let mut view = None;
-    for (day_name, day) in crate::journals::journal_conflict_days(store)? {
+    for day in crate::journals::journal_conflicts(store)? {
         // A file outside the journals directory can claim this day too
         // (CM-DAYFILE). Its complete bucket is listed as a name conflict
         // instead ([`name_objects`]); only all-journals days are folded here.
@@ -39,9 +39,7 @@ fn journal_objects(store: &Store, bad: &mut Unreadable) -> io::Result<Vec<Confli
                     .map_err(|error| io::Error::other(format!("{error:?}")))?,
             ),
         };
-        // By the day, never its title: a year-less title is a label several
-        // days share, which names none of them (CM SPEC §2.1).
-        if let tine_store::Resolved::Existing { id, others } = view.resolve(&day_name, true) {
+        if let tine_store::Resolved::Existing { id, others } = view.resolve(&day.title, true) {
             if std::iter::once(&id)
                 .chain(&others)
                 .any(|id| !id.as_str().starts_with(&journals))

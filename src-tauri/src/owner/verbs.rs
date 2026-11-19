@@ -614,13 +614,7 @@ pub(super) fn journal_write_page(
     graph: &WholeGraph,
     day: JournalDate,
 ) -> Result<PageId, ErrorBody> {
-    // Looked up by a spelling that names this day alone: under a year-less
-    // title format the title is a label several days share (K SPEC §2.1).
-    let title = slot
-        .store
-        .config()
-        .journal_format()
-        .identifying_spelling(day);
+    let title = slot.store.config().journal_format().title(day);
     if let Resolved::Existing { id, mut others } = lookup(slot, graph, &title, true) {
         if !others.is_empty() {
             others.insert(0, id);

@@ -777,15 +777,15 @@ fn the_duplicate_day_keeper_is_the_file_the_day_opens() {
     let _ = fs::remove_dir_all(&root);
 }
 
-/// CM leftovers item 1 (K SPEC §2.1, approved label limitation): under a
-/// year-less title format (`MM-dd`) the label `11-02` names no day, so the
-/// duplicate days of 2026-11-02 are found by the day, never by that label. A
-/// file of another year (`pages/2027-11-02.md`, also displayed `11-02`) and
-/// an earlier year's journal neither hide the conflict nor take the keeper.
+/// D-20261119-YL fallback row: under a refused title format (`MM-dd`) the
+/// days keep the default titles, so the duplicate files of 2026-11-02 are one
+/// conflict named `Nov 2nd, 2026`. A file of another year
+/// (`pages/2027-11-02.md`) and an earlier year's journal neither hide the
+/// conflict nor take the keeper.
 #[test]
-fn a_year_less_duplicate_day_is_queued_by_its_day_not_its_label() {
+fn a_duplicate_day_is_queued_under_the_fallback_title() {
     let _integration_guard = crate::integration_lock();
-    let root = crate::test_support::fresh_dir("tine-f8dj-year-less-");
+    let root = crate::test_support::fresh_dir("tine-f8dj-fallback-title-");
     for dir in ["pages", "journals", "logseq"] {
         fs::create_dir_all(root.join(dir)).unwrap();
     }
@@ -805,6 +805,7 @@ fn a_year_less_duplicate_day_is_queued_by_its_day_not_its_label() {
     assert_eq!(object.page_path, "journals/2026-11-02.md");
     let days = tine_graph_features::journals::journal_conflicts(&store).unwrap();
     assert_eq!(days.len(), 1, "{days:?}");
+    assert_eq!(days[0].title, "Nov 2nd, 2026");
     let canonical: Vec<_> = (days[0].files.iter())
         .map(|file| (file.path.as_str(), file.canonical))
         .collect();

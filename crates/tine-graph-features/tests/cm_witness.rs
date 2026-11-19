@@ -56,10 +56,18 @@ fn format(path: &str) -> Format {
 }
 
 fn setup(name: &str, files: &Value) -> (PathBuf, Arc<Store>) {
-    let mut entries = vec![(
-        "logseq/config.edn",
-        "{:file/name-format :legacy :journal/file-name-format \"yyyy/MM/dd\"}\n",
-    )];
+    setup_titled(name, files, None)
+}
+
+/// As [`setup`], with `:journal/page-title-format` `title` when given.
+fn setup_titled(name: &str, files: &Value, title: Option<&str>) -> (PathBuf, Arc<Store>) {
+    let config = match title {
+        Some(title) => format!(
+            "{{:file/name-format :legacy :journal/file-name-format \"yyyy/MM/dd\" :journal/page-title-format \"{title}\"}}\n"
+        ),
+        None => "{:file/name-format :legacy :journal/file-name-format \"yyyy/MM/dd\"}\n".to_owned(),
+    };
+    let mut entries = vec![("logseq/config.edn", config.as_str())];
     for file in files.as_array().unwrap() {
         entries.push((
             file["path"].as_str().unwrap(),
@@ -117,8 +125,13 @@ fn compare_after(root: &Path, row: &Value, survivor: Option<&str>) -> Result<(),
 }
 
 fn admitted(row: &Value) -> Result<(), String> {
+    admitted_titled(row, None)
+}
+
+/// As [`admitted`], under `:journal/page-title-format` `title` when given.
+fn admitted_titled(row: &Value, title: Option<&str>) -> Result<(), String> {
     let name = row["name"].as_str().unwrap();
-    let (root, store) = setup(name, &row["before"]);
+    let (root, store) = setup_titled(name, &row["before"], title);
     let app_data = tempfile::tempdir().unwrap();
     let host = tine_store::PageHost::start_for_tests(&store, app_data.path()).unwrap();
     let old = row["old"].as_str().unwrap();
@@ -785,5 +798,65 @@ fn o3_refusal_precedence_is_observed_before_any_transaction_writes() {
             wanted
         );
         assert_eq!(snapshot(&root), before);
+    }
+}
+
+/// D-20261119-YL, model `inherited_slash_date_survives_title_selection`: the
+/// title format selects only the renderer, so K's `day_under_source` row (a
+/// `2026/10/26` link, the pages-directory file claiming that day, and the
+/// day-source refusal) holds under a valid alternate title format and under
+/// the default that replaces a refused one (`MM-dd` writes no year).
+#[test]
+fn the_inherited_slash_date_survives_either_title_format() {
+    let _guard = crate::integration_lock();
+    let matrix = matrix();
+    let row = matrix["fixtures"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|r| r["name"] == "day_under_source")
+        .unwrap()
+        .clone();
+    for (title, refused, day_title) in [
+        ("dd/MM/yyyy", false, "26/10/2026"),
+        ("MM-dd", true, "Oct 26th, 2026"),
+    ] {
+        admitted_titled(&row, Some(title)).unwrap_or_else(|e| panic!("{title}: {e}"));
+        let (root, store) = setup_titled(&format!("slash-{refused}"), &row["before"], Some(title));
+        let config = store.config();
+        let days = config.journal_format();
+        assert_eq!(days.title_refusal().is_some(), refused, "{title}");
+        let day = days.parse("2026/10/26").unwrap();
+        assert_eq!(days.title(day), day_title, "{title}");
+        let view = store.whole_graph().unwrap();
+        for spelling in ["2026/10/26", day_title] {
+            match view.resolve(spelling, true) {
+                tine_store::Resolved::Existing { id, .. } => {
+                    assert_eq!(id.as_str(), "pages/dayphysical.md", "{title}: {spelling}")
+                }
+                other => panic!("{title}: {spelling} opens {other:?}"),
+            }
+        }
+        // The stored link names the day: R is its referrer.
+        let referrers: Vec<_> = view
+            .backlinks("2026/10/26")
+            .unwrap()
+            .iter()
+            .map(|group| group.page.clone())
+            .collect();
+        assert_eq!(referrers, ["R"], "{title}");
+        let before = snapshot(&root);
+        let offer = rename_offer(&store, "2026/10/26", "Moved", None).unwrap();
+        assert_eq!(
+            serde_json::to_value(offer).unwrap()["reason"]["kind"],
+            "day",
+            "{title}"
+        );
+        let error = rename(&store, "2026/10/26", "Moved", RenameChoice::Rename).unwrap_err();
+        assert!(
+            matches!(RenameBlocked::of(&error), Some(RenameBlocked::Day { .. })),
+            "{title}: {error}"
+        );
+        assert_eq!(snapshot(&root), before, "{title}");
     }
 }

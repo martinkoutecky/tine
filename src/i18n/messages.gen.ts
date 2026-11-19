@@ -1332,6 +1332,11 @@ export interface MessageArgs {
   "journal-sections-explanation": {};
   "journal-slash-thatday-is-only-available-on-journal-pages": {};
   "journal-slash-the-date-was-not-inserted-because-the-graph": {};
+  "journal-title-format-refused-misread": { "configured": string | number; "day": string | number; "effective": string | number; "readAs": string | number; "written": string | number };
+  "journal-title-format-refused-missing-day": { "configured": string | number; "effective": string | number };
+  "journal-title-format-refused-missing-month": { "configured": string | number; "effective": string | number };
+  "journal-title-format-refused-missing-year": { "configured": string | number; "effective": string | number };
+  "journal-title-format-refused-unread": { "configured": string | number; "day": string | number; "effective": string | number; "written": string | number };
   "journals-prose-in-progress": { "count": string | number };
   "journals-prose-task-summary": { "progress": string | number; "tasks": string | number };
   "journals-prose-tasks-today": { "count": number };

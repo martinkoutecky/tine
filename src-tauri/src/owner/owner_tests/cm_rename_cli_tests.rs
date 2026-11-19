@@ -254,12 +254,12 @@ fn cli_planner_refusals_are_refused_before_any_write() {
     }
 }
 
-/// O2 asks of the name the user typed (round 2 finding 3): under a
-/// yearless title format, `2026-10-26` names the 2026 journal, whose page is
-/// titled `10-26`; the rename is the Day refusal, not `uncertain` from the
-/// yearless title the owner used to pass on.
+/// D-20261119-YL fallback row: under a refused title format (`MM-dd`),
+/// `2026-10-26` names the 2026 journal, whose page keeps the default title
+/// `Oct 26th, 2026`; the rename is the Day refusal. `[[10-26]]` is an
+/// ordinary link and stays as written.
 #[test]
-fn cli_a_typed_day_is_refused_under_a_yearless_title_format() {
+fn cli_a_typed_day_is_refused_under_the_fallback_title() {
     let graph = Graph::seeded(
         Default::default(),
         &[

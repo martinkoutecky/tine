@@ -1,0 +1,364 @@
+{
+  "backlinks": {
+    "Birthday": [
+      {
+        "blocks": [
+          {
+            "children": [],
+            "collapsed": false,
+            "id": "75143738-034a-8dd7-b08f-38fa7295e7fd",
+            "raw": "[[11-02]]",
+            "tags": []
+          }
+        ],
+        "kind": "page",
+        "page": "Notes"
+      }
+    ],
+    "Notes": [],
+    "Nov 2nd, 2026": [
+      {
+        "blocks": [
+          {
+            "children": [],
+            "collapsed": false,
+            "id": "840cab30-0095-83b5-beac-32e44cbcce48",
+            "raw": "[[Nov 2nd, 2026]]",
+            "tags": []
+          }
+        ],
+        "kind": "page",
+        "page": "Notes"
+      }
+    ],
+    "Nov 2nd, 2027": []
+  },
+  "conflicts": [],
+  "counts": [
+    [
+      [
+        "pages/Notes.md",
+        0
+      ],
+      [
+        "pages/Birthday.md",
+        1
+      ],
+      [
+        "journals/2027_11_02.md",
+        0
+      ],
+      [
+        "journals/2026_11_02.md",
+        1
+      ]
+    ],
+    []
+  ],
+  "inventory": [
+    {
+      "day": null,
+      "is_journal": false,
+      "key": "11-02",
+      "link": {
+        "kind": "page",
+        "name": "Birthday"
+      },
+      "name": "11-02",
+      "namespace_excluded": true,
+      "target": {
+        "kind": "alias",
+        "owners": [
+          "pages/Birthday.md"
+        ]
+      }
+    },
+    {
+      "day": null,
+      "is_journal": false,
+      "key": "birthday",
+      "name": "Birthday",
+      "target": {
+        "id": "pages/Birthday.md",
+        "kind": "existing",
+        "others": []
+      }
+    },
+    {
+      "day": null,
+      "is_journal": false,
+      "key": "notes",
+      "name": "Notes",
+      "target": {
+        "id": "pages/Notes.md",
+        "kind": "existing",
+        "others": []
+      }
+    },
+    {
+      "day": 20261102,
+      "is_journal": true,
+      "key": "nov 2nd, 2026",
+      "name": "Nov 2nd, 2026",
+      "target": {
+        "id": "journals/2026_11_02.md",
+        "kind": "existing",
+        "others": []
+      }
+    },
+    {
+      "day": 20271102,
+      "is_journal": true,
+      "key": "nov 2nd, 2027",
+      "name": "Nov 2nd, 2027",
+      "target": {
+        "id": "journals/2027_11_02.md",
+        "kind": "existing",
+        "others": []
+      }
+    }
+  ],
+  "journalFileFormat": null,
+  "journalTitleFormat": "MM-dd",
+  "keyOf": {
+    "11-02": "11-02",
+    "Birthday": "birthday",
+    "Notes": "notes",
+    "Nov 2nd, 2026": "Day 2026-11-02",
+    "Nov 2nd, 2027": "Day 2027-11-02"
+  },
+  "namespaceTree": [],
+  "open": {
+    "11-02": {
+      "journal": [
+        "journal",
+        "11-02"
+      ],
+      "page": [
+        "page",
+        "birthday"
+      ]
+    },
+    "Birthday": {
+      "journal": [
+        "journal",
+        "birthday"
+      ],
+      "page": [
+        "page",
+        "birthday"
+      ]
+    },
+    "Notes": {
+      "journal": [
+        "journal",
+        "notes"
+      ],
+      "page": [
+        "page",
+        "notes"
+      ]
+    },
+    "Nov 2nd, 2026": {
+      "journal": [
+        "journal",
+        "Day 2026-11-02"
+      ],
+      "page": [
+        "journal",
+        "Day 2026-11-02"
+      ]
+    },
+    "Nov 2nd, 2027": {
+      "journal": [
+        "journal",
+        "Day 2027-11-02"
+      ],
+      "page": [
+        "journal",
+        "Day 2027-11-02"
+      ]
+    }
+  },
+  "owner": {
+    "11-02": {
+      "journal": null,
+      "page": "pages/Birthday.md"
+    },
+    "Birthday": {
+      "journal": null,
+      "page": "pages/Birthday.md"
+    },
+    "Notes": {
+      "journal": null,
+      "page": "pages/Notes.md"
+    },
+    "Nov 2nd, 2026": {
+      "journal": "journals/2026_11_02.md",
+      "page": "journals/2026_11_02.md"
+    },
+    "Nov 2nd, 2027": {
+      "journal": "journals/2027_11_02.md",
+      "page": "journals/2027_11_02.md"
+    }
+  },
+  "pages": [
+    {
+      "key": "Day 2026-11-02",
+      "kind": "journal",
+      "linkedRefs": 1,
+      "name": "Nov 2nd, 2026",
+      "owner": "journals/2026_11_02.md",
+      "parent": null
+    },
+    {
+      "key": "Day 2027-11-02",
+      "kind": "journal",
+      "linkedRefs": 0,
+      "name": "Nov 2nd, 2027",
+      "owner": "journals/2027_11_02.md",
+      "parent": null
+    },
+    {
+      "key": "birthday",
+      "kind": "page",
+      "linkedRefs": 1,
+      "name": "Birthday",
+      "owner": "pages/Birthday.md",
+      "parent": null
+    },
+    {
+      "key": "notes",
+      "kind": "page",
+      "linkedRefs": 0,
+      "name": "Notes",
+      "owner": "pages/Notes.md",
+      "parent": null
+    }
+  ],
+  "spellings": {
+    "11-02": {
+      "backend": [
+        "page",
+        "birthday"
+      ],
+      "day": null,
+      "model": [
+        "page",
+        "birthday"
+      ]
+    },
+    "Birthday": {
+      "backend": [
+        "page",
+        "birthday"
+      ],
+      "day": null,
+      "model": [
+        "page",
+        "birthday"
+      ]
+    },
+    "Notes": {
+      "backend": [
+        "page",
+        "notes"
+      ],
+      "day": null,
+      "model": [
+        "page",
+        "notes"
+      ]
+    },
+    "Nov 2nd, 2026": {
+      "backend": [
+        "journal",
+        "Day 2026-11-02"
+      ],
+      "day": [
+        2026,
+        11,
+        2
+      ],
+      "model": [
+        "journal",
+        "Day 2026-11-02"
+      ]
+    },
+    "Nov 2nd, 2027": {
+      "backend": [
+        "journal",
+        "Day 2027-11-02"
+      ],
+      "day": [
+        2027,
+        11,
+        2
+      ],
+      "model": [
+        "journal",
+        "Day 2027-11-02"
+      ]
+    }
+  },
+  "tree": [
+    {
+      "children": [],
+      "page": [
+        "journal",
+        "Day 2026-11-02"
+      ]
+    },
+    {
+      "children": [],
+      "page": [
+        "journal",
+        "Day 2027-11-02"
+      ]
+    },
+    {
+      "children": [],
+      "page": [
+        "page",
+        "birthday"
+      ]
+    },
+    {
+      "children": [],
+      "page": [
+        "page",
+        "notes"
+      ]
+    }
+  ],
+  "treeParent": [
+    {
+      "page": [
+        "journal",
+        "Day 2026-11-02"
+      ],
+      "parent": null
+    },
+    {
+      "page": [
+        "journal",
+        "Day 2027-11-02"
+      ],
+      "parent": null
+    },
+    {
+      "page": [
+        "page",
+        "birthday"
+      ],
+      "parent": null
+    },
+    {
+      "page": [
+        "page",
+        "notes"
+      ],
+      "parent": null
+    }
+  ]
+}

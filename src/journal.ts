@@ -1,5 +1,6 @@
 import { createEffect, createSignal, untrack } from "solid-js";
-import { absent_link_is_journal, format_journal_date, journal_day_json, parse_journal_format_json } from "./render/wasm/lsdoc_wasm.js";
+import { absent_link_is_journal, format_journal_date, journal_day_json, journal_title_status_json, parse_journal_format_json } from "./render/wasm/lsdoc_wasm.js";
+import { msg, type Msg } from "./i18n";
 import { onAppReturn } from "./windowRealm";
 
 /** Journal dates and title formatting. `journalTitle` and `parseJournalTitle`
@@ -12,6 +13,7 @@ import { onAppReturn } from "./windowRealm";
 
 export const DEFAULT_TITLE_FORMAT = "MMM do, yyyy";
 let titleFormat = DEFAULT_TITLE_FORMAT;
+let effectiveTitleFormat = DEFAULT_TITLE_FORMAT;
 /** The configured `:journal/file-name-format`; "" means the default. */
 let fileFormat = "";
 
@@ -154,16 +156,61 @@ export function createAnswerDay(): { day: () => number; follow: (asOfDay: () => 
 
 export type JournalDateParts = { readonly y: number; readonly m: number; readonly d: number };
 
-/// Set the active journal title format (from `GraphMeta.journal_page_title_format`).
+/// Set the configured journal title format (from `GraphMeta.journal_page_title_format`).
 export function setJournalTitleFormat(fmt: string | undefined | null): void {
   titleFormat = fmt && fmt.trim() ? fmt : DEFAULT_TITLE_FORMAT;
+  effectiveTitleFormat = journalTitleStatus(fileFormat, titleFormat).effective;
 }
 
-/// Set both journal formats from GraphMeta: the title format renders titles;
-/// both feed the one date answerer (`parseJournalTitle`).
+/// Set both configured journal formats from GraphMeta. Both feed the one date
+/// answerer (`parseJournalTitle`); titles render in the effective title format
+/// the same answerer picks (`journalTitleStatus`).
 export function setJournalFormats(title: string | undefined | null, file: string | undefined | null): void {
-  setJournalTitleFormat(title);
   fileFormat = file && file.trim() ? file : "";
+  setJournalTitleFormat(title);
+}
+
+/** Why a configured title format is not used (D-20261119-YL): it writes no
+ * such field, or the title it writes for `day` opens `read_as` (null: no day). */
+export type JournalTitleRefusal =
+  | { readonly missing: "year" | "month" | "day" }
+  | { readonly day: JournalDateParts; readonly written: string; readonly read_as: JournalDateParts | null };
+/** The title format that renders journal titles, and why the configured one
+ * is not used if it is not. */
+export type JournalTitleStatus = { readonly effective: string; readonly refusal: JournalTitleRefusal | null };
+
+let statusKey: string | null = null;
+let statusValue: JournalTitleStatus = { effective: DEFAULT_TITLE_FORMAT, refusal: null };
+/** The one answer, `tine_core::date::JournalFormat::title_format` /
+ * `title_refusal` through wasm, for configured (file, title) formats ("" =
+ * default). Cached for the last pair. O(1) warm. */
+export function journalTitleStatus(file: string, title: string): JournalTitleStatus {
+  const key = `${file}\u0000${title}`;
+  if (statusKey !== key) {
+    statusValue = Object.freeze(JSON.parse(journal_title_status_json(file, title)) as JournalTitleStatus);
+    statusKey = key;
+  }
+  return statusValue;
+}
+
+const isoDay = (day: JournalDateParts): string =>
+  `${String(day.y).padStart(4, "0")}-${String(day.m).padStart(2, "0")}-${String(day.d).padStart(2, "0")}`;
+
+/** What Tine says about a refused title format `configured` (the notice and
+ * Settings), or null when it is used. O(1). */
+export function journalTitleRefusalMessage(configured: string, status: JournalTitleStatus): Msg | null {
+  const refusal = status.refusal;
+  if (!refusal) return null;
+  const effective = status.effective;
+  if ("missing" in refusal) {
+    if (refusal.missing === "year") return msg("journal-title-format-refused-missing-year", { configured, effective });
+    if (refusal.missing === "month") return msg("journal-title-format-refused-missing-month", { configured, effective });
+    return msg("journal-title-format-refused-missing-day", { configured, effective });
+  }
+  const args = { configured, effective, written: refusal.written, day: isoDay(refusal.day) };
+  return refusal.read_as
+    ? msg("journal-title-format-refused-misread", { ...args, readAs: isoDay(refusal.read_as) })
+    : msg("journal-title-format-refused-unread", args);
 }
 
 /** Native format grammar with a bounded compiled-pattern cache. O(format + title), no I/O. */
@@ -179,9 +226,10 @@ export function localCalendarDate(y: number, m: number, d: number): Date | null 
   return date.getFullYear() === y && date.getMonth() === m && date.getDate() === d ? date : null;
 }
 
-/// The journal page title for a date, in the graph's configured title format.
+/// The journal page title for a date, in the graph's effective title format
+/// (the configured one unless it names no single day, D-20261119-YL).
 export function journalTitle(d: Date): string {
-  return formatJournal(d, titleFormat);
+  return formatJournal(d, effectiveTitleFormat);
 }
 
 /// Try to parse `s` as a date in pattern `fmt` (the inverse of formatJournal, for

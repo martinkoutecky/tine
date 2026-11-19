@@ -350,7 +350,7 @@ impl WholeGraph {
     ///
     /// [`InventoryScope::ReferencedJournals`] lists only days mentioned by
     /// explicit references, with accepted date spellings merged into the
-    /// configured journal title. Uses published reference/alias keys, not
+    /// effective journal title. Uses published reference/alias keys, not
     /// document scans; O(R log D + indexed alias lookups), R reference names,
     /// D distinct dates. Ordinary date-named pages retain ordinary identity.
     ///

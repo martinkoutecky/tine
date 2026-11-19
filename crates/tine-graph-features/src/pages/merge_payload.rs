@@ -846,7 +846,7 @@ pub fn propose<'f>(
         !prefixes[1].is_empty(),
         normalize_target,
         org,
-        &target.name,
+        target,
         &format,
     )?;
     let [target_body_count, source_child_count, source_body_count] = counts.blocks;

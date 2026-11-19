@@ -505,6 +505,12 @@
       ],
       "r9-own-child-alias": [
         "frontend all pages: file pages/a.md has no row (hidden as an OG built-in page, A11)"
+      ],
+      "yl1-yearless-title-falls-back": [
+        "frontend all pages: row journals/2026_11_02.md (count 1) owns no model page"
+      ],
+      "yl3-valid-alternate-title": [
+        "frontend all pages: row journals/2026_11_02.md (count 1) owns no model page"
       ]
     }
   },
@@ -569,7 +575,20 @@
     }
   },
   "frontendNames": {
-    "fixtures": {}
+    "fixtures": {
+      "yl1-yearless-title-falls-back": [
+        "frontend title rule: settleTitleIdentity would rename pages/physical.md to \"2026-11-02\", the store names it \"Nov 2nd, 2026\""
+      ],
+      "yl3-valid-alternate-title": [
+        "frontend title rule: settleTitleIdentity would rename pages/physical.md to \"2026-11-02\", the store names it \"02.11.2026\""
+      ],
+      "yl5-slash-date-under-alternate-title": [
+        "frontend title rule: settleTitleIdentity would rename pages/dayphysical.md to \"2026/10/26\", the store names it \"26.10.2026\""
+      ],
+      "yl6-slash-date-under-fallback-title": [
+        "frontend title rule: settleTitleIdentity would rename pages/dayphysical.md to \"2026/10/26\", the store names it \"Oct 26th, 2026\""
+      ]
+    }
   },
   "frontendNamespaces": {
     "fixtures": {}
@@ -714,6 +733,18 @@
       ],
       "r9-case-rename-onto-taken-file": [
         "pages/n%2Fy.md: launch walk \"n/y\", answer Some(\"B\")"
+      ],
+      "yl1-yearless-title-falls-back": [
+        "pages/physical.md: launch walk \"physical\", answer Some(\"Nov 2nd, 2026\")"
+      ],
+      "yl3-valid-alternate-title": [
+        "pages/physical.md: launch walk \"physical\", answer Some(\"02.11.2026\")"
+      ],
+      "yl5-slash-date-under-alternate-title": [
+        "pages/dayphysical.md: launch walk \"dayphysical\", answer Some(\"26.10.2026\")"
+      ],
+      "yl6-slash-date-under-fallback-title": [
+        "pages/dayphysical.md: launch walk \"dayphysical\", answer Some(\"Oct 26th, 2026\")"
       ]
     },
     "harnessSkipped": [],
@@ -1179,7 +1210,13 @@
       "random-96": [],
       "random-97": [],
       "random-98": [],
-      "random-99": []
+      "random-99": [],
+      "yl1-yearless-title-falls-back": [],
+      "yl2-yearless-label-is-an-ordinary-alias": [],
+      "yl3-valid-alternate-title": [],
+      "yl4-two-digit-year-falls-back": [],
+      "yl5-slash-date-under-alternate-title": [],
+      "yl6-slash-date-under-fallback-title": []
     },
     "harnessSkipped": [],
     "random": {},

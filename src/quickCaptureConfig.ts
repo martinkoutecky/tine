@@ -61,11 +61,6 @@ export function captureDestination(typedTitle: string | null | undefined, option
   return journals ? { kind: "journal" } : { kind: "page", name: QUICK_CAPTURE_PAGE };
 }
 
-/** The name of the page a destination resolves to. */
-export function destinationName(destination: CaptureDestination, todayTitle: string): string {
-  return destination.kind === "journal" ? todayTitle : destination.name;
-}
-
 /** OG redirects (`page-handler/create!` `:redirect?`) only when the capture goes
  * to a page other than the one open. `current` is the open page's name, if any. */
 export function shouldRedirect(options: QuickCaptureOptions, destinationPage: string, current: string | null | undefined): boolean {

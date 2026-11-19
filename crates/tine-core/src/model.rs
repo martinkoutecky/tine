@@ -473,23 +473,15 @@ impl PageEntry {
 /// journals directory `journals_dir` (graph-relative, as configured) first,
 /// then unsigned UTF-8 graph-relative path bytes. Configured filename/date
 /// formats and a file's text do not rank valid, distinct physical paths.
-///
-/// Name-keyed tables (`page_key` alone) can hold two identities under one
-/// key only when a year-less title format gives a day the label of an
-/// ordinary name (`MM-dd`: the page `11-02` and the day 2026-11-02, SPEC §2.1
-/// label limitation). The ordinary claim ranks first there: it is the real
-/// file of the typed name, and the label identifies no day.
 pub fn compare_page_claimants(
     journals_dir: &str,
     a: &PageEntry,
     b: &PageEntry,
 ) -> std::cmp::Ordering {
     let rank = |entry: &PageEntry| {
-        let in_journals = entry
-            .rel_path_str()
+        !(entry.rel_path_str())
             .strip_prefix(journals_dir.trim_end_matches('/'))
-            .is_some_and(|tail| tail.starts_with('/'));
-        (entry.date_key.is_some(), !in_journals)
+            .is_some_and(|tail| tail.starts_with('/'))
     };
     rank(a)
         .cmp(&rank(b))
@@ -946,8 +938,11 @@ pub struct GraphMeta {
     pub quick_capture_insert_today: bool,
     /// OG `:quick-capture-options {:redirect-page? …}`; only a literal `true`.
     pub quick_capture_redirect_page: bool,
-    /// Effective journal title format (`:journal/page-title-format`, default
-    /// `MMM do, yyyy`) — so the frontend formats "today" to match the backend.
+    /// Configured journal title format (`:journal/page-title-format`, default
+    /// `MMM do, yyyy`). The frontend asks the one answerer through wasm which
+    /// format renders titles (`JournalFormat::title_format`: this one unless
+    /// it names no single day, D-20261119-YL) and parses with this one, as the
+    /// backend does.
     pub journal_page_title_format: String,
     /// Effective journal filename format (`:journal/file-name-format`, default
     /// `yyyy_MM_dd`).
@@ -1093,7 +1088,7 @@ impl GraphMeta {
             quick_capture_default_page: config.quick_capture_default_page.clone(),
             quick_capture_insert_today: config.quick_capture_insert_today,
             quick_capture_redirect_page: config.quick_capture_redirect_page,
-            journal_page_title_format: journal_format.title_format().to_string(),
+            journal_page_title_format: journal_format.configured_title_format().to_string(),
             journal_file_name_format: journal_format.file_format().to_string(),
             file_name_format: match config.file_name_format {
                 crate::config::FileNameFormat::Legacy => "legacy",

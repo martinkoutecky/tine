@@ -748,14 +748,32 @@ fn plan_request(
     // SPEC §5.3: the selected physical member defines the entire map.
     // Keep `new` for checking that this member still holds the requested
     // spelling. Descendants, referrers and reports use the selection too.
+    // O1 (model `survivorSpelling`): the survivor's own title if it names
+    // its claim, else its effective name. A page's effective name is its
+    // title already; a day's is its title format's rendering
+    // (D-20261119-YL), so a day's header is read: `title:: 2027-10-26` on
+    // that day's file is its spelling, a header naming another day is not.
+    // One read of the survivor, which the merge reads again under its
+    // revision guard.
     let selected = merge_into
         .and_then(|into| {
-            let inventory = graph.inventory(tine_store::InventoryScope::File(&PageId::from(into)));
+            let id = PageId::from(into);
+            let inventory = graph.inventory(tine_store::InventoryScope::File(&id));
             let entry = inventory.0.first()?;
             if let Some(day) = entry.day.filter(|_| entry.is_journal) {
                 let day = tine_core::date::JournalDate::from_ordinal(day.0);
-                if journal_format.parse(&entry.name) != Some(day) {
-                    return Some(day.file_stem());
+                let title =
+                    crate::parsed_text::read(store, &id.file())
+                        .ok()
+                        .and_then(|(text, _)| {
+                            tine_core::model::page_title_from_header(
+                                &text,
+                                Format::from_path(into.as_ref()),
+                            )
+                        });
+                if let Some(title) = title.filter(|title| journal_format.parse(title) == Some(day))
+                {
+                    return Some(title);
                 }
             }
             Some(entry.name.clone())

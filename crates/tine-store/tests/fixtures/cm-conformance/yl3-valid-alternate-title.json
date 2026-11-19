@@ -1,0 +1,32 @@
+{
+ "config": {
+  "journalTitleFormat": "dd.MM.yyyy"
+ },
+ "files": {
+  "journals/2026_11_02.md": "- 2026\n",
+  "journals/2027_11_02.md": "title:: 2026-11-02\n- target\n",
+  "pages/physical.md": "title:: 2026-11-02\n- target\n",
+  "pages/Notes.md": "- year-less [[11-02]]\n- alternate 2027 [[02.11.2027]]\n- default 2026 [[Nov 2nd, 2026]]\n"
+ },
+ "navigate": [
+  "11-02",
+  "02.11.2026",
+  "02.11.2027",
+  "Nov 2nd, 2026",
+  "2027-11-02"
+ ],
+ "queries": [
+  {
+   "anchor": "block",
+   "q": {
+    "refs": "02.11.2027"
+   }
+  },
+  {
+   "anchor": "block",
+   "q": {
+    "refs": "Nov 2nd, 2026"
+   }
+  }
+ ]
+}

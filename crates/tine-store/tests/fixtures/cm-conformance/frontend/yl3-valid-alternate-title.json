@@ -1,0 +1,403 @@
+{
+  "backlinks": {
+    "02.11.2027": [
+      {
+        "blocks": [
+          {
+            "children": [],
+            "collapsed": false,
+            "id": "840cab30-0095-83b5-beac-32e44cbcce48",
+            "raw": "alternate 2027 [[02.11.2027]]",
+            "tags": []
+          }
+        ],
+        "kind": "page",
+        "page": "Notes"
+      }
+    ],
+    "11-02": [
+      {
+        "blocks": [
+          {
+            "children": [],
+            "collapsed": false,
+            "id": "75143738-034a-8dd7-b08f-38fa7295e7fd",
+            "raw": "year-less [[11-02]]",
+            "tags": []
+          }
+        ],
+        "kind": "page",
+        "page": "Notes"
+      }
+    ],
+    "Notes": []
+  },
+  "conflicts": [
+    "Day 2026-11-02"
+  ],
+  "counts": [
+    [
+      [
+        "journals/2026_11_02.md",
+        1
+      ],
+      [
+        "pages/Notes.md",
+        0
+      ],
+      [
+        "journals/2027_11_02.md",
+        1
+      ]
+    ],
+    [
+      [
+        "11-02",
+        1
+      ]
+    ]
+  ],
+  "inventory": [
+    {
+      "day": 20261102,
+      "is_journal": true,
+      "key": "02.11.2026",
+      "name": "02.11.2026",
+      "target": {
+        "id": "journals/2026_11_02.md",
+        "kind": "existing",
+        "others": [
+          "pages/physical.md"
+        ]
+      }
+    },
+    {
+      "day": 20271102,
+      "is_journal": true,
+      "key": "02.11.2027",
+      "name": "02.11.2027",
+      "target": {
+        "id": "journals/2027_11_02.md",
+        "kind": "existing",
+        "others": []
+      }
+    },
+    {
+      "day": null,
+      "is_journal": false,
+      "key": "11-02",
+      "name": "11-02",
+      "target": {
+        "id": "pages/11-02.md",
+        "kind": "absent"
+      }
+    },
+    {
+      "day": null,
+      "is_journal": false,
+      "key": "notes",
+      "name": "Notes",
+      "target": {
+        "id": "pages/Notes.md",
+        "kind": "existing",
+        "others": []
+      }
+    }
+  ],
+  "journalFileFormat": null,
+  "journalTitleFormat": "dd.MM.yyyy",
+  "keyOf": {
+    "02.11.2026": "Day 2026-11-02",
+    "02.11.2027": "Day 2027-11-02",
+    "11-02": "11-02",
+    "Notes": "notes"
+  },
+  "namespaceTree": [],
+  "open": {
+    "02.11.2026": {
+      "journal": [
+        "journal",
+        "Day 2026-11-02"
+      ],
+      "page": [
+        "journal",
+        "Day 2026-11-02"
+      ]
+    },
+    "02.11.2027": {
+      "journal": [
+        "journal",
+        "Day 2027-11-02"
+      ],
+      "page": [
+        "journal",
+        "Day 2027-11-02"
+      ]
+    },
+    "11-02": {
+      "journal": [
+        "journal",
+        "11-02"
+      ],
+      "page": [
+        "page",
+        "11-02"
+      ]
+    },
+    "2026-11-02": {
+      "journal": [
+        "journal",
+        "Day 2026-11-02"
+      ],
+      "page": [
+        "journal",
+        "Day 2026-11-02"
+      ]
+    },
+    "2027-11-02": {
+      "journal": [
+        "journal",
+        "Day 2027-11-02"
+      ],
+      "page": [
+        "journal",
+        "Day 2027-11-02"
+      ]
+    },
+    "Notes": {
+      "journal": [
+        "journal",
+        "notes"
+      ],
+      "page": [
+        "page",
+        "notes"
+      ]
+    },
+    "Nov 2nd, 2026": {
+      "journal": [
+        "journal",
+        "Day 2026-11-02"
+      ],
+      "page": [
+        "journal",
+        "Day 2026-11-02"
+      ]
+    }
+  },
+  "owner": {
+    "02.11.2026": {
+      "journal": "journals/2026_11_02.md",
+      "page": "journals/2026_11_02.md"
+    },
+    "02.11.2027": {
+      "journal": "journals/2027_11_02.md",
+      "page": "journals/2027_11_02.md"
+    },
+    "11-02": {
+      "journal": null,
+      "page": null
+    },
+    "2026-11-02": {
+      "journal": "journals/2026_11_02.md",
+      "page": "journals/2026_11_02.md"
+    },
+    "2027-11-02": {
+      "journal": "journals/2027_11_02.md",
+      "page": "journals/2027_11_02.md"
+    },
+    "Notes": {
+      "journal": null,
+      "page": "pages/Notes.md"
+    },
+    "Nov 2nd, 2026": {
+      "journal": "journals/2026_11_02.md",
+      "page": "journals/2026_11_02.md"
+    }
+  },
+  "pages": [
+    {
+      "key": "Day 2027-11-02",
+      "kind": "journal",
+      "linkedRefs": 1,
+      "name": "02.11.2027",
+      "owner": "journals/2027_11_02.md",
+      "parent": null
+    },
+    {
+      "key": "11-02",
+      "kind": "page",
+      "linkedRefs": 1,
+      "name": "11-02",
+      "owner": null,
+      "parent": null
+    },
+    {
+      "key": "notes",
+      "kind": "page",
+      "linkedRefs": 0,
+      "name": "Notes",
+      "owner": "pages/Notes.md",
+      "parent": null
+    }
+  ],
+  "spellings": {
+    "02.11.2026": {
+      "backend": [
+        "journal",
+        "Day 2026-11-02"
+      ],
+      "day": [
+        2026,
+        11,
+        2
+      ],
+      "model": [
+        "journal",
+        "Day 2026-11-02"
+      ]
+    },
+    "02.11.2027": {
+      "backend": [
+        "journal",
+        "Day 2027-11-02"
+      ],
+      "day": [
+        2027,
+        11,
+        2
+      ],
+      "model": [
+        "journal",
+        "Day 2027-11-02"
+      ]
+    },
+    "11-02": {
+      "backend": [
+        "page",
+        "11-02"
+      ],
+      "day": null,
+      "model": [
+        "page",
+        "11-02"
+      ]
+    },
+    "2026-11-02": {
+      "backend": [
+        "journal",
+        "Day 2026-11-02"
+      ],
+      "day": [
+        2026,
+        11,
+        2
+      ],
+      "model": [
+        "journal",
+        "Day 2026-11-02"
+      ]
+    },
+    "2027-11-02": {
+      "backend": [
+        "journal",
+        "Day 2027-11-02"
+      ],
+      "day": [
+        2027,
+        11,
+        2
+      ],
+      "model": [
+        "journal",
+        "Day 2027-11-02"
+      ]
+    },
+    "Notes": {
+      "backend": [
+        "page",
+        "notes"
+      ],
+      "day": null,
+      "model": [
+        "page",
+        "notes"
+      ]
+    },
+    "Nov 2nd, 2026": {
+      "backend": [
+        "journal",
+        "Day 2026-11-02"
+      ],
+      "day": [
+        2026,
+        11,
+        2
+      ],
+      "model": [
+        "journal",
+        "Day 2026-11-02"
+      ]
+    }
+  },
+  "tree": [
+    {
+      "children": [],
+      "page": [
+        "journal",
+        "Day 2026-11-02"
+      ]
+    },
+    {
+      "children": [],
+      "page": [
+        "journal",
+        "Day 2027-11-02"
+      ]
+    },
+    {
+      "children": [],
+      "page": [
+        "page",
+        "notes"
+      ]
+    },
+    {
+      "children": [],
+      "page": [
+        "page",
+        "11-02"
+      ]
+    }
+  ],
+  "treeParent": [
+    {
+      "page": [
+        "journal",
+        "Day 2026-11-02"
+      ],
+      "parent": null
+    },
+    {
+      "page": [
+        "journal",
+        "Day 2027-11-02"
+      ],
+      "parent": null
+    },
+    {
+      "page": [
+        "page",
+        "11-02"
+      ],
+      "parent": null
+    },
+    {
+      "page": [
+        "page",
+        "notes"
+      ],
+      "parent": null
+    }
+  ]
+}

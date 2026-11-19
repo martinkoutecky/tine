@@ -121,6 +121,16 @@ export function is_render_hidden_prop(key: string, user_hidden: string[], pre_bl
 export function journal_day_json(name: string, file_format: string, title_format: string): string;
 
 /**
+ * Which title format renders journal titles for (file, title) format
+ * strings, and why the configured one is not used if it is not: the one
+ * answer, `JournalFormat::title_format` / `title_refusal` (D-20261119-YL).
+ * `{"effective", "refusal"}`, `refusal` null or `{"missing": "year"|"month"|
+ * "day"}` or `{"day", "written", "read_as"}` (days as `{"y","m","d"}`,
+ * `read_as` null when the title opens no day). O(1) warm.
+ */
+export function journal_title_status_json(file_format: string, title_format: string): string;
+
+/**
  * The message of the most recent panic in this instance ("" if none). A trapped
  * instance still answers small calls; the glue reads this before reinstantiating.
  */
@@ -397,6 +407,7 @@ export interface InitOutput {
     readonly is_query_macro_name: (a: number, b: number) => number;
     readonly is_render_hidden_prop: (a: number, b: number, c: number, d: number, e: number) => number;
     readonly journal_day_json: (a: number, b: number, c: number, d: number, e: number, f: number) => [number, number];
+    readonly journal_title_status_json: (a: number, b: number, c: number, d: number) => [number, number];
     readonly last_panic: () => [number, number];
     readonly linkable_property_names: (a: number, b: number, c: number) => [number, number];
     readonly logbook_apply_marker_transition: (a: number, b: number, c: number, d: number, e: number, f: number, g: number) => [number, number];

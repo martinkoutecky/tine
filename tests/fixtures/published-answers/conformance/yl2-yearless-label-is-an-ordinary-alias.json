@@ -1,0 +1,186 @@
+{
+  "aliases": [
+    [
+      "11-02",
+      "Birthday"
+    ]
+  ],
+  "answers": {
+    "alias_groups": [
+      {
+        "aliases": [
+          "11-02"
+        ],
+        "name": "Birthday",
+        "pages": []
+      }
+    ],
+    "inventory": [
+      {
+        "day": null,
+        "is_journal": false,
+        "key": "11-02",
+        "link": {
+          "kind": "page",
+          "name": "Birthday"
+        },
+        "name": "11-02",
+        "target": {
+          "kind": "alias",
+          "owners": [
+            "pages/Birthday.md"
+          ]
+        }
+      },
+      {
+        "day": null,
+        "is_journal": false,
+        "key": "birthday",
+        "name": "Birthday",
+        "target": {
+          "id": "pages/Birthday.md",
+          "kind": "existing",
+          "others": []
+        }
+      },
+      {
+        "day": null,
+        "is_journal": false,
+        "key": "notes",
+        "name": "Notes",
+        "target": {
+          "id": "pages/Notes.md",
+          "kind": "existing",
+          "others": []
+        }
+      },
+      {
+        "day": 20261102,
+        "is_journal": true,
+        "key": "nov 2nd, 2026",
+        "name": "Nov 2nd, 2026",
+        "target": {
+          "id": "journals/2026_11_02.md",
+          "kind": "existing",
+          "others": []
+        }
+      },
+      {
+        "day": 20271102,
+        "is_journal": true,
+        "key": "nov 2nd, 2027",
+        "name": "Nov 2nd, 2027",
+        "target": {
+          "id": "journals/2027_11_02.md",
+          "kind": "existing",
+          "others": []
+        }
+      }
+    ],
+    "journals": {
+      "content_days": [
+        20261102,
+        20271102
+      ],
+      "file_name_format": "yyyy_MM_dd",
+      "title_format": "MMM do, yyyy"
+    },
+    "resolve": [
+      {
+        "kind": "page",
+        "name": "Nov 2nd, 2026",
+        "target": {
+          "id": "journals/2026_11_02.md",
+          "kind": "existing",
+          "others": []
+        }
+      },
+      {
+        "kind": "page",
+        "name": "Nov 2nd, 2027",
+        "target": {
+          "id": "journals/2027_11_02.md",
+          "kind": "existing",
+          "others": []
+        }
+      }
+    ],
+    "v": 1
+  },
+  "backlinks": {},
+  "block_ref_counts": {},
+  "entries": [
+    {
+      "date_key": null,
+      "kind": "page",
+      "name": "Birthday",
+      "path": "pages/Birthday.md"
+    },
+    {
+      "date_key": null,
+      "kind": "page",
+      "name": "Notes",
+      "path": "pages/Notes.md"
+    },
+    {
+      "date_key": 20261102,
+      "kind": "journal",
+      "name": "Nov 2nd, 2026",
+      "path": "journals/2026_11_02.md"
+    },
+    {
+      "date_key": 20271102,
+      "kind": "journal",
+      "name": "Nov 2nd, 2027",
+      "path": "journals/2027_11_02.md"
+    }
+  ],
+  "exported_at": "",
+  "home": "Birthday",
+  "icons": {},
+  "name": "Site",
+  "pages": [
+    {
+      "blocks": [],
+      "format": "md",
+      "kind": "page",
+      "name": "Birthday",
+      "path": "pages/Birthday.md",
+      "pre_block": null,
+      "read_only": true,
+      "title": "Birthday"
+    },
+    {
+      "blocks": [],
+      "format": "md",
+      "kind": "page",
+      "name": "Notes",
+      "path": "pages/Notes.md",
+      "pre_block": null,
+      "read_only": true,
+      "title": "Notes"
+    },
+    {
+      "blocks": [],
+      "format": "md",
+      "kind": "journal",
+      "name": "Nov 2nd, 2026",
+      "path": "journals/2026_11_02.md",
+      "pre_block": null,
+      "read_only": true,
+      "title": "Nov 2nd, 2026"
+    },
+    {
+      "blocks": [],
+      "format": "md",
+      "kind": "journal",
+      "name": "Nov 2nd, 2027",
+      "path": "journals/2027_11_02.md",
+      "pre_block": null,
+      "read_only": true,
+      "title": "Nov 2nd, 2027"
+    }
+  ],
+  "queries": [],
+  "schema": 1
+}

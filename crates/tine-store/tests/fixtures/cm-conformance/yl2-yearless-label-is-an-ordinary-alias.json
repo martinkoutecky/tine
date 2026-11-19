@@ -1,0 +1,31 @@
+{
+ "config": {
+  "journalTitleFormat": "MM-dd"
+ },
+ "files": {
+  "journals/2026_11_02.md": "- 2026\n",
+  "journals/2027_11_02.md": "- 2027\n",
+  "pages/Birthday.md": "alias:: 11-02\n- every year\n",
+  "pages/Notes.md": "- [[11-02]]\n- [[Nov 2nd, 2026]]\n"
+ },
+ "navigate": [
+  "11-02",
+  "Birthday",
+  "Nov 2nd, 2026",
+  "Nov 2nd, 2027"
+ ],
+ "queries": [
+  {
+   "anchor": "block",
+   "q": {
+    "refs": "Birthday"
+   }
+  },
+  {
+   "anchor": "block",
+   "q": {
+    "refs": "11-02"
+   }
+  }
+ ]
+}

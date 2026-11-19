@@ -654,52 +654,90 @@ fn selected_spelling_in_native_reference_sites() {
     }
 }
 
+/// D-20261119-YL, model `rejected_journal_title_uses_default`: `MM-dd` writes
+/// no year, so it is refused and the day's effective title is the default.
+/// A merge into a day repoints text with the survivor's spelling (O1): its
+/// own header when that names the same day, else the effective title. A
+/// header naming another day (`title:: 2026-10-26` on the 2027 file) is not
+/// the survivor's spelling. The other year's file is untouched.
 #[test]
-fn selected_spelling_identifies_a_day_with_an_ambiguous_label() {
+fn a_merge_into_a_day_under_the_fallback_title_repoints_text_with_the_survivor_spelling() {
     let _guard = crate::integration_lock();
-    let (root, store) = fixture(
-        "selected-day",
-        &[
-            (
-                "logseq/config.edn",
-                "{:journal/page-title-format \"MM-dd\"}",
-            ),
-            ("pages/B.md", "- source\n"),
-            ("journals/2026_10_26.md", "alias:: PickedDay\n- 2026\n"),
-            ("journals/2027_10_26.md", "- 2027\n"),
-            (
-                "pages/referrer.md",
-                "alias:: B\n- [[B]]\n- {{query (page \"B\")}}\n",
-            ),
-        ],
-    );
-    // The journal holds every accepted spelling of its day (O3); its title
-    // `10-26` names two days, so D is its file-stem spelling (O1).
-    let offer =
-        serde_json::to_value(rename_offer(&store, "B", "2026-10-26", None).unwrap()).unwrap();
-    assert_eq!(offer["kind"], "merge", "{offer}");
-    assert_eq!(offer["into"], "journals/2026_10_26.md", "{offer}");
-    rename(
-        &store,
-        "B",
-        "2026-10-26",
-        RenameChoice::MergeInto("journals/2026_10_26.md"),
-    )
-    .unwrap();
-    let files = snapshot(&root);
-    selected_spelling_oracle("ambiguous-day", &files);
-    assert_eq!(
-        files["pages/referrer.md"],
-        "alias:: 2026_10_26\n- [[2026_10_26]]\n- {{query (page \"2026_10_26\")}}\n"
-    );
-    assert_eq!(files["journals/2027_10_26.md"], "- 2027\n");
-    selected_spelling_save(&store, &root, &files);
-    let fresh = Store::open(&root, Default::default()).unwrap().0;
-    for year in [2026, 2027] {
-        let id = tine_core::model::PageId::from(format!("journals/{year}_10_26.md").as_str());
-        let page = fresh.page(&id).unwrap();
-        assert_eq!(page.doc.name, "10-26");
-        assert_eq!(page.doc.blocks[0].raw, year.to_string());
+    for (case, header, spelling) in [
+        ("plain", "", "Oct 26th, 2027"),
+        (
+            "nonmatching-header",
+            "title:: 2026-10-26\n",
+            "Oct 26th, 2027",
+        ),
+        ("matching-header", "title:: 2027-10-26\n", "2027-10-26"),
+    ] {
+        let day = format!("{header}alias:: PickedDay\n- 2027\n");
+        let (root, store) = fixture(
+            &format!("fallback-day-{case}"),
+            &[
+                (
+                    "logseq/config.edn",
+                    "{:journal/page-title-format \"MM-dd\"}",
+                ),
+                ("pages/B.md", "- source\n"),
+                ("journals/2026_10_26.md", "- 2026\n"),
+                ("journals/2027_10_26.md", &day),
+                (
+                    "pages/referrer.md",
+                    "alias:: B\n- [[B]]\n- {{query (page \"B\")}}\n",
+                ),
+            ],
+        );
+        let offer =
+            serde_json::to_value(rename_offer(&store, "B", "2027-10-26", None).unwrap()).unwrap();
+        assert_eq!(offer["kind"], "merge", "{case}: {offer}");
+        assert_eq!(offer["into"], "journals/2027_10_26.md", "{case}: {offer}");
+        rename(
+            &store,
+            "B",
+            "2027-10-26",
+            RenameChoice::MergeInto("journals/2027_10_26.md"),
+        )
+        .unwrap();
+        let files = snapshot(&root);
+        // An alias value with a comma is written as a link.
+        let alias = if spelling.contains(',') {
+            format!("[[{spelling}]]")
+        } else {
+            spelling.to_owned()
+        };
+        assert_eq!(
+            files["pages/referrer.md"],
+            format!("alias:: {alias}\n- [[{spelling}]]\n- {{{{query (page \"{spelling}\")}}}}\n"),
+            "{case}"
+        );
+        assert_eq!(files["journals/2026_10_26.md"], "- 2026\n", "{case}");
+        assert_eq!(
+            fs::read_to_string(root.join("logseq/config.edn")).unwrap(),
+            "{:journal/page-title-format \"MM-dd\"}",
+            "{case}"
+        );
+        selected_spelling_save(&store, &root, &files);
+        let fresh = Store::open(&root, Default::default()).unwrap().0;
+        let id = tine_core::model::PageId::from("journals/2026_10_26.md");
+        assert_eq!(
+            fresh.page(&id).unwrap().doc.name,
+            "Oct 26th, 2026",
+            "{case}"
+        );
+        let view = fresh.whole_graph().unwrap();
+        for (name, opens) in [
+            (spelling, "journals/2027_10_26.md"),
+            ("Oct 26th, 2026", "journals/2026_10_26.md"),
+        ] {
+            match view.resolve(name, true) {
+                tine_store::Resolved::Existing { id, .. } => {
+                    assert_eq!(id.as_str(), opens, "{case}: {name}")
+                }
+                other => panic!("{case}: {name} opens {other:?}"),
+            }
+        }
     }
 }
 

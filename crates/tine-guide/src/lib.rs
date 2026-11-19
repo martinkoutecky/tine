@@ -234,6 +234,24 @@ mod journal_guide_tests {
         assert!(journals.contains("A day without a file gets its new file in `journals/`."));
     }
 
+    /// D-20261119-YL: a journal title format that names no single day is not
+    /// used; the Guide says what Tine shows instead and that no file changes.
+    #[test]
+    fn a_journal_title_format_that_names_no_single_day_is_documented() {
+        let journals = include_str!("templates/journals-tasks-scheduling.md");
+        for promise in [
+            "A journal title has to name one day",
+            "such as `MM-dd` (no year, so `11-02` would be every year's November 2nd)",
+            "journal titles use the default, `MMM do, yyyy`, a notice says so once when the graph opens",
+            "Settings → **Journals** shows the format in use and why",
+            "Tine changes no file and keeps the setting in `config.edn` as it is",
+            "A link such as `[[11-02]]` is then an ordinary page link.",
+        ] {
+            assert!(journals.contains(promise), "missing: {promise}");
+        }
+        assert!(!journals.contains("a page named like `11-02` stays an ordinary page"));
+    }
+
     #[test]
     fn sidebar_commands_are_documented() {
         let journals = include_str!("templates/journals-tasks-scheduling.md");

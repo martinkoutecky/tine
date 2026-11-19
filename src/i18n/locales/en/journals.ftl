@@ -21,3 +21,14 @@ journals-prose-tasks-today = { NUMBER($count, useGrouping: 0) } { $count ->
     } today
 journals-prose-in-progress = { NUMBER($count, useGrouping: 0) } in progress
 journals-prose-task-summary = { $tasks }, { $progress }
+## A configured journal title format that names no single day (D-20261119-YL)
+# $configured (string): the title format config.edn sets; $effective (string): the format Tine uses instead.
+journal-title-format-refused-missing-year = Journal titles use "{ $effective }", not "{ $configured }" from config.edn: that format writes no year, so one title would name the same date in every year. Your files are unchanged.
+# $configured (string): the title format config.edn sets; $effective (string): the format Tine uses instead.
+journal-title-format-refused-missing-month = Journal titles use "{ $effective }", not "{ $configured }" from config.edn: that format writes no month, so one title would name several days. Your files are unchanged.
+# $configured (string): the title format config.edn sets; $effective (string): the format Tine uses instead.
+journal-title-format-refused-missing-day = Journal titles use "{ $effective }", not "{ $configured }" from config.edn: that format writes no day of the month, so one title would name several days. Your files are unchanged.
+# $configured (string): the title format config.edn sets; $effective (string): the format Tine uses instead; $day (string): a date, yyyy-MM-dd; $written (string): the title the format writes for it; $readAs (string): the other date that title opens, yyyy-MM-dd.
+journal-title-format-refused-misread = Journal titles use "{ $effective }", not "{ $configured }" from config.edn: that format titles { $day } "{ $written }", which opens { $readAs }. Your files are unchanged.
+# $configured (string): the title format config.edn sets; $effective (string): the format Tine uses instead; $day (string): a date, yyyy-MM-dd; $written (string): the title the format writes for it.
+journal-title-format-refused-unread = Journal titles use "{ $effective }", not "{ $configured }" from config.edn: that format titles { $day } "{ $written }", which opens no journal day. Your files are unchanged.

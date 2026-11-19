@@ -1,0 +1,26 @@
+{
+ "config": {
+  "journalTitleFormat": "dd.MM.yyyy",
+  "journalFileFormat": "yyyy/MM/dd",
+  "fileNameFormat": "legacy"
+ },
+ "files": {
+  "pages/2026.md": "- notes\n",
+  "pages/dayphysical.md": "title:: 2026/10/26\n- day\n",
+  "pages/R.md": "- [[2026/10/26]] [[2026/x]]\n"
+ },
+ "navigate": [
+  "2026/10/26",
+  "26.10.2026",
+  "2026",
+  "2026/x"
+ ],
+ "queries": [
+  {
+   "anchor": "block",
+   "q": {
+    "refs": "2026/10/26"
+   }
+  }
+ ]
+}

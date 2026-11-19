@@ -64,16 +64,24 @@ impl Intended {
         indented: bool,
         normalize: bool,
         org: bool,
-        target: &str,
+        target: &tine_core::model::PageDto,
         format: &refs::RenameFormat<'_>,
     ) -> Result<Counts, RealizationFailure> {
         let read = Header::read(&w.text, org);
         let refused = || RealizationError::BodyLaw.at(MergePart::Output);
+        // A day keeping its own title (O6) keeps its claim: a journals-
+        // directory file is named by its file name, so a header naming another
+        // day stays and the file keeps its day (CM SPEC O1, "the survivor's
+        // title if that title names its claim, otherwise its effective name";
+        // D-20261119-YL nonmatching-header row). A pages-directory day's title
+        // names that day, so the comparison below already admits it.
+        let journal = target.kind == tine_core::model::PageKind::Journal;
         if read.title.as_ref().is_some_and(|name| {
-            !refs::same_page(name, target)
+            !(journal && inputs[0].title.as_ref() == Some(name))
+                && !refs::same_page(name, &target.name)
                 && !format.days.is_some_and(|days| {
                     days.parse(name)
-                        .is_some_and(|day| days.parse(target) == Some(day))
+                        .is_some_and(|day| days.parse(&target.name) == Some(day))
                 })
         }) {
             return Err(RealizationError::SurvivorIdentity.at(MergePart::Output));

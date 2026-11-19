@@ -115,14 +115,12 @@ fn day_opens(root: &std::path::Path, names: &[&str]) -> Vec<(String, String, Str
     out
 }
 
-/// Model r6 O3 ("a journal holds every accepted spelling of its day") and
-/// cm-cut6k SPEC §2.1: with title format `MM-dd`, two days may display the
-/// same label, "they remain distinct day identities", and `Dates.parse`
-/// "must not substitute an ambiguous rendered title for the day". So a
-/// spelling that parses to a day is held only by that day's journal, not by
-/// every journal sharing its rendered title; the ambiguous label `10-26`
-/// itself (which parses to no day) keeps its title lookup. A format with a
-/// year is unchanged, and two files of one day stay twins in path order.
+/// Model r6 O3 ("a journal holds every accepted spelling of its day"): a
+/// spelling that parses to a day is held only by that day's journal. Under
+/// `MM-dd`, which writes no year and so is not used (D-20261119-YL), the two
+/// years of 26 October keep the default titles, and `10-26` is an ordinary
+/// name no file claims. A format with a year is unchanged, and two files of
+/// one day stay twins in path order.
 #[test]
 fn a_full_day_spelling_is_held_only_by_that_days_journal() {
     let _guard = super::integration_lock();
@@ -145,17 +143,20 @@ fn a_full_day_spelling_is_held_only_by_that_days_journal() {
     assert_eq!(
         day_opens(
             ambiguous.path(),
-            &["2026-10-26", "2025_10_26", "2027-10-26", "10-26"]
+            &[
+                "2026-10-26",
+                "2025_10_26",
+                "2027-10-26",
+                "Oct 26th, 2025",
+                "10-26"
+            ]
         ),
         [
             row("2026-10-26", "journals/2026_10_26.md"),
             row("2025_10_26", "journals/2025_10_26.md"),
             row("2027-10-26", "absent"),
-            (
-                "10-26".to_owned(),
-                "journals/2025_10_26.md".to_owned(),
-                "journals/2025_10_26.md+journals/2026_10_26.md".to_owned()
-            ),
+            row("Oct 26th, 2025", "journals/2025_10_26.md"),
+            row("10-26", "absent"),
         ]
     );
     let with_year = graph(

@@ -1,0 +1,13 @@
+{
+  "fileNameFormat": "legacy",
+  "files": [
+    {
+      "format": "md",
+      "name": "Birthday",
+      "path": "pages/Birthday.md",
+      "preBlock": "alias:: 11-02",
+      "title": null
+    }
+  ],
+  "links": []
+}

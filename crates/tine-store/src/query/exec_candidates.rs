@@ -81,7 +81,7 @@ fn required(filter: &Filter, anchor: Anchor) -> Option<Req> {
 }
 
 /// The page keys a name need probes. A date spelling names its journal
-/// (S12, `eval_page_name`): the journal is named by the configured title,
+/// (S12, `eval_page_name`): the journal is named by the effective title,
 /// so its key joins the probe. The one date answerer reads the spelling.
 fn name_keys(name: &str, format: &tine_core::date::JournalFormat) -> impl Iterator<Item = String> {
     let journal = eval::reference_day(name, format)

@@ -71,7 +71,7 @@ impl Graph {
 /// an accepted date is that day (CM SPEC §2.1; D-20261110-CM CM-DATE "one
 /// key per day, no ordinary page named by a date"; D-20261111-CMR14
 /// CM-DAYFILE: `pages/2026-11-02.md` is that day's journal and stays where it
-/// is), named by the day's configured title; any other name is an ordinary
+/// is), named by the day's title (D-20261119-YL); any other name is an ordinary
 /// page of that name. A journals-directory file is named by its file name
 /// instead ([`super::journal_stem_name`]). The one rule every listing, path
 /// read and build names such a file by. O(name).
@@ -113,19 +113,11 @@ pub(crate) struct ClaimLookup<'a> {
 impl ClaimLookup<'_> {
     /// Whether `entry`, a claimant of [`Self::name`], holds the name looked
     /// up. A spelling that parses to a day is held only by that day's files
-    /// (model r6 O3: "a journal holds every accepted spelling of its day"):
-    /// a title format without a year (`MM-dd`) gives two days one title, and
-    /// they remain distinct days (cm-cut6k SPEC §2.1), so the title's other
-    /// files do not hold it. A name that is no day (the shared label `10-26`
-    /// itself) asked as a page is the ordinary page of that name: "typing the
-    /// ambiguous, non-identifying label cannot select" a day (SPEC §2.1), so
-    /// no day's file holds it. Asked as a journal (the app's title handle) it
-    /// keeps every claimant of the name. O(1) per claimant.
+    /// (model r6 O3: "a journal holds every accepted spelling of its day").
+    /// A name that is no day keeps every claimant of the name. O(1) per
+    /// claimant.
     pub(crate) fn holds(&self, entry: &PageEntry) -> bool {
-        match self.day {
-            Some(day) => entry.date_key == Some(day),
-            None => self.kind == PageKind::Journal || entry.date_key.is_none(),
-        }
+        self.day.is_none() || entry.date_key == self.day
     }
 }
 

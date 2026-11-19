@@ -20,3 +20,13 @@ settings-sections-open = 打开页面
 journals-prose-tasks-today = 今天有 { $count } 项任务
 journals-prose-in-progress = { $count } 项进行中
 journals-prose-task-summary = { $tasks }，{ $progress }
+
+journal-title-format-refused-missing-year = 日记标题使用“{ $effective }”，而不是 config.edn 中的“{ $configured }”：该格式不写年份，一个标题会指向每一年的同一日期。你的文件没有改动。
+
+journal-title-format-refused-missing-month = 日记标题使用“{ $effective }”，而不是 config.edn 中的“{ $configured }”：该格式不写月份，一个标题会指向多个日期。你的文件没有改动。
+
+journal-title-format-refused-missing-day = 日记标题使用“{ $effective }”，而不是 config.edn 中的“{ $configured }”：该格式不写日，一个标题会指向多个日期。你的文件没有改动。
+
+journal-title-format-refused-misread = 日记标题使用“{ $effective }”，而不是 config.edn 中的“{ $configured }”：该格式把 { $day } 写成“{ $written }”，而这个标题打开的是 { $readAs }。你的文件没有改动。
+
+journal-title-format-refused-unread = 日记标题使用“{ $effective }”，而不是 config.edn 中的“{ $configured }”：该格式把 { $day } 写成“{ $written }”，而这个标题不打开任何日记日期。你的文件没有改动。

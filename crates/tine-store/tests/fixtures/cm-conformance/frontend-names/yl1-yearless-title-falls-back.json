@@ -1,0 +1,13 @@
+{
+  "fileNameFormat": "legacy",
+  "files": [
+    {
+      "format": "md",
+      "name": "Nov 2nd, 2026",
+      "path": "pages/physical.md",
+      "preBlock": "title:: 2026-11-02",
+      "title": "2026-11-02"
+    }
+  ],
+  "links": []
+}

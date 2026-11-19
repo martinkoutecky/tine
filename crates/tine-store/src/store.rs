@@ -756,9 +756,10 @@ pub struct ConfigState {
     /// unless an iCloud placeholder stands in for it (`missing_config_problem`).
     /// Unrecognized or malformed config values may default individually and do
     /// not set this field. Journal format strings are not validated here:
-    /// unsupported format characters become literal text, and a format that
-    /// cannot parse its own rendered title can make a new journal unresolvable
-    /// by title. Callers setting formats must verify their intended examples.
+    /// unsupported format characters become literal text. A title format
+    /// whose titles do not each name one day is not used for titles
+    /// (`JournalFormat::title_refusal`, D-20261119-YL); a file-name format is
+    /// used as configured.
     pub problem: Option<crate::IoError>,
     /// Final component of the validated assets directory, for backup layout.
     pub assets_directory_name: String,
@@ -1523,10 +1524,10 @@ impl Store {
         if active_only {
             let title = self.graph.current_journal_format().title(date);
             // The day's claimants in any directory, in the one claimant order
-            // (CM SPEC §§2.1–2.2); a year-less title shares its bucket with
-            // other days, which do not hold this one. The lookup also works
-            // before Ready and after a contained load failure, without
-            // waiting or reading journal bodies.
+            // (CM SPEC §§2.1–2.2): the title names this day alone
+            // (D-20261119-YL). The lookup also works before Ready and after a
+            // contained load failure, without waiting or reading journal
+            // bodies.
             if let Some(entry) =
                 (self.day_claimants(&title).into_iter()).find(|entry| entry.date_key == Some(day.0))
             {

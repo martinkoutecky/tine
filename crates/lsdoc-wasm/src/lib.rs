@@ -905,6 +905,32 @@ pub fn journal_day_json(name: &str, file_format: &str, title_format: &str) -> St
     })
 }
 
+/// Which title format renders journal titles for (file, title) format
+/// strings, and why the configured one is not used if it is not: the one
+/// answer, `JournalFormat::title_format` / `title_refusal` (D-20261119-YL).
+/// `{"effective", "refusal"}`, `refusal` null or `{"missing": "year"|"month"|
+/// "day"}` or `{"day", "written", "read_as"}` (days as `{"y","m","d"}`,
+/// `read_as` null when the title opens no day). O(1) warm.
+#[wasm_bindgen]
+pub fn journal_title_status_json(file_format: &str, title_format: &str) -> String {
+    let day = |d: date::JournalDate| serde_json::json!({"y":d.year,"m":d.month,"d":d.day});
+    with_journal_format(file_format, title_format, |format| {
+        let refusal = format.title_refusal().map(|refusal| match refusal {
+            date::TitleFormatRefusal::Missing(field) => serde_json::json!({"missing": match field {
+                date::DateField::Year => "year",
+                date::DateField::Month => "month",
+                date::DateField::Day => "day",
+            }}),
+            date::TitleFormatRefusal::Misread { day: d, written, read_as } => serde_json::json!({
+                "day": day(*d),
+                "written": written,
+                "read_as": read_as.map(day),
+            }),
+        });
+        serde_json::json!({"effective": format.title_format(), "refusal": refusal}).to_string()
+    })
+}
+
 /// The kind of a link target nothing claims: `JournalFormat::absent_link_is_journal`.
 #[wasm_bindgen]
 pub fn absent_link_is_journal(name: &str, file_format: &str, title_format: &str) -> bool {

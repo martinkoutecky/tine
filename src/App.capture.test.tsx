@@ -242,3 +242,55 @@ it("GH #832: redirect-page? opens the page the capture landed on", async () => {
   await receiveConfigured({ quick_capture_default_page: "Inbox", quick_capture_redirect_page: true }, { text: "- go" }, ["Inbox"]);
   expect(route()).toMatchObject({ kind: "page", name: "Inbox" });
 });
+
+// Salvaged from batch/cm-yearless-day-key af71de05b (review 43900f5ea R2-1,
+// R2-2), without its year-less day handle: a capture written into a day
+// before midnight redirects to the day it was written into, whenever its
+// flush, acknowledgement or retry completes, never to a today recomputed at
+// another moment; an idless delivery that landed is a success.
+function beforeMidnight() {
+  let now = new Date(2026, 10, 2, 23, 59).getTime();
+  vi.spyOn(Date, "now").mockImplementation(() => now);
+  const day = journalTitle(appNow());
+  return { day, midnight: () => { now = new Date(2026, 10, 3, 0, 1).getTime(); } };
+}
+async function bindRedirecting(flushed: () => false | [] = () => []) {
+  vi.spyOn(backend(), "graphBindingGeneration").mockReturnValue(11);
+  setGraphMeta({ preferred_format: "md", quick_capture_redirect_page: true } as GraphMeta);
+  answerOpensFromDocument(await bindTestHost());
+  vi.spyOn(backend(), "getPage").mockImplementation(async (name, kind) => ({ name, kind, title: name, id: `journals/${name}.md`, rev: "before", pre_block: null, blocks: [] }));
+  vi.spyOn(backend(), "pageWait").mockImplementation(async () => flushed());
+  mainPaneRouter.openPage("Elsewhere");
+  return installQuickCaptureReceiver();
+}
+
+it.each(["acknowledgement", "flush", "idless flush"])("a capture whose %s completes after midnight redirects to the day it was written into", async (when) => {
+  const clock = beforeMidnight();
+  const receipts = backend().captureReceipt.bind(backend());
+  vi.spyOn(backend(), "captureReceipt").mockImplementation(async (id, action, generation) => {
+    if (action === "saved" && when === "acknowledgement") clock.midnight();
+    return receipts(id, action, generation);
+  });
+  const dispose = await bindRedirecting(() => { if (when !== "acknowledgement") clock.midnight(); return []; });
+  const id = when === "idless flush" ? {} : { id: `midnight-${when}` };
+  await h.receive!({ payload: { ...id, target: "main", bindingGeneration: 11, text: "- late" } });
+  dispose();
+  expect(clock.day).toBe("Nov 2nd, 2026");
+  expect(rootsOf(clock.day)).toEqual(["late"]);
+  expect(route()).toMatchObject({ kind: "page", name: clock.day, pageKind: "journal" });
+});
+
+it("a capture retried the next day redirects to the day it was written into", async () => {
+  const clock = beforeMidnight();
+  let flushed = false;
+  const dispose = await bindRedirecting(() => flushed && []);
+  const payload = { id: "retry-next-day", target: "main", bindingGeneration: 11, text: "- late" };
+  await h.receive!({ payload });
+  expect(h.ack).toHaveBeenLastCalledWith("capture", "quick-capture-ack", { id: payload.id, ok: false, landed: true });
+  clock.midnight(); flushed = true;
+  await h.receive!({ payload });
+  dispose();
+  expect(h.ack).toHaveBeenLastCalledWith("capture", "quick-capture-ack", { id: payload.id, ok: true });
+  expect(rootsOf(clock.day)).toEqual(["late"]);
+  expect(route()).toMatchObject({ kind: "page", name: clock.day, pageKind: "journal" });
+});
