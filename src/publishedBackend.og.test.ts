@@ -26,6 +26,8 @@ const snapshot: PublishedSnapshot = {
     context: { current_page: "Public" }, executed_context: { current_page: "Public" }, view: {}, result }],
 };
 
+const READER = "https://notes.example/site/index.html#/share/key";
+
 describe("published external URL opener (GH #984)", () => {
   afterEach(() => vi.unstubAllGlobals());
 
@@ -42,9 +44,11 @@ describe("published external URL opener (GH #984)", () => {
     "file:///tmp/notes.txt",
     "tine://today",
     "//example.org",
+    "\\\\example.org",
+    "/\\example.org",
   ])("refuses %j at the browser handoff", async (url) => {
     const open = vi.fn();
-    vi.stubGlobal("window", { open });
+    vi.stubGlobal("window", { open, location: { href: READER } });
     const api = publishedBackend(async () => snapshot);
     const outcome = await Promise.allSettled([api.openExternal(url)]);
     expect(open).not.toHaveBeenCalled();
@@ -57,14 +61,26 @@ describe("published external URL opener (GH #984)", () => {
     "mailto:a@b.c",
   ])("opens %j without confirmation", async (url) => {
     const open = vi.fn();
-    vi.stubGlobal("window", { open });
+    vi.stubGlobal("window", { open, location: { href: READER } });
+    await publishedBackend(async () => snapshot).openExternal(url);
+    expect(open).toHaveBeenCalledExactlyOnceWith(url, "_blank", "noopener");
+  });
+
+  it.each([
+    "#section",
+    "#/page/Project",
+    "other-page.html",
+    "*Heading",
+  ])("opens the same-site link %j in a new reader tab, as before (GH #984 review 9a34ea9dd)", async (url) => {
+    const open = vi.fn();
+    vi.stubGlobal("window", { open, location: { href: READER } });
     await publishedBackend(async () => snapshot).openExternal(url);
     expect(open).toHaveBeenCalledExactlyOnceWith(url, "_blank", "noopener");
   });
 
   it("requires a matching confirmation and cannot confirm a refused scheme", async () => {
     const open = vi.fn();
-    vi.stubGlobal("window", { open });
+    vi.stubGlobal("window", { open, location: { href: READER } });
     const api = publishedBackend(async () => snapshot);
     const url = "zotero://select/items/ABC";
     const refusals = await Promise.allSettled([
