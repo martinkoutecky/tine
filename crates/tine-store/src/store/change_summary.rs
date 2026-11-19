@@ -2,7 +2,7 @@
 //! Only mounted query/unlinked targets are checked; no graph traversal on publication.
 use super::*;
 use crate::query::{exec::Plan, index::PageFacts};
-use std::collections::BTreeSet;
+use std::collections::{BTreeSet, HashSet};
 use tine_core::doc::{property_key_norm, DocBlock, Document};
 use tine_core::query::{
     atom::ParseConfig,
@@ -694,13 +694,13 @@ impl Snapshot {
             // day row) changes the listed days.
             summary.days |= day && moved(i);
             //
-            // Inspect parsed facts of this edited page only, on both sides so
-            // removing planning/template metadata invalidates its old answer.
-            for doc in [before, after] {
-                let (planning, templates) = document_reader_facts(doc);
-                summary.days |= planning;
-                summary.templates |= templates;
-            }
+            // An unchanged planning date contributes the same day through a
+            // text edit, task toggle, or fold. A template's body may change
+            // even when its defining property stays the same.
+            let (previous_planning, previous_templates) = document_reader_facts(before);
+            let (next_planning, next_templates) = document_reader_facts(after);
+            summary.days |= previous_planning != next_planning;
+            summary.templates |= previous_templates || next_templates;
             // `(tag P)` reads path refs, including the source page and its
             // namespace ancestors. Backlinks exclude self; keep these keys
             // separate so typing in P does not refresh P's reference sections.
@@ -808,12 +808,13 @@ impl Snapshot {
     }
 }
 
-// Presence is conservative: editing any part of a template-bearing document
-// can change its insertion DTO. Do not build/copy template subtrees here.
-fn document_reader_facts(doc: &Document) -> (bool, bool) {
-    fn blocks(roots: &[DocBlock], planning: &mut bool, templates: &mut bool) {
+// One walk of the already parsed page. Borrow the distinct planning stamps
+// and keep only template presence, since any edit may change a template body.
+fn document_reader_facts(doc: &Document) -> (HashSet<&str>, bool) {
+    fn blocks<'a>(roots: &'a [DocBlock], planning: &mut HashSet<&'a str>, templates: &mut bool) {
         for block in roots {
-            *planning |= block.scheduled().is_some() || block.deadline().is_some();
+            planning.extend(block.scheduled());
+            planning.extend(block.deadline());
             *templates |= block
                 .property("template")
                 .is_some_and(|name| !name.is_empty());
@@ -828,7 +829,7 @@ fn document_reader_facts(doc: &Document) -> (bool, bool) {
                     .is_some_and(|name| !name.is_empty())
             })
     });
-    let mut planning = false;
+    let mut planning = HashSet::new();
     blocks(&doc.roots, &mut planning, &mut templates);
     (planning, templates)
 }

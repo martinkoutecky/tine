@@ -909,6 +909,10 @@ fn day_and_template_hints_are_edit_scoped_and_cover_removal() {
         ("[[2026-10-30]]", true, false),
         ("removed day", true, false),
         ("TODO planned\nSCHEDULED: <2026-10-30 Fri>", true, false),
+        ("TODO edited plan\nSCHEDULED: <2026-10-30 Fri>", false, false),
+        ("TODO edited plan\nSCHEDULED: <2026-10-31 Sat>", true, false),
+        ("TODO edited plan\nSCHEDULED: <2026-10-31 Sat>\nDEADLINE: <2026-11-01 Sun>", true, false),
+        ("DONE edited plan\nSCHEDULED: <2026-10-31 Sat>\nDEADLINE: <2026-11-01 Sun>", false, false),
         ("removed planning", true, false),
         ("a template\ntemplate:: Example", false, true),
         ("edited template body\ntemplate:: Example", false, true),
@@ -959,6 +963,29 @@ fn day_and_template_hints_are_edit_scoped_and_cover_removal() {
         check(&previous, &next, summary).unwrap();
         previous = next;
     }
+}
+
+#[test]
+fn folding_a_journal_with_planning_does_not_invalidate_its_days() {
+    let _guard = crate::test_transactions::integration_lock();
+    let (dir, store) = fixture(3);
+    let path = "journals/2026_10_22.md";
+    edit(&store, path, |doc| {
+        doc.blocks[0].children.push(BlockDto {
+            raw: "foldable child".into(),
+            ..Default::default()
+        });
+        doc.blocks.push(BlockDto {
+            raw: "TODO planned\nSCHEDULED: <2026-10-31 Sat>".into(),
+            ..Default::default()
+        });
+    });
+    let before = answers(&store, dir.path());
+    let wire = edit(&store, path, |doc| doc.blocks[0].collapsed = true);
+    let summary = &wire["summary"];
+    assert_eq!(summary["days"], false);
+    assert_eq!(summary["journals"], true);
+    check(&before, &answers(&store, dir.path()), summary).unwrap();
 }
 
 #[test]
