@@ -17,6 +17,7 @@ The format follows [Keep a Changelog](https://keepachangelog.com/); versions use
 
 ### Fixed
 - Renaming a page that very large pages link to uses less memory: each linking page's rewrite proof and the check's reading of it are now let go as soon as that page has been checked, instead of being held until the whole rename was prepared (a 20,000-block page: 125 MB to 113 MB peak; REG-CM-RENAME-RETAINED-BYTES).
+- All Pages showed 0 references for a page reached only through a property key (`done-at:: today` reaching `Done At`) while its Linked References listed the block; the count and the panel now come from one answer (UI-CM-ALLPAGES-COUNT-ZERO-FOR-FOLDED-KEY-PAGE).
 - Adding to a page or a journal day while Tine is still loading the graph at launch no longer writes a second file for it beside your file; the add is refused as for any page that already has a file (REG-HELD-UNINDEXED-TWIN).
 - When you type in a page while an agent writes to it through the CLI, a resulting conflict review now compares against your last save that reached the disk, instead of falling back to a two-way review when an older save was proven only by the disk (#964; REG-GH964-LIVE-CONFLICT-BASE).
 - On Windows, a graph on a file system without file IDs (a WSL share such as `\\wsl.localhost`, a FAT32 or exFAT drive, a Samba share) can be saved again; since 0.9.0 every save failed with "The request is not supported (os error 50)" (reported by redstreet in #973; REG-973-WINDOWS-NO-FILE-ID).
@@ -31,6 +32,7 @@ The format follows [Keep a Changelog](https://keepachangelog.com/); versions use
 - Hovering a bullet no longer raises the red "Could not read this block's git history" toast in a graph that has no usable git repository (none, a broken or moved `.git`, a bare repository, one that does not hold the graph); the bullet just says Unknown. A history read that really fails inside a repository is shown once per graph, not on every hover (reported by EllisMorrow in #980; UI-GH980-NO-GIT-NO-ERROR).
 - Closing Quick Capture with the window manager (Alt+F4, Cmd+W) no longer loses the text you typed or stops Quick Capture from opening until Tine is restarted: it hides like losing focus does, and the next capture shortcut shows the draft again (reported by corefusion in #967; UI-CAPTURE-WM-CLOSE-967).
 - When two files claim the same page name (for example `pages/XX1.md` and `pages/笔记集/XX1.md`), you can delete one of them: open it from **Conflicts → Page name conflicts**, and its page menu offers **Delete file “…”**, which deletes exactly that file and leaves the other untouched. Deleting by name used to fail with "Multiple files share this page identity" and offered no way to remove the file (reported by EllisMorrow in #978; UI-GH978-DELETE-TWIN-FILE).
+- Mouse Back and Forward buttons work again in Windows graph windows and move one page per press (#948).
 - Quick share links are offered in every build of Tine, including the Flatpak
   and builds from source. They used to show "Coming soon" in any build made
   outside Tine's release workflow. A release is now refused instead while
