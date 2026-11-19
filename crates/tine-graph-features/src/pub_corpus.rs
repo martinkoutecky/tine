@@ -13,7 +13,7 @@
 //! and [`PubPage::label`] the label, so code cannot read the label as a name
 //! by accident. This file is the only place in publication, render and print
 //! that reads `CorpusPage::name` or asks the whole graph for a corpus
-//! (`pub_corpus_guard.rs` fails on a site that does).
+//! (the guard test in this file's `tests` fails on a site that does).
 //!
 //! One names-only inventory row per journal page
 //! ([`tine_store::InventoryScope::FileNames`]) builds the names: O(day files ·
@@ -84,11 +84,11 @@ impl Named {
     }
 }
 
-/// The day handle of file `id` (`2026_11_02` under `MM-dd`), when it has one:
-/// from its own names-only inventory row, O(log P).
-fn handle_of(whole: &WholeGraph, id: &PageId) -> Option<String> {
+/// The operational name of file `id` (`2026_11_02` under `MM-dd`): its own
+/// names-only inventory row's answer, O(log P).
+fn operational_name_of(whole: &WholeGraph, id: &PageId) -> Option<String> {
     let rows = whole.inventory(InventoryScope::FileNames(id));
-    rows.0.first()?.handle.clone()
+    Some(rows.0.first()?.operational_name().to_owned())
 }
 
 /// The operational name of the page `[[link]]` opens, when that is a day whose
@@ -99,8 +99,8 @@ fn handle_of(whole: &WholeGraph, id: &PageId) -> Option<String> {
 pub(crate) fn link_name(whole: &WholeGraph, link: &str) -> String {
     if link.bytes().any(|b| b.is_ascii_digit()) {
         if let tine_store::Resolved::Existing { id, .. } = whole.resolve(link, false) {
-            if let Some(handle) = handle_of(whole, &id) {
-                return handle;
+            if let Some(name) = operational_name_of(whole, &id) {
+                return name;
             }
         }
     }
@@ -112,10 +112,10 @@ impl PubCorpus {
     pub(crate) fn new(whole: &WholeGraph, corpus: Corpus) -> Self {
         let names = (corpus.pages.iter())
             .map(|page| {
-                let handle = (page.kind == PageKind::Journal)
-                    .then(|| handle_of(whole, &page.id))
-                    .flatten();
-                handle.unwrap_or_else(|| page.name.clone())
+                (page.kind == PageKind::Journal)
+                    .then(|| operational_name_of(whole, &page.id))
+                    .flatten()
+                    .unwrap_or_else(|| page.name.clone())
             })
             .collect();
         Self { corpus, names }
@@ -405,5 +405,44 @@ mod tests {
             !body.contains(".name"),
             "output_comments.rs reads a page name"
         );
+    }
+
+    /// `InventoryEntry::operational_name` is the one place the handle-or-name
+    /// rule is written (I-12, r6d): outside tine-store nothing reads an entry's
+    /// `handle` to decide a name. The receivers named are how inventory rows are
+    /// bound in this workspace.
+    #[test]
+    fn nothing_outside_the_store_reads_an_inventory_handle() {
+        const RECEIVERS: [&str; 4] = ["entry.handle", "row.handle", "first.handle", "e.handle"];
+        let hits = |text: &str| -> bool {
+            let body = code(text);
+            RECEIVERS.iter().any(|r| {
+                body.match_indices(r)
+                    .any(|(at, _)| !body[..at].ends_with(|c: char| c.is_alphanumeric() || c == '_'))
+            })
+        };
+        assert!(hits("let h = row.handle.clone();"));
+        assert!(!hits("let h = row.operational_name();"));
+        assert!(!hits("let h = app.handle();"));
+        let manifest = Path::new(env!("CARGO_MANIFEST_DIR"));
+        let mut dirs = vec![manifest.join("src"), manifest.join("src/publish_query")];
+        dirs.push(manifest.join("../../src-tauri/src"));
+        let mut scanned = 0;
+        for dir in dirs {
+            for entry in std::fs::read_dir(&dir).unwrap() {
+                let path = entry.unwrap().path();
+                let name = path.file_name().unwrap().to_str().unwrap().to_owned();
+                if path.is_file() && name.ends_with(".rs") && !name.ends_with("_tests.rs") {
+                    scanned += 1;
+                    let text = std::fs::read_to_string(&path).unwrap();
+                    assert!(
+                        !hits(&before_tests(&text)),
+                        "{} reads an inventory entry's handle; use operational_name()",
+                        path.display()
+                    );
+                }
+            }
+        }
+        assert!(scanned > 100, "the scan found {scanned} files");
     }
 }

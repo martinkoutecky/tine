@@ -77,12 +77,12 @@ pub(crate) fn answers(
     // including their ordinary target and the shared answer for their link.
     // This compatibility shape retires with answers v2, not in live All.
     let spellings = graph.inventory(InventoryScope::PublishedV1Spellings(inventory));
-    // The name a row's identity is asked by: its handle (a year-less day's
-    // identifying spelling, whose key is the row's `key`), else its name.
+    // The name a row's identity is asked by: its operational name when that
+    // is not its own name (a year-less day), else its name.
     let mut asks: HashMap<String, String> = HashMap::new();
     for entry in inventory.0.iter().chain(&spellings.0) {
-        if let Some(handle) = &entry.handle {
-            asks.insert(page_key(handle), handle.clone());
+        if entry.operational_name() != entry.name {
+            asks.insert(entry.key(), entry.operational_name().to_owned());
         }
     }
     let mut rows: Vec<PageInventoryEntryWire> = inventory

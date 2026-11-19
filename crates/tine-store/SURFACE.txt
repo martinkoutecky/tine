@@ -391,7 +391,7 @@ field restore::RestoreFailed.phase
 field restore::RestoreFailed.cause
 field restore::RestoreFailed.done
 
-## WholeGraph: Names (ceiling: 34)
+## WholeGraph: Names (ceiling: 35)
 # CLI export extends corpus's selection parameter to indexed block-ID candidate
 # pages. A page name cannot identify those pages; CorpusScope types that existing
 # parameter. No Store operation or WholeGraph question is added.
@@ -430,6 +430,11 @@ field store::InventoryEntry.empty_alias
 # no InventoryScope can carry them, and the wire row and the published v1 rows
 # key by them. 26 -> 28.
 field store::InventoryEntry.handle
+# I-12 / r6d: what a caller names this page (the handle of a year-less day, else the
+# name) was written at four sites outside tine-store; the entry answers it once. `key`
+# derives from it. No InventoryScope parameter can carry it: it is a property of the
+# row, not a question. 34 -> 35.
+fn store::InventoryEntry::operational_name
 fn store::InventoryEntry::key
 struct store::LinkTarget
 field store::LinkTarget.name

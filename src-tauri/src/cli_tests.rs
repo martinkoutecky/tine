@@ -616,6 +616,29 @@ fn doctor_reports_a_duplicate_page_identity_and_fails() {
     );
 }
 
+/// With an `MM-dd` title format the day files of two years share the label
+/// `11-02`; each is its own page, so doctor reports no duplicate identity.
+#[test]
+fn doctor_does_not_take_two_years_of_one_day_for_a_duplicate_identity() {
+    let root = doctor_fixture("yearless");
+    std::fs::create_dir_all(root.path().join("logseq")).unwrap();
+    std::fs::write(
+        root.path().join("logseq/config.edn"),
+        "{:journal/page-title-format \"MM-dd\"}\n",
+    )
+    .unwrap();
+    for year in ["2025", "2026"] {
+        std::fs::write(
+            root.path().join(format!("journals/{year}_11_02.md")),
+            "- day\n",
+        )
+        .unwrap();
+    }
+    let report = doctor_report(root.path()).unwrap();
+    assert!(report.problems.is_empty(), "{:?}", report.problems);
+    assert_eq!(doctor(root.path()), Ok(()));
+}
+
 #[test]
 fn checked_in_man_pages_are_generated_from_the_cli_schema() {
     const MAN_PAGES: &[(&str, &str)] = &[

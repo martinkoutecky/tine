@@ -658,14 +658,21 @@ fn doctor_report(path: &Path) -> Result<DoctorReport, String> {
         .whole_graph()
         .map_err(|e| format!("cannot parse graph: {e:?}"))?;
     let corpus = graph.corpus(None, false);
-    // One identity per page name under the store's own fold (`page_key`): two
-    // files claiming it make links and edits land on only one of them.
+    // One identity per page under the store's own answer (`InventoryEntry::key`:
+    // a year-less day's handle, else its name, folded by `page_key`): two files
+    // claiming it make links and edits land on only one of them. The label of
+    // such a day is shared by other years and is no identity.
     let mut identities: std::collections::BTreeMap<String, Vec<String>> = Default::default();
-    for page in &corpus.pages {
-        identities
-            .entry(tine_core::refs::page_key(&page.name))
-            .or_default()
-            .push(String::from(page.id.clone()));
+    for entry in &graph
+        .inventory(tine_store::InventoryScope::ConflictingFiles(None))
+        .0
+    {
+        if let tine_store::Resolved::Existing { id, .. } = &entry.target {
+            identities
+                .entry(entry.key())
+                .or_default()
+                .push(String::from(id.clone()));
+        }
     }
     let mut problems: Vec<String> = graph
         .unreadable_files()

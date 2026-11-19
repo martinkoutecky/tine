@@ -292,17 +292,20 @@ pub(crate) fn excerpt(document: &tine_core::doc::Document) -> String {
     cut(first_text(&document.roots).unwrap_or_default())
 }
 
-fn entry_with(name: &str, excerpt: String) -> Entry {
+/// `name` is the page's operational name: it is the id and the route a tap
+/// opens. `title` is shown only; it differs for a year-less day, whose label
+/// (`11-02`) other years share.
+fn entry_with(name: &str, title: &str, excerpt: String) -> Entry {
     Entry {
         id: tine_core::refs::page_key(name),
-        title: name.to_owned(),
+        title: title.to_owned(),
         excerpt,
         url: format!("tine://page/{}", encode_component(name)),
     }
 }
 
 pub(crate) fn entry(name: &str, document: &tine_core::doc::Document) -> Entry {
-    entry_with(name, excerpt(document))
+    entry_with(name, name, excerpt(document))
 }
 
 /// [`entry`] for a page the store just loaded.
@@ -310,6 +313,7 @@ pub(crate) fn entry_for_page(page: &tine_core::model::PageDto) -> Entry {
     let is_org = page.format == tine_core::model::Format::Org;
     entry_with(
         &page.name,
+        &page.title,
         cut(first_dto_text(&page.blocks, is_org).unwrap_or_default()),
     )
 }
@@ -333,6 +337,20 @@ pub(crate) fn bound(app: &tauri::AppHandle, label: &str, slot: &crate::state::Gr
     }
 }
 
+/// One entry per page of `view`, named as a watcher update names it (the
+/// operational name), titled by the label.
+fn entries_of(view: &tine_store::WholeGraph) -> Vec<Entry> {
+    (view.corpus(None, true).pages.iter())
+        .map(|page| {
+            let row = (page.kind == PageKind::Journal)
+                .then(|| view.inventory(tine_store::InventoryScope::FileNames(&page.id)))
+                .and_then(|rows| rows.0.first().map(|row| row.operational_name().to_owned()));
+            let name = row.as_deref().unwrap_or(&page.name);
+            entry_with(name, &page.name, excerpt(&page.document))
+        })
+        .collect()
+}
+
 /// Replace the index with `slot`'s pages. Called once the window's graph is
 /// warm (graph.rs `warm_cache_async`); a no-op unless `slot` is still bound.
 pub(crate) fn reindex(app: &tauri::AppHandle, label: &str, slot: &Arc<crate::state::GraphSlot>) {
@@ -342,13 +360,7 @@ pub(crate) fn reindex(app: &tauri::AppHandle, label: &str, slot: &Arc<crate::sta
     let source = slot.clone();
     index(app).reindex(&binding_of(slot), move || {
         match source.store.whole_graph() {
-            Ok(view) => Some(
-                view.corpus(None, true)
-                    .pages
-                    .iter()
-                    .map(|page| entry(&page.name, &page.document))
-                    .collect(),
-            ),
+            Ok(view) => Some(entries_of(&view)),
             Err(error) => {
                 crate::debug::diag_private("spotlight-reindex-failed", &format!("{error:?}"));
                 None
@@ -519,6 +531,39 @@ mod tests {
         assert!(entry.excerpt.starts_with("First"), "{:?}", entry.excerpt);
         assert!(!entry.excerpt.contains('\n'));
         assert_eq!(entry.url, "tine://page/%C3%9Cber%20Plan%2F2026");
+    }
+
+    /// Under an `MM-dd` title format two years of 11-02 are two pages: each
+    /// entry is addressed and opened by its own operational name, and shows the
+    /// label, as a watcher update of the same day does.
+    #[test]
+    fn year_less_days_are_indexed_by_their_own_name_and_titled_by_the_label() {
+        let root = tempfile::tempdir().unwrap();
+        std::fs::create_dir_all(root.path().join("journals")).unwrap();
+        std::fs::create_dir_all(root.path().join("logseq")).unwrap();
+        std::fs::write(
+            root.path().join("logseq/config.edn"),
+            "{:journal/page-title-format \"MM-dd\"}\n",
+        )
+        .unwrap();
+        for year in ["2025", "2026"] {
+            std::fs::write(
+                root.path().join(format!("journals/{year}_11_02.md")),
+                format!("- day {year}\n"),
+            )
+            .unwrap();
+        }
+        let store = tine_store::Store::open(root.path(), Default::default())
+            .unwrap()
+            .0;
+        let view = store.whole_graph().unwrap();
+        let mut entries = entries_of(&view);
+        entries.sort_by(|a, b| a.id.cmp(&b.id));
+        let ids: Vec<_> = entries.iter().map(|e| e.id.as_str()).collect();
+        assert_eq!(ids, ["2025_11_02", "2026_11_02"]);
+        assert!(entries.iter().all(|e| e.title == "11-02"));
+        assert_eq!(entries[1].url, "tine://page/2026_11_02");
+        assert_eq!(entries[1].excerpt, "day 2026");
     }
 
     #[test]

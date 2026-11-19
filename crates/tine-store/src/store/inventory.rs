@@ -47,10 +47,17 @@ pub struct InventoryEntry {
 }
 
 impl InventoryEntry {
-    /// The page key this entry is looked up by: of its [`Self::handle`] when
-    /// it has one, else of its name. The wire's `key`. O(name).
+    /// What the app and a publication call this page: its [`Self::handle`]
+    /// when it has one (a year-less day, whose name is a label other years
+    /// share), else its name. The one place this rule is written.
+    pub fn operational_name(&self) -> &str {
+        self.handle.as_deref().unwrap_or(&self.name)
+    }
+
+    /// The page key this entry is looked up by: of its
+    /// [`Self::operational_name`]. The wire's `key`. O(name).
     pub fn key(&self) -> String {
-        tine_core::refs::page_key(self.handle.as_deref().unwrap_or(&self.name))
+        tine_core::refs::page_key(self.operational_name())
     }
 }
 
