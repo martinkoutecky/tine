@@ -196,6 +196,23 @@ describe.each<EditorKind>(["textarea", "cm6"])("%s editor: the Enter family comm
     expect(editor.value()).toMatch(/^project:: \[\[Programming\]\] ?, Other, \[\[Existing\]\]$/);
   });
 
+  it.each(["; ((Keep ]] intact))", "\t{{embed [[Existing]]}}"])(
+    "finishes an unfinished page reference before %j (FORK-853b)", async following => {
+      const prefix = "project:: [[pr";
+      setGraphMeta(META); bumpGraphEpoch();
+      vi.spyOn(backend(), "quickSwitch").mockResolvedValue([
+        { name: "Programming", kind: "page", date_key: null, path: "pages/Programming.md" },
+      ]);
+      const editor = mount(prefix + following, prefix.length);
+      editor.type("o");
+      await acceptSuggestion(editor, "Programming");
+      const completed = "project:: [[Programming]]";
+      expect(editor.value()).toBe(completed + " " + following);
+      expect(editor.selection()).toEqual([completed.length + 1, completed.length + 1]);
+      expect(roots()).toEqual(["first", "target"]);
+    },
+  );
+
   it("keeps the literal closer and following text when accepting a property suggestion (#853)", async () => {
     const prefix = "project:: `[[pro";
     const following = " text]]";

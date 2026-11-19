@@ -76,24 +76,19 @@ function multilineLiteralAt(raw: string, at: number, format: Format): boolean {
   }) && offsetInLiteral(raw, format, at);
 }
 
-function startsReferenceBefore(nodes: Inline[], boundary: number): boolean {
-  return nodes.some(node => node.span && node.span[0] < boundary && (
-    referenceKind(node) || startsReferenceBefore(inlineChildren(node) ?? [], boundary)
+function overlapsCloser(nodes: Inline[], closerStart: number): boolean {
+  return nodes.some(node => node.span && node.span[0] < closerStart + 2 && node.span[1] > closerStart && (
+    // A bare tag's plain name can include closing punctuation. A bracketed tag has a reference child.
+    node.k === "tag" ? overlapsCloser(node.children, closerStart) : node.k !== "plain"
   ));
 }
 
-function hasSibling(raw: string, caret: number, replaceEnd: number, probeEnd: number, format: Format): boolean {
-  const suffix = raw.slice(caret, probeEnd);
-  return startsReferenceBefore(parseInline(suffix, format), utf16ToUtf8ByteOffset(suffix, replaceEnd - caret));
-}
-
-/** lsdoc allows a plain page or block ref to absorb another opener when the
- * first ref is unfinished. Parse that later text on its own before agreeing
- * to replace it. A genuine nested page ref has its own parser node. */
+/** FORK-853b: finish a reference at the caret when it has no closer of its own.
+ * lsdoc can absorb a closer from later text, so check its ownership by parsing
+ * that text independently. A nested page reference can still have an outer closer. */
 function referenceEnd(raw: string, start: number, caret: number, kind: "page" | "block", format: Format,
   nestedOnly = false): number {
   const closer = kind === "page" ? "]]" : "))";
-  const otherCloser = kind === "page" ? "))" : "]]";
   // Empty editor auto-pairs are scaffolds. lsdoc requires a nonempty name.
   if (!nestedOnly && caret === start + 2 && raw.startsWith(closer, caret)) return caret + 2;
   if (!parserReady()) return caret;
@@ -101,10 +96,8 @@ function referenceEnd(raw: string, start: number, caret: number, kind: "page" | 
   // Delimiters only schedule parser probes. Start with enough room to amortize
   // rereading the reference prefix and double until lsdoc resolves the span.
   let scanned = caret;
-  let needsSibling = false;
-  let mayWrapSibling = false;
-  let lastReplaceEnd = caret;
-  let siblingProbeEnd = caret;
+  let replaceEnd = caret;
+  let probeLaterConstruct = false;
   for (let size = Math.max(32, caret - start); ; size *= 2) {
     const limit = Math.min(caret + size, raw.length);
     const from = Math.max(start + 2, scanned - 1);
@@ -112,35 +105,31 @@ function referenceEnd(raw: string, start: number, caret: number, kind: "page" | 
     const end = from + chunk.length;
     const done = end < limit || limit === raw.length;
     scanned = limit;
-    if (!chunk.includes(closer) && !(needsSibling && chunk.includes(otherCloser)) &&
-        !(mayWrapSibling && /[`$>\\}*~=_^+/)\]]/.test(chunk))) {
+    if (!chunk.includes(closer) && !(probeLaterConstruct && /[\])}>`$~=_*^+/\\]/.test(chunk))) {
       if (done) break;
       continue;
     }
 
     const sample = raw.slice(start, end);
     const owner = parseInline(sample, format)[0];
-    if (!owner?.span || owner.span[0] !== 0 || referenceKind(owner) !== kind) {
-      lastReplaceEnd = caret;
-      if (done) break;
-      continue;
+    replaceEnd = caret;
+    if (owner?.span?.[0] === 0 && referenceKind(owner) === kind) {
+      const candidate = start + utf8ByteToUtf16Offset(sample, owner.span[1]);
+      if (candidate <= caret) return caret;
+      const nested = owner.k === "nested_link";
+      const beforeCloser = sample.slice(2, candidate - start - 2);
+      const checkLaterConstruct = /\(\(|\{\{|[\[<`$~=_*^+\\]/.test(beforeCloser);
+      // The opener and closer each occupy two bytes in lsdoc's spans.
+      const borrowed = checkLaterConstruct && overlapsCloser(parseInline(sample.slice(2), format), owner.span[1] - 4);
+      if (!borrowed && (!nestedOnly || nested)) replaceEnd = candidate;
+      const mayNest = kind === "page" && !nested && beforeCloser.includes("[[");
+      if (!checkLaterConstruct || (borrowed && !mayNest)) break;
+      // Once the closer is borrowed, only another closer can complete the outer reference.
+      probeLaterConstruct = !borrowed;
     }
-    const replaceEnd = start + utf8ByteToUtf16Offset(sample, owner.span[1]);
-    if (replaceEnd <= caret) return caret;
-    if (owner.k === "nested_link") return replaceEnd;
-    const later = raw.slice(caret, replaceEnd);
-    const mayNest = kind === "page" && later.includes("[[");
-    needsSibling = later.includes("[[") || (later.includes("((") && (kind === "block" || later.includes(",")));
-    if (!needsSibling) return nestedOnly ? caret : replaceEnd;
-    // A later delimiter may complete a wrapper around the apparent sibling.
-    mayWrapSibling = /[`$<\\{*~=_^+/]|(?:^|[^\[])\[(?!\[)/.test(later);
-    if (!mayNest && hasSibling(raw, caret, replaceEnd, end, format)) return caret;
-    lastReplaceEnd = replaceEnd;
-    siblingProbeEnd = mayNest ? end : caret;
     if (done) break;
   }
-  if (nestedOnly || lastReplaceEnd === caret) return caret;
-  return siblingProbeEnd > caret && hasSibling(raw, caret, lastReplaceEnd, siblingProbeEnd, format) ? caret : lastReplaceEnd;
+  return replaceEnd;
 }
 
 /** Owns the active reference marker, its query and its replacement span.

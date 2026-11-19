@@ -126,10 +126,11 @@ For continuations involving more than one line, the parser's block regions suppl
 An enclosing reference or a fresh tag can still offer its picker. Otherwise the ordinary
 property-value rules resume.
 For a complete same-line reference, the decision supplies the replacement span and the whole
-page query (GH #888). The replacement preserves independently parsed later references. Bare tags
-replace through the caret. When a sibling reference may own a closer, lookahead keeps the last
-delimiter-bounded parse window. The detector scans to the line boundary if necessary and sends
-no extra text to lsdoc when the remaining suffix contains no relevant delimiter.
+page query (GH #888). For an unfinished `[[`, `#[[` or `((`, a pick inserts a complete reference
+through the caret and keeps the text that follows (FORK-853b). The detector uses lsdoc's inline
+spans to check whether an apparent closer belongs to another construct. Bare tags replace through
+the caret. Lookahead grows in delimiter-bounded windows and can scan to the line boundary. The
+detector sends no extra text to lsdoc when the remaining suffix contains no relevant delimiter.
 Both editors ask `properties.ts` for Markdown value positions through the existing
 accepted-property-line parser; only then does autocomplete split comma-separated
 query spans. Typing and pasting (including typing inside an existing value) share

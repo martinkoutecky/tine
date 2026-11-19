@@ -569,6 +569,41 @@ describe("completion replacement (OG accept-range parity)", () => {
     expect(applyCompletion(raw, trigger.start, end, insert).raw).toBe(raw.slice(0, start) + insert + suffix);
   });
 
+  it.each([
+    ["[[", " ((Keep ]] intact))", "[[Programming]]"],
+    ["#[[", " ((Keep ]] intact))", "[[Programming]]"],
+    ["[[", "\t((Keep ]] intact))", "[[Programming]]"],
+    ["[[", "; ((Keep ]] intact))", "[[Programming]]"],
+    ["[[", " ((Keep ]] intact))\nmore", "[[Programming]]"],
+    ["[[", " ((Keep ]] intact))\r\nmore", "[[Programming]]"],
+    ["[[", " [keep](((Keep ]] intact)))", "[[Programming]]"],
+    ["[[", " {{embed [[Keep]]}}", "[[Programming]]"],
+    ["[[", " {{embed #[[Keep]]}}", "[[Programming]]"],
+    ["[[", " {{embed ((Keep ]] intact))}}", "[[Programming]]"],
+    ["[[", " {{embed Keep ]] intact}}", "[[Programming]]"],
+    ["[[", ` {{embed [[Keep]]${"x".repeat(64)}}}`, "[[Programming]]"],
+    ["[[", " `Keep ]] intact`", "[[Programming]]"],
+    ["[[", " $Keep ]] intact$", "[[Programming]]"],
+    ["[[", " <https://example.org/Keep]]/intact>", "[[Programming]]"],
+    ["[[", " after the cursor", "[[Programming]]"],
+    ["[[", "", "[[Programming]]"],
+    ["((", " {{embed ((Keep))}}", "((programming-id))"],
+    ["((", " after the cursor", "((programming-id))"],
+    ["[[", "]] intact`", "[[Programming]]", "pro `Keep "],
+    ["((", ")) intact$", "((programming-id))", "pro $Keep "],
+  ])("finishes the unfinished %s at the caret before %j (FORK-853b)", (opener, suffix, insert, query = "pro") => {
+    const prefix = `project:: ${opener}${query}`;
+    const raw = prefix + suffix;
+    const caret = prefix.length;
+    const start = caret - query.length - 2;
+    const trigger = detectTrigger(raw, caret)!;
+    const end = completionReplacementEnd(raw, trigger, insert);
+    expect(applyCompletion(raw, start, end, insert)).toEqual({
+      raw: raw.slice(0, start) + insert + suffix, caret: start + insert.length,
+    });
+    expect(trigger).toEqual({ kind: opener === "((" ? "block" : "page", query, start, end: caret });
+  });
+
   it("keeps the page picker active after a single bracket inside the name", () => {
     const raw = "project:: [[pro [x] title]]";
     expect(detectTrigger(raw, raw.indexOf(" title"))).toMatchObject({
@@ -578,6 +613,7 @@ describe("completion replacement (OG accept-range parity)", () => {
 
   it.each([
     " [x] title",
+    " [x] #tag",
     " #[[child]] title",
     " [ title",
     " \\]] title",
