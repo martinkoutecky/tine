@@ -228,39 +228,6 @@ it.each([["Alpha", "1"], ["Alpha", "2"], ["Beta", "1"], ["Beta", "2"]])(
   },
 );
 
-it("warms targets only when their reference export level is included", async () => {
-  localStorage.setItem("tine.exportOptions", JSON.stringify({ maxDepth: 1 }));
-  const uuid = "12345678-1234-1234-1234-123456789abc";
-  const tree = { ...coldHit, children: [block("hidden", `{{embed [[Delayed]]}} ((${uuid})) {{embed ((${uuid}))}} {{query [[Other]]}}`)] };
-  const { root } = await mountTarget([sources[0], { ...sources[1], blocks: [tree] }, sources[2]]);
-  let finish!: (source: PageRead) => void;
-  const read = vi.spyOn(backend(), "getPage").mockReturnValue(new Promise(resolve => { finish = resolve; }));
-  const refs = vi.spyOn(backend(), "resolveBlocks").mockResolvedValue([null]);
-  const embed = vi.spyOn(backend(), "previewBlock").mockResolvedValue(null);
-  const query = vi.spyOn(backend(), "exportQuerySubtrees").mockResolvedValue({ results: [], omitted_queries: 0 });
-  chooseReferences(root, label => label === tree.raw).click();
-  const copy = () => root.querySelector<HTMLButtonElement>(".export-modal .export-btn-primary");
-  await vi.waitFor(() => expect(copy()?.disabled).toBe(false));
-  expect(read).not.toHaveBeenCalled();
-  expect(refs).not.toHaveBeenCalled();
-  expect(embed).not.toHaveBeenCalled();
-  expect(query).not.toHaveBeenCalled();
-  changeExportLevel(root, "2");
-  await vi.waitFor(() => expect(read).toHaveBeenCalledWith("Delayed", "page"));
-  expect(copy()?.disabled).toBe(true);
-  changeExportLevel(root, "1");
-  await vi.waitFor(() => expect(copy()?.disabled).toBe(false));
-  changeExportLevel(root, "2");
-  expect(copy()?.disabled).toBe(true);
-  finish(page("Delayed", [block("target", "Resolved embed body")]));
-  await vi.waitFor(() => expect(copy()?.disabled).toBe(false));
-  expect(read).toHaveBeenCalledTimes(1);
-  expect(refs).toHaveBeenCalledTimes(1);
-  expect(embed).toHaveBeenCalledTimes(1);
-  expect(query).toHaveBeenCalledTimes(1);
-  expect(root.querySelector<HTMLTextAreaElement>(".export-preview")?.value).toContain("Resolved embed body");
-});
-
 it("copies selected roots from different source depths as siblings, with their children nested as in Logseq", async () => {
   const { root, writeRich } = await mountTarget();
   await selectAlpha(root);

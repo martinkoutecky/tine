@@ -27,7 +27,6 @@ import {
 } from "../editor/exportText";
 import { exportOpml } from "../editor/exportOpml";
 import { exportHtml } from "../editor/exportHtml";
-import { includesChildren } from "../editor/exportMarkup";
 import { referenceExportAtDepth, referenceExportCandidates } from "../editor/exportProjection";
 import type { Block, Format, Inline, ListItem } from "../render/ast";
 import type { BlockDto, PageDto, QueryExportResult, QueryExportSpec, RefGroup } from "../types";
@@ -175,24 +174,14 @@ function refGroupToExportNodes(group: RefGroup): ExportNode[] {
   return blockDtosToExportNodes(group.blocks, formatForPage(group.page));
 }
 
-type PageReadCache = Map<string, Promise<ExportNode[] | null>>;
-type WarmReads = {
-  pages: PageReadCache;
-  refs: Map<string, Promise<void>>;
-  macros: Map<string, Promise<void>>;
-};
-type WarmScope = {
-  depth: MaxDepth;
-  embeddedDepth: MaxDepth;
-  reads: WarmReads;
-  current: Owner;
-};
+type PageReadCache = Map<string, Promise<PageDto | null>>;
 
-function cachedEmbedPage(cache: PageReadCache, page: string, owner: Owner): Promise<ExportNode[] | null> {
-  let pending = cache.get(page);
+function cachedPage(cache: PageReadCache, page: string, kind: "page" | "journal"): Promise<PageDto | null> {
+  const key = `${kind}\0${page}`;
+  let pending = cache.get(key);
   if (!pending) {
-    pending = backend().getPage(page, "page").then(dto => owner() && dto ? pageToExportNodes(dto) : null);
-    cache.set(page, pending);
+    pending = backend().getPage(page, kind);
+    cache.set(key, pending);
   }
   return pending;
 }
@@ -287,10 +276,10 @@ function collectRawTargets(raw: string, format: Format, targets: WarmTargets): v
   }
 }
 
-function collectNodeTargets(nodes: ExportNode[], targets: WarmTargets, maxDepth: MaxDepth, level = 1): void {
+function collectNodeTargets(nodes: ExportNode[], targets: WarmTargets): void {
   for (const n of nodes) {
     collectRawTargets(n.raw, n.format ?? "md", targets);
-    if (includesChildren(level, maxDepth)) collectNodeTargets(n.children, targets, maxDepth, level + 1);
+    collectNodeTargets(n.children, targets);
   }
 }
 
@@ -321,9 +310,10 @@ async function warmMacro(
       }
       const page = embedPageTarget(arg);
       if (page) {
-        const result = await readOwned(owner, cachedEmbedPage(pages, page, owner));
+        const result = await readOwned(owner, cachedPage(pages, page, "page"));
         if (result.kind === "stale") return;
-        if (result.value) warmed.set(key, { kind: "nodes", nodes: result.value });
+        const dto = result.value;
+        if (dto) warmed.set(key, { kind: "nodes", nodes: pageToExportNodes(dto) });
         return;
       }
     }
@@ -389,18 +379,13 @@ async function warmQueryMacros(
 /** Resolve block refs and supported macros in export nodes into warmed.
  * Ref lookups run in parallel, query macros use one bounded native export
  * batch, and page embeds can read whole pages. Cost grows with refs, queries
- * and embedded page content within the supplied depth. A preview reuses
- * target reads as the level changes; retired levels stop discovering targets. */
-export async function warmExportResolutionsOwned(
-  nodes: ExportNode[], warmed: Map<string, WarmedMacro>, owner: Owner, refsOwned: ResolvedRefs = new Map(),
-  { depth, embeddedDepth, reads, current }: WarmScope = {
-    depth: "all", embeddedDepth: "all", reads: { pages: new Map(), refs: new Map(), macros: new Map() }, current: owner,
-  },
-): Promise<void> {
-  if (!owner()) return;
+ * and embedded page content. Failed resolutions generally leave the literal
+ * macro for export; stale graph ownership stops later phases. */
+export async function warmExportResolutionsOwned(nodes: ExportNode[], warmed: Map<string, WarmedMacro>, owner: Owner, refsOwned: ResolvedRefs = new Map()): Promise<void> {
   const targets: WarmTargets = { refs: new Set(), macros: new Map() };
+  const pages: PageReadCache = new Map();
   const seenRefs = new Set<string>(), seenMacros = new Set<string>();
-  collectNodeTargets(nodes, targets, depth);
+  collectNodeTargets(nodes, targets);
   // Follow resolved targets too: refs inside refs and embeds share the same
   // graph-owned warming path. Bound work before each native read.
   for (let depth = 0; depth < 6; depth++) {
@@ -408,17 +393,14 @@ export async function warmExportResolutionsOwned(
       const refs = [...targets.refs].filter(uuid => !seenRefs.has(uuid)).slice(0, 2000 - seenRefs.size);
       if (!refs.length) break;
       refs.forEach(uuid => seenRefs.add(uuid));
-      await Promise.all(refs.map(uuid => {
-        let pending = reads.refs.get(uuid);
-        if (!pending) {
-          pending = readOwned(owner, resolveBlockBatched(uuid)).then(answer => {
-            if (owner() && answer.kind === "current" && answer.value) refsOwned.set(uuid, answer.value);
-          }).catch(error => { if (owner()) reportUiFailure("export-preview", error); });
-          reads.refs.set(uuid, pending);
-        }
-        return pending;
+      await Promise.all(refs.map(async uuid => {
+        const answer = await readOwned(owner, resolveBlockBatched(uuid).catch((error) => {
+          if (owner()) reportUiFailure("export-preview", error);
+          return null;
+        }));
+        if (owner() && answer.kind === "current" && answer.value) refsOwned.set(uuid, answer.value);
       }));
-      if (!owner() || !current()) return;
+      if (!owner()) return;
       for (const uuid of refs) {
         const resolved = resolveExportBlockRef(uuid, refsOwned);
         if (resolved) collectRawTargets(resolved.raw, resolved.format, targets);
@@ -427,17 +409,13 @@ export async function warmExportResolutionsOwned(
     const macros = [...targets.macros.entries()].filter(([key]) => !seenMacros.has(key)).slice(0, 2000 - seenMacros.size);
     macros.forEach(([key]) => seenMacros.add(key));
     if (!macros.length) break;
-    const missing = macros.filter(([key]) => !reads.macros.has(key));
-    const queries = missing.filter(([, macro]) => isQueryMacroName(macro.name));
-    const queryBatch = warmQueryMacros(queries.map(([, macro]) => macro), warmed, owner);
-    for (const [key, macro] of missing) {
-      reads.macros.set(key, isQueryMacroName(macro.name) ? queryBatch : warmMacro(macro, warmed, reads.pages, owner));
-    }
-    await Promise.all(macros.map(([key]) => reads.macros.get(key)));
-    if (!owner() || !current()) return;
+    await warmQueryMacros(macros.map(([,macro]) => macro).filter(macro => isQueryMacroName(macro.name)), warmed, owner);
+    await Promise.all(macros.map(([,macro]) => macro).filter(macro => !isQueryMacroName(macro.name))
+      .map(macro => warmMacro(macro, warmed, pages, owner)));
+    if (!owner()) return;
     for (const [key] of macros) {
       const result = warmed.get(key);
-      if (result?.kind === "nodes") collectNodeTargets(result.nodes, targets, embeddedDepth);
+      if (result?.kind === "nodes") collectNodeTargets(result.nodes, targets);
     }
   }
 }
@@ -558,27 +536,19 @@ function Modal(props: { request: ExportRequest }): JSX.Element {
   };
 
   let disposed = false;
-  const owner = graphOwner(() => !disposed);
-  const reads: WarmReads = { pages: new Map(), refs: new Map(), macros: new Map() };
   onCleanup(() => {
     disposed = true;
     warmedRefs.clear();
   });
 
-  createEffect(() => {
-    let current = true;
-    onCleanup(() => { current = false; });
+  onMount(() => {
     setWarming(true);
-    void warmExportResolutionsOwned(visibleNodes(), warmedMacros, owner, warmedRefs, {
-      depth: maxDepth(), embeddedDepth: depth(), reads, current: () => current,
-    }).finally(() => {
-      if (!owner() || !current) return;
+    void warmExportResolutionsOwned(nodes, warmedMacros, graphOwner(() => !disposed), warmedRefs).finally(() => {
+      if (disposed) return;
       setWarmRev(warmRev() + 1);
       setWarming(false);
     });
-  });
 
-  onMount(() => {
     const onKey = (e: KeyboardEvent) => {
       if (e.key === "Enter" && (e.metaKey || e.ctrlKey)) {
         e.preventDefault();
