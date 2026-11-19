@@ -242,7 +242,7 @@ samples/             Demo graph used by tests/screenshots
 ## Build & run
 
 Use Node.js 22.13 or newer (pdf.js 5 requires Node 22).
-The PDF image decoder also requires Emscripten **4.0.20**. `npm run build:pdf-decoder`
+The PDF image decoder uses Emscripten **4.0.20** by default. `npm run build:pdf-decoder`
 compiles pinned, vendored OpenJPEG sources with standard SIMD, without network
 access. Builds and tests reuse the verified result until its inputs change. See
 [`vendor/pdfjs-openjpeg/README.md`](vendor/pdfjs-openjpeg/README.md) for provenance
@@ -262,11 +262,21 @@ cd ~/.local/share/emsdk
 source ./emsdk_env.sh        # sets EMSDK for this shell
 ```
 
-The build finds the SDK through `EMSDK`, or through `TINE_PDFJS_EMSDK`, which names
-the SDK's `upstream/` directory instead. Set one of them in every shell that builds
-Tine. If you use a separate toolchain directory (`TINE_TOOLCHAIN`, or a sibling
-`.toolchain/` that contains `cargo/bin/rustup`), `source scripts/env.sh` also sets
-`EMSDK` when the SDK is installed at `emsdk/` inside it and `EMSDK` isn't set yet.
+The default build finds the SDK through `EMSDK` or through `TINE_PDFJS_EMSDK`,
+which names the SDK's `upstream/` directory. If you use `TINE_TOOLCHAIN` or a
+sibling `.toolchain/` containing `cargo/bin/rustup`, `source scripts/env.sh` sets
+`EMSDK` when the SDK is installed at `emsdk/` inside it and `EMSDK` is unset.
+
+Distribution packagers can set `TINE_PDFJS_EMCC=emcc` to use `emcc` and `emar`
+from `PATH`, or set `TINE_PDFJS_EMCC=/path/to/emcc` to use that executable and
+its sibling `emar`. Set it in the environment of the full Tine build. This
+uses the compiler installation's configuration, including any `EM_CONFIG`
+and `EM_CACHE` supplied by the packaging environment. Other Emscripten versions
+produce a build warning and the resulting decoder must pass the pdf.js
+interface check. The tools run from the directory the build was started in.
+A decoder built this way is never reused from the build cache: `npm run build`
+compiles it once, in its Vite asset step, and a later build without the
+variable never ships it.
 
 ```bash
 source scripts/env.sh        # toolchain env (CARGO_HOME/RUSTUP_HOME, lib paths)
