@@ -26,8 +26,15 @@ pub(crate) fn install(window: &tauri::WebviewWindow) {
     platform::install(window);
 }
 
+/// Who owns side-button presses in this build, handed to the frontend as
+/// `__TINE_MOUSE_HISTORY__` before it runs: `gtk` (the GTK widget consumes them),
+/// `webview2` (WebView2 delivers DOM events; the subclass takes forwarded copies) or
+/// `dom` (no native handler). The build knows this; a user agent can be changed (#948).
+pub(crate) const HISTORY_SOURCE: &str = platform::SOURCE;
+
 #[cfg(target_os = "linux")]
 mod platform {
+    pub(super) const SOURCE: &str = "gtk";
     use super::emit_navigation;
     use std::cell::Cell;
 
@@ -105,6 +112,7 @@ mod platform {
 
 #[cfg(target_os = "windows")]
 mod platform {
+    pub(super) const SOURCE: &str = "webview2";
     use super::emit_navigation;
     use std::ffi::c_void;
 
@@ -212,5 +220,6 @@ mod platform {
 
 #[cfg(not(any(target_os = "linux", target_os = "windows")))]
 mod platform {
+    pub(super) const SOURCE: &str = "dom";
     pub(super) fn install(_window: &tauri::WebviewWindow) {}
 }

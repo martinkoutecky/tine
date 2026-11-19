@@ -1,11 +1,11 @@
 import { expect, it, vi } from "vitest";
 import { installMouseHistory } from "./mouseHistory";
 
-function fixture() {
+function fixture(source: "dom" | "gtk" | "webview2" = "dom") {
   const target = new EventTarget();
   const doc = new EventTarget();
   const navigate = vi.fn();
-  const dispose = installMouseHistory(target as Window, doc as Document, navigate);
+  const dispose = installMouseHistory(target as Window, doc as Document, navigate, source);
   const send = (type: string, values: Record<string, unknown> = {}) => {
     const event = new Event(type, { cancelable: true });
     Object.assign(event, { button: 3, buttons: 0, clientX: 20, clientY: 20, ...values });
@@ -78,4 +78,36 @@ it("does not navigate while another button owns a text selection, then accepts t
   f.send("mouseup");
   expect(f.navigate.mock.calls).toEqual([["back"]]);
   f.dispose();
+});
+
+// GH #948 review: two side buttons held at once keep separate gestures.
+it.each([["dom", true], ["dom", false], ["webview2", true], ["webview2", false]] as const)(
+  "%s overlapping Back/Forward presses each step once in both release orders (auxclick %s)", (source, aux) => {
+  for (const olderFirst of [true, false]) {
+    const f = fixture(source);
+    f.send("mousedown", { button: 3, buttons: 8 });
+    f.send("mousedown", { button: 4, buttons: 24 });
+    const order = olderFirst ? [3, 4] : [4, 3];
+    for (const button of order) {
+      f.send("mouseup", { button });
+      if (aux) f.send("auxclick", { button });
+    }
+    expect(f.navigate.mock.calls).toEqual(order.map((b) => [b === 3 ? "back" : "forward"]));
+    f.dispose();
+  }
+});
+
+it.each(["dom", "webview2"] as const)("%s overlapping cancelled presses never navigate, in either release order", (source) => {
+  for (const olderFirst of [true, false]) {
+    const f = fixture(source);
+    f.send("mousedown", { button: 3, buttons: 8 });
+    f.send("mousedown", { button: 4, buttons: 24 });
+    f.send("mousemove", { buttons: 24, clientX: 60 });
+    for (const button of olderFirst ? [3, 4] : [4, 3]) {
+      f.send("mouseup", { button, clientX: 60 });
+      f.send("auxclick", { button, clientX: 60 });
+    }
+    expect(f.navigate).not.toHaveBeenCalled();
+    f.dispose();
+  }
 });
