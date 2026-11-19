@@ -3,6 +3,7 @@ import { render } from "solid-js/web";
 import { backend } from "../backend";
 import { audioPlayer, setAudioPlayer } from "../ui";
 import { AudioOverlay } from "./AudioOverlay";
+import { AstBody } from "../render/body";
 import { installKeybindings } from "../keybindings";
 import { clearTransientLayersForTest, dismissTopTransient, registerTransientLayer } from "../transientLayers";
 import { setToasts, toasts } from "../toasts";
@@ -22,11 +23,13 @@ describe("AudioOverlay resource lifecycle", () => {
     vi.spyOn(HTMLMediaElement.prototype, "pause").mockImplementation(() => {});
     vi.stubGlobal("URL", { createObjectURL: () => "blob:test", revokeObjectURL: vi.fn() });
     const host = document.createElement("div"); document.body.append(host);
-    const dispose = render(() => <AudioOverlay />, host);
+    const dispose = render(() => <><AstBody raw={"![Track](..\\ASSETS\\nested\\track.mp3)"} /><AudioOverlay /></>, host);
     try {
-      setAudioPlayer({ url: "..\\ASSETS\\nested\\track.mp3", name: "Track" });
-      await vi.waitFor(() => expect(stream).toHaveBeenCalledWith("nested/track.mp3"));
-      host.querySelector("audio")!.dispatchEvent(new Event("error"));
+      await vi.waitFor(() => expect(host.querySelector(".media-audio-widen")).not.toBeNull());
+      host.querySelector<HTMLButtonElement>(".media-audio-widen")!.click();
+      await vi.waitFor(() => expect(host.querySelector(".audio-overlay audio")).not.toBeNull());
+      expect(stream.mock.calls).toEqual([["nested/track.mp3"], ["nested/track.mp3"]]);
+      host.querySelector(".audio-overlay audio")!.dispatchEvent(new Event("error"));
       await vi.waitFor(() => expect(read).toHaveBeenCalledWith("nested/track.mp3", 64 * 1024 * 1024));
     } finally { dispose(); host.remove(); }
   });
@@ -38,7 +41,7 @@ describe("AudioOverlay resource lifecycle", () => {
     document.body.append(host);
     const dispose = render(() => <AudioOverlay />, host);
     try {
-      setAudioPlayer({ url: "../assets/track.mp3", name: "Track" });
+      setAudioPlayer({ url: "../assets/track.mp3", name: "Track", assetPath: "track.mp3" });
       await vi.waitFor(() => expect(host.querySelector(".audio-play")).not.toBeNull());
       (host.querySelector(".audio-play") as HTMLButtonElement).click();
       await vi.waitFor(() => expect(toasts().some((toast) => toast.message === "Couldn't play this audio file.")).toBe(true));
@@ -57,7 +60,7 @@ describe("AudioOverlay resource lifecycle", () => {
     document.body.append(host);
     const dispose = render(() => <AudioOverlay />, host);
     try {
-      setAudioPlayer({ url: "../assets/broken.mp3", name: "Broken" });
+      setAudioPlayer({ url: "../assets/broken.mp3", name: "Broken", assetPath: "broken.mp3" });
       await vi.waitFor(() => expect(host.querySelector("audio")).not.toBeNull());
       host.querySelector("audio")!.dispatchEvent(new Event("error"));
       await vi.waitFor(() => expect(toasts().some((toast) => toast.message === "Couldn't load this audio file.")).toBe(true));
@@ -76,7 +79,7 @@ describe("AudioOverlay resource lifecycle", () => {
     const host = document.createElement("div");
     document.body.append(host);
     const dispose = render(() => <AudioOverlay />, host);
-    setAudioPlayer({ url: "../assets/long.mp3", name: "Long recording" });
+    setAudioPlayer({ url: "../assets/long.mp3", name: "Long recording", assetPath: "long.mp3" });
     await vi.waitFor(() => expect(host.querySelector("audio")).not.toBeNull());
     await Promise.resolve();
 
@@ -99,7 +102,7 @@ describe("AudioOverlay resource lifecycle", () => {
     const host = document.createElement("div");
     document.body.append(host);
     const dispose = render(() => <AudioOverlay />, host);
-    setAudioPlayer({ url: "../assets/broken.mp3", name: "Broken recording" });
+    setAudioPlayer({ url: "../assets/broken.mp3", name: "Broken recording", assetPath: "broken.mp3" });
     await vi.waitFor(() => expect(host.querySelector("audio")).not.toBeNull());
     host.querySelector("audio")!.dispatchEvent(new Event("error"));
     await vi.waitFor(() => expect(read).toHaveBeenCalledTimes(1));
@@ -134,7 +137,7 @@ describe("AudioOverlay resource lifecycle", () => {
       dismiss: () => { lowerDismissals += 1; return true; },
     });
     try {
-      setAudioPlayer({ url: "../assets/owned.mp3", name: "Owned recording" });
+      setAudioPlayer({ url: "../assets/owned.mp3", name: "Owned recording", assetPath: "owned.mp3" });
       await vi.waitFor(() => expect(host.querySelector(".audio-overlay")).not.toBeNull());
       const event = new KeyboardEvent("keydown", { key: "Escape", bubbles: true, cancelable: true });
       host.querySelector(".audio-overlay")!.dispatchEvent(event);
@@ -143,7 +146,7 @@ describe("AudioOverlay resource lifecycle", () => {
       expect(audioPlayer()).toBeNull();
       expect(lowerDismissals).toBe(0);
 
-      setAudioPlayer({ url: "../assets/owned.mp3", name: "Owned recording" });
+      setAudioPlayer({ url: "../assets/owned.mp3", name: "Owned recording", assetPath: "owned.mp3" });
       await vi.waitFor(() => expect(host.querySelector(".audio-overlay")).not.toBeNull());
       expect(dismissTopTransient("back")).toBe(true);
       await Promise.resolve();

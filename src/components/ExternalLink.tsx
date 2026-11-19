@@ -3,7 +3,7 @@ import { backend } from "../backend";
 import { pushToast } from "../toasts";
 import { msg } from "../i18n";
 import { graphOwner, ownedWhen, readOwned } from "../owned";
-import { DEFERRED_HREF, anchorDecision, linkScheme, refusedLinkScheme, rememberableLinkScheme } from "../linkSchemePolicy";
+import { DEFERRED_HREF, anchorKeepsHref, linkScheme, refusedLinkScheme, rememberableLinkScheme, type AnchorDecision } from "../linkSchemePolicy";
 import { loadLinkSchemeSettings, rememberedLinkSchemes, setLinkSchemeRemembered } from "../linkSchemeSettings";
 import { askLinkScheme } from "../linkSchemePrompt";
 export { linkScheme } from "../linkSchemePolicy";
@@ -78,17 +78,16 @@ export function reportLinkOpenFailure(dest: string, error: unknown): void {
 /** The anchor attributes and activation of a graph-authored link (GH #984; the
  * policy is `anchorDecision`). Relative and web/mail destinations keep their
  * href; any other stays a focusable link whose Enter runs the same activation as
- * its click. Click and Enter run `activate` (the checked opener). */
-export function outboundAnchorAttrs(dest: string, activate: () => void): JSX.AnchorHTMLAttributes<HTMLAnchorElement> {
-  const decision = anchorDecision(dest);
+ * its click. Click and Enter run the caller's chosen route. */
+export function outboundAnchorAttrs(dest: string, decision: AnchorDecision, activate: () => void): JSX.AnchorHTMLAttributes<HTMLAnchorElement> {
   const run = (event: Event) => {
     event.preventDefault();
     event.stopPropagation();
     activate();
   };
-  if (decision === "relative" || decision === "direct") return { href: dest, onClick: run };
+  if (anchorKeepsHref(decision)) return { href: dest, onClick: run };
   return {
-    ...(decision === "defer" ? { [DEFERRED_HREF]: dest } : {}),
+    ...(decision !== "drop" ? { [DEFERRED_HREF]: dest } : {}),
     role: "link", tabindex: 0, onClick: run, onKeyDown: (event) => { if (event.key === "Enter") run(event); },
   };
 }

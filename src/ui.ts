@@ -1466,12 +1466,10 @@ export function openLightbox(src: string, gallery?: string[]) {
   setLightbox(src);
 }
 
-// Expanded audio player overlay (the "Expand" button on an inline audio embed):
-// a dimmed, ~90%-wide panel with a waveform scrubber + skip controls. `url` is the
-// markdown asset URL (resolved to a blob like the inline embed); `name` is the
-// display filename. Null = closed.
+// Expanded audio player. The inline embed supplies the graph asset path or a
+// web URL with `assetPath: null`. A null track closes the player.
 export const [audioPlayer, setAudioPlayer] =
-  createSignal<{ url: string; name: string } | null>(null);
+  createSignal<{ url: string; name: string; assetPath: string | null } | null>(null);
 
 export { pageIdentityKey };
 

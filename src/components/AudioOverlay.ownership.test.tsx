@@ -14,7 +14,7 @@ it.each(["cancel", "replace", "close", "unmount"])("L10:65: audio scrubbing ends
   vi.spyOn(HTMLCanvasElement.prototype, "getContext").mockReturnValue(null);
   vi.spyOn(HTMLMediaElement.prototype, "pause").mockImplementation(() => {});
   vi.spyOn(backend(), "streamAsset").mockResolvedValue("stream:track");
-  setAudioPlayer({ url: "../assets/track.mp3", name: "track" });
+  setAudioPlayer({ url: "../assets/track.mp3", name: "track", assetPath: "track.mp3" });
   const root = document.createElement("div"); document.body.append(root);
   const dispose = render(() => <AudioOverlay />, root);
   await tick();
@@ -26,7 +26,7 @@ it.each(["cancel", "replace", "close", "unmount"])("L10:65: audio scrubbing ends
   canvas.dispatchEvent(pointer("pointerdown"));
   expect(audio.currentTime).toBe(25);
   if (end === "cancel") window.dispatchEvent(pointer("pointercancel"));
-  else if (end === "replace") setAudioPlayer({ url: "../assets/other.mp3", name: "other" });
+  else if (end === "replace") setAudioPlayer({ url: "../assets/other.mp3", name: "other", assetPath: "other.mp3" });
   else if (end === "close") setAudioPlayer(null);
   else dispose();
   await tick();

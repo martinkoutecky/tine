@@ -6,7 +6,7 @@ import { t } from "../i18n";
 // closes. It deliberately does not decode the whole track merely to draw a
 // waveform: long compressed recordings can expand into gigabytes of PCM.
 
-import { For, Show, createEffect, createSignal, onCleanup, onMount, type JSX } from "solid-js";
+import { For, Show, createEffect, createSignal, on, onCleanup, onMount, type JSX } from "solid-js";
 import { audioPlayer, setAudioPlayer } from "../ui";
 import { backend, isTauri } from "../backend";
 import { graphOwner, latestOwner, readOwned } from "../owned";
@@ -14,11 +14,9 @@ import { acquireMediaBlobFallback, type MediaBlobLease } from "../mediaBlobFallb
 import { registerTransientLayer } from "../transientLayers";
 import { reportUiFailure } from "../uiFailure";
 import { readOr } from "../resourceRead";
-import { assetRelPath } from "../render/inline";
 import { mime_from_path } from "../render/wasm/lsdoc_wasm";
 import { queryAllWindows, requestFrame, useOwnerWindow, viewportOf } from "../windowRealm";
 import { createGraphResource } from "../graphResource";
-const isExternal = (u: string) => /^(https?:|data:|blob:)/.test(u);
 
 function fmtTime(t: number): string {
   if (!isFinite(t) || t < 0) t = 0;
@@ -70,12 +68,10 @@ export function AudioOverlay(): JSX.Element {
   // Resolve to a range-aware native URL for graph assets (same path as the inline
   // embed), or the direct URL for external/http audio.
   const [srcResource] = createGraphResource(
-    () => audioPlayer()?.url ?? null,
-    async (u) => {
-      if (isExternal(u)) return u;
-      const r = assetRelPath(u);
-      if (!r) return "";
-      const result = await readOwned(graphOwner(() => alive && audioPlayer()?.url === u), backend().streamAsset(r));
+    audioPlayer,
+    async (track) => {
+      if (track.assetPath === null) return track.url;
+      const result = await readOwned(graphOwner(() => alive && audioPlayer() === track), backend().streamAsset(track.assetPath));
       return result.kind === "current" ? result.value : "";
     }
   );
@@ -98,15 +94,13 @@ export function AudioOverlay(): JSX.Element {
     tryingBlobFallback = false;
   };
   const retryAsBoundedBlob = () => {
-    const u = audioPlayer()?.url;
-    if (!u || isExternal(u) || tryingBlobFallback || blobFallback()) return;
-    const rel = assetRelPath(u);
-    if (!rel) return;
+    const track = audioPlayer();
+    if (!track?.assetPath || tryingBlobFallback || blobFallback()) return;
     tryingBlobFallback = true;
-    const owner = latestOwner(fallbackScope, "blob", graphOwner(() => alive && audioPlayer()?.url === u));
+    const owner = latestOwner(fallbackScope, "blob", graphOwner(() => alive && audioPlayer() === track));
     const abort = new AbortController();
     fallbackAbort = abort;
-    void acquireMediaBlobFallback(rel, "audio", mime_from_path(rel), abort.signal).then((lease) => {
+    void acquireMediaBlobFallback(track.assetPath, "audio", mime_from_path(track.assetPath), abort.signal).then((lease) => {
       if (!owner()) {
         lease.release();
         return;
@@ -121,14 +115,10 @@ export function AudioOverlay(): JSX.Element {
   // tracks must explicitly end the old fallback lease and invalidate late reads.
   let cancelScrub = () => {};
   onCleanup(() => cancelScrub());
-  let activeUrl: string | null = null;
-  createEffect(() => {
-    const next = audioPlayer()?.url ?? null;
+  createEffect(on(audioPlayer, () => {
     cancelScrub();
-    if (next === activeUrl) return;
-    activeUrl = next;
     releaseBlobFallback();
-  });
+  }));
 
   let audioEl: HTMLAudioElement | undefined;
   let canvasEl: HTMLCanvasElement | undefined;
@@ -173,7 +163,7 @@ export function AudioOverlay(): JSX.Element {
       (window as unknown as { __tineOpenAudio?: (u: string, n: string) => void }).__tineOpenAudio = (
         u: string,
         n: string
-      ) => setAudioPlayer({ url: u, name: n });
+      ) => { if (/^data:audio\//.test(u)) setAudioPlayer({ url: u, name: n, assetPath: null }); };
     }
   });
 
