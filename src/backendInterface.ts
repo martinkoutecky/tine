@@ -47,7 +47,7 @@ import type { EditKinds } from "./editKind";
 import type { SheetExport, SheetInput, SheetScope } from "./sheet/staticExport";
 import type { NativeTineLinks } from "./nativeTineLinks";
 import type { QuickShareCheckOutcome, QuickShareConnectStart, QuickShareConnectStatus, QuickShareCreated, QuickShareDeleteOutcome, QuickShareFound, QuickShareListing, QuickSharePrepared } from "./quickShare/commands";
-import type { DebugInfo, DiagnosticReport, DiagnosticFrontendKind, DiagnosticFrontendFields, GpuEnv, BackupInfo, GraphChange, AssetChangedBatch, GraphConfigChange, CustomCssChange, TrashAssetOutcome, GraphAnswersChange } from "./backendTypes";
+import type { DebugInfo, DiagnosticReport, DiagnosticFrontendKind, DiagnosticFrontendFields, GpuEnv, BackupInfo, GraphChange, AssetChangedBatch, GraphConfigChange, CustomCssChange, TrashAssetOutcome, GraphChangeBatch } from "./backendTypes";
 import type { DiskToken, OwedPage, PageMail, PageOperation, PageRefusal, PublishedNeed, PublishedRevision } from "./document";
 
 /** What a native confirmation shows: the action it offers and the way back. */
@@ -645,10 +645,10 @@ export interface Backend {
   onOwnerPageRenamed?(cb: (rename: import("./types").OwnerPageRename) => void): Promise<() => void>;
   /** The answer to `onOwnerFlushRequest`: whether that text is saved. */
   ownerFlushAnswer?(id: number, saved: boolean, bindingGeneration: number): Promise<void>;
-  /** Watcher freshness (family 10), native only: a checkout-sized batch as one
-   *  event, a refused/restored OS watch, and a focus rescan (one full stat
-   *  diff) whose returned sequence completes after its page events. */
-  onGraphChangedBulk?(cb: (bulk: { changes: GraphChange[]; binding_generation?: number; answers?: GraphAnswersChange | null }) => void): Promise<() => void>;
+  /** Native watcher freshness: multiple pages or answers alone in one event,
+   * a refused/restored OS watch, and a focus rescan (one stat diff) whose
+   * returned sequence completes after its page events. */
+  onGraphChangedBulk?(cb: (bulk: GraphChangeBatch) => void): Promise<() => void>;
   onGraphWatchStatus?(cb: (status: { refused: boolean; message: string; binding_generation?: number }) => void): Promise<() => void>;
   onGraphRescanComplete?(cb: (sequence: number) => void): Promise<() => void>;
   /** `rebuild` (Settings only) ignores every stamp and re-parses every file. */

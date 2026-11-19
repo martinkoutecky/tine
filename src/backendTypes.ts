@@ -238,6 +238,14 @@ export interface GraphChange {
   removed: boolean;
 }
 
+/** One window delivery with shared publication evidence and optional checkout toast. */
+export interface GraphChangeBatch {
+  changes: Omit<GraphChange, "answers">[];
+  binding_generation?: number;
+  answers?: import("./backend").GraphAnswersChange | null;
+  show_summary?: boolean;
+}
+
 /** One coalesced watcher publication of files outside actors created, replaced
  *  or deleted under the graph's assets capability. Paths are relative to
  *  `assets/`; absolute device paths never cross the bridge. */

@@ -28,17 +28,16 @@ const changed = (name: string, kind: "page" | "journal" = "page"): GraphChange =
 
 let disk: Record<string, PageDto & { id: string }>;
 let reads: string[];
-let feedRestarts: number;
 let host: TestHost;
 beforeAll(() => initParser());
 beforeEach(async () => {
-  serial = 0; resetStore(); setToasts([]); disk = {}; reads = []; feedRestarts = 0;
+  serial = 0; resetStore(); setToasts([]); disk = {}; reads = [];
   host = await bindTestHost();
   answerOpensFromDocument(host);
   vi.spyOn(backend(), "getPage").mockImplementation(async (name) => { reads.push(name); return (disk[name] ?? null) as never; });
   vi.spyOn(backend(), "setAppBool").mockResolvedValue(undefined);
   installExternalChangeUiHandler(() => ({
-    pageOpen: (name) => name === "Open", journalsOpen: true, leaveRemovedPage: () => {}, restartJournalFeed: () => { feedRestarts++; },
+    pageOpen: (name) => name === "Open", journalsOpen: true, leaveRemovedPage: () => {},
   }));
 });
 afterEach(() => { setConflictPolicyAlwaysAsk(false); resetStore(); vi.restoreAllMocks(); });
@@ -59,7 +58,7 @@ async function editedThenConflicted(name: string, raw: string): Promise<void> {
 }
 
 describe("a checkout-sized batch (graph-changed-bulk)", () => {
-  it("reads only loaded or shown pages, moves revisions once, restarts the feed once and says so once", async () => {
+  it("reads only loaded or shown pages, moves revisions once and says so once", async () => {
     loadFeed([page("Jan 1st, 2026", ["j"])]);
     ensurePageLoaded(page("Open", ["old open"]));
     ensurePageLoaded(page("Dirty", ["old dirty"]));
@@ -69,31 +68,14 @@ describe("a checkout-sized batch (graph-changed-bulk)", () => {
       ...Array.from({ length: 36 }, (_, i) => changed(`Elsewhere ${i}`))];
     vi.spyOn(backend(), "getPageByPath").mockImplementation(async (path) => (Object.values(disk).find((p) => p.id === path) ?? null) as never);
     const before = dataRev();
-    await applyGraphChangesBulk({ changes });
+    await applyGraphChangesBulk({ changes, show_summary: true });
     expect(dataRev()).toBe(before + 1);
     expect(reads.filter((name) => name.startsWith("Elsewhere"))).toEqual([]);
     expect(raws("Open")).toEqual(["new open"]);
     expect(raws("Dirty")).toEqual(["mine"]);
     expect(isConflicted("Dirty")).toBe(true);
-    expect(feedRestarts).toBe(1);
     expect(toasts().map((t) => t.message)).toEqual(["40 pages updated externally · 1 conflict to review"]);
   });
-});
-
-it.each(["single", "bulk"])("GH #987: a %s journal change with a summary leaves the feed refresh to its days key", async (route) => {
-  loadFeed([page("Jan 1st, 2026", ["j"])]);
-  disk = { "Jan 1st, 2026": page("Jan 1st, 2026", ["j2"]) };
-  const answers: GraphAnswersChange = { rev: "9", inventoryChanged: false, blockRefCounts: {},
-    summary: { rev: "9", full: false, pages: ["jan 1st, 2026"], blocks: [], linksTo: [], queryTo: [], props: {}, inventoryChanged: false } };
-  const edit = changed("Jan 1st, 2026", "journal");
-  if (route === "single") await applyGraphChange({ ...edit, answers });
-  else await applyGraphChangesBulk({ changes: [edit], answers });
-  expect(raws("Jan 1st, 2026")).toEqual(["j2"]);
-  expect(feedRestarts).toBe(0);
-  // Missing evidence keeps the conservative restart.
-  if (route === "single") await applyGraphChange(edit);
-  else await applyGraphChangesBulk({ changes: [edit] });
-  expect(feedRestarts).toBe(1);
 });
 
 // tine#644 follow-up F5. A window answers a change on a page it shows but no
@@ -102,15 +84,16 @@ it.each(["single", "bulk"])("GH #987: a %s journal change with a summary leaves 
 // (`reading_a_contained_page_again_publishes_nothing`). With a store that does,
 // each read starts the next one.
 describe("a shown page no host holds", () => {
-  it("a read retired by graph switch cannot restart the new graph's feed", async () => {
+  it("a page read retired by graph switch cannot install in the new graph", async () => {
     let deliver!: (dto: PageDto) => void;
     vi.spyOn(backend(), "getPage").mockImplementationOnce(() => new Promise(resolve => { deliver = resolve as never; }));
     const request = applyGraphChange(changed("Open", "journal"));
     resetStore();
+    const freshDays = changedKey("days");
     deliver(page("Open", ["old graph text"]));
     await request;
     expect(pageByName("Open")).toBeUndefined();
-    expect(feedRestarts).toBe(0);
+    expect(changedKey("days")).toBe(freshDays);
   });
   const readsFor = async (announcedByReads: number) => {
     reads = [];

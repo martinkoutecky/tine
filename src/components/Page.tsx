@@ -5,7 +5,7 @@ import { Rich } from "../i18n/Rich";
 import { BlockList } from "./BlockList";
 import { t, msg } from "../i18n";
 import { reportUiFailure } from "../uiFailure";
-import { For, Show, createEffect, createMemo, createSignal, onCleanup, onMount, untrack, useContext, type JSX } from "solid-js";
+import { For, Show, createEffect, createMemo, createRoot, createSignal, onCleanup, onMount, untrack, useContext, type JSX } from "solid-js";
 import { admitRead, mainPages, pageByName, loadFeed, appendFeed, emptyPage, withToday, toLoadablePage, loadRoutedPage, setFeedExtender, formatForBlock, pageAliasNames, readPageProperties, readPageProperty, setPageProperty, appendToTodayJournal, ensureEmptyBlock, insertEmptyChildBlock, promotePagePreamble, beginPageHeaderEdit, pageHeaderProperties, isBlockMoving, isDirty, isSaving, installPageIdentityNavigation, rekeyPageIdentityByPath, followPageIdentity, type FeedPage, node as docNode, feedNames, isLoaded, loadedPage, pinPageWhileDrafting } from "../document";
 import { resolveRouteBlock, sameRoute, pageTargetFromFeedPage, pageTargetFromRoute, pageTargetMatchesLoaded, openPageTargetInNewTab, openInNewTab, type PageTarget, type PaneRouter } from "../router";
 import { PaneContext, focusedRouter, openRouteInOtherPane, rewritePageTargetAcrossPanes } from "../panes";
@@ -17,6 +17,7 @@ import { QuickShareAll } from "./QuickShareAll";
 import { graphEpoch, graphMeta } from "../graphSession";
 import { graphConfigUnreadable } from "../graphConfig";
 import { changed } from "../changeKeys";
+import { resultChangesInFlight } from "../queryResultsEpoch";
 import { PageLoadError, createPinnedPathRecovery, refusedPageOpen, routeAdoptsRead, type PinnedPathRefusal } from "./pageLoadRecovery";
 import { EXPORTS_MARKER, JOURNAL_SECTIONS_MARKER, hasMarker } from "../tineKeys";
 import { captureBinding, clearOnBindingInvalidated, graphScopedSignal } from "../binding";
@@ -97,16 +98,21 @@ let journalAsOfDay: number | null = null;
 let nextBeforeDay: number | null = null;
 let feedGeneration = 0;
 let loadingGeneration: number | null = null;
-let latestFeedRestart: Promise<unknown | null> | null = null;
+let latestFeedRestart: { epoch: number; promise: Promise<unknown | null> } | null = null;
 let publishedFeedEpoch: number | null = null;
 let feedDone = false;
 let pendingFeedRestart = false;
 let feedReferencesPending = false;
 let paintedFeedGeneration: number | null = null;
 const feedViewportAnchors = new Set<() => (() => void) | undefined>();
-const journalCompletionOwners = new Set<JournalsFeedOwner>();
-clearOnBindingInvalidated(() => { feedViewportAnchors.clear(); journalCompletionOwners.clear(); publishedFeedEpoch = null;
-  feedReferencesPending = false; });
+const journalSurfaces = new Set<JournalsFeedOwner>();
+let journalObserver: { epoch: number; dispose: () => void } | undefined;
+clearOnBindingInvalidated(() => {
+  journalObserver?.dispose(); journalObserver = undefined;
+  feedViewportAnchors.clear(); journalSurfaces.clear(); publishedFeedEpoch = null;
+  latestFeedRestart = journalRefreshFlight = null;
+  feedReferencesPending = pendingFeedRestart = false;
+});
 const oldestFeedDay = () => {
   const name = feedNames().at(-1);
   const date = name ? parseJournalTitle(name) : null;
@@ -123,10 +129,8 @@ const feedRefusal = () => { const held = feedRefusalIn(); return held && held.ep
  * once the holder is replaceable (master defers the feed atomically). */
 class FeedWithheld extends Error {}
 
-/** A feed response belongs to one graph and one or more concrete Journals
- * surfaces.  App's watcher supplies a captured owner too, so a response begun
- * before navigation/graph switch cannot update the shared feed store. */
-export interface JournalsFeedOwner {
+/** A feed response belongs to one graph and its requesting Journals surfaces. */
+interface JournalsFeedOwner {
   graphEpoch: number;
   isLive: () => boolean;
 }
@@ -143,13 +147,7 @@ function pageHasActiveEdit(name: string): boolean {
   return !!(edited && docNode(edited)?.page === name) || isDirty(name) || isSaving(name) || isConflicted(name) || isBlockMoving(name);
 }
 
-/** A journal the backend skipped as unreadable is named, never silently
- *  missing from the feed (one bad file never blanks it, I-22). */
-/** A window that has not yet bound a graph (startup, before `load_graph`
- *  returns) has no journals to read: the backend refuses every graph read with
- *  missing-graph-binding. That refusal is not a failed read — the bind bumps
- *  the graph epoch, which re-runs the Journals route loader. So an unbound
- *  window issues no feed read and reports nothing (og 12e P2). */
+// The binding's epoch bump reruns the loader once there is a graph to read.
 function windowUnbound(): boolean {
   return backend().graphBindingGeneration() === 0;
 }
@@ -162,20 +160,14 @@ function hasPublishedFeed(epoch: number): boolean {
   return publishedFeedEpoch === epoch;
 }
 
-/** The shared feed read for route loads, watcher changes and calendar rollover.
- * It keeps the old feed and cursor until the answer passes ownership checks. */
-// Returns the caught backend rejection for the route's initial-error display,
-// or null after success, deferral, or a stale owner. Refresh callers show a toast.
+// Keep the displayed feed and cursor until the new answer passes admission.
 function restartJournalFeed(owner: JournalsFeedOwner, retried = false, rollover = false): Promise<unknown | null> {
   if (!ownerIsLive(owner)) return Promise.resolve(null);
-  const pending = runJournalFeedRestart(owner, retried, rollover);
-  latestFeedRestart = pending;
-  void pending.then(() => {
-    if (latestFeedRestart === pending) latestFeedRestart = null;
-  }, () => {
-    if (latestFeedRestart === pending) latestFeedRestart = null;
-  });
-  return pending;
+  const flight = { epoch: owner.graphEpoch, promise: runJournalFeedRestart(owner, retried, rollover) };
+  latestFeedRestart = flight;
+  const retire = () => { if (latestFeedRestart === flight) latestFeedRestart = null; };
+  void flight.promise.then(retire, retire);
+  return flight.promise;
 }
 
 let journalRefreshFlight: { graphEpoch: number; day: number; owner: JournalsFeedOwner; promise: Promise<unknown | null> } | null = null;
@@ -254,7 +246,7 @@ async function runJournalFeedRestart(owner: JournalsFeedOwner, retried: boolean,
   const preserve = rollover || mergeReferences;
   const throughDay = published && !rollover ? oldestFeedDay() : null;
   const generation = ++feedGeneration; // invalidate starts/appends before checking edit safety
-  const requestOwner = latestOwner(feedOwners, "restart", graphOwner(() => ownerIsLive(owner)));
+  const requestOwner = latestOwner(feedOwners, "restart", graphOwner(() => generation === feedGeneration && ownerIsLive(owner)));
   if (!preserve && feedHasActiveEdit()) {
     recordFeedReason("active-edit");
     pendingFeedRestart = true;
@@ -342,7 +334,7 @@ async function runJournalFeedRestart(owner: JournalsFeedOwner, retried: boolean,
 async function completeJournalFeed(owner: JournalsFeedOwner, generation: number, day: number): Promise<void> {
   // The feed is shared: closing the initiating pane transfers completion to
   // another still-visible Journals surface of the same graph and generation.
-  const currentOwner = () => ownerIsLive(owner) ? owner : [...journalCompletionOwners]
+  const currentOwner = () => ownerIsLive(owner) ? owner : [...journalSurfaces]
     .find(candidate => candidate.graphEpoch === owner.graphEpoch && ownerIsLive(candidate));
   const live = () => generation === feedGeneration && !!currentOwner() && journalAsOfDay === day && localDayKey() === day;
   const names = feedNames();
@@ -369,6 +361,56 @@ async function completeJournalFeed(owner: JournalsFeedOwner, generation: number,
       reportUiFailure("journal-feed", error);
     }
   }
+}
+
+// One observer owns publication refreshes for all Journals surfaces in this window.
+function observeJournalFeed(epoch: number): () => void {
+  return createRoot(dispose => {
+    let live = true, queued = false;
+    let revision = changed("days"), day = currentDayKey();
+    let waiting: Promise<unknown> | null = null;
+    const owner = { graphEpoch: epoch, isLive: () => {
+      if (live) for (const surface of journalSurfaces) if (ownerIsLive(surface)) return true;
+      return false;
+    } };
+    onCleanup(() => { live = false; });
+    const refresh = (focus = false) => {
+      // Let this publication's page replacements finish before taking its feed snapshot.
+      if (queued && resultChangesInFlight()) return;
+      untrack(() => {
+        if (!ownerIsLive(owner)) return;
+        const today = currentDayKey();
+        const rollover = journalAsOfDay !== null && journalAsOfDay !== today;
+        if (!(queued || pendingFeedRestart || (focus && journalAsOfDay !== today))) return;
+        if (!rollover && feedHasActiveEdit()) return;
+        const flight = journalRefreshFlight?.graphEpoch === epoch ? journalRefreshFlight.promise
+          : latestFeedRestart?.epoch === epoch ? latestFeedRestart.promise : null;
+        if (flight) {
+          if ((queued || pendingFeedRestart) && waiting !== flight) {
+            waiting = flight;
+            const settled = () => { if (waiting === flight) { waiting = null; refresh(); } };
+            void flight.then(settled, settled);
+          }
+          return;
+        }
+        queued = pendingFeedRestart = false;
+        void refreshJournalFeedForCurrentDay(owner);
+      });
+    };
+    createEffect(() => {
+      const nextRevision = changed("days"), today = currentDayKey();
+      if (nextRevision !== revision || today !== day) {
+        revision = nextRevision; day = today;
+        // Let the old IPC finish, while its admission guard prevents a reread.
+        if (!queued && latestFeedRestart?.epoch === epoch) ++feedGeneration;
+        queued = true;
+      }
+      editingId(); feedHasActiveEdit();
+      refresh();
+    });
+    onCleanup(onAppReturn(() => refresh(true)));
+    return dispose;
+  });
 }
 
 // OG's pre-block predicate lives in Rust alongside ordinary-block visibility.
@@ -462,8 +504,15 @@ export function PageView(): JSX.Element {
   createEffect(() => {
     if (currentRoute().kind !== "journals") return;
     const owner = journalOwner();
-    journalCompletionOwners.add(owner);
-    onCleanup(() => journalCompletionOwners.delete(owner));
+    journalSurfaces.add(owner);
+    if (journalObserver?.epoch !== owner.graphEpoch) {
+      journalObserver?.dispose();
+      journalObserver = { epoch: owner.graphEpoch, dispose: observeJournalFeed(owner.graphEpoch) };
+    }
+    onCleanup(() => {
+      journalSurfaces.delete(owner);
+      if (!journalSurfaces.size) { journalObserver?.dispose(); journalObserver = undefined; }
+    });
   });
   createEffect(() => {
     loadRetry();
@@ -511,8 +560,8 @@ export function PageView(): JSX.Element {
           // A watcher or second Journals surface can supersede this read while
           // the native reads are in flight. The older
           // request is correctly discarded, but its route must await the winner.
-          while (!hasPublishedFeed(epoch) && latestFeedRestart && owned()) {
-            feedError = await latestFeedRestart;
+          while (!hasPublishedFeed(epoch) && latestFeedRestart?.epoch === epoch && owned()) {
+            feedError = await latestFeedRestart.promise;
           }
           if (!owned()) return;
           // A superseding owner may have disappeared before publishing. The
@@ -675,58 +724,6 @@ export function PageView(): JSX.Element {
       if (loadingGeneration === generation) loadingGeneration = null;
     }
   };
-
-  // Local calendar rollover follows the app's one date-change signal,
-  // currentDayKey() (journal.ts: the midnight timer, re-armed on every
-  // focus/visibility return and backend clock sample; card hB3Lv8, I-12).
-  // A return also retries a pending refresh or a feed answered for another
-  // day, unless the day change of that same return already started one.
-  createEffect(() => {
-    const route = currentRoute();
-    if (route.kind !== "journals") return;
-    const owner = journalOwner(route);
-    let dayRefresh: Promise<unknown> | null = null;
-    let day = untrack(currentDayKey);
-    createEffect(() => {
-      const today = currentDayKey();
-      if (today === day) return;
-      day = today;
-      const refresh = dayRefresh = refreshJournalFeedForCurrentDay(owner)
-        .finally(() => { if (dayRefresh === refresh) dayRefresh = null; });
-    });
-    const onFocus = () => {
-      if (!dayRefresh && (journalAsOfDay !== untrack(currentDayKey) || pendingFeedRestart)) {
-        void refreshJournalFeedForCurrentDay(owner);
-      }
-    };
-    onCleanup(onAppReturn(onFocus));
-  });
-
-  // A deferred watcher/midnight refresh is retried only when the existing edit
-  // lifecycle has advanced; it never replaces a dirty feed with a stale window.
-  let previousReferenceRev = changed("days");
-  createEffect(() => {
-    const route = currentRoute();
-    if (route.kind !== "journals") return;
-    editingId();
-    const revision = changed("days");
-    if (revision !== previousReferenceRev) {
-      previousReferenceRev = revision;
-      pendingFeedRestart = true;
-    }
-    // Subscribe to every page-scoped safety gate even before a watcher marks a
-    // retry pending.  That makes the corresponding release event sufficient;
-    // no unrelated graph change is needed to wake a deferred feed refresh.
-    const unsafe = feedHasActiveEdit();
-    if (pendingFeedRestart && !unsafe) {
-      // This effect deliberately tracks the edit/conflict/save lifecycle.  Do
-      // not untrack it with the initial route loader: it is the pending retry.
-      // The retry consumes the flag: a later lifecycle event while it is in
-      // flight starts no second read; a retry that defers again re-arms it.
-      pendingFeedRestart = false;
-      void refreshJournalFeedForCurrentDay(journalOwner(route));
-    }
-  });
 
   createEffect(() => {
     if (currentRoute().kind !== "journals") return;

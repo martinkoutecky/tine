@@ -8,7 +8,7 @@ import { For, Match, Show, Suspense, Switch, createEffect, createMemo, createSig
 import { Sidebar } from "./components/Sidebar";
 import { JournalsIcon } from "./components/JournalsIcon";
 import { ShareIcon } from "./components/ShareIcon";
-import { PageView, reloadJournalsFeedFromStart, type JournalsFeedOwner } from "./components/Page";
+import { PageView } from "./components/Page";
 import { QueryWorkspace } from "./components/QueryWorkspace";
 import { ConflictOverview } from "./components/ConflictOverview";
 import { AllPages } from "./components/AllPages";
@@ -57,7 +57,7 @@ import { goBack, goForward, canGoBack, canGoForward, flushSession, openPage, rou
 import { openJournalsFromClick } from "./journalsNavigation";
 import { theme, toggleTheme, sidebarOpen, toggleSidebar, rightSidebarOpen, toggleRightSidebar, openSwitcher, sidebarWidth, openSettings, settingsOpen, welcomeOpen, closeWelcome, shortcutOverrides, wideMode, documentMode, focusMode, dimInactiveBlocks, exitFocusMode, installPaneTracker, refreshSyncConflicts, graphTransitioning, setGraphTransitioning, activeDrawer, completeActiveLeftNavigation, dismissMobileDrawer, setLeftSidebarOpen } from "./ui";
 import { openShareDialog } from "./shareState";
-import { graphMeta, firstLoadDone, setFirstLoadDone, graphEpoch, setStartupOpenFailure } from "./graphSession";
+import { graphMeta, firstLoadDone, setFirstLoadDone, setStartupOpenFailure } from "./graphSession";
 import { applyGraphChange, installAliasDraftRouteHandler, installExternalChangeUiHandler } from "./document";
 
 installAliasDraftRouteHandler((name, kind) => openPage(name, kind));
@@ -206,31 +206,6 @@ async function closeAndroidRootSafely(): Promise<void> {
   await androidRootClose.request();
 }
 
-/** Capture the actual live Journals surfaces that justified a watcher restart.
- * The shared feed may be displayed in either half of a split; a main-router
- * check alone would let an old graph/navigation response land in that feed. */
-function journalsFeedOwner(
-  routes: Array<{ paneId: string; route: ReturnType<PaneRouter["route"]> }>
-): JournalsFeedOwner | null {
-  const epoch = graphEpoch();
-  const owners = routes.filter((p) => p.route.kind === "journals");
-  if (!owners.length) return null;
-  return {
-    graphEpoch: epoch,
-    isLive: () =>
-      graphEpoch() === epoch && owners.some((p) =>
-        allPaneIds().includes(p.paneId) && sameRoute(paneRouter(p.paneId).route(), p.route)
-      ),
-  };
-}
-
-function requestJournalFeedWatcherRestart(
-  routes: Array<{ paneId: string; route: ReturnType<PaneRouter["route"]> }>
-) {
-  const owner = journalsFeedOwner(routes);
-  if (owner) void reloadJournalsFeedFromStart(owner);
-}
-
 installExternalChangeUiHandler(() => {
   const routes = allPaneIds().map((paneId) => ({ paneId, router: paneRouter(paneId), route: paneRouter(paneId).route() }));
   return {
@@ -247,7 +222,6 @@ installExternalChangeUiHandler(() => {
         }
       }
     },
-    restartJournalFeed: () => requestJournalFeedWatcherRestart(routes),
   };
 });
 

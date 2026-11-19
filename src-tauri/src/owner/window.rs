@@ -339,8 +339,7 @@ impl WindowLink {
     }
 
     /// Tell the window that these pages changed, as the watcher tells it of
-    /// outside edits (`watcher::page_event_payloads`: one `graph-changed` per
-    /// page, one `graph-changed-bulk` for a checkout-sized batch).
+    /// outside edits, with one envelope for the publication's shared answers.
     pub(crate) fn pages_changed(&self, pages: Vec<GraphChange>) {
         // Owner writes already acquired a whole-graph view before planning.
         // Sampling its published revision is O(1), with no file read or scan.
@@ -368,8 +367,8 @@ impl WindowLink {
     }
 
     fn deliver_pages(&self, (pages, answers): PageDelivery) {
-        for (event, payload) in
-            crate::watcher::page_event_payloads(pages, self.binding_generation, answers)
+        if let Some((event, payload)) =
+            crate::watcher::page_event_payload(pages, self.binding_generation, answers)
         {
             let _ = self.app.emit_to(self.label.as_str(), event, payload);
         }

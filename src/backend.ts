@@ -82,7 +82,7 @@ import type { Backend, ConfirmOptions, FacetScope } from "./backendInterface";
 
 
 export type { DebugInfo, DiagnosticReport, DiagnosticFrontendKind, DiscardReason, DiagnosticFrontendFields, GpuEnv, BackupInfo, GraphChange, AssetChangedBatch, GraphConfigChange, CustomCssChange, TrashAssetOutcome, GraphAnswersChange, GraphFolderPickResult, PreparedGraphFolder, ClipboardAssetFile, ClipboardFileList, MediaCaptureResult, KnownGraph, InstalledPluginRecord, PluginRegistryCacheEnvelope, PluginRegistryCacheLoad, LoadGraphResult, CaptureGraphBindingResult, GraphAccessInspection, GitAutocommitStatus, GitPolicy, GitSyncStatus, GitRemote } from "./backendTypes";
-import type { DebugInfo, DiagnosticReport, DiagnosticFrontendKind, DiagnosticFrontendFields, GpuEnv, BackupInfo, GraphChange, AssetChangedBatch, GraphConfigChange, CustomCssChange, TrashAssetOutcome, GraphAnswersChange } from "./backendTypes";
+import type { DebugInfo, DiagnosticReport, DiagnosticFrontendKind, DiagnosticFrontendFields, GpuEnv, BackupInfo, GraphChange, AssetChangedBatch, GraphConfigChange, CustomCssChange, TrashAssetOutcome, GraphChangeBatch } from "./backendTypes";
 import type { DiskToken, OwedPage, PageMail, PageOperation, PageRefusal, PublishedNeed, PublishedRevision } from "./document";
 
 export function isTauri(): boolean {
@@ -906,7 +906,7 @@ class TauriBackend implements Backend {
   onOwnerFlushRequest(cb: (request: { id: number; page: string; all?: boolean; binding_generation: number }) => void) { return this.on("owner-flush-request", cb); }
   onOwnerPageRenamed(cb: (rename: import("./types").OwnerPageRename) => void) { return this.on("owner-page-renamed", cb); }
   ownerFlushAnswer(id: number, saved: boolean, bindingGeneration: number) { return this.call<void>("owner_flush_answer", { id, saved, bindingGeneration }); }
-  onGraphChangedBulk(cb: (bulk: { changes: GraphChange[]; binding_generation?: number; answers?: GraphAnswersChange | null }) => void) { return this.on("graph-changed-bulk", cb); }
+  onGraphChangedBulk(cb: (bulk: GraphChangeBatch) => void) { return this.on("graph-changed-bulk", cb); }
   async onGraphWatchStatus(cb: (status: { refused: boolean; message: string; binding_generation?: number }) => void) {
     const [a, b] = await Promise.all([true, false].map((refused) => this.on<{ message: string }>(`graph-watch-${refused ? "refused" : "restored"}`, (p) => cb({ ...p, refused }))));
     return () => { a(); b(); };
