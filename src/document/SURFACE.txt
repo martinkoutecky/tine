@@ -46,7 +46,6 @@ canIndentBlock  # why: the swipe indent cue asks the kernel indent verb instead 
 captureEmptyPage  # why: the tine://capture route admits today's journal exactly as the capture append does (ADR 0073); batchNativeIntegrations
 captureScratchPage
 captureToPage
-captureTransferRollback  # why: a rename helper puts its own page edits back exactly when its request is refused (D-20261116-TAGH); batch-cm-helpers-rename-merge
 carryTodayPage
 carryUnfinished
 childIds

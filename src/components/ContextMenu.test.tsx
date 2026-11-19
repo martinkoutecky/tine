@@ -21,6 +21,9 @@ import { conflictedInHost, openAsLoaded } from "./hostConflict.test.support";
 import { reloadPage } from "../document/workingSet";
 import { noteSeenAnswer, resetSeenForTests } from "../seen/seenState";
 import { commentMarginHidden, persistCommentMarginHidden } from "../commentMarginPref";
+import { setConflictInventory } from "../conflictQueue";
+import { setBaseRev } from "../document/host/wiring";
+import { isFavorite, seedFavorites } from "../favorites";
 
 describe("PageMenu page-kind availability", () => {
   it("keeps rename page-only but exposes delete for pages and journals", () => {
@@ -367,6 +370,44 @@ describe("BlockMenu — convert an outline into a grid (Show children as →)", 
     action!.click();
     await vi.waitFor(() => expect(remove).toHaveBeenCalledWith(host.session, "P", "page", "pages/two.md"));
     dispose();
+  });
+
+  it("GH #978: a file sharing its page name with another deletes exactly that file at its loaded revision", async () => {
+    load();
+    setDoc("pages", 0, "id", "pages/笔记集/P.md");
+    const host = await bindTestHost();
+    setBaseRev("P", "rev-loaded");
+    seedFavorites(["P"]);
+    setConflictInventory({ sync_conflicts: [], vcs_markers: [], queue: [{
+      id: "name:p", source: "duplicate-name", page_name: "P", page_path: "pages/P.md", kind: "page",
+      sides: [
+        { role: "mine", label: "pages/P.md", path: "pages/P.md", kind: "page" },
+        { role: "theirs", label: "pages/笔记集/P.md", path: "pages/笔记集/P.md", kind: "page" },
+      ], markers: [] }] });
+    const confirm = vi.spyOn(backend(), "confirm").mockResolvedValue(true);
+    const byName = vi.spyOn(backend(), "pageDelete");
+    const byFile = vi.spyOn(backend(), "pageDeleteFile").mockResolvedValue("applied");
+    const dispose = mount(() => <ContextMenu />);
+    try {
+      openPageContextMenu(10, 10, "P", "page", true);
+      expect(document.querySelector('[data-page-action-id="delete-page"]')).toBeNull();
+      const action = document.querySelector<HTMLElement>('[data-page-action-id="delete-file"]')!;
+      expect(action.textContent).toBe("Delete file “pages/笔记集/P.md”");
+      action.click();
+      await vi.waitFor(() => expect(byFile).toHaveBeenCalledWith(host.session, "pages/笔记集/P.md", "rev-loaded"));
+      expect(confirm.mock.calls[0][0]).toContain("pages/笔记集/P.md");
+      expect(byName).not.toHaveBeenCalled();
+      await vi.waitFor(() => expect(toasts().some((t) => t.message === "Deleted “pages/笔记集/P.md”")).toBe(true));
+      expect(pageByName("P")).toBeUndefined();
+      // The name lives on in pages/P.md, so its favorite stays.
+      expect(isFavorite("P", "page")).toBe(true);
+      // Without a twin, the same menu deletes by name.
+      setConflictInventory({ sync_conflicts: [], vcs_markers: [], queue: [] });
+      load(); setDoc("pages", 0, "id", "pages/P.md");
+      openPageContextMenu(10, 10, "P", "page", true);
+      expect(document.querySelector('[data-page-action-id="delete-file"]')).toBeNull();
+      expect(document.querySelector('[data-page-action-id="delete-page"]')?.textContent).toBe("Delete page");
+    } finally { dispose(); setConflictInventory({ sync_conflicts: [], vcs_markers: [], queue: [] }); }
   });
 
   it("GH #687: delete failure toast carries the storage refusal", async () => {

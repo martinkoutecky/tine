@@ -16,7 +16,7 @@ pub use rename_plan::{RenameBlocked, RenameChoice, RenamedPage};
 #[path = "pages_rename_offer.rs"]
 mod rename_offer;
 pub use rename_offer::{
-    rename_offer, rename_page_as, AliasDialog, DayMove, OwnRefusal, RenameOffer,
+    rename_offer, rename_page_as, AliasDialog, DayMove, OwnRefusal, RefusedMerge, RenameOffer,
 };
 #[path = "pages_rename_helpers.rs"]
 mod rename_helpers;
@@ -27,6 +27,9 @@ mod refusal;
 mod rename_report;
 use refusal::unsaved_error;
 pub use refusal::{save_page_unchanged, MergeRefused, RewriteBlocked};
+#[path = "pages_delete.rs"]
+mod delete;
+pub use delete::{delete_page_expected, delete_page_file};
 use rename_plan::{plan_rename, RenamePlan};
 use rename_report::{site_exceptions, survivor_check, IncompleteRename, StepChecks};
 pub use rename_report::{
@@ -44,8 +47,8 @@ impl RenamePlan {
     }
 }
 use tine_store::{
-    Area, FileId, FileRev, Input, LoadError, PageHost, PageId, PageOperation, PageRead, RenameMap,
-    Resolved, Store, StoreError, TitleRebind,
+    Area, FileId, FileRev, Input, LoadError, PageHost, PageId, PageRead, RenameMap, Resolved,
+    Store, StoreError, TitleRebind,
 };
 
 /// A page read or OS source selection failed at the load, identity, or file step.
@@ -153,6 +156,8 @@ fn view(store: &Store) -> io::Result<tine_store::WholeGraph> {
 /// had (`docs/storage-contract.md`). Assets and `custom.css` are not walked:
 /// no page plan reads them. Cost O(P stamps).
 fn refreshed_view(store: &Store) -> io::Result<tine_store::WholeGraph> {
+    #[cfg(test)]
+    PAGE_STAMP_WALKS.with(|n| n.set(n.get() + 1));
     store
         .refresh(tine_store::Depth::PageStamps)
         .map_err(|failure| match failure {
@@ -160,6 +165,12 @@ fn refreshed_view(store: &Store) -> io::Result<tine_store::WholeGraph> {
             tine_store::LoadError::Closed => error(io::ErrorKind::BrokenPipe, "store closed"),
         })?;
     view(store)
+}
+
+#[cfg(test)]
+thread_local! {
+    /// Graph-wide `PageStamps` refreshes [`refreshed_view`] ran on this thread.
+    static PAGE_STAMP_WALKS: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
 }
 
 /// Whether a page FILENAME in the pages area that the view does not admit (a
@@ -369,49 +380,6 @@ fn text_file(store: &Store, rel: &str) -> io::Result<FileId> {
         }
     }
     Err(error(io::ErrorKind::InvalidInput, "invalid file path"))
-}
-
-/// Delete one named page or journal through the page host (GH #620, STEP3
-/// §12, Q-P2b-5). The identity checks run here against a refreshed
-/// inventory and a fresh read: twins refuse as ambiguous, and a displayed
-/// path that no longer holds the name is a stale target, unless a fresh read
-/// confirms that file is also absent (external deletion during
-/// confirmation), which succeeds without a write; an absent name with no
-/// displayed path is a no-op. The host's deletion is bound to the bytes the
-/// check read and refuses if its own read differs. The window waits for a
-/// `Pending` deletion to publish (§4.4). Cost one stat walk of the graph's
-/// text files (O(P), [`refreshed_view`]) plus the file's bytes.
-pub fn delete_page_expected(
-    store: &Store,
-    host: &PageHost,
-    session: u64,
-    name: &str,
-    kind: PageKind,
-    expected_path: Option<&str>,
-) -> io::Result<PageOperation> {
-    let graph = refreshed_view(store)?;
-    let ids = existing(graph.resolve(name, kind == PageKind::Journal));
-    let Some(id) = ids.first() else {
-        if let Some(path) = expected_path.filter(|path| !path.trim().is_empty()) {
-            let file = text_file(store, path)?;
-            match store.read(&file, Some(tine_store::PARSE_INPUT_MAX_BYTES)) {
-                Err(StoreError::NotFound(_)) => {}
-                Err(error) => return Err(store_error(error)),
-                Ok(_) => return Err(error(io::ErrorKind::NotFound, "stale page target")),
-            }
-            // A conflicted draft of the vanished file is kept recoverably
-            // before the window discards it (L9 review R1).
-            if let Some(page) = store.as_page(&file) {
-                return Ok(host.delete(session, &page, None));
-            }
-        }
-        return Ok(PageOperation::Applied);
-    };
-    validate_target(&ids, expected_path)?;
-    let (checked, _) = store
-        .read(&id.file(), Some(tine_store::PARSE_INPUT_MAX_BYTES))
-        .map_err(store_error)?;
-    Ok(host.delete(session, id, Some(&checked[..])))
 }
 
 /// Rename a page and its file-backed namespace descendants in one transaction.

@@ -88,14 +88,15 @@ fn the_alias_dialog_shows_the_component_and_each_requests_effect() {
         }
     );
     assert_eq!(dialog.opens.name, "Machine Learning");
-    assert_eq!(dialog.declarers.len(), 1);
-    let mut aliases = dialog.declarers[0].aliases.clone();
+    assert_eq!(dialog.component.len(), 1);
+    let mut aliases = dialog.component[0].aliases.clone();
     aliases.sort();
     assert_eq!(aliases, ["AI", "ML", "Stats"]);
     assert_eq!(dialog.source.name, "ML notes");
     assert_eq!(dialog.source.aliases, ["Notes"]);
 
-    let merge = dialog.merge.as_ref().expect("the merge is offered");
+    assert_eq!(dialog.merges.len(), 1);
+    let merge = dialog.merges.first().expect("the merge is offered");
     assert_eq!(merge.into, "pages/Machine Learning.md");
     assert_eq!(merge.name, "Machine Learning");
     assert!(
@@ -179,7 +180,7 @@ fn the_dialogs_merge_is_the_ordinary_merge_request() {
     let _guard = crate::integration_lock();
     let (root, store) = fixture("merge", ML);
     let dialog = alias_dialog(&store, "ML notes", "ML");
-    let merge = dialog.merge.unwrap();
+    let merge = dialog.merges.into_iter().next().unwrap();
     assert_eq!(
         rename(
             &store,
@@ -223,7 +224,7 @@ fn a_refused_step_is_not_offered_and_says_why() {
             path: "pages/Machine Learning.md".into(),
         })
     );
-    assert!(dialog.merge.is_some());
+    assert_eq!(dialog.merges.len(), 1);
 
     // The rename after the edit would capture an existing page (O4).
     let (_root, store) = fixture(
@@ -257,7 +258,11 @@ fn a_fileless_source_is_offered_the_reference_merge() {
     );
     let dialog = alias_dialog(&store, "Ghost", "Short Two");
     assert_eq!(dialog.source.path, None);
-    let merge = dialog.merge.expect("the reference merge is offered");
+    let merge = dialog
+        .merges
+        .into_iter()
+        .next()
+        .expect("the reference merge is offered");
     assert_eq!(merge.into, "pages/Owner Two.md");
     assert_eq!(merge.effect.pages, ["ghost referrer"]);
     assert_eq!(
@@ -377,16 +382,16 @@ fn the_dialog_and_the_union_keep_the_windows_wire_names() {
     for key in [
         "message",
         "opens",
-        "declarers",
+        "component",
         "source",
-        "merge",
-        "mergeRefused",
+        "merges",
+        "mergesRefused",
         "own",
         "ownRefused",
     ] {
         assert!(wire.get(key).is_some(), "missing {key}: {wire}");
     }
-    assert_eq!(wire["merge"]["effect"]["retargeted"][0]["pageCount"], 1);
+    assert_eq!(wire["merges"][0]["effect"]["retargeted"][0]["pageCount"], 1);
     assert_eq!(wire["own"]["edits"][0]["after"], "AI, Stats");
     assert!(wire["own"]["effect"]["pageCount"].is_u64());
     let (_root, store) = fixture(
@@ -542,4 +547,563 @@ fn a_contested_name_offers_its_claiming_files() {
         }
     }
     assert_eq!(snapshot(&root), before);
+}
+
+fn resolved_name(store: &Store, name: &str) -> String {
+    let graph = store.whole_graph().unwrap();
+    let id = match graph.resolve(name, false) {
+        tine_store::Resolved::Existing { id, .. } => id,
+        tine_store::Resolved::Alias { owners } => owners[0].clone(),
+        other => panic!("{name} resolves to {other:?}"),
+    };
+    id.as_str().to_owned()
+}
+
+fn retargets(
+    effect: &tine_graph_features::pages::Effect,
+) -> Vec<(String, String, String, Vec<String>)> {
+    effect
+        .retargeted
+        .iter()
+        .map(|r| {
+            (
+                r.name.clone(),
+                r.before.clone(),
+                r.after.clone(),
+                r.pages.clone(),
+            )
+        })
+        .collect()
+}
+
+/// D-20261106-R13-UI / D-20261115-HELP: the dialog shows the alias
+/// component, not only the direct declarers, and offers the ordinary merge
+/// into every component page the model allows (each its own request).
+#[test]
+fn the_dialog_offers_a_merge_into_every_component_page() {
+    let _guard = crate::integration_lock();
+    let files: &[(&str, &str)] = &[
+        ("pages/A.md", "alias:: ML\n\n- a body\n"),
+        ("pages/B.md", "alias:: ML, Stats\n\n- b body\n"),
+        ("pages/C.md", "alias:: Stats\n\n- c body\n"),
+        ("pages/Source.md", "- source body\n"),
+    ];
+    let (_root, store) = fixture("component", files);
+    let dialog = alias_dialog(&store, "Source", "ML");
+    let component: Vec<&str> = dialog.component.iter().map(|p| p.name.as_str()).collect();
+    assert_eq!(component, ["A", "B", "C"]);
+    let into: Vec<&str> = dialog.merges.iter().map(|m| m.into.as_str()).collect();
+    assert_eq!(into, ["pages/A.md", "pages/B.md", "pages/C.md"]);
+    assert!(
+        dialog.merges_refused.is_empty(),
+        "{:?}",
+        dialog.merges_refused
+    );
+    for target in ["B", "C"] {
+        let (root, store) = fixture(&format!("component-{target}"), files);
+        let dialog = alias_dialog(&store, "Source", "ML");
+        let merge = dialog.merges.iter().find(|m| m.name == target).unwrap();
+        assert_eq!(
+            rename(
+                &store,
+                "Source",
+                &merge.name,
+                RenameChoice::MergeInto(&merge.into)
+            ),
+            RenameOutcome::Merged,
+            "{target}"
+        );
+        let after = snapshot(&root);
+        assert!(!after.contains_key("pages/Source.md"));
+        assert!(after[&format!("pages/{target}.md")].contains("source body"));
+    }
+}
+
+/// Each "links open a different page" row is the owner the name resolves to
+/// before and after the request: a declarer with a lesser path keeps a
+/// shared alias, and a real file keeps its own name.
+#[test]
+fn a_merge_retargets_only_names_whose_owner_changes() {
+    let _guard = crate::integration_lock();
+    let files: &[(&str, &str)] = &[
+        ("pages/A.md", "alias:: Shared\n\n- a body\n"),
+        ("pages/Real.md", "- the real page\n"),
+        (
+            "pages/Source.md",
+            "alias:: Shared, Real, Mine\n\n- source body\n",
+        ),
+        ("pages/Z.md", "alias:: ML\n\n- z links [[Mine]]\n"),
+        ("pages/q.md", "- [[Shared]] [[Real]] [[Mine]]\n"),
+    ];
+    let (root, store) = fixture("merge-owners", files);
+    let dialog = alias_dialog(&store, "Source", "ML");
+    let merge = dialog.merges.iter().find(|m| m.name == "Z").unwrap();
+    // Shared opens A before and after; Real is a real file; only Mine moves,
+    // and the survivor's own link to it is listed.
+    assert_eq!(
+        retargets(&merge.effect),
+        [(
+            "Mine".to_owned(),
+            "Source".to_owned(),
+            "Z".to_owned(),
+            vec!["Z".to_owned(), "q".to_owned()]
+        )]
+    );
+    let (shared, real) = (
+        resolved_name(&store, "Shared"),
+        resolved_name(&store, "Real"),
+    );
+    assert_eq!(
+        rename(&store, "Source", "Z", RenameChoice::MergeInto(&merge.into)),
+        RenameOutcome::Merged
+    );
+    // The prediction is what the merge does.
+    assert_eq!(resolved_name(&store, "Shared"), shared);
+    assert_eq!(resolved_name(&store, "Real"), real);
+    assert_eq!(resolved_name(&store, "Mine"), "pages/Z.md");
+    assert!(snapshot(&root).contains_key("pages/A.md"));
+}
+
+/// "Use the name": the typed name moves to the source, and a shared alias
+/// whose least-path declarer was the source passes to another declarer when
+/// the source's file moves.
+#[test]
+fn use_the_name_retargets_shared_aliases_that_change_owner() {
+    let _guard = crate::integration_lock();
+    let files: &[(&str, &str)] = &[
+        ("pages/Aa.md", "alias:: Shared, Kept\n\n- source body\n"),
+        ("pages/B.md", "alias:: Shared, ML\n\n- b body\n"),
+        ("pages/q.md", "- [[Shared]] [[Kept]] [[ML]]\n"),
+    ];
+    let (root, store) = fixture("own-owners", files);
+    let dialog = alias_dialog(&store, "Aa", "ML");
+    let own = dialog.own.as_ref().expect("use the name is offered");
+    let mut rows = retargets(&own.effect);
+    rows.sort();
+    assert_eq!(
+        rows,
+        [
+            (
+                "ML".to_owned(),
+                "B".to_owned(),
+                "ML".to_owned(),
+                vec!["q".to_owned()]
+            ),
+            (
+                "Shared".to_owned(),
+                "Aa".to_owned(),
+                "B".to_owned(),
+                vec!["q".to_owned()]
+            ),
+        ]
+    );
+    let edit = &own.edits[0];
+    fs::write(
+        root.join(&edit.path),
+        format!(
+            "{}:: {}\n\n- b body\n",
+            edit.key,
+            edit.after.as_deref().unwrap()
+        ),
+    )
+    .unwrap();
+    assert_eq!(
+        rename(&store, "Aa", "ML", RenameChoice::Rename),
+        RenameOutcome::Renamed
+    );
+    assert_eq!(resolved_name(&store, "Shared"), "pages/B.md");
+    assert_eq!(resolved_name(&store, "Kept"), "pages/ML.md");
+    assert_eq!(resolved_name(&store, "ML"), "pages/ML.md");
+}
+
+/// One request of the alias dialog: rename `old` to `typed` (only an alias),
+/// answered by merging into `into` (`Some`) or by "use the name" (`None`).
+struct Case {
+    label: &'static str,
+    files: &'static [(&'static str, &'static str)],
+    old: &'static str,
+    typed: &'static str,
+    into: Option<&'static str>,
+    /// The rows the dialog must show: (name, before, after, pages).
+    rows: &'static [(
+        &'static str,
+        &'static str,
+        &'static str,
+        &'static [&'static str],
+    )],
+    /// (row name, a spelling links use) for every name a surviving link
+    /// names, and the files the request moves (before, after).
+    probes: &'static [(&'static str, &'static str)],
+    moves: &'static [(&'static str, &'static str)],
+}
+
+const SOURCE_PLAIN: (&str, &str) = ("pages/Source.md", "- s\n");
+const Z_ML: (&str, &str) = ("pages/Z.md", "alias:: ML\n\n- z\n");
+const MINE: &[(&str, &str, &str, &[&str])] = &[("Mine", "Source", "Z", &["Z"])];
+const ML_TO_Z: &[(&str, &str, &str, &[&str])] = &[("ML", "Z", "ML", &["Z"])];
+const OWN_MOVES: &[(&str, &str)] = &[("pages/Source.md", "pages/ML.md")];
+
+/// The review of 88a0ab211 (finding 1): eight executed requests whose
+/// surviving links change page, which the earlier prediction missed.
+const CASES: &[Case] = &[
+    Case {
+        label: "merge-declarer-body",
+        files: &[
+            ("pages/Source.md", "alias:: Mine\n\n- s\n"),
+            ("pages/Z.md", "alias:: ML, Mine\n\n- z links [[Mine]]\n"),
+        ],
+        old: "Source",
+        typed: "ML",
+        into: Some("pages/Z.md"),
+        rows: MINE,
+        probes: &[("Mine", "Mine")],
+        moves: &[],
+    },
+    Case {
+        label: "merge-source-body",
+        files: &[
+            ("pages/Source.md", "alias:: Mine\n\n- s links [[Mine]]\n"),
+            Z_ML,
+        ],
+        old: "Source",
+        typed: "ML",
+        into: Some("pages/Z.md"),
+        rows: MINE,
+        probes: &[("Mine", "Mine")],
+        moves: &[],
+    },
+    Case {
+        label: "own-declarer-body",
+        files: &[
+            SOURCE_PLAIN,
+            ("pages/Z.md", "alias:: ML\n\n- z links [[ML]]\n"),
+        ],
+        old: "Source",
+        typed: "ML",
+        into: None,
+        rows: ML_TO_Z,
+        probes: &[("ML", "ML")],
+        moves: OWN_MOVES,
+    },
+    Case {
+        label: "own-source-body",
+        files: &[("pages/Source.md", "- s links [[ML]]\n"), Z_ML],
+        old: "Source",
+        typed: "ML",
+        into: None,
+        rows: &[("ML", "Z", "ML", &["ML"])],
+        probes: &[("ML", "ML")],
+        moves: OWN_MOVES,
+    },
+    Case {
+        label: "own-declarer-body-crlf",
+        files: &[
+            SOURCE_PLAIN,
+            ("pages/Z.md", "alias:: ML\r\n\r\n- z links [[ML]]\r\n"),
+        ],
+        old: "Source",
+        typed: "ML",
+        into: None,
+        rows: ML_TO_Z,
+        probes: &[("ML", "ML")],
+        moves: OWN_MOVES,
+    },
+    Case {
+        label: "own-declarer-body-page-link",
+        files: &[
+            SOURCE_PLAIN,
+            ("pages/Z.md", "alias:: ML\n\n- z [see]([[ML]])\n"),
+        ],
+        old: "Source",
+        typed: "ML",
+        into: None,
+        rows: ML_TO_Z,
+        probes: &[("ML", "ML")],
+        moves: OWN_MOVES,
+    },
+    Case {
+        label: "own-declarer-body-tag",
+        files: &[SOURCE_PLAIN, ("pages/Z.md", "alias:: ML\n\n- z #ML\n")],
+        old: "Source",
+        typed: "ML",
+        into: None,
+        rows: ML_TO_Z,
+        probes: &[("ML", "ML")],
+        moves: OWN_MOVES,
+    },
+    Case {
+        label: "own-declarer-body-embed",
+        files: &[
+            SOURCE_PLAIN,
+            ("pages/Z.md", "alias:: ML\n\n- z {{embed [[ML]]}}\n"),
+        ],
+        old: "Source",
+        typed: "ML",
+        into: None,
+        rows: ML_TO_Z,
+        probes: &[("ML", "ML")],
+        moves: OWN_MOVES,
+    },
+    Case {
+        label: "merge-survivor-body-org",
+        files: &[
+            ("pages/Source.org", "#+alias: Mine\n\n* s\n"),
+            ("pages/Z.org", "#+alias: ML, Mine\n\n* z links [[Mine]]\n"),
+        ],
+        old: "Source",
+        typed: "ML",
+        into: Some("pages/Z.org"),
+        rows: MINE,
+        probes: &[("Mine", "Mine")],
+        moves: &[],
+    },
+    Case {
+        label: "merge-day-spelling",
+        files: &[
+            ("pages/Source.md", "alias:: 2026-11-18\n\n- s\n"),
+            Z_ML,
+            ("pages/q.md", "- [[Nov 18th, 2026]]\n"),
+        ],
+        old: "Source",
+        typed: "ML",
+        into: Some("pages/Z.md"),
+        rows: &[("2026-11-18", "Source", "Z", &["q"])],
+        probes: &[("2026-11-18", "Nov 18th, 2026")],
+        moves: &[],
+    },
+    Case {
+        label: "own-moved-child",
+        files: &[
+            ("pages/Aa.md", "- a\n"),
+            ("pages/Aa%2Fx.md", "alias:: Shared\n\n- x\n"),
+            ("pages/B.md", "alias:: Shared\n\n- b\n"),
+            Z_ML,
+            ("pages/q.md", "- [[Shared]]\n"),
+        ],
+        old: "Aa",
+        typed: "ML",
+        into: None,
+        rows: &[("Shared", "Aa/x", "B", &["q"])],
+        probes: &[("Shared", "Shared")],
+        moves: &[
+            ("pages/Aa.md", "pages/ML.md"),
+            ("pages/Aa%2Fx.md", "pages/ML%2Fx.md"),
+        ],
+    },
+    // The review of 0a3d95eae (finding 2): "use the name" for a source with
+    // no file. The typed name's declarer releases it; the rename then gives
+    // it to a page with no file (its links open that page) or, through the
+    // respelled alias declaration, to the alias source's declarer.
+    Case {
+        label: "own-fileless-reference",
+        files: &[Z_ML, ("pages/q.md", "- [[X]] and [[ML]]\n")],
+        old: "X",
+        typed: "ML",
+        into: None,
+        rows: &[("ML", "Z", "ML", &["q"])],
+        probes: &[("ML", "ML")],
+        moves: &[],
+    },
+    Case {
+        label: "own-fileless-namespace",
+        files: &[Z_ML, ("pages/q.md", "- [[N/c]] and [[ML]]\n")],
+        old: "N",
+        typed: "ML",
+        into: None,
+        rows: &[("ML", "Z", "ML", &["q"])],
+        probes: &[("ML", "ML")],
+        moves: &[],
+    },
+    Case {
+        label: "own-fileless-alias",
+        files: &[
+            ("pages/W.md", "alias:: X\n\n- w\n"),
+            Z_ML,
+            ("pages/q.md", "- [[ML]]\n"),
+        ],
+        old: "X",
+        typed: "ML",
+        into: None,
+        rows: &[("ML", "Z", "W", &["q"])],
+        probes: &[("ML", "ML")],
+        moves: &[],
+    },
+    // The review of 0a3d95eae (finding 3): an Org headline tag is a site the
+    // rename cannot spell, in the source, the survivor and another declarer.
+    Case {
+        label: "merge-org-headline-tag-source",
+        files: &[
+            ("pages/Source.org", "#+alias: Mine\n\n* s :Mine:\n"),
+            ("pages/Z.org", "#+alias: ML\n\n* z\n"),
+        ],
+        old: "Source",
+        typed: "ML",
+        into: Some("pages/Z.org"),
+        rows: MINE,
+        probes: &[("Mine", "Mine")],
+        moves: &[],
+    },
+    Case {
+        label: "merge-org-headline-tag-survivor",
+        files: &[
+            ("pages/Source.org", "#+alias: Mine\n\n* s\n"),
+            ("pages/Z.org", "#+alias: ML, Mine\n\n* z :Mine:\n"),
+        ],
+        old: "Source",
+        typed: "ML",
+        into: Some("pages/Z.org"),
+        rows: MINE,
+        probes: &[("Mine", "Mine")],
+        moves: &[],
+    },
+    Case {
+        label: "merge-org-headline-tag-declarer",
+        files: &[
+            ("pages/Source.org", "#+alias: Mine\n\n* s\n"),
+            ("pages/Y.org", "#+alias: Mine\n\n* y :Mine:\n"),
+            ("pages/Z.org", "#+alias: ML\n\n* z\n"),
+        ],
+        old: "Source",
+        typed: "ML",
+        into: Some("pages/Z.org"),
+        rows: &[("Mine", "Source", "Y", &["Y"])],
+        probes: &[("Mine", "Mine")],
+        moves: &[],
+    },
+];
+
+/// The effect the dialog shows for the case's request.
+fn case_effect(store: &Store, case: &Case) -> tine_graph_features::pages::Effect {
+    let dialog = alias_dialog(store, case.old, case.typed);
+    match case.into {
+        Some(into) => {
+            let merge = dialog.merges.iter().find(|m| m.into == into);
+            merge
+                .unwrap_or_else(|| panic!("{}: {dialog:?}", case.label))
+                .effect
+                .clone()
+        }
+        None => {
+            dialog
+                .own
+                .unwrap_or_else(|| panic!("{}", case.label))
+                .effect
+        }
+    }
+}
+
+/// D-20261106-R13-UI: every surviving link that opens another page is
+/// shown, wherever it is (a declarer's or the survivor's body, the source's
+/// own body, a day's other spelling, a moved child's alias).
+#[test]
+fn every_surviving_link_that_opens_another_page_is_listed() {
+    let _guard = crate::integration_lock();
+    let mut wrong = Vec::new();
+    for case in CASES {
+        let (_root, store) = fixture(case.label, case.files);
+        let expected: Vec<_> = (case.rows.iter())
+            .map(|(name, before, after, pages)| {
+                let pages = pages.iter().map(|page| page.to_string()).collect();
+                (
+                    name.to_string(),
+                    before.to_string(),
+                    after.to_string(),
+                    pages,
+                )
+            })
+            .collect();
+        let shown = retargets(&case_effect(&store, case));
+        if shown != expected {
+            wrong.push((case.label, shown, expected));
+        }
+    }
+    assert!(wrong.is_empty(), "{wrong:#?}");
+}
+
+/// The file and name `spelling` opens; a name no file claims or declares
+/// opens its page with no file, shown by the name.
+fn page_at(graph: &tine_store::WholeGraph, spelling: &str) -> (String, String) {
+    let id = match graph.resolve(spelling, false) {
+        tine_store::Resolved::Existing { id, .. } => id,
+        tine_store::Resolved::Alias { owners } => owners[0].clone(),
+        tine_store::Resolved::Absent { .. } => return (String::new(), spelling.to_owned()),
+    };
+    let name = graph.inventory(tine_store::InventoryScope::File(&id)).0[0]
+        .name
+        .clone();
+    (id.as_str().to_owned(), name)
+}
+
+/// Apply the dialog's alias edit the way the window's property write does.
+fn release(root: &Path, edit: &tine_graph_features::pages::AliasEdit) {
+    let path = root.join(&edit.path);
+    let text = fs::read_to_string(&path).unwrap();
+    let org = edit.path.ends_with(".org");
+    let line = |value: &str| match org {
+        true => format!("#+{}: {value}", edit.key),
+        false => format!("{}:: {value}", edit.key),
+    };
+    let old = line(&edit.before);
+    let text = match &edit.after {
+        Some(after) => text.replacen(&old, &line(after), 1),
+        None => {
+            let at = text.find(&old).unwrap();
+            let end = text[at..].find('\n').map_or(text.len(), |n| at + n + 1);
+            format!("{}{}", &text[..at], &text[end..])
+        }
+    };
+    fs::write(path, text).unwrap();
+}
+
+/// The rows are the store's own answer: executing each request and asking
+/// `resolve` before and after changes exactly the rows' names, from the
+/// rows' page to the rows' page (a moved file is the same page).
+#[test]
+fn each_cases_rows_are_the_executed_resolution_diff() {
+    let _guard = crate::integration_lock();
+    let mut wrong = Vec::new();
+    for case in CASES {
+        let (root, store) = fixture(&format!("{}-run", case.label), case.files);
+        let predicted: Vec<_> = (retargets(&case_effect(&store, case)).into_iter())
+            .map(|(name, before, after, _)| (name, before, after))
+            .collect();
+        let before = store.whole_graph().unwrap();
+        let was: Vec<_> = case
+            .probes
+            .iter()
+            .map(|(_, s)| page_at(&before, s))
+            .collect();
+        let outcome = match case.into {
+            Some(into) => {
+                let dialog = alias_dialog(&store, case.old, case.typed);
+                let name = &dialog.merges.iter().find(|m| m.into == into).unwrap().name;
+                rename(&store, case.old, name, RenameChoice::MergeInto(into))
+                    == RenameOutcome::Merged
+            }
+            None => {
+                for edit in &alias_dialog(&store, case.old, case.typed)
+                    .own
+                    .unwrap()
+                    .edits
+                {
+                    release(&root, edit);
+                }
+                rename(&store, case.old, case.typed, RenameChoice::Rename) == RenameOutcome::Renamed
+            }
+        };
+        assert!(outcome, "{}", case.label);
+        let after = store.whole_graph().unwrap();
+        let executed: Vec<_> = (case.probes.iter().zip(was))
+            .filter_map(|((label, spelling), (was_path, was_name))| {
+                let (path, name) = page_at(&after, spelling);
+                let moved = case.moves.iter().find(|(from, _)| *from == was_path);
+                let same = moved.map_or(was_path.as_str(), |(_, to)| to) == path;
+                (!same).then(|| (label.to_string(), was_name, name))
+            })
+            .collect();
+        if predicted != executed {
+            wrong.push((case.label, predicted, executed));
+        }
+    }
+    assert!(wrong.is_empty(), "{wrong:#?}");
 }

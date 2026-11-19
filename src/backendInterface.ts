@@ -159,6 +159,11 @@ export interface Backend {
    * (twins, a stale `expectedPath`, an external removal) and binds the host's
    * deletion to the bytes it read (GH #620, Q-P2b-5); a failed check rejects. */
   pageDelete(session: number, name: string, kind: PageKind, expectedPath?: string): Promise<PageOperation>;
+  /** Delete exactly the page file `path`, loaded at `baseRev` (GH #978): one of
+   * several files claiming one name, which `pageDelete` refuses as ambiguous. A
+   * changed revision or a path that is not a page file rejects; the other files
+   * are not written. */
+  pageDeleteFile(session: number, path: string, baseRev: string): Promise<PageOperation>;
   /** One bounded wait (≤ 5 s) for these needs to publish; null at the bound. */
   pageWait(session: number, needs: readonly PublishedNeed[], boundMs: number): Promise<PublishedRevision[] | false | null>;
   pageSaveNow(session: number, keys: readonly string[]): Promise<void>;

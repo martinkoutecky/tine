@@ -676,10 +676,13 @@ export function removeDeletedPageFromNavigation(targetOrName: PageTarget | strin
   const target: PageTarget = typeof targetOrName === "string"
     ? { name: targetOrName, pageKind: kind! }
     : targetOrName;
-  const name = target.name;
-  kind = target.pageKind;
-  forgetDeletedFavorite(name, kind);
+  forgetDeletedFavorite(target.name, target.pageKind);
+  removeDeletedFileFromNavigation(target);
+}
 
+/** Recents and sidebar only: a deleted file whose name lives on keeps its favorite (GH #978). */
+export function removeDeletedFileFromNavigation(target: PageTarget): void {
+  const { name, pageKind: kind } = target;
   const nextRecents = recentPages().filter((r) => !(
     r.name === name && r.kind === kind && (target.path === undefined || r.path === target.path)
   ));
@@ -687,7 +690,6 @@ export function removeDeletedPageFromNavigation(targetOrName: PageTarget | strin
     setRecentPages(nextRecents);
     scheduleSessionSave();
   }
-
   const nextSidebar = rightSidebar().filter((item) => {
     const sameLogical = item.kind === "page"
       ? item.name === name && item.pageKind === kind

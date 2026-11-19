@@ -20,11 +20,11 @@ const offer = (over: Partial<AliasDialogOffer> = {}): AliasDialogOffer => ({
   reason: { kind: "aliasHeld", alias: "ML", page: "Machine Learning", path: "pages/Machine Learning.md" },
   message: "",
   opens: { name: "Machine Learning", path: "pages/Machine Learning.md", journal: false, aliases: ["AI", "ML"] },
-  declarers: [{ name: "Machine Learning", path: "pages/Machine Learning.md", journal: false, aliases: ["AI", "ML"] }],
+  component: [{ name: "Machine Learning", path: "pages/Machine Learning.md", journal: false, aliases: ["AI", "ML"] }],
   source: { name: "ML notes", path: "pages/ML notes.md", journal: false, aliases: ["Notes"] },
-  merge: { into: "pages/Machine Learning.md", name: "Machine Learning", journal: false, tags: { survivor: "x", source: "y", united: "x, y" },
-    effect: { pages: ["Machine Learning", "ML notes", "q"], pageCount: 3, retargeted: [{ name: "Notes", before: "ML notes", after: "Machine Learning", pages: ["r"], pageCount: 1 }] } },
-  mergeRefused: null,
+  merges: [{ into: "pages/Machine Learning.md", name: "Machine Learning", journal: false, tags: { survivor: "x", source: "y", united: "x, y" },
+    effect: { pages: ["Machine Learning", "ML notes", "q"], pageCount: 3, retargeted: [{ name: "Notes", before: "ML notes", after: "Machine Learning", pages: ["r"], pageCount: 1 }] } }],
+  mergesRefused: [],
   own: {
     edits: [{ page: "Machine Learning", path: "pages/Machine Learning.md", journal: false, key: "alias", before: "AI, ML", after: "AI" }],
     effect: { pages: ["Machine Learning", "ML notes"], pageCount: 2, retargeted: [{ name: "ML", before: "Machine Learning", after: "ML", pages: ["q"], pageCount: 1 }] },
@@ -73,7 +73,7 @@ it("a refused request is not offered: the dialog says why and shows the request 
 
 it("with neither request allowed, the dialog says why for both and asks for another name", async () => {
   vi.spyOn(backend(), "renameOffer").mockResolvedValue(offer({
-    merge: null, mergeRefused: { kind: "differentFormats", source: "pages/ML notes.md", target: "pages/Machine Learning.org" },
+    merges: [], mergesRefused: [{ name: "Machine Learning", path: "pages/Machine Learning.org", reason: { kind: "differentFormats", source: "pages/ML notes.md", target: "pages/Machine Learning.org" } }],
     own: null, ownRefused: { kind: "aliasLine", page: "Machine Learning", path: "pages/Machine Learning.md" },
   }));
   const done = renameOrMergePage("ML notes", "ML");
@@ -88,7 +88,7 @@ it("with neither request allowed, the dialog says why for both and asks for anot
 });
 
 it("clicking a request is the decision: the merge runs with no second question", async () => {
-  vi.spyOn(backend(), "renameOffer").mockResolvedValue(offer({ merge: { ...offer().merge!, tags: null } }));
+  vi.spyOn(backend(), "renameOffer").mockResolvedValue(offer({ merges: [{ ...offer().merges[0], tags: null }] }));
   const confirm = vi.spyOn(backend(), "confirm");
   const rename = vi.spyOn(backend(), "renamePage").mockResolvedValue({ outcome: "merged", renamed: [{ from: "ML notes", to: "Machine Learning", path: "pages/ML notes.md" }], touched: [] });
   const done = renameOrMergePage("ML notes", "ML", { name: "ML notes", pageKind: "page", path: "pages/ML notes.md" });
@@ -97,4 +97,22 @@ it("clicking a request is the decision: the merge runs with no second question",
   expect(await done).toBe("merged");
   expect(confirm).not.toHaveBeenCalled();
   expect(rename).toHaveBeenCalledWith("ML notes", "Machine Learning", "rename-page", "pages/ML notes.md", "pages/Machine Learning.md", []);
+});
+
+it("offers the merge into every component page, and a refused one says why", async () => {
+  const second = { name: "Stats", path: "pages/Stats.md", journal: false, aliases: ["ML"] };
+  vi.spyOn(backend(), "renameOffer").mockResolvedValue(offer({
+    component: [...offer().component, second, { name: "Org Page", path: "pages/Org Page.org", journal: false, aliases: ["Stats"] }],
+    merges: [offer().merges[0], { into: "pages/Stats.md", name: "Stats", journal: false, tags: null, effect: { pages: ["ML notes", "Stats"], pageCount: 2, retargeted: [] } }],
+    mergesRefused: [{ name: "Org Page", path: "pages/Org Page.org", reason: { kind: "differentFormats", source: "pages/ML notes.md", target: "pages/Org Page.org" } }],
+  }));
+  const rename = vi.spyOn(backend(), "renamePage").mockResolvedValue({ outcome: "merged", renamed: [{ from: "ML notes", to: "Stats", path: "pages/ML notes.md" }], touched: [] });
+  const done = renameOrMergePage("ML notes", "ML", { name: "ML notes", pageKind: "page", path: "pages/ML notes.md" });
+  await vi.waitFor(() => expect(dialog()).not.toBeNull());
+  expect(dialog()!.querySelector('[data-component-page="Org Page"]')).not.toBeNull();
+  expect(dialog()!.querySelectorAll('[data-choice="merge"]')).toHaveLength(2);
+  expect(dialog()!.textContent).toContain("Merging into “Org Page” is not possible: Cannot merge:");
+  (dialog()!.querySelector('[data-choice="merge"][data-merge-into="pages/Stats.md"]') as HTMLButtonElement).click();
+  expect(await done).toBe("merged");
+  expect(rename).toHaveBeenCalledWith("ML notes", "Stats", "rename-page", "pages/ML notes.md", "pages/Stats.md", []);
 });

@@ -380,6 +380,10 @@ class TauriBackend implements Backend {
     dropDisplayedFor({ name }); // the backend drops the page's seen record; a mark on leave would recreate it
     return this.call<PageOperation>("page_delete", { session, name, kind, expectedPath });
   }
+  pageDeleteFile(session: number, path: string, baseRev: string) {
+    dropDisplayedFor({ path }); // the name lives on in its other files
+    return this.call<PageOperation>("page_delete_file", { session, path, baseRev });
+  }
   pageWait(session: number, needs: readonly PublishedNeed[], boundMs: number) {
     return this.call<PublishedRevision[] | false | null>("page_wait", { session, needs, boundMs });
   }

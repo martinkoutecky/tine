@@ -493,8 +493,9 @@ export type RenameOutcome = Exclude<Awaited<ReturnType<typeof renamePageOnDisk>>
  *    first writes them (D-20261116-TAGH, `renameHelpers.ts`).
  *  - `to` is only other pages' alias (r6 O3): the alias dialog shows the
  *    component and the requests the model allows, each with its effect
- *    (D-20261115-HELP); its merge choice is the merge's confirm, its "use the
- *    name for this page" removes the alias from the declaring pages first.
+ *    (D-20261115-HELP); each merge choice (one per component page the model
+ *    allows) is that merge's confirm, its "use the name for this page"
+ *    removes the alias from the declaring pages first.
  *  - `from` is a day (O0/O2): the day-move dialog offers to move its notes to
  *    `to` instead (`moveDayNotes`, D-20261111-CMDF): `{ moved }` names the
  *    page that received them.
@@ -505,9 +506,10 @@ export type RenameOutcome = Exclude<Awaited<ReturnType<typeof renamePageOnDisk>>
  *    `renameOutcomeMessage`; nothing is written.
  *  A helper's edits are ordinary page edits through the guarded save; when the
  *  request after them does not happen (refused, busy, an unsaved page, an
- *  error), each edited page is put back exactly as it was and saved again, so
- *  no half-done helper is left (an `uncertain` rename keeps them: it may have
- *  committed). `cancelled`: the user declined, the graph changed, or a typed
+ *  error), each helper property that still holds the helper's value gets its
+ *  old value back and is saved again (other typing stays), so no half-done
+ *  helper is left (an `uncertain` rename keeps them: it may have committed; a
+ *  graph switch leaves the old graph's files as the saves left them). `cancelled`: the user declined, the graph changed, or a typed
  *  refusal was already shown with its recovery action. The other outcomes are
  *  `renamePageOnDisk`'s. `onRefreshed` receives the graph owner captured after
  *  the rename's refresh. The answer is not re-asked after the dialog: the
@@ -562,10 +564,11 @@ export async function renameOrMergePage(
     case "alias": {
       const answer = await askAliasDialog(from, to, offer);
       if (!owner() || !answer) return "cancelled";
-      if (answer === "merge" && offer.merge) {
-        into = offer.merge.into;
-        name = offer.merge.name;
-        edits = tagEdits(offer.merge.tags, offer.merge.name, offer.merge.journal);
+      const merge = answer === "own" ? undefined : offer.merges.find((choice) => choice.into === answer.merge);
+      if (merge) {
+        into = merge.into;
+        name = merge.name;
+        edits = tagEdits(merge.tags, merge.name, merge.journal);
       } else if (answer === "own" && offer.own) {
         edits = offer.own.edits.map(({ page, journal, key, before, after }) => ({ page, journal, key, before, after }));
       }
@@ -579,7 +582,8 @@ export async function renameOrMergePage(
     if (edits.length) {
       const made = await applyHelperEdits(edits);
       if ("refused" in made) {
-        if (owner()) pushToast(msg(made.refused === "changed" ? "rename-helper-page-changed" : "rename-helper-unsaved", { page: made.page }), "error");
+        if (owner() && made.refused === "unrestored") pushToast(msg("rename-helper-not-restored", { pages: edits.map((edit) => edit.page).join(", ") }), "error");
+        else if (owner()) pushToast(msg(made.refused === "changed" ? "rename-helper-page-changed" : "rename-helper-unsaved", { page: made.page }), "error");
         return "cancelled";
       }
       applied = made;
@@ -588,12 +592,16 @@ export async function renameOrMergePage(
       if (applied && !(await applied.undo()) && owner()) pushToast(msg("rename-helper-not-restored", { pages: edits.map((edit) => edit.page).join(", ") }), "error");
     };
     try {
+      // The graph may have changed during the saves: no rename in another graph.
+      if (!owner()) return "cancelled";
       const done = await renamePageOnDisk(from, name, target, into, onRefreshed, saveFirst);
       if (done !== "renamed" && done !== "merged" && done !== "uncertain") await putBack();
       return done;
     } catch (error) {
       await putBack();
       throw error;
+    } finally {
+      applied?.release(); // the helper's pages stay loaded through the request and its put-back
     }
   };
   const retry = async (file: string) => {

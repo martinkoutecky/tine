@@ -270,6 +270,9 @@ mod page_case_alias;
 #[path = "page_delete_missing.rs"]
 mod page_delete_missing;
 
+#[path = "page_delete_twin.rs"]
+mod page_delete_twin;
+
 #[path = "page_op_walks.rs"]
 mod page_op_walks;
 

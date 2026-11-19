@@ -138,12 +138,14 @@ pub enum RenameOffer {
 
 /// The alias dialog (D-20261106-R13-UI, D-20261115-HELP, r6 "Outside the
 /// model"): the typed name is only an alias (`reason`), opening `opens`; the
-/// component is every page declaring it (`declarers`, the source included
-/// when it does) with its alias lines, and the source. Two requests may be
-/// offered, each with what it changes:
-/// - `merge`: the ordinary request "rename the source to `opens`' name",
-///   whose answer is the merge confirm (the dialog's button is that
-///   confirm); `mergeRefused` when the model refuses that request.
+/// component is every page of the name's alias group (`InventoryScope::
+/// AliasGroup`, the declarers and the pages linked to them through other
+/// aliases, the source included when it is one) with its alias lines, and
+/// the source. The requests offered, each with what it changes:
+/// - `merges`: for each component page other than the source, the ordinary
+///   request "rename the source to that page's name", whose answer is the
+///   merge confirm (the dialog's button is that confirm); `mergesRefused`
+///   names each component page whose merge the model refuses, and why.
 /// - `own`: "use the name for this page": the ordinary edits that drop the
 ///   alias from every other declarer, then the plain rename to `alias`;
 ///   `ownRefused` says why it is not offered.
@@ -154,10 +156,10 @@ pub struct AliasDialog {
     pub reason: RenameBlocked,
     pub message: String,
     pub opens: DialogPage,
-    pub declarers: Vec<DialogPage>,
+    pub component: Vec<DialogPage>,
     pub source: DialogPage,
-    pub merge: Option<MergeChoice>,
-    pub merge_refused: Option<RenameBlocked>,
+    pub merges: Vec<MergeChoice>,
+    pub merges_refused: Vec<RefusedMerge>,
     pub own: Option<OwnChoice>,
     pub own_refused: Option<OwnRefusal>,
 }
@@ -189,6 +191,15 @@ pub struct DayMove {
     pub reference_count: usize,
     pub release: Option<AliasEdit>,
     pub retargeted: Option<rename_helpers::Retarget>,
+}
+
+/// A component page the source cannot be merged into, with the model's
+/// refusal of that request.
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize)]
+pub struct RefusedMerge {
+    pub name: String,
+    pub path: String,
+    pub reason: RenameBlocked,
 }
 
 /// One page of the alias component: its name, file (None for a name with
@@ -258,9 +269,11 @@ fn dialog_page(graph: &tine_store::WholeGraph, id: &PageId) -> DialogPage {
 
 /// Build the alias dialog for the refused request `old` → `new` (O3's
 /// `held`: the alias, the page it opens and that page's file). Read-only:
-/// the merge request's plan, the released rename's plan
-/// ([`plan_released_rename`]), and one file read per other declarer. Cost:
-/// two plans, plus O(declarers) file reads and the merge's tag reads.
+/// the component from the alias-group inventory, each merge request's plan,
+/// the released rename's plan ([`plan_released_rename`]), and one file read
+/// per other declarer. Cost: one plan per component page other than the
+/// source plus one, on the view the typed request's refusal refreshed (no
+/// further walk), O(declarers) file reads and each merge's tag reads.
 fn alias_dialog(
     store: &Store,
     graph: &tine_store::WholeGraph,
@@ -270,9 +283,7 @@ fn alias_dialog(
     reason: RenameBlocked,
 ) -> io::Result<AliasDialog> {
     let RenameBlocked::AliasHeld {
-        page: opens_name,
-        path: opens_path,
-        ..
+        path: opens_path, ..
     } = reason.clone()
     else {
         unreachable!("the alias dialog answers O3's alias-held refusal only");
@@ -293,56 +304,74 @@ fn alias_dialog(
             aliases: Vec::new(),
         },
     };
-    let declarers: Vec<DialogPage> = owners.iter().map(|id| dialog_page(graph, id)).collect();
-    let opens = declarers
+    // The component: every file of the name's alias group (its declarers
+    // included), once, by path.
+    let mut ids: Vec<PageId> = graph
+        .inventory(tine_store::InventoryScope::AliasGroup(new))
+        .0
+        .iter()
+        .filter_map(|entry| match &entry.target {
+            tine_store::Resolved::Existing { id, .. } => Some(id.clone()),
+            _ => None,
+        })
+        .chain(owners.iter().cloned())
+        .collect();
+    ids.sort_unstable();
+    ids.dedup();
+    let component: Vec<DialogPage> = ids.iter().map(|id| dialog_page(graph, id)).collect();
+    let opens = component
         .iter()
         .find(|page| page.path.as_deref() == Some(opens_path.as_str()))
         .cloned()
         .unwrap_or_else(|| dialog_page(graph, &PageId::from(opens_path.clone())));
-    // Choice 1: the ordinary request "rename the source to the owner's name".
-    let (mut merge, mut merge_refused) = (None, None);
-    match rename_offer(store, old, &opens_name, expected_path)? {
-        RenameOffer::Merge {
-            into,
-            name,
-            journal,
-            tags,
-        } if into == opens_path => {
-            match plan_rename(
-                store,
-                old,
-                &opens_name,
-                expected_path,
-                RenameChoice::MergeInto(&into),
-                #[cfg(test)]
-                &|| {},
-            ) {
-                Ok(plan) => {
-                    // The source's aliases join the owner: their links open
-                    // it, their text unchanged.
-                    let survivor = PageId::from(into.clone());
-                    let own: Vec<&PageId> = source_id.iter().chain([&survivor]).collect();
-                    let retargeted = source
-                        .aliases
-                        .iter()
-                        .filter_map(|a| {
-                            rename_helpers::retarget(&plan.graph, a, &source.name, &name, &own)
-                        })
-                        .collect();
-                    let effect = rename_helpers::effect(&plan, retargeted);
-                    merge = Some(MergeChoice {
-                        into,
-                        name,
-                        journal,
-                        tags,
-                        effect,
-                    });
-                }
-                Err(e) => merge_refused = RenameBlocked::of(&e).cloned(),
+    // Choice 1, per component page: the ordinary request "rename the source
+    // to that page's name", answered by merging into it. Planned exactly
+    // (`MergeInto`) on the view the typed request's refusal refreshed; a
+    // merge the planner would not ask about (the name opens another file)
+    // is no choice, as the rename's own question would not offer it.
+    let (mut merges, mut merges_refused) = (Vec::new(), Vec::new());
+    for target in component
+        .iter()
+        .filter(|page| page.path.is_some() && page.path != source.path)
+    {
+        let into = target.path.clone().unwrap_or_default();
+        match plan_rename(
+            store,
+            old,
+            &target.name,
+            expected_path,
+            RenameChoice::MergeInto(&into),
+            #[cfg(test)]
+            &|| {},
+        ) {
+            Ok(plan) => {
+                let tags = match &source_id {
+                    Some(source) => {
+                        rename_helpers::tag_union(store, &PageId::from(into.clone()), source)?
+                    }
+                    None => None,
+                };
+                let retargeted = rename_helpers::retargets(store, &plan, &target.name, &[])?;
+                let effect = rename_helpers::effect(&plan, retargeted);
+                merges.push(MergeChoice {
+                    into,
+                    name: target.name.clone(),
+                    journal: target.journal,
+                    tags,
+                    effect,
+                });
             }
+            Err(e) => match RenameBlocked::of(&e) {
+                Some(reason) => merges_refused.push(RefusedMerge {
+                    name: target.name.clone(),
+                    path: into,
+                    reason: reason.clone(),
+                }),
+                // Not offered: the merge's own refusal (O3 unasked, O4).
+                None if super::RewriteBlocked::of(&e).is_some() => {}
+                None => return Err(e),
+            },
         }
-        RenameOffer::Refused { reason, .. } => merge_refused = Some(reason),
-        _ => {}
     }
     // Choice 2: drop the alias from every other declarer, then rename.
     let mut edits = Vec::new();
@@ -363,11 +392,11 @@ fn alias_dialog(
     if own_refused.is_none() {
         match plan_released_rename(store, old, new, expected_path) {
             Ok(plan) if !plan.unchanged => {
-                let mine: Vec<&PageId> = owners.iter().chain(source_id.iter()).collect();
-                let retargeted =
-                    rename_helpers::retarget(&plan.graph, new, &opens.name, new, &mine)
-                        .into_iter()
-                        .collect();
+                let released: Vec<PageId> = edits
+                    .iter()
+                    .map(|edit| PageId::from(edit.path.as_str()))
+                    .collect();
+                let retargeted = rename_helpers::retargets(store, &plan, new, &released)?;
                 let mut effect = rename_helpers::effect(&plan, retargeted);
                 for edit in &edits {
                     if !effect.pages.contains(&edit.page) {
@@ -394,10 +423,10 @@ fn alias_dialog(
         message: reason.to_string(),
         reason,
         opens,
-        declarers,
+        component,
         source,
-        merge,
-        merge_refused,
+        merges,
+        merges_refused,
         own,
         own_refused,
     })
@@ -468,7 +497,7 @@ fn day_move(
                     Some(edit) => release = Some(edit),
                     None => return Ok(refused(reason)),
                 }
-                retargeted = rename_helpers::retarget(graph, new, &day.name, new, &[&day_id]);
+                retargeted = rename_helpers::released_retarget(graph, new, &day_id);
                 None
             }
             Some(first) => Some(dialog_page(graph, first)),
@@ -478,7 +507,9 @@ fn day_move(
     };
     let mut referrers = graph.explicit_referrers(std::slice::from_ref(&day.name));
     referrers.retain(|id| *id != day_id);
-    let (references, reference_count) = rename_helpers::names(graph, referrers.iter());
+    let (references, reference_count) = rename_helpers::names(referrers.iter().map(|id| {
+        name_of(graph, id).unwrap_or_else(|| id.as_str().to_owned())
+    }));
     Ok(RenameOffer::DayMove(DayMove {
         journal: into
             .as_ref()

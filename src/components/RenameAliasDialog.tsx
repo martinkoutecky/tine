@@ -61,30 +61,30 @@ function Dialog(props: { request: AliasDialogRequest }) {
     if (aliasDialogRequest() !== request) return refuseStaleWrite(t("rename-alias-dialog-stale-what"));
     request.finish(choice);
   };
-  const sourceDeclares = offer.declarers.some((page) => page.path === offer.source.path && page.path !== null);
+  const sourceDeclares = offer.component.some((page) => page.path === offer.source.path && page.path !== null);
   const own = ownRefusal(offer, request.to);
   return (
     <RenameDialogFrame id="tine-rename-alias-dialog" label={t("rename-alias-dialog-title", { to: request.to, owner })} dismiss={() => request.finish(null)}>
         <h2>{t("rename-alias-dialog-title", { to: request.to, owner })}</h2>
         <p>{t("rename-alias-dialog-intro", { to: request.to, from: request.from })}</p>
         <ul class="tine-rename-alias-component">
-          <For each={offer.declarers}>{(page) => <PageLine page={page} to={request.to} opens={page.path === offer.opens.path} source={page.path === offer.source.path} />}</For>
+          <For each={offer.component}>{(page) => <PageLine page={page} to={request.to} opens={page.path === offer.opens.path} source={page.path === offer.source.path} />}</For>
           <Show when={!sourceDeclares}><PageLine page={offer.source} to={request.to} opens={false} source /></Show>
         </ul>
-        <div class="tine-rename-alias-choice" data-choice-block="merge">
-          <Show when={offer.merge} fallback={
-            <Show when={offer.mergeRefused}>{(reason) =>
-              <p class="tine-rename-alias-unavailable">{t("rename-alias-dialog-merge-unavailable", { owner, reason: render(renameRefusalMessage(reason())) })}</p>}</Show>}>
-            {(merge) => <>
-              <h3>{t("rename-alias-dialog-merge", { from: request.from, owner: merge().name })}</h3>
-              <ul>
-                <li>{t("rename-alias-dialog-merge-body", { from: request.from, owner: merge().name })}</li>
-                <Show when={merge().tags}>{(tags) => <li>{t("rename-alias-dialog-tags", { united: tags().united })}</li>}</Show>
-                <Effect effect={merge().effect} />
-              </ul>
-            </>}
-          </Show>
-        </div>
+        <For each={offer.merges}>{(merge) =>
+          <div class="tine-rename-alias-choice" data-choice-block="merge" data-merge-into={merge.into}>
+            <h3>{t("rename-alias-dialog-merge", { from: request.from, owner: merge.name })}</h3>
+            <ul>
+              <li>{t("rename-alias-dialog-merge-body", { from: request.from, owner: merge.name })}</li>
+              <Show when={merge.tags}>{(tags) => <li>{t("rename-alias-dialog-tags", { united: tags().united })}</li>}</Show>
+              <Effect effect={merge.effect} />
+            </ul>
+            <button type="button" data-choice="merge" data-merge-into={merge.into} onClick={() => answer({ merge: merge.into })}>{t("rename-alias-dialog-merge", { from: request.from, owner: merge.name })}</button>
+          </div>
+        }</For>
+        <For each={offer.mergesRefused}>{(refused) =>
+          <p class="tine-rename-alias-unavailable" data-merge-refused={refused.path}>{t("rename-alias-dialog-merge-unavailable", { owner: refused.name, reason: render(renameRefusalMessage(refused.reason)) })}</p>
+        }</For>
         <div class="tine-rename-alias-choice" data-choice-block="own">
           <Show when={offer.own} fallback={<Show when={own}><p class="tine-rename-alias-unavailable">{t("rename-alias-dialog-own-unavailable", { to: request.to, reason: own ?? "" })}</p></Show>}>
             {(choice) => <>
@@ -99,10 +99,8 @@ function Dialog(props: { request: AliasDialogRequest }) {
             </>}
           </Show>
         </div>
-        <Show when={!offer.merge && !offer.own}><p>{t("rename-alias-dialog-none")}</p></Show>
+        <Show when={!offer.merges.length && !offer.own}><p>{t("rename-alias-dialog-none")}</p></Show>
         <DialogActions
-          aux={<Show when={offer.merge}>{(merge) =>
-            <button type="button" data-choice="merge" onClick={() => answer("merge")}>{t("rename-alias-dialog-merge", { from: request.from, owner: merge().name })}</button>}</Show>}
           cancel={<button type="button" data-choice-cancel onClick={() => request.finish(null)}>{t("confirm-cancel")}</button>}
           primary={<Show when={offer.own}>
             <button type="button" data-choice="own" onClick={() => answer("own")}>{t("rename-alias-dialog-own", { to: request.to })}</button></Show>}

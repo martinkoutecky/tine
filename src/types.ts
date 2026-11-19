@@ -285,6 +285,10 @@ export type RenameEffect = {
 
 export type AliasDialogPage = { name: string; path: string | null; journal: boolean; aliases: string[] };
 
+/** One merge the alias dialog offers (`pages::MergeChoice`): the ordinary
+ *  request "rename the source to `name`", merging into `into`. */
+export type AliasMergeChoice = { into: string; name: string; journal: boolean; tags: TagUnion | null; effect: RenameEffect };
+
 /** One alias line edit of "use the name for this page" (`pages::AliasEdit`). */
 export type AliasEdit = { page: string; path: string; journal: boolean; key: string; before: string; after: string | null };
 
@@ -293,9 +297,9 @@ export type AliasEdit = { page: string; path: string; journal: boolean; key: str
 export type AliasDialogOffer = {
   kind: "alias";
   reason: RenameRefusal; message: string;
-  opens: AliasDialogPage; declarers: AliasDialogPage[]; source: AliasDialogPage;
-  merge: { into: string; name: string; journal: boolean; tags: TagUnion | null; effect: RenameEffect } | null;
-  mergeRefused: RenameRefusal | null;
+  opens: AliasDialogPage; component: AliasDialogPage[]; source: AliasDialogPage;
+  merges: AliasMergeChoice[];
+  mergesRefused: { name: string; path: string; reason: RenameRefusal }[];
   own: { edits: AliasEdit[]; effect: RenameEffect } | null;
   ownRefused: { kind: "plan"; reason: RenameRefusal } | { kind: "aliasLine"; page: string; path: string } | { kind: "other" } | null;
 };
