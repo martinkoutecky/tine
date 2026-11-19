@@ -1512,7 +1512,6 @@ export interface MessageArgs {
   "page-ui-pull-unfinished-tasks-from-the-most-recent-day-that": {};
   "page-ui-read-only-this-org-file-uses-a-structure-tine": {};
   "page-ui-rename-failed": { "value1": string | number };
-  "page-ui-shift-click-to-open-in-sidebar-ctrl-middle-click": {};
   "page-ui-show-tagged-blocks-as-a-table": {};
   "page-ui-table": {};
   "page-ui-tag-table-couldn-t-load": { "error": string | number };

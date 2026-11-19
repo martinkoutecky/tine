@@ -1154,7 +1154,7 @@ function PageSection(props: { page: FeedPage; seen?: boolean; children?: JSX.Ele
           <h1
             class="page-title"
             classList={{ "journal-title": props.page.kind === "journal" }}
-            title={props.page.guide ? t("page-ui-bundled-guide-page") : props.page.kind === "page" ? t("page-ui-double-click-to-rename-shift-click-sidebar-ctrl-middle") : t("page-ui-shift-click-to-open-in-sidebar-ctrl-middle-click")}
+            title={props.page.guide ? t("page-ui-bundled-guide-page") : t("page-ui-double-click-to-rename-shift-click-sidebar-ctrl-middle")}
             onMouseDown={internalLinkMouseDown}
             onClick={(e) => {
               const dest = internalLinkDest(e);
