@@ -3,12 +3,13 @@ import { chromium } from "playwright";
 import { createServer } from "vite";
 import { mkdirSync, readFileSync, realpathSync, writeFileSync } from "node:fs";
 import { dirname, resolve } from "node:path";
+import { hasPaleThreadFork, sampleThreadInk } from "./lib/thread-ink.mjs";
 
 const out = resolve(process.argv[2] ?? "target/artifacts/rendering-1115/after");
 mkdirSync(out, { recursive: true });
 const server = await createServer({ configFile: "vite.config.ts", cacheDir: `${out}/vite-cache`,
   define: { __BUILD_TIME__: JSON.stringify("1970-01-01T00:00:00Z"), __GIT_COMMIT__: JSON.stringify("rendering-1115"), __TINE_COMMUNITY_REGISTRY__: "true" },
-  server: { port: 0, fs: { allow: [process.cwd(), realpathSync("node_modules"), dirname(realpathSync("node_modules/inter-ui"))] } } });
+  server: { port: 0, strictPort: false, fs: { allow: [process.cwd(), realpathSync("node_modules"), dirname(realpathSync("node_modules/inter-ui"))] } } });
 await server.listen();
 let browser;
 const evidence = [], failures = [];
@@ -16,7 +17,7 @@ try {
   browser = await chromium.launch({ args: ["--no-sandbox", "--disable-dev-shm-usage"] });
   for (const cm6 of [false, true]) for (const zoom of [1, 1.25]) for (const display of ["all", "active"]) {
     const name = `${cm6 ? "cm6" : "classic"}-${zoom}-${display}`;
-    const page = await browser.newPage({ viewport: { width: 1800, height: 1500 } });
+    const page = await browser.newPage({ viewport: { width: 1800, height: 1500 }, deviceScaleFactor: 1.5 });
     page.on("pageerror", error => console.error(`${name}: ${error}`));
     await page.goto(`${server.resolvedUrls.local[0]}?regressions`, { waitUntil: "commit" });
     await page.locator("[data-search-trigger]").waitFor();
@@ -63,17 +64,19 @@ try {
         const child = row.querySelector(":scope > .block-children-container > .block-children > .ls-block > .block-main");
         if (!child) return null;
         const stub = getComputedStyle(parent, "::after"), elbow = getComputedStyle(child, "::before");
+        const continuation = getComputedStyle(child.parentElement, "::after");
+        const rail = continuation.display !== "none" && continuation.content !== "none" ? continuation : elbow;
         return { parent: parent.textContent, drawn: painted(parent, "::after"),
-          railDelta: child.getBoundingClientRect().left + zoom * parseFloat(elbow.left) - parent.getBoundingClientRect().left - zoom * parseFloat(stub.left),
+          railDelta: child.getBoundingClientRect().left + zoom * parseFloat(rail.left) - parent.getBoundingClientRect().left - zoom * parseFloat(stub.left),
           gap: child.getBoundingClientRect().top + zoom * parseFloat(elbow.top) - parent.getBoundingClientRect().bottom };
       }).filter(Boolean);
       return { markers, comments, branches };
     }, { zoom });
-    await page.screenshot({ path: `${out}/${name}.png` });
+    await page.screenshot({ path: `${out}/${name}.png`, scale: "css" });
     // Isolate the painted ring from text and incoming threading for its pixel mask.
     // Neither the number's metrics nor the circle's own paint is changed.
     const maskStyle = await page.addStyleTag({ content: ".bullet-order { color: transparent !important; } .block-main:has(> .block-controls > .ordered)::before { visibility: hidden !important; }" });
-    const shot = await page.screenshot({ path: `${out}/${name}-marker-mask.png` });
+    const shot = await page.screenshot({ path: `${out}/${name}-marker-mask.png`, scale: "css" });
     await maskStyle.evaluate(el => el.remove());
     facts.markerInk = await page.evaluate(async ({ src, markers }) => {
       const image = new Image(); image.src = src; await image.decode();
@@ -103,6 +106,26 @@ try {
     for (const comment of facts.comments) if (comment.strayStub || comment.strayElbow) failures.push(`${name}: stray connector inside ${comment.text}`);
     for (const branch of facts.branches) if (display === "all" && (!branch.drawn || Math.abs(branch.railDelta) > .1 || branch.gap > .1)) failures.push(`${name}: broken child-level connector ${JSON.stringify(branch)}`);
     if (!facts.comments.length || !facts.branches.length) throw new Error(`${name}: fixture missing comments or nested outline`);
+    if (display === "all") {
+      // Sample the branch at device resolution, independently of the CSS-pixel marker checks.
+      const blocks = page.locator(".page-blocks .block-content");
+      await blocks.getByText("Deep leaf", { exact: true }).click();
+      const { row, dpr } = await blocks.getByText("First outline child", { exact: true }).evaluate((el, zoom) => {
+        const main = el.closest(".block-main");
+        const box = main.getBoundingClientRect();
+        const arm = getComputedStyle(main, "::before"), rail = getComputedStyle(main.parentElement, "::after");
+        const bullet = main.querySelector(".bullet").getBoundingClientRect();
+        return { dpr: devicePixelRatio, row: { x: box.left + zoom * parseFloat(rail.left), joinY: box.top,
+          top: box.top + zoom * parseFloat(arm.top), bulletY: bullet.top + bullet.height / 2,
+          width: zoom * parseFloat(rail.borderLeftWidth), radius: parseFloat(arm.borderBottomLeftRadius),
+          continuationVisible: rail.display !== "none" && rail.content !== "none" } };
+      }, zoom);
+      const junction = await page.screenshot({ path: `${out}/${name}-thread-join.png` });
+      const [ink] = await page.evaluate(sampleThreadInk,
+        { src: `data:image/png;base64,${junction.toString("base64")}`, rows: [row], dpr, zoom });
+      facts.threadFork = ink.fork;
+      if (!ink.above || !ink.fork?.arm || hasPaleThreadFork(ink.fork)) failures.push(`${name}: pale or missing routed T junction ${JSON.stringify(ink.fork)}`);
+    }
     if (!cm6 && zoom === 1 && display === "all") {
       await page.keyboard.press("Escape");
       await page.evaluate(async () => (await import("/src/ui.ts")).openSettings("editor"));

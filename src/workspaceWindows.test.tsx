@@ -4,6 +4,7 @@ import { maybeEditorIn } from "./tests/editorDriver";
 // its pane tree and destroys its native window. An iframe stands in for the
 // native popup's engine-linked Document.
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { readFileSync } from "node:fs";
 
 const native = vi.hoisted(() => ({
   calls: [] as { cmd: string; args: unknown }[],
@@ -49,6 +50,7 @@ import { MAIN_WINDOW_ID, MAX_WORKSPACE_WINDOWS, mainWindow, setActiveWindowId, w
 import { editingId, startEditing } from "./editorController";
 import { setToasts, toasts } from "./toasts";
 import { interfaceZoom, zoomIn, zoomReset } from "./zoom";
+import { ThreadJoinMasks } from "./components/ThreadJoinMasks";
 
 type Realm = Window & typeof globalThis;
 const frames: HTMLIFrameElement[] = [];
@@ -133,6 +135,24 @@ describe("workspace window lifecycle (P4)", () => {
     await vi.waitFor(() => expect(doc.documentElement.getAttribute("data-theme")).toBe("light"));
     expect(native.calls[0]).toEqual({ cmd: "workspace_window_prepare", args: { geometry: null } });
     expect(mainWindow.open).toHaveBeenCalledWith("about:blank", "ws-main-1", "popup");
+  });
+
+  it("copies the threading stylesheet with the local SVG masks it references", async () => {
+    const style = document.createElement("style");
+    // happy-dom need only mirror the fragment references, not parse the entire sheet.
+    const maskRules = [...readFileSync("src/styles/app.css", "utf8").matchAll(/mask: url\("#(thread-[\w-]+)"\);/g)];
+    expect(maskRules.length).toBeGreaterThan(0);
+    style.textContent = maskRules.map(([rule], i) => `.thread-${i} { ${rule} }`).join("\n");
+    document.head.append(style);
+    const definitions = document.createElement("div");
+    document.body.append(definitions);
+    cleanups.push(() => { style.remove(); definitions.remove(); }, render(() => <ThreadJoinMasks />, definitions));
+
+    const { win } = await openReady();
+    expect([...win.document.head.querySelectorAll("style")].map(sheet => sheet.textContent)).toContain(style.textContent);
+    for (const [, id] of maskRules) {
+      expect(win.document.querySelectorAll(`svg mask[id="${id}"]`)).toHaveLength(1);
+    }
   });
 
   it("disposes exactly once whichever doors race, and ends an edit typed in the window", async () => {

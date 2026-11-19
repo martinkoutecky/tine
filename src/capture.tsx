@@ -57,7 +57,7 @@ import { installTextareaPrimarySelectionGuard } from "./textareaPrimarySelection
 import { installMiddleClickPasteGuard } from "./middleClickPaste";
 import { withoutPageInventory } from "./pageIndex";
 import "./styles/editableEmoji.css";
-import "./styles/app.css";
+import "./styles/appStyle";
 import "./styles/capture.css";
 
 // The capture WebView is granted no graph-wide read (no graph slot).

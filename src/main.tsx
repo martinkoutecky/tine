@@ -1,7 +1,6 @@
 import { msg } from "./i18n";
 import { render } from "solid-js/web";
 import { App } from "./App";
-import { ThreadJoinMasks } from "./components/ThreadJoinMasks";
 import "./session";
 import { installWorkspaceWindowSession } from "./session";
 import { restoreSession } from "./router";
@@ -35,7 +34,7 @@ import { installTextareaPrimarySelectionGuard } from "./textareaPrimarySelection
 import { installMiddleClickPasteGuard } from "./middleClickPaste";
 import { installRenderStallMonitor } from "./renderStalls";
 import "./styles/editableEmoji.css";
-import "./styles/app.css";
+import "./styles/appStyle";
 import "./styles/settingsRows.css"; // right after app.css: its Settings row primitives, split out
 import "./styles/guideLevels.css"; // after app.css: reads its .block-children rule
 import "./styles/touchGestures.css"; // after app.css: its .sel-toolbar-mobile overrides .sel-toolbar
@@ -103,7 +102,7 @@ const mount = () => {
   // index.html owns the immediate, dependency-free readiness frame. Remove it
   // only when Solid is ready to synchronously install the real application.
   root.replaceChildren();
-  render(() => <><ThreadJoinMasks /><App /></>, root);
+  render(() => <App />, root);
   if (isQuickShareViewer()) {
     const banner = document.createElement("div");
     document.body.prepend(banner);

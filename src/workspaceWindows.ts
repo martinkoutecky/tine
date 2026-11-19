@@ -206,11 +206,13 @@ async function documentReady(popup: Realm): Promise<void> {
   throw new Error("workspace window document never appeared");
 }
 
-/** Mirror main's stylesheets and <html>/<body> attributes (theme, accent,
- * platform) into the popup, now and whenever they change. Interface zoom is a
- * native per-webview level, not an attribute: mirrorZoom carries it. */
+/** Mirror main's stylesheets, their SVG definitions, and <html>/<body> attributes
+ * (theme, accent, platform) into the popup. The definitions are static. The
+ * stylesheets and attributes are mirrored whenever they change. */
 function mirrorStyles(doc: Document): () => void {
   const source = mainWindow.document;
+  const masks = source.getElementById("thread-join-masks");
+  if (masks) doc.body.append(doc.importNode(masks, true));
   const SHEETS = "link[rel=stylesheet], style";
   // One copy per source node, replaced only when that node changes (review
   // F9): re-cloning every sheet on each head mutation re-parsed the whole
@@ -274,13 +276,13 @@ function mirrorZoom(label: string): () => void {
 function bootstrap(entry: Entry, popup: Realm): void {
   const doc = popup.document;
   doc.title = "Tine";
+  const mount = doc.createElement("div");
+  mount.id = "root";
+  doc.body.replaceChildren(mount);
   entry.teardown.push(mirrorStyles(doc));
   if (entry.label) entry.teardown.push(mirrorZoom(entry.label));
   delegateEvents([...DelegatedEvents], doc);
   entry.teardown.push(() => clearDelegatedEvents(doc));
-  const mount = doc.createElement("div");
-  mount.id = "root";
-  doc.body.replaceChildren(mount);
   entry.teardown.push(registerWindow(entry.id, popup));
   if (!shellRenderer) throw new Error("workspace window shell not installed");
   entry.teardown.push(shellRenderer(entry.id, mount));
