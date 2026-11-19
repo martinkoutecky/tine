@@ -31,6 +31,7 @@ import { pushToast } from "../toasts";
 import { focusPageTrailing } from "./pageTrailing";
 import { ensureJournalTemplateForDay, renameOrMergePage, renameOutcomeMessage, switchGraph } from "../graph";
 import { Block, OutlineScopeContext } from "./Block";
+import { bindOutlineSelection } from "../outlineSelectionTarget";
 import { TaggedPages } from "./TaggedPages";
 import { AliasGroupHeader } from "./AliasGroup";
 import { LinkedReferences } from "./LinkedReferences";
@@ -928,6 +929,7 @@ function ZoomedView(props: { id: string }): JSX.Element {
   };
   const crumb = (id: string) => visibleBody(docNode(id).raw, formatForBlock(id))[0] || "…";
   const editSurface = () => pane.paneId === "main" ? "main" : `pane:${pane.paneId}`;
+  const scope = { get roots() { return [props.id]; }, get forceExpandedRoot() { return props.id; } };
   const focusTrailing = () => {
     const root = docNode(props.id);
     if (!root || pageReadOnly(pageByName(root.page)) || pageByName(root.page)?.guide) return;
@@ -939,7 +941,7 @@ function ZoomedView(props: { id: string }): JSX.Element {
   };
 
   return (
-    <div class="page zoomed-page">
+    <div class="page zoomed-page" ref={el => bindOutlineSelection(el, () => ({ scope, surface: editSurface() }))}>
       <div class="zoom-breadcrumb">
         <a
           class="crumb crumb-page"
@@ -989,7 +991,7 @@ function ZoomedView(props: { id: string }): JSX.Element {
         {/* A zoom root is a viewing boundary: reveal its immediate subtree even
             when collapsed on the parent page, without mutating collapsed::.
             Descendants still honor their own individual collapse state. */}
-        <OutlineScopeContext.Provider value={{ roots: [props.id], forceExpandedRoot: props.id }}>
+        <OutlineScopeContext.Provider value={scope}>
           <CommentSurface main page={pageByName(pageName())} roots={[props.id]}><Block id={props.id} forceExpanded /></CommentSurface>
         </OutlineScopeContext.Provider>
       </div>
@@ -1126,7 +1128,8 @@ function PageSection(props: { page: FeedPage; seen?: boolean; children?: JSX.Ele
   const isTodayJournal = () => props.page.kind === "journal"
     && props.page.name === journalTitle(localDateFromDayKey(currentDayKey()));
   return (
-    <div class="page-section" data-page-name={props.page.name}>
+    <div class="page-section" data-page-name={props.page.name}
+      ref={el => bindOutlineSelection(el, () => ({ scope: { roots: rootsToRender() }, surface: editSurface() }))}>
       <Show when={props.page.kind === "page"}>
         <NamespaceCrumb name={props.page.name} />
       </Show>

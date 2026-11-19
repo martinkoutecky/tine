@@ -23,6 +23,7 @@ import { applyTaskWorkflow, datePicker } from "./ui";
 import { ensurePageLoaded, pageByName, blockSubtreeMarkdown, deleteBlock, setRaw, node as docNode } from "./document";
 import { endEdit, startEditing } from "./editorController";
 import { installKeybindings, matchesCommand } from "./keybindings";
+import { bindOutlineSelection } from "./outlineSelectionTarget";
 import { bindingAlternatives, type ShortcutBinding } from "./shortcutBindings";
 import { backend } from "./backend";
 import { initPinyinMatchingSetting, pinyinMatchingEnabled } from "./launcherRanking";
@@ -761,7 +762,7 @@ function Capture() {
               }
             }}
           />
-          <div class="page-blocks">
+          <div class="page-blocks" ref={el => bindOutlineSelection(el, () => ({ scope: { roots: roots() }, surface: "main" }))}>
             <For each={roots()}>{(rid) => <Block id={rid} />}</For>
           </div>
           <Show when={!bindingAlternatives(submitBinding()).length}>

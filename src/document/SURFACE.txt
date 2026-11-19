@@ -5,6 +5,7 @@ FeedPage
 HistoryRouteContext
 Node
 OutlineScope
+OutlineSelectionTarget  # why: hand the keyboard dispatcher a rendered outline and selection lifetime; batch-fix-793-selall
 OwedPage  # why: backend wire type of the page host protocol; batch-og-s3b
 PageLoadRefusal  # why: GH #254 family: one typed answer to whether a page file took its name slot; batchJ1
 PageMail  # why: backend wire type of the page host protocol; batch-og-s3b
@@ -190,6 +191,7 @@ seenPageSnapshot  # why: "changed since you last looked" sends the page's unsave
 selectBlock
 selectBlockSubtree  # why: Ctrl/Cmd+A escalation from the editor (GH #262); batch17a
 selectedIds
+selectionIncludesPage  # why: pin selected live reference pages through a shared page index; batch-fix-793-selall
 selectionMarkdown
 selectionScope  # why: one-level fold commands resolve the selected occurrence's collapse surface instead of its source (GH #768); batch-fix-gh768
 setBlockProperty

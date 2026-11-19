@@ -16,6 +16,7 @@ import { ReferenceDisclosure } from "./ReferenceDisclosure";
 import { createMembershipResource, groupsContainEdit } from "../resultMembership";
 import { referenceRevision } from "../referenceKeys";
 import { FIND_REFERENCES_ATTR, FIND_REFERENCES_PAGE_ATTR } from "../inpageFind";
+import { bindOutlineSelection } from "../outlineSelectionTarget";
 
 // Block-level "linked references": the blocks that reference THIS block (via
 // `((uuid))` / `[..](((uuid)))` / `{{embed ((uuid))}}`), grouped by page. Toggled
@@ -50,7 +51,7 @@ export function BlockReferences(props: { id: string }): JSX.Element {
     <>
       <ResourceFailure of={groupsResource} what="references to this block" onRetry={() => void refetch()} />
     <Show when={groups() && groups()!.length > 0}>
-      <div class="block-references-inner" {...{ [FIND_REFERENCES_ATTR]: "block", [FIND_REFERENCES_PAGE_ATTR]: props.id }}>
+      <div class="block-references-inner" ref={el => bindOutlineSelection(el)} {...{ [FIND_REFERENCES_ATTR]: "block", [FIND_REFERENCES_PAGE_ATTR]: props.id }}>
         <div class="block-references-header">
           {t("editor-references-linked-reference", { count: count() })}
           <Show when={(groups() ?? []).length > 1}>
@@ -60,8 +61,9 @@ export function BlockReferences(props: { id: string }): JSX.Element {
           </Show>
         </div>
         <For each={groups()}>
-          {(g) => (
-            <div class="reference-group">
+          {(g) => {
+            let host!: HTMLDivElement;
+            return <div class="reference-group" ref={el => { host = el; bindOutlineSelection(el); }}>
               <div class="reference-group-header">
               <button type="button" class="reference-group-disclosure"
                 aria-expanded={!groupCollapsed(g)}
@@ -92,11 +94,11 @@ export function BlockReferences(props: { id: string }): JSX.Element {
               <div class="reference-blocks">
                 {/* OG shows each referrer's ancestor breadcrumb in the block-ref
                     panel (:breadcrumb-show? true) for "where does this live" context. */}
-                <LiveRefGroup heightKey={`block-refs:${props.id}`} page={g.page} kind={g.kind} path={g.path} blocks={g.blocks} surface="ref" showBreadcrumb />
+                <LiveRefGroup selectionHost={host} heightKey={`block-refs:${props.id}`} page={g.page} kind={g.kind} path={g.path} blocks={g.blocks} surface="ref" showBreadcrumb />
               </div>
               </Show>
-            </div>
-          )}
+            </div>;
+          }}
         </For>
       </div>
     </Show>

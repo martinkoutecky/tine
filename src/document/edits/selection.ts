@@ -196,10 +196,13 @@ const selectionSnapshot = createRoot(() => createMemo(() => {
   const state = selectionState();
   const owner = getOwner();
   let ids: Accessor<string[]> | undefined, roots: string[] | undefined;
+  let pages: Accessor<ReadonlySet<string>> | undefined;
   const selectedRoots = () => roots ??= selectionRoots(state)!;
   return {
     ids: () => (ids ??= runWithOwner(owner, () => createMemo(() => subtreeIds(selectedRoots())!))!)(),
     roots: selectedRoots,
+    pages: () => (pages ??= runWithOwner(owner, () => createMemo(() =>
+      new Set(selectedRoots().map(id => doc.byId[id]?.page))))!)(),
   };
 }));
 
@@ -302,12 +305,25 @@ export function isSelected(id: string): boolean {
 // Hierarchical Ctrl/Cmd+A (GH #262): the ancestor whose visible subtree the
 // current select-all sequence covers. Any other selection mutation resets it.
 let selectAllHead: string | null = null;
+let widenOutline: OutlineSelectionTarget["widen"];
 // Remember crossed subtree boundaries so reversal can restore a nested anchor
 // after an upward step selected its parent. Entries are indices in this topology.
 let keyboardPath: number[] = [];
 let keyboardTopology: number | null = null;
 
 export function selectBlock(id: string, scope: OutlineScope | null = null, surface = activeSurface() ?? "main") {
+  startBlockSelection(id, scope, surface);
+}
+
+/** A rendered outline and its lifetime, optionally with a wider loaded outline. */
+export interface OutlineSelectionTarget {
+  scope: OutlineScope;
+  surface: string;
+  widen?: () => OutlineSelectionTarget | undefined;
+  members?: readonly string[];
+}
+
+function startBlockSelection(id: string, scope: OutlineScope | null, surface: string, whole?: OutlineSelectionTarget) {
   const owner = selectionSurfaces.get(surface);
   endEdit("select-block");
   notifyOutlineSelectionStarted(id);
@@ -315,11 +331,21 @@ export function selectBlock(id: string, scope: OutlineScope | null = null, surfa
   selectedSurfaces = owner ? new Set() : undefined;
   selectedSurfaceKey = owner ? surface : undefined;
   for (let selected = owner; selected; selected = selected.parent) selectedSurfaces!.add(selected);
+  for (const key of whole?.members ?? []) {
+    const member = selectionSurfaces.get(key);
+    if (member) selectedSurfaces?.add(member);
+  }
   activeSelectionScope = scope;
   selectAllHead = null;
+  widenOutline = whole?.widen;
   keyboardPath = [];
   keyboardTopology = null;
-  batch(() => { setSelectionView({ id, scope }); setSelAnchor(id); setSelFocus(id); });
+  batch(() => {
+    setSelectionView({ id, scope });
+    const order = whole ? selectionTopology().order : undefined;
+    setSelAnchor(order ? order[0] ?? null : id);
+    setSelFocus(order ? order.at(-1) ?? null : id);
+  });
 }
 export function clearSelection() {
   selectedSurfaces = undefined;
@@ -327,6 +353,7 @@ export function clearSelection() {
   batch(() => { setSelAnchor(null); setSelFocus(null); setSelectionView(null); });
   activeSelectionScope = null;
   selectAllHead = null;
+  widenOutline = undefined;
   keyboardPath = [];
   keyboardTopology = null;
 }
@@ -341,6 +368,7 @@ export function extendSelectionTo(id: string, scope: OutlineScope | null = activ
   }
   if (scope !== activeSelectionScope || !selectionTopology().index.has(id)) return;
   selectAllHead = null;
+  widenOutline = undefined;
   keyboardPath = [];
   setSelFocus(id);
 }
@@ -384,6 +412,7 @@ export function moveSelection(dir: 1 | -1, extend: boolean) {
   else keyboardPath.push(ni);
   const next = order[ni];
   selectAllHead = null;
+  widenOutline = undefined;
   batch(() => {
     setSelFocus(next);
     if (!extend) setSelAnchor(next);
@@ -399,17 +428,25 @@ export function selectBlockSubtree(id: string, scope: OutlineScope | null = null
   selectAllHead = id;
 }
 
-/** Repeated Ctrl/Cmd+A in block-selection mode: widen the selection one
+/** Ctrl/Cmd+A from whitespace selects the supplied outline. A repeated press
+ *  can take its wider loaded outline, if supplied. In block-selection mode
+ *  otherwise, widen the selection one
  *  ancestor level at a time — subtree, parent subtree, …, the whole visible
  *  outline, where it stays (idempotent) — or start the ladder at the current
  *  selection's anchor when no select-all sequence is in progress (GH #262). */
-export function expandBlockSelection() {
+export function expandBlockSelection(target?: OutlineSelectionTarget) {
+  const whole = target ?? widenOutline?.();
+  if (whole) {
+    const id = whole.scope.roots.find(id => !!doc.byId[id]);
+    if (id) startBlockSelection(id, whole.scope, whole.surface, whole);
+    return;
+  }
   keyboardPath = [];
   const a = selAnchor();
   const f = selFocus();
   if (!a || !f) return;
   const { order, index, end } = selectionTopology();
-  if (order.length < 2) return;
+  if (order.length < 2 || !index.has(a) || !index.has(f)) return;
   // Whole-outline selection is the top of the ladder; further presses no-op.
   if (a === order[0] && end[index.get(f)!] === order.length - 1) return;
   let head = selectAllHead;
@@ -487,6 +524,12 @@ function scrollBlockRowIntoView(id: string) {
  * after an endpoint/tree change, without enumerating their descendants. */
 export function topSelected(): string[] {
   return selectionSnapshot().roots();
+}
+
+/** Does the selection pin this source page? The first reader builds the
+ * shared index in O(selected roots), and each lookup costs O(1). No I/O. */
+export function selectionIncludesPage(page: string): boolean {
+  return selectionSnapshot().pages().has(page);
 }
 
 function selectionRemovalSurvivor(): string | null {

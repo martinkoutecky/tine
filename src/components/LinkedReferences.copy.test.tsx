@@ -4,6 +4,7 @@ import { backend } from "../backend";
 import { clearClipboardPayload } from "../clipboard";
 import { resetStore } from "../document";
 import { endEdit } from "../editorController";
+import { setGraphMeta } from "../graphSession";
 import { installKeybindings } from "../keybindings";
 import { resetNearObserverForTests } from "../lazyObserve";
 import { resetReferenceSectionState } from "../referenceSectionState";
@@ -47,6 +48,7 @@ afterEach(() => {
   closeExportModal();
   clearClipboardPayload();
   resetStore();
+  setGraphMeta(null);
   resetTabsToJournals();
   resetNearObserverForTests();
   resetReferenceSectionState();
@@ -56,12 +58,12 @@ afterEach(() => {
   document.body.replaceChildren();
 });
 
-async function mountTarget(sourcePages = sources, referenceGroups = groups) {
+async function mountTarget(sourcePages = sources, referenceGroups = groups, visibleSources = ["Alpha"]) {
   vi.stubGlobal("IntersectionObserver", class {
     constructor(private callback: IntersectionObserverCallback) {}
     observe(target: Element) {
       const group = target.closest(".reference-group");
-      const isIntersecting = !group || group.querySelector(".reference-page")?.textContent === "Alpha";
+      const isIntersecting = !group || visibleSources.includes(group.querySelector(".reference-page")?.textContent ?? "");
       queueMicrotask(() => this.callback([{ target, isIntersecting } as IntersectionObserverEntry], this as unknown as IntersectionObserver));
     }
     unobserve() {}
@@ -97,22 +99,21 @@ function changeExportLevel(root: HTMLElement, value: string) {
   level.dispatchEvent(new Event("change", { bubbles: true }));
 }
 
-function press(key: string, options: KeyboardEventInit = {}) {
-  document.body.dispatchEvent(new KeyboardEvent("keydown", { key, bubbles: true, cancelable: true, ...options }));
+function press(key: string, options: KeyboardEventInit = {}, target: Element = document.body) {
+  const event = new KeyboardEvent("keydown", { key, bubbles: true, cancelable: true, ...options });
+  target.dispatchEvent(event);
+  return event;
 }
 
-async function selectAlpha(root: HTMLElement) {
+async function openAlphaEditor(root: HTMLElement) {
   const content = root.querySelector<HTMLElement>(`[data-block-id="${hit.id}"] > .block-main .block-content`)!;
   content.dispatchEvent(new MouseEvent("mousedown", { bubbles: true, button: 0 }));
   document.dispatchEvent(new MouseEvent("mouseup", { bubbles: true, button: 0 }));
-  const editor = await vi.waitFor(() => {
+  return vi.waitFor(() => {
     const editor = maybeEditorIn(root, hit.id);
     expect(editor).not.toBeNull();
     return editor!;
   });
-  editor.keydown({ key: "Escape" });
-  for (let i = 0; i < 4; i++) press("a", { ctrlKey: true });
-  press("c", { ctrlKey: true });
 }
 
 it("copies selected cold reference trees to the requested level on a routed page", async () => {
@@ -230,7 +231,10 @@ it.each([["Alpha", "1"], ["Alpha", "2"], ["Beta", "1"], ["Beta", "2"]])(
 
 it("copies selected roots from different source depths as siblings, with their children nested as in Logseq", async () => {
   const { root, writeRich } = await mountTarget();
-  await selectAlpha(root);
+  const editor = await openAlphaEditor(root);
+  editor.keydown({ key: "Escape" });
+  for (let i = 0; i < 4; i++) press("a", { ctrlKey: true });
+  press("c", { ctrlKey: true });
   const [plain, html] = writeRich.mock.calls[0]!;
   expect(plain.split("\n")).toEqual([
     "- Alpha reference [[Target]]", "\t- Alpha child",
@@ -240,4 +244,103 @@ it("copies selected roots from different source depths as siblings, with their c
   const roots = [...copied.body.querySelectorAll(":scope > ul > li")];
   expect(roots.map(root => root.firstChild?.textContent)).toEqual(["Alpha reference [[Target]]", "Other Alpha reference [[Target]]"]);
   expect(roots.map(root => root.querySelector("ul li")?.textContent)).toEqual(["Alpha child", "Other Alpha child"]);
+});
+
+it("keeps child and grandchild levels after Ctrl+A with multiple reference groups loaded", async () => {
+  const grandchild = block("alpha-grandchild", "Alpha grandchild");
+  const child = block("alpha-child", "Alpha child [[Target]]", [grandchild]);
+  const tree = { ...hit, children: [child] };
+  const sourcePages = [{ ...sources[0], blocks: [tree, sources[0].blocks[1]] }, ...sources.slice(1)];
+  const referenceGroups = [{ ...groups[0], blocks: [...groups[0].blocks, shallow(child)] }, ...groups.slice(1)];
+  setGraphMeta({ root: "/graphs/A", ref_default_open_blocks_level: 5 } as never);
+  const { root, liveRow, readByPath, writeRich } = await mountTarget(sourcePages, referenceGroups, ["Alpha", "Beta", "Gamma"]);
+  await vi.waitFor(() => {
+    for (const id of [grandchild.id, nestedHit.id, "beta-grandchild", excludedHit.id]) {
+      expect(liveRow(id), id).not.toBeNull();
+    }
+  });
+  const readsBeforeCopy = readByPath.mock.calls.length;
+  const mouseEditor = await openAlphaEditor(root);
+  mouseEditor.keydown({ key: "Escape" });
+  expect(press("c", { ctrlKey: true }).defaultPrevented).toBe(true);
+  expect(writeRich).toHaveBeenCalledOnce();
+  const singleTree = writeRich.mock.calls[0];
+
+  const editor = await openAlphaEditor(root);
+  editor.keydown({ key: "a", ctrlKey: true });
+  // jsdom has no native textarea select-all default action.
+  if (editor.kind === "textarea") editor.selectByUser(0, editor.value().length);
+  expect(editor.keydown({ key: "a", ctrlKey: true }).defaultPrevented).toBe(true);
+  for (let i = 0; i < 2; i++) expect(press("a", { ctrlKey: true }).defaultPrevented).toBe(true);
+  expect(press("c", { ctrlKey: true }).defaultPrevented).toBe(true);
+  expect(writeRich).toHaveBeenCalledTimes(2);
+  expect(readByPath).toHaveBeenCalledTimes(readsBeforeCopy);
+
+  const [plain, html] = writeRich.mock.calls[1];
+  expect(singleTree[0]).toBe("- Alpha reference [[Target]]\n\t- Alpha child [[Target]]\n\t\t- Alpha grandchild");
+  expect(plain).toBe(`${singleTree[0]}\n- Other Alpha reference [[Target]]\n\t- Other Alpha child`);
+  const copied = new DOMParser().parseFromString(html, "text/html");
+  const roots = [...copied.body.querySelectorAll(":scope > ul > li")];
+  const single = new DOMParser().parseFromString(singleTree[1], "text/html");
+  expect(roots.map(root => root.firstChild?.textContent)).toEqual([hit.raw, nestedHit.raw]);
+  for (const [label, document] of [["single tree", single], ["Ctrl+A", copied]] as const) {
+    const firstChild = document.body.querySelector(":scope > ul > li > ul > li");
+    expect(firstChild?.firstChild?.textContent, label).toBe(child.raw);
+    expect(firstChild?.querySelector(":scope > ul > li")?.textContent, label).toBe(grandchild.raw);
+  }
+  expect(roots[1].querySelector(":scope > ul > li")?.textContent).toBe(nestedHit.children[0].raw);
+});
+
+it("copies trees from reference whitespace and widens only to loaded groups", async () => {
+  setGraphMeta({ root: "/graphs/A", ref_default_open_blocks_level: 5 } as never);
+  const grandchild = block("alpha-grandchild", "Alpha grandchild");
+  const tree = { ...hit, children: [{ ...hit.children[0], children: [grandchild] }] };
+  const { root, liveRow, readByPath, writeRich } = await mountTarget(
+    [{ ...sources[0], blocks: [tree, sources[0].blocks[1]] }, ...sources.slice(1)], groups, ["Alpha", "Beta"],
+  );
+  await vi.waitFor(() => expect(liveRow("beta-grandchild")).not.toBeNull());
+  const reads = readByPath.mock.calls.length;
+  const submit = vi.spyOn(backend(), "pageSubmit");
+  expect(readByPath).not.toHaveBeenCalledWith("pages/Gamma.md");
+  const [alphaGroup, betaGroup, gammaGroup] = root.querySelectorAll<HTMLElement>(".reference-group");
+  root.tabIndex = -1;
+  root.focus(); // The browser gives the clicked group's pane scroller keyboard focus.
+  alphaGroup.click();
+  const alpha = "- Alpha reference [[Target]]\n\t- Alpha child\n\t\t- Alpha grandchild\n- Other Alpha reference [[Target]]\n\t- Other Alpha child";
+  const beta = "- Beta reference [[Target]]\n\t- Beta child\n\t\t- Beta grandchild";
+  for (const [index, plain] of [alpha, [alpha, beta].join("\n"), [alpha, beta].join("\n")].entries()) {
+    expect(press("a", { ctrlKey: true }, root).defaultPrevented, `select-all press ${index + 1}`).toBe(true);
+    expect(press("c", { ctrlKey: true }, root).defaultPrevented).toBe(true);
+    expect(writeRich).toHaveBeenCalledTimes(index + 1);
+    expect(writeRich.mock.calls[index][0]).toBe(plain);
+    const html = new DOMParser().parseFromString(writeRich.mock.calls[index][1], "text/html");
+    const grandchildren = [...html.querySelectorAll("body > ul > li > ul > li > ul > li")].map(li => li.textContent);
+    expect(grandchildren).toEqual(index === 0 ? ["Alpha grandchild"] : ["Alpha grandchild", "Beta grandchild"]);
+  }
+  betaGroup.querySelector<HTMLButtonElement>(".reference-group-disclosure")!.click();
+  expect(press("c", { ctrlKey: true }).defaultPrevented).toBe(false);
+  gammaGroup.click();
+  expect(press("a", { ctrlKey: true }).defaultPrevented).toBe(true);
+  expect(press("c", { ctrlKey: true }).defaultPrevented).toBe(false);
+  expect(readByPath).toHaveBeenCalledTimes(reads);
+  expect(submit).not.toHaveBeenCalled();
+});
+
+it("selects the routed page outline from blank space and preserves native select-all in fields", async () => {
+  const { root, writeRich } = await mountTarget();
+  root.querySelector<HTMLElement>(".page-blocks")!.click();
+  for (const field of [document.createElement("input"), document.createElement("textarea"), document.createElement("div")]) {
+    if (field.tagName === "DIV") field.setAttribute("contenteditable", "true");
+    root.append(field);
+    field.focus();
+    expect(press("a", { ctrlKey: true }, field).defaultPrevented).toBe(false);
+    field.remove();
+  }
+  expect(press("a", { ctrlKey: true }).defaultPrevented).toBe(true);
+  const dialog = document.createElement("div");
+  dialog.setAttribute("role", "dialog");
+  root.append(dialog);
+  expect(press("a", { ctrlKey: true }, dialog).defaultPrevented).toBe(false);
+  expect(press("c", { ctrlKey: true }).defaultPrevented).toBe(true);
+  expect(writeRich.mock.calls[0][0]).toBe("- Target page body");
 });

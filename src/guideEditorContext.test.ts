@@ -5,6 +5,8 @@ it("the block-selection tips explain route departure and journal scrolling", () 
   const page = readFileSync("crates/tine-guide/src/templates/tips.md", "utf8");
   expect(page).toContain("Leaving a page clears its block selection");
   expect(page).toContain("Scrolling between days in the Journals feed keeps the selection");
+  expect(page).toContain("Click blank space in an outline and press **Ctrl+A**");
+  expect(page).toContain("the next includes the other loaded groups in that section");
 });
 
 it("the search tour teaches pointer and keyboard activation in the focused split", () => {

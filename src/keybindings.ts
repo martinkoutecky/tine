@@ -33,8 +33,9 @@ import { restoreDrawerFocus } from "./mobileDrawers";
 import { isTauri } from "./backend";
 import { zoomReset } from "./zoom";
 import { zoomInOnTarget, zoomOutOneLevel } from "./zoomCommands";
-import { activeWindowId, MAIN_WINDOW_ID, onEachWindow, queryAllWindows } from "./windowRealm";
-import { dismissTopTransient } from "./transientLayers";
+import { activeWindowId, documentOf, isElementNode, MAIN_WINDOW_ID, onEachWindow, queryAllWindows, selectionOf } from "./windowRealm";
+import { dismissTopTransient, topTransientLayer } from "./transientLayers";
+import { outlineSelectionAt } from "./outlineSelectionTarget";
 import { carryDaysBack } from "./carry";
 import {
   openJournals,
@@ -1043,9 +1044,6 @@ function handleSelectionKey(e: KeyboardEvent): boolean {
       .catch(() => pushToast(msg("commands-couldn-t-cut-selection-clipboard-write-failed"), "error"));
     return true;
   }
-  if (mod && !e.shiftKey && !e.altKey && shortcutKey(e) === "a") {
-    return expandBlockSelection(), true;
-  }
   if (e.key === "Enter") {
     const ids = topSelected();
     const last = ids[ids.length - 1];
@@ -1101,6 +1099,7 @@ export function installKeybindings(overrides: Record<string, ShortcutBinding> = 
 
   let seq: Chord[] = [];
   let seqTimer: ReturnType<typeof setTimeout> | null = null;
+  const lastClicks = new WeakMap<Document, WeakRef<Element>>();
   const resetSeq = () => {
     seq = [];
     if (seqTimer) clearTimeout(seqTimer);
@@ -1220,6 +1219,37 @@ export function installKeybindings(overrides: Record<string, ShortcutBinding> = 
       }
     }
 
+    if (chord.mod && !chord.shift && !chord.alt && chord.key === "a") {
+      const doc = documentOf(e);
+      const target = e.target;
+      const focused = isElementNode(target) && target !== doc.body && target !== doc.documentElement ? target : undefined;
+      const clicked = lastClicks.get(doc)?.deref();
+      // A pointer click can focus the pane's scroll container. Its own
+      // keyboard focus still belongs to the more specific outline clicked.
+      const at = clicked?.isConnected && (!focused || focused.contains(clicked)) ? clicked : focused;
+      const dialog = "dialog, [role='dialog'], [role='alertdialog']";
+      const field = at?.closest(`input, textarea, [contenteditable=""], [contenteditable="true"], [contenteditable="plaintext-only"], ${dialog}`);
+      if ((field?.isConnected && !isOutlineBlockEditorTarget(target))
+          || topTransientLayer()?.root?.()?.matches(dialog)) {
+        resetSeq();
+        return;
+      }
+      if (!editing) {
+        const outline = at?.isConnected && !paneSel() && !at.closest("[data-sheet-grid-id]") ? outlineSelectionAt(at) : undefined;
+        if (hasSelection() || (!editingId() && outline)) {
+          if (hasSelection()) expandBlockSelection();
+          else {
+            const target = outline?.();
+            if (target) expandBlockSelection(target);
+          }
+          selectionOf(e)?.removeAllRanges();
+          e.preventDefault();
+          resetSeq();
+          return;
+        }
+      }
+    }
+
     // Block-selection mode keys (no editor focused).
     if (!editing && hasSelection()) {
       if (handleSelectionKey(e)) {
@@ -1328,6 +1358,10 @@ export function installKeybindings(overrides: Record<string, ShortcutBinding> = 
   // in a workspace window reaches the same handler, and its window's listeners
   // go away with it.
   const uninstallWindows = onEachWindow((win, id) => {
+    const rememberClick = (e: MouseEvent) => {
+      if (e.button === 0 && isElementNode(e.target)) lastClicks.set(win.document, new WeakRef(e.target));
+    };
+    win.addEventListener("click", rememberClick, true);
     win.addEventListener("keydown", handler, true);
     win.addEventListener("paste", pasteHandler, true);
     win.addEventListener("keydown", superTracker, true);
@@ -1340,6 +1374,8 @@ export function installKeybindings(overrides: Record<string, ShortcutBinding> = 
     const disposeMouse = installMouseHistory(win, win.document, navigateMouseHistory, historySource);
     if (id === MAIN_WINDOW_ID) mainMouse = disposeMouse;
     return () => {
+      win.removeEventListener("click", rememberClick, true);
+      lastClicks.delete(win.document);
       win.removeEventListener("keydown", handler, true);
       win.removeEventListener("paste", pasteHandler, true);
       win.removeEventListener("keydown", superTracker, true);
