@@ -5,6 +5,8 @@
 
 mod active_pages;
 mod backlink_membership;
+#[cfg(test)]
+pub(crate) use backlink_membership::ONE_PANEL_SOURCE_VISITS;
 mod checkpoint_state;
 mod collapse_only;
 mod completion_rank;

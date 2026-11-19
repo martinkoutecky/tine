@@ -112,3 +112,104 @@ fn a_carried_move_rewrite_planned_before_an_external_edit_is_refused() {
         store.close();
     }
 }
+
+/// PC-9 (PRINCIPLES 2): a rename step's certificate and the model's reading
+/// of its old text are read by that step's preflight and check only, so the
+/// plan keeps neither once its steps are prepared; a graph-wide rename does
+/// not hold every referrer's (about 28 bytes per input byte) to the end.
+/// Both the referrer rewrite (`PreparedRewrite::reuse`) and the moved page
+/// (`reuse_proposal`) are covered; the bytes are the same as without them.
+#[test]
+fn a_prepared_step_keeps_neither_its_certificate_nor_its_reading() {
+    let referrer = "- see [[Old]] and #Old\n";
+    let (dir, store) = graph(PAGE);
+    fs::write(dir.path().join("pages/Ref.md"), referrer).unwrap();
+    let names = store.config().file_name_format;
+    let plan = std::sync::Arc::new(crate::CheckPlan {
+        old: Some("Old".into()),
+        destination: "New".into(),
+        days: store.config().config.journal_format(),
+        names,
+    });
+    let reading = |text: &str| {
+        std::sync::Arc::new(tine_core::cm_check::observe(
+            text,
+            tine_core::model::Format::Md,
+            names,
+        ))
+    };
+    let check = |page: &str, observed| crate::RenameCheck {
+        plan: std::sync::Arc::clone(&plan),
+        page: page.into(),
+        fixed: false,
+        observed: Some(observed),
+        source: None,
+    };
+    let (from, to) = (
+        store.file_id(Area::Pages, "Old.md").unwrap(),
+        store.file_id(Area::Pages, "New.md").unwrap(),
+    );
+    let ref_id = crate::PageId::from("pages/Ref.md");
+    let renames = std::sync::Arc::new(map());
+    let mut tx = store.page_plan(Some(EditKind::RenamePage));
+    let p = proposal(&store, referrer);
+    let ref_reading = reading(referrer);
+    let kept = [std::sync::Arc::downgrade(&ref_reading)];
+    tx.rewrite_refs_prepared(
+        &[EditKind::RenamePage],
+        &ref_id,
+        store.read(&ref_id.file(), None).unwrap().1,
+        (referrer.to_owned(), p.text),
+        Some(&renames),
+        names,
+        p.trace,
+    );
+    tx.check(&ref_id.file(), check("ref", ref_reading));
+    let moved_reading = reading(PAGE);
+    let kept = [kept[0].clone(), std::sync::Arc::downgrade(&moved_reading)];
+    tx.move_file(
+        &from,
+        store.read(&from, None).unwrap().1,
+        &to,
+        MoveRewrite::Prepared {
+            renames: std::sync::Arc::clone(&renames),
+            old: PAGE.to_owned(),
+            proposal: proposal(&store, PAGE),
+            format: names,
+        },
+    );
+    tx.check(&from, check("old", moved_reading));
+    let _writer = store.writer.lock().unwrap();
+    let prepared = tx.prepare_steps().map_err(|(_, why)| why).unwrap();
+    assert_eq!(
+        prepared[0].new.as_deref(),
+        Some("- see [[New]] and #New\n".as_bytes())
+    );
+    assert_eq!(
+        prepared[1].new.as_deref(),
+        Some("title:: New\n\n- see [[New]] here\n".as_bytes())
+    );
+    for (step, reading) in tx.steps.iter().zip(&kept) {
+        assert!(
+            matches!(
+                step,
+                super::Step::Rewrite {
+                    prepared: None,
+                    check: None,
+                    ..
+                } | super::Step::Move {
+                    prepared: None,
+                    check: None,
+                    ..
+                }
+            ),
+            "PC-9: a prepared step still holds its certificate or check"
+        );
+        assert!(
+            reading.upgrade().is_none(),
+            "PC-9: the model's reading outlived its step's check"
+        );
+    }
+    drop(_writer);
+    store.close();
+}

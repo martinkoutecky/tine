@@ -408,6 +408,22 @@ enum Step {
     },
 }
 
+impl Step {
+    /// A rewrite or move step's prepared rewrite and model check, taken out
+    /// for its preflight ([`PagePlan::prepare_steps`]), which frees them.
+    fn take_certified(&mut self) -> (Option<Box<PreparedRewrite>>, Option<Box<RenameCheck>>) {
+        match self {
+            Step::Rewrite {
+                prepared, check, ..
+            }
+            | Step::Move {
+                prepared, check, ..
+            } => (prepared.take(), check.take()),
+            _ => (None, None),
+        }
+    }
+}
+
 /// `Transaction` has no door to these steps: only `PagePlan::plan` takes them.
 const PLAN_ONLY: &str = "a page step reached the non-page commit";
 
