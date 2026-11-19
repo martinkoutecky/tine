@@ -67,11 +67,23 @@ impl<'a> PagePlan<'a> {
         Ok(names)
     }
 
-    pub(super) fn prepare_steps(&self) -> Result<Vec<Prepared>, (usize, Why)> {
+    /// Prepare every step, in order. A rename's or merge's prepared rewrite
+    /// (its certificate and copy of the old text) and its model check (with
+    /// the writer's reading of the old text) are read by this step's
+    /// preflight and check only, so they are taken out of the step here and
+    /// freed as soon as those have used them: the certificate when the
+    /// rewrite is reused or discarded, the reading and the check after the
+    /// check. Nothing later (planning, the host's commit, a refusal) reads
+    /// them, and a plan is prepared once (PC-9).
+    pub(super) fn prepare_steps(&mut self) -> Result<Vec<Prepared>, (usize, Why)> {
         let mut allocated = HashSet::new();
         let mut prepared = Vec::new();
         let mut titles = validation::TitleIndexes::default();
-        for (index, step) in self.steps.iter().enumerate() {
+        for index in 0..self.steps.len() {
+            let (rewrite, mut check) = self.steps[index].take_certified();
+            let carried = check.as_mut().and_then(|check| check.observed.take());
+            let this = &*self;
+            let step = &this.steps[index];
             // Preflight reads and computes, writing nothing, under the writer
             // lock: a page's own-title read and reference rewrite parse it with
             // lsdoc. A parser panic on one malformed page (an external editor,
@@ -84,16 +96,12 @@ impl<'a> PagePlan<'a> {
             let next = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
                 let mut observed = None;
                 #[allow(unused_mut)]
-                let mut next = self.preflight(step, &allocated, &mut titles, &mut observed)?;
+                let held = (rewrite, carried);
+                let mut next =
+                    this.preflight(step, &allocated, &mut titles, held, &mut observed)?;
                 #[cfg(any(test, feature = "test-faults"))]
                 model_check::writer_bug(step, &mut next);
-                if let Step::Rewrite {
-                    check: Some(check), ..
-                }
-                | Step::Move {
-                    check: Some(check), ..
-                } = step
-                {
+                if let Some(check) = &check {
                     let run = || model_check::check(check, &next, observed);
                     #[cfg(feature = "test-faults")]
                     let run = || crate::cost_counters::model_check(run);
@@ -152,13 +160,22 @@ impl<'a> PagePlan<'a> {
         self.unreadable_owner(file, &[])
     }
 
+    /// `certified` is a rewrite or move step's prepared rewrite and the
+    /// writer's reading of its old text, taken out of the step
+    /// ([`Self::prepare_steps`]); `observed` receives the reading the step's
+    /// check uses.
     pub(super) fn preflight(
         &self,
         step: &Step,
         allocated: &HashSet<FileId>,
         titles: &mut validation::TitleIndexes,
+        certified: (
+            Option<Box<PreparedRewrite>>,
+            Option<Arc<tine_core::cm_check::Content>>,
+        ),
         observed: &mut Option<Arc<tine_core::cm_check::Content>>,
     ) -> Result<Prepared, Why> {
+        let (kept, carried) = certified;
         let unsupported_config_step = match step {
             Step::Trash { file, .. } => file.as_str() == "logseq/config.edn",
             Step::Unique {
@@ -339,14 +356,13 @@ impl<'a> PagePlan<'a> {
                 expected,
                 renames,
                 rebind_title,
-                prepared,
-                check,
+                ..
             } => {
                 let file = id.file();
                 if !self.page(&file) {
                     return Err(Why::Refused(Refusal::InvalidTarget(file.as_str().into())));
                 }
-                let carried = check.as_ref().and_then(|check| check.observed.clone());
+                let merge = kept.as_ref().is_some_and(|p| p.is_merge());
                 let old = self.stage(&file, expected)?;
                 let path = self.path(&file)?;
                 let config = self.store.config();
@@ -356,11 +372,13 @@ impl<'a> PagePlan<'a> {
                     names: name_format,
                     days: Some(&days),
                 };
-                let reused = prepared
-                    .as_ref()
+                let reused = kept
                     .map(|prepared| prepared.reuse(&file, &old, name_format))
                     .transpose()?
-                    .flatten();
+                    .flatten()
+                    .map(|(text, _certificate)| text);
+                // The writer's reading describes the prepared text only.
+                let carried = carried.filter(|_| reused.is_some());
                 let new = if *rebind_title {
                     let (new, read) = rewrite_move(&old, &path, renames, titles, format, None)?;
                     *observed = read;
@@ -381,7 +399,7 @@ impl<'a> PagePlan<'a> {
                 if file
                     .as_str()
                     .starts_with(&format!("{}/", self.store.config().pages_dir))
-                    && !prepared.as_ref().is_some_and(|p| p.is_merge())
+                    && !merge
                 {
                     validation::title_identity(
                         &old,
@@ -393,7 +411,7 @@ impl<'a> PagePlan<'a> {
                     )?;
                 }
                 refuse_marker_rewrite(&old, &new, Format::from_path(&path))?;
-                if prepared.as_ref().is_some_and(|p| p.is_merge()) {
+                if merge {
                     refuse_marker_rewrite(&new, &old, Format::from_path(&path))?;
                 }
                 Ok(Prepared {
@@ -410,8 +428,7 @@ impl<'a> PagePlan<'a> {
                 expected,
                 to,
                 renames,
-                prepared,
-                check,
+                ..
             } => {
                 if to.as_str().starts_with("logseq/.tine-") {
                     return Err(Why::Refused(Refusal::InvalidTarget(to.as_str().into())));
@@ -442,16 +459,13 @@ impl<'a> PagePlan<'a> {
                         // these staged bytes, this format and this syntax.
                         let same_syntax =
                             Format::from_path(&path) == Format::from_path(Path::new(file.as_str()));
-                        let reused = match prepared {
+                        let reused = match kept {
                             Some(prepared) if same_syntax => {
                                 prepared.reuse_proposal(file, old, name_format)?
                             }
                             _ => None,
                         };
-                        let carried = reused
-                            .as_ref()
-                            .and(check.as_ref())
-                            .and_then(|check| check.observed.clone());
+                        let carried = reused.as_ref().and(carried);
                         let (new, read) = rewrite_move(old, &path, map, titles, format, reused)?;
                         *observed = read.or(carried);
                         Some(new)

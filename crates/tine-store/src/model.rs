@@ -5,6 +5,8 @@
 
 mod active_pages;
 mod backlink_membership;
+#[cfg(test)]
+pub(crate) use backlink_membership::ONE_PANEL_SOURCE_VISITS;
 mod checkpoint_state;
 mod collapse_only;
 mod completion_rank;
@@ -79,10 +81,12 @@ use tine_core::doc::{self, DocBlock, Document};
 use tine_core::model::AssetInfo;
 use tine_core::model::{
     is_sync_conflict, path_is_sync_conflict, ref_groups_estimated_bytes, BoundedRefGroups, Format,
-    PageDto, PageEntry, PageKind, ReferenceKind,
+    PageDto, PageEntry, PageKind,
 };
 #[cfg(test)]
-use tine_core::model::{sync_conflict_base, BlockDto, GraphMeta, RefGroup, SyncConflict};
+use tine_core::model::{
+    sync_conflict_base, BlockDto, GraphMeta, RefGroup, ReferenceKind, SyncConflict,
+};
 use tine_core::projection::{assign_doc_runtime_ids, block_to_dto};
 use tine_core::reference_evidence::{BlockSignature, ReferenceFilter};
 
@@ -1520,11 +1524,11 @@ impl ReadSnapshot {
             .filter(|entry| entry.kind == PageKind::Journal)?;
         Some(owners.handle(&entry.name, entry.date_key).into_owned())
     }
-    pub(crate) fn reference_candidate_pages(
-        &self,
-        names: &[String],
-        kind: ReferenceKind,
-    ) -> ReferenceCandidatePages {
+    /// Candidate pages for an unlinked-references query on `names` (explicit
+    /// panels read [`ReadSnapshot::explicit_panel`]): pages whose block
+    /// signatures could hold a plain mention, or every page while the
+    /// signature index is incomplete or stale.
+    pub(crate) fn reference_candidate_pages(&self, names: &[String]) -> ReferenceCandidatePages {
         let full_page_count = self.pages.len();
         let full = || {
             ReferenceCandidatePages::unfiltered(
@@ -1541,43 +1545,29 @@ impl ReadSnapshot {
         {
             return full();
         }
-        if kind == ReferenceKind::Explicit {
-            let candidates = self.explicit_index.candidates(names);
-            ReferenceCandidatePages::unfiltered(
-                self.pages
-                    .iter()
-                    .filter(|(entry, _)| candidates.contains(&entry.path))
-                    .cloned()
-                    .collect(),
-                true,
-                #[cfg(test)]
-                full_page_count,
-            )
-        } else {
-            let filter = ReferenceFilter::new(names);
-            let mut selected = Vec::new();
-            let mut signatures = Vec::new();
-            for (position, (entry, doc)) in self.pages.slots() {
-                let Some(blocks) = index.get(position) else {
-                    return full();
-                };
-                if filter
-                    .as_ref()
-                    .is_some_and(|filter| !blocks.iter().any(|block| filter.admits(block)))
-                {
-                    continue;
-                }
-                selected.push((entry.clone(), Arc::clone(doc)));
-                signatures.push(Arc::clone(blocks));
+        let filter = ReferenceFilter::new(names);
+        let mut selected = Vec::new();
+        let mut signatures = Vec::new();
+        for (position, (entry, doc)) in self.pages.slots() {
+            let Some(blocks) = index.get(position) else {
+                return full();
+            };
+            if filter
+                .as_ref()
+                .is_some_and(|filter| !blocks.iter().any(|block| filter.admits(block)))
+            {
+                continue;
             }
-            ReferenceCandidatePages {
-                pages: selected,
-                indexed: true,
-                #[cfg(test)]
-                full_page_count,
-                filter,
-                signatures,
-            }
+            selected.push((entry.clone(), Arc::clone(doc)));
+            signatures.push(Arc::clone(blocks));
+        }
+        ReferenceCandidatePages {
+            pages: selected,
+            indexed: true,
+            #[cfg(test)]
+            full_page_count,
+            filter,
+            signatures,
         }
     }
     pub(crate) fn alias_edges(&self) -> Arc<crate::query::AliasEdges> {
@@ -5761,6 +5751,12 @@ mod tests {
         paths.into_iter().map(|path| path.unwrap().into()).collect()
     }
 
+    /// The source pages of the explicit panel for `names`, through the
+    /// production boundary ([`ReadSnapshot::explicit_panel`]).
+    fn explicit_pages(graph: &ReadSnapshot, names: &[String]) -> ReferenceCandidatePages {
+        graph.explicit_panel(names, &names[0]).1
+    }
+
     fn assert_reference_candidates_equal_full_scan(
         graph: &ReadSnapshot,
         target: &str,
@@ -5773,6 +5769,12 @@ mod tests {
         let exact_paths = |pages: &[(PageEntry, Arc<Document>)]| {
             let mut paths = pages
                 .iter()
+                // A panel never lists its own page's blocks.
+                .filter(|(entry, _)| {
+                    kind == ReferenceKind::Plain
+                        || tine_core::refs::page_key(&entry.name)
+                            != tine_core::refs::page_key(target)
+                })
                 .filter(|(entry, doc)| match kind {
                     ReferenceKind::Explicit => crate::query::page_affects_backlinks(
                         &real_pages,
@@ -5800,7 +5802,10 @@ mod tests {
         };
         let full =
             graph.with_pages(|pages| exact_paths(&pages.iter().cloned().collect::<Vec<_>>()));
-        let candidates = graph.reference_candidate_pages(names, kind);
+        let candidates = match kind {
+            ReferenceKind::Explicit => explicit_pages(graph, names),
+            ReferenceKind::Plain => graph.reference_candidate_pages(names),
+        };
         assert_eq!(exact_paths(&candidates.pages), full);
     }
 
@@ -6015,23 +6020,21 @@ mod tests {
             tine_core::refs::page_key("Target"),
             tine_core::refs::page_key("Alias"),
         ];
-        let explicit = snapshot.reference_candidate_pages(&names, ReferenceKind::Explicit);
+        let explicit = explicit_pages(&snapshot, &names);
         assert!(explicit.indexed);
         assert!(candidate_paths(&explicit).contains(&"pages/Source.md".to_string()));
         assert!(explicit.pages.len() < explicit.full_page_count);
-        let plain = snapshot.reference_candidate_pages(&names, ReferenceKind::Plain);
+        let plain = snapshot.reference_candidate_pages(&names);
         assert!(plain.indexed);
         assert!(candidate_paths(&plain).contains(&"pages/Source.md".to_string()));
         // Non-ASCII names are filtered too (GH #623): the block signatures key
         // on the matcher's own folding, so "Café" prunes the unrelated pages.
-        let unicode = snapshot
-            .reference_candidate_pages(&[tine_core::refs::page_key("Café")], ReferenceKind::Plain);
+        let unicode = snapshot.reference_candidate_pages(&[tine_core::refs::page_key("Café")]);
         assert!(unicode.indexed);
         assert!(unicode.pages.len() < unicode.full_page_count);
         // A name with no key at all (a lone combining mark) cannot be
         // filtered: every page stays a candidate.
-        let unfilterable =
-            snapshot.reference_candidate_pages(&["\u{301}".to_string()], ReferenceKind::Plain);
+        let unfilterable = snapshot.reference_candidate_pages(&["\u{301}".to_string()]);
         assert!(unfilterable.indexed);
         assert_eq!(unfilterable.pages.len(), unfilterable.full_page_count);
         assert_reference_candidates_equal_full_scan(
@@ -6066,14 +6069,12 @@ mod tests {
             Ok(_)
         ));
         snapshot = published_snapshot(&store);
-        assert!(!candidate_paths(
-            &snapshot.reference_candidate_pages(&names, ReferenceKind::Explicit)
-        )
-        .contains(&"pages/Source.md".to_string()));
-        assert!(!candidate_paths(
-            &snapshot.reference_candidate_pages(&names, ReferenceKind::Plain)
-        )
-        .contains(&"pages/Source.md".to_string()));
+        assert!(!candidate_paths(&explicit_pages(&snapshot, &names))
+            .contains(&"pages/Source.md".to_string()));
+        assert!(
+            !candidate_paths(&snapshot.reference_candidate_pages(&names))
+                .contains(&"pages/Source.md".to_string())
+        );
         assert_reference_candidates_equal_full_scan(
             snapshot.as_ref(),
             "Target",
@@ -6093,10 +6094,8 @@ mod tests {
         store.refresh(crate::Depth::Stamps).unwrap();
         assert!(host_writer.quiesce_for_tests(std::time::Duration::from_secs(20)));
         snapshot = published_snapshot(&store);
-        assert!(candidate_paths(
-            &snapshot.reference_candidate_pages(&names, ReferenceKind::Explicit)
-        )
-        .contains(&"pages/Source.md".to_string()));
+        assert!(candidate_paths(&explicit_pages(&snapshot, &names))
+            .contains(&"pages/Source.md".to_string()));
         assert_reference_candidates_equal_full_scan(
             snapshot.as_ref(),
             "Target",
@@ -6114,7 +6113,7 @@ mod tests {
         fs::remove_file(&source_path).unwrap();
         store.refresh(crate::Depth::Stamps).unwrap();
         snapshot = published_snapshot(&store);
-        let after_delete = snapshot.reference_candidate_pages(&names, ReferenceKind::Explicit);
+        let after_delete = explicit_pages(&snapshot, &names);
         assert!(after_delete.indexed);
         assert!(!candidate_paths(&after_delete).contains(&"pages/Source.md".to_string()));
         assert_reference_candidates_equal_full_scan(
@@ -6135,10 +6134,8 @@ mod tests {
         fs::write(&source_path, "- [[Alias]] and Target again\n").unwrap();
         store.refresh(crate::Depth::Stamps).unwrap();
         snapshot = published_snapshot(&store);
-        assert!(candidate_paths(
-            &snapshot.reference_candidate_pages(&names, ReferenceKind::Explicit)
-        )
-        .contains(&"pages/Source.md".to_string()));
+        assert!(candidate_paths(&explicit_pages(&snapshot, &names))
+            .contains(&"pages/Source.md".to_string()));
         assert_reference_candidates_equal_full_scan(
             snapshot.as_ref(),
             "Target",
@@ -6156,14 +6153,14 @@ mod tests {
         fs::write(dir.join("pages/Created.md"), "- [[Target]] and Target\n").unwrap();
         store.refresh(crate::Depth::Stamps).unwrap();
         snapshot = published_snapshot(&store);
-        let after_create = snapshot.reference_candidate_pages(&names, ReferenceKind::Explicit);
+        let after_create = explicit_pages(&snapshot, &names);
         assert!(after_create.indexed);
         assert!(candidate_paths(&after_create).contains(&"pages/Created.md".to_string()));
         assert_indexed_reference_results_equal_full_scan(&snapshot, "Target");
 
         // Deliberate incompleteness can never narrow the authority set.
         snapshot.reference_candidate_index.write().unwrap().complete = false;
-        let fallback = snapshot.reference_candidate_pages(&names, ReferenceKind::Explicit);
+        let fallback = snapshot.reference_candidate_pages(&names);
         assert!(!fallback.indexed);
         assert_eq!(fallback.pages.len(), fallback.full_page_count);
         assert_eq!(fallback.full_page_count, 4);
@@ -6187,7 +6184,7 @@ mod tests {
             index.complete = true;
             index.generation = current_generation.saturating_sub(1);
         }
-        let stale_fallback = snapshot.reference_candidate_pages(&names, ReferenceKind::Explicit);
+        let stale_fallback = snapshot.reference_candidate_pages(&names);
         assert!(!stale_fallback.indexed);
         assert_eq!(stale_fallback.pages.len(), stale_fallback.full_page_count);
 
@@ -6205,7 +6202,7 @@ mod tests {
         let snapshot = published_snapshot(&store);
 
         let names = vec![tine_core::refs::page_key("K")];
-        let candidates = snapshot.reference_candidate_pages(&names, ReferenceKind::Plain);
+        let candidates = snapshot.reference_candidate_pages(&names);
         assert!(candidates.indexed);
         assert!(candidate_paths(&candidates).contains(&"pages/Source.md".to_string()));
         assert!(candidates.pages.len() < candidates.full_page_count);
@@ -6239,8 +6236,8 @@ mod tests {
         let snapshot = published_snapshot(&store);
         let build_ms = started.elapsed().as_millis();
         let names = vec![tine_core::refs::page_key("Needle")];
-        let explicit = snapshot.reference_candidate_pages(&names, ReferenceKind::Explicit);
-        let plain = snapshot.reference_candidate_pages(&names, ReferenceKind::Plain);
+        let explicit = explicit_pages(&snapshot, &names);
+        let plain = snapshot.reference_candidate_pages(&names);
         let estimated_bytes = {
             let index = snapshot.reference_candidate_index.read().unwrap();
             index.signatures.len() * std::mem::size_of::<Arc<Vec<BlockSignature>>>()

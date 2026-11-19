@@ -144,14 +144,19 @@ day answers to.
 **Counts.** All pages shows, per page, the number of blocks the page's
 unfiltered Linked References panel lists: a block once however many of the
 page's names it uses, never a block of the page's own panel or of the Favorites
-arrangement page (`WholeGraph::page_backlink_counts`). The snapshot membership
-owner is the one answerer of "which blocks reference this page": it supplies
-both panel selection and cardinalities. Every listed page, and every spelling a
-reference target names (a property key whose fold another title also reaches
-included), is registered under the names its panel resolver gives it. An
-opening with no registered panel (a name only a property key fold reaches)
-reads the panels its names and folds reach, plus those panels' own pages,
-filtered by the parser-owned evidence. Parser-owned reference
+arrangement page (`WholeGraph::page_backlink_counts`). One membership rule
+(`member_rows`) answers both: a block belongs to a panel when one of its
+explicit reference targets is one of the panel's names (or a property key
+folding like one) and the block is not on the panel's own page. The counts
+read builds the snapshot membership over every source; a panel reads it when it
+is resident and holds that exact panel, and otherwise applies the same rule to
+only the sources the explicit index lists for its names and their folded
+property keys (a first Linked References open never builds the graph-wide
+membership). A panel's members depend only on its names and own page, so both
+paths give one answer. Every listed page, and every spelling a reference target
+names (a property key whose fold another title also reaches included), is
+registered under the names its panel resolver gives it, so every All pages row
+has its panel. Parser-owned reference
 evidence contributes one source/block membership per reached panel, deduplicated
 across names. Source arrays and reverse panel leaves share immutable snapshots;
 publications replace changed contributions and registrations. A target can reach

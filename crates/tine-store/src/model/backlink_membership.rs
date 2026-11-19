@@ -9,6 +9,11 @@ use tine_core::reference_evidence::{visit_reference_targets, ReferenceTarget};
 use tine_core::refs;
 
 const CHUNK: u32 = 128;
+#[cfg(test)]
+thread_local! {
+    /// Sources a one-panel membership read (cost probe).
+    pub(crate) static ONE_PANEL_SOURCE_VISITS: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
+}
 type Contributions = Arc<[(u32, u32)]>;
 
 fn visit_source_blocks(
@@ -33,6 +38,70 @@ fn visit_source_blocks(
         visit(block, ordinal);
         ordinal += 1;
         stack.extend(block.children.iter().rev());
+    }
+}
+
+/// The one membership rule. Block `ordinal` of `entry` belongs to each panel
+/// `reach` names for one of its explicit reference targets (a page key DIRECT,
+/// a folded property key PROPERTY), unless the panel's own page is the source.
+/// The Favorites page contributes nothing. The source is named as the app
+/// names it ([`ReadSnapshot::page_name`]: a day by the spelling that
+/// identifies it). Sorted, unique (panel, ordinal).
+fn member_rows(
+    graph: &ReadSnapshot,
+    entry: &PageEntry,
+    doc: &Document,
+    reach: impl Fn(&str, u8, &mut dyn FnMut(u32, &str)),
+) -> Contributions {
+    let config = graph.config();
+    if config
+        .favorites_page
+        .as_deref()
+        .is_some_and(|name| refs::page_key(name) == refs::page_key(&entry.name))
+    {
+        return Arc::from([]);
+    }
+    let source = refs::page_key(&graph.page_name(entry));
+    let mut rows = Vec::new();
+    visit_source_blocks(entry, doc, config, |block, ordinal| {
+        for reference in block.projection().reference_source().explicit {
+            visit_reference_targets(reference, config, |target| {
+                let (key, flag) = match target {
+                    ReferenceTarget::PageKey(key) => (key, DIRECT),
+                    ReferenceTarget::PropertyKey(key) => (key, PROPERTY),
+                };
+                reach(key, flag, &mut |panel, own| {
+                    if own != source {
+                        rows.push((panel, ordinal));
+                    }
+                });
+                false
+            });
+        }
+    });
+    rows.sort_unstable();
+    rows.dedup();
+    rows.into()
+}
+
+/// One Linked References panel's members as (source slot, block ordinal),
+/// sorted; ordinals 0/1 are the header and preamble, roots start at 2.
+pub(crate) struct PanelMembers(Vec<(u32, u32)>);
+
+impl PanelMembers {
+    /// O(log members).
+    pub(crate) fn contains(&self, slot: usize, ordinal: u32) -> bool {
+        self.0.binary_search(&(slot as u32, ordinal)).is_ok()
+    }
+    /// The member source slots, ascending, each once.
+    pub(crate) fn sources(&self) -> impl Iterator<Item = usize> + '_ {
+        let mut last = None;
+        self.0.iter().filter_map(move |&(slot, _)| {
+            (last != Some(slot)).then(|| {
+                last = Some(slot);
+                slot as usize
+            })
+        })
     }
 }
 
@@ -245,15 +314,6 @@ impl Reach {
     }
 }
 
-/// The memberships one Linked References opening reads
-/// ([`BacklinkMembership::selection`]).
-pub(crate) struct PanelSelection {
-    panels: Vec<u32>,
-    /// Source slots read whole: own pages of reached panels (never set for a
-    /// registered opening).
-    whole: BTreeSet<usize>,
-}
-
 pub(crate) struct BacklinkMembership {
     sources: Chunks<Contributions>,
     panels: Chunks<Option<Panel>>,
@@ -270,9 +330,6 @@ pub(crate) struct BacklinkMembership {
     pub(crate) full_builds: usize,
     #[cfg(test)]
     pub(crate) snapshot_reads: std::sync::atomic::AtomicUsize,
-    /// Source pages handed to panel materializers (cost counter).
-    #[cfg(test)]
-    pub(crate) candidate_sources: std::sync::atomic::AtomicUsize,
 }
 
 impl BacklinkMembership {
@@ -320,17 +377,6 @@ impl BacklinkMembership {
                 });
             }
         });
-    }
-    /// Membership evidence grouped by source, for the panel's materializer.
-    /// O(memberships) output; the source and block ordinals are authoritative.
-    pub(crate) fn sources_for_panel(&self, id: u32) -> BTreeMap<usize, Vec<u32>> {
-        let mut sources = BTreeMap::<usize, Vec<u32>>::new();
-        if let Some(panel) = self.panel(id) {
-            panel.members.visit(&mut |(source, block)| {
-                sources.entry(source as usize).or_default().push(block)
-            });
-        }
-        sources
     }
     fn intern(&self, name: &str) -> Arc<str> {
         self.names
@@ -452,75 +498,20 @@ impl BacklinkMembership {
             }
         }
     }
-    /// The memberships an opening reads. An opening registered as a panel
-    /// (its complete name set and self exclusion agree) reads exactly that
-    /// panel. Any other opening (a name no file claims and no reference
-    /// spells, reached only through a property key fold, or an alias whose
-    /// self exclusion differs) reads every panel its names and their property
-    /// folds reach, plus those panels' own pages, whose blocks they exclude
-    /// but this opening does not. The panel's parser evidence then keeps the
-    /// blocks that name the opening (CM D3: the membership is the one
-    /// answerer; the panel filters it). O(names + reached panels).
-    pub(crate) fn selection(
-        &self,
-        graph: &ReadSnapshot,
-        names: &[String],
-        own: &str,
-    ) -> PanelSelection {
+    /// Resolve the requested panel to its already registered membership.
+    /// Alias-only openings share a real panel only when its self exclusion
+    /// and complete name set agree. O(names and reached panels).
+    pub(crate) fn selection(&self, names: &[String], own: &str) -> Option<u32> {
         let own = refs::page_key(own);
-        let exact = names.first().and_then(|first| {
-            self.names.get(first.as_str())?.ids(DIRECT).find(|&id| {
+        self.names
+            .get(names.first()?.as_str())?
+            .ids(DIRECT)
+            .find(|&id| {
                 self.panel(id).is_some_and(|panel| {
                     panel.own.as_ref() == own
                         && panel.names.len() == names.len()
                         && panel.names.iter().zip(names).all(|(a, b)| a.as_ref() == b)
                 })
-            })
-        });
-        if let Some(id) = exact {
-            return PanelSelection {
-                panels: vec![id],
-                whole: BTreeSet::new(),
-            };
-        }
-        let mut panels = BTreeSet::new();
-        for name in names {
-            for (key, flag) in [(name.clone(), DIRECT), (property_key_norm(name), PROPERTY)] {
-                if let Some(reach) = self.names.get(key.as_str()) {
-                    panels.extend(reach.ids(flag));
-                }
-            }
-        }
-        let mut whole = BTreeSet::new();
-        for &id in &panels {
-            let Some(panel) = self.panel(id) else {
-                continue;
-            };
-            for path in graph.real_page_names.paths(&panel.own) {
-                if let Some(&slot) = graph
-                    .list
-                    .get_path(path)
-                    .and_then(|entry| graph.pages.positions.get(entry.rel_path_str()))
-                {
-                    whole.insert(slot);
-                }
-            }
-        }
-        PanelSelection {
-            panels: panels.into_iter().collect(),
-            whole,
-        }
-    }
-    /// Whether the selection admits one source block; ordinals 0/1 are the
-    /// header and preamble, roots start at 2. One binary search over the
-    /// source's pairs per selected panel (one for a registered opening).
-    pub(crate) fn admits(&self, selection: &PanelSelection, slot: usize, ordinal: u32) -> bool {
-        selection.whole.contains(&slot)
-            || self.sources.get(slot as u32).is_some_and(|rows| {
-                selection
-                    .panels
-                    .iter()
-                    .any(|&panel| rows.binary_search(&(panel, ordinal)).is_ok())
             })
     }
     /// Cardinalities by the existing CM-COUNT panel identity. O(panels).
@@ -547,48 +538,18 @@ impl BacklinkMembership {
         entry: &PageEntry,
         doc: &Document,
     ) -> Contributions {
-        let config = graph.config();
-        if config
-            .favorites_page
-            .as_deref()
-            .is_some_and(|name| refs::page_key(name) == refs::page_key(&entry.name))
-        {
-            return Arc::from([]);
-        }
-        let source = refs::page_key(&crate::query::page_handle(
-            self.resolver.format(),
-            &entry.name,
-            entry.date_key,
-        ));
-        let mut rows = Vec::new();
-        let mut collect = |block: &DocBlock, ordinal| {
-            for reference in block.projection().reference_source().explicit {
-                visit_reference_targets(reference, config, |target| {
-                    let (key, flag) = match target {
-                        ReferenceTarget::PageKey(key) => (key, DIRECT),
-                        ReferenceTarget::PropertyKey(key) => (key, PROPERTY),
-                    };
-                    for panel in self
-                        .names
-                        .get(key)
-                        .into_iter()
-                        .flat_map(|reach| reach.ids(flag))
-                    {
-                        if self
-                            .panel(panel)
-                            .is_some_and(|panel| panel.own.as_ref() != source)
-                        {
-                            rows.push((panel, ordinal));
-                        }
-                    }
-                    false
-                });
+        member_rows(graph, entry, doc, |key, flag, push| {
+            for id in self
+                .names
+                .get(key)
+                .into_iter()
+                .flat_map(|reach| reach.ids(flag))
+            {
+                if let Some(panel) = self.panel(id) {
+                    push(id, &panel.own);
+                }
             }
-        };
-        visit_source_blocks(entry, doc, config, &mut collect);
-        rows.sort_unstable();
-        rows.dedup();
-        rows.into()
+        })
     }
     fn replace_source(&mut self, slot: usize, rows: Contributions, touched: &mut BTreeSet<u32>) {
         let old = self.sources.get(slot as u32).cloned().unwrap_or_default();
@@ -628,8 +589,6 @@ impl BacklinkMembership {
             full_builds: 1,
             #[cfg(test)]
             snapshot_reads: std::sync::atomic::AtomicUsize::new(0),
-            #[cfg(test)]
-            candidate_sources: std::sync::atomic::AtomicUsize::new(0),
         };
         for (entry, _) in graph.pages.iter() {
             // A day by the name that identifies it (`page_handle`).
@@ -679,8 +638,6 @@ impl BacklinkMembership {
             full_builds: 0,
             #[cfg(test)]
             snapshot_reads: std::sync::atomic::AtomicUsize::new(0),
-            #[cfg(test)]
-            candidate_sources: std::sync::atomic::AtomicUsize::new(0),
         };
         let mut seeds = BTreeSet::new();
         let mut sources = BTreeSet::new();
@@ -937,31 +894,78 @@ impl ReadSnapshot {
     pub(crate) fn resident_backlink_memberships(&self) -> Option<&BacklinkMembership> {
         self.backlink_membership.get()
     }
-    /// Candidate source pages from the selection's reverse membership
-    /// evidence. O(source pages in the selected panels), with keyed access to
-    /// the held documents.
-    pub(crate) fn explicit_panel_candidate_pages(
+    /// The Linked References panel of the opening whose equivalent names are
+    /// `names` and whose own page is `own`, with its member source pages.
+    ///
+    /// A resident snapshot membership (built by an All pages counts read)
+    /// serves a registered panel: O(members). Otherwise the same rule
+    /// ([`member_rows`]) runs over the sources the explicit index lists for
+    /// the names and their folded property keys, for this one panel only:
+    /// O(names + blocks of those sources), never a graph-wide build. A panel's
+    /// members depend only on its names and own page, so both give one answer.
+    pub(crate) fn explicit_panel(
         &self,
-        selection: &PanelSelection,
-    ) -> ReferenceCandidatePages {
-        let answer = self.scan_all_backlink_memberships();
-        let mut slots = selection.whole.clone();
-        for &panel in &selection.panels {
-            slots.extend(answer.sources_for_panel(panel).into_keys());
-        }
-        #[cfg(test)]
-        answer
-            .candidate_sources
-            .fetch_add(slots.len(), std::sync::atomic::Ordering::Relaxed);
-        ReferenceCandidatePages::unfiltered(
-            slots
-                .into_iter()
+        names: &[String],
+        own: &str,
+    ) -> (PanelMembers, ReferenceCandidatePages) {
+        let resident = self.backlink_membership.get().and_then(|answer| {
+            let panel = answer.panel(answer.selection(names, own)?)?;
+            let mut rows = Vec::with_capacity(panel.members.len() as usize);
+            panel.members.visit(&mut |row| rows.push(row));
+            Some(PanelMembers(rows))
+        });
+        let members = resident.unwrap_or_else(|| self.one_panel_members(names, own));
+        let pages = ReferenceCandidatePages::unfiltered(
+            members
+                .sources()
                 .filter_map(|slot| self.pages.get(slot).cloned())
                 .collect(),
             true,
             #[cfg(test)]
             self.pages.len(),
-        )
+        );
+        (members, pages)
+    }
+    fn one_panel_members(&self, names: &[String], own: &str) -> PanelMembers {
+        let own = refs::page_key(own);
+        let folds: BTreeSet<String> = names.iter().map(|name| property_key_norm(name)).collect();
+        // A property-key reference is indexed under its folded spelling's key.
+        let keys: Vec<String> = names
+            .iter()
+            .cloned()
+            .chain(folds.iter().map(|fold| refs::page_key(fold)))
+            .collect::<BTreeSet<_>>()
+            .into_iter()
+            .collect();
+        let slots: BTreeSet<usize> = self
+            .explicit_index
+            .candidates(&keys)
+            .iter()
+            .filter_map(|path| {
+                let entry = self.list.get_path(path)?;
+                self.pages.positions.get(entry.rel_path_str()).copied()
+            })
+            .collect();
+        let mut rows = Vec::new();
+        for slot in slots {
+            let Some((entry, doc)) = self.pages.get(slot) else {
+                continue;
+            };
+            #[cfg(test)]
+            ONE_PANEL_SOURCE_VISITS.with(|count| count.set(count.get() + 1));
+            let reached = member_rows(self, entry, doc, |key, flag, push| {
+                let set = if flag == DIRECT {
+                    names.iter().any(|name| name == key)
+                } else {
+                    folds.contains(key)
+                };
+                if set {
+                    push(0, &own);
+                }
+            });
+            rows.extend(reached.iter().map(|&(_, ordinal)| (slot as u32, ordinal)));
+        }
+        PanelMembers(rows)
     }
     pub(super) fn carry_backlink_memberships(&self, old: &Self, paths: &[String]) {
         if let Some(before) = old.backlink_membership.get() {

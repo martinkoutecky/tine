@@ -6,6 +6,23 @@ use tine_core::date::{JournalDate, JournalFormat};
 struct Counting;
 thread_local! {
     static ALLOCATIONS: Cell<Option<usize>> = const { Cell::new(None) };
+    /// This thread's net live bytes and their high-water mark while measuring.
+    static BYTES: Cell<Option<(isize, isize)>> = const { Cell::new(None) };
+}
+fn grow(delta: isize) {
+    let _ = BYTES.try_with(|bytes| {
+        if let Some((live, peak)) = bytes.get() {
+            let live = live + delta;
+            bytes.set(Some((live, peak.max(live))));
+        }
+    });
+}
+/// Net live bytes and peak of what `f` allocated on this thread (PC-9 budgets).
+pub fn live_bytes<T>(f: impl FnOnce() -> T) -> (T, usize, usize) {
+    BYTES.with(|bytes| bytes.set(Some((0, 0))));
+    let out = f();
+    let (live, peak) = BYTES.with(|bytes| bytes.replace(None).unwrap());
+    (out, live.max(0) as usize, peak.max(0) as usize)
 }
 fn count() {
     let _ = ALLOCATIONS.try_with(|count| {
@@ -17,13 +34,16 @@ fn count() {
 unsafe impl GlobalAlloc for Counting {
     unsafe fn alloc(&self, layout: Layout) -> *mut u8 {
         count();
+        grow(layout.size() as isize);
         unsafe { System.alloc(layout) }
     }
     unsafe fn dealloc(&self, pointer: *mut u8, layout: Layout) {
+        grow(-(layout.size() as isize));
         unsafe { System.dealloc(pointer, layout) }
     }
     unsafe fn realloc(&self, pointer: *mut u8, layout: Layout, size: usize) -> *mut u8 {
         count();
+        grow(size as isize - layout.size() as isize);
         unsafe { System.realloc(pointer, layout, size) }
     }
 }

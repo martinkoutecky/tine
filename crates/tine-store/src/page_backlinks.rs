@@ -478,13 +478,13 @@ mod tests {
     }
 
     /// CM D3: an opening no panel is registered for (`done_at`: no file, no
-    /// reference spells it, `done-at::` reaches it by its property fold) reads
-    /// the panels its names and folds reach, filtered by the parser evidence,
-    /// so it lists exactly what the reference rule names, including a block
-    /// on a reached panel's own page that the panel itself excludes. Before,
-    /// these openings took a second, parser-evidence-only scan.
+    /// reference spells it, `done-at::` reaches it by its property fold) is
+    /// answered by the same membership rule applied to its own names, so it
+    /// lists exactly what the reference rule names, including a block on
+    /// the page `done-at` that this opening, unlike that page's own panel,
+    /// does not exclude.
     #[test]
-    fn an_unregistered_opening_reads_the_reached_memberships_exactly() {
+    fn an_unregistered_opening_lists_exactly_what_the_reference_rule_names() {
         let root = tempfile::tempdir().unwrap();
         std::fs::create_dir(root.path().join("pages")).unwrap();
         let write = |path: &str, text: &str| std::fs::write(root.path().join(path), text).unwrap();
@@ -539,19 +539,23 @@ mod tests {
     }
 
     /// CM D3 cost counter: one membership build per snapshot serves both
-    /// surfaces. A panel open after the counts (or the counts after a panel)
-    /// builds nothing, hands its materializer only the sources the selected
-    /// panel names (1 of 104 pages here) and constructs evidence only for the
-    /// listed blocks; an unregistered opening reads only the reached panels'
-    /// sources and own pages.
+    /// surfaces. A panel open after the counts builds nothing, hands its
+    /// materializer only the source the panel names (1 of 104 pages here) and
+    /// constructs evidence only for the listed blocks; an opening nothing
+    /// names hands it no source.
     #[test]
     fn one_membership_build_serves_the_panel_and_the_counts() {
-        use std::sync::atomic::Ordering::Relaxed;
         let (_root, store) = fixture(100, 60);
         let view = store.whole_graph().unwrap();
         let work = view.graph.resident_backlink_memberships().unwrap();
         assert_eq!(work.full_builds, 1, "the fixture's counts read built it");
         assert_eq!(work.source_visits, view.graph.pages.len());
+        let named = |name: &str| {
+            let names = [tine_core::refs::page_key(name)];
+            view.graph.explicit_panel(&names, name).1.pages.len()
+        };
+        assert_eq!(named("Target"), 1, "only Source.md");
+        assert_eq!(named("never named"), 0);
         tine_core::reference_evidence::reset_occurrence_constructions();
         let groups = view.backlinks("Target").unwrap();
         assert_eq!(
@@ -561,14 +565,11 @@ mod tests {
         );
         let work = view.graph.resident_backlink_memberships().unwrap();
         assert_eq!(work.full_builds, 1, "the panel reuses the counts' build");
-        assert_eq!(work.candidate_sources.load(Relaxed), 1, "only Source.md");
         assert_eq!(
             tine_core::reference_evidence::occurrence_constructions(),
             2,
             "evidence for the listed block's two names only"
         );
-        let _ = view.backlinks("never named");
-        assert_eq!(work.candidate_sources.load(Relaxed), 1, "nothing reached");
         let _ = view.page_backlink_counts();
         assert_eq!(work.full_builds, 1);
     }
@@ -656,5 +657,212 @@ mod tests {
                 "{key}"
             );
         }
+    }
+
+    /// The rich graph the cold/resident panel agreement runs on: aliases (one
+    /// without a file, a chain), two date spellings, property keys (one folding
+    /// to another title), namespaces, self references and the Favorites page.
+    fn rich_graph() -> tempfile::TempDir {
+        let root = tempfile::tempdir().unwrap();
+        for dir in ["pages", "journals", "logseq"] {
+            std::fs::create_dir(root.path().join(dir)).unwrap();
+        }
+        let write = |path: &str, text: &str| std::fs::write(root.path().join(path), text).unwrap();
+        write("logseq/config.edn", "{:tine/favorites-page \"Favs\"}");
+        write("pages/Favs.md", "- [[Hub]]\n");
+        write("pages/Hub.md", "alias:: H\n\n- [[Hub]] and [[H]] self\n");
+        write("pages/H.md", "- the H file\n");
+        write("pages/Machine Learning.md", "alias:: ML\n\n- about it\n");
+        write("pages/B.md", "alias:: C\n\n- b\n");
+        write("pages/C.md", "alias:: D\n\n- c\n");
+        write("pages/Done At.md", "- done at [[Hub]]\n  done-at:: own\n");
+        write("pages/Space%2FChild.md", "- child [[Space]]\n");
+        write("journals/2026_10_27.md", "- the day [[Hub]]\n");
+        write(
+            "pages/Notes.md",
+            concat!(
+                "link:: [[Hub]]\n\n",
+                "- see [[ML]] and #Hub\n",
+                "  - [[Machine Learning]] [[H]]\n",
+                "- chain [[C]] [[D]]\n",
+                "- on [[Oct 27th, 2026]]\n",
+                "- on [[2026-10-27]] [[Space/Child]]\n",
+                "- task\n  done-at:: today\n",
+                "- `[[Hub]]` in code\n",
+                "- [[Ref only]] [[done at]]\n",
+            ),
+        );
+        root
+    }
+
+    fn panel_answer(view: &crate::store::WholeGraph, name: &str) -> Vec<(String, Vec<String>)> {
+        view.backlinks(name)
+            .unwrap()
+            .iter()
+            .map(|group| {
+                (
+                    group.page.clone(),
+                    group.blocks.iter().map(|block| block.raw.clone()).collect(),
+                )
+            })
+            .collect()
+    }
+
+    /// Fix for the first Linked References open (card …J-F1k): a panel read on
+    /// a snapshot without the resident membership answers from the panel's own
+    /// sources through the same membership rule, and agrees with the resident
+    /// membership the All pages counts build, for every kind of opening.
+    #[test]
+    fn a_cold_panel_open_agrees_with_the_resident_membership_for_every_opening() {
+        let root = rich_graph();
+        let openings = [
+            "Hub",
+            "hub",
+            "H",
+            "Machine Learning",
+            "ML",
+            "B",
+            "C",
+            "D",
+            "Done At",
+            "done-at",
+            "done_at",
+            "done at",
+            "Space",
+            "Space/Child",
+            "2026-10-27",
+            "Oct 27th, 2026",
+            "Ref only",
+            "link",
+            "Notes",
+            "Favs",
+            "Nothing names this",
+        ];
+        let cold = |name: &str| {
+            let (store, _, _) = crate::Store::open(root.path(), Default::default()).unwrap();
+            store.stop_watcher_for_tests();
+            let view = store.whole_graph().unwrap();
+            let answer = panel_answer(&view, name);
+            assert!(
+                view.graph.resident_backlink_memberships().is_none(),
+                "{name}: a panel read builds no graph-wide membership"
+            );
+            answer
+        };
+        let (store, _, _) = crate::Store::open(root.path(), Default::default()).unwrap();
+        store.stop_watcher_for_tests();
+        let view = store.whole_graph().unwrap();
+        let (files, references) = view.page_backlink_counts();
+        assert!(view.graph.resident_backlink_memberships().is_some());
+        let mut listed = 0;
+        for name in openings {
+            let resident = panel_answer(&view, name);
+            listed += resident
+                .iter()
+                .map(|(_, blocks)| blocks.len())
+                .sum::<usize>();
+            assert_eq!(cold(name), resident, "{name}: cold vs resident panel");
+        }
+        assert!(listed >= 20, "the openings list blocks: {listed}");
+        // Every row still equals its panel, opened cold.
+        let paths: HashMap<String, String> = view
+            .list
+            .iter()
+            .filter_map(|entry| Some((entry.rel_path.as_ref()?.to_string(), entry.name.clone())))
+            .collect();
+        for (path, count) in files {
+            let panel: usize = cold(&paths[&path]).iter().map(|(_, b)| b.len()).sum();
+            assert_eq!(count, panel, "{path}: count vs cold panel");
+        }
+        let mut disagreements = Vec::new();
+        for (name, count) in references {
+            let panel: usize = cold(&name).iter().map(|(_, b)| b.len()).sum();
+            if count != panel {
+                disagreements.push((name, count, panel));
+            }
+        }
+        // The reference-only row `done-at` (a property key folding like the
+        // file title `Done At`) counts its panel's blocks (CM D3: it had no
+        // registered panel and read 0).
+        assert!(disagreements.is_empty(), "{disagreements:?}");
+    }
+
+    /// Counter for the first open: a cold panel read visits only the sources
+    /// the explicit index lists for its names (here Source.md and Target.md's
+    /// self link), not the 100 unrelated pages, and builds no membership.
+    #[test]
+    fn a_cold_panel_open_visits_only_its_sources() {
+        let root = tempfile::tempdir().unwrap();
+        std::fs::create_dir(root.path().join("pages")).unwrap();
+        std::fs::write(
+            root.path().join("pages/Target.md"),
+            "alias:: Twin\n\n- [[Target]]\n",
+        )
+        .unwrap();
+        std::fs::write(
+            root.path().join("pages/Source.md"),
+            "- [[Target]] [[Twin]]\n- plain\n",
+        )
+        .unwrap();
+        for at in 0..100 {
+            std::fs::write(
+                root.path().join(format!("pages/Unrelated {at}.md")),
+                "- [[Other]]\n",
+            )
+            .unwrap();
+        }
+        let (store, _, _) = crate::Store::open(root.path(), Default::default()).unwrap();
+        store.stop_watcher_for_tests();
+        let view = store.whole_graph().unwrap();
+        crate::model::ONE_PANEL_SOURCE_VISITS.with(|c| c.set(0));
+        assert_eq!(
+            panel_answer(&view, "Twin"),
+            vec![("Source".to_owned(), vec!["[[Target]] [[Twin]]".to_owned()])]
+        );
+        assert_eq!(crate::model::ONE_PANEL_SOURCE_VISITS.with(|c| c.get()), 2);
+        assert!(view.graph.resident_backlink_memberships().is_none());
+        // An opening nothing names reads no source.
+        crate::model::ONE_PANEL_SOURCE_VISITS.with(|c| c.set(0));
+        assert!(panel_answer(&view, "Ghost").is_empty());
+        assert_eq!(crate::model::ONE_PANEL_SOURCE_VISITS.with(|c| c.get()), 0);
+    }
+
+    /// Fix for the outside-edit refresh with All pages counts resident (card
+    /// …J-F3s): the fileless-day support the counts read builds is patched from
+    /// the changed page alone. Neither snapshot builds the graph-wide per-page
+    /// referenced-name index (before the fix both did, O(graph) per snapshot),
+    /// for an outside edit and for an in-app save alike.
+    #[test]
+    fn an_edit_after_the_counts_read_patches_without_a_graph_wide_name_index() {
+        let (root, store) = fixture(100, 1);
+        let held = store.whole_graph().unwrap();
+        assert!(held.graph.day_support_built(), "the counts read built it");
+        std::fs::write(
+            root.path().join("pages/Source.md"),
+            "- [[Target]] [[Twin]]\n- outside [[Other]] [[Fresh name]]\n",
+        )
+        .unwrap();
+        store.refresh(crate::Depth::Stamps).unwrap();
+        let outside = store.whole_graph().unwrap();
+        assert!(outside.graph.day_support_built(), "carried, not dropped");
+        save(&store, "pages/Source.md", |page| {
+            page.blocks[0].raw = "plain [[Target]] [[Another name]]".to_owned()
+        });
+        let saved = store.whole_graph().unwrap();
+        assert!(saved.graph.day_support_built());
+        for (label, view) in [("held", &held), ("outside", &outside), ("saved", &saved)] {
+            assert!(
+                !view.graph.referenced_name_index_built(),
+                "{label}: no graph-wide referenced-name index"
+            );
+        }
+        // The patched counts equal a fresh store's on the same files.
+        let patched = saved.page_backlink_counts();
+        let (fresh, _, _) = crate::Store::open(root.path(), Default::default()).unwrap();
+        fresh.stop_watcher_for_tests();
+        assert_eq!(patched, fresh.whole_graph().unwrap().page_backlink_counts());
+        let references: Vec<&str> = patched.1.iter().map(|(name, _)| name.as_str()).collect();
+        assert!(references.contains(&"Another name"), "{references:?}");
+        assert!(references.contains(&"Fresh name"), "{references:?}");
     }
 }
