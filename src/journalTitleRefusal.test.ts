@@ -1,10 +1,12 @@
 // D-20261119-YL: a configured journal title format that names no single day is
 // not used. Titles render in the default; the configured format still feeds
 // the one date parser; the graph says so once per load (no persisted state).
-import { afterEach, beforeAll, describe, expect, it } from "vitest";
+import { afterEach, beforeAll, describe, expect, it, vi } from "vitest";
+import { backend } from "./backend";
 import { applyConfigDerivedState } from "./graph";
 import { setGraphMeta } from "./graphSession";
-import { journalTitle, journalTitleRefusalMessage, journalTitleStatus, parseJournalTitle, setJournalFormats } from "./journal";
+import { graphTitleRefusal, journalTitle, journalTitleRefusalMessage, journalTitleStatus, parseJournalTitle, setJournalFormats } from "./journal";
+import { changeJournalTitleFormat } from "./ui";
 import { renderEnglish } from "./i18n";
 import { initParser } from "./render/parse";
 import { dismissToast, toasts } from "./toasts";
@@ -46,27 +48,82 @@ describe("the effective journal title format", () => {
   });
 });
 
+describe("the frontend asks with the configured strings as written (review F3)", () => {
+  it("passes a whitespace or NBSP file format through, so the frontend and Rust pick one effective title", () => {
+    for (const file of [" ", "\t", "\r\n", "\u00a0"]) {
+      // Rust keeps a blank-looking filename pattern as written, so the
+      // configured `yyyy_dd_MM` has no competing default filename route.
+      setJournalFormats("yyyy_dd_MM", file);
+      const status = journalTitleStatus(file, "yyyy_dd_MM");
+      expect(status, JSON.stringify(file)).toEqual({ effective: "yyyy_dd_MM", refusal: null });
+      expect(journalTitle(new Date(2026, 10, 2)), JSON.stringify(file)).toBe("2026_02_11");
+      expect(graphTitleRefusal({ journal_page_title_format: "yyyy_dd_MM", journal_file_name_format: file })).toBeNull();
+    }
+  });
+});
+
 describe("the notice", () => {
   const notices = () => toasts().filter((toast) => toast.message.startsWith("Journal titles use"));
+  const shown = () => notices().map((toast) => toast.message);
 
-  it("is shown once per graph load while the configured format is refused", () => {
+  it("is shown once per graph load while the configured format is refused, and auto-dismisses", () => {
+    vi.useFakeTimers();
     applyConfigDerivedState(meta("MM-dd"), null);
-    expect(notices().map((toast) => [toast.kind, toast.message])).toEqual([[
+    expect(notices().map((toast) => [toast.kind, !!toast.sticky, toast.message])).toEqual([[
       "warn",
+      false,
       'Journal titles use "MMM do, yyyy", not "MM-dd" from config.edn: that format writes no year, so one title would name the same date in every year. Your files are unchanged.',
     ]]);
-    // A later config publication in the same load says nothing more.
-    applyConfigDerivedState(meta("dd-MM"), meta("MM-dd"));
-    applyConfigDerivedState({ ...meta("dd-MM"), favorites: ["A"] } as GraphMeta, meta("dd-MM"));
+    // A later publication with the same diagnostic says nothing more.
+    applyConfigDerivedState({ ...meta("MM-dd"), favorites: ["A"] } as GraphMeta, meta("MM-dd"));
+    applyConfigDerivedState({ ...meta("MM-dd"), journal_file_name_format: "yyyy_MM_dd" } as GraphMeta, meta("MM-dd"));
     expect(notices()).toHaveLength(1);
-    // The next graph load says it again.
-    applyConfigDerivedState(meta("MM-dd", "/other"), null);
-    expect(notices()).toHaveLength(2);
+    vi.advanceTimersByTime(3300);
+    vi.useRealTimers();
+    expect(notices()).toHaveLength(0);
+    applyConfigDerivedState({ ...meta("MM-dd"), favorites: ["B"] } as GraphMeta, meta("MM-dd"));
+    expect(notices()).toHaveLength(0);
+  });
+
+  it("retires when the diagnostic changes or the setting is corrected", () => {
+    applyConfigDerivedState(meta("MM-dd"), null);
+    applyConfigDerivedState(meta("dd-MM"), meta("MM-dd"));
+    expect(shown()).toHaveLength(1);
+    expect(shown()[0]).toContain('not "dd-MM"');
+    applyConfigDerivedState(meta("yyyy-MM-dd"), meta("dd-MM"));
+    expect(notices()).toHaveLength(0);
+  });
+
+  it("retires on a graph switch; the next load says its own once", () => {
+    applyConfigDerivedState(meta("MM-dd"), null);
+    applyConfigDerivedState(meta("dd-MM", "/other"), null);
+    expect(shown()).toHaveLength(1);
+    expect(shown()[0]).toContain('not "dd-MM"');
+    applyConfigDerivedState(meta("yyyy-MM-dd", "/third"), null);
+    expect(notices()).toHaveLength(0);
   });
 
   it("is not shown for a format that names one day", () => {
     applyConfigDerivedState(meta("yyyy-MM-dd"), null);
     applyConfigDerivedState(meta("MMM do, yyyy"), meta("yyyy-MM-dd"));
     expect(notices()).toHaveLength(0);
+  });
+
+  it("is shown after a successful Settings save of a refused preset (no config event reaches the writer)", async () => {
+    const loaded = await backend().loadGraph("");
+    if (loaded.kind === "focused_existing") throw new Error("no graph metadata");
+    const graph = { ...loaded.meta, root: "/graph", journal_page_title_format: "MMM do, yyyy", journal_file_name_format: "MM-dd-yyyy" };
+    applyConfigDerivedState(graph, null);
+    expect(notices()).toHaveLength(0);
+    let finish!: (notes: string[]) => void;
+    vi.spyOn(backend(), "setJournalTitleFormat").mockImplementationOnce(() => new Promise<string[]>((resolve) => { finish = resolve; }));
+    changeJournalTitleFormat("dd-MM-yyyy");
+    expect(notices()).toHaveLength(0);
+    finish([]);
+    await Promise.resolve();
+    await Promise.resolve();
+    expect(shown()).toHaveLength(1);
+    expect(shown()[0]).toContain('not "dd-MM-yyyy"');
+    vi.restoreAllMocks();
   });
 });

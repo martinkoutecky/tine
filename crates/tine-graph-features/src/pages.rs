@@ -773,6 +773,7 @@ fn rename_transaction<'s>(
         mut renamed,
         moved_titles_to_rebind,
         merge,
+        survivor_read,
         ref_merge,
         candidates,
         mut reads,
@@ -794,6 +795,7 @@ fn rename_transaction<'s>(
             store,
             src,
             dst,
+            survivor_read,
             Some(MergeNames {
                 links: &lookup,
                 rewritten: &rewritten_names,
@@ -1317,7 +1319,7 @@ pub fn merge_pages(store: &Store, host: &PageHost, src_rel: &str, dst_rel: &str)
     // blocks), from one draft, so a crash between them completes the
     // deletion at relaunch rather than appending the blocks twice.
     let plan = || {
-        let survivor = merged_survivor(store, &src_id, &dst_id, None)?;
+        let survivor = merged_survivor(store, &src_id, &dst_id, None, None)?;
         let mut op = crate::retained::plan(transaction(&survivor))?;
         op.moves.push((dst_id.clone(), src_id.clone()));
         Ok(Some(op))
@@ -1346,10 +1348,13 @@ struct Survivor {
 }
 
 /// Realize the survivor from revision-guarded input bytes; no DTO serialization.
+/// `dst_read`: the survivor's bytes and revision a plan already read (its
+/// spelling was chosen from them); otherwise the survivor is read here.
 fn merged_survivor(
     store: &Store,
     src: &PageId,
     dst: &PageId,
+    dst_read: Option<(String, FileRev)>,
     renames: Option<MergeNames<'_>>,
 ) -> io::Result<Survivor> {
     let org = Format::from_path(src.as_str().as_ref()) == Format::Org;
@@ -1361,7 +1366,10 @@ fn merged_survivor(
         .error());
     }
     let (src_text, src_rev) = read_text(store, &src.file())?;
-    let (dst_text, dst_rev) = read_text(store, &dst.file())?;
+    let (dst_text, dst_rev) = match dst_read {
+        Some(read) => read,
+        None => read_text(store, &dst.file())?,
+    };
     let format = Format::from_path(src.as_str().as_ref());
     for (id, text) in [(src, &src_text), (dst, &dst_text)] {
         if tine_core::concord_queue::has_vcs_anchor(text.as_bytes())

@@ -9,9 +9,12 @@ import { openPage, route } from "./router";
 import { captureTime } from "./shareShape";
 import {
   captureDestination, shouldRedirect, templateOutline,
-  type QuickCaptureOptions,
+  type CaptureDestination, type QuickCaptureOptions,
 } from "./quickCaptureConfig";
 import type { QuickCaptureAck, QuickCaptureRequest } from "./quickCaptureAck";
+
+/** The page an insertion wrote into, and its kind. */
+type Written = { readonly name: string; readonly kind: CaptureDestination["kind"] };
 
 /** Install the graph window's capture receiver. Each request is deduplicated
  * by id (100 completed ids retained); writes use the document capture door.
@@ -28,7 +31,9 @@ export async function installQuickCaptureReceiver(live: WriteOwner = ownedWhen((
   const receiptOwner = ownedWhen(() => true);
   const inFlight = new Map<string, Promise<boolean>>();
   // Pending insertions are retained independently of the completed-id cap.
-  const landed = new Map<string, { name: string; owner: WriteOwner }>();
+  // What each insertion wrote into, kept from the insertion: a retry's
+  // settings may name another destination (review HOLD 7 F7).
+  const landed = new Map<string, { written: Written; owner: WriteOwner }>();
   const uncertain = new Set<string>();
   // A failed receipt lookup proves neither insertion nor non-insertion. Keep
   // the retry identity, but offer only a plain retry until custody is known.
@@ -114,10 +119,11 @@ export async function installQuickCaptureReceiver(live: WriteOwner = ownedWhen((
     const save = async () => {
       let ok = false;
       let newClaim = false;
-      // The page this capture was written into: its redirect, never a today
-      // computed at another moment (midnight may pass while it saves, or
-      // before a retry flushes what an earlier delivery inserted).
-      let written: string | undefined;
+      // The page this capture was written into, with its kind: its redirect
+      // and success text, never a today computed at another moment (midnight
+      // may pass while it saves, or before a retry flushes what an earlier
+      // delivery inserted) nor the destination a retry's settings now give.
+      let written: Written | undefined;
       const forgetUninserted = async (): Promise<boolean | undefined> => {
         if (id && newClaim && !landed.has(id)) {
           const forgotten = await writeOwned(receiptOwner, backend().captureReceipt(id, "forget", e.payload.bindingGeneration));
@@ -147,10 +153,13 @@ export async function installQuickCaptureReceiver(live: WriteOwner = ownedWhen((
             return false;
           }
         }
-        written = prior?.name;
-        const inserted = (name: string) => { written = name; if (id) landed.set(id, { name, owner: saveOwner }); };
+        written = prior?.written;
+        const inserted = (name: string) => {
+          written = { name, kind: destination.kind };
+          if (id) landed.set(id, { written, owner: saveOwner });
+        };
         const result = await writeOwned(saveOwner, prior
-          ? (prior.owner() ? flushPage(prior.name) : Promise.resolve(false))
+          ? (prior.owner() ? flushPage(prior.written.name) : Promise.resolve(false))
           : destination.kind === "page" ? captureToPage(destination.name, text, inserted, shape) : appendToTodayJournal(text, inserted, shape));
         ok = result.kind === "current" && result.value;
         if (ok && id) {
@@ -169,13 +178,14 @@ export async function installQuickCaptureReceiver(live: WriteOwner = ownedWhen((
         if (id) ok = forgotten ?? (await receiptStatus(id) === "saved");
       }
       if (saveOwner()) {
+        const into = written?.kind ?? (title ? "page" : "journal");
         if (!ok) pushToast(msg("app-capture-couldn-t-be-saved-its-text"), "error");
-        else if (title) pushToast(msg("app-captured-to", { title }), "info");
+        else if (into === "page") pushToast(msg("app-captured-to", { title: written?.name ?? title }), "info");
         else pushToast(msg("app-captured-to-today-s-journal"), "info");
         if (ok && written) {
           const open = route();
-          if (shouldRedirect(options, written, open.kind === "page" ? open.name : null)) {
-            openPage(written, destination.kind === "journal" ? "journal" : "page");
+          if (shouldRedirect(options, written.name, open.kind === "page" ? open.name : null)) {
+            openPage(written.name, written.kind);
           }
         }
       }

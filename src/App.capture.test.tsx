@@ -10,6 +10,7 @@ import { bindTestHost, submittedPages } from "./document/host/wiring.test.suppor
 import { mainPaneRouter, route } from "./router";
 import { setGraphMeta } from "./graphSession";
 import type { GraphMeta } from "./types";
+import { toasts } from "./toasts";
 
 import { initParser } from "./render/parse";
 beforeAll(() => initParser());
@@ -293,4 +294,36 @@ it("a capture retried the next day redirects to the day it was written into", as
   expect(h.ack).toHaveBeenLastCalledWith("capture", "quick-capture-ack", { id: payload.id, ok: true });
   expect(rootsOf(clock.day)).toEqual(["late"]);
   expect(route()).toMatchObject({ kind: "page", name: clock.day, pageKind: "journal" });
+});
+
+// Review HOLD 7 F7: a retry flushes what an earlier delivery inserted. Its
+// redirect and success text name the page that insertion wrote into, with
+// that page's kind, never the destination the retry's settings now give.
+it.each([
+  { from: "Inbox", to: undefined },
+  { from: undefined, to: "Inbox" },
+])("a retry after the default destination moves from $from to $to names the page it was written into", async ({ from, to }) => {
+  vi.spyOn(backend(), "graphBindingGeneration").mockReturnValue(11);
+  const settings = (page: string | undefined) => ({ preferred_format: "md", quick_capture_redirect_page: true, quick_capture_default_page: page } as GraphMeta);
+  setGraphMeta(settings(from));
+  answerOpensFromDocument(await bindTestHost());
+  vi.spyOn(backend(), "getPage").mockImplementation(async (name, kind) => ({ name, kind, title: name, id: kind === "journal" ? `journals/${name}.md` : `pages/${name}.md`, rev: "before", pre_block: null, blocks: [] }));
+  let flushed = false;
+  vi.spyOn(backend(), "pageWait").mockImplementation(async () => flushed && []);
+  mainPaneRouter.openPage("Elsewhere");
+  const dispose = await installQuickCaptureReceiver();
+  const payload = { id: `retry-moved-${from ?? "journal"}`, target: "main", bindingGeneration: 11, text: "- moved" };
+  await h.receive!({ payload });
+  expect(h.ack).toHaveBeenLastCalledWith("capture", "quick-capture-ack", { id: payload.id, ok: false, landed: true });
+  setGraphMeta(settings(to));
+  flushed = true;
+  const before = toasts().length;
+  await h.receive!({ payload });
+  dispose();
+  expect(h.ack).toHaveBeenLastCalledWith("capture", "quick-capture-ack", { id: payload.id, ok: true });
+  const day = journalTitle(appNow());
+  const written = from ?? day;
+  expect(rootsOf(written)).toEqual(["moved"]);
+  expect(route()).toMatchObject({ kind: "page", name: written, pageKind: from ? "page" : "journal" });
+  expect(toasts().slice(before).map((toast) => toast.message)).toEqual([from ? `Captured to “${from}”` : "Captured to today's journal"]);
 });

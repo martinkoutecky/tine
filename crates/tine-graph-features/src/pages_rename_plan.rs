@@ -50,6 +50,10 @@ pub(super) struct RenamePlan {
     pub(super) renamed: Vec<RenamedPage>,
     pub(super) moved_titles_to_rebind: HashSet<PageId>,
     pub(super) merge: Option<(PageId, PageId)>,
+    /// The survivor's bytes and revision its spelling was chosen from (O1,
+    /// a day's header title), which the merge realizes from: the merge's
+    /// revision guard then covers the choice, and the survivor is read once.
+    pub(super) survivor_read: Option<(String, FileRev)>,
     pub(super) ref_merge: bool,
     pub(super) candidates: Vec<PageId>,
     /// The candidates `pages` read to find the plan's write set, reused by
@@ -753,8 +757,9 @@ fn plan_request(
     // title already; a day's is its title format's rendering
     // (D-20261119-YL), so a day's header is read: `title:: 2027-10-26` on
     // that day's file is its spelling, a header naming another day is not.
-    // One read of the survivor, which the merge reads again under its
-    // revision guard.
+    // One read of the survivor: the merge realizes from these bytes, under
+    // their revision (`survivor_read`).
+    let mut survivor_read = None;
     let selected = merge_into
         .and_then(|into| {
             let id = PageId::from(into);
@@ -762,15 +767,10 @@ fn plan_request(
             let entry = inventory.0.first()?;
             if let Some(day) = entry.day.filter(|_| entry.is_journal) {
                 let day = tine_core::date::JournalDate::from_ordinal(day.0);
-                let title =
-                    crate::parsed_text::read(store, &id.file())
-                        .ok()
-                        .and_then(|(text, _)| {
-                            tine_core::model::page_title_from_header(
-                                &text,
-                                Format::from_path(into.as_ref()),
-                            )
-                        });
+                survivor_read = crate::parsed_text::read(store, &id.file()).ok();
+                let title = survivor_read.as_ref().and_then(|(text, _)| {
+                    tine_core::model::page_title_from_header(text, Format::from_path(into.as_ref()))
+                });
                 if let Some(title) = title.filter(|title| journal_format.parse(title) == Some(day))
                 {
                     return Some(title);
@@ -897,6 +897,7 @@ fn plan_request(
             renamed: Vec::new(),
             moved_titles_to_rebind: HashSet::new(),
             merge: None,
+            survivor_read: None,
             ref_merge: false,
             candidates: Vec::new(),
             reads: HashMap::new(),
@@ -1145,6 +1146,7 @@ fn plan_request(
         moves,
         renamed,
         moved_titles_to_rebind,
+        survivor_read: merge.as_ref().and(survivor_read),
         merge,
         ref_merge,
         candidates,

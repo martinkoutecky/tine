@@ -1173,3 +1173,65 @@ fn a_hosted_rename_planned_before_a_config_change_replans() {
     drop(host);
     store.close();
 }
+
+/// Review HOLD 7 F4: a merge into a day links it by the survivor's own
+/// matching header title (O1), chosen from one read of the survivor. An
+/// outside editor that adds that title after the read and before the commit
+/// fails the merge's revision guard on those bytes, and the replan links the
+/// day by the title the survivor now has: never a spelling chosen from older
+/// bytes than the ones the merge wrote over.
+#[test]
+fn a_survivor_title_changed_after_its_read_replans_the_merge() {
+    let root = crate::test_support::fresh_dir("tine-merge-survivor-read-");
+    disk::create_dir_all(root.join("pages")).unwrap();
+    disk::create_dir_all(root.join("journals")).unwrap();
+    disk::write(root.join("pages/B.md"), "- source\n").unwrap();
+    disk::write(root.join("journals/2027_10_26.md"), "- 2027\n").unwrap();
+    disk::write(root.join("pages/referrer.md"), "- [[B]]\n").unwrap();
+    let store = Arc::new(Store::open(&root, Default::default()).unwrap().0);
+    store.whole_graph().unwrap();
+    let plans = std::cell::Cell::new(0);
+    hosted(&store, |host| {
+        rename_page_after_inventory(
+            &store,
+            host,
+            "B",
+            "2027-10-26",
+            None,
+            RenameChoice::MergeInto("journals/2027_10_26.md"),
+            &[],
+            || {
+                plans.set(plans.get() + 1);
+                match plans.get() {
+                    // The first plan's view goes stale, so the host
+                    // operation plans again; that plan's survivor read is
+                    // then overtaken by the outside edit.
+                    1 => disk::write(root.join("pages/unrelated.md"), "- new\n").unwrap(),
+                    2 => disk::write(
+                        root.join("journals/2027_10_26.md"),
+                        "title:: 2027-10-26\n- 2027, edited outside\n",
+                    )
+                    .unwrap(),
+                    _ => {}
+                }
+            },
+        )
+    })
+    .unwrap();
+    assert_eq!(
+        disk::read_to_string(root.join("pages/referrer.md")).unwrap(),
+        "- [[2027-10-26]]\n"
+    );
+    let survivor = disk::read_to_string(root.join("journals/2027_10_26.md")).unwrap();
+    assert!(survivor.starts_with("title:: 2027-10-26\n"), "{survivor}");
+    assert!(survivor.contains("2027, edited outside"), "{survivor}");
+    assert!(survivor.contains("source"), "{survivor}");
+    assert!(!root.join("pages/B.md").exists());
+    assert!(
+        plans.get() >= 3,
+        "the revision guard replanned: {}",
+        plans.get()
+    );
+    store.close();
+    disk::remove_dir_all(root).unwrap();
+}

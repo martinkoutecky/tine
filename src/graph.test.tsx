@@ -172,8 +172,8 @@ async function loadHarness(
     setJournalFormats: journal ? (title: string | null | undefined) => journal.setJournalTitleFormat(title) : vi.fn(),
     // Every configured title format here is used (D-20261119-YL refusals are
     // pinned in journalTitleRefusal.test.ts).
-    journalTitleStatus: () => ({ effective: "MMM do, yyyy", refusal: null }),
-    journalTitleRefusalMessage: () => null,
+    graphTitleRefusal: () => null,
+    noticeTitleRefusal: () => {},
   }));
   vi.doMock("./editor/templateVars", () => ({ applyTemplateVars, prepareTemplateVars }));
   vi.doMock("./warmCache", () => ({ waitForWarmCache }));

@@ -112,12 +112,15 @@ pub(crate) struct ClaimLookup<'a> {
 
 impl ClaimLookup<'_> {
     /// Whether `entry`, a claimant of [`Self::name`], holds the name looked
-    /// up. A spelling that parses to a day is held only by that day's files
-    /// (model r6 O3: "a journal holds every accepted spelling of its day").
-    /// A name that is no day keeps every claimant of the name. O(1) per
-    /// claimant.
+    /// up: the claimant names the day asked for, or no day for a name that is
+    /// no day. A spelling that parses to a day is held only by that day's
+    /// files (model r6 O3: "a journal holds every accepted spelling of its
+    /// day"); a name that is no day only by undated files. One normalized
+    /// bucket can hold both: `page_key` folds case, composition and the
+    /// slashes a title format may carry (`x 2026_02_11` under `X yyyy_dd_MM`,
+    /// `20261102` under `/yyyyMMdd/`). O(1) per claimant.
     pub(crate) fn holds(&self, entry: &PageEntry) -> bool {
-        self.day.is_none() || entry.date_key == self.day
+        entry.date_key == self.day
     }
 }
 

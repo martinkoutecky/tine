@@ -529,3 +529,112 @@ fn a_retitle_to_another_year_moves_the_day_under_the_fallback_title() {
     assert_eq!(store.journal_id(NOV_2, false).as_str(), rels[1]);
     assert_eq!(store.journal_id(nov_2_2027, false).as_str(), rels[2]);
 }
+
+/// The graph `files`, opened with its load paused: `page_named` answers from
+/// the file listing (the cold path), before any view exists.
+fn paused_graph(files: &[(&str, &str)]) -> (tempfile::TempDir, Store, std::path::PathBuf) {
+    let dir = tempfile::tempdir().unwrap();
+    fs::create_dir(dir.path().join("pages")).unwrap();
+    fs::create_dir(dir.path().join("journals")).unwrap();
+    for (rel, text) in files {
+        let path = dir.path().join(rel);
+        fs::create_dir_all(path.parent().unwrap()).unwrap();
+        fs::write(path, text).unwrap();
+    }
+    let pause = dir.path().join(".tine-test-pause-load");
+    fs::write(&pause, "").unwrap();
+    let store = Store::open(dir.path(), Default::default()).unwrap().0;
+    (dir, store, pause)
+}
+
+/// Review HOLD 7 F2: one normalized name bucket can hold an ordinary identity
+/// and a dated journal. A lookup holds only the claimants of the day it asked
+/// for (`None`: no day), cold and ready, in three bucket shapes: a literal that
+/// differs only by case (`x 2026_02_11` under `X yyyy_dd_MM`), by Unicode
+/// composition (decomposed É under a literal É), and by the slashes `page_key`
+/// drops (`20261102` under `/yyyyMMdd/`).
+#[test]
+fn a_normalized_bucket_holds_only_the_requested_day() {
+    let _guard = crate::integration_lock();
+    let decomposed = "E\u{301} 2026-11-02";
+    for (format, page, name) in [
+        ("X yyyy_dd_MM", "pages/x 2026_02_11.md", "x 2026_02_11"),
+        (
+            "\u{c9} yyyy-MM-dd",
+            "pages/E\u{301} 2026-11-02.md",
+            decomposed,
+        ),
+        ("/yyyyMMdd/", "pages/20261102.md", "20261102"),
+    ] {
+        let config = format!("{{:journal/page-title-format \"{format}\"}}\n");
+        let files = [
+            ("logseq/config.edn", config.as_str()),
+            ("journals/2026_11_02.md", "- the day\n"),
+            (page, "- an ordinary page\n"),
+        ];
+        let want = Some((page.to_owned(), PageKind::Page));
+        let (dir, store, pause) = paused_graph(&files);
+        assert_eq!(opens(&store, name, PageKind::Page), want, "{format}: cold");
+        assert_eq!(
+            store.journal_id(NOV_2, false).as_str(),
+            "journals/2026_11_02.md",
+            "{format}: cold day"
+        );
+        fs::remove_file(pause).unwrap();
+        let view = store.whole_graph().unwrap();
+        assert_eq!(
+            existing(&view.resolve(name, false)),
+            [page],
+            "{format}: ready"
+        );
+        assert_eq!(
+            opens(&store, name, PageKind::Page),
+            want,
+            "{format}: ready open"
+        );
+        assert_eq!(
+            store.journal_id(NOV_2, false).as_str(),
+            "journals/2026_11_02.md",
+            "{format}: ready day"
+        );
+        drop(dir);
+    }
+}
+
+/// Review HOLD 7 F2, the snapshot: under `/yyyyMMdd/` the undated
+/// `journals/20261102.md` shares the day's journal bucket and sorts ahead of
+/// `journals/2026_11_02.md`. The day's file arriving outside the app takes
+/// the day, as a cold open has it; the undated file never does.
+#[test]
+fn an_undated_journal_in_the_days_bucket_never_takes_the_day() {
+    let _guard = crate::integration_lock();
+    let rels = [
+        "logseq/config.edn",
+        "journals/2026_11_02.md",
+        "journals/20261102.md",
+    ];
+    let (dir, store) = graph(&[
+        (rels[0], "{:journal/page-title-format \"/yyyyMMdd/\"}\n"),
+        (rels[2], "- not a day\n"),
+    ]);
+    store.whole_graph().unwrap();
+    assert_eq!(
+        store.journal_id(NOV_2, false).as_str(),
+        rels[1],
+        "no file yet"
+    );
+    fs::write(dir.path().join(rels[1]), "- the day\n").unwrap();
+    settle(&store, "outside arrival", |store| {
+        let view = store.whole_graph().unwrap();
+        matches!(view.resolve("/20261102/", true), Resolved::Existing { id, others }
+            if id.as_str() == rels[1] || others.iter().any(|o| o.as_str() == rels[1]))
+    });
+    let (days, names) = ([NOV_2], ["/20261102/", "20261102"]);
+    assert_eq!(
+        day_answers(&store, &days, &names),
+        cold_answers(dir.path(), &rels, &days, &names),
+        "incremental after the arrival equals a cold open"
+    );
+    assert_eq!(store.journal_id(NOV_2, false).as_str(), rels[1]);
+    assert_eq!(store.journal_id(NOV_2, true).as_str(), rels[1]);
+}

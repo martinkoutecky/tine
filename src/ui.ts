@@ -23,7 +23,7 @@ export { conflictQueue, settleArtifactConflict, syncConflicts, setSyncConflicts 
 import { parseBlockPos, type PageFollower, type PageTarget } from "./routeTypes";
 import { PaneContext } from "./paneContext";
 import { exitPaneSelect } from "./paneSelect";
-import { DEFAULT_TITLE_FORMAT, setJournalTitleFormat } from "./journal";
+import { DEFAULT_TITLE_FORMAT, noticeTitleRefusal, setJournalTitleFormat } from "./journal";
 import { pageIdentityKey } from "./pageIdentity";
 import { clearDrawerOpener, mobileDrawerMode, captureDrawerOpener, restoreDrawerFocus, type DrawerSide } from "./mobileDrawers";
 import { navigationTarget } from "./pageIndex";
@@ -216,12 +216,12 @@ export function changeJournalTitleFormat(fmt: string) {
   setJournalTitleFormat(next);
   bumpGraphEpoch(); // immediate: re-render open journal titles with the new format
   const owner = latestOwner(journalTitleFormatScope, "title", bindingOwner(), () => graphMeta()?.root === m.root && graphMeta()?.journal_page_title_format === next);
-  // Bump again once config.edn is written so the feed and the rename proposals
-  // reload against the new format rather than racing the write.
+  // Once config.edn is written: bump again (feed and rename proposals reload against it), and say a refusal (no config event reaches this window).
   void writeOwned(owner, backend().setJournalTitleFormat(next, ["rename-page"]))
     .then((result) => {
       if (result.kind === "stale") return;
       setGraphMeta({ ...graphMeta()!, journal_config_diagnostics: result.value });
+      noticeTitleRefusal(graphMeta()!, false);
       bumpGraphEpoch();
       void refreshJournalConflicts(); // the queue surfaces any day the new format reveals
     })

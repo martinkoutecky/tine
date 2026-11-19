@@ -18,7 +18,7 @@ import { installFavoritesPageDoor } from "./favorites";
 import { clearAssetBlobCache } from "./assetCache";
 import { resetTabsToJournals, openPage, restoreSession, flushSession, type PageFollower, type PageTarget } from "./router";
 import { resetPaneLayoutToSingle, removePageTargetAcrossPanes, rewritePagesAcrossPanes } from "./panes";
-import { journalTitle, journalTitleRefusalMessage, journalTitleStatus, localDayKey, setJournalFormats, appNow } from "./journal";
+import { journalTitle, localDayKey, noticeTitleRefusal, setJournalFormats, appNow } from "./journal";
 import { setFileNameFormat } from "./render/pageRefs";
 import { applyTemplateVars, prepareTemplateVars } from "./editor/templateVars";
 import { resetPageIndex } from "./pageIndex";
@@ -96,8 +96,7 @@ export function applyConfigDerivedState(meta: GraphMeta, previous: GraphMeta | n
   const journalFormatsMoved = !previous || previous.journal_page_title_format !== meta.journal_page_title_format
     || previous.journal_file_name_format !== meta.journal_file_name_format;
   if (journalFormatsMoved) setJournalFormats(meta.journal_page_title_format, meta.journal_file_name_format);
-  if (!previous) titleRefusalNoticed = false;
-  if (journalFormatsMoved && !titleRefusalNoticed) noticeTitleRefusal(meta);
+  if (journalFormatsMoved) noticeTitleRefusal(meta, !previous);
   const fileNameFormatMoved = !previous || previous.file_name_format !== meta.file_name_format;
   if (fileNameFormatMoved) setFileNameFormat(meta.file_name_format);
   setGraphMeta(meta);
@@ -106,23 +105,6 @@ export function applyConfigDerivedState(meta: GraphMeta, previous: GraphMeta | n
   const alreadyShown = previous !== null && previous.favorites_page === meta.favorites_page
     && sameNames(favorites().map((item) => item.name), incoming);
   if (!alreadyShown) seedFavorites(incoming, meta.favorites_page ?? null);
-}
-
-/** Whether this graph load has said its title format is not used. */
-let titleRefusalNoticed = false;
-/** Say once per graph load that the configured title format is not used
- *  (D-20261119-YL): the first time a published config refuses it. Settings
- *  keeps saying so while it is refused. No persisted state. O(1). */
-function noticeTitleRefusal(meta: GraphMeta): void {
-  const configured = meta.journal_page_title_format || "";
-  const notice = journalTitleRefusalMessage(configured,
-    journalTitleStatus(meta.journal_file_name_format || "", configured));
-  if (notice) showTitleRefusal(notice);
-}
-
-function showTitleRefusal(notice: Msg): void {
-  titleRefusalNoticed = true;
-  pushToast(notice, "warn", { sticky: true });
 }
 
 function sameNames(shown: string[], incoming: string[]): boolean {

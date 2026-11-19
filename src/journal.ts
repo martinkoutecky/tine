@@ -1,6 +1,7 @@
 import { createEffect, createSignal, untrack } from "solid-js";
 import { absent_link_is_journal, format_journal_date, journal_day_json, journal_title_status_json, parse_journal_format_json } from "./render/wasm/lsdoc_wasm.js";
-import { msg, type Msg } from "./i18n";
+import { msg, textKey, type Msg } from "./i18n";
+import { dismissToast, pushToast } from "./toasts";
 import { onAppReturn } from "./windowRealm";
 
 /** Journal dates and title formatting. `journalTitle` and `parseJournalTitle`
@@ -158,15 +159,16 @@ export type JournalDateParts = { readonly y: number; readonly m: number; readonl
 
 /// Set the configured journal title format (from `GraphMeta.journal_page_title_format`).
 export function setJournalTitleFormat(fmt: string | undefined | null): void {
-  titleFormat = fmt && fmt.trim() ? fmt : DEFAULT_TITLE_FORMAT;
+  titleFormat = fmt ?? "";
   effectiveTitleFormat = journalTitleStatus(fileFormat, titleFormat).effective;
 }
 
 /// Set both configured journal formats from GraphMeta. Both feed the one date
-/// answerer (`parseJournalTitle`); titles render in the effective title format
-/// the same answerer picks (`journalTitleStatus`).
+/// answerer (`parseJournalTitle`) as written, never trimmed or defaulted here
+/// (the answerer reads "" as the default); titles render in the effective
+/// title format the same answerer picks (`journalTitleStatus`).
 export function setJournalFormats(title: string | undefined | null, file: string | undefined | null): void {
-  fileFormat = file && file.trim() ? file : "";
+  fileFormat = file ?? "";
   setJournalTitleFormat(title);
 }
 
@@ -191,6 +193,32 @@ export function journalTitleStatus(file: string, title: string): JournalTitleSta
     statusKey = key;
   }
   return statusValue;
+}
+
+/** Why the configured title format of `meta` is not used, or null (the notice
+ *  and Settings): both config strings go to the answerer unchanged. O(1) warm. */
+export function graphTitleRefusal(meta: { journal_page_title_format: string; journal_file_name_format: string }): Msg | null {
+  const configured = meta.journal_page_title_format ?? "";
+  return journalTitleRefusalMessage(configured, journalTitleStatus(meta.journal_file_name_format ?? "", configured));
+}
+
+/** The notice this graph load shows, with the diagnostic it says. */
+let shownRefusal: { root: string; key: string | null; toast: number | null } | null = null;
+/** Say once per graph load that the configured title format is not used
+ *  (D-20261119-YL); Settings keeps saying so while it is refused. The one
+ *  notice handler, after a graph load (`load`), a published config change
+ *  and a successful Settings save. The same diagnostic again says nothing
+ *  more; a new graph or a changed diagnostic retires the shown notice and
+ *  says the new one. It auto-dismisses. No persisted state. O(1) warm. */
+export function noticeTitleRefusal(meta: { root: string; journal_page_title_format: string; journal_file_name_format: string }, load: boolean): void {
+  const notice = graphTitleRefusal(meta);
+  const key = notice ? textKey(notice) : null;
+  if (!load && shownRefusal?.root === meta.root && shownRefusal.key === key) return;
+  if (shownRefusal?.toast != null) dismissToast(shownRefusal.toast);
+  shownRefusal = { root: meta.root, key, toast: notice ? showRefusal(notice) : null };
+}
+function showRefusal(notice: Msg): number {
+  return pushToast(notice, "warn");
 }
 
 const isoDay = (day: JournalDateParts): string =>

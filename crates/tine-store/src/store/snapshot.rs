@@ -392,21 +392,24 @@ impl Snapshot {
                 }
                 let list = Arc::make_mut(&mut list);
                 list.remove_path(&path);
-                // A day's winner is the first claimant of its title: the
-                // title names that day alone (D-20261119-YL).
-                let day_winner = |name: &str| {
+                // A day's winner is the first claimant of its title that
+                // holds that day: the title's normalized bucket can also hold
+                // an undated file (`journals/20261102.md` under `/yyyyMMdd/`).
+                let day_winner = |name: &str, day: i64| {
                     (buckets.get(&(true, tine_core::refs::page_key(name))))
-                        .and_then(|bucket| bucket.first())
+                        .and_then(|bucket| bucket.iter().find(|e| e.date_key == Some(day)))
                 };
                 if let Some((old, old_name)) = old_day {
-                    list.remove_day(old.date_key.unwrap());
-                    if let Some(winner) = day_winner(&old_name) {
+                    let day = old.date_key.unwrap();
+                    list.remove_day(day);
+                    if let Some(winner) = day_winner(&old_name, day) {
                         list.push(winner.clone());
                     }
                 }
                 if entry.kind == PageKind::Journal && entry.date_key.is_some() {
-                    list.remove_day(entry.date_key.unwrap());
-                    if let Some(winner) = day_winner(&entry.name) {
+                    let day = entry.date_key.unwrap();
+                    list.remove_day(day);
+                    if let Some(winner) = day_winner(&entry.name, day) {
                         list.push(winner.clone());
                     }
                 } else if kind != ChangeKind::Removed {

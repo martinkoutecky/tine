@@ -2,7 +2,8 @@
 // single day is not used. The graph's config.edn sets
 // `:journal/page-title-format "MM-dd"` (no year: `11-02` would be November 2nd
 // of every year) and holds the journals 2026_11_02 and 2027_11_02.
-//  1. The notice appears once for the graph load (a sticky warning toast).
+//  1. The notice appears once for the graph load (a warning toast that
+//     auto-dismisses) and is not repeated during the session.
 //  2. Settings > Journals shows the format in use and why.
 //  3. Both days carry the default title (`MMM do, yyyy`) and open by it.
 //  4. Typing [[11-02]] in a block links an ordinary page named 11-02, not a
@@ -70,10 +71,34 @@ const notices = () => browser.execute(() => [...document.querySelectorAll(".toas
   }))
   .filter((toast) => toast.text.startsWith("Journal titles use")));
 
-/** Wait for the graph load's notice and assert it is shown exactly once. */
+/** Record every title-format notice this page shows from now on, one entry
+ *  per toast element, so a notice that auto-dismisses is still counted.
+ *  Installed as soon as the window exists, before the graph load publishes
+ *  its config (a transient toast lives 3.2 s, src/toasts.ts). */
+const recordNotices = () => browser.execute(() => {
+  if (window.__titleNotices) return;
+  const seen = (window.__titleNotices = []);
+  const marked = new WeakSet();
+  const scan = () => {
+    for (const toast of document.querySelectorAll(".toast")) {
+      const text = (toast.querySelector(".toast-msg")?.textContent ?? "").replace(/[⁨⁩]/g, "").trim();
+      if (marked.has(toast) || !text.startsWith("Journal titles use")) continue;
+      marked.add(toast);
+      seen.push({ warn: toast.classList.contains("toast-warn"), text, repeated: toast.querySelector(".toast-count") !== null });
+    }
+  };
+  scan();
+  new MutationObserver(scan).observe(document.documentElement, { childList: true, subtree: true, characterData: true });
+});
+const recorded = () => browser.execute(() => window.__titleNotices ?? []);
+const ONCE = [{ warn: true, text: NOTICE, repeated: false }];
+
+/** Wait for the graph load's notice, assert it was shown exactly once, and
+ *  that it dismisses itself. */
 async function noticeShownOnce(what) {
-  await browser.waitUntil(async () => (await notices()).length > 0, { timeout: 20_000, interval: 150, timeoutMsg: `${what}: the title-format notice never appeared` });
-  assert.deepEqual(await notices(), [{ warn: true, text: NOTICE, repeated: false }], `${what}: the notice is one warning, shown once`);
+  await browser.waitUntil(async () => (await recorded()).length > 0, { timeout: 20_000, interval: 150, timeoutMsg: `${what}: the title-format notice never appeared` });
+  assert.deepEqual(await recorded(), ONCE, `${what}: the notice is one warning, shown once`);
+  await browser.waitUntil(async () => (await notices()).length === 0, { timeout: 10_000, interval: 150, timeoutMsg: `${what}: the notice did not dismiss itself` });
 }
 
 try {
@@ -81,6 +106,7 @@ try {
   browser = await remote({ hostname: "127.0.0.1", port, path: "/", logLevel: "error", connectionRetryCount: 5,
     connectionRetryTimeout: 30_000, capabilities: tauriCapabilities(process.env.TINE_APP || path.join(root, "target/debug/tine"), "cm-dated-titles") });
   await ensureMainWindow(browser);
+  await recordNotices();
   await browser.$(".graph-switch-btn").waitForExist({ timeout: 30_000 });
   await assertAppLease(ownerFixture);
 
@@ -136,11 +162,13 @@ try {
   assert.ok(!fs.existsSync(path.join(graph, "pages/11-02.md")), "opening the ordinary page writes no file");
   assert.deepEqual(untouched(), expectedUntouched, "config.edn and the journals are unchanged before the reload");
 
-  stage = "the notice is still shown once";
-  assert.deepEqual(await notices(), [{ warn: true, text: NOTICE, repeated: false }], "the notice did not repeat during the session");
+  stage = "the notice was not repeated during the session";
+  assert.deepEqual(await recorded(), ONCE, "the notice did not repeat during the session");
+  assert.deepEqual(await notices(), [], "no notice is shown again");
 
   stage = "after a reload the notice appears once again and the files are unchanged";
   await browser.refresh();
+  await recordNotices();
   await browser.$(".graph-switch-btn").waitForExist({ timeout: 30_000 });
   await noticeShownOnce("after reload");
   await openPageByName(browser, "Nov 2nd, 2027");
@@ -148,7 +176,7 @@ try {
   assert.equal(fs.readFileSync(path.join(graph, "pages/Scratch.md"), "utf8"), "- scratch [[11-02]]\n");
 
   ownerFixture.verify();
-  fs.writeFileSync(path.join(run, "receipt.json"), JSON.stringify({ commit, workingDiff: true, outcome: "PASS", journey: "MM-dd title format refused: the notice shows once per load; Settings > Journals names the format in use and why; Nov 2nd, 2026 and Nov 2nd, 2027 carry default titles and open by them; typed [[11-02]] opens the ordinary page 11-02 and writes no file for it; config.edn and both journals byte-identical after a reload, which shows the notice once again", graph }, null, 2));
+  fs.writeFileSync(path.join(run, "receipt.json"), JSON.stringify({ commit, workingDiff: true, outcome: "PASS", journey: "MM-dd title format refused: the notice shows once per load and dismisses itself; Settings > Journals names the format in use and why; Nov 2nd, 2026 and Nov 2nd, 2027 carry default titles and open by them; typed [[11-02]] opens the ordinary page 11-02 and writes no file for it; config.edn and both journals byte-identical after a reload, which shows the notice once again", graph }, null, 2));
   console.log(`PASS CM dated titles. ${run}`);
 } catch (error) {
   try { await browser?.saveScreenshot(path.join(run, "failure.png")); } catch {}

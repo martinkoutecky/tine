@@ -90,7 +90,7 @@ import { StyleKnobsSettings } from "./StyleKnobsSettings";
 import { backend, isTauri, type BackupInfo } from "../backend";
 import { restoreBackupFromSettings } from "../backupRestore";
 import type { JournalFile } from "../types";
-import { DEFAULT_TITLE_FORMAT, formatJournal, appNow, journalTitleRefusalMessage, journalTitleStatus } from "../journal";
+import { DEFAULT_TITLE_FORMAT, formatJournal, appNow, graphTitleRefusal } from "../journal";
 import {
   launcherRankingEnabled,
   pinyinMatchingEnabled,
@@ -925,9 +925,8 @@ function EditorTab(props: { search: string }): JSX.Element {
 function JournalsTab(props: { search: string }): JSX.Element {
   // The title format in use and why, while config.edn's is refused (D-20261119-YL).
   const titleRefusal = () => {
-    const configured = graphMeta()?.journal_page_title_format || "";
-    return journalTitleRefusalMessage(configured,
-      journalTitleStatus(graphMeta()?.journal_file_name_format || "", configured));
+    const meta = graphMeta();
+    return meta ? graphTitleRefusal(meta) : null;
   };
   // Quick-capture Enter behaviour (app-level setting, read by the capture window).
   const [captureEnterFiles, setCaptureEnterFiles] = createSignal(false);
