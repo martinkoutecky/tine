@@ -3466,9 +3466,9 @@ html[data-system-insets="native-viewport"] {
    text is 1.7em–0.9em, so its line box scales with the level.) */
 /* height = heading line box = heading font-size (1.7/1.4/1.2em) × the 1.6
    .block-content line-height, so the bullet centers exactly on the line. */
-.ls-block:has(> .block-main.bullet-h1) { --block-first-line-height: 2.72em; }
-.ls-block:has(> .block-main.bullet-h2) { --block-first-line-height: 2.24em; }
-.ls-block:has(> .block-main.bullet-h3) { --block-first-line-height: 1.92em; }
+.ls-block.bullet-h1 { --block-first-line-height: 2.72em; }
+.ls-block.bullet-h2 { --block-first-line-height: 2.24em; }
+.ls-block.bullet-h3 { --block-first-line-height: 1.92em; }
 
 .collapse-toggle {
   width: 18px;

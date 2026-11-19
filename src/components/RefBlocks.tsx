@@ -209,9 +209,9 @@ function RefBlock(props: {
       data-block-id={props.block.id}
       data-block-ref={blockDtoExternalId(props.block)}
       data-author={storedAuthorOf(facets().properties) ?? undefined}
-      classList={{ "page-property-reference": !!props.block.page_property, collapsed: folded() }}
+      classList={{ "page-property-reference": !!props.block.page_property, collapsed: folded(), [`bullet-h${headingLevel()}`]: headingLevel() != null }}
     >
-      <div class="block-main" classList={{ [`bullet-h${headingLevel()}`]: headingLevel() != null }}>
+      <div class="block-main">
         <div class="block-controls">
           <Show when={props.pageBody}>
             <span

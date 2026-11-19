@@ -73,7 +73,7 @@ const measureBullets = () => {
     if (!Number.isFinite(lineHeight)) continue;
     const box = content.getBoundingClientRect();
     const dotBox = dot.getBoundingClientRect();
-    const heading = /\bbullet-h[1-6]\b/.exec(main.className)?.[0] ?? null;
+    const heading = /\bbullet-h[1-6]\b/.exec(block.className)?.[0] ?? null;
     rows.push({ heading, text: (content.textContent ?? "").trim().slice(0, 30), delta: (dotBox.top + dotBox.height / 2) - (box.top + parseFloat(style.paddingTop) + lineHeight / 2) });
   }
   return rows;

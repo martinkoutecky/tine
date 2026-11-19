@@ -33,7 +33,7 @@ const nestedOutline = Array.from({ length: 8 }, (_, index) => index)
 const heading = block({
   id: "heading-parent",
   label: "Heading parent keeps its trailing touch target above its child.",
-  mainClass: "bullet-h1",
+  blockClass: "bullet-h1",
   children: block({ id: "heading-leaf", label: "Heading leaf text reaches the row edge." }),
 });
 const embed = `
