@@ -64,7 +64,8 @@ export function installMouseHistory(
   };
   const dragStart = () => { dragging = true; cancel(); };
   const dragEnd = () => { dragging = false; };
-  const blur = () => { presses.clear(); released.clear(); pendingNative = undefined; primaryHeld = false; dragging = false; };
+  // Only the window losing focus ends a gesture; an editor or control blurring inside it does not (#948 review).
+  const blur = (event: Event) => { if (event.target !== win) return; presses.clear(); released.clear(); pendingNative = undefined; primaryHeld = false; dragging = false; };
   const listeners = { mousedown: down, mouseup: up, mousemove: move, auxclick: aux,
     dragstart: dragStart, dragend: dragEnd, blur };
   const capture = { capture: true };
