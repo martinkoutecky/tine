@@ -20,7 +20,7 @@ mod tests {
         .unwrap();
         let store = Store::open(dir.path(), Default::default()).unwrap().0;
         let whole = store.whole_graph().unwrap();
-        let corpus = whole.corpus(None, false);
+        let corpus = PubCorpus::all(&whole, false);
         let graph = RenderGraph::new(&corpus, &whole, &store, None);
         let mut files = HashMap::<String, String>::new();
         publish_graph(
@@ -65,7 +65,7 @@ mod tests {
         }
         let store = Store::open(dir.path(), Default::default()).unwrap().0;
         let whole = store.whole_graph().unwrap();
-        let corpus = whole.corpus(None, false);
+        let corpus = PubCorpus::all(&whole, false);
         let graph = RenderGraph::new(&corpus, &whole, &store, None);
         let refs = no_refs();
         let cache = RefCell::new(QueryCache::default());
@@ -124,7 +124,7 @@ mod tests {
         fs::write(dir.join("pages/Source.md"), "- [[Other]] and [[Actual]]\n").unwrap();
         let store = Store::open(&dir, Default::default()).unwrap().0;
         let whole = store.whole_graph().unwrap();
-        let corpus = whole.corpus(None, false);
+        let corpus = PubCorpus::all(&whole, false);
         let graph = RenderGraph::new(&corpus, &whole, &store, None);
         let mut files = HashMap::<String, String>::new();
         publish_graph(
@@ -169,7 +169,7 @@ mod tests {
         .unwrap();
         let store = Store::open(&dir, Default::default()).unwrap().0;
         let whole = store.whole_graph().unwrap();
-        let corpus = whole.corpus(None, false);
+        let corpus = PubCorpus::all(&whole, false);
         let graph = RenderGraph::new(&corpus, &whole, &store, None);
         let mut files = HashMap::<String, String>::new();
         publish_graph(
@@ -214,7 +214,7 @@ mod tests {
         .unwrap();
         let store = Store::open(&dir, Default::default()).unwrap().0;
         let whole = store.whole_graph().unwrap();
-        let corpus = whole.corpus(None, false);
+        let corpus = PubCorpus::all(&whole, false);
         let graph = RenderGraph::new(&corpus, &whole, &store, None);
         let refs = no_refs();
         let cache = RefCell::new(QueryCache::default());
@@ -252,7 +252,7 @@ mod tests {
         ).unwrap();
         let store = Store::open(&dir, Default::default()).unwrap().0;
         let whole = store.whole_graph().unwrap();
-        let corpus = whole.corpus(None, false);
+        let corpus = PubCorpus::all(&whole, false);
         fs::remove_file(dir.join("pages/Target.md")).unwrap();
         let graph = RenderGraph::new(&corpus, &whole, &store, None);
         let mut dashboard = Vec::new();
@@ -302,7 +302,7 @@ mod tests {
         }
         let store = Store::open(dir.path(), Default::default()).unwrap().0;
         let whole = store.whole_graph().unwrap();
-        let corpus = whole.corpus(None, false);
+        let corpus = PubCorpus::all(&whole, false);
         let graph = RenderGraph::new(&corpus, &whole, &store, None);
         let refs = no_refs();
         let budget = RefCell::new(PrintAssetBudget::standard());
@@ -349,7 +349,7 @@ mod tests {
         fs::write(dir.join("assets/large.png"), b"123456").unwrap();
         let store = Store::open(&dir, Default::default()).unwrap().0;
         let whole = store.whole_graph().unwrap();
-        let corpus = whole.corpus(None, false);
+        let corpus = PubCorpus::all(&whole, false);
         let graph = RenderGraph::new(&corpus, &whole, &store, None);
         let refs = no_refs();
         let cumulative = RefCell::new(PrintAssetBudget {
@@ -406,7 +406,7 @@ mod tests {
         fs::write(dir.join("pages").join("P.md"), "- TODO target\n").unwrap();
         let store = Store::open(&dir, Default::default()).unwrap().0;
         let whole = store.whole_graph().unwrap();
-        let corpus = whole.corpus(None, false);
+        let corpus = PubCorpus::all(&whole, false);
         let graph = RenderGraph::new(&corpus, &whole, &store, None);
         let _ = whole.corpus(None, false);
         let refs = RefIndex::new();
@@ -464,7 +464,7 @@ mod tests {
         fs::write(dir.join("pages/Host.md"), host).unwrap();
         let store = Store::open(&dir, Default::default()).unwrap().0;
         let whole = store.whole_graph().unwrap();
-        let corpus = whole.corpus(None, false);
+        let corpus = PubCorpus::all(&whole, false);
         let graph = RenderGraph::new(&corpus, &whole, &store, None);
         render_lookups::PAGE_PROBES.with(|probes| probes.set(0));
         let mut host_html = String::new();

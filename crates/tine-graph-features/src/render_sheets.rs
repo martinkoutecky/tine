@@ -22,6 +22,7 @@ use super::{
     ast_plain_text, body_blocks, decorate, esc, esc_attr, publish_page_allowed, render_block,
     render_facets, render_opts, render_outline_item, Ctx, PageAnchors, PrintOpts, RenderGraph,
 };
+use crate::pub_corpus::PubCorpus;
 use serde::{Deserialize, Serialize};
 use serde_json::json;
 use std::cell::Cell as Budget;
@@ -32,7 +33,6 @@ use tine_core::model::BlockDto;
 use tine_core::query::ir::{ViewKind, ViewSettings};
 use tine_core::query::macro_text::{is_query_macro_name, query_macro_extent};
 use tine_core::query::wire_parse::QueryTextDialect;
-use tine_core::Corpus;
 
 /// Sheets accepted per export.
 const MAX_SHEETS: usize = 2_000;
@@ -303,20 +303,16 @@ fn is_candidate(block: &DocBlock) -> bool {
 /// (`None` = no publication boundary, as in print): a query sheet's row on any
 /// other page is left out of the app's input.
 pub fn sheet_inputs(
-    corpus: &Corpus,
+    corpus: &PubCorpus,
     pages: Option<&[String]>,
     graph: Option<&RenderGraph<'_>>,
     published: Option<&HashSet<String>>,
 ) -> Vec<SheetInput> {
     let mut query_budget = MAX_QUERY_SHEETS;
-    let wanted = pages.map(|p| crate::publish_query::Named::new(p.iter().map(String::as_str)));
     let mut out = Vec::new();
-    for page in &corpus.pages {
+    for page in corpus.pages_among(pages) {
         // The sheet's page by its operational name, as the render keys it.
-        let name = graph.map_or(page.name.as_str(), |graph| graph.page_name(page));
-        if wanted.as_ref().is_some_and(|w| !w.admits(name)) {
-            continue;
-        }
+        let name = page.name();
         let mut stack: Vec<(&DocBlock, Vec<u32>)> = page
             .document
             .roots
@@ -878,7 +874,7 @@ fn render_sheet_comments(owner: &DocBlock, grid: bool, e: &Emit, out: &mut Strin
 }
 
 /// The page a sheet answer is keyed by: the rendered page's operational name
-/// (`RenderGraph::page_name`), as `sheet_inputs` names it; its title is for
+/// (`PubPage::name`), as `sheet_inputs` names it; its title is for
 /// display.
 fn sheet_page<'a>(e: &'a Emit) -> &'a str {
     e.ctx.current_page.unwrap_or(e.title)

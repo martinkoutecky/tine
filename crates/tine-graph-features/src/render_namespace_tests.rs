@@ -33,7 +33,7 @@ fn namespace_identity_membership_in_print_and_publish() {
     }
     let store = Store::open(root.path(), Default::default()).unwrap().0;
     let whole = store.whole_graph_reconciled().unwrap();
-    let corpus = whole.corpus(None, true);
+    let corpus = PubCorpus::all(&whole, true);
     for keyed in [false, true] {
         let mut graph = RenderGraph::new(&corpus, &whole, &store, None);
         graph.lookups.keyed = keyed;
@@ -85,14 +85,8 @@ fn namespace_identity_membership_in_print_and_publish() {
             .next()
             .unwrap();
         assert!(!namespace.contains(">Project/Z</a>"));
-        let selected = Corpus {
-            pages: corpus
-                .pages
-                .iter()
-                .filter(|page| ["Host", "project/y"].contains(&page.name.as_str()))
-                .cloned()
-                .collect(),
-        };
+        let mut selected = PubCorpus::all(&whole, true);
+        selected.retain(|page| ["Host", "project/y"].contains(&page.label()));
         let mut graph = RenderGraph::new(&selected, &whole, &store, None);
         graph.lookups.keyed = keyed;
         let mut published = String::new();
@@ -141,7 +135,7 @@ fn namespace_lookup_visits_only_matching_names() {
         .unwrap();
         let store = Store::open(root.path(), Default::default()).unwrap().0;
         let whole = store.whole_graph_reconciled().unwrap();
-        let corpus = Corpus::default();
+        let corpus = PubCorpus::empty();
         let graph = RenderGraph::for_pages(&corpus, &whole, &store, None);
         render_lookups::PAGE_PROBES.with(|probes| probes.set(0));
         let names = graph.lookups.names_under(&whole, "Project/");

@@ -14,6 +14,7 @@
 //! callers show them. For query exports, an asset-budget refusal offers Settings,
 //! missing assets are visible warnings, and replacement reports retained output.
 
+use crate::pub_corpus::{key_of, PubCorpus};
 use crate::render::{self, RenderGraph, SheetExport, SheetIndex};
 use crate::render_query_cache::substitute_current_page;
 use serde::Deserialize;
@@ -28,7 +29,6 @@ use tine_core::query::macro_text::query_macro_extents;
 use tine_core::query::wire_parse::{
     anchored_view, parse_query_pair, ParsedQuery, QueryTextDialect,
 };
-use tine_core::refs::page_key;
 use tine_store::Resolved;
 use tine_store::{IrAnswer, IrRequest, Store, WholeGraph};
 
@@ -165,7 +165,7 @@ pub(crate) struct Planned {
     pub(crate) plan: QueryExportPlan,
     pub(crate) parsed: ParsedQuery,
     pub(crate) result: QueryResult,
-    pub(crate) selected: tine_core::Corpus,
+    pub(crate) selected: PubCorpus,
 }
 
 pub(crate) fn resolve_plan(
@@ -217,17 +217,15 @@ fn resolve_plan_review(
         result.total = groups.iter().map(|group| group.blocks.len()).sum();
         result.matched_total = Some(result.total);
     }
-    let corpus = graph.corpus(None, true);
-    let handles = day_handles(graph, &corpus.pages);
+    let corpus = PubCorpus::all(graph, true);
     // Owner files by (kind, page_key), built once rather than per group. Page
     // identity is `page_key` everywhere here (census Q1), as in the reader
     // (`publishedBackend.ts pageByName`): two files claiming one key are an
     // ambiguous owner for every name, not only an ASCII one.
     let ambiguous = render::ambiguous_source_keys(&graph);
     let mut owners: HashMap<_, Vec<&str>> = HashMap::new();
-    for page in &corpus.pages {
-        let key = page_key(app_name(&handles, page));
-        (owners.entry((page.kind, key)).or_default()).push(page.id.as_str());
+    for page in corpus.pages() {
+        (owners.entry((page.kind, page.key())).or_default()).push(page.id.as_str());
     }
     let mut paths = HashSet::new();
     let anchor = match &result.rows {
@@ -239,9 +237,9 @@ fn resolve_plan_review(
         }
         QueryRows::Block { groups } => {
             for group in groups {
-                match owners.get(&(group.kind, page_key(&group.page))) {
+                match owners.get(&(group.kind, key_of(&group.page))) {
                     Some(files)
-                        if files.len() == 1 && !ambiguous.contains(&page_key(&group.page)) =>
+                        if files.len() == 1 && !ambiguous.contains(&key_of(&group.page)) =>
                     {
                         paths.insert(files[0].to_owned())
                     }
@@ -254,15 +252,12 @@ fn resolve_plan_review(
     if paths.len() > MAX_PAGES {
         return Err(refusal("query selects too many pages"));
     }
-    let mut chosen: Vec<_> = corpus
-        .pages
-        .into_iter()
-        .filter(|page| paths.contains(page.id.as_str()))
-        .collect();
+    let mut chosen = corpus;
+    chosen.retain(|page| paths.contains(page.id.as_str()));
     if chosen.len() != paths.len() {
         return Err(refusal("query result owner is missing"));
     }
-    chosen.sort_by(|a, b| a.id.as_str().cmp(b.id.as_str()));
+    chosen.sort_by_key(|page| page.id.as_str().to_owned());
     // WYSIWYG selection minus the two rules every export applies
     // (SHARE-DIALOG §1–2): private pages and the exports page stay out, and the
     // plan names them so the review shows what was left out.
@@ -270,7 +265,7 @@ fn resolve_plan_review(
     chosen.retain(|page| match render::export_left_out(page) {
         Some(reason) => {
             left_out.push(LeftOutPage {
-                name: page.name.clone(),
+                name: page.label().to_owned(),
                 path: page.id.as_str().into(),
                 reason,
             });
@@ -280,9 +275,9 @@ fn resolve_plan_review(
     });
     let include_comments =
         crate::output_comments::included(request.include_comments, &request.properties);
-    crate::output_comments::project(&mut chosen, include_comments);
+    chosen.project_comments(include_comments);
     if !include_comments {
-        crate::output_comments::close_result(&mut result, &chosen);
+        chosen.close_result(&mut result);
     }
     if chosen.is_empty() && !left_out.is_empty() {
         return Err(refusal(
@@ -290,28 +285,22 @@ fn resolve_plan_review(
         ));
     }
     let selects_host_page = request.current_page.as_deref().is_some_and(|host| {
-        chosen
-            .iter()
-            .any(|page| page_key(app_name(&handles, page)) == page_key(host))
+        let host = key_of(host);
+        chosen.pages().any(|page| page.key() == host)
     });
-    let selected = tine_core::Corpus { pages: chosen };
+    let selected = chosen;
     // The answer is closed to the exported pages too, so neither a ticked
     // "Include the query text" home nor the row count carries a left-out row.
     if !left_out.is_empty() {
-        let paths: HashSet<&str> = selected.pages.iter().map(|p| p.id.as_str()).collect();
-        let names: HashSet<_> = selected
-            .pages
-            .iter()
-            .map(|p| (p.kind, page_key(app_name(&handles, p))))
-            .collect();
+        let paths: HashSet<&str> = selected.pages().map(|p| p.id.as_str()).collect();
+        let names: HashSet<_> = selected.pages().map(|p| (p.kind, p.key())).collect();
         result = close_query_result(result, &paths, &names);
     }
     let pages: Vec<ExportPage> = selected
-        .pages
-        .iter()
+        .pages()
         .map(|p| ExportPage {
             // As the snapshot names it: the membership a re-plan compares.
-            name: app_name(&handles, p).to_owned(),
+            name: p.name().to_owned(),
             path: p.id.as_str().into(),
             journal: p.kind == PageKind::Journal,
         })
@@ -327,7 +316,7 @@ fn resolve_plan_review(
     reviewed.include_comments = Some(include_comments);
     hasher.update(serde_json::to_vec(&reviewed).map_err(io::Error::other)?);
     hasher.update(serde_json::to_vec(&result.rows).map_err(io::Error::other)?);
-    for page in &selected.pages {
+    for page in selected.pages() {
         hasher.update(page.id.as_str().as_bytes());
         hasher.update(serde_json::to_vec(page.document.as_ref()).map_err(io::Error::other)?);
     }
@@ -395,7 +384,7 @@ fn previous_membership(bytes: Option<Vec<u8>>) -> Option<Vec<String>> {
 fn collect_static(
     store: &Store,
     graph: &WholeGraph,
-    corpus: &tine_core::Corpus,
+    corpus: &PubCorpus,
     sheets: &SheetIndex,
     query_export: bool,
     asset_budget: u64,
@@ -444,81 +433,6 @@ fn collect_static(
     Ok(files)
 }
 
-/// Each day file's handle among `pages`, by path: the one operational name a
-/// year-less day is admitted, slugged, looked up, homed and bounded by in a
-/// publication, as it crosses to the app (`PageDto.name`, `RefGroup.page`,
-/// query rows: `2026_11_02`) where its name is the label `11-02` (CM SPEC
-/// §2.1). Every other page goes by its name ([`app_name`]); the label stays
-/// for display. From each day file's own names-only inventory row
-/// ([`tine_store::InventoryScope::FileNames`]): O(day files · log P), no graph
-/// inventory and no claimant of a shared label read.
-pub(crate) type Handles = HashMap<String, String>;
-
-/// See [`Handles`].
-pub(crate) fn day_handles<'p>(
-    graph: &WholeGraph,
-    pages: impl IntoIterator<Item = &'p tine_core::CorpusPage>,
-) -> Handles {
-    (pages.into_iter())
-        .filter(|page| page.kind == PageKind::Journal)
-        .filter_map(|page| {
-            let rows = graph.inventory(tine_store::InventoryScope::FileNames(&page.id));
-            Some((page.id.as_str().to_owned(), rows.0.first()?.handle.clone()?))
-        })
-        .collect()
-}
-
-/// The one operational name of `page` ([`Handles`]); its `name` stays its
-/// title.
-pub(crate) fn app_name<'a>(handles: &'a Handles, page: &'a tine_core::CorpusPage) -> &'a str {
-    handles
-        .get(page.id.as_str())
-        .map_or(&page.name, String::as_str)
-}
-
-/// Whether a page is the one a caller named: the one answer, for publication,
-/// print, PDF and sheets, by Logseq page identity (`page_key`), so a name that
-/// differs from the page's only by case, surrounding space, boundary slashes
-/// or Unicode normalization is that page. It admits a page by its operational
-/// name ([`app_name`]); the results carry that name, never the caller's
-/// spelling.
-pub(crate) struct Named(HashSet<String>);
-
-impl Named {
-    pub(crate) fn new<'a>(names: impl IntoIterator<Item = &'a str>) -> Self {
-        Self(names.into_iter().map(page_key).collect())
-    }
-
-    /// Whether the page with this operational name is named. O(name).
-    pub(crate) fn admits(&self, operational: &str) -> bool {
-        self.0.contains(&page_key(operational))
-    }
-}
-
-/// The pages of this view whose operational name ([`app_name`]) is `name`
-/// ([`Named`]), in page order: the pages a print, a PDF or a keyed lookup
-/// names. A day's handle is no claimant's name, so its file is found as a link
-/// to it opens and its name's claimants are filtered. O(C log P) for C
-/// claimants.
-pub(crate) fn pages_named(graph: &WholeGraph, name: &str) -> Vec<tine_core::CorpusPage> {
-    let mut pages = graph.corpus(Some(name), true).pages;
-    if pages.is_empty() {
-        if let Resolved::Existing { id, .. } = graph.resolve(name, false) {
-            if let Some(row) = graph
-                .inventory(tine_store::InventoryScope::FileNames(&id))
-                .0
-                .first()
-            {
-                pages = graph.corpus(Some(row.name.as_str()), true).pages;
-            }
-        }
-    }
-    let handles = day_handles(graph, &pages);
-    let named = Named::new([name]);
-    pages.retain(|page| named.admits(app_name(&handles, page)));
-    pages
-}
-
 fn close_query_result(
     mut result: QueryResult,
     paths: &HashSet<&str>,
@@ -527,7 +441,7 @@ fn close_query_result(
     match &mut result.rows {
         QueryRows::Page { pages } => pages.retain(|page| paths.contains(page.path.as_str())),
         QueryRows::Block { groups } => {
-            groups.retain(|group| names.contains(&(group.kind, page_key(&group.page))))
+            groups.retain(|group| names.contains(&(group.kind, key_of(&group.page))))
         }
     }
     result.total = match &result.rows {
@@ -563,21 +477,13 @@ fn display_only_property(key: &str) -> bool {
 /// their host block's `tine.*` properties, and those in a page's properties
 /// (the page header, which the reader renders with no host block and so no
 /// properties).
-fn baked_queries(
-    graph: &WholeGraph,
-    corpus: &tine_core::Corpus,
-    handles: &Handles,
-) -> io::Result<Vec<Value>> {
-    let paths: HashSet<_> = corpus.pages.iter().map(|page| page.id.as_str()).collect();
-    let names: HashSet<_> = corpus
-        .pages
-        .iter()
-        .map(|page| (page.kind, page_key(app_name(handles, page))))
-        .collect();
+fn baked_queries(graph: &WholeGraph, corpus: &PubCorpus) -> io::Result<Vec<Value>> {
+    let paths: HashSet<_> = corpus.pages().map(|page| page.id.as_str()).collect();
+    let names: HashSet<_> = corpus.pages().map(|page| (page.kind, page.key())).collect();
     let mut records = Vec::new();
     let registry = ir_registry(graph)?;
-    for page in &corpus.pages {
-        let name = app_name(handles, page);
+    for page in corpus.pages() {
+        let name = page.name();
         let mut bake = |raw: &str, properties: Vec<(String, String)>| -> io::Result<()> {
             // The raw-extent reader is quadratic with many malformed starts;
             // bound its input before calling it (I-22).
@@ -637,7 +543,7 @@ fn baked_queries(
 fn snapshot(
     graph: &WholeGraph,
     meta: &GraphMeta,
-    corpus: &tine_core::Corpus,
+    corpus: &PubCorpus,
     name: &str,
     home: &str,
     home_query: Option<(&QueryExportRequest, &ParsedQuery, &QueryResult)>,
@@ -661,7 +567,7 @@ fn snapshot(
 pub(crate) fn snapshot_at(
     graph: &WholeGraph,
     meta: &GraphMeta,
-    corpus: &tine_core::Corpus,
+    corpus: &PubCorpus,
     name: &str,
     home: &str,
     home_query: Option<(&QueryExportRequest, &ParsedQuery, &QueryResult)>,
@@ -670,14 +576,9 @@ pub(crate) fn snapshot_at(
     let mut pages: Vec<Value> = Vec::new();
     let mut entries: Vec<Value> = Vec::new();
     let inventory = graph.inventory(tine_store::InventoryScope::All);
-    let handles = day_handles(graph, &corpus.pages);
     // Each page as the app names it; its label stays its `title`.
-    let names: Vec<&str> = (corpus.pages.iter())
-        .map(|page| app_name(&handles, page))
-        .collect();
-    let selected: HashSet<_> = (corpus.pages.iter().zip(&names))
-        .map(|(p, name)| (p.kind, page_key(name)))
-        .collect();
+    let names: Vec<&str> = corpus.pages().map(|page| page.name()).collect();
+    let selected: HashSet<_> = corpus.pages().map(|p| (p.kind, p.key())).collect();
     // One pass over the inventory, not one per page (I-15).
     let mut days = HashMap::new();
     for entry in &inventory.0 {
@@ -685,14 +586,14 @@ pub(crate) fn snapshot_at(
             days.entry(id.as_str()).or_insert(day.0);
         }
     }
-    for (page, name) in corpus.pages.iter().zip(&names) {
+    for (page, name) in corpus.pages().zip(&names) {
         let blocks: Vec<_> = page
             .document
             .roots
             .iter()
             .map(tine_core::projection::block_to_dto)
             .collect();
-        let mut value = json!({ "name": name, "kind": page.kind, "title": page.name,
+        let mut value = json!({ "name": name, "kind": page.kind, "title": page.label(),
             "pre_block": page.document.pre_block, "blocks": blocks,
             "format": tine_core::model::Format::from_path(Path::new(page.id.as_str())),
             "read_only": true, "guide": false });
@@ -705,7 +606,7 @@ pub(crate) fn snapshot_at(
             json!({ "name": name, "kind": page.kind, "date_key": day, "path": page.id.as_str() }),
         );
     }
-    let mut queries = baked_queries(graph, corpus, &handles)?;
+    let mut queries = baked_queries(graph, corpus)?;
     if let Some((request, parsed, result)) = home_query {
         let macro_name = match request.dialect {
             QueryTextDialect::MacroTql | QueryTextDialect::Tql => "tine-query",
@@ -757,9 +658,9 @@ pub(crate) fn snapshot_at(
         // (closure, `docs/contracts/quick-share.md`).
         let executed_context = ExecutionContext {
             current_page: request.current_page.as_deref().and_then(|host| {
-                let key = page_key(host);
+                let key = key_of(host);
                 (names.iter())
-                    .find(|name| page_key(name) == key)
+                    .find(|name| key_of(name) == key)
                     .map(|name| (*name).to_owned())
             }),
         };
@@ -786,7 +687,7 @@ pub(crate) fn snapshot_at(
             .map_err(|e| io::Error::other(format!("{e:?}")))?;
         let closed: Vec<_> = groups
             .iter()
-            .filter(|g| selected.contains(&(g.kind, page_key(&g.page))))
+            .filter(|g| selected.contains(&(g.kind, key_of(&g.page))))
             .cloned()
             .collect();
         if !closed.is_empty() {
@@ -796,7 +697,7 @@ pub(crate) fn snapshot_at(
     let names: Vec<String> = names.iter().map(|name| name.to_string()).collect();
     let icons = graph.page_icons(&names);
     let mut owner_names = HashMap::new();
-    for (page, name) in corpus.pages.iter().zip(&names) {
+    for (page, name) in corpus.pages().zip(&names) {
         owner_names.entry(page.id.as_str()).or_insert(name);
     }
     let aliases: Vec<_> = inventory
@@ -883,7 +784,7 @@ fn app_files(
 /// the remaining budget. Cost O(selected text + asset bytes); no graph writes.
 fn publication_assets(
     store: &Store,
-    corpus: &tine_core::Corpus,
+    corpus: &PubCorpus,
     budget: u64,
     warnings: &mut Vec<String>,
 ) -> Result<Vec<(String, Vec<u8>)>, tine_store::StoreError> {
@@ -987,7 +888,7 @@ pub(crate) fn planned_page_keys(
         .whole_graph()
         .map_err(|e| io::Error::other(format!("graph load failed: {e:?}")))?;
     let planned = resolve_plan(store, &graph, request)?;
-    Ok(crate::publish::page_keys(&graph, &planned.selected.pages))
+    Ok(planned.selected.pages().map(|page| page.key()).collect())
 }
 
 /// Commit a reviewed query to its in-graph leaf. Replace retains the old leaf
@@ -1074,7 +975,7 @@ fn publish_at(
     if planned.plan.fingerprint != fingerprint {
         return Err(refusal("query export changed; review it again"));
     }
-    if planned.selected.pages.is_empty() {
+    if planned.selected.is_empty() {
         return Err(refusal("query has no pages to export"));
     }
     let mut result = planned.result;
@@ -1085,16 +986,12 @@ fn publish_at(
     // still read from the real store.
     let (mut files, snap) = crate::build_graph::with_build_graph(
         store,
-        &planned.selected.pages,
+        &planned.selected,
         scratch,
         BUILD_GRAPH_REFUSED,
         |build, meta, corpus| {
             if request.include_query_text && !planned.plan.include_comments {
-                crate::output_comments::remap_result_ids(
-                    &mut result,
-                    &planned.selected.pages,
-                    &corpus.pages,
-                );
+                planned.selected.remap_result_ids(&mut result, &corpus);
             }
             let files = collect_static(
                 store,
@@ -1161,7 +1058,7 @@ fn publish_at(
         })?;
     Ok(ExportReceipt {
         path: receipt.site.display().to_string(),
-        pages: planned.selected.pages.len(),
+        pages: planned.selected.len(),
         files: receipt.files,
         retired: receipt.previous_kept.map(|p| p.display().to_string()),
         warnings,
@@ -1304,19 +1201,15 @@ fn live(
         return Err(refusal("live export name is invalid"));
     }
     let graph = export_view(store)?;
-    let mut corpus = graph.corpus(None, true);
+    let mut corpus = PubCorpus::all(&graph, true);
     let selection = render::PageSelection::every_page(all_pages);
-    corpus.pages.retain(|page| selection.includes(page));
-    crate::output_comments::project(&mut corpus.pages, include_comments);
-    if corpus.pages.len() > MAX_PAGES {
+    corpus.retain(|page| selection.includes(page));
+    corpus.project_comments(include_comments);
+    if corpus.len() > MAX_PAGES {
         return Err(refusal("live export selects too many pages"));
     }
-    corpus.pages.sort_by(|a, b| a.name.cmp(&b.name));
-    let handles = day_handles(&graph, &corpus.pages);
-    let find = |wanted: &str| {
-        let wanted = tine_core::refs::page_key(wanted);
-        (corpus.pages.iter()).find(|p| tine_core::refs::page_key(app_name(&handles, p)) == wanted)
-    };
+    corpus.sort_by_key(|page| page.label().to_owned());
+    let find = |wanted: &str| corpus.find_named(wanted);
     let home =
         match requested_home {
             Some(requested) => Some(find(requested).ok_or_else(|| {
@@ -1329,15 +1222,15 @@ fn live(
                 .as_deref()
                 .and_then(|configured| find(configured))
                 .or_else(|| find("Welcome to Tine"))
-                .or_else(|| corpus.pages.first()),
+                .or_else(|| corpus.first()),
         }
-        .map(|p| app_name(&handles, p).to_owned())
+        .map(|p| p.name().to_owned())
         .unwrap_or_default();
     // The static fallback and the snapshot both come from the build graph
     // (see `publish_query_with_sheets_in`).
     let (mut files, snap) = crate::build_graph::with_build_graph(
         store,
-        &corpus.pages,
+        &corpus,
         scratch,
         BUILD_GRAPH_REFUSED,
         |build, meta, corpus| {
@@ -1357,7 +1250,7 @@ fn live(
         },
     )?;
     app_files(&mut files, bundle, snap, name)?;
-    commit(store, parent, &slug(name), files, corpus.pages.len())
+    commit(store, parent, &slug(name), files, corpus.len())
 }
 
 /// Publish a create-only static HTML site to an external, user-selected
@@ -1374,20 +1267,20 @@ pub fn publish_static(
         return Err(refusal("static export name is invalid"));
     }
     let graph = export_view(store)?;
-    let mut corpus = graph.corpus(None, true);
+    let mut corpus = PubCorpus::all(&graph, true);
     let selection = render::PageSelection::every_page(all_pages);
-    corpus.pages.retain(|page| selection.includes(page));
-    crate::output_comments::project(&mut corpus.pages, include_comments);
-    if corpus.pages.len() > MAX_PAGES {
+    corpus.retain(|page| selection.includes(page));
+    corpus.project_comments(include_comments);
+    if corpus.len() > MAX_PAGES {
         return Err(refusal("static export selects too many pages"));
     }
-    corpus.pages.sort_by(|a, b| a.name.cmp(&b.name));
+    corpus.sort_by_key(|page| page.label().to_owned());
     // No frontend computes sheets for a CLI export: every sheet block stays a
     // plain outline. Rendered from the private build graph (see
     // `publish_query_with_sheets_in`), under the system temp directory.
     let files = crate::build_graph::with_build_graph(
         store,
-        &corpus.pages,
+        &corpus,
         &std::env::temp_dir(),
         BUILD_GRAPH_REFUSED,
         |build, _meta, corpus| {
@@ -1402,7 +1295,7 @@ pub fn publish_static(
             )
         },
     )?;
-    commit(store, parent, &slug(name), files, corpus.pages.len())
+    commit(store, parent, &slug(name), files, corpus.len())
 }
 
 #[cfg(test)]
@@ -1428,7 +1321,7 @@ mod snapshot_consistency_tests {
         )
         .unwrap();
         let (store, _, _) = Store::open(root, Default::default()).unwrap();
-        let corpus = store.whole_graph().unwrap().corpus(None, true);
+        let corpus = PubCorpus::all(&store.whole_graph().unwrap(), true);
         let assets =
             publication_assets(&store, &corpus, 32 * 1024 * 1024, &mut Vec::new()).unwrap();
         let names: Vec<_> = assets.iter().map(|(name, _)| name.as_str()).collect();
@@ -1468,7 +1361,7 @@ mod snapshot_consistency_tests {
         store.refresh(tine_store::Depth::Stamps).unwrap();
         let bytes = crate::build_graph::with_build_graph(
             &store,
-            &reviewed.selected.pages,
+            &reviewed.selected,
             temp.path(),
             BUILD_GRAPH_REFUSED,
             |build, meta, corpus| snapshot(build, meta, &corpus, "Export", "Public", None, 0),

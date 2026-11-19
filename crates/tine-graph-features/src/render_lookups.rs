@@ -12,12 +12,12 @@
 //! identity tree in either mode. A block whose subtree exceeds `blocks`'
 //! result budget still copies the corpus once.
 
+use crate::pub_corpus::{PubCorpus, PubPage};
 use std::cell::OnceCell;
 use std::collections::HashMap;
 use std::sync::Arc;
 use tine_core::doc::{DocBlock, Document};
 use tine_core::model::PageKind;
-use tine_core::{Corpus, CorpusPage};
 use tine_store::WholeGraph;
 
 #[cfg(test)]
@@ -39,14 +39,19 @@ type BlockAt = (usize, Box<[usize]>);
 
 /// A block found by uuid: its page and the child-index path to it.
 pub(super) struct BlockHit {
-    pub page: CorpusPage,
+    page: PubCorpus,
     path: Box<[usize]>,
 }
 
 impl BlockHit {
+    /// The page holding the block.
+    pub(super) fn page(&self) -> PubPage<'_> {
+        self.page.first().expect("a hit holds its page")
+    }
+
     pub(super) fn block(&self) -> (&DocBlock, bool) {
         let (first, rest) = self.path.split_first().expect("a block path is non-empty");
-        let mut block = &self.page.document.roots[*first];
+        let mut block = &self.page().document.roots[*first];
         let mut comment = false;
         for i in rest {
             block = &block.children[*i];
@@ -82,12 +87,12 @@ fn keyed_block(whole: &WholeGraph, uuid: &str) -> Result<Option<BlockHit>, ()> {
     let Some(group) = group else {
         return Ok(None);
     };
-    let pages = crate::publish_query::pages_named(whole, &group.page).into_iter();
-    for page in pages.filter(|page| page.kind == group.kind) {
+    let named = PubCorpus::named(whole, [group.page.as_str()]);
+    for (at, page) in named.pages().enumerate() {
         let mut path = Vec::new();
-        if find(&page.document.roots, uuid, &mut path) {
+        if page.kind == group.kind && find(&page.document.roots, uuid, &mut path) {
             return Ok(Some(BlockHit {
-                page,
+                page: named.only(at),
                 path: path.into_boxed_slice(),
             }));
         }
@@ -100,34 +105,19 @@ pub(super) struct Lookups {
     /// Answer from the view's keyed indexes, not the corpus (single-page print).
     pub keyed: bool,
     /// Keyed mode's fallback for blocks over the exact lookup result budget.
-    all_pages: OnceCell<Corpus>,
+    all_pages: OnceCell<PubCorpus>,
     /// Block uuid or `id::` → page index and child-index path from its roots.
     blocks: OnceCell<HashMap<String, BlockAt>>,
     docs: OnceCell<HashMap<(String, PageKind), usize>>,
     by_name: OnceCell<HashMap<String, usize>>,
-    /// The corpus's day handles (`publish_query::Handles`).
-    handles: OnceCell<crate::publish_query::Handles>,
 }
 
 impl Lookups {
-    /// The one operational name of `page`, a page of `corpus`
-    /// (`publish_query::Handles`). O(day files · log P) once, then O(1).
-    pub(super) fn name<'p>(
-        &'p self,
-        corpus: &Corpus,
-        whole: &WholeGraph,
-        page: &'p CorpusPage,
-    ) -> &'p str {
-        let handles =
-            (self.handles).get_or_init(|| crate::publish_query::day_handles(whole, &corpus.pages));
-        crate::publish_query::app_name(handles, page)
-    }
-
     /// The first block, in corpus order then pre-order, whose runtime uuid or
     /// `id::` property is `uuid`.
     pub(super) fn block(
         &self,
-        corpus: &Corpus,
+        corpus: &PubCorpus,
         whole: &WholeGraph,
         uuid: &str,
     ) -> Option<BlockHit> {
@@ -135,15 +125,15 @@ impl Lookups {
             match keyed_block(whole, uuid) {
                 Ok(hit) => return hit,
                 // Over the block question's result budget: one corpus copy.
-                Err(()) => self.all_pages.get_or_init(|| whole.corpus(None, true)),
+                Err(()) => self.all_pages.get_or_init(|| PubCorpus::all(whole, true)),
             }
         } else {
             corpus
         };
         let blocks = self.blocks.get_or_init(|| {
-            count_page_probes(corpus.pages.len());
+            count_page_probes(corpus.len());
             let mut map = HashMap::new();
-            for (page, entry) in corpus.pages.iter().enumerate() {
+            for (page, entry) in corpus.pages().enumerate() {
                 let mut stack: Vec<(Vec<usize>, &DocBlock)> = (entry.document.roots.iter())
                     .enumerate()
                     .rev()
@@ -169,60 +159,57 @@ impl Lookups {
             return None;
         }
         Some(BlockHit {
-            page: corpus.pages[*page].clone(),
+            page: corpus.only(*page),
             path: path.clone(),
         })
     }
 
-    /// The document of the page with this exact operational name and kind
-    /// (last file wins).
+    /// The document of the page with this operational name (by page identity)
+    /// and kind (last file wins).
     pub(super) fn doc(
         &self,
-        corpus: &Corpus,
+        corpus: &PubCorpus,
         whole: &WholeGraph,
         name: &str,
         kind: PageKind,
     ) -> Option<Arc<Document>> {
         if self.keyed {
-            return (crate::publish_query::pages_named(whole, name).into_iter())
-                .filter(|page| page.kind == kind)
-                .last()
-                .map(|page| page.document);
+            let named = PubCorpus::named(whole, [name]);
+            let page = named.pages().filter(|page| page.kind == kind).last()?;
+            return Some(Arc::clone(page.document));
         }
         let docs = self.docs.get_or_init(|| {
-            count_page_probes(corpus.pages.len());
-            (corpus.pages.iter().enumerate())
-                .map(|(i, page)| ((self.name(corpus, whole, page).to_owned(), page.kind), i))
+            count_page_probes(corpus.len());
+            (corpus.pages().enumerate())
+                .map(|(i, page)| ((page.key(), page.kind), i))
                 .collect()
         });
-        let page = docs.get(&(name.to_owned(), kind))?;
-        Some(Arc::clone(&corpus.pages[*page].document))
+        let page = docs.get(&(crate::pub_corpus::key_of(name), kind))?;
+        Some(Arc::clone(corpus.page_at(*page).document))
     }
 
     /// The first page, in corpus order, whose operational name has `name`'s
     /// Logseq page identity (`refs::page_key`).
     pub(super) fn doc_named(
         &self,
-        corpus: &Corpus,
+        corpus: &PubCorpus,
         whole: &WholeGraph,
         name: &str,
     ) -> Option<Arc<Document>> {
         if self.keyed {
-            return (crate::publish_query::pages_named(whole, name).into_iter())
-                .next()
-                .map(|page| page.document);
+            let named = PubCorpus::named(whole, [name]);
+            return Some(Arc::clone(named.first()?.document));
         }
         let by_name = self.by_name.get_or_init(|| {
-            count_page_probes(corpus.pages.len());
+            count_page_probes(corpus.len());
             let mut map = HashMap::new();
-            for (i, page) in corpus.pages.iter().enumerate() {
-                map.entry(tine_core::refs::page_key(self.name(corpus, whole, page)))
-                    .or_insert(i);
+            for (i, page) in corpus.pages().enumerate() {
+                map.entry(page.key()).or_insert(i);
             }
             map
         });
-        let page = by_name.get(&tine_core::refs::page_key(name))?;
-        Some(Arc::clone(&corpus.pages[*page].document))
+        let page = by_name.get(&crate::pub_corpus::key_of(name))?;
+        Some(Arc::clone(corpus.page_at(*page).document))
     }
 
     /// Active stored names under an identity prefix, in displayed-name byte order.

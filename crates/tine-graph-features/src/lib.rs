@@ -24,6 +24,7 @@ pub mod pages;
 mod parsed_text;
 pub mod pdf;
 pub mod print;
+mod pub_corpus;
 mod publication_options;
 pub mod publish;
 pub mod publish_query;

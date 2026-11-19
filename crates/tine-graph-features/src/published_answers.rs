@@ -26,12 +26,12 @@
 //!   carries on purpose: the viewer's date parser needs them) and the days
 //!   whose journal has content (`WholeGraph::journal_content_days`).
 use crate::inventory_wire::{alias_group_wire, entry_wire, PageInventoryEntryWire, ResolvedWire};
+use crate::pub_corpus::PubCorpus;
 use serde_json::{json, Value};
 use std::collections::{HashMap, HashSet};
 use std::io;
 use tine_core::model::GraphMeta;
 use tine_core::refs::page_key;
-use tine_core::Corpus;
 use tine_store::{Inventory, InventoryScope, Resolved, WholeGraph};
 
 /// The `answers.v` this writer emits.
@@ -66,7 +66,7 @@ pub(crate) fn home_name_taken(inventory: &Inventory, spellings: &Inventory, name
 pub(crate) fn answers(
     graph: &WholeGraph,
     meta: &GraphMeta,
-    corpus: &Corpus,
+    corpus: &PubCorpus,
     inventory: &Inventory,
     home: Option<&str>,
 ) -> io::Result<Value> {
@@ -162,12 +162,10 @@ pub(crate) fn answers(
             },
         );
     }
-    let handles = crate::publish_query::day_handles(graph, &corpus.pages);
     let alias_groups: Vec<Value> = corpus
-        .pages
-        .iter()
+        .pages()
         .filter_map(|page| {
-            let name = crate::publish_query::app_name(&handles, page);
+            let name = page.name();
             let group = alias_group_wire(graph, name);
             (!group.aliases.is_empty() || !group.pages.is_empty())
                 .then(|| json!({ "name": name, "aliases": group.aliases, "pages": group.pages }))

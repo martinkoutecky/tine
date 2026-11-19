@@ -1,9 +1,9 @@
 //! Query publication inputs. Selection reads a held view; the shared publisher
 //! owns evaluation, validation, review, output and recovery.
 use super::*;
+use crate::pub_corpus::{PubCorpus, PubPage};
 use tine_core::doc::DocBlock;
 use tine_core::model::PageId;
-use tine_core::CorpusPage;
 
 #[cfg(test)]
 thread_local! {
@@ -22,9 +22,9 @@ pub fn query_request_by_uuid(
     let graph = store
         .whole_graph()
         .map_err(|e| io::Error::other(format!("graph load failed: {e:?}")))?;
-    let corpus = graph.corpus(tine_store::CorpusScope::BlockIdCandidates(uuid), true);
+    let corpus = PubCorpus::block_candidates(&graph, uuid);
     let mut found = None;
-    for page in &corpus.pages {
+    for page in corpus.pages() {
         let mut stack: Vec<_> = page.document.roots.iter().collect();
         while let Some(block) = stack.pop() {
             #[cfg(feature = "test-faults")]
@@ -45,7 +45,6 @@ pub fn query_request_by_uuid(
     let query =
         render::query_for_export(block.visible_text(), block.is_org(), false).map_err(refusal)?;
     Ok(block_request(
-        &graph,
         page,
         block,
         query,
@@ -84,16 +83,9 @@ pub fn query_request_on_page(
     name: Option<&str>,
     replace: bool,
 ) -> io::Result<QueryExportRequest> {
-    let inventory = graph.inventory(tine_store::InventoryScope::FileNames(id));
-    let entry = inventory
-        .0
-        .first()
-        .ok_or_else(|| refusal("query page is absent"))?;
-    let corpus = graph.corpus(Some(entry.name.as_str()), true);
+    let corpus = PubCorpus::file(graph, id).ok_or_else(|| refusal("query page is absent"))?;
     let page = corpus
-        .pages
-        .iter()
-        .find(|page| &page.id == id)
+        .first()
         .ok_or_else(|| refusal("query page is absent"))?;
     let mut stack = vec![page.document.roots.iter()];
     while let Some(blocks) = stack.last_mut() {
@@ -106,12 +98,11 @@ pub fn query_request_on_page(
         match render::query_for_export(block.visible_text(), block.is_org(), true) {
             Ok(query) => {
                 return Ok(block_request(
-                    graph,
                     page,
                     block,
                     query,
                     name,
-                    &format!("Query {}", page.name),
+                    &format!("Query {}", page.label()),
                     replace,
                 ))
             }
@@ -123,12 +114,11 @@ pub fn query_request_on_page(
             Err(error) => return Err(refusal(error)),
         }
     }
-    Err(refusal(format!("page `{}` has no query", page.name)))
+    Err(refusal(format!("page `{}` has no query", page.label())))
 }
 
 fn block_request(
-    graph: &WholeGraph,
-    page: &CorpusPage,
+    page: PubPage<'_>,
     block: &DocBlock,
     (argument, dialect, title): (String, QueryTextDialect, Option<String>),
     name: Option<&str>,
@@ -147,8 +137,7 @@ fn block_request(
         .filter(|(key, _)| query_parse_property(key) || display_only_property(key))
         .collect();
     // The host page by its operational name: a year-less day's handle.
-    let handles = day_handles(graph, [page]);
-    request.current_page = Some(app_name(&handles, page).to_owned());
+    request.current_page = Some(page.name().to_owned());
     request.host_block_id = Some(block.uuid.to_string());
     request
 }

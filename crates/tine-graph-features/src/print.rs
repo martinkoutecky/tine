@@ -1,9 +1,9 @@
 //! Single-page print document client.
 
 use std::io;
-use tine_core::{Corpus, CorpusPage};
 use tine_store::{Store, WholeGraph};
 
+use crate::pub_corpus::PubCorpus;
 use crate::render::{self, RenderGraph, SheetExport, SheetIndex};
 
 /// Options for the single-page print/PDF export.
@@ -46,7 +46,7 @@ pub fn page_print_html_with_sheets(
     let Some((whole, mut corpus)) = fresh_named_pages(store, &[name.to_owned()])? else {
         return Ok(None);
     };
-    crate::output_comments::project(&mut corpus.pages, opts.include_comments);
+    corpus.project_comments(opts.include_comments);
     let mut graph = RenderGraph::for_pages(&corpus, &whole, store, Some(&sheets));
     graph.include_comments = opts.include_comments;
     render::page_print_html(&graph, name, opts)
@@ -64,7 +64,7 @@ pub fn page_print_html_with_sheets(
 pub(crate) fn fresh_named_pages(
     store: &Store,
     names: &[String],
-) -> io::Result<Option<(WholeGraph, Corpus)>> {
+) -> io::Result<Option<(WholeGraph, PubCorpus)>> {
     let load = |store: &Store| {
         store
             .whole_graph()
@@ -73,12 +73,10 @@ pub(crate) fn fresh_named_pages(
     let mut names: Vec<&String> = names.iter().collect();
     names.sort();
     names.dedup();
-    let named = |whole: &WholeGraph| -> Vec<CorpusPage> {
-        let mut pages: Vec<CorpusPage> = (names.iter())
-            .flat_map(|name| crate::publish_query::pages_named(whole, name))
-            .collect();
-        // Name order, page order within a name: what sorting a corpus gives.
-        pages.sort_by(|a, b| a.name.cmp(&b.name));
+    let named = |whole: &WholeGraph| {
+        let mut pages = PubCorpus::named(whole, names.iter().map(|name| name.as_str()));
+        // Label order, page order within a label: what sorting a corpus gives.
+        pages.sort_by_key(|page| page.label().to_owned());
         pages
     };
     let mut whole = load(store)?;
@@ -86,8 +84,8 @@ pub(crate) fn fresh_named_pages(
     if pages.is_empty() {
         return Ok(None);
     }
-    for page in &pages {
-        store.page(&page.id).map_err(crate::store_error)?;
+    for page in pages.pages() {
+        store.page(page.id).map_err(crate::store_error)?;
     }
     let fresh = load(store)?;
     let pages = if fresh.rev() != whole.rev() {
@@ -96,5 +94,5 @@ pub(crate) fn fresh_named_pages(
     } else {
         pages
     };
-    Ok(Some((whole, Corpus { pages })))
+    Ok(Some((whole, pages)))
 }

@@ -381,13 +381,13 @@ pub fn prepare(
     request.include_query_text = false;
     let planned = resolve_plan(store, &graph, &request)?;
     let selected = &planned.selected;
-    if selected.pages.is_empty() {
+    if selected.is_empty() {
         return Err(refusal("this query selects no pages to share"));
     }
-    if selected.pages.len() > MAX_PAGES {
+    if selected.len() > MAX_PAGES {
         return Err(refusal(format!(
             "a share holds at most {MAX_PAGES} pages; this query selects {}",
-            selected.pages.len()
+            selected.len()
         )));
     }
 
@@ -395,34 +395,26 @@ pub fn prepare(
     // plus the graph's parse configuration (journal formats, property rules).
     let (title, snapshot) = crate::build_graph::with_build_graph(
         store,
-        &selected.pages,
+        selected,
         scratch,
         "the shared pages did not read back as the same pages; nothing was shared",
         |private_graph, meta, mut corpus| {
             // The private store lists its pages in directory order, which differs
             // by filesystem (hash order on ext4, name order on NTFS). The share
             // lists them in the order the review showed: by path, as the plan.
-            corpus
-                .pages
-                .sort_by(|a, b| a.id.as_str().cmp(b.id.as_str()));
+            corpus.sort_by_key(|page| page.id.as_str().to_owned());
             // The export rules hold for the bytes actually shared, not only for
             // the whole-graph view the plan was made from.
-            if corpus
-                .pages
-                .iter()
-                .any(|page| render::export_left_out(page).is_some())
-            {
+            if (corpus.pages()).any(|page| render::export_left_out(page).is_some()) {
                 return Err(refusal(
                     "a shared page is private or the exports page; nothing was shared",
                 ));
             }
-            let (title, home, home_query) = if corpus.pages.len() == 1 {
+            let (title, home, home_query) = if corpus.len() == 1 {
                 // Titled by its label, homed by its operational name (a
                 // year-less day's handle), as its entry is named.
-                let page = &corpus.pages[0];
-                let handles = crate::publish_query::day_handles(private_graph, [page]);
-                let home = crate::publish_query::app_name(&handles, page).to_owned();
-                (page.name.clone(), home, None)
+                let page = corpus.page_at(0);
+                (page.label().to_owned(), page.name().to_owned(), None)
             } else {
                 let title = request.name.trim().to_owned();
                 // The synthetic home must not shadow a name the build graph
