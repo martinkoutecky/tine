@@ -1,0 +1,140 @@
+import { afterEach, beforeAll, expect, it } from "vitest";
+import { render } from "solid-js/web";
+import type { JSX } from "solid-js";
+import { AstBody } from "../render/body";
+import { initParser } from "../render/parse";
+import { openingSegments } from "../editor/properties";
+import { OpeningText } from "./OpeningText";
+
+beforeAll(async () => { await initParser(); });
+afterEach(() => { document.body.replaceChildren(); });
+
+function mount(view: () => JSX.Element): HTMLElement {
+  const host = document.createElement("div");
+  document.body.append(host);
+  render(view, host);
+  return host;
+}
+
+/** Each piece of the opening row in order: a group's shown text, or a block piece's HTML. */
+function pieces(text: string, format: "md" | "org" = "md"): { group: boolean; shown: string }[] {
+  const host = mount(() => <OpeningText raw={text} format={format} />);
+  return [...host.children].filter((el) => !el.classList.contains("opening-blank")).map((el) => el.classList.contains("opening-group")
+    ? { group: true, shown: el.textContent ?? "" }
+    : { group: false, shown: el.innerHTML });
+}
+
+/** The HTML of `text` rendered as an ordinary block body. */
+function asBlockBody(text: string, format: "md" | "org" = "md"): string {
+  return mount(() => <AstBody raw={text} format={format} />).innerHTML;
+}
+
+// D-20261119-PG, redesign B: the parser names opening text's top-level
+// property groups; each shows as its exact source, one line per source line
+// (a Windows line end is one), indentation and any text kept, no markup.
+it.each([
+  ["prose\n\nk:: v\n\nmore", "md", ["k:: v"]],
+  ["prose\nk:: v", "md", ["k:: v"]],
+  ["a:: 1\n\nb:: 2", "md", ["a:: 1", "b:: 2"]],
+  ["prose\r\n\r\nk:: v\r\nj:: w\r\n\r\nmore", "md", ["k:: v\nj:: w"]],
+  ["prose\n\n  k:: v\n\tj:: w", "md", ["  k:: v\n\tj:: w"]],
+  ["prose\n\nstatus:: TODO [#A] **x** [[P]]", "md", ["status:: TODO [#A] **x** [[P]]"]],
+  ["prose\n#+k: [[X]]\nmore", "md", ["#+k: [[X]]"]],
+  ["prose\n#+k: v", "org", ["#+k: v"]],
+  ["prose\n\nkey:: été 日本\n\nmore", "md", ["key:: été 日本"]],
+  ["TODO k:: v", "md", ["TODO k:: v"]],
+  ["[#A] k:: v", "md", ["[#A] k:: v"]],
+  ["TODO [#A] k:: v\r\nprose", "md", ["TODO [#A] k:: v"]],
+  ["TODO #+k: v", "md", ["TODO #+k: v"]],
+] as const)("shows the group of %j (%s) as its source", (text, format, groups) => {
+  expect(pieces(text, format).filter((p) => p.group).map((p) => p.shown)).toEqual(groups);
+  const fromParser = openingSegments(text, format).filter((s) => s.group).map((s) => s.text);
+  expect(fromParser.map((g) => g.replace(/\r?\n$/, "").replace(/\r\n/g, "\n"))).toEqual(groups);
+  expect(fromParser.every((g) => text.includes(g))).toBe(true);
+});
+
+// Everything else is block text: it renders exactly as the same text does
+// as a block body, queries, macros, containers and hidden directives included.
+it.each([
+  ["> q\n#+k: v", "md"], ["> q\n#+k: v", "org"],
+  ["#+BEGIN_QUOTE\n#+k: v\n#+END_QUOTE", "md"], ["#+BEGIN_NOTE\n#+k: v\n#+END_NOTE", "org"],
+  ["{{query (task TODO)}}", "md"], ["prose {{tine-query x}} more", "org"],
+  ["{{embed [[X]]}}", "md"], ["{{video https://example.com/v.mp4}}", "md"],
+  ["**bold** [[Page]] #tag", "md"], ["line one\nline two", "md"],
+] as const)("renders %j (%s), which has no top-level group, as a block body", (text, format) => {
+  const shown = pieces(text, format);
+  expect(shown.every((p) => !p.group)).toBe(true);
+  expect(shown).toHaveLength(1);
+  expect(shown[0].shown).toBe(asBlockBody(text, format));
+});
+
+it("keeps groups and block pieces in source order, each piece a block body", () => {
+  const text = "one {{query x}}\n\na:: 1\n\n> two\n\nb:: 2\nc:: 3\n\nthree";
+  const shown = pieces(text);
+  expect(shown.map((p) => p.group)).toEqual([false, true, false, true, false]);
+  expect(shown.filter((p) => p.group).map((p) => p.shown)).toEqual(["a:: 1", "b:: 2\nc:: 3"]);
+  const blocks = ["one {{query x}}", "> two", "three"];
+  expect(shown.filter((p) => !p.group).map((p) => p.shown)).toEqual(blocks.map((b) => {
+    document.body.replaceChildren();
+    return asBlockBody(b);
+  }));
+});
+
+it.each([
+  ["prose\n\nk:: v\n\n\nmore", ["text", "blank", "group", "blank", "blank", "text"]],
+  ["a:: 1\r\n\r\nb:: 2", ["group", "blank", "group"]],
+  ["\n\nprose\nk:: v\n", ["blank", "blank", "text", "group"]],
+  ["prose\n\n\n#+k: v", ["text", "blank", "blank", "group"]],
+] as const)("shows each blank source line of %j between pieces", (text, kinds) => {
+  const host = mount(() => <OpeningText raw={text} format="md" />);
+  expect([...host.children].map((el) => el.className.match(/opening-(group|text|blank)/)![1])).toEqual(kinds);
+});
+
+// Ruling (b) on D-20261119-PG: a task word or priority the block parse lifts
+// off a piece's first line prints as its exact source, never as chrome.
+it.each([
+  ["TODO Prose [[Target]]", "md", ["TODO Prose [[Target]]"]],
+  ["[#A] Prose", "md", ["[#A] Prose"]],
+  ["TODO [#A] Prose [[Target]]", "md", ["TODO [#A] Prose [[Target]]"]],
+  ["DONE  done it", "md", ["DONE  done it"]],
+  ["LATER [#C] later", "md", ["LATER [#C] later"]],
+  ["NOW now", "md", ["NOW now"]],
+  ["TODO", "md", ["TODO"]],
+  ["TODO\nnext line", "md", ["TODO", "next line"]],
+  ["TODO Org prose", "org", ["TODO Org prose"]],
+  ["DONE [#B] Org prose", "org", ["DONE [#B] Org prose"]],
+  ["a:: 1\n\nNOW after a group", "md", ["a:: 1", "", "NOW after a group"]],
+] as const)("prints the lifted task word or priority of %j (%s) as text", (text, format, lines) => {
+  const host = mount(() => <OpeningText raw={text} format={format} />);
+  const shown = [...host.children].flatMap((piece) => {
+    if (piece.classList.contains("opening-blank")) return [""];
+    const out = [""];
+    const walk = (node: Node) => {
+      if (node.nodeName === "BR") out.push("");
+      else if (node.nodeType === Node.TEXT_NODE) out[out.length - 1] += node.textContent ?? "";
+      else node.childNodes.forEach(walk);
+    };
+    walk(piece);
+    return out.flatMap((line) => line.split("\n"));
+  });
+  expect(shown).toEqual(lines);
+  expect(host.querySelector(".block-marker, .block-priority, input[type=checkbox]")).toBeNull();
+});
+
+// One parser answer per text, then one block parse per piece: the UTF-8 work
+// grows with the text, not with pieces times text.
+it("encodes opening text a linear number of times in its pieces", () => {
+  const encoded = (pairs: number) => {
+    const text = Array.from({ length: pairs }, (_, i) => `prose ${i}\n\nk${i}:: v`).join("\n\n");
+    const proto = TextEncoder.prototype;
+    const encode = proto.encode, encodeInto = proto.encodeInto;
+    let chars = 0;
+    proto.encode = function (input?: string) { chars += input?.length ?? 0; return encode.call(this, input); };
+    proto.encodeInto = function (input: string, dest: Uint8Array) { chars += input.length; return encodeInto.call(this, input, dest); };
+    try { mount(() => <OpeningText raw={text} format="md" />); } finally { proto.encode = encode; proto.encodeInto = encodeInto; }
+    document.body.replaceChildren();
+    return chars / text.length;
+  };
+  const small = encoded(32), large = encoded(256);
+  expect(large).toBeLessThan(small * 1.25 + 1);
+});

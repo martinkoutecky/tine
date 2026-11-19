@@ -137,17 +137,20 @@ describe("opening text with later property groups", () => {
         expect(el?.textContent).toContain("Prose");
         return el!;
       });
-      const lines: string[] = [""];
-      const walk = (node: Node) => {
-        if (node.nodeName === "BR") lines.push("");
-        else if (node.nodeType === Node.TEXT_NODE) {
-          // Source text keeps its own line breaks (white-space: pre-wrap).
-          const [first, ...rest] = (node.textContent ?? "").split("\n");
-          lines[lines.length - 1] += first;
-          lines.push(...rest);
-        } else node.childNodes.forEach(walk);
-      };
-      walk(row);
+      // Each piece of the opening text is its own line or lines: a group's
+      // source lines (white-space: pre-wrap), a blank line, or block text.
+      const lines = [...row.querySelectorAll(".opening-group, .opening-text, .opening-blank")].flatMap((piece) => {
+        if (piece.classList.contains("opening-blank")) return [""];
+        if (piece.classList.contains("opening-group")) return (piece.textContent ?? "").split("\n");
+        const out = [""];
+        const walk = (node: Node) => {
+          if (node.nodeName === "BR") out.push("");
+          else if (node.nodeType === Node.TEXT_NODE) out[out.length - 1] += node.textContent ?? "";
+          else node.childNodes.forEach(walk);
+        };
+        walk(piece);
+        return out;
+      });
       expect(lines.map(line => line.trim())).toEqual(["later:: x", "last:: y", "", "TODO [#A] Prose [[Target]]"]);
       expect(row.querySelector(".prop-key, .block-marker, .block-priority")).toBeNull();
       const header = root.querySelector('[data-block-id="page-property:Page:source"]')!;

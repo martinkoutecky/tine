@@ -203,6 +203,12 @@ export function page_header_json(raw: string): string;
 export function page_identity_key(name: string): string;
 
 /**
+ * Opening text's property nodes as UTF-8 byte ranges `[[start, end], ...]`
+ * in source order (I-12: the one answerer, `page_preamble::opening_groups`).
+ */
+export function page_opening_groups_json(text: string, is_org: boolean): string;
+
+/**
  * The same page-property edit used by the native owner and the page form.
  */
 export function page_parts_with_property(parts_json: string, is_org: boolean, key: string, value?: string | null): string;
@@ -414,6 +420,7 @@ export interface InitOutput {
     readonly page_file_format: (a: number, b: number) => [number, number];
     readonly page_header_json: (a: number, b: number) => [number, number];
     readonly page_identity_key: (a: number, b: number) => [number, number];
+    readonly page_opening_groups_json: (a: number, b: number, c: number) => [number, number];
     readonly page_parts_with_property: (a: number, b: number, c: number, d: number, e: number, f: number, g: number) => [number, number, number, number];
     readonly page_preamble_content_json: (a: number, b: number, c: number) => [number, number];
     readonly page_regions_json: (a: number, b: number, c: number) => [number, number];

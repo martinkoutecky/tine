@@ -5,20 +5,19 @@ import { TableWrap, longCellClass } from "../components/TableWrap";
 // Block-body rendering: splits a block's text lines into paragraphs, fenced
 // code blocks (syntax-highlighted), and markdown tables.
 
-import { For, Index, Show, createMemo, createResource, useContext, type JSX } from "solid-js";
+import { For, Index, Show, createContext, createMemo, createResource, useContext, type Accessor, type JSX } from "solid-js";
 import { Dynamic } from "solid-js/web";
 import { astText, renderInlines, renderRawHtml, renderSanitizedHtml, MathView, CopyButton } from "./inline";
 import { EmojiText } from "./emoji";
 import type { Block as AstBlock, Inline as AstInline, ListItem as AstListItem, Format } from "./ast";
 import { hiccupToHtml } from "./hiccup";
-import { coarseSpanAttrs, rebulletedSourceByteToRawByte, rebulletedSourceToRawUtf16Cursor, utf8ByteToUtf16Offset, type SpanDomAttrs } from "./spans";
+import { coarseSpanAttrs, rebulletedSourceByteToRawByte, utf8ByteToUtf16Offset, type SpanDomAttrs } from "./spans";
 import { evalCalc } from "../editor/calc";
 import { toggleListItemAtIndex, formatForBlock, node as docNode } from "../document";
 import { PropertyRows } from "./PropertyRows";
 import { isPropertyLine } from "./block";
 import { TableV2, tableV2Options, type TableV2Options } from "./tableV2";
 import { isQuarantined, parserReady } from "./parse";
-import { BodySourceContext, type CodeEditAction, type OpeningSource } from "./bodySource";
 import { parseBody, renderedProperties, stripPlanningLines } from "./facets";
 import { createNearBlockMount } from "../createNearBlockMount";
 import { BeginQuery } from "../components/BeginQuery";
@@ -131,12 +130,8 @@ function AdmonitionIcon(props: { type: string }): JSX.Element {
   );
 }
 
-function isInlineFlow(b: AstBlock): b is Extract<AstBlock, { kind: "paragraph" | "bullet" | "heading" }> {
+function isInlineFlow(b: AstBlock): boolean {
   return b.kind === "paragraph" || b.kind === "bullet" || b.kind === "heading";
-}
-
-function endsInBreak(b: Extract<AstBlock, { kind: "paragraph" | "bullet" | "heading" }>): boolean {
-  return b.inline[b.inline.length - 1]?.k === "break";
 }
 
 /** An inline-flow block with NO visible content — empty inlines or only whitespace /
@@ -163,34 +158,20 @@ export function renderBlocks(
   format: Format = "md",
   tableOptions?: TableV2Options,
 ): JSX.Element {
-  // Opening text (D-20261119-PG), at any depth: a property node or separator
-  // is its source text, which carries its own line breaks. A rendered flow
-  // before it gets the break its title line does not render.
-  const opening = macroExpansion ? undefined : useContext(BodySourceContext)?.opening;
   const propertyEntries = renderedProperties(blocks, format);
-  const displayBlocks = opening ? blocks
-    : blocks.filter(block => block.kind !== "properties" || block.props === propertyEntries);
-  const literals = opening ? displayBlocks.map((b, i) => opening.literal(b, displayBlocks[i - 1])) : [];
-  const joins = (i: number) => {
-    const prev = displayBlocks[i - 1], b = displayBlocks[i];
-    if (literals[i - 1] !== undefined) return false;
-    if (literals[i] !== undefined) return isInlineFlow(prev) && !endsInBreak(prev);
-    return isInlineFlow(b) && isInlineFlow(prev);
-  };
-  const view = (b: AstBlock, i: number) => literals[i] === undefined ? renderBlock(b, blockId, macroExpansion, format, tableOptions)
-    : literals[i] ? SourceText({ text: literals[i]! }) : null;
+  const displayBlocks = blocks.filter(block => block.kind !== "properties" || block.props === propertyEntries);
   const content = (
     <For each={displayBlocks}>
       {(b, i) => (
         <>
-          <Show when={i() > 0 && joins(i())}>
+          <Show when={i() > 0 && isInlineFlow(b) && isInlineFlow(displayBlocks[i() - 1])}>
             <br />
           </Show>
           {/* A `# heading` block's size applies ONLY to the heading's own line (the
               first inline-flow node), NOT to continuation constructs in the same block
               (e.g. a `> quote` under it) — matching OG. The heading level comes from
               the facet cache (facetsOf); we wrap just block 0. */}
-          <Show when={i() === 0 && headingLevel && isInlineFlow(b) && b.kind !== "heading"} fallback={view(b, i())}>
+          <Show when={i() === 0 && headingLevel && isInlineFlow(b) && b.kind !== "heading"} fallback={renderBlock(b, blockId, macroExpansion, format, tableOptions)}>
             <span class={`heading-text h${headingLevel}`} {...(coarseSpanAttrs(b.span) ?? {})}>{renderBlock(b, blockId, macroExpansion, format, tableOptions)}</span>
           </Show>
         </>
@@ -203,41 +184,6 @@ export function renderBlocks(
       {content}
     </span>
   );
-}
-
-/** Source text shown exactly as written: no inline parse, no typography,
- *  its spaces, tabs and line breaks kept. */
-export function SourceText(props: { text: string }): JSX.Element {
-  return <span class="source-text" style={{ "white-space": "pre-wrap" }}>{props.text}</span>;
-}
-
-/** An inline flow with nothing of its own to render: only spaces and breaks,
- *  or a first line holding only a task word or priority. */
-function isSeparator(b: AstBlock): boolean {
-  return isInlineFlow(b) && b.inline.every((x) => x.k === "break" || x.k === "hardbreak" || (x.k === "plain" && !x.text.trim()));
-}
-
-/** What of opening text `raw` shows as its source: every property node (a
- *  `key:: value` group or a `#+key: value` line) at any depth, from its line
- *  start, and every top-level separator, from the end of the node before it.
- *  The parser emits a span for every node. One shift and one UTF-16 walk per
- *  buffer; nodes arrive in source order. */
-function openingSource(raw: string, top: readonly AstBlock[]): OpeningSource {
-  const at = rebulletedSourceToRawUtf16Cursor(raw);
-  const separators = new Set(top.filter(isSeparator));
-  return {
-    literal(b, prev) {
-      const property = b.kind === "properties" || b.kind === "directive";
-      if (!property && !separators.has(b)) return undefined;
-      const after = prev ? at(prev.span![1]) : 0;
-      const start = at(b.span![0]);
-      return raw.slice(property ? Math.max(after, raw.lastIndexOf("\n", start - 1) + 1) : after, at(b.span![1]));
-    },
-    slice(span, starts) {
-      const text = raw.slice(at(span[0]), at(span[1]));
-      return text.startsWith(starts) ? text : undefined;
-    },
-  };
 }
 
 function renderBlock(b: AstBlock, blockId?: string, macroExpansion = false, format: Format = "md", tableOptions?: TableV2Options): JSX.Element {
@@ -416,6 +362,8 @@ function renderProps(b: Extract<AstBlock, { kind: "properties" }>, blockId?: str
 // renderer did not draw. Fragment hosts can provide only the code action,
 // leaving checkboxes inert without a matching raw source.
 // Only code widgets read editability; prose must not observe page-host revisions.
+type CodeEditAction = Accessor<((sourceByte: number) => void) | undefined>;
+export const BodySourceContext = createContext<{ raw?: string; codeEditAction?: CodeEditAction }>();
 
 // An in-block list from the AST (`ListItem[]`).
 function AstList(props: { items: AstListItem[]; blockId?: string; spanAttrs?: SpanDomAttrs; macroExpansion?: boolean; format?: Format; tableOptions?: TableV2Options }): JSX.Element {
@@ -478,8 +426,7 @@ function bodyBlocks(parsed: AstBlock[], raw: string): AstBlock[] {
   );
 }
 
-function renderBody(raw: string, format: Format, blockId?: string, headingLevel?: number | null, macroExpansion = false, inPeek = false, codeEditAction?: CodeEditAction, opening = false): JSX.Element {
-  if (opening) return renderOpening(raw, format, blockId);
+function renderBody(raw: string, format: Format, blockId?: string, headingLevel?: number | null, macroExpansion = false, inPeek = false, codeEditAction?: CodeEditAction): JSX.Element {
   // One parse supplies both the visible body and its property-dependent table
   // presentation. This stays on AstBody's path, so SheetGrid cells inherit it.
   const parsed = parseBody(raw, format);
@@ -493,24 +440,6 @@ function renderBody(raw: string, format: Format, blockId?: string, headingLevel?
     : <BodySourceContext.Provider value={{ raw, codeEditAction }}>
         {renderBlocks(blocks, blockId, headingLevel, macroExpansion, format, tableV2Options(properties))}
       </BodySourceContext.Provider>;
-}
-
-/** Opening text: the same parse and renderer as a block body, with nothing
- *  lifted into chrome (no chips, badges, marker or live query). A Windows
- *  line end is one line break, so the text is read with LF line ends. The
- *  first line's task word, priority and leading blank lines are source text. */
-function renderOpening(text: string, format: Format, blockId?: string): JSX.Element {
-  const raw = text.replace(/\r\n/g, "\n");
-  const parsed = parseBody(raw, format);
-  if (isQuarantined(parsed)) return renderBlocks(parsed, blockId, undefined, false, format);
-  const opening = openingSource(raw, parsed);
-  const first = parsed[0];
-  const firstInline = first && first.kind === "bullet" && !isSeparator(first) ? first.inline[0]?.span : undefined;
-  const lead = firstInline ? raw.slice(0, rebulletedSourceToRawUtf16Cursor(raw)(firstInline[0])) : "";
-  return <BodySourceContext.Provider value={{ raw, opening }}>
-    <Show when={lead}><SourceText text={lead} /></Show>
-    {renderBlocks(parsed, blockId, undefined, false, format)}
-  </BodySourceContext.Provider>;
 }
 
 /** Render a block's body. Parses the WHOLE block's `raw` (re-bulleted like OG, via
@@ -530,16 +459,11 @@ function renderOpening(text: string, format: Format, blockId?: string): JSX.Elem
 function placeholderLines(raw: string): string[] {
   return raw.split("\n").filter((l) => !isPropertyLine(l));
 }
-function placeholderText(raw: string, opening?: boolean): string {
-  return opening ? raw : placeholderLines(raw).join("\n");
-}
-function PlaceholderText(props: { raw: string; opening?: boolean }): JSX.Element {
-  return <>{placeholderText(props.raw, props.opening)}</>;
+function PlaceholderText(props: { raw: string }): JSX.Element {
+  return <>{placeholderLines(props.raw).join("\n")}</>;
 }
 
-/** `opening`: the text is a page's opening text (D-20261119-PG), rendered as
- *  written: property groups as source lines, a marker or priority as text. */
-export function AstBody(props: { raw: string; blockId?: string; format?: Format; headingLevel?: number | null; macroExpansion?: boolean; codeEditAction?: CodeEditAction; opening?: boolean }): JSX.Element {
+export function AstBody(props: { raw: string; blockId?: string; format?: Format; headingLevel?: number | null; macroExpansion?: boolean; codeEditAction?: CodeEditAction }): JSX.Element {
   // P1 block-render virtualization (see docs/adr): defer the synchronous parse +
   // AST→DOM build until the block is near the viewport. Render-once-keep: once a
   // block has rendered (latched by id in `renderedBlocks`) it renders eagerly
@@ -552,7 +476,7 @@ export function AstBody(props: { raw: string; blockId?: string; format?: Format;
   // Admission stays near-viewport and parser-confirmed; other AST shapes and
   // previews retain their existing renderer.
   const queryRuns = createMemo(() => {
-    if (!observe.near() || !parserReady() || insidePeek || props.macroExpansion || props.opening || !props.raw.includes("{{")) return undefined;
+    if (!observe.near() || !parserReady() || insidePeek || props.macroExpansion || !props.raw.includes("{{")) return undefined;
     const format = props.format ?? "md";
     const parsed = parseBody(props.raw, format);
     if (isQuarantined(parsed)) return undefined;
@@ -580,12 +504,12 @@ export function AstBody(props: { raw: string; blockId?: string; format?: Format;
           style={estimateBodyReserve(placeholderLines(props.raw), props.headingLevel ?? null)}
           ref={observe}
         >
-          <PlaceholderText raw={props.raw} opening={props.opening} />
+          <PlaceholderText raw={props.raw} />
         </span>
       }
     >
-      <Show when={parserReady()} fallback={<span class="ast-fallback"><PlaceholderText raw={props.raw} opening={props.opening} /></span>}>
-        <Show when={queryRuns()} fallback={renderBody(props.raw, props.format ?? "md", props.blockId, props.headingLevel, props.macroExpansion ?? false, insidePeek, props.codeEditAction, props.opening)}>
+      <Show when={parserReady()} fallback={<span class="ast-fallback"><PlaceholderText raw={props.raw} /></span>}>
+        <Show when={queryRuns()} fallback={renderBody(props.raw, props.format ?? "md", props.blockId, props.headingLevel, props.macroExpansion ?? false, insidePeek, props.codeEditAction)}>
           <Index each={queryRuns()}>{(run, blockIndex) => {
             const content = <Index each={run().entries}>{entry => <Show when={!!entry().extent}
               fallback={renderInlines([entry().inline], props.blockId, true, false, props.format, props.raw)}>

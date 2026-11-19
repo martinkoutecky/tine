@@ -196,6 +196,17 @@ pub fn page_preamble_content_json(raw: &str, is_org: bool) -> String {
     serde_json::to_string(&tine_outline::page_preamble::preamble_content_range(raw, is_org).map(|r| [r.0, r.1])).unwrap()
 }
 
+/// Opening text's property nodes as UTF-8 byte ranges `[[start, end], ...]`
+/// in source order (I-12: the one answerer, `page_preamble::opening_groups`).
+#[wasm_bindgen]
+pub fn page_opening_groups_json(text: &str, is_org: bool) -> String {
+    let groups: Vec<[usize; 2]> = tine_outline::page_preamble::opening_groups(text, is_org)
+        .into_iter()
+        .map(|r| [r.0, r.1])
+        .collect();
+    serde_json::to_string(&groups).unwrap()
+}
+
 /// Whether a block property key is hidden from rendered chips (I-12: the one
 /// answerer the static export also asks). O(key bytes + hidden keys), no I/O.
 #[wasm_bindgen]

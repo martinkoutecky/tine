@@ -363,7 +363,7 @@ pub(crate) fn raw_range(raw: &str, span: &Option<Span>, document: bool) -> Optio
     let r = Range(at(*start), at(*end));
     (r.0 < r.1 && raw.is_char_boundary(r.0) && raw.is_char_boundary(r.1)).then_some(r)
 }
-fn whole_line(raw: &str, r: Range) -> Range {
+pub(crate) fn whole_line(raw: &str, r: Range) -> Range {
     let start = raw[..r.0].rfind('\n').map_or(0, |p| p + 1);
     let end = if r.1 > start && raw.as_bytes()[r.1 - 1] == b'\n' {
         r.1
@@ -514,15 +514,15 @@ fn mapped_regions(raw: &str, is_org: bool, blocks: &[Block], document: bool) -> 
     // node after opening text and the lines after a folded one. A `#` key
     // stays a property, as in a block (OG's `valid-property-name?` drops it).
     let (mut top, mut first_node) = (Vec::new(), None);
-    for b in blocks
+    let before_first_block = blocks
         .iter()
-        .take_while(|b| !matches!(b, Block::Bullet { .. } | Block::Heading { .. }))
+        .position(|b| matches!(b, Block::Bullet { .. } | Block::Heading { .. }))
+        .unwrap_or(blocks.len());
+    for (r, properties) in
+        crate::page_preamble::top_property_nodes(raw, &blocks[..before_first_block], true)
     {
-        if let Block::Properties { span, .. } | Block::Directive { span, .. } = b {
-            let r = raw_range(raw, span, true).map(|r| whole_line(raw, r));
-            top.extend(r);
-            first_node = first_node.or(r.filter(|_| matches!(b, Block::Properties { .. })));
-        }
+        top.push(r);
+        first_node = first_node.or(Some(r).filter(|_| properties));
     }
     let first_node = first_node.filter(|r| {
         raw[..r.0]

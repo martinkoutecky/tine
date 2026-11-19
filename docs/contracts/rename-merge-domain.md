@@ -273,20 +273,20 @@ top-level directives before the first headline and the head drawer, except a
 directive or drawer strictly between two lines of other text, and the prose runs
 from the first to the last of that other text, so page properties may follow
 it). Every other non-blank byte of a pre-block is prose, so it is indexed,
-renamed and kept like any block text. That prose is the page's opening text and
-is shown exactly as written wherever it appears: the page's opening row, its
-Linked References row and a query's List row all render it with the block
-renderer (`AstBody` with `opening`, one parse per row), so every construct
-renders as it does in a block. The one difference: nothing is lifted into
-block chrome. Whatever the renderer would lift or drop shows as its exact
-source, from the parser's spans, once, one line break per line end (a Windows
-line end is one): every property node at any depth (a later Markdown property
-group, i.e. lines after the header's blank line, or a `#+key: value` line, also
-inside a quote or note container), from its line start; every blank or
-space-only line between top-level nodes and before the first; the first line's
-task word or priority; and every `{{query}}` or `{{tine-query}}` macro, which
-never runs there (D-20261119-PG, a deliberate difference from Logseq, which
-shows such a group as nothing). While the header is edited, the frontend keeps the
+renamed and kept like any block text. That prose is the page's opening text, and the page's opening row, its Linked
+References row and a query's List row all show it the same way (`OpeningText`).
+The parser names its property groups (`page_preamble::opening_groups`): every
+top-level `key:: value` group or `#+key: value` line of the text read as a
+block body, as whole source lines, so a task word or priority on a group's
+line is the group's. Each group shows exactly as written, one line per source
+line (a Windows line end is one), never as property chips or page properties
+(D-20261119-PG, a deliberate difference from Logseq, which shows such a group
+as nothing). Each blank line between pieces shows as one. Every other piece
+renders as a block body (`AstBody`), as the same text would in a block:
+queries run, and nested directives are hidden. A task word or priority that
+the block parse lifts off a piece's first line prints as its exact source
+text before that body, with no task chrome or behaviour: opening text is not a
+task. While the header is edited, the frontend keeps the
 parser's answer (`pageOpening`) instead of splitting the remaining pre-block
 again; display, the properties panel, and the copy and edit checks on a
 result's header and opening rows all read that one answer. A Markdown `#+key: value` line is prose

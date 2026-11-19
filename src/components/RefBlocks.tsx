@@ -9,6 +9,7 @@ import type { BlockDto } from "../types";
 import { pageProperties } from "../render/block";
 import { effectiveHeadingLevel, facetsFromDto, renderedProperties } from "../render/facets";
 import { taskCheckboxState } from "../markers";
+import { OpeningText } from "./OpeningText";
 import { AstBody } from "../render/body";
 import { BlockRenderBoundary } from "./BlockRenderBoundary";
 import { blockWritable, formatForPage, node as docNode, resolveBlockRef, setCollapsed } from "../document";
@@ -121,11 +122,15 @@ function RefBlock(props: {
   // live row. Measured: no slower on the normal path; slower only while a
   // source page cannot be read (D-20261023-VC, tine-agents evidence/m19-wave4).
   // A preamble row is opening text (D-20261119-PG): no task, heading, date or
-  // property chrome; `AstBody opening` shows all of it as written.
+  // property chrome; `OpeningText` shows its later groups as written.
   const facets = createMemo(() => facetsFromDto(props.block.page_preamble ? {} : props.block));
   const headingLevel = createMemo(() => effectiveHeadingLevel(facets(), props.depth));
   const format = createMemo(() => formatForPage(props.page));
   const annotation = () => annotationInfo(facets().properties);
+  // Chosen once per row: a row's preamble flag is its DTO's.
+  const body = () => props.block.page_preamble
+    ? <OpeningText raw={props.block.raw} format={format()} />
+    : <AstBody raw={props.block.raw} format={format()} headingLevel={headingLevel()} />;
   // Only an exact whole-block candidate needs query confirmation here.
   const beginQuery = createMemo(() =>
     !props.readOnly && /^\s*#\+BEGIN_QUERY\b/i.test(props.block.raw)
@@ -312,7 +317,7 @@ function RefBlock(props: {
                 <Show
                   when={!props.block.page_preamble && beginQuery()}
                   fallback={
-                    <Show when={annotation()?.areaStamp} fallback={<AstBody raw={props.block.raw} format={format()} headingLevel={headingLevel()} opening={!!props.block.page_preamble} />}>
+                    <Show when={annotation()?.areaStamp} fallback={body()}>
                       <AnnotationBody page={props.page ?? ""} highlightId={blockDtoExternalId(props.block)}
                         color={annotation()!.color} hlPage={annotation()!.hlPage} areaStamp={annotation()!.areaStamp}
                         line={visibleBody(props.block.raw, format()).join("\n")} />

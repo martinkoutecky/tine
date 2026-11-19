@@ -1,7 +1,6 @@
 import { rawOffsetToVisibleOffset, visibleOffsetToRawByte, type HidePolicy, type PropFormat } from "../editor/properties";
 import { typographicSegments } from "./typography";
 import type { Span, SpanMap } from "./ast";
-import { utf8ToUtf16Cursor } from "./utf16Cursor";
 
 const UTF8 = new TextEncoder();
 const UTF8_DECODER = new TextDecoder();
@@ -40,24 +39,10 @@ export function utf8ByteToUtf16Offset(text: string, byteOffset: number): number 
   return UTF8_DECODER.decode(bytes.subarray(0, clamp(byteOffset, 0, bytes.length))).length;
 }
 
-/** The parser sees `raw` re-bulleted: its leading whitespace replaced by "- ". */
-function rebulletShift(raw: string): { shift: number; rawLen: number } {
-  const rawLen = utf8ByteLength(raw);
-  return { shift: rawLen - utf8ByteLength(raw.trimStart()) - 2, rawLen };
-}
-
 export function rebulletedSourceByteToRawByte(raw: string, sourceByte: number): number {
-  const { shift, rawLen } = rebulletShift(raw);
-  return clamp(sourceByte + shift, 0, rawLen);
-}
-
-/** {@link rebulletedSourceByteToRawByte} as a raw UTF-16 offset, for the
- *  ascending spans of one buffer: the shift is computed once and the
- *  conversion walks `raw` once in total ({@link utf8ToUtf16Cursor}). */
-export function rebulletedSourceToRawUtf16Cursor(raw: string): (sourceByte: number) => number {
-  const { shift, rawLen } = rebulletShift(raw);
-  const at = utf8ToUtf16Cursor(raw);
-  return (sourceByte) => at(clamp(sourceByte + shift, 0, rawLen));
+  const rawLen = utf8ByteLength(raw);
+  const lead = rawLen - utf8ByteLength(raw.trimStart());
+  return clamp(sourceByte - 2 + lead, 0, rawLen);
 }
 
 export function sourceByteFromPlainTextByte(

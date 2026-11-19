@@ -3,6 +3,7 @@
 //! properties primary, OG's rule); these functions only read it.
 
 use crate::block_regions::{parse_document, BlockRegions, Range};
+use lsdoc::ast::Block;
 use serde::Serialize;
 
 /// One Markdown page-header property: the parser's accepted key and value, its
@@ -140,13 +141,91 @@ pub fn preamble_content_range_in(raw: &str, is_org: bool, regions: &BlockRegions
     (!content.is_empty()).then(|| Range(start + leading, start + leading + content.len()))
 }
 
+/// Where a page's opening text (the prose [`preamble_content_range`] finds)
+/// has property groups: every top-level `key:: value` group or `#+key:
+/// value` line of the text read as a block body (the parse the window renders
+/// it with), as whole source lines in source order, so a task word or
+/// priority on a group's line is the group's (D-20261119-PG: groups after the
+/// header are opening text, shown exactly as written). The window shows these
+/// ranges as source and the rest as block text. Empty for parser-refused
+/// text, which renders wholly as a block. O(bytes).
+pub fn opening_groups(text: &str, is_org: bool) -> Vec<Range> {
+    #[cfg(not(target_arch = "wasm32"))]
+    let Ok(blocks) = std::panic::catch_unwind(|| crate::render::parse_block(text, is_org)) else {
+        return Vec::new();
+    };
+    #[cfg(target_arch = "wasm32")]
+    let blocks = crate::render::parse_block(text, is_org);
+    top_property_nodes(text, &blocks, false)
+        .map(|(r, _)| r)
+        .collect()
+}
+
+/// The property nodes among `blocks` (one level, as the parser split them):
+/// each `key:: value` group (`true`) or `#+key: value` line (`false`), as
+/// whole source lines of `raw` with their last line end. The one answer to
+/// "which nodes are property nodes, and which lines are theirs": a page's
+/// header is the first group before its first block ([`parse_document`](crate::block_regions::parse_document)),
+/// and its opening text shows every group as written
+/// ([`opening_groups`]). `document`: spans are `raw`'s own, not
+/// a re-bulleted block's. O(nodes).
+pub(crate) fn top_property_nodes<'a>(
+    raw: &'a str,
+    blocks: &'a [Block],
+    document: bool,
+) -> impl Iterator<Item = (Range, bool)> + 'a {
+    blocks.iter().filter_map(move |b| match b {
+        Block::Properties { span, .. } | Block::Directive { span, .. } => {
+            crate::block_regions::raw_range(raw, span, document).map(|r| {
+                (
+                    crate::block_regions::whole_line(raw, r),
+                    matches!(b, Block::Properties { .. }),
+                )
+            })
+        }
+        _ => None,
+    })
+}
+
 #[cfg(test)]
 mod tests {
-    use super::{page_header, preamble_content_range};
+    use super::{opening_groups, page_header, preamble_content_range};
     use serde::Deserialize;
 
     fn text(raw: &str) -> Option<&str> {
         preamble_content_range(raw, false).map(|r| &raw[r.0..r.1])
+    }
+
+    /// D-20261119-PG: opening text's top-level property nodes, as the parser
+    /// splits them, whole lines in source order; nothing nested, and no
+    /// paragraph that only looks like a group.
+    #[test]
+    fn opening_groups_are_the_top_level_property_nodes_as_whole_lines() {
+        let groups = |t: &str, org: bool| -> Vec<String> {
+            opening_groups(t, org)
+                .iter()
+                .map(|r| t[r.0..r.1].to_owned())
+                .collect()
+        };
+        assert_eq!(groups("prose\n\nk:: v\n\nmore", false), ["k:: v\n"]);
+        assert_eq!(groups("prose\nk:: v", false), ["k:: v"]);
+        assert_eq!(groups("a:: 1\n\nb:: 2", false), ["a:: 1\n", "b:: 2"]);
+        assert_eq!(groups("  k:: v\n\tj:: w", false), ["  k:: v\n\tj:: w"]);
+        assert_eq!(groups("prose\r\n\r\nk:: v\r\nmore", false), ["k:: v\r\n"]);
+        assert_eq!(groups("prose\n#+k: v\nmore", false), ["#+k: v\n"]);
+        assert_eq!(groups("prose\n#+k: v", true), ["#+k: v"]);
+        assert_eq!(
+            groups("#+BEGIN_QUOTE\n#+k: v\n#+END_QUOTE", false),
+            Vec::<String>::new()
+        );
+        assert_eq!(groups("> q\n#+k: v", false), Vec::<String>::new());
+        assert_eq!(groups("plain prose", false), Vec::<String>::new());
+        assert_eq!(groups("TODO k:: v", false), ["TODO k:: v"]);
+        assert_eq!(
+            groups("TODO [#A] k:: v\nprose", false),
+            ["TODO [#A] k:: v\n"]
+        );
+        assert_eq!(groups("TODO [#A] Prose [[T]]", false), Vec::<String>::new());
     }
 
     #[test]
