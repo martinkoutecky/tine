@@ -272,6 +272,11 @@ pub enum InventoryScope<'a> {
     ActiveFilesUnder(&'a str),
     /// The file-claimed name of this page in this view, if present.
     File(&'a PageId),
+    /// [`Self::File`]'s row without resolving what its name opens: `name`,
+    /// `handle`, `is_journal` and `day` as `File` gives them, `target` the file
+    /// itself. For a reader of names alone: a year-less day's name is a label
+    /// shared with every other year, and resolving it reads them all.
+    FileNames(&'a PageId),
     /// This journal file's row in the view's day index, as `JournalFiles`
     /// lists it, also when the file failed to read: empty unless the file is
     /// a journal and its name's opening claimant.
@@ -318,6 +323,43 @@ pub enum InventoryScope<'a> {
 }
 
 impl WholeGraph {
+    /// The row of page file `id` ([`InventoryScope::File`]); `resolve: false`
+    /// leaves its `target` the file itself ([`InventoryScope::FileNames`]).
+    fn file_entry(&self, id: &PageId, resolve: bool) -> Arc<Inventory> {
+        Arc::new(Inventory(
+            self.graph
+                .physical_pages
+                .positions
+                .get(id.as_str())
+                .and_then(|&slot| self.graph.physical_pages.get(slot))
+                .map(|(entry, _)| {
+                    let handle = file_handle(&self.graph.real_page_owners(), entry);
+                    let is_journal = entry.kind == PageKind::Journal;
+                    let target = if resolve {
+                        self.resolve(handle.as_deref().unwrap_or(&entry.name), is_journal)
+                    } else {
+                        Resolved::Existing {
+                            id: id.clone(),
+                            others: Vec::new(),
+                        }
+                    };
+                    InventoryEntry {
+                        target,
+                        handle,
+                        name: entry.name.clone(),
+                        is_journal,
+                        day: entry.date_key.map(Day),
+                        link: None,
+                        namespace_parent: false,
+                        parent: None,
+                        empty_alias: false,
+                    }
+                })
+                .into_iter()
+                .collect(),
+        ))
+    }
+
     /// Physical conflict buckets, ordered with the opening claimant first.
     /// `names` limits refreshes to affected keys (O(claimants log P)); `None`
     /// enumerates all keys once for the initial conflict view. No file reads.
@@ -414,6 +456,7 @@ impl WholeGraph {
     /// [`InventoryScope::File`] uses the existing page-position map and
     /// resolves its name in this view: O(log P + C) for C name claimants,
     /// with no document traversal or file reads. An absent page returns empty.
+    /// [`InventoryScope::FileNames`] is O(log P): no claimant is read.
     pub fn inventory(&self, scope: InventoryScope<'_>) -> Arc<Inventory> {
         match scope {
             InventoryScope::ActiveFilesUnder(prefix) => {
@@ -484,30 +527,8 @@ impl WholeGraph {
                 });
                 Arc::new(Inventory(entry.into_iter().collect()))
             }
-            InventoryScope::File(id) => Arc::new(Inventory(
-                self.graph
-                    .physical_pages
-                    .positions
-                    .get(id.as_str())
-                    .and_then(|&slot| self.graph.physical_pages.get(slot))
-                    .map(|(entry, _)| {
-                        let handle = file_handle(&self.graph.real_page_owners(), entry);
-                        let asked = handle.as_deref().unwrap_or(&entry.name);
-                        InventoryEntry {
-                            target: self.resolve(asked, entry.kind == PageKind::Journal),
-                            handle,
-                            name: entry.name.clone(),
-                            is_journal: entry.kind == PageKind::Journal,
-                            day: entry.date_key.map(Day),
-                            link: None,
-                            namespace_parent: false,
-                            parent: None,
-                            empty_alias: false,
-                        }
-                    })
-                    .into_iter()
-                    .collect(),
-            )),
+            InventoryScope::File(id) => self.file_entry(id, true),
+            InventoryScope::FileNames(id) => self.file_entry(id, false),
             InventoryScope::All => self.full_inventory(),
             InventoryScope::ConflictingFiles(names) => Arc::new(Inventory(
                 self.claim_conflicts(names)

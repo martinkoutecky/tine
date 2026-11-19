@@ -84,7 +84,7 @@ pub fn query_request_on_page(
     name: Option<&str>,
     replace: bool,
 ) -> io::Result<QueryExportRequest> {
-    let inventory = graph.inventory(tine_store::InventoryScope::File(id));
+    let inventory = graph.inventory(tine_store::InventoryScope::FileNames(id));
     let entry = inventory
         .0
         .first()

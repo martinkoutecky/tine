@@ -309,12 +309,12 @@ pub fn sheet_inputs(
     published: Option<&HashSet<String>>,
 ) -> Vec<SheetInput> {
     let mut query_budget = MAX_QUERY_SHEETS;
-    let wanted: Option<HashSet<&str>> = pages.map(|p| p.iter().map(String::as_str).collect());
+    let wanted = pages.map(|p| crate::publish_query::Named::new(p.iter().map(String::as_str)));
     let mut out = Vec::new();
     for page in &corpus.pages {
         // The sheet's page by its operational name, as the render keys it.
         let name = graph.map_or(page.name.as_str(), |graph| graph.page_name(page));
-        if wanted.as_ref().is_some_and(|w| !w.contains(name)) {
+        if wanted.as_ref().is_some_and(|w| !w.admits(name)) {
             continue;
         }
         let mut stack: Vec<(&DocBlock, Vec<u32>)> = page

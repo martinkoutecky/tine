@@ -665,7 +665,10 @@ public function taking either. `crates/tine-store/SURFACE.txt` budgets it per
 concept and `crates/tine-store/tests/shallow_ratchet.rs` keeps this count true.
 `InventoryScope::File(PageId)` extends the existing inventory question with
 one file's name in the captured view (O(log P + C) for C name claimants,
-no file reads or new index).
+no file reads or new index). `InventoryScope::FileNames(PageId)` is the same
+row without resolving what its name opens (`target` is the file itself):
+O(log P), no claimant read, for a reader of a file's handle or name; a
+year-less day's name is a label every other year shares.
 `WholeGraph::template_names()` lists names in the same page/preorder order as
 `templates()`, including duplicates, in O(T + name bytes). Publication derives
 a sparse tree of template-bearing page slots through the core template visitor

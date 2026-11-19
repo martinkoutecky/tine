@@ -125,7 +125,9 @@ impl<'a> RenderGraph<'a> {
     pub(crate) fn link_name(&self, link: &str) -> String {
         if link.bytes().any(|b| b.is_ascii_digit()) {
             if let tine_store::Resolved::Existing { id, .. } = self.whole.resolve(link, false) {
-                let rows = self.whole.inventory(tine_store::InventoryScope::File(&id));
+                let rows = self
+                    .whole
+                    .inventory(tine_store::InventoryScope::FileNames(&id));
                 if let Some(handle) = rows.0.first().and_then(|row| row.handle.clone()) {
                     return handle;
                 }
@@ -141,7 +143,9 @@ impl<'a> RenderGraph<'a> {
         (row.kind == PageKind::Journal)
             .then(|| {
                 let id = tine_core::model::PageId::from(row.path.as_str());
-                let rows = self.whole.inventory(tine_store::InventoryScope::File(&id));
+                let rows = self
+                    .whole
+                    .inventory(tine_store::InventoryScope::FileNames(&id));
                 rows.0.first().map(|entry| entry.name.clone())
             })
             .flatten()
@@ -1957,7 +1961,9 @@ pub fn page_print_html(
     name: &str,
     opts: PrintOpts,
 ) -> io::Result<Option<String>> {
-    let Some(entry) = (graph.list_pages().into_iter()).find(|e| graph.page_name(e) == name) else {
+    let named = crate::publish_query::Named::new([name]);
+    let Some(entry) = (graph.list_pages().into_iter()).find(|e| named.admits(graph.page_name(e)))
+    else {
         return Ok(None);
     };
     let parsed = entry.document.as_ref();

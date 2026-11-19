@@ -449,8 +449,9 @@ fn collect_static(
 /// publication, as it crosses to the app (`PageDto.name`, `RefGroup.page`,
 /// query rows: `2026_11_02`) where its name is the label `11-02` (CM SPEC
 /// §2.1). Every other page goes by its name ([`app_name`]); the label stays
-/// for display. From each day file's own inventory row: O(day files · log P),
-/// no graph inventory.
+/// for display. From each day file's own names-only inventory row
+/// ([`tine_store::InventoryScope::FileNames`]): O(day files · log P), no graph
+/// inventory and no claimant of a shared label read.
 pub(crate) type Handles = HashMap<String, String>;
 
 /// See [`Handles`].
@@ -461,7 +462,7 @@ pub(crate) fn day_handles<'p>(
     (pages.into_iter())
         .filter(|page| page.kind == PageKind::Journal)
         .filter_map(|page| {
-            let rows = graph.inventory(tine_store::InventoryScope::File(&page.id));
+            let rows = graph.inventory(tine_store::InventoryScope::FileNames(&page.id));
             Some((page.id.as_str().to_owned(), rows.0.first()?.handle.clone()?))
         })
         .collect()
@@ -475,17 +476,36 @@ pub(crate) fn app_name<'a>(handles: &'a Handles, page: &'a tine_core::CorpusPage
         .map_or(&page.name, String::as_str)
 }
 
-/// The pages of this view whose operational name ([`app_name`]) has `name`'s
-/// page identity (`page_key`), in page order: the pages a print, a PDF or a
-/// keyed lookup names. A day's handle is no claimant's name, so its file is
-/// found as a link to it opens and its name's claimants are filtered.
-/// O(C log P) for C claimants.
+/// Whether a page is the one a caller named: the one answer, for publication,
+/// print, PDF and sheets, by Logseq page identity (`page_key`), so a name that
+/// differs from the page's only by case, surrounding space, boundary slashes
+/// or Unicode normalization is that page. It admits a page by its operational
+/// name ([`app_name`]); the results carry that name, never the caller's
+/// spelling.
+pub(crate) struct Named(HashSet<String>);
+
+impl Named {
+    pub(crate) fn new<'a>(names: impl IntoIterator<Item = &'a str>) -> Self {
+        Self(names.into_iter().map(page_key).collect())
+    }
+
+    /// Whether the page with this operational name is named. O(name).
+    pub(crate) fn admits(&self, operational: &str) -> bool {
+        self.0.contains(&page_key(operational))
+    }
+}
+
+/// The pages of this view whose operational name ([`app_name`]) is `name`
+/// ([`Named`]), in page order: the pages a print, a PDF or a keyed lookup
+/// names. A day's handle is no claimant's name, so its file is found as a link
+/// to it opens and its name's claimants are filtered. O(C log P) for C
+/// claimants.
 pub(crate) fn pages_named(graph: &WholeGraph, name: &str) -> Vec<tine_core::CorpusPage> {
     let mut pages = graph.corpus(Some(name), true).pages;
     if pages.is_empty() {
         if let Resolved::Existing { id, .. } = graph.resolve(name, false) {
             if let Some(row) = graph
-                .inventory(tine_store::InventoryScope::File(&id))
+                .inventory(tine_store::InventoryScope::FileNames(&id))
                 .0
                 .first()
             {
@@ -494,8 +514,8 @@ pub(crate) fn pages_named(graph: &WholeGraph, name: &str) -> Vec<tine_core::Corp
         }
     }
     let handles = day_handles(graph, &pages);
-    let key = page_key(name);
-    pages.retain(|page| page_key(app_name(&handles, page)) == key);
+    let named = Named::new([name]);
+    pages.retain(|page| named.admits(app_name(&handles, page)));
     pages
 }
 

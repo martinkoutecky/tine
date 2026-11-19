@@ -725,6 +725,57 @@ fn year_less_inventory_claimant_work_is_linear_in_the_days() {
     );
 }
 
+/// REG-CM-YEARLESS-DAY-KEY (round 6): a file's names-only row (`FileNames`)
+/// is its `File` row without the resolution of what its name opens, and reads
+/// no claimant of the label its day shares with other years: probing each of D
+/// day files costs the same however many years share the label.
+#[test]
+fn a_files_names_only_row_is_its_row_without_resolving_the_shared_label() {
+    let _guard = crate::integration_lock();
+    let visits = |years: i32| {
+        let mut files: Vec<(String, String)> = vec![
+            (
+                "logseq/config.edn".into(),
+                "{:journal/page-title-format \"MM-dd\"}\n".into(),
+            ),
+            ("pages/11-02.md".into(), "- a label page\n".into()),
+        ];
+        for year in 1990..1990 + years {
+            files.push((format!("journals/{year}_11_02.md"), "- a day\n".into()));
+        }
+        let borrowed: Vec<(&str, &str)> = (files.iter())
+            .map(|(rel, text)| (rel.as_str(), text.as_str()))
+            .collect();
+        let (_dir, store) = graph(&borrowed);
+        let view = store.whole_graph().unwrap();
+        let ids: Vec<PageId> = (1990..1990 + years)
+            .map(|year| PageId::from(format!("journals/{year}_11_02.md").as_str()))
+            .collect();
+        let full = view.inventory(InventoryScope::File(&ids[0])).0[0].clone();
+        let names = view.inventory(InventoryScope::FileNames(&ids[0])).0[0].clone();
+        assert_eq!(names.handle.as_deref(), Some("1990_11_02"));
+        assert_eq!(
+            (&names.name, &names.handle, names.is_journal, names.day),
+            (&full.name, &full.handle, full.is_journal, full.day)
+        );
+        assert_eq!(existing(&names.target), ["journals/1990_11_02.md"]);
+        let label = view.inventory(InventoryScope::FileNames(&PageId::from("pages/11-02.md")));
+        assert_eq!(label.0[0].handle, None);
+        assert!(view
+            .inventory(InventoryScope::FileNames(&PageId::from("pages/none.md")))
+            .0
+            .is_empty());
+        let before = tine_store::cost_counters::claimant_visits();
+        for id in &ids {
+            assert!(view.inventory(InventoryScope::FileNames(id)).0[0]
+                .handle
+                .is_some());
+        }
+        tine_store::cost_counters::claimant_visits() - before
+    };
+    assert_eq!((visits(8), visits(32)), (0, 0), "no claimant is read");
+}
+
 /// REG-CM-YEARLESS-DAY-KEY (round 3, the owner fix): the page a read hands
 /// the app is named by the spelling that identifies it (`name`, what the app
 /// keys its working set, feed, sidebar, reference requests and saves by) and

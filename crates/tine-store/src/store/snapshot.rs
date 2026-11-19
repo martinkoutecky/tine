@@ -74,7 +74,10 @@ impl Store {
 
 impl WholeGraph {
     pub(super) fn name_claimants(&self, name: &str, kind: PageKind) -> Vec<PageEntry> {
-        name_claimants(&self.claimants, name, kind).to_vec()
+        let entries = name_claimants(&self.claimants, name, kind);
+        #[cfg(feature = "test-faults")]
+        (0..entries.len()).for_each(|_| crate::cost_counters::claimant_visit());
+        entries.to_vec()
     }
     pub(super) fn all_name_claimants(&self, name: &str) -> Vec<PageEntry> {
         let mut entries: Vec<_> = [PageKind::Page, PageKind::Journal]

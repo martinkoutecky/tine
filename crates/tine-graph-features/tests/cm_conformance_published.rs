@@ -605,6 +605,133 @@ fn print_and_pdf_find_a_year_less_day_by_its_handle() {
     assert!(failures.is_empty(), "{}", failures.join("\n"));
 }
 
+/// REG-CM-YEARLESS-DAY-KEY round 6: one place answers "is this the page the
+/// caller named" for print, PDF and sheets, by Logseq page identity
+/// (`page_key`), so a name that differs from the page's own spelling only by
+/// case, surrounding space, boundary slashes or Unicode normalization prints
+/// it and hands over its sheets, under its canonical operational name. Before
+/// the fix the page was found by `pages_named` and then dropped by exact
+/// comparisons in the renderer and the sheet filter.
+#[test]
+fn print_and_sheets_find_a_page_by_the_identity_of_the_name_asked() {
+    use tine_graph_features::print::{page_print_html, PrintOpts};
+    use tine_graph_features::publish::{sheet_export_inputs, SheetScope};
+    let _integration_guard = crate::integration_lock();
+    let root = tempfile::tempdir().unwrap();
+    let graph = root.path().join("graph");
+    for (rel, text) in [
+        (
+            "pages/Topic.md",
+            "- marker-Topic\n- sheet\n  tine.view:: table\n",
+        ),
+        (
+            "pages/\u{dc}ber.md",
+            "- marker-Uber\n- sheet\n  tine.view:: table\n",
+        ),
+        (
+            "pages/Other.org",
+            "* marker-Other\n* sheet\n:PROPERTIES:\n:tine.view: table\n:END:\n",
+        ),
+    ] {
+        let path = graph.join(rel);
+        fs::create_dir_all(path.parent().unwrap()).unwrap();
+        fs::write(path, text).unwrap();
+    }
+    let store = Store::open(&graph, Default::default()).unwrap().0;
+    let mut failures: Vec<String> = Vec::new();
+    for (asked, canonical) in [
+        ("Topic", "Topic"),
+        ("topic", "Topic"),
+        ("TOPIC", "Topic"),
+        (" Topic ", "Topic"),
+        ("/Topic/", "Topic"),
+        ("\u{dc}ber", "\u{dc}ber"),
+        ("\u{fc}ber", "\u{dc}ber"),
+        ("U\u{308}ber", "\u{dc}ber"),
+        ("Other", "Other"),
+        ("other", "Other"),
+        ("OTHER", "Other"),
+    ] {
+        let marker = format!("marker-{}", canonical.replace('\u{dc}', "U"));
+        match page_print_html(&store, asked, PrintOpts::default()).unwrap() {
+            Some(html) if html.contains(&marker) => {}
+            other => failures.push(format!("print {asked:?}: {}", other.is_some())),
+        }
+        let names = [asked.to_owned()];
+        for scope in [
+            SheetScope::Print {
+                include_comments: None,
+            },
+            SheetScope::Live {
+                all_pages: true,
+                include_comments: None,
+            },
+        ] {
+            let inputs = sheet_export_inputs(&store, Some(&names), Some(&scope)).unwrap();
+            let pages: Vec<_> = inputs.iter().map(|input| input.page.as_str()).collect();
+            if pages != [canonical] {
+                failures.push(format!("sheets {asked:?} {scope:?}: {pages:?}"));
+            }
+        }
+    }
+    store.close();
+    assert!(failures.is_empty(), "{}", failures.join("\n"));
+}
+
+/// REG-CM-YEARLESS-DAY-KEY round 6: printing one year-less day costs the
+/// claimants of its label once, not once per year sharing it. D years of
+/// `11-02` under `MM-dd` and the label page: the claimant visits of printing
+/// one day grow linearly with D (before the fix each of the D day-handle
+/// probes cloned the D-year bucket, D squared).
+#[test]
+fn printing_a_year_less_day_reads_each_claimant_of_its_label_a_bounded_number_of_times() {
+    use tine_graph_features::print::{page_print_html, PrintOpts};
+    let _integration_guard = crate::integration_lock();
+    let visits = |years: i32| {
+        let root = tempfile::tempdir().unwrap();
+        let graph = root.path().join("graph");
+        let mut files = vec![
+            (
+                "logseq/config.edn".to_owned(),
+                "{:journal/page-title-format \"MM-dd\"}\n".to_owned(),
+            ),
+            (
+                "pages/11-02.md".to_owned(),
+                "- marker-label-page\n".to_owned(),
+            ),
+        ];
+        for year in 1990..1990 + years {
+            let ext = if year % 2 == 0 { "md" } else { "org" };
+            let bullet = if ext == "md" { "-" } else { "*" };
+            files.push((
+                format!("journals/{year}_11_02.{ext}"),
+                format!("{bullet} marker-{year}\n"),
+            ));
+        }
+        for (rel, text) in &files {
+            let path = graph.join(rel);
+            fs::create_dir_all(path.parent().unwrap()).unwrap();
+            fs::write(path, text).unwrap();
+        }
+        let store = Store::open(&graph, Default::default()).unwrap().0;
+        store.whole_graph().unwrap();
+        let before = tine_store::cost_counters::claimant_visits();
+        let html = page_print_html(&store, "1991_11_02", PrintOpts::default())
+            .unwrap()
+            .expect("the day prints");
+        let after = tine_store::cost_counters::claimant_visits();
+        assert!(html.contains("marker-1991") && !html.contains("marker-1992"));
+        store.close();
+        after - before
+    };
+    let (small, large) = (visits(8), visits(32));
+    assert!(
+        large <= 4 * small + 8 * 4,
+        "claimant visits grow linearly: 8 years {small}, 32 years {large}"
+    );
+    assert!(large <= 2 * 32 + 8, "claimant visits for 32 years: {large}");
+}
+
 /// REG-CM-YEARLESS-DAY-KEY round 5b: a published page query's row for a
 /// year-less day links by the day's handle and shows its label, as the app
 /// shows it (`pageLabel`).

@@ -94,6 +94,7 @@ impl WholeGraph {
     pub(super) fn corpus_named(&self, name: &str) -> tine_core::Corpus {
         let key = tine_core::refs::page_key(name);
         let mut found: Vec<(usize, CorpusPage)> = Vec::new();
+        let mut placed = HashSet::new();
         for journal in [false, true] {
             let Some(claimants) = self.claimants.get(&(journal, key.clone())) else {
                 continue;
@@ -107,9 +108,7 @@ impl WholeGraph {
                 let Some(id) = entry.rel_path.clone() else {
                     continue;
                 };
-                if tine_core::refs::page_key(&entry.name) != key
-                    || found.iter().any(|(known, _)| *known == slot)
-                {
+                if tine_core::refs::page_key(&entry.name) != key || !placed.insert(slot) {
                     continue;
                 }
                 found.push((

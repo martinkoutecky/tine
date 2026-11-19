@@ -234,6 +234,20 @@ mod journal_guide_tests {
         assert!(journals.contains("A day without a file gets its new file in `journals/`."));
     }
 
+    /// A journal title format without a year (`MM-dd`): the label is an
+    /// ordinary page's name, and each day is reached by its date and shown as
+    /// its label (D-20261114-RC; REG-CM-YEARLESS-DAY-KEY).
+    #[test]
+    fn a_year_less_title_format_is_documented_as_reaching_each_day_by_its_date() {
+        let journals = include_str!("templates/journals-tasks-scheduling.md");
+        assert!(journals.contains("With a journal title format without a year, such as `MM-dd`"));
+        assert!(journals.contains("a page named like `11-02` stays an ordinary page"));
+        assert!(journals.contains("each day is reached by its date"));
+        assert!(journals.contains(
+            "`[[2026-11-02]]` and **Go to date** open that year's day, shown as `11-02`"
+        ));
+    }
+
     #[test]
     fn sidebar_commands_are_documented() {
         let journals = include_str!("templates/journals-tasks-scheduling.md");
