@@ -81,7 +81,7 @@
     "@tauri-apps/plugin-updater": "^2.13.3",
     "@twemoji/svg": "^15.0.0",
     "chrono-node": "2.2.4",
-    "dompurify": "^3.4.16",
+    "dompurify": "^3.4.18",
     "emoji-regex": "^10.6.0",
     "highlight.js": "^11.11.1",
     "inter-ui": "4.1.1",

@@ -19,6 +19,12 @@ The format follows [Keep a Changelog](https://keepachangelog.com/); versions use
 - Moving or reindenting a block carries its children's indentation with it, including multiline bodies and drawers ([discussion #960](https://github.com/martinkoutecky/tine/discussions/960)).
 - Distribution packagers can build the PDF decoder with their own Emscripten installation using `TINE_PDFJS_EMCC` (#187, #976).
 
+### Security
+
+- DOMPurify is updated to 3.4.18 and seroval to 1.6.12, which close published
+  advisories. Tine used none of the affected DOMPurify modes, so no known
+  exploit applied (reported by Dieterbe in #982).
+
 ## [0.9.0] - 2026-11-16
 
 Tine 0.9.0 makes the 0.9 Beta line stable. It is Tine Beta 0.9.0-beta.14 (the
