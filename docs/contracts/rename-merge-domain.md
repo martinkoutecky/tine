@@ -153,8 +153,8 @@ edited, and the kept page's tag union comes before the removal of the source's
 `tags::` line, so a crash between two saves never leaves a tag on no page. After each
 save the binding is checked again. If a save fails, a page changed meanwhile, the
 binding retires, or the request does not happen (refused, busy, an unsaved page, an
-error), the helper puts back its own values in reverse order: each property that
-still holds the helper's value gets its old value back and is saved before the next;
+error), the helper puts back its own values in reverse order, on the pages it has
+edited so far: each property that still holds the helper's value gets its old value back and is saved before the next;
 anything else typed meanwhile stays. A retired binding puts nothing back
 (the window no longer holds that graph). An `uncertain` request keeps the edits,
 since it may have committed.

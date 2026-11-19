@@ -1,7 +1,7 @@
 import { afterEach, beforeAll, beforeEach, expect, it, vi } from "vitest";
 import { backend } from "./backend";
 import { renameOrMergePage } from "./graph";
-import { ensurePageLoaded, pageByName, resetStore, setPageProperty, setRaw } from "./document";
+import { ensurePageLoaded, flushAll, pageByName, resetStore, setPageProperty, setRaw } from "./document";
 import { loadSingle } from "./document/workingSet";
 import { doc } from "./document/model";
 import { bindTestHost } from "./document/host/wiring.test.support";
@@ -377,4 +377,56 @@ it("after a failed page read the helper's pages can be evicted again", async () 
   expect(pageByName("New")).toBeTruthy();
   browse(90);
   expect(pageByName("New")).toBeFalsy();
+});
+
+// Review of 8c2bfe7fc, finding 1 (DS-12): while the first helper page saves,
+// the user sets a later page's property to the very value the helper offered.
+// The later page's check refuses; the put-back covers only the pages the
+// helper edited, so the user's value stays and the first page is restored.
+// Controls: a different value typed there survives too.
+const ownEdits = (first: "Machine Learning" | "Models") => {
+  const ml = { page: "Machine Learning", path: "pages/Machine Learning.md", journal: false, key: "alias", before: "AI, ML", after: "AI" };
+  const models = { page: "Models", path: "pages/Models.md", journal: false, key: "alias", before: "ML", after: null };
+  return dialog({ own: { edits: first === "Models" ? [models, ml] : [ml, models], effect: { pages: ["Machine Learning", "Models", "ML notes"], pageCount: 3, retargeted: [] } } });
+};
+it.each([
+  ...[false, true].flatMap((fails) => [
+    [`removing the source's tags line (first save ${fails ? "fails" : "succeeds"})`, "tags", "Old", null, fails],
+    [`reducing alias:: AI, ML to AI (first save ${fails ? "fails" : "succeeds"})`, "alias-ml", "Machine Learning", "AI", fails],
+    [`removing alias:: ML (first save ${fails ? "fails" : "succeeds"})`, "alias-models", "Models", null, fails],
+  ] as const),
+  ["control: another tags value (first save succeeds)", "tags", "Old", "z", false],
+  ["control: another tags value (first save fails)", "tags", "Old", "z", true],
+] as const)("a later page the user changed during the first save keeps the user's value: %s", async (_, shape, later, typed, fails) => {
+  const rename = vi.spyOn(backend(), "renamePage");
+  let first: string, before: string;
+  if (shape === "tags") {
+    page("New", "tags:: b, c", "- kept");
+    page("Old", "tags:: a, b", "- gone");
+    offer(tagged);
+    vi.spyOn(backend(), "confirm").mockResolvedValue(true);
+    [first, before] = ["New", "tags:: b, c"];
+  } else {
+    page("Machine Learning", "alias:: AI, ML", "- ml body");
+    page("Models", "alias:: ML", "- models body");
+    page("ML notes", null, "- notes");
+    offer(ownEdits(shape === "alias-ml" ? "Models" : "Machine Learning"));
+    [first, before] = shape === "alias-ml" ? ["Models", "alias:: ML"] : ["Machine Learning", "alias:: AI, ML"];
+  }
+  const key = shape === "tags" ? "tags" : "alias";
+  saveFails = fails;
+  // Inside the first page's save: the user edits the later page. A failing
+  // first save lets the writes after it succeed.
+  onWrite = () => {
+    setPageProperty(later, key, typed);
+    if (fails) onWrite = () => { saveFails = false; };
+  };
+  const done = shape === "tags"
+    ? renameOrMergePage("Old", "New", { name: "Old", pageKind: "page", path: "pages/Old.md" })
+    : (async () => { const run = renameOrMergePage("ML notes", "ML"); await answer("own"); return run; })();
+  expect(await done).toBe("cancelled");
+  expect(await flushAll()).toBe(true);
+  expect(rename).not.toHaveBeenCalled();
+  expect(header(first)).toBe(before);
+  expect(header(later) || null).toBe(typed === null ? null : `${key}:: ${typed}`);
 });

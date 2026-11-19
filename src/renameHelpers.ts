@@ -63,12 +63,14 @@ export async function applyHelperEdits(edits: readonly HelperEdit[]): Promise<Ap
     if (stale >= 0) return refuse("changed", edits[stale].page);
     // One page at a time, in order, each published before the next is edited
     // (a crash between saves, KC2SE): the tag union is on disk before the
-    // source's tag line goes; the put-back runs in reverse.
+    // source's tag line goes; the put-back runs in reverse, over the edits
+    // made (`made`): a later page the helper never edited is the user's.
+    let made = 0;
     const undo = async () => {
       if (!owner()) return false;
       // A page no longer loaded cannot be put back: that is a failed restore.
-      if (names.some((name) => !pageByName(name))) return false;
-      for (let i = edits.length - 1; i >= 0; i--) {
+      if (names.slice(0, made).some((name) => !pageByName(name))) return false;
+      for (let i = made - 1; i >= 0; i--) {
         if (!holds(i, edits[i].after)) continue;
         setPageProperty(names[i], edits[i].key, edits[i].before, edits[i].header);
         if (!(await flushPage(names[i])) || !owner()) return false;
@@ -78,6 +80,7 @@ export async function applyHelperEdits(edits: readonly HelperEdit[]): Promise<Ap
     for (const [i, name] of names.entries()) {
       if (!owner() || !holds(i, edits[i].before)) return refuse(await undo() ? "changed" : "unrestored", edits[i].page);
       setPageProperty(name, edits[i].key, edits[i].after);
+      made = i + 1;
       if (!holds(i, edits[i].after) || !(await flushPage(name)) || !owner()) {
         return refuse(await undo() ? "unsaved" : "unrestored", edits[i].page);
       }
