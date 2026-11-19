@@ -94,6 +94,9 @@ type FakeListener = {
 
 let restoreFakeGlobals: (() => void) | null = null;
 
+let mouseClock = 0;
+const lastMouseUp = new Map<number, number>();
+
 function installFakeWindow() {
   const listeners: FakeListener[] = [];
   const windowDescriptor = Object.getOwnPropertyDescriptor(globalThis, "window");
@@ -136,7 +139,10 @@ function installFakeWindow() {
 
   return {
     dispatchMouse(type: string, button: number, buttons = 0, clientX = 20) {
-      const event = { type, button, buttons, clientX, clientY: 20, preventDefault() {} } as MouseEvent;
+      // Blink gives an auxclick its release's timestamp (GH #948).
+      const timeStamp = ++mouseClock;
+      if (type === "mouseup") lastMouseUp.set(button, timeStamp);
+      const event = { type, button, buttons, clientX, clientY: 20, timeStamp, preventDefault() {} } as unknown as MouseEvent;
       listeners.filter(l => l.type === type && l.capture).forEach(l => l.listener(event));
     },
     dispatchCaptureKeydown(event: KeyboardEvent) {
@@ -146,7 +152,9 @@ function installFakeWindow() {
     },
     dispatchAuxClick(button: number) {
       let prevented = false;
-      const event = { button, preventDefault: () => { prevented = true; } } as unknown as MouseEvent;
+      const timeStamp = lastMouseUp.get(button) ?? ++mouseClock;
+      lastMouseUp.delete(button);
+      const event = { button, buttons: 0, timeStamp, preventDefault: () => { prevented = true; } } as unknown as MouseEvent;
       listeners
         .filter((l) => l.type === "auxclick" && l.capture)
         .forEach((l) => l.listener(event as unknown as Event));
@@ -332,6 +340,8 @@ describe("mouse side-button navigation (#156)", () => {
           for (const type of ["mousedown", "mouseup", "auxclick"]) {
             const event = new Event(type, { cancelable: true });
             Object.assign(event, { button, buttons: type === "mousedown" ? (button === 3 ? 8 : 16) : 0, clientX: 20, clientY: 20 });
+            // Blink gives the auxclick its release's timestamp.
+            Object.defineProperty(event, "timeStamp", { value: type === "mousedown" ? 2 * i : 2 * i + 1 });
             popup.dispatchEvent(event);
           }
           expect(router.route()).toMatchObject({ kind: "page", name: `Popup history ${direction === "back" ? 5 - i : i + 1}` });
