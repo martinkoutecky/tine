@@ -1,4 +1,4 @@
-import { exportNodesFor, pageByName, resolveBlockRef } from "../document";
+import { exportNodesFor, node, pageByName, resolveBlockRef } from "../document";
 import { noticeChangedResults, samePreBlockResult, resolveResultRow, referenceExportSource } from "./queryResultIdentity";
 import { blockDtoExternalId } from "../blockIdentity";
 import { resultTicket, resultsTicketActionable } from "../queryResultsEpoch";
@@ -63,6 +63,11 @@ export async function openReferenceResultsCopy(groups: RefGroup[], current: Owne
       const children = blockDtosToExportNodes(headers, format);
       if (loaded) {
         const ids = outline.map(block => {
+          // The row's own runtime key still naming the same text is the block:
+          // no page-wide authored-ID index for an ordinary export (GH #793).
+          const at = { page: group.page, pageKind: group.kind, ...(group.path ? { path: group.path } : {}) };
+          const keyed = resolveBlockRef({ uuid: block.id, ...at }, { locator: true });
+          if (keyed !== null && node(keyed)?.raw === block.raw) return keyed;
           const id = resolveBlockRef({
             uuid: blockDtoExternalId(block), page: group.page, pageKind: group.kind,
             ...(group.path ? { path: group.path } : {}),
