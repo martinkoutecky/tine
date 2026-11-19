@@ -52,7 +52,7 @@ import {
   route,
 } from "./router";
 import { journalTitle, parseJournalTitle, appNow } from "./journal";
-import { undo, redo, hasSelection, moveSelection, cycleSelectionTasks, expandBlockSelection, moveSelectionItems, indentSelection, outdentSelection, deleteSelection, selectionMarkdown, selectionScope, clearSelection, selectedIds, singleSelectedId, topSelected, blockIsGridView, pageVisibleOrder, selectBlock, visibleOrder, toggleUndoRedoMode, buildClipboardPayload, node as docNode, loadedPage } from "./document";
+import { undo, redo, hasSelection, moveSelection, cycleSelectionTasks, expandBlockSelection, moveSelectionItems, indentSelection, outdentSelection, deleteSelection, selectionMarkdown, selectionScope, clearSelection, clearSelectionOutsideOutline, selectedIds, singleSelectedId, topSelected, blockIsGridView, pageVisibleOrder, selectBlock, visibleOrder, toggleUndoRedoMode, buildClipboardPayload, node as docNode, loadedPage } from "./document";
 import { editingId, startEditing } from "./editorController";
 import { copyBlockOutline } from "./clipboard";
 import { cutBlocks } from "./cut";
@@ -1100,6 +1100,8 @@ export function installKeybindings(overrides: Record<string, ShortcutBinding> = 
   let seq: Chord[] = [];
   let seqTimer: ReturnType<typeof setTimeout> | null = null;
   const lastClicks = new WeakMap<Document, WeakRef<Element>>();
+  const selectAllDialogs = "dialog, [role='dialog'], [role='alertdialog']";
+  const selectAllFields = `input, textarea, [contenteditable=""], [contenteditable="true"], [contenteditable="plaintext-only"], ${selectAllDialogs}`;
   const resetSeq = () => {
     seq = [];
     if (seqTimer) clearTimeout(seqTimer);
@@ -1227,20 +1229,19 @@ export function installKeybindings(overrides: Record<string, ShortcutBinding> = 
       // A pointer click can focus the pane's scroll container. Its own
       // keyboard focus still belongs to the more specific outline clicked.
       const at = clicked?.isConnected && (!focused || focused.contains(clicked)) ? clicked : focused;
-      const dialog = "dialog, [role='dialog'], [role='alertdialog']";
-      const field = at?.closest(`input, textarea, [contenteditable=""], [contenteditable="true"], [contenteditable="plaintext-only"], ${dialog}`);
+      const field = at?.closest(selectAllFields);
       if ((field?.isConnected && !isOutlineBlockEditorTarget(target))
-          || topTransientLayer()?.root?.()?.matches(dialog)) {
+          || topTransientLayer()?.root?.()?.matches(selectAllDialogs)) {
         resetSeq();
         return;
       }
       if (!editing) {
         const outline = at?.isConnected && !paneSel() && !at.closest("[data-sheet-grid-id]") ? outlineSelectionAt(at) : undefined;
-        if (hasSelection() || (!editingId() && outline)) {
+        if (hasSelection() || (!editingId() && outline !== undefined)) {
           if (hasSelection()) expandBlockSelection();
-          else {
-            const target = outline?.();
-            if (target) expandBlockSelection(target);
+          else if (outline) {
+            const target = outline.read();
+            if (target) expandBlockSelection({ ...target, surface: outline.surface });
           }
           selectionOf(e)?.removeAllRanges();
           e.preventDefault();
@@ -1359,7 +1360,13 @@ export function installKeybindings(overrides: Record<string, ShortcutBinding> = 
   // go away with it.
   const uninstallWindows = onEachWindow((win, id) => {
     const rememberClick = (e: MouseEvent) => {
-      if (e.button === 0 && isElementNode(e.target)) lastClicks.set(win.document, new WeakRef(e.target));
+      const at = e.target;
+      if (e.button !== 0 || !isElementNode(at)) return;
+      lastClicks.set(win.document, new WeakRef(at));
+      if (!hasSelection() || e.shiftKey || e.ctrlKey || e.metaKey || e.altKey || paneSel() ||
+          at.closest(`${selectAllFields}, [data-sheet-grid-id], a, button, select, label, [role='button']`)) return;
+      const outline = outlineSelectionAt(at, true);
+      if (outline !== undefined) clearSelectionOutsideOutline(outline?.surface, outline?.page);
     };
     win.addEventListener("click", rememberClick, true);
     win.addEventListener("keydown", handler, true);

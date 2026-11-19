@@ -7,8 +7,8 @@ import * as deepLinkNavigation from "./deepLinkNavigation";
 import { installMobileExternalLinkHandler } from "./App";
 import { App } from "./App";
 import { render } from "solid-js/web";
-import { paneRouter, resetPaneLayoutToSingle, restorePaneLayout } from "./panes";
-import { markDirty, resetStore, setRaw } from "./document";
+import { paneRouter, resetPaneLayoutToSingle, restorePaneLayout, splitPane } from "./panes";
+import { clearSelection, markDirty, resetStore, selectedIds, setRaw } from "./document";
 import { setBlockMoving } from "./document/edits/moves";
 import { pageToDto } from "./document/convert";
 import { type FeedPage, type Node as StoreNode } from "./document/model";
@@ -18,6 +18,7 @@ import { pageInventoryRev, firstLoadDone, setFirstLoadDone } from "./graphSessio
 import { bumpGraphEpoch } from "./graphSession";
 import { applyGraphChange as handleGraphChange } from "./document";
 import { bindTestHost, type TestHost } from "./document/host/wiring.test.support";
+import { journalTitle, localDayKey } from "./journal";
 
 vi.mock("@tauri-apps/api/core", { spy: true });
 
@@ -33,6 +34,14 @@ function click(el: Element): MouseEvent {
   const event = new MouseEvent("click", { bubbles: true, cancelable: true });
   el.dispatchEvent(event);
   return event;
+}
+
+function selectAllFrom(at: HTMLElement, scroller: HTMLElement): boolean {
+  scroller.focus();
+  click(at);
+  const event = new KeyboardEvent("keydown", { key: "a", ctrlKey: true, bubbles: true, cancelable: true });
+  scroller.dispatchEvent(event);
+  return event.defaultPrevented;
 }
 
 // The window's page-mail listener is registered on its first bind; App renders
@@ -57,6 +66,79 @@ afterEach(() => {
   vi.restoreAllMocks();
   resetStore();
   resetPaneLayoutToSingle({ tabs: [{ history: [{ kind: "journals" }], pos: 0, pinned: false }], activeIndex: 0 });
+});
+
+it.each([false, true])("selects the routed page or zoom from scroller whitespace (split pane: %s)", async (split) => {
+  const roots = [
+    { id: "zoom-root", raw: "Zoom root", collapsed: true, children: [{ id: "zoom-child", raw: "Zoom child", collapsed: false, children: [] }] },
+    { id: "page-sibling", raw: "Page sibling {{embed [[Embedded]]}}", collapsed: false, children: [] },
+  ];
+  const routed: PageRead = { name: "Outline", title: "Outline", kind: "page", id: "pages/Outline.md", pre_block: null, blocks: roots };
+  const embedded: PageRead = { name: "Embedded", title: "Embedded", kind: "page", id: "pages/Embedded.md", pre_block: null,
+    blocks: [{ id: "embedded-root", raw: "Embedded body", collapsed: false, children: [] }] };
+  vi.spyOn(backend(), "getPage").mockImplementation(async name => name === routed.name ? routed : name === embedded.name ? embedded : null);
+  vi.spyOn(backend(), "getPageByPath").mockImplementation(async path => path === routed.id ? routed : path === embedded.id ? embedded : null);
+  setFirstLoadDone(false);
+  const host = document.createElement("div"); document.body.append(host);
+  const dispose = render(() => <App />, host);
+  try {
+    await vi.waitFor(() => expect(firstLoadDone()).toBe(true));
+    const paneId = split ? splitPane("main", "row")! : "main";
+    const router = paneRouter(paneId);
+    router.replaceActiveRoute({ kind: "page", name: routed.name, pageKind: "page" });
+    const scroller = await vi.waitFor(() => {
+      const el = host.querySelector<HTMLElement>(split ? `[data-pane-id="${paneId}"] .main-content` : ".main-content");
+      expect(el?.textContent).toContain("Page sibling");
+      return el!;
+    });
+    for (const zone of [scroller, scroller.querySelector<HTMLElement>(".main-content-inner")!]) {
+      expect(selectAllFrom(zone, scroller)).toBe(true);
+      expect(selectedIds()).toEqual(["zoom-root", "zoom-child", "page-sibling"]);
+      clearSelection();
+    }
+    const embed = await vi.waitFor(() => {
+      const el = scroller.querySelector<HTMLElement>(".embed-block");
+      expect(el?.textContent).toContain("Embedded body");
+      return el!;
+    });
+    expect(selectAllFrom(embed, scroller)).toBe(true);
+    expect(selectedIds()).toEqual(["embedded-root"]);
+    router.zoomToBlock({ name: routed.name, pageKind: "page", block: "zoom-root" });
+    await vi.waitFor(() => expect(scroller.querySelector(".zoomed-page")?.textContent).toContain("Zoom child"));
+    for (const zone of [scroller, scroller.querySelector<HTMLElement>(".main-content-inner")!]) {
+      expect(selectAllFrom(zone, scroller)).toBe(true);
+      expect(selectedIds()).toEqual(["zoom-root", "zoom-child"]);
+      clearSelection();
+    }
+  } finally { dispose(); }
+});
+
+it("keeps Journals day scopes after a routed page leaves the scroller", async () => {
+  const today = new Date();
+  const yesterday = new Date(today.getFullYear(), today.getMonth(), today.getDate() - 1);
+  const days = [today, yesterday].map((date, index): PageRead => ({
+    name: journalTitle(date), title: journalTitle(date), kind: "journal", id: `journals/${localDayKey(date)}.md`, pre_block: null,
+    blocks: [{ id: `day-${index}`, raw: `Journal body ${index}`, collapsed: false, children: [] }],
+  }));
+  vi.spyOn(backend(), "journalFeedPage").mockResolvedValue({ pages: days, next_before_day: null, done: true, as_of_day: localDayKey(today) });
+  const routed: PageRead = { name: "Outline", title: "Outline", kind: "page", id: "pages/Outline.md", pre_block: null,
+    blocks: [{ id: "page-root", raw: "Routed body", collapsed: false, children: [] }] };
+  vi.spyOn(backend(), "getPage").mockResolvedValue(routed);
+  const router = paneRouter("main");
+  router.replaceActiveRoute({ kind: "page", name: routed.name, pageKind: "page" });
+  const host = document.createElement("div"); document.body.append(host);
+  const dispose = render(() => <App />, host);
+  try {
+    await vi.waitFor(() => expect(host.querySelector(".main-content")?.textContent).toContain("Routed body"));
+    const scroller = host.querySelector<HTMLElement>(".main-content")!;
+    router.replaceActiveRoute({ kind: "journals" });
+    await vi.waitFor(() => expect(scroller.textContent).toContain("Journal body 1"));
+    expect(selectAllFrom(scroller, scroller)).toBe(false);
+    for (const [index, day] of days.entries()) {
+      expect(selectAllFrom(scroller.querySelector<HTMLElement>(`[data-page-name="${day.name}"] .page-blocks`)!, scroller)).toBe(true);
+      expect(selectedIds()).toEqual([`day-${index}`]);
+    }
+  } finally { dispose(); }
 });
 
 function page(name: string, kind: "page" | "journal", roots: string[]): FeedPage {
