@@ -13,9 +13,12 @@ The format follows [Keep a Changelog](https://keepachangelog.com/); versions use
 - Merging two pages that both have a `tags::` line leaves the remaining page with one `tags::` line holding both pages' tags; the merge question shows them. If the merge does not happen, both lines stay as they were (UI-CM-MERGE-UNITED-TAGS).
 
 ### Fixed
+- Renaming a page that very large pages link to uses less memory: each linking page's rewrite proof and the check's reading of it are now let go as soon as that page has been checked, instead of being held until the whole rename was prepared (a 20,000-block page: 125 MB to 113 MB peak; REG-CM-RENAME-RETAINED-BYTES).
 - Adding to a page or a journal day while Tine is still loading the graph at launch no longer writes a second file for it beside your file; the add is refused as for any page that already has a file (REG-HELD-UNINDEXED-TWIN).
 - When you type in a page while an agent writes to it through the CLI, a resulting conflict review now compares against your last save that reached the disk, instead of falling back to a two-way review when an older save was proven only by the disk (#964; REG-GH964-LIVE-CONFLICT-BASE).
 - On Windows, a graph on a file system without file IDs (a WSL share such as `\\wsl.localhost`, a FAT32 or exFAT drive, a Samba share) can be saved again; since 0.9.0 every save failed with "The request is not supported (os error 50)" (reported by redstreet in #973; REG-973-WINDOWS-NO-FILE-ID).
+- The first Linked References panel you open reads only the pages that reference it again, as before 0.10: on a 10,000-page graph it took about half a second instead of a few milliseconds (REG-PERF-FIRST-LINKED-REFS-OPEN).
+- The first edit after All pages has shown its reference counts, made in Tine or in another editor, no longer pays for a scan of the whole graph: on a 10,000-page graph it took about 200 ms instead of 40 ms (REG-PERF-OUTSIDE-EDIT-REFRESH-COUNTS).
 
 - A code block whose text wraps because of a theme or custom.css (not Tine's wrap setting) keeps its line numbers level with their lines: the numbers after a wrapped line sat one row too high and the last line had none (reported by BeyondTheJob in #970; UI-GH970-CODE-GUTTER-WRAP).
 - Ctrl+P and Ctrl+N move to the previous and the next block from the edge of a block, as Up and Down do, and likewise move the autocomplete highlight, the date picker by a week and the block selection, as in Logseq; they did nothing (reported by mtravers in #986; UI-GH986-CTRL-NP-NAVIGATION).
