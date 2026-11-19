@@ -314,6 +314,12 @@ export function Block(props: { id: string; hideRefCount?: boolean; forceExpanded
             collapsed: collapsed(),
             "block-embed-host": blockEmbedHost(),
             ...comments,
+            // Heading level on the row (the thread connectors read its first-line height) so the bullet column can match the (taller)
+            // heading line box and the bullet stays centered on the first line. While
+            // editing, apply the same offset only when the hidden-props-stripped editor
+            // value is still a single line; multi-line heading blocks edit at body size in the textarea. The CM6
+            // editor sizes the first line whatever follows it.
+            [`bullet-h${headingLevel()}`]: headingLevel() != null && (!editing() || cm6EditorEnabled() || editorIsUniline()),
             "author-tinted": authorTinted(),
             // The card of a thread with a message changed since the user last looked (DESIGN §12),
             // also while the thread is folded to "N replies" and its message rows are not drawn.
@@ -340,12 +346,6 @@ export function Block(props: { id: string; hideRefCount?: boolean; forceExpanded
             editorId: props.id, surface: rowHost()?.surface ?? surfaceKey, editing, readOnly: () => blockPageReadOnly(rowHost()?.id ?? props.id) });
         }}
         classList={{
-          // Heading level on the row so the bullet column can match the (taller)
-          // heading line box and the bullet stays centered on the first line. While
-          // editing, apply the same offset only when the hidden-props-stripped editor
-          // value is still a single line; multi-line heading blocks edit at body size in the textarea. The CM6
-          // editor sizes the first line whatever follows it.
-          [`bullet-h${headingLevel()}`]: headingLevel() != null && (!editing() || cm6EditorEnabled() || editorIsUniline()),
           "drop-before": dropInd()?.id === props.id && dropInd()?.position === "before",
           "drop-after": dropInd()?.id === props.id && dropInd()?.position === "after",
           "drop-child": dropInd()?.id === props.id && dropInd()?.position === "child",

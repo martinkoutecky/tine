@@ -3466,9 +3466,9 @@ html[data-system-insets="native-viewport"] {
    text is 1.7em–0.9em, so its line box scales with the level.) */
 /* height = heading line box = heading font-size (1.7/1.4/1.2em) × the 1.6
    .block-content line-height, so the bullet centers exactly on the line. */
-.ls-block:has(> .block-main.bullet-h1) { --block-first-line-height: 2.72em; }
-.ls-block:has(> .block-main.bullet-h2) { --block-first-line-height: 2.24em; }
-.ls-block:has(> .block-main.bullet-h3) { --block-first-line-height: 1.92em; }
+.ls-block.bullet-h1 { --block-first-line-height: 2.72em; }
+.ls-block.bullet-h2 { --block-first-line-height: 2.24em; }
+.ls-block.bullet-h3 { --block-first-line-height: 1.92em; }
 
 .collapse-toggle {
   width: 18px;
@@ -3715,6 +3715,7 @@ html[data-system-insets="native-viewport"] {
   --thread-bullet-x: 26px;
   --thread-stub-x: calc(var(--thread-bullet-x) - var(--thread-width, 1px) / 2);
   --thread-rail-x: calc(var(--thread-stub-x) - var(--ls-block-indent) - 1px);
+  --thread-arm-x: calc(var(--thread-rail-x) + var(--thread-width, 1px));
   --thread-active-color: var(--thread-color, var(--ls-link-text-color));
   --thread-normal-color: color-mix(in srgb, var(--guide-color) 82%, transparent);
 }
@@ -3754,16 +3755,18 @@ html[data-system-insets="native-viewport"] {
 :is(.plugin-thread-lines > .block-children-container > .block-children, .plugin-thread-lines > .block-children-container > .block-children > .outline-list > .outline-window) > .ls-block > .block-main {
   position: relative;
 }
+/* The square arm and rail extend paint across their shared inline edge. Their
+   masks cut both strokes there on the same device-pixel boundary. */
 :is(.plugin-thread-lines > .block-children-container > .block-children, .plugin-thread-lines > .block-children-container > .block-children > .outline-list > .outline-window) > .ls-block > .block-main::before {
   content: "";
   position: absolute;
-  inset-inline-start: var(--thread-rail-x);
+  inset-inline-start: var(--thread-arm-x);
   top: -1px;
-  width: calc(var(--ls-block-indent) + 1px + var(--thread-width, 1px) / 2);
+  width: calc(var(--ls-block-indent) + 1px - var(--thread-width, 1px) / 2);
   height: calc(1px + var(--thread-elbow-end));
   box-sizing: border-box;
-  border-inline-start: var(--thread-width, 1px) solid transparent;
-  background: linear-gradient(var(--thread-elbow-color), var(--thread-elbow-color)) bottom / 100% var(--thread-width, 1px) no-repeat padding-box;
+  border-image: linear-gradient(transparent calc(100% - var(--thread-width, 1px)), var(--thread-elbow-color) 0) 0 fill / 0 / 0 2px;
+  mask: url("#thread-arm-mask");
   pointer-events: none;
   z-index: 1;
 }
@@ -3771,10 +3774,12 @@ html[data-system-insets="native-viewport"] {
    turns a corner; a straight stroke through that curve would draw twice. */
 :is(.plugin-thread-lines > .block-children-container > .block-children, .plugin-thread-lines > .block-children-container > .block-children > .outline-list > .outline-window:last-child) > .ls-block:last-child > .block-main::before,
 :is(.plugin-thread-lines-active > .block-children-container > .block-children, .plugin-thread-lines-active > .block-children-container > .block-children > .outline-list > .outline-window) > .ls-block:focus-within > .block-main::before {
+  inset-inline-start: var(--thread-rail-x);
+  width: calc(var(--ls-block-indent) + 1px + var(--thread-width, 1px) / 2);
   border-end-start-radius: 6px;
-  border-inline-start-color: var(--thread-incoming-color);
+  border-inline-start: var(--thread-width, 1px) solid var(--thread-incoming-color);
   border-bottom: var(--thread-width, 1px) solid var(--thread-elbow-color);
-  background: none;
+  border-image: none;
   mask: url("#thread-elbow-mask");
 }
 
@@ -3834,13 +3839,15 @@ html[data-system-insets="native-viewport"] {
   bottom: 0;
   pointer-events: none;
 }
-/* Extend the paint past both ends so the mask owns the pixel at the join. */
+/* Extend the paint past the joins so the masks own the shared pixel cuts. */
 .plugin-thread-lines:not(.collapsed) > .block-main::after,
 :is(.plugin-thread-lines > .block-children-container > .block-children, .plugin-thread-lines > .block-children-container > .block-children > .outline-list > .outline-window) > .ls-block::after,
 .plugin-thread-lines > .block-children-container > .block-children > .outline-list > .outline-window > [aria-hidden="true"]::before {
   --thread-rail-color: var(--thread-normal-color);
+  box-sizing: border-box;
+  width: var(--thread-width, 1px);
   border-inline-start: var(--thread-width, 1px) solid var(--thread-rail-color);
-  border-image: linear-gradient(var(--thread-rail-start-color, var(--thread-rail-color)) calc(2px + var(--thread-elbow-end)), var(--thread-rail-color) 0) 0 fill / 0 / 2px 0;
+  border-image: linear-gradient(var(--thread-rail-start-color, var(--thread-rail-color)) calc(2px + var(--thread-elbow-end)), var(--thread-rail-color) 0) 0 fill / 0 / 2px;
   mask: url("#thread-rail-mask");
 }
 .plugin-thread-lines-active > .block-children-container > .block-children > .outline-list > .outline-window > [aria-hidden="true"]::before {

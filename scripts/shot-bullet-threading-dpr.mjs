@@ -6,6 +6,7 @@ import { chromium } from "playwright";
 import { createServer } from "vite";
 import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { resolve } from "node:path";
+import { hasPaleThreadFork, sampleThreadInk } from "./lib/thread-ink.mjs";
 
 const out = resolve(process.argv[2] ?? "target/artifacts/fix-129-beta/dpr");
 mkdirSync(out, { recursive: true });
@@ -70,16 +71,19 @@ try {
           const continuation = getComputedStyle(el.parentElement, "::after");
           const parentBullet = parent.querySelector(".bullet").getBoundingClientRect();
           const previous = el.parentElement.previousElementSibling;
-          return { id, joinY: box.top, x: box.left + zoom * parseFloat(style.left),
+          const radius = parseFloat(style.borderBottomLeftRadius);
+          const continuationVisible = continuation.display !== "none" && continuation.content !== "none";
+          const railStyle = radius === 0 && continuationVisible ? continuation : style;
+          return { id, joinY: box.top, x: box.left + zoom * parseFloat(railStyle.left),
             parentX: parent.getBoundingClientRect().left + zoom * parseFloat(stub.left),
             stubTop: parent.getBoundingClientRect().top + zoom * parseFloat(stub.top),
             parentBulletY: parentBullet.top + parentBullet.height / 2,
             sourceBottom: previous?.matches(".ls-block") ? previous.getBoundingClientRect().bottom : parent.getBoundingClientRect().bottom,
-            radius: parseFloat(style.borderBottomLeftRadius),
+            radius,
             focused: el.parentElement.matches(":focus-within"),
-            continuationVisible: continuation.display !== "none" && continuation.content !== "none",
+            continuationVisible,
             top: box.top + zoom * parseFloat(style.top), bottom: box.top + zoom * (parseFloat(style.top) + parseFloat(style.height)),
-            bulletY: bullet.top + bullet.height / 2, width: zoom * parseFloat(style.borderLeftWidth), display: style.display };
+            bulletY: bullet.top + bullet.height / 2, width: zoom * parseFloat(railStyle.borderLeftWidth), display: style.display };
         });
         return { dpr: devicePixelRatio, rows };
       }, { zoom, ids });
@@ -98,35 +102,8 @@ try {
         }
       }
       const shot = await page.screenshot({ path: `${out}/${name}.png` });
-      const ink = thickness === 0 ? [] : await page.evaluate(async ({ src, rows, dpr, zoom }) => {
-        const image = new Image(); image.src = src; await image.decode();
-        const canvas = document.createElement("canvas"); canvas.width = image.width; canvas.height = image.height;
-        const ctx = canvas.getContext("2d"); ctx.drawImage(image, 0, 0);
-        const pixels = ctx.getImageData(0, 0, canvas.width, canvas.height).data;
-        return rows.map(row => {
-          const left = Math.floor(row.x * dpr) - 2;
-          const right = Math.ceil((row.x + row.width) * dpr) + 2;
-          const contrast = (x, y) => {
-            const background = 4 * (y * canvas.width + left - 2);
-            const k = 4 * (y * canvas.width + x);
-            return Math.abs(pixels[background] - pixels[k]) + Math.abs(pixels[background + 1] - pixels[k + 1]) + Math.abs(pixels[background + 2] - pixels[k + 2]);
-          };
-          const rail = y => Array.from({ length: right - left + 1 }, (_, i) => contrast(left + i, y));
-          const mass = y => rail(y).reduce((total, pixel) => total + pixel, 0);
-          const first = Math.floor((Math.min(row.joinY, row.top) - zoom) * dpr);
-          const last = Math.ceil((row.joinY + zoom) * dpr);
-          const branchY = Math.floor(row.bulletY * dpr);
-          const beforeBranch = Math.floor((row.bulletY - 5 * zoom) * dpr);
-          const fork = row.id === "ordinary" ? { peak: 0, arm: 0, rail: Math.max(...rail(first - 2)) } : null;
-          if (fork) for (let y = branchY - Math.ceil(row.width * dpr); y <= branchY + Math.ceil(row.width * dpr); y++) {
-            fork.peak = Math.max(fork.peak, ...rail(y));
-            fork.arm = Math.max(fork.arm, contrast(right + 2, y));
-          }
-          return { id: row.id, first, above: mass(first - 2), below: mass(last + 2),
-            join: Array.from({ length: last - first + 1 }, (_, i) => mass(first + i)), fork,
-            activeRail: row.focused && row.radius === 0 ? mass(beforeBranch) : null };
-        });
-      }, { src: `data:image/png;base64,${shot.toString("base64")}`, rows: geometry.rows, dpr, zoom });
+      const ink = thickness === 0 ? [] : await page.evaluate(sampleThreadInk,
+        { src: `data:image/png;base64,${shot.toString("base64")}`, rows: geometry.rows, dpr, zoom });
       for (const { id, above, below, join, fork, activeRail } of ink) {
         // A palette transition can have different ink on either side of a join.
         // Allow 15% beyond either straight stroke for channel quantization.
@@ -134,8 +111,11 @@ try {
           failures.push(`${name}/${id}: seam ink ${join.join(", ")} versus straight ink ${above}, ${below}`);
         }
         if (!color && activeRail !== null && activeRail < .85 * above) failures.push(`${name}/${id}: active rail fades before its branch (${activeRail} versus ${above})`);
-        if (fork && (!fork.arm || fork.peak > 1.15 * Math.max(fork.rail, fork.arm))) {
+        if (fork && (!fork.arm || (id === "ordinary" && fork.peak > 1.15 * Math.max(fork.rail, fork.arm)))) {
           failures.push(`${name}/${id}: T junction ink ${fork.peak} versus rail ${fork.rail} and arm ${fork.arm}`);
+        }
+        if (fork && hasPaleThreadFork(fork)) {
+          failures.push(`${name}/${id}: pale T junction ink ${fork.bridge.join(", ")}`);
         }
       }
       evidence.push({ name, geometry, ink });

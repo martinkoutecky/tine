@@ -75,7 +75,7 @@ const measureBullets = () => {
     if (!Number.isFinite(lineHeight)) continue;
     const box = content.getBoundingClientRect();
     const dotBox = dot.getBoundingClientRect();
-    const heading = /\bbullet-h[1-6]\b/.exec(main.className)?.[0] ?? null;
+    const heading = /\bbullet-h[1-6]\b/.exec(block.className)?.[0] ?? null;
     rows.push({
       heading,
       text: (content.textContent ?? "").replace(/\s+/g, " ").trim().slice(0, 40),
@@ -191,8 +191,8 @@ try {
   // catch a change to the ordinary column that drags the heading levels with it;
   // it deliberately does not freeze the heading column's exact height.
   const headingFixture = ["h1", "h2", "h3", "h4"].map((level) => `
-    <div class="ls-block">
-      <div class="block-main ${["h1", "h2", "h3"].includes(level) ? `bullet-${level}` : ""}">
+    <div class="ls-block ${["h1", "h2", "h3"].includes(level) ? `bullet-${level}` : ""}">
+      <div class="block-main">
         <div class="block-controls">
           <span class="collapse-toggle"></span>
           <span class="bullet-container"><span class="bullet"></span></span>

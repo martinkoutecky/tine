@@ -128,10 +128,10 @@ describe("per-block derivations run once per block", () => {
     const { host, dispose } = mountPage(["plain"]);
     try {
       expect(host.querySelector(".block-content.heading")).toBeNull();
-      expect(host.querySelector(".block-main")!.className).not.toMatch(/bullet-h/);
+      expect(host.querySelector(".ls-block")!.className).not.toMatch(/bullet-h/);
       setDoc("byId", "b0", "raw", "# now a heading");
       expect(host.querySelector(".block-content.heading.h1")).not.toBeNull();
-      expect(host.querySelector(".block-main")!.className).toMatch(/bullet-h1/);
+      expect(host.querySelector(".ls-block")!.className).toMatch(/bullet-h1/);
     } finally {
       dispose();
     }

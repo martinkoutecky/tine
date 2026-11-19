@@ -4,14 +4,13 @@ import { initParser } from "../../src/render/parse";
 import { loadSingle } from "../../src/document/workingSet";
 import { openPage } from "../../src/router";
 import { Block } from "../../src/components/Block";
-import { ThreadJoinMasks } from "../../src/components/ThreadJoinMasks";
 import { pluginManager } from "../../src/plugins/manager";
 import type { PluginSettings } from "../../src/plugins/settings";
 import { galleryThemes } from "../../src/styles/themes";
 import { setCm6EditorEnabled } from "../../src/editor/cm6Setting";
 import "../../src/styles/inter.css";
 import "../../src/styles/theme.css";
-import "../../src/styles/app.css";
+import "../../src/styles/appStyle";
 import "../../src/styles/ls-shim.css";
 
 const [settings, setSettings] = createSignal<PluginSettings>({ display: "all", thickness: 1, color: "", "color-by-level": false });
@@ -45,4 +44,4 @@ loadSingle({ name: "Thread", title: "Thread", kind: "page", pre_block: null, for
   ] },
 ] });
 openPage("Thread");
-render(() => <main class="main-content" style={{ padding: "40px", width: "min(640px, calc(100vw - 80px))" }}><ThreadJoinMasks /><Block id="root" /></main>, document.getElementById("root")!);
+render(() => <main class="main-content" style={{ padding: "40px", width: "min(640px, calc(100vw - 80px))" }}><Block id="root" /></main>, document.getElementById("root")!);

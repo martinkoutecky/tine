@@ -125,7 +125,9 @@ try {
   const mobileJoins = await mobile.evaluate(() => ["parent", "middle", "focus"].map(id => {
     const row = document.querySelector(`[data-block-id="${id}"] > .block-main`);
     const parent = row.closest(".block-children-container").parentElement.querySelector(":scope > .block-main");
-    return { id, childX: row.getBoundingClientRect().left + parseFloat(getComputedStyle(row, "::before").left),
+    const continuation = getComputedStyle(row.parentElement, "::after");
+    const rail = continuation.display !== "none" && continuation.content !== "none" ? continuation : getComputedStyle(row, "::before");
+    return { id, childX: row.getBoundingClientRect().left + parseFloat(rail.left),
       parentX: parent.getBoundingClientRect().left + parseFloat(getComputedStyle(parent, "::after").left) };
   }));
   for (const join of mobileJoins) if (Math.abs(join.childX - join.parentX) > .05) throw new Error(`Mobile ${join.id} rail jogs from parent stub`);
