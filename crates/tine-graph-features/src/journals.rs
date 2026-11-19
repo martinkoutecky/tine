@@ -541,7 +541,7 @@ mod journal_feed_tests {
 /// day) and O(path bytes). No write.
 pub fn absent_journal_id(store: &Store, name: &str) -> Result<Option<PageId>, StoreError> {
     let fmt = format(store);
-    let Some(date) = fmt.parse(name) else {
+    let Some(date) = fmt.parse_text(name) else {
         return Ok(None);
     };
     if store
@@ -673,7 +673,7 @@ fn migration_target(entry: &FileEntry, fmt: &JournalFormat) -> Option<String> {
     if fmt.is_canonical_stem(source_stem) {
         return None;
     }
-    let date = fmt.parse(source_stem)?;
+    let date = fmt.parse_file_stem(source_stem)?;
     let wanted = fmt.file_stem(date);
     let ext = entry.rel.rsplit_once('.')?.1;
     let target = format!("{wanted}.{ext}");

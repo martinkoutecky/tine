@@ -360,7 +360,7 @@ impl BacklinkMembership {
                         _ => reference.name.trim(),
                     };
                     let (canonical, _, _) = self.resolver.resolve(spelling);
-                    let journal = self.resolver.format().parse(spelling).is_some();
+                    let journal = self.resolver.format().parse_text(spelling).is_some();
                     self.register(&canonical, journal, spelling);
                     false
                 });
@@ -713,7 +713,7 @@ impl BacklinkMembership {
                         let (_, real_names, real_own) = next.resolver.resolve(&entry.name);
                         names == real_names && own == real_own
                     });
-                let journal = next.resolver.format().parse(&spelling).is_some();
+                let journal = next.resolver.format().parse_text(&spelling).is_some();
                 if !served && self.identity(&canonical_key, journal).is_some() {
                     wanted.entry((journal, canonical_key)).or_insert(spelling);
                 }

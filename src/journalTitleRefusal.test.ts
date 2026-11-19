@@ -1,11 +1,13 @@
 // D-20261119-YL: a configured journal title format that names no single day is
-// not used. Titles render in the default; the configured format still feeds
-// the one date parser; the graph says so once per load (no persisted state).
+// not used. Titles render in the default; the refused format is no text route
+// (model round 3), though an existing journal file it names keeps its day; the
+// graph says so once per load (no persisted state).
 import { afterEach, beforeAll, describe, expect, it, vi } from "vitest";
 import { backend } from "./backend";
 import { applyConfigDerivedState } from "./graph";
 import { setGraphMeta } from "./graphSession";
 import { graphTitleRefusal, journalTitle, journalTitleRefusalMessage, journalTitleStatus, parseJournalTitle, setJournalFormats } from "./journal";
+import { JOURNAL_TITLE_FORMATS } from "./journalTitleFormats";
 import { changeJournalTitleFormat } from "./ui";
 import { renderEnglish } from "./i18n";
 import { initParser } from "./render/parse";
@@ -34,13 +36,17 @@ describe("the effective journal title format", () => {
     expect(journalTitleStatus("yyyy_MM_dd", "MM-dd")).toEqual({ effective: "MMM do, yyyy", refusal: { missing: "year" } });
   });
 
-  it("uses a valid configured format, and keeps a refused one in the parser", () => {
+  it("uses a valid configured format; a refused one reads no text, a file-name format still does", () => {
     setJournalFormats("dd.MM.yyyy", "");
     expect(journalTitle(new Date(2026, 10, 2))).toBe("02.11.2026");
     expect(journalTitleStatus("", "dd.MM.yyyy").refusal).toBeNull();
     setJournalFormats("d.M.yy", "");
     expect(journalTitle(new Date(2026, 0, 5))).toBe("Jan 5th, 2026");
-    // The parser is unchanged: a title a file or link already has still reads.
+    // A refused title format is no text route: `[[5.1.26]]` is an ordinary page.
+    expect(parseJournalTitle("5.1.26")).toBeNull();
+    expect(parseJournalTitle("Jan 5th, 2026")?.getFullYear()).toBe(2026);
+    // The same pattern as the file-name format is a text route.
+    setJournalFormats("MMM do, yyyy", "d.M.yy");
     expect(parseJournalTitle("5.1.26")?.getFullYear()).toBe(2026);
     const status = journalTitleStatus("", "d.M.yy");
     expect(status.refusal).toEqual({ day: { y: 1900, m: 1, d: 1 }, written: "1.1.00", read_as: { y: 2000, m: 1, d: 1 } });
@@ -109,7 +115,17 @@ describe("the notice", () => {
     expect(notices()).toHaveLength(0);
   });
 
-  it("is shown after a successful Settings save of a refused preset (no config event reaches the writer)", async () => {
+  it("is never needed for a Settings preset: each names one day, whatever the file-name format", () => {
+    // The check is the title's own round trip (model round 3), so the file-name
+    // format cannot make a preset refused (`MM-dd-yyyy` files, `dd-MM-yyyy` titles).
+    for (const title of JOURNAL_TITLE_FORMATS) {
+      for (const file of ["yyyy_MM_dd", "MM-dd-yyyy", "dd-MM-yyyy", title]) {
+        expect(journalTitleStatus(file, title), `${title} / ${file}`).toEqual({ effective: title, refusal: null });
+      }
+    }
+  });
+
+  it("is shown after a successful save of a refused format (no config event reaches the writer)", async () => {
     const loaded = await backend().loadGraph("");
     if (loaded.kind === "focused_existing") throw new Error("no graph metadata");
     const graph = { ...loaded.meta, root: "/graph", journal_page_title_format: "MMM do, yyyy", journal_file_name_format: "MM-dd-yyyy" };
@@ -117,13 +133,13 @@ describe("the notice", () => {
     expect(notices()).toHaveLength(0);
     let finish!: (notes: string[]) => void;
     vi.spyOn(backend(), "setJournalTitleFormat").mockImplementationOnce(() => new Promise<string[]>((resolve) => { finish = resolve; }));
-    changeJournalTitleFormat("dd-MM-yyyy");
+    changeJournalTitleFormat("dd-MM");
     expect(notices()).toHaveLength(0);
     finish([]);
     await Promise.resolve();
     await Promise.resolve();
     expect(shown()).toHaveLength(1);
-    expect(shown()[0]).toContain('not "dd-MM-yyyy"');
+    expect(shown()[0]).toContain('not "dd-MM"');
     vi.restoreAllMocks();
   });
 });

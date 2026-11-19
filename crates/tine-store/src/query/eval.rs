@@ -650,7 +650,7 @@ pub(crate) fn reference_day(name: &str, format: &tine_core::date::JournalFormat)
     if !name.bytes().any(|byte| byte.is_ascii_digit()) {
         return None;
     }
-    format.parse(name).map(|date| date.ordinal_key())
+    format.parse_text(name).map(|date| date.ordinal_key())
 }
 
 /// One `journal` / `day` comparison of a reference element whose name denotes

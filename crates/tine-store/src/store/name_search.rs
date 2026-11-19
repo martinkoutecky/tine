@@ -16,7 +16,7 @@ impl WholeGraph {
                 crate::cost_counters::journal_reference_visit();
             })
             .filter_map(|name| {
-                let date = self.journal_format.parse(name)?;
+                let date = self.journal_format.parse_text(name)?;
                 let title = self.journal_format.title(date);
                 let spellings =
                     crate::query::journal_spelling_keys(&self.journal_format, date, &title);

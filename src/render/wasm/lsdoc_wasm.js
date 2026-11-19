@@ -406,8 +406,8 @@ function __tine_raw_is_render_hidden_prop(key, user_hidden, pre_block) {
 }
 
 /**
- * Is `name` a journal date, and which day: `tine_core::date::JournalFormat::parse`
- * (the one list, D-20261102-JDL). `{"y","m","d"}` or null. O(name) warm.
+ * Is `name` a journal date, and which day: `tine_core::date::JournalFormat::parse_text`
+ * (the text routes, D-20261102-JDL, D-20261119-YL). `{"y","m","d"}` or null. O(name) warm.
  * @param {string} name
  * @param {string} file_format
  * @param {string} title_format

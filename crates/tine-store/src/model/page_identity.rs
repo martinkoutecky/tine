@@ -79,7 +79,7 @@ pub(crate) fn page_file_claim(
     format: &JournalFormat,
     name: String,
 ) -> (String, PageKind, Option<i64>) {
-    match format.parse(&name) {
+    match format.parse_text(&name) {
         Some(day) => (
             format.title(day),
             PageKind::Journal,
@@ -131,7 +131,7 @@ pub(crate) fn claim_lookup<'a>(
     name: &'a str,
     kind: PageKind,
 ) -> ClaimLookup<'a> {
-    match format.parse(name) {
+    match format.parse_text(name) {
         Some(day) => ClaimLookup {
             name: format.title(day).into(),
             kind: PageKind::Journal,
@@ -789,7 +789,11 @@ pub(crate) fn journal_listing_covers(
         || path
             .file_stem()
             .and_then(|stem| stem.to_str())
-            .is_some_and(|stem| format.parse(&decode_page_name(stem, name_format)).is_some())
+            .is_some_and(|stem| {
+                format
+                    .parse_text(&decode_page_name(stem, name_format))
+                    .is_some()
+            })
 }
 
 fn list_pages(graph: &Graph, kind: Option<PageKind>) -> Vec<PageEntry> {

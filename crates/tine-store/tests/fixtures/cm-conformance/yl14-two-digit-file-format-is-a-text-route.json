@@ -1,0 +1,21 @@
+{
+ "config": {
+  "journalFileFormat": "d.M.yy"
+ },
+ "files": {
+  "journals/2.11.26.md": "- day\n",
+  "pages/Notes.md": "- typed file spelling [[2.11.26]]\n- title [[Nov 2nd, 2026]]\n"
+ },
+ "navigate": [
+  "2.11.26",
+  "Nov 2nd, 2026"
+ ],
+ "queries": [
+  {
+   "anchor": "block",
+   "q": {
+    "refs": "2.11.26"
+   }
+  }
+ ]
+}

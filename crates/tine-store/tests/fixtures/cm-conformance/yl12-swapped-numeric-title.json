@@ -1,0 +1,30 @@
+{
+ "config": {
+  "journalTitleFormat": "yyyy_dd_MM"
+ },
+ "files": {
+  "journals/2026_11_02.md": "- november\n",
+  "journals/2026_02_11.md": "- february\n",
+  "pages/Notes.md": "- typed file spelling [[2026_11_02]]\n- title [[2026_02_11]]\n- iso [[2026-11-02]]\n"
+ },
+ "navigate": [
+  "2026_11_02",
+  "2026_02_11",
+  "2026-11-02",
+  "2026-02-11"
+ ],
+ "queries": [
+  {
+   "anchor": "block",
+   "q": {
+    "refs": "2026_11_02"
+   }
+  },
+  {
+   "anchor": "block",
+   "q": {
+    "refs": "2026_02_11"
+   }
+  }
+ ]
+}

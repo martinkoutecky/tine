@@ -280,9 +280,10 @@ export function parseJournalWith(s: string, fmt: string): JournalDateParts | nul
 const parsedDays: ({file:string; title:string; input:string; parts:JournalDateParts|null} | undefined)[] = Array(64);
 let parsedDaySlot = 0;
 
-/** The graph's one date answerer, `tine_core::date::JournalFormat::parse`
+/** The graph's one date answerer for text, `tine_core::date::JournalFormat::parse_text`
  * run through wasm (the same Rust code the backend runs; D-20261102-JDL: the
- * native list, the configured file-name format included). Explicit formats,
+ * configured file-name format included; D-20261119-YL: the effective title
+ * first, a refused title no route). Explicit formats,
  * for callers that are not the open graph (the browser mock). O(name), no I/O. */
 export function parseJournalDayIn(name: string, file: string, title: string): JournalDateParts | null {
   const cached = parsedDays.find(entry => entry?.file === file && entry.title === title && entry.input === name);

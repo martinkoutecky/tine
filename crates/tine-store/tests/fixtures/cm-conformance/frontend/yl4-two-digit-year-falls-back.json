@@ -1,6 +1,6 @@
 {
   "backlinks": {
-    "Jan 1st, 2000": [
+    "1.1.00": [
       {
         "blocks": [
           {
@@ -15,7 +15,7 @@
         "page": "Notes"
       }
     ],
-    "Jan 5th, 2026": [
+    "5.1.26": [
       {
         "blocks": [
           {
@@ -24,7 +24,15 @@
             "id": "75143738-034a-8dd7-b08f-38fa7295e7fd",
             "raw": "configured spelling [[5.1.26]]",
             "tags": []
-          },
+          }
+        ],
+        "kind": "page",
+        "page": "Notes"
+      }
+    ],
+    "Jan 5th, 2026": [
+      {
+        "blocks": [
           {
             "children": [],
             "collapsed": false,
@@ -48,24 +56,38 @@
       ],
       [
         "journals/2026_01_05.md",
-        2
+        1
       ]
     ],
     [
       [
-        "Jan 1st, 2000",
+        "1.1.00",
+        1
+      ],
+      [
+        "5.1.26",
         1
       ]
     ]
   ],
   "inventory": [
     {
-      "day": 20000101,
-      "is_journal": true,
-      "key": "jan 1st, 2000",
-      "name": "Jan 1st, 2000",
+      "day": null,
+      "is_journal": false,
+      "key": "1.1.00",
+      "name": "1.1.00",
       "target": {
-        "id": "journals/2000_01_01.md",
+        "id": "pages/1%2E1%2E00.md",
+        "kind": "absent"
+      }
+    },
+    {
+      "day": null,
+      "is_journal": false,
+      "key": "5.1.26",
+      "name": "5.1.26",
+      "target": {
+        "id": "pages/5%2E1%2E26.md",
         "kind": "absent"
       }
     },
@@ -95,7 +117,8 @@
   "journalFileFormat": null,
   "journalTitleFormat": "d.M.yy",
   "keyOf": {
-    "Jan 1st, 2000": "Day 2000-01-01",
+    "1.1.00": "1.1.00",
+    "5.1.26": "5.1.26",
     "Jan 5th, 2026": "Day 2026-01-05",
     "Notes": "notes"
   },
@@ -104,7 +127,7 @@
     "1.1.00": {
       "journal": [
         "journal",
-        "Day 2000-01-01"
+        "1.1.00"
       ],
       "page": [
         "page",
@@ -114,11 +137,11 @@
     "5.1.26": {
       "journal": [
         "journal",
-        "Day 2026-01-05"
+        "5.1.26"
       ],
       "page": [
-        "journal",
-        "Day 2026-01-05"
+        "page",
+        "5.1.26"
       ]
     },
     "Jan 1st, 2000": {
@@ -158,8 +181,8 @@
       "page": null
     },
     "5.1.26": {
-      "journal": "journals/2026_01_05.md",
-      "page": "journals/2026_01_05.md"
+      "journal": null,
+      "page": null
     },
     "Jan 1st, 2000": {
       "journal": null,
@@ -176,19 +199,27 @@
   },
   "pages": [
     {
-      "key": "Day 2000-01-01",
+      "key": "Day 2026-01-05",
       "kind": "journal",
       "linkedRefs": 1,
-      "name": "Jan 1st, 2000",
+      "name": "Jan 5th, 2026",
+      "owner": "journals/2026_01_05.md",
+      "parent": null
+    },
+    {
+      "key": "1.1.00",
+      "kind": "page",
+      "linkedRefs": 1,
+      "name": "1.1.00",
       "owner": null,
       "parent": null
     },
     {
-      "key": "Day 2026-01-05",
-      "kind": "journal",
-      "linkedRefs": 2,
-      "name": "Jan 5th, 2026",
-      "owner": "journals/2026_01_05.md",
+      "key": "5.1.26",
+      "kind": "page",
+      "linkedRefs": 1,
+      "name": "5.1.26",
+      "owner": null,
       "parent": null
     },
     {
@@ -203,32 +234,24 @@
   "spellings": {
     "1.1.00": {
       "backend": [
-        "journal",
-        "Day 2000-01-01"
+        "page",
+        "1.1.00"
       ],
-      "day": [
-        2000,
-        1,
-        1
-      ],
+      "day": null,
       "model": [
-        "journal",
-        "Day 2000-01-01"
+        "page",
+        "1.1.00"
       ]
     },
     "5.1.26": {
       "backend": [
-        "journal",
-        "Day 2026-01-05"
+        "page",
+        "5.1.26"
       ],
-      "day": [
-        2026,
-        1,
-        5
-      ],
+      "day": null,
       "model": [
-        "journal",
-        "Day 2026-01-05"
+        "page",
+        "5.1.26"
       ]
     },
     "Jan 1st, 2000": {
@@ -291,8 +314,15 @@
     {
       "children": [],
       "page": [
-        "journal",
-        "Day 2000-01-01"
+        "page",
+        "5.1.26"
+      ]
+    },
+    {
+      "children": [],
+      "page": [
+        "page",
+        "1.1.00"
       ]
     }
   ],
@@ -300,14 +330,21 @@
     {
       "page": [
         "journal",
-        "Day 2000-01-01"
+        "Day 2026-01-05"
       ],
       "parent": null
     },
     {
       "page": [
-        "journal",
-        "Day 2026-01-05"
+        "page",
+        "1.1.00"
+      ],
+      "parent": null
+    },
+    {
+      "page": [
+        "page",
+        "5.1.26"
       ],
       "parent": null
     },

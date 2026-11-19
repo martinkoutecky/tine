@@ -1032,9 +1032,15 @@ What a `[[name]]` link opens has one answerer, `WholeGraph::link_target`
 first takes the opening claimant of that literal name. In particular an
 ordinary date-named file retains its own spelling (D-20261107-KD); another
 accepted spelling can still name the day's journal. Without a literal file,
-the graph's journal answerer (`JournalFormat::parse`: configured formats and
-fixed fallbacks, D-20261102-JDL) tries that day's active journal, then the
-alias owner. An active claimant always opens itself, including an empty or
+the graph's journal answerer for text (`JournalFormat::parse_text`, the text
+routes in order: the effective title format, the file-name format, then
+`MMM do, yyyy`, `yyyy-MM-dd`, `yyyy_MM_dd`; a refused title format is no route;
+D-20261102-JDL, D-20261119-YL) tries that day's active journal, then the
+alias owner. A journal file's own day comes from its stem by a separate list,
+`JournalFormat::parse_file_stem` (the file-name format, the configured title
+format even when refused, then the same fixed forms), which discovery,
+`accepted_stems` and the day's write target use too, so an existing journal
+file keeps its day. An active claimant always opens itself, including an empty or
 blank file (D-20261106-R13-C4). Live entries never set the retired `empty_alias`
 flag. Named routes, links and exact-path opens all retain that file. An
 alias owned by a journal opens the journal. A name nothing claims or aliases is

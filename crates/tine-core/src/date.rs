@@ -469,40 +469,87 @@ impl Format {
     }
 }
 
-/// Append token `t`'s rendering of `d` (`Format::format`, one token).
-fn render_token(t: &Tok, d: JournalDate, out: &mut String) {
-    use std::fmt::Write;
-    let dow = (d.to_days().rem_euclid(7) + 4).rem_euclid(7) as usize; // 0 = Sunday
+/// Where [`render_token`] writes: a `String`, or the characters the parser
+/// reads (the title check renders straight into them).
+trait Sink {
+    fn put_str(&mut self, s: &str);
+    fn put(&mut self, c: char);
+    /// `value` in decimal, zero-padded to at least `width` digits.
+    fn put_number(&mut self, value: u32, width: usize) {
+        let mut digits = [0u8; 10];
+        let (mut n, mut len) = (value, 0);
+        loop {
+            digits[len] = b'0' + (n % 10) as u8;
+            len += 1;
+            n /= 10;
+            if n == 0 {
+                break;
+            }
+        }
+        for _ in len..width {
+            self.put('0');
+        }
+        for &digit in digits[..len].iter().rev() {
+            self.put(digit as char);
+        }
+    }
+}
+
+impl Sink for String {
+    fn put_str(&mut self, s: &str) {
+        self.push_str(s)
+    }
+    fn put(&mut self, c: char) {
+        self.push(c)
+    }
+}
+
+impl Sink for Vec<char> {
+    fn put_str(&mut self, s: &str) {
+        self.extend(s.chars())
+    }
+    fn put(&mut self, c: char) {
+        self.push(c)
+    }
+}
+
+/// Append token `t`'s rendering of `d` (`Format::format`, one token). Digits
+/// are written directly: the title check renders every token once per class.
+fn render_token(t: &Tok, d: JournalDate, out: &mut impl Sink) {
+    let dow = || (d.to_days().rem_euclid(7) + 4).rem_euclid(7) as usize; // 0 = Sunday
     let mi = (d.month.max(1) - 1) as usize % 12;
-    let _ = match t {
-        Tok::Lit(s) => write!(out, "{s}"),
-        Tok::Year(4) => write!(out, "{:04}", d.year),
-        Tok::Year(2) => write!(out, "{:02}", d.year.rem_euclid(100)),
-        Tok::Year(_) => write!(out, "{}", d.year),
-        Tok::MonthNum(true) => write!(out, "{:02}", d.month),
-        Tok::MonthNum(false) => write!(out, "{}", d.month),
-        Tok::MonthName(true) => write!(out, "{}", MONTHS_FULL[mi]),
-        Tok::MonthName(false) => write!(out, "{}", MONTHS[mi]),
-        Tok::DayNum(true) => write!(out, "{:02}", d.day),
-        Tok::DayNum(false) => write!(out, "{}", d.day),
-        Tok::DayOrd => write!(out, "{}", ordinal(d.day)),
-        Tok::Weekday(4) => write!(out, "{}", WEEKDAYS_FULL[dow]),
-        Tok::Weekday(_) => write!(out, "{}", WEEKDAYS_ABBR[dow]),
+    let (value, width) = match t {
+        Tok::Lit(s) => return out.put_str(s),
+        // Years in JOURNAL_YEARS are never negative; others keep `{}`.
+        Tok::Year(4) if d.year >= 0 => (d.year as u32, 4),
+        Tok::Year(4) => return out.put_str(&format!("{:04}", d.year)),
+        Tok::Year(2) => (d.year.rem_euclid(100) as u32, 2),
+        Tok::Year(_) if d.year >= 0 => (d.year as u32, 1),
+        Tok::Year(_) => return out.put_str(&d.year.to_string()),
+        Tok::MonthNum(padded) => (d.month, if *padded { 2 } else { 1 }),
+        Tok::MonthName(true) => return out.put_str(MONTHS_FULL[mi]),
+        Tok::MonthName(false) => return out.put_str(MONTHS[mi]),
+        Tok::DayNum(padded) => (d.day, if *padded { 2 } else { 1 }),
+        Tok::DayOrd => return out.put_str(&ordinal(d.day)),
+        Tok::Weekday(4) => return out.put_str(WEEKDAYS_FULL[dow()]),
+        Tok::Weekday(_) => return out.put_str(WEEKDAYS_ABBR[dow()]),
     };
+    out.put_number(value, width);
 }
 
 // ===== Which title formats name one day (D-20261119-YL) =====
 //
 // A configured `:journal/page-title-format` renders journal titles only if
 // every title it writes names its day alone: for every day `d` with a year in
-// [`JOURNAL_YEARS`], the graph's one parser ([`JournalFormat::parse`], whose
-// parse list the configured pattern does not change) reads `title(d)` back as
-// `d`, as ordinary text lookup reads a spelling (`claim_lookup` parses the
-// name itself; the model's key-level parse is this parse, the CM harness's
-// `canonicalDates` binding `page_key(s) -> parse(s)`). A pattern that
-// fails is not used; titles use [`DEFAULT_TITLE_FORMAT`] and the refusal says
-// why. Decided by an exact analysis of the parser's steps, never by sampling
-// the graph's days ([`title_refusal`]).
+// [`JOURNAL_YEARS`], the pattern's own parser reads its title back as `d`
+// (`format.parse(key(format.render(d))) = d`, where the key is the trimming
+// [`JournalFormat::parse_text`] applies). The effective title is the first
+// text route ([`text_routes`]), so its own complete parse decides: no other
+// pattern can repair or spoil the round trip, and the check depends on the
+// title pattern alone. A pattern that fails is not used, contributes no text
+// route; titles use [`DEFAULT_TITLE_FORMAT`] and the refusal says why. Decided
+// by an exact analysis of the parser's steps, never by sampling the graph's
+// days ([`title_refusal`]).
 
 /// The years a journal day may have: what the parser reads (at most four year
 /// digits) and the renderer writes back exactly.
@@ -531,7 +578,7 @@ pub enum TitleFormatRefusal {
         day: JournalDate,
         /// Its title under the configured pattern.
         written: String,
-        /// The day ordinary text lookup reads that title as.
+        /// The day the pattern reads that title as.
         read_as: Option<JournalDate>,
     },
 }
@@ -549,14 +596,14 @@ trait Observe {
 
 impl Observe for () {}
 
-/// One pattern's reading of one class representative's key: positions the year
-/// writes, and what the reader did.
+/// The pattern's reading of one class representative's title: which positions
+/// hold digits whose values vary across the class, and what the reader did.
 struct Trace<'a> {
-    /// Key positions of each year the title writes, with its token.
-    year_slots: &'a [(std::ops::Range<usize>, Tok)],
-    /// A pattern digit literal compared to a year digit: the outcome depends on
-    /// the year's value.
-    dependent: bool,
+    /// Input positions of the varying digits each field token wrote, in order.
+    slots: &'a [(std::ops::Range<usize>, Tok)],
+    /// The first pattern digit literal compared to a varying digit, as
+    /// `(position, expected)`: from there the reading depends on its value.
+    dependent: Option<(usize, char)>,
     /// The last span read per field, with the reading token.
     spans: [Option<(std::ops::Range<usize>, Tok)>; 3],
     whole: bool,
@@ -564,8 +611,11 @@ struct Trace<'a> {
 
 impl Observe for Trace<'_> {
     fn literal(&mut self, at: usize, expected: char) {
-        if expected.is_ascii_digit() && self.year_slots.iter().any(|(slot, _)| slot.contains(&at)) {
-            self.dependent = true;
+        if self.dependent.is_none()
+            && expected.is_ascii_digit()
+            && slot_meeting(self.slots, at..at + 1).is_some()
+        {
+            self.dependent = Some((at, expected));
         }
     }
     fn field(&mut self, field: DateField, tok: &Tok, span: std::ops::Range<usize>) {
@@ -576,55 +626,75 @@ impl Observe for Trace<'_> {
     }
 }
 
-/// [`title_refusal`] for a pattern pair, memoized per process: `JournalFormat`
-/// is built wherever config is read, and the check reads 366 days or more.
-fn checked_title(
-    file_pat: &str,
-    title_pat: &str,
-    title: &Format,
-    parse_list: &[Format],
-) -> Option<TitleFormatRefusal> {
-    type Memo = Vec<((String, String), Option<TitleFormatRefusal>)>;
+/// The slot (of `slots`, in input order and disjoint) that `span` meets.
+/// O(log slots).
+fn slot_meeting(
+    slots: &[(std::ops::Range<usize>, Tok)],
+    span: std::ops::Range<usize>,
+) -> Option<&(std::ops::Range<usize>, Tok)> {
+    let first = slots.partition_point(|(slot, _)| slot.end <= span.start);
+    slots.get(first).filter(|(slot, _)| slot.start < span.end)
+}
+
+/// The field a token writes or reads, if any.
+fn field_of(tok: &Tok) -> Option<DateField> {
+    match tok {
+        Tok::Year(_) => Some(DateField::Year),
+        Tok::MonthNum(_) | Tok::MonthName(_) => Some(DateField::Month),
+        Tok::DayNum(_) | Tok::DayOrd => Some(DateField::Day),
+        Tok::Lit(_) | Tok::Weekday(_) => None,
+    }
+}
+
+/// [`title_refusal`] for a title pattern, memoized per process by that pattern
+/// alone (the verdict depends on nothing else): `JournalFormat` is built
+/// wherever config is read, and the check reads one title per class.
+fn checked_title(title_pat: &str, title: &Format) -> Option<TitleFormatRefusal> {
+    type Memo = Vec<(String, Option<TitleFormatRefusal>)>;
     static MEMO: std::sync::Mutex<Memo> = std::sync::Mutex::new(Vec::new());
     const MEMO_MAX: usize = 8;
-    let key = (file_pat.to_string(), title_pat.to_string());
     if let Some((_, verdict)) =
-        (MEMO.lock().ok()).and_then(|memo| memo.iter().find(|(k, _)| *k == key).cloned())
+        (MEMO.lock().ok()).and_then(|memo| memo.iter().find(|(k, _)| k == title_pat).cloned())
     {
         return verdict;
     }
-    let verdict = title_refusal(title, parse_list);
+    let verdict = title_refusal(title);
     if let Ok(mut memo) = MEMO.lock() {
         if memo.len() >= MEMO_MAX {
             memo.remove(0);
         }
-        memo.push((key, verdict.clone()));
+        memo.push((title_pat.to_string(), verdict.clone()));
     }
     verdict
 }
 
-/// What ordinary text lookup reads `written` as: the day the graph's parser
-/// ([`JournalFormat::parse`], which trims) reads it as.
-fn read_back(parse_list: &[Format], written: &str) -> Option<JournalDate> {
-    let cs: Vec<char> = written.trim().chars().collect();
-    parse_list.iter().find_map(|f| f.parse_chars(&cs))
+/// Whether `title` names every day in [`JOURNAL_YEARS`] alone (`None`), else
+/// the first failure found.
+///
+/// Exact, by classes. A class fixes everything about a title but the values
+/// of its numeric fields' digits: the year's digit count when the title writes
+/// an unpadded year, the weekday when it writes one, and a shape of month and
+/// day (the month when it writes a month name, the digit count of an unpadded
+/// month or day, the ordinal suffix). The reader's steps depend on a digit's
+/// value only where a pattern digit literal meets it or in the final calendar
+/// check, so one representative's traced reading decides the whole class: it
+/// fails for all (a step failed with no value dependence), or reads every
+/// field exactly from the digits that field wrote, or from characters fixed
+/// for the class (so every class day reads as itself). A class it leaves
+/// undecided is split by month and day, where only the year's digits vary: at
+/// the first literal that meets a year digit, every member whose digit there
+/// differs fails to read back, so one such member is the refusal; otherwise
+/// the year is read exactly or the class is checked day by day. One render and
+/// one read per class, each one pass over the pattern's tokens:
+/// O(classes · pattern), independent of every other pattern.
+fn title_refusal(title: &Format) -> Option<TitleFormatRefusal> {
+    title_refusal_by(title, true)
 }
 
-/// Whether `title` names every day in [`JOURNAL_YEARS`] alone under the parse
-/// list `parse_list` (`None`), else the first failure found.
-///
-/// Exact, by classes: fix a month and day (366 pairs), plus the year's digit
-/// count when the title writes an unpadded year and the weekday when it writes
-/// one. Within a class only the year's digits vary, and the reader's steps
-/// depend on a digit's value only where a pattern digit literal meets it or in
-/// the final calendar check. So one representative's traced reading decides
-/// each pattern for the whole class: it fails for all (a step failed with no
-/// value dependence), or reads the year from exactly the year the title wrote
-/// and the month and day from fixed characters (so it reads every class day
-/// the same way), or else the class is checked day by day. O(366 · classes per
-/// pair · parse list) without a dependent class; a dependent class costs one
-/// read per year in it.
-fn title_refusal(title: &Format, parse_list: &[Format]) -> Option<TitleFormatRefusal> {
+/// [`title_refusal`]; `by_shape` false skips the shape classes and decides
+/// every month and day on its own (the reference the shape classes must agree
+/// with, in tests).
+fn title_refusal_by(title: &Format, by_shape: bool) -> Option<TitleFormatRefusal> {
     let has = |f: fn(&Tok) -> bool| title.toks.iter().any(f);
     for (field, present) in [
         (DateField::Year, has(|t| matches!(t, Tok::Year(_)))),
@@ -650,49 +720,123 @@ fn title_refusal(title: &Format, parse_list: &[Format]) -> Option<TitleFormatRef
             .chain(2101..=*JOURNAL_YEARS.end())
     };
     let misread = |d: JournalDate| {
+        #[cfg(test)]
+        count_validator_read();
         let written = title.format(d);
-        let read_as = read_back(parse_list, &written);
+        let read_as = title.parse(written.trim());
         (read_as != Some(d)).then_some(TitleFormatRefusal::Misread {
             day: d,
             written,
             read_as,
         })
     };
+    let lengths: &[u32] = if by_length { &[1, 2, 3, 4] } else { &[0] };
+    let weekdays: &[Option<i64>] = if by_weekday {
+        &[
+            Some(0),
+            Some(1),
+            Some(2),
+            Some(3),
+            Some(4),
+            Some(5),
+            Some(6),
+        ]
+    } else {
+        &[None]
+    };
+    let member = |length: u32, weekday: Option<i64>, d: JournalDate| {
+        (d.month != 2 || d.day != 29 || is_leap(d.year))
+            && (length == 0 || d.year.to_string().len() as u32 == length)
+            && weekday.map_or(true, |w| d.to_days().rem_euclid(7) == w)
+    };
+    // The month and day shape: what of them a title writes besides digit values.
+    let (month_name, short_month) = (
+        has(|t| matches!(t, Tok::MonthName(_))),
+        has(|t| matches!(t, Tok::MonthNum(false))),
+    );
+    let (short_day, ordinal_day) = (
+        has(|t| matches!(t, Tok::DayNum(false) | Tok::DayOrd)),
+        has(|t| matches!(t, Tok::DayOrd)),
+    );
+    let shape = |month: u32, day: u32| {
+        (
+            if month_name {
+                month
+            } else if short_month {
+                u32::from(month >= 10)
+            } else {
+                0
+            },
+            u32::from(short_day && day >= 10),
+            if ordinal_day {
+                ordinal(day)[day.to_string().len()..].to_owned()
+            } else {
+                String::new()
+            },
+        )
+    };
+    let mut shapes: Vec<((u32, u32, String), Vec<(u32, u32)>)> = Vec::new();
     for month in 1..=12u32 {
         for day in 1..=days_in_month(2000, month) {
-            let date = |year| JournalDate { year, month, day };
-            let in_pair = move |year: &i32| month != 2 || day != 29 || is_leap(*year);
-            let lengths: &[u32] = if by_length { &[1, 2, 3, 4] } else { &[0] };
-            for &length in lengths {
-                let weekdays: &[Option<i64>] = if by_weekday {
-                    &[
-                        Some(0),
-                        Some(1),
-                        Some(2),
-                        Some(3),
-                        Some(4),
-                        Some(5),
-                        Some(6),
-                    ]
-                } else {
-                    &[None]
+            let key = if by_shape {
+                shape(month, day)
+            } else {
+                (month, day, String::new())
+            };
+            match shapes.iter_mut().find(|(k, _)| *k == key) {
+                Some((_, pairs)) => pairs.push((month, day)),
+                None => shapes.push((key, vec![(month, day)])),
+            }
+        }
+    }
+    let mut buffer = Vec::new();
+    // One month and day's class: only the year's digits vary.
+    let mut pair_class = |month: u32, day: u32, length: u32, weekday: Option<i64>| {
+        let date = |year| JournalDate { year, month, day };
+        let in_class = |year: &i32| member(length, weekday, date(*year));
+        let rep = years().find(in_class)?;
+        let day_by_day = || years().filter(in_class).find_map(|y| misread(date(y)));
+        match class_verdict(title, date(rep), &mut buffer) {
+            Verdict::Names => None,
+            Verdict::Refused => misread(date(rep)),
+            Verdict::Depends { tok, offset, digit } => {
+                let differs = |y: &i32| {
+                    let mut year = String::new();
+                    render_token(&tok, date(*y), &mut year);
+                    year.chars().nth(offset) != Some(digit)
                 };
-                for &weekday in weekdays {
-                    let member = move |year: &i32| {
-                        in_pair(year)
-                            && (length == 0 || year.to_string().len() as u32 == length)
-                            && weekday.map_or(true, |w| date(*year).to_days().rem_euclid(7) == w)
-                    };
-                    let Some(rep) = years().find(member) else {
-                        continue;
-                    };
-                    match class_verdict(title, parse_list, date(rep)) {
-                        Verdict::Names => {}
-                        Verdict::Refused => return misread(date(rep)),
-                        Verdict::DayByDay => {
-                            if let Some(refusal) =
-                                years().filter(member).find_map(|y| misread(date(y)))
-                            {
+                misread(date(rep))
+                    .or_else(|| {
+                        (years().filter(in_class))
+                            .find(differs)
+                            .and_then(|y| misread(date(y)))
+                    })
+                    .or_else(day_by_day)
+            }
+            Verdict::DayByDay => day_by_day(),
+        }
+    };
+    let mut shape_buffer = Vec::new();
+    for (_, pairs) in &shapes {
+        for &length in lengths {
+            for &weekday in weekdays {
+                let rep = years().find_map(|year| {
+                    (pairs.iter())
+                        .map(|&(month, day)| JournalDate { year, month, day })
+                        .find(|d| member(length, weekday, *d))
+                });
+                let Some(rep) = rep else {
+                    continue;
+                };
+                let verdict = (pairs.len() > 1)
+                    .then(|| shape_verdict(title, rep, pairs, &mut shape_buffer))
+                    .unwrap_or(ShapeVerdict::Undecided);
+                match verdict {
+                    ShapeVerdict::Names => {}
+                    ShapeVerdict::Refused => return misread(rep),
+                    ShapeVerdict::Undecided => {
+                        for &(month, day) in pairs {
+                            if let Some(refusal) = pair_class(month, day, length, weekday) {
                                 return Some(refusal);
                             }
                         }
@@ -704,85 +848,175 @@ fn title_refusal(title: &Format, parse_list: &[Format]) -> Option<TitleFormatRef
     None
 }
 
+#[cfg(test)]
+thread_local! {
+    /// Title renders and reads [`title_refusal`] made on this thread.
+    static VALIDATOR_READS: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
+}
+
+#[cfg(test)]
+fn count_validator_read() {
+    VALIDATOR_READS.with(|reads| reads.set(reads.get() + 1));
+}
+
+/// `rep`'s title as the parser reads it (trimmed, as
+/// `JournalFormat::parse_text` trims), rendered into `buffer`, with the input
+/// positions of the digits each token `slot` selects wrote. Digits only, so
+/// trimming never cuts into one. One pass over the tokens.
+fn render_for_read(
+    title: &Format,
+    rep: JournalDate,
+    buffer: &mut Vec<char>,
+    slot: impl Fn(&Tok) -> bool,
+) -> (std::ops::Range<usize>, Vec<(std::ops::Range<usize>, Tok)>) {
+    buffer.clear();
+    let mut slots: Vec<(std::ops::Range<usize>, Tok)> = Vec::new();
+    for t in &title.toks {
+        let start = buffer.len();
+        render_token(t, rep, buffer);
+        if slot(t) {
+            let digits = buffer[start..].iter().take_while(|c| c.is_ascii_digit());
+            slots.push((start..start + digits.count(), t.clone()));
+        }
+    }
+    let lead = buffer.iter().take_while(|c| c.is_whitespace()).count();
+    let trail = (buffer[lead..].iter().rev())
+        .take_while(|c| c.is_whitespace())
+        .count();
+    for (slot, _) in &mut slots {
+        *slot = slot.start - lead..slot.end - lead;
+    }
+    (lead..buffer.len() - trail, slots)
+}
+
+enum ShapeVerdict {
+    /// Every class day's title reads back as that day.
+    Names,
+    /// The representative's title does not, nor does any class day's.
+    Refused,
+    /// Split the class by month and day.
+    Undecided,
+}
+
+/// [`title_refusal`] for the shape class of `rep`, whose month and day are
+/// among `pairs`: one render and one traced read, where every numeric field's
+/// digits vary.
+fn shape_verdict(
+    title: &Format,
+    rep: JournalDate,
+    pairs: &[(u32, u32)],
+    buffer: &mut Vec<char>,
+) -> ShapeVerdict {
+    #[cfg(test)]
+    count_validator_read();
+    let numeric = |t: &Tok| !matches!(t, Tok::Lit(_) | Tok::Weekday(_) | Tok::MonthName(_));
+    let (input, slots) = render_for_read(title, rep, buffer, numeric);
+    let mut trace = Trace {
+        slots: &slots,
+        dependent: None,
+        spans: [None, None, None],
+        whole: false,
+    };
+    let got = title.read(&buffer[input], &mut trace);
+    if trace.dependent.is_some() {
+        return ShapeVerdict::Undecided;
+    }
+    if !trace.whole {
+        return ShapeVerdict::Refused; // Failed before any value mattered.
+    }
+    let Some(got) = got.filter(|got| *got == rep) else {
+        return ShapeVerdict::Undecided;
+    };
+    for (field, span) in [DateField::Year, DateField::Month, DateField::Day]
+        .into_iter()
+        .zip(&trace.spans)
+    {
+        let (span, reader) = span.as_ref().expect("read_whole sets every field");
+        let exact = match slot_meeting(&slots, span.clone()) {
+            // Read from the digits that field wrote, whole; `yy` reads 20xx.
+            Some((slot, writer)) => {
+                slot == span
+                    && field_of(writer) == Some(field)
+                    && !matches!(writer, Tok::Year(2))
+                    && !matches!(reader, Tok::Year(2))
+            }
+            // Read from characters fixed for the class: right for every class
+            // day only if they all share the value read.
+            None => match field {
+                DateField::Year => false,
+                DateField::Month => pairs.iter().all(|&(month, _)| month == got.month),
+                DateField::Day => pairs.iter().all(|&(_, day)| day == got.day),
+            },
+        };
+        if !exact {
+            return ShapeVerdict::Undecided;
+        }
+    }
+    ShapeVerdict::Names
+}
+
 enum Verdict {
     /// Every class day's title reads back as that day.
     Names,
     /// The representative's title does not.
     Refused,
+    /// The reading compares the pattern digit `digit` to character `offset`
+    /// of the year `tok` writes: a member whose year differs there fails.
+    Depends {
+        tok: Tok,
+        offset: usize,
+        digit: char,
+    },
     /// Undecided by the representative.
     DayByDay,
 }
 
-/// [`title_refusal`] for the class of `rep`.
-fn class_verdict(title: &Format, parse_list: &[Format], rep: JournalDate) -> Verdict {
-    // The title, with the character positions each year token wrote.
-    let mut written = String::new();
-    let mut year_digits: Vec<(std::ops::Range<usize>, Tok)> = Vec::new();
-    for t in &title.toks {
-        let start = written.chars().filter(char::is_ascii_digit).count();
-        render_token(t, rep, &mut written);
-        if matches!(t, Tok::Year(_)) {
-            let end = written.chars().filter(char::is_ascii_digit).count();
-            year_digits.push((start..end, t.clone()));
-        }
+/// [`title_refusal`] for the class of `rep`'s month and day, where only the
+/// year's digits vary: one render and one traced read, rendered into `buffer`.
+fn class_verdict(title: &Format, rep: JournalDate, buffer: &mut Vec<char>) -> Verdict {
+    #[cfg(test)]
+    count_validator_read();
+    let (input, year_slots) = render_for_read(title, rep, buffer, |t| matches!(t, Tok::Year(_)));
+    let mut trace = Trace {
+        slots: &year_slots,
+        dependent: None,
+        spans: [None, None, None],
+        whole: false,
+    };
+    let got = title.read(&buffer[input], &mut trace);
+    if let Some((at, digit)) = trace.dependent {
+        let (slot, tok) =
+            slot_meeting(&year_slots, at..at + 1).expect("a dependent position is a year digit");
+        return Verdict::Depends {
+            tok: tok.clone(),
+            offset: at - slot.start,
+            digit,
+        };
     }
-    // Positions of the title's digits in what the parser reads (trimmed).
-    let cs: Vec<char> = written.trim().chars().collect();
-    let digit_at: Vec<usize> = (cs.iter().enumerate())
-        .filter(|(_, c)| c.is_ascii_digit())
-        .map(|(i, _)| i)
-        .collect();
-    if digit_at.len() != written.chars().filter(char::is_ascii_digit).count() {
-        return Verdict::DayByDay;
-    }
-    let mut year_slots = Vec::with_capacity(year_digits.len());
-    for (digits, tok) in year_digits {
-        let (first, last) = (digit_at[digits.start], digit_at[digits.end - 1]);
-        if last - first + 1 != digits.len() {
-            return Verdict::DayByDay;
-        }
-        year_slots.push((first..last + 1, tok));
+    if !trace.whole {
+        return Verdict::Refused; // Failed before any value mattered: fails for the class.
     }
     let read = |field: &Option<(std::ops::Range<usize>, Tok)>| {
         field.clone().expect("read_whole sets every field")
     };
-    for pattern in parse_list {
-        let mut trace = Trace {
-            year_slots: &year_slots,
-            dependent: false,
-            spans: [None, None, None],
-            whole: false,
-        };
-        let got = pattern.read(&cs, &mut trace);
-        if trace.dependent {
-            return Verdict::DayByDay;
-        }
-        if !trace.whole {
-            continue; // Failed before any value mattered: fails for the class.
-        }
-        let [year, month, day] = &trace.spans;
-        let (year, month, day) = (read(year), read(month), read(day));
-        let in_year = |span: &std::ops::Range<usize>| {
-            (year_slots.iter()).any(|(slot, _)| slot.start < span.end && span.start < slot.end)
-        };
-        // `yy` reads 20xx: exact only for this century, so day by day.
-        let exact_year = !matches!(year.1, Tok::Year(2))
-            && (year_slots.iter())
-                .any(|(slot, tok)| *slot == year.0 && !matches!(tok, Tok::Year(2)));
-        if !exact_year || in_year(&month.0) || in_year(&day.0) {
-            return Verdict::DayByDay;
-        }
-        // The month and day are read from fixed characters, the year exactly:
-        // every class day reads as (its year, these month and day).
-        return match got {
-            Some(d) if (d.month, d.day) == (rep.month, rep.day) => Verdict::Names,
-            Some(_) => Verdict::Refused,
-            // The calendar check failed for this year; another class year may
-            // pass it (29 February).
-            None => Verdict::DayByDay,
-        };
+    let [year, month, day] = &trace.spans;
+    let (year, month, day) = (read(year), read(month), read(day));
+    let in_year = |span: &std::ops::Range<usize>| slot_meeting(&year_slots, span.clone()).is_some();
+    // `yy` reads 20xx: exact only for this century, so day by day.
+    let exact_year = !matches!(year.1, Tok::Year(2))
+        && (year_slots.iter()).any(|(slot, tok)| *slot == year.0 && !matches!(tok, Tok::Year(2)));
+    if !exact_year || in_year(&month.0) || in_year(&day.0) {
+        return Verdict::DayByDay;
     }
-    Verdict::Refused
+    // The month and day are read from fixed characters, the year exactly:
+    // every class day reads as (its year, these month and day).
+    match got {
+        Some(d) if (d.month, d.day) == (rep.month, rep.day) => Verdict::Names,
+        Some(_) => Verdict::Refused,
+        // The calendar check failed for this year; another class year may
+        // pass it (29 February).
+        None => Verdict::DayByDay,
+    }
 }
 
 /// What [`Format::compile`] does with a pattern part it does not support.
@@ -931,8 +1165,66 @@ fn match_name(cs: &[char], i: usize, tables: &[&[&str]]) -> Option<(usize, usize
     best
 }
 
+/// THE order in which text names a day (D-20261119-YL, model round 3): every
+/// consumer of a name, a link, a query argument, search, capture, publication,
+/// the CLI and wasm reads text through [`JournalFormat::parse_text`], which
+/// tries these. The effective title format first (a refused title format is no
+/// route), then the configured file-name format (D-20261102-JDL: Martin chose
+/// the native list; deliberate OG deviation, OG `page-name->map` tries title
+/// formats only, so `[[22-10-2026]]` under `dd-MM-yyyy` is that day's journal
+/// everywhere), then `MMM do, yyyy`, `yyyy-MM-dd` and `yyyy_MM_dd`, each once.
+fn text_routes(file_pat: &str, effective_title_pat: &str) -> Vec<Format> {
+    routes([
+        effective_title_pat,
+        file_pat,
+        DEFAULT_TITLE_FORMAT,
+        "yyyy-MM-dd",
+        DEFAULT_FILE_FORMAT,
+    ])
+}
+
+/// THE order in which a journal file's stem names its day (D-20261119-YL,
+/// model round 4: unchanged by the title ruling, so every existing file keeps
+/// its day): the configured file-name format, the configured title format even
+/// when refused for text, then `MMM do, yyyy`, `yyyy-MM-dd` and `yyyy_MM_dd`,
+/// each once. Read through [`JournalFormat::parse_file_stem`] by journal path
+/// extraction, discovery ([`JournalFormat::accepted_stems`]), find, reuse and
+/// create, and claimant selection; never by text.
+fn file_stem_routes(file_pat: &str, configured_title_pat: &str) -> Vec<Format> {
+    routes([
+        file_pat,
+        configured_title_pat,
+        DEFAULT_TITLE_FORMAT,
+        "yyyy-MM-dd",
+        DEFAULT_FILE_FORMAT,
+    ])
+}
+
+/// `patterns` compiled in order, each distinct pattern once: trying a pattern
+/// twice cannot change the first success.
+fn routes(patterns: [&str; 5]) -> Vec<Format> {
+    let mut seen: Vec<&str> = Vec::with_capacity(patterns.len());
+    for pattern in patterns {
+        if !seen.contains(&pattern) {
+            seen.push(pattern);
+        }
+    }
+    seen.into_iter().map(Format::compile).collect()
+}
+
+/// The first route that reads `s` (trimmed) as a day.
+fn first_route(routes: &[Format], s: &str) -> Option<JournalDate> {
+    let s = s.trim();
+    // One pre-sized buffer for every format tried (I-25,
+    // tests/og_p10_journal_date_cost.rs).
+    let mut cs = Vec::with_capacity(s.len());
+    cs.extend(s.chars());
+    routes.iter().find_map(|f| f.parse_chars(&cs))
+}
+
 /// The journal date formats for a graph: the user's filename + title patterns,
-/// plus a fallback parse list so foreign/default journal files still resolve.
+/// and the two route lists that read a day back: one for text
+/// ([`text_routes`]), one for a journal file's stem ([`file_stem_routes`]).
 #[deny(missing_docs)]
 #[derive(Clone)]
 pub struct JournalFormat {
@@ -946,7 +1238,8 @@ pub struct JournalFormat {
     configured_title_pat: String,
     /// Why the configured title pattern is not used, if it is not.
     title_refusal: Option<TitleFormatRefusal>,
-    parse_list: Vec<Format>,
+    text_routes: Vec<Format>,
+    file_stem_routes: Vec<Format>,
 }
 
 impl JournalFormat {
@@ -956,12 +1249,10 @@ impl JournalFormat {
     ///
     /// The one place a configured title pattern is accepted or refused
     /// (D-20261119-YL, I-12): it renders journal titles only if, for every
-    /// day in [`JOURNAL_YEARS`], its title parses back to
-    /// that day ([`title_refusal`]); otherwise titles use
-    /// [`DEFAULT_TITLE_FORMAT`] and [`Self::title_refusal`] says why. The
-    /// parse list is the same either way: the choice selects the renderer
-    /// only, never the parser. O(patterns) after the first check of a
-    /// pattern pair in this process.
+    /// day in [`JOURNAL_YEARS`], its own parser reads its title back as that
+    /// day ([`title_refusal`]); otherwise titles use [`DEFAULT_TITLE_FORMAT`],
+    /// the pattern is no text route, and [`Self::title_refusal`] says why.
+    /// O(patterns) after the first check of a title pattern in this process.
     pub fn new(file_fmt: Option<&str>, title_fmt: Option<&str>) -> JournalFormat {
         let file_pat = file_fmt
             .filter(|s| !s.is_empty())
@@ -971,28 +1262,9 @@ impl JournalFormat {
             .filter(|s| !s.is_empty())
             .unwrap_or(DEFAULT_TITLE_FORMAT)
             .to_string();
-        // THE list of date forms a name may be spelled in (D-20261102-JDL:
-        // Martin chose the native list). Deliberate OG deviation: OG
-        // `page-name->map` tries title formats only; Tine also reads the
-        // configured FILE-NAME format, so `[[22-10-2026]]` under
-        // `dd-MM-yyyy` is that day's journal everywhere (link, Linked
-        // References, queries, Upcoming, the frontend via wasm).
-        let mut pats: Vec<String> = Vec::new();
-        for p in [
-            file_pat.as_str(),
-            title_pat.as_str(),
-            DEFAULT_TITLE_FORMAT,
-            "yyyy-MM-dd",
-            DEFAULT_FILE_FORMAT,
-        ] {
-            if !pats.iter().any(|x| x == p) {
-                pats.push(p.to_string());
-            }
-        }
-        let parse_list: Vec<Format> = pats.iter().map(|p| Format::compile(p)).collect();
         let configured = Format::compile(&title_pat);
         let title_refusal = (title_pat != DEFAULT_TITLE_FORMAT)
-            .then(|| checked_title(&file_pat, &title_pat, &configured, &parse_list))
+            .then(|| checked_title(&title_pat, &configured))
             .flatten();
         let (title, effective) = match title_refusal {
             Some(_) => (Format::compile(DEFAULT_TITLE_FORMAT), DEFAULT_TITLE_FORMAT),
@@ -1002,7 +1274,8 @@ impl JournalFormat {
             file: Format::compile(&file_pat),
             title,
             title_pat: effective.to_string(),
-            parse_list,
+            text_routes: text_routes(&file_pat, effective),
+            file_stem_routes: file_stem_routes(&file_pat, &title_pat),
             file_pat,
             configured_title_pat: title_pat,
             title_refusal,
@@ -1014,55 +1287,61 @@ impl JournalFormat {
         Self::new(None, None)
     }
 
-    /// Parse a journal filename stem or display title to a date. Tries the
-    /// configured file and title formats, then `MMM do, yyyy`, `yyyy-MM-dd`,
-    /// and `yyyy_MM_dd` in that order. `None` means no format matched.
-    pub fn parse(&self, s: &str) -> Option<JournalDate> {
-        let s = s.trim();
-        // One pre-sized buffer for every format tried (I-25,
-        // tests/og_p10_journal_date_cost.rs).
-        let mut cs = Vec::with_capacity(s.len());
-        cs.extend(s.chars());
-        self.parse_list.iter().find_map(|f| f.parse_chars(&cs))
+    /// The day a piece of text names (a page name, a link target, a query
+    /// argument, a typed title), trimmed, by [`text_routes`]. `None` means no
+    /// route matched: the text is an ordinary name.
+    pub fn parse_text(&self, s: &str) -> Option<JournalDate> {
+        first_route(&self.text_routes, s)
     }
 
-    /// Every rendering of `d` in the parse list that [`Self::parse`] reads
-    /// back as `d`, deduplicated: the spellings of the day this format
-    /// writes. A refused title pattern's rendering (`11-02` under `MM-dd`)
-    /// names no day, so it is no spelling of one. Real names reached by a
-    /// looser spelling (`2026-10-2`, `October 22nd, 2026`) are found by
-    /// parsing them, not here. O(parse list²).
+    /// The day a journal file's stem names, trimmed, by [`file_stem_routes`]:
+    /// a file's calendar identity, never the meaning of typed text. `None`
+    /// means the stem names no day.
+    pub fn parse_file_stem(&self, stem: &str) -> Option<JournalDate> {
+        first_route(&self.file_stem_routes, stem)
+    }
+
+    /// Every rendering of `d` by a text route that [`Self::parse_text`] reads
+    /// back as `d`, deduplicated: the spellings of the day as text. A refused
+    /// title pattern is no route, so its rendering (`11-02` under `MM-dd`) is
+    /// no spelling. Real names reached by a looser spelling (`2026-10-2`,
+    /// `October 22nd, 2026`) are found by parsing them, not here.
+    /// O(routes²).
     pub fn spellings(&self, d: JournalDate) -> Vec<String> {
-        let mut out: Vec<String> = Vec::with_capacity(self.parse_list.len());
-        for f in &self.parse_list {
+        Self::renderings(&self.text_routes, d)
+    }
+
+    /// The renderings of `d` by `routes` that the first of them to read each
+    /// reads back as `d`, deduplicated.
+    fn renderings(routes: &[Format], d: JournalDate) -> Vec<String> {
+        let mut out: Vec<String> = Vec::with_capacity(routes.len());
+        for f in routes {
             let s = f.format(d);
-            if !out.contains(&s) && self.parse(&s) == Some(d) {
+            if !out.contains(&s) && first_route(routes, &s) == Some(d) {
                 out.push(s);
             }
         }
         out
     }
 
-    /// The names [`Self::parse`] reads as `d` that differ from
-    /// [`Self::spellings`] only in numeric field width (`2026-11-1`,
-    /// `2026_11_01`), spellings first, deduplicated, each checked to parse
+    /// The journal file stems [`Self::parse_file_stem`] reads as `d`: each
+    /// file-stem route's rendering, then those differing only in numeric field
+    /// width (`2026-11-1`, `2026_11_01`), deduplicated, each checked to parse
     /// back (a two-digit year outside 2000-2099 does not): where a file of the
     /// day may be found by name without listing a directory (GH #863 D3).
-    /// Bounded by `renderings_by_width`: at most 4 per parse-list pattern
-    /// with one year, month and day field, for a year past 999, and never more
-    /// than [`WIDTH_RENDERINGS_MAX`] per pattern (a pattern whose width product
-    /// would exceed it contributes only its ordinary spelling).
+    /// Bounded by `renderings_by_width`: at most 4 per route with one year,
+    /// month and day field, for a year past 999, and never more than
+    /// [`WIDTH_RENDERINGS_MAX`] per route (a route whose width product would
+    /// exceed it contributes only its ordinary spelling).
     /// Other accepted forms (a month name's other length, any ordinal
     /// suffix, another weekday, case, surrounding space) are not listed.
     pub fn accepted_stems(&self, d: JournalDate) -> Vec<String> {
-        let widths = self
-            .parse_list
-            .iter()
-            .flat_map(|f| f.renderings_by_width(d));
+        let routes = &self.file_stem_routes;
+        let widths = routes.iter().flat_map(|f| f.renderings_by_width(d));
         let mut seen = std::collections::HashSet::new();
         let mut out: Vec<String> = Vec::new();
-        for s in self.spellings(d).into_iter().chain(widths) {
-            if !seen.contains(&s) && self.parse(&s) == Some(d) {
+        for s in Self::renderings(routes, d).into_iter().chain(widths) {
+            if !seen.contains(&s) && self.parse_file_stem(&s) == Some(d) {
                 seen.insert(s.clone());
                 out.push(s);
             }
@@ -1070,12 +1349,13 @@ impl JournalFormat {
         out
     }
 
-    /// A cheap necessary condition for `self.parse(name) == Some(day)`: every
-    /// accepted spelling reads the day of month and the year as contiguous
-    /// ASCII digit runs (`Format::parse`: `d`/`dd`/`do` and `yy`/`yyyy`), so
-    /// the name contains `day.day` and `day.year % 100` in decimal (a padded
-    /// run contains the unpadded digits). Lets a scan for one day's spellings
-    /// skip most names unparsed; never a replacement for [`Self::parse`].
+    /// A cheap necessary condition for `self.parse_text(name) == Some(day)`
+    /// and `self.parse_file_stem(name) == Some(day)`: every route reads the
+    /// day of month and the year as contiguous ASCII digit runs
+    /// (`Format::parse`: `d`/`dd`/`do` and `yy`/`yyyy`), so the name contains
+    /// `day.day` and `day.year % 100` in decimal (a padded run contains the
+    /// unpadded digits). Lets a scan for one day's spellings skip most names
+    /// unparsed; never a replacement for parsing.
     pub fn may_spell_day(name: &str, day: JournalDate) -> bool {
         Self::day_spelling_prefilter(day)(name)
     }
@@ -1088,10 +1368,11 @@ impl JournalFormat {
     }
 
     /// The kind of a link target no file, alias or reference claims: a
-    /// journal iff the name is a date in this format. The one rule; the
-    /// store's `link_target` and the frontend (through wasm) both call it.
+    /// journal iff the name is a date as text ([`Self::parse_text`]). The one
+    /// rule; the store's `link_target` and the frontend (through wasm) both
+    /// call it.
     pub fn absent_link_is_journal(&self, name: &str) -> bool {
-        self.parse(name).is_some()
+        self.parse_text(name).is_some()
     }
 
     /// Display title for a date, in the effective title format
@@ -1176,7 +1457,12 @@ mod fmt_tests {
     fn rejects_impossible_calendar_days() {
         for stem in ["2026_02_31", "2026-02-29", "2026_04_31"] {
             assert_eq!(JournalDate::from_file_stem(stem), None, "{stem}");
-            assert_eq!(JournalFormat::default().parse(stem), None, "{stem}");
+            assert_eq!(JournalFormat::default().parse_text(stem), None, "{stem}");
+            assert_eq!(
+                JournalFormat::default().parse_file_stem(stem),
+                None,
+                "{stem}"
+            );
         }
         assert_eq!(
             Format::compile("MMM do, yyyy").parse("Feb 31st, 2026"),
@@ -1245,7 +1531,7 @@ mod fmt_tests {
     fn non_dates_reject() {
         let f = JournalFormat::default();
         for s in ["My Notes", "Project/Alpha", "2024-13-01", "hello world", ""] {
-            assert_eq!(f.parse(s), None, "should reject {s:?}");
+            assert_eq!(f.parse_text(s), None, "should reject {s:?}");
         }
     }
 
@@ -1254,9 +1540,11 @@ mod fmt_tests {
         // A graph configured for dd-MM-yyyy filenames still resolves an old
         // default-format file, and vice-versa.
         let custom = JournalFormat::new(Some("dd-MM-yyyy"), Some("MMM do, yyyy"));
-        assert_eq!(custom.parse("05-01-2024"), Some(d(2024, 1, 5))); // user's format
-        assert_eq!(custom.parse("2024_01_05"), Some(d(2024, 1, 5))); // legacy default file
-        assert_eq!(custom.parse("Jan 5th, 2024"), Some(d(2024, 1, 5))); // title ref
+        for parse in [JournalFormat::parse_text, JournalFormat::parse_file_stem] {
+            assert_eq!(parse(&custom, "05-01-2024"), Some(d(2024, 1, 5))); // user's format
+            assert_eq!(parse(&custom, "2024_01_05"), Some(d(2024, 1, 5))); // legacy default file
+            assert_eq!(parse(&custom, "Jan 5th, 2024"), Some(d(2024, 1, 5))); // title ref
+        }
         assert_eq!(custom.file_stem(d(2024, 1, 5)), "05-01-2024");
     }
 
@@ -1419,8 +1707,8 @@ mod fmt_tests {
                 "title": title,
                 "stem": stem,
                 "canonical": fmt.is_canonical_stem(&stem),
-                "parse_title": fmt.parse(&title).map(|d| d.ordinal_key()),
-                "parse_stem": fmt.parse(&stem).map(|d| d.ordinal_key()),
+                "parse_title": fmt.parse_text(&title).map(|d| d.ordinal_key()),
+                "parse_stem": fmt.parse_file_stem(&stem).map(|d| d.ordinal_key()),
             });
             assert_eq!(&got, row);
         }
@@ -1436,15 +1724,15 @@ mod fmt_tests {
         for case in fixture["cases"].as_array().unwrap() {
             let name = case["name"].as_str().unwrap();
             assert_eq!(
-                fmt.parse(name).is_some(),
+                fmt.parse_text(name).is_some(),
                 case["expected"].as_bool().unwrap(),
                 "{name}"
             );
         }
     }
 
-    /// D-20261102-JDL: the one date list includes the configured file-name
-    /// format; every spelling it renders for a day parses back to that day,
+    /// D-20261102-JDL: the text routes include the configured file-name
+    /// format; every spelling they render for a day parses back to that day,
     /// and the unknown-name link rule is that same parse.
     #[test]
     fn spellings_parse_back_and_the_file_name_format_counts() {
@@ -1462,7 +1750,7 @@ mod fmt_tests {
         unique.dedup();
         assert_eq!(unique.len(), spellings.len(), "deduplicated: {spellings:?}");
         for spelling in &spellings {
-            assert_eq!(fmt.parse(spelling), Some(day), "{spelling}");
+            assert_eq!(fmt.parse_text(spelling), Some(day), "{spelling}");
             assert!(fmt.absent_link_is_journal(spelling), "{spelling}");
         }
         assert!(!fmt.absent_link_is_journal("Launch"));
@@ -1477,7 +1765,8 @@ mod fmt_tests {
             (&fmt, "2010-10-10", d(2010, 10, 10)),
             (&lenient, "1.1.0", d(2000, 1, 1)),
         ] {
-            assert_eq!(format.parse(spelling), Some(day), "{spelling}");
+            assert_eq!(format.parse_text(spelling), Some(day), "{spelling}");
+            assert_eq!(format.parse_file_stem(spelling), Some(day), "{spelling}");
             assert!(JournalFormat::may_spell_day(spelling, day), "{spelling}");
         }
         assert!(!JournalFormat::may_spell_day("Oct 23rd, 2026", day));
@@ -1513,13 +1802,18 @@ mod fmt_tests {
                 "{expected} in {stems:?}"
             );
         }
-        assert_eq!(stems[..3], fmt.spellings(day)[..], "spellings first");
+        // The file-stem routes' own renderings first.
+        assert_eq!(
+            stems[..3],
+            ["2026_11_01", "Nov 1st, 2026", "2026-11-01"],
+            "renderings first"
+        );
         let mut unique = stems.clone();
         unique.sort();
         unique.dedup();
         assert_eq!(unique.len(), stems.len(), "deduplicated: {stems:?}");
         for stem in &stems {
-            assert_eq!(fmt.parse(stem), Some(day), "{stem}");
+            assert_eq!(fmt.parse_file_stem(stem), Some(day), "{stem}");
         }
         assert_eq!(stems.len(), 6, "{stems:?}");
         // Bounded: one-digit month and day double each numeric pattern.
@@ -1565,17 +1859,20 @@ mod title_check_tests {
     }
 
     /// The exhaustive law, day by day over [`JOURNAL_YEARS`]: the reference
-    /// the class analysis must agree with.
+    /// the class analysis must agree with. The pattern's own round trip
+    /// (`format.parse(key(format.render(d))) = d`), and, when it holds, the
+    /// first text route reads the title back the same way.
     fn names_every_day(file: &str, title: &str) -> bool {
         let fmt = JournalFormat::new(Some(file), Some(title));
         let configured = Format::compile(title);
+        let own = |day: JournalDate| configured.parse(configured.format(day).trim()) == Some(day);
         let (start, end) = (
             d(*JOURNAL_YEARS.start(), 1, 1).to_days(),
             d(*JOURNAL_YEARS.end(), 12, 31).to_days(),
         );
         (start..=end).all(|z| {
             let day = JournalDate::from_days(z);
-            fmt.parse(&configured.format(day)) == Some(day)
+            own(day) && fmt.parse_text(&configured.format(day)) == Some(day)
         })
     }
 
@@ -1611,7 +1908,7 @@ mod title_check_tests {
         assert_eq!(fmt.title(d(2027, 11, 2)), "Nov 2nd, 2027");
         // `11-02` names no day: no day's spelling, and it parses as none.
         assert!(!fmt.spellings(d(2026, 11, 2)).iter().any(|s| s == "11-02"));
-        assert_eq!(fmt.parse("11-02"), None);
+        assert_eq!(fmt.parse_text("11-02"), None);
         assert_eq!(
             verdict("yyyy_MM_dd", "MMMM yyyy"),
             Some(TitleFormatRefusal::Missing(DateField::Day))
@@ -1660,16 +1957,16 @@ mod title_check_tests {
     fn every_og_title_choice_is_used_and_the_default_names_one_day_beside_each() {
         for title in og_title_patterns() {
             assert_eq!(verdict(DEFAULT_FILE_FORMAT, &title), None, "{title}");
-            // The fallback must itself name one day, whatever file format
-            // precedes it in the parse list (the default is never checked at
-            // run time): every OG choice as the file-name format.
-            let fmt = JournalFormat::new(Some(&title), None);
-            let default = Format::compile(DEFAULT_TITLE_FORMAT);
-            assert_eq!(
-                title_refusal(&default, &fmt.parse_list),
-                None,
-                "file {title}"
-            );
+        }
+        // The fallback names one day on its own (the default is never checked
+        // at run time), and as the first text route no file-name format can
+        // read its titles otherwise: every OG choice as the file-name format.
+        assert_eq!(title_refusal(&Format::compile(DEFAULT_TITLE_FORMAT)), None);
+        for file in og_title_patterns() {
+            let fmt = JournalFormat::new(Some(&file), None);
+            for day in [d(2026, 11, 2), d(1999, 2, 28), d(2024, 2, 29), d(5, 12, 31)] {
+                assert_eq!(fmt.parse_text(&fmt.title(day)), Some(day), "file {file}");
+            }
         }
     }
 
@@ -1690,13 +1987,7 @@ mod title_check_tests {
     }
 
     #[test]
-    fn a_title_another_accepted_spelling_reads_first_is_refused() {
-        // The file-name format is tried first: `02-11-2026` is February 11.
-        let refusal = verdict("MM-dd-yyyy", "dd-MM-yyyy").expect("misread as the file format");
-        assert!(matches!(
-            refusal,
-            TitleFormatRefusal::Misread { read_as: Some(other), day, .. } if other != day
-        ));
+    fn a_title_its_own_parser_misreads_is_refused() {
         // Distinct renderings, yet one the parser does not read back:
         // `190011` is 1900-01-01, read as month 11 with no day.
         assert_eq!(
@@ -1714,7 +2005,7 @@ mod title_check_tests {
         // `yyyy` writes `0000`..`9999`; 29 February of year 0 and 9996 parse back.
         let fmt = JournalFormat::new(None, Some("yyyy-MM-dd"));
         for day in [d(0, 2, 29), d(9996, 2, 29), d(0, 1, 1), d(9999, 12, 31)] {
-            assert_eq!(fmt.parse(&fmt.title(day)), Some(day));
+            assert_eq!(fmt.parse_text(&fmt.title(day)), Some(day));
         }
         assert_eq!(verdict("yyyy_MM_dd", "y-M-d"), None);
     }
@@ -1732,12 +2023,176 @@ mod title_check_tests {
             ("yyyy_MM_dd", "dMyyyy"),
             ("yyyy_MM_dd", "EEE d MMM y"),
             ("1MM-dd-yyyy", "yyyy-MM-dd"),
+            ("yyyy_MM_dd", "MMd2yyyy"),
         ] {
             assert_eq!(
                 verdict(file, title).is_none(),
                 names_every_day(file, title),
                 "{file} / {title}"
             );
+        }
+    }
+
+    /// D-20261119-YL model round 3 (review finding 1): text tries the effective
+    /// title first, then the file-name format, then the fixed forms; a refused
+    /// title is no text route. A file's stem keeps the old order (round 4).
+    #[test]
+    fn text_reads_the_effective_title_first_and_a_refused_title_not_at_all() {
+        let nov2 = d(2026, 11, 2);
+        // The refused `MMM do, ddyy` reads `Nov 2nd, 2026` as November 20.
+        let refused = JournalFormat::new(None, Some("MMM do, ddyy"));
+        assert!(refused.title_refusal().is_some());
+        assert_eq!(refused.title(nov2), "Nov 2nd, 2026");
+        assert_eq!(refused.parse_text("Nov 2nd, 2026"), Some(nov2));
+        assert_eq!(
+            refused.parse_file_stem("Nov 2nd, 2026"),
+            Some(d(2026, 11, 20))
+        );
+        // The same pattern as the file-name format, with the title absent,
+        // explicitly default, or refused: the default title reads first.
+        for title in [
+            None,
+            Some(DEFAULT_TITLE_FORMAT),
+            Some("MM-dd"),
+            Some("MMM do, ddyy"),
+        ] {
+            let fmt = JournalFormat::new(Some("MMM do, ddyy"), title);
+            assert_eq!(fmt.title_format(), DEFAULT_TITLE_FORMAT, "{title:?}");
+            assert_eq!(fmt.parse_text("Nov 2nd, 2026"), Some(nov2), "{title:?}");
+            assert_eq!(
+                fmt.spellings(nov2).first().map(String::as_str),
+                Some("Nov 2nd, 2026")
+            );
+        }
+        // A refused title that was a date's only route: typed text is an
+        // ordinary name, the legacy file keeps its day and is found.
+        let short = JournalFormat::new(None, Some("d.M.yy"));
+        assert!(short.title_refusal().is_some());
+        assert_eq!(short.parse_text("2.11.26"), None);
+        assert!(!short.absent_link_is_journal("2.11.26"));
+        assert_eq!(short.parse_file_stem("2.11.26"), Some(nov2));
+        assert!(short.accepted_stems(nov2).iter().any(|s| s == "2.11.26"));
+        assert!(!short.spellings(nov2).iter().any(|s| s == "2.11.26"));
+        // The same pattern as the file-name format stays a text route.
+        let as_file = JournalFormat::new(Some("d.M.yy"), None);
+        assert_eq!(as_file.parse_text("2.11.26"), Some(nov2));
+        // An accepted numeric title swapped against the file-name format:
+        // typed text follows the title, the file `2026_11_02` stays November 2.
+        let swapped = JournalFormat::new(Some("yyyy_MM_dd"), Some("yyyy_dd_MM"));
+        assert_eq!(swapped.title_refusal(), None);
+        assert_eq!(swapped.parse_text("2026_11_02"), Some(d(2026, 2, 11)));
+        assert_eq!(swapped.parse_file_stem("2026_11_02"), Some(nov2));
+        assert_eq!(swapped.title(nov2), "2026_02_11");
+        assert_eq!(swapped.parse_text(&swapped.title(nov2)), Some(nov2));
+        assert!(swapped
+            .accepted_stems(nov2)
+            .iter()
+            .any(|s| s == "2026_11_02"));
+        // Refused before, when the file-name format read its titles first.
+        assert_eq!(verdict("MM-dd-yyyy", "dd-MM-yyyy"), None);
+    }
+
+    /// Review finding 5: the check reads the title pattern alone, one render
+    /// and one read per class, each one pass over the tokens. Was 0.95 s for
+    /// the `2!` pairs (a file-name digit literal against the title's year) and
+    /// 0.74 s for 1,000 `-dd`.
+    #[test]
+    fn the_title_check_costs_one_read_per_class_whatever_the_pattern() {
+        let repeated = format!("yyyy-MM{}", "-dd".repeat(1000));
+        for (title, refused) in [
+            ("2!yyyy-MM-dd", false),
+            ("yyyy-MM-dd", false),
+            ("2!yyyy_MM_dd", false),
+            ("yyyy_MM_dd", false),
+            (repeated.as_str(), false),
+            // A digit literal the reading meets inside the year.
+            ("MMd2yyyy", true),
+        ] {
+            let format = Format::compile(title);
+            VALIDATOR_READS.with(|reads| reads.set(0));
+            let started = std::time::Instant::now();
+            let verdict = title_refusal(&format);
+            let elapsed = started.elapsed();
+            let reads = VALIDATOR_READS.with(|reads| reads.get());
+            let name = &title[..title.len().min(12)];
+            assert_eq!(verdict.is_some(), refused, "{name}: {verdict:?}");
+            // One shape class for these padded patterns, whatever their length.
+            assert!(reads <= 4, "{name}: {reads} reads");
+            // Native release about 0.1 ms; a debug build is slower.
+            let budget = if cfg!(debug_assertions) { 100 } else { 5 };
+            assert!(elapsed.as_millis() < budget, "{name}: {elapsed:?}");
+        }
+        // The file-name format no longer enters: these pairs share one verdict.
+        for file in ["2!yyyy-MM-dd", "1MM-dd-yyyy", "yyyy-MM-dd", "MMM do, ddyy"] {
+            assert_eq!(verdict(file, "yyyy-MM-dd"), None, "{file}");
+        }
+    }
+
+    /// The shape classes decide exactly what deciding every month and day on
+    /// its own decides (that reference agrees with the exhaustive law above).
+    #[test]
+    fn shape_classes_agree_with_deciding_each_month_and_day() {
+        let mut titles = og_title_patterns();
+        titles.extend(
+            [
+                "d.M.yyyy",
+                "M/d/yyyy",
+                "do MMM yyyy",
+                "MMMM d, yyyy",
+                "EEE, d MMM y",
+                "yyyyMMdd",
+                "yyyyMd",
+                "dMyyyy",
+                "Mdyyyy",
+                "MMd2yyyy",
+                "d1M-yyyy",
+                "MM1dd-yyyy",
+                "yyyy-M-d",
+                "y-M-d",
+                "dd.MM.yy",
+                "d MMMM yyyy EEEE",
+                "1MM-dd-yyyy",
+                "dd-MM-yyyy dd",
+                "MM dd yyyy MM",
+                "do do MMM yyyy",
+                "d-yyyy-M",
+                "yMd",
+                "y M d",
+                "MMMMd yyyy",
+                "MMMdo yyyy",
+                "EEEEd.M.yyyy",
+                "dd MM 12 yyyy",
+                " yyyy-MM-dd ",
+                "yyyy-MM-dd yy",
+                "yy yyyy-MM-dd",
+                "MM-dd-yyyy-d",
+                "d-MM-yyyy-dd",
+                "2!yyyy-MM-dd",
+                "MMM do, ddyy",
+            ]
+            .map(String::from),
+        );
+        for title in titles {
+            let format = Format::compile(&title);
+            let (by_shape, each) = (
+                title_refusal_by(&format, true),
+                title_refusal_by(&format, false),
+            );
+            assert_eq!(
+                by_shape.is_none(),
+                each.is_none(),
+                "{title}: {by_shape:?} / {each:?}"
+            );
+            if let Some(TitleFormatRefusal::Misread {
+                day,
+                written,
+                read_as,
+            }) = by_shape
+            {
+                assert_eq!(format.format(day), written, "{title}");
+                assert_eq!(format.parse(written.trim()), read_as, "{title}");
+                assert_ne!(read_as, Some(day), "{title}");
+            }
         }
     }
 }

@@ -106,7 +106,7 @@ pub fn renamed_site_name<'a>(
 /// The day pin, the one answer for every site a rename writes (a page name, a
 /// property key, a query argument): `rename` answers a site's new spelling,
 /// and a site spelled as a day (the graph's one date answer,
-/// `JournalFormat::parse`, accepts the whole site name) keeps its spelling (O2
+/// `JournalFormat::parse_text`, accepts the whole site name) keeps its spelling (O2
 /// "days are never respelled"; O4 "a day under the source ... stays, and the
 /// rename proceeds"). The day test runs only for a site the rename would
 /// otherwise respell.
@@ -115,7 +115,7 @@ pub fn pinned_site<T>(
     days: Option<&crate::date::JournalFormat>,
     rename: impl FnOnce() -> Option<T>,
 ) -> Option<T> {
-    rename().filter(|_| days.is_none_or(|days| days.parse(name).is_none()))
+    rename().filter(|_| days.is_none_or(|days| days.parse_text(name).is_none()))
 }
 
 /// The renamed spelling of a page name, including unclaimed namespace

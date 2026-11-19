@@ -81,7 +81,7 @@ async function runCase(c: Case): Promise<string[]> {
   const conflicts = new Set(c.conflicts);
   for (const [s, want] of Object.entries(c.spellings)) {
     // The frontend's "is this a journal date, which day" (journal.ts, the
-    // Rust answerer through wasm) against the native parse list.
+    // Rust answerer through wasm) against the native text routes.
     const day = journal.parseJournalTitle(s);
     if (!sameDay(day, want.day)) {
       diffs.push(`frontend date [[${s}]]: native ${showWant(want.day)}, frontend ${showDay(day)}`);

@@ -115,8 +115,8 @@ export function is_query_macro_name(name: string): boolean;
 export function is_render_hidden_prop(key: string, user_hidden: string[], pre_block: boolean): boolean;
 
 /**
- * Is `name` a journal date, and which day: `tine_core::date::JournalFormat::parse`
- * (the one list, D-20261102-JDL). `{"y","m","d"}` or null. O(name) warm.
+ * Is `name` a journal date, and which day: `tine_core::date::JournalFormat::parse_text`
+ * (the text routes, D-20261102-JDL, D-20261119-YL). `{"y","m","d"}` or null. O(name) warm.
  */
 export function journal_day_json(name: string, file_format: string, title_format: string): string;
 

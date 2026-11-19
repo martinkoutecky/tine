@@ -7,13 +7,9 @@
         "day": null,
         "is_journal": false,
         "key": "1.1.00",
-        "link": {
-          "kind": "journal",
-          "name": "Jan 1st, 2000"
-        },
         "name": "1.1.00",
         "target": {
-          "id": "journals/2000_01_01.md",
+          "id": "pages/1%2E1%2E00.md",
           "kind": "absent"
         }
       },
@@ -21,24 +17,9 @@
         "day": null,
         "is_journal": false,
         "key": "5.1.26",
-        "link": {
-          "kind": "journal",
-          "name": "Jan 5th, 2026"
-        },
         "name": "5.1.26",
         "target": {
-          "id": "journals/2026_01_05.md",
-          "kind": "existing",
-          "others": []
-        }
-      },
-      {
-        "day": 20000101,
-        "is_journal": true,
-        "key": "jan 1st, 2000",
-        "name": "Jan 1st, 2000",
-        "target": {
-          "id": "journals/2000_01_01.md",
+          "id": "pages/5%2E1%2E26.md",
           "kind": "absent"
         }
       },
@@ -73,15 +54,6 @@
       "title_format": "MMM do, yyyy"
     },
     "resolve": [
-      {
-        "kind": "journal",
-        "name": "5.1.26",
-        "target": {
-          "id": "journals/2026_01_05.md",
-          "kind": "existing",
-          "others": []
-        }
-      },
       {
         "kind": "page",
         "name": "Jan 5th, 2026",

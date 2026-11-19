@@ -197,7 +197,7 @@ impl Store {
         view: &WholeGraph,
     ) -> Result<Option<UnindexedDay>, StoreError> {
         let format = &view.journal_format;
-        let Some(day) = format.parse(name) else {
+        let Some(day) = format.parse_text(name) else {
             return Ok(None);
         };
         let key = tine_core::refs::page_key(&format.title(day));

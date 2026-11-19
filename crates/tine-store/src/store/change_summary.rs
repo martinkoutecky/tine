@@ -579,8 +579,8 @@ impl Snapshot {
                 .iter()
                 .any(|graph| graph.alias_edges().neighbors(&key).next().is_some());
             // A fileless day is a virtual journal: a day, not a journal file.
-            let day =
-                entry.kind == PageKind::Journal || self.journal_format.parse(&entry.name).is_some();
+            let day = entry.kind == PageKind::Journal
+                || self.journal_format.parse_text(&entry.name).is_some();
             let journal = entry.kind == PageKind::Journal && entry.rel_path.is_some();
             if day {
                 day_keys.push(key.clone());
@@ -803,7 +803,7 @@ impl Snapshot {
         summary.days |= summary
             .links_to
             .iter()
-            .any(|name| self.journal_format.parse(name).is_some());
+            .any(|name| self.journal_format.parse_text(name).is_some());
         summary
     }
 }

@@ -62,7 +62,7 @@ fn compiled_date_parse_allocates_only_its_input_character_buffer() {
         (&custom, "2026_09_30", Some(20260930), 4),
     ] {
         ALLOCATIONS.with(|count| count.set(Some(0)));
-        let parsed = format.parse(text);
+        let parsed = format.parse_text(text);
         let allocations = ALLOCATIONS.with(|count| count.replace(None).unwrap());
         assert_eq!(parsed.map(|date: JournalDate| date.ordinal_key()), expected);
         assert!(allocations <= limit,

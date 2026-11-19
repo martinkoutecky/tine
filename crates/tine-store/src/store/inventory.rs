@@ -96,7 +96,7 @@ fn owner_link(graph: &ReadSnapshot, path: &str) -> Option<LinkTarget> {
 /// What `[[name]]` opens: the one answer (CM step 2, census Q8), used for the
 /// inventory's `link` field ([`WholeGraph::inventory`], the publication delta)
 /// and by [`WholeGraph::link_target`].
-/// - A date by the graph's one date answerer ([`JournalFormat::parse`]): the
+/// - A date by the graph's one date answerer ([`JournalFormat::parse_text`]): the
 ///   day's journal file, else an ordinary page of exactly this name, else
 ///   the owner of an alias spelled so (model rule 4, S6), else the virtual
 ///   journal ([`JournalFormat::absent_link_is_journal`]).

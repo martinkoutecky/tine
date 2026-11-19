@@ -242,11 +242,11 @@ impl LinkGraph {
             self_keys.push(refs::page_key(&self_page));
             // A page-anchored query row of a reference-only page finds its
             // node by key, as a file row does (D-20261102-CM4 CM-REFONLY).
-            table.by_key[usize::from(format.parse(&canonical).is_some())]
+            table.by_key[usize::from(format.parse_text(&canonical).is_some())]
                 .entry(refs::page_key(&canonical))
                 .or_insert(node);
             table.virtuals.push(VirtualNode {
-                journal_day: format.parse(&canonical).map(|day| day.ordinal_key()),
+                journal_day: format.parse_text(&canonical).map(|day| day.ordinal_key()),
                 name: canonical,
             });
         }

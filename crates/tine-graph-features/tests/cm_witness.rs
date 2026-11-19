@@ -826,7 +826,7 @@ fn the_inherited_slash_date_survives_either_title_format() {
         let config = store.config();
         let days = config.journal_format();
         assert_eq!(days.title_refusal().is_some(), refused, "{title}");
-        let day = days.parse("2026/10/26").unwrap();
+        let day = days.parse_text("2026/10/26").unwrap();
         assert_eq!(days.title(day), day_title, "{title}");
         let view = store.whole_graph().unwrap();
         for spelling in ["2026/10/26", day_title] {

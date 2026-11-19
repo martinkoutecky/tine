@@ -397,7 +397,7 @@ impl Writer {
 /// parses as a journal day reads as that day, any other by its page key
 /// (the model's `Date13.target`, then `page_key`). O(name bytes).
 fn reading(name: &str, format: &refs::RenameFormat<'_>) -> String {
-    match format.days.and_then(|days| days.parse(name)) {
+    match format.days.and_then(|days| days.parse_text(name)) {
         Some(day) => format!("\u{0}{}", day.ordinal_key()),
         None => refs::page_key(name),
     }

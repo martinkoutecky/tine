@@ -337,7 +337,7 @@ pub fn file_json(
     let stem = if journal_dir {
         let journal = config.journal_format();
         journal
-            .parse(file_stem)
+            .parse_file_stem(file_stem)
             .map(|day| journal.title(day))
             .unwrap_or_else(|| file_stem.to_owned())
     } else {
@@ -535,9 +535,10 @@ impl GraphSpec {
 
     /// The graph's journal formats, as the store builds them from its config
     /// (`Config::journal_format`: `JournalFormat::new(file, title)`). The
-    /// harness's date fold, and so the model's `dateKey`, is this native
-    /// parse list, the one list Martin chose (D-20261102-JDL: native list,
-    /// configured file-name format included, a deliberate OG deviation).
+    /// harness's date fold, and so the model's `dateKey`, is these formats'
+    /// text routes (`JournalFormat::parse_text`; D-20261102-JDL: configured
+    /// file-name format included, a deliberate OG deviation; D-20261119-YL:
+    /// the effective title first, a refused title no route).
     pub fn journal_format(&self) -> JournalFormat {
         JournalFormat::new(
             self.journal_file_format.as_deref(),
@@ -1179,7 +1180,7 @@ pub fn frontend_case(
         names.insert(s.clone());
         names.insert(view.link_target(s).name);
         let day = journal
-            .parse(s.trim())
+            .parse_text(s.trim())
             .map(|d| json!([d.year, d.month, d.day]));
         let link = view.link_target(s);
         let backend = k::resolved_page(
@@ -1574,7 +1575,7 @@ pub fn compare_reference_days(ctx: &Ctx) -> Vec<Diff> {
                 .flat_map(|(_, s)| {
                     std::iter::once(s.as_str()).chain(tine_core::refs::namespace_refs(s))
                 })
-                .filter(|s| ctx.journal.parse(s.trim()).is_some())
+                .filter(|s| ctx.journal.parse_text(s.trim()).is_some())
                 .map(str::to_owned)
                 .collect();
             if !dated.is_empty() {

@@ -269,7 +269,7 @@ impl<'a> Rename<'a> {
     /// Lean `Date13.target P D [] s`: a day, else the page key.
     fn identity(&self, name: &str) -> Result<crate::date::JournalDate, String> {
         self.days
-            .and_then(|days| days.parse(name))
+            .and_then(|days| days.parse_text(name))
             .ok_or_else(|| crate::refs::page_key(name))
     }
 

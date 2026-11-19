@@ -896,12 +896,12 @@ fn with_journal_format<T>(file: &str, title: &str, f: impl FnOnce(&date::Journal
     })
 }
 
-/// Is `name` a journal date, and which day: `tine_core::date::JournalFormat::parse`
-/// (the one list, D-20261102-JDL). `{"y","m","d"}` or null. O(name) warm.
+/// Is `name` a journal date, and which day: `tine_core::date::JournalFormat::parse_text`
+/// (the text routes, D-20261102-JDL, D-20261119-YL). `{"y","m","d"}` or null. O(name) warm.
 #[wasm_bindgen]
 pub fn journal_day_json(name: &str, file_format: &str, title_format: &str) -> String {
     with_journal_format(file_format, title_format, |format| {
-        serde_json::to_string(&format.parse(name).map(|d| serde_json::json!({"y":d.year,"m":d.month,"d":d.day}))).unwrap()
+        serde_json::to_string(&format.parse_text(name).map(|d| serde_json::json!({"y":d.year,"m":d.month,"d":d.day}))).unwrap()
     })
 }
 

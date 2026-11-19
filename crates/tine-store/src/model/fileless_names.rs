@@ -156,7 +156,7 @@ impl FilelessName {
         let day = name
             .bytes()
             .any(|b| b.is_ascii_digit())
-            .then(|| format.parse(name))
+            .then(|| format.parse_text(name))
             .flatten();
         Self {
             name: day.map_or_else(|| name.to_owned(), |day| format.title(day)),

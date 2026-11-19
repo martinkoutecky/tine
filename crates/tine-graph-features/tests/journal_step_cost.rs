@@ -119,7 +119,7 @@ fn measure(enforce_cost: bool) {
                     .iter()
                     .map(|p| {
                         tine_core::date::JournalFormat::new(None, None)
-                            .parse(&p.doc.title)
+                            .parse_text(&p.doc.title)
                             .unwrap()
                             .ordinal_key()
                     })

@@ -3050,7 +3050,7 @@ impl Graph {
                     // extension follows the graph's :preferred-format.
                     let stem = self
                         .current_journal_format()
-                        .parse(name)
+                        .parse_text(name)
                         .map(|d| self.current_journal_format().file_stem(d))
                         .unwrap_or_else(|| name.to_string());
                     self.journals_path().join(format!("{stem}.{}", pref.ext()))
@@ -4619,7 +4619,7 @@ fn count_cache_linear_scan(n: usize) {
 /// the file list names journal files by: a stem the format cannot parse names
 /// itself and claims no day.
 pub(crate) fn journal_stem_name(fmt: &JournalFormat, stem: &str) -> (String, Option<i64>) {
-    match fmt.parse(stem) {
+    match fmt.parse_file_stem(stem) {
         Some(d) => (fmt.title(d), Some(d.ordinal_key())),
         None => (stem.to_string(), None),
     }

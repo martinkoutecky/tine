@@ -124,9 +124,9 @@ const METHODS: &[(&str, Option<&str>, &str)] = &[
         "reference evidence of the output leftover",
     ),
     (
-        "parse",
+        "parse_text",
         Some("days"),
-        "journal identity through the shared date reader",
+        "journal identity through the shared date reader (text routes)",
     ),
     ("ordinal_key", None, "journal identity"),
     (

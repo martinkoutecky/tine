@@ -238,7 +238,7 @@ fn configured_date_aliases_keep_case_sensitive_literals_and_loose_digits() {
     let _guard = crate::integration_lock();
     let format = tine_core::date::JournalFormat::new(Some("dd.MM.yyyy"), Some("X-yyyy_d_MM"));
     assert!(
-        format.parse("X-2026_03_10").is_some(),
+        format.parse_text("X-2026_03_10").is_some(),
         "recognized authored spelling"
     );
     let (dir, store) = graph(&[

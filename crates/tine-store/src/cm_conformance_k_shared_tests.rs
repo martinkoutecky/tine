@@ -16,10 +16,12 @@
 //!   and Tine's own journal answers are projected to the same token (Tine's
 //!   `InventoryEntry::day`, else the native parse of the name).
 //! - **The filename-day table.** The bridge reads a journals-directory file's
-//!   day from its raw file stem (`rawStem`) through `canonicalDates`, apart
-//!   from its displayed title; every raw stem is therefore keyed, and parsed
-//!   with the graph's native journal parse (`JournalFormat::parse`, the parse
-//!   Tine's reader applies to a journal file name).
+//!   day (`journalDay`) at the key of its `rawStem` in `canonicalDates`, apart
+//!   from its displayed title. Text and a file stem name days by different
+//!   routes (D-20261119-YL model rounds 3-4: `JournalFormat::parse_text`,
+//!   `JournalFormat::parse_file_stem`), so a journals-directory file's
+//!   `rawStem` is its stem behind [`STEM_TAG`], a key no spelling has, dated
+//!   by the file-stem routes; every other spelling is dated as text.
 //! - **Only queries the bridge can evaluate.** The bridge has no evaluations
 //!   for opaque `given` leaves, so a query containing one is not requested; it
 //!   is recorded as a difference line of its own, never dropped silently.
@@ -28,6 +30,9 @@
 //! difference no class explains is a `FINDING` and fails the test.
 
 use super::*;
+
+/// The prefix of a journals-directory file's `rawStem`: no name contains it.
+pub const STEM_TAG: &str = "\u{0}stem ";
 
 /// An injective token for a calendar day. Upper case, so no ordinary page
 /// key (`page_key` folds case) can equal it.
@@ -45,7 +50,7 @@ pub fn ordinal_token(ordinal: i64) -> String {
 /// the input's `canonicalDates` and `literalKeys` describe to the bridge.
 pub fn key(journal: &JournalFormat, s: &str) -> String {
     journal
-        .parse(s)
+        .parse_text(s)
         .map(day_token)
         .unwrap_or_else(|| page_key(s))
 }
@@ -94,10 +99,17 @@ pub fn model_input(spec: &GraphSpec) -> Value {
         })
         .collect::<Vec<_>>());
     let mut raw_stems = Vec::new();
+    let mut stem_days = BTreeMap::new();
     for file in input["files"].as_array_mut().unwrap() {
         let rel = file["path"].as_str().unwrap().to_owned();
         let raw = Path::new(&rel).file_stem().unwrap().to_str().unwrap();
-        file["rawStem"] = json!(raw);
+        if file["dir"] == "journals" {
+            let tagged = format!("{STEM_TAG}{raw}");
+            stem_days.insert(tagged.clone(), journal.parse_file_stem(raw).map(day_token));
+            file["rawStem"] = json!(tagged);
+        } else {
+            file["rawStem"] = json!(raw);
+        }
         raw_stems.push(raw.to_owned());
     }
     let mut extra = spec.navigate.clone();
@@ -123,7 +135,7 @@ pub fn model_input(spec: &GraphSpec) -> Value {
             let mut names = tine_core::refs::namespace_refs(s)
                 .map(str::to_owned)
                 .collect::<Vec<_>>();
-            if let Some(day) = journal.parse(s) {
+            if let Some(day) = journal.parse_text(s) {
                 names.extend(journal.spellings(day));
                 names.push(journal.title(day));
             }
@@ -131,18 +143,23 @@ pub fn model_input(spec: &GraphSpec) -> Value {
         })
         .collect();
     all.extend(more);
-    input["literalKeys"] = json!(all
-        .iter()
-        .map(|s| (s, page_key(s)))
-        .collect::<BTreeMap<_, _>>());
+    let mut literal_keys: BTreeMap<String, String> =
+        all.iter().map(|s| (s.clone(), page_key(s))).collect();
+    let mut canonical_dates: BTreeMap<String, String> = (all.iter())
+        .filter_map(|s| journal.parse_text(s).map(|d| (page_key(s), day_token(d))))
+        .collect();
+    for (tagged, day) in stem_days {
+        literal_keys.insert(tagged.clone(), tagged.clone());
+        if let Some(day) = day {
+            canonical_dates.insert(tagged, day);
+        }
+    }
+    input["literalKeys"] = json!(literal_keys);
     input["keys"] = input["literalKeys"].clone();
-    input["canonicalDates"] = json!(all
-        .iter()
-        .filter_map(|s| journal.parse(s).map(|d| (page_key(s), day_token(d))))
-        .collect::<BTreeMap<_, _>>());
+    input["canonicalDates"] = json!(canonical_dates);
     input["dateKeys"] = json!(all
         .iter()
-        .filter_map(|s| journal.parse(s).map(day_token))
+        .filter_map(|s| journal.parse_text(s).map(day_token))
         .collect::<BTreeSet<_>>());
     input["claimantConfig"] = json!({
         "kindPref": "page", "order": "unsigned-utf8-relative-path",
@@ -202,7 +219,7 @@ pub fn spelling(ctx: &Ctx, p: &Page) -> String {
     }
     if p.0 == "journal" {
         if let Some(day) = p.1.strip_prefix("Day ") {
-            if let Some(d) = JournalFormat::new(None, None).parse(day) {
+            if let Some(d) = JournalFormat::new(None, None).parse_text(day) {
                 return ctx.journal.title(d);
             }
         }
@@ -589,9 +606,10 @@ fn model_claim(journal: &JournalFormat, f: &Value) -> Page {
         .filter(|_| f["dir"] == "pages")
         .unwrap_or_else(|| f["stem"].as_str().unwrap());
     let day = if f["dir"] == "journals" {
-        journal.parse(f["rawStem"].as_str().unwrap())
+        let raw = f["rawStem"].as_str().unwrap();
+        journal.parse_file_stem(raw.strip_prefix(STEM_TAG).unwrap_or(raw))
     } else {
-        journal.parse(name)
+        journal.parse_text(name)
     };
     match day {
         Some(d) => ("journal".to_owned(), day_token(d)),
@@ -643,7 +661,7 @@ pub fn facts(view: &WholeGraph, journal: &JournalFormat, input: &Value, model: &
             .as_object()
             .into_iter()
             .flatten()
-            .filter(|(_, t)| t.as_str() == Some(token))
+            .filter(|(literal, t)| t.as_str() == Some(token) && !literal.starts_with(STEM_TAG))
             .map(|(literal, _)| page_key(literal))
             .collect::<Vec<_>>()
     };

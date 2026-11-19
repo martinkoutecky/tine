@@ -85,7 +85,7 @@ fn required(filter: &Filter, anchor: Anchor) -> Option<Req> {
 /// so its key joins the probe. The one date answerer reads the spelling.
 fn name_keys(name: &str, format: &tine_core::date::JournalFormat) -> impl Iterator<Item = String> {
     let journal = eval::reference_day(name, format)
-        .and(format.parse(name))
+        .and(format.parse_text(name))
         .map(|day| refs::page_key(&format.title(day)));
     std::iter::once(refs::page_key(name)).chain(journal)
 }

@@ -337,7 +337,7 @@ fn parse_number(text: &str) -> Option<f64> {
 /// The date rule: `yyyy-mm-dd`, or an 8-digit `yyyymmdd` that is a valid
 /// calendar date in 1900–2100, or a title in `journal_page_title_format` ONLY
 /// (the title pattern alone, never the file pattern or the default fallback
-/// list `JournalFormat::parse` walks — B6).
+/// routes `JournalFormat::parse_text` walks — B6).
 fn classify_day(text: &str, config: &ParseConfig) -> Option<i64> {
     let trimmed = text.trim();
     if let Some(day) = iso_day(trimmed) {

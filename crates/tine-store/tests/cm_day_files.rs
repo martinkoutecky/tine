@@ -638,3 +638,106 @@ fn an_undated_journal_in_the_days_bucket_never_takes_the_day() {
     assert_eq!(store.journal_id(NOV_2, false).as_str(), rels[1]);
     assert_eq!(store.journal_id(NOV_2, true).as_str(), rels[1]);
 }
+
+/// D-20261119-YL model round 4: a journal file named under a title format
+/// that is now refused keeps its day. Under `d.M.yy`, `journals/2.11.26.md`
+/// is discovered as 2026-11-02 cold (file listing) and ready (index), the
+/// day's writes go to it (no canonical `2026_11_02.md` beside it), and the
+/// typed text `2.11.26` is an ordinary page: a refused title format is no
+/// text route (round 3), the file's stem is no text.
+#[test]
+fn a_journal_file_named_by_a_refused_title_format_keeps_its_day() {
+    let _guard = crate::integration_lock();
+    let legacy = "journals/2.11.26.md";
+    let files = [
+        (
+            "logseq/config.edn",
+            "{:journal/page-title-format \"d.M.yy\"}\n",
+        ),
+        (legacy, "- the legacy day\n"),
+        ("pages/Notes.md", "- [[2.11.26]] [[Nov 2nd, 2026]]\n"),
+    ];
+    let want = Some((legacy.to_owned(), PageKind::Journal));
+    let (dir, store, pause) = paused_graph(&files);
+    let before = bytes(dir.path(), &files);
+    assert!(store.config().journal_format().title_refusal().is_some());
+    assert_eq!(
+        opens(&store, "Nov 2nd, 2026", PageKind::Journal),
+        want,
+        "cold"
+    );
+    assert_eq!(
+        store.journal_id(NOV_2, true).as_str(),
+        legacy,
+        "cold ensure"
+    );
+    fs::remove_file(pause).unwrap();
+    let view = store.whole_graph().unwrap();
+    assert_eq!(existing(&view.resolve("Nov 2nd, 2026", true)), [legacy]);
+    assert_eq!(
+        opens(&store, "Nov 2nd, 2026", PageKind::Journal),
+        want,
+        "ready"
+    );
+    assert_eq!(
+        store.journal_id(NOV_2, true).as_str(),
+        legacy,
+        "ready ensure"
+    );
+    assert_eq!(
+        store.journal_id(NOV_2, false).as_str(),
+        legacy,
+        "ready index"
+    );
+    match view.resolve("2.11.26", false) {
+        Resolved::Absent { id } => assert_eq!(id.as_str(), "pages/2%2E11%2E26.md"),
+        other => panic!("typed 2.11.26: {other:?}"),
+    }
+    assert!(!dir.path().join("journals/2026_11_02.md").exists());
+    assert_eq!(bytes(dir.path(), &files), before);
+}
+
+/// D-20261119-YL model rounds 3-4, swapped numeric formats: file
+/// `yyyy_MM_dd`, title `yyyy_dd_MM` (accepted: it reads its own titles back).
+/// Each file keeps the day its stem names (`journals/2026_11_02.md` is
+/// November 2nd, titled `2026_02_11`); typed text reads by the title first,
+/// so `[[2026_11_02]]` opens February 11th. Cold and ready answer alike.
+#[test]
+fn swapped_numeric_formats_keep_file_days_and_read_text_by_the_title() {
+    let _guard = crate::integration_lock();
+    let (nov, feb) = ("journals/2026_11_02.md", "journals/2026_02_11.md");
+    let files = [
+        (
+            "logseq/config.edn",
+            "{:journal/page-title-format \"yyyy_dd_MM\"}\n",
+        ),
+        (nov, "- november\n"),
+        (feb, "- february\n"),
+    ];
+    let feb_11 = Day(20260211);
+    let (dir, store, pause) = paused_graph(&files);
+    assert_eq!(store.config().journal_format().title_refusal(), None);
+    let check = |store: &Store, when: &str| {
+        assert_eq!(store.journal_id(NOV_2, true).as_str(), nov, "{when}");
+        assert_eq!(store.journal_id(feb_11, true).as_str(), feb, "{when}");
+        for (typed, file) in [("2026_02_11", nov), ("2026_11_02", feb)] {
+            assert_eq!(
+                opens(store, typed, PageKind::Journal),
+                Some((file.to_owned(), PageKind::Journal)),
+                "{when}: {typed}"
+            );
+        }
+    };
+    check(&store, "cold");
+    fs::remove_file(pause).unwrap();
+    let view = store.whole_graph().unwrap();
+    let row = view.inventory(InventoryScope::File(&PageId::from(nov)));
+    assert_eq!(
+        (row.0.iter())
+            .map(|e| (e.name.as_str(), e.is_journal))
+            .collect::<Vec<_>>(),
+        [("2026_02_11", true)]
+    );
+    check(&store, "ready");
+    drop(dir);
+}

@@ -1948,7 +1948,10 @@ impl Store {
                                             .file_stem()
                                             .and_then(|stem| stem.to_str())
                                             .and_then(|stem| {
-                                                store.graph.current_journal_format().parse(stem)
+                                                store
+                                                    .graph
+                                                    .current_journal_format()
+                                                    .parse_file_stem(stem)
                                             })
                                             .map(|date| Day(date.ordinal_key()))
                                     } else {

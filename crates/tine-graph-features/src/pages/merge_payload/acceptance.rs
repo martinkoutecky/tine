@@ -80,8 +80,8 @@ impl Intended {
             !(journal && inputs[0].title.as_ref() == Some(name))
                 && !refs::same_page(name, &target.name)
                 && !format.days.is_some_and(|days| {
-                    days.parse(name)
-                        .is_some_and(|day| days.parse(&target.name) == Some(day))
+                    days.parse_text(name)
+                        .is_some_and(|day| days.parse_text(&target.name) == Some(day))
                 })
         }) {
             return Err(RealizationError::SurvivorIdentity.at(MergePart::Output));

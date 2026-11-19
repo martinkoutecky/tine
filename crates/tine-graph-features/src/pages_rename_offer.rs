@@ -456,8 +456,8 @@ fn day_move(
     };
     let days = store.config().config.journal_format();
     let same_day = days
-        .parse(new)
-        .is_some_and(|day| days.parse(old) == Some(day));
+        .parse_text(new)
+        .is_some_and(|day| days.parse_text(old) == Some(day));
     let Some(day_id) = existing(graph.resolve(old, true))
         .into_iter()
         .find(|id| expected_path.is_none_or(|path| id.as_str() == path))
@@ -514,7 +514,7 @@ fn day_move(
     };
     let journal = into
         .as_ref()
-        .map_or_else(|| days.parse(new).is_some(), |page| page.journal);
+        .map_or_else(|| days.parse_text(new).is_some(), |page| page.journal);
     let path = into
         .as_ref()
         .and_then(|page| page.path.clone())

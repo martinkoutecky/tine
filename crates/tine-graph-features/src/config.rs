@@ -247,7 +247,7 @@ pub(crate) fn favorites_after_rename(
     // merge did not move too (Lean `favoritesAfter`).
     if let Some(days) = merged_days {
         let target = |name: &str| {
-            days.parse(name).map_or_else(
+            days.parse_text(name).map_or_else(
                 || Target::Page(tine_core::refs::page_key(name)),
                 Target::Day,
             )

@@ -42,7 +42,7 @@ pub(crate) fn alias_group_members(
     let own_day = real
         .opening_entry(&own)
         .is_none_or(|entry| entry.kind == PageKind::Journal)
-        .then(|| format.parse(target))
+        .then(|| format.parse_text(target))
         .flatten();
     let mut members = std::collections::BTreeMap::new();
     for key in component {
@@ -52,7 +52,7 @@ pub(crate) fn alias_group_members(
         if let Some(entry) = real.opening_entry(&key) {
             if entry.kind == PageKind::Journal
                 && own_day.is_some()
-                && format.parse(&entry.name) == own_day
+                && format.parse_text(&entry.name) == own_day
             {
                 continue;
             }
@@ -103,7 +103,7 @@ impl crate::model::ReadSnapshot {
             edges
                 .date(key)
                 .map(JournalDate::from_ordinal)
-                .or_else(|| format.parse(key))
+                .or_else(|| format.parse_text(key))
         });
         let Some(day) = day else {
             return relation.owner_paths(key);
@@ -131,7 +131,7 @@ fn date_keys(spellings: &[String], format: &JournalFormat) -> Vec<(String, i64)>
     let mut dates: Vec<_> = spellings
         .iter()
         .filter_map(|name| {
-            let day = format.parse(name)?;
+            let day = format.parse_text(name)?;
             Some([
                 (refs::page_key(name), day.ordinal_key()),
                 (refs::page_key(&format.title(day)), day.ordinal_key()),

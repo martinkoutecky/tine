@@ -139,7 +139,7 @@ fn check_row(row: &Value, days: &JournalFormat) -> Result<(), String> {
         );
         let is_survivor = Some(f) == survivor;
         let name = page_name(f);
-        let journal = days.parse(&name).is_some();
+        let journal = days.parse_text(&name).is_some();
         let want_path = expected_path(&rename, path, &name, journal || is_survivor);
         if h["path"] != want_path.as_str() {
             return Err(format!("path {want_path:?}, after {}", h["path"]));

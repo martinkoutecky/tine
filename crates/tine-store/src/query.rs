@@ -572,7 +572,7 @@ pub(crate) fn reference_class(
 }
 
 /// The explicitly referenced name keys that denote `day` by the graph's one
-/// date answerer ([`JournalFormat::parse`]): `2026-10-2` and `October 22nd,
+/// date answerer ([`JournalFormat::parse_text`]): `2026-10-2` and `October 22nd,
 /// 2026` reach the Oct 22nd journal because they parse to it, not because a
 /// list renders them. O(R) digit checks over the snapshot's explicit
 /// reference index, a parse only for digit-bearing names; no index of its own.
@@ -621,7 +621,7 @@ pub(crate) fn graph_equivalent_page_names_with(
     let target_day = (!ordinary(&target_key))
         .then(|| {
             format
-                .parse(target)
+                .parse_text(target)
                 .or_else(|| edges.date(&target_key).map(JournalDate::from_ordinal))
         })
         .flatten();
@@ -636,7 +636,7 @@ pub(crate) fn graph_equivalent_page_names_with(
             edges
                 .date(key)
                 .map(JournalDate::from_ordinal)
-                .or_else(|| format.parse(key))
+                .or_else(|| format.parse_text(key))
         };
         let Some(day) = day else { return Vec::new() };
         if !visited_days.borrow_mut().insert(day) {
@@ -662,7 +662,7 @@ pub(crate) fn graph_equivalent_page_names_with(
 }
 
 /// The rendered spellings of a journal day (GH #481): its own name plus every
-/// rendering of the day in the graph's one parse list
+/// rendering of the day by the graph's text routes
 /// ([`JournalFormat::spellings`]), as page keys. Looser spellings a link may
 /// use (`2026-10-2`) are added where references are known
 /// ([`referenced_day_keys`]); scoped invalidation reads them from the changed

@@ -659,7 +659,7 @@ pub(super) fn journal_day(slot: &GraphSlot, date: Option<&str>) -> Result<Journa
         return Ok(day);
     }
     let config = slot.store.config();
-    config.journal_format().parse(date).ok_or_else(|| {
+    config.journal_format().parse_text(date).ok_or_else(|| {
         ErrorBody::new(
             "bad-args",
             format!("`{date}` is not a date (use YYYY-MM-DD)"),

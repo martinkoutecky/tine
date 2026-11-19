@@ -11,7 +11,7 @@ impl WholeGraph {
     /// name), the declarers included even when a file claims it. Cost: as
     /// `resolve`, plus the alias lookup and the day's spellings.
     pub fn name_owners(&self, name: &str) -> NameOwners {
-        let spellings = match self.journal_format.parse(name) {
+        let spellings = match self.journal_format.parse_text(name) {
             Some(day) => {
                 let title = self.journal_format.title(day);
                 let mut keys =
@@ -48,7 +48,7 @@ impl WholeGraph {
 
     /// The pages declaring `name` as an alias, in path order.
     fn declarers_of(&self, name: &str) -> Vec<PageId> {
-        let day = self.journal_format.parse(name);
+        let day = self.journal_format.parse_text(name);
         (self.graph)
             .alias_owner_paths(&tine_core::refs::page_key(name), day)
             .map(|paths| paths.into_iter().map(PageId::from).collect())
@@ -72,8 +72,8 @@ impl WholeGraph {
     /// custom-format links are not rewritten. If an old title no longer parses
     /// under the configured or fallback formats, resolving it as an ordinary
     /// page can propose a new page rather than the former journal. To classify a clicked journal
-    /// title, use the current `JournalFormat::parse`, which tries configured
-    /// formats and fallbacks, then pass that result as `is_journal`. Cost
+    /// title, use the current `JournalFormat::parse_text`, which tries the
+    /// text routes, then pass that result as `is_journal`. Cost
     /// O(1) indexed lookup after the snapshot's one-time O(all aliases)
     /// alias-key build when no real file wins.
     pub fn resolve(&self, name: &str, is_journal: bool) -> Resolved {
@@ -91,7 +91,7 @@ impl WholeGraph {
                 others: others.filter(|other| other != id).collect(),
             };
         }
-        if !is_journal || self.journal_format.parse(name).is_some() {
+        if !is_journal || self.journal_format.parse_text(name).is_some() {
             let owners = self.declarers_of(name);
             if let Some(first) = owner(dir, &[], &owners) {
                 debug_assert_eq!(Some(first), owners.first(), "owners in path order");
@@ -118,7 +118,7 @@ impl WholeGraph {
         if crate::model::claim_lookup(&self.journal_format, name, kind).kind == PageKind::Journal {
             let stem = self
                 .journal_format
-                .parse(name)
+                .parse_text(name)
                 .map(|date| self.journal_format.file_stem(date))
                 .unwrap_or_else(|| name.to_owned());
             return proposed_journal_id(config, stem);

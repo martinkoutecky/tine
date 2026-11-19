@@ -38,7 +38,7 @@ impl PanelResolver {
         let mut first_journal = crate::model::persistent::Map::new();
         for (entry, _) in graph.pages.iter() {
             if entry.kind == PageKind::Journal {
-                if let Some(day) = format.parse(&entry.name) {
+                if let Some(day) = format.parse_text(&entry.name) {
                     if !first_journal.contains_key(&day.ordinal_key()) {
                         first_journal.insert(day.ordinal_key(), entry.name.clone());
                     }
@@ -115,7 +115,7 @@ impl PanelResolver {
                     continue;
                 };
                 if entry.kind == PageKind::Journal {
-                    if let Some(day) = self.format.parse(&entry.name) {
+                    if let Some(day) = self.format.parse_text(&entry.name) {
                         days.insert(day);
                     }
                 }

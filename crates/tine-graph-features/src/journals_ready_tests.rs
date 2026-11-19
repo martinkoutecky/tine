@@ -503,7 +503,7 @@ fn realistic_graph_feed_restart() {
     let opened = feed_page_through(&store, 3, None, None, true).unwrap();
     let oldest = opened.pages.last().map(|page| page.doc.name.clone());
     let through = oldest
-        .and_then(|name| format(&store).parse(&name))
+        .and_then(|name| format(&store).parse_text(&name))
         .map(|day| day.ordinal_key());
     let rounds = 9;
     let listed = journal_listings();

@@ -12,8 +12,10 @@
 // (pinned in cm_conformance_published.rs), so it answers as the app. The only
 // differences left, in `tests/fixtures/published-answers/conformance-differences.json`
 // (reasons in the design note), are spellings no exported page writes: d1's
-// typed `25-10-2026` and d6's `23.10.2026`, and yl1/yl3's typed ISO days
-// (`2026-11-02`, named there only by `title::` headers). OWN2 closes the former twin-day
+// typed `25-10-2026` and d6's `23.10.2026`, yl1/yl3/yl12/yl13's typed ISO days
+// (`2026-11-02`, named there only by `title::` headers or the navigation list),
+// and yl4's `Jan 1st, 2000` (only `[[1.1.00]]` wrote it, an ordinary page since
+// a refused title format is no text route, D-20261119-YL). OWN2 closes the former twin-day
 // getPage difference because the shared opening path now agrees. A site
 // visitor reaches them only by typing the address. `CM_REFRESH=1` rewrites it.
 import { readdirSync, readFileSync, writeFileSync } from "node:fs";

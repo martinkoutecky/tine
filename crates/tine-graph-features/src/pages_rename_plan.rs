@@ -298,7 +298,7 @@ fn file_mentions_a_name(path: &std::path::Path, map: &RenameMap) -> io::Result<b
 /// dialog question [`super::rename_offer`] and the CM-OWN-CHILD "used" test
 /// share): page or journal files claiming it, else the pages declaring it
 /// as an alias. A journal claims its day under every date spelling the
-/// graph's one date answer accepts (`JournalFormat::parse`, CM step 2 batch
+/// graph's one date answer accepts (`JournalFormat::parse_text`, CM step 2 batch
 /// 1; M-Q7: a rename onto a day is a merge into its journal). O(1) indexed
 /// lookups (two `resolve`s, a third for a date).
 #[derive(Debug, PartialEq, Eq)]
@@ -314,7 +314,7 @@ pub(super) fn holder(
     name: &str,
 ) -> Holder {
     let mut files = existing(graph.resolve(name, false));
-    if journal_format.parse(name).is_some() {
+    if journal_format.parse_text(name).is_some() {
         for id in existing(graph.resolve(name, true)) {
             if !files.contains(&id) {
                 files.push(id);
@@ -389,7 +389,7 @@ impl<'a> Touched<'a> {
             }
         };
         let mut touch = |name: &str, touched: &mut Vec<String>| {
-            if journal_format.parse(name).is_none() {
+            if journal_format.parse_text(name).is_none() {
                 add(name, touched);
             }
         };
@@ -743,7 +743,7 @@ fn plan_request(
     let journal_format = config.config.journal_format();
     // O0, O2: a day is not a rename source, by its identity (every spelling
     // the graph's one date answer accepts), wherever its file is.
-    if journal_format.parse(old).is_some() {
+    if journal_format.parse_text(old).is_some() {
         return Err(RenameBlocked::Day {
             name: old.to_owned(),
         }
@@ -771,7 +771,8 @@ fn plan_request(
                 let title = survivor_read.as_ref().and_then(|(text, _)| {
                     tine_core::model::page_title_from_header(text, Format::from_path(into.as_ref()))
                 });
-                if let Some(title) = title.filter(|title| journal_format.parse(title) == Some(day))
+                if let Some(title) =
+                    title.filter(|title| journal_format.parse_text(title) == Some(day))
                 {
                     return Some(title);
                 }
@@ -804,7 +805,7 @@ fn plan_request(
     // The files the rename moves: no journal, and no day under the source,
     // which stays (O4) wherever its file is.
     let moves_with = |entry: &&tine_store::InventoryEntry| {
-        !entry.is_journal && journal_format.parse(&entry.name).is_none()
+        !entry.is_journal && journal_format.parse_text(&entry.name).is_none()
     };
     let destination = holder(&graph, &journal_format, new);
     // O3 first (Lean `selectCore` before `authorize`): a name another page

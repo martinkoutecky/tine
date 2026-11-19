@@ -1,0 +1,22 @@
+{
+ "config": {
+  "journalTitleFormat": "MMM do, ddyy"
+ },
+ "files": {
+  "journals/2026_11_02.md": "- day\n",
+  "journals/2026_11_20.md": "- later\n",
+  "pages/Notes.md": "- [[Nov 2nd, 2026]]\n- [[Nov 20th, 2026]]\n"
+ },
+ "navigate": [
+  "Nov 2nd, 2026",
+  "Nov 20th, 2026"
+ ],
+ "queries": [
+  {
+   "anchor": "block",
+   "q": {
+    "refs": "Nov 2nd, 2026"
+   }
+  }
+ ]
+}

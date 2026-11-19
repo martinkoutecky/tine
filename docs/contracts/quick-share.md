@@ -154,7 +154,10 @@ build graph (closure, below). The same field is written by the static export
   on purpose; the reader's date parser needs them) and the days whose journal
   has content. The effective title format is the configured one unless it
   names no single day, then the default `MMM do, yyyy` (D-20261119-YL), so a
-  reader renders the titles the rows name.
+  reader renders the titles the rows name. The two values are the whole input
+  of the text routes (`JournalFormat::parse_text`: effective title, file-name
+  format, fixed forms; a refused title is no route), so the reader classifies
+  a typed name as the app does.
 - Reader: links and `[[` destinations use the rows' `link`
   (`inventoryRows.ts linkTargetIn`, the app's own reader); a named route uses
   `navigationTarget`; `getPage` / `resolvePage(name, kind)` read the row's

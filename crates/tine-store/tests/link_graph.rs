@@ -374,7 +374,7 @@ fn parity(root: &Path) -> (usize, usize) {
             for reference in block.projection().reference_source().explicit {
                 let key = page_key(&reference.name);
                 for name in tine_core::refs::namespace_refs(&key) {
-                    if format.parse(name).is_none()
+                    if format.parse_text(name).is_none()
                         && matches!(graph.resolve(name, false), Resolved::Absent { .. })
                     {
                         fileless.insert(name.to_owned());

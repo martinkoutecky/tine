@@ -227,7 +227,7 @@ fn marker_row_name(store: &Store, kind: PageKind, stem: &str) -> String {
     if kind == PageKind::Journal {
         let journal_format = config.journal_format();
         journal_format
-            .parse(stem)
+            .parse_file_stem(stem)
             .map(|day| journal_format.title(day))
             .unwrap_or_else(|| stem.to_owned())
     } else {

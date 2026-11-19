@@ -6,10 +6,21 @@
     "published getPage journal [[2026-11-02]]: live journals/2026_11_02.md, published null",
     "published getPage page [[2026-11-02]]: live journals/2026_11_02.md, published null"
   ],
+  "yl12-swapped-numeric-title": [
+    "published getPage journal [[2026-02-11]]: live journals/2026_02_11.md, published null",
+    "published getPage page [[2026-02-11]]: live journals/2026_02_11.md, published null"
+  ],
+  "yl13-legacy-refused-title-file-keeps-its-day": [
+    "published getPage journal [[2026-11-02]]: live journals/2.11.26.md, published null",
+    "published getPage page [[2026-11-02]]: live journals/2.11.26.md, published null"
+  ],
   "yl3-valid-alternate-title": [
     "published getPage journal [[2026-11-02]]: live journals/2026_11_02.md, published null",
     "published getPage journal [[2027-11-02]]: live journals/2027_11_02.md, published null",
     "published getPage page [[2026-11-02]]: live journals/2026_11_02.md, published null",
     "published getPage page [[2027-11-02]]: live journals/2027_11_02.md, published null"
+  ],
+  "yl4-two-digit-year-falls-back": [
+    "published navigate [[Jan 1st, 2000]]: live (\"journal\", \"Day 2000-01-01\"), published (\"journal\", \"jan 1st, 2000\")"
   ]
 }
