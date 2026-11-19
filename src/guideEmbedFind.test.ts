@@ -5,6 +5,8 @@ it("the Guide explains copying offscreen references and counting export levels f
   const find = readFileSync("crates/tine-guide/src/templates/find-and-revisit.md", "utf8");
   expect(find).toContain("including groups you haven’t scrolled to");
   expect(find).toContain("Level 1 copies the reference itself, and level 2 also includes its immediate children");
+  expect(find).toContain("A checked descendant that falls below the chosen level starts its own branch");
+  expect(find).toContain("While Tine reads the selected sources, you can cancel the export");
 });
 
 it("the Guide teaches selection-seeded Find and the page-embed host fold", () => {

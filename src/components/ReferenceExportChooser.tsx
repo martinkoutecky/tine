@@ -58,8 +58,8 @@ export function ReferenceExportChooser(props: {
         aria-label={t("reference-export-chooser-copy-export", { subject: String(props.subject) })} onClick={(event) => event.stopPropagation()}>
         <div class="export-head">{t("reference-export-chooser-copy-export", { subject: props.subject })}<span class="export-count">{t("reference-export-chooser-count", { count: String(count()), total: String(total) })}</span></div>
         <div class="ref-export-actions" role="group" aria-label={t("reference-export-chooser-reference-selection")}>
-          <button type="button" disabled={!total} onClick={() => setSelected(new Set(allKeys()))}>{t("reference-export-chooser-all")}</button>
-          <button type="button" disabled={!count()} onClick={() => setSelected(new Set())}>{t("reference-export-chooser-none")}</button>
+          <button type="button" disabled={opening() || !total} onClick={() => setSelected(new Set(allKeys()))}>{t("reference-export-chooser-all")}</button>
+          <button type="button" disabled={opening() || !count()} onClick={() => setSelected(new Set())}>{t("reference-export-chooser-none")}</button>
         </div>
         <div class="ref-export-list" role="group" aria-label={t("reference-export-chooser-entries", { subject: String(props.subject) })}>
           <For each={groups}>{(group) => (
@@ -68,7 +68,7 @@ export function ReferenceExportChooser(props: {
               <For each={group.blocks}>{(block) => {
                 const key = entryKey(group, block);
                 return <label class="ref-export-row">
-                  <input type="checkbox" checked={selected().has(key)}
+                  <input type="checkbox" checked={selected().has(key)} disabled={opening()}
                     onChange={(event) => toggle(key, event.currentTarget.checked)} />
                   <span class="ref-export-text"><EmojiText text={visibleBody(block.raw, formatForPage(group.page))[0] ?? ""} /></span>
                 </label>;
