@@ -3395,6 +3395,9 @@ html[data-system-insets="native-viewport"] {
 /* ---------------------------------------------------------------- blocks */
 
 .ls-block {
+  --block-first-line-height: calc(var(--ls-block-line-height) + 2 * var(--ls-block-content-pad-y));
+  --thread-bullet-y: calc(1px + var(--block-first-line-height) / 2);
+  --thread-elbow-end: calc(var(--thread-bullet-y) + var(--thread-width, 1px) / 2);
   position: relative;
 }
 
@@ -3419,8 +3422,6 @@ html[data-system-insets="native-viewport"] {
 @media print { .sticky-ancestor { display: none; } [data-sticky-parent] > .block-main { margin-top: 0; } }
 
 .block-main {
-  --block-first-line-height: calc(var(--ls-block-line-height) + 2 * var(--ls-block-content-pad-y));
-  --thread-bullet-y: calc(1px + var(--block-first-line-height) / 2);
   display: flex;
   align-items: flex-start;
   min-height: 26px;
@@ -3465,9 +3466,9 @@ html[data-system-insets="native-viewport"] {
    text is 1.7em–0.9em, so its line box scales with the level.) */
 /* height = heading line box = heading font-size (1.7/1.4/1.2em) × the 1.6
    .block-content line-height, so the bullet centers exactly on the line. */
-.block-main.bullet-h1 { --block-first-line-height: 2.72em; }
-.block-main.bullet-h2 { --block-first-line-height: 2.24em; }
-.block-main.bullet-h3 { --block-first-line-height: 1.92em; }
+.ls-block:has(> .block-main.bullet-h1) { --block-first-line-height: 2.72em; }
+.ls-block:has(> .block-main.bullet-h2) { --block-first-line-height: 2.24em; }
+.ls-block:has(> .block-main.bullet-h3) { --block-first-line-height: 1.92em; }
 
 .collapse-toggle {
   width: 18px;
@@ -3757,13 +3758,12 @@ html[data-system-insets="native-viewport"] {
   content: "";
   position: absolute;
   inset-inline-start: var(--thread-rail-x);
-  top: -1px; /* Overlap separately rasterized border ends at fractional DPR (GH #129). */
+  top: -1px;
   width: calc(var(--ls-block-indent) + 1px + var(--thread-width, 1px) / 2);
-  height: calc(1px + var(--thread-bullet-y) + var(--thread-width, 1px) / 2);
+  height: calc(1px + var(--thread-elbow-end));
   box-sizing: border-box;
-  border-inline-start: var(--thread-width, 1px) solid var(--thread-incoming-color);
-  border-bottom: var(--thread-width, 1px) solid var(--thread-elbow-color);
-  border-end-start-radius: 0;
+  border-inline-start: var(--thread-width, 1px) solid transparent;
+  background: linear-gradient(var(--thread-elbow-color), var(--thread-elbow-color)) bottom / 100% var(--thread-width, 1px) no-repeat padding-box;
   pointer-events: none;
   z-index: 1;
 }
@@ -3772,6 +3772,10 @@ html[data-system-insets="native-viewport"] {
 :is(.plugin-thread-lines > .block-children-container > .block-children, .plugin-thread-lines > .block-children-container > .block-children > .outline-list > .outline-window:last-child) > .ls-block:last-child > .block-main::before,
 :is(.plugin-thread-lines-active > .block-children-container > .block-children, .plugin-thread-lines-active > .block-children-container > .block-children > .outline-list > .outline-window) > .ls-block:focus-within > .block-main::before {
   border-end-start-radius: 6px;
+  border-inline-start-color: var(--thread-incoming-color);
+  border-bottom: var(--thread-width, 1px) solid var(--thread-elbow-color);
+  background: none;
+  mask: url("#thread-elbow-mask");
 }
 
 /* Active elbows follow host-owned focus; ordinary guide borders stay visible. */
@@ -3786,11 +3790,10 @@ html[data-system-insets="native-viewport"] {
   inset-inline-start: var(--thread-stub-x);
   top: var(--thread-bullet-y);
   bottom: 0;
-  border-inline-start: var(--thread-width, 1px) solid var(--thread-normal-color);
   pointer-events: none;
 }
 .plugin-thread-lines:has(> .block-children-container :focus) > .block-main::after {
-  border-inline-start-color: var(--thread-active-color);
+  --thread-rail-color: var(--thread-active-color);
 }
 :is(.plugin-thread-lines > .block-children-container > .block-children, .plugin-thread-lines > .block-children-container > .block-children > .outline-list > .outline-window) > .ls-block::after {
   content: "";
@@ -3798,7 +3801,6 @@ html[data-system-insets="native-viewport"] {
   inset-inline-start: var(--thread-rail-x);
   top: 0;
   bottom: 0;
-  border-inline-start: var(--thread-width, 1px) solid var(--thread-normal-color);
   pointer-events: none;
 }
 /* An elbow ends the path at the final sibling; a straight continuation through
@@ -3807,7 +3809,10 @@ html[data-system-insets="native-viewport"] {
   display: none;
 }
 :is(.plugin-thread-lines > .block-children-container > .block-children, .plugin-thread-lines > .block-children-container > .block-children > .outline-list > .outline-window) > .ls-block:has(~ .ls-block:focus-within)::after {
-  border-inline-start-color: var(--thread-active-color);
+  --thread-rail-color: var(--thread-active-color);
+}
+:is(.plugin-thread-lines > .block-children-container > .block-children, .plugin-thread-lines > .block-children-container > .block-children > .outline-list > .outline-window) > .ls-block:focus-within::after {
+  --thread-rail-start-color: var(--thread-incoming-color);
 }
 .plugin-thread-lines-active > .block-main::after,
 :is(.plugin-thread-lines-active > .block-children-container > .block-children, .plugin-thread-lines-active > .block-children-container > .block-children > .outline-list > .outline-window) > .ls-block::after {
@@ -3827,19 +3832,24 @@ html[data-system-insets="native-viewport"] {
   inset-inline-start: var(--thread-rail-x);
   top: 0;
   bottom: 0;
-  border-inline-start: var(--thread-width, 1px) solid var(--thread-normal-color);
   pointer-events: none;
+}
+/* Extend the paint past both ends so the mask owns the pixel at the join. */
+.plugin-thread-lines:not(.collapsed) > .block-main::after,
+:is(.plugin-thread-lines > .block-children-container > .block-children, .plugin-thread-lines > .block-children-container > .block-children > .outline-list > .outline-window) > .ls-block::after,
+.plugin-thread-lines > .block-children-container > .block-children > .outline-list > .outline-window > [aria-hidden="true"]::before {
+  --thread-rail-color: var(--thread-normal-color);
+  border-inline-start: var(--thread-width, 1px) solid var(--thread-rail-color);
+  border-image: linear-gradient(var(--thread-rail-start-color, var(--thread-rail-color)) calc(2px + var(--thread-elbow-end)), var(--thread-rail-color) 0) 0 fill / 0 / 2px 0;
+  mask: url("#thread-rail-mask");
 }
 .plugin-thread-lines-active > .block-children-container > .block-children > .outline-list > .outline-window > [aria-hidden="true"]::before {
   display: none;
 }
-.plugin-thread-lines > .block-children-container > .block-children > .outline-list > .outline-window:has(~ .outline-window:focus-within) > .ls-block > .block-main::before {
-  border-inline-start-color: var(--thread-active-color);
-}
 .plugin-thread-lines > .block-children-container > .block-children > .outline-list > .outline-window:has(~ .outline-window:focus-within) > .ls-block::after,
 .plugin-thread-lines > .block-children-container > .block-children > .outline-list > .outline-window:has(~ .outline-window:focus-within) > [aria-hidden="true"]::before {
   display: block;
-  border-inline-start-color: var(--thread-active-color);
+  --thread-rail-color: var(--thread-active-color);
 }
 .plugin-thread-lines:focus-within > .block-main > .block-controls .bullet,
 .plugin-thread-lines .ls-block:has(> .block-main:focus-within) > .block-main > .block-controls .bullet {

@@ -2,7 +2,9 @@ import { render } from "solid-js/web";
 import { createSignal } from "solid-js";
 import { initParser } from "../../src/render/parse";
 import { loadSingle } from "../../src/document/workingSet";
+import { openPage } from "../../src/router";
 import { Block } from "../../src/components/Block";
+import { ThreadJoinMasks } from "../../src/components/ThreadJoinMasks";
 import { pluginManager } from "../../src/plugins/manager";
 import type { PluginSettings } from "../../src/plugins/settings";
 import { galleryThemes } from "../../src/styles/themes";
@@ -37,8 +39,10 @@ loadSingle({ name: "Thread", title: "Thread", kind: "page", pre_block: null, for
       ] },
     ] },
     { id: "last", raw: "Another branch", collapsed: false, children: [
+      { id: "ordinary", raw: "Inactive square branch", collapsed: false, children: [] },
       { id: "unrelated-child", raw: "Ordinary guide stays visible", collapsed: false, children: [] },
     ] },
   ] },
 ] });
-render(() => <main class="main-content" style={{ padding: "40px", width: "min(640px, calc(100vw - 80px))" }}><Block id="root" /></main>, document.getElementById("root")!);
+openPage("Thread");
+render(() => <main class="main-content" style={{ padding: "40px", width: "min(640px, calc(100vw - 80px))" }}><ThreadJoinMasks /><Block id="root" /></main>, document.getElementById("root")!);

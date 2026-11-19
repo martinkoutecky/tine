@@ -18,7 +18,7 @@ try {
     const name = `${cm6 ? "cm6" : "classic"}-${zoom}-${display}`;
     const page = await browser.newPage({ viewport: { width: 1800, height: 1500 } });
     page.on("pageerror", error => console.error(`${name}: ${error}`));
-    await page.goto(`${server.resolvedUrls.local[0]}?regressions`);
+    await page.goto(`${server.resolvedUrls.local[0]}?regressions`, { waitUntil: "commit" });
     await page.locator("[data-search-trigger]").waitFor();
     if (process.env.RENDER_BASELINE_CSS) await page.evaluate(css => {
       document.querySelector('style[data-vite-dev-id$="/src/styles/app.css"]').textContent = css;
