@@ -23,7 +23,7 @@ import { PageReferenceLabel } from "./PageReferenceLabel";
 import { graphEpoch, graphMeta } from "../graphSession";
 import { changed, changedAny, pageChangeKey } from "../changeKeys";
 import { pushToast } from "../toasts";
-import { openOutboundLink, reportLinkOpenFailure } from "../components/ExternalLink";
+import { openOutboundLink, outboundAnchorAttrs, reportLinkOpenFailure } from "../components/ExternalLink";
 import { copyImageFromSrc } from "../copyImage";
 import { parseBlock, parserReady } from "./parse";
 import { mime_from_path } from "./wasm/lsdoc_wasm";
@@ -53,8 +53,7 @@ import { mediaEditorForAsset } from "../mediaEditors";
 import { acquireMediaBlobFallback, type MediaBlobLease } from "../mediaBlobFallback";
 import { resolveMediaEditorCommand } from "../mediaEditorSettings";
 import { refreshAssetOnReturn } from "../assetRefresh";
-import { isPublishedExport, isQuickShareViewer } from "../publishedBackend";
-import { navigableHref } from "../linkSchemePolicy";
+import { isQuickShareViewer } from "../publishedBackend";
 import { ShareMedia } from "../quickShare/ShareMedia";
 import { CopyButton } from "./CopyButton";
 export { CopyButton } from "./CopyButton";
@@ -504,21 +503,22 @@ function renderLink(
     if (k === "video" || k === "audio")
       return <MediaEmbed url={dest} kind={k} alt="" blockId={blockId} token={token} spanAttrs={spanAttrs} />;
   }
-  const unsafeHref = !navigableHref(dest, isPublishedExport());
+  const activate = () => {
+    const rel = assetLinkRel(dest);
+    if (rel !== null) void readOwned(graphOwner(), backend().openAsset(rel, backend().graphBindingGeneration())).catch((error) => reportLinkOpenFailure(dest, error));
+    else void openOutboundLink(dest);
+  };
   return (
     <span class="link-copy-wrap">
       <a
         class="external-link"
-        href={unsafeHref ? undefined : dest}
+        {...outboundAnchorAttrs(dest, activate)}
         title={fileUrlTitle(dest)}
         {...(spanAttrs ?? {})}
         onClick={(e) => {
           e.preventDefault();
           e.stopPropagation();
-          if (unsafeHref) return;
-          const rel = assetLinkRel(dest);
-          if (rel !== null) void readOwned(graphOwner(), backend().openAsset(rel, backend().graphBindingGeneration())).catch((error) => reportLinkOpenFailure(dest, error));
-          else void openOutboundLink(dest);
+          activate();
         }}
       >
         <Show when={s.label && s.label.length} fallback={dest}>{renderInlines(s.label!, blockId, spanMode, macroExpansion, format)}</Show>

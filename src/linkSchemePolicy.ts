@@ -45,19 +45,48 @@ export function checkExternalLink(
   if (refusedLinkScheme(scheme) || (platform === "browser" && nativeOnly)) {
     throw new Error(`${scheme}: links are never opened`);
   }
-  // Consent is stored lowercase; the native side compares schemes case-insensitively (#984 review).
-  if (!isDirectExternalScheme(scheme) && !nativeOnly && confirmedScheme?.toLowerCase() !== scheme) {
+  if (!isDirectExternalScheme(scheme) && !nativeOnly && !sameScheme(confirmedScheme, scheme)) {
     throw new Error(`opening a ${scheme}: link needs your confirmation`);
   }
 }
 
-/** Whether an anchor may keep `dest` as its `href` (browser default navigation,
- * middle-click, "open in new tab"). Refused schemes never do. In a published
- * reader only web, mail and scheme-less (internal) destinations do: every
- * other scheme goes through the checked opener or not at all (GH #984). O(URL bytes). */
+/** Exact ASCII case-insensitive match, as the native opener's
+ * `eq_ignore_ascii_case` (no Unicode folding: KELVIN SIGN is not `k`). */
+function sameScheme(confirmed: string | undefined, scheme: string): boolean {
+  return confirmed !== undefined && confirmed.length === scheme.length
+    && confirmed.replace(/[A-Z]/g, (c) => c.toLowerCase()) === scheme;
+}
+
+/** Whether an anchor may keep `dest` as its `href`, i.e. reach browser default
+ * navigation (middle-click, "open in new tab"). Relative destinations do (site-
+ * internal); refused schemes never do; in a published reader only web and mail
+ * do (GH #984), so every other scheme, one-letter ones included, is opened only
+ * through the checked opener. O(URL bytes). */
 export function navigableHref(dest: string, published: boolean): boolean {
-  const scheme = linkScheme(dest);
-  if (scheme === null) return true;
+  let scheme: string;
+  try {
+    scheme = new URL(dest).protocol.slice(0, -1);
+  } catch (error) {
+    if (!(error instanceof TypeError)) throw error;
+    return true;
+  }
   if (refusedLinkScheme(scheme)) return false;
   return !published || isDirectExternalScheme(scheme);
+}
+
+/** Where a raw-HTML anchor keeps a destination that must not reach browser
+ * navigation but still opens through the checked opener (GH #984). */
+export const DEFERRED_HREF = "data-tine-href";
+
+/** Apply `navigableHref` to a sanitized anchor: keep the href, or move it to
+ * DEFERRED_HREF (still a focusable link), or drop a refused one. O(URL bytes). */
+export function deferAnchorHref(anchor: Element, published: boolean): void {
+  const dest = anchor.getAttribute("href") ?? "";
+  if (navigableHref(dest, published)) return;
+  anchor.removeAttribute("href");
+  if (navigableHref(dest, false)) {
+    anchor.setAttribute(DEFERRED_HREF, dest);
+    anchor.setAttribute("role", "link");
+    anchor.setAttribute("tabindex", "0");
+  }
 }

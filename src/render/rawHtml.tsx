@@ -6,6 +6,7 @@ import { acquireLocalImageBlob } from "../assetCache";
 import type { SpanDomAttrs } from "./spans";
 import { isPublishedExport, isQuickShareViewer } from "../publishedBackend";
 import { ShareMedia, shareHtml } from "../quickShare/ShareMedia";
+import { activateDeferredAnchor } from "../components/ExternalLink";
 
 // Video-embed hosts (youtube/vimeo/loom/bilibili) that reject an embed when it
 // arrives with no referrer — YouTube in particular fails with error 153. For
@@ -50,7 +51,7 @@ export function renderSanitizedHtml(text: string, spanAttrs?: SpanDomAttrs): JSX
 // document-order match to the scanned paths). Off by default; see ADR 0019.
 function RawHtmlContent(props: { text: string; spanAttrs?: SpanDomAttrs; allowIframe?: boolean }): JSX.Element {
   const presentation = createMemo(() => rawHtmlPresentation(props.text, props.allowIframe, isPublishedExport()));
-  if (isQuickShareViewer()) return <Show when={presentation().iframe} fallback={<span class="raw-html" innerHTML={shareHtml(presentation().html, presentation().localImages)} {...(props.spanAttrs ?? {})} />}>
+  if (isQuickShareViewer()) return <Show when={presentation().iframe} fallback={<span class="raw-html" innerHTML={shareHtml(presentation().html, presentation().localImages)} onClick={activateDeferredAnchor} onKeyDown={activateDeferredAnchor} {...(props.spanAttrs ?? {})} />}>
     {(frame) => <ShareMedia url={frame().src} />}
   </Show>;
   let host: HTMLSpanElement | undefined;
@@ -77,7 +78,7 @@ function RawHtmlContent(props: { text: string; spanAttrs?: SpanDomAttrs; allowIf
       releases.forEach((release) => release());
     });
   });
-  return <Show when={presentation().iframe} fallback={<span ref={host} class="raw-html" innerHTML={presentation().html} {...(props.spanAttrs ?? {})} />}>
+  return <Show when={presentation().iframe} fallback={<span ref={host} class="raw-html" innerHTML={presentation().html} onClick={activateDeferredAnchor} onKeyDown={activateDeferredAnchor} {...(props.spanAttrs ?? {})} />}>
     {(frame) => renderIframe(frame().src, frame().width, frame().height, props.spanAttrs)}
   </Show>;
 }

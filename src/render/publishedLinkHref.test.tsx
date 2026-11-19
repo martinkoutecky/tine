@@ -1,4 +1,4 @@
-import { afterEach, beforeAll, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 import { render } from "solid-js/web";
 
 // GH #984 review (033c3cc8c): in a published reader, a link keeps a browser-navigable
@@ -13,16 +13,53 @@ vi.mock("../publishedBackend", async (original) => ({
 import { InlineText } from "./inline";
 import { initParser } from "./parse";
 import { rawHtmlPresentation } from "./htmlSanitize";
+import { renderSanitizedHtml } from "./rawHtml";
 import { checkExternalLink, navigableHref } from "../linkSchemePolicy";
+import { backend } from "../backend";
+import { setToasts } from "../toasts";
+import { LinkSchemePrompt } from "../components/LinkSchemePrompt";
+import { initLinkSchemeSettings } from "../linkSchemeSettings";
 
 beforeAll(initParser);
-afterEach(() => { document.body.replaceChildren(); published.on = true; });
+const disposers: (() => void)[] = [];
+beforeEach(async () => {
+  vi.spyOn(backend(), "getAppString").mockResolvedValue("[]");
+  await initLinkSchemeSettings();
+  const host = document.createElement("div"); document.body.append(host);
+  disposers.push(render(() => <LinkSchemePrompt />, host));
+});
+afterEach(() => {
+  disposers.splice(0).forEach((dispose) => dispose());
+  vi.restoreAllMocks();
+  document.body.replaceChildren();
+  setToasts([]);
+  published.on = true;
+});
+const flush = () => new Promise((resolve) => setTimeout(resolve, 0));
 
-function href(source: string): string | null {
+function mount(view: () => ReturnType<typeof InlineText>): HTMLElement {
   const host = document.createElement("div");
   document.body.append(host);
-  render(() => <InlineText text={source} />, host);
-  const link = host.querySelector("a.external-link");
+  disposers.push(render(view, host));
+  return host;
+}
+
+/** Activate the link (click or Enter), confirm the prompt, return what reached the OS opener. */
+async function activateAndConfirm(link: Element, how: "click" | "enter"): Promise<unknown[][]> {
+  const open = vi.spyOn(backend(), "openExternal").mockResolvedValue(undefined);
+  link.dispatchEvent(how === "click"
+    ? new MouseEvent("click", { bubbles: true, cancelable: true })
+    : new KeyboardEvent("keydown", { key: "Enter", bubbles: true, cancelable: true }));
+  await flush();
+  const prompt = document.querySelector<HTMLFormElement>('[role="dialog"]');
+  expect(prompt, "consent prompt").not.toBeNull();
+  prompt!.requestSubmit();
+  await flush();
+  return open.mock.calls;
+}
+
+function href(source: string): string | null {
+  const link = mount(() => <InlineText text={source} />).querySelector("a.external-link");
   expect(link, source).not.toBeNull();
   return link!.getAttribute("href");
 }
@@ -41,7 +78,25 @@ describe("published links keep an href only for direct schemes (GH #984)", () =>
     expect(href("[f](file:///etc/passwd)")).toBeNull();
     expect(href("[t](tine://open?page=x)")).toBeNull();
     expect(href("[b](blob:https://example.org/1)")).toBeNull();
+    expect(href("[c](c:/notes/x.txt)")).toBeNull();
+    expect(href("[n](file:notes.txt)")).toBeNull();
   });
+
+  for (const how of ["click", "enter"] as const) {
+    it(`a published custom-app link stays focusable and opens through the prompt (${how})`, async () => {
+      const link = mount(() => <InlineText text="[z](zotero://select/items/A)" />).querySelector("a.external-link")!;
+      expect(link.getAttribute("tabindex")).toBe("0");
+      expect(link.getAttribute("role")).toBe("link");
+      expect(await activateAndConfirm(link, how)).toEqual([["zotero://select/items/A", "zotero"]]);
+    });
+
+    it(`a published raw-HTML tel: anchor opens through the prompt (${how})`, async () => {
+      const anchor = mount(() => renderSanitizedHtml('<a href="tel:123"><b>call</b></a>')).querySelector("a")!;
+      expect(anchor.getAttribute("href")).toBeNull();
+      expect(anchor.getAttribute("tabindex")).toBe("0");
+      expect(await activateAndConfirm(how === "click" ? anchor.querySelector("b")! : anchor, how)).toEqual([["tel:123", "tel"]]);
+    });
+  }
 
   it("the app keeps custom-scheme hrefs but never a refused one", () => {
     published.on = false;
@@ -72,5 +127,7 @@ describe("custom-scheme confirmation matches case-insensitively (GH #984 review)
     }
     expect(() => checkExternalLink("zotero://select/items/A", "obsidian", "native")).toThrow();
     expect(() => checkExternalLink("javascript:alert(1)", "javascript", "native")).toThrow();
+    // ASCII only, like the native opener: U+212A KELVIN SIGN lowercases to "k" in JavaScript.
+    expect(() => checkExternalLink("keep://x", "\u212Aeep", "native")).toThrow();
   });
 });

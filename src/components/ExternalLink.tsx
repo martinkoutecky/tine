@@ -3,7 +3,8 @@ import { backend } from "../backend";
 import { pushToast } from "../toasts";
 import { msg } from "../i18n";
 import { graphOwner, ownedWhen, readOwned } from "../owned";
-import { linkScheme, refusedLinkScheme, rememberableLinkScheme } from "../linkSchemePolicy";
+import { DEFERRED_HREF, linkScheme, navigableHref, refusedLinkScheme, rememberableLinkScheme } from "../linkSchemePolicy";
+import { isPublishedExport } from "../publishedBackend";
 import { loadLinkSchemeSettings, rememberedLinkSchemes, setLinkSchemeRemembered } from "../linkSchemeSettings";
 import { askLinkScheme } from "../linkSchemePrompt";
 export { linkScheme } from "../linkSchemePolicy";
@@ -73,4 +74,34 @@ export function ExternalLink(props: { dest: string; class?: string; children: JS
  *  all look like a dead link (GH #444, master c817fb150). */
 export function reportLinkOpenFailure(dest: string, error: unknown): void {
   pushToast(msg("external-link-couldn-t-open", { dest: String(dest), error: String(error) }), "error");
+}
+
+/** Anchor attributes for a graph-authored destination (GH #984; the policy is
+ * `navigableHref`): a navigable destination keeps its href; any other stays a
+ * focusable link whose Enter runs the same checked activation as its click. */
+export function outboundAnchorAttrs(dest: string, activate: () => void): JSX.AnchorHTMLAttributes<HTMLAnchorElement> {
+  if (navigableHref(dest, isPublishedExport())) return { href: dest };
+  return {
+    role: "link",
+    tabindex: 0,
+    onKeyDown: (event) => {
+      if (event.key !== "Enter") return;
+      event.preventDefault();
+      event.stopPropagation();
+      activate();
+    },
+  };
+}
+
+/** Delegated click/Enter for raw-HTML anchors whose destination the sanitizer
+ * deferred (`deferAnchorHref`): opens it through the checked opener. */
+export function activateDeferredAnchor(event: MouseEvent | KeyboardEvent): void {
+  if ("key" in event && event.key !== "Enter") return;
+  const node = event.target as Node | null;
+  const element = node?.nodeType === 1 ? (node as Element) : node?.parentElement;
+  const dest = element?.closest(`a[${DEFERRED_HREF}]`)?.getAttribute(DEFERRED_HREF);
+  if (!dest) return;
+  event.preventDefault();
+  event.stopPropagation();
+  void openOutboundLink(dest);
 }

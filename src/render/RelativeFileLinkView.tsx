@@ -1,6 +1,6 @@
 import type { JSX } from "solid-js";
 import { backend } from "../backend";
-import { openOutboundLink, reportLinkOpenFailure } from "../components/ExternalLink";
+import { openOutboundLink, outboundAnchorAttrs, reportLinkOpenFailure } from "../components/ExternalLink";
 import { graphOwner, readOwned } from "../owned";
 import { graphMeta } from "../graphSession";
 import { filePathUrl, resolvedFilePath, type FileLinkTarget } from "./relativeFileLink";
@@ -16,22 +16,25 @@ export function RelativeFileLink(props: {
   children: JSX.Element;
 }): JSX.Element {
   const resolved = () => resolvedFilePath(props.target, graphMeta()?.root ?? "");
+  const activate = () => {
+    const target = props.target;
+    if (target.kind === "outside") {
+      void openOutboundLink(filePathUrl(resolved()));
+    } else {
+      void readOwned(graphOwner(), backend().openGraphFile(target.path, backend().graphBindingGeneration()))
+        .catch((error) => reportLinkOpenFailure(props.dest, error));
+    }
+  };
   return (
     <a
       class="external-link file-link"
-      href={props.dest}
+      {...outboundAnchorAttrs(props.dest, activate)}
       title={resolved()}
       {...(props.spanAttrs ?? {})}
       onClick={(event) => {
         event.preventDefault();
         event.stopPropagation();
-        const target = props.target;
-        if (target.kind === "outside") {
-          void openOutboundLink(filePathUrl(resolved()));
-        } else {
-          void readOwned(graphOwner(), backend().openGraphFile(target.path, backend().graphBindingGeneration()))
-            .catch((error) => reportLinkOpenFailure(props.dest, error));
-        }
+        activate();
       }}
     >
       {props.children}
