@@ -78,9 +78,9 @@ import { hiccupToHtml } from "./hiccup";
 import { LinkDepthContext, MAX_DEPTH_OF_LINKS } from "../components/linkDepth";
 import { readOr } from "../resourceRead";
 import { fileUrlTitle } from "./relativeFileLink";
-import { externalPdfPath, relativePdfFileUrl } from "./externalPdfPath";
+import { externalPdfPath, relativePdfFile } from "./externalPdfPath";
 import { ExternalPdfLink } from "./ExternalPdfLink";
-import { PdfAssetLink, pdfFilenameFromDest } from "./PdfAssetLink";
+import { PdfAssetLink } from "./PdfAssetLink";
 import { RelativeFileLink } from "./RelativeFileLinkView";
 import { galleryFor } from "../imageGallery";
 import { queryMacroRenderRun } from "./queryMacroRender";
@@ -439,10 +439,13 @@ function renderLink(
   const url = s.url;
   const spanAttrs = spanMode ? coarseSpanAttrs(s.span) : undefined;
   const token: MediaToken = { full: s.full, metadata: s.metadata, span: spanMode ? s.span : undefined };
-  const orgImage = url.type === "page_ref" && format === "org" && isOgOrgPageRefImageTarget(url.v);
-  const searchDecision = url.type === "search" ? anchorDecision(url.v) : undefined;
+  const localDecision = url.type === "search" || (url.type === "page_ref" && format === "org")
+    ? anchorDecision(url.v) : undefined;
+  const orgImage = url.type === "page_ref" && localDecision !== undefined
+    && isOgOrgPageRefImageTarget(localDecision.kind === "relative" ? localDecision.path
+      : localDecision.kind === "drive" ? localDecision.target.path : url.v);
   if ((url.type === "page_ref" && !orgImage)
-      || (url.type === "search" && searchDecision?.kind === "relative" && searchTargetIsPage(url.v))) {
+      || (url.type === "search" && localDecision?.kind === "relative" && searchTargetIsPage(localDecision.path))) {
     // OG `page-reference` brackets a labelled link like a bare one (GH #966).
     const alias = s.label && s.label.length
       ? <PageReferenceLabel>{renderInlines(s.label, blockId, spanMode, macroExpansion, format)}</PageReferenceLabel>
@@ -454,7 +457,7 @@ function renderLink(
     return <BlockRefView id={url.v} label={label} spanAttrs={spanAttrs} blockId={blockId} span={hostSpan(s, spanMode, macroExpansion)} />;
   }
   const dest = urlDest(url, format, s.full);
-  const decision = searchDecision ?? anchorDecision(dest);
+  const decision = localDecision ?? anchorDecision(dest);
   const relative = decision.kind === "relative" ? decision : null;
   if (orgImage && relative) return <AssetImage source={relative} alt="" blockId={blockId} token={token} spanAttrs={spanAttrs} />;
   const assetTarget = relative?.attachment ?? null;
@@ -466,12 +469,14 @@ function renderLink(
   // OG 6e7afa8eb block.cljs show-link?/media-link: Markdown requires !, Org media does not.
   // GH #732: a relative file link reads as the absolute file: URL its resolver names.
   if ((s.image || format === "org") && !isMobilePlatform && !quickShare && decision.kind !== "drive") {
-    const readerDest = fileTarget && (!relative || relative.pathQualified) ? relativePdfFileUrl(fileTarget, graphMeta()?.root ?? "")
-      : decision.kind === "file" ? decision.url : null;
-    const outsidePath = readerDest === null ? null : externalPdfPath(readerDest);
-    if (readerDest !== null && outsidePath?.kind === "pdf") {
-      const label = s.label?.length ? astText(s.label) : outsidePath.path.split("/").pop()!;
-      return <ExternalPdfLink dest={readerDest} path={outsidePath.path} label={label} spanAttrs={spanAttrs} />;
+    let reader = fileTarget && (!relative || relative.pathQualified) ? relativePdfFile(fileTarget, graphMeta()?.root ?? "") : null;
+    if (decision.kind === "file" && fileTarget === null) {
+      const outside = externalPdfPath(decision.url);
+      if (outside.kind === "pdf") reader = { path: outside.path, url: decision.url };
+    }
+    if (reader !== null) {
+      const label = s.label?.length ? astText(s.label) : reader.path.split("/").pop()!;
+      return <ExternalPdfLink dest={reader.url} path={reader.path} label={label} spanAttrs={spanAttrs} />;
     }
   }
   const web = decision.kind === "web";
@@ -480,7 +485,7 @@ function renderLink(
     const { width, height } = parseImageMetaBrace(s.metadata);
     const alt = s.label && s.label.length ? astText(s.label) : "";
     if (assetPdf !== null) return <PdfAssetLink filename={assetPdf} label={alt} spanAttrs={spanAttrs} />;
-    const k = mediaKind(media.url);
+    const k = mediaKind(media.kind === "relative" ? media.path : media.url);
     if (k === "video" || k === "audio")
       return <MediaEmbed source={media} kind={k} alt={alt} width={width} blockId={blockId} token={token} spanAttrs={spanAttrs} />;
     return <AssetImage source={media} alt={alt} width={width} height={height} blockId={blockId} token={token} spanAttrs={spanAttrs} />;
@@ -499,7 +504,7 @@ function renderLink(
     );
   }
   if (assetPdf !== null) {
-    const labelStr = s.label && s.label.length ? astText(s.label) : pdfFilenameFromDest(dest);
+    const labelStr = s.label && s.label.length ? astText(s.label) : undefined;
     return <PdfAssetLink filename={assetPdf} label={labelStr} spanAttrs={spanAttrs} />;
   }
   // OG parity (og-1.0.0 block.cljs:989-1011 show-link? -> :1213 media-link;
@@ -727,12 +732,14 @@ function mediaResizeGrip(
   };
 }
 
-type MediaSource = Extract<AnchorDecision, { kind: "web" }> | { kind: "relative"; url: string; mediaPath: string | null };
+type MediaSource = Extract<AnchorDecision, { kind: "web" }> | {
+  kind: "relative"; url: string; path: string; attachment: string | null;
+};
 
 function QuickShareMedia(props: { source: MediaSource; label?: string }) {
   const source = props.source;
   return source.kind === "web" ? <ShareMedia url={source.url} label={props.label} />
-    : <ShareLocalMedia path={source.mediaPath || source.url} label={props.label} />;
+    : <ShareLocalMedia path={source.attachment ?? source.path} label={props.label} />;
 }
 
 // Image embed: external URLs load directly; graph assets (`../assets/x.png`)
@@ -764,7 +771,7 @@ export function AssetImage(props: {
     ...(props.height ? { height: props.height } : {}),
   });
   const external = props.source.kind === "web";
-  const rel = () => props.source.kind === "relative" ? props.source.mediaPath : null;
+  const rel = () => props.source.kind === "relative" ? props.source.attachment : null;
   // Served from a shared, graph-scoped blob cache so repeated references and
   // re-mounts don't re-read the file or mint duplicate blob URLs. The cache owns
   // the URL's lifetime (cleared on graph switch), so we don't revoke on unmount.
@@ -993,7 +1000,7 @@ function MediaEmbed(props: {
   // Audio has no fullscreen; the "Expand" button (below) opens a wide overlay
   // player with a waveform scrubber instead of stretching the inline control.
   const external = source.kind === "web";
-  const assetPath = source.kind === "relative" ? source.mediaPath : null;
+  const assetPath = source.kind === "relative" ? source.attachment : null;
   // Graph media uses native range requests; never copy a multi-GB file into a Blob.
   const [blobResource] = createGraphResource(() => assetPath || null, async (path) => {
     const result = await readOwned(graphOwner(), backend().streamAsset(path));
@@ -1004,7 +1011,11 @@ function MediaEmbed(props: {
   const blob = () => readOr(blobResource, undefined, "inline audio asset");
   const src = () => blobFallback() || (external ? source.url : blob());
   const label = () => {
-    const name = (assetPath || source.url).split("/").pop() || source.url;
+    if (source.kind === "relative") {
+      const path = source.attachment ?? source.path;
+      return path.split("/").pop() || path;
+    }
+    const name = source.url.split("/").pop() || source.url;
     try { return decodeURIComponent(name); }
     catch { return name; /* An ordinary filename may contain a literal percent. */ }
   };

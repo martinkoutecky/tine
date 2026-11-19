@@ -13,9 +13,10 @@ export function urlDest(url: Url, format?: Format, full?: string): string {
       return url.v;
     case "complex":
       if (!url.protocol || url.link == null) return url.link ?? "";
-      // The Org projection uses the same fields for C:path and C://path.
-      // Its full text preserves the delimiter at the start of the destination.
-      if (format === "org" && /^[a-z]$/i.test(url.protocol) && !full?.startsWith(`[[${url.protocol}://`)) {
+      // The Org projection uses the same fields for C:path and C://path,
+      // even when the drive letter is escaped. Recover the authored delimiter.
+      if (format === "org" && (/^[a-z]$/i.test(url.protocol) || url.protocol.includes("%"))
+          && !full?.startsWith(`[[${url.protocol}://`)) {
         return `${url.protocol}:${url.link}`;
       }
       return `${url.protocol}://${url.link}`;

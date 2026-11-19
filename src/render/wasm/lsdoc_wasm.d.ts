@@ -7,9 +7,9 @@
 export function absent_link_is_journal(name: string, file_format: string, title_format: string): boolean;
 
 /**
- * Assets-relative link target; O(URL bytes), no parse or filesystem I/O.
+ * Attachment target from a decoded slash-normalized path. O(path bytes), no I/O.
  */
-export function asset_rel_path(url: string): string | undefined;
+export function attachment_path(path: string): string | undefined;
 
 /**
  * Parser-boundary negative-only prefilter; true still needs drawer ownership.
@@ -39,6 +39,13 @@ export function comment_quote(properties: string): string | undefined;
  * O(stem bytes), no I/O; malformed percent escapes are preserved.
  */
 export function decode_page_name(stem: string, legacy: boolean): string;
+
+/**
+ * Decode and normalize a local destination with the writer's escape rules.
+ * Returns the path alone, or [path, attachment, candidate PDF identity].
+ * File URL shorthand requests the path alone. O(input bytes), no I/O.
+ */
+export function decoded_link_path(dest: string, file: boolean): any;
 
 export function edit_block_regions_json(raw: string, is_org: boolean, regions: any, request: any): string;
 
@@ -258,6 +265,11 @@ export function parse_journal_format_json(text: string, pattern: string): string
 export function pdf_asset_file(path: string): string;
 
 /**
+ * PDF asset identity from a decoded slash-normalized path. O(path bytes), no I/O.
+ */
+export function pdf_asset_file_decoded(path: string, attachment?: string | null): string;
+
+/**
  * PDF identity with the existing preview/native suffix policy. O(filename bytes).
  */
 export function pdf_asset_key(filename: string, preview: boolean): string;
@@ -375,12 +387,13 @@ export type InitInput = RequestInfo | URL | Response | BufferSource | WebAssembl
 export interface InitOutput {
     readonly memory: WebAssembly.Memory;
     readonly absent_link_is_journal: (a: number, b: number, c: number, d: number, e: number, f: number) => number;
-    readonly asset_rel_path: (a: number, b: number) => [number, number];
+    readonly attachment_path: (a: number, b: number) => [number, number];
     readonly block_may_have_logbook: (a: number, b: number) => number;
     readonly block_reference_names: (a: number, b: number, c: number) => [number, number];
     readonly canonical_group_field: (a: number, b: number) => [number, number];
     readonly comment_quote: (a: number, b: number) => [number, number, number, number];
     readonly decode_page_name: (a: number, b: number, c: number) => [number, number];
+    readonly decoded_link_path: (a: number, b: number, c: number) => any;
     readonly edit_block_regions_json: (a: number, b: number, c: number, d: any, e: any) => [number, number, number, number];
     readonly editor_offset_of_raw: (a: number, b: number, c: number, d: any, e: number, f: number, g: number) => [number, number, number];
     readonly editor_text_join: (a: number, b: number, c: number, d: number, e: number, f: any, g: number, h: number, i: number, j: number) => [number, number, number, number];
@@ -422,6 +435,7 @@ export interface InitOutput {
     readonly parse_inline_json: (a: number, b: number, c: number) => [number, number];
     readonly parse_journal_format_json: (a: number, b: number, c: number, d: number) => [number, number];
     readonly pdf_asset_file: (a: number, b: number) => [number, number];
+    readonly pdf_asset_file_decoded: (a: number, b: number, c: number, d: number) => [number, number];
     readonly pdf_asset_key: (a: number, b: number, c: number) => [number, number];
     readonly property_line_json: (a: number, b: number) => [number, number];
     readonly query_edn_json: (a: number, b: number, c: number, d: number, e: number, f: number) => [number, number];

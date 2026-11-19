@@ -19,14 +19,14 @@ function __tine_raw_absent_link_is_journal(name, file_format, title_format) {
 }
 
 /**
- * Assets-relative link target; O(URL bytes), no parse or filesystem I/O.
- * @param {string} url
+ * Attachment target from a decoded slash-normalized path. O(path bytes), no I/O.
+ * @param {string} path
  * @returns {string | undefined}
  */
-function __tine_raw_asset_rel_path(url) {
-    const ptr0 = passStringToWasm0(url, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+function __tine_raw_attachment_path(path) {
+    const ptr0 = passStringToWasm0(path, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
     const len0 = WASM_VECTOR_LEN;
-    const ret = wasm.asset_rel_path(ptr0, len0);
+    const ret = wasm.attachment_path(ptr0, len0);
     let v2;
     if (ret[0] !== 0) {
         v2 = getStringFromWasm0(ret[0], ret[1]).slice();
@@ -122,6 +122,21 @@ function __tine_raw_decode_page_name(stem, legacy) {
     } finally {
         wasm.__wbindgen_free(deferred2_0, deferred2_1, 1);
     }
+}
+
+/**
+ * Decode and normalize a local destination with the writer's escape rules.
+ * Returns the path alone, or [path, attachment, candidate PDF identity].
+ * File URL shorthand requests the path alone. O(input bytes), no I/O.
+ * @param {string} dest
+ * @param {boolean} file
+ * @returns {any}
+ */
+function __tine_raw_decoded_link_path(dest, file) {
+    const ptr0 = passStringToWasm0(dest, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+    const len0 = WASM_VECTOR_LEN;
+    const ret = wasm.decoded_link_path(ptr0, len0, file);
+    return ret;
 }
 
 /**
@@ -986,6 +1001,29 @@ function __tine_raw_pdf_asset_file(path) {
 }
 
 /**
+ * PDF asset identity from a decoded slash-normalized path. O(path bytes), no I/O.
+ * @param {string} path
+ * @param {string | null} [attachment]
+ * @returns {string}
+ */
+function __tine_raw_pdf_asset_file_decoded(path, attachment) {
+    let deferred3_0;
+    let deferred3_1;
+    try {
+        const ptr0 = passStringToWasm0(path, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+        const len0 = WASM_VECTOR_LEN;
+        var ptr1 = isLikeNone(attachment) ? 0 : passStringToWasm0(attachment, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+        var len1 = WASM_VECTOR_LEN;
+        const ret = wasm.pdf_asset_file_decoded(ptr0, len0, ptr1, len1);
+        deferred3_0 = ret[0];
+        deferred3_1 = ret[1];
+        return getStringFromWasm0(ret[0], ret[1]);
+    } finally {
+        wasm.__wbindgen_free(deferred3_0, deferred3_1, 1);
+    }
+}
+
+/**
  * PDF identity with the existing preview/native suffix policy. O(filename bytes).
  * @param {string} filename
  * @param {boolean} preview
@@ -1447,6 +1485,10 @@ function __wbg_get_imports() {
             const ret = new Date();
             return ret;
         },
+        __wbg_of_b0cd2e09b31a9684: function(arg0, arg1, arg2) {
+            const ret = Array.of(arg0, arg1, arg2);
+            return ret;
+        },
         __wbindgen_cast_0000000000000001: function(arg0, arg1) {
             // Cast intrinsic for `Ref(String) -> Externref`.
             const ret = getStringFromWasm0(arg0, arg1);
@@ -1743,12 +1785,13 @@ function __tineGuard(name, raw) { // Tine trap isolation: one guarded export per
   };
 }
 export const absent_link_is_journal = __tineGuard("absent_link_is_journal", __tine_raw_absent_link_is_journal);
-export const asset_rel_path = __tineGuard("asset_rel_path", __tine_raw_asset_rel_path);
+export const attachment_path = __tineGuard("attachment_path", __tine_raw_attachment_path);
 export const block_may_have_logbook = __tineGuard("block_may_have_logbook", __tine_raw_block_may_have_logbook);
 export const block_reference_names = __tineGuard("block_reference_names", __tine_raw_block_reference_names);
 export const canonical_group_field = __tineGuard("canonical_group_field", __tine_raw_canonical_group_field);
 export const comment_quote = __tineGuard("comment_quote", __tine_raw_comment_quote);
 export const decode_page_name = __tineGuard("decode_page_name", __tine_raw_decode_page_name);
+export const decoded_link_path = __tineGuard("decoded_link_path", __tine_raw_decoded_link_path);
 export const edit_block_regions_json = __tineGuard("edit_block_regions_json", __tine_raw_edit_block_regions_json);
 export const editor_offset_of_raw = __tineGuard("editor_offset_of_raw", __tine_raw_editor_offset_of_raw);
 export const editor_text_join = __tineGuard("editor_text_join", __tine_raw_editor_text_join);
@@ -1790,6 +1833,7 @@ export const parse_document_json = __tineGuard("parse_document_json", __tine_raw
 export const parse_inline_json = __tineGuard("parse_inline_json", __tine_raw_parse_inline_json);
 export const parse_journal_format_json = __tineGuard("parse_journal_format_json", __tine_raw_parse_journal_format_json);
 export const pdf_asset_file = __tineGuard("pdf_asset_file", __tine_raw_pdf_asset_file);
+export const pdf_asset_file_decoded = __tineGuard("pdf_asset_file_decoded", __tine_raw_pdf_asset_file_decoded);
 export const pdf_asset_key = __tineGuard("pdf_asset_key", __tine_raw_pdf_asset_key);
 export const property_line_json = __tineGuard("property_line_json", __tine_raw_property_line_json);
 export const query_edn_json = __tineGuard("query_edn_json", __tine_raw_query_edn_json);
