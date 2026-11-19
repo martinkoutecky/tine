@@ -114,16 +114,22 @@ export function carryUnfinished(
 // Move a day's notes to a page (D-20261111-CMDF, D-20261115-HELP)
 // ---------------------------------------------------------------------------
 
-/** The blocks of `day` that a day move takes: the children of its page header
- *  root (the header itself stays), then every other root; none when they are
- *  all empty (nothing to move). O(roots + header children). */
-export function dayMoveBlocks(day: string): string[] {
+/** The day-transfer plan, the one answer to "which root of `day` is its
+ *  retained header" and "which current blocks move": the header's current
+ *  children (the header itself stays), then every other root; no blocks when
+ *  they are all empty (nothing to move). `header`: the header the caller
+ *  decided earlier, before a helper edit could empty it so that
+ *  {@link pageHeaderRoot} no longer sees it; omitted, it is decided now. It is
+ *  the header only while it is the day's first root. O(roots + header children). */
+export type DayMovePlan = { header: string | null; blocks: string[] };
+export function dayMovePlan(day: string, header?: string | null): DayMovePlan {
   const page = pageByName(day);
-  if (!page) return [];
-  const header = pageHeaderRoot(page);
-  const roots = [...(header?.children ?? []), ...page.roots.filter((id) => id !== header?.id)];
+  if (!page) return { header: null, blocks: [] };
+  const id = header === undefined ? pageHeaderRoot(page)?.id : header;
+  const kept = id && page.roots[0] === id ? id : null;
+  const blocks = [...(kept ? doc.byId[kept].children : []), ...page.roots.filter((r) => r !== kept)];
   const empty = (id: string): boolean => doc.byId[id]?.raw.trim() === "" && doc.byId[id].children.every(empty);
-  return roots.every(empty) ? [] : roots;
+  return { header: kept, blocks: blocks.every(empty) ? [] : blocks };
 }
 
 /** A page property value a helper took from the day before the move
@@ -131,24 +137,26 @@ export function dayMoveBlocks(day: string): string[] {
  *  helper's `after` (other typing stays; D-20261111-MA, MOA). */
 export type PropertyPutBack = { key: string; before: string; after: string | null };
 
-/** Move the day's blocks ({@link dayMoveBlocks}) after the last block of
- *  `page` (blocks under the header promoted to roots) and leave `stub` as the
- *  day's last block; the day keeps its header, with `putBack`'s value restored
- *  in it. One undo step, and one transfer through the page host: the day's
- *  and the page's new text go to disk as one guarded two-page operation, a
- *  refused one is restored (carry's `persistTransfer`), the put-back with it.
- *  A page with no file gets it from that operation. Both pages must be loaded
- *  and writable; an empty placeholder block of `page` is dropped.
- *  `persisted`: the host applied it. O(blocks of both pages). */
-export function moveDayBlocks(day: string, page: string, stub: string, putBack?: PropertyPutBack): { moved: number; persisted: Promise<boolean> } {
+/** Move the day's blocks ({@link dayMovePlan} with `header`) after the last
+ *  block of `page` (the header's children promoted to roots) and leave `stub`
+ *  as the day's last block; the day keeps its header node, with `putBack`'s
+ *  value restored in it. One undo step, and one transfer through the page
+ *  host: the day's and the page's new text go to disk as one guarded two-page
+ *  operation, a refused one is restored (carry's `persistTransfer`), the
+ *  put-back with it. A page with no file gets it from that operation. Both
+ *  pages must be loaded and writable; an empty placeholder block of `page` is
+ *  dropped. `persisted`: the host applied it. O(blocks of both pages): each
+ *  parent's moved children are detached once. */
+export function moveDayBlocks(day: string, page: string, stub: string, header?: string | null, putBack?: PropertyPutBack): { moved: number; persisted: Promise<boolean> } {
   const none = { moved: 0, persisted: Promise.resolve(false) };
-  const ids = dayMoveBlocks(day);
+  const plan = dayMovePlan(day, header);
+  const ids = plan.blocks;
   if (day === page || !ids.length || !pageWritable(day) || !pageWritable(page)) return none;
   if (refuseConflictedMove([day, page])) return none;
   pushUndo("move-day", [day, page]);
   const before = capturePages([day, page]);
   const holds = putBack && (readPageProperty(day, putBack.key) ?? "").trim() === (putBack.after ?? "").trim();
-  const restore = holds ? pagePropertyEdit(day, putBack.key, putBack.before) : null;
+  const restore = holds ? pagePropertyEdit(day, putBack.key, putBack.before, plan.header ? doc.byId[plan.header] : null) : null;
   setDoc(
     produce((s) => {
       const from = s.pages.find((p) => p.name === day);
@@ -162,9 +170,9 @@ export function moveDayBlocks(day: string, page: string, stub: string, putBack?:
           to.roots = [];
         }
       }
+      // Every current child of the header moves, and every other root.
+      if (plan.header) s.byId[plan.header].children = [];
       for (const id of ids) {
-        const parent = s.byId[id].parent;
-        if (parent) s.byId[parent].children = s.byId[parent].children.filter((x) => x !== id);
         s.byId[id].parent = null;
         reassignPage(s, id, page);
       }

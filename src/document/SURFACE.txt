@@ -60,7 +60,7 @@ consumedAnswer  # why: backup restore waits on the host answer watermark; batch-
 createPage
 cycleSelectionTasks
 datedThreadRoot  # why: dated margin replies are messages with outline bodies (MC5/MC6, #891); batch-mc-messages-1111
-dayMoveBlocks  # why: the day move moves a day's blocks to a page in one two-page transfer and keeps its header (D-20261111-CMDF, D-20261115-HELP); batch-cm-helpers-day-move
+dayMovePlan  # why: the one day-transfer planner: which root is the retained header (decided before the alias release) and which blocks move (D-20261111-CMDF, D-20261115-HELP); batch-cm-helpers-day-move
 deleteBlock
 deletePage
 deleteSelection

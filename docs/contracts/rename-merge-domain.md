@@ -173,12 +173,16 @@ notes to the typed name's page with one cross-page block move, a guarded
 two-page host operation. The offer names the receiving file (`path`: the
 existing page's, or the file `WholeGraph::proposed_file` says a new page is
 created as), and the window holds a new page in that file's format. What
-moves: every root but the page-header block, and the header's children,
-promoted to roots at the destination; the header stays with the day, which
-gains one `Moved to [[name]]` block. For the day's own alias the helper edit
-releases the alias first; the move itself puts back only that value, and only
-while the line still reads the helper's value, inside the same operation, so
-other typing in the header survives. After the confirmation the receiving page
+moves: one planner (`dayMovePlan`) answers which root is the retained header
+and which blocks move: every root but the page-header block, and the header's
+current children, promoted to roots at the destination; the header node stays
+with the day, which gains one `Moved to [[name]]` block. The header is decided
+once, before any helper edit, so releasing an alias that was the header's only
+line does not turn the header into an ordinary block that moves. For the day's
+own alias the helper edit releases the alias first; the move itself puts back
+only that value, into that header node, and only while the line still reads
+the helper's value, inside the same operation, so other typing in the header
+survives. Each parent's moved children are detached once. After the confirmation the receiving page
 must be the file the dialog named, or still have no file, by the store's name
 answer (`resolve`); otherwise nothing moves and the rename is asked again.
 Cost: one read of the destination when not loaded, one name resolution, one

@@ -137,4 +137,4 @@ export { extendFeedForScroll, isBlockMoving, moveBlock, moveBlocksRelative, move
 export { installPageIdentityNavigation, rekeyPageIdentityByPath } from "./workingSet";
 export { pageInstanceGeneration } from "./instance";
 export { retireFeedPages } from "./workingSet";
-export { carryUnfinished, dayMoveBlocks, moveDayBlocks } from "./edits/carry";
+export { carryUnfinished, dayMovePlan, moveDayBlocks } from "./edits/carry";

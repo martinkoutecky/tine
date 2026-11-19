@@ -1,7 +1,7 @@
 import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 import { backend } from "./backend";
 import { renameOrMergePage } from "./graph";
-import { ensurePageLoaded, flushAll, loadFeed, pageByName, resetStore, setPageProperty } from "./document";
+import { ensurePageLoaded, flushAll, loadFeed, moveDayBlocks, pageByName, resetStore, setPageProperty } from "./document";
 import { bindTestHost } from "./document/host/wiring.test.support";
 import { installDiskHost } from "./diskHost.test.support";
 import { initParser } from "./render/parse";
@@ -372,6 +372,71 @@ describe("renaming a day moves its notes to a page", () => {
     expect(dayText).toContain("mood:: calm");
     expect(dayText).toContain("Moved to [[Trip]]");
     expect(dayText).not.toContain("nested note");
+  });
+
+  // Round 3 (merge review 1b45a4f1f), finding 1: the retained header is decided
+  // before the alias release. A first-root header holding only the day's own
+  // alias is emptied by the release; its notes still become the page's roots
+  // (not nested, so not hidden under a collapsed blank bullet), and the header
+  // stays on the day with the alias back. The reviewer's 8 probes (collapsed /
+  // expanded x one / two children x with / without ordinary roots), then the
+  // siblings: a header with another property, and a Markdown preamble header.
+  const headed = (raw: string, collapsed: boolean, notes: string[], after: string[]) =>
+    page(DAY, DAY_FILE, [{ ...block(raw), collapsed, children: notes.map(block) }, ...after.map(block)]);
+  it.each([
+    ...[true, false].flatMap((collapsed) => [["one child"], ["one child", "two child"]].flatMap((notes) => [[], ["day note"]].map((after) =>
+      [`an alias-only first-root header (collapsed: ${collapsed}, ${notes.length} children, ${after.length} other roots)`,
+        () => headed("alias:: Launch day", collapsed, notes, after), [...notes, ...after]] as const))),
+    ["a first-root header with another property", () => headed("alias:: Launch day\nmood:: calm", true, ["one child"], ["day note"]), ["one child", "day note"]],
+    ["an alias-only Markdown preamble", () => dayPage("alias:: Launch day"), ["day note", "TODO call"]],
+    ["a Markdown preamble with another property", () => dayPage("alias:: Launch day\nmood:: calm"), ["day note", "TODO call"]],
+  ] as const)("to the day's own alias with %s: the notes become the page's roots, the header stays", async (_, make, moved) => {
+    const day = make();
+    loadFeed([day]);
+    await bindDisk([day]);
+    absent();
+    offer(dayMove({ name: "Launch day", path: "pages/Launch day.md", release }));
+    const done = renameOrMergePage(DAY, "Launch day", target);
+    await answer(true);
+    expect(await done).toEqual({ moved: "Launch day", kind: "page" });
+    expect(await flushAll()).toBe(true);
+    expect(saved("pages/Launch day.md")).toEqual(moved);
+    expect(files.get("pages/Launch day.md")!.blocks.every((b) => b.children.length === 0)).toBe(true);
+    const dayFile = files.get(DAY_FILE)!;
+    expect(dayFile.blocks.every((b) => b.raw.trim() !== "" && b.children.length === 0)).toBe(true);
+    const dayText = text(DAY_FILE);
+    expect(dayText.split("alias:: Launch day")).toHaveLength(2); // back once, in the header it left
+    expect(dayText).toContain("Moved to [[Launch day]]");
+    for (const note of moved) expect(dayText).not.toContain(note);
+    if (String(day.pre_block ?? day.blocks[0].raw).includes("mood::")) expect(dayText).toContain("mood:: calm");
+  });
+
+  // Finding 2: detaching the header's children visits each once. The cost of
+  // the move's array work, counted as elements visited by the array methods
+  // the move calls, doubles (not quadruples) when the children double.
+  it("moving a header's children costs work linear in their number (128 / 256 / 512)", async () => {
+    const visits = async (k: number) => {
+      resetStore();
+      const notes = Array.from({ length: k }, (_, i) => `note ${i}`);
+      const day = headed("mood:: calm", false, notes, []), trip = page("Trip", "pages/Trip.md", [block("trip plan")]);
+      loadFeed([day, trip]);
+      await bindDisk([day, trip]);
+      const methods = ["filter", "map", "forEach", "some", "every", "find", "findIndex", "indexOf", "includes", "splice", "reduce", "flatMap"] as const;
+      const proto = Array.prototype as unknown as Record<string, (...args: unknown[]) => unknown>;
+      const originals = methods.map((m) => proto[m]);
+      let count = 0;
+      methods.forEach((m, i) => { proto[m] = function (this: unknown[], ...args: unknown[]) { count += this.length; return originals[i].apply(this, args); }; });
+      let moved: ReturnType<typeof moveDayBlocks>;
+      try { moved = moveDayBlocks(DAY, "Trip", "Moved to [[Trip]]"); } finally { methods.forEach((m, i) => { proto[m] = originals[i]; }); }
+      expect(moved.moved).toBe(k);
+      expect(await moved.persisted).toBe(true);
+      expect(await flushAll()).toBe(true);
+      expect(saved("pages/Trip.md")).toEqual(["trip plan", ...notes]);
+      return count;
+    };
+    const [a, b, c] = [await visits(128), await visits(256), await visits(512)];
+    expect(b / a).toBeLessThan(2.5);
+    expect(c / b).toBeLessThan(2.5);
   });
 
   // Follow-up (finding 6): the move's operations, counted (PC-3). The lower

@@ -1,5 +1,5 @@
 import { backend } from "./backend";
-import { admitPageFile, admitRead, dayMoveBlocks, emptyPage, ensurePageLoaded, flushPage, formatOfFile, moveDayBlocks, pageByName, pinPageNearViewport, readPageProperty, reportPageLoadRefusal, setPageProperty } from "./document";
+import { admitPageFile, admitRead, dayMovePlan, emptyPage, ensurePageLoaded, flushPage, formatOfFile, moveDayBlocks, pageByName, pinPageNearViewport, readPageProperty, reportPageLoadRefusal, setPageProperty } from "./document";
 import { msg } from "./i18n";
 import { bindingOwner, readOwned, writeOwned, type Owner } from "./owned";
 import { askContested, askDayMove } from "./renameHelperDialogs";
@@ -103,11 +103,13 @@ async function admit(owner: Owner, name: string, kind: PageKind, file?: string):
 export async function moveDayNotes(day: string, offer: DayMoveOffer): Promise<{ moved: string; kind: PageKind } | "again" | null> {
   const owner = bindingOwner();
   if (!(await admit(owner, day, "journal")) || !owner()) return null;
-  if (!dayMoveBlocks(day).length) {
+  if (!dayMovePlan(day).blocks.length) {
     pushToast(msg("rename-day-nothing", { day }), "info");
     return null;
   }
   if (!(await askDayMove(day, offer.name, offer)) || !owner()) return null;
+  // The retained header is decided here, before the alias release can empty it.
+  const header = dayMovePlan(day).header;
   let applied: AppliedEdits | null = null;
   if (offer.release) {
     const made = await applyHelperEdits([offer.release]);
@@ -137,7 +139,7 @@ export async function moveDayNotes(day: string, offer: DayMoveOffer): Promise<{ 
       if (owner()) pushToast(msg("rename-refused-different-formats", { source: offer.day.path ?? day, target: offer.into?.path ?? name }), "error");
       return null;
     }
-    const moved = moveDayBlocks(day, name, `Moved to [[${name}]]`, offer.release ?? undefined);
+    const moved = moveDayBlocks(day, name, `Moved to [[${name}]]`, header, offer.release ?? undefined);
     if (!moved.moved || !(await moved.persisted)) {
       await putBack();
       if (!moved.moved && owner()) pushToast(msg("rename-day-not-moved", { day }), "error");

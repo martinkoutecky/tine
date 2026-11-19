@@ -111,8 +111,7 @@ export function pageHeaderRoot(page: ReadonlyFeedPage): Node | null {
  *  whole source: the pre-block then holds only the post-header remainder.
  *  `exclude` names a root the caller shows as an ordinary block instead. */
 type PropertyPart = { kind: "preBlock"; text: string } | { kind: "root"; id: string; text: string };
-function pagePropertyParts(page: ReadonlyFeedPage, exclude: string | null): PropertyPart[] {
-  const first = pageHeaderRoot(page);
+function pagePropertyParts(page: ReadonlyFeedPage, exclude: string | null, first: Node | null = pageHeaderRoot(page)): PropertyPart[] {
   const root = first && first.id !== exclude ? first : null;
   // A header draft's leading blank lines (Enter at its start) are not part of
   // it, as the save drops them (`canonicalPageHeaderDraft`, GH #210 F1).
@@ -194,12 +193,14 @@ export function setPageProperty(pageName: string, key: string, value: string | n
 /** {@link setPageProperty}'s text change alone, against the page as it stands
  *  now, for a caller that applies it with `setDoc(produce(edit))` in the same
  *  tick inside its own edit (no undo step, dirty mark or save of its own).
+ *  `header`: the page-header root a caller decided earlier (the day move's
+ *  plan, which an edit since may have emptied), instead of {@link pageHeaderRoot} now.
  *  Null: no change, or the page is missing or read-only. O(property text). */
-export function pagePropertyEdit(pageName: string, key: string, value: string | null): ((s: DocState) => void) | null {
+export function pagePropertyEdit(pageName: string, key: string, value: string | null, header?: Node | null): ((s: DocState) => void) | null {
   const idx = doc.pages.findIndex((x) => x.name === pageName);
   if (idx < 0 || !pageWritable(pageName)) return null;
   const page = doc.pages[idx];
-  const parts = pagePropertyParts(page, null);
+  const parts = pagePropertyParts(page, null, header);
   const next = pagePartsWithProperty(parts.map((part) => part.text), page.format, key, value);
   if (next.every((text, i) => text === parts[i].text)) return null;
   return (s) => {
