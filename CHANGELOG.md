@@ -8,6 +8,8 @@ The format follows [Keep a Changelog](https://keepachangelog.com/); versions use
 
 ## [Unreleased]
 
+## [0.9.1] - 2026-11-19
+
 ### Fixed
 
 - Mouse Back and Forward buttons work again in Windows graph windows and move one page per press (#948).
@@ -7535,7 +7537,8 @@ takes over your graph.
 - macOS and Windows installers are currently **unsigned** — on macOS right-click →
   Open; on Windows choose *More info → Run anyway*.
 
-[Unreleased]: https://github.com/martinkoutecky/tine/compare/v0.9.0-beta.1...HEAD
+[Unreleased]: https://github.com/martinkoutecky/tine/compare/v0.9.1...HEAD
+[0.9.1]: https://github.com/martinkoutecky/tine/compare/v0.9.0...v0.9.1
 [0.9.0-beta.1]: https://github.com/martinkoutecky/tine/compare/v0.8.2...v0.9.0-beta.1
 [0.8.2]: https://github.com/martinkoutecky/tine/compare/v0.8.1...v0.8.2
 [0.8.1]: https://github.com/martinkoutecky/tine/compare/v0.8.0...v0.8.1

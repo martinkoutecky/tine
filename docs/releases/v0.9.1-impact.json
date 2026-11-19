@@ -1,0 +1,99 @@
+{
+  "schemaVersion": 1,
+  "version": "0.9.1",
+  "baseTag": "v0.9.0",
+  "focusedAudit": {
+    "required": false,
+    "reason": "Martin authorized this stable patch release on 2026-11-19 (D-20261119-CUT091). The release checklist reserves audits for maintainer requests."
+  },
+  "items": [
+    {
+      "section": "Fixed",
+      "text": "Mouse Back and Forward buttons work again in Windows graph windows and move one page per press (#948).",
+      "userVisible": true,
+      "regressions": ["UI-GH948-WINDOWS-MOUSE-HISTORY"],
+      "regressionEvidence": {
+        "status": "current",
+        "reason": "Keybinding tests cover one page per press. The Windows smoke journey uses synthetic XBUTTON input. A physical Windows mouse remains unverified under D-20261119-CUT091.",
+        "refs": ["src/keybindings.test.ts", "src/mouseHistory.test.ts", "scripts/e2e-windows-smoke.mjs"]
+      },
+      "docs": {"status": "not-applicable", "reason": "Restores existing history navigation with the same mouse buttons.", "refs": []},
+      "website": {"status": "not-applicable", "reason": "The fix restores input for existing history navigation.", "refs": []},
+      "blog": {"status": "not-applicable", "reason": "Covered in the patch release notes.", "refs": []}
+    },
+    {
+      "section": "Fixed",
+      "text": "Quick share links are offered in every build of Tine, including the Flatpak and builds from source. They used to show \"Coming soon\" in any build made outside Tine's release workflow. A release is now refused instead while tine.page cannot open its links (reported by Dieterbe in discussion #968; REG-QS-ATTEST-STORES-09).",
+      "userVisible": true,
+      "regressions": ["REG-QS-ATTEST-STORES-09"],
+      "regressionEvidence": {
+        "status": "current",
+        "reason": "The Share dialog and Sharing settings tests cover link availability. The preflight test covers the required viewer check.",
+        "refs": ["src/components/ShareDialog.test.tsx", "src/components/QuickShareSettings.test.tsx", "scripts/test-quick-share-viewer-preflight.mjs"]
+      },
+      "docs": {
+        "status": "update",
+        "reason": "The quick-share contract now describes link availability in every build and the release's viewer check. The Share pages Guide still describes the former Coming soon message in the app and on the web. Both copies need the corresponding correction.",
+        "refs": ["docs/contracts/quick-share.md", "crates/tine-core/src/templates/share-pages.md", "website/guide/features-share-pages.html"]
+      },
+      "website": {"status": "current", "reason": "The homepage's description of link sharing still applies.", "refs": ["website/index.html"]},
+      "blog": {"status": "not-applicable", "reason": "Covered in the patch release notes.", "refs": []}
+    },
+    {
+      "section": "Fixed",
+      "text": "On Windows, a graph on a file system without file IDs (a WSL share such as `\\\\wsl.localhost`, a FAT32 or exFAT drive, a Samba share) can be saved again; since 0.9.0 every save failed with \"The request is not supported (os error 50)\" (reported by redstreet in #973; REG-973-WINDOWS-NO-FILE-ID).",
+      "userVisible": true,
+      "regressions": ["REG-973-WINDOWS-NO-FILE-ID"],
+      "regressionEvidence": {
+        "status": "current",
+        "reason": "The Windows storage test simulates a file system without file IDs and covers saving and detection of a moved graph folder. A real WSL share remains unverified.",
+        "refs": ["crates/tine-store/src/root_binding.rs"]
+      },
+      "docs": {"status": "update", "reason": "The storage contract records the Windows graph-root identity fallback.", "refs": ["docs/storage-contract.md"]},
+      "website": {"status": "not-applicable", "reason": "Restores saves for existing Windows graph locations.", "refs": []},
+      "blog": {"status": "not-applicable", "reason": "Covered in the patch release notes.", "refs": []}
+    },
+    {
+      "section": "Fixed",
+      "text": "Moving or reindenting a block carries its children's indentation with it, including multiline bodies and drawers ([discussion #960](https://github.com/martinkoutecky/tine/discussions/960)).",
+      "userVisible": true,
+      "regressions": ["REG-CLI-MOVE-SUBTREE-INDENT-960"],
+      "regressionEvidence": {
+        "status": "current",
+        "reason": "Owner, storage and Linux CLI cases cover the saved subtree indentation, including multiline bodies and drawers. Windows and macOS runtime behavior remains unverified.",
+        "refs": ["src-tauri/src/owner/owner_tests/move_indent_tests.rs", "crates/tine-store/tests/save_layout_retention.rs", "scripts/cli-move-indent-acceptance.mjs"]
+      },
+      "docs": {"status": "update", "reason": "The CLI output contract describes how a move retains indentation within the moved subtree.", "refs": ["docs/contracts/cli-output.md"]},
+      "website": {"status": "not-applicable", "reason": "The existing move and indent commands retain their interface.", "refs": []},
+      "blog": {"status": "not-applicable", "reason": "Covered in the patch release notes.", "refs": []}
+    },
+    {
+      "section": "Fixed",
+      "text": "Distribution packagers can build the PDF decoder with their own Emscripten installation using `TINE_PDFJS_EMCC` (#187, #976).",
+      "userVisible": true,
+      "regressions": ["REG-GH187-GH976-PACKAGER-EMSCRIPTEN"],
+      "regressionEvidence": {
+        "status": "current",
+        "reason": "Build tests cover the compiler override. The decoder proof compares JPEG 2000 output pixels from the pinned and packager compilers.",
+        "refs": ["src/pdfjsOpenjpegBuild.test.ts"]
+      },
+      "docs": {"status": "update", "reason": "The PDF decoder build notes document the packager override.", "refs": ["vendor/pdfjs-openjpeg/README.md"]},
+      "website": {"status": "not-applicable", "reason": "The option is for building distribution packages.", "refs": []},
+      "blog": {"status": "not-applicable", "reason": "Covered in the patch release notes.", "refs": []}
+    },
+    {
+      "section": "Fixed",
+      "text": "DOMPurify is updated to 3.4.18 and seroval to 1.6.12, which close published advisories. Tine used none of the affected DOMPurify modes, so no known exploit applied (reported by Dieterbe in #982).",
+      "userVisible": true,
+      "regressions": [],
+      "regressionEvidence": {
+        "status": "not-applicable",
+        "reason": "The dependency-only update uses the resolved package versions as evidence. The fix commit contains no Tine runtime code change.",
+        "refs": ["package.json", "package-lock.json"]
+      },
+      "docs": {"status": "not-applicable", "reason": "The dependency update leaves the documented sanitization interface and user workflow intact.", "refs": []},
+      "website": {"status": "not-applicable", "reason": "The dependency update changes no website feature descriptions.", "refs": []},
+      "blog": {"status": "not-applicable", "reason": "Covered in the patch release notes.", "refs": []}
+    }
+  ]
+}
