@@ -258,6 +258,26 @@ describe("detectTrigger", () => {
     });
   });
 
+  it.each([
+    ["", "[[", "page", "pro", "]]"],
+    ["", "[[", "page", "pro", ""],
+    ["other, ", "[[", "page", "pro", ""],
+    ["", "((", "block", "pro", "))"],
+    ["", "#", "tag", "pro", ""],
+  ])("prefers reference search in a property value with prefix %j and opener %s", (prefix, opener, kind, query, closer) => {
+    const before = `Body\nproject:: ${prefix}`;
+    const end = before.length + opener.length + query.length;
+    const raw = `${before}${opener}${query}${closer}`;
+    expect(detectTrigger(raw, end)).toEqual({ kind, query, start: before.length, end });
+  });
+
+  it("ends page search after the closing brackets and offers ordinary property values again", () => {
+    const raw = "project:: [[Programming]] more";
+    expect(detectTrigger(raw, raw.length)).toEqual({
+      kind: "property-value", property: "project", query: "[[Programming]] more", start: 10, end: raw.length,
+    });
+  });
+
   it("excludes parser-rejected property lookalikes and Org drawers from value search", () => {
     for (const raw of ["prose alpha:: ", "alpha::one", "  alpha:: one", "[[alpha]]:: one", "```\nalpha:: one", "#alpha:: one"]) {
       expect(detectTrigger(raw, raw.length)?.kind).not.toBe("property-value");
