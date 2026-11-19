@@ -53,7 +53,8 @@ import { mediaEditorForAsset } from "../mediaEditors";
 import { acquireMediaBlobFallback, type MediaBlobLease } from "../mediaBlobFallback";
 import { resolveMediaEditorCommand } from "../mediaEditorSettings";
 import { refreshAssetOnReturn } from "../assetRefresh";
-import { isQuickShareViewer } from "../publishedBackend";
+import { isPublishedExport, isQuickShareViewer } from "../publishedBackend";
+import { navigableHref } from "../linkSchemePolicy";
 import { ShareMedia } from "../quickShare/ShareMedia";
 import { CopyButton } from "./CopyButton";
 export { CopyButton } from "./CopyButton";
@@ -503,7 +504,7 @@ function renderLink(
     if (k === "video" || k === "audio")
       return <MediaEmbed url={dest} kind={k} alt="" blockId={blockId} token={token} spanAttrs={spanAttrs} />;
   }
-  const unsafeHref = /^(?:javascript|vbscript|data):/i.test(dest.replace(/[\u0000-\u0020]/g, ""));
+  const unsafeHref = !navigableHref(dest, isPublishedExport());
   return (
     <span class="link-copy-wrap">
       <a
