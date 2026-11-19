@@ -9,6 +9,7 @@ fs.mkdirSync(out, { recursive: true });
 const port = 5341;
 const server = spawn(process.execPath, ["node_modules/vite/bin/vite.js", "--port", String(port), "--strictPort"], { stdio: "ignore" });
 let browser;
+const gaps = [];
 try {
   for (let i = 0; i < 100; i++) {
     try { if ((await fetch(`http://localhost:${port}/scripts/harness/query-breadcrumbs.html`)).ok) break; } catch {}
@@ -19,7 +20,8 @@ try {
     const page = await browser.newPage({ viewport: { width, height: 900 }, hasTouch: width === 390 });
     await page.goto(`http://localhost:${port}/scripts/harness/query-breadcrumbs.html`);
     await page.locator('.query-group [data-block-id="task"]').waitFor();
-    await page.locator(".ref-breadcrumb").waitFor();
+    await page.locator(".ref-breadcrumb").first().waitFor();
+    await page.locator('.query-group [data-block-id="other"]').waitFor();
     await page.screenshot({ path: `${out}/on-${width}.png`, fullPage: true });
     await page.getByLabel("Query actions").click();
     await page.getByRole("button", { name: "View", exact: true }).click();
@@ -29,18 +31,26 @@ try {
     await page.screenshot({ path: `${out}/switch-${width}.png`, fullPage: true });
     await checkbox.uncheck();
     await page.waitForFunction(() => window.breadcrumbSource().includes("tine.breadcrumbs:: false"));
-    await page.locator(".ref-breadcrumb, .query-page, .query-crumb").waitFor({ state: "detached" });
-    assert.match(await page.locator(".query-group").innerText(), /Buy apples/);
+    await page.locator(".ref-breadcrumb, .query-page, .query-crumb").first().waitFor({ state: "detached" });
+    assert.match(await page.locator(".query-group").first().innerText(), /Buy apples/);
     await page.getByRole("button", { name: "Done", exact: true }).click();
     await page.screenshot({ path: `${out}/off-${width}.png`, fullPage: true });
+    gaps.push(await page.evaluate(() => {
+      const box = id => document.querySelector(`.query-group [data-block-id="${id}"]`).getBoundingClientRect();
+      return { width: innerWidth, samePage: box("next").top - box("task").bottom, acrossPages: box("other").top - box("next").bottom };
+    }));
     await page.getByLabel("Query actions").click();
     await page.getByRole("button", { name: "View", exact: true }).click();
     await checkbox.check();
     await page.waitForFunction(() => !window.breadcrumbSource().includes("tine.breadcrumbs"));
-    await page.locator(".ref-breadcrumb").waitFor();
+    await page.locator(".ref-breadcrumb").first().waitFor();
     await page.getByRole("button", { name: "table", exact: true }).click();
     await checkbox.waitFor({ state: "detached" });
     await page.close();
+  }
+  console.log(JSON.stringify(gaps));
+  for (const { width, samePage, acrossPages } of gaps) {
+    assert.ok(Math.abs(samePage - acrossPages) < 1, `${width}px: row gaps ${samePage}px within a page, ${acrossPages}px across pages`);
   }
   console.log("PASS routed simple query: context, property toggle, restore, table; desktop and mobile widths");
 } finally { await browser?.close(); server.kill(); }
