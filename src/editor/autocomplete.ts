@@ -3,17 +3,15 @@ import { activeLocale, msg, render, t, type Msg } from "../i18n";
 // trigger at the caret, and apply a chosen completion. No DOM — unit-testable.
 
 import { TEMPLATE_VARS } from "./templateVars";
-import { isBareTagPrefix, tagRef } from "../tags";
+import { tagRef } from "../tags";
 import { propertyKeyNorm } from "../propertyKey";
 import { QUERY_MACRO_SCAFFOLD, QUERY_MACRO_SCAFFOLD_CARET } from "./queryMacroName";
 import { searchFold } from "./searchFold";
 import { pageIdentityKey } from "../pageIdentity";
 import { isEditablePropertyKey, propertyValuePosition } from "./properties";
 import { codeFences, lineStartsInFence } from "./fences";
-import type { Format, Inline } from "../render/ast";
-import { parserReady } from "../render/parse";
-import { utf16ToUtf8ByteOffset } from "../render/spans";
-import { parse_inline_json } from "../render/wasm/lsdoc_wasm.js";
+import type { Format } from "../render/ast";
+import { referenceCompletion } from "./referenceCompletion";
 import type { ObjectiveMatchClass } from "../types";
 
 // Deferred catalog messages; property getters resolve in the consuming computation.
@@ -168,6 +166,8 @@ export interface Trigger {
   start: number;
   /** Index in `raw` where the query ends (the caret). */
   end: number;
+  /** End of the existing reference when it extends beyond the caret. */
+  replaceEnd?: number;
   /** Canonical key owning a property-value query. */
   property?: string;
   /** Earlier comma-separated values on the same property line. */
@@ -191,69 +191,18 @@ export function detectTrigger(
   caret: number,
   format: Format = "md",
 ): Trigger | null {
-  const trigger = triggerBeforeCaret(raw, caret, format);
-  return trigger && lineStartsInFence(raw, raw.lastIndexOf("\n", caret - 1) + 1, format) ? null : trigger;
+  const lineStart = raw.lastIndexOf("\n", caret - 1) + 1;
+  const trigger = triggerBeforeCaret(raw, caret, lineStart, format);
+  return trigger && lineStart > 0 && lineStartsInFence(raw, lineStart, format) ? null : trigger;
 }
 
-function referenceTrigger(before: string, lineStart: number, caret: number): Trigger | null {
-  // The nearest opener wins while a reference is being typed.
-  const openPage = before.lastIndexOf("[[");
-  const openBlock = before.lastIndexOf("((");
-  if (openPage > openBlock) {
-    const inner = before.slice(openPage + 2);
-    if (!inner.includes("]") && !inner.includes("[")) {
-      return { kind: "page", query: inner, start: lineStart + openPage, end: caret };
-    }
-  }
-  if (openBlock > openPage) {
-    const inner = before.slice(openBlock + 2);
-    if (!inner.includes(")") && !inner.includes("(")) {
-      return { kind: "block", query: inner, start: lineStart + openBlock, end: caret };
-    }
-  }
-
-  // Use lsdoc's bare-tag boundary so Unicode/IME text keeps the picker open.
-  const hash = before.lastIndexOf("#");
-  if (hash !== -1 && (hash === 0 || /\s/u.test(before[hash - 1]))) {
-    const query = before.slice(hash + 1);
-    if (isBareTagPrefix(query)) return { kind: "tag", query, start: lineStart + hash, end: caret };
-  }
-  return null;
-}
-
-function insideClosedReference(raw: string, before: string, lineStart: number, trigger: Trigger, format: Format): boolean {
-  const offset = trigger.start - lineStart;
-  // A competing reference needs an opener before the marker and a closer before the caret.
-  const mayEnclose = offset > 0 && (
-    (before.includes("]]", offset) && before.lastIndexOf("[[", offset - 1) !== -1)
-    || (before.includes("))", offset) && before.lastIndexOf("((", offset - 1) !== -1)
-  );
-  if (!mayEnclose || !parserReady()) return false;
-
-  const newline = raw.indexOf("\n", trigger.end);
-  const line = raw.slice(lineStart, newline === -1 ? raw.length : newline);
-  const inlines = JSON.parse(parse_inline_json(line, format === "org")) as Inline[] | null;
-  const marker = utf16ToUtf8ByteOffset(before, offset);
-  const caret = utf16ToUtf8ByteOffset(before, before.length);
-  const encloses = (node: Inline): boolean => {
-    const span = node.span;
-    if (!span || span[0] >= marker || span[1] <= marker) return false;
-    if (span[1] <= caret && (node.k === "nested_link" ||
-      (node.k === "link" && (node.url.type === "page_ref" || node.url.type === "block_ref")))) return true;
-    if ("children" in node) return node.children.some(encloses);
-    return node.k === "link" && (node.label?.some(encloses) ?? false);
-  };
-  return inlines?.some(encloses) ?? false;
-}
-
-function triggerBeforeCaret(raw: string, caret: number, format: Format): Trigger | null {
+function triggerBeforeCaret(raw: string, caret: number, lineStart: number, format: Format): Trigger | null {
   // No trigger spans a newline: the `[[` inner forbids it, `#tag`/`/command`
   // are anchored at line start or after whitespace, and `<command` starts its
   // own logical line. So only the CURRENT line's
   // prefix can matter — slicing just that (not the whole `raw[0..caret]`) avoids
   // an O(block length) allocation per keystroke on long blocks. Returned indices
   // are offset back into `raw` by `lineStart`, so callers see absolute positions.
-  const lineStart = raw.lastIndexOf("\n", caret - 1) + 1;
   const before = raw.slice(lineStart, caret);
 
   // Use the persisted parser's property-key alphabet, including Unicode letters.
@@ -268,21 +217,13 @@ function triggerBeforeCaret(raw: string, caret: number, format: Format): Trigger
     return { kind: "property-name", query: before, start: lineStart, end: caret + 2 };
   }
 
-  const reference = referenceTrigger(before, lineStart, caret);
-  if (reference && !insideClosedReference(raw, before, lineStart, reference, format)) {
-    if (reference.kind === "page") {
-      // GH #888 (D-20261109-LK): rank the whole existing link name. OG page-search
-      // uses only the text up to the caret (6e7afa8eb, components/editor.cljs:105–121).
-      const end = refCompletionEnd(raw, reference);
-      if (end > caret) reference.query += raw.slice(caret, end - 2);
-    }
-    return reference;
-  }
+  const reference = referenceCompletion(raw, before, lineStart, caret, format);
+  if (reference) return reference;
 
   // Explicit references and tags take precedence in property values (#853).
   // Tine offers property values at any parser-accepted Markdown value position.
   // OG starts the value picker after a name choice (6e7afa8eb, editor.cljs:2211).
-  const valuePosition = propertyValuePosition(raw, caret, format);
+  const valuePosition = propertyValuePosition(raw, before, lineStart, format);
   if (valuePosition) {
     const authored = raw.slice(valuePosition.start, caret);
     const comma = authored.lastIndexOf(",");
@@ -448,25 +389,13 @@ export function applyCompletion(
   };
 }
 
-/** Same-line replacement boundary for an active reference (GH #199, #853).
- * Page search also uses this boundary for the whole-link query (GH #888).
- * The active opener owns its closer. Bare tags end at the caret, even when a
- * selected tag needs brackets. Slash command macro insertions keep their `}}` range. */
-export function refCompletionEnd(value: string, { kind, end }: Pick<Trigger, "kind" | "end">, insertedText?: string): number {
-  const pair = kind === "page" ? "]]" : kind === "block" ? "))"
-    : kind === "command" && insertedText?.endsWith("}}") ? "}}" : null;
-  if (pair === null) return end;
-  const page = pair === "]]";
-  const opener = page ? "[" : pair === "))" ? "(" : "{";
-  for (let i = end; i < value.length; i++) {
-    const ch = value[i];
-    if (ch === "\n" || ch === "\r" || (ch === opener && (page || value[i + 1] === ch))) break;
-    if (ch === pair[0]) {
-      if (value[i + 1] === ch) return i + 2;
-      if (page) break;
-    }
-  }
-  return end;
+/** Reference triggers carry their replacement boundary. Slash macro commands
+ * retain the same-line `}}` handling from before the reference picker fix. */
+export function completionReplacementEnd(value: string, { kind, end, replaceEnd }: Trigger, insertedText: string): number {
+  if (kind !== "command" || !insertedText.endsWith("}}")) return replaceEnd ?? end;
+  const lineEnd = value.indexOf("\n", end);
+  const closer = value.indexOf("}}", end);
+  return closer !== -1 && (lineEnd === -1 || closer < lineEnd) ? closer + 2 : end;
 }
 
 /** Build the inserted text for a page reference (`[[Name]]`). */

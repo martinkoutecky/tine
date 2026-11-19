@@ -7,7 +7,7 @@ import {
   commandScore,
   detectTrigger,
   applyCompletion,
-  refCompletionEnd,
+  completionReplacementEnd,
   withRefCompletionSpace,
   autoPairEdit,
   fullWidthRefReplace,
@@ -268,7 +268,8 @@ describe("detectTrigger", () => {
     const before = `Body\nproject:: ${prefix}`;
     const end = before.length + opener.length + query.length;
     const raw = `${before}${opener}${query}${closer}`;
-    expect(detectTrigger(raw, end)).toEqual({ kind, query, start: before.length, end });
+    expect(detectTrigger(raw, end)).toEqual({ kind, query, start: before.length, end,
+      ...(closer ? { replaceEnd: raw.length } : {}) });
   });
 
   it("ends page search after the closing brackets and offers ordinary property values again", () => {
@@ -289,6 +290,31 @@ describe("detectTrigger", () => {
   it("still searches a fresh reference after a closed one with an inner marker", () => {
     const raw = "project:: [[Math ((notation]], ((new";
     expect(detectTrigger(raw, raw.length)).toMatchObject({ kind: "block", query: "new" });
+  });
+
+  it.each(["[[a ((b]]", "#[[a ((b]]", "((a [[b))"])(
+    "searches a fresh tag after %s", value => {
+      const raw = `project:: ${value} #fresh`;
+      expect(detectTrigger(raw, raw.length)).toMatchObject({ kind: "tag", query: "fresh" });
+    },
+  );
+
+  it.each([
+    "{{embed [[a ((b]]|}}",
+    "{{embed [[a ((b]]}}|",
+    "[label]([[a ((b]]|)",
+    "[label](((a [[b))|)",
+    "[label]([[a ((b]])|",
+  ])("resumes property values after leaving the reference in %s", marked => {
+    const raw = `project:: ${marked.replace("|", "")}`;
+    const caret = "project:: ".length + marked.indexOf("|");
+    expect(detectTrigger(raw, caret)).toMatchObject({ kind: "property-value", property: "project" });
+  });
+
+  it("returns to the enclosing page reference after leaving a nested child", () => {
+    const raw = "project:: [[outer [[inner ((b]] tail]]";
+    const caret = raw.indexOf("]]") + 2;
+    expect(detectTrigger(raw, caret)).toMatchObject({ kind: "page", query: "outer [[inner ((b]] tail", start: "project:: ".length });
   });
 
   it("excludes parser-rejected property lookalikes and Org drawers from value search", () => {
@@ -456,12 +482,16 @@ describe("applyCompletion", () => {
   });
 });
 
-describe("refCompletionEnd (OG accept-range parity)", () => {
+describe("completion replacement (OG accept-range parity)", () => {
   it.each([
     ["project:: [[pro|, [[Existing]]", "[[Programming]]", "page"],
     ["project:: [[pro|, Other, [[Existing]]", "[[Programming]]", "page"],
     ["project:: #[[pro|, #[[Existing]]", "[[Programming]]", "page"],
     ["project:: ((pro|, ((existing))", "((programming-id))", "block"],
+    ["project:: ((pro|, [[Keep )) intact]]", "((programming-id))", "block"],
+    ["project:: ((pro|, #[[Keep )) intact]]", "((programming-id))", "block"],
+    ["project:: ((pro|, **[[Keep )) intact]]**", "((programming-id))", "block"],
+    ["project:: [[pro|, ((Keep ]] intact))", "[[Programming]]", "page"],
     ["project:: #pro|, [[Existing]]", "#[[Programming notes]]", "tag"],
     ["project:: #pro|, #[[Existing]]", "#[[Programming notes]]", "tag"],
     ["See [[pro|, [[Existing]]", "[[Programming]]", "page"],
@@ -472,8 +502,45 @@ describe("refCompletionEnd (OG accept-range parity)", () => {
     const trigger = detectTrigger(raw, caret)!;
     const start = caret - (kind === "tag" ? "#pro".length : "[[pro".length);
     expect(trigger).toMatchObject({ kind, query: "pro", start });
-    const end = refCompletionEnd(raw, trigger, insert);
+    const end = completionReplacementEnd(raw, trigger, insert);
     expect(applyCompletion(raw, trigger.start, end, insert).raw).toBe(raw.slice(0, start) + insert + suffix);
+  });
+
+  it("keeps the page picker active after a single bracket inside the name", () => {
+    const raw = "project:: [[pro [x] title]]";
+    expect(detectTrigger(raw, raw.indexOf(" title"))).toMatchObject({
+      kind: "page", query: "pro [x] title", replaceEnd: raw.length,
+    });
+  });
+
+  it.each([
+    " [x] title",
+    " #[[child]] title",
+    " [ title",
+    " \\]] title",
+    " [[child]] title",
+  ])("ranks and replaces the same whole page reference containing %s", suffix => {
+    const prefix = "project:: [[pro";
+    const raw = `${prefix}${suffix}]], [[Existing]]`;
+    const trigger = detectTrigger(raw, prefix.length)!;
+    expect(trigger).toMatchObject({ kind: "page", query: `pro${suffix}` });
+    const end = completionReplacementEnd(raw, trigger, "[[Programming]]");
+    expect(applyCompletion(raw, trigger.start, end, "[[Programming]]").raw).toBe("project:: [[Programming]], [[Existing]]");
+  });
+
+  it("ranks and replaces the whole bracketed tag without changing its marker", () => {
+    const raw = "project:: #[[pro [x] title]], [[Existing]]";
+    const caret = raw.indexOf(" [x]");
+    const trigger = detectTrigger(raw, caret)!;
+    expect(trigger).toMatchObject({ kind: "page", query: "pro [x] title" });
+    const insert = "[[Programming]]";
+    expect(applyCompletion(raw, trigger.start, completionReplacementEnd(raw, trigger, insert), insert).raw)
+      .toBe("project:: #[[Programming]], [[Existing]]");
+  });
+
+  it("keeps the pre-#853 slash macro boundary when another opener precedes the closer", () => {
+    const raw = "/embed {{old}}";
+    expect(completionReplacementEnd(raw, detectTrigger(raw, 6)!, "{{embed [[]]}}")).toBe(raw.length);
   });
 
   it("queries and replaces an entire property page reference whose name contains a comma", () => {
@@ -481,32 +548,38 @@ describe("refCompletionEnd (OG accept-range parity)", () => {
     const trigger = detectTrigger(raw, raw.indexOf(",") + 1)!;
     expect(trigger).toMatchObject({ kind: "page", query: "Sat, 07.11.2026" });
     const insert = "[[Saturday]]";
-    const end = refCompletionEnd(raw, trigger, insert);
+    const end = completionReplacementEnd(raw, trigger, insert);
     expect(applyCompletion(raw, trigger.start, end, insert).raw).toBe("project:: [[Saturday]], [[Existing]]");
   });
 
   it("swallows the next page-ref closer when completing mid-ref", () => {
-    expect(refCompletionEnd("[[first second]]", { kind: "page", end: 8 })).toBe(16);
+    const raw = "[[first second]]";
+    expect(completionReplacementEnd(raw, detectTrigger(raw, 8)!, "[[first]]")).toBe(16);
   });
 
   it("swallows a page-ref closer immediately after the caret", () => {
-    expect(refCompletionEnd("[[first second]]", { kind: "page", end: 14 })).toBe(16);
+    const raw = "[[first second]]";
+    expect(completionReplacementEnd(raw, detectTrigger(raw, 14)!, "[[first second]]")).toBe(16);
   });
 
   it("leaves an unclosed page ref unchanged", () => {
-    expect(refCompletionEnd("[[first", { kind: "page", end: 7 })).toBe(7);
+    const raw = "[[first";
+    expect(completionReplacementEnd(raw, detectTrigger(raw, 7)!, "[[first]]")).toBe(7);
   });
 
   it("swallows the next block-ref closer when completing mid-ref", () => {
-    expect(refCompletionEnd("((abcabc))", { kind: "block", end: 6 })).toBe(10);
+    const raw = "((abcabc))";
+    expect(completionReplacementEnd(raw, detectTrigger(raw, 6)!, "((u))")).toBe(10);
   });
 
   it("does not swallow a closer on the next line", () => {
-    expect(refCompletionEnd("[[fir\nx]]", { kind: "page", end: 5 })).toBe(5);
+    const raw = "[[fir\nx]]";
+    expect(completionReplacementEnd(raw, detectTrigger(raw, 5)!, "[[first]]")).toBe(5);
   });
 
   it("leaves non-ref completions unchanged", () => {
-    expect(refCompletionEnd("/tod", { kind: "command", end: 4 }, "TODO ")).toBe(4);
+    const raw = "/tod";
+    expect(completionReplacementEnd(raw, detectTrigger(raw, 4)!, "TODO ")).toBe(4);
   });
 
   it("replaces the full reporter-case ref instead of leaving a stray closer", () => {
@@ -514,7 +587,7 @@ describe("refCompletionEnd (OG accept-range parity)", () => {
     // produces "[[first]]second]]", so this assertion fails without this helper.
     const raw = "[[first second]]";
     const insert = pageInsert("first");
-    const result = applyCompletion(raw, 0, refCompletionEnd(raw, { kind: "page", end: 8 }), insert);
+    const result = applyCompletion(raw, 0, completionReplacementEnd(raw, detectTrigger(raw, 8)!, insert), insert);
     expect(result.raw).toBe("[[first]]");
   });
 });
@@ -690,7 +763,7 @@ describe("detectTrigger inside a complete link (GH #888)", () => {
   it("queries the whole link text, through the closer a pick replaces", () => {
     const raw = "see [[Sat, 07.11.2026]] later";
     const caret = raw.indexOf(",") + 1;
-    expect(detectTrigger(raw, caret)).toEqual({ kind: "page", query: "Sat, 07.11.2026", start: 4, end: caret });
+    expect(detectTrigger(raw, caret)).toEqual({ kind: "page", query: "Sat, 07.11.2026", start: 4, end: caret, replaceEnd: 23 });
     // A tag's bracketed form shares the page path.
     expect(detectTrigger("a #[[multi word]]", 11)).toMatchObject({ kind: "page", query: "multi word" });
   });
@@ -703,7 +776,7 @@ describe("detectTrigger inside a complete link (GH #888)", () => {
   });
 
   it("keeps block references at the caret: their text is an id, not a page name", () => {
-    expect(detectTrigger("((ab cd))", 4)).toEqual({ kind: "block", query: "ab", start: 0, end: 4 });
+    expect(detectTrigger("((ab cd))", 4)).toEqual({ kind: "block", query: "ab", start: 0, end: 4, replaceEnd: 9 });
   });
 });
 
