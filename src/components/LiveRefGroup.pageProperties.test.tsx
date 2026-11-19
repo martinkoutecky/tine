@@ -140,8 +140,12 @@ describe("opening text with later property groups", () => {
       const lines: string[] = [""];
       const walk = (node: Node) => {
         if (node.nodeName === "BR") lines.push("");
-        else if (node.nodeType === Node.TEXT_NODE) lines[lines.length - 1] += node.textContent;
-        else node.childNodes.forEach(walk);
+        else if (node.nodeType === Node.TEXT_NODE) {
+          // Source text keeps its own line breaks (white-space: pre-wrap).
+          const [first, ...rest] = (node.textContent ?? "").split("\n");
+          lines[lines.length - 1] += first;
+          lines.push(...rest);
+        } else node.childNodes.forEach(walk);
       };
       walk(row);
       expect(lines.map(line => line.trim())).toEqual(["later:: x", "last:: y", "", "TODO [#A] Prose [[Target]]"]);

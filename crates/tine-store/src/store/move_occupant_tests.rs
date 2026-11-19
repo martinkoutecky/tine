@@ -92,16 +92,12 @@ fn an_absolute_destination_is_refused_before_it_is_probed() {
 
 #[test]
 fn a_parent_relative_destination_is_refused_before_it_is_probed() {
+    // The two temp dirs are siblings, so this is relative on every platform
+    // (review a55c0f03a: a Windows drive prefix must not end up inside it).
     let answer = outside_occupant(|root, outside| {
-        let up = "../".repeat(root.components().count() + 1);
-        format!(
-            "pages/{up}{}",
-            outside
-                .join("x.md")
-                .to_str()
-                .unwrap()
-                .trim_start_matches('/')
-        )
+        assert_eq!(root.parent(), outside.parent());
+        let sibling = outside.file_name().unwrap().to_str().unwrap();
+        format!("pages/../../{sibling}/x.md")
     });
     assert!(
         matches!(answer, Err(StoreError::InvalidTarget(_))),

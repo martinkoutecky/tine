@@ -275,11 +275,14 @@ from the first to the last of that other text, so page properties may follow
 it). Every other non-blank byte of a pre-block is prose, so it is indexed,
 renamed and kept like any block text. That prose is the page's opening text and
 is shown exactly as written wherever it appears: the page's opening row, its
-Linked References row and a query's List row all render it through one
-renderer (`src/render/openingText.tsx`, one parse per row). A later Markdown
-property group in it (lines after the header's blank line) stays its literal
-lines, never property chips or page properties; a leading task word or priority
-keeps its text (D-20261119-PG, a deliberate difference from Logseq, which shows
+Linked References row and a query's List row all render it with the block
+renderer (`AstBody` with `opening`, one parse per row), so every construct
+renders as it does in a block. The one difference: nothing is lifted into
+block chrome. A property node in it (a later Markdown property group, i.e.
+lines after the header's blank line, or a `#+key: value` line) shows as its
+exact source lines, whole lines from the parser's span with their spacing and
+no typography, never property chips or page properties; a leading task word or
+priority keeps its text (D-20261119-PG, a deliberate difference from Logseq, which shows
 such a group as nothing). While the header is edited, the frontend keeps the
 parser's answer (`pageOpening`) instead of splitting the remaining pre-block
 again; display, the properties panel, and the copy and edit checks on a

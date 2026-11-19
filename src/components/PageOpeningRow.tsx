@@ -1,7 +1,7 @@
 import { Show, type JSX } from "solid-js";
 import { pageOpening, type FeedPage } from "../document";
 import { t } from "../i18n";
-import { OpeningText } from "../render/openingText";
+import { AstBody } from "../render/body";
 import { BlockRenderBoundary } from "./BlockRenderBoundary";
 
 /** A page's opening text, the prose before its first block (GH #85), as the
@@ -21,7 +21,7 @@ export function PageOpeningRow(props: { page: FeedPage; onEdit: () => void }): J
               </span>
             </div>
             <div class="block-content-wrapper" onClick={() => props.onEdit()}>
-              <BlockRenderBoundary raw={content()}><div class="block-content"><OpeningText text={content()} format={props.page.format} /></div></BlockRenderBoundary>
+              <BlockRenderBoundary raw={content()}><div class="block-content"><AstBody raw={content()} format={props.page.format} opening /></div></BlockRenderBoundary>
             </div>
           </div>
         </div>

@@ -8,7 +8,6 @@ import { For, Show, createMemo, createSignal, onCleanup, type JSX } from "solid-
 import type { BlockDto } from "../types";
 import { pageProperties } from "../render/block";
 import { effectiveHeadingLevel, facetsFromDto, renderedProperties } from "../render/facets";
-import { OpeningText } from "../render/openingText";
 import { taskCheckboxState } from "../markers";
 import { AstBody } from "../render/body";
 import { BlockRenderBoundary } from "./BlockRenderBoundary";
@@ -122,7 +121,7 @@ function RefBlock(props: {
   // live row. Measured: no slower on the normal path; slower only while a
   // source page cannot be read (D-20261023-VC, tine-agents evidence/m19-wave4).
   // A preamble row is opening text (D-20261119-PG): no task, heading, date or
-  // property chrome; `OpeningText` shows all of it as written.
+  // property chrome; `AstBody opening` shows all of it as written.
   const facets = createMemo(() => facetsFromDto(props.block.page_preamble ? {} : props.block));
   const headingLevel = createMemo(() => effectiveHeadingLevel(facets(), props.depth));
   const format = createMemo(() => formatForPage(props.page));
@@ -313,9 +312,7 @@ function RefBlock(props: {
                 <Show
                   when={!props.block.page_preamble && beginQuery()}
                   fallback={
-                    <Show when={annotation()?.areaStamp} fallback={props.block.page_preamble
-                      ? <OpeningText text={props.block.raw} format={format()} />
-                      : <AstBody raw={props.block.raw} format={format()} headingLevel={headingLevel()} />}>
+                    <Show when={annotation()?.areaStamp} fallback={<AstBody raw={props.block.raw} format={format()} headingLevel={headingLevel()} opening={!!props.block.page_preamble} />}>
                       <AnnotationBody page={props.page ?? ""} highlightId={blockDtoExternalId(props.block)}
                         color={annotation()!.color} hlPage={annotation()!.hlPage} areaStamp={annotation()!.areaStamp}
                         line={visibleBody(props.block.raw, format()).join("\n")} />
