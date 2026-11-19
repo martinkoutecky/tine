@@ -26,7 +26,7 @@ import { blockPickerLeg, mergeBlockPickerLegs } from "./editor/blockPickerMatch"
 import { searchFold } from "./editor/searchFold";
 import { setQuickSharePrefix } from "./publishedPermalink";
 import { admitPublishedAnswers, publishedAnswerer } from "./publishedAnswers";
-import { anchorDecision, checkExternalLink } from "./linkSchemePolicy";
+import { checkBrowserHandoff } from "./linkSchemePolicy";
 import type { QuickShareListing } from "./quickShare/commands";
 
 type PublishedPage = PageDto & { path: string };
@@ -291,17 +291,6 @@ export const OPTIONAL_METHODS = new Set([
 ]);
 
 /** Build the snapshot backend. `load` is awaited lazily by every method. */
-/** A scheme-less link that resolves to this site (`#section`, `other.html`,
- * `*Heading`): the opener keeps the Beta behaviour, a new reader tab (GH #984
- * adds no rule for it). `//host` or `\\host` leave the site and go through the
- * scheme policy like any other destination. */
-function sameSiteRelative(url: string): boolean {
-  if (anchorDecision(url) !== "relative") return false;
-  const here = new URL(window.location.href);
-  const there = new URL(url, here);
-  return there.protocol === here.protocol && there.host === here.host;
-}
-
 export function publishedBackend(load: () => Promise<PublishedSnapshot> = loadPublishedSnapshot): Backend {
   const appBools = new Map<string, boolean>();
   const appStrings = new Map<string, string>();
@@ -709,7 +698,7 @@ export function publishedBackend(load: () => Promise<PublishedSnapshot> = loadPu
       return url;
     },
     async openExternal(url: string, confirmedScheme?: string) {
-      if (!sameSiteRelative(url)) checkExternalLink(url, confirmedScheme, "browser");
+      checkBrowserHandoff(url, confirmedScheme, window.location.href);
       window.open(url, "_blank", "noopener");
     },
     async openAsset(name: string) {

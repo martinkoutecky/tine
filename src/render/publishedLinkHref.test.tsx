@@ -121,6 +121,20 @@ describe("links keep an href only for relative, web and mail destinations (GH #9
     expect(asset.mock.calls.map(([rel]) => rel)).toEqual(["manual.txt", "manual.txt"]);
   });
 
+  it("a refused scheme naming assets/ never reaches the attachment opener (review ef9423888)", async () => {
+    const open = vi.spyOn(backend(), "openExternal").mockResolvedValue(undefined);
+    const asset = vi.spyOn(backend(), "openAsset").mockResolvedValue(undefined);
+    for (const dest of ["\u0001javascript:assets/manual.txt", "java\tscript:assets/manual.txt", " data:assets/manual.txt", "vbscript:../assets/manual.txt"]) {
+      const link = mount(() => <InlineText text={`[x](${dest})`} />).querySelector("a.external-link");
+      if (!link) continue;
+      link.dispatchEvent(new MouseEvent("click", { bubbles: true, cancelable: true }));
+      link.dispatchEvent(new KeyboardEvent("keydown", { key: "Enter", bubbles: true, cancelable: true }));
+    }
+    await flush();
+    expect(asset).not.toHaveBeenCalled();
+    expect(open).not.toHaveBeenCalled();
+  });
+
   it("raw HTML and Hiccup anchors", () => {
     const html = '<a href="https://example.org">w</a><a href="tel:123">t</a><a href="sms:1">s</a>'
       + '<a href="matrix:u/a">x</a><a href="#top">i</a><a href="about:blank">a</a>';
