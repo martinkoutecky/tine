@@ -10,7 +10,7 @@ import type { ContestedOffer, DayMoveOffer, PageKind } from "./types";
 /** One page-property edit a rename helper makes before its request
  *  (D-20261115-HELP, D-20261116-TAGH): the backend read the file's `key` value
  *  as `before`; the helper writes `after` (null: the line goes). */
-export type HelperEdit = { page: string; journal: boolean; key: string; before: string; after: string | null };
+export type HelperEdit = { page: string; journal: boolean; key: string; before: string; after: string | null; header?: string | null };
 
 /** The helper's edits, saved; `undo` puts back only the helper's own property
  *  values (each one only while it still holds the helper's value, so other
@@ -33,9 +33,13 @@ const same = (a: string | null, b: string) => (a ?? "").trim() === b.trim();
  *  Nothing is written unless every page is fresh and the binding is current.
  *  The binding is checked after every save; a failed save or a retired binding
  *  puts the edits back (`undo`). Cost: one page read per page not loaded, the
- *  edits, and one guarded save per page. Every page is pinned against eviction
- *  before the first load (so loading many pages, or the request's own loads,
- *  cannot drop one); the pins go on every refusal here, else with `release`. */
+ *  edits, and one guarded save per page. `header`: the page-header root
+ *  (by id) the caller decided before this edit (the day move's plan), so
+ *  `undo` writes the old value back into that root even when this edit
+ *  emptied it; omitted, the header is found when written. Every page is
+ *  pinned against eviction before the first load (so loading many pages, or
+ *  the request's own loads, cannot drop one); the pins go on every refusal
+ *  here, else with `release`. */
 export async function applyHelperEdits(edits: readonly HelperEdit[]): Promise<AppliedEdits | EditsRefused> {
   const owner = bindingOwner();
   const names = edits.map((edit) => edit.page);
@@ -58,7 +62,7 @@ export async function applyHelperEdits(edits: readonly HelperEdit[]): Promise<Ap
       if (!owner()) return false;
       // A page no longer loaded cannot be put back: that is a failed restore.
       if (names.some((name) => !pageByName(name))) return false;
-      edits.forEach((edit, i) => { if (holds(i, edit.after)) setPageProperty(names[i], edit.key, edit.before); });
+      edits.forEach((edit, i) => { if (holds(i, edit.after)) setPageProperty(names[i], edit.key, edit.before, edit.header); });
       const saved = await Promise.all(names.map((name) => flushPage(name)));
       return owner() && saved.every(Boolean);
     };
@@ -74,12 +78,16 @@ export async function applyHelperEdits(edits: readonly HelperEdit[]): Promise<Ap
   }
 }
 
-/** Load `name` into the working set (a page with no file as an empty page,
- *  in the format of `file`, the file it will be created as), so its file is
- *  the one a write lands in (`admitPageFile`). False when the graph changed
- *  or another file holding the name has unsaved input (said). */
-async function admit(owner: Owner, name: string, kind: PageKind, file?: string): Promise<boolean> {
-  if (pageByName(name)) return true;
+/** Load `name` into the working set as the file `at` (null: no file yet; a
+ *  page with no file as an empty page, in the format of `file`, the file it
+ *  will be created as), so the file a write lands in is the confirmed one
+ *  (`admitPageFile`). A loaded page is reused only when it holds `at`, else
+ *  its slot is admitted afresh (a twin merged away may still hold the name,
+ *  DS-12). False when the graph changed or another file holding the name has
+ *  unsaved input (said). */
+async function admit(owner: Owner, name: string, kind: PageKind, at: string | null, file?: string): Promise<boolean> {
+  const loaded = pageByName(name);
+  if (loaded && (loaded.id ?? null) === at) return true;
   const refused = await admitPageFile(name, kind, owner, emptyPage(name, kind, file ? formatOfFile(file) : undefined));
   if (refused === "stale") return false;
   if (refused) { reportPageLoadRefusal(refused); return false; }
@@ -102,7 +110,7 @@ async function admit(owner: Owner, name: string, kind: PageKind, file?: string):
  *  and one two-page operation. */
 export async function moveDayNotes(day: string, offer: DayMoveOffer): Promise<{ moved: string; kind: PageKind } | "again" | null> {
   const owner = bindingOwner();
-  if (!(await admit(owner, day, "journal")) || !owner()) return null;
+  if (!(await admit(owner, day, "journal", offer.day.path)) || !owner()) return null;
   if (!dayMovePlan(day).blocks.length) {
     pushToast(msg("rename-day-nothing", { day }), "info");
     return null;
@@ -112,7 +120,7 @@ export async function moveDayNotes(day: string, offer: DayMoveOffer): Promise<{ 
   const header = dayMovePlan(day).header;
   let applied: AppliedEdits | null = null;
   if (offer.release) {
-    const made = await applyHelperEdits([offer.release]);
+    const made = await applyHelperEdits([{ ...offer.release, header }]);
     if ("refused" in made) {
       if (!owner()) return null;
       if (made.refused === "unrestored") pushToast(msg("rename-helper-not-restored", { pages: day }), "error");
@@ -127,7 +135,7 @@ export async function moveDayNotes(day: string, offer: DayMoveOffer): Promise<{ 
   const kind: PageKind = offer.journal ? "journal" : "page";
   const name = offer.name;
   try {
-    if (!(await admit(owner, name, kind, offer.path)) || !owner()) { await putBack(); return null; }
+    if (!(await admit(owner, name, kind, offer.into?.path ?? null, offer.path)) || !owner()) { await putBack(); return null; }
     // The receiving file must be the one confirmed: a file, which one, or none
     // (DS-12). The store answers it; a page this window created holds no path.
     const at = await readOwned(owner, backend().resolvePage(name, kind));

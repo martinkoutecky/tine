@@ -182,7 +182,15 @@ line does not turn the header into an ordinary block that moves. For the day's
 own alias the helper edit releases the alias first; the move itself puts back
 only that value, into that header node, and only while the line still reads
 the helper's value, inside the same operation, so other typing in the header
-survives. Each parent's moved children are detached once. After the confirmation the receiving page
+survives. When the move does not happen (refused by the host, different
+formats, the receiving file changed, a failed read), the helper's put-back
+writes the value into that same header node too, under the same guard, so the
+day reads as before. Each parent's moved children are detached once. The day
+and the receiving page are taken from the working set only when the loaded
+copy holds the file the dialog named (none, for a new page); otherwise that
+file is admitted into the name's slot (`admitPageFile`, refused when the
+loaded copy has unsaved input), so a twin merged away by the contested-name
+helper cannot receive the notes. After the confirmation the receiving page
 must be the file the dialog named, or still have no file, by the store's name
 answer (`resolve`); otherwise nothing moves and the rename is asked again.
 Cost: one read of the destination when not loaded, one name resolution, one

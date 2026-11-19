@@ -466,6 +466,112 @@ describe("renaming a day moves its notes to a page", () => {
     expect(writes.filter((key) => key === DAY_FILE)).toHaveLength(1 + aliasSaves);
   });
 
+  // Round 4 (fresh review 0076d3d2b), finding 1: an own-alias move that does
+  // not happen puts the alias back into the header it was released from, even
+  // when the release emptied that header, so the day reads as before (no
+  // alias in the preamble, no blank parent around the notes). The reviewer's
+  // 40 probes: host refusal, format mismatch, destination-identity mismatch
+  // ("again"), destination-read exception x collapsed / expanded x zero / one /
+  // two children x with / without ordinary roots, wherever notes exist.
+  type Arrange = (spies: Awaited<ReturnType<typeof bindDisk>>) => void;
+  const refusals: [string, Arrange, string][] = [
+    ["the host refuses the move", (spies) => { spies.move.mockResolvedValueOnce({ reason: "failed", message: "host stopped" }); }, "pages/Launch day.md"],
+    ["the formats differ", () => absent("org"), "pages/Launch day.org"],
+    ["the destination is no longer the confirmed one", () => {
+      const resolve = backend().resolvePage.bind(backend());
+      vi.mocked(backend().resolvePage).mockImplementation(async (name, kind) =>
+        name === "Launch day" ? { kind: "existing", id: "pages/Launch day.md", others: [] } : resolve(name, kind));
+    }, "pages/Launch day.md"],
+    ["the destination read fails", () => {
+      vi.mocked(backend().getPage).mockImplementation(async () => { throw new Error("read failed"); });
+    }, "pages/Launch day.md"],
+  ];
+  it.each(refusals.flatMap(([why, arrange, dest]) => [true, false].flatMap((collapsed) => [[], ["one child"], ["one child", "two child"]].flatMap((notes) =>
+    [[], ["day note"]].filter((after) => notes.length + after.length > 0).map((after) =>
+      [`${why} (collapsed: ${collapsed}, ${notes.length} children, ${after.length} other roots)`, arrange, dest, collapsed, notes, after] as const)))))(
+    "to the day's own alias from an alias-only first-root header, when %s the day reads as before", async (_, arrange, dest, collapsed, notes, after) => {
+      const day = headed("alias:: Launch day", collapsed, notes, after);
+      loadFeed([day]);
+      const spies = await bindDisk([day]);
+      absent();
+      arrange(spies);
+      offer(dayMove({ name: "Launch day", path: dest, release }), { kind: "refused", reason: { kind: "day", name: DAY }, message: "" });
+      const done = renameOrMergePage(DAY, "Launch day", target);
+      await answer(true);
+      await done.catch(() => "failed");
+      expect(await flushAll()).toBe(true);
+      const dayFile = files.get(DAY_FILE)!;
+      // A childless properties-only first root is saved as the preamble (the
+      // same header, GH #198); with notes under it, it stays the first bullet.
+      const shape = dayFile.blocks.map((b) => [b.raw.trim(), b.children.map((c) => c.raw)]);
+      const rest = after.map((raw) => [raw, []]);
+      if (notes.length) {
+        expect(dayFile.pre_block ?? "").toBe("");
+        expect(shape).toEqual([["alias:: Launch day", notes], ...rest]);
+      } else {
+        expect(dayFile.pre_block).toBe("alias:: Launch day");
+        expect(shape).toEqual(rest);
+      }
+      if (notes.length) expect(dayFile.blocks[0].collapsed).toBe(collapsed);
+      expect(saved(dest)).toBeNull();
+    });
+
+  // Finding 2: after the contested helper merged a twin away, a window that
+  // had the discarded twin open still moves the notes into the file the user
+  // confirmed (the kept one), not into the discarded file's stale slot.
+  it("after a contested merge, the day move lands in the kept file, not the discarded twin still open", async () => {
+    const day = dayPage(null);
+    const kept = page("Trip", "pages/Trip.md", [block("trip plan")]), twin = page("Trip", "pages/trip copy.md", [block("copy note")]);
+    loadFeed([day, twin]);
+    await bindDisk([day, kept, twin]);
+    absent();
+    vi.spyOn(backend(), "mergePages").mockImplementation(async (from, into) => {
+      const merged = files.get(into)!;
+      files.set(into, { ...merged, blocks: [...merged.blocks, ...files.get(from)!.blocks], rev: `${merged.rev}-merged` });
+      files.delete(from);
+      return undefined as never;
+    });
+    const contested: ContestedOffer = {
+      kind: "contested", reason: { kind: "contested", name: "Trip", files: ["pages/Trip.md", "pages/trip copy.md"] },
+      message: "", name: "Trip", files: ["pages/Trip.md", "pages/trip copy.md"], opens: "pages/Trip.md",
+    };
+    const offers = offer(contested, dayMove({ into: { name: "Trip", path: "pages/Trip.md", journal: false, aliases: [] }, path: "pages/Trip.md",
+      day: { name: DAY, path: DAY_FILE, journal: true, aliases: [] } }));
+    const done = renameOrMergePage(DAY, "Trip", target);
+    await answer("pages/Trip.md");
+    await vi.waitFor(() => expect(offers).toHaveBeenCalledTimes(2));
+    await answer(true);
+    expect(await done).toEqual({ moved: "Trip", kind: "page" });
+    expect(await flushAll()).toBe(true);
+    expect(saved("pages/Trip.md")).toEqual(["trip plan", "copy note", "day note", "TODO call"]);
+    expect(files.has("pages/trip copy.md")).toBe(false);
+    expect(saved(DAY_FILE)).toEqual(["Moved to [[Trip]]"]);
+    expect(errors()).toEqual([]);
+  });
+
+  // Its sibling: the day itself. A window holding another file under the
+  // day's name (a duplicate-day file opened by path) moves the notes of the
+  // day file the dialog named, not that other file's.
+  it("the notes that move are those of the day file the dialog named, not another file open under the day's name", async () => {
+    const day = dayPage(null), stray = page(DAY, "journals/2026_11_18 (1).md", [block("stray note")]);
+    loadFeed([stray]);
+    await bindDisk([day, stray]);
+    absent();
+    vi.mocked(backend().getPage).mockImplementation(async (name) => {
+      if (name === DAY) return { ...structuredClone(files.get(DAY_FILE)!), id: DAY_FILE };
+      const found = [...files.entries()].find(([, p]) => p.name === name);
+      return found ? { ...structuredClone(found[1]), id: found[0] } : null;
+    });
+    offer(dayMove({ day: { name: DAY, path: DAY_FILE, journal: true, aliases: [] } }));
+    const done = renameOrMergePage(DAY, "Trip", target);
+    await answer(true);
+    expect(await done).toEqual({ moved: "Trip", kind: "page" });
+    expect(await flushAll()).toBe(true);
+    expect(saved("pages/Trip.md")).toEqual(["day note", "TODO call"]);
+    expect(saved(DAY_FILE)).toEqual(["Moved to [[Trip]]"]);
+    expect(saved("journals/2026_11_18 (1).md")).toEqual(["stray note"]);
+  });
+
   it("a day with nothing to move says so and writes nothing", async () => {
     const day = page(DAY, DAY_FILE, [block("")]);
     loadFeed([day]);

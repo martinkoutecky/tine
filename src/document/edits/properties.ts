@@ -180,9 +180,10 @@ export function readPageProperty(pageName: string, key: string): string | null {
  *  no-op writes are ignored. Records undo and schedules a guarded page save.
  *  Cost O(property text) now, then one page save. A childed transient header
  *  remains intact if its last key clears; that invalid draft cannot save until
- *  its children move out. */
-export function setPageProperty(pageName: string, key: string, value: string | null) {
-  const edit = pagePropertyEdit(pageName, key, value);
+ *  its children move out. `header`: as {@link pagePropertyEdit}'s, by id
+ *  (null: no header root; a header since deleted counts as none). */
+export function setPageProperty(pageName: string, key: string, value: string | null, header?: string | null) {
+  const edit = pagePropertyEdit(pageName, key, value, header === undefined ? undefined : header ? doc.byId[header] ?? null : null);
   if (!edit) return;
   if (key.toLowerCase() === "title") noteTitleIdentityIntent(pageName);
   pushUndo(`pageprop:${pageName}:${key}`, [pageName]);
