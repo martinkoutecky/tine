@@ -9,6 +9,11 @@ use tine_core::reference_evidence::{visit_reference_targets, ReferenceTarget};
 use tine_core::refs;
 
 const CHUNK: u32 = 128;
+#[cfg(test)]
+thread_local! {
+    /// Sources a one-panel membership read (cost probe).
+    pub(crate) static ONE_PANEL_SOURCE_VISITS: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
+}
 type Contributions = Arc<[(u32, u32)]>;
 
 fn visit_source_blocks(
@@ -33,6 +38,67 @@ fn visit_source_blocks(
         visit(block, ordinal);
         ordinal += 1;
         stack.extend(block.children.iter().rev());
+    }
+}
+
+/// The one membership rule. Block `ordinal` of `entry` belongs to each panel
+/// `reach` names for one of its explicit reference targets (a page key DIRECT,
+/// a folded property key PROPERTY), unless the panel's own page is the source.
+/// The Favorites page contributes nothing. Sorted, unique (panel, ordinal).
+fn member_rows(
+    config: &tine_core::Config,
+    entry: &PageEntry,
+    doc: &Document,
+    reach: impl Fn(&str, u8, &mut dyn FnMut(u32, &str)),
+) -> Contributions {
+    if config
+        .favorites_page
+        .as_deref()
+        .is_some_and(|name| refs::page_key(name) == refs::page_key(&entry.name))
+    {
+        return Arc::from([]);
+    }
+    let source = refs::page_key(&entry.name);
+    let mut rows = Vec::new();
+    visit_source_blocks(entry, doc, config, |block, ordinal| {
+        for reference in block.projection().reference_source().explicit {
+            visit_reference_targets(reference, config, |target| {
+                let (key, flag) = match target {
+                    ReferenceTarget::PageKey(key) => (key, DIRECT),
+                    ReferenceTarget::PropertyKey(key) => (key, PROPERTY),
+                };
+                reach(key, flag, &mut |panel, own| {
+                    if own != source {
+                        rows.push((panel, ordinal));
+                    }
+                });
+                false
+            });
+        }
+    });
+    rows.sort_unstable();
+    rows.dedup();
+    rows.into()
+}
+
+/// One Linked References panel's members as (source slot, block ordinal),
+/// sorted; ordinals 0/1 are the header and preamble, roots start at 2.
+pub(crate) struct PanelMembers(Vec<(u32, u32)>);
+
+impl PanelMembers {
+    /// O(log members).
+    pub(crate) fn contains(&self, slot: usize, ordinal: u32) -> bool {
+        self.0.binary_search(&(slot as u32, ordinal)).is_ok()
+    }
+    /// The member source slots, ascending, each once.
+    pub(crate) fn sources(&self) -> impl Iterator<Item = usize> + '_ {
+        let mut last = None;
+        self.0.iter().filter_map(move |&(slot, _)| {
+            (last != Some(slot)).then(|| {
+                last = Some(slot);
+                slot as usize
+            })
+        })
     }
 }
 
@@ -301,17 +367,6 @@ impl BacklinkMembership {
             }
         });
     }
-    /// Membership evidence grouped by source, for the panel's materializer.
-    /// O(memberships) output; the source and block ordinals are authoritative.
-    pub(crate) fn sources_for_panel(&self, id: u32) -> BTreeMap<usize, Vec<u32>> {
-        let mut sources = BTreeMap::<usize, Vec<u32>>::new();
-        if let Some(panel) = self.panel(id) {
-            panel.members.visit(&mut |(source, block)| {
-                sources.entry(source as usize).or_default().push(block)
-            });
-        }
-        sources
-    }
     fn intern(&self, name: &str) -> Arc<str> {
         self.names
             .iter_from(name)
@@ -448,13 +503,6 @@ impl BacklinkMembership {
                 })
             })
     }
-    /// One source/block membership lookup; ordinals 0/1 are the header and
-    /// preamble, roots start at 2. Binary search over one source's pairs.
-    pub(crate) fn contains(&self, slot: usize, panel: u32, ordinal: u32) -> bool {
-        self.sources
-            .get(slot as u32)
-            .is_some_and(|rows| rows.binary_search(&(panel, ordinal)).is_ok())
-    }
     /// Cardinalities by the existing CM-COUNT panel identity. O(panels).
     pub(crate) fn scan_all_counts(&self) -> HashMap<(bool, String), u32> {
         #[cfg(test)]
@@ -479,44 +527,18 @@ impl BacklinkMembership {
         entry: &PageEntry,
         doc: &Document,
     ) -> Contributions {
-        let config = graph.config();
-        if config
-            .favorites_page
-            .as_deref()
-            .is_some_and(|name| refs::page_key(name) == refs::page_key(&entry.name))
-        {
-            return Arc::from([]);
-        }
-        let source = refs::page_key(&entry.name);
-        let mut rows = Vec::new();
-        let mut collect = |block: &DocBlock, ordinal| {
-            for reference in block.projection().reference_source().explicit {
-                visit_reference_targets(reference, config, |target| {
-                    let (key, flag) = match target {
-                        ReferenceTarget::PageKey(key) => (key, DIRECT),
-                        ReferenceTarget::PropertyKey(key) => (key, PROPERTY),
-                    };
-                    for panel in self
-                        .names
-                        .get(key)
-                        .into_iter()
-                        .flat_map(|reach| reach.ids(flag))
-                    {
-                        if self
-                            .panel(panel)
-                            .is_some_and(|panel| panel.own.as_ref() != source)
-                        {
-                            rows.push((panel, ordinal));
-                        }
-                    }
-                    false
-                });
+        member_rows(graph.config(), entry, doc, |key, flag, push| {
+            for id in self
+                .names
+                .get(key)
+                .into_iter()
+                .flat_map(|reach| reach.ids(flag))
+            {
+                if let Some(panel) = self.panel(id) {
+                    push(id, &panel.own);
+                }
             }
-        };
-        visit_source_blocks(entry, doc, config, &mut collect);
-        rows.sort_unstable();
-        rows.dedup();
-        rows.into()
+        })
     }
     fn replace_source(&mut self, slot: usize, rows: Contributions, touched: &mut BTreeSet<u32>) {
         let old = self.sources.get(slot as u32).cloned().unwrap_or_default();
@@ -838,26 +860,78 @@ impl ReadSnapshot {
     pub(crate) fn resident_backlink_memberships(&self) -> Option<&BacklinkMembership> {
         self.backlink_membership.get()
     }
-    /// Candidate source pages from the panel's reverse membership evidence.
-    /// O(source pages in the panel), with keyed access to the held documents.
-    pub(crate) fn explicit_panel_candidate_pages(
+    /// The Linked References panel of the opening whose equivalent names are
+    /// `names` and whose own page is `own`, with its member source pages.
+    ///
+    /// A resident snapshot membership (built by an All pages counts read)
+    /// serves a registered panel: O(members). Otherwise the same rule
+    /// ([`member_rows`]) runs over the sources the explicit index lists for
+    /// the names and their folded property keys, for this one panel only:
+    /// O(names + blocks of those sources), never a graph-wide build. A panel's
+    /// members depend only on its names and own page, so both give one answer.
+    pub(crate) fn explicit_panel(
         &self,
-        panel: Option<u32>,
-    ) -> ReferenceCandidatePages {
-        let rows = panel
-            .map(|panel| {
-                self.scan_all_backlink_memberships()
-                    .sources_for_panel(panel)
-            })
-            .unwrap_or_default();
-        ReferenceCandidatePages::unfiltered(
-            rows.keys()
-                .filter_map(|&slot| self.pages.get(slot).cloned())
+        names: &[String],
+        own: &str,
+    ) -> (PanelMembers, ReferenceCandidatePages) {
+        let resident = self.backlink_membership.get().and_then(|answer| {
+            let panel = answer.panel(answer.selection(names, own)?)?;
+            let mut rows = Vec::with_capacity(panel.members.len() as usize);
+            panel.members.visit(&mut |row| rows.push(row));
+            Some(PanelMembers(rows))
+        });
+        let members = resident.unwrap_or_else(|| self.one_panel_members(names, own));
+        let pages = ReferenceCandidatePages::unfiltered(
+            members
+                .sources()
+                .filter_map(|slot| self.pages.get(slot).cloned())
                 .collect(),
             true,
             #[cfg(test)]
             self.pages.len(),
-        )
+        );
+        (members, pages)
+    }
+    fn one_panel_members(&self, names: &[String], own: &str) -> PanelMembers {
+        let own = refs::page_key(own);
+        let folds: BTreeSet<String> = names.iter().map(|name| property_key_norm(name)).collect();
+        // A property-key reference is indexed under its folded spelling's key.
+        let keys: Vec<String> = names
+            .iter()
+            .cloned()
+            .chain(folds.iter().map(|fold| refs::page_key(fold)))
+            .collect::<BTreeSet<_>>()
+            .into_iter()
+            .collect();
+        let slots: BTreeSet<usize> = self
+            .explicit_index
+            .candidates(&keys)
+            .iter()
+            .filter_map(|path| {
+                let entry = self.list.get_path(path)?;
+                self.pages.positions.get(entry.rel_path_str()).copied()
+            })
+            .collect();
+        let mut rows = Vec::new();
+        for slot in slots {
+            let Some((entry, doc)) = self.pages.get(slot) else {
+                continue;
+            };
+            #[cfg(test)]
+            ONE_PANEL_SOURCE_VISITS.with(|count| count.set(count.get() + 1));
+            let reached = member_rows(self.config(), entry, doc, |key, flag, push| {
+                let set = if flag == DIRECT {
+                    names.iter().any(|name| name == key)
+                } else {
+                    folds.contains(key)
+                };
+                if set {
+                    push(0, &own);
+                }
+            });
+            rows.extend(reached.iter().map(|&(_, ordinal)| (slot as u32, ordinal)));
+        }
+        PanelMembers(rows)
     }
     pub(super) fn carry_backlink_memberships(&self, old: &Self, paths: &[String]) {
         if let Some(before) = old.backlink_membership.get() {

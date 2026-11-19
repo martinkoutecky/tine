@@ -9,6 +9,8 @@ The format follows [Keep a Changelog](https://keepachangelog.com/); versions use
 ## [Unreleased]
 
 ### Fixed
+- The first Linked References panel you open reads only the pages that reference it again, as before 0.10: on a 10,000-page graph it took about half a second instead of a few milliseconds (REG-PERF-FIRST-LINKED-REFS-OPEN).
+- The first edit after All pages has shown its reference counts, made in Tine or in another editor, no longer pays for a scan of the whole graph: on a 10,000-page graph it took about 200 ms instead of 40 ms (REG-PERF-OUTSIDE-EDIT-REFRESH-COUNTS).
 
 - Hovering a bullet no longer raises the red "Could not read this block's git history" toast in a graph that has no usable git repository (none, a broken or moved `.git`, a bare repository, one that does not hold the graph); the bullet just says Unknown. A history read that really fails inside a repository is shown once per graph, not on every hover (reported by EllisMorrow in #980; UI-GH980-NO-GIT-NO-ERROR).
 - Ticking a task on the Journals page no longer moves the page under you when the Scheduled & Deadline list or a default query above it changes size. Where the web view has no scroll anchoring of its own (Linux), the block under the pointer jumped by the height of the removed rows; Tine now keeps it in place (#944, reported by Jioqls).
