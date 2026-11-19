@@ -20,8 +20,9 @@ on its own. Remove the patch when moving the pin to a release that contains it.
 Both upstreams use BSD-2-Clause; the build bundles both licence texts.
 
 `scripts/build-pdfjs-openjpeg.mjs` reproduces the upstream wasm32/no-threads
-configuration and compiles with Emscripten 4.0.20, `-O3 -msimd128 -msse`.
-It omits upstream's `-mrelaxed-simd`, which causes WebKitGTK to reject the
+configuration and uses `-O3 -msimd128 -msse`. The default build uses the
+pinned Emscripten 4.0.20 SDK.
+Both builds omit upstream's `-mrelaxed-simd`, which causes WebKitGTK to reject the
 official module and use its much slower JS fallback. The initial heap stays
 16 MiB, growth stays enabled, and the maximum stays 2 GiB. The compiler, source
 hashes, memory settings and output digest are recorded in `BUILD_OPENJPEG.json`.
@@ -34,12 +35,25 @@ decoder instructions, types, memory limits and official JS fallback unchanged.
 The Vite plugin serves the same rebuilt WASM in development and copies it
 with its licences and provenance into the offline application bundle.
 
-Install/activate Emscripten 4.0.20 and source `emsdk_env.sh` (steps in the root
-README, under "PDF decoder SDK"), then run `npm run build:pdf-decoder`. `EMSDK` identifies the SDK installation;
+For the default build, install and activate Emscripten 4.0.20 and source
+`emsdk_env.sh` (steps in the root README under "PDF decoder SDK"), then run
+`npm run build:pdf-decoder`. `EMSDK` identifies the SDK installation.
 `TINE_PDFJS_EMSDK` may instead name its `upstream/` directory. Python 3 and
 Node.js 22.13+ must be available. The builder needs no CMake, Docker, network,
-or host C compiler. All intermediate output and the compiler cache stay in
-`target/pdfjs-openjpeg/`. A verified source/output hash enables reuse.
+or host C compiler. The default build keeps its intermediate output and
+compiler cache in `target/pdfjs-openjpeg/` and reuses a decoder when its
+inputs and output match the recorded hashes.
+
+Packagers can opt in to their own Emscripten toolchain with `emcc` and `emar`
+on PATH:
+
+```sh
+TINE_PDFJS_EMCC=emcc npm run build
+```
+
+The same switch works with `npm run build:pdf-decoder`. An executable path
+selects the compiler and its sibling `emar`. The packager toolchain builds
+a fresh decoder each time.
 
 CI installs the pinned SDK before building. Flatpak materializes the SDK
 archive as a pinned manifest source for each Linux host architecture, then

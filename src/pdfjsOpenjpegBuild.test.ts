@@ -1,10 +1,14 @@
 import { execFileSync } from "node:child_process";
+import { createHash } from "node:crypto";
 import fs from "node:fs";
 import path from "node:path";
-import { afterEach, beforeEach, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { buildOpenjpeg } from "../scripts/build-pdfjs-openjpeg.mjs";
 
 vi.mock("node:child_process", () => ({ execFileSync: vi.fn() }));
+vi.mock("../scripts/lib/pdfjs-openjpeg-abi.mjs", () => ({
+  matchOpenjpegImports: (wasm: Uint8Array) => wasm,
+}));
 
 let outDir: string;
 const compilerVersion = "emcc (Emscripten gcc/clang-like replacement) 5.0.6";
@@ -79,13 +83,83 @@ it.each([["emcc", "emar"], ["./emcc", "./emar"], ["link/../bin/emcc", "link/../b
     expect(() => buildOpenjpeg({ outDir })).toThrow(`archiver ${emar}`);
   });
 
-it("rebuilds when the cached decoder was made under another key (review F1; both directions are proved with real toolchains in the r3 evidence)", () => {
-  vi.stubEnv("TINE_PDFJS_EMCC", "emcc");
-  vi.spyOn(console, "warn").mockImplementation(() => {});
-  fs.writeFileSync(path.join(outDir, "openjpeg.wasm"), "cached");
-  fs.writeFileSync(path.join(outDir, "BUILD_OPENJPEG.json"), JSON.stringify({ inputHash: "x", sha256: "y" }));
-  vi.mocked(execFileSync).mockImplementationOnce(() => compilerVersion).mockImplementationOnce(() => {
-    throw new Error("compiler reached");
+describe("decoder cache", () => {
+  const source = "openjpeg/openjp2/thread.c";
+  const vendor = "vendor/pdfjs-openjpeg";
+  const tools = vi.mocked(execFileSync);
+
+  function buildAndCountTools() {
+    tools.mockClear();
+    expect(buildOpenjpeg({ outDir })).toBe(outDir);
+    const calls = tools.mock.calls.map(([file, args = []]) =>
+      file === "test-python" ? [path.basename(args[0], ".py"), ...args.slice(1)] : [file, ...args]);
+    expect(calls).toHaveLength(25);
+    expect(calls.filter(([tool, flag]) => tool === "emcc" && flag === "--version")).toHaveLength(1);
+    expect(calls.filter(([tool, flag]) => tool === "emcc" && flag === "-c")).toHaveLength(22);
+    expect(calls.filter(([tool, flag]) => tool === "emar" && flag === "rcs")).toHaveLength(1);
+    expect(calls.filter(([tool, flag]) => tool === "emcc" && flag === "-o")).toHaveLength(1);
+  }
+
+  beforeEach(() => {
+    vi.stubEnv("PYTHON", "test-python");
+    vi.stubEnv("TINE_PDFJS_EMSDK", path.resolve("target/sdk/upstream"));
+    tools.mockImplementation(((file: string, args: string[]) => {
+      const flag = args[file === "test-python" ? 1 : 0];
+      if (flag === "--version") {
+        return file === "test-python" ? compilerVersion.replace("5.0.6", "4.0.20") : compilerVersion;
+      }
+      if (flag === "-o") {
+        fs.writeFileSync(path.join(outDir, "openjpeg.js"), "");
+        fs.writeFileSync(path.join(outDir, "openjpeg.wasm"), "test decoder bytes");
+      }
+      return "";
+    }) as typeof execFileSync);
+    buildAndCountTools();
   });
-  expect(() => buildOpenjpeg({ outDir })).toThrow("compiler reached");
+
+  it("reuses the pinned decoder without launching a tool or needing the SDK", () => {
+    vi.stubEnv("TINE_PDFJS_EMSDK", undefined);
+    tools.mockClear();
+    expect(buildOpenjpeg({ outDir })).toBe(outDir);
+    expect(tools).toHaveBeenCalledTimes(0);
+  });
+
+  it.each([
+    `${vendor}/${source}`,
+    "node_modules/pdfjs-dist/legacy/build/pdf.worker.mjs",
+    "scripts/build-pdfjs-openjpeg.mjs",
+    "scripts/lib/pdfjs-openjpeg-abi.mjs",
+  ])("rebuilds the pinned decoder when %s changes", input => {
+    const read = fs.readFileSync;
+    const changedFile = path.resolve(input);
+    const changedBytes = Buffer.concat([read(changedFile), Buffer.from("\n")]);
+    const provenanceFile = path.resolve(vendor, "source.json");
+    vi.spyOn(fs, "readFileSync").mockImplementation(((...args: Parameters<typeof read>) => {
+      const [file] = args;
+      if (file === changedFile) return changedBytes;
+      if (input === `${vendor}/${source}` && file === provenanceFile) {
+        // A revised vendored source comes with its matching provenance hash.
+        const provenance = JSON.parse(read(provenanceFile, "utf8"));
+        provenance.files[source] = createHash("sha256").update(changedBytes).digest("hex");
+        return JSON.stringify(provenance);
+      }
+      return read(...args);
+    }) as typeof read);
+    buildAndCountTools();
+  });
+
+  it("rebuilds when only the cached WASM bytes change", () => {
+    fs.appendFileSync(path.join(outDir, "openjpeg.wasm"), "corruption");
+    buildAndCountTools();
+    expect(fs.readFileSync(path.join(outDir, "openjpeg.wasm"), "utf8")).toBe("test decoder bytes");
+  });
+
+  it("rebuilds on every packager invocation and keeps its receipt separate from the pinned build", () => {
+    vi.stubEnv("TINE_PDFJS_EMCC", "emcc");
+    vi.spyOn(console, "warn").mockImplementation(() => {});
+    buildAndCountTools(); // The output directory holds a valid pinned receipt.
+    buildAndCountTools(); // Same packager, with its own valid receipt on disk.
+    vi.stubEnv("TINE_PDFJS_EMCC", undefined);
+    buildAndCountTools(); // A pinned build must also miss after a packager build.
+  });
 });
