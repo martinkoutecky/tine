@@ -119,16 +119,20 @@ impl PreparedRewrite {
         }
     }
 
-    /// The prepared text when `file`'s staged `old` bytes and the filename
-    /// format still match what this rewrite was prepared from, with its
-    /// certificate checked. On mismatch, reference rewrites return `None` for
-    /// recomputation; merges refuse. O(file bytes) comparison, no parse.
+    /// The prepared text and its certificate when `file`'s staged `old`
+    /// bytes and the filename format still match what this rewrite was
+    /// prepared from, with its certificate checked. On mismatch, reference
+    /// rewrites return `None` for recomputation; merges refuse. O(file bytes)
+    /// comparison, no parse. Consumes the rewrite: no later stage reads it, so
+    /// its copy of the old text (and the certificate, unless the caller keeps
+    /// it) is freed at the step's preflight, not held to the end of the
+    /// transaction (PC-9).
     pub(super) fn reuse(
-        &self,
+        self: Box<Self>,
         file: &FileId,
         old: &[u8],
         name_format: FileNameFormat,
-    ) -> Result<Option<String>, Why> {
+    ) -> Result<Option<(String, tine_core::text_trace::TextTrace)>, Why> {
         let matches =
             self.file == *file && self.old.as_bytes() == old && self.name_format == name_format;
         if !matches {
@@ -148,25 +152,25 @@ impl PreparedRewrite {
         trace
             .check(&self.new, &trace.substitution)
             .map_err(|e| Why::Refused(Refusal::TextRealization(e)))?;
-        Ok(Some(self.new.clone()))
+        Ok(Some((self.new, self.certificate)))
     }
 
     /// [`Self::reuse`] as the proposal a moved page's own-title rebind
     /// continues from (its certificate is the rewrite's). Same checks.
     pub(super) fn reuse_proposal(
-        &self,
+        self: Box<Self>,
         file: &FileId,
         old: &[u8],
         name_format: FileNameFormat,
     ) -> Result<Option<tine_core::refs::RenameProposal>, Why> {
-        Ok(self
-            .reuse(file, old, name_format)?
-            .map(|text| tine_core::refs::RenameProposal {
+        Ok(self.reuse(file, old, name_format)?.map(|(text, trace)| {
+            tine_core::refs::RenameProposal {
                 text,
-                trace: self.certificate.clone(),
+                trace,
                 unrealized: Vec::new(),
                 rewritten: Default::default(),
                 observed: None,
-            }))
+            }
+        }))
     }
 }
