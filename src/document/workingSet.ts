@@ -669,9 +669,9 @@ function feedPageOwner(dto: PageDto & { id?: string }): PageDto & { id?: string 
   return virtual;
 }
 
-/** Load the journals feed as the main view. Normal refresh replaces safe pages;
- * a calendar rollover can add the returned days while retaining every existing
- * feed page and its mounted editor. `mergeByDay` orders that retained union
+/** Load the journals feed as the main view. Normal refresh replaces safe pages
+ * and leaves retired days as placeholders. A calendar rollover can add days
+ * while retaining existing pages and their editors. `mergeByDay` orders that retained union
  * by journal date when referenced-only days arrive. An optional owner check refuses stale
  * publication. Publication FOLLOWS installation (master 7bd793bd0): when another
  * file holding a day's name has unsaved input, the old feed stays and the
@@ -683,18 +683,17 @@ function feedPageOwner(dto: PageDto & { id?: string }): PageDto & { id?: string 
  * cap); no disk write or failure is exposed here. */
 export function loadFeed(dtos: (PageDto & { id?: string })[], opts: { endEdit?: boolean; preserveExisting?: boolean; mergeByDay?: boolean; isRequestLive?: () => boolean } = {}): "published" | "stale" | PageLoadRefusal {
   if (opts.isRequestLive?.() === false) return "stale";
+  const existing = new Set(doc.feed);
   for (const input of dtos) {
     const d = feedPageOwner(input);
-    // A calendar rollover adds the new day while keeping every mounted older
-    // feed page, including its editor and any unsaved text, as the same object.
-    if (opts.preserveExisting && doc.feed.includes(d.name)) continue;
+    if (existing.has(d.name) && (opts.preserveExisting || !pageByName(d.name))) continue;
     const refusal = opts.preserveExisting ? ensurePageLoaded(d) : upsertUnlessDirty(d);
     if (refusal) return refusal;
   }
   if (opts.isRequestLive?.() === false) return "stale";
   const incoming = dtos.map((d) => d.name);
   const names = opts.preserveExisting
-    ? [...incoming, ...doc.feed.filter((name) => !incoming.includes(name))]
+    ? [...new Set([...incoming, ...doc.feed])]
     : incoming;
   if (opts.mergeByDay) names.sort((a, b) => (parseJournalTitle(b)?.getTime() ?? 0) - (parseJournalTitle(a)?.getTime() ?? 0));
   setDoc("feed", names);

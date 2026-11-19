@@ -99,14 +99,16 @@ let feedGeneration = 0;
 let loadingGeneration: number | null = null;
 let latestFeedRestart: Promise<unknown | null> | null = null;
 let publishedFeedEpoch: number | null = null;
-let publishedFeedNames: readonly string[] | null = null;
 let feedDone = false;
 let pendingFeedRestart = false;
 let feedReferencesPending = false;
 let paintedFeedGeneration: number | null = null;
 const feedViewportAnchors = new Set<() => (() => void) | undefined>();
 const journalCompletionOwners = new Set<JournalsFeedOwner>();
-clearOnBindingInvalidated(() => { feedViewportAnchors.clear(); journalCompletionOwners.clear(); feedReferencesPending = false; });
+clearOnBindingInvalidated(() => {
+  feedViewportAnchors.clear(); journalCompletionOwners.clear();
+  publishedFeedEpoch = null; feedReferencesPending = false;
+});
 const oldestFeedDay = () => {
   const name = feedNames().at(-1);
   const date = name ? parseJournalTitle(name) : null;
@@ -159,12 +161,11 @@ function ownerIsLive(owner: JournalsFeedOwner): boolean {
 }
 
 function hasPublishedFeed(epoch: number): boolean {
-  return publishedFeedEpoch === epoch && publishedFeedNames === feedNames();
+  return publishedFeedEpoch === epoch;
 }
 
-/** The single start-over owner for route loads, watcher changes and calendar
- * rollover.  It intentionally keeps the old feed/cursor until a response has
- * passed all ownership checks. */
+/** The shared feed read for route loads, watcher changes and calendar rollover.
+ * It keeps the old feed and cursor until the answer passes ownership checks. */
 // Returns the caught backend rejection for the route's initial-error display,
 // or null after success, deferral, or a stale owner. Refresh callers show a toast.
 function restartJournalFeed(owner: JournalsFeedOwner, retried = false, rollover = false): Promise<unknown | null> {
@@ -250,8 +251,10 @@ async function runJournalFeedRestart(owner: JournalsFeedOwner, retried: boolean,
   // must not steal the generation from a live request that is about to land.
   if (!ownerIsLive(owner)) { recordFeedReason("owner-retired"); return null; }
   if (windowUnbound()) { recordFeedReason("window-unbound"); return null; }
-  const mergeReferences = hasPublishedFeed(owner.graphEpoch) && feedReferencesPending && journalAsOfDay === localDayKey();
+  const published = hasPublishedFeed(owner.graphEpoch);
+  const mergeReferences = published && feedReferencesPending && journalAsOfDay === localDayKey();
   const preserve = rollover || mergeReferences;
+  const throughDay = published && !rollover ? oldestFeedDay() : null;
   const generation = ++feedGeneration; // invalidate starts/appends before checking edit safety
   const requestOwner = latestOwner(feedOwners, "restart", graphOwner(() => ownerIsLive(owner)));
   if (!preserve && feedHasActiveEdit()) {
@@ -263,8 +266,11 @@ async function runJournalFeedRestart(owner: JournalsFeedOwner, retried: boolean,
   loadingGeneration = generation;
   try {
     let retryDay = false;
-    const result = await admitRead(requestOwner, () => mergeReferences
-      ? backend().journalFeedPage(FEED_PAGE, null, false, oldestFeedDay())
+    // Only startup and rollover need the fast file-only answer. A settled
+    // window can take one authoritative answer, including referenced days,
+    // so removed days disappear without dropping the still-valid suffix.
+    const result = await admitRead(requestOwner, () => throughDay !== null
+      ? backend().journalFeedPage(FEED_PAGE, null, !mergeReferences, throughDay)
       : backend().journalFeedPage(FEED_PAGE, null), response => withToday(response.pages).map(page => page.name), response => {
       reportUnreadableJournals(response);
       if (!responseMatches(browserDay, response)) {
@@ -287,7 +293,7 @@ async function runJournalFeedRestart(owner: JournalsFeedOwner, retried: boolean,
         return null;
       }
       pendingFeedRestart = false;
-      const restoreAnchors = preserve ? [...feedViewportAnchors].map(capture => capture()) : [];
+      const restoreAnchors = published || rollover ? [...feedViewportAnchors].map(capture => capture()) : [];
       const loaded = loadFeed(withToday(response.pages), {
         endEdit: false,
         preserveExisting: preserve,
@@ -305,7 +311,6 @@ async function runJournalFeedRestart(owner: JournalsFeedOwner, retried: boolean,
       setFeedRefusal(null);
       setUpcomingFeed({ epoch: owner.graphEpoch, pages: response.upcoming ?? [] });
       publishedFeedEpoch = owner.graphEpoch;
-      publishedFeedNames = feedNames();
       journalAsOfDay = response.as_of_day;
       nextBeforeDay = response.next_before_day;
       feedDone = response.done;
@@ -356,7 +361,6 @@ async function completeJournalFeed(owner: JournalsFeedOwner, generation: number,
       for (const restore of restores) restore?.();
       if (loaded === "stale") return;
       if (loaded !== "published") { feedDayRefused(loaded, publicationOwner); return; }
-      publishedFeedNames = feedNames();
       setUpcomingFeed({ epoch: owner.graphEpoch, pages: response.upcoming ?? [] });
       nextBeforeDay = response.next_before_day;
       feedDone = response.done;
@@ -384,8 +388,8 @@ function paneContextFromContext() {
 // an empty today page unless the newest journal on disk already is today.
 export { withToday, toLoadablePage } from "../document";
 
-/** Refresh the shared Journals feed from the backend's first page, ensuring a
- * configured daily template first. Cost follows the journal inventory scan,
+/** Refresh the shared Journals feed through its oldest published day, ensuring
+ * a configured daily template first. Cost follows the journal inventory scan,
  * returned page blocks, and at most one template write. A dead owner or active
  * feed edit leaves the visible feed unchanged, except that the initial
  * referenced-day merge adds days while preserving all existing bodies.
@@ -660,7 +664,6 @@ export function PageView(): JSX.Element {
         }
         if (response.pages.length) {
           for (const refusal of appendFeed(response.pages)) feedDayRefused(refusal, owner);
-          publishedFeedNames = feedNames();
         }
         nextBeforeDay = response.next_before_day;
         feedDone = response.done;

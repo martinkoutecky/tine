@@ -75,8 +75,11 @@ it can retire. Retirement candidates follow per-name slot geometry and loaded
 membership; observer frames do not scan unrelated near or retired placeholders.
 Candidates keep slot registration order and pass every existing safety pin.
 A day near any viewport reloads through the normal owned page read
-and admission gate. Retiring and reloading preserve the reader's viewport and
-measured space; no offscreen source text cache is introduced.
+and admission gate, using the day name to resolve the current journal file.
+A feed refresh anchors the viewport as it admits the answer and keeps the
+measured placeholders of retired days that still belong in the feed.
+Retiring and reloading preserve the reader's viewport and measured space.
+Offscreen placeholders retain geometry only.
 Measured heights survive feed surface disposal/reopening, are pruned on the
 next feed surface update, and clear with the graph binding. No document body
 is retained for this geometry.

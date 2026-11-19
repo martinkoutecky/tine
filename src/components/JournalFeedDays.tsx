@@ -108,7 +108,6 @@ function JournalDay(props: { name: string; children: (page: FeedPage) => JSX.Ele
   let el!: HTMLDivElement;
   let live = true;
   let inFlight = false;
-  let path: string | undefined;
   const [near, setNear] = createSignal(false);
   const [height, setHeight] = createSignal(heights.get(props.name) ?? 0);
   const [reserve, setReserve] = createSignal(false);
@@ -126,7 +125,7 @@ function JournalDay(props: { name: string; children: (page: FeedPage) => JSX.Ele
     if (inFlight || page()) return;
     inFlight = true; setFailed(false);
     try {
-      await admitRead(graphOwner(() => live), () => path ? backend().getPageByPath(path) : backend().getPage(props.name, "journal"), dto => [props.name, ...(dto ? [dto.name] : [])], dto => {
+      await admitRead(graphOwner(() => live), () => backend().getPage(props.name, "journal"), dto => [props.name, ...(dto ? [dto.name] : [])], dto => {
         const anchor = captureReadingViewport(el.parentElement!);
         const refusal = ensurePageLoaded(toLoadablePage(dto ?? emptyPage(props.name, "journal"), props.name));
         anchor?.restore();
@@ -139,8 +138,7 @@ function JournalDay(props: { name: string; children: (page: FeedPage) => JSX.Ele
   };
   createEffect(() => {
     const loaded = page();
-    if (loaded) path = loaded.id;
-    else setReserve(true);
+    if (!loaded) setReserve(true);
     if (near() && !loaded && !failed()) void untrack(reload);
   });
   // Today's async sections can briefly be shorter during remount. Keep the

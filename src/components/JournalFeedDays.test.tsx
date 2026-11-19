@@ -68,7 +68,8 @@ it("requires every surface to be away, preserves measured placeholders and reloa
   vi.spyOn(HTMLElement.prototype, "getBoundingClientRect").mockImplementation(function (this: HTMLElement) {
     return { height: this.classList.contains("journal-feed-day") ? 100 : bodyHeight } as DOMRect;
   });
-  loadFeed(Array.from({ length: 20 }, (_, i) => day(i)));
+  const initial = Array.from({ length: 20 }, (_, i) => ({ ...day(i), id: `journals/Day${i}.md` }));
+  loadFeed(initial);
   const host = document.createElement("div"); document.body.append(host);
   const dispose = render(() => <><JournalFeedDays>{content}</JournalFeedDays><JournalFeedDays>{content}</JournalFeedDays></>, host);
   let disposeReopened: (() => void) | undefined;
@@ -81,15 +82,18 @@ it("requires every surface to be away, preserves measured placeholders and reloa
     expect(pageByName("Day8")).toBeUndefined();
     expect(pageByName("Day9")).toBeDefined();
     expect(host.querySelector<HTMLElement>('[data-feed-day="Day1"]')?.style.minHeight).toBe("100px");
+    loadFeed(initial.map(dto => dto.name === "Day1" ? { ...dto, id: "journals/replacement.md" } : dto));
+    expect(host.querySelectorAll("[data-feed-retired]")).toHaveLength(16);
     const reopened = document.createElement("div"); document.body.append(reopened);
     disposeReopened = render(() => <JournalFeedDays>{content}</JournalFeedDays>, reopened);
     expect(reopened.querySelector<HTMLElement>('[data-feed-day="Day1"]')?.style.minHeight).toBe("100px");
     disposeReopened(); disposeReopened = undefined;
     bodyHeight = 60; // async sections have not filled their previous space yet
-    vi.spyOn(backend(), "getPage").mockResolvedValue({ ...day(1, "fresh disk content"), id: "journals/Day1.md" });
+    vi.spyOn(backend(), "getPage").mockResolvedValue({ ...day(1, "fresh disk content"), id: "journals/replacement.md" });
     observers[0].emit(el => el.getAttribute("data-feed-day") === "Day1");
     await vi.waitFor(() => expect(host.querySelector('[data-feed-day="Day1"]')?.textContent).toBe("fresh disk content"));
     expect(pageByName("Day0")).toBeDefined();
+    expect(pageByName("Day1")?.id).toBe("journals/replacement.md");
     expect(host.querySelector('[data-feed-day="Day1"]')?.hasAttribute("data-feed-retired")).toBe(false);
     const reloaded = host.querySelector<HTMLElement>('[data-feed-day="Day1"]')!;
     expect(reloaded.style.minHeight).toBe("100px");
