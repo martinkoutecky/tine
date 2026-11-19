@@ -46,3 +46,11 @@ it.each([renderRawHtml, renderSanitizedHtml])("suppresses raw and macro-expanded
   expect(root.textContent).toContain("not included");
   expect(root.textContent).toContain("local-photo.png — not included");
 });
+it("shows resolved local drive and attachment targets as placeholders", () => {
+  shareMode();
+  const raw = "![drive](C:%5Cdocs%5Cnote%25.PDF) [attachment](assets/https://example.org/a.txt)";
+  const root = mount(() => renderBlocks(parseBlock(raw, false)));
+  expect(root.textContent).toContain("note%.PDF — not included");
+  expect(root.textContent).toContain("a.txt — not included");
+  expect(root.querySelector("a, img, audio, video")).toBeNull();
+});

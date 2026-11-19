@@ -1,6 +1,6 @@
 import { expect, it } from "vitest";
 import { externalPdfPath, relativePdfFileUrl } from "./externalPdfPath";
-import { fileLinkTarget } from "./relativeFileLink";
+import { anchorDecision } from "../linkSchemePolicy";
 
 it.each([
   ["file:///tmp/paper.pdf", "/tmp/paper.pdf"],
@@ -24,8 +24,9 @@ it.each(["file:paper.pdf", "file:../paper.pdf", "file:/tmp/paper.pdf", "../paper
 // GH #732 follow-up: a relative file link resolves with the one graph-root
 // resolver (relativeFileLink.ts), then reads as the absolute file: URL it names.
 const rel = (dest: string, root = "/home/user/graph") => {
-  const target = fileLinkTarget(dest); // null: a scheme URL or page name, never a file link
-  return target && relativePdfFileUrl(dest, target, root);
+  const decision = anchorDecision(dest);
+  return "target" in decision && decision.target && (decision.kind !== "relative" || decision.pathQualified)
+    ? relativePdfFileUrl(decision.target, root) : null;
 };
 
 it.each([
@@ -53,7 +54,7 @@ it.each([
 });
 
 it.each(["paper.pdf", "/tmp/paper.pdf", "file:assets/a.pdf", "file:docs/../Assets/a.pdf", "file:../graph/assets/sub/a.pdf", "C:\\papers\\paper.pdf", "../notes.txt", "file:../notes.pdf.txt",
-  "../paper.pdf#page=2", "../paper.pdf?x=1", "https://example.org/paper.pdf", "file:///tmp/paper.pdf", "Some Page.pdf"])(
+  "../paper.pdf#page=2", "../paper.pdf?x=1", "https://example.org/paper.pdf", "file:///tmp/paper.pdf", "Some Page.pdf", "..%2Fpaper.pdf"])(
   "leaves %s with its existing opener", (dest) => {
     expect(rel(dest)).toBeNull();
   });

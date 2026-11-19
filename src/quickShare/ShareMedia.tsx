@@ -10,9 +10,14 @@ function mediaDestination(value: string): { kind: "external"; url: URL } | { kin
 /** No resource element is ever mounted; following a link is a reader action. */
 export function ShareMedia(props: { url: string; label?: string }) {
   const url = () => { const destination = mediaDestination(props.url); return destination.kind === "external" ? destination.url : null; };
-  return <span class="quick-share-media">{url()
-    ? <a href={url()!.href} target="_blank" rel="noreferrer">{t("quick-share-viewer-remote-media", { host: url()!.host })}</a>
-    : t("quick-share-viewer-asset", { name: props.url.split("/").pop() || props.label || props.url })}</span>;
+  return <>{url()
+    ? <span class="quick-share-media"><a href={url()!.href} target="_blank" rel="noreferrer">{t("quick-share-viewer-remote-media", { host: url()!.host })}</a></span>
+    : <ShareLocalMedia path={props.url} label={props.label} />}</>;
+}
+
+export function ShareLocalMedia(props: { path: string; label?: string }) {
+  const name = () => props.path.split("/").pop() || props.label || props.path;
+  return <span class="quick-share-media">{t("quick-share-viewer-asset", { name: name() })}</span>;
 }
 
 /** Operate on inert, already sanitized HTML before insertion into the live DOM.

@@ -7,3 +7,7 @@ it("preserves browser destinations, including the empty-protocol policy", () => 
   expect(urlDest({ type: "complex", link: "x" })).toBe("x");
   expect(urlDest({ type: "complex" })).toBe("");
 });
+it("does not invent a separator in a one-letter Org protocol", () => {
+  expect(urlDest({ type: "complex", protocol: "C", link: "%5Cdocs%5Cnote.pdf" }, "org")).toBe("C:%5Cdocs%5Cnote.pdf");
+  expect(urlDest({ type: "complex", protocol: "C", link: "docs/note.pdf" }, "org")).toBe("C:docs/note.pdf");
+});
