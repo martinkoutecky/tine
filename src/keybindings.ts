@@ -1188,10 +1188,9 @@ export function installKeybindings(overrides: Record<string, string> = {}): () =
     if (handleSheetPasteEvent(e)) e.preventDefault();
   };
   type MouseHistoryDirection = "back" | "forward";
-  // Linux/Windows graph webviews intercept native releases; workspace popups
-  // and macOS/iOS/Android use DOM input.
-  // Select one owner, rather than guessing duplicate presses from their timing.
   const nativeMainHistory = "__TAURI_INTERNALS__" in window && !isMacDesktop && !isMobilePlatform;
+  const { navigator } = window;
+  const webview2MouseHistory = nativeMainHistory && browserPlatform(navigator?.userAgent ?? "").windows;
   let mainMouse: ReturnType<typeof installMouseHistory> | undefined;
   const navigateMouseHistory = (direction: MouseHistoryDirection) => {
     if (direction === "back") goBack();
@@ -1227,9 +1226,11 @@ export function installKeybindings(overrides: Record<string, string> = {}): () =
     win.addEventListener("keydown", superTracker, true);
     win.addEventListener("keyup", superTracker, true);
     win.addEventListener("blur", clearSuper);
-    const disposeMouse = installMouseHistory(win, win.document, direction => {
-      if (!nativeMainHistory || id !== MAIN_WINDOW_ID) navigateMouseHistory(direction);
-    });
+    // GTK consumes graph-webview presses before they can reach the DOM.
+    // On Windows the native hook filters commands forwarded from WebView2.
+    const gtkMainHistory = nativeMainHistory && !webview2MouseHistory && id === MAIN_WINDOW_ID;
+    const historySource = gtkMainHistory ? "gtk" : webview2MouseHistory ? "webview2" : "dom";
+    const disposeMouse = installMouseHistory(win, win.document, navigateMouseHistory, historySource);
     if (id === MAIN_WINDOW_ID) mainMouse = disposeMouse;
     return () => {
       win.removeEventListener("keydown", handler, true);

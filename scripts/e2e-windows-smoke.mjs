@@ -5,6 +5,7 @@ import { setTimeout as sleep } from "node:timers/promises";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
+import { fileURLToPath } from "node:url";
 import {
   startWebdriverApplication,
   stopWebdriverApplication,
@@ -12,6 +13,7 @@ import {
   webdriverServerArgs,
 } from "./e2e-capabilities.mjs";
 import { ensureMainWindow } from "./lib/e2e-main-window.mjs";
+import { currentPageTitle, openPageByLink, openPageByName } from "./lib/e2e-navigation.mjs";
 
 if (process.platform !== "win32") throw new Error("windows smoke must run on Windows");
 const APP = process.env.TINE_APP;
@@ -25,6 +27,11 @@ const journal = path.join(graph, "journals", `${stem}.md`);
 fs.rmSync(root, { recursive: true, force: true });
 for (const dir of ["pages", "journals", "logseq"]) fs.mkdirSync(path.join(graph, dir), { recursive: true });
 fs.writeFileSync(journal, "- WINDOWS_SMOKE_ORIGINAL\n");
+const historyPages = Array.from({ length: 8 }, (_, i) => `Side button ${i}`);
+for (const [i, name] of historyPages.entries()) {
+  const next = historyPages[i + 1];
+  fs.writeFileSync(path.join(graph, "pages", `${name}.md`), next ? `- [[${next}]]\n` : "- Last history page\n");
+}
 
 const env = {
   ...process.env,
@@ -33,6 +40,16 @@ const env = {
   LOCALAPPDATA: path.join(root, "localappdata"),
 };
 const webviewTarget = await startWebdriverApplication(APP, env, Number(process.env.E2E_NATIVE_PORT || 4445));
+const historyInput = fileURLToPath(new URL("./lib/e2e-windows-history-input.ps1", import.meta.url));
+function pressHistoryButton(button, delivery) {
+  const input = spawnSync("powershell.exe", [
+    "-NoProfile", "-NonInteractive", "-ExecutionPolicy", "Bypass", "-File", historyInput,
+    "-ProcessId", String(webviewTarget.applicationProcess.pid), "-Button", String(button), "-Delivery", delivery,
+  ], { encoding: "utf8", windowsHide: true });
+  if (input.status !== 0) {
+    throw new Error(`GH #948 input harness (${delivery}, XBUTTON${button}): ${input.error ?? input.stderr.trim()}`);
+  }
+}
 const log = fs.openSync(path.join(process.env.E2E_ARTIFACT_DIR || root, "tauri-driver.log"), "w");
 const driver = spawn(TD, webdriverServerArgs(DRIVER_PORT), { env: webviewTarget.env, stdio: ["ignore", log, log] });
 await sleep(3000);
@@ -95,6 +112,34 @@ try {
     throw new Error("saved text did not survive reload");
   }
   console.log("PASS: Windows WebView2 launch, overscroll containment, graph render, edit, save, and reload");
+
+  await openPageByName(browser, historyPages[0]);
+  for (const name of historyPages.slice(1)) await openPageByLink(browser, name);
+  // Leave an extra page in each direction so excess steps stay observable.
+  await browser.keys(["Alt", "ArrowLeft"]);
+  for (const delivery of ["mouse", "native", "native-first", "browser-first"]) {
+    for (const [button, start, delta] of [[1, 6, -1], [2, 0, 1]]) {
+      for (let press = 1; press <= 6; press++) {
+        const before = historyPages[start + (press - 1) * delta];
+        const expected = historyPages[start + press * delta];
+        const step = `GH #948 ${delivery}, XBUTTON${button}, press ${press}`;
+        await browser.waitUntil(async () => (await currentPageTitle(browser)) === before, {
+          timeout: 5_000, timeoutMsg: `${step}: starting page should be ${before}`,
+        });
+        pressHistoryButton(button, delivery === "browser-first" ? "mouse" : delivery);
+        try {
+          await browser.waitUntil(async () => (await currentPageTitle(browser)) === expected, { timeout: 5_000 });
+          if (delivery === "browser-first") pressHistoryButton(button, "forwarded");
+          const observed = await currentPageTitle(browser);
+          if (observed !== expected) throw new Error(`unexpected extra step to ${observed}`);
+        } catch (error) {
+          const observed = await currentPageTitle(browser);
+          throw new Error(`${step}: expected ${expected}, observed ${observed || "no routed page"}`, { cause: error });
+        }
+      }
+    }
+    console.log(`PASS: GH #948 ${delivery}, six Windows Back and six Forward presses each moved one page`);
+  }
 } finally {
   try { await browser?.deleteSession(); } catch {}
   spawnSync("taskkill", ["/PID", String(driver.pid), "/T", "/F"], { stdio: "ignore" });
