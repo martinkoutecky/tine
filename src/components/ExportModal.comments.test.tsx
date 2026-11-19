@@ -113,14 +113,14 @@ it.each([false, true])("a published reader embed of a comment (reply=%s) is labe
 // Iif8k: reference rows are shallow; the native reference producer supplies
 // thread membership, and the chooser's Copy/Export must use it.
 it("reference-panel Copy/Export labels comment rows and omits them on request", async () => {
-  const groups: RefGroup[] = [{ page: "Source", kind: "page", blocks: [
+  const groups: RefGroup[] = [{ page: "Source", kind: "page", export_source: { path: "pages/Source.md", rev: "source" }, blocks: [
     { id: "root", raw: "COMMENTMARKER [[Target]]\ntine.quote:: Body", comment: true, breadcrumb: ["Body"], collapsed: false, children: [] },
     { id: "reply", raw: "REPLYMARKER [[Target]]", comment: true, breadcrumb: ["Body", "COMMENTMARKER"], collapsed: false, children: [] },
     { id: "plain", raw: "ORDINARY [[Target]]", breadcrumb: ["Body"], collapsed: false, children: [] },
   ] }];
   vi.spyOn(backend(), "getPage").mockResolvedValue({
     id: "pages/Source.md", name: "Source", title: "Source", kind: "page", format: "md",
-    pre_block: null, blocks: [{ id: "body", raw: "Body", collapsed: false, children: groups[0].blocks }],
+    pre_block: null, rev: "source", blocks: [{ id: "body", raw: "Body", collapsed: false, children: groups[0].blocks }],
   });
   const host = document.createElement("div");
   document.body.append(host);

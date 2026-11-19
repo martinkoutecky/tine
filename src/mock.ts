@@ -705,7 +705,8 @@ export function mockBackend(extraPages: PageDto[] = conflictDemoBodies().map((bl
           walk(b.children, [...anc, b.raw.split("\n")[0] ?? ""]);
         });
       walk(p.blocks, []);
-      if (matched.length) groups.push({ page: p.name, kind: p.kind, blocks: matched });
+      if (matched.length) groups.push({ page: p.name, kind: p.kind, blocks: matched,
+        ...(exclude && { export_source: { path: mockPagePath(p), rev: p.rev ?? "mock-rev" } }) });
     }
     return groups;
   };
@@ -878,7 +879,7 @@ export function mockBackend(extraPages: PageDto[] = conflictDemoBodies().map((bl
       const rows = candidates.slice(0, limit);
       const done = rows.length === candidates.length;
       return {
-        pages: rows.map(({ page }) => ({ ...page, id: mockPagePath(page) })),
+        pages: rows.map(({ page }) => ({ ...page, rev: page.rev ?? "mock-rev", id: mockPagePath(page) })),
         next_before_day: done || !rows.length ? null : rows[rows.length - 1].day,
         done,
         as_of_day,
@@ -889,7 +890,7 @@ export function mockBackend(extraPages: PageDto[] = conflictDemoBodies().map((bl
     },
     async getPage(name: string) {
       const page = name.startsWith("hls__") ? hlsPageDto(name) : find(name);
-      return page ? { ...page, id: mockPagePath(page) } : null;
+      return page ? { ...page, rev: page.rev ?? "mock-rev", id: mockPagePath(page) } : null;
     },
     async resolvePage(name: string, kind: "journal" | "page") {
       return mockResolve(name, kind);
@@ -1436,7 +1437,7 @@ export function mockBackend(extraPages: PageDto[] = conflictDemoBodies().map((bl
     ...mockJournalFiles(),
     async getPageByPath(path: string) {
       const page = all.find((p) => mockPagePath(p) === path);
-      if (page) return { ...page, id: path };
+      if (page) return { ...page, rev: page.rev ?? "mock-rev", id: path };
       // The duplicate-day stray opens to its own content (#21); other paths fall
       // back to the canonical page by name.
       const stray = path.includes("Friday");

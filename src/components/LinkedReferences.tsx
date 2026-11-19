@@ -155,6 +155,8 @@ export function ReferenceSection(input: { name: string; unlinked?: boolean; jour
   });
   const registration = registerUnlinkedReader(unlinkedTarget);
   const freshness = createCollapsedRevision(dependency.revision, collapsed, () => props.name);
+  const [exportRetry, setExportRetry] = createSignal(0);
+  const exportReadRevision = () => `${freshness.revision()}\0${exportRetry()}`;
   const answerRevisions = new WeakMap<RefGroup[], string>();
   const [groupsResource] = createMembershipResource(
     () => props.unlinked ? unlinkedTarget() : props.name,
@@ -180,7 +182,7 @@ export function ReferenceSection(input: { name: string; unlinked?: boolean; jour
     // backlinks change. Only an editor inside the result surface needs its
     // answer retained until blur; source edits may follow published revisions.
     (groups, id) => (!props.journalFeed || !!activeSurface()?.startsWith("ref:")) && groupsContainEdit(groups, id),
-    undefined, false, freshness.revision,
+    undefined, false, exportReadRevision,
   );
   // The resource loader reports failures through loadError; readOr covers reads.
   const groups = () => readOr(groupsResource, undefined, "linked references");
@@ -445,7 +447,8 @@ export function ReferenceSection(input: { name: string; unlinked?: boolean; jour
     >
     <Show when={props.unlinked || (groups() && mergedGroups().length > 0)}>
       <Show when={exportChooserOpen()}>
-        <ReferenceExportChooser subject={heading()} groups={shown()} onClose={() => setExportChooserOpen(false)} />
+        <ReferenceExportChooser subject={heading()} groups={shown()} onClose={() => setExportChooserOpen(false)}
+          onSourceReadFailed={() => setExportRetry(value => value + 1)} />
       </Show>
       <div ref={el => onMount(() => onCleanup(trackViewportAnchor(el)))} class={`${section}-references`}
         {...{

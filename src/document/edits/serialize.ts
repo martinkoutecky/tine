@@ -1,8 +1,8 @@
-import { doc, formatForBlock, pageByName } from "../model";
+import { authoredBlockClaims, doc, formatForBlock, pageByName } from "../model";
 import { hideKeys, splitProps } from "../../editor/properties";
 import { type ClipboardPayloadData, type ClipboardSourcePage, type ClipboardBlock, CLIPBOARD_PAYLOAD_MAX_BLOCKS, CLIPBOARD_PAYLOAD_MAX_RAW_BYTES } from "../../clipboard";
 import { pageInstanceGeneration } from "../instance";
-import { stampCutSource } from "../host/wiring";
+import { baseRevFor, stampCutSource } from "../host/wiring";
 import { type ExportNode } from "../../editor/exportText";
 import { type BlockDto } from "../../types";
 import { threadRootOf } from "../commentThreads";
@@ -91,30 +91,44 @@ export function buildClipboardPayload(ids: string[]): ClipboardPayloadData | nul
   return { blocks, sourcePages: [...pages.values()] };
 }
 
+/** The loaded source's file revision and page-local export locators. Authored
+ * lookup can index this page once. A duplicate authored identity has no answer. */
+export function exportSourceIdentity(page: string) {
+  return {
+    rev: baseRevFor(page),
+    locator: (id: string) => doc.byId[id]?.page === page ? id : null,
+    authored: (id: string) => {
+      const matches = authoredBlockClaims(page, id);
+      return matches?.size === 1 ? matches.values().next().value! : null;
+    },
+  };
+}
+
 /** Build an ExportNode forest (raw + children) for the given block ids and their
- *  subtrees — input to the configurable text exporter (Copy / Export modal). */
-export function exportNodesFor(ids: string[]): ExportNode[] {
+ *  subtrees — input to the configurable text exporter (Copy / Export modal).
+ *  Reference export retains checked descendants for depth-based promotion. */
+export function exportNodesFor(ids: string[], retainCheckedDescendants = false): ExportNode[] {
   const set = new Set(ids);
   // A multi-selection (selectedIds) includes complete subtrees, so it can
   // contain BOTH a parent and its descendants. Export only the selection's roots
   // — a kept node's subtree already carries its children, so emitting a selected
   // child again as a top-level node would duplicate it (the "1 2 3 1 2 3" bug).
-  const toNode = (id: string): ExportNode | null => {
+  const toNode = (id: string, detachedRoot: boolean): ExportNode | null => {
     const n = doc.byId[id];
     if (!n) return null;
+    const checked = retainCheckedDescendants && !detachedRoot && set.has(id);
     return {
       raw: n.raw,
       format: pageByName(n.page)?.format ?? "md",
       hasParent: n.parent !== null,
-      children: n.children.map(toNode).filter((x): x is ExportNode => x != null),
+      ...(checked && { checked: true }),
+      ...((checked || detachedRoot) && threadRootOf(id) && { comment: { author: null, date: null } }),
+      children: n.children.map(child => toNode(child, false)).filter((x): x is ExportNode => x != null),
     };
   };
   return ids
     .filter((id) => !hasSelectedAncestor(id, set))
-    .map(id => {
-      const node = toNode(id);
-      return node && threadRootOf(id) ? { ...node, comment: { author: null, date: null } } : node;
-    })
+    .map(id => toNode(id, true))
     .filter((x): x is ExportNode => x != null);
 }
 

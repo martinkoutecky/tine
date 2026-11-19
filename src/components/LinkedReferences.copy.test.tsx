@@ -1,12 +1,13 @@
-import { afterEach, expect, it, vi } from "vitest";
+import { afterEach, beforeAll, expect, it, vi } from "vitest";
 import { render } from "solid-js/web";
 import { backend } from "../backend";
 import { clearClipboardPayload } from "../clipboard";
-import { resetStore } from "../document";
+import { ensurePageLoaded, resetStore } from "../document";
 import { endEdit } from "../editorController";
 import { installKeybindings } from "../keybindings";
 import { resetNearObserverForTests } from "../lazyObserve";
 import { resetReferenceSectionState } from "../referenceSectionState";
+import { initParser } from "../render/parse";
 import { mainPaneRouter, resetTabsToJournals } from "../router";
 import { maybeEditorIn } from "../tests/editorDriver";
 import type { BlockDto, PageRead, RefGroup } from "../types";
@@ -18,7 +19,7 @@ const block = (id: string, raw: string, children: BlockDto[] = []): BlockDto => 
   id, raw, children, collapsed: false,
 });
 const page = (name: string, blocks: BlockDto[]): PageRead => ({
-  name, title: name, kind: "page", format: "md", id: `pages/${name}.md`, pre_block: null, blocks,
+  name, title: name, kind: "page", format: "md", id: `pages/${name}.md`, rev: "original", pre_block: null, blocks,
 });
 const hit = block("alpha-hit", "Alpha reference [[Target]]", [block("alpha-child", "Alpha child")]);
 const nestedHit = block("alpha-nested", "Other Alpha reference [[Target]]", [block("alpha-nested-child", "Other Alpha child")]);
@@ -34,11 +35,12 @@ const sources = [
 ];
 const shallow = (value: BlockDto) => ({ ...value, children: [] });
 const groups: RefGroup[] = sources.map((source, index) => ({
-  page: source.name, kind: source.kind, path: source.id,
+  page: source.name, kind: source.kind, path: source.id, export_source: { path: source.id, rev: source.rev! },
   blocks: [shallow([hit, coldHit, excludedHit][index]), ...(index === 0 ? [shallow(nestedHit)] : [])],
 }));
 
 const disposers: (() => void)[] = [];
+beforeAll(initParser);
 afterEach(() => {
   endEdit("page-navigation");
   for (const dispose of disposers.splice(0).reverse()) dispose();
@@ -54,7 +56,7 @@ afterEach(() => {
   document.body.replaceChildren();
 });
 
-async function mountTarget() {
+async function mountTarget(sourcePages = sources, referenceGroups = groups) {
   vi.stubGlobal("IntersectionObserver", class {
     constructor(private callback: IntersectionObserverCallback) {}
     observe(target: Element) {
@@ -66,8 +68,8 @@ async function mountTarget() {
     disconnect() {}
   });
   vi.spyOn(backend(), "getPage").mockImplementation(async name => name === target.name ? target : null);
-  const readByPath = vi.spyOn(backend(), "getPageByPath").mockImplementation(async path => sources.find(source => source.id === path) ?? null);
-  vi.spyOn(backend(), "getBacklinks").mockResolvedValue(groups);
+  const readByPath = vi.spyOn(backend(), "getPageByPath").mockImplementation(async path => sourcePages.find(source => source.id === path) ?? null);
+  const backlinks = vi.spyOn(backend(), "getBacklinks").mockResolvedValue(referenceGroups);
   const writeText = vi.spyOn(backend(), "writeText").mockResolvedValue(undefined);
   const writeRich = vi.spyOn(backend(), "writeRich").mockResolvedValue(undefined);
   mainPaneRouter.replaceActiveRoute({ kind: "page", name: "Target", pageKind: "page" });
@@ -75,8 +77,24 @@ async function mountTarget() {
   document.body.append(root);
   disposers.push(installKeybindings(), render(() => <><PageView /><ExportModal /></>, root));
   const liveRow = (id: string) => root.querySelector<HTMLElement>(`.ls-block:not(.ref-block)[data-block-id="${id}"] > .block-main`);
+  await vi.waitFor(() => expect(readByPath).toHaveBeenCalledWith("pages/Alpha.md"));
   await vi.waitFor(() => expect(liveRow(hit.id)).not.toBeNull());
-  return { root, liveRow, readByPath, writeText, writeRich };
+  return { root, liveRow, readByPath, backlinks, writeText, writeRich };
+}
+
+function chooseReferences(root: HTMLElement, keep: (label: string) => boolean) {
+  root.querySelector<HTMLButtonElement>('button[aria-label="Copy / export linked references"]')!.click();
+  const chooser = root.querySelector('[role="dialog"][aria-label="Copy / export Linked References"]')!;
+  for (const label of chooser.querySelectorAll("label")) {
+    if (!keep(label.textContent ?? "")) label.querySelector("input")!.click();
+  }
+  return chooser.querySelector<HTMLButtonElement>(".export-btn-primary")!;
+}
+
+function changeExportLevel(root: HTMLElement, value: string) {
+  const level = root.querySelector<HTMLSelectElement>(".export-modal select")!;
+  level.value = value;
+  level.dispatchEvent(new Event("change", { bubbles: true }));
 }
 
 function press(key: string, options: KeyboardEventInit = {}) {
@@ -163,12 +181,106 @@ it("does not reopen export after the chooser is dismissed during a cold source r
   const chooser = root.querySelector('[role="dialog"][aria-label="Copy / export Linked References"]')!;
   chooser.querySelector<HTMLButtonElement>(".export-btn-primary")!.click();
   expect(readByPath).toHaveBeenLastCalledWith("pages/Beta.md");
-  chooser.querySelector<HTMLButtonElement>(".export-btn-secondary")!.click();
+  for (const control of chooser.querySelectorAll<HTMLInputElement | HTMLButtonElement>("input, .ref-export-actions button")) {
+    expect(control.disabled).toBe(true);
+  }
+  const cancel = chooser.querySelector<HTMLButtonElement>(".export-btn-secondary")!;
+  expect(cancel.disabled).toBe(false);
+  cancel.click();
   resolveSource(sources[1]);
   await sourceRead;
   await Promise.resolve();
   expect(root.querySelector(".export-preview")).toBeNull();
   expect(readByPath.mock.calls).toEqual([["pages/Alpha.md"], ["pages/Beta.md"]]);
+});
+
+it.each([true, false])("refuses a reused positional row with identical text (loaded=%s)", async loaded => {
+  const selectedSource = sources[loaded ? 0 : 1];
+  const selected = loaded ? hit : coldHit;
+  const { root, readByPath, backlinks } = await mountTarget();
+  const next = chooseReferences(root, label => label === selected.raw);
+  const replacement = { ...selectedSource, rev: "replacement", blocks: [
+    block(selected.id, selected.raw, [block("replacement-child", "Unrelated replacement child")]),
+  ] };
+  backlinks.mockResolvedValue(groups.map(group => group.page === selectedSource.name
+    ? { ...group, export_source: { path: replacement.id, rev: replacement.rev } }
+    : group));
+  if (loaded) ensurePageLoaded(replacement);
+  else readByPath.mockResolvedValueOnce(replacement).mockResolvedValueOnce(replacement);
+  next.click();
+  await vi.waitFor(() => expect(next.isConnected && !next.disabled).toBe(true));
+  expect(root.querySelector(".export-preview")).toBeNull();
+  await vi.waitFor(() => expect(backlinks).toHaveBeenCalledTimes(2));
+  root.querySelector<HTMLButtonElement>(".ref-export-chooser .export-btn-secondary")!.click();
+  chooseReferences(root, label => label === selected.raw).click();
+  await vi.waitFor(() => expect(root.querySelector<HTMLTextAreaElement>(".export-preview")?.value).toContain("Unrelated replacement child"));
+});
+
+it.each([["Alpha", "1"], ["Alpha", "2"], ["Beta", "1"], ["Beta", "2"]])(
+  "promotes checked %s rows below level %s in every format", async (name, level) => {
+    const sourceIndex = name === "Alpha" ? 0 : 1;
+    const parent = name === "Alpha" ? hit : coldHit;
+    const selected = block("checked-descendant", "Checked descendant [[Target]]", [block("descendant-leaf", "Descendant leaf")]);
+    const descendant = level === "1" ? selected : block("unchecked-bridge", "Unchecked intermediate", [selected]);
+    const tree = { ...parent, children: [descendant] };
+    const sourcePages = sources.map((source, index) => index === sourceIndex ? { ...source, blocks: [tree] } : source);
+    const referenceGroups = groups.map((group, index) => index === sourceIndex ? { ...group, blocks: [shallow(tree), shallow(selected)] } : group);
+    const { root } = await mountTarget(sourcePages, referenceGroups);
+    chooseReferences(root, label => label === tree.raw || label === selected.raw).click();
+    const preview = await vi.waitFor(() => {
+      const field = root.querySelector<HTMLTextAreaElement>(".export-preview");
+      expect(field).not.toBeNull();
+      return field!;
+    });
+    changeExportLevel(root, level);
+    expect(preview.value.split("\n").some(line => line.startsWith("\t- Checked descendant"))).toBe(true);
+    if (level === "2") expect(preview.value.split("\n")).toContain("\t\t- Descendant leaf");
+    const format = (label: string) => [...root.querySelectorAll<HTMLButtonElement>(".export-modal button")]
+      .find(button => button.textContent?.trim() === label)!.click();
+    format("OPML");
+    const opml = new DOMParser().parseFromString(preview.value, "application/xml");
+    expect([...opml.querySelectorAll("body > outline > outline")].map(node => node.getAttribute("text")?.split(" [[")[0]))
+      .toEqual([tree.raw.split(" [[")[0], "Checked descendant"]);
+    format("HTML");
+    const html = new DOMParser().parseFromString(preview.value, "text/html");
+    expect([...html.querySelectorAll("body > ul > li > ul > li")].map(node => node.firstChild?.textContent?.split(" [[")[0]))
+      .toEqual([tree.raw.split(" [[")[0], "Checked descendant"]);
+    changeExportLevel(root, "all");
+    expect(preview.value.match(/Checked descendant/g)).toHaveLength(1);
+  },
+);
+
+it("warms targets only when their reference export level is included", async () => {
+  localStorage.setItem("tine.exportOptions", JSON.stringify({ maxDepth: 1 }));
+  const uuid = "12345678-1234-1234-1234-123456789abc";
+  const tree = { ...coldHit, children: [block("hidden", `{{embed [[Delayed]]}} ((${uuid})) {{embed ((${uuid}))}} {{query [[Other]]}}`)] };
+  const { root } = await mountTarget([sources[0], { ...sources[1], blocks: [tree] }, sources[2]]);
+  let finish!: (source: PageRead) => void;
+  const read = vi.spyOn(backend(), "getPage").mockReturnValue(new Promise(resolve => { finish = resolve; }));
+  const refs = vi.spyOn(backend(), "resolveBlocks").mockResolvedValue([null]);
+  const embed = vi.spyOn(backend(), "previewBlock").mockResolvedValue(null);
+  const query = vi.spyOn(backend(), "exportQuerySubtrees").mockResolvedValue({ results: [], omitted_queries: 0 });
+  chooseReferences(root, label => label === tree.raw).click();
+  const copy = () => root.querySelector<HTMLButtonElement>(".export-modal .export-btn-primary");
+  await vi.waitFor(() => expect(copy()?.disabled).toBe(false));
+  expect(read).not.toHaveBeenCalled();
+  expect(refs).not.toHaveBeenCalled();
+  expect(embed).not.toHaveBeenCalled();
+  expect(query).not.toHaveBeenCalled();
+  changeExportLevel(root, "2");
+  await vi.waitFor(() => expect(read).toHaveBeenCalledWith("Delayed", "page"));
+  expect(copy()?.disabled).toBe(true);
+  changeExportLevel(root, "1");
+  await vi.waitFor(() => expect(copy()?.disabled).toBe(false));
+  changeExportLevel(root, "2");
+  expect(copy()?.disabled).toBe(true);
+  finish(page("Delayed", [block("target", "Resolved embed body")]));
+  await vi.waitFor(() => expect(copy()?.disabled).toBe(false));
+  expect(read).toHaveBeenCalledTimes(1);
+  expect(refs).toHaveBeenCalledTimes(1);
+  expect(embed).toHaveBeenCalledTimes(1);
+  expect(query).toHaveBeenCalledTimes(1);
+  expect(root.querySelector<HTMLTextAreaElement>(".export-preview")?.value).toContain("Resolved embed body");
 });
 
 it("copies selected roots from different source depths as siblings, with their children nested as in Logseq", async () => {

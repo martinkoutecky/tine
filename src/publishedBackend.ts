@@ -29,6 +29,9 @@ import { admitPublishedAnswers, publishedAnswerer } from "./publishedAnswers";
 import type { QuickShareListing } from "./quickShare/commands";
 
 type PublishedPage = PageDto & { path: string };
+const snapshotPageRead = (page: PublishedPage): PageRead => ({
+  ...structuredClone(page), id: page.path, rev: page.rev ?? "published",
+});
 
 /** `<meta name="tine-published" content="snapshot.json">` in the exported shell. */
 export const PUBLISHED_META_NAME = "tine-published";
@@ -489,12 +492,12 @@ export function publishedBackend(load: () => Promise<PublishedSnapshot> = loadPu
     async getPage(name: string, kind: "journal" | "page") {
       const page = (await answersOf()).page(name, kind);
       if (!page) return null;
-      return { ...structuredClone(page), id: page.path } satisfies PageRead;
+      return snapshotPageRead(page);
     },
     async getPageByPath(path: string) {
       const snapshot = await load();
       const page = snapshot.pages.find((candidate) => candidate.path === path);
-      return page ? { ...structuredClone(page), id: page.path } satisfies PageRead : null;
+      return page ? snapshotPageRead(page) : null;
     },
     async journalFeedPage(limit: number, beforeDay: number | null) {
       const snapshot = await load();
@@ -508,7 +511,7 @@ export function publishedBackend(load: () => Promise<PublishedSnapshot> = loadPu
       const pages = rows
         .map((entry) => publishedAnswerer(snapshot).feedPage(entry))
         .filter((page): page is PublishedPage => page !== null)
-        .map((page) => ({ ...structuredClone(page), id: page.path } satisfies PageRead));
+        .map(snapshotPageRead);
       const done = rows.length === candidates.length;
       return {
         pages,
@@ -532,7 +535,13 @@ export function publishedBackend(load: () => Promise<PublishedSnapshot> = loadPu
     // ---- references ----
     async getBacklinks(name: string) {
       const snapshot = await load();
-      return structuredClone(backlinkGroups(snapshot, name));
+      const answers = publishedAnswerer(snapshot);
+      return structuredClone(backlinkGroups(snapshot, name)).map(group => {
+        const page = answers.page(group.page, group.kind);
+        return page && (!group.path || group.path === page.path)
+          ? { ...group, export_source: { path: page.path, rev: page.rev ?? "published" } }
+          : group;
+      });
     },
     async getBacklinkFilterContext(name: string, targets: BacklinkFilterTarget[]): Promise<BacklinkFilterContext> {
       const snapshot = await load();

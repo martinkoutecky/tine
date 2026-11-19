@@ -545,6 +545,8 @@ export interface RefGroup {
   kind: PageKind;
   /** Exact owner for path-bearing search presentations; absent for legacy DSL results. */
   path?: string;
+  /** Physical owner and revision of the snapshot that supplied these reference rows. */
+  export_source?: { path: string; rev: string | null; ambiguous_ids?: string[] };
   blocks: BlockDto[];
   evidence?: ReferenceBlockEvidence[];
 }

@@ -16,10 +16,10 @@ it("exports the opening selection snapshot in each source page's format", async 
   const block = (id: string) => ({ id, raw: `TODO ${id}`, collapsed: false, children: [] });
   vi.spyOn(backend(), "getPage").mockResolvedValue({
     id: "pages/Org Source.org", name: "Org Source", title: "Org Source", kind: "page",
-    pre_block: null, format: "org", blocks: [block("a"), block("b")],
+    pre_block: null, format: "org", rev: "original", blocks: [block("a"), block("b")],
   });
   const [groups, setGroups] = createSignal<RefGroup[]>([
-    { page: "Org Source", kind: "page", blocks: [block("a"), block("b")] },
+    { page: "Org Source", kind: "page", export_source: { path: "pages/Org Source.org", rev: "original" }, blocks: [block("a"), block("b")] },
   ]);
   const root = document.createElement("div");
   document.body.append(root);

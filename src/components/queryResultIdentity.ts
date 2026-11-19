@@ -23,12 +23,45 @@ function dtoIndex(page: PageDto): Map<string, BlockDto[]> {
   visit(page.blocks); dtoIndexes.set(page, index); return index;
 }
 
-/** Match a shallow reference against an exact source page read for export.
- * Index the source once per read, then check the runtime key and original
- * body so a reused positional key cannot silently export a different row. */
-export function referenceExportSource(reference: BlockDto, sourcePage: PageDto): BlockDto | null {
-  const matches = dtoIndex(sourcePage).get(reference.id);
-  return matches?.length === 1 && matches[0].raw === reference.raw ? matches[0] : null;
+function unique<T>(matches: T[] | undefined): T | null {
+  return matches?.length === 1 ? matches[0] : null;
+}
+
+const authoredDtoIndexes = new WeakMap<PageDto, Map<string, BlockDto[]>>();
+/** Match one authored ID, indexing a cold page once on first use. */
+export function dtoAuthored(page: PageDto, id: string): BlockDto | null {
+  let index = authoredDtoIndexes.get(page);
+  if (!index) {
+    index = new Map();
+    for (const rows of dtoIndex(page).values()) for (const block of rows) {
+      const authored = block.has_id !== false && existingBlockId(block.raw, page.format ?? "md");
+      if (!authored) continue;
+      const matches = index.get(authored) ?? [];
+      matches.push(block);
+      index.set(authored, matches);
+    }
+    authoredDtoIndexes.set(page, index);
+  }
+  return unique(index.get(id));
+}
+
+/** Match one runtime key in the source DTO's lazily indexed outline. */
+export function dtoLocator(page: PageDto, id: string): BlockDto | null {
+  return unique(dtoIndex(page).get(id));
+}
+
+/** Resolve an export row on its known physical source. A positional locator
+ * names a block only within the exact source revision. Across revisions the
+ * parser's authored identity must resolve to exactly one block. Lookups are
+ * source-local and may lazily index that page once. */
+export function referenceExportSource<Row>(
+  reference: BlockDto, format: Format, expectedRev: string | null, actualRev: string | null | undefined,
+  ambiguous: ReadonlySet<string>,
+  locator: (id: string) => Row | null, authored: (id: string) => Row | null,
+): Row | null {
+  if (expectedRev !== null && expectedRev === actualRev) return locator(reference.id);
+  const id = reference.has_id !== false && existingBlockId(reference.raw, format);
+  return id && !ambiguous.has(id) ? authored(id) : null;
 }
 
 const mountedSynthetic = new WeakMap<BlockDto, number | null>();
@@ -54,21 +87,13 @@ export function resolveResultRow(row: ResultRow, mode: "action" | "mount" = "act
   if (sourcePage) {
     if (!row.dto || sourcePage.name !== row.page || sourcePage.kind !== row.kind || (row.path && sourcePage.id !== row.path)) return null;
     const format = sourcePage.format ?? "md";
-    const index = dtoIndex(sourcePage);
     if (resultsTicketActionable(resultTicket(row.dto))) {
-      const matches = index.get(row.dto.id) ?? [];
-      return matches.length === 1 ? matches[0] : null;
+      return dtoLocator(sourcePage, row.dto.id);
     }
     const durable = existingBlockId(row.dto.raw, format);
     // Authored identity survives replacement, not a held or in-flight change.
     if (!durable || !resultsActionable()) return null;
-    const matches: BlockDto[] = [];
-    const visit = (blocks: BlockDto[]) => { for (const block of blocks) {
-      if (durable ? existingBlockId(block.raw, format) === durable : block.id === row.dto!.id) matches.push(block);
-      visit(block.children);
-    } };
-    visit(sourcePage.blocks);
-    return matches.length === 1 ? matches[0] : null;
+    return dtoAuthored(sourcePage, durable);
   }
   const page = pageByName(row.page);
   if (!page || (row.kind && page.kind !== row.kind) || (row.path && page.id !== row.path)) return null;

@@ -15,6 +15,53 @@ fn name_claimants<'a>(
 }
 
 impl Store {
+    /// Export provenance from the view that supplied a reference group.
+    /// Resolves its owner through the name index. A group with authored IDs
+    /// checks their uniqueness in that one document. Performs no file reads.
+    /// If the cached source has been replaced, its old revision is unknown.
+    pub fn reference_source(
+        &self,
+        view: &WholeGraph,
+        group: &RefGroup,
+    ) -> Option<(PageId, Option<FileRev>, Vec<String>)> {
+        let owners = view.graph.real_page_owners();
+        let entry = owners.opening_entry(&tine_core::refs::page_key(&group.page))?;
+        let (entry, document) = view
+            .graph
+            .pages
+            .get(*view.graph.pages.positions.get(entry.rel_path_str())?)?;
+        if entry.kind != group.kind || entry.name != group.page {
+            return None;
+        }
+        let mut claims = group
+            .blocks
+            .iter()
+            .filter(|block| block.has_id == Some(true))
+            .flat_map(|block| &block.properties)
+            .filter(|(key, _)| key.trim().eq_ignore_ascii_case("id"))
+            .map(|(_, value)| (value.trim(), 0))
+            .collect::<HashMap<_, _>>();
+        if !claims.is_empty() {
+            crate::query::walk(&document.roots, &mut |block| {
+                if let Some(id) = &block.projection().regions.id {
+                    if let Some(count) = claims.get_mut(id.value.trim()) {
+                        *count += 1;
+                    }
+                }
+            });
+        }
+        let ambiguous = claims
+            .into_iter()
+            .filter(|(_, count)| *count != 1)
+            .map(|(id, _)| id.to_owned())
+            .collect();
+        let rev = self
+            .graph
+            .cached_document_rev(entry, document)
+            .map(FileRev::from);
+        Some((entry.rel_path.clone()?, rev, ambiguous))
+    }
+
     /// Use the latest published identity index for a move's same-name check.
     /// Before the first publication, live discovery still supplies the index;
     /// never wait for the load worker while holding the transaction writer lock.
@@ -73,6 +120,49 @@ impl WholeGraph {
             .collect();
         entries.sort_by(|a, b| crate::model::compare_page_claimants(a, b));
         entries
+    }
+}
+
+#[cfg(test)]
+mod reference_export_tests {
+    use super::*;
+
+    #[test]
+    fn reference_export_provenance_tracks_the_exact_source_document() {
+        let root = tempfile::tempdir().unwrap();
+        std::fs::create_dir(root.path().join("pages")).unwrap();
+        let file = root.path().join("pages/Source.md");
+        let original = "- [[Target]]\n  id:: duplicate\n  - Original child\n- Other block\n  id:: duplicate\n- Target in prose\n";
+        std::fs::write(&file, original).unwrap();
+        let store = Arc::new(Store::open(root.path(), Default::default()).unwrap().0);
+        let writer = crate::test_host_writer::HostWriter::start(&store);
+        let view = store.whole_graph().unwrap();
+        let linked = view.backlinks("Target").unwrap();
+        let unlinked = view.unlinked_references("Target").unwrap();
+        let id = PageId::from("pages/Source.md");
+        let read = store.page(&id).unwrap();
+        assert_eq!(
+            store.reference_source(&view, &linked[0]),
+            Some((id.clone(), Some(read.rev.clone()), vec!["duplicate".into()]))
+        );
+        assert_eq!(
+            store.reference_source(&view, &unlinked[0]),
+            Some((id.clone(), Some(read.rev.clone()), Vec::new()))
+        );
+        let mut doc = read.doc;
+        doc.blocks[0].children[0].raw = "Replacement child".into();
+        writer
+            .save(
+                crate::EditKind::ReplacePage,
+                &id,
+                SaveBase::Existing(read.rev),
+                &doc,
+            )
+            .unwrap();
+        assert_eq!(
+            store.reference_source(&view, &linked[0]),
+            Some((id, None, vec!["duplicate".into()]))
+        );
     }
 }
 

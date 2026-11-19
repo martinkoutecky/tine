@@ -645,9 +645,15 @@ per-edit work, and never deletes or overwrites a graph file to repair a cache.
 `whole_graph_reconciled()` never serves the checkpoint: it waits for the launch
 diff, for graph-wide destructive operations and for a one-shot lookup that
 missed in the checkpoint (a cold-start `tine://` link, GH #181). The public operation
-surface is 58 operations: the methods of `Store`, `Transaction` and `PagePlan` plus every
+surface is 59 operations: the methods of `Store`, `Transaction` and `PagePlan` plus every
 public function taking either. `crates/tine-store/SURFACE.txt` budgets it per
 concept and `crates/tine-store/tests/shallow_ratchet.rs` keeps this count true.
+Reference export receives the physical source and file revision paired with its
+reference view. The store checks the view's exact document against the current
+cache while holding the cache read lock. If the document was replaced, its old
+revision is unavailable. A reference with an authored ID can follow it within
+that same file when the ID was unique in both versions. The native bridge adds
+this information to the panel answer without reading source files.
 `InventoryScope::File(PageId)` extends the existing inventory question with
 one file's name in the captured view (O(log P + C) for C name claimants,
 no file reads or new index).

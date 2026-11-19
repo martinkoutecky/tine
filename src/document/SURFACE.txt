@@ -77,6 +77,7 @@ exitMultilineBlock  # why: the double-Enter exit writes its trailing-line trim a
 expandAncestors  # why: navigation reveals a block hidden in collapsed ancestors (GH #258); batch17a
 expandBlockSelection  # why: Ctrl/Cmd+A ladder in block selection (GH #262); batch17a
 exportNodesFor
+exportSourceIdentity  # why: GH #793: source revision with page-local runtime and unique authored locators for reference export; batch-fix-793-r2
 exportsPage  # why: the exports page DTO uses the canonical guarded-create boundary (export definitions); batch-share-dialog-ui
 extendFeedForScroll
 extendSelectionTo

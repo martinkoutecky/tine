@@ -155,7 +155,10 @@ fn store::Store::path_for_os_handoff
 struct store::Day
 struct store::FileRev
 
-## Reads (ceiling: 20)
+## Reads (ceiling: 21)
+# GH #793: export compares the reference answer's source revision with the
+# exact source it reads. The live cache and immutable view both take part.
+fn store::Store::reference_source
 # Audit L8-03: the orphan-asset inventory moved from WholeGraph::referenced_assets
 # (parsed pages only, cannot read set-aside duplicate-day files or fail on an
 # unreadable one) to the store, which can; the WholeGraph question left the surface.

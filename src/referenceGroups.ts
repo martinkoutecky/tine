@@ -10,6 +10,12 @@ export function mergeReferenceGroups(groups: RefGroup[]): RefGroup[] {
     const key = pageIdentityKey(group.page);
     const existing = merged.get(key);
     if (existing) {
+      if (existing.export_source?.path !== group.export_source?.path || existing.export_source?.rev !== group.export_source?.rev) {
+        delete existing.export_source;
+      } else if (existing.export_source && group.export_source?.ambiguous_ids?.length) {
+        existing.export_source = { ...existing.export_source,
+          ambiguous_ids: [...(existing.export_source.ambiguous_ids ?? []), ...group.export_source.ambiguous_ids] };
+      }
       existing.blocks.push(...group.blocks);
       existing.evidence = [...(existing.evidence ?? []), ...(group.evidence ?? [])];
     } else {

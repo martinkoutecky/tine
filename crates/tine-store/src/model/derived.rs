@@ -545,6 +545,28 @@ impl Graph {
         self.derived.disk_revs.read().unwrap().get(path).cloned()
     }
 
+    /// Revision paired with this exact snapshot document. The current cache
+    /// may have advanced since the snapshot answered the reference query.
+    pub(crate) fn cached_document_rev(
+        &self,
+        entry: &PageEntry,
+        document: &Arc<Document>,
+    ) -> Option<String> {
+        self.with_cached(&entry.path, |row| {
+            let (_, cached) = row?;
+            if !Arc::ptr_eq(document, cached) {
+                return None;
+            }
+            self.derived
+                .disk_revs
+                .read()
+                .unwrap()
+                .get(&entry.path)
+                .cloned()
+        })
+        .flatten()
+    }
+
     #[cfg(test)]
     pub(super) fn cache_index_built(&self) -> bool {
         self.derived.cache_index.read().unwrap().is_some()

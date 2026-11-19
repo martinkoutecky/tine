@@ -186,7 +186,8 @@ fn refuse_bound_graph_path(
 }
 
 pub(crate) mod query_error_wire;
-use query_error_wire::{query_error, reference_error};
+pub(crate) mod reference_read;
+use query_error_wire::query_error;
 
 #[tauri::command]
 pub(crate) fn load_workspaces(
@@ -435,23 +436,6 @@ pub(crate) async fn copy_guide_into_graph(
 }
 
 #[tauri::command]
-pub(crate) async fn get_backlinks(
-    name: String,
-    state: GraphContext<'_>,
-) -> Result<Arc<Vec<RefGroup>>, String> {
-    let slot = slot_for_context(&state)?;
-    tauri::async_runtime::spawn_blocking(move || {
-        let view = slot
-            .store
-            .whole_graph()
-            .map_err(|e| format!("graph load failed: {e:?}"))?;
-        view.backlinks(&name).map_err(reference_error)
-    })
-    .await
-    .map_err(|error| error.to_string())?
-}
-
-#[tauri::command]
 pub(crate) async fn get_backlink_filter_context(
     name: String,
     targets: Vec<BacklinkFilterTarget>,
@@ -488,23 +472,6 @@ pub(crate) async fn register_unlinked_reference(
             .map_err(|error| format!("reader subscription failed: {error:?}"))
     })
     .await
-}
-
-#[tauri::command]
-pub(crate) async fn get_unlinked_refs(
-    name: String,
-    state: GraphContext<'_>,
-) -> Result<Arc<Vec<RefGroup>>, String> {
-    let slot = slot_for_context(&state)?;
-    tauri::async_runtime::spawn_blocking(move || {
-        let view = slot
-            .store
-            .whole_graph()
-            .map_err(|e| format!("graph load failed: {e:?}"))?;
-        view.unlinked_references(&name).map_err(reference_error)
-    })
-    .await
-    .map_err(|error| error.to_string())?
 }
 
 /// `block uuid → # of referrers` over the whole graph (drives the per-block

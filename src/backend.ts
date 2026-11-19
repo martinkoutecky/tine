@@ -112,6 +112,17 @@ function graphOpenFailure(error: unknown): never {
   throw error;
 }
 
+interface ReferenceGroupsWire {
+  groups: RefGroup[];
+  sources: ([string, string | null, string[]] | null)[];
+}
+function withReferenceSources({ groups, sources }: ReferenceGroupsWire): RefGroup[] {
+  return groups.map((group, index) => {
+    const source = sources[index];
+    return source ? { ...group, export_source: { path: source[0], rev: source[1], ambiguous_ids: source[2] } } : group;
+  });
+}
+
 class TauriBackend implements Backend {
   private invoke!: <T>(cmd: string, args?: Record<string, unknown>) => Promise<T>;
   private convertFileSrc!: (path: string, protocol?: string) => string;
@@ -408,13 +419,13 @@ class TauriBackend implements Backend {
     return this.call<void>("set_guide_announced", { announced });
   }
   getBacklinks(name: string) {
-    return this.call<RefGroup[]>("get_backlinks", { name });
+    return this.call<ReferenceGroupsWire>("get_backlinks", { name }).then(withReferenceSources);
   }
   getBacklinkFilterContext(name: string, targets: BacklinkFilterTarget[]) {
     return this.call<BacklinkFilterContext>("get_backlink_filter_context", { name, targets });
   }
   getUnlinkedRefs(name: string) {
-    return this.call<RefGroup[]>("get_unlinked_refs", { name });
+    return this.call<ReferenceGroupsWire>("get_unlinked_refs", { name }).then(withReferenceSources);
   }
   registerUnlinkedReference(subscription: string, target: string | null, bindingGeneration: number) {
     return this.call<void>("register_unlinked_reference", { subscription, target }, bindingGeneration);

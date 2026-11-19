@@ -98,24 +98,25 @@ mod workspace_windows;
 mod youtube_identity;
 use backup::{delete_old_backups, get_backup_keep, list_backups, restore_backup, set_backup_keep};
 use capture_asset::{capture_import_asset, capture_save_asset};
+use commands::reference_read::{get_backlinks, get_unlinked_refs};
 use commands::{
     apply_journal_filename_migrations, asset_trash_stats, block_ref_counts, block_referrers,
     capture_quick_switch, close_graph_window, copy_guide_into_graph, detect_media_editor,
     edit_asset_external, edit_custom_css, empty_asset_trash, export_query_subtrees,
-    get_backlink_filter_context, get_backlinks, get_page, get_page_by_path, get_unlinked_refs,
-    guide_pages, import_asset, import_native_capture, journal_content_days, journal_feed_page,
-    list_journal_conflicts, list_journal_filename_migrations, list_orphan_assets,
-    list_template_names, list_templates, load_workspaces, merge_pages, open_asset, open_graph_file,
-    open_page_file, open_pdf, page_alias_group, page_icons, page_inventory, page_modified,
-    page_print_html, preview_block, query_facets, quick_switch, read_asset, read_asset_range,
-    read_custom_css, read_highlights, read_journal_file, read_local_image, read_text_file,
-    register_unlinked_reference, rename_file_to_page, rename_offer, rename_page, resolve_block,
-    resolve_blocks, resolve_page, run_graph_search, save_asset, save_pdf_area_image,
-    save_workspaces, search, set_default_journal_template, set_doc_mode_enter_for_new_block,
-    set_enable_tooltip, set_guide_announced, set_journal_title_format, set_logical_outdenting,
-    set_preferred_format, set_preferred_workflow, set_show_brackets, set_start_of_week,
-    set_timetracking_enabled, stat_asset, stream_asset_path, tine_open_devtools, trash_asset,
-    trash_journal_file, write_highlights,
+    get_backlink_filter_context, get_page, get_page_by_path, guide_pages, import_asset,
+    import_native_capture, journal_content_days, journal_feed_page, list_journal_conflicts,
+    list_journal_filename_migrations, list_orphan_assets, list_template_names, list_templates,
+    load_workspaces, merge_pages, open_asset, open_graph_file, open_page_file, open_pdf,
+    page_alias_group, page_icons, page_inventory, page_modified, page_print_html, preview_block,
+    query_facets, quick_switch, read_asset, read_asset_range, read_custom_css, read_highlights,
+    read_journal_file, read_local_image, read_text_file, register_unlinked_reference,
+    rename_file_to_page, rename_offer, rename_page, resolve_block, resolve_blocks, resolve_page,
+    run_graph_search, save_asset, save_pdf_area_image, save_workspaces, search,
+    set_default_journal_template, set_doc_mode_enter_for_new_block, set_enable_tooltip,
+    set_guide_announced, set_journal_title_format, set_logical_outdenting, set_preferred_format,
+    set_preferred_workflow, set_show_brackets, set_start_of_week, set_timetracking_enabled,
+    stat_asset, stream_asset_path, tine_open_devtools, trash_asset, trash_journal_file,
+    write_highlights,
 };
 use concord::{
     conflict_inventory, duplicate_journal_diff, live_conflict_diff, merge_live_conflict,

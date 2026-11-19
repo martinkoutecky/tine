@@ -32,8 +32,9 @@ it("counts a refresh read until it answers or fails, and not a page load", async
   expect(reads.refreshReadsInFlight()).toBe(2);
   let idle = false;
   void reads.refreshReadsIdle().then(() => { idle = true; });
-  finish.get("get_backlinks")!.resolve([]);
-  await backlinks;
+  const group = { page: "Source", kind: "page", blocks: [] };
+  finish.get("get_backlinks")!.resolve({ groups: [group], sources: [["pages/Source.md", "source-rev", ["duplicate"]]] });
+  expect(await backlinks).toEqual([{ ...group, export_source: { path: "pages/Source.md", rev: "source-rev", ambiguous_ids: ["duplicate"] } }]);
   expect(reads.refreshReadsInFlight()).toBe(1);
   finish.get("resolve_blocks")!.reject(new Error("no graph"));
   await refs;
