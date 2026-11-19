@@ -88,7 +88,8 @@ pub fn percent_decode(s: &str) -> String {
         out.push(b[i]);
         i += 1;
     }
-    String::from_utf8(out).unwrap_or_else(|error| String::from_utf8_lossy(error.as_bytes()).into_owned())
+    String::from_utf8(out)
+        .unwrap_or_else(|error| String::from_utf8_lossy(error.as_bytes()).into_owned())
 }
 
 fn hex_nibble(c: u8) -> Option<u8> {

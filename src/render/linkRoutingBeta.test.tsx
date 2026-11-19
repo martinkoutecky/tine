@@ -93,6 +93,14 @@ it("keeps the Beta file opener for Org drives authored with ://", () => {
   expect(graph).not.toHaveBeenCalled();
 });
 
+it("opens a bare Org link to an encoded drive as a file, never a page (review 1102600ff F3)", () => {
+  const external = vi.spyOn(backend(), "openExternal").mockResolvedValue();
+  const dests = ["C%3A//docs/note.PDF", "C%3A/docs/note.txt", "%43:%5Cdocs%5Cnote", "%43%3A%2Fdocs%2Fnote.txt"];
+  for (const dest of dests) click(`[[${dest}]]`, "org");
+  expect(external).toHaveBeenCalledTimes(dests.length);
+  for (const [url] of external.mock.calls) expect(url).toMatch(/^file:\/\/\/C:\//);
+});
+
 it("keeps encoded colons in ordinary graph filenames", () => {
   const graph = vi.spyOn(backend(), "openGraphFile").mockResolvedValue();
   const external = vi.spyOn(backend(), "openExternal").mockResolvedValue();
@@ -268,12 +276,13 @@ it("opens the same local target for equivalent destination bytes (GH #984)", asy
       expect.soft(handoffs(), `${format} ${dest}`).toEqual(expected);
     }
   }
-  // The independent HTML sanitizer strips hrefs with a literal drive colon.
+  // The independent HTML sanitizer strips hrefs with a literal drive colon, so
+  // every encoded spelling of one is inert too (review 1102600ff F2).
   for (const dest of new Set(byteSpellings("C:/docs/note.PDF").map((path) => path.replace(":", "%3A")))) {
     const dispose = render(() => renderSanitizedHtml(`<a href="${dest}">Open</a>`), host);
     try {
-      host.querySelector("a")!.click();
-      expect.soft(handoffs(), dest).toEqual([[], [], ["file:///C:/docs/note.PDF"], []]);
+      host.querySelector("a")?.click();
+      expect.soft(handoffs(), dest).toEqual([[], [], [], []]);
     } finally { dispose(); }
   }
   const read = vi.spyOn(backend(), "readAsset").mockRejectedValue("not-found");

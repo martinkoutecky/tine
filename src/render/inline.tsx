@@ -444,7 +444,7 @@ function renderLink(
   const orgImage = url.type === "page_ref" && localDecision !== undefined
     && isOgOrgPageRefImageTarget(localDecision.kind === "relative" ? localDecision.path
       : localDecision.kind === "drive" ? localDecision.target.path : url.v);
-  if ((url.type === "page_ref" && !orgImage)
+  if ((url.type === "page_ref" && !orgImage && localDecision?.kind !== "drive")
       || (url.type === "search" && localDecision?.kind === "relative" && searchTargetIsPage(localDecision.path))) {
     // OG `page-reference` brackets a labelled link like a bare one (GH #966).
     const alias = s.label && s.label.length
