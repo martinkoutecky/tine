@@ -14,8 +14,16 @@ import { projectExportNodes } from "../editor/exportProjection";
 
 export function uniqueResultRoots(blocks: BlockDto[]): BlockDto[] {
   const descendants = new Set<string>();
-  const visit = (children: BlockDto[]) => { for (const child of children) { descendants.add(child.id); visit(child.children); } };
-  for (const block of blocks) visit(block.children);
+  const visited = new Set<BlockDto>();
+  const visit = (block: BlockDto) => {
+    if (visited.has(block)) return;
+    visited.add(block);
+    for (const child of block.children) {
+      descendants.add(child.id);
+      visit(child);
+    }
+  };
+  for (const block of blocks) visit(block);
   const seen = new Set<string>();
   return blocks.filter(block => !descendants.has(block.id) && !seen.has(block.id) && !!seen.add(block.id));
 }
@@ -62,17 +70,17 @@ export async function openReferenceResultsCopy(groups: RefGroup[], current: Owne
           if (id === null) throw new Error("reference moved");
           return id;
         });
-        children.push(...exportNodesFor(ids));
+        children.push(...exportNodesFor([...new Set(ids)], true));
       } else if (sourcePage) {
-        const references = new Map(outline.map(block => [block.id, block]));
         const roots = outline.map(block => {
           const source = referenceExportSource(block, sourcePage);
           if (!source) throw new Error("reference moved");
           return source;
         });
+        const references = new Map(roots.map((root, index) => [root.id, outline[index]]));
         for (const root of uniqueResultRoots(roots)) {
           const reference = references.get(root.id)!;
-          children.push(...blockDtosToExportNodes([{ ...root, comment: reference.comment }], format, !!reference.breadcrumb?.length));
+          children.push(...blockDtosToExportNodes([root], format, !!reference.breadcrumb?.length, references));
         }
       }
       count += group.blocks.length;

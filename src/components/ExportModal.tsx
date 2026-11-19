@@ -27,6 +27,8 @@ import {
 } from "../editor/exportText";
 import { exportOpml } from "../editor/exportOpml";
 import { exportHtml } from "../editor/exportHtml";
+import { includesChildren } from "../editor/exportMarkup";
+import { referenceExportAtDepth, referenceExportCandidates } from "../editor/exportProjection";
 import type { Block, Format, Inline, ListItem } from "../render/ast";
 import type { BlockDto, PageDto, QueryExportResult, QueryExportSpec, RefGroup } from "../types";
 import { registerTransientLayer } from "../transientLayers";
@@ -152,10 +154,17 @@ function macroArg(args: string[]): string {
 
 /** Project a bounded DTO subtree into the export serializer's read-only forest.
  * Cost is O(blocks and descendants); it does not read or write the graph. */
-export function blockDtosToExportNodes(blocks: BlockDto[], format: Format, hasParent = false): ExportNode[] {
-  return blocks.map((b) => ({ id: b.id, raw: b.raw, format, hasParent,
-    ...(b.comment ? { comment: { author: null, date: null } } : {}),
-    children: blockDtosToExportNodes(b.children, format, true) }));
+export function blockDtosToExportNodes(
+  blocks: BlockDto[], format: Format, hasParent = false, checked?: ReadonlyMap<string, BlockDto>,
+): ExportNode[] {
+  const convert = (rows: BlockDto[], parent: boolean, nested: boolean): ExportNode[] => rows.map(b => {
+    const selection = checked?.get(b.id);
+    return { id: b.id, raw: b.raw, format, hasParent: parent,
+      ...(nested && selection && { checked: true }),
+      ...(b.comment || selection?.comment ? { comment: { author: null, date: null } } : {}),
+      children: convert(b.children, true, true) };
+  });
+  return convert(blocks, hasParent, false);
 }
 
 function pageToExportNodes(page: PageDto): ExportNode[] {
@@ -166,14 +175,24 @@ function refGroupToExportNodes(group: RefGroup): ExportNode[] {
   return blockDtosToExportNodes(group.blocks, formatForPage(group.page));
 }
 
-type PageReadCache = Map<string, Promise<PageDto | null>>;
+type PageReadCache = Map<string, Promise<ExportNode[] | null>>;
+type WarmReads = {
+  pages: PageReadCache;
+  refs: Map<string, Promise<void>>;
+  macros: Map<string, Promise<void>>;
+};
+type WarmScope = {
+  depth: MaxDepth;
+  embeddedDepth: MaxDepth;
+  reads: WarmReads;
+  current: Owner;
+};
 
-function cachedPage(cache: PageReadCache, page: string, kind: "page" | "journal"): Promise<PageDto | null> {
-  const key = `${kind}\0${page}`;
-  let pending = cache.get(key);
+function cachedEmbedPage(cache: PageReadCache, page: string, owner: Owner): Promise<ExportNode[] | null> {
+  let pending = cache.get(page);
   if (!pending) {
-    pending = backend().getPage(page, kind);
-    cache.set(key, pending);
+    pending = backend().getPage(page, "page").then(dto => owner() && dto ? pageToExportNodes(dto) : null);
+    cache.set(page, pending);
   }
   return pending;
 }
@@ -268,10 +287,10 @@ function collectRawTargets(raw: string, format: Format, targets: WarmTargets): v
   }
 }
 
-function collectNodeTargets(nodes: ExportNode[], targets: WarmTargets): void {
+function collectNodeTargets(nodes: ExportNode[], targets: WarmTargets, maxDepth: MaxDepth, level = 1): void {
   for (const n of nodes) {
     collectRawTargets(n.raw, n.format ?? "md", targets);
-    collectNodeTargets(n.children, targets);
+    if (includesChildren(level, maxDepth)) collectNodeTargets(n.children, targets, maxDepth, level + 1);
   }
 }
 
@@ -302,10 +321,9 @@ async function warmMacro(
       }
       const page = embedPageTarget(arg);
       if (page) {
-        const result = await readOwned(owner, cachedPage(pages, page, "page"));
+        const result = await readOwned(owner, cachedEmbedPage(pages, page, owner));
         if (result.kind === "stale") return;
-        const dto = result.value;
-        if (dto) warmed.set(key, { kind: "nodes", nodes: pageToExportNodes(dto) });
+        if (result.value) warmed.set(key, { kind: "nodes", nodes: result.value });
         return;
       }
     }
@@ -371,13 +389,18 @@ async function warmQueryMacros(
 /** Resolve block refs and supported macros in export nodes into warmed.
  * Ref lookups run in parallel, query macros use one bounded native export
  * batch, and page embeds can read whole pages. Cost grows with refs, queries
- * and embedded page content. Failed resolutions generally leave the literal
- * macro for export; stale graph ownership stops later phases. */
-export async function warmExportResolutionsOwned(nodes: ExportNode[], warmed: Map<string, WarmedMacro>, owner: Owner, refsOwned: ResolvedRefs = new Map()): Promise<void> {
+ * and embedded page content within the supplied depth. A preview reuses
+ * target reads as the level changes; retired levels stop discovering targets. */
+export async function warmExportResolutionsOwned(
+  nodes: ExportNode[], warmed: Map<string, WarmedMacro>, owner: Owner, refsOwned: ResolvedRefs = new Map(),
+  { depth, embeddedDepth, reads, current }: WarmScope = {
+    depth: "all", embeddedDepth: "all", reads: { pages: new Map(), refs: new Map(), macros: new Map() }, current: owner,
+  },
+): Promise<void> {
+  if (!owner()) return;
   const targets: WarmTargets = { refs: new Set(), macros: new Map() };
-  const pages: PageReadCache = new Map();
   const seenRefs = new Set<string>(), seenMacros = new Set<string>();
-  collectNodeTargets(nodes, targets);
+  collectNodeTargets(nodes, targets, depth);
   // Follow resolved targets too: refs inside refs and embeds share the same
   // graph-owned warming path. Bound work before each native read.
   for (let depth = 0; depth < 6; depth++) {
@@ -385,14 +408,17 @@ export async function warmExportResolutionsOwned(nodes: ExportNode[], warmed: Ma
       const refs = [...targets.refs].filter(uuid => !seenRefs.has(uuid)).slice(0, 2000 - seenRefs.size);
       if (!refs.length) break;
       refs.forEach(uuid => seenRefs.add(uuid));
-      await Promise.all(refs.map(async uuid => {
-        const answer = await readOwned(owner, resolveBlockBatched(uuid).catch((error) => {
-          if (owner()) reportUiFailure("export-preview", error);
-          return null;
-        }));
-        if (owner() && answer.kind === "current" && answer.value) refsOwned.set(uuid, answer.value);
+      await Promise.all(refs.map(uuid => {
+        let pending = reads.refs.get(uuid);
+        if (!pending) {
+          pending = readOwned(owner, resolveBlockBatched(uuid)).then(answer => {
+            if (owner() && answer.kind === "current" && answer.value) refsOwned.set(uuid, answer.value);
+          }).catch(error => { if (owner()) reportUiFailure("export-preview", error); });
+          reads.refs.set(uuid, pending);
+        }
+        return pending;
       }));
-      if (!owner()) return;
+      if (!owner() || !current()) return;
       for (const uuid of refs) {
         const resolved = resolveExportBlockRef(uuid, refsOwned);
         if (resolved) collectRawTargets(resolved.raw, resolved.format, targets);
@@ -401,13 +427,17 @@ export async function warmExportResolutionsOwned(nodes: ExportNode[], warmed: Ma
     const macros = [...targets.macros.entries()].filter(([key]) => !seenMacros.has(key)).slice(0, 2000 - seenMacros.size);
     macros.forEach(([key]) => seenMacros.add(key));
     if (!macros.length) break;
-    await warmQueryMacros(macros.map(([,macro]) => macro).filter(macro => isQueryMacroName(macro.name)), warmed, owner);
-    await Promise.all(macros.map(([,macro]) => macro).filter(macro => !isQueryMacroName(macro.name))
-      .map(macro => warmMacro(macro, warmed, pages, owner)));
-    if (!owner()) return;
+    const missing = macros.filter(([key]) => !reads.macros.has(key));
+    const queries = missing.filter(([, macro]) => isQueryMacroName(macro.name));
+    const queryBatch = warmQueryMacros(queries.map(([, macro]) => macro), warmed, owner);
+    for (const [key, macro] of missing) {
+      reads.macros.set(key, isQueryMacroName(macro.name) ? queryBatch : warmMacro(macro, warmed, reads.pages, owner));
+    }
+    await Promise.all(macros.map(([key]) => reads.macros.get(key)));
+    if (!owner() || !current()) return;
     for (const [key] of macros) {
       const result = warmed.get(key);
-      if (result?.kind === "nodes") collectNodeTargets(result.nodes, targets);
+      if (result?.kind === "nodes") collectNodeTargets(result.nodes, targets, embeddedDepth);
     }
   }
 }
@@ -446,6 +476,20 @@ function Modal(props: { request: ExportRequest }): JSX.Element {
   // the preview recomputes from it as options change. Rendered mode applies the
   // typographic glyphs exactly when the app displays them (not persisted).
   const nodes = "nodes" in props.request ? props.request.nodes : exportNodesFor(props.request.ids);
+  const grouped = "nodes" in props.request && props.request.groupedDepth;
+  let candidates: ExportNode[][] | undefined;
+  const depth = createMemo(() => opts().maxDepth ?? "all");
+  // The page label sits one level above the selected reference roots.
+  const maxDepth = createMemo(() => {
+    const level = depth();
+    return grouped && level !== "all" ? level + 1 : level;
+  });
+  const visibleNodes = createMemo(() => {
+    const level = depth();
+    if (!grouped || level === "all") return nodes;
+    const groups = candidates ??= nodes.map(group => referenceExportCandidates(group.children));
+    return nodes.map((group, index) => ({ ...group, children: referenceExportAtDepth(groups[index], level) }));
+  });
   // Name the preserved syntax after the selection's actual format (GH #352).
   const sourceLabel = () => {
     const formats = new Set(nodes.map((n) => n.format ?? "md"));
@@ -485,12 +529,8 @@ function Modal(props: { request: ExportRequest }): JSX.Element {
   const payload = createMemo(() => {
     warmRev();
     expansions = 0;
-    const depth = opts().maxDepth;
-    // Page labels group the output. Level 1 starts at the selected block,
-    // as in Logseq's get-blocks-contents.
-    const maxDepth = "nodes" in props.request && props.request.groupedDepth && typeof depth === "number" ? depth + 1 : depth;
     const markupOptions = {
-      ...opts(), maxDepth, resolveBlockRef,
+      ...opts(), maxDepth: maxDepth(), resolveBlockRef,
       resolveEmbed: (name: string, args: string[]) => {
         const result = warmedMacros.get(macroKey(name, args));
         return result?.kind === "nodes" ? [
@@ -499,9 +539,9 @@ function Modal(props: { request: ExportRequest }): JSX.Element {
         ] : null;
       },
     };
-    if (format() === "opml") return exportOpml(nodes, markupOptions);
-    if (format() === "html") return exportHtml(nodes, markupOptions);
-    return exportOutline(nodes, {
+    if (format() === "opml") return exportOpml(visibleNodes(), markupOptions);
+    if (format() === "html") return exportHtml(visibleNodes(), markupOptions);
+    return exportOutline(visibleNodes(), {
       ...markupOptions,
       typographicGlyphs: typographyMode() === "render",
       resolveBlockRef,
@@ -518,19 +558,27 @@ function Modal(props: { request: ExportRequest }): JSX.Element {
   };
 
   let disposed = false;
+  const owner = graphOwner(() => !disposed);
+  const reads: WarmReads = { pages: new Map(), refs: new Map(), macros: new Map() };
   onCleanup(() => {
     disposed = true;
     warmedRefs.clear();
   });
 
-  onMount(() => {
+  createEffect(() => {
+    let current = true;
+    onCleanup(() => { current = false; });
     setWarming(true);
-    void warmExportResolutionsOwned(nodes, warmedMacros, graphOwner(() => !disposed), warmedRefs).finally(() => {
-      if (disposed) return;
+    void warmExportResolutionsOwned(visibleNodes(), warmedMacros, owner, warmedRefs, {
+      depth: maxDepth(), embeddedDepth: depth(), reads, current: () => current,
+    }).finally(() => {
+      if (!owner() || !current) return;
       setWarmRev(warmRev() + 1);
       setWarming(false);
     });
+  });
 
+  onMount(() => {
     const onKey = (e: KeyboardEvent) => {
       if (e.key === "Enter" && (e.metaKey || e.ctrlKey)) {
         e.preventDefault();
