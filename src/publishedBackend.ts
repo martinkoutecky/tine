@@ -411,19 +411,18 @@ export function publishedBackend(load: () => Promise<PublishedSnapshot> = loadPu
     walk([root], (block) => lines.push(block.raw));
     return lines.join("\n");
   };
-  /** `../assets/<name>` — or null when the authored name would leave the
-   *  export's own `assets/` folder. The rule is the static exporter's
-   *  (`AssetSink::asset_relative` in `publish.rs`), applied to the name after
-   *  its `assets/` prefix: a `?` query or `#` fragment is dropped, a remote
+  /** `../assets/<name>` — or null when the name would leave the export's own
+   *  `assets/` folder. `name` is the resolved file name the link classifier
+   *  gives (`anchorDecision`, GH #984), already decoded, so `?` and `#` are
+   *  bytes of the name and are encoded, not dropped. A remote
    *  reference, a backslash, an absolute path, a leading `.` step or a `..`
    *  step is refused, and empty and interior `.` steps collapse the way
    *  `Path::components` collapses them — so every name the export copied is
    *  answered under the path it was copied to, and nothing else is asked for.
    *  A colon inside a file name (`x:y.png`, `data:plot.png`) is a name. */
   const assetUrl = (name: string): string | null => {
-    const bare = name.split(/[?#]/)[0] ?? "";
-    if (bare.includes("://") || bare.includes("\\") || bare.startsWith("/")) return null;
-    const steps = bare.split("/").filter((segment) => segment !== "");
+    if (name.includes("://") || name.includes("\\") || name.startsWith("/")) return null;
+    const steps = name.split("/").filter((segment) => segment !== "");
     if (steps.length === 0 || steps[0] === "." || steps.includes("..")) return null;
     const segments = steps.filter((segment) => segment !== ".");
     if (segments.length === 0) return null;

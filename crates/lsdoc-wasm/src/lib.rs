@@ -944,7 +944,7 @@ pub fn decoded_link_path(dest: &str, file: bool) -> JsValue {
     let attachment = if file { None } else { asset_path::attachment_path(&path) };
     // A possible PDF can use the identity from this call if the classifier
     // selects the asset reader. Other suffixes need no candidate identity.
-    let pdf = (!file && path.ends_with(['f', 'F']))
+    let pdf = (!file && path.as_bytes().rsplit(|&b| b == b'.').next().is_some_and(|ext| ext.eq_ignore_ascii_case(b"pdf")) && path.contains('.'))
         .then(|| asset_path::pdf_asset_file_decoded(&path, attachment));
     let value = JsValue::from_str(&path);
     if attachment.is_none() && pdf.is_none() {

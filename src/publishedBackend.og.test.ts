@@ -260,6 +260,16 @@ describe("published reads are parser-decided, visible on failure and bounded (OG
     await expect(api.streamAsset("/etc/passwd")).rejects.toThrow(/not a file/);
   });
 
+  it("requests the resolved asset name whole: # and ? are bytes of it (review 1102600ff F4)", async () => {
+    const fetched = vi.fn(async (_url: string) => respond(bytesOf(1)));
+    vi.stubGlobal("fetch", fetched);
+    const api = publishedBackend(async () => snapshot);
+    await api.readAsset("photo#v2.png", TEST_ASSET_MAX_BYTES);
+    await api.readAsset("photo?v2.png", TEST_ASSET_MAX_BYTES);
+    expect(await api.streamAsset("sub/a#b.mp3")).toBe("../assets/sub/a%23b.mp3");
+    expect(fetched.mock.calls.map(([url]) => url)).toEqual(["../assets/photo%23v2.png", "../assets/photo%3Fv2.png"]);
+  });
+
   it("honours the caller's byte cap on an asset, by declared length and by streamed length", async () => {
     const api = publishedBackend(async () => snapshot);
     vi.stubGlobal("fetch", vi.fn(async () => respond(bytesOf(10), { headers: { "content-length": "10" } })));

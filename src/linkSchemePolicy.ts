@@ -1,6 +1,6 @@
 import schemes from "../src-tauri/external-link-schemes.json";
 import { attachment_path, decoded_link_path, pdf_asset_file_decoded } from "./render/wasm/lsdoc_wasm.js";
-import { filePathUrl, graphRelative, type FileLinkTarget } from "./render/relativeFileLink";
+import { graphRelative, type FileLinkTarget } from "./render/relativeFileLink";
 
 const NATIVE_SCHEMES = [schemes.localFile, schemes.deepLink];
 
@@ -159,8 +159,10 @@ export function deferAnchorHref(anchor: Element): void {
   const decision = anchorDecision(anchor.getAttribute("href") ?? "");
   if (anchorHref(decision) !== undefined) return;
   anchor.removeAttribute("href");
-  if (decision.kind === "drop") return;
-  anchor.setAttribute(DEFERRED_HREF, decision.kind === "drive" ? filePathUrl(decision.target.path) : decision.url);
+  // A raw anchor never opens a local drive path: the sanitizer already strips a
+  // literal drive href, and its encoded spelling gets the same answer (GH #984).
+  if (decision.kind === "drop" || decision.kind === "drive") return;
+  anchor.setAttribute(DEFERRED_HREF, decision.url);
   anchor.setAttribute("role", "link");
   anchor.setAttribute("tabindex", "0");
 }
