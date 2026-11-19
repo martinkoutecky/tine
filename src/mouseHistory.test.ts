@@ -111,3 +111,18 @@ it.each(["dom", "webview2"] as const)("%s overlapping cancelled presses never na
     f.dispose();
   }
 });
+
+// GH #948 review r2 F3: a release marker never outlives the next press, whatever button it is.
+it.each(["dom", "webview2"] as const)("%s auxclick-only presses after an interleaved click still step", (source) => {
+  for (const between of [4, 0]) {
+    const f = fixture(source);
+    f.send("mousedown", { button: 3, buttons: 8 });
+    f.send("mouseup", { button: 3 });
+    // No auxclick for that release; another button is clicked, then Back arrives as auxclick only.
+    f.send("mousedown", { button: between, buttons: between === 4 ? 16 : 1 });
+    f.send("mouseup", { button: between });
+    f.send("auxclick", { button: 3 });
+    expect(f.navigate.mock.calls.filter(([d]) => d === "back")).toHaveLength(2);
+    f.dispose();
+  }
+});

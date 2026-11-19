@@ -12,16 +12,17 @@ export function installMouseHistory(
   type Press = { x: number; y: number; cancelled: boolean };
   const presses = new Map<number, Press>();
   const released = new Set<number>();
-  // A DOM-seen release whose native delivery has not arrived yet; cleared by that button's next press.
-  const pendingNative = new Map<number, boolean>();
+  // A DOM-seen release whose native delivery has not arrived yet; cleared by the next press.
+  let pendingNative: { button: number; cancelled: boolean } | undefined;
   let primaryHeld = false;
   let dragging = false;
   const side = (button: number) => button === 3 || button === 4;
   const cancel = () => { for (const press of presses.values()) press.cancelled = true; };
   const down = (event: MouseEvent) => {
+    // A release's auxclick follows it before any other press; a later press ends its eligibility (#948).
+    released.clear();
+    pendingNative = undefined;
     if (!side(event.button)) { primaryHeld = true; cancel(); return; }
-    released.delete(event.button);
-    pendingNative.delete(event.button);
     presses.set(event.button, { x: event.clientX, y: event.clientY,
       cancelled: event.defaultPrevented || primaryHeld || dragging || !!(event.buttons & 7) });
   };
@@ -44,8 +45,7 @@ export function installMouseHistory(
     const releaseCancelled = !current || current.cancelled || occupied
       || Math.hypot(event.clientX - current.x, event.clientY - current.y) > 5;
     // Only an explicit DOM press can veto the GTK release (#948).
-    if (gtkOwnsPress && current) pendingNative.set(event.button, releaseCancelled);
-    else pendingNative.delete(event.button);
+    pendingNative = gtkOwnsPress && current ? { button: event.button, cancelled: releaseCancelled } : undefined;
     if (!gtkOwnsPress && !releaseCancelled)
       navigate(event.button === 3 ? "back" : "forward");
   };
@@ -59,7 +59,7 @@ export function installMouseHistory(
   };
   const dragStart = () => { dragging = true; cancel(); };
   const dragEnd = () => { dragging = false; };
-  const blur = () => { presses.clear(); released.clear(); pendingNative.clear(); primaryHeld = false; dragging = false; };
+  const blur = () => { presses.clear(); released.clear(); pendingNative = undefined; primaryHeld = false; dragging = false; };
   const listeners = { mousedown: down, mouseup: up, mousemove: move, auxclick: aux,
     dragstart: dragStart, dragend: dragEnd, blur };
   const capture = { capture: true };
@@ -78,7 +78,7 @@ export function installMouseHistory(
     let cancelled = false;
     const press = presses.get(button);
     if (press) { cancelled = press.cancelled; presses.delete(button); }
-    else if (pendingNative.has(button)) { cancelled = pendingNative.get(button)!; pendingNative.delete(button); }
+    else if (pendingNative?.button === button) { cancelled = pendingNative.cancelled; pendingNative = undefined; }
     return !cancelled && !primaryHeld && !dragging;
   };
   return dispose;
