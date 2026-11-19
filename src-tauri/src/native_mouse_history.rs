@@ -51,18 +51,25 @@ mod platform {
                 prelude::{WidgetExt, WidgetExtManual},
             };
 
-            let press = Cell::new(None::<(u32, f64, f64)>);
+            // One slot per side button (Back, Forward): both can be held at once (#948).
+            let presses = [Cell::new(None::<(f64, f64)>), Cell::new(None::<(f64, f64)>)];
+            let cancel_all = move |presses: &[Cell<Option<(f64, f64)>>; 2]| {
+                presses.iter().for_each(|p| p.set(None))
+            };
             platform_webview
                 .inner()
                 .add_events(EventMask::POINTER_MOTION_MASK);
             platform_webview.inner().connect_event(move |_, event| {
                 if event.event_type() == EventType::MotionNotify {
-                    if let (Some((_, x, y)), Ok(motion)) =
-                        (press.get(), <EventMotion as FromEvent>::from(event.clone()))
-                    {
+                    if let Ok(motion) = <EventMotion as FromEvent>::from(event.clone()) {
                         let (next_x, next_y) = motion.position();
-                        if (next_x - x).hypot(next_y - y) > 5.0 {
-                            press.set(None);
+                        for press in &presses {
+                            if press
+                                .get()
+                                .is_some_and(|(x, y)| (next_x - x).hypot(next_y - y) > 5.0)
+                            {
+                                press.set(None);
+                            }
                         }
                     }
                     return gtk::glib::Propagation::Proceed;
@@ -76,12 +83,12 @@ mod platform {
                 let Ok(button_event) = <EventButton as FromEvent>::from(event.clone()) else {
                     return gtk::glib::Propagation::Proceed;
                 };
-                let direction = match button_event.button() {
-                    GDK_BUTTON_BACK => "back",
-                    GDK_BUTTON_FORWARD => "forward",
+                let (direction, press) = match button_event.button() {
+                    GDK_BUTTON_BACK => ("back", &presses[0]),
+                    GDK_BUTTON_FORWARD => ("forward", &presses[1]),
                     _ => {
                         // Another button owns a text selection/native drag.
-                        press.set(None);
+                        cancel_all(&presses);
                         return gtk::glib::Propagation::Proceed;
                     }
                 };
@@ -97,10 +104,10 @@ mod platform {
                             | ModifierType::BUTTON3_MASK,
                     );
                     let (x, y) = button_event.position();
-                    press.set((!occupied).then_some((button_event.button(), x, y)));
-                } else if let Some((button, x, y)) = press.take() {
+                    press.set((!occupied).then_some((x, y)));
+                } else if let Some((x, y)) = press.take() {
                     let (next_x, next_y) = button_event.position();
-                    if button == button_event.button() && (next_x - x).hypot(next_y - y) <= 5.0 {
+                    if (next_x - x).hypot(next_y - y) <= 5.0 {
                         emit_navigation(&event_window, direction);
                     }
                 }
