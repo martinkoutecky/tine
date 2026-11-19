@@ -14,7 +14,7 @@ import { InlineText } from "./inline";
 import { initParser } from "./parse";
 import { rawHtmlPresentation } from "./htmlSanitize";
 import { renderSanitizedHtml } from "./rawHtml";
-import { checkExternalLink, navigableHref } from "../linkSchemePolicy";
+import { anchorDecision, checkExternalLink, rememberableLinkScheme } from "../linkSchemePolicy";
 import { backend } from "../backend";
 import { setToasts } from "../toasts";
 import { LinkSchemePrompt } from "../components/LinkSchemePrompt";
@@ -64,13 +64,13 @@ function href(source: string): string | null {
   return link!.getAttribute("href");
 }
 
-const anchors = (html: string, isPublished: boolean) => {
+const anchors = (html: string) => {
   const root = document.createElement("div");
-  root.innerHTML = rawHtmlPresentation(html, false, isPublished).html;
+  root.innerHTML = rawHtmlPresentation(html).html;
   return [...root.querySelectorAll("a")].map((a) => a.getAttribute("href"));
 };
 
-describe("published links keep an href only for direct schemes (GH #984)", () => {
+describe("links keep an href only for relative, web and mail destinations (GH #984)", () => {
   it("Markdown links in a published reader", () => {
     expect(href("[w](https://example.org/a)")).toBe("https://example.org/a");
     expect(href("[m](mailto:a@b.c)")).toBe("mailto:a@b.c");
@@ -87,6 +87,7 @@ describe("published links keep an href only for direct schemes (GH #984)", () =>
       const link = mount(() => <InlineText text="[z](zotero://select/items/A)" />).querySelector("a.external-link")!;
       expect(link.getAttribute("tabindex")).toBe("0");
       expect(link.getAttribute("role")).toBe("link");
+      expect(link.getAttribute("data-tine-href")).toBe("zotero://select/items/A");
       expect(await activateAndConfirm(link, how)).toEqual([["zotero://select/items/A", "zotero"]]);
     });
 
@@ -98,25 +99,46 @@ describe("published links keep an href only for direct schemes (GH #984)", () =>
     });
   }
 
-  it("the app keeps custom-scheme hrefs but never a refused one", () => {
+  it("the app follows the same href policy", () => {
     published.on = false;
-    expect(href("[z](zotero://select/items/A)")).toBe("zotero://select/items/A");
+    expect(href("[w](https://example.org/a)")).toBe("https://example.org/a");
+    expect(href("[z](zotero://select/items/A)")).toBeNull();
     expect(href("[b](blob:https://example.org/1)")).toBeNull();
+  });
+
+  it("a published reader follows fragment and relative links itself; the app keeps its opener", async () => {
+    const open = vi.spyOn(backend(), "openExternal").mockResolvedValue(undefined);
+    for (const source of ["[s](#section)", "[d](#a.b)"]) {
+      const link = mount(() => <InlineText text={source} />).querySelector("a.external-link")!;
+      expect(link.getAttribute("href"), source).not.toBeNull();
+      const click = new MouseEvent("click", { bubbles: true, cancelable: true });
+      link.dispatchEvent(click);
+      expect(click.defaultPrevented, source).toBe(false);
+    }
+    await flush();
+    expect(open).not.toHaveBeenCalled();
+    published.on = false;
+    const link = mount(() => <InlineText text="[s](#section)" />).querySelector("a.external-link")!;
+    const click = new MouseEvent("click", { bubbles: true, cancelable: true });
+    link.dispatchEvent(click);
+    expect(click.defaultPrevented).toBe(true);
   });
 
   it("raw HTML and Hiccup anchors", () => {
     const html = '<a href="https://example.org">w</a><a href="tel:123">t</a><a href="sms:1">s</a>'
       + '<a href="matrix:u/a">x</a><a href="#top">i</a><a href="about:blank">a</a>';
-    expect(anchors(html, true)).toEqual(["https://example.org", null, null, null, "#top", null]);
-    expect(anchors(html, false)).toEqual(["https://example.org", "tel:123", "sms:1", "matrix:u/a", "#top", null]);
+    expect(anchors(html)).toEqual(["https://example.org", null, null, null, "#top", null]);
   });
 
-  it("obfuscated refused schemes lose the href in every mode", () => {
-    for (const mode of [true, false]) {
-      for (const dest of [" javascript:alert(1)", "java\tscript:alert(1)", "JAVASCRIPT:alert(1)", "vbscript:x"]) {
-        expect(navigableHref(dest, mode), `${mode} ${JSON.stringify(dest)}`).toBe(false);
-      }
+  it("obfuscated refused schemes are dropped", () => {
+    for (const dest of [" javascript:alert(1)", "java\tscript:alert(1)", "JAVASCRIPT:alert(1)", "vbscript:x"]) {
+      expect(anchorDecision(dest), JSON.stringify(dest)).toBe("drop");
     }
+  });
+
+  it("ftp, ws and wss keep their consent path (round-3 review)", () => {
+    for (const scheme of ["ftp", "ws", "wss"]) expect(rememberableLinkScheme(scheme), scheme).toBe(true);
+    for (const scheme of ["http", "file", "tine", "javascript", "zotero:", "a/b", "z"]) expect(rememberableLinkScheme(scheme), scheme).toBe(false);
   });
 });
 

@@ -27,7 +27,7 @@ export function isDirectExternalScheme(scheme: string): boolean {
  * No host, path, prefix, direct-open or refused scheme can become consent. */
 export function rememberableLinkScheme(scheme: string): boolean {
   return !isDirectExternalScheme(scheme) && !NATIVE_SCHEMES.includes(scheme)
-    && !refusedLinkScheme(scheme) && linkScheme(`${scheme}:`) === scheme;
+    && !refusedLinkScheme(scheme) && /^[a-z][a-z0-9+.-]+$/.test(scheme);
 }
 
 /** Check an outbound URL before handing it to the browser or native command.
@@ -57,36 +57,37 @@ function sameScheme(confirmed: string | undefined, scheme: string): boolean {
     && confirmed.replace(/[A-Z]/g, (c) => c.toLowerCase()) === scheme;
 }
 
-/** Whether an anchor may keep `dest` as its `href`, i.e. reach browser default
- * navigation (middle-click, "open in new tab"). Relative destinations do (site-
- * internal); refused schemes never do; in a published reader only web and mail
- * do (GH #984), so every other scheme, one-letter ones included, is opened only
- * through the checked opener. O(URL bytes). */
-export function navigableHref(dest: string, published: boolean): boolean {
+/** What an anchor in graph content does with its destination, in every renderer
+ * and mode (GH #984). `relative`: site- or page-internal, a real href. `direct`:
+ * web or mail, a real href. `defer`: any other scheme (another app's, `file:`,
+ * `tine:`, a one-letter one): no href, so no browser default navigation, middle-
+ * click or new tab; it opens only through the checked opener. `drop`: a refused
+ * scheme, never opened. One URL parse, O(URL bytes). */
+export type AnchorDecision = "relative" | "direct" | "defer" | "drop";
+export function anchorDecision(dest: string): AnchorDecision {
   let scheme: string;
   try {
     scheme = new URL(dest).protocol.slice(0, -1);
   } catch (error) {
     if (!(error instanceof TypeError)) throw error;
-    return true;
+    return "relative";
   }
-  if (refusedLinkScheme(scheme)) return false;
-  return !published || isDirectExternalScheme(scheme);
+  if (refusedLinkScheme(scheme)) return "drop";
+  return isDirectExternalScheme(scheme) ? "direct" : "defer";
 }
 
-/** Where a raw-HTML anchor keeps a destination that must not reach browser
- * navigation but still opens through the checked opener (GH #984). */
+/** Where a raw-HTML anchor keeps a deferred destination (GH #984). */
 export const DEFERRED_HREF = "data-tine-href";
 
-/** Apply `navigableHref` to a sanitized anchor: keep the href, or move it to
- * DEFERRED_HREF (still a focusable link), or drop a refused one. O(URL bytes). */
-export function deferAnchorHref(anchor: Element, published: boolean): void {
-  const dest = anchor.getAttribute("href") ?? "";
-  if (navigableHref(dest, published)) return;
+/** Apply `anchorDecision` to a sanitized anchor: keep the href, move it to
+ * DEFERRED_HREF (still a focusable link), or drop a refused one. */
+export function deferAnchorHref(anchor: Element): void {
+  const decision = anchorDecision(anchor.getAttribute("href") ?? "");
+  if (decision === "relative" || decision === "direct") return;
+  const dest = anchor.getAttribute("href")!;
   anchor.removeAttribute("href");
-  if (navigableHref(dest, false)) {
-    anchor.setAttribute(DEFERRED_HREF, dest);
-    anchor.setAttribute("role", "link");
-    anchor.setAttribute("tabindex", "0");
-  }
+  if (decision === "drop") return;
+  anchor.setAttribute(DEFERRED_HREF, dest);
+  anchor.setAttribute("role", "link");
+  anchor.setAttribute("tabindex", "0");
 }

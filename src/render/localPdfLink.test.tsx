@@ -114,7 +114,8 @@ describe("GH #577: file PDF links are reads through the OS opener (I-2, I-4)", (
       const dispose = render(() => surface === "page" ? <PageView /> : surface === "sidebar" ? <RightSidebar /> : <AstBody raw="{{embed [[External PDFs]]}}" />, host);
       try {
         const link = await vi.waitFor(() => {
-          const link = host.querySelector<HTMLAnchorElement>('a[href="file:///tmp/external.pdf"]');
+          // file: links keep their destination off href since GH #984; they open only through the checked opener.
+          const link = host.querySelector<HTMLAnchorElement>('a[data-tine-href="file:///tmp/external.pdf"]');
           expect(link).not.toBeNull();
           return link!;
         });

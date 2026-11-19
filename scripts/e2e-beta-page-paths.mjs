@@ -116,7 +116,7 @@ async function checkCli(name) {
 }
 async function deepLink(name = "Survey test") {
   await openPageByName(browser, "Refs");
-  await browser.$(`.main-content a[href="tine://block/${block}"]`).click();
+  await browser.$(`.main-content a[data-tine-href="tine://block/${block}"]`).click(); // tine: links have no href (GH #984)
   // The referrer itself displays the referenced text. Observe the destination
   // route and its actual block, so that text cannot satisfy the link check.
   await browser.waitUntil(() => browser.execute((name, block) =>
