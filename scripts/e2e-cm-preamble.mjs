@@ -141,8 +141,10 @@ try {
   await browser.keys(["Control", "a"]);
   await browser.$(editorSelector(".main-content")).addValue("Edited org prose [[New]]");
   await browser.keys("Escape");
+  // The whole file: the edited opening text became the first heading and the
+  // following heading is unchanged (not nested, renamed or duplicated).
   await waitForFileText(path.join(graph, "pages/Notes.org"),
-    (text) => text.startsWith("* Edited org prose [[New]]\n") && text.includes("* heading") && !text.includes("Org prose"), { timeoutMs: 15_000 });
+    (text) => text === "* Edited org prose [[New]]\n* heading\n", { timeoutMs: 15_000 });
 
   fs.writeFileSync(path.join(run, "receipt.json"), JSON.stringify({ commit, workingDiff: true, outcome: "PASS", journey: "preamble prose counts in All pages (Target 4, Ghost 1), is a Linked References row, and is renamed (Markdown with and without page properties, Org); the Org page shows it as an editable first row; All pages hides a uuid name and a draws/ name", graph }, null, 2));
   console.log(`PASS CM preamble. ${run}`);

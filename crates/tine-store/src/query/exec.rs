@@ -79,10 +79,8 @@ mod scope_tests;
 /// filter, its compiled patterns and the registry snapshot it coerces by.
 pub(crate) struct Plan {
     anchor: Anchor,
-    /// Whether the header page-property block is one of the page's block rows:
-    /// true for a query that is block-anchored as written (OG's block
-    /// queries). A `@page` query the legacy bridge lists block-wise answers
-    /// with the page's outline blocks, as before.
+    /// Whether the header page-property block is one of the page's block rows
+    /// ([`Query::shows_header_rows`]).
     page_property_rows: bool,
     /// Whether a block row whose immediate parent also matched is absorbed
     /// (OG `tree/filter-top-level-blocks`). False only for an advanced query
@@ -233,7 +231,7 @@ impl Plan {
             .then(tag_targets);
         Plan {
             anchor,
-            page_property_rows: query.anchor == Anchor::Block,
+            page_property_rows: query.shows_header_rows(),
             top_level_only: query.removes_block_children(),
             compiled: CompiledLeaves::for_query(&filter),
             track: eval::uses_path_refs(&filter),
