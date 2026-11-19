@@ -1,7 +1,13 @@
 /** Wry 0.57's WKWebView adapter synthesizes mousedown/up for NSEvent buttons
  * 3/4, with a history default on mouseup, but no auxclick. Chromium also emits
  * auxclick. Consume a completed release once, preserving middle-click links. */
-export function installMouseHistory(win: Window, doc: Document, navigate: (direction: "back" | "forward") => void) {
+export function installMouseHistory(
+  win: Window,
+  doc: Document,
+  navigate: (direction: "back" | "forward") => void,
+  source: "dom" | "gtk" | "webview2" = "dom",
+) {
+  const gtkOwnsPress = source === "gtk";
   let press: { button: number; x: number; y: number; cancelled: boolean } | undefined;
   let released: number | undefined;
   // A DOM-seen release whose native delivery has not arrived yet; cleared by the next press.
@@ -26,15 +32,18 @@ export function installMouseHistory(win: Window, doc: Document, navigate: (direc
     if (!side(event.button)) { primaryHeld = false; return; }
     const current = press;
     press = undefined;
-    released = event.button;
     // Suppress Wry's window.history default even for a cancelled gesture.
     const prevented = event.defaultPrevented;
     event.preventDefault();
-    const releaseCancelled = current?.button !== event.button || !!current?.cancelled || prevented || dragging || primaryHeld
+    const occupied = prevented || dragging || primaryHeld;
+    // An unpaired WebView2 release can leave the click to auxclick.
+    released = current || occupied || source !== "webview2" ? event.button : undefined;
+    const matched = current?.button === event.button;
+    const releaseCancelled = !matched || !!current?.cancelled || occupied
       || (!!current && Math.hypot(event.clientX - current.x, event.clientY - current.y) > 5);
-    // Only an explicit DOM press can veto the native release; an absent one never does (#948).
-    pendingNative = current?.button === event.button ? { button: event.button, cancelled: releaseCancelled } : undefined;
-    if (!releaseCancelled)
+    // Only an explicit DOM press can veto the GTK release (#948).
+    pendingNative = gtkOwnsPress && matched ? { button: event.button, cancelled: releaseCancelled } : undefined;
+    if (!gtkOwnsPress && !releaseCancelled)
       navigate(event.button === 3 ? "back" : "forward");
   };
   const aux = (event: MouseEvent) => {
@@ -42,7 +51,7 @@ export function installMouseHistory(win: Window, doc: Document, navigate: (direc
     const prevented = event.defaultPrevented;
     event.preventDefault();
     if (released === event.button) { released = undefined; return; }
-    if (!prevented && !dragging && !primaryHeld && !press?.cancelled)
+    if (!gtkOwnsPress && !prevented && !dragging && !primaryHeld && !press?.cancelled)
       navigate(event.button === 3 ? "back" : "forward");
   };
   const dragStart = () => { dragging = true; cancel(); };
@@ -57,9 +66,10 @@ export function installMouseHistory(win: Window, doc: Document, navigate: (direc
     for (const [name, listener] of Object.entries(listeners)) win.removeEventListener(name, listener as EventListener, capture);
     doc.removeEventListener?.("selectionchange", cancel);
   };
-  /** Whether a native (WM_APPCOMMAND / X11) side-button release should navigate, in O(1). This recognizer is the one
-   * owner of the gesture: a selection, drag or cancelled press vetoes it; with no DOM press seen, native decides. */
+  /** Guard a native history command against a selection or drag. A GTK release
+   * also consumes matching DOM gesture state. Windows commands are independent. */
   dispose.acceptNative = (direction: "back" | "forward") => {
+    if (!gtkOwnsPress) return !primaryHeld && !dragging;
     const button = direction === "back" ? 3 : 4;
     // The native release ends its gesture: consume the matching press or release, so its verdict never outlives it.
     let cancelled = false;
