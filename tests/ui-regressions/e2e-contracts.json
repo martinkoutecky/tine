@@ -490,9 +490,13 @@
       "stability":"burn-in"
     },
     "scripts/e2e-journal-edit-feed-kept.mjs": {
-      "contracts": [{"class":"stateful-ux","userOutcome":"After scrolling the Journals feed past its first page and editing an older journal's text, ending the edit keeps every loaded day loaded and the edited day where the reader left it; the feed shows and the file holds the edited body, with no feed restart, even when the edit is the session's first change.","blocking":true,"authority":"D-20261102-PERF; REG-COST-JOURNAL-EDIT-NO-FEED-RESTART; UI-FEED-FIRST-CHANGE-RESTART"}],
-      "acceptableVariations": ["Read, save, watcher and render latency; extra days loaded by infinite scroll while settling; the edited day moving by less than a quarter of the viewport."],
-      "nonRequirements": ["Exact pixels, DOM nesting or scroll offsets; day references and planning (Rust change-summary tests); external journal changes, which keep their own feed restart; certification outside Linux WebKitGTK."],
+      "contracts": [
+        {"class":"stateful-ux","userOutcome":"After scrolling the Journals feed past its first page and editing an older journal's text, ending the edit keeps every loaded day loaded and the edited day where the reader left it; the feed shows and the file holds the edited body, with no feed restart, even when the edit is the session's first change.","blocking":true,"authority":"D-20261102-PERF; REG-COST-JOURNAL-EDIT-NO-FEED-RESTART; UI-FEED-FIRST-CHANGE-RESTART"},
+        {"class":"stateful-ux","userOutcome":"Folding a block above today's Scheduled & Deadline section and then clicking away from an older journal edit keeps the edited day in view and saves the edit.","blocking":true,"authority":"GH #987; UI-GH987-JOURNAL-BLUR-SCROLL"},
+        {"class":"stateful-ux","userOutcome":"Adding a scheduled date to an older journal and clicking away saves the date and keeps the loaded days and reader's position. An external change to the date appears while the reader keeps the same place.","blocking":true,"authority":"GH #987; UI-GH987-JOURNAL-REFRESH-SCROLL"}
+      ],
+      "acceptableVariations": ["Read, save, watcher and render latency, extra days loaded by infinite scroll while settling, and modest movement within the viewport."],
+      "nonRequirements": ["Exact pixels, DOM nesting or scroll offsets, the full matrix of planning and day reference invalidation keys covered in Rust, and certification outside Linux WebKitGTK."],
       "stability":"burn-in"
     },
     "scripts/e2e-rn-cf-org-body.mjs": {
