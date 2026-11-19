@@ -514,7 +514,7 @@ function renderLink(
         class="external-link"
         title={fileUrlTitle(dest)}
         {...(spanAttrs ?? {})}
-        {...outboundAnchorAttrs(dest, activate, true)}
+        {...outboundAnchorAttrs(dest, activate)}
       >
         <Show when={s.label && s.label.length} fallback={dest}>{renderInlines(s.label!, blockId, spanMode, macroExpansion, format)}</Show>
       </a>

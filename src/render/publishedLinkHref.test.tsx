@@ -106,22 +106,19 @@ describe("links keep an href only for relative, web and mail destinations (GH #9
     expect(href("[b](blob:https://example.org/1)")).toBeNull();
   });
 
-  it("a published reader follows fragment and relative links itself; the app keeps its opener", async () => {
+  it("relative links keep the Beta path: the checked opener, or the asset opener for attachments (review 9a34ea9dd)", async () => {
     const open = vi.spyOn(backend(), "openExternal").mockResolvedValue(undefined);
-    for (const source of ["[s](#section)", "[d](#a.b)"]) {
+    const asset = vi.spyOn(backend(), "openAsset").mockResolvedValue(undefined);
+    for (const source of ["[s](#section)", "[d](#a.b)", "[h](*Heading)", "[a](../assets/manual.txt)", "[b](assets/manual.txt)"]) {
       const link = mount(() => <InlineText text={source} />).querySelector("a.external-link")!;
       expect(link.getAttribute("href"), source).not.toBeNull();
       const click = new MouseEvent("click", { bubbles: true, cancelable: true });
       link.dispatchEvent(click);
-      expect(click.defaultPrevented, source).toBe(false);
+      expect(click.defaultPrevented, source).toBe(true);
     }
     await flush();
-    expect(open).not.toHaveBeenCalled();
-    published.on = false;
-    const link = mount(() => <InlineText text="[s](#section)" />).querySelector("a.external-link")!;
-    const click = new MouseEvent("click", { bubbles: true, cancelable: true });
-    link.dispatchEvent(click);
-    expect(click.defaultPrevented).toBe(true);
+    expect(open.mock.calls.map(([dest]) => dest)).toEqual(["#section", "#a.b", "*Heading"]);
+    expect(asset.mock.calls.map(([rel]) => rel)).toEqual(["manual.txt", "manual.txt"]);
   });
 
   it("raw HTML and Hiccup anchors", () => {
