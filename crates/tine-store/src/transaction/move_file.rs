@@ -50,7 +50,7 @@ impl PagePlan<'_> {
                 case_only(Path::new(from.as_str()), Path::new(to.as_str()))
                     && matches!(fs::symlink_metadata(&dst),
                     Err(error) if error.kind() == io::ErrorKind::NotFound);
-            if !self.destination_is_source_spelling(from, to)? && !absent_case_destination {
+            if !self.destination_is_source_spelling(from, &dst)? && !absent_case_destination {
                 return Err(Why::Conflict {
                     file: to.clone(),
                     disk: disk_rev(&dst),
@@ -129,15 +129,7 @@ impl PagePlan<'_> {
     // the requested spelling while retaining that door's target validation.
     pub(super) fn spelled_path(&self, file: &FileId) -> Result<PathBuf, Why> {
         self.path(file)?;
-        let candidate = self.store.graph.root.join(file.as_str());
-        let parent = candidate.parent().unwrap();
-        // Resolve the parent, never a final symlink's target: a separately
-        // listed destination must remain occupied at its requested location.
-        let (existing, resolved) =
-            crate::model::canonical_existing_ancestor(parent).map_err(failed)?;
-        Ok(resolved
-            .join(parent.strip_prefix(existing).unwrap())
-            .join(candidate.file_name().unwrap()))
+        self.store.spelled_destination(file).map_err(failed)
     }
 
     pub(super) fn spelling_move(plan: &Prepared) -> bool {
@@ -170,10 +162,10 @@ impl PagePlan<'_> {
 
     /// Same-file equality alone also accepts two hard links. Only an absent
     /// destination directory entry can be an alternate spelling of the source.
-    fn destination_is_source_spelling(&self, from: &FileId, to: &FileId) -> Result<bool, Why> {
+    /// `dst` is the destination's [`Self::spelled_path`].
+    fn destination_is_source_spelling(&self, from: &FileId, dst: &Path) -> Result<bool, Why> {
         let src = self.path(from)?;
-        let dst = self.spelled_path(to)?;
-        self.source_spelling_alias(&src, &dst, &dst).map_err(failed)
+        self.source_spelling_alias(&src, dst, dst).map_err(failed)
     }
 
     fn source_spelling_alias(
@@ -197,13 +189,15 @@ impl PagePlan<'_> {
         from: &FileId,
         to: &FileId,
     ) -> Result<bool, Why> {
-        if self.destination_is_source_spelling(from, to)? {
+        let dst = self.spelled_path(to)?;
+        if self.destination_is_source_spelling(from, &dst)? {
             Ok(false)
         } else {
-            // Which entry occupies `to` is `Store::move_occupant`'s answer, the
-            // one the rename planner names in its refusal; an occupant's
+            // Which entry occupies `to` is `Store::move_occupant`'s answer,
+            // probed here at the guard's already checked spelling; the rename
+            // planner names the same occupant in its refusal. An occupant's
             // revision (through a link, as before) makes the conflict.
-            if self.store.move_occupant(to).map_err(failed)?.is_some() {
+            if self.store.occupant_at(to, &dst).map_err(failed)?.is_some() {
                 self.absent(to)?;
             }
             Ok(true)
@@ -211,7 +205,7 @@ impl PagePlan<'_> {
     }
 
     fn verify_move_destination(&self, from: &FileId, to: &FileId, index: usize) -> Result<(), Why> {
-        if self.destination_is_source_spelling(from, to)? {
+        if self.destination_is_source_spelling(from, &self.spelled_path(to)?)? {
             Ok(())
         } else {
             self.verify(to, None, index)

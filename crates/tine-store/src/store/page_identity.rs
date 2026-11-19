@@ -115,14 +115,33 @@ impl Store {
     /// The one answer to "which entry occupies this move destination", for
     /// the rename planner and the transaction's no-replace move guard alike:
     /// `None` when no directory entry answers to `to`; otherwise the listed
-    /// spelling of that entry. A final symlink is its own entry and is never
-    /// followed (discovery skips it; the guard treats it as occupied at the
-    /// requested spelling). Only a regular entry may resolve to another
-    /// listed spelling: on a case-folding volume `pages/B.md` reaches the
-    /// listed `pages/b.md` ([`Self::disk_spelling`]).
-    /// Cost: one `lstat`; two canonicalizations when an entry answers.
-    pub fn move_occupant(&self, to: &FileId) -> std::io::Result<Option<FileId>> {
-        match fs::symlink_metadata(self.graph.root.join(to.as_str())) {
+    /// spelling of that entry. `to` is first checked the way the move guard
+    /// checks it ([`Self::path_for_os_handoff`] and the write-target check),
+    /// so an absolute, parent-relative or out-of-graph id, or one under an
+    /// ancestor linked outside the graph, is refused before anything is
+    /// probed. Then [`Self::occupant_at`] answers.
+    /// Cost O(path components); see [`Self::occupant_at`] for the probe.
+    pub fn move_occupant(&self, to: &FileId) -> Result<Option<FileId>, StoreError> {
+        let path = self.path_for_os_handoff(to, false)?;
+        self.ensure_write_target(to, &path)
+            .map_err(StoreError::from_io)?;
+        let spelled = self.spelled_destination(to).map_err(StoreError::from_io)?;
+        self.occupant_at(to, &spelled).map_err(StoreError::from_io)
+    }
+
+    /// [`Self::move_occupant`]'s probe of an already checked destination,
+    /// `spelled` being [`Self::spelled_destination`] of `to`. A final symlink
+    /// is its own entry and is never followed (discovery skips it; the guard
+    /// treats it as occupied at the requested spelling). Only a regular entry
+    /// may resolve to another listed spelling: on a case-folding volume
+    /// `pages/B.md` reaches the listed `pages/b.md` ([`Self::disk_spelling`]).
+    /// Cost: one `lstat`; two canonicalizations when a regular entry answers.
+    pub(crate) fn occupant_at(
+        &self,
+        to: &FileId,
+        spelled: &Path,
+    ) -> std::io::Result<Option<FileId>> {
+        match fs::symlink_metadata(spelled) {
             Err(error) if crate::atomic_file::names_nothing(&error) => Ok(None),
             Err(error) => Err(error),
             Ok(meta) if meta.file_type().is_symlink() => Ok(Some(to.clone())),
@@ -131,6 +150,29 @@ impl Store {
                     .and_then(|page| self.disk_spelling(&page))
                     .map_or_else(|| to.clone(), |page| page.file()),
             )),
+        }
+    }
+
+    /// `file`'s OS path with its parent resolved and its requested leaf kept,
+    /// never a final symlink's target: a separately listed destination must
+    /// remain occupied at its requested location. The caller has checked
+    /// `file` ([`Self::path_for_os_handoff`]).
+    pub(crate) fn spelled_destination(&self, file: &FileId) -> std::io::Result<PathBuf> {
+        let candidate = self.graph.root.join(file.as_str());
+        let parent = candidate.parent().unwrap();
+        let (existing, resolved) = crate::model::canonical_existing_ancestor(parent)?;
+        Ok(resolved
+            .join(parent.strip_prefix(existing).unwrap())
+            .join(candidate.file_name().unwrap()))
+    }
+
+    /// The write-target boundary for `path`, `file`'s checked OS path: the
+    /// approved assets root for `assets/`, the graph root otherwise.
+    pub(crate) fn ensure_write_target(&self, file: &FileId, path: &Path) -> std::io::Result<()> {
+        if file.as_str().starts_with("assets/") {
+            self.graph.ensure_asset_write_target(path)
+        } else {
+            self.graph.ensure_write_target(path)
         }
     }
 

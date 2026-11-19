@@ -2493,10 +2493,16 @@ volume answers through another listed spelling: renaming `A` to `B` while
 replanning until `WouldBlock` (scenario: an external editor or sync delivery
 left that file there). Which entry occupies a destination is one answer,
 `Store::move_occupant`, used by both this planner check and the transaction's
-no-replace move guard: a final symlink is its own entry and is never followed
-to the page it points at; only a regular entry resolves to its listed folded
-spelling. Cost per destination candidate: one `lstat`, plus two
-canonicalizations when an entry answers (proof
+no-replace move guard. It first checks the destination as that guard does
+(a valid id inside its area, no ancestor linked out of the graph, the graph
+write-target check) and probes nothing otherwise, so an absolute,
+parent-relative or out-of-graph destination is refused (`InvalidTarget`)
+rather than named (scenario: malformed input, or an external editor or sync
+delivery replacing a graph folder with a link out of it). A final symlink is
+its own entry and is never followed to the page it points at; only a regular
+entry resolves to its listed folded spelling. Cost per destination candidate:
+the guard's fixed destination check, one `lstat`, and two more
+canonicalizations when a regular entry answers (proof
 `crates/tine-store/src/store/move_occupant_tests.rs`,
 `crates/tine-graph-features/tests/cm_merge_rules.rs`
 `rename_onto_a_case_spelled_link_does_not_blame_its_target`, and the K

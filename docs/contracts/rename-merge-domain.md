@@ -273,7 +273,17 @@ top-level directives before the first headline and the head drawer, except a
 directive or drawer strictly between two lines of other text, and the prose runs
 from the first to the last of that other text, so page properties may follow
 it). Every other non-blank byte of a pre-block is prose, so it is indexed,
-renamed and kept like any block text. A Markdown `#+key: value` line is prose
+renamed and kept like any block text. That prose is the page's opening text and
+is shown exactly as written wherever it appears: the page's opening row, its
+Linked References row and a query's List row all render it through one
+renderer (`src/render/openingText.tsx`, one parse per row). A later Markdown
+property group in it (lines after the header's blank line) stays its literal
+lines, never property chips or page properties; a leading task word or priority
+keeps its text (D-20261119-PG, a deliberate difference from Logseq, which shows
+such a group as nothing). While the header is edited, the frontend keeps the
+parser's answer (`pageOpening`) instead of splitting the remaining pre-block
+again; display, the properties panel, and the copy and edit checks on a
+result's header and opening rows all read that one answer. A Markdown `#+key: value` line is prose
 whose references count, as Logseq hoists it. The format is the file's, never
 inferred from the text.
 Header checking costs O(header bytes), uses the same native description as the

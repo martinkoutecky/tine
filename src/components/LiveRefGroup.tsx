@@ -404,8 +404,8 @@ function MountedRefGroup(props: LiveRefGroupProps & { occurrence: RefOccurrence;
     if (!ready()) return kept;
     const page = sourcePage();
     if (!page || page.kind !== props.kind || (props.path && page.id !== props.path)) return kept;
-    const first = docNode(page.roots[0] ?? "");
-    const raw = first?.originatedFromPageHeader ? first.raw : page.preBlock ?? "";
+    // Only the header (D-20261119-PG): a pre-block also holds the opening text.
+    const raw = pageOpening(page).properties ?? "";
     if (raw.trimEnd() === b.raw.trimEnd()) {
       readOnlyRows.delete(b);
       return b;

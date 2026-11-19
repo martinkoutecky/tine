@@ -223,12 +223,13 @@ export function pagePropertyEdit(pageName: string, key: string, value: string | 
 
 /** Where page `page`'s header ends, as the parser answered it (D-20261119-PG):
  *  its header text and its opening text, the prose before the first block,
- *  shown as written. While `beginPageHeaderEdit`'s root is the header, that
- *  root holds the header and the opening text the parser found then; the
- *  pre-block it left is never split a second time. O(pre-block bytes). */
+ *  shown as written. While `beginPageHeaderEdit`'s root is the header, the
+ *  header text is that root's draft and the opening text the one the parser
+ *  found then; the pre-block it left is never split a second time.
+ *  O(pre-block bytes). */
 export function pageOpening(page: ReadonlyFeedPage): { properties: string | null; content: string | null } {
   const first = page.format === "md" ? doc.byId[page.roots[0]] : undefined;
-  if (first?.originatedFromPageHeader) return { properties: null, content: first.headerOpening ?? null };
+  if (first?.originatedFromPageHeader) return { properties: withoutLeadingBlankLines(first.raw) || null, content: first.headerOpening ?? null };
   const { properties, content } = splitPagePreamble(page.preBlock, page.format);
   return { properties, content };
 }
@@ -386,9 +387,10 @@ export function promotePagePreamble(pageName: string): string | null {
   setDoc(
     produce((s) => {
       const index = s.pages.findIndex((p) => p.name === pageName);
-      s.pages[index].preBlock = properties;
-      s.byId[id] = { id, raw: content, collapsed: false, parent: null, page: pageName, children: [] };
       const header = s.byId[s.pages[index].roots[0]];
+      // A header editor's root keeps the header; its pre-block is this text.
+      s.pages[index].preBlock = header?.originatedFromPageHeader ? null : properties;
+      s.byId[id] = { id, raw: content, collapsed: false, parent: null, page: pageName, children: [] };
       if (header?.originatedFromPageHeader) header.headerOpening = null;
       s.pages[index].roots.splice(header?.originatedFromPageHeader ? 1 : 0, 0, id);
     })

@@ -85,6 +85,8 @@ fn rename_merge_and_journal_rename_proposals_are_documented_in_the_bundled_guide
         "rewrite an alias declaration as plain comma-separated names",
         "A Markdown page's properties are the property lines at its very top, up to the first blank or other line",
         "the page shows it, its links count, a rename updates them",
+        // D-20261119-PG: later property groups are opening text, shown as written.
+        "a later group of `key:: value` lines after that blank line stays those lines, not page properties",
         "nothing was renamed or merged",
         "Pending edits may already have been saved before a refusal; those saves stay",
         "Tine lists the files where either happened",

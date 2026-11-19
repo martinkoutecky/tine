@@ -1,8 +1,7 @@
-import { For, Show, type JSX } from "solid-js";
+import { Show, type JSX } from "solid-js";
 import { pageOpening, type FeedPage } from "../document";
 import { t } from "../i18n";
-import { InlineText } from "../render/inline";
-import type { Format } from "../types";
+import { OpeningText } from "../render/openingText";
 import { BlockRenderBoundary } from "./BlockRenderBoundary";
 
 /** A page's opening text, the prose before its first block (GH #85), as the
@@ -28,16 +27,5 @@ export function PageOpeningRow(props: { page: FeedPage; onEdit: () => void }): J
         </div>
       )}
     </Show>
-  );
-}
-
-/** Opening text exactly as written (D-20261119-PG), one line at a time: as
- *  one block, a run of `key:: value` lines would parse as that block's
- *  properties and show nothing. Each line's inline markup renders. O(text). */
-function OpeningText(props: { text: string; format: Format }): JSX.Element {
-  return (
-    <For each={props.text.split("\n")}>
-      {(line, i) => <>{i() > 0 && <br />}<InlineText text={line} format={props.format} /></>}
-    </For>
   );
 }

@@ -118,6 +118,40 @@ describe("preamble query rows", () => {
   });
 });
 
+// D-20261119-PG, review da945bc19 (AR-15, UI-3): a page's later property
+// groups are opening text. Its Linked References and query rows show them as
+// written, with no property chips, and the page's properties row holds only
+// its header.
+describe("opening text with later property groups", () => {
+  const OPENING = "later:: x\nlast:: y\n\nTODO [#A] Prose [[Target]]";
+  it.each(["ref", "query"] as const)("shows a preamble row as written on %s, and the header row without its later groups", async surface => {
+    vi.spyOn(backend(), "getPage").mockResolvedValue({ ...sourcePage(), pre_block: `${HEADER}\n\n${OPENING}\n` });
+    const preamble: BlockDto = { id: "page-preamble:Page:source", raw: OPENING, collapsed: false, page_preamble: true, children: [] };
+    const blocks = [propertyRow(), preamble];
+    adoptResults(blocks, captureResultsTicket());
+    const { root, dispose } = mount(() => <LiveRefGroup page="Source" kind="page" blocks={blocks} surface={surface} eager />);
+    try {
+      await vi.waitFor(() => expect(pageByName("Source")).toBeDefined());
+      const row = await vi.waitFor(() => {
+        const el = root.querySelector<HTMLElement>('[data-block-id="page-preamble:Page:source"] .block-content');
+        expect(el?.textContent).toContain("Prose");
+        return el!;
+      });
+      const lines: string[] = [""];
+      const walk = (node: Node) => {
+        if (node.nodeName === "BR") lines.push("");
+        else if (node.nodeType === Node.TEXT_NODE) lines[lines.length - 1] += node.textContent;
+        else node.childNodes.forEach(walk);
+      };
+      walk(row);
+      expect(lines.map(line => line.trim())).toEqual(["later:: x", "last:: y", "", "TODO [#A] Prose [[Target]]"]);
+      expect(row.querySelector(".prop-key, .block-marker, .block-priority")).toBeNull();
+      const header = root.querySelector('[data-block-id="page-property:Page:source"]')!;
+      expect([...header.querySelectorAll(".prop-key")].map(key => key.textContent)).not.toContain("later");
+    } finally { dispose(); }
+  });
+});
+
 describe("page properties in Linked References (GH #486)", () => {
   it("keeps the rendered properties row when its source page is re-admitted unchanged (GH #886)", async () => {
     vi.spyOn(backend(), "getPage").mockResolvedValue(sourcePage());

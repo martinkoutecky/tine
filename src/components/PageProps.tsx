@@ -2,7 +2,7 @@ import { msg, t } from "../i18n";
 import { For, Show, createEffect, createMemo, createSignal, onCleanup, onMount, untrack, type JSX } from "solid-js";
 import { pagePropsPanel, closePageProps, type PropsPanelScope } from "../ui";
 import {
-  blockPageReadOnly, blockProperty, formatForBlock, node, pageByName, pageReadOnly, pageInstanceGeneration,
+  blockPageReadOnly, blockProperty, formatForBlock, node, pageByName, pageOpening, pageReadOnly, pageInstanceGeneration,
   readPageProperties, readPageProperty, setBlockProperty, setPageProperty,
 } from "../document";
 import { PAGE_PROP_SPECS, isEditablePropertyKey, FORM_MANAGED, hides, type PagePropSpec } from "../editor/properties";
@@ -32,7 +32,9 @@ export function PageProps(): JSX.Element {
 // keep their own surfaces. Other hidden editor keys remain editable here.
 // The Rust policy owns this list independently of textarea visibility.
 function machineManaged(scope: PropsPanelScope, key: string): boolean {
-  const raw = scope.kind === "block" ? node(scope.id)?.raw ?? "" : pageByName(scope.name)?.preBlock ?? "";
+  const page = scope.kind === "page" ? pageByName(scope.name) : undefined;
+  // A page's own properties are its header's, never its opening text's (D-20261119-PG).
+  const raw = scope.kind === "block" ? node(scope.id)?.raw ?? "" : (page && pageOpening(page).properties) ?? "";
   const format = scope.kind === "block" ? formatForBlock(scope.id) : pageByName(scope.name)?.format ?? "md";
   const own = blockRegions(raw, format).properties.filter((p) => p.primary).map((p): [string, string] => [p.key, p.value]);
   return hides(FORM_MANAGED, key, own);
