@@ -80,6 +80,22 @@ describe("a checkout-sized batch (graph-changed-bulk)", () => {
   });
 });
 
+it.each(["single", "bulk"])("GH #987: a %s journal change with a summary leaves the feed refresh to its days key", async (route) => {
+  loadFeed([page("Jan 1st, 2026", ["j"])]);
+  disk = { "Jan 1st, 2026": page("Jan 1st, 2026", ["j2"]) };
+  const answers: GraphAnswersChange = { rev: "9", inventoryChanged: false, blockRefCounts: {},
+    summary: { rev: "9", full: false, pages: ["jan 1st, 2026"], blocks: [], linksTo: [], queryTo: [], props: {}, inventoryChanged: false } };
+  const edit = changed("Jan 1st, 2026", "journal");
+  if (route === "single") await applyGraphChange({ ...edit, answers });
+  else await applyGraphChangesBulk({ changes: [edit], answers });
+  expect(raws("Jan 1st, 2026")).toEqual(["j2"]);
+  expect(feedRestarts).toBe(0);
+  // Missing evidence keeps the conservative restart.
+  if (route === "single") await applyGraphChange(edit);
+  else await applyGraphChangesBulk({ changes: [edit] });
+  expect(feedRestarts).toBe(1);
+});
+
 // tine#644 follow-up F5. A window answers a change on a page it shows but no
 // host holds with one read, and nothing here damps a repeat. So the bound is
 // the store's: reading a page must not announce a change for it
