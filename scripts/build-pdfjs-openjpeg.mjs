@@ -14,6 +14,19 @@ const sha = bytes => crypto.createHash("sha256").update(bytes).digest("hex");
 const read = file => fs.readFileSync(file, "utf8");
 
 export function buildOpenjpeg({ outDir = openjpegBuildDir, force = false } = {}) {
+  const emcc = process.env.TINE_PDFJS_EMCC;
+  const compiler = emcc && (emcc === "emcc"
+    ? { emcc, emar: "emar" }
+    : { emcc: path.resolve(emcc), emar: path.resolve(path.dirname(emcc), "emar") });
+  const sdk = process.env.TINE_PDFJS_EMSDK || (process.env.EMSDK && path.join(process.env.EMSDK, "upstream"));
+  const config = path.join(outDir, "emscripten.config");
+  const env = compiler ? process.env
+    : { ...process.env, EM_CONFIG: config, EM_CACHE: path.join(outDir, "cache"), EMCC_CORES: "4" };
+  const python = process.env.PYTHON || (process.platform === "win32" ? "python" : "python3");
+  const tool = (name, args, capture = false) => execFileSync(compiler ? compiler[name] : python,
+    compiler ? args : [path.join(sdk, "emscripten", `${name}.py`), ...args],
+    { cwd: outDir, env, encoding: "utf8", stdio: capture ? "pipe" : "inherit" });
+
   const provenance = JSON.parse(read(path.join(vendor, "source.json")));
   const hash = crypto.createHash("sha256");
   for (const [file, expected] of Object.entries(provenance.files)) {
@@ -26,23 +39,28 @@ export function buildOpenjpeg({ outDir = openjpegBuildDir, force = false } = {})
   for (const file of [fileURLToPath(import.meta.url), fileURLToPath(new URL("./lib/pdfjs-openjpeg-abi.mjs", import.meta.url))]) {
     hash.update(fs.readFileSync(file));
   }
+  let version;
+  if (compiler) {
+    fs.mkdirSync(outDir, { recursive: true });
+    version = tool("emcc", ["--version"], true).split("\n")[0];
+    hash.update(JSON.stringify([compiler, version, env.PATH, env.EM_CONFIG, env.EM_CACHE]));
+  }
   const inputHash = hash.digest("hex"), output = path.join(outDir, "openjpeg.wasm");
   const receipt = path.join(outDir, "BUILD_OPENJPEG.json");
   if (!force && fs.existsSync(receipt) && fs.existsSync(output)) {
     const previous = JSON.parse(read(receipt));
     if (previous.inputHash === inputHash && previous.sha256 === sha(fs.readFileSync(output))) return outDir;
   }
-  const sdk = process.env.TINE_PDFJS_EMSDK || (process.env.EMSDK && path.join(process.env.EMSDK, "upstream"));
-  if (!sdk) throw new Error("Building the PDF decoder requires Emscripten 4.0.20: see 'PDF decoder SDK' in README.md for installing it and setting EMSDK or TINE_PDFJS_EMSDK.");
+  if (!compiler && !sdk) throw new Error("Building the PDF decoder requires Emscripten 4.0.20 via EMSDK or TINE_PDFJS_EMSDK. Packagers can set TINE_PDFJS_EMCC to use their own compiler. See 'PDF decoder SDK' in README.md.");
   fs.mkdirSync(path.join(outDir, "obj"), { recursive: true });
-  const config = path.join(outDir, "emscripten.config");
-  fs.writeFileSync(config, `LLVM_ROOT = ${JSON.stringify(path.join(sdk, "bin"))}\nBINARYEN_ROOT = ${JSON.stringify(sdk)}\nNODE_JS = [${JSON.stringify(process.execPath)}]\n`);
-  const env = { ...process.env, EM_CONFIG: config, EM_CACHE: path.join(outDir, "cache"), EMCC_CORES: "4" };
-  const python = process.env.PYTHON || (process.platform === "win32" ? "python" : "python3");
-  const tool = (name, args, capture = false) => execFileSync(python, [path.join(sdk, "emscripten", `${name}.py`), ...args],
-    { cwd: outDir, env, encoding: "utf8", stdio: capture ? "pipe" : "inherit" });
-  const version = tool("emcc", ["--version"], true).split("\n")[0];
-  if (!/\b4\.0\.20\b/.test(version)) throw new Error(`Expected Emscripten 4.0.20, got ${version}`);
+  if (!compiler) {
+    fs.writeFileSync(config, `LLVM_ROOT = ${JSON.stringify(path.join(sdk, "bin"))}\nBINARYEN_ROOT = ${JSON.stringify(sdk)}\nNODE_JS = [${JSON.stringify(process.execPath)}]\n`);
+    version = tool("emcc", ["--version"], true).split("\n")[0];
+  }
+  if (!/\b4\.0\.20\b/.test(version)) {
+    if (!compiler) throw new Error(`Expected Emscripten 4.0.20, got ${version}. Set TINE_PDFJS_EMCC to opt into a packager toolchain.`);
+    console.warn(`Building the PDF decoder with TINE_PDFJS_EMCC and ${version} (pinned release version: 4.0.20).`);
+  }
   // Fixed wasm32 target configuration, equivalent to upstream's CMake probes.
   fs.writeFileSync(path.join(outDir, "opj_config.h"), "#define OPJ_VERSION_MAJOR 2\n#define OPJ_VERSION_MINOR 5\n#define OPJ_VERSION_BUILD 4\n");
   fs.writeFileSync(path.join(outDir, "opj_config_private.h"), '#define OPJ_PACKAGE_VERSION "2.5.4"\n#define OPJ_HAVE_FSEEKO 1\n#define OPJ_HAVE_MALLOC_H\n#define OPJ_HAVE_MEMALIGN\n#define OPJ_HAVE_POSIX_MEMALIGN\n#ifndef _POSIX_C_SOURCE\n#define _POSIX_C_SOURCE 200112L\n#endif\n');
