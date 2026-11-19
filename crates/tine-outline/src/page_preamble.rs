@@ -174,9 +174,10 @@ pub(crate) fn top_property_nodes<'a>(
     blocks: &'a [Block],
     document: bool,
 ) -> impl Iterator<Item = (Range, bool)> + 'a {
+    let coords = crate::lsdoc_block_parse::Coords::of(raw, document);
     blocks.iter().filter_map(move |b| match b {
         Block::Properties { span, .. } | Block::Directive { span, .. } => {
-            crate::block_regions::raw_range(raw, span, document).map(|r| {
+            crate::block_regions::raw_range(raw, span, coords).map(|r| {
                 (
                     crate::block_regions::whole_line(raw, r),
                     matches!(b, Block::Properties { .. }),
@@ -437,6 +438,30 @@ mod tests {
             wrong.len(),
             inputs.len(),
             &wrong[..wrong.len().min(20)]
+        );
+    }
+
+    /// Review 28d081755 F1 (PC-3): mapping the groups measures the leading
+    /// trim once, not twice per group, so whitespace before many groups costs
+    /// one scan. Counted, and timed at 2,000 groups after 16 KB of lead.
+    #[test]
+    fn opening_groups_cost_is_linear() {
+        let text = format!(
+            "{}{}",
+            "  \t\n".repeat(4_000),
+            "k:: v\nprose\n\n".repeat(2_000)
+        );
+        crate::lsdoc_block_parse::LEAD_SCANS.with(|n| n.set(0));
+        let started = std::time::Instant::now();
+        let groups = opening_groups(&text, false);
+        let elapsed = started.elapsed();
+        assert_eq!(groups.len(), 2_000);
+        let scans = crate::lsdoc_block_parse::LEAD_SCANS.with(|n| n.replace(0));
+        assert!(scans <= 1, "{scans} leading-trim scans for one call");
+        // Linear is ~12 ms in a debug build; one scan per group was ~1.1 s.
+        assert!(
+            elapsed < std::time::Duration::from_millis(50),
+            "{elapsed:?}"
         );
     }
 }

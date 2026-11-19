@@ -2680,6 +2680,50 @@ describe("Markdown preamble content", () => {
       }
     });
   }
+
+  // UI-CM-OPENING-PROPERTY-GROUPS, review 28d081755 F3: a checklist in opening text has no
+  // block to tick, so its checkbox is inert and a click on it opens the opening row's editor,
+  // leaving the text exactly as written. Markdown and Org list kinds, also inside quote and note.
+  for (const [opening, format] of [
+    ["Intro\n\n1. [ ] item", "md"], ["Intro\n\n1. [x] item", "md"],
+    ["Intro\n\n+ [ ] item", "md"], ["Intro\n\n* [ ] item", "md"],
+    ["Intro\n\n> 1. [ ] quoted", "md"], ["Intro\n\n#+BEGIN_NOTE\n+ [x] noted\n#+END_NOTE", "md"],
+    ["Intro\n\n1. [ ] item", "org"], ["Intro\n\n+ [X] item", "org"], ["Intro\n\n- [ ] item", "org"],
+    ["Intro\n\n#+BEGIN_QUOTE\n1. [ ] quoted\n#+END_QUOTE", "org"], ["Intro\n\n#+BEGIN_NOTE\n- [X] noted\n#+END_NOTE", "org"],
+  ] as const) {
+    it(`opens the editor on a checkbox click in the ${format} opening text ${JSON.stringify(opening)}`, async () => {
+      const bodyId = "66666666-6666-4666-8666-666666666666";
+      const dto = {
+        name: "Checklist",
+        kind: "page" as const,
+        title: "Checklist",
+        pre_block: opening,
+        format,
+        blocks: [{ id: bodyId, raw: "Head", collapsed: false, children: [] }],
+      };
+      setDoc({
+        byId: { [bodyId]: node(bodyId, "Head", dto.name) },
+        pages: [{ ...page(dto.name, "page", [bodyId], dto.pre_block), format }],
+        feed: [], loaded: true,
+      });
+      vi.spyOn(backend(), "getPage").mockResolvedValue(unpinned(dto));
+      mainPaneRouter.openPage(dto.name, "page", { inPlace: true });
+      const { root, dispose } = mount(() => <PageView />);
+      try {
+        await tick(); await tick();
+        const box = root.querySelector<HTMLElement>(".preamble-block .block-checkbox");
+        expect(box?.getAttribute("aria-disabled")).toBe("true");
+        box!.click();
+        await tick();
+        const promoted = pageByName(dto.name)!.roots[0];
+        expect(promoted).not.toBe(bodyId);
+        expect(doc.byId[promoted].raw).toBe(opening);
+        expect(editingId()).toBe(promoted);
+      } finally {
+        dispose();
+      }
+    });
+  }
 });
 
 describe("theme API 0.2 presentation on the journal title row", () => {

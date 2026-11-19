@@ -104,6 +104,11 @@ it.each([
   ["TODO Org prose", "org", ["TODO Org prose"]],
   ["DONE [#B] Org prose", "org", ["DONE [#B] Org prose"]],
   ["a:: 1\n\nNOW after a group", "md", ["a:: 1", "", "NOW after a group"]],
+  // Review 28d081755 F2: a lead's own spaces and tabs stay exact at a piece's end.
+  ["TODO \t", "md", ["TODO \t"]],
+  ["[#A]  ", "md", ["[#A]  "]],
+  ["TODO [#B]\t", "org", ["TODO [#B]\t"]],
+  ["a:: 1\r\n\r\nNOW  \r\n", "md", ["a:: 1", "", "NOW  "]],
 ] as const)("prints the lifted task word or priority of %j (%s) as text", (text, format, lines) => {
   const host = mount(() => <OpeningText raw={text} format={format} />);
   const shown = [...host.children].flatMap((piece) => {
@@ -137,4 +142,23 @@ it("encodes opening text a linear number of times in its pieces", () => {
   };
   const small = encoded(32), large = encoded(256);
   expect(large).toBeLessThan(small * 1.25 + 1);
+});
+
+// Review 28d081755 F2 (PC-3): splitting a piece from its blank edge lines is
+// one scan, so interior whitespace costs its length once, not its square (a
+// regex trim took 1.6 s at 32,000 spaces). Eight times the text may cost about
+// eight times as much (the block body itself grows with blank lines), never 64.
+it.each([" ", "\t", "\n", "\r\n"])("splits a piece around 32,000 interior %j in linear time", (ws) => {
+  const time = (chars: number) => {
+    const text = `a${ws.repeat(chars / ws.length)}b`;
+    const started = performance.now();
+    const host = mount(() => <OpeningText raw={text} format="md" />);
+    const elapsed = performance.now() - started;
+    expect(host.textContent).toContain("b");
+    document.body.replaceChildren();
+    return elapsed;
+  };
+  time(4_000);
+  const small = time(4_000), large = time(32_000);
+  expect(large).toBeLessThan(12 * small + 50);
 });

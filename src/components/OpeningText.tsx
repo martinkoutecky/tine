@@ -31,13 +31,30 @@ function piecesOf(raw: string, format: Format): Piece[] {
   const lineEnds = (s: string) => (s.match(/\n/g) ?? []).length;
   for (const s of openingSegments(raw, format)) {
     if (s.group) { out.push({ kind: "group", text: s.text.replace(/\r?\n$/, "").replace(/\r\n/g, "\n") }); continue; }
-    const text = s.text.replace(/^\s*\n/, "").replace(/\s+$/, "");
-    if (!text.trim()) { blanks(lineEnds(s.text)); continue; }
-    blanks(lineEnds(s.text.slice(0, s.text.length - s.text.replace(/^\s*\n/, "").length)));
-    out.push({ kind: "text", text });
-    blanks(Math.max(0, lineEnds(s.text.slice(s.text.replace(/\s+$/, "").length)) - 1));
+    const { start, end } = contentLines(s.text);
+    if (start === end) { blanks(lineEnds(s.text)); continue; }
+    blanks(lineEnds(s.text.slice(0, start)));
+    out.push({ kind: "text", text: s.text.slice(start, end) });
+    blanks(Math.max(0, lineEnds(s.text.slice(end)) - 1));
   }
   return out;
+}
+
+/** The lines of `text` from its first to its last non-blank one, without the
+ *  last one's line end: its spaces and tabs are kept as written. One scan in
+ *  from each edge (a regex trim retries at every whitespace character). */
+function contentLines(text: string): { start: number; end: number } {
+  const blank = (i: number) => /\s/.test(text[i]);
+  let last = text.length;
+  while (last > 0 && blank(last - 1)) last--;
+  let first = 0;
+  while (first < last && blank(first)) first++;
+  if (first === last) return { start: 0, end: 0 };
+  const start = text.lastIndexOf("\n", first) + 1;
+  let end = text.indexOf("\n", last);
+  if (end < 0) end = text.length;
+  if (text[end - 1] === "\r") end--;
+  return { start, end };
 }
 
 function textPiece(text: string, format: Format): JSX.Element {

@@ -368,6 +368,9 @@ export const BodySourceContext = createContext<{ raw?: string; codeEditAction?: 
 // An in-block list from the AST (`ListItem[]`).
 function AstList(props: { items: AstListItem[]; blockId?: string; spanAttrs?: SpanDomAttrs; macroExpansion?: boolean; format?: Format; tableOptions?: TableV2Options }): JSX.Element {
   const sourceRaw = useContext(BodySourceContext)?.raw;
+  // A body with no block (the opening text, D-20261119-PG) has no line to
+  // tick: its checkbox is drawn, inert, and a click on it is the host's.
+  const detached = !props.blockId;
   const ordered = props.items[0]?.ordered ?? false;
   return (
     <Dynamic component={ordered ? "ol" : "ul"} class="md-list" {...(props.spanAttrs ?? {})}>
@@ -387,9 +390,10 @@ function AstList(props: { items: AstListItem[]; blockId?: string; spanAttrs?: Sp
                 classList={{ checked: item.checkbox === true }}
                 role="checkbox"
                 aria-checked={item.checkbox === true}
-                onClick={(e) => {
+                aria-disabled={detached || undefined}
+                onClick={detached ? undefined : (e) => {
                   e.stopPropagation();
-                  if (props.blockId && sourceRaw !== undefined) toggleAstCheckbox(props.blockId, sourceRaw, item);
+                  if (sourceRaw !== undefined) toggleAstCheckbox(props.blockId!, sourceRaw, item);
                 }}
               />{" "}
             </Show>

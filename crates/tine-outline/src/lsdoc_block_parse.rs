@@ -492,11 +492,34 @@ fn restore_blocks(blocks: &mut [Block], protected: &[ProtectedCode], restored: &
 
 /// Where a block's parsed text starts: the block boundary's leading trim.
 pub(crate) fn block_lead(raw: &str) -> usize {
+    #[cfg(test)]
+    LEAD_SCANS.with(|n| n.set(n.get() + 1));
     raw.len() - trim_block_start(raw).len()
+}
+// Leading-trim scans per operation, pinned by `opening_groups_cost_is_linear` (PC-3).
+#[cfg(test)]
+thread_local! {
+    pub(crate) static LEAD_SCANS: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
 }
 /// A prepared single-block offset (after the `* `/`- ` wrapper) in raw.
 pub(crate) fn raw_offset(raw: &str, at: usize) -> usize {
-    (at.saturating_sub(2) + block_lead(raw)).min(raw.len())
+    Coords::of(raw, false).raw(raw, at)
+}
+/// How a parse's offsets map to `raw`: a whole document's are its own; a
+/// prepared single block's sit after the wrapper and the leading trim, which
+/// is measured once here, so mapping each node is O(1).
+#[derive(Clone, Copy)]
+pub(crate) struct Coords(Option<usize>);
+impl Coords {
+    pub(crate) fn of(raw: &str, document: bool) -> Self {
+        Coords((!document).then(|| block_lead(raw)))
+    }
+    pub(crate) fn raw(self, raw: &str, at: usize) -> usize {
+        match self.0 {
+            None => at.min(raw.len()),
+            Some(lead) => (at.saturating_sub(2) + lead).min(raw.len()),
+        }
+    }
 }
 /// The end of the first line after the leading trim, after its newline.
 pub(crate) fn first_line_end(raw: &str) -> usize {
