@@ -30,7 +30,7 @@ it("checks the desktop external link before IPC and preserves native routes", as
 
 it("checks the browser preview's external link before opening a window", async () => {
   const open = vi.fn();
-  vi.stubGlobal("window", { open });
+  vi.stubGlobal("window", { open, location: { href: "http://localhost:1420/" } });
   const { mockBackend } = await import("./mock");
   const api = mockBackend();
   const refusals = await Promise.allSettled([

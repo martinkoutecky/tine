@@ -50,6 +50,24 @@ export function checkExternalLink(
   }
 }
 
+/** The browser backends' handoff check (published reader, browser preview).
+ * A scheme-less link that resolves to `base`'s own site (`#section`,
+ * `other.html`, `*Heading`) opens as on the Beta, a new tab; `//host`, `\\host`
+ * and `/\host` leave the site and, like every other destination, go through
+ * `checkExternalLink`. */
+export function checkBrowserHandoff(url: string, confirmedScheme: string | undefined, base: string): void {
+  if (anchorDecision(url) === "relative") {
+    try {
+      const here = new URL(base);
+      const there = new URL(url, here);
+      if (there.protocol === here.protocol && there.host === here.host) return;
+    } catch (error) {
+      if (!(error instanceof TypeError)) throw error;
+    }
+  }
+  checkExternalLink(url, confirmedScheme, "browser");
+}
+
 /** Exact ASCII case-insensitive match, as the native opener's
  * `eq_ignore_ascii_case` (no Unicode folding: KELVIN SIGN is not `k`). */
 function sameScheme(confirmed: string | undefined, scheme: string): boolean {

@@ -24,6 +24,7 @@ import { graphEpoch, graphMeta } from "../graphSession";
 import { changed, changedAny, pageChangeKey } from "../changeKeys";
 import { pushToast } from "../toasts";
 import { openOutboundLink, outboundAnchorAttrs, reportLinkOpenFailure } from "../components/ExternalLink";
+import { anchorDecision } from "../linkSchemePolicy";
 import { copyImageFromSrc } from "../copyImage";
 import { parseBlock, parserReady } from "./parse";
 import { mime_from_path } from "./wasm/lsdoc_wasm";
@@ -503,8 +504,10 @@ function renderLink(
     if (k === "video" || k === "audio")
       return <MediaEmbed url={dest} kind={k} alt="" blockId={blockId} token={token} spanAttrs={spanAttrs} />;
   }
+  // Only a scheme-less destination may name an attachment: a refused or custom
+  // scheme with `assets/` in it still goes to the checked opener (review ef9423888).
+  const rel = anchorDecision(dest) === "relative" ? assetLinkRel(dest) : null;
   const activate = () => {
-    const rel = assetLinkRel(dest);
     if (rel !== null) void readOwned(graphOwner(), backend().openAsset(rel, backend().graphBindingGeneration())).catch((error) => reportLinkOpenFailure(dest, error));
     else void openOutboundLink(dest);
   };
