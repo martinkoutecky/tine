@@ -17,7 +17,6 @@ page-merge-missing-name-range = F-LINK: The parser could not locate an alias nam
 page-merge-alias-owner = Q-OWNER: The merged text would lose an alias's property meaning. No files were changed. Edit the alias declaration and try again.
 page-ui-bundled-guide-page = Bundled Guide page
 page-ui-double-click-to-rename-shift-click-sidebar-ctrl-middle = Double-click to rename (shift-click → sidebar, ctrl/middle-click → new tab, alt-click → other pane)
-page-ui-shift-click-to-open-in-sidebar-ctrl-middle-click = Shift-click to open in sidebar, ctrl/middle-click → new tab, alt-click → other pane
 page-ui-copy-the-guide-into-your-graph = Copy the guide into your graph
 page-ui-page-actions = Page actions
 page-ui-unfavorite = Unfavorite

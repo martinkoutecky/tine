@@ -13,6 +13,7 @@ The format follows [Keep a Changelog](https://keepachangelog.com/); versions use
 - Merging two pages that both have a `tags::` line leaves the remaining page with one `tags::` line holding both pages' tags; the merge question shows them. If the merge does not happen, both lines stay as they were (UI-CM-MERGE-UNITED-TAGS).
 - Renaming a journal day (double-click its title and type a name) offers to move the day's notes to the page you typed: a new page, or an existing one after its own blocks. The dialog lists the pages whose links keep opening the day. The day keeps its properties and its `alias::` line and gets one block, `Moved to [[name]]`; the day and the page are saved together, so a move that cannot happen changes neither (UI-CM-DAY-MOVE).
 - When a rename stops because several files claim one name, a dialog lists the files and offers to keep one and merge the others into it, then tries the rename again, instead of only refusing (UI-CM-CONTESTED-MERGE).
+- A journal day's title tooltip now says "Double-click to rename", as a page's does, since renaming a day (moving its notes to a page) has no menu row (D-20261119-DRM).
 
 ### Fixed
 - Renaming a page that very large pages link to uses less memory: each linking page's rewrite proof and the check's reading of it are now let go as soon as that page has been checked, instead of being held until the whole rename was prepared (a 20,000-block page: 125 MB to 113 MB peak; REG-CM-RENAME-RETAINED-BYTES).

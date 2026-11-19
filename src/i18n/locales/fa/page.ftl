@@ -13,7 +13,6 @@ page-merge-missing-name-range = F-LINK: تجزیه‌گر نتوانست نام 
 page-merge-alias-owner = Q-OWNER: متن ادغام‌شده معنای ویژگی نام مستعار را از دست می‌دهد. هیچ فایلی تغییر نکرد. اعلان نام مستعار را ویرایش کنید و دوباره تلاش کنید.
 page-ui-bundled-guide-page = صفحهٔ راهنمای همراه برنامه
 page-ui-double-click-to-rename-shift-click-sidebar-ctrl-middle = دوبار کلیک: تغییر نام (Shift+کلیک: نوار کناری، Ctrl/کلیک میانی: زبانهٔ جدید، Alt+کلیک: قاب دیگر)
-page-ui-shift-click-to-open-in-sidebar-ctrl-middle-click = Shift+کلیک: باز کردن در نوار کناری، Ctrl/کلیک میانی: زبانهٔ جدید، Alt+کلیک: قاب دیگر
 page-ui-copy-the-guide-into-your-graph = کپی راهنما در گراف شما
 page-ui-page-actions = عملیات صفحه
 page-ui-unfavorite = حذف از برگزیده‌ها

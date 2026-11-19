@@ -24,7 +24,6 @@ page-ui-bundled-guide-page = 内置指南页面
 
 page-ui-double-click-to-rename-shift-click-sidebar-ctrl-middle = 双击重命名（Shift 点击 → 侧边栏，Ctrl/中键点击 → 新标签页，Alt 点击 → 另一窗格）
 
-page-ui-shift-click-to-open-in-sidebar-ctrl-middle-click = Shift 点击在侧边栏打开，Ctrl/中键点击 → 新标签页，Alt 点击 → 另一窗格
 
 page-ui-copy-the-guide-into-your-graph = 将指南复制到你的图谱
 
