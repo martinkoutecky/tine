@@ -182,9 +182,9 @@ export const propertyKeyFold = propertyKeyNorm;
  *  CM6-D9 made this the rule for both editors (Martin 2026-11-09), a deliberate
  *  difference from Logseq, whose `[[` and `/` handlers open their menus in code
  *  too (og/src/main/frontend/handler/editor.cljs:1606 and :1894, 6e7afa8eb).
- *  Inline code is not a fence and keeps its menus, as in CM6 before. The fence
- *  parse runs only when a trigger is pending, never for ordinary typing. An
- *  editor showing a projected code body says so through its adapter's
+ *  Reference completion also checks parser-owned inline literals. The fence
+ *  parse runs only when a trigger is pending. An editor showing a projected
+ *  code body says so through its adapter's
  *  `suppressTriggers` (editorCompletions.ts), since that buffer holds no fence. */
 export function detectTrigger(
   raw: string,

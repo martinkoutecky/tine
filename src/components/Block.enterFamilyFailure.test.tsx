@@ -58,6 +58,7 @@ import { bindTestHost } from "../document/host/wiring.test.support";
 import { openAsLoaded } from "./hostConflict.test.support";
 import { doc } from "../document/model";
 import { initParser } from "../render/parse";
+import type { Format } from "../render/ast";
 import { setToasts, toasts } from "../toasts";
 import { bumpGraphEpoch, setGraphMeta } from "../graphSession";
 import type { GraphMeta } from "../types";
@@ -88,8 +89,8 @@ describe.each<EditorKind>(["textarea", "cm6"])("%s editor: the Enter family comm
   });
 
   /** The page `Third`: `first`, then `target` holding `raw`, edited with the caret at `caret`. */
-  function mount(raw: string, caret = raw.length): EditorDriver {
-    loadSingle({ name: "Third", title: "Third", kind: "page", pre_block: null, format: "md",
+  function mount(raw: string, caret = raw.length, format: Format = "md"): EditorDriver {
+    loadSingle({ name: "Third", title: "Third", kind: "page", pre_block: null, format,
       blocks: [{ id: "first", raw: "first", collapsed: false, children: [] },
         { id: "target", raw, collapsed: false, children: [] }] });
     startEditing("target", caret);
@@ -236,13 +237,15 @@ describe.each<EditorKind>(["textarea", "cm6"])("%s editor: the Enter family comm
   });
 
   it.each([
-    ["[[", " [x] title"],
-    ["[[", " #[[child]] title"],
-    ["[[", " [ title"],
-    ["[[", " \\]] title"],
-    ["[[", " [[child]] title"],
-    ["#[[", " [x] title"],
-  ])("replaces the whole %s reference containing %s (#853)", async (opener, suffix) => {
+    ["[[", " [x] title", true],
+    ["[[", " #[[child]] title", false],
+    ["[[", " [ title", true],
+    ["[[", " \\]] title", true],
+    ["[[", " [[child]] title", false],
+    ["#[[", " [x] title", true],
+    ["#[[", "ramming #x", false],
+  ] as const)(
+    "picks in a %s reference containing %s (PICK-853c)", async (opener, suffix, plain) => {
       const prefix = `project:: ${opener}pr`;
       const following = ", [[Existing]]";
       setGraphMeta(META); bumpGraphEpoch();
@@ -252,9 +255,54 @@ describe.each<EditorKind>(["textarea", "cm6"])("%s editor: the Enter family comm
       const editor = mount(`${prefix}${suffix}]]${following}`, prefix.length);
       editor.type("o");
       await acceptSuggestion(editor, "Programming");
-      expect(editor.value().replace("]] ,", "]],")).toBe(`project:: ${opener}Programming]]${following}`);
+      const completed = `project:: ${opener}Programming]]`;
+      const remaining = plain ? following : `${suffix}]]${following}`;
+      const spacing = remaining.startsWith(" ") ? "" : " ";
+      expect(editor.value()).toBe(completed + spacing + remaining);
     },
   );
+
+  it.each(["[[", "#[["])("picks the enclosing %s page when the title contains a block marker (PICK-853c)", async opener => {
+    const before = `project:: ${opener}Math ((no`;
+    const after = "ation)) tail]], [[Existing]]";
+    setGraphMeta(META); bumpGraphEpoch();
+    vi.spyOn(backend(), "quickSwitch").mockImplementation(async query => query === "Math ((notation)) tail"
+      ? [{ name: "Mathematics", kind: "page", date_key: null, path: "pages/Mathematics.md" }]
+      : []);
+    const editor = mount(before + after, before.length);
+    editor.type("t");
+    await acceptSuggestion(editor, "Mathematics");
+    expect(editor.value()).toBe(`project:: ${opener}Mathematics]] , [[Existing]]`);
+    expect(roots()).toEqual(["first", "target"]);
+  });
+
+  it("offers property values while typing inside a Markdown link destination (PICK-853c)", async () => {
+    const before = "project:: [keep](relative/[[pr";
+    const after = "]]/abc)";
+    const propertyValue = "[keep](relative/[[project]]/abc)";
+    setGraphMeta(META); bumpGraphEpoch();
+    vi.spyOn(backend(), "queryFacets").mockResolvedValue([["project", [propertyValue]]]);
+    const pages = vi.spyOn(backend(), "quickSwitch").mockResolvedValue([
+      { name: "Programming", kind: "page", date_key: null, path: "pages/Programming.md" },
+    ]);
+    const editor = mount(before + after, before.length);
+    editor.type("o");
+    await vi.waitFor(() => expect(document.querySelector(".autocomplete .ac-label")?.textContent).toBe(propertyValue));
+    expect(pages).not.toHaveBeenCalled();
+    expect(editor.value()).toBe(before + "o" + after);
+  });
+
+  it.each(["md", "org"] as const)("keeps page search closed on the %s opening line of multiline math (PICK-853c)", format => {
+    const before = "$$ text [[pr";
+    const after = "\nmore\n$$";
+    setGraphMeta(META); bumpGraphEpoch();
+    const pages = vi.spyOn(backend(), "quickSwitch").mockResolvedValue([]);
+    const editor = mount(before + after, before.length, format);
+    editor.type("o");
+    expect(editor.value()).toBe(before + "o" + after);
+    expect(pages).not.toHaveBeenCalled();
+    expect(document.querySelector(".autocomplete")).toBeNull();
+  });
 
   it.each([
     ["[[", "[[Existing]]", "Programming", "[[Programming]]"],
@@ -272,9 +320,13 @@ describe.each<EditorKind>(["textarea", "cm6"])("%s editor: the Enter family comm
     expect(editor.value().replace("]] ,", "]],")).toBe(`project:: ${inserted}, ${following}`);
   });
 
-  it.each(["((existing))", "[[Keep )) intact]]", "#[[Keep )) intact]]"])(
-    "preserves %s after accepting a block suggestion (#853)", async following => {
-      const prefix = "project:: ((pr";
+  it.each([
+    ...[", ((existing))", ", [[Keep )) intact]]", ", #[[Keep )) intact]]", " https://x.test/(keep)) tail", " #keep))suffix"]
+      .map(following => ({ before: "((pr", after: following, typed: "o", query: "pro", following })),
+    { before: "((Alpha [[b", after: "ta)), rest", typed: "e", query: "Alpha [[be", following: ", rest" },
+  ])(
+    "picks the block reference in $before|$after (#853)", async ({ before, after, typed, query, following }) => {
+      const prefix = `project:: ${before}`;
       const id = "11111111-1111-4111-8111-111111111111";
       setGraphMeta(META); bumpGraphEpoch();
       openAsLoaded(await bindTestHost());
@@ -282,14 +334,15 @@ describe.each<EditorKind>(["textarea", "cm6"])("%s editor: the Enter family comm
       vi.spyOn(backend(), "getPage").mockResolvedValue({
         id: "pages/Source.md", name: "Source", kind: "page", title: "Source", pre_block: null, blocks: [target],
       });
-      vi.spyOn(backend(), "search").mockResolvedValue([{
+      const search = vi.spyOn(backend(), "search").mockResolvedValue([{
         page: "Source", kind: "page", evidence: [], blocks: [{ ...target, properties: [["id", id]] }],
       }]);
-      const editor = mount(`${prefix}, ${following}`, prefix.length);
-      editor.type("o");
+      const editor = mount(prefix + after, prefix.length);
+      editor.type(typed);
       await acceptSuggestion(editor, "first");
-      await vi.waitFor(() => expect(editor.value().replace(")) ,", ")),"))
-        .toBe(`project:: ((${id})), ${following}`));
+      expect(search).toHaveBeenCalledWith(query, 20, "block-picker");
+      const spacing = following.startsWith(" ") ? "" : " ";
+      await vi.waitFor(() => expect(editor.value()).toBe(`project:: ((${id}))${spacing}${following}`));
     },
   );
 

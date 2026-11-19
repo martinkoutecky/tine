@@ -13,4 +13,6 @@ it("the bundled Guide explains reference search in property values from template
   const guide = readFileSync("crates/tine-guide/src/templates/pages-links-references-search.md", "utf8");
   expect(guide).toContain("When editing a Markdown property line, type `[[` to find a page, `((` to find a block or `#` to find a tag. This works in a property from a newly inserted template too.");
   expect(guide).toContain("Picking a suggestion for an unfinished `[[`, `#[[` or `((` closes the reference at the caret and keeps the text that follows it.");
+  expect(guide).toContain("A pick inside a closed reference replaces through the closing brackets or parentheses when only plain text follows the caret inside it.");
+  expect(guide).toContain("the pick finishes at the caret and keeps the following text");
 });
