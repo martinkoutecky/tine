@@ -66,6 +66,9 @@ mod og_gh644_f2_quote_property_group;
 #[path = "og_k1_content.rs"]
 mod og_k1_content;
 
+#[path = "cm_rename_retained_bytes.rs"]
+mod cm_rename_retained_bytes;
+
 #[path = "og_p10_journal_date_cost.rs"]
 mod og_p10_journal_date_cost;
 

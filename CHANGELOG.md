@@ -9,6 +9,7 @@ The format follows [Keep a Changelog](https://keepachangelog.com/); versions use
 ## [Unreleased]
 
 ### Fixed
+- Renaming a page that very large pages link to uses less memory: each linking page's rewrite proof and the check's reading of it are now let go as soon as that page has been checked, instead of being held until the whole rename was prepared (a 20,000-block page: 125 MB to 113 MB peak; REG-CM-RENAME-RETAINED-BYTES).
 - Adding to a page or a journal day while Tine is still loading the graph at launch no longer writes a second file for it beside your file; the add is refused as for any page that already has a file (REG-HELD-UNINDEXED-TWIN).
 - When you type in a page while an agent writes to it through the CLI, a resulting conflict review now compares against your last save that reached the disk, instead of falling back to a two-way review when an older save was proven only by the disk (#964; REG-GH964-LIVE-CONFLICT-BASE).
 - On Windows, a graph on a file system without file IDs (a WSL share such as `\\wsl.localhost`, a FAT32 or exFAT drive, a Samba share) can be saved again; since 0.9.0 every save failed with "The request is not supported (os error 50)" (reported by redstreet in #973; REG-973-WINDOWS-NO-FILE-ID).
