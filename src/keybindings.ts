@@ -11,7 +11,7 @@ import { showWorkspaces } from "./navSettings";
 import { adjustSidebarWidth } from "./sidebarSizing";
 import { openTodayInSidebar } from "./journalsNavigation";
 import { openCssEditor, openCssInDefaultApp } from "./cssEditor";
-import { isMac as isMacDesktop, isMobilePlatform } from "./nativeChrome";
+import { isMobilePlatform } from "./nativeChrome";
 import { openWorkspaceWindow, workspaceWindowsSupported } from "./workspaceWindows";
 import { browserPlatform } from "./browserPlatform";
 // Configurable keyboard shortcuts. Defaults mirror OG Logseq command ids and
@@ -1293,9 +1293,10 @@ export function installKeybindings(overrides: Record<string, ShortcutBinding> = 
     if (handleSheetPasteEvent(e)) e.preventDefault();
   };
   type MouseHistoryDirection = "back" | "forward";
-  const nativeMainHistory = "__TAURI_INTERNALS__" in window && !isMacDesktop && !isMobilePlatform;
-  const { navigator } = window;
-  const webview2MouseHistory = nativeMainHistory && browserPlatform(navigator?.userAgent ?? "").windows;
+  // The native build says who owns side-button presses (native_mouse_history.rs); a user agent can be changed (#948).
+  const mouseHistorySource = (globalThis as { __TINE_MOUSE_HISTORY__?: string }).__TINE_MOUSE_HISTORY__;
+  const nativeMainHistory = "__TAURI_INTERNALS__" in window && (mouseHistorySource === "gtk" || mouseHistorySource === "webview2");
+  const webview2MouseHistory = nativeMainHistory && mouseHistorySource === "webview2";
   let mainMouse: ReturnType<typeof installMouseHistory> | undefined;
   const navigateMouseHistory = (direction: MouseHistoryDirection) => {
     if (direction === "back") goBack();

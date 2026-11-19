@@ -8,41 +8,44 @@ export function installMouseHistory(
   source: "dom" | "gtk" | "webview2" = "dom",
 ) {
   const gtkOwnsPress = source === "gtk";
-  let press: { button: number; x: number; y: number; cancelled: boolean } | undefined;
-  let released: number | undefined;
-  // A DOM-seen release whose native delivery has not arrived yet; cleared by the next press.
-  let pendingNative: { button: number; cancelled: boolean } | undefined;
+  // Per side button (3 Back, 4 Forward): both can be held at once, and each release consumes only its own state.
+  type Press = { x: number; y: number; cancelled: boolean };
+  const presses = new Map<number, Press>();
+  const released = new Set<number>();
+  // A DOM-seen release whose native delivery has not arrived yet; cleared by that button's next press.
+  const pendingNative = new Map<number, boolean>();
   let primaryHeld = false;
   let dragging = false;
   const side = (button: number) => button === 3 || button === 4;
-  const cancel = () => { if (press) press.cancelled = true; };
+  const cancel = () => { for (const press of presses.values()) press.cancelled = true; };
   const down = (event: MouseEvent) => {
-    released = undefined;
-    pendingNative = undefined;
     if (!side(event.button)) { primaryHeld = true; cancel(); return; }
-    press = { button: event.button, x: event.clientX, y: event.clientY,
-      cancelled: event.defaultPrevented || primaryHeld || dragging || !!(event.buttons & 7) };
+    released.delete(event.button);
+    pendingNative.delete(event.button);
+    presses.set(event.button, { x: event.clientX, y: event.clientY,
+      cancelled: event.defaultPrevented || primaryHeld || dragging || !!(event.buttons & 7) });
   };
   const move = (event: MouseEvent) => {
     // A release the webview never delivered must not leave a gesture held.
     if (!(event.buttons & 7)) { primaryHeld = false; dragging = false; }
-    if (press && Math.hypot(event.clientX - press.x, event.clientY - press.y) > 5) cancel();
+    for (const press of presses.values())
+      if (Math.hypot(event.clientX - press.x, event.clientY - press.y) > 5) press.cancelled = true;
   };
   const up = (event: MouseEvent) => {
     if (!side(event.button)) { primaryHeld = false; return; }
-    const current = press;
-    press = undefined;
+    const current = presses.get(event.button);
+    presses.delete(event.button);
     // Suppress Wry's window.history default even for a cancelled gesture.
     const prevented = event.defaultPrevented;
     event.preventDefault();
     const occupied = prevented || dragging || primaryHeld;
     // An unpaired WebView2 release can leave the click to auxclick.
-    released = current || occupied || source !== "webview2" ? event.button : undefined;
-    const matched = current?.button === event.button;
-    const releaseCancelled = !matched || !!current?.cancelled || occupied
-      || (!!current && Math.hypot(event.clientX - current.x, event.clientY - current.y) > 5);
+    if (current || occupied || source !== "webview2") released.add(event.button);
+    const releaseCancelled = !current || current.cancelled || occupied
+      || Math.hypot(event.clientX - current.x, event.clientY - current.y) > 5;
     // Only an explicit DOM press can veto the GTK release (#948).
-    pendingNative = gtkOwnsPress && matched ? { button: event.button, cancelled: releaseCancelled } : undefined;
+    if (gtkOwnsPress && current) pendingNative.set(event.button, releaseCancelled);
+    else pendingNative.delete(event.button);
     if (!gtkOwnsPress && !releaseCancelled)
       navigate(event.button === 3 ? "back" : "forward");
   };
@@ -50,13 +53,13 @@ export function installMouseHistory(
     if (!side(event.button)) return;
     const prevented = event.defaultPrevented;
     event.preventDefault();
-    if (released === event.button) { released = undefined; return; }
-    if (!gtkOwnsPress && !prevented && !dragging && !primaryHeld && !press?.cancelled)
+    if (released.delete(event.button)) return;
+    if (!gtkOwnsPress && !prevented && !dragging && !primaryHeld && !presses.get(event.button)?.cancelled)
       navigate(event.button === 3 ? "back" : "forward");
   };
   const dragStart = () => { dragging = true; cancel(); };
   const dragEnd = () => { dragging = false; };
-  const blur = () => { press = undefined; released = undefined; pendingNative = undefined; primaryHeld = false; dragging = false; };
+  const blur = () => { presses.clear(); released.clear(); pendingNative.clear(); primaryHeld = false; dragging = false; };
   const listeners = { mousedown: down, mouseup: up, mousemove: move, auxclick: aux,
     dragstart: dragStart, dragend: dragEnd, blur };
   const capture = { capture: true };
@@ -73,8 +76,9 @@ export function installMouseHistory(
     const button = direction === "back" ? 3 : 4;
     // The native release ends its gesture: consume the matching press or release, so its verdict never outlives it.
     let cancelled = false;
-    if (press?.button === button) { cancelled = press.cancelled; press = undefined; }
-    else if (pendingNative?.button === button) { cancelled = pendingNative.cancelled; pendingNative = undefined; }
+    const press = presses.get(button);
+    if (press) { cancelled = press.cancelled; presses.delete(button); }
+    else if (pendingNative.has(button)) { cancelled = pendingNative.get(button)!; pendingNative.delete(button); }
     return !cancelled && !primaryHeld && !dragging;
   };
   return dispose;
