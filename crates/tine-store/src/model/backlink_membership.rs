@@ -54,14 +54,14 @@ fn member_rows(
     reach: impl Fn(&str, u8, &mut dyn FnMut(u32, &str)),
 ) -> Contributions {
     let config = graph.config();
+    let source = refs::page_key(&graph.page_name(entry));
     if config
         .favorites_page
         .as_deref()
-        .is_some_and(|name| refs::page_key(name) == refs::page_key(&entry.name))
+        .is_some_and(|name| refs::page_key(name) == source)
     {
         return Arc::from([]);
     }
-    let source = refs::page_key(&graph.page_name(entry));
     let mut rows = Vec::new();
     visit_source_blocks(entry, doc, config, |block, ordinal| {
         for reference in block.projection().reference_source().explicit {
@@ -335,10 +335,11 @@ pub(crate) struct BacklinkMembership {
 impl BacklinkMembership {
     fn register_source_targets(&mut self, graph: &ReadSnapshot, entry: &PageEntry, doc: &Document) {
         let config = graph.config();
+        let source = refs::page_key(&graph.page_name(entry));
         if config
             .favorites_page
             .as_deref()
-            .is_some_and(|name| refs::page_key(name) == refs::page_key(&entry.name))
+            .is_some_and(|name| refs::page_key(name) == source)
         {
             return;
         }

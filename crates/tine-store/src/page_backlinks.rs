@@ -477,6 +477,87 @@ mod tests {
         assert_eq!(references[0], ("done-at".to_owned(), 1));
     }
 
+    /// CM D3 review round 1: a year-less day (`MM-dd` titles) is labelled
+    /// `11-02` but named by its day spelling, so the source exclusions (the
+    /// panel's own page, the Favorites page) must compare the name the app
+    /// gives the source, not its label. Ordinary page `11-02` and Favorites
+    /// `11-02` each collide with the label of a day in the four file shapes;
+    /// the count equals the panel (cold and resident), and the unlinked read
+    /// lists the day.
+    #[test]
+    fn a_year_less_day_is_not_the_page_its_label_spells() {
+        let days = [
+            ("journals/2026_11_02.md", "- [[11-02]] link\n- [[Other]] link\n- 11-02 and Other mention\n"),
+            ("pages/2026-11-02.md", "- [[11-02]] link\n- [[Other]] link\n- 11-02 and Other mention\n"),
+            ("pages/2026-11-02.org", "* [[11-02]] link\n* [[Other]] link\n* 11-02 and Other mention\n"),
+            (
+                "pages/custom.md",
+                "title:: 2026-11-02\n\n- [[11-02]] link\n- [[Other]] link\n- 11-02 and Other mention\n",
+            ),
+        ];
+        let blocks = |groups: &[tine_core::RefGroup]| -> usize {
+            groups.iter().map(|group| group.blocks.len()).sum()
+        };
+        // Every case runs; the failures are reported together.
+        let mut failures = Vec::new();
+        for favorites in [false, true] {
+            for (day, text) in days {
+                let case = format!("favorites {favorites}, {day}");
+                let root = tempfile::tempdir().unwrap();
+                for dir in ["pages", "journals", "logseq"] {
+                    std::fs::create_dir(root.path().join(dir)).unwrap();
+                }
+                let write =
+                    |path: &str, text: &str| std::fs::write(root.path().join(path), text).unwrap();
+                write(
+                    "logseq/config.edn",
+                    if favorites {
+                        "{:journal/page-title-format \"MM-dd\" :tine/favorites-page \"11-02\"}"
+                    } else {
+                        "{:journal/page-title-format \"MM-dd\"}"
+                    },
+                );
+                write("pages/11-02.md", "- the ordinary page\n");
+                write("pages/Other.md", "- other\n");
+                write(day, text);
+                let store = Arc::new(
+                    crate::Store::open(root.path(), Default::default())
+                        .unwrap()
+                        .0,
+                );
+                store.stop_watcher_for_tests();
+                // The name whose panel the day must feed: the ordinary page
+                // `11-02` normally; `Other` when `11-02` is Favorites (the
+                // Favorites page itself is never a source, the day is).
+                let (target, file, expected) = if favorites {
+                    ("Other", "pages/Other.md", 1)
+                } else {
+                    ("11-02", "pages/11-02.md", 1)
+                };
+                let panel =
+                    |view: &crate::store::WholeGraph| blocks(&view.backlinks(target).unwrap());
+                let cold = panel(&store.whole_graph().unwrap());
+                let mut check = |got: usize, want: usize, what: &str| {
+                    if got != want {
+                        failures.push(format!("{case}: {what} is {got}, want {want}"));
+                    }
+                };
+                check(cold, expected, "cold panel");
+                let view = store.whole_graph().unwrap();
+                let (files, _) = view.page_backlink_counts();
+                let count = files.iter().find(|(path, _)| path == file).unwrap().1;
+                check(count, expected, "count");
+                check(panel(&view), expected, "resident panel");
+                check(
+                    view.unlinked_references(target).unwrap().len(),
+                    1,
+                    "unlinked groups (the day's plain mention)",
+                );
+            }
+        }
+        assert!(failures.is_empty(), "{failures:#?}");
+    }
+
     /// CM D3: an opening no panel is registered for (`done_at`: no file, no
     /// reference spells it, `done-at::` reaches it by its property fold) is
     /// answered by the same membership rule applied to its own names, so it

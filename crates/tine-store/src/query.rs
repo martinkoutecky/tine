@@ -982,7 +982,7 @@ fn collect_reference_occurrences_bounded(
         sources.sort_by(|&a, &b| pages[a].0.path.cmp(&pages[b].0.path));
         for page in sources {
             let (entry, doc) = &pages[page];
-            if exclude.excludes_name(&entry.name) {
+            if exclude.excludes_name(&graph.page_name(entry)) {
                 continue;
             }
             let mut blocks = Vec::new();
@@ -1644,7 +1644,7 @@ pub(crate) fn changed_page_affects_unlinked(
         |_| Vec::new(),
     );
     if refs::ReferenceSourceExclusions::new(&self_page, config.favorites_page.as_deref())
-        .excludes_name(&entry.name)
+        .excludes_name(&graph.page_name(entry))
     {
         return false;
     }
