@@ -99,9 +99,9 @@ function changeExportLevel(root: HTMLElement, value: string) {
   level.dispatchEvent(new Event("change", { bubbles: true }));
 }
 
-function press(key: string, options: KeyboardEventInit = {}) {
+function press(key: string, options: KeyboardEventInit = {}, target: Element = document.body) {
   const event = new KeyboardEvent("keydown", { key, bubbles: true, cancelable: true, ...options });
-  document.body.dispatchEvent(event);
+  target.dispatchEvent(event);
   return event;
 }
 
@@ -289,4 +289,58 @@ it("keeps child and grandchild levels after Ctrl+A with multiple reference group
     expect(firstChild?.querySelector(":scope > ul > li")?.textContent, label).toBe(grandchild.raw);
   }
   expect(roots[1].querySelector(":scope > ul > li")?.textContent).toBe(nestedHit.children[0].raw);
+});
+
+it("copies trees from reference whitespace and widens only to loaded groups", async () => {
+  setGraphMeta({ root: "/graphs/A", ref_default_open_blocks_level: 5 } as never);
+  const grandchild = block("alpha-grandchild", "Alpha grandchild");
+  const tree = { ...hit, children: [{ ...hit.children[0], children: [grandchild] }] };
+  const { root, liveRow, readByPath, writeRich } = await mountTarget(
+    [{ ...sources[0], blocks: [tree, sources[0].blocks[1]] }, ...sources.slice(1)], groups, ["Alpha", "Beta"],
+  );
+  await vi.waitFor(() => expect(liveRow("beta-grandchild")).not.toBeNull());
+  const reads = readByPath.mock.calls.length;
+  const submit = vi.spyOn(backend(), "pageSubmit");
+  expect(readByPath).not.toHaveBeenCalledWith("pages/Gamma.md");
+  const [alphaGroup, betaGroup, gammaGroup] = root.querySelectorAll<HTMLElement>(".reference-group");
+  root.tabIndex = -1;
+  root.focus(); // The browser gives the clicked group's pane scroller keyboard focus.
+  alphaGroup.click();
+  const alpha = "- Alpha reference [[Target]]\n\t- Alpha child\n\t\t- Alpha grandchild\n- Other Alpha reference [[Target]]\n\t- Other Alpha child";
+  const beta = "- Beta reference [[Target]]\n\t- Beta child\n\t\t- Beta grandchild";
+  for (const [index, plain] of [alpha, [alpha, beta].join("\n"), [alpha, beta].join("\n")].entries()) {
+    expect(press("a", { ctrlKey: true }, root).defaultPrevented, `select-all press ${index + 1}`).toBe(true);
+    expect(press("c", { ctrlKey: true }, root).defaultPrevented).toBe(true);
+    expect(writeRich).toHaveBeenCalledTimes(index + 1);
+    expect(writeRich.mock.calls[index][0]).toBe(plain);
+    const html = new DOMParser().parseFromString(writeRich.mock.calls[index][1], "text/html");
+    const grandchildren = [...html.querySelectorAll("body > ul > li > ul > li > ul > li")].map(li => li.textContent);
+    expect(grandchildren).toEqual(index === 0 ? ["Alpha grandchild"] : ["Alpha grandchild", "Beta grandchild"]);
+  }
+  betaGroup.querySelector<HTMLButtonElement>(".reference-group-disclosure")!.click();
+  expect(press("c", { ctrlKey: true }).defaultPrevented).toBe(false);
+  gammaGroup.click();
+  expect(press("a", { ctrlKey: true }).defaultPrevented).toBe(true);
+  expect(press("c", { ctrlKey: true }).defaultPrevented).toBe(false);
+  expect(readByPath).toHaveBeenCalledTimes(reads);
+  expect(submit).not.toHaveBeenCalled();
+});
+
+it("selects the routed page outline from blank space and preserves native select-all in fields", async () => {
+  const { root, writeRich } = await mountTarget();
+  root.querySelector<HTMLElement>(".page-blocks")!.click();
+  for (const field of [document.createElement("input"), document.createElement("textarea"), document.createElement("div")]) {
+    if (field.tagName === "DIV") field.setAttribute("contenteditable", "true");
+    root.append(field);
+    field.focus();
+    expect(press("a", { ctrlKey: true }, field).defaultPrevented).toBe(false);
+    field.remove();
+  }
+  expect(press("a", { ctrlKey: true }).defaultPrevented).toBe(true);
+  const dialog = document.createElement("div");
+  dialog.setAttribute("role", "dialog");
+  root.append(dialog);
+  expect(press("a", { ctrlKey: true }, dialog).defaultPrevented).toBe(false);
+  expect(press("c", { ctrlKey: true }).defaultPrevented).toBe(true);
+  expect(writeRich.mock.calls[0][0]).toBe("- Target page body");
 });

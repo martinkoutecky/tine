@@ -1,6 +1,7 @@
 import { For, Show, batch, createEffect, createMemo, createSignal, createUniqueId, on, onCleanup, onMount, untrack, useContext, type JSX, type Signal } from "solid-js";
 import { nearestAncestors } from "../render/blockTrail";
-import { ownSelectionSurface } from "../document";
+import { ownSelectionSurface, type OutlineSelectionTarget, type OutlineScope } from "../document";
+import { bindOutlineSelection } from "../outlineSelectionTarget";
 import { createGraphResource } from "../graphResource";
 import { backend } from "../backend";
 import { graphOwner, latestOwner } from "../owned";
@@ -35,7 +36,7 @@ import { queueReferenceCommit, queueReferenceRead } from "../referenceAdmission"
 import { trackRetirementPin } from "../retirementPins";
 import { BlockList } from "./BlockList";
 import { CommentSurface } from "./CommentSurface";
-import { promotePagePreamble, pageInstanceGeneration, topSelected } from "../document";
+import { promotePagePreamble, pageInstanceGeneration, selectionIncludesPage } from "../document";
 import { rendersAsPageHeader, splitPagePreamble } from "../editor/properties";
 import { t } from "../i18n";
 import { retainResultDraft } from "../queryResultDrafts";
@@ -77,6 +78,9 @@ function keepUnchanged<T extends object>(previous: Map<string, T> | undefined, e
 // the real block and saves to its page. Keyed by uuid so a reactive refresh
 // reuses existing rows and never yanks the caret out of a block being edited.
 interface LiveRefGroupProps {
+  selectionHost?: HTMLElement;
+  registerSelection?: (target: OutlineSelectionTarget) => () => void;
+  widenSelection?: OutlineSelectionTarget["widen"];
   /** Owner-provided identity for reference groups; never derived from a row. */
   heightKey?: string;
   page: string;
@@ -155,7 +159,7 @@ export function LiveRefGroup(props: LiveRefGroupProps): JSX.Element {
   onCleanup(() => { alive = false; });
   const windowed = () => props.surface === "ref" && !props.eager;
   const pinned = () => interaction() || occurrence.pendingEdits[0]() > 0 || (!!editingId() && docNode(editingId()!)?.page === props.page)
-    || topSelected().some(id => docNode(id)?.page === props.page);
+    || selectionIncludesPage(props.page);
   const wanted = () => inWindow() || forced() || (near() && (pinned() || printingOutline()));
   const priority = () => visible() || forced() ? 0 : 1;
   const reserved = reservedGroupHeight(() => {
@@ -214,7 +218,7 @@ export function LiveRefGroup(props: LiveRefGroupProps): JSX.Element {
   const estimate = () => Math.max(1, props.blocks.reduce((lines, block) => lines + (block.page_property ? block.raw.split("\n").length : 1), 0)) * 1.9;
 
   return (
-    <div ref={el} class="live-ref-group" data-find-source-mounted={sourceMounted()}
+    <div ref={host => { el = host; if (!props.selectionHost) bindOutlineSelection(host); }} class="live-ref-group" data-find-source-mounted={sourceMounted()}
       style={!near() ? { "min-height": reserved() ? `${reserved()}px` : `${estimate()}em` } : undefined}>
       <ReservedGroupGeometryContext.Provider value={occurrence.geometry}>
       <Show when={near()}><MountedRefGroup {...props} occurrence={occurrence} geometryHost={() => el}
@@ -637,10 +641,25 @@ function MountedRefGroup(props: LiveRefGroupProps & { occurrence: RefOccurrence;
       return next;
     }),
   };
+  // Only rows resolved on their own live source page enter navigation or selection.
+  const liveRoots = () => ready() ? groupedIds().filter(id => !!liveNode(id)) : [];
+  const scope: OutlineScope = {
+    get roots() { return liveRoots(); },
+    collapsed: (id, stored) => props.surface === "preview" ? stored
+      : contextRootIds().has(id) ? false : collapseSurface.collapsed(id, stored),
+    navOnly: true,
+    splitAsChild: props.surface === "query" || props.surface === "ref" ? id => resultRootIds().has(id) : undefined,
+  };
+  onMount(() => {
+    const target = { scope, surface, widen: props.widenSelection };
+    const host = props.selectionHost ?? props.geometryHost();
+    if (host) onCleanup(bindOutlineSelection(host, () => target));
+    if (props.registerSelection) onCleanup(props.registerSelection(target));
+  });
   // GH #792: the one-level fold commands treat a query block's result rows as its children.
   if (props.surface === "query") onCleanup(registerQueryResultFold({
     hostId: () => props.hostBlockId,
-    roots: () => groupedIds().filter((id) => ready() && !!liveNode(id)),
+    roots: liveRoots,
     surface: collapseSurface,
   }));
   let lastBulkVersion: number | undefined;
@@ -746,18 +765,7 @@ function MountedRefGroup(props: LiveRefGroupProps & { occurrence: RefOccurrence;
             not to the source page's sibling (which mounts an editor outside this
             view and hides the caret). `roots` tracks result membership reactively;
             navOnly keeps structural mutations (merges/indents/moves) on page order. */}
-        <OutlineScopeContext.Provider value={{
-          // A row left on its read-only copy (not the live block of
-          // its own page) never enters navigation or selection: its id may name
-          // another page's block.
-          get roots() { return groupedIds().filter((id) => ready() && !!liveNode(id)); },
-          // A preview shows source folds, so it navigates through them too.
-          collapsed: (id, stored) => props.surface === "preview" ? stored
-            : contextRootIds().has(id) ? false : collapseSurface.collapsed(id, stored),
-          navOnly: true,
-          // Result surfaces only: embeds and previews keep the ordinary split.
-          splitAsChild: props.surface === "query" || props.surface === "ref" ? (id) => resultRootIds().has(id) : undefined,
-        }}>
+        <OutlineScopeContext.Provider value={scope}>
         <LinkDepthContext.Provider value={linkDepth + 1}>
         <CommentSurface page={pageByName(props.page)} roots={groupedIds()}><BlockList ids={groupedIds()} results render={(id, authorNeighbors) => {
             const crumb = createMemo<Crumb[]>((previous) => {

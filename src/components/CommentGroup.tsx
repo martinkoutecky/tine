@@ -1,7 +1,8 @@
-import { createContext, For, Show, useContext, type JSX } from "solid-js";
+import { createContext, createUniqueId, For, Show, useContext, type JSX } from "solid-js";
 import { Block, SurfaceContext } from "./Block";
 import { CommentQuoteHeader } from "./CommentParts";
-import { blockWritable, formatForBlock, node } from "../document";
+import { blockWritable, formatForBlock, node, ownSelectionSurface } from "../document";
+import { bindOutlineSelection } from "../outlineSelectionTarget";
 import { quoteSelectorOf } from "../comments";
 import { facetsOf } from "../render/facets";
 import { appendThreadForPassage } from "../commentActions";
@@ -19,6 +20,8 @@ export function quoteInGroup(id: string): () => boolean {
  * action slot. Only the passage header and outer card are shared. */
 export function CommentGroup(props: { ids: readonly string[]; render?: (id: string) => JSX.Element }): JSX.Element {
   const surface = useContext(SurfaceContext);
+  const selectionSurface = `comment-group:${createUniqueId()}`;
+  ownSelectionSurface(selectionSurface, undefined, surface);
   const first = () => props.ids[0];
   const firstNode = blockNodeBinding(first).node;
   const selector = () => quoteSelectorOf(facetsOf(firstNode().raw, formatForBlock(first())).properties);
@@ -26,7 +29,8 @@ export function CommentGroup(props: { ids: readonly string[]; render?: (id: stri
     const parent = node(firstNode().parent!);
     return !!parent && !!selector() && passageKey(parent.raw, selector()!, formatForBlock(first())) !== null;
   };
-  return <div class="comment-group" data-comment-group={first()}>
+  return <div class="comment-group" data-comment-group={first()}
+    ref={el => bindOutlineSelection(el, () => ({ scope: { roots: props.ids }, surface: selectionSurface }))}>
     <Show when={props.ids.length > 1}><CommentQuoteHeader parentId={firstNode().parent} selector={selector()} /></Show>
     <CommentGroupContext.Provider value={() => props.ids}>
       <For each={props.ids}>{id => props.render ? props.render(id) : <Block id={id} />}</For>

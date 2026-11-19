@@ -112,7 +112,7 @@ export function pageVisibleOrder(pageName: string, revealId?: string): string[] 
  * mutations (merges/indents/moves) must NOT treat the display list as the
  * outline — they fall back to page order instead (master GH #341). */
 export interface OutlineScope {
-  roots: string[];
+  roots: readonly string[];
   forceExpandedRoot?: string;
   /** A secondary surface's collapse contract, so the scoped visible order
    * mirrors what is rendered rather than the durable `node.collapsed` flags. */

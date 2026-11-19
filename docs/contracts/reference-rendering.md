@@ -25,6 +25,12 @@ panel's own search, which covers every group (the panel root carries
 chunks, retaining their geometry with the occurrence. Large root lists use the
 ordinary outline windows and model-based reveal/navigation scope.
 
+From blank space, Ctrl/Cmd+A starts in the nearest rendered outline. In a
+Linked or Unlinked References group it first selects that group's live blocks.
+The next press selects the section's currently loaded groups in display order.
+That selection retires if a participating group closes or leaves the section.
+Copy / export can include groups whose source was never loaded by the view.
+
 In-outline embeds and queries belong to Find's page scope. Find counts their
 loaded rendered content and discloses the number of hosts not searched yet,
 including parser-identified hosts in unvisited outline windows. Each embed or
