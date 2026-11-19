@@ -54,6 +54,8 @@ import { backend } from "../backend";
 import { editingId, endEdit, startEditing } from "../editorController";
 import { isDirty, pageByName, redo, resetStore, setRaw, undo, undoTopTag } from "../document";
 import { loadSingle } from "../document/workingSet";
+import { bindTestHost } from "../document/host/wiring.test.support";
+import { openAsLoaded } from "./hostConflict.test.support";
 import { doc } from "../document/model";
 import { initParser } from "../render/parse";
 import { setToasts, toasts } from "../toasts";
@@ -103,6 +105,15 @@ describe.each<EditorKind>(["textarea", "cm6"])("%s editor: the Enter family comm
     try { return run(); } finally { window.removeEventListener("error", onError); }
   };
   const enter = (editor: EditorDriver) => quietly(() => editor.keydown({ key: "Enter", code: "Enter", bubbles: true, cancelable: true }));
+  async function acceptSuggestion(editor: EditorDriver, label: string) {
+    const row = await vi.waitFor(() => {
+      const labels = [...document.querySelectorAll(".autocomplete .ac-label")].map(item => item.textContent);
+      expect(labels).toContain(label);
+      return labels.indexOf(label);
+    });
+    for (let i = 0; i < row; i++) editor.keydown({ key: "ArrowDown", code: "ArrowDown", bubbles: true, cancelable: true });
+    enter(editor);
+  }
   const roots = () => pageByName("Third")!.roots;
   const texts = () => roots().map((id) => doc.byId[id].raw);
   const errors = () => toasts().filter((t) => t.kind === "error");
@@ -184,6 +195,64 @@ describe.each<EditorKind>(["textarea", "cm6"])("%s editor: the Enter family comm
     enter(editor);
     expect(editor.value()).toMatch(/^project:: \[\[Programming\]\] ?, Other, \[\[Existing\]\]$/);
   });
+
+  it.each([
+    ["[[", " [x] title"],
+    ["[[", " #[[child]] title"],
+    ["[[", " [ title"],
+    ["[[", " \\]] title"],
+    ["[[", " [[child]] title"],
+    ["#[[", " [x] title"],
+  ])("replaces the whole %s reference containing %s (#853)", async (opener, suffix) => {
+      const prefix = `project:: ${opener}pr`;
+      const following = ", [[Existing]]";
+      setGraphMeta(META); bumpGraphEpoch();
+      vi.spyOn(backend(), "quickSwitch").mockResolvedValue([
+        { name: "Programming", kind: "page", date_key: null, path: "pages/Programming.md" },
+      ]);
+      const editor = mount(`${prefix}${suffix}]]${following}`, prefix.length);
+      editor.type("o");
+      await acceptSuggestion(editor, "Programming");
+      expect(editor.value().replace("]] ,", "]],")).toBe(`project:: ${opener}Programming]]${following}`);
+    },
+  );
+
+  it.each([
+    ["[[", "[[Existing]]", "Programming", "[[Programming]]"],
+    ["#[[", "#[[Existing]]", "Programming", "#[[Programming]]"],
+    ["#", "[[Existing]]", "#Programming notes", "#[[Programming notes]]"],
+    ["#", "#[[Existing]]", "#Programming notes", "#[[Programming notes]]"],
+  ])("preserves later property values after %s completion before %s (#853)", async (opener, following, label, inserted) => {
+    const prefix = `project:: ${opener}pr`;
+    const name = label.startsWith("#") ? label.slice(1) : label;
+    setGraphMeta(META); bumpGraphEpoch();
+    vi.spyOn(backend(), "quickSwitch").mockResolvedValue([{ name, kind: "page", date_key: null, path: `pages/${name}.md` }]);
+    const editor = mount(`${prefix}, ${following}`, prefix.length);
+    editor.type("o");
+    await acceptSuggestion(editor, label);
+    expect(editor.value().replace("]] ,", "]],")).toBe(`project:: ${inserted}, ${following}`);
+  });
+
+  it.each(["((existing))", "[[Keep )) intact]]", "#[[Keep )) intact]]"])(
+    "preserves %s after accepting a block suggestion (#853)", async following => {
+      const prefix = "project:: ((pr";
+      const id = "11111111-1111-4111-8111-111111111111";
+      setGraphMeta(META); bumpGraphEpoch();
+      openAsLoaded(await bindTestHost());
+      const target = { id, raw: `first\nid:: ${id}`, collapsed: false, children: [] };
+      vi.spyOn(backend(), "getPage").mockResolvedValue({
+        id: "pages/Source.md", name: "Source", kind: "page", title: "Source", pre_block: null, blocks: [target],
+      });
+      vi.spyOn(backend(), "search").mockResolvedValue([{
+        page: "Source", kind: "page", evidence: [], blocks: [{ ...target, properties: [["id", id]] }],
+      }]);
+      const editor = mount(`${prefix}, ${following}`, prefix.length);
+      editor.type("o");
+      await acceptSuggestion(editor, "first");
+      await vi.waitFor(() => expect(editor.value().replace(")) ,", ")),"))
+        .toBe(`project:: ((${id})), ${following}`));
+    },
+  );
 
   describe("template slash-completion (HONP4)", () => {
     const DAILY = [{ id: "tpl", raw: "from template", collapsed: false, children: [{ id: "tpl-child", raw: "template child", collapsed: false, children: [] }] }];

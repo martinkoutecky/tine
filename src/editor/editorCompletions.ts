@@ -2,7 +2,7 @@ import { createEffect, createSignal, on, onCleanup, untrack } from "solid-js";
 import { backend } from "../backend";
 import { propertyCompletionSession } from "./propertyCompletionSession";
 import { acceptBlockRefPick, blockPickItems } from "./blockRefPick";
-import { applyCompletion, refCompletionEnd, withRefCompletionSpace, detectTrigger, pageInsert, tagInsert, orderAcItems, COMMANDS, advancedBlockInsertion, filterAdvancedBlockCommands, commandScore, codeLanguageItems, fuzzyScore, aliasOfLabel, propertyKeyFold, type Trigger } from "./autocomplete";
+import { applyCompletion, completionReplacementEnd, withRefCompletionSpace, detectTrigger, pageInsert, tagInsert, orderAcItems, COMMANDS, advancedBlockInsertion, filterAdvancedBlockCommands, commandScore, codeLanguageItems, fuzzyScore, aliasOfLabel, propertyKeyFold, type Trigger } from "./autocomplete";
 import { getTemplates, templateToOutline, type AcItem } from "./completionItems";
 import { node, insertEditorOutline, setHeading, withUndoUnit, type PendingEdit } from "../document";
 import { editingId, editingOwner, editingSurface, startEditing, endEdit } from "../editorController";
@@ -85,6 +85,7 @@ export function editorCompletions(props: CompletionAdapter) {
   const pageReads = coalescedRead<import("../owned").Owned<PageEntry[]>>();
   let timer: ReturnType<typeof setTimeout> | undefined;
   let pluginInvocation = 0;
+  let lastDetection: { raw: string; position: number; format: ReturnType<CompletionAdapter["format"]>; trigger: Trigger | null } | undefined;
   let completionOriginalRaw: string | null = null;
   let completionLease: { pageName: string; blockId: string; originalRaw: string; session: string } | null = null;
   const releaseLease = (lease: NonNullable<typeof completionLease>) => {
@@ -97,6 +98,7 @@ export function editorCompletions(props: CompletionAdapter) {
   };
   const closeAc = () => {
     clearTimeout(timer); releaseCompletionLease(); completionOriginalRaw = null;
+    lastDetection = undefined;
     latestOwner(autocompleteScope, "suggestions"); pageReads.cancel();
     setAc(null); setAcBlockState(null); setAcItems([]); setAcIndex(0);
     propertyCompletion.end();
@@ -104,11 +106,15 @@ export function editorCompletions(props: CompletionAdapter) {
   };
   const sameAcTrigger = (left: Trigger | null, right: Trigger) => left !== null
     && left.kind === right.kind && left.query === right.query && left.start === right.start
-    && left.end === right.end && left.property === right.property
+    && left.end === right.end && left.replaceEnd === right.replaceEnd && left.property === right.property
     && (left.propertyValues ?? []).join("\0") === (right.propertyValues ?? []).join("\0");
   const detectEditorTrigger = () => {
     if (props.suppressTriggers()) return null;
-    const trigger = detectTrigger(text(), caret(), props.format());
+    const raw = text(), position = caret(), format = props.format();
+    if (lastDetection?.raw !== raw || lastDetection.position !== position || lastDetection.format !== format) {
+      lastDetection = { raw, position, format, trigger: detectTrigger(raw, position, format) };
+    }
+    const trigger = lastDetection.trigger;
     if (trigger) return trigger;
     // The explicit scaffold picker also accepts an empty query on its opener.
     const open = ac();
@@ -135,7 +141,9 @@ export function editorCompletions(props: CompletionAdapter) {
       closeAc();
       return;
     }
-    setAc(t);
+    // Picker identity carries the intent of an asynchronous block pick. A new
+    // refresh can reuse the parse while still retiring the previous picker.
+    setAc({ ...t });
     setAcBlockState(null);
     setAcIndex(0);
     const requestOwner = latestOwner(autocompleteScope, "suggestions", graphOwner(() => current() && sameAcTrigger(ac(), t)));
@@ -296,9 +304,11 @@ export function editorCompletions(props: CompletionAdapter) {
   };
 
   const replaceTrigger = (insert: string, caretOffset?: number) => {
-    const trigger = ac(); if (!trigger || !current()) return;
+    const open = ac(); if (!open || !current()) return;
     const raw = text();
-    const result = applyCompletion(raw, trigger.start, refCompletionEnd(raw, trigger, insert), insert, caretOffset);
+    const trigger = open.kind === "page" || open.kind === "block" || open.kind === "tag" ? detectEditorTrigger() : open;
+    if (!trigger || trigger.kind !== open.kind || trigger.start !== open.start) return;
+    const result = applyCompletion(raw, trigger.start, completionReplacementEnd(raw, trigger, insert), insert, caretOffset);
     const spaced = caretOffset === undefined
       ? withRefCompletionSpace(result.raw, result.caret, insert, spaceAfterRefCompletion()) : result;
     // Keep the raw view until the completion edit is committed, then map its
@@ -444,7 +454,7 @@ export function editorCompletions(props: CompletionAdapter) {
       && (!previous || previous.kind !== next.kind || previous.start !== next.start)) {
       releaseCompletionLease(); completionOriginalRaw = props.rawBeforeCommit();
     }
-    setAc(next); setAcIndex(0); setAcBlockState(next.kind === "block" ? "pending" : null);
+    setAc({ ...next }); setAcIndex(0); setAcBlockState(next.kind === "block" ? "pending" : null);
     if (next.kind === "block" || !previous || previous.kind !== next.kind || previous.start !== next.start
       || ((next.kind === "page" || next.kind === "tag") && !next.query.trim())) setAcItems([]);
     clearTimeout(timer);
@@ -455,6 +465,7 @@ export function editorCompletions(props: CompletionAdapter) {
   const selectionChanged = () => {
     if (!current() || props.composing()) return;
     const open = ac();
+    if (!open) return;
     const here = detectEditorTrigger();
     // Moving the caret never opens value suggestions (OG opens them only from
     // input): an arrow key or Enter on a property line must keep moving the
@@ -464,7 +475,7 @@ export function editorCompletions(props: CompletionAdapter) {
       else if (!sameAcTrigger(open, here)) refresh();
       return;
     }
-    if (!open || !["page", "tag", "block"].includes(open.kind)) return;
+    if (!["page", "tag", "block"].includes(open.kind)) return;
     if (!here || here.kind !== open.kind || here.start !== open.start) closeAc();
   };
   createEffect(on(pinyinMatchingEnabled, () => {
