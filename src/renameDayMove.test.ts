@@ -1,7 +1,7 @@
 import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 import { backend } from "./backend";
 import { renameOrMergePage } from "./graph";
-import { flushAll, loadFeed, resetStore } from "./document";
+import { ensurePageLoaded, flushAll, loadFeed, pageByName, resetStore } from "./document";
 import { bindTestHost } from "./document/host/wiring.test.support";
 import { installDiskHost } from "./diskHost.test.support";
 import { initParser } from "./render/parse";
@@ -26,13 +26,16 @@ const page = (name: string, path: string, blocks: BlockDto[], pre_block: string 
 
 let files: Map<string, PageDto>;
 let writes: string[];
+let saveFails = false;
 async function bindDisk(pages: PageRead[]) {
   files = new Map(pages.map((p) => [p.id, structuredClone(p)]));
   writes = [];
+  saveFails = false;
   let n = 0;
   return installDiskHost(await bindTestHost(), {
     read: (key) => files.get(key) ?? null,
     write: (key, dto) => {
+      if (saveFails) throw new Error("disk full");
       writes.push(key);
       const rev = `w${++n}`;
       files.set(key, { ...structuredClone(dto), rev });
@@ -171,6 +174,66 @@ describe("renaming a day moves its notes to a page", () => {
     expect(header(DAY_FILE)).toBe("alias:: Launch day");
     expect(saved(DAY_FILE)).toEqual(["day note", "TODO call"]);
     expect(saved("pages/Launch day.md")).toBeNull();
+  });
+
+  /** Load `count` unrelated pages, as browsing does: more than the working
+   *  set holds (80), so unpinned pages are evicted. */
+  const browse = (count: number) => {
+    for (let i = 0; i < count; i++) {
+      ensurePageLoaded(page(`Filler ${i}`, `pages/Filler ${i}.md`, [block("filler")]));
+    }
+  };
+  const release = { page: DAY, path: DAY_FILE, journal: true, key: "alias", before: "Launch day", after: null };
+
+  it("to the day's own alias, loading the destination page cannot evict the day under its helper edit", async () => {
+    const day = dayPage("alias:: Launch day");
+    loadFeed([]);
+    await bindDisk([day]);
+    absent();
+    const read = backend().getPage.bind(backend());
+    vi.spyOn(backend(), "getPage").mockImplementation(async (name, kind) => { if (name === "Launch day") browse(90); return read(name, kind); });
+    offer(dayMove({ name: "Launch day", release }));
+    const done = renameOrMergePage(DAY, "Launch day", target);
+    await answer(true);
+    expect(await done).toEqual({ moved: "Launch day", kind: "page" });
+    expect(await flushAll()).toBe(true);
+    expect(saved("pages/Launch day.md")).toEqual(["day note", "TODO call"]);
+    expect(saved(DAY_FILE)).toEqual(["Moved to [[Launch day]]"]);
+    expect(header(DAY_FILE)).toBe("alias:: Launch day");
+    expect(errors()).toEqual([]);
+  });
+
+  it.each([
+    ["a move", () => {}],
+    ["a refused move", (spies: Awaited<ReturnType<typeof bindDisk>>) => spies.move.mockResolvedValueOnce({ reason: "failed", message: "host stopped" })],
+  ] as const)("after %s to the day's own alias the day can be evicted again", async (_, arrange) => {
+    const day = dayPage("alias:: Launch day");
+    loadFeed([]);
+    const spies = await bindDisk([day]);
+    absent();
+    arrange(spies);
+    offer(dayMove({ name: "Launch day", release }));
+    const done = renameOrMergePage(DAY, "Launch day", target);
+    await answer(true);
+    await done;
+    expect(await flushAll()).toBe(true);
+    expect(pageByName(DAY)).toBeTruthy();
+    browse(90);
+    expect(pageByName(DAY)).toBeFalsy();
+  });
+
+  it("to the day's own alias, a failed alias save that cannot be put back says the line was not restored", async () => {
+    const day = dayPage("alias:: Launch day");
+    loadFeed([day]);
+    await bindDisk([day]);
+    absent();
+    saveFails = true;
+    offer(dayMove({ name: "Launch day", release }));
+    const done = renameOrMergePage(DAY, "Launch day", target);
+    await answer(true);
+    expect(await done).toBe("cancelled");
+    expect(errors().some((text) => text.includes("could not save the restored text"))).toBe(true);
+    expect(errors().some((text) => text.includes("so it was put back"))).toBe(false);
   });
 
   it("a day with nothing to move says so and writes nothing", async () => {

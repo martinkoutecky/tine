@@ -507,9 +507,11 @@ fn day_move(
     };
     let mut referrers = graph.explicit_referrers(std::slice::from_ref(&day.name));
     referrers.retain(|id| *id != day_id);
-    let (references, reference_count) = rename_helpers::names(referrers.iter().map(|id| {
-        name_of(graph, id).unwrap_or_else(|| id.as_str().to_owned())
-    }));
+    let (references, reference_count) = rename_helpers::names(
+        referrers
+            .iter()
+            .map(|id| name_of(graph, id).unwrap_or_else(|| id.as_str().to_owned())),
+    );
     Ok(RenameOffer::DayMove(DayMove {
         journal: into
             .as_ref()

@@ -449,9 +449,11 @@ pub(super) fn released_retarget(
     }
     let mut referrers = graph.explicit_referrers(&before.spellings);
     referrers.retain(|id| id != day);
-    let (pages, page_count) = names(referrers.iter().map(|id| {
-        name_of(graph, id).unwrap_or_else(|| id.as_str().to_owned())
-    }));
+    let (pages, page_count) = names(
+        referrers
+            .iter()
+            .map(|id| name_of(graph, id).unwrap_or_else(|| id.as_str().to_owned())),
+    );
     (page_count > 0).then(|| Retarget {
         name: name.to_owned(),
         before: name_of(graph, day).unwrap_or_else(|| day.as_str().to_owned()),

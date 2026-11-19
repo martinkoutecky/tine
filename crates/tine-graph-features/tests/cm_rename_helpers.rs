@@ -510,6 +510,32 @@ fn a_day_moved_to_its_own_alias_releases_it_and_names_the_links_that_follow() {
     }
 }
 
+/// D-20261111-MOA with the helpers' owner rule (r5, finding 2): the links that
+/// follow the new page are the store's spellings of the name, not only the
+/// typed one: a day's alias spelled as another date is linked in any of that
+/// day's renderings, and each one is listed.
+#[test]
+fn a_day_moved_to_a_date_alias_lists_every_spelling_that_follows() {
+    let _guard = crate::integration_lock();
+    let (_root, store) = fixture(
+        "day-move-date-alias",
+        &[
+            (
+                "journals/2026_11_18.md",
+                "alias:: [[Nov 19th, 2026]]\n\n- day note\n",
+            ),
+            ("pages/iso.md", "- see [[2026-11-19]]\n"),
+            ("pages/plain.md", "- see [[Nov 19th, 2026]]\n"),
+        ],
+    );
+    let own = day_move(&store, "Nov 18th, 2026", "Nov 19th, 2026");
+    assert!(own.release.is_some(), "{own:?}");
+    let links = own.retargeted.expect("the links follow the new page");
+    let mut pages = links.pages.clone();
+    pages.sort();
+    assert_eq!(pages, vec!["iso".to_owned(), "plain".to_owned()]);
+}
+
 /// D-20261019-M2(6), D-20261115-HELP: a name two files claim is not a bare
 /// refusal: the window gets the claiming files and the one the name opens,
 /// to offer the file merge. Also as a day move's destination.
