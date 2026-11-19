@@ -4,7 +4,7 @@ import { bindingOwner, ownedWhen, readOwned, readOwnedResource, writeOwned, type
 import { pushToast } from "./toasts";
 import { msg } from "./i18n";
 import { graphMeta } from "./graphSession";
-import { appNow, journalTitle } from "./journal";
+import { appNow, journalHandle, journalTitle } from "./journal";
 import { openPage, route } from "./router";
 import { captureTime } from "./shareShape";
 import {
@@ -168,7 +168,8 @@ export async function installQuickCaptureReceiver(live: WriteOwner = ownedWhen((
         else pushToast(msg("app-captured-to-today-s-journal"), "info");
         if (ok) {
           const open = route();
-          const name = destinationName(destination, todayTitle);
+          // Today's journal by its handle: a year-less title is a label.
+          const name = destinationName(destination, journalHandle(appNow()));
           if (shouldRedirect(options, name, open.kind === "page" ? open.name : null)) {
             openPage(name, destination.kind === "journal" ? "journal" : "page");
           }

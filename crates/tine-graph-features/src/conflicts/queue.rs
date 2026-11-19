@@ -267,10 +267,8 @@ fn name_objects(store: &Store, names: Option<&[String]>) -> io::Result<Vec<Confl
     let inventory = view.inventory(tine_store::InventoryScope::ConflictingFiles(names));
     let mut buckets = std::collections::BTreeMap::<String, Vec<_>>::new();
     for entry in &inventory.0 {
-        buckets
-            .entry(tine_core::refs::page_key(&entry.name))
-            .or_default()
-            .push(entry);
+        // By the identity's key: a year-less day's label names every year.
+        buckets.entry(entry.key()).or_default().push(entry);
     }
     let file = |entry: &tine_store::InventoryEntry| match &entry.target {
         tine_store::Resolved::Existing { id, .. } => id.as_str().to_owned(),
@@ -280,9 +278,11 @@ fn name_objects(store: &Store, names: Option<&[String]>) -> io::Result<Vec<Confl
         .into_values()
         .into_iter()
         .filter(|claims| {
-            !claims
-                .iter()
-                .all(|entry| entry.is_journal && file(entry).starts_with(&journals))
+            // A label page alone under a year-less label is no conflict.
+            claims.len() > 1
+                && !claims
+                    .iter()
+                    .all(|entry| entry.is_journal && file(entry).starts_with(&journals))
         })
         .map(|claims| {
             let winner = &claims[0];
@@ -294,7 +294,7 @@ fn name_objects(store: &Store, names: Option<&[String]>) -> io::Result<Vec<Confl
                 }
             };
             ConflictObject {
-                id: format!("name:{}", tine_core::refs::page_key(&winner.name)),
+                id: format!("name:{}", winner.key()),
                 source: ConflictSource::DuplicateName,
                 page_name: winner.name.clone(),
                 page_path: file(winner),

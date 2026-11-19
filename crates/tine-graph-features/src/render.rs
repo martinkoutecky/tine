@@ -2218,9 +2218,9 @@ pub(crate) fn ambiguous_source_keys(whole: &WholeGraph) -> HashSet<String> {
     let inventory = whole.inventory(tine_store::InventoryScope::ConflictingFiles(None));
     let mut buckets = std::collections::HashMap::<String, (usize, HashSet<i64>)>::new();
     for entry in &inventory.0 {
-        let (count, days) = buckets
-            .entry(tine_core::refs::page_key(&entry.name))
-            .or_default();
+        // By the key the entry is looked up by: a year-less day's handle,
+        // not the label `11-02` it shares with other days and a page.
+        let (count, days) = buckets.entry(entry.key()).or_default();
         if !entry.is_journal || entry.day.is_none_or(|day| days.insert(day.0)) {
             *count += 1;
         }

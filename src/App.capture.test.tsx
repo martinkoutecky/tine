@@ -5,7 +5,7 @@ import { loadSingle } from "./document/workingSet";
 import { resetStore, pageByName } from "./document";
 import { doc } from "./document/model";
 import { answerOpensFromDocument } from "./document/host/documentHost.test.support";
-import { journalTitle, appNow } from "./journal";
+import { journalHandle, journalTitle, appNow, setJournalTitleFormat } from "./journal";
 import { bindTestHost, submittedPages } from "./document/host/wiring.test.support";
 import { mainPaneRouter, route } from "./router";
 import { setGraphMeta } from "./graphSession";
@@ -241,4 +241,22 @@ it("GH #832: redirect-page? opens the page the capture landed on", async () => {
   mainPaneRouter.openPage("Elsewhere");
   await receiveConfigured({ quick_capture_default_page: "Inbox", quick_capture_redirect_page: true }, { text: "- go" }, ["Inbox"]);
   expect(route()).toMatchObject({ kind: "page", name: "Inbox" });
+});
+
+// REG-CM-YEARLESS-DAY-KEY (round 4, review item 5): under a year-less title
+// (`MM-dd`) an untitled capture lands in today's journal, named by its handle,
+// and redirect-page? opens that journal, not the ordinary page its label
+// names; the template's `{date}` is still the title.
+it("redirect-page? opens today's year-less journal, not the page of its label", async () => {
+  setJournalTitleFormat("MM-dd");
+  try {
+    const label = journalTitle(appNow()), today = journalHandle(appNow());
+    mainPaneRouter.openPage("Elsewhere");
+    await receiveConfigured({ quick_capture_redirect_page: true, quick_capture_template_text: "{date} {text}" }, { text: "- go" }, [label]);
+    expect(route()).toMatchObject({ kind: "page", name: today, pageKind: "journal" });
+    expect(rootsOf(today)).toEqual([`${label} go`]);
+    expect(rootsOf(label)).toEqual([]);
+  } finally {
+    setJournalTitleFormat(null);
+  }
 });

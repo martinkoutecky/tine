@@ -62,8 +62,8 @@ export function captureDestination(typedTitle: string | null | undefined, option
 }
 
 /** The name of the page a destination resolves to. */
-export function destinationName(destination: CaptureDestination, todayTitle: string): string {
-  return destination.kind === "journal" ? todayTitle : destination.name;
+export function destinationName(destination: CaptureDestination, todayName: string): string {
+  return destination.kind === "journal" ? todayName : destination.name;
 }
 
 /** OG redirects (`page-handler/create!` `:redirect?`) only when the capture goes

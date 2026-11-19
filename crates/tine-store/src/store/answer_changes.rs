@@ -67,7 +67,7 @@ impl Snapshot {
             let answer =
                 crate::model::fileless_names::FilelessName::new(&self.journal_format, name);
             if let Some(day) = answer.day {
-                days.insert(tine_core::refs::page_key(&answer.name), day);
+                days.insert(answer.key(&self.journal_format), day);
             }
         };
         let mut targets = HashSet::new();

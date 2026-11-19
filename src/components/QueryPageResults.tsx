@@ -8,6 +8,7 @@ import type { QueryHit } from "../types";
 import type { QueryPresentation } from "../router";
 import { pageRowFieldValue, type ViewSettings } from "../editor/queryIr";
 import { buildSearchExcerpt } from "./SearchResultRow";
+import { pageLabel } from "../journal";
 
 export type QueryPageHit = Extract<QueryHit, { entity: "page" }>;
 
@@ -27,7 +28,10 @@ function PageText(props: { hit: QueryPageHit }): JSX.Element {
   const spans = () => props.hit.evidence
     .filter((item) => item.field === "page_name")
     .flatMap((item) => item.spans);
-  return <For each={buildSearchExcerpt(props.hit.page.name, spans())}>{(part) => part.marked
+  // A year-less day is named by its handle and shown by its label; the
+  // name's match spans do not index the label, so the label is unmarked.
+  const label = () => pageLabel(props.hit.page.name);
+  return <For each={buildSearchExcerpt(label(), label() === props.hit.page.name ? spans() : [])}>{(part) => part.marked
     ? <mark>{part.text}</mark> : part.text}</For>;
 }
 

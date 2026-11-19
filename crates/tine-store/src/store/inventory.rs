@@ -66,8 +66,10 @@ pub struct LinkTarget {
 fn fileless_entry(
     answer: crate::model::fileless_names::FilelessName,
     target: Resolved,
+    format: &JournalFormat,
 ) -> InventoryEntry {
     InventoryEntry {
+        handle: answer.handle(format),
         name: answer.name,
         target,
         is_journal: answer.day.is_some(),
@@ -79,8 +81,14 @@ fn fileless_entry(
         namespace_parent: answer.namespace_parent,
         parent: None,
         empty_alias: false,
-        handle: None,
     }
+}
+
+/// [`InventoryEntry::handle`] of the page file `entry`: its handle when its
+/// name does not identify its day. O(name + parse list) for a day.
+fn file_handle(owners: &crate::query::RealPageOwners, entry: &PageEntry) -> Option<String> {
+    (owners.day_key(&entry.name, entry.date_key))
+        .map(|_| owners.handle(&entry.name, entry.date_key).into_owned())
 }
 
 /// The page the alias `key` opens, if any page declares it: the alias owner
@@ -419,6 +427,7 @@ impl WholeGraph {
                         .under(&prefix)
                         .filter_map(|entry| {
                             Some(InventoryEntry {
+                                handle: file_handle(&owners, entry),
                                 name: entry.name.clone(),
                                 target: Resolved::Existing {
                                     id: entry.rel_path.clone()?,
@@ -430,7 +439,6 @@ impl WholeGraph {
                                 namespace_parent: false,
                                 parent: None,
                                 empty_alias: false,
-                                handle: None,
                             })
                         })
                         .collect(),
@@ -482,16 +490,20 @@ impl WholeGraph {
                     .positions
                     .get(id.as_str())
                     .and_then(|&slot| self.graph.physical_pages.get(slot))
-                    .map(|(entry, _)| InventoryEntry {
-                        name: entry.name.clone(),
-                        target: self.resolve(&entry.name, entry.kind == PageKind::Journal),
-                        is_journal: entry.kind == PageKind::Journal,
-                        day: entry.date_key.map(Day),
-                        link: None,
-                        namespace_parent: false,
-                        parent: None,
-                        empty_alias: false,
-                        handle: None,
+                    .map(|(entry, _)| {
+                        let handle = file_handle(&self.graph.real_page_owners(), entry);
+                        let asked = handle.as_deref().unwrap_or(&entry.name);
+                        InventoryEntry {
+                            target: self.resolve(asked, entry.kind == PageKind::Journal),
+                            handle,
+                            name: entry.name.clone(),
+                            is_journal: entry.kind == PageKind::Journal,
+                            day: entry.date_key.map(Day),
+                            link: None,
+                            namespace_parent: false,
+                            parent: None,
+                            empty_alias: false,
+                        }
                     })
                     .into_iter()
                     .collect(),
@@ -503,6 +515,7 @@ impl WholeGraph {
                     .flatten()
                     .filter_map(|entry| {
                         Some(InventoryEntry {
+                            handle: file_handle(&self.graph.real_page_owners(), &entry),
                             name: entry.name,
                             target: Resolved::Existing {
                                 id: entry.rel_path?,
@@ -514,17 +527,12 @@ impl WholeGraph {
                             namespace_parent: false,
                             parent: None,
                             empty_alias: false,
-                            handle: None,
                         })
                     })
                     .collect(),
             )),
             InventoryScope::PublishedV1Spellings(inventory) => {
-                let listed: HashSet<_> = inventory
-                    .0
-                    .iter()
-                    .map(|entry| tine_core::refs::page_key(&entry.name))
-                    .collect();
+                let listed: HashSet<_> = inventory.0.iter().map(InventoryEntry::key).collect();
                 Arc::new(Inventory(
                     self.graph
                         .referenced_name_table()
@@ -560,11 +568,15 @@ impl WholeGraph {
                     .map(|day| {
                         let date = JournalDate::from_ordinal(day.0);
                         let name = self.journal_format.title(date);
+                        // Resolved by the spelling that names the day: a
+                        // year-less title is a label other days share.
+                        let handle = match self.journal_format.claim_spelling(date, &name) {
+                            std::borrow::Cow::Owned(handle) => Some(handle),
+                            std::borrow::Cow::Borrowed(_) => None,
+                        };
                         InventoryEntry {
-                            // Resolved by the spelling that names the day: a
-                            // year-less title is a label other days share.
-                            target: self
-                                .resolve(&self.journal_format.claim_spelling(date, &name), true),
+                            target: self.resolve(handle.as_deref().unwrap_or(&name), true),
+                            handle,
                             name,
                             is_journal: true,
                             day: Some(day),
@@ -572,7 +584,6 @@ impl WholeGraph {
                             namespace_parent: false,
                             parent: None,
                             empty_alias: false,
-                            handle: None,
                         }
                     })
                     .collect();
@@ -657,7 +668,8 @@ impl WholeGraph {
             }
         }
         let references = self.graph.referenced_name_table();
-        let mut alias_owners: BTreeMap<String, (String, Vec<PageId>)> = BTreeMap::new();
+        let mut alias_owners: BTreeMap<String, (String, Option<JournalDate>, Vec<PageId>)> =
+            BTreeMap::new();
         for (key, alias, owner) in aliases {
             if page_claimed_names.contains(&key) {
                 continue;
@@ -673,7 +685,9 @@ impl WholeGraph {
                 answer.name = self.journal_format.title(day);
                 answer.day = Some(day);
             }
-            let key = tine_core::refs::page_key(&answer.name);
+            // A day is keyed by its handle: a year-less title is a label
+            // other days and an ordinary page share.
+            let key = answer.key(&self.journal_format);
             if answer.day.is_some()
                 && self
                     .graph
@@ -696,34 +710,27 @@ impl WholeGraph {
             };
             let slot = alias_owners
                 .entry(key)
-                .or_insert_with(|| (spelling, Vec::new()));
+                .or_insert_with(|| (spelling, answer.day, Vec::new()));
             let owner = PageId::from(owner);
-            if !slot.1.contains(&owner) {
-                slot.1.push(owner);
+            if !slot.2.contains(&owner) {
+                slot.2.push(owner);
             }
         }
-        for (_, (name, mut owners)) in alias_owners {
+        for (_, (name, day, mut owners)) in alias_owners {
             owners.sort();
-            let answer =
+            let mut answer =
                 crate::model::fileless_names::FilelessName::new(&self.journal_format, &name);
-            entries.push(InventoryEntry {
-                name,
-                target: Resolved::Alias { owners },
-                is_journal: answer.day.is_some(),
-                day: answer.day.map(|day| Day(day.ordinal_key())),
-                link: None,
-                namespace_parent: false,
-                parent: None,
-                empty_alias: false,
-                handle: None,
-            });
+            answer.day = day.or(answer.day);
+            let target = Resolved::Alias { owners };
+            entries.push(fileless_entry(answer, target, &self.journal_format));
         }
         entries.extend(self.graph.reference_only_pages().into_iter().map(|answer| {
-            let target = self.resolve(
-                answer.opening_name.as_deref().unwrap_or(&answer.name),
-                answer.day.is_some(),
-            );
-            fileless_entry(answer, target)
+            let handle = answer.handle(&self.journal_format);
+            let name = (answer.opening_name.as_deref())
+                .or(handle.as_deref())
+                .unwrap_or(&answer.name);
+            let target = self.resolve(name, answer.day.is_some());
+            fileless_entry(answer, target, &self.journal_format)
         }));
         let mut entries: Vec<_> = claimed
             .into_iter()
@@ -791,9 +798,12 @@ impl WholeGraph {
     fn named_entry(&self, name: &str) -> InventoryEntry {
         let mut answer =
             crate::model::fileless_names::FilelessName::new(&self.journal_format, name);
-        answer.name = name.to_owned();
-        let target = self.resolve(&answer.name, answer.day.is_some());
-        fileless_entry(answer, target)
+        // A year-less day's handle keeps the day's label as its name.
+        if answer.handle(&self.journal_format).as_deref() != Some(name) {
+            answer.name = name.to_owned();
+        }
+        let target = self.resolve(name, answer.day.is_some());
+        fileless_entry(answer, target, &self.journal_format)
     }
 
     /// [`InventoryScope::FilelessUnder`]'s entries; see [`Self::inventory`].
@@ -881,8 +891,7 @@ impl WholeGraph {
         names
             .into_iter()
             .map(|name| InventoryEntry {
-                handle: owners
-                    .day_key(&name, winner.date_key)
+                handle: (owners.day_key(&name, winner.date_key))
                     .map(|_| owners.handle(&name, winner.date_key).into_owned()),
                 name,
                 target: Resolved::Existing {
@@ -950,22 +959,13 @@ impl Snapshot {
                 answer.name = self.journal_format.title(day);
                 answer.day = Some(day);
             }
-            if answer.day.is_some() && tine_core::refs::page_key(&answer.name) != key {
+            if answer.day.is_some() && answer.key(&self.journal_format) != key {
                 return None;
             }
-            return Some(self.linked(InventoryEntry {
-                name: answer.name,
-                target: Resolved::Alias {
-                    owners: owners.into_iter().map(PageId::from).collect(),
-                },
-                is_journal: answer.day.is_some(),
-                day: answer.day.map(|day| Day(day.ordinal_key())),
-                link: None,
-                namespace_parent: false,
-                parent: None,
-                empty_alias: false,
-                handle: None,
-            }));
+            let target = Resolved::Alias {
+                owners: owners.into_iter().map(PageId::from).collect(),
+            };
+            return Some(self.linked(fileless_entry(answer, target, &self.journal_format)));
         }
         let fallback = crate::model::fileless_names::FilelessName::new(
             &self.journal_format,
@@ -975,20 +975,16 @@ impl Snapshot {
             // Deltas remove/add the canonical entity key, never a raw date
             // spelling. Another spelling or a namespace child can keep it
             // alive after the edited page stops referring to it.
-            if tine_core::refs::page_key(&self.journal_format.title(day)) != key {
-                return None;
-            }
-            return self.graph.fileless_page_for_day(day).map(|answer| {
-                fileless_entry(
-                    answer,
-                    Resolved::Absent {
-                        id: proposed_journal_id(
-                            &self.config.config,
-                            self.journal_format.file_stem(day),
-                        ),
-                    },
-                )
-            });
+            let format = &self.journal_format;
+            return (self.graph.fileless_page_for_day(day))
+                .filter(|answer| answer.key(format) == key)
+                .map(|answer| {
+                    let id = proposed_journal_id(
+                        &self.config.config,
+                        self.journal_format.file_stem(day),
+                    );
+                    fileless_entry(answer, Resolved::Absent { id }, &self.journal_format)
+                });
         }
         // A key no reference names may still be a namespace parent.
         let (name, namespace_parent) = match spelling {
@@ -1008,7 +1004,7 @@ impl Snapshot {
         let target = Resolved::Absent {
             id: proposed_page_id(&self.config.config, &answer.name),
         };
-        Some(self.linked(fileless_entry(answer, target)))
+        Some(self.linked(fileless_entry(answer, target, &self.journal_format)))
     }
 
     fn linked(&self, entry: InventoryEntry) -> InventoryEntry {

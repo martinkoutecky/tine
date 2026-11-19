@@ -1670,3 +1670,100 @@ fn an_alias_edit_refreshes_a_reference_query_it_does_not_touch() {
     assert!(strings(&wire["summary"]["queryTo"]).contains("extra"));
     assert!(rows(&store).is_empty(), "removing the alias drops the row");
 }
+
+/// Every page event and the merged summary of the publications `act` causes.
+fn published(
+    store: &std::sync::Arc<Store>,
+    act: impl FnOnce(),
+) -> (Vec<(String, String)>, serde_json::Value) {
+    let subscription = store.subscribe();
+    act();
+    store.refresh(crate::Depth::Stamps).unwrap();
+    let (mut pages, mut changes) = (Vec::new(), Vec::new());
+    while let Some(change) = subscription.try_recv().unwrap() {
+        for (_, kind, _, name) in change.pages() {
+            pages.push((format!("{kind:?}"), name.to_owned()));
+        }
+        changes.push(serde_json::to_value(change).unwrap());
+    }
+    (
+        pages,
+        crate::test_host_writer::merged_changes(changes)["summary"].clone(),
+    )
+}
+
+/// REG-CM-YEARLESS-DAY-KEY (round 4, review item 3): a publication names a
+/// year-less day as the app knows it, by its handle `2026_11_02`: the page
+/// key, the property expansion a reader of the day's icon listens to, and
+/// the external page events, a removal named as the previous generation
+/// named it. Before the fix they named the label `11-02`, so an icon edit
+/// left the day's icon reader stale and a removal closed the label page's
+/// pane instead of the day's. Markdown and Org, label page present and
+/// absent; own and outside edits.
+#[test]
+fn a_publication_names_a_year_less_day_by_its_handle() {
+    let _guard = crate::test_transactions::integration_lock();
+    for (ext, bullet) in [("md", "-"), ("org", "*")] {
+        for label_page in [true, false] {
+            let day = format!("journals/2026_11_02.{ext}");
+            let day_text = format!("{bullet} the day\n");
+            let mut files = vec![
+                (
+                    "logseq/config.edn",
+                    "{:journal/page-title-format \"MM-dd\"}\n",
+                ),
+                (day.as_str(), day_text.as_str()),
+                ("journals/2025_11_02.md", "- last year\n"),
+            ];
+            if label_page {
+                files.push(("pages/11-02.md", "- a label page\n"));
+            }
+            let dir = tempfile::tempdir().unwrap();
+            for (rel, text) in &files {
+                let path = dir.path().join(rel);
+                fs::create_dir_all(path.parent().unwrap()).unwrap();
+                fs::write(path, text).unwrap();
+            }
+            let store = std::sync::Arc::new(Store::open(dir.path(), Default::default()).unwrap().0);
+            store.whole_graph().unwrap();
+            store.stop_watcher_for_tests();
+            let case = format!("{ext}, label page {label_page}");
+            // An own icon edit.
+            let wire = edit(&store, &day, |doc| {
+                doc.pre_block = Some(match ext {
+                    "md" => "icon:: X".into(),
+                    _ => "#+icon: X".into(),
+                })
+            });
+            let summary = &wire["summary"];
+            assert_eq!(summary["full"], false, "{case}");
+            assert_eq!(
+                summary["pages"],
+                serde_json::json!(["2026_11_02"]),
+                "{case}"
+            );
+            assert!(
+                (summary["props"]["2026_11_02"].as_array())
+                    .is_some_and(|keys| keys.iter().any(|key| key == "icon")),
+                "{case}: {summary}"
+            );
+            assert!(summary["props"].get("11-02").is_none(), "{case}: {summary}");
+            // An outside edit, then an outside removal.
+            let path = dir.path().join(&day);
+            let (pages, _) = published(&store, || {
+                fs::write(&path, format!("{bullet} edited outside\n")).unwrap()
+            });
+            assert_eq!(
+                pages,
+                [("Modified".to_owned(), "2026_11_02".to_owned())],
+                "{case}"
+            );
+            let (pages, _) = published(&store, || fs::remove_file(&path).unwrap());
+            assert_eq!(
+                pages,
+                [("Removed".to_owned(), "2026_11_02".to_owned())],
+                "{case}"
+            );
+        }
+    }
+}

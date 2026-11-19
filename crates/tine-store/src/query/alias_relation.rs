@@ -66,8 +66,13 @@ pub(crate) fn alias_group_members(
             if own_day.is_some() && answer.day == own_day {
                 continue;
             }
-            let canonical_key = refs::page_key(&answer.name);
-            let spelling = answer.opening_name.unwrap_or(answer.name);
+            // A year-less day by its handle: its label names every year.
+            let canonical_key = answer.key(&format);
+            let spelling = (answer
+                .opening_name
+                .clone()
+                .or_else(|| answer.handle(&format)))
+            .unwrap_or(answer.name);
             members
                 .entry((answer.day.is_some(), canonical_key))
                 .or_insert(spelling);

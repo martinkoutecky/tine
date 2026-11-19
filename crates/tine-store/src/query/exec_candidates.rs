@@ -81,12 +81,14 @@ fn required(filter: &Filter, anchor: Anchor) -> Option<Req> {
 }
 
 /// The page keys a name need probes. A date spelling names its journal
-/// (S12, `eval_page_name`): the journal is named by the configured title,
-/// so its key joins the probe. The one date answerer reads the spelling.
+/// (S12, `eval_page_name`): the journal is keyed by the spelling that
+/// identifies it (its title, or under a year-less title such as `MM-dd` the
+/// spelling the real-name index files it by), so that key joins the probe.
+/// The one date answerer reads the spelling.
 fn name_keys(name: &str, format: &tine_core::date::JournalFormat) -> impl Iterator<Item = String> {
     let journal = eval::reference_day(name, format)
         .and(format.parse(name))
-        .map(|day| refs::page_key(&format.title(day)));
+        .map(|day| refs::page_key(&format.identifying_spelling(day)));
     std::iter::once(refs::page_key(name)).chain(journal)
 }
 
@@ -295,13 +297,14 @@ impl<'a> Candidates<'a> {
                 .map(|names| names.iter().map(String::as_str).collect());
             let empty = Arc::new(Document::default());
             let rows = graph.reference_only_pages();
+            let format = graph.config().journal_format();
             #[cfg(test)]
             FILELESS_ROWS.with(|count| count.set(count.get() + rows.len()));
             rows.into_iter()
                 .filter(|answer| {
                     wanted
                         .as_ref()
-                        .is_none_or(|wanted| wanted.contains(refs::page_key(&answer.name).as_str()))
+                        .is_none_or(|wanted| wanted.contains(answer.key(&format).as_str()))
                 })
                 .map(|answer| (answer.page_entry(), Arc::clone(&empty)))
                 .collect()
