@@ -132,7 +132,9 @@ applies if a code or math span within the title continues across the closer. In 
 for unfinished `[[`, `#[[` or `((`, the pick inserts a complete reference through the caret
 (D-20261119-P853C, FORK-853b). Page search uses the whole title when a pick replaces the whole
 reference (GH #888). Other queries use the prefix through the caret. Bare tags replace through
-the caret. Delimiter lookahead may scan to the end of the line. Inline parsing uses the prefix
+the caret. A block pick captures the buffer and replacement range when accepted. Insertion after
+the target ID publishes uses that range while the editor, picker and buffer still match.
+Delimiter lookahead may scan to the end of the line. Inline parsing uses the prefix
 through candidate terminators and the affected title text, with a fixed number of calls.
 Both editors ask `properties.ts` for Markdown value positions through the existing
 accepted-property-line parser; only then does autocomplete split comma-separated

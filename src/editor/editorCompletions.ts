@@ -303,17 +303,20 @@ export function editorCompletions(props: CompletionAdapter) {
     ));
   };
 
-  const replaceTrigger = (insert: string, caretOffset?: number) => {
-    const open = ac(); if (!open || !current()) return;
-    const raw = text();
-    const trigger = open.kind === "page" || open.kind === "block" || open.kind === "tag" ? detectEditorTrigger() : open;
-    if (!trigger || trigger.kind !== open.kind || trigger.start !== open.start) return;
-    const result = applyCompletion(raw, trigger.start, completionReplacementEnd(raw, trigger, insert), insert, caretOffset);
+  const replaceRange = (raw: string, start: number, end: number, insert: string, caretOffset?: number) => {
+    const result = applyCompletion(raw, start, end, insert, caretOffset);
     const spaced = caretOffset === undefined
       ? withRefCompletionSpace(result.raw, result.caret, insert, spaceAfterRefCompletion()) : result;
     // Keep the raw view until the completion edit is committed, then map its
     // source caret into the parser-owned code/calc body.
     props.replace(spaced.raw, spaced.caret, closeAc);
+  };
+  const replaceTrigger = (insert: string, caretOffset?: number) => {
+    const open = ac(); if (!open || !current()) return;
+    const raw = text();
+    const trigger = open.kind === "page" || open.kind === "block" || open.kind === "tag" ? detectEditorTrigger() : open;
+    if (!trigger || trigger.kind !== open.kind || trigger.start !== open.start) return;
+    replaceRange(raw, trigger.start, completionReplacementEnd(raw, trigger, insert), insert, caretOffset);
   };
   const openPlanning = (kind: "scheduled" | "deadline") => {
     const rect = props.element().getBoundingClientRect();
@@ -335,10 +338,14 @@ export function editorCompletions(props: CompletionAdapter) {
     }
     if (item.propertyValue !== undefined) { replaceTrigger(item.propertyValue); return; }
     if (item.blockRef) {
-      const owner = props.refOwner?.() ?? graphOwner(current), trigger = ac(), before = text();
+      const before = text(), range = detectEditorTrigger();
+      if (range?.kind !== "block" || range.start !== t.start) return;
+      const start = range.start, end = range.replaceEnd ?? range.end;
+      const owner = props.refOwner?.() ?? graphOwner(current), trigger = t;
       acceptBlockRefPick(item.blockRef, {
-        intended: () => owner() && ac() === trigger && text() === before, current: () => owner(),
-        triggerOpen: () => ac() === trigger, sourcePage: () => node(props.id)?.page, insert: (ref) => replaceTrigger(ref),
+        intended: () => owner() && ac() === trigger && text() === before && current(), current: owner,
+        triggerOpen: () => ac() === trigger, sourcePage: () => node(props.id)?.page,
+        insert: (ref) => replaceRange(before, start, end, ref),
       });
       return;
     }

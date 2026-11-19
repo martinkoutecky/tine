@@ -346,6 +346,50 @@ describe.each<EditorKind>(["textarea", "cm6"])("%s editor: the Enter family comm
     },
   );
 
+  describe.each(["md", "org"] as const)("a pending %s block pick", format => {
+    it.each([
+      [" keep this", 5],
+      [" keep this", -1],
+      [" #keep))", 6],
+    ])("uses the picked range before %j after moving the caret by %i", async (suffix, movement) => {
+      const runtimeId = "11111111-1111-4111-8111-111111111111";
+      const target = { id: runtimeId, raw: "first", collapsed: false, children: [] };
+      const path = `pages/Source.${format}`;
+      setGraphMeta(META); bumpGraphEpoch();
+      openAsLoaded(await bindTestHost());
+      vi.spyOn(backend(), "getPage").mockResolvedValue({
+        id: path, name: "Source", kind: "page", title: "Source", pre_block: null, format, blocks: [target],
+      });
+      vi.spyOn(backend(), "search").mockResolvedValue([{ page: "Source", kind: "page", evidence: [], blocks: [target] }]);
+      const pageWait = backend().pageWait.bind(backend());
+      let publish: (() => void) | undefined;
+      let stampedId: string | undefined;
+      vi.spyOn(backend(), "pageWait").mockImplementation((...args) => {
+        const witness = args[1].find(need => need.key === path)?.witness;
+        if (!witness) return pageWait(...args);
+        stampedId = witness;
+        return new Promise(resolve => { publish = () => resolve(pageWait(...args)); });
+      });
+
+      const prefix = "project:: ((ab";
+      const editor = mount(prefix + suffix, prefix.length, format);
+      editor.type("c");
+      await acceptSuggestion(editor, "first");
+      await vi.waitFor(() => expect(publish).toBeTypeOf("function"));
+      const caret = prefix.length + 1;
+      expect(editor.value()).toBe(prefix + "c" + suffix);
+      editor.selectByUser(caret + movement);
+      expect(editor.selection()).toEqual([caret + movement, caret + movement]);
+      expect(stampedId).not.toBe(runtimeId);
+      publish!();
+
+      const picked = `project:: ((${stampedId}))`;
+      await vi.waitFor(() => expect(editor.value()).toBe(picked + suffix));
+      expect(doc.byId.target.raw).toBe(picked + suffix);
+      expect(errors()).toHaveLength(0);
+    });
+  });
+
   describe("template slash-completion (HONP4)", () => {
     const DAILY = [{ id: "tpl", raw: "from template", collapsed: false, children: [{ id: "tpl-child", raw: "template child", collapsed: false, children: [] }] }];
     async function openTemplate(raw: string, blocks = DAILY, name = "Daily"): Promise<EditorDriver> {

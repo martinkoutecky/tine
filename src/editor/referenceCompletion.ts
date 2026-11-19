@@ -129,9 +129,9 @@ function multilineLiteralAt(raw: string, at: number, format: Format): boolean {
 }
 
 type Reference = { kind: "page" | "block"; start: number; end: number };
-type Owner = Reference | "literal" | "macro";
+type InlineOwner = Reference | "literal" | "macro";
 
-function ownerAt(nodes: Inline[], source: string, at: number, byte = utf16ToUtf8ByteOffset(source, at)): Owner | undefined {
+function ownerAt(nodes: Inline[], source: string, at: number, byte = utf16ToUtf8ByteOffset(source, at)): InlineOwner | undefined {
   for (const node of nodes) {
     if (!node.span || byte < node.span[0] || byte >= node.span[1]) continue;
     if (node.k === "macro") return "macro";
