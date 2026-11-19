@@ -843,6 +843,171 @@ const CASES: &[Case] = &[
         probes: &[("Mine", "Mine")],
         moves: &[],
     },
+    // The review of 57755b314 (finding 1): the executor leaves a declarer with
+    // VCS conflict markers unchanged, so it still declares the old name and
+    // the preview must not count it. Six conflicted inputs, four controls.
+    Case {
+        label: "own-fileless-alias-conflicted-md",
+        files: &[
+            (
+                "pages/W.md",
+                "alias:: X\n\n- w\n\n<<<<<<< ours\n- x\n=======\n- y\n>>>>>>> theirs\n",
+            ),
+            ("pages/Z.md", "alias:: ML\n\n- z\n"),
+            ("pages/q.md", "- [[ML]]\n"),
+        ],
+        old: "X",
+        typed: "ML",
+        into: None,
+        rows: &[("ML", "Z", "ML", &["q"])],
+        probes: &[("ML", "ML")],
+        moves: &[],
+    },
+    Case {
+        label: "own-fileless-alias-conflicted-then-clean-md",
+        files: &[
+            (
+                "pages/W.md",
+                "alias:: X\n\n- w\n\n<<<<<<< ours\n- x\n=======\n- y\n>>>>>>> theirs\n",
+            ),
+            ("pages/Y.md", "alias:: X\n\n- y\n"),
+            ("pages/Z.md", "alias:: ML\n\n- z\n"),
+            ("pages/q.md", "- [[ML]]\n"),
+        ],
+        old: "X",
+        typed: "ML",
+        into: None,
+        rows: &[("ML", "Z", "Y", &["q"])],
+        probes: &[("ML", "ML")],
+        moves: &[],
+    },
+    Case {
+        label: "own-fileless-alias-both-conflicted-md",
+        files: &[
+            (
+                "pages/W.md",
+                "alias:: X\n\n- w\n\n<<<<<<< ours\n- x\n=======\n- y\n>>>>>>> theirs\n",
+            ),
+            (
+                "pages/Y.md",
+                "alias:: X\n\n- y\n\n<<<<<<< ours\n- x\n=======\n- y\n>>>>>>> theirs\n",
+            ),
+            ("pages/Z.md", "alias:: ML\n\n- z\n"),
+            ("pages/q.md", "- [[ML]]\n"),
+        ],
+        old: "X",
+        typed: "ML",
+        into: None,
+        rows: &[("ML", "Z", "ML", &["q"])],
+        probes: &[("ML", "ML")],
+        moves: &[],
+    },
+    Case {
+        label: "own-fileless-alias-clean-then-conflicted-md",
+        files: &[
+            ("pages/W.md", "alias:: X\n\n- w\n"),
+            (
+                "pages/Y.md",
+                "alias:: X\n\n- y\n\n<<<<<<< ours\n- x\n=======\n- y\n>>>>>>> theirs\n",
+            ),
+            ("pages/Z.md", "alias:: ML\n\n- z\n"),
+            ("pages/q.md", "- [[ML]]\n"),
+        ],
+        old: "X",
+        typed: "ML",
+        into: None,
+        rows: &[("ML", "Z", "W", &["q"])],
+        probes: &[("ML", "ML")],
+        moves: &[],
+    },
+    Case {
+        label: "own-fileless-alias-org",
+        files: &[
+            ("pages/W.org", "#+alias: X\n\n* w\n"),
+            ("pages/Z.org", "#+alias: ML\n\n* z\n"),
+            ("pages/q.org", "* q [[ML]]\n"),
+        ],
+        old: "X",
+        typed: "ML",
+        into: None,
+        rows: &[("ML", "Z", "W", &["q"])],
+        probes: &[("ML", "ML")],
+        moves: &[],
+    },
+    Case {
+        label: "own-fileless-alias-conflicted-org",
+        files: &[
+            (
+                "pages/W.org",
+                "#+alias: X\n\n* w\n\n<<<<<<< ours\n* x\n=======\n* y\n>>>>>>> theirs\n",
+            ),
+            ("pages/Z.org", "#+alias: ML\n\n* z\n"),
+            ("pages/q.org", "* q [[ML]]\n"),
+        ],
+        old: "X",
+        typed: "ML",
+        into: None,
+        rows: &[("ML", "Z", "ML", &["q"])],
+        probes: &[("ML", "ML")],
+        moves: &[],
+    },
+    Case {
+        label: "own-fileless-alias-conflicted-then-clean-org",
+        files: &[
+            (
+                "pages/W.org",
+                "#+alias: X\n\n* w\n\n<<<<<<< ours\n* x\n=======\n* y\n>>>>>>> theirs\n",
+            ),
+            ("pages/Y.org", "#+alias: X\n\n* y\n"),
+            ("pages/Z.org", "#+alias: ML\n\n* z\n"),
+            ("pages/q.org", "* q [[ML]]\n"),
+        ],
+        old: "X",
+        typed: "ML",
+        into: None,
+        rows: &[("ML", "Z", "Y", &["q"])],
+        probes: &[("ML", "ML")],
+        moves: &[],
+    },
+    Case {
+        label: "own-fileless-alias-both-conflicted-org",
+        files: &[
+            (
+                "pages/W.org",
+                "#+alias: X\n\n* w\n\n<<<<<<< ours\n* x\n=======\n* y\n>>>>>>> theirs\n",
+            ),
+            (
+                "pages/Y.org",
+                "#+alias: X\n\n* y\n\n<<<<<<< ours\n* x\n=======\n* y\n>>>>>>> theirs\n",
+            ),
+            ("pages/Z.org", "#+alias: ML\n\n* z\n"),
+            ("pages/q.org", "* q [[ML]]\n"),
+        ],
+        old: "X",
+        typed: "ML",
+        into: None,
+        rows: &[("ML", "Z", "ML", &["q"])],
+        probes: &[("ML", "ML")],
+        moves: &[],
+    },
+    Case {
+        label: "own-fileless-alias-clean-then-conflicted-org",
+        files: &[
+            ("pages/W.org", "#+alias: X\n\n* w\n"),
+            (
+                "pages/Y.org",
+                "#+alias: X\n\n* y\n\n<<<<<<< ours\n* x\n=======\n* y\n>>>>>>> theirs\n",
+            ),
+            ("pages/Z.org", "#+alias: ML\n\n* z\n"),
+            ("pages/q.org", "* q [[ML]]\n"),
+        ],
+        old: "X",
+        typed: "ML",
+        into: None,
+        rows: &[("ML", "Z", "W", &["q"])],
+        probes: &[("ML", "ML")],
+        moves: &[],
+    },
 ];
 
 /// The effect the dialog shows for the case's request.

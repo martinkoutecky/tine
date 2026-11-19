@@ -125,7 +125,8 @@ the first real-file claimant, else the declarer with the least path), which
 files: each moved file (children included) claims its new name and declares its
 aliases from its new path, a merge's source goes and its declarations join the
 survivor, a declaration of a renamed name (a page with no file included) is
-respelled to declare the new name, and "use the name" drops the typed name from the
+respelled to declare the new name (a declarer the request skips for VCS conflict
+markers keeps declaring the old one), and "use the name" drops the typed name from the
 other declarers. The names asked are the aliases the moved and merged files
 declare, the names the request gives, and the released typed name, minus the names
 the request rewrites. A moved page is the same page; a merged source is not. A name

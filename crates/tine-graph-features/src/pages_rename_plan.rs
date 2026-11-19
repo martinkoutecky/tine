@@ -156,8 +156,7 @@ impl RenamePlan {
             let rewritten = refs::rename_proposal(&content, org, &self.lookup, format)
                 .map_err(|e| MergeRefused::trace(e, id.as_str()))?;
             let changed = rewritten.text != content;
-            let marked =
-                !tine_core::concord_queue::vcs_conflict_markers(&content, syntax).is_empty();
+            let marked = self.skips(id, &content);
             match (changed, marked) {
                 (true, false) => {
                     pages.push(id.clone());
@@ -180,6 +179,20 @@ impl RenamePlan {
                 .flat_map(|(src, dst)| [src.clone(), dst.clone()]),
         );
         Ok(pages)
+    }
+
+    /// Whether the request leaves candidate `id`'s file (text `content`)
+    /// unwritten although its references change: a page carrying VCS conflict
+    /// markers, unless the plan moves or retitles it. The one answer for
+    /// `pages` (the executor) and the helpers' preview, so a declaration in
+    /// such a file is not respelled in either.
+    pub(super) fn skips(&self, id: &PageId, content: &str) -> bool {
+        !(self.moves.contains_key(id) || self.moved_titles_to_rebind.contains(id))
+            && !tine_core::concord_queue::vcs_conflict_markers(
+                content,
+                Format::from_path(id.as_str().as_ref()),
+            )
+            .is_empty()
     }
 
     /// The source of a single page's rename, which a host runs

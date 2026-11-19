@@ -291,7 +291,8 @@ pub(super) fn effect(plan: &RenamePlan, retargeted: Vec<Retarget>) -> Effect {
 /// (`plan.moves`, children included) claims its new name and declares its
 /// aliases from its new path, the merge's source goes and its declarations
 /// join the survivor, a declaration of a renamed name (`plan.renamed`, a
-/// page with no file included) is respelled to declare the new name, and
+/// page with no file included) is respelled to declare the new name (unless
+/// the executor skips its file, [`RenamePlan::skips`]), and
 /// `released` (the "use the name" edits) stop declaring `typed`. So the
 /// affected names are the aliases the moved and merged files declare, the
 /// names the plan gives, and `typed` when released; each one's
@@ -388,8 +389,16 @@ pub(super) fn retargets(
             });
         }
         let dropped = refs::same_page(&name, typed);
-        let respelled = (given.get(&refs::page_key(&name)).into_iter().flatten())
-            .flat_map(|from| graph.name_owners(from).declarers);
+        // The declarations the request rewrites: a file the executor skips
+        // (`RenamePlan::skips`) keeps declaring the old name.
+        let mut respelled = Vec::new();
+        for from in given.get(&refs::page_key(&name)).into_iter().flatten() {
+            for id in graph.name_owners(from).declarers {
+                if !sites_outside_aliases(store, plan, &mut outside, &id)?.skipped {
+                    respelled.push(id);
+                }
+            }
+        }
         after.declarers = (before.declarers.iter().cloned())
             .filter(|id| !(dropped && released.contains(id)))
             .chain(respelled)
@@ -410,7 +419,7 @@ pub(super) fn retargets(
             let declares = before.declarers.contains(&id) || Some(&id) == source;
             if !declares || {
                 let named = sites_outside_aliases(store, plan, &mut outside, &id)?;
-                before.spellings.iter().any(|key| named.contains(key))
+                before.spellings.iter().any(|key| named.keys.contains(key))
             } {
                 pages.insert(lands(&id));
             }
@@ -435,6 +444,13 @@ thread_local! {
     static SITE_READS: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
 }
 
+/// What one file holds for the preview: the page keys of its sites outside
+/// its alias declarations, and whether the executor leaves it unwritten.
+struct FileSites {
+    keys: HashSet<String>,
+    skipped: bool,
+}
+
 /// The page keys of every site the parser reads in `id`'s file outside its
 /// alias declarations (the model's reading, `cm_check::observe`: links,
 /// tags, Org headline tags, embeds, property values, query and macro
@@ -444,14 +460,16 @@ thread_local! {
 fn sites_outside_aliases<'a>(
     store: &Store,
     plan: &RenamePlan,
-    outside: &'a mut HashMap<PageId, HashSet<String>>,
+    outside: &'a mut HashMap<PageId, FileSites>,
     id: &PageId,
-) -> io::Result<&'a HashSet<String>> {
+) -> io::Result<&'a FileSites> {
     if !outside.contains_key(id) {
         #[cfg(test)]
         SITE_READS.with(|n| n.set(n.get() + 1));
         let mut keys = HashSet::new();
+        let mut skipped = false;
         if let Some(text) = read_text(store, id)? {
+            skipped = plan.skips(id, &text);
             let format = Format::from_path(id.as_str().as_ref());
             let content = cm_check::observe(&text, format, plan.config.file_name_format);
             let headers = (content.header.iter())
@@ -475,7 +493,7 @@ fn sites_outside_aliases<'a>(
                 }
             }
         }
-        outside.insert(id.clone(), keys);
+        outside.insert(id.clone(), FileSites { keys, skipped });
     }
     Ok(&outside[id])
 }
