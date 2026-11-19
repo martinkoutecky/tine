@@ -1013,9 +1013,13 @@ fn plan_request(
         // second spelling). Moving onto it would replace that page, which
         // the no-replace move refuses at commit; retrying cannot help, so
         // refuse now with the reason. Scenario (I-8): an external editor or
-        // a sync delivery left a file at the destination name.
+        // a sync delivery left a file at the destination name. On a
+        // case-folding volume the destination's entry may be listed under
+        // another spelling (`B.md` reaches `b.md`): the store's disk spelling
+        // names that entry, as the no-replace move would find it.
         if let Some(page) = store
             .as_page(&to)
+            .map(|page| store.disk_spelling(&page).unwrap_or(page))
             .filter(|page| !ids.contains(page))
             .and_then(|page| name_of(&graph, &page))
         {

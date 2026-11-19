@@ -29,20 +29,27 @@ const built = spawnSync("cargo", ["run", "-q", "-p", "tine-store", "--example", 
 });
 if (built.status !== 0) throw new Error(`fixture export failed:\n${built.stderr}`);
 const lines = built.stdout.trim().split(/\r?\n/);
-// The live site renders from a private build graph that holds only the exported
-// documents, so the private journal file that shares the public page's name is
-// not in it: the site publishes the public page (two pages) and nothing of the
-// private file (checked below in every generated file).
-if (lines[0] !== "2") throw new Error(`unexpected published page count: ${built.stdout}`);
+// Both files claim the name "Twin". The conceptual model opens the journals
+// file (CM-ORDER, D-20261110-CM: "a journal wins over an ordinary page"), and a
+// losing twin contributes nothing until merged (CM-TWINS, D-20261106-R13). So
+// "Twin" is the private journal: it is not published, and the public twin's
+// `public:: true` publishes nothing either. Only Visible is published, and no
+// generated file carries either twin's text (the private one above all).
+if (lines[0] !== "1") throw new Error(`unexpected published page count: ${built.stdout}`);
 const output = lines.at(-1);
 for (const file of fs.readdirSync(output)) {
   const full = path.join(output, file);
-  if (fs.statSync(full).isFile() && fs.readFileSync(full, "utf8").includes("PRIVATE TWIN SENTINEL")) {
+  if (!fs.statSync(full).isFile()) continue;
+  const text = fs.readFileSync(full, "utf8");
+  if (text.includes("PRIVATE TWIN SENTINEL")) {
     throw new Error(`private twin content crossed the capability boundary in ${file}`);
   }
+  if (text.includes("public twin")) {
+    throw new Error(`the losing twin contributed to the site in ${file}`);
+  }
 }
-if (!fs.readFileSync(path.join(output, "twin.html"), "utf8").includes("public twin")) {
-  throw new Error("the public page that owns the name was not published");
+if (fs.existsSync(path.join(output, "twin.html"))) {
+  throw new Error("the name the private journal opens was published");
 }
 const htmlPath = path.join(output, "visible.html");
 const html = fs.readFileSync(htmlPath, "utf8");
