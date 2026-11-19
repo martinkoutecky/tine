@@ -14,7 +14,7 @@ import { bindTestHost, submittedPages } from "../document/host/wiring.test.suppo
 import { answerOpensFromDocument } from "../document/host/documentHost.test.support";
 import { adoptResults, advanceResultsEpoch, captureResultsTicket, installResultsPendingGate, resultsSettled } from "../queryResultsEpoch";
 import { createSignal } from "solid-js";
-import { OPENING_CONTROL_CASES, pointerClick } from "../tests/openingClickCases";
+import { OPENING_CONTROL_CASES, OPENING_DRAWER_CASES, pointerClick, shownLines } from "../tests/openingClickCases";
 
 // GH #486: a page whose page-level properties link here is listed under Linked
 // References as its properties row. OG lists the referencing page's
@@ -151,6 +151,26 @@ describe("opening text controls on result rows", () => {
     } finally { dispose(); }
   });
 });
+
+// Review e852e1b58 F2 on result rows (Linked References and query List): a
+// task word or priority line, a drawer and the next line show as two lines.
+it.each(OPENING_DRAWER_CASES.flatMap(([text, format, lines]) =>
+  (["ref", "query"] as const).map((surface) => [text, format, surface, lines] as const)))(
+  "shows the opening text %j (%s) line for line on %s", async (text, format, surface, lines) => {
+    vi.spyOn(backend(), "getPage").mockResolvedValue({ ...sourcePage(format), pre_block: text + "\n" });
+    const hit: BlockDto = { id: "page-preamble:Page:source", raw: text, collapsed: false, page_preamble: true, children: [] };
+    adoptResults(hit, captureResultsTicket());
+    const { root, dispose } = mount(() => <LiveRefGroup page="Source" kind="page" blocks={[hit]} surface={surface} eager />);
+    try {
+      const row = await vi.waitFor(() => {
+        const el = root.querySelector('[data-block-id="page-preamble:Page:source"] .block-content');
+        expect(el?.querySelector(".opening-text")).not.toBeNull();
+        return el!;
+      });
+      expect(shownLines(row)).toEqual(lines);
+      expect(row.querySelector(".block-marker, .block-priority, input[type=checkbox]")).toBeNull();
+    } finally { dispose(); }
+  });
 
 // Review 28d081755 F3 on result rows: an opening checklist's inert checkbox
 // is a press on the text, so it promotes the row and opens its editor.

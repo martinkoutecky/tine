@@ -425,7 +425,7 @@ pub fn parse_document(raw: &str, is_org: bool) -> BlockRegions {
 }
 
 /// The accepted header of a block's first node, with token spans when `locate`.
-pub(crate) fn header_of(raw: &str, blocks: &[Block], locate: bool) -> Header {
+fn header_of(raw: &str, blocks: &[Block], locate: bool) -> Header {
     let Some(
         Block::Bullet {
             marker,

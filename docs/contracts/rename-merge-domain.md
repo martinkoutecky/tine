@@ -282,12 +282,13 @@ line is the group's. Each group shows exactly as written, one line per source
 line (a Windows line end is one), never as property chips or page properties
 (D-20261119-PG, a deliberate difference from Logseq, which shows such a group
 as nothing). Each blank line between pieces shows as one. Every other piece
-renders as a block body (`AstBody`), as the same text would in a block:
-queries run, and nested directives are hidden. A task word or priority that
-the block parse lifts off a piece's first line prints as text, with no task
-chrome or behaviour (opening text is not a task): the exact source from the
-piece start to where the body's first node starts (`page_preamble::opening_lead_end`),
-so a line end the parser keeps is drawn once, by the body. A click enters
+renders as body text (`AstBody` with `untitled`), as the same text would
+after a block's first line: queries run, and nested directives and drawers
+are hidden. The piece is parsed with an empty title
+(`lsdoc_block_parse::parse_untitled_block`), so no block header is
+recognized: a task word or priority on its first line is ordinary text with
+no task chrome or behaviour (opening text is not a task), and nothing is
+lifted or put back. A click enters
 editing by the same predicate as a block (`forbidsEditEntry`): a link,
 disclosure or media control keeps its click and the file is untouched. A
 checklist checkbox in it has no block line to tick, so it is inert, and a press

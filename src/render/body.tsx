@@ -430,10 +430,10 @@ function bodyBlocks(parsed: AstBlock[], raw: string): AstBlock[] {
   );
 }
 
-function renderBody(raw: string, format: Format, blockId?: string, headingLevel?: number | null, macroExpansion = false, inPeek = false, codeEditAction?: CodeEditAction): JSX.Element {
+function renderBody(raw: string, format: Format, blockId?: string, headingLevel?: number | null, macroExpansion = false, inPeek = false, codeEditAction?: CodeEditAction, untitled = false): JSX.Element {
   // One parse supplies both the visible body and its property-dependent table
   // presentation. This stays on AstBody's path, so SheetGrid cells inherit it.
-  const parsed = parseBody(raw, format);
+  const parsed = parseBody(raw, format, untitled);
   const properties: [string, string][] = [];
   for (const b of parsed) if (b.kind === "properties") properties.push(...b.props);
   const blocks = bodyBlocks(parsed, raw);
@@ -467,7 +467,9 @@ function PlaceholderText(props: { raw: string }): JSX.Element {
   return <>{placeholderLines(props.raw).join("\n")}</>;
 }
 
-export function AstBody(props: { raw: string; blockId?: string; format?: Format; headingLevel?: number | null; macroExpansion?: boolean; codeEditAction?: CodeEditAction }): JSX.Element {
+/** `untitled`: `raw` is no block (a page's opening text): nothing on its first
+ *  line is lifted as a block header (`parseBlock`). */
+export function AstBody(props: { raw: string; blockId?: string; format?: Format; headingLevel?: number | null; macroExpansion?: boolean; codeEditAction?: CodeEditAction; untitled?: boolean }): JSX.Element {
   // P1 block-render virtualization (see docs/adr): defer the synchronous parse +
   // AST→DOM build until the block is near the viewport. Render-once-keep: once a
   // block has rendered (latched by id in `renderedBlocks`) it renders eagerly
@@ -482,7 +484,7 @@ export function AstBody(props: { raw: string; blockId?: string; format?: Format;
   const queryRuns = createMemo(() => {
     if (!observe.near() || !parserReady() || insidePeek || props.macroExpansion || !props.raw.includes("{{")) return undefined;
     const format = props.format ?? "md";
-    const parsed = parseBody(props.raw, format);
+    const parsed = parseBody(props.raw, format, props.untitled);
     if (isQuarantined(parsed)) return undefined;
     const blocks = bodyBlocks(parsed, props.raw);
     if (!blocks.every(isInlineFlow)) return undefined;
@@ -513,7 +515,7 @@ export function AstBody(props: { raw: string; blockId?: string; format?: Format;
       }
     >
       <Show when={parserReady()} fallback={<span class="ast-fallback"><PlaceholderText raw={props.raw} /></span>}>
-        <Show when={queryRuns()} fallback={renderBody(props.raw, props.format ?? "md", props.blockId, props.headingLevel, props.macroExpansion ?? false, insidePeek, props.codeEditAction)}>
+        <Show when={queryRuns()} fallback={renderBody(props.raw, props.format ?? "md", props.blockId, props.headingLevel, props.macroExpansion ?? false, insidePeek, props.codeEditAction, props.untitled)}>
           <Index each={queryRuns()}>{(run, blockIndex) => {
             const content = <Index each={run().entries}>{entry => <Show when={!!entry().extent}
               fallback={renderInlines([entry().inline], props.blockId, true, false, props.format, props.raw)}>

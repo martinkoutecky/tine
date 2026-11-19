@@ -207,13 +207,6 @@ pub fn page_opening_groups_json(text: &str, is_org: bool) -> String {
     serde_json::to_string(&groups).unwrap()
 }
 
-/// The UTF-8 byte where an opening-text piece's body starts after its lifted
-/// task word or priority (I-12: `page_preamble::opening_lead_end`).
-#[wasm_bindgen]
-pub fn opening_lead_end(text: &str, is_org: bool) -> Option<u32> {
-    tine_outline::page_preamble::opening_lead_end(text, is_org).map(|at| at as u32)
-}
-
 /// Whether a block property key is hidden from rendered chips (I-12: the one
 /// answerer the static export also asks). O(key bytes + hidden keys), no I/O.
 #[wasm_bindgen]
@@ -443,8 +436,12 @@ pub fn lsdoc_tag() -> String {
 }
 
 #[wasm_bindgen]
-pub fn parse_block_bundle_json(raw: &str, is_org: bool) -> String {
-    let mut blocks = lsdoc_block_parse::parse_block(raw, is_org);
+pub fn parse_block_bundle_json(raw: &str, is_org: bool, untitled: bool) -> String {
+    let mut blocks = if untitled {
+        lsdoc_block_parse::parse_untitled_block(raw, is_org)
+    } else {
+        lsdoc_block_parse::parse_block(raw, is_org)
+    };
     let regions = block_regions::from_blocks(raw, is_org, &blocks);
     if !is_org {
         block_regions::strip_swallowed_rows(raw, &mut blocks);

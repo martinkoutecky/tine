@@ -604,20 +604,6 @@ function __tine_raw_nested_reference_names(content) {
 }
 
 /**
- * The UTF-8 byte where an opening-text piece's body starts after its lifted
- * task word or priority (I-12: `page_preamble::opening_lead_end`).
- * @param {string} text
- * @param {boolean} is_org
- * @returns {number | undefined}
- */
-function __tine_raw_opening_lead_end(text, is_org) {
-    const ptr0 = passStringToWasm0(text, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
-    const len0 = WASM_VECTOR_LEN;
-    const ret = wasm.opening_lead_end(ptr0, len0, is_org);
-    return ret === Number.MAX_SAFE_INTEGER ? undefined : ret;
-}
-
-/**
  * Ordered-list label without surface punctuation; O(label bytes), no parse/I/O.
  * @param {number} index
  * @param {number} depth
@@ -889,15 +875,16 @@ function __tine_raw_page_regions_json(raw, is_org) {
 /**
  * @param {string} raw
  * @param {boolean} is_org
+ * @param {boolean} untitled
  * @returns {string}
  */
-function __tine_raw_parse_block_bundle_json(raw, is_org) {
+function __tine_raw_parse_block_bundle_json(raw, is_org, untitled) {
     let deferred2_0;
     let deferred2_1;
     try {
         const ptr0 = passStringToWasm0(raw, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
         const len0 = WASM_VECTOR_LEN;
-        const ret = wasm.parse_block_bundle_json(ptr0, len0, is_org);
+        const ret = wasm.parse_block_bundle_json(ptr0, len0, is_org, untitled);
         deferred2_0 = ret[0];
         deferred2_1 = ret[1];
         return getStringFromWasm0(ret[0], ret[1]);
@@ -1810,7 +1797,6 @@ export const logbook_info_json = __tineGuard("logbook_info_json", __tine_raw_log
 export const lsdoc_tag = __tineGuard("lsdoc_tag", __tine_raw_lsdoc_tag);
 export const mime_from_path = __tineGuard("mime_from_path", __tine_raw_mime_from_path);
 export const nested_reference_names = __tineGuard("nested_reference_names", __tine_raw_nested_reference_names);
-export const opening_lead_end = __tineGuard("opening_lead_end", __tine_raw_opening_lead_end);
 export const ordered_list_glyph = __tineGuard("ordered_list_glyph", __tine_raw_ordered_list_glyph);
 export const outline_apply_json = __tineGuard("outline_apply_json", __tine_raw_outline_apply_json);
 export const outline_max_depth = __tineGuard("outline_max_depth", __tine_raw_outline_max_depth);

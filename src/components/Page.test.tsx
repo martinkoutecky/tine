@@ -1,6 +1,6 @@
 import { maybeEditorIn, type EditorDriver } from "../tests/editorDriver";
 import { openCommentThread } from "../tests/commentEntry";
-import { OPENING_CONTROL_CASES, pointerClick } from "../tests/openingClickCases";
+import { OPENING_CONTROL_CASES, OPENING_DRAWER_CASES, pointerClick, shownLines } from "../tests/openingClickCases";
 import { resetNearObserverForTests } from "../lazyObserve";
 import { afterEach, beforeAll, describe, expect, it, vi } from "vitest";
 import { Show, type JSX } from "solid-js";
@@ -2719,6 +2719,35 @@ describe("Markdown preamble content", () => {
         expect(promoted).not.toBe(bodyId);
         expect(doc.byId[promoted].raw).toBe(opening);
         expect(editingId()).toBe(promoted);
+      } finally {
+        dispose();
+      }
+    });
+  }
+
+  // Review e852e1b58 F2: opening text has no block header, so a task word or
+  // priority line, a drawer and the next line show as the two lines written.
+  for (const [opening, format, lines] of OPENING_DRAWER_CASES) {
+    it(`shows the ${format} opening text ${JSON.stringify(opening)} line for line`, async () => {
+      const bodyId = "77777777-7777-4777-8777-777777777778";
+      const dto = {
+        name: "Drawers", kind: "page" as const, title: "Drawers", pre_block: opening, format,
+        blocks: [{ id: bodyId, raw: "Head", collapsed: false, children: [] }],
+      };
+      setDoc({
+        byId: { [bodyId]: node(bodyId, "Head", dto.name) },
+        pages: [{ ...page(dto.name, "page", [bodyId], dto.pre_block), format }],
+        feed: [], loaded: true,
+      });
+      vi.spyOn(backend(), "getPage").mockResolvedValue(unpinned(dto));
+      mainPaneRouter.openPage(dto.name, "page", { inPlace: true });
+      const { root, dispose } = mount(() => <PageView />);
+      try {
+        await tick(); await tick();
+        const row = root.querySelector(".preamble-block .block-content");
+        expect(row).not.toBeNull();
+        expect(shownLines(row!)).toEqual(lines);
+        expect(row!.querySelector(".block-marker, .block-priority, input[type=checkbox]")).toBeNull();
       } finally {
         dispose();
       }

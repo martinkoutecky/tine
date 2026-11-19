@@ -48,8 +48,8 @@ const EMPTY: Facets = {
  *  OG's ECMAScript left trim), so lsdoc breaks the marker/priority/heading onto
  *  `blocks[0]` — we must NOT prepend a second bullet (that double-bullets, nesting
  *  the body as a list item). */
-export function parseBody(raw: string, format: Format): Block[] {
-  return parseBlock(raw, format === "org");
+export function parseBody(raw: string, format: Format, untitled = false): Block[] {
+  return parseBlock(raw, format === "org", untitled);
 }
 
 // Loaded nodes own backend seeds (seededFacets.ts); large pages keep all hits.
@@ -259,6 +259,20 @@ const UTF8_DECODER = new TextDecoder();
 
 type PlanningSourceLine = { text: string; hasTrailingBody: boolean; lineStart: number };
 
+/** One body's source for planning-line checks: its UTF-8 bytes and the byte
+ *  length of its leading whitespace, prepared on the first planning timestamp
+ *  and shared by every inline flow of one render, so a body costs one encode
+ *  however many flows it has (review e852e1b58 F1). */
+export type PlanningSource = { readonly raw: string; prepared?: { bytes: Uint8Array; leadBytes: number } };
+export const planningSource = (raw: string): PlanningSource => ({ raw });
+function preparedOf(source: PlanningSource): { bytes: Uint8Array; leadBytes: number } {
+  const { raw } = source;
+  return (source.prepared ??= {
+    bytes: UTF8_ENCODER.encode(raw),
+    leadBytes: UTF8_ENCODER.encode(raw.slice(0, raw.length - raw.trimStart().length)).length,
+  });
+}
+
 const isPlanningTimestamp = (i: Inline): i is Extract<Inline, { k: "timestamp" }> =>
   i.k === "timestamp" && (i.ts === "Scheduled" || i.ts === "Deadline");
 
@@ -268,16 +282,15 @@ const isPlanningTimestamp = (i: Inline): i is Extract<Inline, { k: "timestamp" }
  *  `SCHEDULED: <a> DEADLINE: <b>` on one line is two planning timestamps (OG shows both as chips and nothing in the
  *  body). `hasTrailingBody` is about the text after the LAST timestamp of such a run: it is ordinary body content.
  *  Deliberate OG divergence: a parser-recognized mid-text `Discuss SCHEDULED: <…>` remains content in Tine. */
-function planningLinesOf(inlines: readonly Inline[], raw: string): Map<number, PlanningSourceLine> {
+function planningLinesOf(inlines: readonly Inline[], source: PlanningSource): Map<number, PlanningSourceLine> {
   const found = new Map<number, PlanningSourceLine & { end: number; lineEnd: number }>();
-  const bytes = UTF8_ENCODER.encode(raw);
-  const leadBytes = UTF8_ENCODER.encode(raw.slice(0, raw.length - raw.trimStart().length)).length;
   let last: { lineStart: number; end: number } | null = null;
   for (let index = 0; index < inlines.length; index++) {
     const i = inlines[index];
     if (!isPlanningTimestamp(i)) continue;
     const span = i.span;
     if (!span || span[0] < 2 || span[1] < span[0]) continue;
+    const { bytes, leadBytes } = preparedOf(source);
     const start = span[0] - 2 + leadBytes;
     const end = span[1] - 2 + leadBytes;
     if (start < 0 || end < start || end > bytes.length) continue;
@@ -297,6 +310,7 @@ function planningLinesOf(inlines: readonly Inline[], raw: string): Map<number, P
   const out = new Map<number, PlanningSourceLine>();
   for (const [index, f] of found) {
     const runEnd = lastOfLine.get(f.lineStart)!;
+    const { bytes } = preparedOf(source);
     out.set(index, { text: f.text, lineStart: f.lineStart, hasTrailingBody: UTF8_DECODER.decode(bytes.slice(runEnd, f.lineEnd)).trim() !== "" });
   }
   return out;
@@ -314,9 +328,9 @@ export type PlanningChip = { ts: "Scheduled" | "Deadline"; value: string | null;
  *  date chip uses (`planningDates`): lsdoc's Timestamp, line-leading as `planningLinesOf` defines. `value` is the
  *  text between the angle brackets. The CM6 editor renders the same chip from this, so view and edit cannot
  *  disagree on what a planning line is. */
-export function planningChipsOf(inlines: readonly Inline[], raw: string): Map<Inline, PlanningChip> {
+export function planningChipsOf(inlines: readonly Inline[], source: PlanningSource): Map<Inline, PlanningChip> {
   const out = new Map<Inline, PlanningChip>();
-  for (const [index, line] of planningLinesOf(inlines, raw)) {
+  for (const [index, line] of planningLinesOf(inlines, source)) {
     const i = inlines[index];
     if (isPlanningTimestamp(i)) out.set(i, { ts: i.ts as "Scheduled" | "Deadline", value: angleText(line.text), hasTrailingBody: line.hasTrailingBody });
   }
@@ -335,9 +349,10 @@ export function stripPlanningLines(blocks: Block[], raw: string): Block[] {
   // block measurably regresses that path. This is only a cheap candidate gate;
   // lsdoc Timestamp + source-span boundaries still decide semantics below.
   if (!raw.includes("SCHEDULED:") && !raw.includes("DEADLINE:")) return blocks;
+  const source = planningSource(raw);
   return blocks.map((b) => {
     if (b.kind !== "paragraph" && b.kind !== "bullet" && b.kind !== "heading") return b;
-    const planning = planningLinesOf(b.inline, raw);
+    const planning = planningLinesOf(b.inline, source);
     if (planning.size === 0) return b;
 
     const remove = new Set(planning.keys());
@@ -368,9 +383,10 @@ export function stripPlanningLines(blocks: Block[], raw: string): Block[] {
 function planningDates(blocks: Block[], raw: string): { scheduled: string | null; deadline: string | null } {
   let scheduled: string | null = null;
   let deadline: string | null = null;
+  const source = planningSource(raw);
   for (const b of blocks) {
     if (b.kind !== "paragraph" && b.kind !== "bullet" && b.kind !== "heading") continue;
-    for (const [index, line] of planningLinesOf(b.inline, raw)) {
+    for (const [index, line] of planningLinesOf(b.inline, source)) {
       const i = b.inline[index];
       if (!isPlanningTimestamp(i)) continue;
       const value = angleText(line.text);

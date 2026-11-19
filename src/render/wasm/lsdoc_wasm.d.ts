@@ -153,12 +153,6 @@ export function mime_from_path(path: string): string;
 export function nested_reference_names(content: string): string[];
 
 /**
- * The UTF-8 byte where an opening-text piece's body starts after its lifted
- * task word or priority (I-12: `page_preamble::opening_lead_end`).
- */
-export function opening_lead_end(text: string, is_org: boolean): number | undefined;
-
-/**
  * Ordered-list label without surface punctuation; O(label bytes), no parse/I/O.
  */
 export function ordered_list_glyph(index: number, depth: number): string;
@@ -233,7 +227,7 @@ export function page_preamble_content_json(raw: string, is_org: boolean): string
  */
 export function page_regions_json(raw: string, is_org: boolean): string;
 
-export function parse_block_bundle_json(raw: string, is_org: boolean): string;
+export function parse_block_bundle_json(raw: string, is_org: boolean, untitled: boolean): string;
 
 /**
  * Parse one de-bulleted block body into lsdoc's render AST, serialized to JSON.
@@ -418,7 +412,6 @@ export interface InitOutput {
     readonly lsdoc_tag: () => [number, number];
     readonly mime_from_path: (a: number, b: number) => [number, number];
     readonly nested_reference_names: (a: number, b: number) => [number, number];
-    readonly opening_lead_end: (a: number, b: number, c: number) => number;
     readonly ordered_list_glyph: (a: number, b: number) => [number, number];
     readonly outline_apply_json: (a: number, b: number) => [number, number, number, number];
     readonly outline_max_depth: () => number;
@@ -431,7 +424,7 @@ export interface InitOutput {
     readonly page_parts_with_property: (a: number, b: number, c: number, d: number, e: number, f: number, g: number) => [number, number, number, number];
     readonly page_preamble_content_json: (a: number, b: number, c: number) => [number, number];
     readonly page_regions_json: (a: number, b: number, c: number) => [number, number];
-    readonly parse_block_bundle_json: (a: number, b: number, c: number) => [number, number];
+    readonly parse_block_bundle_json: (a: number, b: number, c: number, d: number) => [number, number];
     readonly parse_block_json: (a: number, b: number, c: number) => [number, number];
     readonly parse_document_json: (a: number, b: number, c: number) => [number, number];
     readonly parse_inline_json: (a: number, b: number, c: number) => [number, number];

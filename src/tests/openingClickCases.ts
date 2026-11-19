@@ -22,3 +22,33 @@ export function pointerClick(el: Element): void {
     el.dispatchEvent(new MouseEvent(type, { bubbles: true, cancelable: true, button: 0 }));
   }
 }
+
+/** Opening text with a task word or priority on its own line, then a drawer,
+ *  then more text (review e852e1b58 F2): opening text has no block header, so
+ *  each shows as the two lines written, the drawer hidden as in every body.
+ *  Org and Markdown; LOGBOOK and a custom drawer. */
+export const OPENING_DRAWER_CASES: readonly (readonly [text: string, format: "md" | "org", lines: readonly string[]])[] =
+  (["md", "org"] as const).flatMap((format) => [
+    "TODO \n:LOGBOOK:\nCLOCK: [2026-11-19 Thu 10:00]\n:END:\nNext",
+    "[#A] \n:LOGBOOK:\nCLOCK: [2026-11-19 Thu 10:00]\n:END:\nNext",
+    "TODO [#A] \n:LOGBOOK:\nCLOCK: [2026-11-19 Thu 10:00]\n:END:\nNext",
+    "TODO \n:custom:\nv\n:END:\nNext",
+    "[#B]\n:custom:\nv\n:END:\nNext",
+    "DONE [#C]\t\n:custom:\nv\n:END:\nNext",
+  ].map((text) => [text, format, [text.split("\n")[0], "Next"]] as const));
+
+/** The lines the opening text inside `el` shows, piece by piece: a blank
+ *  piece is one empty line, and a `<br>` starts a new line. */
+export function shownLines(el: Element): string[] {
+  return [...el.querySelectorAll(".opening-group, .opening-text, .opening-blank")].flatMap((piece) => {
+    if (piece.classList.contains("opening-blank")) return [""];
+    const out = [""];
+    const walk = (node: Node) => {
+      if (node.nodeName === "BR") out.push("");
+      else if (node.nodeType === Node.TEXT_NODE) out[out.length - 1] += node.textContent ?? "";
+      else node.childNodes.forEach(walk);
+    };
+    walk(piece);
+    return out.flatMap((line) => line.split("\n"));
+  });
+}

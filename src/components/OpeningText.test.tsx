@@ -5,6 +5,7 @@ import { AstBody } from "../render/body";
 import { initParser } from "../render/parse";
 import { openingSegments } from "../editor/properties";
 import { OpeningText } from "./OpeningText";
+import { OPENING_DRAWER_CASES, shownLines } from "../tests/openingClickCases";
 
 beforeAll(async () => { await initParser(); });
 afterEach(() => { document.body.replaceChildren(); });
@@ -24,10 +25,23 @@ function pieces(text: string, format: "md" | "org" = "md"): { group: boolean; sh
     : { group: false, shown: el.innerHTML });
 }
 
-/** The HTML of `text` rendered as an ordinary block body. */
+/** The HTML of `text` rendered as an ordinary block body, without source
+ *  coordinates: opening text is read with an empty title, so a line end's
+ *  span differs from a block title's while what is drawn is the same. */
 function asBlockBody(text: string, format: "md" | "org" = "md"): string {
-  return mount(() => <AstBody raw={text} format={format} />).innerHTML;
+  return drawn(mount(() => <AstBody raw={text} format={format} />).innerHTML);
 }
+const drawn = (html: string) => html.replace(/ data-s(?:o|e|ce)="\d+"/g, "");
+
+/** The lines opening text shows: its source lines, except that a Markdown
+ *  hard break's trailing spaces and tabs are syntax, not drawn (as on every
+ *  body line after a block's title). */
+function sourceLines(text: string, format: "md" | "org"): string[] {
+  const lines = text.split("\n");
+  return format === "md" ? lines.map((l, i) => (i < lines.length - 1 && HARD_BREAK.has(l) ? l.trimEnd() : l)) : lines;
+}
+const HARD_BREAK = new Set(["TODO \t", "TODO  "]);
+
 
 // D-20261119-PG, redesign B: the parser names opening text's top-level
 // property groups; each shows as its exact source, one line per source line
@@ -65,7 +79,7 @@ it.each([
   const shown = pieces(text, format);
   expect(shown.every((p) => !p.group)).toBe(true);
   expect(shown).toHaveLength(1);
-  expect(shown[0].shown).toBe(asBlockBody(text, format));
+  expect(drawn(shown[0].shown)).toBe(asBlockBody(text, format));
 });
 
 it("keeps groups and block pieces in source order, each piece a block body", () => {
@@ -74,7 +88,7 @@ it("keeps groups and block pieces in source order, each piece a block body", () 
   expect(shown.map((p) => p.group)).toEqual([false, true, false, true, false]);
   expect(shown.filter((p) => p.group).map((p) => p.shown)).toEqual(["a:: 1", "b:: 2\nc:: 3"]);
   const blocks = ["one {{query x}}", "> two", "three"];
-  expect(shown.filter((p) => !p.group).map((p) => p.shown)).toEqual(blocks.map((b) => {
+  expect(shown.filter((p) => !p.group).map((p) => drawn(p.shown))).toEqual(blocks.map((b) => {
     document.body.replaceChildren();
     return asBlockBody(b);
   }));
@@ -115,20 +129,12 @@ it.each([
     "TODO \nNext", "TODO \t\nNext", "TODO  \nNext", "[#A] \nNext", "[#A]\t\nNext",
     "TODO [#A] \nNext", "TODO [#A]\t \nNext", "TODO \n\nNext", "TODO [#B]\t\n\n\nNext",
     "DONE x\nNext", "TODO \n  indented",
-  ].map((text) => [text, format, text.split("\n")] as const)),
-] as const)("prints the lifted task word or priority of %j (%s) as text", (text, format, lines) => {
+  ].map((text) => [text, format, sourceLines(text, format)] as const)),
+  // Review e852e1b58 F2: a drawer after the task word or priority.
+  ...OPENING_DRAWER_CASES,
+] as const)("shows the task word or priority of %j (%s) as text", (text, format, lines) => {
   const host = mount(() => <OpeningText raw={text} format={format} />);
-  const shown = [...host.children].flatMap((piece) => {
-    if (piece.classList.contains("opening-blank")) return [""];
-    const out = [""];
-    const walk = (node: Node) => {
-      if (node.nodeName === "BR") out.push("");
-      else if (node.nodeType === Node.TEXT_NODE) out[out.length - 1] += node.textContent ?? "";
-      else node.childNodes.forEach(walk);
-    };
-    walk(piece);
-    return out.flatMap((line) => line.split("\n"));
-  });
+  const shown = shownLines(host);
   expect(shown).toEqual(lines);
   expect(host.querySelector(".block-marker, .block-priority, input[type=checkbox]")).toBeNull();
 });
@@ -148,6 +154,29 @@ it("encodes opening text a linear number of times in its pieces", () => {
     return chars / text.length;
   };
   const small = encoded(32), large = encoded(256);
+  expect(large).toBeLessThan(small * 1.25 + 1);
+});
+
+// Review e852e1b58 F1 (PC-3): a body's planning lines are found from one
+// UTF-8 copy of it, shared by all its inline flows, so an opening of many
+// quotes and prose lines with SCHEDULED:/DEADLINE: costs its length, not
+// flows times length.
+it.each([
+  ["md", (i: number) => `> quote ${i}\n\nprose ${i}\nSCHEDULED: <2026-11-19 Thu>\nDEADLINE: <2026-11-20 Fri>`],
+  ["org", (i: number) => `#+BEGIN_QUOTE\nquote ${i}\n#+END_QUOTE\nprose ${i}\nSCHEDULED: <2026-11-19 Thu>\nDEADLINE: <2026-11-20 Fri>`],
+] as const)("encodes a %s opening of quotes and planning lines a linear number of times", (format, unit) => {
+  const encoded = (units: number) => {
+    const text = Array.from({ length: units }, (_, i) => unit(i)).join("\n");
+    const proto = TextEncoder.prototype;
+    const encode = proto.encode, encodeInto = proto.encodeInto;
+    let chars = 0;
+    proto.encode = function (input?: string) { chars += input?.length ?? 0; return encode.call(this, input); };
+    proto.encodeInto = function (input: string, dest: Uint8Array) { chars += input.length; return encodeInto.call(this, input, dest); };
+    try { mount(() => <OpeningText raw={text} format={format} />); } finally { proto.encode = encode; proto.encodeInto = encodeInto; }
+    document.body.replaceChildren();
+    return chars / text.length;
+  };
+  const small = encoded(32), large = encoded(64);
   expect(large).toBeLessThan(small * 1.25 + 1);
 });
 

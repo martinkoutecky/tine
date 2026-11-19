@@ -1,21 +1,9 @@
 import { For, Match, Switch, createMemo, type JSX } from "solid-js";
 import type { Format } from "../render/ast";
 import { AstBody } from "../render/body";
-import { openingLeadEnd, openingSegments } from "../editor/properties";
-import { blockRegions, parserReady } from "../render/parse";
+import { openingSegments } from "../editor/properties";
 
 type Piece = { kind: "group" | "text" | "blank"; text: string };
-
-/** The source a block parse lifts off `text`'s start (task word and/or
- *  priority: a block's chrome, never drawn by a body) up to where the body's
- *  first node starts, by the parser's answer: shown as written (D-20261119-PG),
- *  as text with no task behaviour. */
-function liftedLead(text: string, format: Format): string | null {
-  if (!parserReady()) return null;
-  const { marker, priority } = blockRegions(text, format).header;
-  const end = marker || priority ? openingLeadEnd(text, format) : null;
-  return end == null ? null : text.slice(0, end);
-}
 
 /** The pieces of opening text in source order: each group's lines, each
  *  block piece without its edge line ends, and one blank piece per blank
@@ -52,18 +40,17 @@ function contentLines(text: string): { start: number; end: number } {
   return { start, end };
 }
 
+/** One text piece, read as untitled body text (`parseBlock`): a task word
+ *  or priority on its first line is text like any other, so nothing is lifted. */
 function textPiece(text: string, format: Format): JSX.Element {
-  const lead = liftedLead(text, format);
-  const body = <AstBody raw={text} format={format} />;
-  if (!lead) return body;
-  return [<span class="source-text" style={{ "white-space": "pre-wrap" }}>{lead}</span>, body];
+  return <AstBody raw={text} format={format} untitled />;
 }
 
 /** A page's opening text (D-20261119-PG): each property group after the
  *  header shows exactly as written, one line per source line, and the text
- *  between renders as any block body does (queries, macros and all), its
- *  lifted task word or priority printed as text. One parser answer per
- *  text, then one block parse per piece. */
+ *  between renders as body text does (queries, macros and all), with no
+ *  block header: a task word or priority is ordinary text. One parser answer
+ *  per text, then one parse per piece. */
 export function OpeningText(props: { raw: string; format: Format }): JSX.Element {
   const pieces = createMemo(() => piecesOf(props.raw, props.format));
   return (
