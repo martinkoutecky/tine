@@ -28,14 +28,9 @@ export function RelativeFileLink(props: {
   return (
     <a
       class="external-link file-link"
-      {...outboundAnchorAttrs(props.dest, activate)}
       title={resolved()}
       {...(props.spanAttrs ?? {})}
-      onClick={(event) => {
-        event.preventDefault();
-        event.stopPropagation();
-        activate();
-      }}
+      {...outboundAnchorAttrs(props.dest, activate)}
     >
       {props.children}
     </a>

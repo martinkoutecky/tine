@@ -512,14 +512,9 @@ function renderLink(
     <span class="link-copy-wrap">
       <a
         class="external-link"
-        {...outboundAnchorAttrs(dest, activate)}
         title={fileUrlTitle(dest)}
         {...(spanAttrs ?? {})}
-        onClick={(e) => {
-          e.preventDefault();
-          e.stopPropagation();
-          activate();
-        }}
+        {...outboundAnchorAttrs(dest, activate, true)}
       >
         <Show when={s.label && s.label.length} fallback={dest}>{renderInlines(s.label!, blockId, spanMode, macroExpansion, format)}</Show>
       </a>

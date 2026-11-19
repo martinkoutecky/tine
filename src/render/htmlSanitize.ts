@@ -117,7 +117,7 @@ export interface HtmlPresentation { html: string; localImages: (string | null)[]
  * O(fragment bytes/nodes); no IPC, fetching, shared hooks or retained DOM cache.
  * Browser and native export security policies stay distinct in the shared JSON.
  */
-export function rawHtmlPresentation(text: string, allowIframe = false, published = false): HtmlPresentation {
+export function rawHtmlPresentation(text: string, allowIframe = false): HtmlPresentation {
   const root = document.implementation.createHTMLDocument("").createElement("div");
   root.innerHTML = text;
   const frame = allowIframe ? root.querySelector("iframe") : null;
@@ -157,6 +157,6 @@ export function rawHtmlPresentation(text: string, allowIframe = false, published
     }
   }
   // DOMPurify admits more URI schemes than the outbound-link policy (GH #984).
-  for (const anchor of root.querySelectorAll("a[href]")) deferAnchorHref(anchor, published);
+  for (const anchor of root.querySelectorAll("a[href]")) deferAnchorHref(anchor);
   return { html: root.innerHTML, localImages: [...root.querySelectorAll("img")].map((image) => paths.get(image) ?? null), iframe: null };
 }

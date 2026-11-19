@@ -4,7 +4,7 @@ import { rawHtmlPresentation } from "./htmlSanitize";
 import { allowLocalFileImages } from "../localFileSettings";
 import { acquireLocalImageBlob } from "../assetCache";
 import type { SpanDomAttrs } from "./spans";
-import { isPublishedExport, isQuickShareViewer } from "../publishedBackend";
+import { isQuickShareViewer } from "../publishedBackend";
 import { ShareMedia, shareHtml } from "../quickShare/ShareMedia";
 import { activateDeferredAnchor } from "../components/ExternalLink";
 
@@ -50,7 +50,7 @@ export function renderSanitizedHtml(text: string, spanAttrs?: SpanDomAttrs): JSX
 // `src` was a local path (the sanitizer strips those, so we re-attach them by
 // document-order match to the scanned paths). Off by default; see ADR 0019.
 function RawHtmlContent(props: { text: string; spanAttrs?: SpanDomAttrs; allowIframe?: boolean }): JSX.Element {
-  const presentation = createMemo(() => rawHtmlPresentation(props.text, props.allowIframe, isPublishedExport()));
+  const presentation = createMemo(() => rawHtmlPresentation(props.text, props.allowIframe));
   if (isQuickShareViewer()) return <Show when={presentation().iframe} fallback={<span class="raw-html" innerHTML={shareHtml(presentation().html, presentation().localImages)} onClick={activateDeferredAnchor} onKeyDown={activateDeferredAnchor} {...(props.spanAttrs ?? {})} />}>
     {(frame) => <ShareMedia url={frame().src} />}
   </Show>;

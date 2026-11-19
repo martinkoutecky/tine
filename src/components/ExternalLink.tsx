@@ -3,7 +3,7 @@ import { backend } from "../backend";
 import { pushToast } from "../toasts";
 import { msg } from "../i18n";
 import { graphOwner, ownedWhen, readOwned } from "../owned";
-import { DEFERRED_HREF, linkScheme, navigableHref, refusedLinkScheme, rememberableLinkScheme } from "../linkSchemePolicy";
+import { DEFERRED_HREF, anchorDecision, linkScheme, refusedLinkScheme, rememberableLinkScheme } from "../linkSchemePolicy";
 import { isPublishedExport } from "../publishedBackend";
 import { loadLinkSchemeSettings, rememberedLinkSchemes, setLinkSchemeRemembered } from "../linkSchemeSettings";
 import { askLinkScheme } from "../linkSchemePrompt";
@@ -76,20 +76,24 @@ export function reportLinkOpenFailure(dest: string, error: unknown): void {
   pushToast(msg("external-link-couldn-t-open", { dest: String(dest), error: String(error) }), "error");
 }
 
-/** Anchor attributes for a graph-authored destination (GH #984; the policy is
- * `navigableHref`): a navigable destination keeps its href; any other stays a
- * focusable link whose Enter runs the same checked activation as its click. */
-export function outboundAnchorAttrs(dest: string, activate: () => void): JSX.AnchorHTMLAttributes<HTMLAnchorElement> {
-  if (navigableHref(dest, isPublishedExport())) return { href: dest };
+/** The anchor attributes and activation of a graph-authored link (GH #984; the
+ * policy is `anchorDecision`). Relative and web/mail destinations keep their
+ * href; any other stays a focusable link whose Enter runs the same activation as
+ * its click. Click and Enter run `activate` (the checked opener), except that a
+ * published reader follows a relative link itself when `readerNavigates` (a
+ * fragment or another page of the site). */
+export function outboundAnchorAttrs(dest: string, activate: () => void, readerNavigates = false): JSX.AnchorHTMLAttributes<HTMLAnchorElement> {
+  const decision = anchorDecision(dest);
+  const run = (event: Event) => {
+    if (readerNavigates && decision === "relative" && isPublishedExport()) return;
+    event.preventDefault();
+    event.stopPropagation();
+    activate();
+  };
+  if (decision === "relative" || decision === "direct") return { href: dest, onClick: run };
   return {
-    role: "link",
-    tabindex: 0,
-    onKeyDown: (event) => {
-      if (event.key !== "Enter") return;
-      event.preventDefault();
-      event.stopPropagation();
-      activate();
-    },
+    ...(decision === "defer" ? { [DEFERRED_HREF]: dest } : {}),
+    role: "link", tabindex: 0, onClick: run, onKeyDown: (event) => { if (event.key === "Enter") run(event); },
   };
 }
 
