@@ -1662,7 +1662,7 @@ describe("page actions entry point", () => {
   });
 
   it.each(["Exports", "Renamed exports"])("opens sharing and Re-share all on the marked page %s, and hides the exports marker", async name => {
-    vi.spyOn(backend(), "quickShareList").mockResolvedValue({ enabled: true, error: null, account: null, shares: [] });
+    vi.spyOn(backend(), "quickShareList").mockResolvedValue({ error: null, account: null, shares: [] });
     const dto: PageDto = {
       name,
       kind: "page",

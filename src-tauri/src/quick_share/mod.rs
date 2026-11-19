@@ -44,60 +44,6 @@ const MAX_PREPARED: usize = 64;
 /// Listing pages read by Check and Find (100 gists each, DESIGN §3.6).
 const MAX_LIST_PAGES: usize = 30;
 
-/// A build can offer links only after check-release-readiness rendered this
-/// exact fixture corpus using the deployed generation's verified files.
-pub(crate) fn enabled() -> bool {
-    viewer_attested(option_env!("TINE_QUICK_SHARE_VIEWER_G1_READY"))
-}
-
-fn viewer_attested(proof: Option<&str>) -> bool {
-    use sha2::{Digest, Sha256};
-    let Some(proof) = proof else {
-        return false;
-    };
-    let fixtures: &[(&str, &[u8])] = &[
-        (
-            "one-page/document.json",
-            include_bytes!("../../../tests/fixtures/quick-share/g1/one-page/document.json"),
-        ),
-        (
-            "one-page/link.txt",
-            include_bytes!("../../../tests/fixtures/quick-share/g1/one-page/link.txt"),
-        ),
-        (
-            "one-page/tine-share.bin",
-            include_bytes!("../../../tests/fixtures/quick-share/g1/one-page/tine-share.bin"),
-        ),
-        (
-            "one-page/writer.json",
-            include_bytes!("../../../tests/fixtures/quick-share/g1/one-page/writer.json"),
-        ),
-        (
-            "pages/document.json",
-            include_bytes!("../../../tests/fixtures/quick-share/g1/pages/document.json"),
-        ),
-        (
-            "pages/link.txt",
-            include_bytes!("../../../tests/fixtures/quick-share/g1/pages/link.txt"),
-        ),
-        (
-            "pages/tine-share.bin",
-            include_bytes!("../../../tests/fixtures/quick-share/g1/pages/tine-share.bin"),
-        ),
-        (
-            "pages/writer.json",
-            include_bytes!("../../../tests/fixtures/quick-share/g1/pages/writer.json"),
-        ),
-    ];
-    let mut hash = Sha256::new();
-    for (name, bytes) in fixtures {
-        hash.update(name.as_bytes());
-        hash.update([0]);
-        hash.update(bytes);
-    }
-    proof == format!("{:x}", hash.finalize())
-}
-
 /// A secret string (the OAuth token, a device code): `Debug` and `Display`
 /// print `<redacted>`, it has no `Serialize`, and only [`Token::expose`]
 /// reads it.
@@ -138,8 +84,6 @@ fn log(line: impl AsRef<str>) {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 #[serde(tag = "kind", rename_all = "camelCase")]
 pub(crate) enum QsError {
-    /// Quick share is off in this build (phase 3 not deployed).
-    Disabled,
     NotConnected,
     /// 401: "Reconnect GitHub".
     Reconnect,
@@ -300,7 +244,6 @@ pub(crate) struct ConnectedAccount {
 #[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub(crate) struct Listing {
-    pub enabled: bool,
     /// Development builds only: an unauthenticated, read-only HTTPS diagnostic.
     pub connection_test_available: bool,
     pub account: Option<ConnectedAccount>,
@@ -849,7 +792,6 @@ impl Service {
             })
             .collect();
         Listing {
-            enabled: enabled(),
             connection_test_available: cfg!(debug_assertions),
             account: account.map(|a| ConnectedAccount {
                 login: a.login,
@@ -1081,14 +1023,6 @@ fn service(app: &tauri::AppHandle) -> Result<Arc<Service>, QsError> {
     Ok(Arc::clone(SERVICE.get_or_init(|| service)))
 }
 
-fn gate() -> Result<(), QsError> {
-    if enabled() {
-        Ok(())
-    } else {
-        Err(QsError::Disabled)
-    }
-}
-
 fn clipboard(app: &tauri::AppHandle) -> impl FnOnce(&str) -> bool + '_ {
     move |link| {
         use tauri_plugin_clipboard_manager::ClipboardExt;
@@ -1103,7 +1037,6 @@ pub(crate) async fn quick_share_prepare(
     state: crate::state::GraphContext<'_>,
 ) -> Result<PrepareResult, QsError> {
     use tauri::Manager;
-    gate()?;
     let app = state.window.app_handle().clone();
     let slot =
         crate::state::slot_for_context(&state).map_err(|message| QsError::Refused { message })?;
@@ -1132,10 +1065,6 @@ pub(crate) async fn quick_share_create(
     app: tauri::AppHandle,
 ) -> Result<Created, QsError> {
     let service = service(&app)?;
-    if !enabled() {
-        service.discard_prepared(&prepare_id);
-        return Err(QsError::Disabled);
-    }
     service.create_share(&prepare_id, clipboard(&app)).await
 }
 
@@ -1178,13 +1107,11 @@ pub(crate) async fn quick_share_check(
     share_id: String,
     app: tauri::AppHandle,
 ) -> Result<CheckOutcome, QsError> {
-    gate()?;
     service(&app)?.check_share(&share_id).await
 }
 
 #[tauri::command]
 pub(crate) async fn quick_share_find(app: tauri::AppHandle) -> Result<Vec<FoundShare>, QsError> {
-    gate()?;
     service(&app)?.find_shares().await
 }
 
@@ -1194,7 +1121,6 @@ pub(crate) async fn quick_share_delete(
     gist_id: Option<String>,
     app: tauri::AppHandle,
 ) -> Result<DeleteOutcome, QsError> {
-    gate()?;
     service(&app)?
         .delete(share_id.as_deref(), gist_id.as_deref())
         .await
@@ -1223,7 +1149,6 @@ pub(crate) fn quick_share_copy_link(
 pub(crate) async fn quick_share_connect_start(
     app: tauri::AppHandle,
 ) -> Result<ConnectStart, QsError> {
-    gate()?;
     service(&app)?.connect_start().await
 }
 

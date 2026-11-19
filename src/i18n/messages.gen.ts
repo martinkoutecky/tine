@@ -2831,7 +2831,6 @@ export interface MessageArgs {
   "share-dialog-link-note": {};
   "share-dialog-link-saved-as-definition": {};
   "share-dialog-link-saved-on-block": {};
-  "share-dialog-link-soon": {};
   "share-dialog-neighbours": {};
   "share-dialog-neighbours-soon": {};
   "share-dialog-no-page": {};

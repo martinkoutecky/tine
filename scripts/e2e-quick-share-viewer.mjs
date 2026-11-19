@@ -85,7 +85,7 @@ try {
   await browser.execute(() => document.querySelector(".query-block .qc-share").click());
   await browser.$(".share-dialog").waitForExist({ timeout: 15_000 });
   await browser.waitUntil(() => browser.execute(() => document.querySelector('.share-dialog .query-export-pages')?.textContent?.includes("Notes ü")), { timeout: 20_000 });
-  await browser.execute(() => { const radio = document.querySelector('.share-dialog input[name="share-where"][value="link"]'); if (radio.disabled) throw new Error("test binary lacks the local viewer compatibility attestation"); radio.click(); });
+  await browser.execute(() => { const radio = document.querySelector('.share-dialog input[name="share-where"][value="link"]'); if (radio.disabled) throw new Error("the share dialog offers no Link choice"); radio.click(); });
   await browser.execute(() => document.querySelector(".share-dialog .share-export").click());
   await browser.$(".quick-share-dialog").waitForExist({ timeout: 15_000 });
   mark("connects through mocked GitHub device flow");

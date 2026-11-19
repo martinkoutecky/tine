@@ -14,7 +14,7 @@ function prepared(id: string): QuickSharePrepared {
     membership: { added: [`${id} new page`], removed: ["old page"] } };
 }
 function mount() {
-  vi.spyOn(backend(), "quickShareList").mockResolvedValue({ enabled: true, error: null, account: { login: "octo", accountId: 7 },
+  vi.spyOn(backend(), "quickShareList").mockResolvedValue({ error: null, account: { login: "octo", accountId: 7 },
     shares: ["first", "second", "bad"].map(id => ({ shareId: id, state: "live", login: "octo", gistId: id,
       title: id, pages: 1, createdAt: "today", accountMatches: true })) });
   vi.spyOn(backend(), "parseQuery").mockResolvedValue({ query: {} } as never);
@@ -66,7 +66,7 @@ it("closing the preview discards every unconsumed payload", async () => {
 });
 it.each([[true, "page"], [false, "page"], [true, "block"], [false, "block"]] as const)("previews folders alongside shares without writing (sharing enabled: %s, anchor: %s)", async (enabled, anchor) => {
   const { root, upload } = mount();
-  if (!enabled) vi.mocked(backend().quickShareList).mockResolvedValue({ enabled: false, account: null, error: null, shares: [] });
+  if (!enabled) vi.mocked(backend().quickShareList).mockRejectedValue({ kind: "disabled" });
   const run = vi.mocked(backend().queryRun);
   run.mockResolvedValue({ anchor: "block", exceeded: false, groups: [{ page: "Project", kind: "page", blocks: [
     { id: "folder", raw: "{{tine-query @page}}", properties: [["tine.export", "saved-leaf"]], children: [] },

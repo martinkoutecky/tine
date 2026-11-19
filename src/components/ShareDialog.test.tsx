@@ -81,7 +81,7 @@ it("Re-share opens while the device listing is still loading, then keeps Link se
   vi.spyOn(backend(), "quickShareList").mockReturnValue(new Promise(resolve => { finish = resolve; }));
   const root = await open({query: blockTarget("{{tine-query @page}}").query, macro: "{{tine-query @page}}"});
   expect(root.querySelector<HTMLInputElement>('input[value="link"]')!.checked).toBe(true);
-  finish({enabled: true, error: null, account: {login: "octo", accountId: 42}, shares: [{shareId: "local", gistId: gist,
+  finish({ error: null, account: {login: "octo", accountId: 42}, shares: [{shareId: "local", gistId: gist,
     login: "octo", accountMatches: true, state: "live", title: "Project", createdAt: "2026-10-26T00:00:00Z", pages: 1}]});
   await settle();
   expect(exportButton(root).textContent).toBe("Re-share");
@@ -100,8 +100,9 @@ it("offers three choices: this page, its neighbours (disabled, coming), and a qu
   expect(root.querySelector('[data-testid="preview"]')).not.toBeNull();
   // The query is seeded with the selector for this page, as the engine prints it.
   expect(root.querySelector('[data-testid="builder"]')!.getAttribute("data-anchor")).toBe("page");
+  // The browser preview refuses the quick share listing: the link choice stays off, with no "coming soon" promise.
   expect(radios(root, "share-where").map((r) => [r.value, r.disabled])).toEqual([["folder", false], ["link", true]]);
-  expect(root.textContent).toContain("Coming soon");
+  expect(root.textContent).not.toContain("Coming soon");
 });
 
 it("reviews the exact selector for this page: pages, what is left out, the host-page note, and the off-by-default query-text box", async () => {
@@ -205,7 +206,7 @@ it("closes on Escape through the transient layer and traps Tab inside the dialog
 // quick share dialog. Nothing is written to the graph before the link exists: the quick share dialog records the
 // created share (`tine.share::`, D-20261018-Q1) where the share dialog tells it to.
 it("offers Link only where quick share is on, and hands the reviewed request to the quick share dialog", async () => {
-  vi.spyOn(backend(), "quickShareList").mockResolvedValue({ enabled: true, account: null, shares: [], error: null });
+  vi.spyOn(backend(), "quickShareList").mockResolvedValue({ account: null, shares: [], error: null });
   const root = await open({ page: "Project" });
   const link = radios(root, "share-where").find((radio) => radio.value === "link")!;
   expect(link.disabled).toBe(false);
@@ -224,7 +225,7 @@ it("offers Link only where quick share is on, and hands the reviewed request to 
 });
 
 it("from an unchanged query block, the created link is recorded on that block; an edited query is a new definition", async () => {
-  vi.spyOn(backend(), "quickShareList").mockResolvedValue({ enabled: true, account: null, shares: [], error: null });
+  vi.spyOn(backend(), "quickShareList").mockResolvedValue({ account: null, shares: [], error: null });
   let root = await open(blockTarget("{{tine-query @block and #todo}}"));
   radios(root, "share-where").find((radio) => radio.value === "link")!.click(); await settle();
   expect(root.textContent).toContain("Tine records it on this query block (tine.share:: property)");

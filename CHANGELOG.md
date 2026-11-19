@@ -10,6 +10,12 @@ The format follows [Keep a Changelog](https://keepachangelog.com/); versions use
 
 ### Fixed
 
+- Quick share links are offered in every build of Tine, including the Flatpak
+  and builds from source. They used to show "Coming soon" in any build made
+  outside Tine's release workflow. A release is now refused instead while
+  tine.page cannot open its links (reported by Dieterbe in discussion #968;
+  REG-QS-ATTEST-STORES-09).
+- On Windows, a graph on a file system without file IDs (a WSL share such as `\\wsl.localhost`, a FAT32 or exFAT drive, a Samba share) can be saved again; since 0.9.0 every save failed with "The request is not supported (os error 50)" (reported by redstreet in #973; REG-973-WINDOWS-NO-FILE-ID).
 - Moving or reindenting a block carries its children's indentation with it, including multiline bodies and drawers ([discussion #960](https://github.com/martinkoutecky/tine/discussions/960)).
 
 ## [0.9.0] - 2026-11-16
