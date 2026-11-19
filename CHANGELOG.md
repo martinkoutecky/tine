@@ -17,6 +17,13 @@ The format follows [Keep a Changelog](https://keepachangelog.com/); versions use
   tine.page cannot open its links (reported by Dieterbe in discussion #968;
   REG-QS-ATTEST-STORES-09).
 - On Windows, a graph on a file system without file IDs (a WSL share such as `\\wsl.localhost`, a FAT32 or exFAT drive, a Samba share) can be saved again; since 0.9.0 every save failed with "The request is not supported (os error 50)" (reported by redstreet in #973; REG-973-WINDOWS-NO-FILE-ID).
+- Distribution packagers can build the PDF decoder with their own Emscripten installation using `TINE_PDFJS_EMCC` (#187, #976).
+
+### Security
+
+- DOMPurify is updated to 3.4.18 and seroval to 1.6.12, which close published
+  advisories. Tine used none of the affected DOMPurify modes, so no known
+  exploit applied (reported by Dieterbe in #982).
 
 ## [0.9.0] - 2026-11-16
 
