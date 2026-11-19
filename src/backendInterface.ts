@@ -41,6 +41,7 @@ import type {
   QueryPublicationRequest,
   QueryPublicationPlan,
   PublicationReceipt,
+  JournalTitleSaved,
 } from "./types";
 import type { GraphFolderPickResult, PreparedGraphFolder, ClipboardFileList, MediaCaptureResult, KnownGraph, InstalledPluginRecord, PluginRegistryCacheLoad, LoadGraphResult, GraphAccessInspection, TrayStatus, GitAutocommitStatus, GitPolicy, GitSyncStatus } from "./backendTypes";
 import type { EditKinds } from "./editKind";
@@ -337,7 +338,8 @@ export interface Backend {
   /** Persist the journal display-title format to config.edn
    *  `:journal/page-title-format` (e.g. "MMM do, yyyy"). Display-only — does not
    *  rename journal files (`:journal/file-name-format` is separate). */
-  setJournalTitleFormat(format: string, kinds: EditKinds): Promise<string[]>;
+  /** Save `:journal/page-title-format`; resolves to the reloaded config's journal diagnostics and title decision. */
+  setJournalTitleFormat(format: string, kinds: EditKinds): Promise<JournalTitleSaved>;
   /** Set (or clear, with null) the new-journal default template in config.edn
    *  `:default-templates {:journals "Name"}`. */
   setDefaultJournalTemplate(name: string | null): Promise<void>;

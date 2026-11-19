@@ -16,7 +16,7 @@ function meta(root: string): GraphMeta {
     block_hidden_properties: [], linked_references_collapsed_threshold: 100, ref_default_open_blocks_level: 2,
     default_journal_template: null,
     favorites: [],
-    journal_page_title_format: "MMM do, yyyy",
+    journal_page_title_format: "MMM do, yyyy", journal_title: { effective: "MMM do, yyyy", refusal: null },
     journal_file_name_format: "yyyy_MM_dd",
     preferred_format: "md",
     macros: {},

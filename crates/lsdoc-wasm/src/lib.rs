@@ -847,7 +847,10 @@ pub fn query_macro_is_tql(name: &str) -> bool {
     macro_extent::FormFamily::for_macro_name(name) == macro_extent::FormFamily::Tql
 }
 
+// The window reads text routes and formats dates only: the title check and the
+// file-stem routes are native (D-20261119-YL), so they are unused here.
 #[path = "../../tine-core/src/date.rs"]
+#[allow(dead_code)]
 mod date;
 
 thread_local! {
@@ -876,20 +879,22 @@ pub fn parse_journal_format_json(text: &str, pattern: &str) -> String {
 }
 
 thread_local! {
-    static JOURNAL_FORMAT: std::cell::RefCell<Option<(String, String, date::JournalFormat)>> = const { std::cell::RefCell::new(None) };
+    static TEXT_ROUTES: std::cell::RefCell<Option<(String, String, date::TextRoutes)>> = const { std::cell::RefCell::new(None) };
 }
 
-/// The graph's journal date answerer for (file, title) format strings ("" =
-/// default), cached for the last pair: the frontend asks with one graph's
-/// formats at a time.
-fn with_journal_format<T>(file: &str, title: &str, f: impl FnOnce(&date::JournalFormat) -> T) -> T {
-    JOURNAL_FORMAT.with(|cell| {
+/// The graph's text routes (`tine_core::date::TextRoutes`) for its file-name
+/// format and its *effective* title format ("" = default), as the native core
+/// published them in `GraphMeta.journal_title.effective`: no title pattern is
+/// checked here (D-20261119-YL). Cached for the last pair: the frontend asks
+/// with one graph's formats at a time.
+fn with_text_routes<T>(file: &str, effective_title: &str, f: impl FnOnce(&date::TextRoutes) -> T) -> T {
+    TEXT_ROUTES.with(|cell| {
         let mut cell = cell.borrow_mut();
-        if !matches!(&*cell, Some((cf, ct, _)) if cf == file && ct == title) {
+        if !matches!(&*cell, Some((cf, ct, _)) if cf == file && ct == effective_title) {
             *cell = Some((
                 file.to_owned(),
-                title.to_owned(),
-                date::JournalFormat::new(Some(file), Some(title)),
+                effective_title.to_owned(),
+                date::TextRoutes::new(Some(file), Some(effective_title)),
             ));
         }
         f(&cell.as_ref().unwrap().2)
@@ -897,44 +902,20 @@ fn with_journal_format<T>(file: &str, title: &str, f: impl FnOnce(&date::Journal
 }
 
 /// Is `name` a journal date, and which day: `tine_core::date::JournalFormat::parse_text`
-/// (the text routes, D-20261102-JDL, D-20261119-YL). `{"y","m","d"}` or null. O(name) warm.
+/// (the text routes, D-20261102-JDL, D-20261119-YL), for the file-name format
+/// and the effective title format. `{"y","m","d"}` or null. O(name) warm.
 #[wasm_bindgen]
-pub fn journal_day_json(name: &str, file_format: &str, title_format: &str) -> String {
-    with_journal_format(file_format, title_format, |format| {
-        serde_json::to_string(&format.parse_text(name).map(|d| serde_json::json!({"y":d.year,"m":d.month,"d":d.day}))).unwrap()
+pub fn journal_day_json(name: &str, file_format: &str, effective_title_format: &str) -> String {
+    with_text_routes(file_format, effective_title_format, |routes| {
+        serde_json::to_string(&routes.parse(name).map(|d| serde_json::json!({"y":d.year,"m":d.month,"d":d.day}))).unwrap()
     })
 }
 
-/// Which title format renders journal titles for (file, title) format
-/// strings, and why the configured one is not used if it is not: the one
-/// answer, `JournalFormat::title_format` / `title_refusal` (D-20261119-YL).
-/// `{"effective", "refusal"}`, `refusal` null or `{"missing": "year"|"month"|
-/// "day"}` or `{"day", "written", "read_as"}` (days as `{"y","m","d"}`,
-/// `read_as` null when the title opens no day). O(1) warm.
+/// The kind of a link target nothing claims: `JournalFormat::absent_link_is_journal`,
+/// for the file-name format and the effective title format.
 #[wasm_bindgen]
-pub fn journal_title_status_json(file_format: &str, title_format: &str) -> String {
-    let day = |d: date::JournalDate| serde_json::json!({"y":d.year,"m":d.month,"d":d.day});
-    with_journal_format(file_format, title_format, |format| {
-        let refusal = format.title_refusal().map(|refusal| match refusal {
-            date::TitleFormatRefusal::Missing(field) => serde_json::json!({"missing": match field {
-                date::DateField::Year => "year",
-                date::DateField::Month => "month",
-                date::DateField::Day => "day",
-            }}),
-            date::TitleFormatRefusal::Misread { day: d, written, read_as } => serde_json::json!({
-                "day": day(*d),
-                "written": written,
-                "read_as": read_as.map(day),
-            }),
-        });
-        serde_json::json!({"effective": format.title_format(), "refusal": refusal}).to_string()
-    })
-}
-
-/// The kind of a link target nothing claims: `JournalFormat::absent_link_is_journal`.
-#[wasm_bindgen]
-pub fn absent_link_is_journal(name: &str, file_format: &str, title_format: &str) -> bool {
-    with_journal_format(file_format, title_format, |format| format.absent_link_is_journal(name))
+pub fn absent_link_is_journal(name: &str, file_format: &str, effective_title_format: &str) -> bool {
+    with_text_routes(file_format, effective_title_format, |routes| routes.absent_link_is_journal(name))
 }
 
 /// Native date formatter over explicit civil parts; same bounded format cache.

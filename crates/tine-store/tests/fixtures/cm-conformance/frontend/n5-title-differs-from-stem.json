@@ -205,6 +205,10 @@
     }
   ],
   "journalFileFormat": null,
+  "journalTitle": {
+    "effective": "MMM do, yyyy",
+    "refusal": null
+  },
   "journalTitleFormat": null,
   "keyOf": {
     "Caps Title": "caps title",

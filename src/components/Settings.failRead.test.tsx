@@ -11,7 +11,7 @@ import * as router from "../router";
 afterEach(() => { closeSettings(); setGraphMeta(null); setToasts([]); vi.restoreAllMocks(); document.body.innerHTML = ""; });
 
 it("opens the journal picker without requesting template bodies", async () => {
-  setGraphMeta({ root: "/tmp/template-names", default_journal_template: "meeting" } as GraphMeta);
+  setGraphMeta({ root: "/tmp/template-names", default_journal_template: "meeting", journal_title: { effective: "MMM do, yyyy", refusal: null } } as GraphMeta);
   const bodies = vi.spyOn(backend(), "listTemplates");
   const host = document.createElement("div"); document.body.append(host);
   const dispose = render(() => <Settings />, host);
@@ -23,7 +23,7 @@ it("opens the journal picker without requesting template bodies", async () => {
 });
 
 it("keeps names in order and resolves only the chosen definition when Edit is clicked", async () => {
-  setGraphMeta({ root: "/tmp/template-names-edit", default_journal_template: "Daily" } as GraphMeta);
+  setGraphMeta({ root: "/tmp/template-names-edit", default_journal_template: "Daily", journal_title: { effective: "MMM do, yyyy", refusal: null } } as GraphMeta);
   vi.spyOn(backend(), "listTemplateNames").mockResolvedValue(["Daily", "Weekly", "Daily"]);
   const bodies = vi.spyOn(backend(), "listTemplates").mockResolvedValue([{ name: "Weekly", page: "Plans", kind: "page", blocks: [] }]);
   const write = vi.spyOn(backend(), "setDefaultJournalTemplate").mockResolvedValue(undefined);
@@ -45,7 +45,7 @@ it("keeps names in order and resolves only the chosen definition when Edit is cl
 });
 
 it("refreshes the names when Edit finds the chosen definition gone", async () => {
-  setGraphMeta({ root: "/tmp/template-names-gone", default_journal_template: "Daily" } as GraphMeta);
+  setGraphMeta({ root: "/tmp/template-names-gone", default_journal_template: "Daily", journal_title: { effective: "MMM do, yyyy", refusal: null } } as GraphMeta);
   const names = vi.spyOn(backend(), "listTemplateNames").mockResolvedValueOnce(["Daily"]).mockResolvedValue([]);
   vi.spyOn(backend(), "listTemplates").mockResolvedValue([]);
   const open = vi.spyOn(router, "openPage").mockImplementation(() => {});
@@ -62,7 +62,7 @@ it("refreshes the names when Edit finds the chosen definition gone", async () =>
 });
 
 it("reports Edit read failures and ignores an Edit result after the selection changes", async () => {
-  setGraphMeta({ root: "/tmp/template-names-late", default_journal_template: "Daily" } as GraphMeta);
+  setGraphMeta({ root: "/tmp/template-names-late", default_journal_template: "Daily", journal_title: { effective: "MMM do, yyyy", refusal: null } } as GraphMeta);
   vi.spyOn(backend(), "listTemplateNames").mockResolvedValue(["Daily", "Weekly"]);
   const bodies = vi.spyOn(backend(), "listTemplates").mockRejectedValueOnce(new Error("io:PermissionDenied"));
   const open = vi.spyOn(router, "openPage").mockImplementation(() => {});
@@ -87,7 +87,7 @@ it("reports Edit read failures and ignores an Edit result after the selection ch
 
 it("shows unavailable templates with Retry rather than asserting the configured template is missing", async () => {
   setToasts([]);
-  setGraphMeta({ root: "/tmp/template-read-failure", default_journal_template: "Daily" } as GraphMeta);
+  setGraphMeta({ root: "/tmp/template-read-failure", default_journal_template: "Daily", journal_title: { effective: "MMM do, yyyy", refusal: null } } as GraphMeta);
   const read = vi.spyOn(backend(), "listTemplateNames").mockRejectedValue(new Error("io:PermissionDenied"));
   const host = document.createElement("div"); document.body.append(host);
   const dispose = render(() => <Settings />, host);

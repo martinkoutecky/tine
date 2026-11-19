@@ -13,7 +13,7 @@ import { mockQuickShareCommands } from "./mockQuickShare";
 import { mockGitCommands } from "./mockGit";
 import { mockPageHost } from "./mockPageHost";
 import { createMockCaptureReceipts } from "./mockCaptureReceipts";
-import type { BacklinkFilterContext, BacklinkFilterTarget, BlockDto, BlockPreview, GuideCopyResult, GuidePage, Highlight, PageDto, PageEntry, PageInventory, PageInventoryEntry, PageModified, PdfState, QueryExecution, QueryExportBatch, QueryExportSpec, RefGroup, ResolvedPage } from "./types";
+import type { BacklinkFilterContext, BacklinkFilterTarget, BlockDto, BlockPreview, GuideCopyResult, GuidePage, Highlight, JournalTitleSaved, PageDto, PageEntry, PageInventory, PageInventoryEntry, PageModified, PdfState, QueryExecution, QueryExportBatch, QueryExportSpec, RefGroup, ResolvedPage } from "./types";
 import { SAMPLE_PDF_B64 } from "./sample-pdf";
 import { previewDtoSubtree } from "./previewProjection";
 import { hlsPageName } from "./pdf";
@@ -724,6 +724,7 @@ export function mockBackend(extraPages: PageDto[] = conflictDemoBodies().map((bl
         favorites: [],
         mobile_gestures_disabled_in_block_with_tags: [],
         journal_page_title_format: "MMM do, yyyy",
+        journal_title: { effective: "MMM do, yyyy", refusal: null },
         journal_file_name_format: "yyyy_MM_dd",
         preferred_format: "md",
         enable_timetracking: true,
@@ -1169,8 +1170,9 @@ export function mockBackend(extraPages: PageDto[] = conflictDemoBodies().map((bl
     async setPreferredFormat(): Promise<void> {
       // no-op in the browser mock
     },
-    async setJournalTitleFormat(): Promise<string[]> {
-      return [];
+    async setJournalTitleFormat(format: string): Promise<JournalTitleSaved> {
+      // The browser mock offers only Settings presets, every one used.
+      return { journal_config_diagnostics: [], journal_title: { effective: format, refusal: null } };
     },
     async setDefaultJournalTemplate(): Promise<void> {
       // no-op in the browser mock

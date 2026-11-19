@@ -15,7 +15,7 @@ afterEach(() => { closeSettings(); setGraphMeta(null); vi.restoreAllMocks(); doc
 it("GH #808: the sections-page note and its Open page link sit in the wrapping hint, not the control column", async () => {
   bumpGraphEpoch();
   vi.spyOn(backend(), "queryRun").mockResolvedValue({ anchor: "page", pages: [{ name: "Journal sections" }], diagnostics: [], report: { ran: [], ignored: [], supported: true }, total: 1, exceeded: false } as never);
-  setGraphMeta({ root: "/fixture", journal_config_diagnostics: [] } as unknown as GraphMeta);
+  setGraphMeta({ root: "/fixture", journal_config_diagnostics: [], journal_title: { effective: "MMM do, yyyy", refusal: null } } as unknown as GraphMeta);
   const root = document.createElement("div"); document.body.append(root);
   const dispose = render(() => <Settings />, root);
   try {

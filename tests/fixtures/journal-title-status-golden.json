@@ -1,0 +1,66 @@
+{
+  "MMM do, yyyy": {
+    "effective": "MMM do, yyyy",
+    "refusal": null
+  },
+  "dd.MM.yyyy": {
+    "effective": "dd.MM.yyyy",
+    "refusal": null
+  },
+  "yyyy-MM-dd": {
+    "effective": "yyyy-MM-dd",
+    "refusal": null
+  },
+  "yyyy_dd_MM": {
+    "effective": "yyyy_dd_MM",
+    "refusal": null
+  },
+  "MM-dd": {
+    "effective": "MMM do, yyyy",
+    "refusal": {
+      "missing": "year"
+    }
+  },
+  "dd-MM": {
+    "effective": "MMM do, yyyy",
+    "refusal": {
+      "missing": "year"
+    }
+  },
+  "yyyy-MM": {
+    "effective": "MMM do, yyyy",
+    "refusal": {
+      "missing": "day"
+    }
+  },
+  "d.M.yy": {
+    "effective": "MMM do, yyyy",
+    "refusal": {
+      "day": {
+        "y": 1900,
+        "m": 1,
+        "d": 1
+      },
+      "written": "1.1.00",
+      "read_as": {
+        "y": 2000,
+        "m": 1,
+        "d": 1
+      }
+    }
+  },
+  "yyyy-ww": {
+    "effective": "MMM do, yyyy",
+    "refusal": {
+      "missing": "month"
+    }
+  },
+  "EE, yyyy-MM-dd": {
+    "effective": "EE, yyyy-MM-dd",
+    "refusal": null
+  },
+  "E, yyyy/MM/dd": {
+    "effective": "E, yyyy/MM/dd",
+    "refusal": null
+  }
+}

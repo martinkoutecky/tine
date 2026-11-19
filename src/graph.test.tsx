@@ -16,7 +16,7 @@ const META: GraphMeta = {
   block_hidden_properties: [], linked_references_collapsed_threshold: 100, ref_default_open_blocks_level: 2,
   default_journal_template: "Daily",
   favorites: [],
-  journal_page_title_format: "MMM do, yyyy",
+  journal_page_title_format: "MMM do, yyyy", journal_title: { effective: "MMM do, yyyy", refusal: null },
   journal_file_name_format: "yyyy_MM_dd",
   preferred_format: "md",
   macros: {},
@@ -1105,7 +1105,7 @@ describe("OG-R3B custom journal format publication (I-4)", () => {
       };
       const harness = await loadHarness(null, undefined, true, false,
         () => { if (observe) materialization = harness.ensureJournalTemplateForDay(new Date()); }, journal);
-      const customMeta = { ...META, journal_page_title_format: "yyyy-MM-dd" };
+      const customMeta = { ...META, journal_page_title_format: "yyyy-MM-dd", journal_title: { effective: "yyyy-MM-dd", refusal: null } };
       const delivered: PageRead = { id: "journals/2026_07_10.md", name: customTitle,
         kind: "journal", title: customTitle, pre_block: null, rev: "synced-rev",
         blocks: [{ id: "synced", raw: "Synced custom-format journal", collapsed: false, children: [] }] };

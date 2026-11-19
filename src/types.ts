@@ -793,7 +793,11 @@ export interface GraphMeta {
   quick_capture_insert_today: boolean;
   /** OG `:quick-capture-options {:redirect-page? true}`: open the page a capture landed on. */
   quick_capture_redirect_page: boolean;
-  journal_page_title_format: string; // configured :journal/page-title-format (default "MMM do, yyyy"); titles render in journalTitleStatus().effective
+  journal_page_title_format: string; // configured :journal/page-title-format (default "MMM do, yyyy"), as written
+  /** Which title format renders and reads journal titles, and why the
+   *  configured one is not used: the native core's one decision per config
+   *  (`JournalTitleStatus::of`, D-20261119-YL). Nothing here checks a pattern. */
+  journal_title: JournalTitleStatus;
   journal_file_name_format: string; // :journal/file-name-format (default "yyyy_MM_dd")
   /** Effective :file/name-format, resolved by Rust. */
   file_name_format: "legacy" | "triple-lowbar";
@@ -858,3 +862,18 @@ export type JournalMigrationResult = {
   migrated: number;
   skipped: { file: string; reason: string }[];
 };
+
+/** A journal day on the wire. */
+export type JournalDateParts = { readonly y: number; readonly m: number; readonly d: number };
+/** Why a configured title format is not used (D-20261119-YL): it writes no
+ * such field, or the title it writes for `day` opens `read_as` (null: no day).
+ * Rust `JournalTitleRefusal`. */
+export type JournalTitleRefusal =
+  | { readonly missing: "year" | "month" | "day" }
+  | { readonly day: JournalDateParts; readonly written: string; readonly read_as: JournalDateParts | null };
+/** The title format that renders journal titles, and why the configured one
+ * is not used if it is not. Rust `JournalTitleStatus`. */
+export type JournalTitleStatus = { readonly effective: string; readonly refusal: JournalTitleRefusal | null };
+/** What a Settings title-format save resolves to, under GraphMeta's field
+ * names (Rust `JournalTitleSaved`). */
+export type JournalTitleSaved = { readonly journal_config_diagnostics: string[]; readonly journal_title: JournalTitleStatus };

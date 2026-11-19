@@ -157,7 +157,9 @@ build graph (closure, below). The same field is written by the static export
   reader renders the titles the rows name. The two values are the whole input
   of the text routes (`JournalFormat::parse_text`: effective title, file-name
   format, fixed forms; a refused title is no route), so the reader classifies
-  a typed name as the app does.
+  a typed name as the app does. The reader's meta carries that effective
+  format as `journal_title.effective` with no refusal: the snapshot does not
+  carry the configured value.
 - Reader: links and `[[` destinations use the rows' `link`
   (`inventoryRows.ts linkTargetIn`, the app's own reader); a named route uses
   `navigationTarget`; `getPage` / `resolvePage(name, kind)` read the row's

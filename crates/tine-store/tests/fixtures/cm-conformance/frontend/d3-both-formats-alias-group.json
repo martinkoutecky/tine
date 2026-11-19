@@ -157,6 +157,10 @@
     }
   ],
   "journalFileFormat": "dd.MM.yyyy",
+  "journalTitle": {
+    "effective": "yyyy_dd_MM",
+    "refusal": null
+  },
   "journalTitleFormat": "yyyy_dd_MM",
   "keyOf": {
     "2026_10_11": "Day 2026-11-10",

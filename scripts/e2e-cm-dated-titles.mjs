@@ -23,7 +23,10 @@ import { waitForFileText } from "./e2e-file-poll.mjs";
 import { tauriCapabilities, webdriverServerArgs } from "./e2e-capabilities.mjs";
 import { accountHomeFixture, assertAppLease } from "./lib/e2e-account-home.mjs";
 
-const NOTICE = 'Journal titles use "MMM do, yyyy", not "MM-dd" from config.edn: that format writes no year, so one title would name the same date in every year. Your files are unchanged.';
+// The notice's meaning, not its English: a warning naming the format in use
+// and the refused configured one (both quoted message arguments, the same in
+// every locale). The wording is the catalog's and its unit tests'.
+const names = (text) => text.includes('"MMM do, yyyy"') && text.includes('"MM-dd"');
 const CONFIG = '{:journal/page-title-format "MM-dd"\n :tine/guide-announced? true}\n';
 
 const root = path.resolve(import.meta.dirname, "..");
@@ -69,7 +72,7 @@ const notices = () => browser.execute(() => [...document.querySelectorAll(".toas
     text: (toast.querySelector(".toast-msg")?.textContent ?? "").replace(/[⁨⁩]/g, "").trim(),
     repeated: toast.querySelector(".toast-count") !== null,
   }))
-  .filter((toast) => toast.text.startsWith("Journal titles use")));
+  .filter((toast) => toast.text.includes('"MM-dd"')));
 
 /** Record every title-format notice this page shows from now on, one entry
  *  per toast element, so a notice that auto-dismisses is still counted.
@@ -82,7 +85,7 @@ const recordNotices = () => browser.execute(() => {
   const scan = () => {
     for (const toast of document.querySelectorAll(".toast")) {
       const text = (toast.querySelector(".toast-msg")?.textContent ?? "").replace(/[⁨⁩]/g, "").trim();
-      if (marked.has(toast) || !text.startsWith("Journal titles use")) continue;
+      if (marked.has(toast) || !text.includes('"MM-dd"')) continue;
       marked.add(toast);
       seen.push({ warn: toast.classList.contains("toast-warn"), text, repeated: toast.querySelector(".toast-count") !== null });
     }
@@ -91,13 +94,14 @@ const recordNotices = () => browser.execute(() => {
   new MutationObserver(scan).observe(document.documentElement, { childList: true, subtree: true, characterData: true });
 });
 const recorded = () => browser.execute(() => window.__titleNotices ?? []);
-const ONCE = [{ warn: true, text: NOTICE, repeated: false }];
-
-/** Wait for the graph load's notice, assert it was shown exactly once, and
- *  that it dismisses itself. */
+/** Wait for the graph load's notice, assert it was shown exactly once, as a
+ *  warning naming both formats, and that it dismisses itself. */
 async function noticeShownOnce(what) {
   await browser.waitUntil(async () => (await recorded()).length > 0, { timeout: 20_000, interval: 150, timeoutMsg: `${what}: the title-format notice never appeared` });
-  assert.deepEqual(await recorded(), ONCE, `${what}: the notice is one warning, shown once`);
+  const shown = await recorded();
+  assert.equal(shown.length, 1, `${what}: the notice is shown once per load: ${JSON.stringify(shown)}`);
+  assert.ok(shown[0].warn && !shown[0].repeated, `${what}: the notice is one warning: ${JSON.stringify(shown)}`);
+  assert.ok(names(shown[0].text), `${what}: the notice names the format in use and the refused one: ${shown[0].text}`);
   await browser.waitUntil(async () => (await notices()).length === 0, { timeout: 10_000, interval: 150, timeoutMsg: `${what}: the notice did not dismiss itself` });
 }
 
@@ -121,7 +125,9 @@ try {
   const diagnostic = () => browser.execute(() => [...document.querySelectorAll('.settings-modal .config-diagnostic[role="status"]')]
     .map((node) => (node.textContent ?? "").replace(/[⁨⁩]/g, "").trim()));
   await browser.waitUntil(async () => (await diagnostic()).length > 0, { timeout: 10_000, interval: 100, timeoutMsg: "Settings > Journals shows no title-format line" });
-  assert.deepEqual(await diagnostic(), [NOTICE], "Settings > Journals names the format in use and the reason");
+  const lines = await diagnostic();
+  assert.equal(lines.length, 1, `Settings > Journals shows one title-format line: ${JSON.stringify(lines)}`);
+  assert.ok(names(lines[0]), `Settings > Journals names the format in use and the refused one: ${lines[0]}`);
   await browser.keys("Escape");
   await browser.$(".settings-modal").waitForExist({ reverse: true, timeout: 5_000, timeoutMsg: "Settings stayed open after Escape" });
 
@@ -163,7 +169,7 @@ try {
   assert.deepEqual(untouched(), expectedUntouched, "config.edn and the journals are unchanged before the reload");
 
   stage = "the notice was not repeated during the session";
-  assert.deepEqual(await recorded(), ONCE, "the notice did not repeat during the session");
+  assert.equal((await recorded()).length, 1, "the notice did not repeat during the session");
   assert.deepEqual(await notices(), [], "no notice is shown again");
 
   stage = "after a reload the notice appears once again and the files are unchanged";

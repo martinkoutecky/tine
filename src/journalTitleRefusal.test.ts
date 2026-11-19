@@ -1,18 +1,27 @@
 // D-20261119-YL: a configured journal title format that names no single day is
 // not used. Titles render in the default; the refused format is no text route
 // (model round 3), though an existing journal file it names keeps its day; the
-// graph says so once per load (no persisted state).
+// graph says so once per load (no persisted state). The decision is native
+// (`GraphMeta.journal_title`); these tests read the native answers from the
+// golden file Rust pins (`graph_meta_carries_the_native_title_decision`).
 import { afterEach, beforeAll, describe, expect, it, vi } from "vitest";
 import { backend } from "./backend";
 import { applyConfigDerivedState } from "./graph";
 import { setGraphMeta } from "./graphSession";
-import { graphTitleRefusal, journalTitle, journalTitleRefusalMessage, journalTitleStatus, parseJournalTitle, setJournalFormats } from "./journal";
-import { JOURNAL_TITLE_FORMATS } from "./journalTitleFormats";
+import { graphTitleRefusal, journalTitle, journalTitleRefusalMessage, parseJournalTitle, setJournalFormats } from "./journal";
 import { changeJournalTitleFormat } from "./ui";
 import { renderEnglish } from "./i18n";
 import { initParser } from "./render/parse";
 import { dismissToast, toasts } from "./toasts";
-import type { GraphMeta } from "./types";
+import type { GraphMeta, JournalTitleSaved, JournalTitleStatus } from "./types";
+import goldenRaw from "../tests/fixtures/journal-title-status-golden.json?raw";
+
+const GOLDEN = JSON.parse(goldenRaw) as Record<string, JournalTitleStatus>;
+const status = (configured: string): JournalTitleStatus => {
+  const answer = GOLDEN[configured];
+  if (!answer) throw new Error(`no native answer for ${configured} in the golden file`);
+  return answer;
+};
 
 beforeAll(() => initParser());
 afterEach(() => {
@@ -23,24 +32,22 @@ afterEach(() => {
 
 const meta = (title: string, root = "/graph") => ({
   root, preferred_workflow: "now", favorites: [], favorites_page: null,
-  journal_page_title_format: title, journal_file_name_format: "yyyy_MM_dd", default_home: null,
+  journal_page_title_format: title, journal_title: status(title), journal_file_name_format: "yyyy_MM_dd", default_home: null,
 } as unknown as GraphMeta);
 
 describe("the effective journal title format", () => {
   it("renders the default under MM-dd, so two years of 11-02 are two titles and [[11-02]] is no day", () => {
-    setJournalFormats("MM-dd", "yyyy_MM_dd");
+    applyConfigDerivedState(meta("MM-dd"), null);
     expect(journalTitle(new Date(2026, 10, 2))).toBe("Nov 2nd, 2026");
     expect(journalTitle(new Date(2027, 10, 2))).toBe("Nov 2nd, 2027");
     expect(parseJournalTitle("11-02")).toBeNull();
     expect(parseJournalTitle("Nov 2nd, 2027")?.getFullYear()).toBe(2027);
-    expect(journalTitleStatus("yyyy_MM_dd", "MM-dd")).toEqual({ effective: "MMM do, yyyy", refusal: { missing: "year" } });
   });
 
   it("uses a valid configured format; a refused one reads no text, a file-name format still does", () => {
-    setJournalFormats("dd.MM.yyyy", "");
+    applyConfigDerivedState({ ...meta("dd.MM.yyyy"), journal_file_name_format: "" } as GraphMeta, null);
     expect(journalTitle(new Date(2026, 10, 2))).toBe("02.11.2026");
-    expect(journalTitleStatus("", "dd.MM.yyyy").refusal).toBeNull();
-    setJournalFormats("d.M.yy", "");
+    applyConfigDerivedState({ ...meta("d.M.yy"), journal_file_name_format: "" } as GraphMeta, null);
     expect(journalTitle(new Date(2026, 0, 5))).toBe("Jan 5th, 2026");
     // A refused title format is no text route: `[[5.1.26]]` is an ordinary page.
     expect(parseJournalTitle("5.1.26")).toBeNull();
@@ -48,22 +55,19 @@ describe("the effective journal title format", () => {
     // The same pattern as the file-name format is a text route.
     setJournalFormats("MMM do, yyyy", "d.M.yy");
     expect(parseJournalTitle("5.1.26")?.getFullYear()).toBe(2026);
-    const status = journalTitleStatus("", "d.M.yy");
-    expect(status.refusal).toEqual({ day: { y: 1900, m: 1, d: 1 }, written: "1.1.00", read_as: { y: 2000, m: 1, d: 1 } });
-    expect(renderEnglish(journalTitleRefusalMessage("d.M.yy", status)!)).toContain('titles 1900-01-01 "1.1.00", which opens 2000-01-01');
+    expect(renderEnglish(journalTitleRefusalMessage("d.M.yy", status("d.M.yy"))!)).toContain('titles 1900-01-01 "1.1.00", which opens 2000-01-01');
   });
 });
 
-describe("the frontend asks with the configured strings as written (review F3)", () => {
-  it("passes a whitespace or NBSP file format through, so the frontend and Rust pick one effective title", () => {
+describe("the frontend reads with the file-name format as written (review F3)", () => {
+  it("passes a whitespace or NBSP file format through to the text routes", () => {
     for (const file of [" ", "\t", "\r\n", "\u00a0"]) {
       // Rust keeps a blank-looking filename pattern as written, so the
-      // configured `yyyy_dd_MM` has no competing default filename route.
-      setJournalFormats("yyyy_dd_MM", file);
-      const status = journalTitleStatus(file, "yyyy_dd_MM");
-      expect(status, JSON.stringify(file)).toEqual({ effective: "yyyy_dd_MM", refusal: null });
+      // `yyyy_dd_MM` title has no competing default filename route.
+      setJournalFormats(status("yyyy_dd_MM").effective, file);
       expect(journalTitle(new Date(2026, 10, 2)), JSON.stringify(file)).toBe("2026_02_11");
-      expect(graphTitleRefusal({ journal_page_title_format: "yyyy_dd_MM", journal_file_name_format: file })).toBeNull();
+      expect(parseJournalTitle("2026_02_11")?.getMonth(), JSON.stringify(file)).toBe(10);
+      expect(graphTitleRefusal({ journal_page_title_format: "yyyy_dd_MM", journal_title: status("yyyy_dd_MM") })).toBeNull();
     }
   });
 });
@@ -115,31 +119,24 @@ describe("the notice", () => {
     expect(notices()).toHaveLength(0);
   });
 
-  it("is never needed for a Settings preset: each names one day, whatever the file-name format", () => {
-    // The check is the title's own round trip (model round 3), so the file-name
-    // format cannot make a preset refused (`MM-dd-yyyy` files, `dd-MM-yyyy` titles).
-    for (const title of JOURNAL_TITLE_FORMATS) {
-      for (const file of ["yyyy_MM_dd", "MM-dd-yyyy", "dd-MM-yyyy", title]) {
-        expect(journalTitleStatus(file, title), `${title} / ${file}`).toEqual({ effective: title, refusal: null });
-      }
-    }
-  });
-
   it("is shown after a successful save of a refused format (no config event reaches the writer)", async () => {
     const loaded = await backend().loadGraph("");
     if (loaded.kind === "focused_existing") throw new Error("no graph metadata");
-    const graph = { ...loaded.meta, root: "/graph", journal_page_title_format: "MMM do, yyyy", journal_file_name_format: "MM-dd-yyyy" };
+    const graph = { ...loaded.meta, root: "/graph", journal_page_title_format: "MMM do, yyyy", journal_title: status("MMM do, yyyy"), journal_file_name_format: "MM-dd-yyyy" };
     applyConfigDerivedState(graph, null);
     expect(notices()).toHaveLength(0);
-    let finish!: (notes: string[]) => void;
-    vi.spyOn(backend(), "setJournalTitleFormat").mockImplementationOnce(() => new Promise<string[]>((resolve) => { finish = resolve; }));
+    let finish!: (saved: JournalTitleSaved) => void;
+    vi.spyOn(backend(), "setJournalTitleFormat").mockImplementationOnce(() => new Promise<JournalTitleSaved>((resolve) => { finish = resolve; }));
     changeJournalTitleFormat("dd-MM");
     expect(notices()).toHaveLength(0);
-    finish([]);
+    finish({ journal_config_diagnostics: [], journal_title: status("dd-MM") });
     await Promise.resolve();
     await Promise.resolve();
     expect(shown()).toHaveLength(1);
     expect(shown()[0]).toContain('not "dd-MM"');
+    // The native decision replaced the optimistic one: titles use the default.
+    expect(journalTitle(new Date(2026, 10, 2))).toBe("Nov 2nd, 2026");
+    expect(parseJournalTitle("02-11")).toBeNull();
     vi.restoreAllMocks();
   });
 });

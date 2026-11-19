@@ -26,6 +26,10 @@
     }
   ],
   "journalFileFormat": null,
+  "journalTitle": {
+    "effective": "MMM do, yyyy",
+    "refusal": null
+  },
   "journalTitleFormat": null,
   "keyOf": {
     "a": "a"

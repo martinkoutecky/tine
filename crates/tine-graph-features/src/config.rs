@@ -514,12 +514,29 @@ pub fn set_journal_page_title_format(store: &Store, fmt: &str) -> io::Result<()>
     update_scalar(store, ":journal/page-title-format", &edn_string(fmt))
 }
 
-/// [`set_journal_page_title_format`], then the reloaded config's journal
-/// pattern diagnostics (D-20261020-CH3). An own write emits no external-config
-/// event, so Settings takes the fresh notes from this result.
-pub fn store_journal_page_title_format(store: &Store, fmt: &str) -> io::Result<Vec<String>> {
+/// What a Settings title-format save hands back, under [`GraphMeta`]'s field
+/// names: the reloaded config's journal pattern diagnostics (D-20261020-CH3)
+/// and its title decision (D-20261119-YL). An own write emits no
+/// external-config event, so Settings takes both from this result.
+///
+/// [`GraphMeta`]: tine_core::model::GraphMeta
+#[derive(Debug, Clone, serde::Serialize)]
+pub struct JournalTitleSaved {
+    /// `GraphMeta::journal_config_diagnostics` of the reloaded config.
+    pub journal_config_diagnostics: Vec<String>,
+    /// `GraphMeta::journal_title` of the reloaded config.
+    pub journal_title: tine_core::model::JournalTitleStatus,
+}
+
+/// [`set_journal_page_title_format`], then the reloaded config's
+/// [`JournalTitleSaved`].
+pub fn store_journal_page_title_format(store: &Store, fmt: &str) -> io::Result<JournalTitleSaved> {
     set_journal_page_title_format(store, fmt)?;
-    Ok(store.config().config.journal_config_diagnostics.clone())
+    let config = store.config();
+    Ok(JournalTitleSaved {
+        journal_config_diagnostics: config.config.journal_config_diagnostics.clone(),
+        journal_title: tine_core::model::JournalTitleStatus::of(&config.config.journal_format()),
+    })
 }
 
 /// Persist the new-journal default template as `:default-templates {:journals

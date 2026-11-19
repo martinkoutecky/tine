@@ -146,6 +146,12 @@
     }
   ],
   "journalFileFormat": "yyyy/MM/dd",
+  "journalTitle": {
+    "effective": "MMM do, yyyy",
+    "refusal": {
+      "missing": "year"
+    }
+  },
   "journalTitleFormat": "MM-dd",
   "keyOf": {
     "2026": "2026",

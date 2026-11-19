@@ -86,6 +86,10 @@
     }
   ],
   "journalFileFormat": "MMM do, ddyy",
+  "journalTitle": {
+    "effective": "MMM do, yyyy",
+    "refusal": null
+  },
   "journalTitleFormat": "MMM do, yyyy",
   "keyOf": {
     "Notes": "notes",

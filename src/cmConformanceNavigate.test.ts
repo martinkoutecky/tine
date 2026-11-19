@@ -27,6 +27,8 @@ vi.mock("./backend", () => ({ backend: () => backendMock }));
 type Page = [string, string];
 interface Case {
   journalTitleFormat: string | null;
+  /** The native title decision GraphMeta carries (`journal_title`). */
+  journalTitle: import("./types").JournalTitleStatus;
   journalFileFormat: string | null;
   conflicts: string[];
   inventory: PageInventoryEntry[];
@@ -69,8 +71,8 @@ async function runCase(c: Case): Promise<string[]> {
   backendMock.pageInventory.mockReset().mockResolvedValue({ rev: "1", entries: c.inventory });
   await (await import("./render/parse")).initParser();
   const journal = await import("./journal");
-  // graph.ts: setJournalFormats(meta.journal_page_title_format, meta.journal_file_name_format).
-  journal.setJournalFormats(c.journalTitleFormat, c.journalFileFormat);
+  // graph.ts: setJournalFormats(meta.journal_title.effective, meta.journal_file_name_format).
+  journal.setJournalFormats(c.journalTitle.effective, c.journalFileFormat);
   const index = await import("./pageIndex");
   // Each graph gets fresh inventory state without reinitializing the module tree.
   index.resetPageIndex();

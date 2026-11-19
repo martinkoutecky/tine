@@ -49,6 +49,7 @@ import type {
   QueryPublicationRequest,
   QueryPublicationPlan,
   PublicationReceipt,
+  JournalTitleSaved,
 } from "./types";
 import type { GraphFolderPickResult, PreparedGraphFolder, ClipboardFileList, MediaCaptureResult, KnownGraph, InstalledPluginRecord, PluginRegistryCacheLoad, LoadGraphResult, CaptureGraphBindingResult, GraphAccessInspection, TrayStatus, GitAutocommitStatus, GitPolicy, GitSyncStatus } from "./backendTypes";
 import { dbg } from "./debug";
@@ -570,7 +571,7 @@ class TauriBackend implements Backend {
     return this.call<void>("set_preferred_format", { format });
   }
   setJournalTitleFormat(format: string) {
-    return this.call<string[]>("set_journal_title_format", { format });
+    return this.call<JournalTitleSaved>("set_journal_title_format", { format });
   }
   setDefaultJournalTemplate(name: string | null) {
     return this.call<void>("set_default_journal_template", { name });

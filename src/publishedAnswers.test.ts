@@ -26,7 +26,7 @@ async function load(snapshot: PublishedSnapshot) {
   const api = holder.api as ReturnType<typeof publishedBackend>;
   const { setJournalFormats } = await import("./journal");
   const loaded = await api.loadGraph("");
-  if (loaded.kind === "loaded") setJournalFormats(loaded.meta.journal_page_title_format, loaded.meta.journal_file_name_format);
+  if (loaded.kind === "loaded") setJournalFormats(loaded.meta.journal_title.effective, loaded.meta.journal_file_name_format);
   const index = await import("./pageIndex");
   index.installPageIndex();
   await vi.waitFor(() => expect(index.allPages()?.length).toBeGreaterThan(0));

@@ -53,8 +53,8 @@ async function runCase(snapshot: PublishedSnapshot, c: Case): Promise<string[]> 
   const api = holder.api as ReturnType<typeof publishedBackend>;
   const loaded = await api.loadGraph("");
   const journal = await import("./journal");
-  // graph.ts: setJournalFormats(meta.journal_page_title_format, meta.journal_file_name_format).
-  if (loaded.kind === "loaded") journal.setJournalFormats(loaded.meta.journal_page_title_format, loaded.meta.journal_file_name_format);
+  // graph.ts: setJournalFormats(meta.journal_title.effective, meta.journal_file_name_format).
+  if (loaded.kind === "loaded") journal.setJournalFormats(loaded.meta.journal_title.effective, loaded.meta.journal_file_name_format);
   const index = await import("./pageIndex");
   index.installPageIndex();
   await vi.waitFor(() => expect(index.allPages()).toBeDefined());

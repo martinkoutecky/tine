@@ -1222,6 +1222,43 @@ fn first_route(routes: &[Format], s: &str) -> Option<JournalDate> {
     routes.iter().find_map(|f| f.parse_chars(&cs))
 }
 
+/// The text routes ([`text_routes`]) of a file-name format and an
+/// *effective* title format, built without the title check: for a reader
+/// handed the native core's decision. The frontend reads text through wasm
+/// with `GraphMeta.journal_title.effective` ([`JournalFormat::title_format`],
+/// decided once per config load in native code), so no title pattern is
+/// checked on the graph window's load or config path (D-20261119-YL). A
+/// [`JournalFormat`] holds the same routes. O(patterns) to build.
+#[derive(Clone)]
+pub struct TextRoutes(Vec<Format>);
+
+impl TextRoutes {
+    /// The routes for config strings (`None`/empty → Logseq defaults);
+    /// `effective_title_fmt` must be an effective title format, never a
+    /// refused configured one.
+    pub fn new(file_fmt: Option<&str>, effective_title_fmt: Option<&str>) -> TextRoutes {
+        TextRoutes(text_routes(
+            file_fmt
+                .filter(|s| !s.is_empty())
+                .unwrap_or(DEFAULT_FILE_FORMAT),
+            effective_title_fmt
+                .filter(|s| !s.is_empty())
+                .unwrap_or(DEFAULT_TITLE_FORMAT),
+        ))
+    }
+
+    /// [`JournalFormat::parse_text`].
+    pub fn parse(&self, s: &str) -> Option<JournalDate> {
+        first_route(&self.0, s)
+    }
+
+    /// [`JournalFormat::absent_link_is_journal`]: a link target no file,
+    /// alias or reference claims is a journal iff it is a date as text.
+    pub fn absent_link_is_journal(&self, name: &str) -> bool {
+        self.parse(name).is_some()
+    }
+}
+
 /// The journal date formats for a graph: the user's filename + title patterns,
 /// and the two route lists that read a day back: one for text
 /// ([`text_routes`]), one for a journal file's stem ([`file_stem_routes`]).
@@ -1238,7 +1275,7 @@ pub struct JournalFormat {
     configured_title_pat: String,
     /// Why the configured title pattern is not used, if it is not.
     title_refusal: Option<TitleFormatRefusal>,
-    text_routes: Vec<Format>,
+    text_routes: TextRoutes,
     file_stem_routes: Vec<Format>,
 }
 
@@ -1274,7 +1311,7 @@ impl JournalFormat {
             file: Format::compile(&file_pat),
             title,
             title_pat: effective.to_string(),
-            text_routes: text_routes(&file_pat, effective),
+            text_routes: TextRoutes(text_routes(&file_pat, effective)),
             file_stem_routes: file_stem_routes(&file_pat, &title_pat),
             file_pat,
             configured_title_pat: title_pat,
@@ -1291,7 +1328,7 @@ impl JournalFormat {
     /// argument, a typed title), trimmed, by [`text_routes`]. `None` means no
     /// route matched: the text is an ordinary name.
     pub fn parse_text(&self, s: &str) -> Option<JournalDate> {
-        first_route(&self.text_routes, s)
+        self.text_routes.parse(s)
     }
 
     /// The day a journal file's stem names, trimmed, by [`file_stem_routes`]:
@@ -1308,7 +1345,7 @@ impl JournalFormat {
     /// `October 22nd, 2026`) are found by parsing them, not here.
     /// O(routes²).
     pub fn spellings(&self, d: JournalDate) -> Vec<String> {
-        Self::renderings(&self.text_routes, d)
+        Self::renderings(&self.text_routes.0, d)
     }
 
     /// The renderings of `d` by `routes` that the first of them to read each
@@ -1372,7 +1409,7 @@ impl JournalFormat {
     /// rule; the store's `link_target` and the frontend (through wasm) both
     /// call it.
     pub fn absent_link_is_journal(&self, name: &str) -> bool {
-        self.parse_text(name).is_some()
+        self.text_routes.absent_link_is_journal(name)
     }
 
     /// Display title for a date, in the effective title format
@@ -2125,6 +2162,56 @@ mod title_check_tests {
         // The file-name format no longer enters: these pairs share one verdict.
         for file in ["2!yyyy-MM-dd", "1MM-dd-yyyy", "yyyy-MM-dd", "MMM do, ddyy"] {
             assert_eq!(verdict(file, "yyyy-MM-dd"), None, "{file}");
+        }
+    }
+
+    /// D-20261119-YL, review round 3: the frontend's text routes are built
+    /// from the effective format the native core published, so building and
+    /// reading them checks no pattern, whatever its length (a 1,000-weekday
+    /// title took 1.8 s per cold check in wasm when the window checked it).
+    #[test]
+    fn text_routes_from_a_published_effective_format_check_no_pattern() {
+        let long = format!("{}EEEE MMMM do y", "EEEE ".repeat(1000));
+        for (file, effective) in [
+            (None, None),
+            (Some("d.M.yy"), Some("MMM do, yyyy")),
+            (None, Some(long.as_str())),
+        ] {
+            VALIDATOR_READS.with(|reads| reads.set(0));
+            let routes = TextRoutes::new(file, effective);
+            let full = JournalFormat::new(file, effective);
+            for text in ["Nov 2nd, 2026", "2026-11-02", "2.11.26", "Notes"] {
+                assert_eq!(routes.parse(text), full.parse_text(text), "{text}");
+                assert_eq!(
+                    routes.absent_link_is_journal(text),
+                    full.absent_link_is_journal(text)
+                );
+            }
+            VALIDATOR_READS.with(|reads| reads.set(0));
+            let routes = TextRoutes::new(file, effective);
+            let _ = routes.parse("Monday Monday November 2nd 2026");
+            assert_eq!(VALIDATOR_READS.with(|reads| reads.get()), 0);
+        }
+    }
+
+    /// Settings offers only its presets (`src/journalTitleFormats.ts`) and
+    /// shows them without asking which are used: every one is, and the
+    /// verdict depends on the title pattern alone (`checked_title`), so under
+    /// every file-name format too.
+    #[test]
+    fn every_settings_title_preset_is_used() {
+        let source = include_str!("../../../src/journalTitleFormats.ts");
+        let list = source
+            .split_once("JOURNAL_TITLE_FORMATS = [")
+            .and_then(|(_, rest)| rest.split_once(']'))
+            .map(|(list, _)| list)
+            .expect("the preset list");
+        let presets: Vec<&str> = list.split('"').skip(1).step_by(2).collect();
+        assert!(presets.len() >= 20, "{presets:?}");
+        for preset in presets {
+            let format = JournalFormat::new(None, Some(preset));
+            assert_eq!(format.title_refusal(), None, "{preset}");
+            assert_eq!(format.title_format(), preset);
         }
     }
 

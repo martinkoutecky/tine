@@ -449,6 +449,9 @@ export function publishedBackend(load: () => Promise<PublishedSnapshot> = loadPu
           default_home: snapshot.home,
           favorites: [],
           journal_page_title_format: formats.title_format,
+          // The snapshot carries the effective title format only (a refused
+          // one was replaced when it was published), so nothing is refused here.
+          journal_title: { effective: formats.title_format, refusal: null },
           journal_file_name_format: formats.file_name_format,
           preferred_format: "md",
           macros: {},

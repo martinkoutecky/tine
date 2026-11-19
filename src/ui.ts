@@ -204,31 +204,31 @@ export function changePreferredFormat(fmt: "md" | "org") {
 }
 
 const journalTitleFormatScope = {};
-/** Apply the title format to UI state immediately, then start a backend
- * config write. Journal files are never renamed here (master e6f9b6e1ceae);
- * Settings proposes renames for title-named files. Return does not confirm
- * persistence. Failure may roll UI back and toasts. */
+/** Apply a Settings preset title format (each is used: Rust `every_settings_title_preset_is_used`) at once,
+ * then write config; its result carries the native decision and diagnostics. Journal files are never renamed
+ * here (master e6f9b6e1ceae). Failure rolls UI back and toasts. */
 export function changeJournalTitleFormat(fmt: string) {
   const next = fmt.trim() || DEFAULT_TITLE_FORMAT;
   const m = graphMeta();
   if (!m || m.journal_page_title_format === next) return;
-  setGraphMeta({ ...m, journal_page_title_format: next });
+  setGraphMeta({ ...m, journal_page_title_format: next, journal_title: { effective: next, refusal: null } });
   setJournalTitleFormat(next);
   bumpGraphEpoch(); // immediate: re-render open journal titles with the new format
   const owner = latestOwner(journalTitleFormatScope, "title", bindingOwner(), () => graphMeta()?.root === m.root && graphMeta()?.journal_page_title_format === next);
-  // Once config.edn is written: bump again (feed and rename proposals reload against it), and say a refusal (no config event reaches this window).
+  // Once config.edn is written: take the native decision, bump again (feed and rename proposals reload against it), and say a refusal (no config event reaches this window).
   void writeOwned(owner, backend().setJournalTitleFormat(next, ["rename-page"]))
     .then((result) => {
       if (result.kind === "stale") return;
-      setGraphMeta({ ...graphMeta()!, journal_config_diagnostics: result.value });
+      setGraphMeta({ ...graphMeta()!, ...result.value });
+      setJournalTitleFormat(result.value.journal_title.effective);
       noticeTitleRefusal(graphMeta()!, false);
       bumpGraphEpoch();
       void refreshJournalConflicts(); // the queue surfaces any day the new format reveals
     })
     .catch((error) => {
       if (owner()) {
-        setGraphMeta({ ...graphMeta()!, journal_page_title_format: m.journal_page_title_format });
-        setJournalTitleFormat(m.journal_page_title_format);
+        setGraphMeta({ ...graphMeta()!, journal_page_title_format: m.journal_page_title_format, journal_title: m.journal_title });
+        setJournalTitleFormat(m.journal_title.effective);
         bumpGraphEpoch();
       }
       pushToast(msg("ui-ui-could-not-save-journal-title-format", { value1: String(error) }), "error");

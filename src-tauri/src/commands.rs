@@ -882,7 +882,7 @@ pub(crate) async fn set_preferred_format(
 pub(crate) async fn set_journal_title_format(
     format: String,
     state: GraphContext<'_>,
-) -> Result<Vec<String>, String> {
+) -> Result<tine_graph_features::config::JournalTitleSaved, String> {
     with_config_store(&state, move |store| {
         tine_graph_features::config::store_journal_page_title_format(store, &format)
             .map_err(|error| error.to_string())

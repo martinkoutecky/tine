@@ -54,6 +54,8 @@ interface ModelPage {
 }
 interface Case {
   journalTitleFormat: string | null;
+  /** The native title decision GraphMeta carries (`journal_title`). */
+  journalTitle: import("./types").JournalTitleStatus;
   journalFileFormat: string | null;
   conflicts: string[];
   inventory: PageInventoryEntry[];
@@ -162,7 +164,7 @@ async function headerCount(name: string, groups: RefGroup[]): Promise<string> {
 
 async function runCase(c: Case): Promise<string[]> {
   resetPageIndex();
-  setJournalFormats(c.journalTitleFormat, c.journalFileFormat);
+  setJournalFormats(c.journalTitle.effective, c.journalFileFormat);
   vi.spyOn(backend(), "pageInventory").mockResolvedValue({ rev: "1", entries: c.inventory });
   bumpGraphEpoch();
   await refreshPageIndex();

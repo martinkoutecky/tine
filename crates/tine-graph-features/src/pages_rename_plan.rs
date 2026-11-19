@@ -758,28 +758,34 @@ fn plan_request(
     // (D-20261119-YL), so a day's header is read: `title:: 2027-10-26` on
     // that day's file is its spelling, a header naming another day is not.
     // One read of the survivor: the merge realizes from these bytes, under
-    // their revision (`survivor_read`).
+    // their revision (`survivor_read`). A failed read refuses, naming the
+    // file: no spelling is chosen without the header it would come from.
     let mut survivor_read = None;
-    let selected = merge_into
-        .and_then(|into| {
-            let id = PageId::from(into);
-            let inventory = graph.inventory(tine_store::InventoryScope::File(&id));
-            let entry = inventory.0.first()?;
+    let mut selected = None;
+    if let Some(into) = merge_into {
+        let id = PageId::from(into);
+        let inventory = graph.inventory(tine_store::InventoryScope::File(&id));
+        if let Some(entry) = inventory.0.first() {
+            let mut spelling = entry.name.clone();
             if let Some(day) = entry.day.filter(|_| entry.is_journal) {
                 let day = tine_core::date::JournalDate::from_ordinal(day.0);
-                survivor_read = crate::parsed_text::read(store, &id.file()).ok();
-                let title = survivor_read.as_ref().and_then(|(text, _)| {
-                    tine_core::model::page_title_from_header(text, Format::from_path(into.as_ref()))
-                });
-                if let Some(title) =
-                    title.filter(|title| journal_format.parse_text(title) == Some(day))
+                let (text, rev) = crate::parsed_text::read(store, &id.file()).map_err(|error| {
+                    io::Error::new(error.kind(), format!("cannot merge into {into}: {error}"))
+                })?;
+                if let Some(title) = tine_core::model::page_title_from_header(
+                    &text,
+                    Format::from_path(into.as_ref()),
+                )
+                .filter(|title| journal_format.parse_text(title) == Some(day))
                 {
-                    return Some(title);
+                    spelling = title;
                 }
+                survivor_read = Some((text, rev));
             }
-            Some(entry.name.clone())
-        })
-        .unwrap_or_else(|| new.to_owned());
+            selected = Some(spelling);
+        }
+    }
+    let selected = selected.unwrap_or_else(|| new.to_owned());
     let old_key = refs::normalize(old);
     // Only file-claimed names move: the full inventory's alias and
     // reference-only name discovery is not needed here (GH #623).

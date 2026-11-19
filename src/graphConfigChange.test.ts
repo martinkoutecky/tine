@@ -14,8 +14,9 @@ beforeAll(() => initParser());
 
 const meta = {
   root: "/graph", preferred_workflow: "now", favorites: ["A"], favorites_page: null,
-  journal_page_title_format: "MMM do, yyyy", default_home: "Home",
+  journal_page_title_format: "MMM do, yyyy", journal_title: { effective: "MMM do, yyyy", refusal: null }, default_home: "Home",
 } as GraphMeta;
+const titled = (format: string) => ({ journal_page_title_format: format, journal_title: { effective: format, refusal: null } });
 
 afterEach(() => { setGraphMeta(null); seedFavorites([]); });
 
@@ -66,10 +67,10 @@ describe("config-derived state has one producer", () => {
   it("re-dates what is on screen when the journal title format moves outside Tine", () => {
     setGraphMeta(meta);
     const before = graphEpoch();
-    applyGraphConfigChange({ binding_generation: captureBinding().backendGeneration, meta: { ...meta, journal_page_title_format: "yyyy-MM-dd" } });
+    applyGraphConfigChange({ binding_generation: captureBinding().backendGeneration, meta: { ...meta, ...titled("yyyy-MM-dd") } });
     expect(graphEpoch()).toBeGreaterThan(before);
     const settled = graphEpoch();
-    applyGraphConfigChange({ binding_generation: captureBinding().backendGeneration, meta: { ...meta, journal_page_title_format: "yyyy-MM-dd", macros: { hi: "x" } } as GraphMeta });
+    applyGraphConfigChange({ binding_generation: captureBinding().backendGeneration, meta: { ...meta, ...titled("yyyy-MM-dd"), macros: { hi: "x" } } as GraphMeta });
     expect(graphEpoch()).toBe(settled);
   });
 

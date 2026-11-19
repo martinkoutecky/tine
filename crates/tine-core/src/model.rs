@@ -873,6 +873,93 @@ fn default_ref_open_blocks_level() -> i32 {
     crate::config::DEFAULT_REF_OPEN_BLOCKS_LEVEL
 }
 
+/// A journal day on the wire, `{"y", "m", "d"}`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub struct DayParts {
+    /// Year.
+    pub y: i32,
+    /// Month, 1 through 12.
+    pub m: u32,
+    /// Day of month.
+    pub d: u32,
+}
+
+impl From<crate::date::JournalDate> for DayParts {
+    fn from(day: crate::date::JournalDate) -> Self {
+        DayParts {
+            y: day.year,
+            m: day.month,
+            d: day.day,
+        }
+    }
+}
+
+/// Why a configured journal title format is not used, on the wire
+/// (`date::TitleFormatRefusal`): `{"missing": "year" | "month" | "day"}`, or
+/// `{"day", "written", "read_as"}` with `read_as` null when the title opens
+/// no day.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(untagged)]
+pub enum JournalTitleRefusal {
+    /// The pattern writes no such field.
+    Missing {
+        /// `"year"`, `"month"` or `"day"`.
+        missing: String,
+    },
+    /// The title written for `day` opens another day or none.
+    Misread {
+        /// The day.
+        day: DayParts,
+        /// Its title under the configured pattern.
+        written: String,
+        /// The day that title opens, if any.
+        read_as: Option<DayParts>,
+    },
+}
+
+/// The title format journal titles use and why the configured one is not,
+/// if it is not ([`crate::date::JournalFormat::title_format`] and
+/// [`crate::date::JournalFormat::title_refusal`]), as the frontend receives
+/// it: in [`GraphMeta`] and from a Settings save.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct JournalTitleStatus {
+    /// The effective title format.
+    pub effective: String,
+    /// Why the configured title format is not used; `None` when it is.
+    pub refusal: Option<JournalTitleRefusal>,
+}
+
+impl JournalTitleStatus {
+    /// The decision `journal_format` made when it was built from config.
+    /// O(1) beyond copying the pattern; checks nothing.
+    pub fn of(journal_format: &crate::date::JournalFormat) -> Self {
+        use crate::date::{DateField, TitleFormatRefusal};
+        let refusal = journal_format.title_refusal().map(|refusal| match refusal {
+            TitleFormatRefusal::Missing(field) => JournalTitleRefusal::Missing {
+                missing: match field {
+                    DateField::Year => "year",
+                    DateField::Month => "month",
+                    DateField::Day => "day",
+                }
+                .into(),
+            },
+            TitleFormatRefusal::Misread {
+                day,
+                written,
+                read_as,
+            } => JournalTitleRefusal::Misread {
+                day: (*day).into(),
+                written: written.clone(),
+                read_as: read_as.map(DayParts::from),
+            },
+        });
+        JournalTitleStatus {
+            effective: journal_format.title_format().to_string(),
+            refusal,
+        }
+    }
+}
+
 /// Effective graph settings returned when opening a store.
 #[deny(missing_docs)]
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -939,11 +1026,13 @@ pub struct GraphMeta {
     /// OG `:quick-capture-options {:redirect-page? …}`; only a literal `true`.
     pub quick_capture_redirect_page: bool,
     /// Configured journal title format (`:journal/page-title-format`, default
-    /// `MMM do, yyyy`). The frontend asks the one answerer through wasm which
-    /// format renders titles (`JournalFormat::title_format`: this one unless
-    /// it names no single day, D-20261119-YL) and parses with this one, as the
-    /// backend does.
+    /// `MMM do, yyyy`), as written: what Settings shows and names.
     pub journal_page_title_format: String,
+    /// Which title format renders and reads journal titles, and why the
+    /// configured one is not used if it is not: the native core's one
+    /// decision per config (D-20261119-YL). The frontend renders titles and
+    /// builds its text routes from `effective` and never checks a pattern.
+    pub journal_title: JournalTitleStatus,
     /// Effective journal filename format (`:journal/file-name-format`, default
     /// `yyyy_MM_dd`).
     pub journal_file_name_format: String,
@@ -1089,6 +1178,7 @@ impl GraphMeta {
             quick_capture_insert_today: config.quick_capture_insert_today,
             quick_capture_redirect_page: config.quick_capture_redirect_page,
             journal_page_title_format: journal_format.configured_title_format().to_string(),
+            journal_title: JournalTitleStatus::of(journal_format),
             journal_file_name_format: journal_format.file_format().to_string(),
             file_name_format: match config.file_name_format {
                 crate::config::FileNameFormat::Legacy => "legacy",
@@ -1154,6 +1244,42 @@ mod property_key_meta_tests {
             let config = Config::parse(edn);
             let meta = GraphMeta::from_config("graph".into(), &config, &JournalFormat::default());
             assert_eq!(meta.property_pages_enabled, enabled, "{edn}");
+        }
+    }
+}
+
+#[cfg(test)]
+mod journal_title_status_tests {
+    use super::{GraphMeta, JournalTitleStatus};
+    use crate::{config::Config, date::JournalFormat};
+
+    /// The decision the frontend receives (D-20261119-YL), pinned per
+    /// configured title format: the frontend tests read the same file, so
+    /// they exercise the native answer, not a copy of it.
+    #[test]
+    fn graph_meta_carries_the_native_title_decision() {
+        let golden: serde_json::Map<String, serde_json::Value> = serde_json::from_str(
+            include_str!("../../../tests/fixtures/journal-title-status-golden.json"),
+        )
+        .unwrap();
+        assert!(golden.len() >= 6);
+        for (title, want) in &golden {
+            let config = Config::parse(&format!(
+                "{{:journal/page-title-format {}}}",
+                serde_json::to_string(title).unwrap()
+            ));
+            let meta = GraphMeta::from_config("graph".into(), &config, &config.journal_format());
+            assert_eq!(&meta.journal_page_title_format, title);
+            assert_eq!(
+                &serde_json::to_value(&meta.journal_title).unwrap(),
+                want,
+                "{title}"
+            );
+            let back: JournalTitleStatus = serde_json::from_value(want.clone()).unwrap();
+            assert_eq!(
+                back,
+                JournalTitleStatus::of(&JournalFormat::new(None, Some(title)))
+            );
         }
     }
 }

@@ -395,6 +395,105 @@ fn old_file_name_decoder_checkpoints_are_rebuilt() {
     store.close();
 }
 
+/// FORMAT 40 (D-20261119-YL, review round 3 finding 1): a format-39
+/// checkpoint built its journal names, claimants and memos before a refused
+/// title format fell back and before a title read text first. A warm upgrade
+/// over unchanged files must rebuild and answer as a cold build, under
+/// refused `MM-dd` and `d.M.yy` and under swapped numeric formats.
+#[test]
+fn pre_effective_title_checkpoints_rebuild_and_answer_as_a_cold_build() {
+    for (config, files) in [
+        (
+            r#"{:journal/page-title-format "MM-dd"}"#,
+            &[
+                ("journals/2026_11_02.md", "- this year\n"),
+                ("journals/2027_11_02.md", "- next year\n"),
+                (
+                    "pages/Notes.md",
+                    "- [[11-02]] [[Nov 2nd, 2026]] [[Nov 2nd, 2027]]\n",
+                ),
+            ][..],
+        ),
+        (
+            r#"{:journal/page-title-format "d.M.yy"}"#,
+            &[
+                ("journals/2026_11_02.md", "- day\n"),
+                ("pages/Notes.md", "- [[2.11.26]] [[Nov 2nd, 2026]]\n"),
+            ][..],
+        ),
+        (
+            r#"{:journal/file-name-format "yyyy_dd_MM" :journal/page-title-format "yyyy_MM_dd"}"#,
+            &[
+                ("journals/2026_02_11.md", "- by its file, Nov 2\n"),
+                ("journals/2026_11_02.md", "- by its file, Feb 11\n"),
+                ("pages/Notes.md", "- [[2026_11_02]] [[2026_02_11]]\n"),
+            ][..],
+        ),
+    ] {
+        let root = tempfile::tempdir().unwrap();
+        for dir in ["pages", "journals", "logseq"] {
+            fs::create_dir_all(root.path().join(dir)).unwrap();
+        }
+        let config_rel = ("logseq/config.edn", config);
+        for (rel, text) in files.iter().chain([&config_rel]) {
+            let path = root.path().join(rel);
+            fs::write(&path, text).unwrap();
+            set_mtime(&path, old());
+        }
+        let days = |store: &Store| {
+            let view = store.whole_graph_reconciled().unwrap();
+            let graph = &view.graph;
+            let mut out: Vec<String> = view
+                .inventory(crate::InventoryScope::All)
+                .0
+                .iter()
+                .map(|entry| format!("{entry:?}"))
+                .collect();
+            out.sort();
+            for name in [
+                "11-02",
+                "Nov 2nd, 2026",
+                "Nov 2nd, 2027",
+                "2.11.26",
+                "2026_11_02",
+                "2026_02_11",
+            ] {
+                out.push(format!("{name} -> {:?}", view.link_target(name)));
+                let groups =
+                    graph.backlinks_bounded(name, RESULT_BRIDGE_MAX_ROWS, RESULT_BRIDGE_MAX_BYTES);
+                out.push(format!("bl {name} -> {}", groups.groups.len()));
+                let query = format!("[[{name}]]");
+                let rows = graph.run_query_bounded(
+                    &query,
+                    RESULT_BRIDGE_MAX_ROWS,
+                    RESULT_BRIDGE_MAX_BYTES,
+                );
+                out.push(format!("q {name} -> {}", rows.groups.len()));
+            }
+            out
+        };
+        let cp = root.path().join("launch.bin");
+        let written = open_cp(root.path(), &cp);
+        warm(&written);
+        days(&written);
+        assert!(matches!(
+            written.write_checkpoint_now(),
+            Some(CheckpointWrite::Written { .. })
+        ));
+        written.close();
+        let mut bytes = fs::read(&cp).unwrap();
+        bytes[8..12].copy_from_slice(&39_u32.to_le_bytes());
+        fs::write(&cp, bytes).unwrap();
+        let upgraded = open_cp(root.path(), &cp);
+        let warm_days = days(&upgraded);
+        assert_eq!(load_outcome(&upgraded), "format", "{config}");
+        let cold = Store::open(root.path(), Default::default()).unwrap().0;
+        assert_eq!(warm_days, days(&cold), "{config}");
+        cold.close();
+        upgraded.close();
+    }
+}
+
 #[test]
 fn format25_preamble_query_checkpoints_rebuild_once_then_load() {
     let root = graph();
@@ -1509,7 +1608,7 @@ fn the_golden_body_is_pinned_to_format() {
     let digest: String = sha256(&bytes).iter().map(|b| format!("{b:02x}")).collect();
     assert_eq!(
         (FORMAT, digest.as_str()),
-        (39, GOLDEN),
+        (40, GOLDEN),
         "ADR 0070: the checkpoint body changed; bump FORMAT and re-pin GOLDEN"
     );
 }

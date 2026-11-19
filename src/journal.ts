@@ -1,5 +1,6 @@
 import { createEffect, createSignal, untrack } from "solid-js";
-import { absent_link_is_journal, format_journal_date, journal_day_json, journal_title_status_json, parse_journal_format_json } from "./render/wasm/lsdoc_wasm.js";
+import { absent_link_is_journal, format_journal_date, journal_day_json, parse_journal_format_json } from "./render/wasm/lsdoc_wasm.js";
+import type { JournalDateParts, JournalTitleStatus } from "./types";
 import { msg, textKey, type Msg } from "./i18n";
 import { dismissToast, pushToast } from "./toasts";
 import { onAppReturn } from "./windowRealm";
@@ -13,7 +14,7 @@ import { onAppReturn } from "./windowRealm";
  * failures propagate; there is no alternate date grammar. */
 
 export const DEFAULT_TITLE_FORMAT = "MMM do, yyyy";
-let titleFormat = DEFAULT_TITLE_FORMAT;
+/** The effective title format (`GraphMeta.journal_title.effective`). */
 let effectiveTitleFormat = DEFAULT_TITLE_FORMAT;
 /** The configured `:journal/file-name-format`; "" means the default. */
 let fileFormat = "";
@@ -155,51 +156,28 @@ export function createAnswerDay(): { day: () => number; follow: (asOfDay: () => 
   return { day, follow };
 }
 
-export type JournalDateParts = { readonly y: number; readonly m: number; readonly d: number };
+export type { JournalDateParts, JournalTitleRefusal, JournalTitleStatus } from "./types";
 
-/// Set the configured journal title format (from `GraphMeta.journal_page_title_format`).
-export function setJournalTitleFormat(fmt: string | undefined | null): void {
-  titleFormat = fmt ?? "";
-  effectiveTitleFormat = journalTitleStatus(fileFormat, titleFormat).effective;
+/// Set the effective journal title format (`GraphMeta.journal_title.effective`,
+/// "" = the default). Taken as decided: nothing here checks it.
+export function setJournalTitleFormat(effective: string | undefined | null): void {
+  effectiveTitleFormat = effective || DEFAULT_TITLE_FORMAT;
 }
 
-/// Set both configured journal formats from GraphMeta. Both feed the one date
-/// answerer (`parseJournalTitle`) as written, never trimmed or defaulted here
-/// (the answerer reads "" as the default); titles render in the effective
-/// title format the same answerer picks (`journalTitleStatus`).
-export function setJournalFormats(title: string | undefined | null, file: string | undefined | null): void {
+/// Set the graph's journal formats from GraphMeta: the configured file-name
+/// format as written (the text routes read "" as the default) and the
+/// effective title format the native core decided (`journal_title.effective`,
+/// D-20261119-YL). Titles render in, and text is read by, that format; no
+/// pattern is checked in the window. O(1).
+export function setJournalFormats(effectiveTitle: string | undefined | null, file: string | undefined | null): void {
   fileFormat = file ?? "";
-  setJournalTitleFormat(title);
-}
-
-/** Why a configured title format is not used (D-20261119-YL): it writes no
- * such field, or the title it writes for `day` opens `read_as` (null: no day). */
-export type JournalTitleRefusal =
-  | { readonly missing: "year" | "month" | "day" }
-  | { readonly day: JournalDateParts; readonly written: string; readonly read_as: JournalDateParts | null };
-/** The title format that renders journal titles, and why the configured one
- * is not used if it is not. */
-export type JournalTitleStatus = { readonly effective: string; readonly refusal: JournalTitleRefusal | null };
-
-let statusKey: string | null = null;
-let statusValue: JournalTitleStatus = { effective: DEFAULT_TITLE_FORMAT, refusal: null };
-/** The one answer, `tine_core::date::JournalFormat::title_format` /
- * `title_refusal` through wasm, for configured (file, title) formats ("" =
- * default). Cached for the last pair. O(1) warm. */
-export function journalTitleStatus(file: string, title: string): JournalTitleStatus {
-  const key = `${file}\u0000${title}`;
-  if (statusKey !== key) {
-    statusValue = Object.freeze(JSON.parse(journal_title_status_json(file, title)) as JournalTitleStatus);
-    statusKey = key;
-  }
-  return statusValue;
+  setJournalTitleFormat(effectiveTitle);
 }
 
 /** Why the configured title format of `meta` is not used, or null (the notice
- *  and Settings): both config strings go to the answerer unchanged. O(1) warm. */
-export function graphTitleRefusal(meta: { journal_page_title_format: string; journal_file_name_format: string }): Msg | null {
-  const configured = meta.journal_page_title_format ?? "";
-  return journalTitleRefusalMessage(configured, journalTitleStatus(meta.journal_file_name_format ?? "", configured));
+ *  and Settings), from the native decision it carries. O(1). */
+export function graphTitleRefusal(meta: { journal_page_title_format: string; journal_title: JournalTitleStatus }): Msg | null {
+  return journalTitleRefusalMessage(meta.journal_page_title_format ?? "", meta.journal_title);
 }
 
 /** The notice this graph load shows, with the diagnostic it says. */
@@ -210,7 +188,7 @@ let shownRefusal: { root: string; key: string | null; toast: number | null } | n
  *  and a successful Settings save. The same diagnostic again says nothing
  *  more; a new graph or a changed diagnostic retires the shown notice and
  *  says the new one. It auto-dismisses. No persisted state. O(1) warm. */
-export function noticeTitleRefusal(meta: { root: string; journal_page_title_format: string; journal_file_name_format: string }, load: boolean): void {
+export function noticeTitleRefusal(meta: { root: string; journal_page_title_format: string; journal_title: JournalTitleStatus }, load: boolean): void {
   const notice = graphTitleRefusal(meta);
   const key = notice ? textKey(notice) : null;
   if (!load && shownRefusal?.root === meta.root && shownRefusal.key === key) return;
@@ -283,8 +261,9 @@ let parsedDaySlot = 0;
 /** The graph's one date answerer for text, `tine_core::date::JournalFormat::parse_text`
  * run through wasm (the same Rust code the backend runs; D-20261102-JDL: the
  * configured file-name format included; D-20261119-YL: the effective title
- * first, a refused title no route). Explicit formats,
- * for callers that are not the open graph (the browser mock). O(name), no I/O. */
+ * first). `title` is an effective title format, never a refused one.
+ * Explicit formats, for callers that are not the open graph (the browser
+ * mock). O(name), no I/O. */
 export function parseJournalDayIn(name: string, file: string, title: string): JournalDateParts | null {
   const cached = parsedDays.find(entry => entry?.file === file && entry.title === title && entry.input === name);
   if (cached) return cached.parts;
@@ -296,14 +275,14 @@ export function parseJournalDayIn(name: string, file: string, title: string): Jo
 }
 
 function journalParts(name: string): JournalDateParts | null {
-  return parseJournalDayIn(name, fileFormat, titleFormat);
+  return parseJournalDayIn(name, fileFormat, effectiveTitleFormat);
 }
 
 /** The kind of a link target the page inventory does not list (no file,
  * alias or reference claims it): a journal iff the name is a date, decided by
  * the Rust rule `JournalFormat::absent_link_is_journal` through wasm. */
 export function absentLinkIsJournal(name: string): boolean {
-  return absent_link_is_journal(name, fileFormat, titleFormat);
+  return absent_link_is_journal(name, fileFormat, effectiveTitleFormat);
 }
 
 /// A `[[name]]` link / quick-switch pick opens the journal (not an empty page)

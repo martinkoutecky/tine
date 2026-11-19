@@ -1046,7 +1046,11 @@ flag. Named routes, links and exact-path opens all retain that file. An
 alias owned by a journal opens the journal. A name nothing claims or aliases is
 a journal exactly when it parses as a day (`JournalFormat::absent_link_is_journal`,
 exported to the frontend through wasm so the unknown-name fallback runs the same
-code). `page_inventory` entries carry the answer as an optional
+code). Whether the configured title format is used is decided once per config,
+natively (`JournalFormat::new`), and published in `GraphMeta.journal_title`
+(`{effective, refusal}`; a Settings save returns it too). The frontend renders
+titles in `effective` and builds its text routes from it (`date::TextRoutes`
+through wasm); no frontend or wasm code checks a title pattern. `page_inventory` entries carry the answer as an optional
 `link: {name, kind}`, sent only when it differs from the entry itself (most
 entries carry nothing). The field is in-memory and derived per read: nothing is
 persisted or checkpointed. An `inventoryDelta` entry carries it computed at the

@@ -8,6 +8,15 @@ import { applyConfigDerivedState } from "../graph";
 import { backend } from "../backend";
 import { type GraphMeta } from "../types";
 import golden from "../../tests/fixtures/og-journal-formats.json";
+import titleGolden from "../../tests/fixtures/journal-title-status-golden.json";
+
+/** The native title decision for `configured` (pinned by Rust
+ *  `graph_meta_carries_the_native_title_decision`). */
+const decided = (configured: string): GraphMeta["journal_title"] => {
+  const answer = (titleGolden as Record<string, GraphMeta["journal_title"]>)[configured];
+  if (!answer) throw new Error(`no native answer for ${configured} in the golden file`);
+  return answer;
+};
 
 afterEach(() => { closeSettings(); setGraphMeta(null); vi.restoreAllMocks(); vi.useRealTimers(); document.body.innerHTML = ""; });
 
@@ -19,7 +28,7 @@ it("GX4: the sections-page note follows marker changes, full and gaps while unre
   };
   publish();
   const read = vi.spyOn(backend(), "queryRun").mockResolvedValue({ anchor: "page", pages: [], diagnostics: [], report: { ran: [], ignored: [], supported: true }, total: 0, exceeded: false });
-  setGraphMeta({ root: "/fixture", journal_config_diagnostics: [] } as unknown as GraphMeta);
+  setGraphMeta({ root: "/fixture", journal_config_diagnostics: [], journal_title: decided("MMM do, yyyy") } as unknown as GraphMeta);
   const root = document.createElement("div"); document.body.append(root);
   const dispose = render(() => <Settings />, root);
   try {
@@ -40,7 +49,7 @@ it("shows backend journal pattern notes by the format picker and follows fresh c
     ":journal/page-title-format uses unsupported week numbers ww",
     ":journal/file-name-format keeps quoted text 'w'",
   ];
-  setGraphMeta({ root: "/fixture", journal_page_title_format: "yyyy-ww", journal_config_diagnostics: notes } as GraphMeta);
+  setGraphMeta({ root: "/fixture", journal_page_title_format: "yyyy-ww", journal_title: decided("yyyy-ww"), journal_config_diagnostics: notes } as GraphMeta);
   const root = document.createElement("div");
   document.body.append(root);
   const dispose = render(() => <Settings />, root);
@@ -51,7 +60,7 @@ it("shows backend journal pattern notes by the format picker and follows fresh c
     for (const note of notes) expect(statuses().some(text => text?.includes(note))).toBe(true);
     const field = root.querySelector(".config-diagnostic")!.closest(".settings-field");
     expect(field?.querySelector("select")).toBeTruthy();
-    applyConfigDerivedState({ ...graphMeta()!, journal_page_title_format: "yyyy-MM-dd", journal_config_diagnostics: [notes[1]] }, graphMeta());
+    applyConfigDerivedState({ ...graphMeta()!, journal_page_title_format: "yyyy-MM-dd", journal_title: decided("yyyy-MM-dd"), journal_config_diagnostics: [notes[1]] }, graphMeta());
     await new Promise(resolve => setTimeout(resolve, 0));
     expect(statuses().some(text => text?.includes(notes[0]))).toBe(false);
     expect(statuses().some(text => text?.includes(notes[1]))).toBe(true);
@@ -64,8 +73,8 @@ it("shows backend journal pattern notes by the format picker and follows fresh c
 it("offers the OG built-ins with the current custom format first and writes a selected pattern", async () => {
   vi.useFakeTimers({ toFake: ["Date"] });
   vi.setSystemTime(new Date(2024, 0, 5));
-  const saved = vi.spyOn(backend(), "setJournalTitleFormat").mockResolvedValue([]);
-  setGraphMeta({ root: "/fixture", journal_page_title_format: "EE, yyyy-MM-dd", journal_config_diagnostics: ["old pattern note"] } as GraphMeta);
+  const saved = vi.spyOn(backend(), "setJournalTitleFormat").mockResolvedValue({ journal_config_diagnostics: [], journal_title: decided("E, yyyy/MM/dd") });
+  setGraphMeta({ root: "/fixture", journal_page_title_format: "EE, yyyy-MM-dd", journal_title: decided("EE, yyyy-MM-dd"), journal_config_diagnostics: ["old pattern note"] } as GraphMeta);
   const root = document.createElement("div");
   document.body.append(root);
   const dispose = render(() => <Settings />, root);
@@ -88,7 +97,7 @@ it("offers the OG built-ins with the current custom format first and writes a se
 });
 
 it("D-20261119-YL: while config.edn's title format names no single day, Settings shows the format in use and why", async () => {
-  setGraphMeta({ root: "/fixture", journal_page_title_format: "MM-dd", journal_file_name_format: "yyyy_MM_dd", journal_config_diagnostics: [] } as unknown as GraphMeta);
+  setGraphMeta({ root: "/fixture", journal_page_title_format: "MM-dd", journal_title: decided("MM-dd"), journal_file_name_format: "yyyy_MM_dd", journal_config_diagnostics: [] } as unknown as GraphMeta);
   const root = document.createElement("div");
   document.body.append(root);
   const dispose = render(() => <Settings />, root);
@@ -101,12 +110,12 @@ it("D-20261119-YL: while config.edn's title format names no single day, Settings
     ]);
     // The picker keeps the configured value, so the file round-trips.
     expect([...root.querySelectorAll<HTMLSelectElement>("select")].some(s => s.value === "MM-dd")).toBe(true);
-    applyConfigDerivedState({ ...graphMeta()!, journal_page_title_format: "d.M.yy" }, graphMeta());
+    applyConfigDerivedState({ ...graphMeta()!, journal_page_title_format: "d.M.yy", journal_title: decided("d.M.yy") }, graphMeta());
     await new Promise(resolve => setTimeout(resolve, 0));
     expect(notes()).toEqual([
       'Journal titles use "MMM do, yyyy", not "d.M.yy" from config.edn: that format titles 1900-01-01 "1.1.00", which opens 2000-01-01. Your files are unchanged.',
     ]);
-    applyConfigDerivedState({ ...graphMeta()!, journal_page_title_format: "dd.MM.yyyy" }, graphMeta());
+    applyConfigDerivedState({ ...graphMeta()!, journal_page_title_format: "dd.MM.yyyy", journal_title: decided("dd.MM.yyyy") }, graphMeta());
     await new Promise(resolve => setTimeout(resolve, 0));
     expect(notes()).toEqual([]);
   } finally { dispose(); }

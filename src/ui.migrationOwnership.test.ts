@@ -2,6 +2,9 @@ import { afterEach, expect, it, vi } from "vitest";
 import { backend } from "./backend";
 import { bumpGraphEpoch, graphEpoch, graphMeta, setGraphMeta } from "./graphSession";
 import { changeJournalTitleFormat } from "./ui";
+import type { JournalTitleSaved } from "./types";
+
+const saved = (notes: string[], effective: string): JournalTitleSaved => ({ journal_config_diagnostics: notes, journal_title: { effective, refusal: null } });
 
 afterEach(() => { setGraphMeta(null); vi.restoreAllMocks(); });
 
@@ -9,12 +12,12 @@ it("does not publish an old graph's journal migration completion into the new gr
   const loaded = await backend().loadGraph("");
   if (loaded.kind === "focused_existing") throw new Error("no graph metadata");
   setGraphMeta({ ...loaded.meta, root: "/old", journal_page_title_format: "Old" });
-  let finish!: (notes: string[]) => void;
-  vi.spyOn(backend(), "setJournalTitleFormat").mockImplementationOnce(() => new Promise<string[]>((resolve) => { finish = resolve; }));
+  let finish!: (result: JournalTitleSaved) => void;
+  vi.spyOn(backend(), "setJournalTitleFormat").mockImplementationOnce(() => new Promise<JournalTitleSaved>((resolve) => { finish = resolve; }));
   changeJournalTitleFormat("Changed");
   setGraphMeta({ ...loaded.meta, root: "/new", journal_page_title_format: "New", journal_config_diagnostics: ["new graph note"] });
   const before = graphEpoch();
-  finish(["old graph note"]);
+  finish(saved(["old graph note"], "Changed"));
   await Promise.resolve();
   await Promise.resolve();
   expect(graphEpoch()).toBe(before);
@@ -28,7 +31,7 @@ it("does not roll back a newer same-value journal format request", async () => {
   let fail!: (reason: Error) => void;
   vi.spyOn(backend(), "setJournalTitleFormat")
     .mockImplementationOnce(() => new Promise((_, reject) => { fail = reject; }))
-    .mockResolvedValue([]);
+    .mockResolvedValue(saved([], "X"));
   changeJournalTitleFormat("X");
   changeJournalTitleFormat("F");
   changeJournalTitleFormat("X");

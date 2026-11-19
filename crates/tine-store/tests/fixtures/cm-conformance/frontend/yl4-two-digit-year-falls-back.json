@@ -115,6 +115,22 @@
     }
   ],
   "journalFileFormat": null,
+  "journalTitle": {
+    "effective": "MMM do, yyyy",
+    "refusal": {
+      "day": {
+        "d": 1,
+        "m": 1,
+        "y": 1900
+      },
+      "read_as": {
+        "d": 1,
+        "m": 1,
+        "y": 2000
+      },
+      "written": "1.1.00"
+    }
+  },
   "journalTitleFormat": "d.M.yy",
   "keyOf": {
     "1.1.00": "1.1.00",

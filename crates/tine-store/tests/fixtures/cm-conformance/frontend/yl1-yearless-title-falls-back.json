@@ -112,6 +112,12 @@
     }
   ],
   "journalFileFormat": null,
+  "journalTitle": {
+    "effective": "MMM do, yyyy",
+    "refusal": {
+      "missing": "year"
+    }
+  },
   "journalTitleFormat": "MM-dd",
   "keyOf": {
     "11-02": "11-02",

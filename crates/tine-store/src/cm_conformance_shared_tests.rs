@@ -1114,8 +1114,9 @@ fn resolved_wire(r: &Resolved) -> Value {
 /// Harness gap H3 closed for fixtures: what the frontend's link decision
 /// needs to run in vitest (`src/cmConformanceNavigate.test.ts`), with the
 /// answers it is compared to.
-/// - `journalTitleFormat` / `journalFileFormat`: what GraphMeta hands
-///   `setJournalFormats`;
+/// - `journalTitleFormat` / `journalFileFormat` / `journalTitle`: the
+///   configured formats and the native title decision GraphMeta carries
+///   (`setJournalFormats` takes `journalTitle.effective` and the file format);
 /// - `inventory`: `page_inventory`'s entries, built as `src-tauri`'s
 ///   `entry_wire` builds them (with `link`);
 /// - `spellings`: per spelling the model answers for, the native parse's day,
@@ -1262,6 +1263,7 @@ pub fn frontend_case(
         "namespaceTree": ctx.model["namespaceTree"],
         "journalTitleFormat": journal_title_format,
         "journalFileFormat": journal_file_format,
+        "journalTitle": tine_core::model::JournalTitleStatus::of(journal),
         "conflicts": ctx.conflicts,
         "inventory": entries,
         "spellings": spellings,
