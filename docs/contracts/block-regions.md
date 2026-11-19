@@ -118,24 +118,26 @@ source-entry paths remain a follow-up.
 Fence and property recognition are done: code containers come from `literal_blocks`/`open_fence`
 (`fences.ts`), property lines and hidden-property split/reattach from `properties` (`splitProps`).
 Both editors give an active `[[`, `((` or `#` trigger its usual reference search inside a
-Markdown property value. The authored inline parse selects the reference enclosing the caret
+Markdown property value. An inline parse of the authored line selects the reference enclosing the caret
 and retires markers inside references the caret has left. Parser-owned URL and link destinations,
 inline code, math and escaped markers keep the reference picker closed. Markdown and Org each
 use their own parse. A Markdown-style destination in Org can contain a real Org reference.
-The block regions also cover multiline code and math, including the opening line of math.
+The shared, cached block regions cover multiline code and math. Reference detection consults them
+on later lines or on a first line with a possible unclosed literal opener and another line below.
 Outside a reference, a fresh tag can offer its picker and the ordinary property-value rules apply.
 
-For a closed same-line reference, a pick replaces through the closer when lsdoc reads the title
-text after the caret as plain. Literal brackets and escapes can be part of plain text. A reference,
-embed, tag, link, code, math or formatting after the caret keeps that source intact. The same
-applies if a code or math span within the title continues across the closer. In these cases and
+For a closed same-line reference, lsdoc also parses from the title start through the end of the line.
+A pick replaces through the closer if no non-plain node in that parse overlaps the range from the
+caret through the end of the closer. Literal brackets and escapes can be plain. A construct can span
+the caret or extend beyond the closer and still overlap the range. In these cases and
 for unfinished `[[`, `#[[` or `((`, the pick inserts a complete reference through the caret
 (D-20261119-P853C, FORK-853b). Page search uses the whole title when a pick replaces the whole
 reference (GH #888). Other queries use the prefix through the caret. Bare tags replace through
 the caret. A block pick captures the buffer and replacement range when accepted. Insertion after
 the target ID publishes uses that range while the editor, picker and buffer still match.
-Delimiter lookahead may scan to the end of the line. Inline parsing uses the prefix
-through candidate terminators and the affected title text, with a fixed number of calls.
+Reference detection uses at most two inline parses, each bounded by the caret line's byte length,
+and only the authored-line parse for an unfinished reference. A block region cache miss parses the
+block once. Detection performs no file or IPC operations.
 Both editors ask `properties.ts` for Markdown value positions through the existing
 accepted-property-line parser; only then does autocomplete split comma-separated
 query spans. Typing and pasting (including typing inside an existing value) share

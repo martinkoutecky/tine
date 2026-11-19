@@ -262,24 +262,26 @@ describe.each<EditorKind>(["textarea", "cm6"])("%s editor: the Enter family comm
     },
   );
 
-  it.each(["[[", "#[["])("picks the enclosing %s page when the title contains a block marker (PICK-853c)", async opener => {
-    const before = `project:: ${opener}Math ((no`;
-    const after = "ation)) tail]], [[Existing]]";
-    setGraphMeta(META); bumpGraphEpoch();
-    vi.spyOn(backend(), "quickSwitch").mockImplementation(async query => query === "Math ((notation)) tail"
-      ? [{ name: "Mathematics", kind: "page", date_key: null, path: "pages/Mathematics.md" }]
-      : []);
-    const editor = mount(before + after, before.length);
-    editor.type("t");
-    await acceptSuggestion(editor, "Mathematics");
-    expect(editor.value()).toBe(`project:: ${opener}Mathematics]] , [[Existing]]`);
-    expect(roots()).toEqual(["first", "target"]);
-  });
+  it.each((["md", "org"] as const).flatMap(format => ["[[", "#[["].map(opener => [format, opener] as const)))(
+    "picks the enclosing %s %s page and preserves the inner reference's suffix (PICK-853c)", async (format, opener) => {
+      const before = `project:: ${opener}Math ((no`;
+      const after = "ation)) tail]], [[Existing]]";
+      setGraphMeta(META); bumpGraphEpoch();
+      vi.spyOn(backend(), "quickSwitch").mockImplementation(async query => query === "Math ((not"
+        ? [{ name: "Mathematics", kind: "page", date_key: null, path: "pages/Mathematics.md" }]
+        : []);
+      const editor = mount(before + after, before.length, format);
+      editor.type("t");
+      await acceptSuggestion(editor, "Mathematics");
+      expect(editor.value()).toBe(`project:: ${opener}Mathematics]] ${after}`);
+      expect(roots()).toEqual(["first", "target"]);
+    },
+  );
 
-  it("offers property values while typing inside a Markdown link destination (PICK-853c)", async () => {
-    const before = "project:: [keep](relative/[[pr";
+  it.each(["relative/", "relative/a<z/"])("offers property values inside a Markdown destination starting with %s (PICK-853c)", async destination => {
+    const before = `project:: [keep](${destination}[[pr`;
     const after = "]]/abc)";
-    const propertyValue = "[keep](relative/[[project]]/abc)";
+    const propertyValue = `[keep](${destination}[[project]]/abc)`;
     setGraphMeta(META); bumpGraphEpoch();
     vi.spyOn(backend(), "queryFacets").mockResolvedValue([["project", [propertyValue]]]);
     const pages = vi.spyOn(backend(), "quickSwitch").mockResolvedValue([
@@ -291,6 +293,20 @@ describe.each<EditorKind>(["textarea", "cm6"])("%s editor: the Enter family comm
     expect(pages).not.toHaveBeenCalled();
     expect(editor.value()).toBe(before + "o" + after);
   });
+
+  it.each([["md", " x^{Keep]] intact}"], ["org", " /Keep ]] a\\/ b/"]] as const)(
+    "keeps the %s construct %s that extends past the closer (F1)", async (format, suffix) => {
+      const before = "project:: [[pr";
+      setGraphMeta(META); bumpGraphEpoch();
+      vi.spyOn(backend(), "quickSwitch").mockImplementation(async query => query === "pro"
+        ? [{ name: "Programming", kind: "page", date_key: null, path: "pages/Programming.md" }]
+        : []);
+      const editor = mount(before + suffix, before.length, format);
+      editor.type("o");
+      await acceptSuggestion(editor, "Programming");
+      expect(editor.value()).toBe(`project:: [[Programming]]${suffix}`);
+    },
+  );
 
   it.each(["md", "org"] as const)("keeps page search closed on the %s opening line of multiline math (PICK-853c)", format => {
     const before = "$$ text [[pr";
@@ -322,11 +338,13 @@ describe.each<EditorKind>(["textarea", "cm6"])("%s editor: the Enter family comm
 
   it.each([
     ...[", ((existing))", ", [[Keep )) intact]]", ", #[[Keep )) intact]]", " https://x.test/(keep)) tail", " #keep))suffix"]
-      .map(following => ({ before: "((pr", after: following, typed: "o", query: "pro", following })),
-    { before: "((Alpha [[b", after: "ta)), rest", typed: "e", query: "Alpha [[be", following: ", rest" },
+      .map(following => ({ before: "((pr", after: following, typed: "o", query: "pro", following, leading: "" })),
+    { before: "((Alpha [[b", after: "ta)), rest", typed: "e", query: "Alpha [[be", following: ", rest", leading: "" },
+    { before: "((a\\[[b", after: "a\\]] b)), rest", typed: "e", query: "a\\[[be", following: "a\\]] b)), rest", leading: "`[[` " },
   ])(
-    "picks the block reference in $before|$after (#853)", async ({ before, after, typed, query, following }) => {
-      const prefix = `project:: ${before}`;
+    "picks the block reference in $before|$after (#853)", async ({ before, after, typed, query, following, leading }) => {
+      const property = `project:: ${leading}`;
+      const prefix = property + before;
       const id = "11111111-1111-4111-8111-111111111111";
       setGraphMeta(META); bumpGraphEpoch();
       openAsLoaded(await bindTestHost());
@@ -342,7 +360,7 @@ describe.each<EditorKind>(["textarea", "cm6"])("%s editor: the Enter family comm
       await acceptSuggestion(editor, "first");
       expect(search).toHaveBeenCalledWith(query, 20, "block-picker");
       const spacing = following.startsWith(" ") ? "" : " ";
-      await vi.waitFor(() => expect(editor.value()).toBe(`project:: ((${id}))${spacing}${following}`));
+      await vi.waitFor(() => expect(editor.value()).toBe(`${property}((${id}))${spacing}${following}`));
     },
   );
 
