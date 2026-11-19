@@ -26,6 +26,59 @@ const snapshot: PublishedSnapshot = {
     context: { current_page: "Public" }, executed_context: { current_page: "Public" }, view: {}, result }],
 };
 
+describe("published external URL opener (GH #984)", () => {
+  afterEach(() => vi.unstubAllGlobals());
+
+  it.each([
+    "javascript:alert(1)",
+    " javascript:alert(1)",
+    "java\tscript:alert(1)",
+    "java\nscript:alert(1)",
+    "JAVASCRIPT:alert(1)",
+    "data:text/html,hello",
+    "blob:https://example.org/id",
+    "vbscript:example",
+    "about:blank",
+    "file:///tmp/notes.txt",
+    "tine://today",
+    "//example.org",
+  ])("refuses %j at the browser handoff", async (url) => {
+    const open = vi.fn();
+    vi.stubGlobal("window", { open });
+    const api = publishedBackend(async () => snapshot);
+    const outcome = await Promise.allSettled([api.openExternal(url)]);
+    expect(open).not.toHaveBeenCalled();
+    expect(outcome[0].status).toBe("rejected");
+  });
+
+  it.each([
+    "http://example.org",
+    "https://example.org",
+    "mailto:a@b.c",
+  ])("opens %j without confirmation", async (url) => {
+    const open = vi.fn();
+    vi.stubGlobal("window", { open });
+    await publishedBackend(async () => snapshot).openExternal(url);
+    expect(open).toHaveBeenCalledExactlyOnceWith(url, "_blank", "noopener");
+  });
+
+  it("requires a matching confirmation and cannot confirm a refused scheme", async () => {
+    const open = vi.fn();
+    vi.stubGlobal("window", { open });
+    const api = publishedBackend(async () => snapshot);
+    const url = "zotero://select/items/ABC";
+    const refusals = await Promise.allSettled([
+      api.openExternal(url),
+      api.openExternal(url, "obsidian"),
+      api.openExternal("java\tscript:alert(1)", "javascript"),
+    ]);
+    expect(open).not.toHaveBeenCalled();
+    expect(refusals.map(({ status }) => status)).toEqual(["rejected", "rejected", "rejected"]);
+    await api.openExternal(url, "zotero");
+    expect(open).toHaveBeenCalledExactlyOnceWith(url, "_blank", "noopener");
+  });
+});
+
 describe("read-only published snapshot", () => {
   it("answers page and baked query reads from the closed snapshot", async () => {
     validateSnapshot(snapshot);

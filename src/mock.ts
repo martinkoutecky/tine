@@ -27,6 +27,7 @@ import { mockJournalFiles } from "./mockJournalFiles";
 import { marginRegressionPages } from "./mockMarginPages";
 import { guideLevelRegressionPages } from "./mockGuidePages";
 import { mockAliases } from "./mockAliases";
+import { checkExternalLink } from "./linkSchemePolicy";
 
 /** Mock feed membership must use a Logseq journal-title parser, never the
  * host's permissive/non-portable Date string parser. The mock graph's formats
@@ -1178,12 +1179,11 @@ export function mockBackend(extraPages: PageDto[] = conflictDemoBodies().map((bl
     async setStartOfWeek(): Promise<void> {
       // no-op in the browser mock
     },
-    async openExternal(url: string): Promise<void> {
+    async openExternal(url: string, confirmedScheme?: string): Promise<void> {
+      checkExternalLink(url, confirmedScheme, "browser");
       try {
         window.open(url, "_blank", "noreferrer");
-      } catch {
-        // ignore
-      }
+      } catch { /* ignore */ }
     },
     async queryFacets(): Promise<[string, string[]][]> {
       const map = new Map<string, Set<string>>();

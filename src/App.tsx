@@ -91,6 +91,7 @@ import { initCommentIdentity } from "./commentIdentity";
 import { initCommentNamePrompt, probeGraphGit } from "./commentNamePrompt";
 import { initLocalFileSettings } from "./localFileSettings";
 import { loadLinkSchemeSettings } from "./linkSchemeSettings";
+import { isDirectExternalScheme } from "./linkSchemePolicy";
 import { initAssetSettings } from "./assetSettings";
 import { initMediaEditorSettings } from "./mediaEditorSettings";
 import { initSpellcheckSettings } from "./spellcheckSettings";
@@ -588,7 +589,7 @@ export async function installMobileExternalLinkHandler(owner: Owner = ownedWhen(
     // any other explicit scheme (intent:, javascript:, tel:, …) must not
     // navigate the WebView; its own handler (e.g. a file: asset link) still runs.
     e.preventDefault();
-    if (scheme !== "http" && scheme !== "https" && scheme !== "mailto") return;
+    if (!isDirectExternalScheme(scheme)) return;
     e.stopPropagation();
     void backend().openExternal(a.href);
   };

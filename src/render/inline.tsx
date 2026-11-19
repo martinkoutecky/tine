@@ -549,7 +549,7 @@ function renderEmail(text: EmailValue, spanAttrs?: SpanDomAttrs): JSX.Element {
   }
   const href = `mailto:${addr}`;
   return (
-    <a class="external-link" href={href} {...(spanAttrs ?? {})} onClick={(e) => { e.preventDefault(); e.stopPropagation(); void readOwned(graphOwner(), backend().openExternal(href)).catch((error) => reportLinkOpenFailure(href, error)); }}>
+    <a class="external-link" href={href} {...(spanAttrs ?? {})} onClick={(e) => { e.preventDefault(); e.stopPropagation(); void openOutboundLink(href); }}>
       {addr}
     </a>
   );
