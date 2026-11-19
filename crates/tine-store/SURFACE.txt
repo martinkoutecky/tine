@@ -391,7 +391,7 @@ field restore::RestoreFailed.phase
 field restore::RestoreFailed.cause
 field restore::RestoreFailed.done
 
-## WholeGraph: Names (ceiling: 32)
+## WholeGraph: Names (ceiling: 33)
 # CLI export extends corpus's selection parameter to indexed block-ID candidate
 # pages. A page name cannot identify those pages; CorpusScope types that existing
 # parameter. No Store operation or WholeGraph question is added.
@@ -452,6 +452,11 @@ field store::NameOwners.claimants
 field store::NameOwners.declarers
 field store::NameOwners.spellings
 fn store::NameOwners::opens
+# CM day move r2 (merge review d326456c6 finding 3; 32 -> 33): the day move frees the
+# day's own alias before it creates the page under that name, so the offer
+# cannot read the new file from `resolve` (it answers Alias); `proposed_file` is
+# resolve's own absent answer, the one place a new page's file is named.
+fn store::WholeGraph::proposed_file
 fn store::WholeGraph::rev
 fn store::WholeGraph::unreadable_files
 # GH #335 (All pages "Updated" column): `inventory` answers per NAME (aliases,

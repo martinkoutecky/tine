@@ -98,6 +98,20 @@ impl WholeGraph {
                 return Resolved::Alias { owners };
             }
         }
+        Resolved::Absent {
+            id: self.proposed_file(name, is_journal),
+        }
+    }
+
+    /// The file a new page `name` is created as ([`Self::resolve`]'s absent
+    /// answer), whatever claims or declares the name now: for a name a
+    /// helper frees first (a released alias). O(name bytes), no I/O.
+    pub fn proposed_file(&self, name: &str, is_journal: bool) -> PageId {
+        let kind = if is_journal {
+            PageKind::Journal
+        } else {
+            PageKind::Page
+        };
         let config = &self.config.config;
         // A day with no file gets a new one in the journals directory
         // (D-20261111-CMR14 CM-DAYFILE).
@@ -107,12 +121,8 @@ impl WholeGraph {
                 .parse(name)
                 .map(|date| self.journal_format.file_stem(date))
                 .unwrap_or_else(|| name.to_owned());
-            return Resolved::Absent {
-                id: proposed_journal_id(config, stem),
-            };
+            return proposed_journal_id(config, stem);
         }
-        Resolved::Absent {
-            id: inventory::proposed_page_id(config, name),
-        }
+        inventory::proposed_page_id(config, name)
     }
 }

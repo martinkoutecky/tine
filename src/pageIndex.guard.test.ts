@@ -13,11 +13,13 @@ const INVENTORY_OWNER = "src/pageIndex.ts";
 // applies to its held inventory (and the published site to a snapshot's rows).
 const OWNER_READER = "src/inventoryRows.ts";
 // `resolvePage` answers ONE name for a save that has no file id yet (B15b): the
-// journal seed/template, QuickSwitcher Create and query materialize. (A working-set
-// page's first save resolves inside the `page_open` port, STEP3 §3.1.) It never
-// feeds a name map.
+// journal seed/template, QuickSwitcher Create, query materialize and the day
+// move's check that its destination is the confirmed file (renameHelpers.ts).
+// (A working-set page's first save resolves inside the `page_open` port, STEP3
+// §3.1.) It never feeds a name map.
 const RESOLVE_FOR_SAVE = new Set([
   "src/graph.ts",
+  "src/renameHelpers.ts",
   "src/components/QuickSwitcher.tsx",
   "src/components/QueryWorkspace.tsx",
 ]);

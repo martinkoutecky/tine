@@ -168,6 +168,27 @@ property write and one guarded save per page, then the request; the question add
 one plan per offered merge and one for "use the name", with linear header reads
 (each tag line read once, union membership by set lookup).
 
+**Day move** (D-20261111-CMDF, -MA, -MOA): renaming a day offers to move its
+notes to the typed name's page with one cross-page block move, a guarded
+two-page host operation. The offer names the receiving file (`path`: the
+existing page's, or the file `WholeGraph::proposed_file` says a new page is
+created as), and the window holds a new page in that file's format. What
+moves: every root but the page-header block, and the header's children,
+promoted to roots at the destination; the header stays with the day, which
+gains one `Moved to [[name]]` block. For the day's own alias the helper edit
+releases the alias first; the move itself puts back only that value, and only
+while the line still reads the helper's value, inside the same operation, so
+other typing in the header survives. After the confirmation the receiving page
+must be the file the dialog named, or still have no file, by the store's name
+answer (`resolve`); otherwise nothing moves and the rename is asked again.
+Cost: one read of the destination when not loaded, one name resolution, one
+host move, one write per file, plus the alias save for MOA.
+
+| Day-move refusal | In-scope threat |
+| --- | --- |
+| The receiving file is not the confirmed one (asked again) | An external editor, sync delivery or a concurrent honest instance created or replaced the destination's file while the dialog was open. |
+| The day and the page use different formats (`rename-refused-different-formats`) | Malformed input: an Org outline written into Markdown (or the reverse) would not read back as the same blocks. |
+
 The CLI has no standalone unchanged-save verb. Its P3 human message names the
 file and asks the user to open it in the app, save once and repeat the rename.
 P2 asks for a report. Both keep `code: refused`, `detail.reason: rename-refused`

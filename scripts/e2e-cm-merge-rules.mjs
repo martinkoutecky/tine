@@ -55,6 +55,8 @@ const seeded = {
   "journals/2026_10_26.md": "alias:: old/sub\n\n- day\n",
   "journals/2026_11_18.md": "alias:: Launch day\n\n- day note\n- TODO call\n",
   "pages/day referrer.md": "- see [[Nov 18th, 2026]]\n",
+  "journals/2026_11_19.md": "alias:: Second day\nmood:: calm\n\n- second note\n",
+  "journals/2026_11_20.md": "- third note\n",
   "pages/Twin.md": "- twin one\n",
   "pages/twin copy.md": "title:: Twin\n\n- twin two\n",
   "pages/Twin source.md": "- twin source\n",
@@ -244,6 +246,24 @@ try {
   assert.equal(fs.readFileSync(path.join(graph, "pages/day referrer.md"), "utf8"), "- see [[Nov 18th, 2026]]\n", "a link to the day stays on the day");
   await browser.waitUntil(async () => (await currentPageTitle(browser)) === "Trip", { timeout: 15_000, timeoutMsg: "the page that received the notes is not open" });
 
+  stage = "MOA: moving a day's notes to its own alias creates that page; the day keeps its alias and other properties";
+  await openPageByName(browser, "Nov 19th, 2026");
+  await renameTitle("Second day");
+  await browser.$('[data-choice="move"]').waitForExist({ timeout: 15_000, timeoutMsg: "the own-alias day-move dialog never opened" });
+  await browser.$('[data-choice="move"]').click();
+  await waitForFileText(path.join(graph, "pages/Second day.md"), (text) => text.includes("- second note"), { timeoutMs: 15_000 });
+  await waitForFileText(path.join(graph, "journals/2026_11_19.md"), (text) => text.includes("alias:: Second day") && text.includes("mood:: calm")
+    && text.includes("- Moved to [[Second day]]") && !text.includes("second note"), { timeoutMs: 15_000 });
+
+  stage = "CMDF: moving a day's notes into an existing page appends them there";
+  await openPageByName(browser, "Nov 20th, 2026");
+  await renameTitle("Trip");
+  await browser.$('[data-choice="move"]').waitForExist({ timeout: 15_000, timeoutMsg: "the day-move dialog into Trip never opened" });
+  assert.match(await browser.$('[data-choice="move"]').getText(), /Move the notes into “Trip”/);
+  await browser.$('[data-choice="move"]').click();
+  await waitForFileText(path.join(graph, "pages/Trip.md"), (text) => text.includes("- day note") && text.includes("- third note"), { timeoutMs: 15_000 });
+  await waitForFileText(path.join(graph, "journals/2026_11_20.md"), (text) => text.includes("- Moved to [[Trip]]") && !text.includes("third note"), { timeoutMs: 15_000 });
+
   stage = "M2(6): a name two files claim opens the contested dialog; keeping one merges the other into it, then the rename asks again";
   await openPageByName(browser, "Twin source");
   await renameTitle("Twin");
@@ -259,7 +279,7 @@ try {
   assert.ok(!fs.existsSync(path.join(graph, "pages/Twin source.md")), "the renamed source merged into Twin");
 
   ownerFixture.verify();
-  fs.writeFileSync(path.join(run, "receipt.json"), JSON.stringify({ commit, workingDiff: true, outcome: "PASS", journey: "O4 rename moves a journal-declared alias under the source and keeps the journal; O3 alias dialog shows the component and effects, Cancel writes nothing, use-the-name removes the alias then renames, the file-less merge repoints references; TAGH merge leaves one united tags line; O3 alias-only context-menu rename rewrites declaration, links and queries, creates no file and survives reload; O4 own-child refusal writes nothing; CMDF day move dialog (Cancel writes nothing; the move leaves the day its header and a Moved to block); M2(6) contested dialog keeps one file, merges the other, then the rename asks again", graph }, null, 2));
+  fs.writeFileSync(path.join(run, "receipt.json"), JSON.stringify({ commit, workingDiff: true, outcome: "PASS", journey: "O4 rename moves a journal-declared alias under the source and keeps the journal; O3 alias dialog shows the component and effects, Cancel writes nothing, use-the-name removes the alias then renames, the file-less merge repoints references; TAGH merge leaves one united tags line; O3 alias-only context-menu rename rewrites declaration, links and queries, creates no file and survives reload; O4 own-child refusal writes nothing; CMDF day move dialog (Cancel writes nothing; the move leaves the day its header and a Moved to block; MOA to its own alias keeps the alias and other properties; into an existing page appends); M2(6) contested dialog keeps one file, merges the other, then the rename asks again", graph }, null, 2));
   console.log(`PASS CM merge rules. ${run}`);
 } catch (error) {
   try { await browser?.saveScreenshot(path.join(run, "failure.png")); } catch {}

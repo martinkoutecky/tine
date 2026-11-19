@@ -114,7 +114,7 @@ export { evictIfNeeded } from "./workingSet";
 export { admitPageFile, appendFeed, deletePage, ensurePageLoaded, loadFeed, loadGuidePages, loadRoutedPage, pageLoadRefusalMessage, pinPageNearViewport, pinPageWhileDrafting, registerPaneRouteProvider, reportPageLoadRefusal, resetStore, restoreTodayJournalInFeed, type PageLoadRefusal } from "./workingSet";
 export { followPageIdentity, installRenameRefreshHandler, renamePageOnDisk } from "./graphRewrite";
 export { graphRewriteFrozen, tryFreezeGraphRewrite } from "./graphRewriteState";
-export { emptyPage, captureEmptyPage, favoritesArrangementPage, favoritesArrangementBlocks, journalSectionsPage, exportsPage, queryBlockRaw, resolveGuideBlockRef, resolveGuidePageDto, withToday, toLoadablePage, carryTodayPage, captureScratchPage, journalTemplatePage, demoJournalPage, switcherPage, queryWorkspacePage } from "./convert";
+export { emptyPage, formatOfFile, captureEmptyPage, favoritesArrangementPage, favoritesArrangementBlocks, journalSectionsPage, exportsPage, queryBlockRaw, resolveGuideBlockRef, resolveGuidePageDto, withToday, toLoadablePage, carryTodayPage, captureScratchPage, journalTemplatePage, demoJournalPage, switcherPage, queryWorkspacePage } from "./convert";
 export { depthOf, nextVisible, pageVisibleOrder, prevVisible, visibleNeighbor, visibleOrder } from "./tree";
 export { commentsFirst } from "./commentOrder";
 export { bodyNeighbor } from "./bodyNavigation";
@@ -137,4 +137,4 @@ export { extendFeedForScroll, isBlockMoving, moveBlock, moveBlocksRelative, move
 export { installPageIdentityNavigation, rekeyPageIdentityByPath } from "./workingSet";
 export { pageInstanceGeneration } from "./instance";
 export { retireFeedPages } from "./workingSet";
-export { carryUnfinished, dayMoveBlocks, moveDayBlocks, pageHeader, type PageHeader } from "./edits/carry";
+export { carryUnfinished, dayMoveBlocks, moveDayBlocks } from "./edits/carry";

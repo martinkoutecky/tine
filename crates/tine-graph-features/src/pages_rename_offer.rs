@@ -187,6 +187,9 @@ pub struct DayMove {
     /// The destination is a journal day.
     pub journal: bool,
     pub into: Option<DialogPage>,
+    /// The file the notes go to: `into`'s, or the file the new page is
+    /// created as (the store's proposal, in the graph's preferred format).
+    pub path: String,
     pub references: Vec<String>,
     pub reference_count: usize,
     pub release: Option<AliasEdit>,
@@ -467,6 +470,7 @@ fn day_move(
     let day = dialog_page(graph, &day_id);
     let mut release = None;
     let mut retargeted = None;
+    let mut path = None;
     let into = match graph.resolve(new, false) {
         tine_store::Resolved::Existing { id, others } => {
             if !others.is_empty() {
@@ -503,9 +507,20 @@ fn day_move(
             Some(first) => Some(dialog_page(graph, first)),
             None => None,
         },
-        tine_store::Resolved::Absent { .. } => None,
+        tine_store::Resolved::Absent { id } => {
+            path = Some(id.as_str().to_owned());
+            None
+        }
     };
-    let mut referrers = graph.explicit_referrers(std::slice::from_ref(&day.name));
+    let journal = into
+        .as_ref()
+        .map_or_else(|| days.parse(new).is_some(), |page| page.journal);
+    let path = into
+        .as_ref()
+        .and_then(|page| page.path.clone())
+        .or(path)
+        .unwrap_or_else(|| graph.proposed_file(new, journal).as_str().to_owned());
+    let mut referrers = graph.explicit_referrers(&graph.name_owners(&day.name).spellings);
     referrers.retain(|id| *id != day_id);
     let (references, reference_count) = rename_helpers::names(
         referrers
@@ -513,9 +528,8 @@ fn day_move(
             .map(|id| name_of(graph, id).unwrap_or_else(|| id.as_str().to_owned())),
     );
     Ok(RenameOffer::DayMove(DayMove {
-        journal: into
-            .as_ref()
-            .map_or_else(|| days.parse(new).is_some(), |page| page.journal),
+        journal,
+        path,
         name: into
             .as_ref()
             .map_or_else(|| new.to_owned(), |page| page.name.clone()),

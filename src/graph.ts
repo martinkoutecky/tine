@@ -498,7 +498,8 @@ export type RenameOutcome = Exclude<Awaited<ReturnType<typeof renamePageOnDisk>>
  *    removes the alias from the declaring pages first.
  *  - `from` is a day (O0/O2): the day-move dialog offers to move its notes to
  *    `to` instead (`moveDayNotes`, D-20261111-CMDF): `{ moved }` names the
- *    page that received them.
+ *    page that received them; when the receiving file changed while the
+ *    dialog was open, this same rename is asked again.
  *  - several files claim a touched name: the contested dialog offers the file
  *    merge into the file the user keeps (`mergeContested`, D-20261019-M2(6)),
  *    then this same rename is asked again.
@@ -543,7 +544,11 @@ export async function renameOrMergePage(
   ] : [];
   switch (offer.kind) {
     case "refused": return { refused: offer.reason };
-    case "dayMove": return (await moveDayNotes(from, offer)) ?? "cancelled";
+    case "dayMove": {
+      const moved = await moveDayNotes(from, offer);
+      // The destination changed while the dialog was open: ask with the new facts.
+      return moved === "again" ? renameOrMergePage(from, to, target, onRefreshed, onRecovered) : moved ?? "cancelled";
+    }
     case "contested": {
       const merged = await mergeContested(from, to, offer);
       if (!merged || "refused" in merged || !owner()) return "cancelled";

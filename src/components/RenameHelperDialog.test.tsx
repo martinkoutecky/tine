@@ -24,7 +24,7 @@ const day: PageRead = { name: DAY, title: DAY, kind: "journal", id: "journals/20
 const dayMove = (over: Partial<DayMoveOffer> = {}): DayMoveOffer => ({
   kind: "dayMove", reason: { kind: "day", name: DAY }, message: "",
   day: { name: DAY, path: day.id, journal: true, aliases: ["Launch day"] },
-  name: "Trip", journal: false, into: null, references: ["diary", "plans"], referenceCount: 2, release: null, retargeted: null,
+  name: "Trip", journal: false, into: null, path: "pages/Trip.md", references: ["diary", "plans"], referenceCount: 2, release: null, retargeted: null,
   ...over,
 });
 

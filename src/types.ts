@@ -312,6 +312,8 @@ export type DayMoveOffer = {
   kind: "dayMove";
   reason: RenameRefusal; message: string;
   day: AliasDialogPage; name: string; journal: boolean; into: AliasDialogPage | null;
+  /** The file the notes go to: `into`'s, or the file the new page is created as. */
+  path: string;
   references: string[]; referenceCount: number;
   release: AliasEdit | null;
   retargeted: RenameEffect["retargeted"][number] | null;

@@ -536,6 +536,71 @@ fn a_day_moved_to_a_date_alias_lists_every_spelling_that_follows() {
     assert_eq!(pages, vec!["iso".to_owned(), "plain".to_owned()]);
 }
 
+/// Round 2, finding 5: the links to a day that stay on it are listed in every
+/// spelling of its date, not only the displayed one.
+#[test]
+fn a_day_move_lists_links_to_the_day_in_every_date_spelling() {
+    let _guard = crate::integration_lock();
+    let (_root, store) = fixture(
+        "day-move-spellings",
+        &[
+            ("journals/2026_11_18.md", "- day note\n"),
+            ("pages/iso.md", "- see [[2026-11-18]]\n"),
+            ("pages/file.md", "- see [[2026_11_18]]\n"),
+            ("pages/plain.md", "- see [[Nov 18th, 2026]]\n"),
+        ],
+    );
+    let offer = day_move(&store, "Nov 18th, 2026", "Trip");
+    let mut pages = offer.references.clone();
+    pages.sort();
+    assert_eq!(
+        (pages, offer.reference_count),
+        (
+            vec!["file".to_owned(), "iso".to_owned(), "plain".to_owned()],
+            3
+        )
+    );
+}
+
+/// Round 2, finding 3: the offer names the file the notes go to (existing,
+/// or the file a new page is created as, in the graph's preferred format), so
+/// the window holds a new destination in that file's format.
+#[test]
+fn a_day_move_names_the_file_the_notes_go_to() {
+    let _guard = crate::integration_lock();
+    let (_root, store) = fixture("day-move-path", DAY);
+    assert_eq!(
+        day_move(&store, "Nov 18th, 2026", "Trip").path,
+        "pages/Trip.md"
+    );
+    assert_eq!(
+        day_move(&store, "Nov 18th, 2026", "plans").path,
+        "pages/Plans.md"
+    );
+    assert_eq!(
+        day_move(&store, "Nov 18th, 2026", "Launch day").path,
+        "pages/Launch day.md"
+    );
+    let (_root, org) = fixture(
+        "day-move-path-org",
+        &[
+            ("logseq/config.edn", "{:preferred-format \"Org\"}\n"),
+            (
+                "journals/2026_11_18.org",
+                "#+alias: Launch day\n\n* day note\n",
+            ),
+        ],
+    );
+    assert_eq!(
+        day_move(&org, "Nov 18th, 2026", "Trip").path,
+        "pages/Trip.org"
+    );
+    assert_eq!(
+        day_move(&org, "Nov 18th, 2026", "Launch day").path,
+        "pages/Launch day.org"
+    );
+}
+
 /// D-20261019-M2(6), D-20261115-HELP: a name two files claim is not a bare
 /// refusal: the window gets the claiming files and the one the name opens,
 /// to offer the file merge. Also as a day move's destination.

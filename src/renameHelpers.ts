@@ -1,7 +1,7 @@
 import { backend } from "./backend";
-import { admitPageFile, admitRead, dayMoveBlocks, emptyPage, ensurePageLoaded, flushPage, moveDayBlocks, pageByName, pageHeader, pinPageNearViewport, readPageProperty, reportPageLoadRefusal, setPageProperty } from "./document";
+import { admitPageFile, admitRead, dayMoveBlocks, emptyPage, ensurePageLoaded, flushPage, formatOfFile, moveDayBlocks, pageByName, pinPageNearViewport, readPageProperty, reportPageLoadRefusal, setPageProperty } from "./document";
 import { msg } from "./i18n";
-import { bindingOwner, writeOwned, type Owner } from "./owned";
+import { bindingOwner, readOwned, writeOwned, type Owner } from "./owned";
 import { askContested, askDayMove } from "./renameHelperDialogs";
 import { showRewriteRefusal } from "./renameRefusal";
 import { pushToast } from "./toasts";
@@ -74,12 +74,13 @@ export async function applyHelperEdits(edits: readonly HelperEdit[]): Promise<Ap
   }
 }
 
-/** Load `name` into the working set (a page with no file as an empty page),
- *  so its file is the one a write lands in (`admitPageFile`). False when the
- *  graph changed or another file holding the name has unsaved input (said). */
-async function admit(owner: Owner, name: string, kind: PageKind): Promise<boolean> {
+/** Load `name` into the working set (a page with no file as an empty page,
+ *  in the format of `file`, the file it will be created as), so its file is
+ *  the one a write lands in (`admitPageFile`). False when the graph changed
+ *  or another file holding the name has unsaved input (said). */
+async function admit(owner: Owner, name: string, kind: PageKind, file?: string): Promise<boolean> {
   if (pageByName(name)) return true;
-  const refused = await admitPageFile(name, kind, owner, emptyPage(name, kind));
+  const refused = await admitPageFile(name, kind, owner, emptyPage(name, kind, file ? formatOfFile(file) : undefined));
   if (refused === "stale") return false;
   if (refused) { reportPageLoadRefusal(refused); return false; }
   return !!pageByName(name);
@@ -91,12 +92,15 @@ async function admit(owner: Owner, name: string, kind: PageKind): Promise<boolea
  *  shows what stays on the day. The legal steps: for the day's own alias (MOA)
  *  the alias is first removed from the day's alias line (a helper edit, saved),
  *  so the new page can be opened under that name; then one cross-page block
- *  move writes the day (header kept, the alias line back, one `Moved to
- *  [[name]]` block) and the page (created if absent) as one guarded two-page
- *  operation. If the move does not happen the helper edit is put back. Null:
- *  cancelled, refused (said) or not done (said by the move). Cost: one dialog,
- *  up to two page reads, the alias edit's save, and one two-page operation. */
-export async function moveDayNotes(day: string, offer: DayMoveOffer): Promise<{ moved: string; kind: PageKind } | null> {
+ *  move writes the day (header kept, the released alias value back in it, one
+ *  `Moved to [[name]]` block) and the page (created if absent) as one guarded
+ *  two-page operation. If the move does not happen the helper edit is put
+ *  back. `"again"`: the file the name now names is not the one the user
+ *  confirmed (`offer.into`), so nothing moved and the rename is asked again.
+ *  Null: cancelled, refused (said) or not done (said by the move). Cost: one
+ *  dialog, up to two page reads, one name resolution, the alias edit's save,
+ *  and one two-page operation. */
+export async function moveDayNotes(day: string, offer: DayMoveOffer): Promise<{ moved: string; kind: PageKind } | "again" | null> {
   const owner = bindingOwner();
   if (!(await admit(owner, day, "journal")) || !owner()) return null;
   if (!dayMoveBlocks(day).length) {
@@ -104,7 +108,6 @@ export async function moveDayNotes(day: string, offer: DayMoveOffer): Promise<{ 
     return null;
   }
   if (!(await askDayMove(day, offer.name, offer)) || !owner()) return null;
-  const header = offer.release ? pageHeader(day) : null;
   let applied: AppliedEdits | null = null;
   if (offer.release) {
     const made = await applyHelperEdits([offer.release]);
@@ -122,14 +125,19 @@ export async function moveDayNotes(day: string, offer: DayMoveOffer): Promise<{ 
   const kind: PageKind = offer.journal ? "journal" : "page";
   const name = offer.name;
   try {
-    if (!(await admit(owner, name, kind)) || !owner()) { await putBack(); return null; }
+    if (!(await admit(owner, name, kind, offer.path)) || !owner()) { await putBack(); return null; }
+    // The receiving file must be the one confirmed: a file, which one, or none
+    // (DS-12). The store answers it; a page this window created holds no path.
+    const at = await readOwned(owner, backend().resolvePage(name, kind));
+    if (at.kind === "stale" || !owner()) { await putBack(); return null; }
+    if ((at.value.kind === "existing" ? at.value.id : null) !== (offer.into?.path ?? null)) { await putBack(); return "again"; }
     const from = pageByName(day), to = pageByName(name);
     if (!from || !to || (from.format ?? "md") !== (to.format ?? "md")) {
       await putBack();
       if (owner()) pushToast(msg("rename-refused-different-formats", { source: offer.day.path ?? day, target: offer.into?.path ?? name }), "error");
       return null;
     }
-    const moved = moveDayBlocks(day, name, `Moved to [[${name}]]`, header ?? undefined);
+    const moved = moveDayBlocks(day, name, `Moved to [[${name}]]`, offer.release ?? undefined);
     if (!moved.moved || !(await moved.persisted)) {
       await putBack();
       if (!moved.moved && owner()) pushToast(msg("rename-day-not-moved", { day }), "error");

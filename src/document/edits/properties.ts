@@ -3,7 +3,7 @@ import type { PageDto } from "../../types";
 import { ordered_list_glyph, page_alias_spellings } from "../../render/wasm/lsdoc_wasm.js";
 import { scheduleParts, planningTimestamp } from "../../editor/repeat";
 import { blockRegions, editBlock, parserReady } from "../../render/parse";
-import { bumpCollapseEpochs, doc, formatForBlock, pageByName, pageReadOnly, setDoc, freshId, writeRaw, type Node, type ReadonlyFeedPage } from "../model";
+import { bumpCollapseEpochs, doc, formatForBlock, pageByName, pageReadOnly, setDoc, freshId, writeRaw, type DocState, type Node, type ReadonlyFeedPage } from "../model";
 import { facetsOf } from "../../render/facets";
 import { propertyKeyNorm } from "../../render/block";
 import { pushUndo } from "../history";
@@ -183,15 +183,26 @@ export function readPageProperty(pageName: string, key: string): string | null {
  *  remains intact if its last key clears; that invalid draft cannot save until
  *  its children move out. */
 export function setPageProperty(pageName: string, key: string, value: string | null) {
+  const edit = pagePropertyEdit(pageName, key, value);
+  if (!edit) return;
+  if (key.toLowerCase() === "title") noteTitleIdentityIntent(pageName);
+  pushUndo(`pageprop:${pageName}:${key}`, [pageName]);
+  setDoc(produce(edit));
+  markDirty(pageName, "save-block");
+}
+
+/** {@link setPageProperty}'s text change alone, against the page as it stands
+ *  now, for a caller that applies it with `setDoc(produce(edit))` in the same
+ *  tick inside its own edit (no undo step, dirty mark or save of its own).
+ *  Null: no change, or the page is missing or read-only. O(property text). */
+export function pagePropertyEdit(pageName: string, key: string, value: string | null): ((s: DocState) => void) | null {
   const idx = doc.pages.findIndex((x) => x.name === pageName);
-  if (idx < 0 || !pageWritable(pageName)) return;
+  if (idx < 0 || !pageWritable(pageName)) return null;
   const page = doc.pages[idx];
   const parts = pagePropertyParts(page, null);
   const next = pagePartsWithProperty(parts.map((part) => part.text), page.format, key, value);
-  if (next.every((text, i) => text === parts[i].text)) return;
-  if (key.toLowerCase() === "title") noteTitleIdentityIntent(pageName);
-  pushUndo(`pageprop:${pageName}:${key}`, [pageName]);
-  setDoc(produce((s) => {
+  if (next.every((text, i) => text === parts[i].text)) return null;
+  return (s) => {
     parts.forEach((part, i) => {
       if (next[i] === part.text) return;
       if (part.kind === "preBlock") {
@@ -204,8 +215,7 @@ export function setPageProperty(pageName: string, key: string, value: string | n
         delete s.byId[part.id];
       } else writeRaw(s, part.id, next[i]);
     });
-  }));
-  markDirty(pageName, "save-block");
+  };
 }
 
 /** Materialize an existing canonical Markdown page header as Tine's ordinary
