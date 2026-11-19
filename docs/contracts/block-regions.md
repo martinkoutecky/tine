@@ -119,7 +119,9 @@ Fence and property recognition are done: code containers come from `literal_bloc
 (`fences.ts`), property lines and hidden-property split/reattach from `properties` (`splitProps`).
 Both editors give an active `[[`, `((` or `#` trigger its usual reference search inside a
 Markdown property value. After the caret passes a reference's closing delimiter, the ordinary
-property-value rules apply again.
+property-value rules apply again, including when the reference contains another trigger marker.
+Inside an open page or block reference, accepting a match can replace through its closer on the
+same line. A new opener of the same kind ends that lookahead. Bare tags replace through the caret.
 Both editors ask `properties.ts` for Markdown value positions through the existing
 accepted-property-line parser; only then does autocomplete split comma-separated
 query spans. Typing and pasting (including typing inside an existing value) share

@@ -171,6 +171,20 @@ describe.each<EditorKind>(["textarea", "cm6"])("%s editor: the Enter family comm
     });
   });
 
+  it("keeps later property values when accepting a page suggestion (#853)", async () => {
+    const prefix = "project:: [[pr";
+    setGraphMeta(META); bumpGraphEpoch();
+    vi.spyOn(backend(), "quickSwitch").mockImplementation(async query => query === "pro"
+      ? [{ name: "Programming", kind: "page", date_key: null, path: "pages/Programming.md" }]
+      : []);
+    const editor = mount(`${prefix}, Other, [[Existing]]`, prefix.length);
+    editor.type("o");
+    await vi.waitFor(() => expect([...document.querySelectorAll(".autocomplete .ac-label")]
+      .map(row => row.textContent)).toContain("Programming"));
+    enter(editor);
+    expect(editor.value()).toMatch(/^project:: \[\[Programming\]\] ?, Other, \[\[Existing\]\]$/);
+  });
+
   describe("template slash-completion (HONP4)", () => {
     const DAILY = [{ id: "tpl", raw: "from template", collapsed: false, children: [{ id: "tpl-child", raw: "template child", collapsed: false, children: [] }] }];
     async function openTemplate(raw: string, blocks = DAILY, name = "Daily"): Promise<EditorDriver> {

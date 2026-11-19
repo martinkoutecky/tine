@@ -278,6 +278,19 @@ describe("detectTrigger", () => {
     });
   });
 
+  it.each(["[[Math ((notation]]", "#[[Math ((notation]]", "((alpha [[beta))", "((text #inner))"])(
+    "resumes property values after the closed reference %s",
+    value => {
+      const raw = `project:: ${value}`;
+      expect(detectTrigger(raw, raw.length)).toMatchObject({ kind: "property-value", property: "project", query: value });
+    },
+  );
+
+  it("still searches a fresh reference after a closed one with an inner marker", () => {
+    const raw = "project:: [[Math ((notation]], ((new";
+    expect(detectTrigger(raw, raw.length)).toMatchObject({ kind: "block", query: "new" });
+  });
+
   it("excludes parser-rejected property lookalikes and Org drawers from value search", () => {
     for (const raw of ["prose alpha:: ", "alpha::one", "  alpha:: one", "[[alpha]]:: one", "```\nalpha:: one", "#alpha:: one"]) {
       expect(detectTrigger(raw, raw.length)?.kind).not.toBe("property-value");
@@ -444,28 +457,56 @@ describe("applyCompletion", () => {
 });
 
 describe("refCompletionEnd (OG accept-range parity)", () => {
+  it.each([
+    ["project:: [[pro|, [[Existing]]", "[[Programming]]", "page"],
+    ["project:: [[pro|, Other, [[Existing]]", "[[Programming]]", "page"],
+    ["project:: #[[pro|, #[[Existing]]", "[[Programming]]", "page"],
+    ["project:: ((pro|, ((existing))", "((programming-id))", "block"],
+    ["project:: #pro|, [[Existing]]", "#[[Programming notes]]", "tag"],
+    ["project:: #pro|, #[[Existing]]", "#[[Programming notes]]", "tag"],
+    ["See [[pro|, [[Existing]]", "[[Programming]]", "page"],
+  ])("preserves later references when accepting in %s", (marked, insert, kind) => {
+    const caret = marked.indexOf("|");
+    const suffix = marked.slice(caret + 1);
+    const raw = marked.slice(0, caret) + suffix;
+    const trigger = detectTrigger(raw, caret)!;
+    const start = caret - (kind === "tag" ? "#pro".length : "[[pro".length);
+    expect(trigger).toMatchObject({ kind, query: "pro", start });
+    const end = refCompletionEnd(raw, trigger, insert);
+    expect(applyCompletion(raw, trigger.start, end, insert).raw).toBe(raw.slice(0, start) + insert + suffix);
+  });
+
+  it("queries and replaces an entire property page reference whose name contains a comma", () => {
+    const raw = "project:: [[Sat, 07.11.2026]], [[Existing]]";
+    const trigger = detectTrigger(raw, raw.indexOf(",") + 1)!;
+    expect(trigger).toMatchObject({ kind: "page", query: "Sat, 07.11.2026" });
+    const insert = "[[Saturday]]";
+    const end = refCompletionEnd(raw, trigger, insert);
+    expect(applyCompletion(raw, trigger.start, end, insert).raw).toBe("project:: [[Saturday]], [[Existing]]");
+  });
+
   it("swallows the next page-ref closer when completing mid-ref", () => {
-    expect(refCompletionEnd("[[first second]]", 8, "[[first]]")).toBe(16);
+    expect(refCompletionEnd("[[first second]]", { kind: "page", end: 8 })).toBe(16);
   });
 
   it("swallows a page-ref closer immediately after the caret", () => {
-    expect(refCompletionEnd("[[first second]]", 14, "[[first second]]")).toBe(16);
+    expect(refCompletionEnd("[[first second]]", { kind: "page", end: 14 })).toBe(16);
   });
 
   it("leaves an unclosed page ref unchanged", () => {
-    expect(refCompletionEnd("[[first", 7, "[[first]]")).toBe(7);
+    expect(refCompletionEnd("[[first", { kind: "page", end: 7 })).toBe(7);
   });
 
   it("swallows the next block-ref closer when completing mid-ref", () => {
-    expect(refCompletionEnd("((abcabc))", 6, "((u))")).toBe(10);
+    expect(refCompletionEnd("((abcabc))", { kind: "block", end: 6 })).toBe(10);
   });
 
   it("does not swallow a closer on the next line", () => {
-    expect(refCompletionEnd("[[fir\nx]]", 5, "[[first]]")).toBe(5);
+    expect(refCompletionEnd("[[fir\nx]]", { kind: "page", end: 5 })).toBe(5);
   });
 
   it("leaves non-ref completions unchanged", () => {
-    expect(refCompletionEnd("/tod", 4, "TODO ")).toBe(4);
+    expect(refCompletionEnd("/tod", { kind: "command", end: 4 }, "TODO ")).toBe(4);
   });
 
   it("replaces the full reporter-case ref instead of leaving a stray closer", () => {
@@ -473,7 +514,7 @@ describe("refCompletionEnd (OG accept-range parity)", () => {
     // produces "[[first]]second]]", so this assertion fails without this helper.
     const raw = "[[first second]]";
     const insert = pageInsert("first");
-    const result = applyCompletion(raw, 0, refCompletionEnd(raw, 8, insert), insert);
+    const result = applyCompletion(raw, 0, refCompletionEnd(raw, { kind: "page", end: 8 }), insert);
     expect(result.raw).toBe("[[first]]");
   });
 });

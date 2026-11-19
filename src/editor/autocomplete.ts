@@ -10,7 +10,10 @@ import { searchFold } from "./searchFold";
 import { pageIdentityKey } from "../pageIdentity";
 import { isEditablePropertyKey, propertyValuePosition } from "./properties";
 import { codeFences, lineStartsInFence } from "./fences";
-import type { Format } from "../render/ast";
+import type { Format, Inline } from "../render/ast";
+import { parserReady } from "../render/parse";
+import { utf16ToUtf8ByteOffset } from "../render/spans";
+import { parse_inline_json } from "../render/wasm/lsdoc_wasm.js";
 import type { ObjectiveMatchClass } from "../types";
 
 // Deferred catalog messages; property getters resolve in the consuming computation.
@@ -192,6 +195,57 @@ export function detectTrigger(
   return trigger && lineStartsInFence(raw, raw.lastIndexOf("\n", caret - 1) + 1, format) ? null : trigger;
 }
 
+function referenceTrigger(before: string, lineStart: number, caret: number): Trigger | null {
+  // The nearest opener wins while a reference is being typed.
+  const openPage = before.lastIndexOf("[[");
+  const openBlock = before.lastIndexOf("((");
+  if (openPage > openBlock) {
+    const inner = before.slice(openPage + 2);
+    if (!inner.includes("]") && !inner.includes("[")) {
+      return { kind: "page", query: inner, start: lineStart + openPage, end: caret };
+    }
+  }
+  if (openBlock > openPage) {
+    const inner = before.slice(openBlock + 2);
+    if (!inner.includes(")") && !inner.includes("(")) {
+      return { kind: "block", query: inner, start: lineStart + openBlock, end: caret };
+    }
+  }
+
+  // Use lsdoc's bare-tag boundary so Unicode/IME text keeps the picker open.
+  const hash = before.lastIndexOf("#");
+  if (hash !== -1 && (hash === 0 || /\s/u.test(before[hash - 1]))) {
+    const query = before.slice(hash + 1);
+    if (isBareTagPrefix(query)) return { kind: "tag", query, start: lineStart + hash, end: caret };
+  }
+  return null;
+}
+
+function insideClosedReference(raw: string, before: string, lineStart: number, trigger: Trigger, format: Format): boolean {
+  const offset = trigger.start - lineStart;
+  // A competing reference needs an opener before the marker and a closer before the caret.
+  const mayEnclose = offset > 0 && (
+    (before.includes("]]", offset) && before.lastIndexOf("[[", offset - 1) !== -1)
+    || (before.includes("))", offset) && before.lastIndexOf("((", offset - 1) !== -1)
+  );
+  if (!mayEnclose || !parserReady()) return false;
+
+  const newline = raw.indexOf("\n", trigger.end);
+  const line = raw.slice(lineStart, newline === -1 ? raw.length : newline);
+  const inlines = JSON.parse(parse_inline_json(line, format === "org")) as Inline[] | null;
+  const marker = utf16ToUtf8ByteOffset(before, offset);
+  const caret = utf16ToUtf8ByteOffset(before, before.length);
+  const encloses = (node: Inline): boolean => {
+    const span = node.span;
+    if (!span || span[0] >= marker || span[1] <= marker) return false;
+    if (span[1] <= caret && (node.k === "nested_link" ||
+      (node.k === "link" && (node.url.type === "page_ref" || node.url.type === "block_ref")))) return true;
+    if ("children" in node) return node.children.some(encloses);
+    return node.k === "link" && (node.label?.some(encloses) ?? false);
+  };
+  return inlines?.some(encloses) ?? false;
+}
+
 function triggerBeforeCaret(raw: string, caret: number, format: Format): Trigger | null {
   // No trigger spans a newline: the `[[` inner forbids it, `#tag`/`/command`
   // are anchored at line start or after whitespace, and `<command` starts its
@@ -214,35 +268,15 @@ function triggerBeforeCaret(raw: string, caret: number, format: Format): Trigger
     return { kind: "property-name", query: before, start: lineStart, end: caret + 2 };
   }
 
-  // [[page and ((block — an opener with no closer since (the line has no
-  // newline). Whichever opener sits closer to the caret wins (you can type a
-  // `((` inside text that follows a `[[`, or vice-versa, e.g. `{{embed ((`).
-  const openPage = before.lastIndexOf("[[");
-  const openBlock = before.lastIndexOf("((");
-  if (openPage !== -1 && openPage > openBlock) {
-    const inner = before.slice(openPage + 2);
-    if (!inner.includes("]") && !inner.includes("[")) {
-      return { kind: "page", query: inner + linkTextAfterCaret(raw, caret), start: lineStart + openPage, end: caret };
+  const reference = referenceTrigger(before, lineStart, caret);
+  if (reference && !insideClosedReference(raw, before, lineStart, reference, format)) {
+    if (reference.kind === "page") {
+      // GH #888 (D-20261109-LK): rank the whole existing link name. OG page-search
+      // uses only the text up to the caret (6e7afa8eb, components/editor.cljs:105–121).
+      const end = refCompletionEnd(raw, reference);
+      if (end > caret) reference.query += raw.slice(caret, end - 2);
     }
-  }
-  if (openBlock !== -1 && openBlock > openPage) {
-    const inner = before.slice(openBlock + 2);
-    if (!inner.includes(")") && !inner.includes("(")) {
-      return { kind: "block", query: inner, start: lineStart + openBlock, end: caret };
-    }
-  }
-
-  // #tag — `#` at start or after whitespace, followed by the same hard-stop
-  // contract as lsdoc's bare-tag lexer. Do not use `\w`: it is ASCII-only and
-  // closes the picker after CJK/Indic/emoji IME commits. Logseq OG 6e7afa8
-  // (`handle-last-input` + `close-autocomplete-if-outside`) likewise starts on
-  // the marker boundary and keeps arbitrary committed tag text active.
-  const hash = before.lastIndexOf("#");
-  if (hash !== -1 && (hash === 0 || /\s/u.test(before[hash - 1]))) {
-    const query = before.slice(hash + 1);
-    if (isBareTagPrefix(query)) {
-      return { kind: "tag", query, start: lineStart + hash, end: caret };
-    }
+    return reference;
   }
 
   // Explicit references and tags take precedence in property values (#853).
@@ -310,7 +344,7 @@ function triggerBeforeCaret(raw: string, caret: number, format: Format): Trigger
  *  - Typing a `]` immediately before an existing `]` types THROUGH it instead of
  *    stacking a new one — so manually closing an auto-paired `[[…]]` can never
  *    pile up to `]]]]`. (The autocomplete-picker path is handled separately in
- *    Block.tsx's replaceTrigger, which swallows a trailing `]]`.) */
+ *    the shared replacement range, which includes the reference's own `]]`.) */
 export function autoPairEdit(
   value: string,
   caret: number,
@@ -414,33 +448,25 @@ export function applyCompletion(
   };
 }
 
-/** OG accept-range parity (GH #199): when a completion ends in a ref closer
- *  (`]]`/`))`/`}}`), the replacement must extend past the caret to swallow that
- *  closer even when the user typed text between the caret and it (editing inside
- *  an existing ref). Scans the CURRENT LINE only, forward from `end`. Returns the
- *  index just past the closer, or `end` unchanged when there is no matching closer
- *  ahead on this line. */
-export function refCompletionEnd(value: string, end: number, insertedText: string): number {
-  for (const pair of ["]]", "))", "}}"] as const) {
-    if (!insertedText.endsWith(pair)) continue;
-    const lineEnd = value.indexOf("\n", end);
-    const closer = value.indexOf(pair, end);
-    return closer !== -1 && (lineEnd === -1 || closer < lineEnd) ? closer + pair.length : end;
+/** Same-line replacement boundary for an active reference (GH #199, #853).
+ * Page search also uses this boundary for the whole-link query (GH #888).
+ * The active opener owns its closer. Bare tags end at the caret, even when a
+ * selected tag needs brackets. Slash command macro insertions keep their `}}` range. */
+export function refCompletionEnd(value: string, { kind, end }: Pick<Trigger, "kind" | "end">, insertedText?: string): number {
+  const pair = kind === "page" ? "]]" : kind === "block" ? "))"
+    : kind === "command" && insertedText?.endsWith("}}") ? "}}" : null;
+  if (pair === null) return end;
+  const page = pair === "]]";
+  const opener = page ? "[" : pair === "))" ? "(" : "{";
+  for (let i = end; i < value.length; i++) {
+    const ch = value[i];
+    if (ch === "\n" || ch === "\r" || (ch === opener && (page || value[i + 1] === ch))) break;
+    if (ch === pair[0]) {
+      if (value[i + 1] === ch) return i + 2;
+      if (page) break;
+    }
   }
   return end;
-}
-
-/** GH #888 (D-20261109-LK): with the caret inside a complete `[[link]]`, the
- *  page query is the whole link text, so the link's own page ranks first. This
- *  is the text a pick replaces (`refCompletionEnd` swallows through the `]]`).
- *  A deliberate difference from Logseq, whose page search reads only `[[` to
- *  the caret (og/src/main/frontend/components/editor.cljs:105-121 page-search,
- *  6e7afa8eb). A link being typed (no `]]` yet, or `]]` right after the caret)
- *  adds nothing. Text holding another bracket is not this link's text. */
-function linkTextAfterCaret(raw: string, caret: number): string {
-  const close = refCompletionEnd(raw, caret, "]]");
-  const after = close === caret ? "" : raw.slice(caret, close - 2);
-  return after.includes("[") || after.includes("]") ? "" : after;
 }
 
 /** Build the inserted text for a page reference (`[[Name]]`). */
