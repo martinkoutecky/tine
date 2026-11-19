@@ -61,6 +61,12 @@ The format follows [Keep a Changelog](https://keepachangelog.com/); versions use
 - Page merges retain the first spelling of aliases with the same decoded name, preserve native Org property owners and drawer frames, and keep the selected alias declaration's line ending (REG-CM-B5-FROZEN-MERGE).
 - **Changed:** a page merge writes what the conceptual model's merge rule says. The aliases of both pages become one alias property holding each name once, names compared as Tine reads which page they open: `C\#` and `C#`, `ML` and `ml`, or two spellings of one day keep only the first spelling, and the spelling left over is no longer kept in a block. The page that remains keeps its own header; a source property joins it when the remaining page does not have that key (`foo_bar` and `foo-bar` are one key; when a rename merges the pages, keys are compared after the rename, so `old::` meets `new::`, and the source's title left in the merge block names the new page). The block between the two bodies appears only when the source header leaves lines there (a title, a clashing or repeated property, other text), never for blank lines or alias syntax. A merge stops, changing no files, when an Org source drawer entry clashes with one the remaining page has, since inside the quote it would lose its references, when blocks under the source header would have no leftover block to hang under, or when the remaining page's own header would give it another title (REG-CM-MW-ALIAS-READING, REG-CM-MW-LEFTOVER, REG-CM-MW-RENAME-MAP).
 
+### Security
+
+- DOMPurify is updated to 3.4.18 and seroval to 1.6.12, which close published
+  advisories. Tine used none of the affected DOMPurify modes, so no known
+  exploit applied (reported by Dieterbe in #982).
+
 ## [0.10.0-beta.1] - 2026-11-16
 
 The first Tine 0.10 Beta, with every fix in stable 0.9.0. CodeMirror becomes the default editor; margin comments gain dated messages, folding and review; notes and the interface support right-to-left writing, with Persian available; and phones gain full-screen Settings and a toolbar you can customize. This release also improves page names, aliases, queries and renames, expands the command line, and reduces work and memory use on large graphs.
