@@ -15,21 +15,18 @@ const read = file => fs.readFileSync(file, "utf8");
 
 export function buildOpenjpeg({ outDir = openjpegBuildDir, force = false } = {}) {
   const emcc = process.env.TINE_PDFJS_EMCC;
-  const compiler = emcc && (emcc === "emcc"
-    ? { emcc, emar: "emar" }
-    : { emcc: path.resolve(emcc), emar: path.resolve(path.dirname(emcc), "emar") });
+  // A packager's tools run as spelled, from the caller's directory, with the caller's environment.
+  const compiler = emcc && { emcc, emar: emcc === "emcc" ? "emar" : path.join(path.dirname(emcc), "emar") };
   const sdk = process.env.TINE_PDFJS_EMSDK || (process.env.EMSDK && path.join(process.env.EMSDK, "upstream"));
   const config = path.join(outDir, "emscripten.config");
-  // The tools run from outDir, so a packager's relative PATH entries and EM_CONFIG are anchored to the caller's directory.
-  const anchored = () => ({ ...process.env,
-    PATH: (process.env.PATH ?? "").split(path.delimiter).map(dir => path.resolve(dir || ".")).join(path.delimiter),
-    ...(process.env.EM_CONFIG ? { EM_CONFIG: path.resolve(process.env.EM_CONFIG) } : {}) });
-  const env = compiler ? anchored()
+  const env = compiler ? process.env
     : { ...process.env, EM_CONFIG: config, EM_CACHE: path.join(outDir, "cache"), EMCC_CORES: "4" };
+  // The pinned build runs in outDir with relative names (its bytes stay reproducible); a packager's names are absolute.
+  const at = name => compiler ? path.join(outDir, name) : name;
   const python = process.env.PYTHON || (process.platform === "win32" ? "python" : "python3");
   const tool = (name, args, capture = false) => execFileSync(compiler ? compiler[name] : python,
     compiler ? args : [path.join(sdk, "emscripten", `${name}.py`), ...args],
-    { cwd: outDir, env, encoding: "utf8", stdio: capture ? "pipe" : "inherit" });
+    { cwd: compiler ? undefined : outDir, env, encoding: "utf8", stdio: capture ? "pipe" : "inherit" });
 
   const provenance = JSON.parse(read(path.join(vendor, "source.json")));
   const hash = crypto.createHash("sha256");
@@ -43,17 +40,19 @@ export function buildOpenjpeg({ outDir = openjpegBuildDir, force = false } = {})
   for (const file of [fileURLToPath(import.meta.url), fileURLToPath(new URL("./lib/pdfjs-openjpeg-abi.mjs", import.meta.url))]) {
     hash.update(fs.readFileSync(file));
   }
+  // A packager's decoder is cached under its own compiler and version, never under the pinned build's key.
+  const packagerVersion = compiler && tool("emcc", ["--version"], true).split("\n")[0];
+  if (compiler) hash.update(`packager\0${emcc}\0${packagerVersion}`);
   const inputHash = hash.digest("hex"), output = path.join(outDir, "openjpeg.wasm");
   const receipt = path.join(outDir, "BUILD_OPENJPEG.json");
-  // A packager's toolchain is not part of the input hash, so its builds never reuse a cached decoder.
-  if (!force && !compiler && fs.existsSync(receipt) && fs.existsSync(output)) {
+  if (!force && fs.existsSync(receipt) && fs.existsSync(output)) {
     const previous = JSON.parse(read(receipt));
     if (previous.inputHash === inputHash && previous.sha256 === sha(fs.readFileSync(output))) return outDir;
   }
   if (!compiler && !sdk) throw new Error("Building the PDF decoder requires Emscripten 4.0.20 via EMSDK or TINE_PDFJS_EMSDK. Packagers can set TINE_PDFJS_EMCC to use their own compiler. See 'PDF decoder SDK' in README.md.");
   fs.mkdirSync(path.join(outDir, "obj"), { recursive: true });
   if (!compiler) fs.writeFileSync(config, `LLVM_ROOT = ${JSON.stringify(path.join(sdk, "bin"))}\nBINARYEN_ROOT = ${JSON.stringify(sdk)}\nNODE_JS = [${JSON.stringify(process.execPath)}]\n`);
-  const version = tool("emcc", ["--version"], true).split("\n")[0];
+  const version = packagerVersion || tool("emcc", ["--version"], true).split("\n")[0];
   if (!/\b4\.0\.20\b/.test(version)) {
     if (!compiler) throw new Error(`Expected Emscripten 4.0.20, got ${version}. Set TINE_PDFJS_EMCC to opt into a packager toolchain.`);
     console.warn(`Building the PDF decoder with TINE_PDFJS_EMCC and ${version} (pinned release version: 4.0.20).`);
@@ -67,10 +66,10 @@ export function buildOpenjpeg({ outDir = openjpegBuildDir, force = false } = {})
     "openjpeg", "opj_clock", "pi", "t1", "t2", "tcd", "tgt", "function_list", "opj_malloc", "sparse_array"];
   const flags = ["-O3", "-msimd128", "-msse", "-DNDEBUG"];
   for (const name of kernels) {
-    tool("emcc", ["-c", path.join(lib, `${name}.c`), "-o", `obj/${name}.o`, `-I${lib}`, `-I${outDir}`, "-DMUTEX_stub", ...flags]);
+    tool("emcc", ["-c", path.join(lib, `${name}.c`), "-o", at(`obj/${name}.o`), `-I${lib}`, `-I${outDir}`, "-DMUTEX_stub", ...flags]);
   }
-  tool("emar", ["rcs", "libopenjp2.a", ...kernels.map(name => `obj/${name}.o`)]);
-  tool("emcc", ["-o", "openjpeg.js", "libopenjp2.a", path.join(vendor, "openjpeg/convert.c"),
+  tool("emar", ["rcs", at("libopenjp2.a"), ...kernels.map(name => at(`obj/${name}.o`))]);
+  tool("emcc", ["-o", at("openjpeg.js"), at("libopenjp2.a"), path.join(vendor, "openjpeg/convert.c"),
     path.join(vendor, "openjpeg/color.c"), path.join(vendor, "bridge/decoder.c"),
     `-I${lib}`, `-I${path.join(vendor, "openjpeg")}`, `-I${outDir}`,
     "-sALLOW_MEMORY_GROWTH=1", "-sMAXIMUM_MEMORY=2GB", "-sWASM=1", "-sMODULARIZE=1",

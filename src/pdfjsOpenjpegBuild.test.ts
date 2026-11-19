@@ -54,24 +54,21 @@ it.each(["emcc", path.resolve("target/packager/bin/emcc")])(
   },
 );
 
-it("anchors a packager's relative PATH entries and EM_CONFIG to the caller's directory (review F2)", () => {
-  vi.stubEnv("TINE_PDFJS_EMCC", "emcc");
-  vi.stubEnv("PATH", ["tools/bin", "", "/usr/bin"].join(path.delimiter));
-  vi.stubEnv("EM_CONFIG", "packager/emscripten.config");
+it("runs a packager's tools as spelled from the caller's directory and environment (review r2 F2)", () => {
+  vi.stubEnv("TINE_PDFJS_EMCC", "tools/bin/emcc");
+  vi.stubEnv("EM_CONFIG", "~/emscripten.config");
   vi.spyOn(console, "warn").mockImplementation(() => {});
   vi.mocked(execFileSync).mockImplementationOnce(() => compilerVersion).mockImplementationOnce(() => {
     throw new Error("compiler reached");
   });
   expect(() => buildOpenjpeg({ outDir })).toThrow("compiler reached");
-  expect(execFileSync).toHaveBeenNthCalledWith(1, "emcc", ["--version"], expect.objectContaining({
-    env: expect.objectContaining({
-      PATH: [path.resolve("tools/bin"), path.resolve("."), "/usr/bin"].join(path.delimiter),
-      EM_CONFIG: path.resolve("packager/emscripten.config"),
-    }),
-  }));
+  const [, args, options] = vi.mocked(execFileSync).mock.calls[1];
+  expect(vi.mocked(execFileSync).mock.calls[1][0]).toBe("tools/bin/emcc");
+  expect(options).toMatchObject({ cwd: undefined, env: expect.objectContaining({ EM_CONFIG: "~/emscripten.config" }) });
+  expect(args).toContain(path.join(outDir, "obj/thread.o"));
 });
 
-it("never reuses a cached decoder for a packager's toolchain (review F1)", () => {
+it("rebuilds when the cached decoder was made under another key (review F1; both directions are proved with real toolchains in the r3 evidence)", () => {
   vi.stubEnv("TINE_PDFJS_EMCC", "emcc");
   vi.spyOn(console, "warn").mockImplementation(() => {});
   fs.writeFileSync(path.join(outDir, "openjpeg.wasm"), "cached");
