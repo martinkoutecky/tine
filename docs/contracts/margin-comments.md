@@ -65,7 +65,10 @@ thread membership through publication planning, and the frontend export projecti
 uses the same discriminator through wasm. Shallow reference rows (linked, unlinked,
 block referrers) and published-reader embed previews carry the same thread
 membership on their detached root, so reference-panel Copy/Export and reader
-exports label and omit comments like page exports (Iif8k). O(exported blocks), no added filesystem
+exports label and omit comments like page exports (Iif8k). Reference export
+reads a selected source page once if it is outside the working set. It keeps
+the detached root's thread membership when it fills in that root's children.
+Labeling and omitting comments costs O(exported blocks), with no additional
 reads, stats or IPC, no per-edit work. Search-hit presentation is a separate task;
 reference counts and Find remain unchanged.
 

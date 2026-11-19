@@ -18,6 +18,7 @@ references-copy-linked = کپی / خروجی ارجاع‌های پیوندی
 references-copy-unlinked = کپی / خروجی ارجاع‌های بدون پیوند
 references-copy-linked-title = کپی / خروجی ارجاع‌های پیوندی انتخاب‌شده
 references-copy-unlinked-title = کپی / خروجی ارجاع‌های بدون پیوند انتخاب‌شده
+references-export-source-changed = ارجاع‌های انتخاب‌شده برای خروجی باز نشدند. پنجرهٔ انتخاب را ببندید و دوباره تلاش کنید.
 references-filter-linked = پالایش ارجاع‌های پیوندی
 references-search-linked = جستجوی متن ارجاع‌های پیوندی
 references-search-placeholder = جستجوی متن ارجاع

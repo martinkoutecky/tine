@@ -485,8 +485,12 @@ function Modal(props: { request: ExportRequest }): JSX.Element {
   const payload = createMemo(() => {
     warmRev();
     expansions = 0;
+    const depth = opts().maxDepth;
+    // Page labels group the output. Level 1 starts at the selected block,
+    // as in Logseq's get-blocks-contents.
+    const maxDepth = "nodes" in props.request && props.request.groupedDepth && typeof depth === "number" ? depth + 1 : depth;
     const markupOptions = {
-      ...opts(), resolveBlockRef,
+      ...opts(), maxDepth, resolveBlockRef,
       resolveEmbed: (name: string, args: string[]) => {
         const result = warmedMacros.get(macroKey(name, args));
         return result?.kind === "nodes" ? [
