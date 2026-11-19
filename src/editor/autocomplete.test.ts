@@ -1,4 +1,4 @@
-import { describe, it, expect } from "vitest";
+import { describe, it, expect, vi } from "vitest";
 import hljs from "highlight.js/lib/common";
 import {
   COMMANDS,
@@ -27,6 +27,7 @@ import slashFixturePart2 from "./fixtures/slash-ranking-prefix-base-15bbddc/part
 import slashFixturePart3 from "./fixtures/slash-ranking-prefix-base-15bbddc/part-3.json";
 import slashFixturePart4 from "./fixtures/slash-ranking-prefix-base-15bbddc/part-4.json";
 import { setActiveLocale } from "../i18n";
+import * as wasm from "../render/wasm/lsdoc_wasm.js";
 
 it("keeps Unicode command input active and matches localized < labels (GH #107)", async () => {
   for (const [raw, kind, query] of [["/表", "command", "表"], ["text /待办", "command", "待办"], ["<引用", "advanced-command", "引用"], ["/e\u0301", "command", "e\u0301"]] as const) {
@@ -279,6 +280,47 @@ describe("detectTrigger", () => {
     });
   });
 
+  it.each(["`", "``", "$", "$$"].flatMap(delimiter =>
+    ["[[pro", "((pro", "#[[pro", "#pro"].map(marker => [delimiter, marker] as const),
+  ))("uses property search for the %s literal containing %s", (delimiter, marker) => {
+    const beforeCloser = `project:: ${delimiter}text ${marker}`;
+    const raw = beforeCloser + delimiter;
+    expect([beforeCloser.length, raw.length].map(caret => detectTrigger(raw, caret)?.kind))
+      .toEqual(["property-value", "property-value"]);
+  });
+
+  it.each([
+    "é😀 \\[[pro| text]]", "\\((pro| text))",
+    "https://example.org/[[pro|", "https://example.org/((pro|",
+    "<https://example.org/[[pro|>", "<https://example.org/((pro|>",
+    "<https://example.org/[[pro>|", "<https://example.org/((pro>|",
+    "`[[pro`| text]]",
+  ])("uses property search for the literal marker in %s", marked => {
+    const caret = "project:: ".length + marked.indexOf("|");
+    const raw = `project:: ${marked.replace("|", "")}`;
+    expect(detectTrigger(raw, caret)).toMatchObject({ kind: "property-value", property: "project" });
+  });
+
+  it.each(["\\\\", "\\* "])("still searches a genuine reference after %j", prefix => {
+    for (const [marker, closer, kind] of [["[[", "]]", "page"], ["((", "))", "block"]]) {
+      const before = `project:: ${prefix}${marker}pro`;
+      expect(detectTrigger(before + closer, before.length)).toMatchObject({ kind, query: "pro" });
+    }
+  });
+
+  it.each([
+    "Body\n``text\n[[pro|``", "Body\n``text ((pro|\nend``", "Body\n$$\ntext #pro|\n$$",
+  ])("keeps reference search out of the parser's multiline literal in %j", marked => {
+    const caret = marked.indexOf("|");
+    expect(detectTrigger(marked.replace("|", ""), caret)).toBeNull();
+  });
+
+  it.each([["~[[pro~", 6], ["=x #pro=", 7], ["\\[[pro]]", 6], ["\\((pro))", 6]])(
+    "keeps reference search out of the Org literal %j", (raw, caret) => {
+      expect(detectTrigger(raw, caret, "org")).toBeNull();
+    },
+  );
+
   it.each(["[[Math ((notation]]", "#[[Math ((notation]]", "((alpha [[beta))", "((text #inner))"])(
     "resumes property values after the closed reference %s",
     value => {
@@ -483,6 +525,27 @@ describe("applyCompletion", () => {
 });
 
 describe("completion replacement (OG accept-range parity)", () => {
+  it.each(["[[", "#[["])("keeps the %s range without parsing a 1 MiB delimiter-free tail", opener => {
+    const before = `project:: ${opener}pro`;
+    const references = `${before}, ${opener}Existing]]`;
+    const tail = "x".repeat(1024 * 1024);
+    const inline = vi.spyOn(wasm, "parse_inline_json");
+    try {
+      for (const separator of [" ", "\n"]) {
+        inline.mockClear();
+        const raw = references + separator + tail;
+        expect(detectTrigger(raw, before.length)).toEqual({
+          kind: "page", query: "pro", start: before.length - "[[pro".length, end: before.length,
+        });
+        const parsedBytes = inline.mock.calls.reduce((bytes, [source]) => bytes + Buffer.byteLength(source), 0);
+        expect(parsedBytes).toBeGreaterThan(0);
+        expect(parsedBytes).toBeLessThan(128);
+      }
+    } finally {
+      inline.mockRestore();
+    }
+  });
+
   it.each([
     ["project:: [[pro|, [[Existing]]", "[[Programming]]", "page"],
     ["project:: [[pro|, Other, [[Existing]]", "[[Programming]]", "page"],
@@ -506,6 +569,41 @@ describe("completion replacement (OG accept-range parity)", () => {
     expect(applyCompletion(raw, trigger.start, end, insert).raw).toBe(raw.slice(0, start) + insert + suffix);
   });
 
+  it.each([
+    ["[[", " ((Keep ]] intact))", "[[Programming]]"],
+    ["#[[", " ((Keep ]] intact))", "[[Programming]]"],
+    ["[[", "\t((Keep ]] intact))", "[[Programming]]"],
+    ["[[", "; ((Keep ]] intact))", "[[Programming]]"],
+    ["[[", " ((Keep ]] intact))\nmore", "[[Programming]]"],
+    ["[[", " ((Keep ]] intact))\r\nmore", "[[Programming]]"],
+    ["[[", " [keep](((Keep ]] intact)))", "[[Programming]]"],
+    ["[[", " {{embed [[Keep]]}}", "[[Programming]]"],
+    ["[[", " {{embed #[[Keep]]}}", "[[Programming]]"],
+    ["[[", " {{embed ((Keep ]] intact))}}", "[[Programming]]"],
+    ["[[", " {{embed Keep ]] intact}}", "[[Programming]]"],
+    ["[[", ` {{embed [[Keep]]${"x".repeat(64)}}}`, "[[Programming]]"],
+    ["[[", " `Keep ]] intact`", "[[Programming]]"],
+    ["[[", " $Keep ]] intact$", "[[Programming]]"],
+    ["[[", " <https://example.org/Keep]]/intact>", "[[Programming]]"],
+    ["[[", " after the cursor", "[[Programming]]"],
+    ["[[", "", "[[Programming]]"],
+    ["((", " {{embed ((Keep))}}", "((programming-id))"],
+    ["((", " after the cursor", "((programming-id))"],
+    ["[[", "]] intact`", "[[Programming]]", "pro `Keep "],
+    ["((", ")) intact$", "((programming-id))", "pro $Keep "],
+  ])("finishes the unfinished %s at the caret before %j (FORK-853b)", (opener, suffix, insert, query = "pro") => {
+    const prefix = `project:: ${opener}${query}`;
+    const raw = prefix + suffix;
+    const caret = prefix.length;
+    const start = caret - query.length - 2;
+    const trigger = detectTrigger(raw, caret)!;
+    const end = completionReplacementEnd(raw, trigger, insert);
+    expect(applyCompletion(raw, start, end, insert)).toEqual({
+      raw: raw.slice(0, start) + insert + suffix, caret: start + insert.length,
+    });
+    expect(trigger).toEqual({ kind: opener === "((" ? "block" : "page", query, start, end: caret });
+  });
+
   it("keeps the page picker active after a single bracket inside the name", () => {
     const raw = "project:: [[pro [x] title]]";
     expect(detectTrigger(raw, raw.indexOf(" title"))).toMatchObject({
@@ -515,6 +613,7 @@ describe("completion replacement (OG accept-range parity)", () => {
 
   it.each([
     " [x] title",
+    " [x] #tag",
     " #[[child]] title",
     " [ title",
     " \\]] title",

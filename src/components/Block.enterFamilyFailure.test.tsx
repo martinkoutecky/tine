@@ -196,6 +196,45 @@ describe.each<EditorKind>(["textarea", "cm6"])("%s editor: the Enter family comm
     expect(editor.value()).toMatch(/^project:: \[\[Programming\]\] ?, Other, \[\[Existing\]\]$/);
   });
 
+  it.each(["; ((Keep ]] intact))", "\t{{embed [[Existing]]}}"])(
+    "finishes an unfinished page reference before %j (FORK-853b)", async following => {
+      const prefix = "project:: [[pr";
+      setGraphMeta(META); bumpGraphEpoch();
+      vi.spyOn(backend(), "quickSwitch").mockResolvedValue([
+        { name: "Programming", kind: "page", date_key: null, path: "pages/Programming.md" },
+      ]);
+      const editor = mount(prefix + following, prefix.length);
+      editor.type("o");
+      await acceptSuggestion(editor, "Programming");
+      const completed = "project:: [[Programming]]";
+      expect(editor.value()).toBe(completed + " " + following);
+      expect(editor.selection()).toEqual([completed.length + 1, completed.length + 1]);
+      expect(roots()).toEqual(["first", "target"]);
+    },
+  );
+
+  it("keeps the literal closer and following text when accepting a property suggestion (#853)", async () => {
+    const prefix = "project:: `[[pro";
+    const following = " text]]";
+    const propertyValue = "`[[project`";
+    setGraphMeta(META); bumpGraphEpoch();
+    vi.spyOn(backend(), "queryFacets").mockResolvedValue([["project", [propertyValue]]]);
+    vi.spyOn(backend(), "quickSwitch").mockResolvedValue([
+      { name: "Result", kind: "page", date_key: null, path: "pages/Result.md" },
+    ]);
+    const editor = mount(prefix + following, prefix.length);
+    editor.input(prefix + "`" + following, prefix.length + 1, { inputType: "insertFromPaste", data: null });
+    expect(editor.value()).toBe(prefix + "`" + following);
+    const shown = await vi.waitFor(() => {
+      const choice = [...document.querySelectorAll(".autocomplete .ac-label")]
+        .find(row => row.textContent === propertyValue || row.textContent === "Result");
+      expect(choice).toBeDefined();
+      return choice!.textContent!;
+    });
+    await acceptSuggestion(editor, shown);
+    expect(editor.value()).toBe(`project:: ${propertyValue}${following}`);
+  });
+
   it.each([
     ["[[", " [x] title"],
     ["[[", " #[[child]] title"],

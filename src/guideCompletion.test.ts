@@ -12,4 +12,5 @@ it("the bundled Guide explains narrowing page completion in both editors (D-2026
 it("the bundled Guide explains reference search in property values from templates (#853)", () => {
   const guide = readFileSync("crates/tine-guide/src/templates/pages-links-references-search.md", "utf8");
   expect(guide).toContain("When editing a Markdown property line, type `[[` to find a page, `((` to find a block or `#` to find a tag. This works in a property from a newly inserted template too.");
+  expect(guide).toContain("Picking a suggestion for an unfinished `[[`, `#[[` or `((` closes the reference at the caret and keeps the text that follows it.");
 });
