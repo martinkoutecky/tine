@@ -7,6 +7,7 @@ import { AudioOverlay } from "./AudioOverlay";
 import { HelpPopup } from "./HelpShortcuts";
 import { DatePicker } from "./DatePicker";
 import { FormulaEditor } from "./FormulaEditor";
+import { RenameAliasDialog } from "./RenameAliasDialog";
 import { PageProps } from "./PageProps";
 import { ExportModal } from "./ExportModal";
 import { PdfExportDialog } from "./PdfExportDialog";
@@ -53,6 +54,7 @@ export function WindowOverlays(props: {
       <Show when={here()}>
         <FailureBoundary region="Page properties"><PageProps /></FailureBoundary>
         <FailureBoundary region="Export"><ExportModal /></FailureBoundary>
+        <FailureBoundary region="The rename dialog"><RenameAliasDialog /></FailureBoundary>
       </Show>
       {props.recovery}
       <Show when={here()}>

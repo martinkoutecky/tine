@@ -51,6 +51,9 @@ pub struct NativeLine {
     pub frame: bool,
     pub blank: bool,
     pub alias: Option<NativeAlias>,
+    /// The members of a `tags` line, read as alias members are; only in a
+    /// [`NativeDocument::read_with_tags`] read (the merge's tag union helper).
+    pub tags: Option<NativeAlias>,
     pub references: Vec<NativeReference>,
 }
 
@@ -76,7 +79,32 @@ impl NativeDocument {
         Self::from_read(text, org, read.document, read.map.expect("mapped read"))
     }
 
+    /// [`Self::read`] that also reads the members of `tags` header lines
+    /// ([`NativeLine::tags`]) with the alias members' reader: one rule for
+    /// both (D-20261116-TAGH). Costs one header block read more when the
+    /// header has a `tags` line.
+    pub fn read_with_tags(text: &str, org: bool) -> Self {
+        let read = super::parse_outlined(text, org, true);
+        Self::from_read_members(
+            text,
+            org,
+            read.document,
+            read.map.expect("mapped read"),
+            true,
+        )
+    }
+
     pub(crate) fn from_read(text: &str, org: bool, document: Document, map: SourceMap) -> Self {
+        Self::from_read_members(text, org, document, map, false)
+    }
+
+    fn from_read_members(
+        text: &str,
+        org: bool,
+        document: Document,
+        map: SourceMap,
+        with_tags: bool,
+    ) -> Self {
         let first_root = document.pre_block.is_none()
             && page_header::page_header_text(None, document.roots.first().map(|b| b.raw()))
                 .is_some();
@@ -96,12 +124,13 @@ impl NativeDocument {
         };
         let regions = block_regions::parse_document(observed, org);
         let properties: HashMap<_, _> = regions.page_properties().map(|p| (p.line.0, p)).collect();
+        let tags_key = |key: &str| with_tags && key.eq_ignore_ascii_case("tags");
         let mut block = super::DocBlock::new(observed);
         block.set_org(org);
         let source = (org
             || properties
                 .values()
-                .any(|p| page_header::is_alias_key(&p.key)))
+                .any(|p| page_header::is_alias_key(&p.key) || tags_key(&p.key)))
         .then(|| block.read_for_rename());
         let mut alias_members = source
             .as_ref()
@@ -165,8 +194,8 @@ impl NativeDocument {
                 };
                 let found = at.and_then(|at| properties.get(&at));
                 let bytes = |r: Range<usize>| map.native(owner, r.start)..map.native(owner, r.end);
-                let alias = found
-                    .filter(|p| page_header::is_alias_key(&p.key))
+                let members = found
+                    .filter(|p| page_header::is_alias_key(&p.key) || tags_key(&p.key))
                     .map(|p| {
                         while alias_members
                             .peek()
@@ -194,6 +223,10 @@ impl NativeDocument {
                             movable,
                         }
                     });
+                let (alias, tags) = match found {
+                    Some(p) if page_header::is_alias_key(&p.key) => (members, None),
+                    _ => (None, members),
+                };
                 while boxes
                     .get(cursor)
                     .is_some_and(|&(_, close)| Some(close) < at)
@@ -236,6 +269,7 @@ impl NativeDocument {
                     payload,
                     frame: false,
                     alias,
+                    tags,
                     references: line_refs,
                 }
             })
@@ -335,6 +369,34 @@ mod tests {
                 );
                 assert_eq!(native.eol, eol);
             }
+        }
+    }
+
+    /// The tag helper (D-20261116-TAGH) reads `tags::` members with the
+    /// alias reader's own coordinates; the plain read leaves them unread.
+    #[test]
+    fn read_with_tags_reads_tag_members_only_when_asked() {
+        for org in [false, true] {
+            let text = if org {
+                "#+alias: A\n#+tags: x, [[Two Words]]\n\n* body\n"
+            } else {
+                "alias:: A\ntags:: x, [[Two Words]]\n\n- body\n"
+            };
+            assert!(NativeDocument::read(text, org)
+                .lines
+                .iter()
+                .all(|l| l.tags.is_none()));
+            let native = NativeDocument::read_with_tags(text, org);
+            let tags = native.lines.iter().find_map(|l| l.tags.as_ref()).unwrap();
+            let names: Vec<&str> = tags.names.iter().map(|(n, _)| n.as_str()).collect();
+            assert_eq!(names, ["x", "Two Words"]);
+            let tokens: Vec<&str> = tags.tokens.iter().map(|r| &text[r.clone()]).collect();
+            assert_eq!(tokens, ["x", "[[Two Words]]"]);
+            assert!(native
+                .lines
+                .iter()
+                .all(|l| l.alias.is_none() || l.tags.is_none()));
+            assert_eq!(native.lines.iter().filter(|l| l.alias.is_some()).count(), 1);
         }
     }
 }

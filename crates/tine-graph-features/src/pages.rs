@@ -15,7 +15,12 @@ mod rename_plan;
 pub use rename_plan::{RenameBlocked, RenameChoice, RenamedPage};
 #[path = "pages_rename_offer.rs"]
 mod rename_offer;
-pub use rename_offer::{rename_offer, rename_page_as, RenameOffer};
+pub use rename_offer::{
+    rename_offer, rename_page_as, AliasDialog, OwnRefusal, RefusedMerge, RenameOffer,
+};
+#[path = "pages_rename_helpers.rs"]
+mod rename_helpers;
+pub use rename_helpers::{AliasEdit, Effect, Retarget, TagUnion};
 #[path = "pages_refusal.rs"]
 mod refusal;
 #[path = "pages_rename_report.rs"]
@@ -151,6 +156,8 @@ fn view(store: &Store) -> io::Result<tine_store::WholeGraph> {
 /// had (`docs/storage-contract.md`). Assets and `custom.css` are not walked:
 /// no page plan reads them. Cost O(P stamps).
 fn refreshed_view(store: &Store) -> io::Result<tine_store::WholeGraph> {
+    #[cfg(test)]
+    PAGE_STAMP_WALKS.with(|n| n.set(n.get() + 1));
     store
         .refresh(tine_store::Depth::PageStamps)
         .map_err(|failure| match failure {
@@ -158,6 +165,12 @@ fn refreshed_view(store: &Store) -> io::Result<tine_store::WholeGraph> {
             tine_store::LoadError::Closed => error(io::ErrorKind::BrokenPipe, "store closed"),
         })?;
     view(store)
+}
+
+#[cfg(test)]
+thread_local! {
+    /// Graph-wide `PageStamps` refreshes [`refreshed_view`] ran on this thread.
+    static PAGE_STAMP_WALKS: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
 }
 
 /// Whether a page FILENAME in the pages area that the view does not admit (a

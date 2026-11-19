@@ -410,6 +410,7 @@ mod link_oracle;
 mod load_panic_tests;
 #[cfg(test)]
 mod loading_save_tests;
+mod name_owners;
 mod name_search;
 mod page_lookup;
 #[cfg(test)]
@@ -2450,6 +2451,45 @@ pub enum Resolved {
         id: PageId,
     },
 }
+
+/// What decides the page a name opens in one view (CM SPEC §2.2, §4.3).
+#[derive(Clone, Debug)]
+pub struct NameOwners {
+    /// The files claiming the name (a date: its day's files in any
+    /// directory), as the resolver selects them.
+    pub claimants: Vec<PageEntry>,
+    /// The pages declaring the name as an alias (a date: any spelling of
+    /// its day), each once.
+    pub declarers: Vec<PageId>,
+    /// The page keys a reference to the same name may spell: the name's
+    /// own, and for a date every rendering of its day
+    /// (`query::journal_spelling_keys`); the first is the same for every
+    /// spelling of one name.
+    pub spellings: Vec<String>,
+    journals_dir: String,
+}
+
+impl NameOwners {
+    /// The page the name opens: the first claimant in claimant order (the
+    /// journals directory first, then the graph-relative path,
+    /// `compare_page_claimants`), else the declarer with the least relative
+    /// path (D-20261019-AL2/CI4), else none. The one owner rule: the
+    /// resolver answers with it. Pure, O(claimants + declarers).
+    pub fn opens(&self) -> Option<&PageId> {
+        owner(&self.journals_dir, &self.claimants, &self.declarers)
+    }
+}
+
+fn owner<'a>(dir: &str, claimants: &'a [PageEntry], declarers: &'a [PageId]) -> Option<&'a PageId> {
+    match claimants
+        .iter()
+        .min_by(|a, b| crate::model::compare_page_claimants(dir, a, b))
+    {
+        Some(entry) => entry.rel_path.as_ref(),
+        None => declarers.iter().min_by(|a, b| a.as_str().cmp(b.as_str())),
+    }
+}
+
 /// Inputs for the query-plan graph search.
 pub struct SearchRequest {
     /// Search expression.
@@ -2885,82 +2925,6 @@ impl WholeGraph {
         ids.sort_unstable_by(|a, b| a.as_str().cmp(b.as_str()));
         ids.dedup();
         ids
-    }
-
-    /// Resolve a name in this captured view. The caller supplies whether the
-    /// name is a journal title; a name that parses as a date is that day
-    /// whatever the caller says (CM SPEC §2.1, D-20261110-CM CM-DATE), held
-    /// by its files in any directory, and a day with no file proposes one in
-    /// the journals directory (CM-DAYFILE). A non-date name the caller calls
-    /// a journal may propose a new journal file. Real files win over aliases.
-    /// Claimants rank the journals directory first, then unsigned UTF-8
-    /// graph-relative paths (SPEC §2.2); the extension and matching filename
-    /// have no separate rank.
-    /// Ordinary page claims use a preamble `title::` or Org title
-    /// directive when present, then the decoded filename. After a
-    /// journal-format change, a new view uses the new title format for date
-    /// claims; the parser still tries its documented fallback formats. Old
-    /// custom-format links are not rewritten. If an old title no longer parses
-    /// under the configured or fallback formats, resolving it as an ordinary
-    /// page can propose a new page rather than the former journal. To classify a clicked journal
-    /// title, use the current `JournalFormat::parse`, which tries configured
-    /// formats and fallbacks, then pass that result as `is_journal`. Cost
-    /// O(1) indexed lookup after the snapshot's one-time O(all aliases)
-    /// alias-key build when no real file wins.
-    pub fn resolve(&self, name: &str, is_journal: bool) -> Resolved {
-        let kind = if is_journal {
-            PageKind::Journal
-        } else {
-            PageKind::Page
-        };
-        // A date in any accepted spelling is that day, held by its files in
-        // any directory (CM SPEC §2.1, D-20261110-CM CM-DATE).
-        let lookup = crate::model::claim_lookup(&self.journal_format, name, kind);
-        let mut entries = self.name_claimants(&lookup.name, lookup.kind);
-        entries.retain(|entry| lookup.holds(entry));
-        if !entries.is_empty() && lookup.day.is_none() {
-            // A name that is no day is one identity across both kinds.
-            entries = self.all_name_claimants(&lookup.name);
-            entries.retain(|entry| lookup.holds(entry));
-        }
-        if !entries.is_empty() {
-            let mut ids = entries
-                .iter()
-                .map(|entry| entry.rel_path.clone().expect("file claimant has a path"));
-            return Resolved::Existing {
-                id: ids.next().unwrap(),
-                others: ids.collect(),
-            };
-        }
-        if !is_journal || self.journal_format.parse(name).is_some() {
-            let owners: Vec<_> = self
-                .graph
-                .alias_owner_paths(
-                    &tine_core::refs::page_key(name),
-                    self.journal_format.parse(name),
-                )
-                .map(|paths| paths.iter().cloned().map(PageId::from).collect())
-                .unwrap_or_default();
-            if !owners.is_empty() {
-                return Resolved::Alias { owners };
-            }
-        }
-        let config = &self.config.config;
-        // A day with no file gets a new one in the journals directory
-        // (D-20261111-CMR14 CM-DAYFILE).
-        if lookup.kind == PageKind::Journal {
-            let stem = self
-                .journal_format
-                .parse(name)
-                .map(|date| self.journal_format.file_stem(date))
-                .unwrap_or_else(|| name.to_owned());
-            return Resolved::Absent {
-                id: proposed_journal_id(config, stem),
-            };
-        }
-        Resolved::Absent {
-            id: inventory::proposed_page_id(config, name),
-        }
     }
 
     fn validated_page(&self, id: &PageId) -> Result<(), QueryError> {

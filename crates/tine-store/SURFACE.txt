@@ -391,7 +391,7 @@ field restore::RestoreFailed.phase
 field restore::RestoreFailed.cause
 field restore::RestoreFailed.done
 
-## WholeGraph: Names (ceiling: 28)
+## WholeGraph: Names (ceiling: 34)
 # CLI export extends corpus's selection parameter to indexed block-ID candidate
 # pages. A page name cannot identify those pages; CorpusScope types that existing
 # parameter. No Store operation or WholeGraph question is added.
@@ -448,6 +448,19 @@ fn store::WholeGraph::inventory
 fn store::WholeGraph::corpus
 fn store::WholeGraph::journal_content_days
 fn store::WholeGraph::resolve
+# CM helpers r4 (merge review 88a0ab211 finding 1; 26 -> 32): the rename
+# dialog asks which links open another page after a planned request. `resolve`
+# answers only the current view and returns no declarers when a file claims the
+# name, and no parameter can describe a planned graph. So the owner rule itself
+# is public: `name_owners` gives resolve's own inputs (claimants, declarers, the
+# spellings a reference may use), the preview patches them by the plan, and both
+# ask `NameOwners::opens`, which `resolve` uses (one rule, no planned snapshot).
+fn store::WholeGraph::name_owners
+struct store::NameOwners
+field store::NameOwners.claimants
+field store::NameOwners.declarers
+field store::NameOwners.spellings
+fn store::NameOwners::opens
 fn store::WholeGraph::rev
 fn store::WholeGraph::unreadable_files
 # GH #335 (All pages "Updated" column): `inventory` answers per NAME (aliases,
@@ -653,7 +666,7 @@ use transaction::model_check::{CheckPlan,Guarantee,RenameCheck}
 use transaction::refusal::Refusal
 use crate::publish::{PublishDest,PublishFailed,PublishReceipt,SiteWriter}
 use crate::restore::{RestoreFailed,RestoreFile,RestoreReport}
-use crate::store::{Area,Budget,Cancel,Change,ChangeKind,ConfigState,CorpusScope,Day,Depth,FacetPolicy,FileEntry,FileId,FileMeta,FileRev,GraphAccessInspection,GraphRev,Inventory,InventoryEntry,InventoryScope,IrAnswer,IrRequest,LinkTarget,Listing,LoadError,OpenError,OpenOptions,Origin,PageId,PageRead,PageReadSource,QueryError,Resolved,SaveBase,SearchRequest,Store,StoreError,Subscription,SubscriptionEnd,TrashKind,WatchBatch,WatchMode,WholeGraph,}
+use crate::store::{Area,Budget,Cancel,Change,ChangeKind,ConfigState,CorpusScope,Day,Depth,FacetPolicy,FileEntry,FileId,FileMeta,FileRev,GraphAccessInspection,GraphRev,Inventory,InventoryEntry,InventoryScope,IrAnswer,IrRequest,LinkTarget,Listing,LoadError,NameOwners,OpenError,OpenOptions,Origin,PageId,PageRead,PageReadSource,QueryError,Resolved,SaveBase,SearchRequest,Store,StoreError,Subscription,SubscriptionEnd,TrashKind,WatchBatch,WatchMode,WholeGraph,}
 use store::tine_core::model::{FileId,PageId}
 # Card hB9Zjw: the inventory types moved beside their implementation in
 # store/inventory.rs (size ratchet seam); the same items, re-exported by store.

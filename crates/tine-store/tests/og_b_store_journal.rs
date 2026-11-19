@@ -26,7 +26,15 @@ fn absent_journal_proposals_share_the_path_rule() {
             store.close();
         }
     }
-    let source = include_str!("../src/store.rs");
-    assert_eq!(source.matches("proposed_journal_id(").count(), 3,
+    // `resolve` lives in store/name_owners.rs, beside the owner rule it feeds.
+    let source = [
+        include_str!("../src/store.rs"),
+        include_str!("../src/store/name_owners.rs"),
+    ];
+    let count: usize = source
+        .iter()
+        .map(|s| s.matches("proposed_journal_id(").count())
+        .sum();
+    assert_eq!(count, 3,
         "I-12: Store::journal_id and WholeGraph::resolve must both use proposed_journal_id; one definition and two clients, exemplar store.rs");
 }

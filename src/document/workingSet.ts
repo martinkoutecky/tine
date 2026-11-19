@@ -465,8 +465,8 @@ export function pinPageWhileDrafting(page: () => string | null | undefined): () 
 }
 const viewportPins = new Set<() => string | null | undefined>();
 /** Keep a page that a live surface is showing near the viewport, or retaining
- * for an open in-page search, from being
- * evicted (GH #849). Without this, more source pages near the view than the
+ * for an open in-page search (or a rename helper's edited pages through its
+ * request and put-back, `renameHelpers.ts`), from being evicted (GH #849). Without this, more source pages near the view than the
  * working set holds evict each other and reload for ever on an idle page. It only
  * answers eviction: a clean page still takes reloads. The set can exceed the cap
  * by what the surface holds, as other pins do. O(1) to register; each eviction

@@ -99,6 +99,9 @@ mod rename_would_change;
 #[path = "cm_merge_rules.rs"]
 mod cm_merge_rules;
 
+#[path = "cm_rename_helpers.rs"]
+mod cm_rename_helpers;
+
 #[path = "cm_merge_o6.rs"]
 mod cm_merge_o6;
 

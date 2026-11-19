@@ -25,6 +25,7 @@ const INDEPENDENT = new Map([
   ["src/document/edits/selection.ts::cycleSelectionTasks", "rewrites each selected block's marker in place"],
   ["src/document/edits/selection.ts::deleteSelection", "removes blocks from their own pages; nothing is inserted elsewhere"],
   ["src/document/edits/selection.ts::setSelectionHeading", "rewrites each selected block's heading in place"],
+  ["src/renameHelpers.ts::applyHelperEdits", "rewrites one header property (alias:: or tags::) in place on each page; no block changes page (D-20261115-HELP, D-20261116-TAGH)"],
 ]);
 
 function sourceFiles(dir: string): string[] {

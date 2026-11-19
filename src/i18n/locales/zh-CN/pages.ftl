@@ -90,3 +90,30 @@ rename-refused-indented-body = 无法合并：{ $file } 的第一个块有缩进
 rename-refused-directive-escape = 无法合并：{ $file } 在引用块之外含有 #+END_QUOTE 行，会提前结束合并页面中的引用块。请在该文件中将此行移入引用块或删除此行，然后重试。未合并任何页面。
 rename-refused-alias-spelling = 无法合并：Tine 无法在保留原有写法的情况下移动 { $file } 中的别名声明“{ $alias }”。请在该文件中将该声明改为用逗号分隔的普通别名名称，保存后重试。未合并任何页面。
 rename-refused-duplicate-files = 无法重命名：这些文件声明了同一个页面：{ $files }。请先将其中一个合并到另一个，或移除其中一个，再重试。
+# The rename dialog when the typed name is only another page's alias (D-20261115-HELP).
+rename-alias-dialog-title = “{ $to }”已打开“{ $owner }”
+rename-alias-dialog-intro = “{ $to }”是一个别名，因此不能直接将“{ $from }”重命名为它。涉及以下页面：
+# The page's alias line as the file has it (graph syntax, kept as written).
+rename-alias-dialog-aliases = alias:: { $aliases }
+rename-alias-dialog-opens-now = 目前打开“{ $to }”
+rename-alias-dialog-this-page = 正在重命名的页面
+rename-alias-dialog-merge = 将“{ $from }”合并到“{ $owner }”
+rename-alias-dialog-merge-body = “{ $from }”的块移到“{ $owner }”末尾，其别名并入“{ $owner }”的别名，指向“{ $from }”的链接改为“{ $owner }”。
+rename-alias-dialog-tags = 先合并两个页面的标签：tags:: { $united }
+rename-alias-dialog-merge-unavailable = 无法合并到“{ $owner }”：{ $reason }
+rename-alias-dialog-own = 将名称“{ $to }”用于此页面
+rename-alias-dialog-own-edit = 首先，从“{ $page }”的别名中移除“{ $to }”：{ $key }:: { $before } 变为 { $key }:: { $after }
+rename-alias-dialog-own-edit-line = 首先，从“{ $page }”中移除 { $key }:: { $before } 这一行。
+rename-alias-dialog-own-body = 然后将“{ $from }”重命名为“{ $to }”。
+rename-alias-dialog-own-unavailable = 无法将“{ $to }”用于此页面：{ $reason }
+rename-alias-dialog-alias-line = “{ $page }”的别名行除别名外还有其他内容，或重复出现。请自行从中移除“{ $to }”，然后再次重命名。
+rename-alias-dialog-other = Tine 无法规划此操作。请重新开始重命名。
+rename-alias-dialog-none = 请改用其他名称。
+rename-alias-dialog-pages = 更改 { NUMBER($count, useGrouping: 0) } 个页面：{ $pages }
+rename-alias-dialog-retarget = 在 { NUMBER($count, useGrouping: 0) } 个页面中，指向“{ $name }”的链接将打开“{ $after }”而不是“{ $before }”，文字不变：{ $pages }
+rename-alias-dialog-more = { $pages } 等另外 { NUMBER($more, useGrouping: 0) } 个
+rename-alias-dialog-stale-what = 重命名选择
+# A rename helper's own edits (D-20261116-TAGH, D-20261115-HELP).
+rename-helper-page-changed = 无法重命名：自规划重命名以来，“{ $page }”已更改。未进行任何重命名。请重新开始重命名。
+rename-helper-unsaved = 无法重命名：对“{ $page }”的更改无法保存，因此已恢复原样。未进行任何重命名。
+rename-helper-not-restored = 重命名未进行，且 Tine 无法保存 { $pages } 恢复后的文本。请检查这些页面。

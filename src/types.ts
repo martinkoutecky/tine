@@ -270,10 +270,45 @@ export type RenameRefusal =
  *  (`pages::rename_offer`; the window never re-derives it). `merge`: the new
  *  name is one other page's (its file `into`, display `name`), confirmed or
  *  cancelled (model r6 O3: the only answers). */
+/** The merge's tag union (D-20261116-TAGH, `pages::TagUnion`): the kept page's
+ *  `tags::` value becomes `united` and the source's line goes, both as ordinary
+ *  edits before the merge. `survivor`/`source` are the values the backend read. */
+export type TagUnion = { survivor: string; source: string; united: string };
+
+/** What one request changes (`pages::Effect`): the pages whose text changes
+ *  (listed up to a few, `pageCount` all) and the links that open another page
+ *  with their text unchanged. */
+export type RenameEffect = {
+  pages: string[]; pageCount: number;
+  retargeted: { name: string; before: string; after: string; pages: string[]; pageCount: number }[];
+};
+
+export type AliasDialogPage = { name: string; path: string | null; journal: boolean; aliases: string[] };
+
+/** One merge the alias dialog offers (`pages::MergeChoice`): the ordinary
+ *  request "rename the source to `name`", merging into `into`. */
+export type AliasMergeChoice = { into: string; name: string; journal: boolean; tags: TagUnion | null; effect: RenameEffect };
+
+/** One alias line edit of "use the name for this page" (`pages::AliasEdit`). */
+export type AliasEdit = { page: string; path: string; journal: boolean; key: string; before: string; after: string | null };
+
+/** The alias dialog (`pages::AliasDialog`, D-20261115-HELP): the model refused
+ *  the typed name (`reason`, O3); the component and the requests it allows. */
+export type AliasDialogOffer = {
+  kind: "alias";
+  reason: RenameRefusal; message: string;
+  opens: AliasDialogPage; component: AliasDialogPage[]; source: AliasDialogPage;
+  merges: AliasMergeChoice[];
+  mergesRefused: { name: string; path: string; reason: RenameRefusal }[];
+  own: { edits: AliasEdit[]; effect: RenameEffect } | null;
+  ownRefused: { kind: "plan"; reason: RenameRefusal } | { kind: "aliasLine"; page: string; path: string } | { kind: "other" } | null;
+};
+
 export type RenameOffer =
   | { kind: "rename" }
-  | { kind: "merge"; into: string; name: string; journal: boolean }
-  | { kind: "refused"; reason: RenameRefusal; message: string };
+  | { kind: "merge"; into: string; name: string; journal: boolean; tags?: TagUnion | null }
+  | { kind: "refused"; reason: RenameRefusal; message: string }
+  | AliasDialogOffer;
 
 export type ResolvedPage =
   | { kind: "existing"; id: string; others: string[] }
