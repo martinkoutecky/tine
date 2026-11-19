@@ -1,5 +1,5 @@
 import { expect, it } from "vitest";
-import { externalPdfPath, relativePdfFileUrl } from "./externalPdfPath";
+import { externalPdfPath, relativePdfFile } from "./externalPdfPath";
 import { anchorDecision } from "../linkSchemePolicy";
 
 it.each([
@@ -26,7 +26,7 @@ it.each(["file:paper.pdf", "file:../paper.pdf", "file:/tmp/paper.pdf", "../paper
 const rel = (dest: string, root = "/home/user/graph") => {
   const decision = anchorDecision(dest);
   return "target" in decision && decision.target && (decision.kind !== "relative" || decision.pathQualified)
-    ? relativePdfFileUrl(decision.target, root) : null;
+    ? relativePdfFile(decision.target, root) : null;
 };
 
 it.each([
@@ -37,11 +37,12 @@ it.each([
   ["./docs/a.pdf", "file:///home/user/graph/docs/a.pdf"],
   ["docs/a%2520b%23c.pdf", "file:///home/user/graph/docs/a%2520b%23c.pdf"],
   ["file:docs/文.pdf", "file:///home/user/graph/docs/%E6%96%87.pdf"],
+  ["file:docs%2Fguide.PDF", "file:///home/user/graph/docs/guide.PDF"],
   ["file:a.pdf", "file:///home/user/graph/a.pdf"],
 ])("resolves the relative PDF link %s from the graph root", (dest, url) => {
-  expect(rel(dest)).toBe(url);
-  // The reader parses its own answer back to the same path, whatever the spelling.
-  expect(externalPdfPath(url!).kind).toBe("pdf");
+  const parsed = externalPdfPath(url);
+  expect(parsed.kind).toBe("pdf");
+  if (parsed.kind === "pdf") expect(rel(dest)).toEqual({ url, path: parsed.path });
 });
 
 it.each([
@@ -49,8 +50,9 @@ it.each([
   ["file:../a.pdf", "C:/Users/me/graph", "file:///C:/Users/me/a.pdf"],
   ["../a.pdf", "//server/share/graph", "file://server/share/a.pdf"],
 ])("resolves %s against the Windows root %s", (dest, root, url) => {
-  expect(rel(dest, root)).toBe(url);
-  expect(externalPdfPath(url!).kind).toBe("pdf");
+  const parsed = externalPdfPath(url);
+  expect(parsed.kind).toBe("pdf");
+  if (parsed.kind === "pdf") expect(rel(dest, root)).toEqual({ url, path: parsed.path });
 });
 
 it.each(["paper.pdf", "/tmp/paper.pdf", "file:assets/a.pdf", "file:docs/../Assets/a.pdf", "file:../graph/assets/sub/a.pdf", "C:\\papers\\paper.pdf", "../notes.txt", "file:../notes.pdf.txt",

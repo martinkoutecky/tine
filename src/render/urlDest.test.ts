@@ -7,10 +7,12 @@ it("preserves browser destinations, including the empty-protocol policy", () => 
   expect(urlDest({ type: "complex", link: "x" })).toBe("x");
   expect(urlDest({ type: "complex" })).toBe("");
 });
-it("does not invent a separator in a one-letter Org protocol", () => {
+it("preserves the Org drive delimiter with a literal or escaped drive letter", () => {
   expect(urlDest({ type: "complex", protocol: "C", link: "%5Cdocs%5Cnote.pdf" }, "org")).toBe("C:%5Cdocs%5Cnote.pdf");
   expect(urlDest({ type: "complex", protocol: "C", link: "docs/note.pdf" }, "org")).toBe("C:docs/note.pdf");
   const drive = { type: "complex", protocol: "C", link: "docs/note.pdf" } as const;
   expect(urlDest(drive, "org", "[[C://docs/note.pdf][Open]]")).toBe("C://docs/note.pdf");
   expect(urlDest(drive, "org", "[[C:docs/note.pdf][C://docs/note.pdf]]")).toBe("C:docs/note.pdf");
+  expect(urlDest({ ...drive, protocol: "%43", link: "/docs/note.pdf" }, "org", "[[%43:/docs/note.pdf][Open]]")).toBe("%43:/docs/note.pdf");
+  expect(urlDest({ ...drive, protocol: "%43" }, "org", "[[%43://docs/note.pdf][Open]]")).toBe("%43://docs/note.pdf");
 });

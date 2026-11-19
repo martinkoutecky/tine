@@ -191,94 +191,19 @@ it("expanded web audio uses the same remote source as inline playback", async ()
 });
 
 describe("Windows drive links in the app (GH #984)", () => {
-  it.each([
-    "C:%2Fdocs%2Fnote.txt",
-    "C:%2fdocs%2fnote.txt",
-    "C:%2Fdocs/note.txt",
-    "C:%2fdocs\\note.txt",
-  ])("opens %s with the existing file opener", async (dest) => {
-    published.on = false;
-    const open = vi.spyOn(backend(), "openExternal").mockResolvedValue(undefined);
-    const graph = vi.spyOn(backend(), "openGraphFile").mockResolvedValue(undefined);
-    const link = mount(() => <InlineText text={`[note](${dest})`} />).querySelector("a");
-    expect(link).not.toBeNull();
-    link!.click();
-    await flush();
-    expect(open).toHaveBeenCalledExactlyOnceWith("file:///C:/docs/note.txt");
-    expect(graph).not.toHaveBeenCalled();
-  });
-
-  it("refuses an encoded drive path if decoding fails", async () => {
+  it("opens a drive path with a literal malformed percent escape", async () => {
     published.on = false;
     const dest = "C:%2Fdocs%2Fbad%.txt";
-    vi.spyOn(backend(), "openExternal").mockRejectedValue(new Error("unsupported url scheme"));
+    const open = vi.spyOn(backend(), "openExternal").mockResolvedValue();
     const graph = vi.spyOn(backend(), "openGraphFile").mockResolvedValue(undefined);
     const link = mount(() => <InlineText text={`[note](${dest})`} />).querySelector("a");
     expect(link).not.toBeNull();
     link!.click();
     await flush();
     expect(graph).not.toHaveBeenCalled();
-    expect(toasts()).toHaveLength(1);
+    expect(open).toHaveBeenCalledExactlyOnceWith("file:///C:/docs/bad%25.txt");
+    expect(toasts()).toHaveLength(0);
   });
-});
-
-const driveSpellings = [
-  ["C:/docs/note", "note"],
-  ["C:\\docs\\note", "note"],
-  ["C:%2Fdocs%2Fnote", "note"],
-  ["C:%2fdocs%2fnote", "note"],
-  ["C:%5Cdocs%5Cnote", "note"],
-  ["C:%5cdocs%5cnote", "note"],
-  ["C:/docs/note%25", "note%25"],
-  ["C:%2Fdocs\\more%5cnote%252F", "more/note%252F"],
-  ["C%3A%2Fdocs%2Fnote", "note"],
-  ["%43%3a%5Cdocs%5cnote", "note"],
-] as const;
-
-function driveEncodings(path: string): string[] {
-  let spellings = [""];
-  for (const character of path) {
-    const options = new Set<string>();
-    for (const literal of character === "/" ? ["/", "\\"] : [character]) {
-      const hex = literal.charCodeAt(0).toString(16);
-      options.add(literal).add(`%${hex}`).add(`%${hex.toUpperCase()}`);
-    }
-    spellings = spellings.flatMap((prefix) => [...options].map((option) => prefix + option));
-  }
-  return spellings;
-}
-
-it.each(["txt", "pdf", "PDF"])("every byte spelling of a drive .%s link or embed names one file", (extension) => {
-  published.on = false;
-  const external = vi.spyOn(backend(), "openExternal").mockResolvedValue();
-  const graph = vi.spyOn(backend(), "openGraphFile").mockResolvedValue();
-  const asset = vi.spyOn(backend(), "openAsset").mockResolvedValue();
-  const pdf = vi.spyOn(panes, "openPdf").mockReturnValue(null);
-  const host = document.createElement("div");
-  document.body.append(host);
-  for (const stem of ["C:/a", "z:/B"]) {
-    const path = `${stem}.${extension}`;
-    const expected = { kind: "drive", target: { kind: "outside", reason: "absolute", path } };
-    const spellings = driveEncodings(path);
-    for (const spelling of spellings) expect(anchorDecision(spelling), spelling).toEqual(expected);
-    for (let i = 0; i < spellings.length; i += 64) {
-      const batch = spellings.slice(i, i + 64);
-      // Markdown escapes punctuation such as % after a backslash.
-      const text = batch.map((dest) => {
-        const escaped = dest.replaceAll("\\", "\\\\");
-        return `[file](${escaped}) ![file](${escaped})`;
-      }).join(" ");
-      const dispose = render(() => <InlineText text={text} />, host);
-      try {
-        const links = host.querySelectorAll("a");
-        expect(links).toHaveLength(batch.length * 2);
-        for (const link of links) link.click();
-        expect(external.mock.calls).toEqual(Array.from({ length: links.length }, () => [`file:///${path}`]));
-        external.mockClear();
-      } finally { dispose(); }
-    }
-  }
-  for (const alternate of [graph, asset, pdf]) expect(alternate).not.toHaveBeenCalled();
 });
 
 it("a drive decision exposes only an absolute path to the renderer", () => {
@@ -291,7 +216,7 @@ it("a drive decision exposes only an absolute path to the renderer", () => {
 });
 
 describe.each(["app", "published reader"] as const)("Windows drive links in the %s", (mode) => {
-  it.each(driveSpellings)("activates %s through the file opener for every format and suffix", async (stem, name) => {
+  it("activates an encoded drive path through the checked file opener", async () => {
     published.on = mode === "published reader";
     const handoff = vi.spyOn(window, "open").mockReturnValue(null);
     const open = vi.spyOn(backend(), "openExternal");
@@ -305,7 +230,7 @@ describe.each(["app", "published reader"] as const)("Windows drive links in the 
 
     const expected = [];
     for (const ext of ["txt", "pdf", "PDF"]) {
-      const dest = `${stem}.${ext}`;
+      const dest = `%43%3a%5Cdocs%5cnote%252F.${ext}`;
       for (const [source, format, how] of [
         [`[note](${dest})`, "md", "click"],
         [`![note](${dest})`, "md", "enter"],
@@ -317,7 +242,7 @@ describe.each(["app", "published reader"] as const)("Windows drive links in the 
         const event = activationEvent(how);
         anchor!.dispatchEvent(event);
         expect(event.defaultPrevented, source).toBe(true);
-        expected.push([`file:///C:/docs/${name}.${ext}`]);
+        expected.push([`file:///C:/docs/note%252F.${ext}`]);
       }
     }
     await flush();
@@ -341,14 +266,14 @@ describe.each(["app", "published reader"] as const)("Windows drive links in the 
     const stream = vi.spyOn(backend(), "streamAsset");
     const read = vi.spyOn(backend(), "readAsset");
     const pdf = vi.spyOn(panes, "openPdf");
-    for (const dest of ["C:assets/clip.mp3", "C:%252Fassets%2Fimage.png", "C:/docs/bad%.pdf", "C:%5Cassets%5Cnote%00.pdf"]) {
+    for (const dest of ["C:assets/clip.mp3", "C:%252Fassets%2Fimage.png", "C:%5Cassets%5Cnote%00.pdf"]) {
       for (const [format, source] of [["md", `![label](${dest})`], ["org", `[[${dest}][label]]`]] as const) {
         const host = mount(() => <InlineText text={source} format={format} />);
         expect(host.querySelector("img, audio, video, a[href]"), source).toBeNull();
         host.querySelector("a")!.click();
       }
     }
-    expect(toasts()).toHaveLength(4);
+    expect(toasts()).toHaveLength(3);
     for (const other of [open, graph, asset, stream, read, pdf]) expect(other).not.toHaveBeenCalled();
   });
 });

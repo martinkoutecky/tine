@@ -1,10 +1,14 @@
 import { afterEach, beforeAll, expect, it, vi } from "vitest";
 import { render } from "solid-js/web";
+import { clearAssetBlobCache } from "../assetCache";
 import { backend } from "../backend";
 import { graphMeta, setGraphMeta } from "../graphSession";
+import { anchorDecision } from "../linkSchemePolicy";
 import * as panes from "../panes";
+import { AstBody } from "./body";
 import { InlineText } from "./inline";
 import { initParser } from "./parse";
+import { renderSanitizedHtml } from "./rawHtml";
 
 const platform = vi.hoisted(() => ({ mobile: false }));
 vi.mock("../nativeChrome", async (original) => ({
@@ -17,6 +21,7 @@ afterEach(() => {
   platform.mobile = false;
   setGraphMeta(null);
   vi.restoreAllMocks();
+  clearAssetBlobCache();
   document.body.replaceChildren();
 });
 
@@ -26,8 +31,8 @@ function click(source: string, format: "md" | "org" = "md") {
   const dispose = render(() => <InlineText text={source} format={format} />, host);
   try {
     const link = host.querySelector("a");
-    expect(link, source).not.toBeNull();
-    link!.click();
+    expect.soft(link, source).not.toBeNull();
+    link?.click();
   } finally { dispose(); host.remove(); }
 }
 
@@ -106,4 +111,194 @@ it("keeps the Beta PDF asset route when a separator is written only as a URL esc
   click("[Guide](docs%2Fguide.pdf)");
   expect(reader.mock.calls).toEqual([["guide.pdf", "Guide"], ["guide.pdf", "Guide"]]);
   expect(graph).not.toHaveBeenCalled();
+});
+
+function byteOptions(byte: string): Set<string> {
+  const options = new Set([byte]);
+  for (const literal of byte === "/" ? ["/", "\\"] : [byte]) {
+    const hex = literal.charCodeAt(0).toString(16).padStart(2, "0");
+    options.add(literal).add(`%${hex}`).add(`%${hex.toUpperCase()}`);
+  }
+  return options;
+}
+
+function byteSpellings(text: string): string[] {
+  return [...new Set([...text].flatMap((byte, index) =>
+    [...byteOptions(byte)].map((spelling) => text.slice(0, index) + spelling + text.slice(index + 1)),
+  ))];
+}
+
+it("opens the same local target for equivalent destination bytes (GH #984)", async () => {
+  platform.mobile = true;
+  setGraphMeta({ ...graphMeta()!, root: "/home/user/graph" });
+  const asset = vi.spyOn(backend(), "openAsset").mockResolvedValue();
+  const graph = vi.spyOn(backend(), "openGraphFile").mockResolvedValue();
+  const external = vi.spyOn(backend(), "openExternal").mockResolvedValue();
+  const pdf = vi.spyOn(panes, "openPdf").mockReturnValue(null);
+  const formats = ["md", "org"] as const;
+  const source = (dest: string, format: typeof formats[number], embed = false) => {
+    // In Org a final backslash would escape the closing bracket of the label.
+    if (format === "org") return `[[${dest.endsWith("\\") ? dest + "\\" : dest}][Open]]`;
+    // In Markdown a literal backslash must survive punctuation escaping.
+    return `${embed ? "!" : ""}[Open](${dest.replaceAll("\\", "\\\\")})`;
+  };
+  const handoffs = () => [asset, graph, external, pdf].map((route) => {
+    const calls = route.mock.calls.map(([target]) => target);
+    route.mockClear();
+    return calls;
+  });
+  const host = document.createElement("div");
+  document.body.append(host);
+  for (const stem of ["C:/a", "z:/B"]) {
+    for (const extension of ["txt", "pdf", "PDF"]) {
+      const path = `${stem}.${extension}`;
+      const spellings = [...path].reduce((prefixes, byte) =>
+        prefixes.flatMap((prefix) => [...byteOptions(byte)].map((option) => prefix + option)), [""]);
+      for (const spelling of spellings) {
+        expect(anchorDecision(spelling), spelling).toEqual({
+          kind: "drive", target: { kind: "outside", reason: "absolute", path },
+        });
+      }
+      for (const [format, embed] of [["md", false], ["md", true], ["org", false]] as const) {
+        for (let i = 0; i < spellings.length; i += 64) {
+          const batch = spellings.slice(i, i + 64);
+          const text = batch.map((dest) => source(dest, format, embed)).join(" ");
+          const dispose = render(() => <InlineText text={text} format={format} />, host);
+          try {
+            const links = host.querySelectorAll("a");
+            expect(links).toHaveLength(batch.length);
+            links.forEach((link) => link.click());
+            expect.soft(handoffs(), `${format} ${batch[0]}`).toEqual([[], [], Array(batch.length).fill(`file:///${path}`), []]);
+          } finally { dispose(); }
+        }
+      }
+    }
+  }
+  for (const prefix of ["docs.v1/", "../docs.v1/", "/tmp/docs.v1/"]) {
+    for (const suffix of ["AsSeTs/", "assets/photo.png", "assets//photo.png", "assets/sub/guide.PDF"]) {
+      const dest = prefix + suffix;
+      for (const format of formats) {
+        click(source(dest, format), format);
+        const expected = handoffs();
+        expect(expected.flat()).toHaveLength(1);
+        for (const spelling of byteSpellings(dest)) {
+          click(source(spelling, format), format);
+          expect.soft(handoffs(), `${format} ${spelling}`).toEqual(expected);
+        }
+      }
+    }
+  }
+  for (const [spelling, decoded] of [
+    ["docs.v1/%61ssets/", "docs.v1/assets/"],
+    ["docs.v1/assets%2F", "docs.v1/assets/"],
+    ["docs.v1/ASSET%53%5c", "docs.v1/ASSETS/"],
+    ["../%61ssets/", "../assets/"],
+    ["/docs.v1/assets%2F", "/docs.v1/assets/"],
+    ["docs.v1/%41ssets/photo.png", "docs.v1/Assets/photo.png"],
+    ["docs.v1/assets%2fphoto.png", "docs.v1/assets/photo.png"],
+    ["docs.v1/assets/%2F", "docs.v1/assets//"],
+    ["docs.v1/assets/%5C", "docs.v1/assets//"],
+    ["assets/sub%2Fphoto.png", "assets/sub/photo.png"],
+    ["assets/sub%5Cphoto.png", "assets/sub/photo.png"],
+    ["guide.p%64f", "guide.pdf"],
+    ["guide.%50DF", "guide.PDF"],
+    ["guide%2Epdf", "guide.pdf"],
+    ["guide%2e%50DF", "guide.PDF"],
+    ["docs/guide.p%64f", "docs/guide.pdf"],
+    ["docs/guide.P%44F", "docs/guide.PDF"],
+    ["assets/guide.p%64f", "assets/guide.pdf"],
+    ["../assets/sub/guide.P%44F", "../assets/sub/guide.PDF"],
+    ["C%3A%2Fdocs%2Fbad%.txt", "C:/docs/bad%.txt"],
+    ["%43:%5Cdocs%5Cbad%ZZ.PDF", "C:/docs/bad%ZZ.PDF"],
+    ["C%3a%5Cassets/bad%.png", "C:/assets/bad%.png"],
+    ["C%3a%5cassets/bad%.png", "C:/assets/bad%.png"],
+    ["%43%3a%2fassets/bad%.mp3", "C:/assets/bad%.mp3"],
+    ["C%3A/docs/bad%FF.pdf", "C:/docs/bad�.pdf"],
+    ["%43%3A/docs/bad%FF.pdf", "C:/docs/bad�.pdf"],
+    ["C%3A/docs/bad%2.pdf", "C:/docs/bad%2.pdf"],
+    ["%2Ftmp%2Fguide.pdf", "/tmp/guide.pdf"],
+    ["..%2Fguide.PDF", "../guide.PDF"],
+  ]) {
+    for (const format of formats) {
+      click(source(decoded, format), format);
+      const expected = handoffs();
+      expect.soft(expected.flat(), decoded).toHaveLength(1);
+      click(source(spelling, format), format);
+      expect.soft(handoffs(), `${format} ${spelling}`).toEqual(expected);
+    }
+    if (/\.pdf$/i.test(decoded) || /^[a-z]:\//i.test(decoded)) {
+      click(source(decoded, "md", true));
+      const expected = handoffs();
+      click(source(spelling, "md", true));
+      expect.soft(handoffs(), spelling).toEqual(expected);
+    }
+  }
+
+  for (const prefix of ["", "docs/", "../assets/sub/"]) {
+    for (const [escape, literal] of [["%", "%"], ["%ZZ", "%ZZ"], ["%2", "%2"], ["%FF", "�"]]) {
+      const dest = `${prefix}bad%20${escape}.PDF`;
+      const child = prefix.includes("assets") ? "sub/" : "";
+      click(source(dest, "md", true));
+      expect.soft(handoffs(), dest).toEqual([[], [], [], [`${child}bad ${literal}.PDF`]]);
+      click(source(dest, "org"), "org");
+      expect.soft(handoffs(), dest).toEqual(prefix === "docs/"
+        ? [[], [`docs/bad ${literal}.PDF`], [], []]
+        : [[], [], [], [`${child}bad ${literal}.PDF`]]);
+    }
+  }
+  for (const [dest, expected] of [
+    ["bad%20%.pdf", [[], [], [], ["bad %.pdf"]]],
+    ["bad%20%G0.PDF", [[], [], [], ["bad %G0.PDF"]]],
+    ["assets/sub%2Fbad%20%ZZ.pdf", [[], [], [], ["sub/bad %ZZ.pdf"]]],
+    ["docs/bad%20%E9.PDF", [[], [], [], ["bad �.PDF"]]],
+    ["docs/bad%20%2.pdf", [[], [], [], ["bad %2.pdf"]]],
+    ["docs/bad%20%25.pdf", [[], [], [], ["bad %.pdf"]]],
+  ] as const) {
+    click(source(dest, "md", true));
+    expect.soft(handoffs(), dest).toEqual(expected);
+  }
+  for (const [dest, expected] of [
+    ["docs.v1/assets%252F", [[], ["docs.v1/assets%2F"], [], []]],
+    ["docs.v1/assets/photo.png%20", [["photo.png "], [], [], []]],
+    ["assets/sub%20folder/photo.png", [["sub folder/photo.png"], [], [], []]],
+    ["C%3A%252Fassets%2Fimage.png", [["image.png"], [], [], []]],
+  ] as const) {
+    for (const format of formats) {
+      click(source(dest, format), format);
+      expect.soft(handoffs(), `${format} ${dest}`).toEqual(expected);
+    }
+  }
+  // The independent HTML sanitizer strips hrefs with a literal drive colon.
+  for (const dest of new Set(byteSpellings("C:/docs/note.PDF").map((path) => path.replace(":", "%3A")))) {
+    const dispose = render(() => renderSanitizedHtml(`<a href="${dest}">Open</a>`), host);
+    try {
+      host.querySelector("a")!.click();
+      expect.soft(handoffs(), dest).toEqual([[], [], ["file:///C:/docs/note.PDF"], []]);
+    } finally { dispose(); }
+  }
+  const read = vi.spyOn(backend(), "readAsset").mockRejectedValue("not-found");
+  const stream = vi.spyOn(backend(), "streamAsset").mockResolvedValue("stream");
+  for (const [path, method] of [["photo.png", read], ["audio.mp3", stream]] as const) {
+    for (const dest of byteSpellings(`../assets/${path}`)) {
+      for (const view of [
+        () => <InlineText text={source(dest, "md", true)} />,
+        ...(path.endsWith(".png") ? formats.map((format) => () => <AstBody raw={`{{img ${dest}}}`} format={format} />) : []),
+      ]) {
+        const dispose = render(view, host);
+        try {
+          // Drain the mocked reads and their cache lease callbacks between mounts.
+          await new Promise((resolve) => setTimeout(resolve, 0));
+          expect.soft(method.mock.calls.map(([target]) => target), dest).toEqual([path]);
+        } finally {
+          dispose();
+          method.mockClear();
+          clearAssetBlobCache();
+        }
+      }
+    }
+  }
+  platform.mobile = false;
+  setGraphMeta(null);
+  click(source("docs/bad%20%.pdf", "md", true));
+  expect(handoffs()).toEqual([[], [], [], ["bad %.pdf"]]);
 });

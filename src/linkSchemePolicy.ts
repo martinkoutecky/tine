@@ -1,5 +1,5 @@
 import schemes from "../src-tauri/external-link-schemes.json";
-import { asset_rel_path, pdf_asset_file } from "./render/wasm/lsdoc_wasm.js";
+import { attachment_path, decoded_link_path, pdf_asset_file_decoded } from "./render/wasm/lsdoc_wasm.js";
 import { filePathUrl, graphRelative, type FileLinkTarget } from "./render/relativeFileLink";
 
 const NATIVE_SCHEMES = [schemes.localFile, schemes.deepLink];
@@ -85,76 +85,65 @@ function authoredScheme(dest: string): string | undefined {
 }
 
 export type AnchorDecision =
-  | { kind: "relative"; url: string; target: FileLinkTarget | null; pathQualified: boolean; useUrl: boolean;
-      attachment: string | null; mediaPath: string | null; isPdf: boolean; pdfAsset: string | null }
+  | { kind: "relative"; url: string; path: string; target: FileLinkTarget | null; pathQualified: boolean;
+      attachment: string | null; isPdf: boolean; pdfAsset: string | null }
   | { kind: "file"; url: string; target: FileLinkTarget | null; useUrl: boolean }
   | { kind: "drive"; target: { kind: "outside"; reason: "absolute"; path: string } }
   | { kind: "web"; url: string }
   | { kind: "mail" | "defer"; url: string }
   | { kind: "drop"; error: string };
 
-function decodePath(path: string): string | null {
-  if (!path.includes("%")) return path;
-  try { return decodeURIComponent(path); }
-  catch (error) {
-    if (!(error instanceof URIError)) throw error;
-    return null;
-  }
-}
-
 /** Classify a graph-authored destination (GH #984). One decoded, normalized
  * path supplies all local routing. Literal URL syntax and its escaped
  * payload are preserved for URL handoffs. Cost O(destination bytes), no I/O. */
 export function anchorDecision(dest: string): AnchorDecision {
-  const trimmed = dest.trim();
-  const decoded = decodePath(trimmed);
-  let path = decoded ?? trimmed;
-  if (path.includes("\\")) path = path.replaceAll("\\", "/");
   // Logseq's protocol-url? requires a literal scheme delimiter. Encoded
   // colons in ordinary filenames stay path bytes, e.g. report%3Aold.txt.
   const scheme = authoredScheme(dest);
   if (scheme && refusedLinkScheme(scheme)) return { kind: "drop", error: `${scheme}: links are never opened` };
   if (scheme && isDirectExternalScheme(scheme)) return { kind: scheme === schemes.mail ? "mail" : "web", url: dest };
   const file = scheme === schemes.localFile;
+  if (!file && scheme && scheme.length > 1) return { kind: "defer", url: dest };
+
+  let authoredPath = dest.trim();
   if (file) {
-    if (!/^file:(?![/\\])/i.test(trimmed)) return { kind: "file", url: dest, target: null, useUrl: true };
-    path = path.slice("file:".length);
-  } else if (scheme && scheme.length > 1) {
-    return { kind: "defer", url: dest };
+    // A literal slash after file: belongs to file-URL syntax.
+    if (!/^file:(?![/\\])/i.test(authoredPath)) return { kind: "file", url: dest, target: null, useUrl: true };
+    authoredPath = authoredPath.slice("file:".length);
   }
 
+  const needsNormalization = /[%\\]/.test(authoredPath);
+  const local: string | [string, string | undefined, string | undefined] = needsNormalization
+    ? decoded_link_path(authoredPath, file) : authoredPath;
+  const path = typeof local === "string" ? local : local[0];
+  const names = typeof local === "string" ? undefined : local;
   const drive = path[1] === ":" ? /^[a-z]:(\/)?/i.exec(path) : null;
-  if (!file && (drive?.[1] || scheme?.length === 1)) return drive?.[1] && decoded !== null && !path.includes("\0")
+  if (!file && (drive?.[1] || scheme?.length === 1)) return drive?.[1] && !path.includes("\0")
     ? { kind: "drive", target: { kind: "outside", reason: "absolute", path } }
     : { kind: "drop", error: "unsupported url scheme" };
 
-  let attachment: string | null = null;
-  let mediaPath: string | null = null;
   const hasSeparator = path.includes("/");
-  if (!file && (hasSeparator || path.length === "assets".length) && /assets/i.test(path)) {
-    // Attachment lookup strips trailing separators. Only an exact assets
-    // segment can name the assets root (GH #367).
-    const folder = path.endsWith("/") ? path.replace(/\/+$/, "") : path;
-    attachment = /(^|\/)assets$/i.test(folder) ? "" : asset_rel_path(folder) ?? null;
-    if (attachment !== null) mediaPath = folder === dest && attachment !== "" ? attachment : asset_rel_path(dest) ?? null;
+  let attachment = names?.[1] ?? null;
+  if (!needsNormalization && !file && (hasSeparator || path.length === "assets".length) && /assets/i.test(path)) {
+    attachment = attachment_path(path) ?? null;
   }
-  // The outside PDF route requires authored path syntax (GH #732). A URL
-  // escape inside a bare asset name never opts it into the outside reader.
-  const pathQualified = hasSeparator && /[/\\]/.test(trimmed);
   const dotted = path.includes(".");
   const isPdf = dotted && /\.pdf$/i.test(path);
-  const useUrl = isPdf && !pathQualified;
   let target: FileLinkTarget | null = null;
   if (attachment === null && !/^[#*]/.test(path)) {
     if (drive?.[1] || path.startsWith("/")) target = { kind: "outside", reason: "absolute", path };
     else if (dotted) target = graphRelative(path);
   }
-  if (file) return { kind: "file", url: dest, target, useUrl };
-  // The shared PDF identity API accepts escaped input. Protect literal percent
-  // bytes so it sees the same path, including names containing an escape.
-  const pdfAsset = isPdf && target?.kind !== "outside" ? pdf_asset_file(path.replaceAll("%", "%25")) : null;
-  return { kind: "relative", url: dest, target: useUrl && pdfAsset !== null ? null : target,
-    pathQualified, useUrl, attachment, mediaPath, isPdf, pdfAsset };
+  if (file) return { kind: "file", url: dest, target, useUrl: isPdf && !hasSeparator };
+  // The outside PDF route for scheme-less links requires an authored separator
+  // (GH #732). An escape alone keeps a bare in-graph name with the asset reader.
+  const pathQualified = hasSeparator && /[/\\]/.test(authoredPath);
+  let pdfAsset = null;
+  if (isPdf && target?.kind !== "outside") {
+    pdfAsset = needsNormalization ? names?.[2] ?? null : pdf_asset_file_decoded(path, attachment ?? undefined);
+  }
+  return { kind: "relative", url: dest, path, target: !pathQualified && pdfAsset !== null ? null : target,
+    pathQualified, attachment, isPdf, pdfAsset };
 }
 
 export function anchorHref(decision: AnchorDecision): string | undefined {
