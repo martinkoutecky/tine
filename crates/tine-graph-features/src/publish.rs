@@ -31,11 +31,16 @@ pub enum SheetScope {
     },
 }
 
-fn page_keys<'a>(
-    pages: impl Iterator<Item = &'a tine_core::CorpusPage>,
+/// The publication boundary of `pages`: the `page_key` of each one's
+/// operational name (`publish_query::Handles`), as query result groups name
+/// their pages.
+pub(crate) fn page_keys<'a>(
+    graph: &tine_store::WholeGraph,
+    pages: impl IntoIterator<Item = &'a tine_core::CorpusPage> + Clone,
 ) -> std::collections::HashSet<String> {
-    pages
-        .map(|page| tine_core::refs::page_key(&page.name))
+    let handles = crate::publish_query::day_handles(graph, pages.clone());
+    (pages.into_iter())
+        .map(|page| tine_core::refs::page_key(crate::publish_query::app_name(&handles, page)))
         .collect()
 }
 
@@ -90,6 +95,7 @@ pub fn sheet_export_inputs(
         Some(SheetScope::Live { all_pages, .. }) => {
             let selection = render::PageSelection::every_page(*all_pages);
             Some(page_keys(
+                &whole,
                 corpus.pages.iter().filter(|page| selection.includes(page)),
             ))
         }

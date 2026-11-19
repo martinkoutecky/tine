@@ -97,7 +97,7 @@ impl<'a> RenderGraph<'a> {
             .collect();
         let preview = BlockPreview {
             group: RefGroup {
-                page: page.name.clone(),
+                page: self.page_name(page).to_owned(),
                 kind: page.kind,
                 blocks,
                 evidence: Vec::new(),
@@ -109,6 +109,43 @@ impl<'a> RenderGraph<'a> {
 
     fn list_pages(&self) -> Vec<&CorpusPage> {
         self.corpus.pages.iter().collect()
+    }
+
+    /// The one operational name of `page`, a page of this graph's corpus: it
+    /// admits, slugs, keys and looks the page up; its `name` is for display.
+    pub(crate) fn page_name<'p>(&'p self, page: &'p CorpusPage) -> &'p str {
+        self.lookups.name(self.corpus, self.whole, page)
+    }
+
+    /// The operational name of the page `[[link]]` opens, when that is a
+    /// day whose handle differs from the link (`[[2026-11-02]]` opens
+    /// `2026_11_02` under `MM-dd`); else the link itself. The link resolves
+    /// as it opens ([`WholeGraph::resolve`]); a name with no digit is never a
+    /// day. O(log P + C) for a date-like link, O(name) otherwise.
+    pub(crate) fn link_name(&self, link: &str) -> String {
+        if link.bytes().any(|b| b.is_ascii_digit()) {
+            if let tine_store::Resolved::Existing { id, .. } = self.whole.resolve(link, false) {
+                let rows = self.whole.inventory(tine_store::InventoryScope::File(&id));
+                if let Some(handle) = rows.0.first().and_then(|row| row.handle.clone()) {
+                    return handle;
+                }
+            }
+        }
+        link.to_owned()
+    }
+
+    /// What a page query row shows: a day's title (the label `11-02` of the
+    /// handle `2026_11_02`), from its file's row in this view; else the row's
+    /// name. Display only. O(log P) per journal row.
+    fn row_title(&self, row: &tine_core::query::ir::PageRow) -> String {
+        (row.kind == PageKind::Journal)
+            .then(|| {
+                let id = tine_core::model::PageId::from(row.path.as_str());
+                let rows = self.whole.inventory(tine_store::InventoryScope::File(&id));
+                rows.0.first().map(|entry| entry.name.clone())
+            })
+            .flatten()
+            .unwrap_or_else(|| row.name.clone())
     }
 
     // Shallow query rows carry no ancestor properties. Reuse source hydration
@@ -584,7 +621,7 @@ fn decorate(html: &str, ctx: &Ctx, depth: u8) -> String {
 
         if name == "a" && has_class(inner, "page-ref") && !has_class(inner, "tag") {
             if let Some(page) = tag_attr(inner, "data-page") {
-                let page = unescape(page);
+                let page = link_name(ctx, &unescape(page));
                 if publish_page_allowed(ctx, &page) {
                     out.push_str(&format!(
                         "<a class=\"ref\" href=\"{}.html\" data-ref=\"{}\">",
@@ -604,7 +641,7 @@ fn decorate(html: &str, ctx: &Ctx, depth: u8) -> String {
         }
         if name == "a" && has_class(inner, "tag") {
             if let Some(page) = tag_attr(inner, "data-page") {
-                let page = unescape(page);
+                let page = link_name(ctx, &unescape(page));
                 if publish_page_allowed(ctx, &page) {
                     out.push_str(&format!(
                         "<a class=\"tag\" href=\"{}.html\" data-ref=\"{}\">",
@@ -1278,7 +1315,7 @@ fn render_query_with_title(
                 "<li><a class=\"ref\" href=\"{}.html\" data-ref=\"{}\">{}</a></li>",
                 esc(&page_slug(ctx, &page.name)),
                 esc_attr(&tine_core::refs::page_key(&page.name)),
-                esc(&page.name)
+                esc(&graph.row_title(page))
             ));
         }
         out.push_str("</ul>");
@@ -1325,21 +1362,22 @@ fn render_embed(graph: &RenderGraph<'_>, arg: &str, ctx: &Ctx, depth: u8) -> Str
             None => "<div class=\"embed embed-missing\">Embedded block not found.</div>".into(),
         };
     }
-    if let Some(page) = arg.strip_prefix("[[").and_then(|s| s.strip_suffix("]]")) {
-        let page = page.trim();
+    if let Some(link) = arg.strip_prefix("[[").and_then(|s| s.strip_suffix("]]")) {
+        let link = link.trim();
+        let page = &graph.link_name(link);
         if let Some(doc) = ctx.pages.and_then(|pages| {
             pages
                 .get(&tine_core::refs::page_key(page))
                 .map(|(_, doc)| *doc)
         }) {
-            return render_page_embed_doc(page, doc, ctx, depth);
+            return render_page_embed_doc(page, link, doc, ctx, depth);
         }
         if ctx.pages.is_some() {
             return "<div class=\"embed embed-missing\">Embedded content is not public.</div>"
                 .into();
         }
         return match load_page_doc(graph, page) {
-            Some(doc) => render_page_embed_doc(page, &doc, ctx, depth),
+            Some(doc) => render_page_embed_doc(page, link, &doc, ctx, depth),
             None => "<div class=\"embed embed-missing\">Embedded page not found.</div>".into(),
         };
     }
@@ -1422,6 +1460,12 @@ fn render_namespace(graph: &RenderGraph<'_>, ns: &str, ctx: &Ctx) -> String {
     out
 }
 
+/// [`RenderGraph::link_name`], when the render has a graph.
+fn link_name(ctx: &Ctx, link: &str) -> String {
+    ctx.graph
+        .map_or_else(|| link.to_owned(), |graph| graph.link_name(link))
+}
+
 fn publish_page_allowed(ctx: &Ctx, page: &str) -> bool {
     ctx.pages
         .is_none_or(|pages| pages.contains_key(&tine_core::refs::page_key(page)))
@@ -1435,12 +1479,19 @@ fn publish_file_allowed(ctx: &Ctx, page: &str, path: &str) -> bool {
     })
 }
 
-fn render_page_embed_doc(page: &str, doc: &doc::Document, ctx: &Ctx, depth: u8) -> String {
+/// `page` is the embedded page's operational name; `shown` the link as written.
+fn render_page_embed_doc(
+    page: &str,
+    shown: &str,
+    doc: &doc::Document,
+    ctx: &Ctx,
+    depth: u8,
+) -> String {
     let mut out = format!(
         "<div class=\"embed page-embed\"><a class=\"embed-title ref\" href=\"{}.html\" data-ref=\"{}\">{}</a><ul>",
         page_slug(ctx, page),
         esc_attr(&tine_core::refs::page_key(page)),
-        esc(page)
+        esc(shown)
     );
     for b in &doc.roots {
         render_outline_item(b, b.is_org(), &mut out, ctx, depth, 0, false);
@@ -1627,7 +1678,7 @@ fn render_block(
     // A sheet owner's `tine.*` view configuration is chrome (it drove the layout
     // above), not a property chip; every other block keeps all its properties.
     let mut props = b.properties();
-    if render_sheets::is_laid_out(ctx, title, at) {
+    if render_sheets::is_laid_out(ctx, ctx.current_page.unwrap_or(title), at) {
         props.retain(|(key, _)| !tine_core::doc::property_key_norm(key).starts_with("tine."));
     }
     emit_trailer_facets(b, b.raw(), &props, ctx.hidden_props(), out);
@@ -1906,7 +1957,7 @@ pub fn page_print_html(
     name: &str,
     opts: PrintOpts,
 ) -> io::Result<Option<String>> {
-    let Some(entry) = graph.list_pages().into_iter().find(|e| e.name == name) else {
+    let Some(entry) = (graph.list_pages().into_iter()).find(|e| graph.page_name(e) == name) else {
         return Ok(None);
     };
     let parsed = entry.document.as_ref();
@@ -1915,7 +1966,7 @@ pub fn page_print_html(
     collect_block_refs(&parsed.roots, &slug, &mut refs);
     let print_asset_budget = RefCell::new(PrintAssetBudget::standard());
     let ctx = Ctx {
-        current_page: Some(name),
+        current_page: Some(graph.page_name(entry)),
         refs: &refs,
         reverse_refs: None,
         graph: Some(graph),
@@ -2255,10 +2306,12 @@ pub(crate) fn publish_graph(
     // cannot prove which file produced a result. Fail closed for that identity:
     // publish neither twin rather than let a private twin borrow the public
     // capability. Ordinary unique pages retain the exact one-file capability.
+    // Every identity below is the page's operational name (`page_name`): a
+    // year-less day's label `11-02` names other days and a page.
     let mut source_identity_counts: HashMap<String, usize> = HashMap::new();
     for page in &pages {
         *source_identity_counts
-            .entry(tine_core::refs::page_key(&page.name))
+            .entry(tine_core::refs::page_key(graph.page_name(page)))
             .or_default() += 1;
     }
     // Rendering reads active documents; the existing publication admission
@@ -2268,12 +2321,13 @@ pub(crate) fn publish_graph(
         source_identity_counts.insert(key, 2);
     }
     let mut entries: Vec<_> = pages.iter().collect();
-    entries.sort_by(|a, b| a.name.cmp(&b.name));
+    entries.sort_by(|a, b| graph.page_name(a).cmp(graph.page_name(b)));
 
     // Project authorized pages from the caller's corpus. `entries` is sorted by
     // name, so slug assignment is deterministic. Query hydration stays within
     // this public projection.
-    let mut public: Vec<(&str, PageKind, Arc<doc::Document>, &str)> = Vec::new();
+    // (operational name, label, kind, document, file)
+    let mut public: Vec<(&str, &str, PageKind, Arc<doc::Document>, &str)> = Vec::new();
     for e in entries {
         if !selection.includes(e) {
             continue;
@@ -2281,8 +2335,9 @@ pub(crate) fn publish_graph(
         let mut parsed = e.document.as_ref().clone();
         tine_core::projection::assign_doc_runtime_ids(&mut parsed.roots, e.id.as_str());
         let parsed = Arc::new(parsed);
+        let name = graph.page_name(e);
         if source_identity_counts
-            .get(&tine_core::refs::page_key(&e.name))
+            .get(&tine_core::refs::page_key(name))
             .copied()
             .unwrap_or(0)
             != 1
@@ -2292,20 +2347,20 @@ pub(crate) fn publish_graph(
             );
             continue;
         }
-        public.push((e.name.as_str(), e.kind, Arc::clone(&parsed), e.id.as_str()));
+        public.push((name, &e.name, e.kind, Arc::clone(&parsed), e.id.as_str()));
     }
 
     // Assign unique filenames to physical exported pages, then project aliases
     // through WholeGraph's resolution answer. A published alias reaches the
     // same physical file as navigation; unresolved names retain the legacy
     // raw-slug fallback in page_slug.
-    let names: Vec<&str> = public.iter().map(|(n, _, _, _)| *n).collect();
+    let names: Vec<&str> = public.iter().map(|(n, ..)| *n).collect();
     let (mut slugs, collisions) = build_slug_map(&names);
     for _ in &collisions {
         tine_core::diag_line::diagnostic_line("tine export: page slug collision resolved");
     }
     let mut exported_ids = HashMap::with_capacity(public.len());
-    for (name, kind, _, _) in &public {
+    for (name, _, kind, _, _) in &public {
         if let tine_store::Resolved::Existing { id, .. } =
             graph.whole.resolve(name, *kind == PageKind::Journal)
         {
@@ -2317,9 +2372,7 @@ pub(crate) fn publish_graph(
     for entry in &graph.whole.inventory(tine_store::InventoryScope::All).0 {
         if let tine_store::Resolved::Alias { owners } = &entry.target {
             if let Some(slug) = owners.first().and_then(|owner| exported_ids.get(owner)) {
-                slugs
-                    .entry(tine_core::refs::page_key(&entry.name))
-                    .or_insert_with(|| slug.clone());
+                slugs.entry(entry.key()).or_insert_with(|| slug.clone());
             }
         }
     }
@@ -2338,20 +2391,22 @@ pub(crate) fn publish_graph(
     // Build the block-ref index from the public pages, keyed to their final slugs
     // (a `((ref))` only resolves to a block that's actually exported).
     let mut refs = RefIndex::new();
-    for (name, _, parsed, _) in &public {
+    for (name, _, _, parsed, _) in &public {
         collect_block_refs(&parsed.roots, &slug_of(name), &mut refs);
     }
 
     let page_docs: HashMap<String, (&str, &doc::Document)> = public
         .iter()
-        .map(|(name, _, parsed, file)| (tine_core::refs::page_key(name), (*file, parsed.as_ref())))
+        .map(|(name, _, _, parsed, file)| {
+            (tine_core::refs::page_key(name), (*file, parsed.as_ref()))
+        })
         .collect();
     let mut reverse_refs = ReverseRefIndex::new();
-    for (name, _, parsed, _) in &public {
+    for (name, label, _, parsed, _) in &public {
         collect_reverse_refs(
             &parsed.roots,
             &slug_of(name),
-            name,
+            label,
             &PageAnchors::of(&parsed.roots),
             &refs,
             &mut reverse_refs,
@@ -2379,7 +2434,7 @@ pub(crate) fn publish_graph(
         query_cache: Some(&query_cache),
         pages: Some(&page_docs),
     };
-    for (name, kind, parsed, _) in &public {
+    for (name, label, kind, parsed, _) in &public {
         let slug = slug_of(name);
         let file = format!("{slug}.html");
         let ctx = Ctx {
@@ -2387,7 +2442,7 @@ pub(crate) fn publish_graph(
             ..ctx
         };
         let html = page_html(
-            name,
+            label,
             &slug,
             parsed,
             *kind,
@@ -2409,15 +2464,15 @@ pub(crate) fn publish_graph(
             "<li><a class=\"ref\" href=\"{}\" data-ref=\"{}\">{}</a>{}</li>",
             file,
             esc_attr(&tine_core::refs::page_key(name)),
-            esc(name),
+            esc(label),
             tag
         ));
         sidebar_pages.push(json!({
-            "title": *name,
+            "title": *label,
             "ref": tine_core::refs::page_key(name),
             "slug": slug,
             "journal": journal,
-            "favorite": favorites.contains(*name),
+            "favorite": favorites.contains(*label),
         }));
         count += 1;
     }

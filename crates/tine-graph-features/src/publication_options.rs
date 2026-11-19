@@ -48,6 +48,8 @@ pub struct LeftOutPage {
 #[derive(Clone, Debug, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct ExportPage {
+    /// The page's operational name, as the snapshot names it (a year-less
+    /// day's handle, `2026_11_02`); the app shows its label.
     pub name: String,
     pub path: String,
     pub journal: bool,

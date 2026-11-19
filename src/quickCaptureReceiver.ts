@@ -4,11 +4,11 @@ import { bindingOwner, ownedWhen, readOwned, readOwnedResource, writeOwned, type
 import { pushToast } from "./toasts";
 import { msg } from "./i18n";
 import { graphMeta } from "./graphSession";
-import { appNow, journalHandle, journalTitle } from "./journal";
+import { appNow, journalTitle } from "./journal";
 import { openPage, route } from "./router";
 import { captureTime } from "./shareShape";
 import {
-  captureDestination, destinationName, shouldRedirect, templateOutline,
+  captureDestination, shouldRedirect, templateOutline,
   type QuickCaptureOptions,
 } from "./quickCaptureConfig";
 import type { QuickCaptureAck, QuickCaptureRequest } from "./quickCaptureAck";
@@ -114,6 +114,9 @@ export async function installQuickCaptureReceiver(live: WriteOwner = ownedWhen((
     const save = async () => {
       let ok = false;
       let newClaim = false;
+      // The page this capture was written into: its redirect, never a today
+      // recomputed after saving (midnight may pass while it saves).
+      let written: string | undefined;
       const forgetUninserted = async (): Promise<boolean | undefined> => {
         if (id && newClaim && !landed.has(id)) {
           const forgotten = await writeOwned(receiptOwner, backend().captureReceipt(id, "forget", e.payload.bindingGeneration));
@@ -143,7 +146,8 @@ export async function installQuickCaptureReceiver(live: WriteOwner = ownedWhen((
             return false;
           }
         }
-        const inserted = (name: string) => { if (id) landed.set(id, { name, owner: saveOwner }); };
+        written = prior?.name;
+        const inserted = (name: string) => { written = name; if (id) landed.set(id, { name, owner: saveOwner }); };
         const result = await writeOwned(saveOwner, prior
           ? (prior.owner() ? flushPage(prior.name) : Promise.resolve(false))
           : destination.kind === "page" ? captureToPage(destination.name, text, inserted, shape) : appendToTodayJournal(text, inserted, shape));
@@ -151,7 +155,8 @@ export async function installQuickCaptureReceiver(live: WriteOwner = ownedWhen((
         if (ok && id) {
           const remembered = await writeOwned(saveOwner, backend().captureReceipt(id, "saved", e.payload.bindingGeneration));
           if (remembered.kind === "stale") ok = await receiptStatus(id) === "saved";
-        } else {
+        } else if (!ok) {
+          // An idless delivery that landed stays landed: it has no receipt.
           ok = (await forgetUninserted()) ?? false;
         }
       } catch {
@@ -166,12 +171,10 @@ export async function installQuickCaptureReceiver(live: WriteOwner = ownedWhen((
         if (!ok) pushToast(msg("app-capture-couldn-t-be-saved-its-text"), "error");
         else if (title) pushToast(msg("app-captured-to", { title }), "info");
         else pushToast(msg("app-captured-to-today-s-journal"), "info");
-        if (ok) {
+        if (ok && written) {
           const open = route();
-          // Today's journal by its handle: a year-less title is a label.
-          const name = destinationName(destination, journalHandle(appNow()));
-          if (shouldRedirect(options, name, open.kind === "page" ? open.name : null)) {
-            openPage(name, destination.kind === "journal" ? "journal" : "page");
+          if (shouldRedirect(options, written, open.kind === "page" ? open.name : null)) {
+            openPage(written, destination.kind === "journal" ? "journal" : "page");
           }
         }
       }

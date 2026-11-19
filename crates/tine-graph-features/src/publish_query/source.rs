@@ -45,6 +45,7 @@ pub fn query_request_by_uuid(
     let query =
         render::query_for_export(block.visible_text(), block.is_org(), false).map_err(refusal)?;
     Ok(block_request(
+        &graph,
         page,
         block,
         query,
@@ -105,6 +106,7 @@ pub fn query_request_on_page(
         match render::query_for_export(block.visible_text(), block.is_org(), true) {
             Ok(query) => {
                 return Ok(block_request(
+                    graph,
                     page,
                     block,
                     query,
@@ -125,6 +127,7 @@ pub fn query_request_on_page(
 }
 
 fn block_request(
+    graph: &WholeGraph,
     page: &CorpusPage,
     block: &DocBlock,
     (argument, dialect, title): (String, QueryTextDialect, Option<String>),
@@ -143,7 +146,9 @@ fn block_request(
         .into_iter()
         .filter(|(key, _)| query_parse_property(key) || display_only_property(key))
         .collect();
-    request.current_page = Some(page.name.clone());
+    // The host page by its operational name: a year-less day's handle.
+    let handles = day_handles(graph, [page]);
+    request.current_page = Some(app_name(&handles, page).to_owned());
     request.host_block_id = Some(block.uuid.to_string());
     request
 }

@@ -260,3 +260,62 @@ it("redirect-page? opens today's year-less journal, not the page of its label", 
     setJournalTitleFormat(null);
   }
 });
+
+// REG-CM-YEARLESS-DAY-KEY (round 5, review R2-2): a capture written into a
+// year-less day before midnight redirects to the day it was written into,
+// whenever its flush, acknowledgement or retry completes; never to the day
+// recomputed after saving.
+function beforeMidnight() {
+  setJournalTitleFormat("MM-dd");
+  let now = new Date(2026, 10, 2, 23, 59).getTime();
+  vi.spyOn(Date, "now").mockImplementation(() => now);
+  const day = journalHandle(appNow());
+  return { day, midnight: () => { now = new Date(2026, 10, 3, 0, 1).getTime(); } };
+}
+async function bindRedirecting(flushed: () => false | [] = () => []) {
+  vi.spyOn(backend(), "graphBindingGeneration").mockReturnValue(11);
+  setGraphMeta({ preferred_format: "md", quick_capture_redirect_page: true } as GraphMeta);
+  answerOpensFromDocument(await bindTestHost());
+  vi.spyOn(backend(), "getPage").mockImplementation(async (name, kind) => ({ name, kind, title: name, id: `journals/${name}.md`, rev: "before", pre_block: null, blocks: [] }));
+  vi.spyOn(backend(), "pageWait").mockImplementation(async () => flushed());
+  mainPaneRouter.openPage("Elsewhere");
+  return installQuickCaptureReceiver();
+}
+
+it.each(["acknowledgement", "flush", "idless flush"])("a year-less capture whose %s completes after midnight redirects to the day it was written into", async (when) => {
+  const clock = beforeMidnight();
+  try {
+    const receipts = backend().captureReceipt.bind(backend());
+    vi.spyOn(backend(), "captureReceipt").mockImplementation(async (id, action, generation) => {
+      if (action === "saved" && when === "acknowledgement") clock.midnight();
+      return receipts(id, action, generation);
+    });
+    const dispose = await bindRedirecting(() => { if (when !== "acknowledgement") clock.midnight(); return []; });
+    const id = when === "idless flush" ? {} : { id: `midnight-${when}` };
+    await h.receive!({ payload: { ...id, target: "main", bindingGeneration: 11, text: "- late" } });
+    dispose();
+    expect(rootsOf(clock.day)).toEqual(["late"]);
+    expect(route()).toMatchObject({ kind: "page", name: clock.day, pageKind: "journal" });
+  } finally {
+    setJournalTitleFormat(null);
+  }
+});
+
+it("a year-less capture retried the next day redirects to the day it was written into", async () => {
+  const clock = beforeMidnight();
+  try {
+    let flushed = false;
+    const dispose = await bindRedirecting(() => flushed && []);
+    const payload = { id: "retry-next-day", target: "main", bindingGeneration: 11, text: "- late" };
+    await h.receive!({ payload });
+    expect(h.ack).toHaveBeenLastCalledWith("capture", "quick-capture-ack", { id: payload.id, ok: false, landed: true });
+    clock.midnight(); flushed = true;
+    await h.receive!({ payload });
+    dispose();
+    expect(h.ack).toHaveBeenLastCalledWith("capture", "quick-capture-ack", { id: payload.id, ok: true });
+    expect(rootsOf(clock.day)).toEqual(["late"]);
+    expect(route()).toMatchObject({ kind: "page", name: clock.day, pageKind: "journal" });
+  } finally {
+    setJournalTitleFormat(null);
+  }
+});

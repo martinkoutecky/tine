@@ -3,6 +3,7 @@ import { render } from "solid-js/web";
 import { backend } from "../backend";
 import { QueryExportDialog } from "./QueryExportDialog";
 import { rawText, renderEnglish } from "../i18n";
+import { setJournalTitleFormat } from "../journal";
 
 vi.mock("../owned", async (orig) => ({ ...await orig<typeof import("../owned")>(), graphOwner: () => () => true }));
 vi.mock("../sheet/exportSheets", () => ({ exportSheets: async () => [] }));
@@ -125,4 +126,23 @@ it("names left-out pages, notes the host page, and sends the query text only whe
   expect(api.mock.calls[0][0]).toMatchObject({ includeQueryText: false });
   include.click(); exportButton(root).click(); for (let i = 0; i < 4; i++) await tick();
   expect(api.mock.calls[1][0]).toMatchObject({ includeQueryText: true });
+});
+
+// REG-CM-YEARLESS-DAY-KEY (round 5): a plan names a year-less day by its
+// handle, as its snapshot does, so a re-export's membership is unchanged;
+// the review shows the day's label.
+it("shows a year-less day's label in the reviewed pages and their membership", async () => {
+  setJournalTitleFormat("MM-dd");
+  try {
+    const root = await dialog(true, {
+      pages: [{ name: "2026_11_02", path: "journals/2026_11_02.md", journal: true }],
+      previousPages: ["2025_11_02"],
+    }, true);
+    const listed = [...root.querySelectorAll(".query-export-pages li")].map(li => li.firstChild?.textContent?.trim());
+    expect(listed).toEqual(["11-02"]);
+    const membership = [...root.querySelectorAll(".folder-export-membership li")].map(li => li.textContent);
+    expect(membership).toEqual(["+ 11-02", "− 11-02"]);
+  } finally {
+    setJournalTitleFormat(null);
+  }
 });

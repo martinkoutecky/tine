@@ -312,10 +312,9 @@ pub fn sheet_inputs(
     let wanted: Option<HashSet<&str>> = pages.map(|p| p.iter().map(String::as_str).collect());
     let mut out = Vec::new();
     for page in &corpus.pages {
-        if wanted
-            .as_ref()
-            .is_some_and(|w| !w.contains(page.name.as_str()))
-        {
+        // The sheet's page by its operational name, as the render keys it.
+        let name = graph.map_or(page.name.as_str(), |graph| graph.page_name(page));
+        if wanted.as_ref().is_some_and(|w| !w.contains(name)) {
             continue;
         }
         let mut stack: Vec<(&DocBlock, Vec<u32>)> = page
@@ -350,12 +349,12 @@ pub fn sheet_inputs(
                 let query = graph.filter(|_| query_budget > 0).and_then(|graph| {
                     let found = sole_query_macro(block)?;
                     query_budget -= 1;
-                    query_rows(graph, block, &found, Some(&page.name), false, &|name| {
+                    query_rows(graph, block, &found, Some(name), false, &|name| {
                         published.is_none_or(|keys| keys.contains(&tine_core::refs::page_key(name)))
                     })
                 });
                 out.push(SheetInput {
-                    page: page.name.clone(),
+                    page: name.to_owned(),
                     path: path.clone(),
                     fp: fingerprint(block),
                     owner: shallow(block),
@@ -878,6 +877,13 @@ fn render_sheet_comments(owner: &DocBlock, grid: bool, e: &Emit, out: &mut Strin
     }
 }
 
+/// The page a sheet answer is keyed by: the rendered page's operational name
+/// (`RenderGraph::page_name`), as `sheet_inputs` names it; its title is for
+/// display.
+fn sheet_page<'a>(e: &'a Emit) -> &'a str {
+    e.ctx.current_page.unwrap_or(e.title)
+}
+
 /// Lay out the app's answer for `owner` in place of its plain child outline.
 /// Returns true when a sheet was emitted; false leaves the caller to render the
 /// outline (after a visible note when the answer cannot be used).
@@ -885,7 +891,7 @@ pub(super) fn emit(owner: &DocBlock, at: &SheetPath, e: &mut Emit, out: &mut Str
     let Some(sheets) = e.ctx.graph.and_then(|g| g.sheets) else {
         return false;
     };
-    let Some(export) = sheets.0.get(&(e.title.to_owned(), at.to_vec())) else {
+    let Some(export) = sheets.0.get(&(sheet_page(e).to_owned(), at.to_vec())) else {
         return false;
     };
     // A query-backed answer replaced the block's body (`emit_query`); the
@@ -955,7 +961,7 @@ pub(super) fn emit_query(
     let Some(sheets) = graph.sheets else {
         return false;
     };
-    let Some(export) = sheets.0.get(&(e.title.to_owned(), at.to_vec())) else {
+    let Some(export) = sheets.0.get(&(sheet_page(e).to_owned(), at.to_vec())) else {
         return false;
     };
     if !export.query {

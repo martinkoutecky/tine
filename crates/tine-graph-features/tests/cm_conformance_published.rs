@@ -312,3 +312,518 @@ fn a_published_year_less_day_is_named_by_its_handle() {
         }
     }
 }
+
+/// REG-CM-YEARLESS-DAY-KEY round 5 (review R2-1): publication names each
+/// source file by its one operational name wherever it admits, slugs, looks
+/// up, homes or bounds sheets, so under `MM-dd` two years of `11-02` and the
+/// label page `11-02` are three pages, each exported, and a day is a home by
+/// its handle. Markdown/Org, `journals/`/`pages/`, one or two years, the
+/// label page present or absent.
+#[test]
+fn publication_admits_homes_and_bounds_sheets_by_a_year_less_days_handle() {
+    use tine_graph_features::publish::{sheet_export_inputs, SheetScope};
+    use tine_graph_features::publish_query::{
+        plan_query, publish_live_home, publish_query, QueryExportRequest,
+    };
+    let _integration_guard = crate::integration_lock();
+    // Every failing check, so one run shows the whole family.
+    let mut failures: Vec<String> = Vec::new();
+    let snapshot_of = |site: &Path| -> Value {
+        serde_json::from_slice(&fs::read(site.join("app/snapshot.json")).unwrap()).unwrap()
+    };
+    let entries = |snapshot: &Value, name: &str| -> Vec<String> {
+        (snapshot["entries"].as_array().unwrap().iter())
+            .filter(|entry| entry["name"] == name)
+            .map(|entry| entry["path"].as_str().unwrap().to_owned())
+            .collect()
+    };
+    for (day_rel, day_text) in [
+        (
+            "journals/2026_11_02.md",
+            "- marker-this-year [[Topic]]\n  id:: 6566a1b2-0000-4000-8000-000000000001\n",
+        ),
+        (
+            "journals/2026_11_02.org",
+            "* marker-this-year [[Topic]]\n:PROPERTIES:\n:id: 6566a1b2-0000-4000-8000-000000000001\n:END:\n",
+        ),
+        (
+            "pages/Day.md",
+            "title:: 2026-11-02\n\n- marker-this-year [[Topic]]\n  id:: 6566a1b2-0000-4000-8000-000000000001\n",
+        ),
+    ] {
+        for (two_years, label_page) in [(true, true), (true, false), (false, true), (false, false)]
+        {
+            let case = format!("{day_rel}, two years {two_years}, label page {label_page}");
+            let root = tempfile::tempdir().unwrap();
+            let graph = root.path().join("graph");
+            let mut files = vec![
+                (
+                    "logseq/config.edn",
+                    "{:journal/page-title-format \"MM-dd\"}\n",
+                ),
+                (day_rel, day_text),
+                ("pages/Topic.md", "- topic\n"),
+                (
+                    "pages/Sheet.md",
+                    "- {{query [[Topic]]}}\n  tine.view:: table\n",
+                ),
+                ("pages/Embed.md", "- {{embed ((6566a1b2-0000-4000-8000-000000000001))}}\n"),
+            ];
+            if two_years {
+                files.push(("journals/2025_11_02.md", "- marker-last-year [[Topic]]\n"));
+            }
+            if label_page {
+                files.push(("pages/11-02.md", "- marker-label-page [[Topic]]\n"));
+            }
+            for (rel, text) in &files {
+                let path = graph.join(rel);
+                fs::create_dir_all(path.parent().unwrap()).unwrap();
+                fs::write(path, text).unwrap();
+            }
+            let store = Store::open(&graph, Default::default()).unwrap().0;
+            let output = root.path().join("output");
+            fs::create_dir_all(&output).unwrap();
+
+            // Admission and slugs: every page reaches the static HTML.
+            let site = Path::new(
+                &publish_live(&store, &output, "Site", true, true, &bundle())
+                    .expect(&case)
+                    .path,
+            )
+            .to_owned();
+            let html: String = (fs::read_dir(&site).unwrap())
+                .map(|file| file.unwrap().path())
+                .filter(|path| path.extension().is_some_and(|ext| ext == "html"))
+                .map(|path| fs::read_to_string(path).unwrap())
+                .collect();
+            for (marker, present) in [
+                ("marker-this-year", true),
+                ("marker-last-year", two_years),
+                ("marker-label-page", label_page),
+                ("Embedded content is not public", false),
+                ("Embedded block not found", false),
+            ] {
+                if html.contains(marker) != present {
+                    failures.push(format!("{case}: static HTML {marker} present {present}"));
+                }
+            }
+            // The default home names an exported page.
+            let snapshot = snapshot_of(&site);
+            let home = snapshot["home"].as_str().unwrap().to_owned();
+            if entries(&snapshot, &home).len() != 1 {
+                failures.push(format!(
+                    "{case}: default home {home:?} names no exported page"
+                ));
+            }
+
+            // An explicit home by the day's handle.
+            let homed = root.path().join("homed");
+            fs::create_dir_all(&homed).unwrap();
+            match publish_live_home(
+                &store,
+                &homed,
+                "Site",
+                true,
+                true,
+                Some("2026_11_02"),
+                &bundle(),
+            ) {
+                Ok(receipt) => {
+                    let snapshot = snapshot_of(Path::new(&receipt.path));
+                    if snapshot["home"] != "2026_11_02"
+                        || entries(&snapshot, "2026_11_02") != [day_rel]
+                    {
+                        failures.push(format!("{case}: explicit home {}", snapshot["home"]));
+                    }
+                }
+                Err(error) => failures.push(format!("{case}: explicit home refused: {error}")),
+            }
+
+            // A query export's home never takes the day's name.
+            let request = QueryExportRequest {
+                argument: "[[Topic]]".into(),
+                dialect: tine_core::query::wire_parse::QueryTextDialect::MacroQuery,
+                properties: Vec::new(),
+                current_page: None,
+                name: "2026_11_02".into(),
+                host_block_id: None,
+                folder: Some("probe".into()),
+                replace: false,
+                asset_budget_bytes: None,
+                include_query_text: false,
+                include_comments: None,
+            };
+            let plan = plan_query(&store, &request).expect(&case);
+            let site = publish_query(&store, &request, &plan.fingerprint, &bundle())
+                .expect(&case)
+                .path;
+            let snapshot = snapshot_of(Path::new(&site));
+            // Re-planning compares the export's membership by the names its
+            // snapshot gives: the day is the same page, not one gone and one new.
+            let replan = plan_query(&store, &request).expect(&case);
+            let mut planned: Vec<_> = replan.pages.iter().map(|page| page.name.clone()).collect();
+            let mut previous = replan.previous_pages.clone().unwrap_or_default();
+            planned.sort();
+            previous.sort();
+            if planned != previous || !planned.iter().any(|name| name == "2026_11_02") {
+                failures.push(format!(
+                    "{case}: membership {planned:?} vs before {previous:?}"
+                ));
+            }
+            let owners = entries(&snapshot, "2026_11_02");
+            if snapshot["home"] == "2026_11_02" || owners != [day_rel] {
+                failures.push(format!(
+                    "{case}: query home {} beside the day: entries {owners:?}",
+                    snapshot["home"]
+                ));
+            }
+
+            // A query-backed sheet keeps the selected days' rows.
+            let mut days = vec!["2026_11_02"];
+            if two_years {
+                days.push("2025_11_02");
+            }
+            for scope in [
+                SheetScope::Query { request },
+                SheetScope::Live {
+                    all_pages: true,
+                    include_comments: None,
+                },
+            ] {
+                let inputs = sheet_export_inputs(&store, Some(&["Sheet".to_owned()]), Some(&scope))
+                    .expect(&case);
+                let pages = inputs[0].query.as_ref().map(|query| query.pages.clone());
+                let pages = pages.unwrap_or_default();
+                if !days.iter().all(|day| pages.iter().any(|page| page == day)) {
+                    failures.push(format!("{case}: sheet rows {pages:?} miss {days:?}"));
+                }
+            }
+            store.close();
+        }
+    }
+    assert!(failures.is_empty(), "{}", failures.join("\n"));
+}
+
+/// REG-CM-YEARLESS-DAY-KEY round 5b: print and PDF export find a page by the
+/// operational name the app passes, so under `MM-dd` a day prints by its
+/// handle (`2026_11_02`), never another year's day or the label page `11-02`;
+/// the label page prints by its own name; a printed embed of a block on a
+/// year-less day finds it; and a printed day's sheet inputs are its own.
+/// Markdown/Org, one or two years, the label page present.
+#[test]
+fn print_and_pdf_find_a_year_less_day_by_its_handle() {
+    use tine_graph_features::print::{page_print_html, PrintOpts};
+    use tine_graph_features::publish::{sheet_export_inputs, SheetScope};
+    let _integration_guard = crate::integration_lock();
+    let mut failures: Vec<String> = Vec::new();
+    let uuid = "6566a1b2-0000-4000-8000-000000000002";
+    for org in [false, true] {
+        for two_years in [false, true] {
+            let case = format!("org {org}, two years {two_years}");
+            let root = tempfile::tempdir().unwrap();
+            let graph = root.path().join("graph");
+            let day = if org {
+                format!(
+                    "* marker-this-year\n:PROPERTIES:\n:id: {uuid}\n:END:\n* {{{{query [[Topic]]}}}}\n:PROPERTIES:\n:tine.view: table\n:END:\n"
+                )
+            } else {
+                format!(
+                    "- marker-this-year\n  id:: {uuid}\n- {{{{query [[Topic]]}}}}\n  tine.view:: table\n"
+                )
+            };
+            let ext = if org { "org" } else { "md" };
+            let mut files = vec![
+                (
+                    "logseq/config.edn".to_owned(),
+                    "{:journal/page-title-format \"MM-dd\"}\n".to_owned(),
+                ),
+                (format!("journals/2026_11_02.{ext}"), day),
+                (
+                    "pages/11-02.md".to_owned(),
+                    "- marker-label-page\n".to_owned(),
+                ),
+                ("pages/Topic.md".to_owned(), "- topic\n".to_owned()),
+                (
+                    "pages/Notes.md".to_owned(),
+                    "- a note [[Topic]]\n".to_owned(),
+                ),
+                (
+                    "pages/Embed.md".to_owned(),
+                    format!("- {{{{embed (({uuid}))}}}}\n"),
+                ),
+            ];
+            if two_years {
+                files.push((
+                    "journals/2025_11_02.md".to_owned(),
+                    "- marker-last-year\n- {{query [[Topic]]}}\n  tine.view:: table\n".to_owned(),
+                ));
+            }
+            for (rel, text) in &files {
+                let path = graph.join(rel);
+                fs::create_dir_all(path.parent().unwrap()).unwrap();
+                fs::write(path, text).unwrap();
+            }
+            let store = Store::open(&graph, Default::default()).unwrap().0;
+            let print = |name: &str| page_print_html(&store, name, PrintOpts::default()).unwrap();
+            for (name, present, absent) in [
+                (
+                    "2026_11_02",
+                    "marker-this-year",
+                    ["marker-last-year", "marker-label-page"],
+                ),
+                (
+                    "11-02",
+                    "marker-label-page",
+                    ["marker-this-year", "marker-last-year"],
+                ),
+            ] {
+                match print(name) {
+                    Some(html) => {
+                        if !html.contains(present) || absent.iter().any(|m| html.contains(m)) {
+                            failures.push(format!("{case}: print {name} is not that page"));
+                        }
+                    }
+                    None => failures.push(format!("{case}: print {name} found nothing")),
+                }
+            }
+            match print("Embed") {
+                Some(html) if html.contains("marker-this-year") => {}
+                _ => failures.push(format!("{case}: printed embed of the day's block")),
+            }
+            let names = ["2026_11_02".to_owned()];
+            let scope = SheetScope::Print {
+                include_comments: None,
+            };
+            let inputs = sheet_export_inputs(&store, Some(&names), Some(&scope)).unwrap();
+            let pages: Vec<_> = inputs.iter().map(|input| input.page.as_str()).collect();
+            if pages != ["2026_11_02"] {
+                failures.push(format!("{case}: PDF sheet inputs {pages:?}"));
+            }
+            store.close();
+        }
+    }
+    assert!(failures.is_empty(), "{}", failures.join("\n"));
+}
+
+/// REG-CM-YEARLESS-DAY-KEY round 5b: a published page query's row for a
+/// year-less day links by the day's handle and shows its label, as the app
+/// shows it (`pageLabel`).
+#[test]
+fn a_published_page_query_row_shows_a_year_less_days_label() {
+    let _integration_guard = crate::integration_lock();
+    let root = tempfile::tempdir().unwrap();
+    let graph = root.path().join("graph");
+    for (rel, text) in [
+        (
+            "logseq/config.edn",
+            "{:journal/page-title-format \"MM-dd\"}\n",
+        ),
+        (
+            "journals/2026_11_02.md",
+            "type:: day\n\n- marker-this-year\n",
+        ),
+        ("pages/Q.md", "- {{query (page-property type day)}}\n"),
+    ] {
+        let path = graph.join(rel);
+        fs::create_dir_all(path.parent().unwrap()).unwrap();
+        fs::write(path, text).unwrap();
+    }
+    let store = Store::open(&graph, Default::default()).unwrap().0;
+    let out = root.path().join("site");
+    fs::create_dir_all(&out).unwrap();
+    let site = publish_live(&store, &out, "Site", true, true, &bundle())
+        .unwrap()
+        .path;
+    let html: String = fs::read_dir(&site)
+        .unwrap()
+        .map(|file| file.unwrap().path())
+        .filter(|path| path.extension().is_some_and(|ext| ext == "html"))
+        .map(|path| fs::read_to_string(path).unwrap())
+        .filter(|text| text.contains("query-results"))
+        .collect();
+    let row = html
+        .split("<ul class=\"query-results\">")
+        .nth(1)
+        .and_then(|rest| rest.split("</ul>").next())
+        .unwrap_or_default()
+        .to_owned();
+    assert!(
+        row.contains("data-ref=\"2026_11_02\">11-02</a>"),
+        "the row links the handle and shows the label: {row}"
+    );
+    store.close();
+}
+
+/// REG-CM-YEARLESS-DAY-KEY round 5b: a published or printed link written as
+/// a date opens the day it names, as in the app: under `MM-dd`,
+/// `[[2026-11-02]]` and `#[[2026-11-02]]` link the 2026 day's page and
+/// `{{embed [[2026-11-02]]}}` embeds that day, never another year's; the
+/// label `[[11-02]]` without its page stays unlinked.
+#[test]
+fn published_and_printed_date_links_open_a_year_less_day() {
+    let _integration_guard = crate::integration_lock();
+    let mut failures: Vec<String> = Vec::new();
+    let root = tempfile::tempdir().unwrap();
+    let graph = root.path().join("graph");
+    for (rel, text) in [
+        (
+            "logseq/config.edn",
+            "{:journal/page-title-format \"MM-dd\"}\n",
+        ),
+        ("journals/2026_11_02.md", "- marker-this-year\n"),
+        ("journals/2025_11_02.md", "- marker-last-year\n"),
+        (
+            "pages/Notes.md",
+            "- see [[2026-11-02]] and #[[2026-11-02]] and [[11-02]]\n",
+        ),
+        ("pages/PE.md", "- {{embed [[2026-11-02]]}}\n"),
+    ] {
+        let path = graph.join(rel);
+        fs::create_dir_all(path.parent().unwrap()).unwrap();
+        fs::write(path, text).unwrap();
+    }
+    let store = Store::open(&graph, Default::default()).unwrap().0;
+    let out = root.path().join("site");
+    fs::create_dir_all(&out).unwrap();
+    let site = publish_live(&store, &out, "Site", true, true, &bundle())
+        .unwrap()
+        .path;
+    let page = |marker: &str| -> String {
+        fs::read_dir(&site)
+            .unwrap()
+            .map(|file| file.unwrap().path())
+            .filter(|path| path.extension().is_some_and(|ext| ext == "html"))
+            .map(|path| fs::read_to_string(path).unwrap())
+            .filter(|text| text.contains(marker))
+            .collect()
+    };
+    let notes = page("see ");
+    for (needle, present) in [
+        (
+            "<a class=\"ref\" href=\"2026-11-02.html\" data-ref=\"2026_11_02\">",
+            true,
+        ),
+        (
+            "<a class=\"tag\" href=\"2026-11-02.html\" data-ref=\"2026_11_02\">",
+            true,
+        ),
+        ("data-ref=\"2026-11-02\"", false),
+        ("<span class=\"ref ref-outside\" data-ref=\"11-02\">", true),
+    ] {
+        if notes.contains(needle) != present {
+            failures.push(format!("published links: {needle} present {present}"));
+        }
+    }
+    let embed = page("page-embed");
+    if !embed.contains("marker-this-year") || embed.contains("marker-last-year") {
+        failures.push("published page embed is not the 2026 day".into());
+    }
+    match tine_graph_features::print::page_print_html(&store, "PE", Default::default()).unwrap() {
+        Some(html) if html.contains("marker-this-year") && !html.contains("marker-last-year") => {}
+        _ => failures.push("printed page embed is not the 2026 day".into()),
+    }
+    store.close();
+    assert!(failures.is_empty(), "{}", failures.join("\n"));
+}
+
+/// REG-CM-YEARLESS-DAY-KEY round 5b: a query exported from a year-less day
+/// (the page's first query, or a block by UUID) runs with that day as its
+/// current page, named by its handle, so `<% current page %>` is the day, not
+/// the label page `11-02`.
+#[test]
+fn a_query_exported_from_a_year_less_day_has_that_day_as_its_current_page() {
+    use tine_graph_features::publish_query::{query_request_by_uuid, query_request_on_page};
+    let _integration_guard = crate::integration_lock();
+    let root = tempfile::tempdir().unwrap();
+    let graph = root.path().join("graph");
+    for (rel, text) in [
+        (
+            "logseq/config.edn",
+            "{:journal/page-title-format \"MM-dd\"}\n",
+        ),
+        (
+            "journals/2026_11_02.md",
+            "- {{query [[<% current page %>]]}}\n  id:: 6566a1b2-0000-4000-8000-000000000003\n",
+        ),
+        ("pages/11-02.md", "- label page\n"),
+    ] {
+        let path = graph.join(rel);
+        fs::create_dir_all(path.parent().unwrap()).unwrap();
+        fs::write(path, text).unwrap();
+    }
+    let store = Store::open(&graph, Default::default()).unwrap().0;
+    let view = store.whole_graph().unwrap();
+    let store_crate::Resolved::Existing { id, .. } = view.resolve("2026_11_02", true) else {
+        panic!("the day's file");
+    };
+    let on_page = query_request_on_page(&view, &id, None, false).unwrap();
+    let by_uuid =
+        query_request_by_uuid(&store, "6566a1b2-0000-4000-8000-000000000003", None, false).unwrap();
+    assert_eq!(
+        (
+            on_page.current_page.as_deref(),
+            by_uuid.current_page.as_deref()
+        ),
+        (Some("2026_11_02"), Some("2026_11_02"))
+    );
+    drop(view);
+    store.close();
+}
+
+/// REG-CM-YEARLESS-DAY-KEY round 5b: a Quick Share of one year-less day is
+/// that day: its home names the day's entry by its handle, and the share is
+/// titled by the day's label.
+#[test]
+fn a_quick_share_of_one_year_less_day_is_homed_on_that_day() {
+    use tine_graph_features::publish_query::QueryExportRequest;
+    use tine_graph_features::quick_share;
+    let _integration_guard = crate::integration_lock();
+    let root = tempfile::tempdir().unwrap();
+    let graph = root.path().join("graph");
+    for (rel, text) in [
+        (
+            "logseq/config.edn",
+            "{:journal/page-title-format \"MM-dd\"}\n",
+        ),
+        ("journals/2026_11_02.md", "- marker-this-year\n"),
+        ("journals/2025_11_02.md", "- marker-last-year\n"),
+    ] {
+        let path = graph.join(rel);
+        fs::create_dir_all(path.parent().unwrap()).unwrap();
+        fs::write(path, text).unwrap();
+    }
+    let store = Store::open(&graph, Default::default()).unwrap().0;
+    let scratch = root.path().join("scratch");
+    fs::create_dir_all(&scratch).unwrap();
+    let request = QueryExportRequest {
+        argument: "(page [[2026-11-02]])".into(),
+        dialect: tine_core::query::wire_parse::QueryTextDialect::MacroQuery,
+        properties: Vec::new(),
+        current_page: None,
+        name: "Ignored".into(),
+        host_block_id: None,
+        folder: None,
+        replace: false,
+        asset_budget_bytes: None,
+        include_query_text: false,
+        include_comments: None,
+    };
+    let prepared =
+        quick_share::prepare(&store, &request, "2026-11-19T00:00:00Z", &scratch).unwrap();
+    let doc: Value = serde_json::from_slice(
+        &quick_share::gunzip_bounded(&prepared.payload, quick_share::MAX_DOCUMENT_BYTES).unwrap(),
+    )
+    .unwrap();
+    let names: Vec<_> = (doc["snapshot"]["pages"].as_array().unwrap().iter())
+        .map(|page| page["name"].clone())
+        .collect();
+    assert_eq!(
+        (
+            &doc["snapshot"]["home"],
+            names,
+            prepared.preview.title.as_str()
+        ),
+        (&json!("2026_11_02"), vec![json!("2026_11_02")], "11-02")
+    );
+    store.close();
+}

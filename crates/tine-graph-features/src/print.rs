@@ -75,10 +75,7 @@ pub(crate) fn fresh_named_pages(
     names.dedup();
     let named = |whole: &WholeGraph| -> Vec<CorpusPage> {
         let mut pages: Vec<CorpusPage> = (names.iter())
-            .flat_map(|name| {
-                (whole.corpus(Some(name.as_str()), true).pages.into_iter())
-                    .filter(move |page| page.name == **name)
-            })
+            .flat_map(|name| crate::publish_query::pages_named(whole, name))
             .collect();
         // Name order, page order within a name: what sorting a corpus gives.
         pages.sort_by(|a, b| a.name.cmp(&b.name));

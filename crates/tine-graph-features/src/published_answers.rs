@@ -46,9 +46,10 @@ pub(crate) const ANSWERS_VERSION: u32 = 1;
 /// names (and namespace parents) without a link may be taken. Cost O(rows).
 pub(crate) fn home_name_taken(inventory: &Inventory, spellings: &Inventory, name: &str) -> bool {
     let key = page_key(name);
+    // By each row's operational key: a year-less day is taken by its handle.
     inventory.0.iter().chain(&spellings.0).any(|entry| {
         (!matches!(entry.target, Resolved::Absent { .. }) || entry.link.is_some())
-            && page_key(&entry.name) == key
+            && entry.key() == key
     })
 }
 
@@ -161,7 +162,7 @@ pub(crate) fn answers(
             },
         );
     }
-    let handles = crate::publish_query::day_handles(inventory);
+    let handles = crate::publish_query::day_handles(graph, &corpus.pages);
     let alias_groups: Vec<Value> = corpus
         .pages
         .iter()

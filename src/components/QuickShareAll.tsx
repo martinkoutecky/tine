@@ -18,6 +18,7 @@ import { dbg } from "../debug";
 import { FolderExportMembership } from "./FolderExportMembership";
 import { stageExportComments } from "../exportComments";
 import { ensurePageLoaded, flushPage, pageByName, pageLoadRefusalMessage } from "../document";
+import { pageLabel } from "../journal";
 
 const [batchOwner, setBatchOwner] = graphScopedSignal<object>("binding");
 
@@ -216,7 +217,7 @@ function BatchDialog(props: { close: () => void; target: object }): JSX.Element 
               <p>{t("query-export-dialog-summary", { results: folder().plan.rowCount, pages: folder().plan.pages.length })}</p>
               <p>{folder().plan.path}</p>
               <FolderExportMembership plan={folder().plan} />
-              <ul><For each={folder().plan.pages}>{page => <li>{page.name}</li>}</For></ul>
+              <ul><For each={folder().plan.pages}>{page => <li>{pageLabel(page.name)}</li>}</For></ul>
               <Show when={folder().plan.leftOut.length}>
                 <p>{t("query-export-dialog-left-out", { count: folder().plan.leftOut.length })}</p>
                 <ul><For each={folder().plan.leftOut}>{page => <li>{page.name}: {page.reason === "private" ? t("query-export-dialog-left-out-private") : t("query-export-dialog-left-out-exports-page")}</li>}</For></ul>

@@ -417,8 +417,12 @@ pub fn prepare(
                 ));
             }
             let (title, home, home_query) = if corpus.pages.len() == 1 {
-                let name = corpus.pages[0].name.clone();
-                (name.clone(), name, None)
+                // Titled by its label, homed by its operational name (a
+                // year-less day's handle), as its entry is named.
+                let page = &corpus.pages[0];
+                let handles = crate::publish_query::day_handles(private_graph, [page]);
+                let home = crate::publish_query::app_name(&handles, page).to_owned();
+                (page.name.clone(), home, None)
             } else {
                 let title = request.name.trim().to_owned();
                 // The synthetic home must not shadow a name the build graph

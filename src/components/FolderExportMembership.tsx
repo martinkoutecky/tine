@@ -1,6 +1,7 @@
 import { For, Show, type JSX } from "solid-js";
 import type { QueryPublicationPlan } from "../types";
 import { pageIdentityKey } from "../pageIdentity";
+import { pageLabel } from "../journal";
 import { t } from "../i18n";
 
 /** The prior snapshot is only preview evidence; publication still checks the source fingerprint. */
@@ -24,8 +25,8 @@ export function FolderExportMembership(props: { plan: QueryPublicationPlan }): J
   return <Show when={diff()}>{changes => <div class="folder-export-membership">
     <p>{t("quick-share-membership", { added: changes().added.length, removed: changes().removed.length })}</p>
     <details><summary>{t("quick-share-membership-pages")}</summary><ul>
-      <For each={changes().added}>{name => <li>+ {name}</li>}</For>
-      <For each={changes().removed}>{name => <li>− {name}</li>}</For>
+      <For each={changes().added}>{name => <li>+ {pageLabel(name)}</li>}</For>
+      <For each={changes().removed}>{name => <li>− {pageLabel(name)}</li>}</For>
     </ul></details>
   </div>}</Show>;
 }

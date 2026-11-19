@@ -218,18 +218,7 @@ fn resolve_plan_review(
         result.matched_total = Some(result.total);
     }
     let corpus = graph.corpus(None, true);
-    // Each day file's handle from its own row: O(journal pages · log P), no
-    // graph inventory (a year-bearing day's handle is its name).
-    let owned: HashMap<String, String> = (corpus.pages.iter())
-        .filter(|page| page.kind == PageKind::Journal)
-        .filter_map(|page| {
-            let rows = graph.inventory(tine_store::InventoryScope::File(&page.id));
-            Some((page.id.as_str().to_owned(), rows.0.first()?.handle.clone()?))
-        })
-        .collect();
-    let handles: HashMap<&str, &str> = (owned.iter())
-        .map(|(id, handle)| (id.as_str(), handle.as_str()))
-        .collect();
+    let handles = day_handles(graph, &corpus.pages);
     // Owner files by (kind, page_key), built once rather than per group. Page
     // identity is `page_key` everywhere here (census Q1), as in the reader
     // (`publishedBackend.ts pageByName`): two files claiming one key are an
@@ -321,7 +310,8 @@ fn resolve_plan_review(
         .pages
         .iter()
         .map(|p| ExportPage {
-            name: p.name.clone(),
+            // As the snapshot names it: the membership a re-plan compares.
+            name: app_name(&handles, p).to_owned(),
             path: p.id.as_str().into(),
             journal: p.kind == PageKind::Journal,
         })
@@ -454,25 +444,59 @@ fn collect_static(
     Ok(files)
 }
 
-/// Each day file's handle, by path: the name a year-less day crosses to the
-/// app by (`PageDto.name`, `RefGroup.page`, query rows: `2026_11_02`) where
-/// its name is the label `11-02` (CM SPEC §2.1). Every other page crosses by
-/// its name ([`app_name`]). One pass over the inventory.
-pub(crate) fn day_handles(inventory: &tine_store::Inventory) -> HashMap<&str, &str> {
-    (inventory.0.iter())
-        .filter_map(|entry| match (&entry.target, &entry.handle) {
-            (Resolved::Existing { id, .. }, Some(handle)) => Some((id.as_str(), handle.as_str())),
-            _ => None,
+/// Each day file's handle among `pages`, by path: the one operational name a
+/// year-less day is admitted, slugged, looked up, homed and bounded by in a
+/// publication, as it crosses to the app (`PageDto.name`, `RefGroup.page`,
+/// query rows: `2026_11_02`) where its name is the label `11-02` (CM SPEC
+/// §2.1). Every other page goes by its name ([`app_name`]); the label stays
+/// for display. From each day file's own inventory row: O(day files · log P),
+/// no graph inventory.
+pub(crate) type Handles = HashMap<String, String>;
+
+/// See [`Handles`].
+pub(crate) fn day_handles<'p>(
+    graph: &WholeGraph,
+    pages: impl IntoIterator<Item = &'p tine_core::CorpusPage>,
+) -> Handles {
+    (pages.into_iter())
+        .filter(|page| page.kind == PageKind::Journal)
+        .filter_map(|page| {
+            let rows = graph.inventory(tine_store::InventoryScope::File(&page.id));
+            Some((page.id.as_str().to_owned(), rows.0.first()?.handle.clone()?))
         })
         .collect()
 }
 
-/// The name `page` crosses to the app by; its `name` stays its title.
-pub(crate) fn app_name<'a>(
-    handles: &HashMap<&str, &'a str>,
-    page: &'a tine_core::CorpusPage,
-) -> &'a str {
-    handles.get(page.id.as_str()).copied().unwrap_or(&page.name)
+/// The one operational name of `page` ([`Handles`]); its `name` stays its
+/// title.
+pub(crate) fn app_name<'a>(handles: &'a Handles, page: &'a tine_core::CorpusPage) -> &'a str {
+    handles
+        .get(page.id.as_str())
+        .map_or(&page.name, String::as_str)
+}
+
+/// The pages of this view whose operational name ([`app_name`]) has `name`'s
+/// page identity (`page_key`), in page order: the pages a print, a PDF or a
+/// keyed lookup names. A day's handle is no claimant's name, so its file is
+/// found as a link to it opens and its name's claimants are filtered.
+/// O(C log P) for C claimants.
+pub(crate) fn pages_named(graph: &WholeGraph, name: &str) -> Vec<tine_core::CorpusPage> {
+    let mut pages = graph.corpus(Some(name), true).pages;
+    if pages.is_empty() {
+        if let Resolved::Existing { id, .. } = graph.resolve(name, false) {
+            if let Some(row) = graph
+                .inventory(tine_store::InventoryScope::File(&id))
+                .0
+                .first()
+            {
+                pages = graph.corpus(Some(row.name.as_str()), true).pages;
+            }
+        }
+    }
+    let handles = day_handles(graph, &pages);
+    let key = page_key(name);
+    pages.retain(|page| page_key(app_name(&handles, page)) == key);
+    pages
 }
 
 fn close_query_result(
@@ -522,7 +546,7 @@ fn display_only_property(key: &str) -> bool {
 fn baked_queries(
     graph: &WholeGraph,
     corpus: &tine_core::Corpus,
-    handles: &HashMap<&str, &str>,
+    handles: &Handles,
 ) -> io::Result<Vec<Value>> {
     let paths: HashSet<_> = corpus.pages.iter().map(|page| page.id.as_str()).collect();
     let names: HashSet<_> = corpus
@@ -626,7 +650,7 @@ pub(crate) fn snapshot_at(
     let mut pages: Vec<Value> = Vec::new();
     let mut entries: Vec<Value> = Vec::new();
     let inventory = graph.inventory(tine_store::InventoryScope::All);
-    let handles = day_handles(&inventory);
+    let handles = day_handles(graph, &corpus.pages);
     // Each page as the app names it; its label stays its `title`.
     let names: Vec<&str> = (corpus.pages.iter())
         .map(|page| app_name(&handles, page))
@@ -943,12 +967,7 @@ pub(crate) fn planned_page_keys(
         .whole_graph()
         .map_err(|e| io::Error::other(format!("graph load failed: {e:?}")))?;
     let planned = resolve_plan(store, &graph, request)?;
-    Ok(planned
-        .selected
-        .pages
-        .iter()
-        .map(|page| tine_core::refs::page_key(&page.name))
-        .collect())
+    Ok(crate::publish::page_keys(&graph, &planned.selected.pages))
 }
 
 /// Commit a reviewed query to its in-graph leaf. Replace retains the old leaf
@@ -1273,12 +1292,10 @@ fn live(
         return Err(refusal("live export selects too many pages"));
     }
     corpus.pages.sort_by(|a, b| a.name.cmp(&b.name));
+    let handles = day_handles(&graph, &corpus.pages);
     let find = |wanted: &str| {
         let wanted = tine_core::refs::page_key(wanted);
-        corpus
-            .pages
-            .iter()
-            .find(|p| tine_core::refs::page_key(&p.name) == wanted)
+        (corpus.pages.iter()).find(|p| tine_core::refs::page_key(app_name(&handles, p)) == wanted)
     };
     let home =
         match requested_home {
@@ -1294,7 +1311,7 @@ fn live(
                 .or_else(|| find("Welcome to Tine"))
                 .or_else(|| corpus.pages.first()),
         }
-        .map(|p| p.name.clone())
+        .map(|p| app_name(&handles, p).to_owned())
         .unwrap_or_default();
     // The static fallback and the snapshot both come from the build graph
     // (see `publish_query_with_sheets_in`).

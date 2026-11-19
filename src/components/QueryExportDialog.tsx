@@ -15,6 +15,7 @@ import { activeWindow, listen } from "../windowRealm";
 import { registerTransientLayer } from "../transientLayers";
 import { FolderExportMembership } from "./FolderExportMembership";
 import { saveExportComments } from "../exportComments";
+import { pageLabel } from "../journal";
 
 /** Review complete owner pages, then publish a graph query leaf as a static
  * site and read-only browser app, preserving/reporting replaced output. The backend rechecks the fingerprint
@@ -108,7 +109,7 @@ function Dialog(props: { request: QueryPublicationRequest }): JSX.Element {
             <div class="query-export-summary">{t("query-export-dialog-summary", { results: String(selection().rowCount), pages: String(selection().pages.length) })}</div>
             <FolderExportMembership plan={selection()} />
             <ul class="query-export-pages"><For each={selection().pages}>{(page) =>
-              <li>{page.name} <small>{page.path}</small>{page.journal ? t("query-export-dialog-journal") : ""}</li>
+              <li>{pageLabel(page.name)} <small>{page.path}</small>{page.journal ? t("query-export-dialog-journal") : ""}</li>
             }</For></ul>
             <Show when={selection().leftOut.length > 0}>
               <div class="query-export-note query-export-left-out">{t("query-export-dialog-left-out", { count: selection().leftOut.length })}

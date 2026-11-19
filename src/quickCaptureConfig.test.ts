@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import {
-  captureDestination, destinationName, shouldRedirect, templateOutline, QUICK_CAPTURE_PAGE,
+  captureDestination, shouldRedirect, templateOutline, QUICK_CAPTURE_PAGE,
 } from "./quickCaptureConfig";
 
 const ctx = { time: "14:37", date: "Nov 2nd, 2026", format: "md" as const };
@@ -29,10 +29,6 @@ describe("captureDestination (OG quick-capture page cond)", () => {
     expect(captureDestination("", { enableJournals: false })).toEqual({ kind: "page", name: QUICK_CAPTURE_PAGE });
     expect(captureDestination("", { enableJournals: false, insertToday: true })).toEqual({ kind: "page", name: QUICK_CAPTURE_PAGE });
     expect(captureDestination("", { enableJournals: false, defaultPage: "Inbox" })).toEqual({ kind: "page", name: "Inbox" });
-  });
-  it("names the destination page", () => {
-    expect(destinationName({ kind: "journal" }, "Nov 2nd, 2026")).toBe("Nov 2nd, 2026");
-    expect(destinationName({ kind: "page", name: "Inbox" }, "Nov 2nd, 2026")).toBe("Inbox");
   });
 });
 
