@@ -18,7 +18,7 @@ try {
     const name = `${cm6 ? "cm6" : "classic"}-${zoom}-${display}`;
     const page = await browser.newPage({ viewport: { width: 1800, height: 1500 } });
     page.on("pageerror", error => console.error(`${name}: ${error}`));
-    await page.goto(`${server.resolvedUrls.local[0]}?regressions`);
+    await page.goto(`${server.resolvedUrls.local[0]}?regressions`, { waitUntil: "commit" });
     await page.locator("[data-search-trigger]").waitFor();
     if (process.env.RENDER_BASELINE_CSS) await page.evaluate(css => {
       document.querySelector('style[data-vite-dev-id$="/src/styles/app.css"]').textContent = css;
@@ -65,7 +65,7 @@ try {
         const stub = getComputedStyle(parent, "::after"), elbow = getComputedStyle(child, "::before");
         return { parent: parent.textContent, drawn: painted(parent, "::after"),
           railDelta: child.getBoundingClientRect().left + zoom * parseFloat(elbow.left) - parent.getBoundingClientRect().left - zoom * parseFloat(stub.left),
-          gap: child.getBoundingClientRect().top + zoom * parseFloat(elbow.top) - parent.getBoundingClientRect().bottom };
+          gap: child.getBoundingClientRect().top + zoom * (parseFloat(elbow.top) + parseFloat(stub.bottom)) - parent.getBoundingClientRect().bottom };
       }).filter(Boolean);
       return { markers, comments, branches };
     }, { zoom });
