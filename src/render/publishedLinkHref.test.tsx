@@ -231,7 +231,55 @@ const driveSpellings = [
   ["C:%5cdocs%5cnote", "note"],
   ["C:/docs/note%25", "note%25"],
   ["C:%2Fdocs\\more%5cnote%252F", "more/note%252F"],
+  ["C%3A%2Fdocs%2Fnote", "note"],
+  ["%43%3a%5Cdocs%5cnote", "note"],
 ] as const;
+
+function driveEncodings(path: string): string[] {
+  let spellings = [""];
+  for (const character of path) {
+    const options = new Set<string>();
+    for (const literal of character === "/" ? ["/", "\\"] : [character]) {
+      const hex = literal.charCodeAt(0).toString(16);
+      options.add(literal).add(`%${hex}`).add(`%${hex.toUpperCase()}`);
+    }
+    spellings = spellings.flatMap((prefix) => [...options].map((option) => prefix + option));
+  }
+  return spellings;
+}
+
+it.each(["txt", "pdf", "PDF"])("every byte spelling of a drive .%s link or embed names one file", (extension) => {
+  published.on = false;
+  const external = vi.spyOn(backend(), "openExternal").mockResolvedValue();
+  const graph = vi.spyOn(backend(), "openGraphFile").mockResolvedValue();
+  const asset = vi.spyOn(backend(), "openAsset").mockResolvedValue();
+  const pdf = vi.spyOn(panes, "openPdf").mockReturnValue(null);
+  const host = document.createElement("div");
+  document.body.append(host);
+  for (const stem of ["C:/a", "z:/B"]) {
+    const path = `${stem}.${extension}`;
+    const expected = { kind: "drive", target: { kind: "outside", reason: "absolute", path } };
+    const spellings = driveEncodings(path);
+    for (const spelling of spellings) expect(anchorDecision(spelling), spelling).toEqual(expected);
+    for (let i = 0; i < spellings.length; i += 64) {
+      const batch = spellings.slice(i, i + 64);
+      // Markdown escapes punctuation such as % after a backslash.
+      const text = batch.map((dest) => {
+        const escaped = dest.replaceAll("\\", "\\\\");
+        return `[file](${escaped}) ![file](${escaped})`;
+      }).join(" ");
+      const dispose = render(() => <InlineText text={text} />, host);
+      try {
+        const links = host.querySelectorAll("a");
+        expect(links).toHaveLength(batch.length * 2);
+        for (const link of links) link.click();
+        expect(external.mock.calls).toEqual(Array.from({ length: links.length }, () => [`file:///${path}`]));
+        external.mockClear();
+      } finally { dispose(); }
+    }
+  }
+  for (const alternate of [graph, asset, pdf]) expect(alternate).not.toHaveBeenCalled();
+});
 
 it("a drive decision exposes only an absolute path to the renderer", () => {
   expectTypeOf<Extract<AnchorDecision, { kind: "drive" }>>().toEqualTypeOf<{

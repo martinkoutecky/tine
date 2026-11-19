@@ -15,6 +15,13 @@ it("the PDF Guide explains citing an area image (GH #869)", () => {
   for (const detail of ["clipped image", "`((block reference))`", "**Copy ref**", "Click the image to open the PDF at that highlight", "asset placeholder"]) expect(guide("pdf")).toContain(detail);
 });
 
+it("the Guide explains published link checks and file and PDF routes (GH #984)", () => {
+  expect(guide("share-pages")).toContain("The published reader opens web and email links directly. Links to other apps ask for confirmation, and links to local files are blocked.");
+  const pdf = guide("pdf");
+  expect(pdf).toContain("A drive path such as `C:/Papers/paper.pdf` opens in your system's default app");
+  expect(pdf).toContain("`![label](docs/paper.pdf)` looks for `paper.pdf` in your graph's `assets/`.");
+});
+
 it("the PDF Guide teaches touchscreen pinch and one-finger scrolling", () => {
   const pdf = guide("pdf");
   expect(pdf).toContain("pinch with two fingers");

@@ -78,6 +78,7 @@ function sameScheme(confirmed: string | undefined, scheme: string): boolean {
 }
 
 function authoredScheme(dest: string): string | undefined {
+  if (!dest.includes(":")) return undefined;
   // Apply the URL parser's whitespace rules before reading the scheme. Even
   // a malformed absolute URL has a scheme and cannot become a relative path.
   return /^[\u0000-\u0020]*([a-z][a-z0-9+.-]*):/i.exec(dest.replace(/[\t\n\r]/g, ""))?.[1].toLowerCase();
@@ -85,7 +86,7 @@ function authoredScheme(dest: string): string | undefined {
 
 export type AnchorDecision =
   | { kind: "relative"; url: string; target: FileLinkTarget | null; pathQualified: boolean; useUrl: boolean;
-      attachment: string | null; mediaPath: string | null; pdfAsset: string | null }
+      attachment: string | null; mediaPath: string | null; isPdf: boolean; pdfAsset: string | null }
   | { kind: "file"; url: string; target: FileLinkTarget | null; useUrl: boolean }
   | { kind: "drive"; target: { kind: "outside"; reason: "absolute"; path: string } }
   | { kind: "web"; url: string }
@@ -93,6 +94,7 @@ export type AnchorDecision =
   | { kind: "drop"; error: string };
 
 function decodePath(path: string): string | null {
+  if (!path.includes("%")) return path;
   try { return decodeURIComponent(path); }
   catch (error) {
     if (!(error instanceof URIError)) throw error;
@@ -100,46 +102,59 @@ function decodePath(path: string): string | null {
   }
 }
 
-/** Decide the scheme and resolve local targets for a graph-authored destination
- * (GH #984). A drive decision carries an absolute path. Cost O(destination
- * bytes), with no I/O. */
+/** Classify a graph-authored destination (GH #984). One decoded, normalized
+ * path supplies all local routing. Literal URL syntax and its escaped
+ * payload are preserved for URL handoffs. Cost O(destination bytes), no I/O. */
 export function anchorDecision(dest: string): AnchorDecision {
+  const trimmed = dest.trim();
+  const decoded = decodePath(trimmed);
+  let path = decoded ?? trimmed;
+  if (path.includes("\\")) path = path.replaceAll("\\", "/");
+  // Logseq's protocol-url? requires a literal scheme delimiter. Encoded
+  // colons in ordinary filenames stay path bytes, e.g. report%3Aold.txt.
   const scheme = authoredScheme(dest);
   if (scheme && refusedLinkScheme(scheme)) return { kind: "drop", error: `${scheme}: links are never opened` };
   if (scheme && isDirectExternalScheme(scheme)) return { kind: scheme === schemes.mail ? "mail" : "web", url: dest };
   const file = scheme === schemes.localFile;
-  const drive = scheme?.length === 1;
-  if (scheme && !file && !drive) return { kind: "defer", url: dest };
-  const trimmed = dest.trim();
-  if (file && !/^file:(?![/\\])/i.test(trimmed)) return { kind: "file", url: dest, target: null, useUrl: true };
-
-  const source = file ? trimmed.slice("file:".length) : trimmed;
-  if (!drive && !file && /assets/i.test(dest)) {
-    // Attachments trim trailing slashes and accept the assets root (GH #367).
-    const mediaPath = asset_rel_path(dest) ?? null;
-    const spelling = dest.replace(/\\/g, "/").replace(/\/+$/, "");
-    const rel = /(^|\/)assets$/i.test(spelling) ? "" : mediaPath?.replace(/\/+$/, "");
-    if (rel !== undefined) return { kind: "relative", url: dest, target: null, pathQualified: false, useUrl: false, mediaPath,
-      attachment: decodePath(rel) ?? rel, pdfAsset: /\.pdf$/i.test(dest) ? pdf_asset_file(dest) : null };
+  if (file) {
+    if (!/^file:(?![/\\])/i.test(trimmed)) return { kind: "file", url: dest, target: null, useUrl: true };
+    path = path.slice("file:".length);
+  } else if (scheme && scheme.length > 1) {
+    return { kind: "defer", url: dest };
   }
-  // Ordinary relative links keep their existing lexical spelling rules.
-  const encodedPath = drive ? source : source.replace(/\\/g, "/");
-  const decoded = decodePath(encodedPath);
-  const path = drive ? (decoded ?? "").replace(/\\/g, "/") : decoded ?? encodedPath;
-  const absoluteDrive = /^[a-z]:\//i.test(path);
-  if (drive) return absoluteDrive && !path.includes("\0")
+
+  const drive = path[1] === ":" ? /^[a-z]:(\/)?/i.exec(path) : null;
+  if (!file && (drive?.[1] || scheme?.length === 1)) return drive?.[1] && decoded !== null && !path.includes("\0")
     ? { kind: "drive", target: { kind: "outside", reason: "absolute", path } }
     : { kind: "drop", error: "unsupported url scheme" };
 
-  const pathQualified = encodedPath.includes("/");
-  const useUrl = /\.pdf$/i.test(dest) && !pathQualified;
+  let attachment: string | null = null;
+  let mediaPath: string | null = null;
+  const hasSeparator = path.includes("/");
+  if (!file && (hasSeparator || path.length === "assets".length) && /assets/i.test(path)) {
+    // Attachment lookup strips trailing separators. Only an exact assets
+    // segment can name the assets root (GH #367).
+    const folder = path.endsWith("/") ? path.replace(/\/+$/, "") : path;
+    attachment = /(^|\/)assets$/i.test(folder) ? "" : asset_rel_path(folder) ?? null;
+    if (attachment !== null) mediaPath = folder === dest && attachment !== "" ? attachment : asset_rel_path(dest) ?? null;
+  }
+  // The outside PDF route requires authored path syntax (GH #732). A URL
+  // escape inside a bare asset name never opts it into the outside reader.
+  const pathQualified = hasSeparator && /[/\\]/.test(trimmed);
+  const dotted = path.includes(".");
+  const isPdf = dotted && /\.pdf$/i.test(path);
+  const useUrl = isPdf && !pathQualified;
   let target: FileLinkTarget | null = null;
-  if (absoluteDrive || path.startsWith("/")) target = { kind: "outside", reason: "absolute", path };
-  else if (path.includes(".") && !/^[#*]/.test(source)) target = graphRelative(path);
+  if (attachment === null && !/^[#*]/.test(path)) {
+    if (drive?.[1] || path.startsWith("/")) target = { kind: "outside", reason: "absolute", path };
+    else if (dotted) target = graphRelative(path);
+  }
   if (file) return { kind: "file", url: dest, target, useUrl };
-  const pdfAsset = useUrl && target?.kind !== "outside" ? pdf_asset_file(dest) : null;
-  return { kind: "relative", url: dest, target: pdfAsset === null ? target : null, pathQualified, useUrl,
-    attachment: null, mediaPath: null, pdfAsset };
+  // The shared PDF identity API accepts escaped input. Protect literal percent
+  // bytes so it sees the same path, including names containing an escape.
+  const pdfAsset = isPdf && target?.kind !== "outside" ? pdf_asset_file(path.replaceAll("%", "%25")) : null;
+  return { kind: "relative", url: dest, target: useUrl && pdfAsset !== null ? null : target,
+    pathQualified, useUrl, attachment, mediaPath, isPdf, pdfAsset };
 }
 
 export function anchorHref(decision: AnchorDecision): string | undefined {

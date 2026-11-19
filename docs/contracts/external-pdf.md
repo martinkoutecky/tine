@@ -10,14 +10,21 @@ A relative file link to a PDF opens the same reader from the same Markdown `!` o
 Org position: `file:../x.pdf`, `../x.pdf`, `..\x.pdf`, `docs/x.pdf`, `./x.pdf` and
 `file:x.pdf`. `anchorDecision` supplies the lexical file target (GH #457).
 `relativeFileLink.ts` resolves it from the graph root, preserving authored `..`
-steps without a filesystem probe. The reader receives the absolute `file://` URL
+steps without a filesystem probe. Local paths are percent-decoded once and
+backslashes become slashes before drive, asset, PDF or relative routing. A
+Windows drive path always goes to the checked system file opener, including
+links and embeds with an encoded drive prefix, separator or extension. Literal
+URL scheme syntax still determines which links use the URL policy.
+The outside reader receives the absolute `file://` URL
 (`relativePdfFileUrl` in `externalPdfPath.ts`), so every rule below applies to it
 unchanged. Spellings of one file share one reader tab. These keep their existing
 opener: an `assets/` link and a bare `x.pdf` (the graph-asset reader, with
 annotations), any path that resolves into the graph's `assets/` (so
 `file:assets/x.pdf` keeps the file opener), a plain Markdown link, an absolute path
-without `file://`, any non-PDF link, a link with `#`/`?` after the name, and a link
-on a graph whose root is unknown. OG 6e7afa8eb resolves a relative PDF under the graph's `assets/` after
+without `file://`, any non-PDF link, and a link with `#`/`?` after the name.
+On mobile or when the graph root is unknown, scheme-less Markdown embeds of in-graph PDFs
+keep the graph-asset reader using the PDF's asset name. Plain Markdown and
+labelled Org links keep their file-link fallback. OG 6e7afa8eb resolves a relative PDF under the graph's `assets/` after
 stripping leading dots (`resolve-asset-real-path-url`) and has no graph-root form;
 Tine keeps its #457 graph-root rule, so `../x.pdf` names the file above the graph.
 
