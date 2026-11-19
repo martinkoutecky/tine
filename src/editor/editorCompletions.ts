@@ -297,7 +297,8 @@ export function editorCompletions(props: CompletionAdapter) {
 
   const replaceTrigger = (insert: string, caretOffset?: number) => {
     const trigger = ac(); if (!trigger || !current()) return;
-    const result = applyCompletion(text(), trigger.start, refCompletionEnd(text(), trigger.end, insert), insert, caretOffset);
+    const raw = text();
+    const result = applyCompletion(raw, trigger.start, refCompletionEnd(raw, trigger, insert), insert, caretOffset);
     const spaced = caretOffset === undefined
       ? withRefCompletionSpace(result.raw, result.caret, insert, spaceAfterRefCompletion()) : result;
     // Keep the raw view until the completion edit is committed, then map its
