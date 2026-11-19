@@ -1034,6 +1034,12 @@
           "class": "core-operation",
           "userOutcome": "All pages shows each page's Backlinks count as the number of blocks its unfiltered Linked References panel lists (Target 1: its own block and a code span do not count, and one block naming it by two links and a property counts once), lists the pages that only blocks name (Ref Only 2, the tag page Ideas 1, the property-key page rel 1) and no TODO row, no LATER row although pages/LATER.md exists (OG get-all-pages hides built-in names), and no row for a {{embed ((uuid))}} block's uuid; opening Target, and Ref Only from All pages, shows the same number in the Linked References header; a {{query (all-page-tags)}} block lists Ideas, which opens; opening a reference-only page writes no file.",
           "blocking": true
+        },
+        {
+          "class": "core-operation",
+          "userOutcome": "A page named only by a property key counts its Linked References panel in All pages although a file page's title folds to the same key: done-at 1 (from done-at::) beside Done At 1, and due-on 2 (from Due_On:: and due-on::, one row, no Due_On row) beside Due On 2; opening done-at, due-on and Done At from All pages shows the same number in the Linked References header, and writes no file.",
+          "blocking": true,
+          "authority": "CM D3 (one answerer for every All pages row); UI-CM-ALLPAGES-COUNT-ZERO-FOR-FOLDED-KEY-PAGE"
         }
       ],
       "acceptableVariations": [
