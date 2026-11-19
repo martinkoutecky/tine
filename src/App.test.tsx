@@ -5,9 +5,9 @@ import { setToasts, toasts } from "./toasts";
 import { backend } from "./backend";
 import * as deepLinkNavigation from "./deepLinkNavigation";
 import { installMobileExternalLinkHandler } from "./App";
-import { App } from "./App";
+import { App, PaneTree } from "./App";
 import { render } from "solid-js/web";
-import { paneRouter, resetPaneLayoutToSingle, restorePaneLayout } from "./panes";
+import { layoutRoot, paneRouter, resetPaneLayoutToSingle, restorePaneLayout } from "./panes";
 import { markDirty, resetStore, setRaw } from "./document";
 import { setBlockMoving } from "./document/edits/moves";
 import { pageToDto } from "./document/convert";
@@ -18,6 +18,7 @@ import { pageInventoryRev, firstLoadDone, setFirstLoadDone } from "./graphSessio
 import { bumpGraphEpoch } from "./graphSession";
 import { applyGraphChange as handleGraphChange } from "./document";
 import { bindTestHost, type TestHost } from "./document/host/wiring.test.support";
+import { localDayKey } from "./journal";
 
 vi.mock("@tauri-apps/api/core", { spy: true });
 
@@ -199,6 +200,19 @@ describe("mobile external link delegation", () => {
 });
 
 describe("journal watcher feed reconciliation", () => {
+  let unmount: (() => void) | undefined;
+  afterEach(() => { unmount?.(); unmount = undefined; });
+  async function mountWatcherPanes() {
+    const feed = vi.spyOn(backend(), "journalFeedPage").mockResolvedValue({
+      pages: [], next_before_day: null, done: true, as_of_day: localDayKey(),
+    });
+    const root = document.createElement("div");
+    document.body.append(root);
+    unmount = render(() => <PaneTree node={layoutRoot()} path={[]} />, root);
+    await vi.waitFor(() => expect(root.querySelector("[data-feed-day]")).not.toBeNull());
+    return feed.mockClear();
+  }
+
   it("rekeys an externally edited title by physical path before publishing the new page", async () => {
     const id = "pages/Physical.md";
     resetPaneLayoutToSingle({ tabs: [{ history: [{ kind: "page", name: "Physical", pageKind: "page", path: id }], pos: 0, pinned: false }], activeIndex: 0 });
@@ -296,49 +310,37 @@ describe("journal watcher feed reconciliation", () => {
 
   it("restarts Journals for an unloaded journal without fetching a page DTO", async () => {
     const name = "15th July, 2030";
+    const feed = await mountWatcherPanes();
     const read = vi.spyOn(backend(), "getPage");
-    const now = new Date();
-    const feed = vi.spyOn(backend(), "journalFeedPage").mockResolvedValue({
-      pages: [], next_before_day: null, done: true,
-      as_of_day: now.getFullYear() * 10_000 + (now.getMonth() + 1) * 100 + now.getDate(),
-    });
     await handleGraphChange({ name, kind: "journal", created: false, removed: false });
     await Promise.resolve();
     expect(read).not.toHaveBeenCalled();
-    expect(feed).toHaveBeenCalledWith(3, null);
+    expect(feed).toHaveBeenCalledExactlyOnceWith(3, null, true, localDayKey());
   });
 
   it("reloads a loaded journal in Journals and restarts its feed", async () => {
     const name = "15th July, 2030";
+    const feed = await mountWatcherPanes();
     setDoc({ byId: { old: node("old", name) }, pages: [page(name, "journal", ["old"])], feed: [], loaded: true });
     const read = vi.spyOn(backend(), "getPage").mockResolvedValue({ name, kind: "journal", title: name, id: "journals/2030_07_15.md", pre_block: null, blocks: [{ id: "fresh", raw: "external journal", collapsed: false, children: [] }] } as PageRead);
-    const now = new Date();
-    const feed = vi.spyOn(backend(), "journalFeedPage").mockResolvedValue({
-      pages: [], next_before_day: null, done: true,
-      as_of_day: now.getFullYear() * 10_000 + (now.getMonth() + 1) * 100 + now.getDate(),
-    });
     await handleGraphChange({ name, kind: "journal", created: false, removed: false });
     await Promise.resolve();
     expect(read).toHaveBeenCalledTimes(1);
     expect(pageToDto(name)!.blocks[0].raw).toBe("external journal");
-    expect(feed).toHaveBeenCalledWith(3, null);
+    expect(feed).toHaveBeenCalledExactlyOnceWith(3, null);
   });
 
   it("restarts Journals while preserving a dirty journal removed on disk", async () => {
     const name = "15th July, 2030";
+    const feed = await mountWatcherPanes();
     setDoc({ byId: { local: node("local", name) }, pages: [page(name, "journal", ["local"])], feed: [], loaded: true });
     const { host, key } = await heldDirty(name);
-    const now = new Date();
-    const feed = vi.spyOn(backend(), "journalFeedPage").mockResolvedValue({
-      pages: [], next_before_day: null, done: true,
-      as_of_day: now.getFullYear() * 10_000 + (now.getMonth() + 1) * 100 + now.getDate(),
-    });
     await handleGraphChange({ name, kind: "journal", created: false, removed: true });
     await Promise.resolve();
     host.notice(key, { conflictReported: true }, { version: 9, conflict: true, disk: { kind: "no-file" } });
     await vi.waitFor(() => expect(isConflicted(name)).toBe(true));
     expect(pageToDto(name)!.blocks[0].raw).toBe("loaded elsewhere");
-    expect(feed).toHaveBeenCalledWith(3, null);
+    expect(feed).toHaveBeenCalledExactlyOnceWith(3, null);
   });
 
   it("navigates away from a removed page", async () => {
@@ -381,18 +383,12 @@ describe("journal watcher feed reconciliation", () => {
       ]),
       "main"
     );
+    const feed = await mountWatcherPanes();
     setDoc({ byId: { loaded: node("loaded", name) }, pages: [page(name, "journal", ["loaded"])], feed: [], loaded: true });
     vi.spyOn(backend(), "getPage").mockResolvedValue({ name, kind: "journal", title: name, pre_block: null, blocks: [] } as PageDto as PageRead);
-    const now = new Date();
-    const feed = vi.spyOn(backend(), "journalFeedPage").mockResolvedValue({
-      pages: [], next_before_day: null, done: true,
-      as_of_day: now.getFullYear() * 10_000 + (now.getMonth() + 1) * 100 + now.getDate(),
-    });
-
     await handleGraphChange({ name, kind: "journal", created: false, removed: false });
     await Promise.resolve();
-    expect(feed).toHaveBeenCalledTimes(1);
-    expect(feed).toHaveBeenCalledWith(3, null);
+    expect(feed).toHaveBeenCalledExactlyOnceWith(3, null);
   });
 });
 

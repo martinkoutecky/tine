@@ -36,8 +36,7 @@ beforeEach(async () => {
   answerOpensFromDocument(host);
   vi.spyOn(backend(), "getPage").mockImplementation(async () => disk as never);
   vi.spyOn(backend(), "getPageByPath").mockImplementation(async () => disk as never);
-  installExternalChangeUiHandler(() => ({ pageOpen: () => true, journalsOpen: false, leaveRemovedPage: (name) => { left.push(name); },
-    restartJournalFeed: () => {} }));
+  installExternalChangeUiHandler(() => ({ pageOpen: () => true, journalsOpen: false, leaveRemovedPage: (name) => { left.push(name); } }));
 });
 afterEach(() => { resetStore(); vi.restoreAllMocks(); });
 

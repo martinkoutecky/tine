@@ -2067,9 +2067,10 @@ observed time without reparsing. Tests cover these neighboring outcomes in
 
 The watcher drops events under `.git/`, `.stfolder/` and other noise
 directories before reconciling. A burst of more than 32 changed paths is
-reconciled as one full diff and published as one revision; the desktop adapter
-forwards more than 32 page changes in one publication as a single
-`graph-changed-bulk` event. Returning focus asks for `rescan_graph_now`, whose
+reconciled as one full diff and published as one revision. The desktop adapter
+sends one event per publication. Two or more page changes use a
+`graph-changed-bulk` envelope, and a batch of more than 32 pages also shows a
+summary toast. Returning focus asks for `rescan_graph_now`, whose
 completion is signalled only after the dispatch thread has emitted every change
 up to the rescanned revision. None of these paths writes: a reload never
 replaces a page holding an unsaved draft, and the frontend's "always ask"
@@ -2294,7 +2295,11 @@ index and publishes no reader key: settings readers follow `graphMeta`
 (`docs/contracts/config-live-reload.md`). An own
 publication has no external page-reload entries: its answers arrive in an
 empty `graph-changed-bulk` envelope. External publications attach the answers
-once, on their first `graph-changed` entry or their bulk envelope. The
+once to the single-page or bulk envelope. The window releases the publication
+keys once before processing page reloads. A replay after an edit hold or
+Reload from disk only rechecks the page and its route. The shared Journals
+feed observes the released `days` key, including conservative full releases.
+Visible Journals panes share that refresh. The
 `load_graph` answer (`loaded` and `already_current`) carries `published_rev`:
 the last publication whose window events the binding's dispatch thread had
 emitted when the answer was made (`RescanCursor::emitted`, seeded with the

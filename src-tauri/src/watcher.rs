@@ -11,10 +11,8 @@ use tauri::{Emitter, Manager, State};
 use tine_core::model::PageKind;
 use tine_store::{Change, ChangeKind, GraphRev, Origin, SubscriptionEnd, WatchBatch, WatchMode};
 
-/// Above this many changed pages one publication is announced as ONE
-/// `graph-changed-bulk` event (master 1229f32fb, GH #337): a checkout or big
-/// sync otherwise costs the window one reload decision and one `dataRev` bump
-/// per page. The store escalates its reconcile at the same boundary.
+/// A checkout-sized publication also shows a summary toast (GH #337).
+/// The store escalates its reconcile at the same boundary.
 const BULK_CHANGE_THRESHOLD: usize = 32;
 
 #[derive(Clone, Debug, PartialEq, Eq, serde::Serialize)]
@@ -113,8 +111,8 @@ fn spotlight_events(change: &Change) -> crate::spotlight::Changed {
         .collect()
 }
 
-/// The v0.6.5 window events for one publication: `graph-changed` payloads in
-/// file order, and whether `conflicts-changed` is due. Own changes emit none.
+/// Changed pages in file order and whether `conflicts-changed` is due.
+/// Own changes have no external page reloads.
 fn window_events(change: &Change) -> (Vec<GraphChange>, bool) {
     if change.origin == Origin::Own {
         return (Vec::new(), false);
@@ -416,13 +414,12 @@ fn run_rescan(
     Ok(sequence)
 }
 
-/// One publication's page events as window events: one `graph-changed` per
-/// page, or a single `graph-changed-bulk` above `BULK_CHANGE_THRESHOLD`.
-pub(crate) fn page_event_payloads(
-    events: Vec<GraphChange>,
+/// Keep every page of a publication with its one copy of the answers.
+pub(crate) fn page_event_payload(
+    mut events: Vec<GraphChange>,
     binding_generation: u64,
     answers: Option<serde_json::Value>,
-) -> Vec<(&'static str, serde_json::Value)> {
+) -> Option<(&'static str, serde_json::Value)> {
     let payload = |event: GraphChange| {
         serde_json::json!({
             "path": event.path,
@@ -433,33 +430,28 @@ pub(crate) fn page_event_payloads(
             "binding_generation": binding_generation,
         })
     };
-    if events.len() > BULK_CHANGE_THRESHOLD || events.is_empty() && answers.is_some() {
+    if events.len() > 1 || events.is_empty() && answers.is_some() {
+        let show_summary = events.len() > BULK_CHANGE_THRESHOLD;
         // Named `pages`: host_slot_guard_tests matches by name, and git_pull has a function `changes`.
         let pages: Vec<_> = events.into_iter().map(payload).collect();
-        let bulk = serde_json::json!({ "changes": pages, "binding_generation": binding_generation, "answers": answers });
-        vec![("graph-changed-bulk", bulk)]
+        let bulk = serde_json::json!({
+            "changes": pages, "binding_generation": binding_generation, "answers": answers, "show_summary": show_summary,
+        });
+        Some(("graph-changed-bulk", bulk))
     } else {
-        events
-            .into_iter()
-            .enumerate()
-            .map(|(i, event)| {
-                let mut value = payload(event);
-                if i == 0 {
-                    value["answers"] = serde_json::json!(answers);
-                }
-                ("graph-changed", value)
-            })
-            .collect()
+        let mut value = payload(events.pop()?);
+        value["answers"] = serde_json::json!(answers);
+        Some(("graph-changed", value))
     }
 }
 
 /// Summary delivery is unconditional, including own text-only publications.
 /// Own changes keep an empty page list, so this cannot request a page reload.
-fn publication_event_payloads(
+fn publication_event_payload(
     events: Vec<GraphChange>,
     binding_generation: u64,
     change: &Change,
-) -> Vec<(&'static str, serde_json::Value)> {
+) -> (&'static str, serde_json::Value) {
     let mut answers = serde_json::to_value(change).expect("Change answer serialization");
     // A name-only inventory change carries its entries, so the window patches
     // its name maps instead of refetching the inventory (cost-model audit
@@ -469,7 +461,8 @@ fn publication_event_payloads(
             serde_json::to_value(crate::commands::discovery::inventory_delta_wire(delta))
                 .expect("inventory delta serialization");
     }
-    page_event_payloads(events, binding_generation, Some(answers))
+    page_event_payload(events, binding_generation, Some(answers))
+        .expect("answers carry a window event")
 }
 
 fn config_event_payload(change: &Change, slot: &GraphSlot) -> Option<serde_json::Value> {
@@ -498,18 +491,13 @@ fn dispatch(app: &tauri::AppHandle, label: &str, slot: &Arc<GraphSlot>, change: 
         crate::concord::trash_identical_copies(app, label, slot);
     }
     let pages = events.len();
-    let payloads = publication_event_payloads(events, binding_generation, &change);
+    let (name, payload) = publication_event_payload(events, binding_generation, &change);
     if let Some(link) = slot.window.get() {
-        if let Some(answers) = payloads
-            .first()
-            .and_then(|(_, payload)| payload.get("answers"))
-        {
+        if let Some(answers) = payload.get("answers") {
             link.published(change.graph_rev, answers.clone());
         }
     }
-    for (name, payload) in payloads {
-        let _ = app.emit_to(label, name, payload);
-    }
+    let _ = app.emit_to(label, name, payload);
     if let Some(payload) = asset_event_payload(&change, binding_generation) {
         let _ = app.emit_to(label, "asset-changed", payload);
     }
@@ -713,20 +701,25 @@ mod tests {
     fn derived_answers_travel_once_per_single_or_bulk_publication() {
         let answers =
             serde_json::json!({"rev":"9", "inventoryChanged":true, "blockRefCounts":{"target":3}});
-        let single = page_event_payloads(vec![page(0), page(1)], 7, Some(answers.clone()));
-        assert_eq!(single[0].1["answers"], answers);
-        assert!(single[1].1.get("answers").is_none());
-        let bulk = page_event_payloads((0..40).map(page).collect(), 7, Some(answers.clone()));
-        assert_eq!(bulk[0].1["answers"], answers);
-        assert!(bulk[0].1["changes"]
+        let (name, single) = page_event_payload(vec![page(0)], 7, Some(answers.clone())).unwrap();
+        assert_eq!(name, "graph-changed");
+        assert_eq!(single["answers"], answers);
+        let (name, bulk) =
+            page_event_payload((0..32).map(page).collect(), 7, Some(answers.clone())).unwrap();
+        assert_eq!(name, "graph-changed-bulk");
+        assert_eq!(bulk["answers"], answers);
+        assert_eq!(bulk["show_summary"], false);
+        assert_eq!(bulk["changes"].as_array().unwrap().len(), 32);
+        assert!(bulk["changes"]
             .as_array()
             .unwrap()
             .iter()
             .all(|c| c.get("answers").is_none()));
-        let own = page_event_payloads(vec![], 7, Some(answers.clone()));
-        assert_eq!(own[0].1["answers"], answers);
-        assert_eq!(own[0].1["changes"], serde_json::json!([]));
-        assert!(page_event_payloads(vec![], 7, None).is_empty());
+        let (name, own) = page_event_payload(vec![], 7, Some(answers.clone())).unwrap();
+        assert_eq!(name, "graph-changed-bulk");
+        assert_eq!(own["answers"], answers);
+        assert_eq!(own["changes"], serde_json::json!([]));
+        assert!(page_event_payload(vec![], 7, None).is_none());
     }
 
     /// REG-OG-C5-L08-B1 (I-9): a rescan whose scan fails returns the failure
@@ -782,14 +775,14 @@ mod tests {
     }
 
     #[test]
-    fn a_checkout_sized_publication_is_one_bulk_window_event() {
-        let few = page_event_payloads((0..BULK_CHANGE_THRESHOLD).map(page).collect(), 7, None);
-        assert_eq!(few.len(), BULK_CHANGE_THRESHOLD);
-        assert!(few.iter().all(|(name, _)| *name == "graph-changed"));
-        let many = page_event_payloads((0..=BULK_CHANGE_THRESHOLD).map(page).collect(), 7, None);
-        assert_eq!(many.len(), 1, "one event for a checkout-sized batch");
-        let (name, payload) = &many[0];
-        assert_eq!(*name, "graph-changed-bulk");
+    fn only_checkout_sized_publications_request_a_summary_toast() {
+        let (_, few) =
+            page_event_payload((0..BULK_CHANGE_THRESHOLD).map(page).collect(), 7, None).unwrap();
+        assert_eq!(few["show_summary"], false);
+        let (name, payload) =
+            page_event_payload((0..=BULK_CHANGE_THRESHOLD).map(page).collect(), 7, None).unwrap();
+        assert_eq!(name, "graph-changed-bulk");
+        assert_eq!(payload["show_summary"], true);
         assert_eq!(
             payload["changes"].as_array().unwrap().len(),
             BULK_CHANGE_THRESHOLD + 1
@@ -835,10 +828,8 @@ mod tests {
         assert!(events.is_empty());
         let spotlight = spotlight_events(&change);
         assert_eq!(spotlight, vec![("a".into(), None, false)]);
-        let payloads = publication_event_payloads(events, 7, &change);
-        assert_eq!(payloads.len(), 1);
-        assert_eq!(payloads[0].0, "graph-changed-bulk");
-        let payload = &payloads[0].1;
+        let (name, payload) = publication_event_payload(events, 7, &change);
+        assert_eq!(name, "graph-changed-bulk");
         assert_eq!(payload["changes"], serde_json::json!([]));
         assert_eq!(payload["binding_generation"], 7);
         assert_eq!(payload["answers"]["inventoryChanged"], false);

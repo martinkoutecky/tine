@@ -8,8 +8,8 @@
  * `deferExternalReload(page, change)` records the declined change per page,
  * latest observation wins, bound to the graph it was seen in. When the page's
  * gate opens (editing ends or moves to another page, the move settles, the draft
- * pin is released) the change is handed back to the ORIGINAL handler, which
- * re-evaluates the disposition at replay time: a page that turned dirty meanwhile
+ * pin is released) the page reload returns to the external-change handler,
+ * which re-evaluates the disposition: a page that turned dirty meanwhile
  * takes the ordinary conflict path, never a clobbering reload; a page that is
  * still held re-defers. A graph switch discards every record.
  *

@@ -3,7 +3,8 @@ import { applyGraphAnswers } from "../graphAnswers";
 import { beginResultsChange } from "../queryResultsEpoch";
 import { changeSummary } from "../changeSummary";
 import { changeKeyPending } from "../changeKeys";
-import { backend, type GraphChange, type GraphAnswersChange } from "../backend";
+import { backend, type GraphChange } from "../backend";
+import type { GraphChangeBatch } from "../backendTypes";
 import { captureBinding, bindingCurrent } from "../binding";
 import { conflictPolicyAlwaysAsk, holdExternalChange, installHeldExternalChangeApplier } from "../conflictPolicy";
 import { pushToast } from "../toasts";
@@ -11,74 +12,79 @@ import { bindingOwner, latestOwner, readOwned } from "../owned";
 import { reportUiFailure } from "../uiFailure";
 import { bumpDataRev, bumpPageInventoryRev } from "../graphSession";
 import { toLoadablePage } from "./convert";
-import { readLoadedPublicationPages, loadedPageByPath, pageByName } from "./model";
+import { readLoadedPublicationPages, loadedPageByPath, pageByName, feedNames } from "./model";
 import { admitRead, invalidatePageRead, invalidatePageReadKey } from "./readAdmission";
 import { graphRewriteFrozen } from "./graphRewriteState";
 import { acceptHeldPush, hostHolds, isConflicted } from "./host/wiring";
 import { deferExternalReload, installDeferredReloadReplay } from "./deferredReload";
 import { forgetPage, rekeyPageIdentityByPath, reloadDisposition, reloadPageIfStillSafe, reportPageLoadRefusal, restoreTodayJournalInFeed } from "./workingSet";
 
-/** Route and feed actions belong to the app; the document module owns the
- * decision to call them. The snapshot keeps one watcher event on one UI view. */
+/** Routes observed when applying a watcher event. */
 export interface ExternalChangeUi {
   pageOpen(name: string): boolean;
   journalsOpen: boolean;
   leaveRemovedPage(name: string): void;
-  restartJournalFeed(): void;
 }
 
-// A change declined below is recorded for replay; the replay re-enters
-// `applyGraphChange`, so the disposition is re-decided with whatever state holds
-// then (deferredReload.ts; GH #337).
+// Replays recheck page disposition. The initial observation releases the keys.
 installDeferredReloadReplay({
   ready: (page) => !graphRewriteFrozen() && reloadDisposition(page) === "reload",
-  run: (change, own, ui) => void (own ? applyObservedChange(change, ui ?? captureExternalChangeUi?.(), true, true) : applyGraphChange(change))
+  run: (change, own, ui) => void (own ? applyObservedChange(change, ui ?? captureExternalChangeUi?.(), true, true)
+    : applyExternalChange(change, false, true))
     .catch(error => reportUiFailure("page-refresh", error)),
 });
 
-// "Always ask" (conflictPolicy.ts): Reload from disk re-enters this handler with
-// the policy bypassed for that one change.
-installHeldExternalChangeApplier((change) => void applyGraphChange(change, true));
+installHeldExternalChangeApplier(change => void applyExternalChange(change, true, true)
+  .catch(error => reportUiFailure("page-refresh", error)));
 
 let captureExternalChangeUi: (() => ExternalChangeUi) | null = null;
 export function installExternalChangeUiHandler(capture: () => ExternalChangeUi): void {
   captureExternalChangeUi = capture;
 }
 
+function invalidateChangedPage(change: GraphChange): void {
+  invalidatePageRead(change.name);
+  const loadedName = change.path && loadedPageByPath(change.path)?.name;
+  if (loadedName && loadedName !== change.name) invalidatePageRead(loadedName);
+}
+
+function releasePublication(previous: ReturnType<typeof changeSummary>, hasSummary: boolean): void {
+  // Duplicate CLI/watcher evidence still releases staged keys once (GH #907).
+  // The full fallback also advances days (GH #987).
+  if (!hasSummary || previous !== changeSummary() || changeKeyPending("publication")) bumpDataRev(hasSummary);
+}
+
 /** Apply an already-observed watcher change to frontend graph revisions and
  * loaded pages. Reload a safe loaded page, leave a page the host holds to its
  * mail (the host detects conflicts), defer a held one, or
- * notify route/feed UI about a removal. The watcher/backend has already
+ * notify routed UI about a removal. The watcher/backend has already
  * updated disk and its cache; this function does not persist the change.
  * Page reads may reject. Cost follows the affected page and current UI state. */
-export async function applyGraphChange(c: GraphChange, bypassPolicy = false): Promise<void> {
+export function applyGraphChange(c: GraphChange, bypassPolicy = false): Promise<void> {
+  return applyExternalChange(c, bypassPolicy, false);
+}
+
+async function applyExternalChange(c: GraphChange, bypassPolicy: boolean, replay: boolean): Promise<void> {
   const binding = captureBinding();
   if (c.binding_generation !== undefined && c.binding_generation !== binding.backendGeneration) return;
-  invalidatePageRead(c.name);
-  const loadedName = c.path && loadedPageByPath(c.path)?.name;
-  if (loadedName && loadedName !== c.name) invalidatePageRead(loadedName);
-  // The watcher has already updated the backend graph cache. Invalidate even
-  // when this page is outside the bounded frontend working set.
   const finish = beginResultsChange();
   try {
-    const previous = changeSummary();
-    applyGraphAnswers(c.answers);
-    // A CLI reload and the publication feed can carry the same evidence in
-    // either order. Its second delivery must not turn an already released
-    // precise key into the missing-summary full-refresh fallback (GH #907).
-    if (!c.answers?.summary || previous !== changeSummary() || changeKeyPending("publication")) bumpDataRev(!!c.answers?.summary);
-    if (c.created || c.removed) bumpPageInventoryRev();
+    if (!replay) {
+      invalidateChangedPage(c);
+      const previous = changeSummary();
+      applyGraphAnswers(c.answers);
+      releasePublication(previous, !!c.answers?.summary);
+      if (c.created || c.removed) bumpPageInventoryRev();
+    }
     await applyObservedChange(c, captureExternalChangeUi?.(), bypassPolicy);
   }
   finally { finish(); }
 }
 
-/** One checkout-sized watcher batch (`graph-changed-bulk`, over 32 pages;
- *  master 1229f32fb): revisions move once, only pages something loads, shows
- *  or holds are applied (each through the same per-page decision), the journal
- *  feed restarts at most once, and one summary toast replaces per-page work.
+/** Apply a publication with shared evidence for all its pages. Revisions
+ *  move once, and only pages something loads, shows or holds are applied.
  *  Cost O(changes) plus one page read per loaded or shown page. */
-export async function applyGraphChangesBulk(bulk: { changes: GraphChange[]; binding_generation?: number; answers?: GraphAnswersChange | null }): Promise<void> {
+export async function applyGraphChangesBulk(bulk: GraphChangeBatch): Promise<void> {
   const binding = captureBinding();
   if (bulk.binding_generation !== undefined && bulk.binding_generation !== binding.backendGeneration) return;
   const previous = changeSummary();
@@ -101,32 +107,34 @@ export async function applyGraphChangesBulk(bulk: { changes: GraphChange[]; bind
     }
     return;
   }
-  for (const change of changes) {
-    invalidatePageRead(change.name);
-    const loadedName = change.path && loadedPageByPath(change.path)?.name;
-    if (loadedName && loadedName !== change.name) invalidatePageRead(loadedName);
-  }
+  for (const change of changes) invalidateChangedPage(change);
   const finish = beginResultsChange();
   try {
-  for (const change of changes) applyGraphAnswers(change.answers);
-  const hasSummary = !!bulk.answers?.summary || changes.some(change => !!change.answers?.summary);
-  if (!hasSummary || previous !== changeSummary() || changeKeyPending("publication")) bumpDataRev(hasSummary);
-  if (changes.some((c) => c.created || c.removed)) bumpPageInventoryRev();
-  const ui = captureExternalChangeUi?.();
-  let restart = false, conflicts = 0;
-  // Evidence with a summary refreshes the feed through its `days` key (GH #987).
-  const batchUi = ui && { ...ui, restartJournalFeed: () => { restart = !hasSummary; } };
-  for (const c of changes) {
-    if (!bindingCurrent(binding)) return;
-    const name = (c.path && loadedPageByPath(c.path)?.name) || c.name;
-    // A page nothing loads or shows is refetched on navigation anyway.
-    if (!c.removed && !ui?.pageOpen(c.name) && !pageByName(name) && reloadDisposition(name) === "reload") continue;
-    await applyObservedChange(c, batchUi, false);
-    if (isConflicted(name)) conflicts++;
-  }
-  if (!bindingCurrent(binding)) return;
-  if (restart || (ui?.journalsOpen && !hasSummary && changes.some((c) => c.kind === "journal"))) ui?.restartJournalFeed();
-  pushToast(msg("document-external-updates", { pages: changes.length, conflicts }), "info");
+    releasePublication(previous, !!bulk.answers?.summary);
+    if (changes.some(c => c.created || c.removed)) bumpPageInventoryRev();
+    const ui = captureExternalChangeUi?.();
+    let conflicts = 0;
+    const applyPage = async (c: GraphChange) => {
+      if (!bindingCurrent(binding)) return;
+      const name = (c.path && loadedPageByPath(c.path)?.name) || c.name;
+      if (!c.removed && !ui?.pageOpen(c.name) && !pageByName(name) && reloadDisposition(name) === "reload") return;
+      await applyObservedChange(c, ui, false);
+      if (bulk.show_summary && isConflicted(name)) conflicts++;
+    };
+    if (!bulk.show_summary) {
+      // Small publications keep the concurrency of the former per-page events.
+      const outcomes = await Promise.allSettled(changes.map(applyPage));
+      const failure = outcomes.find(outcome => outcome.status === "rejected");
+      if (failure) throw failure.reason;
+      return;
+    }
+    for (const c of changes) {
+      if (!bindingCurrent(binding)) return;
+      await applyPage(c);
+    }
+    if (bindingCurrent(binding)) {
+      pushToast(msg("document-external-updates", { pages: changes.length, conflicts }), "info");
+    }
   } finally { finish(); }
 }
 
@@ -135,10 +143,6 @@ async function applyObservedChange(c: GraphChange, ui: ExternalChangeUi | undefi
     deferExternalReload(c.name, c, own, ui);
     return;
   }
-  const restartJournalFeed = () => {
-    // A summary's `days` key owns the refresh; only missing evidence restarts here (GH #987).
-    if (!own && c.kind === "journal" && !c.answers?.summary) ui?.restartJournalFeed();
-  };
   const loadedName = own ? pageByName(c.name)?.name : c.path ? loadedPageByPath(c.path)?.name : undefined;
   const currentName = loadedName ?? c.name;
   const loaded = pageByName(currentName);
@@ -153,24 +157,19 @@ async function applyObservedChange(c: GraphChange, ui: ExternalChangeUi | undefi
   if (hostHolds(currentName)) {
     if (bypassPolicy) acceptHeldPush(currentName);
     else if (c.removed) deferExternalReload(currentName, c, own, ui);
-    restartJournalFeed();
     return;
   }
   // Input not yet with the host ("conflict") or a hold ("skip"): replayed
   // once the page is replaceable.
   if (disp !== "reload") {
     deferExternalReload(currentName, c, own, ui);
-    restartJournalFeed();
     return;
   }
   if (c.removed) {
     ui?.leaveRemovedPage(c.name);
     if (c.kind === "journal" && ui?.journalsOpen) {
-      // Another file holding today's name keeps it out of the feed (og J1);
-      // the restart below retries once that holder is replaceable.
       const refused = restoreTodayJournalInFeed();
       if (refused) reportPageLoadRefusal(refused);
-      restartJournalFeed();
     }
     return;
   }
@@ -194,6 +193,20 @@ async function applyObservedChange(c: GraphChange, ui: ExternalChangeUi | undefi
     });
     if (result.kind === "stale") return;
     if (disappeared) {
+      // An own merge can retire the displayed twin while the day stays listed.
+      // Resolve that day alone so the feed can keep its slot.
+      if (own && c.kind === "journal" && ui?.journalsOpen && feedNames().includes(currentName)) {
+        const replacement = await admitRead(owner, () => backend().getPage(currentName, c.kind), () => [currentName], dto => {
+          if (dto?.name !== currentName || dto.kind !== c.kind || !dto.id) return false;
+          if (graphRewriteFrozen() || !reloadPageIfStillSafe(currentName, toLoadablePage(dto, currentName))) {
+            deferExternalReload(currentName, c, own, ui);
+          } else if (dto.id !== exact) {
+            ui.leaveRemovedPage(currentName);
+          }
+          return true;
+        });
+        if (replacement.kind === "stale" || replacement.value) return;
+      }
       if (!owner()) return;
       // Retirement has a stricter gate than a same-file text replacement:
       // input or a draft acquired during the read must keep its loaded owner.
@@ -202,10 +215,8 @@ async function applyObservedChange(c: GraphChange, ui: ExternalChangeUi | undefi
         return;
       }
       forgetPage(currentName);
-      // A removed duplicate may leave a surviving day. Existing removal UI
-      // leaves a path-pinned route and restarts the feed to resolve that day.
+      // A removed duplicate may leave a surviving day. Retire the exact route.
       return applyObservedChange({ ...c, name: currentName, removed: true }, ui, bypassPolicy);
     }
   }
-  restartJournalFeed();
 }

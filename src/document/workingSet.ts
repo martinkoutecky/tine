@@ -30,6 +30,7 @@ import { dbg } from "../debug";
 import { msg, type UiText } from "../i18n";
 import { topSelected } from "./edits/selection";
 import { admitRead, invalidatePageRead } from "./readAdmission";
+import { heldExternalChangeFor } from "../conflictPolicy";
 
 let publishIdentityNavigation: ((from: PageTarget, to: PageTarget) => void) | null = null;
 /** The UI installs the exact-path route, tab, Recent and sidebar rewrite. */
@@ -687,6 +688,9 @@ export function loadFeed(dtos: (PageDto & { id?: string })[], opts: { endEdit?: 
   for (const input of dtos) {
     const d = feedPageOwner(input);
     if (existing.has(d.name) && (opts.preserveExisting || !pageByName(d.name))) continue;
+    // Preserve the held file's body while the feed refreshes its membership.
+    const held = heldExternalChangeFor(d.name) && pageByName(d.name);
+    if (held && held.id === d.id) continue;
     const refusal = opts.preserveExisting ? ensurePageLoaded(d) : upsertUnlessDirty(d);
     if (refusal) return refusal;
   }

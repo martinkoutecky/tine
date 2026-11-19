@@ -608,7 +608,7 @@ describe("Journals feed generation lifecycle", () => {
     const lands: ((response: JournalFeedPage) => void)[] = [];
     const api = vi.spyOn(backend(), "journalFeedPage").mockImplementation(() => new Promise((resolve) => { lands.push(resolve); }));
     const getPage = vi.spyOn(backend(), "getPage").mockResolvedValue({ ...journalDto(today, "fresh today"), id: `journals/${today}.md` });
-    installExternalChangeUiHandler(() => ({ pageOpen: () => false, journalsOpen: true, leaveRemovedPage() {}, restartJournalFeed() {} }));
+    installExternalChangeUiHandler(() => ({ pageOpen: () => false, journalsOpen: true, leaveRemovedPage() {} }));
     const mounted = mount(() => <PageView />);
     try {
       await flushMicrotasks();
@@ -625,7 +625,7 @@ describe("Journals feed generation lifecycle", () => {
       expect(doc.feed).toEqual([today, older]);
       expect(getPage).toHaveBeenCalledWith(today, "journal");
     } finally {
-      installExternalChangeUiHandler(() => ({ pageOpen: () => false, journalsOpen: false, leaveRemovedPage() {}, restartJournalFeed() {} }));
+      installExternalChangeUiHandler(() => ({ pageOpen: () => false, journalsOpen: false, leaveRemovedPage() {} }));
       mounted.dispose();
     }
   });

@@ -82,7 +82,7 @@ it.each(["route", "feed"] as const)("Settings Merge replaces the visible stray's
   let merged = false;
   vi.spyOn(backend(), "getPage").mockImplementation(async () => merged ? keeper : stray);
   vi.spyOn(backend(), "getPageByPath").mockImplementation(async path => path === stray.id ? merged ? null : stray : keeper);
-  vi.spyOn(backend(), "journalFeedPage").mockImplementation(async () => ({ pages: [merged ? keeper : stray],
+  const feed = vi.spyOn(backend(), "journalFeedPage").mockImplementation(async () => ({ pages: [merged ? keeper : stray],
     next_before_day: null, done: true, as_of_day: localDayKey(), references_pending: false }));
   vi.spyOn(backend(), "listJournalConflicts").mockImplementation(async () => merged ? [] : [{ title: name, files: [
     { name: "2026-10-26.md", path: keeper.id, canonical: true, preview: "keeper" },
@@ -104,6 +104,7 @@ it.each(["route", "feed"] as const)("Settings Merge replaces the visible stray's
     const body = () => [...root.querySelectorAll(".page-blocks")].map(el => el.textContent).join("\n");
     await vi.waitFor(() => expect(body()).toContain("only in stray"));
     expect(body()).not.toContain("only in keeper");
+    feed.mockClear();
     setConflictPolicyAlwaysAsk(true);
     openSettings("backups");
     const action = () => [...root.querySelectorAll<HTMLButtonElement>("button")].find(button => button.textContent?.trim() === "Merge");
@@ -115,6 +116,7 @@ it.each(["route", "feed"] as const)("Settings Merge replaces the visible stray's
       expect(body()).toContain("only in keeper");
       expect(body()).toContain("only in stray");
     });
+    if (surface === "feed") expect(feed).not.toHaveBeenCalled();
   } finally { dispose(); }
 });
 

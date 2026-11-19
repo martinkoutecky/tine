@@ -13,6 +13,8 @@ const gates: { gate: () => boolean; kind: GateKind }[] = [];
 let generation = 0;
 export function installResultsPendingGate(gate: () => boolean, kind: GateKind = "hold"): void { gates.push({ gate, kind }); }
 export function resultsSettled(): boolean { return pending() === 0 && !gates.some(({ gate }) => gate()); }
+/** Active replacement work. User holds and deferred reloads have their own gates. */
+export function resultChangesInFlight(): boolean { return pending() !== 0; }
 export function advanceResultsEpoch(): void { setResultsEpoch(value => value + 1); }
 
 /** Arrival AND completion invalidate: a read during hydration is unusable. */

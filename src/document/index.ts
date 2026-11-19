@@ -86,15 +86,15 @@
  * `reloadDisposition`: an own-save echo keeps content and undo; a clean page
  * reloads, unless it is being edited or moved (then the change is deferred);
  * a clean removed page that is not being edited leaves its route;
- * results that land after a graph switch are dropped (I-20). This module never imports the router: route
- * and feed effects go through handlers the app installs
+ * results that land after a graph switch are dropped (I-20). Route effects
+ * go through handlers the app installs
  * (`installExternalChangeUiHandler`, `installAliasDraftRouteHandler`,
  * `installHistoryRouteContextAdapter`). An effective title change uses the
  * exact physical path to rekey navigation, loaded page ownership and its save
  * baseline in that order. The UI installs `installPageIdentityNavigation`;
  * rekeying refuses a name collision or an unsafe external reload.
- * `applyGraphChangesBulk` applies a checkout-sized batch with one revision
- * bump, at most one feed restart and one summary toast. With "always ask"
+ * `applyGraphChangesBulk` releases shared evidence once and shows a toast
+ * for checkout-sized batches. The feed observes the released days key. With "always ask"
  * (conflictPolicy.ts) the one silent case, a loaded clean page, is held for its
  * bar instead; `replayDeferredExternalReloads` is the focus-return sweep.
  * Own publication summaries refresh loaded unheld physical owners through
