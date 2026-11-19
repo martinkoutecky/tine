@@ -47,7 +47,7 @@ mod platform {
         let event_window = window.clone();
         let _ = window.with_webview(move |platform_webview| {
             use gtk::{
-                gdk::{EventButton, EventMask, EventMotion, EventType, FromEvent, ModifierType},
+                gdk::{EventButton, EventMask, EventType, FromEvent, ModifierType},
                 prelude::{WidgetExt, WidgetExtManual},
             };
 
@@ -61,8 +61,11 @@ mod platform {
                 .add_events(EventMask::POINTER_MOTION_MASK);
             platform_webview.inner().connect_event(move |_, event| {
                 if event.event_type() == EventType::MotionNotify {
-                    if let Ok(motion) = <EventMotion as FromEvent>::from(event.clone()) {
-                        let (next_x, next_y) = motion.position();
+                    // No held side button: nothing to cancel, and no event copy (review).
+                    if presses.iter().all(|p| p.get().is_none()) {
+                        return gtk::glib::Propagation::Proceed;
+                    }
+                    if let Some((next_x, next_y)) = event.coords() {
                         for press in &presses {
                             if press
                                 .get()

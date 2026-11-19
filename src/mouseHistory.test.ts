@@ -6,9 +6,16 @@ function fixture(source: "dom" | "gtk" | "webview2" = "dom") {
   const doc = new EventTarget();
   const navigate = vi.fn();
   const dispose = installMouseHistory(target as Window, doc as Document, navigate, source);
-  const send = (type: string, values: Record<string, unknown> = {}) => {
+  // Blink gives an auxclick its release's timestamp; `fresh: true` sends an auxclick of a release the page never saw.
+  let clock = 0;
+  const lastUp = new Map<unknown, number>();
+  const send = (type: string, { fresh, ...values }: Record<string, unknown> = {}) => {
     const event = new Event(type, { cancelable: true });
     Object.assign(event, { button: 3, buttons: 0, clientX: 20, clientY: 20, ...values });
+    const button = (event as MouseEvent).button;
+    const stamp = type === "auxclick" && !fresh && lastUp.has(button) ? lastUp.get(button)! : ++clock;
+    if (type === "mouseup") lastUp.set(button, stamp);
+    Object.defineProperty(event, "timeStamp", { value: stamp });
     target.dispatchEvent(event);
     return event;
   };
@@ -125,4 +132,31 @@ it.each(["dom", "webview2"] as const)("%s auxclick-only presses after an interle
     expect(f.navigate.mock.calls.filter(([d]) => d === "back")).toHaveLength(2);
     f.dispose();
   }
+});
+
+// GH #948 review (1dfbea5f2) F1: a release without its auxclick never eats a later auxclick-only press.
+it.each(["dom", "webview2"] as const)("%s auxclick-only press after an unpaired release steps, both buttons", (source) => {
+  for (const button of [3, 4]) {
+    const f = fixture(source);
+    f.send("mousedown", { button, buttons: button === 3 ? 8 : 16 });
+    f.send("mouseup", { button });
+    f.send("mousemove", { buttons: 0, clientX: 40 });
+    f.send("auxclick", { button, fresh: true });
+    expect(f.navigate).toHaveBeenCalledTimes(2);
+    f.dispose();
+  }
+});
+
+// F2: releasing one ordinary button while another stays down keeps the gesture occupied.
+it.each(["dom", "webview2"] as const)("%s side clicks wait while another ordinary button is still held", (source) => {
+  const f = fixture(source);
+  f.send("mousedown", { button: 0, buttons: 1 });
+  f.send("mousedown", { button: 2, buttons: 3 });
+  f.send("mouseup", { button: 0, buttons: 2 });
+  f.send("mousedown", { button: 3, buttons: 10 });
+  f.send("mouseup", { button: 3, buttons: 2 });
+  f.send("auxclick", { button: 3, buttons: 2 });
+  f.send("auxclick", { button: 4, buttons: 2, fresh: true });
+  expect(f.navigate).not.toHaveBeenCalled();
+  f.dispose();
 });

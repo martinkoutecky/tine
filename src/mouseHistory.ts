@@ -11,7 +11,9 @@ export function installMouseHistory(
   // Per side button (3 Back, 4 Forward): both can be held at once, and each release consumes only its own state.
   type Press = { x: number; y: number; cancelled: boolean };
   const presses = new Map<number, Press>();
-  const released = new Set<number>();
+  // Release markers by button, keyed to the release's timestamp: Blink gives an auxclick its release's timestamp,
+  // so a marker consumes only the auxclick of its own release (#948 review).
+  const released = new Map<number, number>();
   // A DOM-seen release whose native delivery has not arrived yet; cleared by the next press.
   let pendingNative: { button: number; cancelled: boolean } | undefined;
   let primaryHeld = false;
@@ -33,15 +35,16 @@ export function installMouseHistory(
       if (Math.hypot(event.clientX - press.x, event.clientY - press.y) > 5) press.cancelled = true;
   };
   const up = (event: MouseEvent) => {
-    if (!side(event.button)) { primaryHeld = false; return; }
+    // Another ordinary button may still be held.
+    if (!side(event.button)) { primaryHeld = !!(event.buttons & 7); return; }
     const current = presses.get(event.button);
     presses.delete(event.button);
     // Suppress Wry's window.history default even for a cancelled gesture.
     const prevented = event.defaultPrevented;
     event.preventDefault();
-    const occupied = prevented || dragging || primaryHeld;
+    const occupied = prevented || dragging || primaryHeld || !!(event.buttons & 7);
     // An unpaired WebView2 release can leave the click to auxclick.
-    if (current || occupied || source !== "webview2") released.add(event.button);
+    if (current || occupied || source !== "webview2") released.set(event.button, event.timeStamp);
     const releaseCancelled = !current || current.cancelled || occupied
       || Math.hypot(event.clientX - current.x, event.clientY - current.y) > 5;
     // Only an explicit DOM press can veto the GTK release (#948).
@@ -53,8 +56,10 @@ export function installMouseHistory(
     if (!side(event.button)) return;
     const prevented = event.defaultPrevented;
     event.preventDefault();
-    if (released.delete(event.button)) return;
-    if (!gtkOwnsPress && !prevented && !dragging && !primaryHeld && !presses.get(event.button)?.cancelled)
+    const marker = released.get(event.button);
+    released.delete(event.button);
+    if (marker !== undefined && marker === event.timeStamp) return;
+    if (!gtkOwnsPress && !prevented && !dragging && !primaryHeld && !(event.buttons & 7) && !presses.get(event.button)?.cancelled)
       navigate(event.button === 3 ? "back" : "forward");
   };
   const dragStart = () => { dragging = true; cancel(); };
