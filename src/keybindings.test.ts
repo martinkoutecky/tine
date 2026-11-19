@@ -307,9 +307,14 @@ afterEach(() => {
 });
 
 describe("mouse side-button navigation (#156)", () => {
-  it.each(["windows", "linux"])("%s workspace popups keep their DOM history owner (GH #948)", async () => {
+  const useTauriHistory = (platform: string) => Object.assign(window, {
+    __TAURI_INTERNALS__: {},
+    navigator: { userAgent: platform === "windows" ? "Mozilla/5.0 (Windows NT 10.0; Win64; x64)" : "" },
+  });
+
+  it.each(["windows", "linux"])("%s workspace popups keep their DOM history owner (GH #948)", async (platform) => {
     installFakeWindow();
-    Object.assign(window, { __TAURI_INTERNALS__: {} });
+    useTauriHistory(platform);
     nativeHistory.listener = undefined;
     const dispose = installKeybindings();
     const popup = new EventTarget();
@@ -317,16 +322,17 @@ describe("mouse side-button navigation (#156)", () => {
     const unregister = registerWindow("workspace-history", popup as unknown as Window);
     try {
       await vi.waitFor(() => expect(nativeHistory.listener).toBeDefined());
-      for (let i = 0; i <= 3; i++) router.openPage(`Popup history ${i}`, "page");
+      for (let i = 0; i <= 7; i++) router.openPage(`Popup history ${i}`, "page");
+      router.goBack();
       for (const direction of ["back", "forward"] as const) {
-        for (let i = 0; i < 3; i++) {
+        for (let i = 0; i < 6; i++) {
           const button = direction === "back" ? 3 : 4;
           for (const type of ["mousedown", "mouseup", "auxclick"]) {
             const event = new Event(type, { cancelable: true });
             Object.assign(event, { button, buttons: type === "mousedown" ? (button === 3 ? 8 : 16) : 0, clientX: 20, clientY: 20 });
             popup.dispatchEvent(event);
           }
-          expect(router.route()).toMatchObject({ kind: "page", name: `Popup history ${direction === "back" ? 2 - i : i + 1}` });
+          expect(router.route()).toMatchObject({ kind: "page", name: `Popup history ${direction === "back" ? 5 - i : i + 1}` });
         }
       }
     } finally {
@@ -336,19 +342,23 @@ describe("mouse side-button navigation (#156)", () => {
   });
 
   it.each([
-    ...["windows", "linux"].flatMap(platform => ["partial", "paired", "native-first", "native-only"].map(delivery => ({ platform, delivery }))),
+    ...["partial", "paired", "native-first", "native-only"].map(delivery => ({ platform: "linux", delivery })),
+    // Windows mixed arrival orders are exercised at the Win32 boundary in
+    // windows-core, since forwarded mouse commands must never become Tauri events.
+    ...["native-only", "browser-only", "browser-partial", "browser-aux-only"].map(delivery => ({ platform: "windows", delivery })),
     ...["macos", "ios", "android"].map(platform => ({ platform, delivery: "paired" })),
   ])("$platform $delivery accepts every rapid history press once, matching keyboard steps (GH #948)", async ({ platform, delivery }) => {
     mousePlatform.mac = platform === "macos";
     mousePlatform.mobile = platform === "ios" || platform === "android";
     const native = platform === "windows" || platform === "linux";
     const fake = installFakeWindow();
-    Object.assign(window, { __TAURI_INTERNALS__: {} });
+    useTauriHistory(platform);
     nativeHistory.listener = undefined;
     const dispose = installKeybindings();
     try {
       await vi.waitFor(() => expect(nativeHistory.listener).toBeDefined());
-      for (let i = 0; i <= 6; i++) router.openPage(`History ${i}`, "page");
+      for (let i = 0; i <= 7; i++) router.openPage(`History ${i}`, "page");
+      router.goBack();
       const step = (direction: "back" | "forward", keyboard: boolean) => {
         if (keyboard) {
           fake.dispatchCaptureKeydown(trackedKeyEvent({ key: direction === "back" ? "ArrowLeft" : "ArrowRight", altKey: true }).event);
@@ -359,12 +369,12 @@ describe("mouse side-button navigation (#156)", () => {
             nativeHistory.listener?.({ payload: { direction, target: "main" } });
           };
           if (native && delivery === "native-first") nativeRelease();
-          if (delivery !== "native-only") {
-            if (delivery !== "partial") fake.dispatchMouse("mousedown", button, button === 3 ? 8 : 16);
+          if (delivery !== "native-only" && delivery !== "browser-aux-only") {
+            if (delivery !== "partial" && delivery !== "browser-partial") fake.dispatchMouse("mousedown", button, button === 3 ? 8 : 16);
             fake.dispatchMouse("mouseup", button);
-            fake.dispatchAuxClick(button);
           }
-          if (native && delivery !== "native-first") nativeRelease();
+          if (delivery !== "native-only") fake.dispatchAuxClick(button);
+          if (native && delivery !== "native-first" && !delivery.startsWith("browser-")) nativeRelease();
         }
         return router.route();
       };
@@ -384,7 +394,7 @@ describe("mouse side-button navigation (#156)", () => {
     }
   });
 
-  it.each(["windows", "linux"])("%s native presses wait while a selection, drag or moved side-button press holds the gesture, and never stay blocked (GH #948)", async () => {
+  it("Linux native presses wait while a selection, drag or moved side-button press holds the gesture, and never stay blocked (GH #948)", async () => {
     const fake = installFakeWindow();
     Object.assign(window, { __TAURI_INTERNALS__: {} });
     nativeHistory.listener = undefined;
@@ -430,6 +440,46 @@ describe("mouse side-button navigation (#156)", () => {
       expect(back()).toMatchObject(at(2));
       expect(back()).toMatchObject(at(1));
       expect(back()).toMatchObject(at(0));
+    } finally {
+      dispose();
+    }
+  });
+
+  it("Windows keeps cancelled DOM gestures and standalone native commands independent (GH #948)", async () => {
+    const fake = installFakeWindow();
+    useTauriHistory("windows");
+    nativeHistory.listener = undefined;
+    const dispose = installKeybindings();
+    try {
+      await vi.waitFor(() => expect(nativeHistory.listener).toBeDefined());
+      for (let i = 0; i <= 3; i++) router.openPage(`Gesture ${i}`, "page");
+      const nativeBack = () => nativeHistory.listener?.({ payload: { direction: "back", target: "main" } });
+      const release = () => {
+        fake.dispatchMouse("mouseup", 3);
+        fake.dispatchAuxClick(3);
+      };
+      fake.dispatchMouse("mousedown", 0, 1);
+      fake.dispatchMouse("mousedown", 3, 9);
+      nativeBack();
+      release();
+      expect(router.route()).toMatchObject({ name: "Gesture 3" });
+      fake.dispatchMouse("mouseup", 0);
+      fake.dispatchMouse("dragstart", 0, 1);
+      nativeBack();
+      expect(router.route()).toMatchObject({ name: "Gesture 3" });
+      fake.dispatchMouse("dragend", 0);
+      fake.dispatchMouse("mousedown", 3, 8);
+      fake.dispatchMouse("mousemove", 3, 8, 60);
+      release();
+      expect(router.route()).toMatchObject({ name: "Gesture 3" });
+      // A stray release is insufficient by itself. The next real click still steps.
+      fake.dispatchMouse("mouseup", 3);
+      expect(router.route()).toMatchObject({ name: "Gesture 3" });
+      fake.dispatchMouse("mousedown", 3, 8);
+      nativeBack();
+      expect(router.route()).toMatchObject({ name: "Gesture 2" });
+      release();
+      expect(router.route()).toMatchObject({ name: "Gesture 1" });
     } finally {
       dispose();
     }

@@ -18,6 +18,7 @@ The format follows [Keep a Changelog](https://keepachangelog.com/); versions use
 - When two files claim the same page name (for example `pages/XX1.md` and `pages/笔记集/XX1.md`), you can delete one of them: open it from **Conflicts → Page name conflicts**, and its page menu offers **Delete file “…”**, which deletes exactly that file and leaves the other untouched. Deleting by name used to fail with "Multiple files share this page identity" and offered no way to remove the file (reported by EllisMorrow in #978; UI-GH978-DELETE-TWIN-FILE).
 - Closing Quick Capture with the window manager (Alt+F4, Cmd+W) no longer loses the text you typed or stops Quick Capture from opening until Tine is restarted: it hides like losing focus does, and the next capture shortcut shows the draft again (reported by corefusion in #967; UI-CAPTURE-WM-CLOSE-967).
 - A code block whose text wraps because of a theme or custom.css (not Tine's wrap setting) keeps its line numbers level with their lines: the numbers after a wrapped line sat one row too high and the last line had none (reported by BeyondTheJob in #970; UI-GH970-CODE-GUTTER-WRAP).
+- Mouse Back and Forward buttons work again in Windows graph windows and move one page per press (#948).
 - Quick share links are offered in every build of Tine, including the Flatpak
   and builds from source. They used to show "Coming soon" in any build made
   outside Tine's release workflow. A release is now refused instead while
