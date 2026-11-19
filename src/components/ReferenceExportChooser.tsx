@@ -2,17 +2,14 @@ import { t } from "../i18n";
 import { DialogActions } from "./DialogActions";
 import { For, Show, createEffect, createSignal, onCleanup, type JSX } from "solid-js";
 import { formatForPage } from "../document";
-import { openExportNodesModal } from "../ui";
 import { visibleBody } from "../render/block";
 import { EmojiText } from "../render/emoji";
-import { blockDtosToExportNodes } from "./ExportModal";
-import type { ExportNode } from "../editor/exportText";
+import { openReferenceResultsCopy } from "./queryResultsCopy";
 import type { BlockDto, RefGroup } from "../types";
 import { registerTransientLayer } from "../transientLayers";
 
-/** Select a stable snapshot of the visible references and hand their DTOs to
- * the shared export dialog. Work costs O(visible reference blocks); the graph
- * is read only and a refresh while open cannot change the selected rows. */
+/** Choose from a stable snapshot of the filtered reference rows. Opening
+ * costs O(reference rows). Continuing reads only the chosen source pages. */
 export function ReferenceExportChooser(props: {
   subject: string;
   groups: RefGroup[];
@@ -20,6 +17,8 @@ export function ReferenceExportChooser(props: {
 }): JSX.Element {
   let root: HTMLDivElement | undefined;
   const groups = props.groups;
+  let alive = true;
+  onCleanup(() => { alive = false; });
   createEffect(() => {
     const unregister = registerTransientLayer({
       id: `reference-export:${props.subject}`,
@@ -31,32 +30,35 @@ export function ReferenceExportChooser(props: {
   const entryKey = (group: RefGroup, block: BlockDto) => `${group.kind}\0${group.page}\0${block.id}`;
   const allKeys = () => groups.flatMap((group) => group.blocks.map((block) => entryKey(group, block)));
   const [selected, setSelected] = createSignal(new Set(allKeys()));
+  const [opening, setOpening] = createSignal(false);
   const count = () => selected().size;
-  const total = () => allKeys().length;
+  const total = count();
   const toggle = (key: string, checked: boolean) => setSelected((current) => {
     const next = new Set(current);
     if (checked) next.add(key); else next.delete(key);
     return next;
   });
-  const exportSelection = () => {
-    const nodes = groups.flatMap((group): ExportNode[] => {
-      const chosen = group.blocks.filter((block) => selected().has(entryKey(group, block)));
-      if (!chosen.length) return [];
-      const format = formatForPage(group.page);
-      return [{ raw: group.page, format, children: blockDtosToExportNodes(chosen, format) }];
+  const exportSelection = async () => {
+    if (opening() || !count()) return;
+    const keys = selected();
+    const chosen = groups.flatMap(group => {
+      const blocks = group.blocks.filter(block => keys.has(entryKey(group, block)));
+      return blocks.length ? [{ ...group, blocks }] : [];
     });
-    if (!nodes.length) return;
-    openExportNodesModal(nodes, count());
-    props.onClose();
+    setOpening(true);
+    const opened = await openReferenceResultsCopy(chosen, () => alive);
+    if (!alive) return;
+    if (opened) props.onClose();
+    else setOpening(false);
   };
 
   return (
     <div class="modal-overlay" onClick={props.onClose}>
       <div ref={root} class="export-modal ref-export-chooser" role="dialog"
         aria-label={t("reference-export-chooser-copy-export", { subject: String(props.subject) })} onClick={(event) => event.stopPropagation()}>
-        <div class="export-head">{t("reference-export-chooser-copy-export", { subject: props.subject })}<span class="export-count">{t("reference-export-chooser-count", { count: String(count()), total: String(total()) })}</span></div>
+        <div class="export-head">{t("reference-export-chooser-copy-export", { subject: props.subject })}<span class="export-count">{t("reference-export-chooser-count", { count: String(count()), total: String(total) })}</span></div>
         <div class="ref-export-actions" role="group" aria-label={t("reference-export-chooser-reference-selection")}>
-          <button type="button" disabled={!total()} onClick={() => setSelected(new Set(allKeys()))}>{t("reference-export-chooser-all")}</button>
+          <button type="button" disabled={!total} onClick={() => setSelected(new Set(allKeys()))}>{t("reference-export-chooser-all")}</button>
           <button type="button" disabled={!count()} onClick={() => setSelected(new Set())}>{t("reference-export-chooser-none")}</button>
         </div>
         <div class="ref-export-list" role="group" aria-label={t("reference-export-chooser-entries", { subject: String(props.subject) })}>
@@ -73,11 +75,13 @@ export function ReferenceExportChooser(props: {
               }}</For>
             </div>
           )}</For>
-          <Show when={total() === 0}><div class="ref-export-empty">{t("reference-export-chooser-no-entries-in-this-section")}</div></Show>
+          <Show when={total === 0}><div class="ref-export-empty">{t("reference-export-chooser-no-entries-in-this-section")}</div></Show>
         </div>
         <DialogActions
           cancel={<button class="export-btn-secondary" onClick={props.onClose}>{t("reference-export-chooser-cancel")}</button>}
-          primary={<button class="export-btn-primary" disabled={!count()} onClick={exportSelection}>{t("reference-export-chooser-open")}</button>} />
+          primary={<button class="export-btn-primary" disabled={!count() || opening()} onClick={exportSelection}>
+            {t(opening() ? "export-modal-resolving" : "reference-export-chooser-open")}
+          </button>} />
       </div>
     </div>
   );
