@@ -68,6 +68,17 @@ it("runs a packager's tools as spelled from the caller's directory and environme
   expect(args).toContain(path.join(outDir, "obj/thread.o"));
 });
 
+it.each([["emcc", "emar"], ["./emcc", "./emar"], ["link/../bin/emcc", "link/../bin/emar"]])(
+  "pairs TINE_PDFJS_EMCC=%s with the archiver %s, keeping its spelling (review r3 F2)", (emcc, emar) => {
+    vi.stubEnv("TINE_PDFJS_EMCC", emcc);
+    vi.spyOn(console, "warn").mockImplementation(() => {});
+    vi.mocked(execFileSync).mockImplementation(((file: string) => {
+      if (file.endsWith("emar")) throw new Error(`archiver ${file}`);
+      return compilerVersion;
+    }) as typeof execFileSync);
+    expect(() => buildOpenjpeg({ outDir })).toThrow(`archiver ${emar}`);
+  });
+
 it("rebuilds when the cached decoder was made under another key (review F1; both directions are proved with real toolchains in the r3 evidence)", () => {
   vi.stubEnv("TINE_PDFJS_EMCC", "emcc");
   vi.spyOn(console, "warn").mockImplementation(() => {});

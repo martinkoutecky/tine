@@ -274,8 +274,9 @@ uses the compiler installation's configuration, including any `EM_CONFIG`
 and `EM_CACHE` supplied by the packaging environment. Other Emscripten versions
 produce a build warning and the resulting decoder must pass the pdf.js
 interface check. The tools run from the directory the build was started in.
-A decoder built this way is reused only by builds with the same compiler and
-version; a build without the variable never reuses it.
+A decoder built this way is never reused from the build cache: `npm run build`
+compiles it once, in its Vite asset step, and a later build without the
+variable never ships it.
 
 ```bash
 source scripts/env.sh        # toolchain env (CARGO_HOME/RUSTUP_HOME, lib paths)
