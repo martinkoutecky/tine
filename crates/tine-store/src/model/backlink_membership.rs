@@ -342,23 +342,31 @@ impl BacklinkMembership {
         visit_source_blocks(entry, doc, config, |block, _| {
             for reference in block.projection().reference_source().explicit {
                 visit_reference_targets(reference, config, |target| {
-                    let (key, flag) = match target {
-                        ReferenceTarget::PageKey(key) => (key, DIRECT),
-                        ReferenceTarget::PropertyKey(key) => (key, PROPERTY),
-                    };
-                    if self
-                        .names
-                        .get(key)
-                        .is_some_and(|reach| reach.ids(flag).next().is_some())
-                    {
-                        return false;
-                    }
                     let spelling = match target {
                         ReferenceTarget::PageKey(key) if key != refs::page_key(&reference.name) => {
                             key
                         }
                         _ => reference.name.trim(),
                     };
+                    // The spelling's own panel, not any panel its fold reaches:
+                    // `done-at::` also reaches `Done At` (property folding), but
+                    // the `done-at` page is a row of its own and needs its
+                    // panel (CM D3, one answerer for every row).
+                    let own_key;
+                    let key = match target {
+                        ReferenceTarget::PageKey(key) => key,
+                        ReferenceTarget::PropertyKey(_) => {
+                            own_key = refs::page_key(spelling);
+                            own_key.as_str()
+                        }
+                    };
+                    if self
+                        .names
+                        .get(key)
+                        .is_some_and(|reach| reach.ids(DIRECT).next().is_some())
+                    {
+                        return false;
+                    }
                     let (canonical, _, _) = self.resolver.resolve(spelling);
                     let journal = self.resolver.format().parse(spelling).is_some();
                     self.register(&canonical, journal, spelling);

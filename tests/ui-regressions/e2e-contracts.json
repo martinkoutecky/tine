@@ -585,8 +585,7 @@
       ],
       "acceptableVariations":["First-body latency varies with machine load; no fixed latency budget. Minor subpixel layout differences are acceptable while the same content remains at the viewport."],
       "nonRequirements":["Exact pixels, DOM nesting, and native platform certification outside Linux WebKitGTK."],
-      "stability":"quarantined",
-      "quarantineReason":"IVKfg: uncontrolled setup passed 0/2 in the nightly, then the identical binary passed 3/3, including a false green with five days already merged and an empty editor. The corrected held journey needs a test-faults native build; provision that in the nightly runner before lifting quarantine. See RECEIPT-nightly-reds-1113.md."
+      "stability":"stable"
     },
     "scripts/e2e-large-page-cli.mjs": {
       "setup": "Synthetic 10,900-line page in a disposable account HOME/XDG with the classic editor selected in scratch device settings; real app owner and CLI share the kernel lease.",

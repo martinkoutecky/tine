@@ -17,6 +17,7 @@ The format follows [Keep a Changelog](https://keepachangelog.com/); versions use
 
 ### Fixed
 - Renaming a page that very large pages link to uses less memory: each linking page's rewrite proof and the check's reading of it are now let go as soon as that page has been checked, instead of being held until the whole rename was prepared (a 20,000-block page: 125 MB to 113 MB peak; REG-CM-RENAME-RETAINED-BYTES).
+- All Pages showed 0 references for a page reached only through a property key (`done-at:: today` reaching `Done At`) while its Linked References listed the block; the count and the panel now come from one answer (UI-CM-ALLPAGES-COUNT-ZERO-FOR-FOLDED-KEY-PAGE).
 - Adding to a page or a journal day while Tine is still loading the graph at launch no longer writes a second file for it beside your file; the add is refused as for any page that already has a file (REG-HELD-UNINDEXED-TWIN).
 - When you type in a page while an agent writes to it through the CLI, a resulting conflict review now compares against your last save that reached the disk, instead of falling back to a two-way review when an older save was proven only by the disk (#964; REG-GH964-LIVE-CONFLICT-BASE).
 - On Windows, a graph on a file system without file IDs (a WSL share such as `\\wsl.localhost`, a FAT32 or exFAT drive, a Samba share) can be saved again; since 0.9.0 every save failed with "The request is not supported (os error 50)" (reported by redstreet in #973; REG-973-WINDOWS-NO-FILE-ID).
@@ -61,6 +62,12 @@ The format follows [Keep a Changelog](https://keepachangelog.com/); versions use
 - Rename and merge refuse a title reference rewrite that would silently change a stationary page's identity (REG-CM-B5-TITLE-IDENTITY).
 - Page merges retain the first spelling of aliases with the same decoded name, preserve native Org property owners and drawer frames, and keep the selected alias declaration's line ending (REG-CM-B5-FROZEN-MERGE).
 - **Changed:** a page merge writes what the conceptual model's merge rule says. The aliases of both pages become one alias property holding each name once, names compared as Tine reads which page they open: `C\#` and `C#`, `ML` and `ml`, or two spellings of one day keep only the first spelling, and the spelling left over is no longer kept in a block. The page that remains keeps its own header; a source property joins it when the remaining page does not have that key (`foo_bar` and `foo-bar` are one key; when a rename merges the pages, keys are compared after the rename, so `old::` meets `new::`, and the source's title left in the merge block names the new page). The block between the two bodies appears only when the source header leaves lines there (a title, a clashing or repeated property, other text), never for blank lines or alias syntax. A merge stops, changing no files, when an Org source drawer entry clashes with one the remaining page has, since inside the quote it would lose its references, when blocks under the source header would have no leftover block to hang under, or when the remaining page's own header would give it another title (REG-CM-MW-ALIAS-READING, REG-CM-MW-LEFTOVER, REG-CM-MW-RENAME-MAP).
+
+### Security
+
+- DOMPurify is updated to 3.4.18 and seroval to 1.6.12, which close published
+  advisories. Tine used none of the affected DOMPurify modes, so no known
+  exploit applied (reported by Dieterbe in #982).
 
 ## [0.10.0-beta.1] - 2026-11-16
 
