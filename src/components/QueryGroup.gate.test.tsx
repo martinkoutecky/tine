@@ -40,7 +40,7 @@ describe("a query group header never renders without its rows", () => {
     document.body.append(root);
     const [showPage, setShowPage] = createSignal(true);
     const group: RefGroup = { page: "Tasks", kind: "page", blocks: [{ id: "alpha", raw: "TODO alpha", collapsed: false, children: [] }] };
-    const dispose = render(() => <QueryGroup group={() => group} flat={flat} showPage={showPage()} />, root);
+    const dispose = render(() => <QueryGroup group={() => group} flat={flat} showPage={showPage()} showBreadcrumb={showPage()} />, root);
     try {
       const shell = root.querySelector(".query-group")!;
       expect(root.querySelector(".query-page, .query-crumb")?.textContent).toBe("Tasks");
@@ -52,6 +52,19 @@ describe("a query group header never renders without its rows", () => {
       setShowPage(true);
       expect(shell.classList.contains("query-group-no-page")).toBe(false);
     } finally { dispose(); }
+  });
+
+  it("keeps the group spacing when only the page heading is hidden and breadcrumbs still show (review 19d60bdea)", () => {
+    vi.spyOn(backend(), "getPage").mockResolvedValue(null);
+    const root = document.createElement("div");
+    document.body.append(root);
+    const group: RefGroup = { page: "Tasks", kind: "page", blocks: [{ id: "alpha", raw: "TODO alpha", collapsed: false, children: [] }] };
+    for (const showBreadcrumb of [true, undefined]) {
+      const dispose = render(() => <QueryGroup group={() => group} flat showPage={false} showBreadcrumb={showBreadcrumb} />, root);
+      try {
+        expect(root.querySelector(".query-group")!.classList.contains("query-group-no-page"), String(showBreadcrumb)).toBe(false);
+      } finally { dispose(); }
+    }
   });
 
   it("reserves the complete previously mounted query shell, including its header (GH #810)", async () => {
