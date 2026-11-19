@@ -1175,7 +1175,10 @@
       "stability": "stable"
     },
     "scripts/e2e-windows-smoke.mjs": {
-      "contracts": [{ "class": "core-operation", "userOutcome": "The real Windows WebView2 app can complete its core smoke workflow with real backend and disk state.", "blocking": true }],
+      "contracts": [
+        { "class": "core-operation", "userOutcome": "The real Windows WebView2 app can complete its core smoke workflow with real backend and disk state.", "blocking": true },
+        { "class": "core-operation", "userOutcome": "Windows XBUTTON1 and XBUTTON2 move exactly one routed page per press, including when a child-window mouse command also reaches the host.", "blocking": true }
+      ],
       "acceptableVariations": ["Windows chrome, WebView2 startup timing, and native control rendering may vary."],
       "nonRequirements": ["Exact titlebar palette, DPI-scaled geometry, or startup animation."],
       "stability":"burn-in"

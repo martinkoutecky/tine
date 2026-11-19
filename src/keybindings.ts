@@ -7,7 +7,7 @@ import { changeCodeWrapping, codeWrapping } from "./codeDisplay";
 import { openWorkspaceCreation } from "./workspaceCreation";
 import { adjustSidebarWidth } from "./sidebarSizing";
 import { openCssEditor, openCssInDefaultApp } from "./cssEditor";
-import { isMac as isMacDesktop, isMobilePlatform } from "./nativeChrome";
+import { isMobilePlatform } from "./nativeChrome";
 import { openWorkspaceWindow, workspaceWindowsSupported } from "./workspaceWindows";
 import { browserPlatform } from "./browserPlatform";
 // Configurable keyboard shortcuts. Defaults mirror OG Logseq command ids and
@@ -1188,10 +1188,10 @@ export function installKeybindings(overrides: Record<string, string> = {}): () =
     if (handleSheetPasteEvent(e)) e.preventDefault();
   };
   type MouseHistoryDirection = "back" | "forward";
-  // Linux/Windows graph webviews intercept native releases; workspace popups
-  // and macOS/iOS/Android use DOM input.
-  // Select one owner, rather than guessing duplicate presses from their timing.
-  const nativeMainHistory = "__TAURI_INTERNALS__" in window && !isMacDesktop && !isMobilePlatform;
+  // The native build says who owns side-button presses (native_mouse_history.rs); a user agent can be changed (#948).
+  const mouseHistorySource = (globalThis as { __TINE_MOUSE_HISTORY__?: string }).__TINE_MOUSE_HISTORY__;
+  const nativeMainHistory = "__TAURI_INTERNALS__" in window && (mouseHistorySource === "gtk" || mouseHistorySource === "webview2");
+  const webview2MouseHistory = nativeMainHistory && mouseHistorySource === "webview2";
   let mainMouse: ReturnType<typeof installMouseHistory> | undefined;
   const navigateMouseHistory = (direction: MouseHistoryDirection) => {
     if (direction === "back") goBack();
@@ -1227,9 +1227,11 @@ export function installKeybindings(overrides: Record<string, string> = {}): () =
     win.addEventListener("keydown", superTracker, true);
     win.addEventListener("keyup", superTracker, true);
     win.addEventListener("blur", clearSuper);
-    const disposeMouse = installMouseHistory(win, win.document, direction => {
-      if (!nativeMainHistory || id !== MAIN_WINDOW_ID) navigateMouseHistory(direction);
-    });
+    // GTK consumes graph-webview presses before they can reach the DOM.
+    // On Windows the native hook filters commands forwarded from WebView2.
+    const gtkMainHistory = nativeMainHistory && !webview2MouseHistory && id === MAIN_WINDOW_ID;
+    const historySource = gtkMainHistory ? "gtk" : webview2MouseHistory ? "webview2" : "dom";
+    const disposeMouse = installMouseHistory(win, win.document, navigateMouseHistory, historySource);
     if (id === MAIN_WINDOW_ID) mainMouse = disposeMouse;
     return () => {
       win.removeEventListener("keydown", handler, true);
