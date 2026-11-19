@@ -4273,9 +4273,9 @@ html[data-mobile-editing-dock] .app-container[data-mobile-drawer-mode="true"] :i
 .block-checkbox:hover {
   border-color: var(--accent, #4c8bf5);
 }
-/* No block behind it (opening text): inert, the click goes to the row. */
+/* No block behind it (opening text): inert, a press on it is on the text. */
 .block-checkbox[aria-disabled="true"] {
-  pointer-events: none;
+  cursor: inherit;
 }
 .block-checkbox.checked {
   background: var(--accent, #4c8bf5);

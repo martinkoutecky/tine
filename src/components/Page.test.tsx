@@ -1,5 +1,6 @@
 import { maybeEditorIn, type EditorDriver } from "../tests/editorDriver";
 import { openCommentThread } from "../tests/commentEntry";
+import { OPENING_CONTROL_CASES, pointerClick } from "../tests/openingClickCases";
 import { resetNearObserverForTests } from "../lazyObserve";
 import { afterEach, beforeAll, describe, expect, it, vi } from "vitest";
 import { Show, type JSX } from "solid-js";
@@ -2674,6 +2675,49 @@ describe("Markdown preamble content", () => {
         const promoted = pageByName(dto.name)!.roots[0];
         expect(doc.byId[promoted].raw).toBe(prose);
         expect(pageByName(dto.name)?.preBlock).toBe(header);
+        expect(editingId()).toBe(promoted);
+      } finally {
+        dispose();
+      }
+    });
+  }
+
+  // UI-CM-OPENING-PROPERTY-GROUPS, review fe3946dc9 F1: the opening row enters editing by the
+  // ordinary block predicate, so a link, disclosure or media control keeps its click and the
+  // page is untouched; a click on the text itself still opens the editor.
+  for (const [opening, format, target] of OPENING_CONTROL_CASES) {
+    it(`keeps a ${target} click in the ${format} opening text ${JSON.stringify(opening)} its own`, async () => {
+      const bodyId = "77777777-7777-4777-8777-777777777777";
+      const dto = {
+        name: "Controls", kind: "page" as const, title: "Controls", pre_block: opening, format,
+        blocks: [{ id: bodyId, raw: "Head", collapsed: false, children: [] }],
+      };
+      setDoc({
+        byId: { [bodyId]: node(bodyId, "Head", dto.name) },
+        pages: [{ ...page(dto.name, "page", [bodyId], dto.pre_block), format }],
+        feed: [], loaded: true,
+      });
+      vi.spyOn(backend(), "getPage").mockResolvedValue(unpinned(dto));
+      vi.spyOn(window, "open").mockImplementation(() => null);
+      mainPaneRouter.openPage(dto.name, "page", { inPlace: true });
+      const { root, dispose } = mount(() => <PageView />);
+      try {
+        await tick(); await tick();
+        const control = root.querySelector<HTMLElement>(`.preamble-block .block-content ${target}`);
+        expect(control).not.toBeNull();
+        control!.addEventListener("click", (e) => e.preventDefault());
+        pointerClick(control!);
+        await tick();
+        expect(pageByName(dto.name)!.roots).toEqual([bodyId]);
+        expect(pageByName(dto.name)!.preBlock).toBe(opening);
+        expect(isDirty(dto.name)).toBe(false);
+        expect(editingId()).toBeNull();
+
+        pointerClick(root.querySelector(".preamble-block .block-content")!);
+        await tick();
+        const promoted = pageByName(dto.name)!.roots[0];
+        expect(promoted).not.toBe(bodyId);
+        expect(doc.byId[promoted].raw).toBe(opening);
         expect(editingId()).toBe(promoted);
       } finally {
         dispose();

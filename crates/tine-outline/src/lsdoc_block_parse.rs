@@ -7,6 +7,7 @@
 //! Equal width keeps every parser-owned source span valid; restoring by span (not
 //! by a supposedly unique sentinel) makes the transform collision-proof.
 
+use crate::block_regions::Header;
 use lsdoc::ast::{Block, Inline, ListItem, Projection, Span};
 
 const MAX_PARSED_TREE_DEPTH: usize = 1024;
@@ -536,6 +537,36 @@ pub(crate) fn first_line_end(raw: &str) -> usize {
 /// page keeps each line's CR in the raw), so rows never split the title line;
 /// a headline that already ends with its newline stays where it is, and one
 /// that ends inside the next line's indentation ends at that line's start.
+/// Where the source a block body draws starts after a lifted task word or
+/// priority: the first node of the next line when the title is otherwise
+/// empty (the line end the parser keeps is that node's), else after the
+/// tokens and the blanks that follow them on their line. `None` with nothing
+/// lifted. O(1) past the header.
+pub(crate) fn lifted_end(raw: &str, blocks: &[Block], header: &Header) -> Option<usize> {
+    let tokens = [header.marker_range, header.priority_range];
+    let mut end = tokens.iter().flatten().map(|r| r.1).max()?;
+    if let (
+        Some(Block::Bullet { inline: title, .. } | Block::Heading { inline: title, .. }),
+        Some(next @ Block::Paragraph { inline, span }),
+    ) = (blocks.first(), blocks.get(1))
+    {
+        // A body draws no blank paragraph, so its source is the lead's too.
+        let at = match inline.first() {
+            _ if blank_paragraph(next) => span.as_ref().map(|s| s.1),
+            Some(
+                Inline::Plain { span, .. } | Inline::Break { span } | Inline::HardBreak { span },
+            ) => span.as_ref().map(|s| s.0),
+            _ => None,
+        };
+        if let (true, Some(at)) = (title.is_empty(), at) {
+            return Some(raw_offset(raw, at));
+        }
+    }
+    while matches!(raw.as_bytes().get(end), Some(b' ' | b'\t')) {
+        end += 1;
+    }
+    Some(end)
+}
 pub(crate) fn headline_end(raw: &str, blocks: &[Block]) -> Option<usize> {
     let (Block::Bullet { span, .. } | Block::Heading { span, .. }) = blocks.first()? else {
         return None;

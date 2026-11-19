@@ -14,6 +14,7 @@ import { bindTestHost, submittedPages } from "../document/host/wiring.test.suppo
 import { answerOpensFromDocument } from "../document/host/documentHost.test.support";
 import { adoptResults, advanceResultsEpoch, captureResultsTicket, installResultsPendingGate, resultsSettled } from "../queryResultsEpoch";
 import { createSignal } from "solid-js";
+import { OPENING_CONTROL_CASES, pointerClick } from "../tests/openingClickCases";
 
 // GH #486: a page whose page-level properties link here is listed under Linked
 // References as its properties row. OG lists the referencing page's
@@ -117,6 +118,60 @@ describe("preamble query rows", () => {
     } finally { dispose(); }
   });
 });
+
+// Review fe3946dc9 F1: a Linked References or query row of opening text enters
+// editing by the ordinary block predicate, so a control in it keeps its click
+// and the source page is untouched; a click on the text still promotes it.
+describe("opening text controls on result rows", () => {
+  const cases = OPENING_CONTROL_CASES.flatMap(([text, format, target]) =>
+    (["ref", "query"] as const).map((surface) => [text, format, target, surface] as const));
+  it.each(cases)("keeps the click of %j (%s) on its %s on %s", async (text, format, target, surface) => {
+    vi.spyOn(backend(), "getPage").mockResolvedValue({ ...sourcePage(format), pre_block: text + "\n" });
+    vi.spyOn(window, "open").mockImplementation(() => null);
+    const hit: BlockDto = { id: "page-preamble:Page:source", raw: text, collapsed: false, page_preamble: true, children: [] };
+    adoptResults(hit, captureResultsTicket());
+    const { root, dispose } = mount(() => <LiveRefGroup page="Source" kind="page" blocks={[hit]} surface={surface} eager />);
+    try {
+      await vi.waitFor(() => expect(pageByName("Source")).toBeDefined());
+      const control = await vi.waitFor(() => {
+        const el = root.querySelector<HTMLElement>(`[data-block-id="page-preamble:Page:source"] .block-content ${target}`);
+        expect(el).not.toBeNull();
+        return el!;
+      });
+      control.addEventListener("click", (e) => e.preventDefault());
+      pointerClick(control);
+      await Promise.resolve(); await Promise.resolve();
+      expect(editingId()).toBeNull();
+      expect(pageByName("Source")!.preBlock).toBe(text + "\n");
+      expect(isDirty("Source")).toBe(false);
+
+      pointerClick(root.querySelector('[data-block-id="page-preamble:Page:source"] .block-content')!);
+      const editor = await vi.waitFor(() => { expect(maybeEditorIn(root)).not.toBeNull(); return editorIn(root); });
+      expect(editor.value()).toBe(text);
+    } finally { dispose(); }
+  });
+});
+
+// Review 28d081755 F3 on result rows: an opening checklist's inert checkbox
+// is a press on the text, so it promotes the row and opens its editor.
+it.each([["Intro\n\n1. [ ] item", "md"], ["Intro\n\n- [X] item", "org"]] as const)(
+  "opens the editor on a checkbox click in the result row of %j (%s)", async (text, format) => {
+    vi.spyOn(backend(), "getPage").mockResolvedValue({ ...sourcePage(format), pre_block: text + "\n" });
+    const hit: BlockDto = { id: "page-preamble:Page:source", raw: text, collapsed: false, page_preamble: true, children: [] };
+    adoptResults(hit, captureResultsTicket());
+    const { root, dispose } = mount(() => <LiveRefGroup page="Source" kind="page" blocks={[hit]} surface="ref" eager />);
+    try {
+      await vi.waitFor(() => expect(pageByName("Source")).toBeDefined());
+      const box = await vi.waitFor(() => {
+        const el = root.querySelector<HTMLElement>('[data-block-id="page-preamble:Page:source"] .block-checkbox');
+        expect(el?.getAttribute("aria-disabled")).toBe("true");
+        return el!;
+      });
+      pointerClick(box);
+      const editor = await vi.waitFor(() => { expect(maybeEditorIn(root)).not.toBeNull(); return editorIn(root); });
+      expect(editor.value()).toBe(text);
+    } finally { dispose(); }
+  });
 
 // D-20261119-PG, review da945bc19 (AR-15, UI-3): a page's later property
 // groups are opening text. Its Linked References and query rows show them as

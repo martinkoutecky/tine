@@ -26,7 +26,7 @@ import { BeginQuery } from "./BeginQuery";
 import { inspectBeginQuery } from "../render/beginQuery";
 import { blockDtoExternalId } from "../blockIdentity";
 import { SourceTaskCheckbox } from "./SourceTaskCheckbox";
-import { isElementNode } from "../windowRealm";
+import { forbidsEditEntry } from "../editor/editTargets";
 import { CalGlyph } from "./blockParts";
 import { blockDirAttr } from "../render/textDirection";
 import { noteLayoutDirAttr } from "../noteLayoutSetting";
@@ -284,7 +284,7 @@ function RefBlock(props: {
             classList={{ done: facets().done, [`heading h${headingLevel() ?? ""}`]: headingLevel() != null }}
             onClick={(event) => {
               if (props.block.page_preamble && props.onEditPreamble) {
-                if (isElementNode(event.target) && event.target.closest("a, button, .page-ref, .tag")) return;
+                if (forbidsEditEntry(event)) return;
                 event.stopPropagation();
                 props.onEditPreamble();
                 return;
@@ -292,7 +292,7 @@ function RefBlock(props: {
               // GH #486: the same gesture as the source page's properties area
               // (Page.tsx editPageHeader); links and buttons keep their own click.
               if (!props.block.page_property || !props.onEditPageProperties) return;
-              if (isElementNode(event.target) && event.target.closest("a, button, .page-ref, .tag")) return;
+              if (forbidsEditEntry(event)) return;
               event.stopPropagation();
               props.onEditPageProperties(event);
             }}

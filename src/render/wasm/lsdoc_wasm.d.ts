@@ -153,6 +153,12 @@ export function mime_from_path(path: string): string;
 export function nested_reference_names(content: string): string[];
 
 /**
+ * The UTF-8 byte where an opening-text piece's body starts after its lifted
+ * task word or priority (I-12: `page_preamble::opening_lead_end`).
+ */
+export function opening_lead_end(text: string, is_org: boolean): number | undefined;
+
+/**
  * Ordered-list label without surface punctuation; O(label bytes), no parse/I/O.
  */
 export function ordered_list_glyph(index: number, depth: number): string;
@@ -412,6 +418,7 @@ export interface InitOutput {
     readonly lsdoc_tag: () => [number, number];
     readonly mime_from_path: (a: number, b: number) => [number, number];
     readonly nested_reference_names: (a: number, b: number) => [number, number];
+    readonly opening_lead_end: (a: number, b: number, c: number) => number;
     readonly ordered_list_glyph: (a: number, b: number) => [number, number];
     readonly outline_apply_json: (a: number, b: number) => [number, number, number, number];
     readonly outline_max_depth: () => number;

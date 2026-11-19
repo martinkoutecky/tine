@@ -149,6 +149,19 @@ pub fn preamble_content_range_in(raw: &str, is_org: bool, regions: &BlockRegions
 /// header are opening text, shown exactly as written). The window shows these
 /// ranges as source and the rest as block text. Empty for parser-refused
 /// text, which renders wholly as a block. O(bytes).
+/// Where the body of an opening-text piece starts after the task word or
+/// priority the block parse lifts off its first line (`None` when nothing is
+/// lifted): the piece shows that source as written, then its body
+/// (D-20261119-PG). One parse, asked only of a piece whose cached regions
+/// name a marker or priority. O(piece bytes).
+pub fn opening_lead_end(text: &str, is_org: bool) -> Option<usize> {
+    #[cfg(not(target_arch = "wasm32"))]
+    let blocks = std::panic::catch_unwind(|| crate::render::parse_block(text, is_org)).ok()?;
+    #[cfg(target_arch = "wasm32")]
+    let blocks = crate::render::parse_block(text, is_org);
+    let header = crate::block_regions::header_of(text, &blocks, true);
+    crate::lsdoc_block_parse::lifted_end(text, &blocks, &header)
+}
 pub fn opening_groups(text: &str, is_org: bool) -> Vec<Range> {
     #[cfg(not(target_arch = "wasm32"))]
     let Ok(blocks) = std::panic::catch_unwind(|| crate::render::parse_block(text, is_org)) else {
@@ -190,7 +203,7 @@ pub(crate) fn top_property_nodes<'a>(
 
 #[cfg(test)]
 mod tests {
-    use super::{opening_groups, page_header, preamble_content_range};
+    use super::{opening_groups, opening_lead_end, page_header, preamble_content_range};
     use serde::Deserialize;
 
     fn text(raw: &str) -> Option<&str> {
@@ -463,5 +476,29 @@ mod tests {
             elapsed < std::time::Duration::from_millis(50),
             "{elapsed:?}"
         );
+    }
+
+    /// Review fe3946dc9 F2: an opening piece's lead runs to the body's first
+    /// node, so a line end the parser keeps is the body's, never added twice.
+    #[test]
+    fn opening_lead_runs_to_the_body_start() {
+        for is_org in [false, true] {
+            for (text, lead) in [
+                ("TODO \nNext", Some("TODO")),
+                // Markdown's hard break draws no blanks before it; Org keeps them as text.
+                (
+                    "TODO \t\nNext",
+                    Some(if is_org { "TODO" } else { "TODO \t" }),
+                ),
+                ("[#A] \nNext", Some("[#A]")),
+                ("TODO [#A]\t \nNext", Some("TODO [#A]")),
+                ("TODO \t", Some("TODO \t")),
+                ("DONE x\nNext", Some("DONE ")),
+                ("prose", None),
+            ] {
+                let end = opening_lead_end(text, is_org);
+                assert_eq!(end.map(|e| &text[..e]), lead, "{text:?} org={is_org}");
+            }
+        }
     }
 }

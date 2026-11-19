@@ -109,6 +109,13 @@ it.each([
   ["[#A]  ", "md", ["[#A]  "]],
   ["TODO [#B]\t", "org", ["TODO [#B]\t"]],
   ["a:: 1\r\n\r\nNOW  \r\n", "md", ["a:: 1", "", "NOW  "]],
+  // Review fe3946dc9 F2: the lead runs to the parser's body start, so a line
+  // end the parser keeps is drawn once (no inserted break).
+  ...(["md", "org"] as const).flatMap((format) => [
+    "TODO \nNext", "TODO \t\nNext", "TODO  \nNext", "[#A] \nNext", "[#A]\t\nNext",
+    "TODO [#A] \nNext", "TODO [#A]\t \nNext", "TODO \n\nNext", "TODO [#B]\t\n\n\nNext",
+    "DONE x\nNext", "TODO \n  indented",
+  ].map((text) => [text, format, text.split("\n")] as const)),
 ] as const)("prints the lifted task word or priority of %j (%s) as text", (text, format, lines) => {
   const host = mount(() => <OpeningText raw={text} format={format} />);
   const shown = [...host.children].flatMap((piece) => {

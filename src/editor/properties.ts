@@ -9,7 +9,7 @@ import { utf8ToUtf16Cursor } from "../render/utf16Cursor";
 import { reportUiFailure } from "../uiFailure";
 import { graphMeta } from "../graphSession";
 
-import { property_line_json, page_regions_json, page_header_json, page_preamble_content_json, page_opening_groups_json, page_parts_with_property } from "../render/wasm/lsdoc_wasm.js";
+import { property_line_json, page_regions_json, page_header_json, page_preamble_content_json, page_opening_groups_json, opening_lead_end, page_parts_with_property } from "../render/wasm/lsdoc_wasm.js";
 import type { RegionProperty } from "../render/parse";
 
 // Deferred catalog messages; property getters resolve in the consuming computation.
@@ -252,6 +252,15 @@ export function splitPagePreamble(raw: string | null | undefined, format: Format
  *  order, joining to `text`. The parser's answer
  *  (`page_preamble::opening_groups`); without a parser, one text piece.
  *  O(text bytes). */
+/** Where an opening-text piece's body starts (UTF-16) after the task word or
+ *  priority its block parse lifts, or `null` with nothing lifted: the parser's
+ *  answer (`page_preamble::opening_lead_end`). One parse; ask it only of a
+ *  piece whose cached regions name a marker or priority. */
+export function openingLeadEnd(text: string, format: Format): number | null {
+  const end = opening_lead_end(text, format === "org");
+  return end == null ? null : utf8ToUtf16Cursor(text)(end);
+}
+
 export function openingSegments(text: string, format: Format): { text: string; group: boolean }[] {
   if (!parserReady()) return [{ text, group: false }];
   const groups = JSON.parse(page_opening_groups_json(text, format === "org")) as [number, number][];

@@ -284,10 +284,14 @@ line (a Windows line end is one), never as property chips or page properties
 as nothing). Each blank line between pieces shows as one. Every other piece
 renders as a block body (`AstBody`), as the same text would in a block:
 queries run, and nested directives are hidden. A task word or priority that
-the block parse lifts off a piece's first line prints as its exact source
-text before that body, with no task chrome or behaviour: opening text is not a
-task. A checklist checkbox in it has no block line to tick, so it is inert and
-a click on it opens the opening row's editor, the text unchanged. While the header is edited, the frontend keeps the
+the block parse lifts off a piece's first line prints as text, with no task
+chrome or behaviour (opening text is not a task): the exact source from the
+piece start to where the body's first node starts (`page_preamble::opening_lead_end`),
+so a line end the parser keeps is drawn once, by the body. A click enters
+editing by the same predicate as a block (`forbidsEditEntry`): a link,
+disclosure or media control keeps its click and the file is untouched. A
+checklist checkbox in it has no block line to tick, so it is inert, and a press
+on it is a press on the text. While the header is edited, the frontend keeps the
 parser's answer (`pageOpening`) instead of splitting the remaining pre-block
 again; display, the properties panel, and the copy and edit checks on a
 result's header and opening rows all read that one answer. A Markdown `#+key: value` line is prose
