@@ -17,9 +17,12 @@ The format follows [Keep a Changelog](https://keepachangelog.com/); versions use
 
 ### Fixed
 - Renaming a page that very large pages link to uses less memory: each linking page's rewrite proof and the check's reading of it are now let go as soon as that page has been checked, instead of being held until the whole rename was prepared (a 20,000-block page: 125 MB to 113 MB peak; REG-CM-RENAME-RETAINED-BYTES).
+- All Pages showed 0 references for a page reached only through a property key (`done-at:: today` reaching `Done At`) while its Linked References listed the block; the count and the panel now come from one answer (UI-CM-ALLPAGES-COUNT-ZERO-FOR-FOLDED-KEY-PAGE).
 - Adding to a page or a journal day while Tine is still loading the graph at launch no longer writes a second file for it beside your file; the add is refused as for any page that already has a file (REG-HELD-UNINDEXED-TWIN).
 - When you type in a page while an agent writes to it through the CLI, a resulting conflict review now compares against your last save that reached the disk, instead of falling back to a two-way review when an older save was proven only by the disk (#964; REG-GH964-LIVE-CONFLICT-BASE).
 - On Windows, a graph on a file system without file IDs (a WSL share such as `\\wsl.localhost`, a FAT32 or exFAT drive, a Samba share) can be saved again; since 0.9.0 every save failed with "The request is not supported (os error 50)" (reported by redstreet in #973; REG-973-WINDOWS-NO-FILE-ID).
+- Query results have even spacing when breadcrumbs are turned off, including between results from different source pages (#881).
+- Help for the `tine export` subcommands explains which graph path to pass and where static and live publications are written (#588).
 - The first Linked References panel you open reads only the pages that reference it again, as before 0.10: on a 10,000-page graph it took about half a second instead of a few milliseconds (REG-PERF-FIRST-LINKED-REFS-OPEN).
 - The first edit after All pages has shown its reference counts, made in Tine or in another editor, no longer pays for a scan of the whole graph: on a 10,000-page graph it took about 200 ms instead of 40 ms (REG-PERF-OUTSIDE-EDIT-REFRESH-COUNTS).
 
@@ -29,6 +32,7 @@ The format follows [Keep a Changelog](https://keepachangelog.com/); versions use
 - Hovering a bullet no longer raises the red "Could not read this block's git history" toast in a graph that has no usable git repository (none, a broken or moved `.git`, a bare repository, one that does not hold the graph); the bullet just says Unknown. A history read that really fails inside a repository is shown once per graph, not on every hover (reported by EllisMorrow in #980; UI-GH980-NO-GIT-NO-ERROR).
 - Closing Quick Capture with the window manager (Alt+F4, Cmd+W) no longer loses the text you typed or stops Quick Capture from opening until Tine is restarted: it hides like losing focus does, and the next capture shortcut shows the draft again (reported by corefusion in #967; UI-CAPTURE-WM-CLOSE-967).
 - When two files claim the same page name (for example `pages/XX1.md` and `pages/笔记集/XX1.md`), you can delete one of them: open it from **Conflicts → Page name conflicts**, and its page menu offers **Delete file “…”**, which deletes exactly that file and leaves the other untouched. Deleting by name used to fail with "Multiple files share this page identity" and offered no way to remove the file (reported by EllisMorrow in #978; UI-GH978-DELETE-TWIN-FILE).
+- Mouse Back and Forward buttons work again in Windows graph windows and move one page per press (#948).
 - Quick share links are offered in every build of Tine, including the Flatpak
   and builds from source. They used to show "Coming soon" in any build made
   outside Tine's release workflow. A release is now refused instead while
@@ -61,6 +65,12 @@ The format follows [Keep a Changelog](https://keepachangelog.com/); versions use
 - Rename and merge refuse a title reference rewrite that would silently change a stationary page's identity (REG-CM-B5-TITLE-IDENTITY).
 - Page merges retain the first spelling of aliases with the same decoded name, preserve native Org property owners and drawer frames, and keep the selected alias declaration's line ending (REG-CM-B5-FROZEN-MERGE).
 - **Changed:** a page merge writes what the conceptual model's merge rule says. The aliases of both pages become one alias property holding each name once, names compared as Tine reads which page they open: `C\#` and `C#`, `ML` and `ml`, or two spellings of one day keep only the first spelling, and the spelling left over is no longer kept in a block. The page that remains keeps its own header; a source property joins it when the remaining page does not have that key (`foo_bar` and `foo-bar` are one key; when a rename merges the pages, keys are compared after the rename, so `old::` meets `new::`, and the source's title left in the merge block names the new page). The block between the two bodies appears only when the source header leaves lines there (a title, a clashing or repeated property, other text), never for blank lines or alias syntax. A merge stops, changing no files, when an Org source drawer entry clashes with one the remaining page has, since inside the quote it would lose its references, when blocks under the source header would have no leftover block to hang under, or when the remaining page's own header would give it another title (REG-CM-MW-ALIAS-READING, REG-CM-MW-LEFTOVER, REG-CM-MW-RENAME-MAP).
+
+### Security
+
+- DOMPurify is updated to 3.4.18 and seroval to 1.6.12, which close published
+  advisories. Tine used none of the affected DOMPurify modes, so no known
+  exploit applied (reported by Dieterbe in #982).
 
 ## [0.10.0-beta.1] - 2026-11-16
 
