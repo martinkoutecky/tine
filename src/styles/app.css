@@ -3395,6 +3395,9 @@ html[data-system-insets="native-viewport"] {
 /* ---------------------------------------------------------------- blocks */
 
 .ls-block {
+  --block-first-line-height: calc(var(--ls-block-line-height) + 2 * var(--ls-block-content-pad-y));
+  --thread-bullet-y: calc(1px + var(--block-first-line-height) / 2);
+  --thread-elbow-end: calc(var(--thread-bullet-y) + var(--thread-width, 1px) / 2);
   position: relative;
 }
 
@@ -3419,8 +3422,6 @@ html[data-system-insets="native-viewport"] {
 @media print { .sticky-ancestor { display: none; } [data-sticky-parent] > .block-main { margin-top: 0; } }
 
 .block-main {
-  --block-first-line-height: calc(var(--ls-block-line-height) + 2 * var(--ls-block-content-pad-y));
-  --thread-bullet-y: calc(1px + var(--block-first-line-height) / 2);
   display: flex;
   align-items: flex-start;
   min-height: 26px;
@@ -3465,9 +3466,9 @@ html[data-system-insets="native-viewport"] {
    text is 1.7em–0.9em, so its line box scales with the level.) */
 /* height = heading line box = heading font-size (1.7/1.4/1.2em) × the 1.6
    .block-content line-height, so the bullet centers exactly on the line. */
-.block-main.bullet-h1 { --block-first-line-height: 2.72em; }
-.block-main.bullet-h2 { --block-first-line-height: 2.24em; }
-.block-main.bullet-h3 { --block-first-line-height: 1.92em; }
+.ls-block:has(> .block-main.bullet-h1) { --block-first-line-height: 2.72em; }
+.ls-block:has(> .block-main.bullet-h2) { --block-first-line-height: 2.24em; }
+.ls-block:has(> .block-main.bullet-h3) { --block-first-line-height: 1.92em; }
 
 .collapse-toggle {
   width: 18px;
@@ -3712,6 +3713,7 @@ html[data-system-insets="native-viewport"] {
 /* Host-owned `thread-lines` rendering; the guest cannot inject CSS or DOM. */
 .plugin-thread-lines {
   --thread-bullet-x: 26px;
+  --thread-row-join: 1px;
   --thread-stub-x: calc(var(--thread-bullet-x) - var(--thread-width, 1px) / 2);
   --thread-rail-x: calc(var(--thread-stub-x) - var(--ls-block-indent) - 1px);
   --thread-active-color: var(--thread-color, var(--ls-link-text-color));
@@ -3757,9 +3759,9 @@ html[data-system-insets="native-viewport"] {
   content: "";
   position: absolute;
   inset-inline-start: var(--thread-rail-x);
-  top: -1px; /* Overlap separately rasterized border ends at fractional DPR (GH #129). */
+  top: var(--thread-row-join); /* The preceding stroke ends here (GH #129). */
   width: calc(var(--ls-block-indent) + 1px + var(--thread-width, 1px) / 2);
-  height: calc(1px + var(--thread-bullet-y) + var(--thread-width, 1px) / 2);
+  height: calc(var(--thread-elbow-end) - var(--thread-row-join));
   box-sizing: border-box;
   border-inline-start: var(--thread-width, 1px) solid var(--thread-incoming-color);
   border-bottom: var(--thread-width, 1px) solid var(--thread-elbow-color);
@@ -3785,7 +3787,7 @@ html[data-system-insets="native-viewport"] {
   position: absolute;
   inset-inline-start: var(--thread-stub-x);
   top: var(--thread-bullet-y);
-  bottom: 0;
+  bottom: calc(-1 * var(--thread-row-join));
   border-inline-start: var(--thread-width, 1px) solid var(--thread-normal-color);
   pointer-events: none;
 }
@@ -3796,10 +3798,14 @@ html[data-system-insets="native-viewport"] {
   content: "";
   position: absolute;
   inset-inline-start: var(--thread-rail-x);
-  top: 0;
-  bottom: 0;
+  top: var(--thread-row-join);
+  bottom: calc(-1 * var(--thread-row-join));
   border-inline-start: var(--thread-width, 1px) solid var(--thread-normal-color);
   pointer-events: none;
+}
+/* In all-outlines mode the elbow owns the rail above and through the branch. */
+:is(.plugin-thread-lines:not(.plugin-thread-lines-active) > .block-children-container > .block-children, .plugin-thread-lines:not(.plugin-thread-lines-active) > .block-children-container > .block-children > .outline-list > .outline-window) > .ls-block::after {
+  top: var(--thread-elbow-end);
 }
 /* An elbow ends the path at the final sibling; a straight continuation through
    that row would cross the curve and extend into its descendants (GH #129). */
@@ -3825,8 +3831,8 @@ html[data-system-insets="native-viewport"] {
   content: "";
   position: absolute;
   inset-inline-start: var(--thread-rail-x);
-  top: 0;
-  bottom: 0;
+  top: var(--thread-row-join);
+  bottom: calc(-1 * var(--thread-row-join));
   border-inline-start: var(--thread-width, 1px) solid var(--thread-normal-color);
   pointer-events: none;
 }
@@ -7664,18 +7670,18 @@ img.emoji {
 .query-group {
   margin-bottom: 8px;
 }
-
-.query-empty,
-.query-unsupported,
-.embed-missing {
-  font-size: 13px;
-  color: var(--text-muted);
 .query-group.query-group-no-page {
   margin-bottom: 0;
 }
 .query-group-no-page > .live-ref-group > .comment-surface > .page-section {
   padding-bottom: 0;
 }
+
+.query-empty,
+.query-unsupported,
+.embed-missing {
+  font-size: 13px;
+  color: var(--text-muted);
 }
 .link-depth-warning {
   margin: 2px 0;
