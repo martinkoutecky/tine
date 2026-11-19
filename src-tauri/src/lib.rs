@@ -758,6 +758,11 @@ pub fn run() {
         "globalThis.__TINE_PLATFORM__ = {:?};",
         crate::graph::app_platform()
     ));
+    // Side-button ownership comes from the build, not the WebView2 user agent (#948).
+    let builder = builder.append_invoke_initialization_script(format!(
+        "globalThis.__TINE_MOUSE_HISTORY__ = {:?};",
+        crate::native_mouse_history::HISTORY_SOURCE
+    ));
 
     let builder = match e2e_touch_gestures_platform() {
         Some(kind) => builder.append_invoke_initialization_script(format!(

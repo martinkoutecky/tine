@@ -27,6 +27,7 @@ import {
 } from "../editor/exportText";
 import { exportOpml } from "../editor/exportOpml";
 import { exportHtml } from "../editor/exportHtml";
+import { referenceExportAtDepth, referenceExportCandidates } from "../editor/exportProjection";
 import type { Block, Format, Inline, ListItem } from "../render/ast";
 import type { BlockDto, PageDto, QueryExportResult, QueryExportSpec, RefGroup } from "../types";
 import { registerTransientLayer } from "../transientLayers";
@@ -152,10 +153,17 @@ function macroArg(args: string[]): string {
 
 /** Project a bounded DTO subtree into the export serializer's read-only forest.
  * Cost is O(blocks and descendants); it does not read or write the graph. */
-export function blockDtosToExportNodes(blocks: BlockDto[], format: Format, hasParent = false): ExportNode[] {
-  return blocks.map((b) => ({ id: b.id, raw: b.raw, format, hasParent,
-    ...(b.comment ? { comment: { author: null, date: null } } : {}),
-    children: blockDtosToExportNodes(b.children, format, true) }));
+export function blockDtosToExportNodes(
+  blocks: BlockDto[], format: Format, hasParent = false, checked?: ReadonlyMap<string, BlockDto>,
+): ExportNode[] {
+  const convert = (rows: BlockDto[], parent: boolean, nested: boolean): ExportNode[] => rows.map(b => {
+    const selection = checked?.get(b.id);
+    return { id: b.id, raw: b.raw, format, hasParent: parent,
+      ...(nested && selection && { checked: true }),
+      ...(b.comment || selection?.comment ? { comment: { author: null, date: null } } : {}),
+      children: convert(b.children, true, true) };
+  });
+  return convert(blocks, hasParent, false);
 }
 
 function pageToExportNodes(page: PageDto): ExportNode[] {
@@ -446,6 +454,20 @@ function Modal(props: { request: ExportRequest }): JSX.Element {
   // the preview recomputes from it as options change. Rendered mode applies the
   // typographic glyphs exactly when the app displays them (not persisted).
   const nodes = "nodes" in props.request ? props.request.nodes : exportNodesFor(props.request.ids);
+  const grouped = "nodes" in props.request && props.request.groupedDepth;
+  let candidates: ExportNode[][] | undefined;
+  const depth = createMemo(() => opts().maxDepth ?? "all");
+  // The page label sits one level above the selected reference roots.
+  const maxDepth = createMemo(() => {
+    const level = depth();
+    return grouped && level !== "all" ? level + 1 : level;
+  });
+  const visibleNodes = createMemo(() => {
+    const level = depth();
+    if (!grouped || level === "all") return nodes;
+    const groups = candidates ??= nodes.map(group => referenceExportCandidates(group.children));
+    return nodes.map((group, index) => ({ ...group, children: referenceExportAtDepth(groups[index], level) }));
+  });
   // Name the preserved syntax after the selection's actual format (GH #352).
   const sourceLabel = () => {
     const formats = new Set(nodes.map((n) => n.format ?? "md"));
@@ -486,7 +508,7 @@ function Modal(props: { request: ExportRequest }): JSX.Element {
     warmRev();
     expansions = 0;
     const markupOptions = {
-      ...opts(), resolveBlockRef,
+      ...opts(), maxDepth: maxDepth(), resolveBlockRef,
       resolveEmbed: (name: string, args: string[]) => {
         const result = warmedMacros.get(macroKey(name, args));
         return result?.kind === "nodes" ? [
@@ -495,9 +517,9 @@ function Modal(props: { request: ExportRequest }): JSX.Element {
         ] : null;
       },
     };
-    if (format() === "opml") return exportOpml(nodes, markupOptions);
-    if (format() === "html") return exportHtml(nodes, markupOptions);
-    return exportOutline(nodes, {
+    if (format() === "opml") return exportOpml(visibleNodes(), markupOptions);
+    if (format() === "html") return exportHtml(visibleNodes(), markupOptions);
+    return exportOutline(visibleNodes(), {
       ...markupOptions,
       typographicGlyphs: typographyMode() === "render",
       resolveBlockRef,
