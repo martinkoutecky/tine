@@ -7,6 +7,7 @@ icon:: 📄
 		- Outside PDFs are **read-only**: find text, zoom, jump to pages, and select/copy text. Highlights, area capture and highlight notes are unavailable until outside files have a stable annotation identity. Opening, scrolling and zooming write nothing into the graph.
 		- **Relative links** work the same way: `![label](../papers/paper.pdf)`, `![label](file:../papers/paper.pdf)` or `[[file:../papers/paper.pdf][label]]` name a path from your graph folder, and `..` steps up out of it. A plain `![label](assets/paper.pdf)` link still opens the annotated reader.
 		- A plain Markdown `[label](file:///absolute/path/paper.pdf)` link opens in your system's default app. iOS and Android keep their existing outside-link behavior; they cannot access outside files in Tine's reader.
+		- A drive path such as `C:/Papers/paper.pdf` opens in your system's default app, even as a Markdown embed or an Org link. On a phone, a Markdown embed such as `![label](docs/paper.pdf)` looks for `paper.pdf` in your graph's `assets/`.
 		- The file is read only after you click its link. After restarting Tine, open the original link again to authorize the read. A missing file, permission error, wrong file type or file above 256 MiB shows an error in the reader with its path.
 	- **Select text** in the PDF to highlight it; click a highlight again to change its color.
 	- Hold **Shift** while dragging a rectangle on Linux or Windows, or **Command** on macOS, then choose a color to clip a figure or equation as an image highlight. Dismissing the color chooser writes nothing.

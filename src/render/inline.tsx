@@ -453,7 +453,7 @@ function renderLink(
     const label = s.label && s.label.length ? astText(s.label) : undefined;
     return <BlockRefView id={url.v} label={label} spanAttrs={spanAttrs} blockId={blockId} span={hostSpan(s, spanMode, macroExpansion)} />;
   }
-  const dest = urlDest(url, format);
+  const dest = urlDest(url, format, s.full);
   const decision = searchDecision ?? anchorDecision(dest);
   const relative = decision.kind === "relative" ? decision : null;
   if (orgImage && relative) return <AssetImage source={relative} alt="" blockId={blockId} token={token} spanAttrs={spanAttrs} />;
@@ -476,7 +476,7 @@ function renderLink(
   }
   const web = decision.kind === "web";
   const media = web ? decision : relative;
-  if (s.image && media && (assetPdf !== null || !/\.pdf$/i.test(media.url))) {
+  if (s.image && media && (assetPdf !== null || !(relative?.isPdf ?? /\.pdf$/i.test(media.url)))) {
     const { width, height } = parseImageMetaBrace(s.metadata);
     const alt = s.label && s.label.length ? astText(s.label) : "";
     if (assetPdf !== null) return <PdfAssetLink filename={assetPdf} label={alt} spanAttrs={spanAttrs} />;
