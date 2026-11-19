@@ -67,6 +67,10 @@ The format follows [Keep a Changelog](https://keepachangelog.com/); versions use
   advisories. Tine used none of the affected DOMPurify modes, so no known
   exploit applied (reported by Dieterbe in #982).
 
+### Security
+
+- Published exports check the URL scheme before opening an external link. Web and email links open directly, and custom app links require confirmation (#984).
+
 ## [0.10.0-beta.1] - 2026-11-16
 
 The first Tine 0.10 Beta, with every fix in stable 0.9.0. CodeMirror becomes the default editor; margin comments gain dated messages, folding and review; notes and the interface support right-to-left writing, with Persian available; and phones gain full-screen Settings and a toolbar you can customize. This release also improves page names, aliases, queries and renames, expands the command line, and reduces work and memory use on large graphs.

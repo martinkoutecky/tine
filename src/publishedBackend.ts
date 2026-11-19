@@ -26,6 +26,7 @@ import { blockPickerLeg, mergeBlockPickerLegs } from "./editor/blockPickerMatch"
 import { searchFold } from "./editor/searchFold";
 import { setQuickSharePrefix } from "./publishedPermalink";
 import { admitPublishedAnswers, publishedAnswerer } from "./publishedAnswers";
+import { checkExternalLink } from "./linkSchemePolicy";
 import type { QuickShareListing } from "./quickShare/commands";
 
 type PublishedPage = PageDto & { path: string };
@@ -696,7 +697,8 @@ export function publishedBackend(load: () => Promise<PublishedSnapshot> = loadPu
       if (!url) throw new Error(`asset ${name}: not a file inside the published assets`);
       return url;
     },
-    async openExternal(url: string) {
+    async openExternal(url: string, confirmedScheme?: string) {
+      checkExternalLink(url, confirmedScheme, "browser");
       window.open(url, "_blank", "noopener");
     },
     async openAsset(name: string) {

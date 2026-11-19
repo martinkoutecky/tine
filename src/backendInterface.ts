@@ -346,10 +346,9 @@ export interface Backend {
   setStartOfWeek(n: number): Promise<void>;
   /** The graph's logseq/custom.css (empty string if none). */
   readCustomCss(): Promise<string>;
-  /** Open an http(s)/mailto/`file:` URL in the OS default app. Any other
-   *  scheme (GH #503) opens only when `confirmedScheme` names it: pass it only
-   *  after the user confirmed a prompt naming the scheme and the full target
-   *  (`openOutboundLink`); the native side refuses it otherwise. */
+  /** Open an http(s) or mailto URL, with native routes for file and Tine links.
+   * Custom schemes need `confirmedScheme` from `openOutboundLink` (GH #503).
+   * Refused URLs reject before any browser or OS handoff (GH #984). */
   openExternal(url: string, confirmedScheme?: string): Promise<void>;
   // Graph binding: every asset/PDF method that takes `bindingGeneration` needs
   // a positive safe-integer generation for this window's current graph. The frontend

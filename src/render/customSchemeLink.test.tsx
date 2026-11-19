@@ -1,11 +1,10 @@
 import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
-import { readFileSync } from "node:fs";
 import { render } from "solid-js/web";
 import { InlineText } from "./inline";
 import { initParser } from "./parse";
 import { backend } from "../backend";
 import { setToasts, toasts } from "../toasts";
-import { linkScheme } from "../components/ExternalLink";
+import { linkScheme, openOutboundLink } from "../components/ExternalLink";
 import { LinkSchemePrompt } from "../components/LinkSchemePrompt";
 import { initLinkSchemeSettings } from "../linkSchemeSettings";
 
@@ -106,13 +105,13 @@ describe("custom URL schemes open in their app after a confirm (GH #503)", () =>
     expect(linkScheme("Zotero://x")).toBe("zotero");
   });
 
-  it("the never-opened scheme list matches the native opener's (one rule, two layers)", () => {
-    const ts = readFileSync("src/linkSchemePolicy.ts", "utf8");
-    const rs = readFileSync("src-tauri/src/platform.rs", "utf8");
-    const list = (text: RegExpExecArray | null) => [...(text?.[1] ?? "").matchAll(/"([a-z]+)"/g)].map((m) => m[1]).sort();
-    const tsList = list(/NEVER_OPENED_SCHEMES = new Set\(\[([^\]]*)\]/.exec(ts));
-    const rsList = list(/NEVER_OPENED_SCHEMES: &\[&str\] = &\[([^\]]*)\]/.exec(rs));
-    expect(tsList.length).toBeGreaterThan(0);
-    expect(tsList).toEqual(rsList);
+  it("refused schemes never reach the opener or ask for custom-scheme consent", async () => {
+    const open = vi.spyOn(backend(), "openExternal").mockResolvedValue(undefined);
+    for (const dest of [" java\tscript:example", "vbscript:example", "data:text/plain,hello", "blob:https://x.test/id", "about:blank"]) {
+      await openOutboundLink(dest);
+      expect(document.querySelector('[role="dialog"]')).toBeNull();
+      expect(open).not.toHaveBeenCalled();
+    }
+    expect(toasts()).toHaveLength(5);
   });
 });

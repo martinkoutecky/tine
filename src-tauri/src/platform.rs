@@ -944,7 +944,7 @@ fn gpu_env_for(packaged_by: Option<&str>) -> GpuEnv {
 /// (`file://host/share`) everywhere except Windows, where it is a real UNC path.
 pub(crate) fn file_url_to_path(url: &str) -> Option<std::path::PathBuf> {
     let parsed = tauri::Url::parse(url).ok()?;
-    if parsed.scheme() != "file" {
+    if parsed.scheme() != FILE_SCHEME {
         return None;
     }
     let path = parsed.to_file_path().ok()?;
@@ -1014,56 +1014,43 @@ pub(crate) enum ExternalOpen {
     CustomScheme,
 }
 
-/// Schemes no outbound link ever opens, confirmed or not: they run code or
-/// carry inline content in whatever receives them (I-22). `file:` and `tine:`
-/// have their own routes and are not custom schemes either.
-const NEVER_OPENED_SCHEMES: &[&str] = &["javascript", "vbscript", "data", "blob", "about"];
+include!(concat!(env!("OUT_DIR"), "/external_link_schemes.rs"));
 
-/// The RFC 3986 scheme of `url`, lowercased, or `None` when it has none. A
-/// single letter is a Windows drive (`C:\notes`), not a scheme.
-pub(crate) fn url_scheme(url: &str) -> Option<String> {
-    let (scheme, _) = url.split_once(':')?;
+/// Split the raw URL at its RFC 3986 scheme without normalizing the OS argument.
+/// A single letter is a Windows drive (`C:\notes`), not a scheme.
+fn url_scheme(url: &str) -> Option<(&str, &str)> {
+    let (scheme, destination) = url.split_once(':')?;
     let mut chars = scheme.chars();
     let first = chars.next()?;
     (scheme.len() > 1
         && first.is_ascii_alphabetic()
         && chars.all(|c| c.is_ascii_alphanumeric() || matches!(c, '+' | '-' | '.')))
-    .then(|| scheme.to_ascii_lowercase())
+    .then_some((scheme, destination))
 }
 
-/// OG parity for `file:` (og-1.0.0 `electron/window.cljs` `open-default-app!`):
-/// Logseq sends http(s)/mailto to `shell.openExternal` and hands EVERY other
-/// scheme, `file:` included, to the OS default application with no confirmation
-/// and no extension filtering. Tine matches that for `file:`: a graph is the
-/// user's own content, and a link that silently does nothing (GH #444, where
-/// this gate rejected `file:` outright and the frontend then discarded the
-/// rejection) is worse for the honest case than the parity behaviour is for the
-/// hostile one.
-///
-/// Any other scheme (GH #503: `zotero://`, `obsidian://`, `shortcuts://` …) OG
-/// also hands to the OS silently. Tine opens it only when `confirmed_scheme`
-/// names that exact scheme, which the frontend supplies after the user
-/// confirmed a prompt naming the scheme and the full target. Refusal scenario
-/// (in scope: malformed or imported Markdown, a synced note from another
-/// device): a link in a note is untrusted content, and an unconfirmed click
-/// must not launch an arbitrary registered handler. `javascript:`/`data:`-like
-/// schemes are refused even when confirmed (I-22).
+/// Preserve Logseq's local file route (og-1.0.0 `electron/window.cljs`
+/// `open-default-app!`, GH #444). Registered apps require confirmation for
+/// the exact scheme because imported or synced notes are untrusted (GH #503).
+/// Refused schemes stay blocked even when confirmed (I-22).
 pub(crate) fn external_open_plan(
     url: &str,
     confirmed_scheme: Option<&str>,
 ) -> Result<ExternalOpen, String> {
-    if url.starts_with("file:") {
+    let Some((raw_scheme, destination)) = url_scheme(url) else {
+        return Err("unsupported url scheme".into());
+    };
+    if raw_scheme == FILE_SCHEME {
         let path = file_url_to_path(url)
             .ok_or_else(|| "that file link does not name a local file".to_string())?;
         return Ok(ExternalOpen::LocalPath(path));
     }
-    if url.starts_with("http://") || url.starts_with("https://") || url.starts_with("mailto:") {
+    if raw_scheme == MAIL_SCHEME
+        || (WEB_SCHEMES.contains(&raw_scheme) && destination.starts_with("//"))
+    {
         return Ok(ExternalOpen::Url);
     }
-    let Some(scheme) = url_scheme(url) else {
-        return Err("unsupported url scheme".into());
-    };
-    if NEVER_OPENED_SCHEMES.contains(&scheme.as_str()) || scheme == "tine" {
+    let scheme = raw_scheme.to_ascii_lowercase();
+    if NEVER_OPENED_SCHEMES.contains(&scheme.as_str()) || scheme == TINE_SCHEME {
         return Err(format!("{scheme}: links are never opened"));
     }
     if confirmed_scheme.map(str::to_ascii_lowercase).as_deref() != Some(scheme.as_str()) {
@@ -1083,7 +1070,7 @@ pub(crate) async fn open_external(
     url: String,
     confirmed_scheme: Option<String>,
 ) -> Result<(), String> {
-    if url.starts_with("tine:") {
+    if url.split_once(':').map(|(scheme, _)| scheme) == Some(TINE_SCHEME) {
         crate::deep_links::receive_url(&app, url);
         return Ok(());
     }
@@ -1747,11 +1734,18 @@ mod file_url_tests {
             "about:blank",
             "tine://today",
         ] {
-            let scheme = url_scheme(url).expect("a scheme");
+            let (scheme, _) = url_scheme(url).expect("a scheme");
             assert!(
-                external_open_plan(url, Some(&scheme)).is_err(),
+                external_open_plan(url, Some(scheme)).is_err(),
                 "{url} must never open"
             );
+        }
+        for url in [
+            " javascript:alert(1)",
+            "java\tscript:alert(1)",
+            "java\nscript:alert(1)",
+        ] {
+            assert!(external_open_plan(url, Some("javascript")).is_err());
         }
         // A Windows drive path or a bare word is not a scheme.
         assert_eq!(url_scheme("C:\\notes\\a.txt"), None);
