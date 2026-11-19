@@ -5,6 +5,37 @@ use crate::{PageHost, Resolved, Store};
 use std::fs;
 use std::sync::Condvar;
 
+struct Pause(crate::store::TestPause);
+
+impl Pause {
+    fn new() -> Self {
+        Self(Arc::new((Mutex::new((false, false)), Condvar::new())))
+    }
+
+    fn wait(&self, message: &str) {
+        let (state, ready) = &*self.0;
+        let (state, _) = ready
+            .wait_timeout_while(
+                state.lock().unwrap(),
+                std::time::Duration::from_secs(20),
+                |state| !state.0,
+            )
+            .unwrap();
+        assert!(state.0, "{message}");
+    }
+
+    fn resume(&self) {
+        self.0 .0.lock().unwrap().1 = true;
+        self.0 .1.notify_all();
+    }
+}
+
+impl Drop for Pause {
+    fn drop(&mut self) {
+        self.resume();
+    }
+}
+
 #[test]
 fn refresh_then_rename_sees_recovered_pages_before_owner_delivery() {
     for depth in [
@@ -50,31 +81,11 @@ fn recovered_page_at_depth(depth: crate::Depth, cold: bool) {
         }]),
     )
     .unwrap();
-    let pause: crate::store::TestPause = Arc::new((Mutex::new((false, false)), Condvar::new()));
-    struct Release(crate::store::TestPause);
-    impl Drop for Release {
-        fn drop(&mut self) {
-            self.0 .0.lock().unwrap().1 = true;
-            self.0 .1.notify_all();
-        }
-    }
-    let _release = Release(pause.clone());
-    *store.host_publication_pause.lock().unwrap() = Some(pause.clone());
+    let pause = Pause::new();
+    *store.host_publication_pause.lock().unwrap() = Some(pause.0.clone());
     let launched = store.clone();
     let launch = std::thread::spawn(move || PageHost::start_for_tests(&launched, &app).unwrap());
-    let (state, ready) = &*pause;
-    let mut state = state.lock().unwrap();
-    while !state.0 {
-        let waited = ready
-            .wait_timeout(state, std::time::Duration::from_secs(20))
-            .unwrap();
-        state = waited.0;
-        assert!(
-            !waited.1.timed_out() || state.0,
-            "recovery did not reach index delivery"
-        );
-    }
-    drop(state);
+    pause.wait("recovery did not reach index delivery");
     assert_eq!(fs::read(root.join("pages/Old.md")).unwrap(), new);
     if cold {
         fs::remove_file(hold_load).unwrap();
@@ -110,10 +121,7 @@ fn recovered_page_at_depth(depth: crate::Depth, cold: bool) {
             Event::Refreshed(view) => break Some(view),
         }
     };
-    let mut state = pause.0.lock().unwrap();
-    state.1 = true;
-    ready.notify_all();
-    drop(state);
+    pause.resume();
     let host = launch.join().unwrap();
     let view = match stale {
         Some(view) => view,
@@ -132,7 +140,7 @@ fn recovered_page_at_depth(depth: crate::Depth, cold: bool) {
     store.close();
     assert!(
         matches!(resolved, Resolved::Existing { .. }),
-        "recovered page missing: {resolved:?}"
+        "{depth:?} cold={cold}: recovered page missing: {resolved:?}"
     );
     assert_eq!(
         after["fullDiffs"]["total"].as_u64().unwrap(),
@@ -145,6 +153,55 @@ fn recovered_page_at_depth(depth: crate::Depth, cold: bool) {
             "no extra parse pass"
         );
     }
+}
+
+#[test]
+fn rebuild_keeps_the_name_of_a_page_released_during_the_listing() {
+    use crate::{Depth, PageId};
+
+    let dir = tempfile::tempdir().unwrap();
+    let page = PageId::from("pages/Old.md");
+    fs::create_dir(dir.path().join("pages")).unwrap();
+    fs::write(
+        dir.path().join(page.as_str()),
+        "title:: Recovered\n- text\n",
+    )
+    .unwrap();
+    let store = Arc::new(Store::open(dir.path(), Default::default()).unwrap().0);
+    store.whole_graph_reconciled().unwrap();
+    store.watch.stop_background_for_test();
+    store.hold_page(&page).unwrap();
+    let passes = || {
+        store.diagnostics()["launch"]["loadPassesTotal"]
+            .as_u64()
+            .unwrap()
+    };
+    let before = passes();
+
+    let pause = Pause::new();
+    *store.graph.certify_pause.lock().unwrap() = Some(pause.0.clone());
+    let reading = store.clone();
+    let read = std::thread::spawn(move || {
+        reading.refresh(Depth::Rebuild).unwrap();
+        reading.whole_graph().unwrap().resolve("Recovered", false)
+    });
+    // Certification dropped the disk entry while held. Return the page to
+    // the watcher before certification collects the current owner entries.
+    pause.wait("rebuild did not reach name certification");
+    *store.graph.certify_pause.lock().unwrap() = None;
+    {
+        let _writer = store.writer.lock().unwrap();
+        store.watch.release_hold(page.as_str());
+    }
+    pause.resume();
+    let resolved = read.join().unwrap();
+    let after = passes();
+    store.close();
+    assert!(
+        matches!(&resolved, Resolved::Existing { id, .. } if *id == page),
+        "recovered page missing: {resolved:?}"
+    );
+    assert_eq!(after, before + 1, "the listing race adds no parse pass");
 }
 
 #[test]

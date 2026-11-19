@@ -3564,13 +3564,7 @@ impl Graph {
         };
         let installed = self.install_pass(built, gen0, replace);
         let installed_any = installed.is_some();
-        if let Some(launch_patch::Installed {
-            named,
-            stamps,
-            racy,
-        }) = installed
-        {
-            self.install_launch_listing(self.cache_gen.load(Ordering::Acquire), named);
+        if let Some(launch_patch::Installed { stamps, racy }) = installed {
             if !replace {
                 *self.launch_observations.lock().unwrap() = Some(LaunchObservations {
                     stamps,
