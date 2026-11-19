@@ -1523,6 +1523,14 @@ mod rename_guide_tests {
                 "share onboarding must explain {outcome}"
             );
         }
+        // Link sharing is offered in every build (D-20261117-QSG): no Guide wording makes it build-dependent.
+        for stale in [
+            "Coming soon",
+            "compatible reader must be available",
+            "shown when sharing is available",
+        ] {
+            assert!(!share.contains(stale), "share onboarding must not say {stale}");
+        }
         let files = include_str!("templates/files-external-edits-backups.md");
         assert!(files.contains("- ## Share pages"));
         assert!(files.contains("[[Features/Share pages]]"));

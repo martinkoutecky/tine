@@ -87,7 +87,9 @@ it("onboarding documents explicit clone and init with git optional and automatio
 
 it("the Beta Guide makes quick-share links discoverable on phones", () => {
   const share = guide("share-pages");
-  for (const detail of ["On Android and iOS", "**Link**", "**Connect GitHub**", "compatible reader"]) expect(share).toContain(detail);
+  for (const detail of ["On Android and iOS", "**Link**", "**Connect GitHub**", "does not require a desktop"]) expect(share).toContain(detail);
+  // Link sharing is offered in every build (D-20261117-QSG): nothing in the Guide makes it depend on the build.
+  for (const stale of ["Coming soon", "compatible reader must be available", "shown when sharing is available"]) expect(share).not.toContain(stale);
 });
 
 it("the Beta Guide explains theme typography independently of colors and style", () => {
