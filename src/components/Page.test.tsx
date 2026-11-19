@@ -2585,6 +2585,60 @@ describe("Markdown preamble content", () => {
     });
   }
 
+  // REG-CM-OPENING-PROPERTY-GROUPS (D-20261119-PG): a Markdown page's header is its first property
+  // group; later groups are opening text, shown as written, and a header edit neither re-reads
+  // them as a header nor changes a byte of them on save.
+  it("shows later property groups as opening text, also while the header is edited", async () => {
+    const bodyId = "55555555-5555-4555-8555-555555555555";
+    const header = "alias:: Record\nai-prompt:: [[Prompt-Test]]";
+    const opening = "page-level:: [[Level-Two]]\nlayout:: wide\n\ntimestamp:: 2025\n--:: --\nmethods:: [[Method-A]]";
+    const preBlock = `${header}\n\n${opening}`;
+    const dto = {
+      name: "Groups",
+      kind: "page" as const,
+      title: "Groups",
+      pre_block: preBlock,
+      blocks: [{ id: bodyId, raw: "b", collapsed: false, children: [] }],
+    };
+    setDoc({
+      byId: { [bodyId]: node(bodyId, "b", dto.name) },
+      pages: [page(dto.name, "page", [bodyId], dto.pre_block)],
+      feed: [], loaded: true,
+    });
+    vi.spyOn(backend(), "getPage").mockResolvedValue(unpinned(dto));
+    mainPaneRouter.openPage(dto.name, "page", { inPlace: true });
+    const { root, dispose } = mount(() => <PageView />);
+    const shownOpening = () => root.querySelector(".preamble-block .block-content-wrapper")?.textContent ?? "";
+    const propertyKeys = () => [...root.querySelectorAll(".page-properties .prop-key")].map((k) => k.textContent?.trim());
+    try {
+      await tick(); await tick();
+      for (const line of opening.split("\n")) expect(shownOpening()).toContain(line);
+      expect(propertyKeys()).toContain("ai-prompt");
+      expect(propertyKeys()).not.toContain("page-level");
+      expect(propertyKeys()).not.toContain("timestamp");
+
+      ([...root.querySelectorAll<HTMLElement>(".page-properties .prop-row")]
+        .find((row) => row.querySelector(".prop-key")?.textContent?.trim() === "ai-prompt"))!.click();
+      await tick();
+      const headerId = pageByName(dto.name)!.roots[0];
+      const editor = maybeEditorIn(root.querySelector<HTMLElement>(`[data-block-id="${headerId}"]`)!) as EditorDriver;
+      expect(editor.value()).toBe(header);
+      for (const line of opening.split("\n")) expect(shownOpening()).toContain(line);
+      // The header editor stays above the opening text, as the file has them.
+      const headerRow = root.querySelector(`[data-block-id="${headerId}"]`)!;
+      expect(headerRow.compareDocumentPosition(root.querySelector(".preamble-block")!) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+      expect(propertyKeys()).not.toContain("page-level");
+      expect(propertyKeys()).not.toContain("timestamp");
+
+      editor.input(header.replace("Prompt-Test", "Prompt-Edited"), undefined, { eventKind: "plain" });
+      await tick();
+      expect(pageToDto(dto.name)?.pre_block).toBe(preBlock.replace("Prompt-Test", "Prompt-Edited"));
+      for (const line of opening.split("\n")) expect(shownOpening()).toContain(line);
+    } finally {
+      dispose();
+    }
+  });
+
   // REG-CM-ORG-TEXT-BETWEEN-DIRECTIVES: Org text between opening directives is shown as the
   // opening-text row, and editing it promotes exactly that text, keeping the directives on
   // both sides of it in the header.

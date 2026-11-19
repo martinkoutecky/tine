@@ -2487,6 +2487,21 @@ A case-only destination file that is listed for a different page (its
 refuses it `FileTaken` with that page's name and plans nothing (CM step 2
 R14), so the move preflight above never sees it.
 
+The same refusal covers an ordinary rename whose destination a case-folding
+volume answers through another listed spelling: renaming `A` to `B` while
+`pages/b.md` is page `C`'s refuses `FileTaken` naming `C`, instead of
+replanning until `WouldBlock` (scenario: an external editor or sync delivery
+left that file there). Which entry occupies a destination is one answer,
+`Store::move_occupant`, used by both this planner check and the transaction's
+no-replace move guard: a final symlink is its own entry and is never followed
+to the page it points at; only a regular entry resolves to its listed folded
+spelling. Cost per destination candidate: one `lstat`, plus two
+canonicalizations when an entry answers (proof
+`crates/tine-store/src/store/move_occupant_tests.rs`,
+`crates/tine-graph-features/tests/cm_merge_rules.rs`
+`rename_onto_a_case_spelled_link_does_not_blame_its_target`, and the K
+witness `folded_occupant` row on Windows).
+
 Case-only moves first try the existing atomic no-replace primitive on Linux,
 Windows, macOS, Android and iOS. Only an already-exists refusal permits an
 alias check: the requested destination spelling must be absent from the

@@ -200,7 +200,12 @@ impl PagePlan<'_> {
         if self.destination_is_source_spelling(from, to)? {
             Ok(false)
         } else {
-            self.absent(to)?;
+            // Which entry occupies `to` is `Store::move_occupant`'s answer, the
+            // one the rename planner names in its refusal; an occupant's
+            // revision (through a link, as before) makes the conflict.
+            if self.store.move_occupant(to).map_err(failed)?.is_some() {
+                self.absent(to)?;
+            }
             Ok(true)
         }
     }

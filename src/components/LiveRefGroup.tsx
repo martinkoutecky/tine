@@ -35,8 +35,8 @@ import { queueReferenceCommit, queueReferenceRead } from "../referenceAdmission"
 import { trackRetirementPin } from "../retirementPins";
 import { BlockList } from "./BlockList";
 import { CommentSurface } from "./CommentSurface";
-import { promotePagePreamble, pageInstanceGeneration, topSelected } from "../document";
-import { rendersAsPageHeader, splitPagePreamble } from "../editor/properties";
+import { pageOpening, promotePagePreamble, pageInstanceGeneration, topSelected } from "../document";
+import { rendersAsPageHeader } from "../editor/properties";
 import { t } from "../i18n";
 import { retainResultDraft } from "../queryResultDrafts";
 
@@ -447,7 +447,7 @@ function MountedRefGroup(props: LiveRefGroupProps & { occurrence: RefOccurrence;
   const promoteLoadedPreamble = (hit: BlockDto): void => {
     const page = pageByName(props.page);
     if (!page || (props.surface === "query" && !resultsTicketActionable(resultTicket(hit)))
-      || splitPagePreamble(page.preBlock, page.format).content !== hit.raw) {
+      || pageOpening(page).content !== hit.raw) {
       if (props.surface === "query") noticeChangedResults(1);
       return;
     }

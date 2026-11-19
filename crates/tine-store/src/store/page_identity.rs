@@ -94,11 +94,10 @@ impl Store {
     /// another case or normalization spelling. Canonicalization reveals the
     /// disk spelling; accept it only under the shared Unicode fold and as an
     /// eligible graph text file. The normal page path guard runs afterward.
-    /// A spelling resolver only (for a read, a new host key and a rename's
-    /// destination check: the entry a no-replace move would find): which page
-    /// a path names is [`crate::model::Graph::identify`]'s (B1).
+    /// A spelling resolver only (for a read and a new host key): which page a
+    /// path names is [`crate::model::Graph::identify`]'s (B1).
     /// Cost: two canonicalizations, no read.
-    pub fn disk_spelling(&self, id: &PageId) -> Option<PageId> {
+    pub(crate) fn disk_spelling(&self, id: &PageId) -> Option<PageId> {
         let root = canonical_existing_path(&self.graph.root).ok()?;
         let actual = canonical_existing_path(&root.join(id.as_str())).ok()?;
         let rel = actual.strip_prefix(&root).ok()?;
@@ -111,6 +110,28 @@ impl Store {
             return None;
         }
         Some(PageId::from(spelling))
+    }
+
+    /// The one answer to "which entry occupies this move destination", for
+    /// the rename planner and the transaction's no-replace move guard alike:
+    /// `None` when no directory entry answers to `to`; otherwise the listed
+    /// spelling of that entry. A final symlink is its own entry and is never
+    /// followed (discovery skips it; the guard treats it as occupied at the
+    /// requested spelling). Only a regular entry may resolve to another
+    /// listed spelling: on a case-folding volume `pages/B.md` reaches the
+    /// listed `pages/b.md` ([`Self::disk_spelling`]).
+    /// Cost: one `lstat`; two canonicalizations when an entry answers.
+    pub fn move_occupant(&self, to: &FileId) -> std::io::Result<Option<FileId>> {
+        match fs::symlink_metadata(self.graph.root.join(to.as_str())) {
+            Err(error) if crate::atomic_file::names_nothing(&error) => Ok(None),
+            Err(error) => Err(error),
+            Ok(meta) if meta.file_type().is_symlink() => Ok(Some(to.clone())),
+            Ok(_) => Ok(Some(
+                self.as_page(to)
+                    .and_then(|page| self.disk_spelling(&page))
+                    .map_or_else(|| to.clone(), |page| page.file()),
+            )),
+        }
     }
 
     /// Type an eligible graph `.md`, `.markdown`, or `.org` file as a page id

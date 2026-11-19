@@ -406,8 +406,37 @@ try {
   let headerEditor = await browser.$(editorSelector(".page-blocks"));
   await headerEditor.waitForExist({ timeout: 5_000 });
   const originalHeader = await editorText(browser, ".page-blocks");
-  if (!originalHeader.includes("ai-prompt:: [[Prompt-Test]]") || !originalHeader.includes("\n\npage-level::")) {
-    throw new Error(`page-header ordinary editor lost raw properties/separators: ${JSON.stringify(originalHeader)}`);
+  // A Markdown page's properties are Logseq's: the first run of property
+  // lines, up to the first blank line (d62e4203e, REG-CM-HEADER-BOUNDARY; mldoc
+  // oracle row `a:: x\n\nb:: y` in crates/tine-outline/src/page_preamble/og_page_header.json).
+  // The reporter's later groups are the page's opening text: shown in their own
+  // row below the header, never folded into the header editor or dropped.
+  const firstGroup = "alias:: Test Record, Alternate\nai-prompt:: [[Prompt-Test]]\nusage-frequency:: [[Frequency-High]]";
+  if (originalHeader !== firstGroup) {
+    throw new Error(`page-header ordinary editor did not hold exactly the first property group: ${JSON.stringify(originalHeader)}`);
+  }
+  const openingText = await browser.execute((name) => document
+    .querySelector(`.page-blocks [data-page-preamble="${CSS.escape(name)}"]`)?.textContent ?? null, "Property detailed");
+  const openingWords = [
+    "page-level", "Level-Two", "layout", "Layout-Top-Collapsed", "component-state", "Component-Wide",
+    "timestamp", "20250707092601", "observation-target", "Object-Test-Page", "external-impact",
+    "methods", "Method-A", "Method-B", "key-conclusion", "Conclusion-A", "Conclusion-B",
+  ];
+  const missingOpening = openingWords.filter((word) => !openingText?.includes(word));
+  if (missingOpening.length) {
+    throw new Error(`opening-text row lost later property groups: ${JSON.stringify({ missingOpening, openingText })}`);
+  }
+  // While the header is edited, the opening text is not read as a header again
+  // (D-20261119-PG): no later key in the properties box, and the header editor
+  // stays above the opening-text row.
+  const duringEdit = await browser.execute((name, selector) => {
+    const keys = [...document.querySelectorAll(".page-properties .prop-key")].map((key) => key.textContent?.trim());
+    const editor = document.querySelector(selector);
+    const row = document.querySelector(`.page-blocks [data-page-preamble="${CSS.escape(name)}"]`);
+    return { keys, editorFirst: !!editor && !!row && !!(editor.compareDocumentPosition(row) & Node.DOCUMENT_POSITION_FOLLOWING) };
+  }, "Property detailed", editorSelector(".page-blocks"));
+  if (duringEdit.keys.some((key) => ["page-level", "timestamp"].includes(key)) || !duringEdit.editorFirst) {
+    throw new Error(`header edit re-read the opening text: ${JSON.stringify(duringEdit)}`);
   }
   const editedHeader = originalHeader.replace("ai-prompt:: [[Prompt-Test]]", "ai-prompt:: [[Prompt-Edited]]");
   const oldPromptStart = originalHeader.indexOf("Prompt-Test");
@@ -452,6 +481,7 @@ try {
   const detailedExpected = detailed
     .replace("alias:: Test Record", "alias:: Test Record, Alternate")
     .replace("ai-prompt:: [[Prompt-Test]]", "ai-prompt:: [[Prompt-Edited]]");
+  // The header-edit save leaves every byte of the opening text (groups 2 and 3) as it was.
   if (detailedAfter !== detailedExpected) {
     throw new Error(`detailed page changed outside the edited line\nEXPECTED:\n${detailedExpected}\nACTUAL:\n${detailedAfter}`);
   }

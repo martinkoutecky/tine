@@ -147,13 +147,15 @@ fn file_kind::is_asset_sidecar
 # og 21a: a live-conflict review finds its Concord-ledger base by the draft's revision.
 fn store::FileRev::from_bytes
 fn store::Store::as_page
+fn store::Store::file_id
+fn store::Store::journal_id
 # Windows nightly 2026-11-19 (K folded_occupant): as_page types a path with no
 # disk read, so it cannot say that `pages/B.md` reaches the listed `pages/b.md`
 # on a case-folding volume; no parameter of it can without a disk read. The
-# rename planner's destination check asks the resolver page reads already use.
-fn store::Store::disk_spelling
-fn store::Store::file_id
-fn store::Store::journal_id
+# rename planner's destination check and the no-replace move guard share one
+# answer for which entry occupies a destination (a final symlink is its own
+# entry; review c1909f09f).
+fn store::Store::move_occupant
 fn store::Store::path_for_os_handoff
 struct store::Day
 struct store::FileRev
