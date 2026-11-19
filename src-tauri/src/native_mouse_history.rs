@@ -79,7 +79,10 @@ mod platform {
                 }
                 if !matches!(
                     event.event_type(),
-                    EventType::ButtonPress | EventType::ButtonRelease
+                    EventType::ButtonPress
+                        | EventType::DoubleButtonPress
+                        | EventType::TripleButtonPress
+                        | EventType::ButtonRelease
                 ) {
                     return gtk::glib::Propagation::Proceed;
                 }
@@ -96,6 +99,14 @@ mod platform {
                     }
                 };
 
+                // GTK adds a double/triple press after the second/third plain
+                // press; Wry would turn it into a DOM mousedown (#948 review).
+                if matches!(
+                    event.event_type(),
+                    EventType::DoubleButtonPress | EventType::TripleButtonPress
+                ) {
+                    return gtk::glib::Propagation::Stop;
+                }
                 // GtkWidget::event runs before the more-specific
                 // button-{press,release}-event signal. Stop both halves here so
                 // Wry cannot also synthesize DOM input/default history; navigate

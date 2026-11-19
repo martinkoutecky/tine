@@ -5,6 +5,12 @@ function fixture(source: "dom" | "gtk" | "webview2" = "dom") {
   const target = new EventTarget();
   const doc = new EventTarget();
   const navigate = vi.fn();
+  const listeners = new Map<string, (event: Event) => void>();
+  const add = target.addEventListener.bind(target);
+  target.addEventListener = ((name: string, listener: EventListener, options?: AddEventListenerOptions | boolean) => {
+    listeners.set(name, listener);
+    add(name, listener, options);
+  }) as typeof target.addEventListener;
   const dispose = installMouseHistory(target as Window, doc as Document, navigate, source);
   // Blink gives an auxclick its release's timestamp; `fresh: true` sends an auxclick of a release the page never saw.
   let clock = 0;
@@ -19,7 +25,7 @@ function fixture(source: "dom" | "gtk" | "webview2" = "dom") {
     target.dispatchEvent(event);
     return event;
   };
-  return { navigate, dispose, send, doc };
+  return { navigate, dispose, send, doc, listeners };
 }
 
 it("routes Wry's macOS down/up pair once and consumes the browser default", () => {
@@ -158,5 +164,34 @@ it.each(["dom", "webview2"] as const)("%s side clicks wait while another ordinar
   f.send("auxclick", { button: 3, buttons: 2 });
   f.send("auxclick", { button: 4, buttons: 2, fresh: true });
   expect(f.navigate).not.toHaveBeenCalled();
+  f.dispose();
+});
+
+// GH #948 review (187d3d4d3) F2: an editor blurring inside the window keeps the gesture;
+// the window itself losing focus still ends it.
+it.each(["dom", "webview2"] as const)("%s element blur inside the window keeps side-button gestures", (source) => {
+  for (const button of [3, 4]) {
+    const f = fixture(source);
+    const blur = f.listeners.get("blur")!;
+    const inner = () => blur({ type: "blur", target: new EventTarget() } as unknown as Event);
+    const down = () => f.send("mousedown", { button, buttons: button === 3 ? 8 : 16 });
+    // Release-only delivery (no auxclick) with a blur between down and up.
+    down(); inner(); f.send("mouseup", { button });
+    expect(f.navigate).toHaveBeenCalledTimes(1);
+    // Paired delivery with a blur between up and its auxclick: one step, not two.
+    f.send("mousemove", { clientX: 20 });
+    down(); f.send("mouseup", { button }); inner(); f.send("auxclick", { button });
+    expect(f.navigate).toHaveBeenCalledTimes(2);
+    f.dispose();
+  }
+});
+
+it("a window blur still ends a pending side-button press", () => {
+  const f = fixture("dom");
+  f.send("mousedown", { buttons: 8 });
+  f.send("blur");
+  f.send("auxclick", { fresh: true });
+  f.send("mouseup");
+  expect(f.navigate).toHaveBeenCalledTimes(1);
   f.dispose();
 });
