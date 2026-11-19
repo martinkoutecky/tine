@@ -114,7 +114,8 @@ export async function applyGraphChangesBulk(bulk: { changes: GraphChange[]; bind
   if (changes.some((c) => c.created || c.removed)) bumpPageInventoryRev();
   const ui = captureExternalChangeUi?.();
   let restart = false, conflicts = 0;
-  const batchUi = ui && { ...ui, restartJournalFeed: () => { restart = true; } };
+  // Evidence with a summary refreshes the feed through its `days` key (GH #987).
+  const batchUi = ui && { ...ui, restartJournalFeed: () => { restart = !hasSummary; } };
   for (const c of changes) {
     if (!bindingCurrent(binding)) return;
     const name = (c.path && loadedPageByPath(c.path)?.name) || c.name;
@@ -124,7 +125,7 @@ export async function applyGraphChangesBulk(bulk: { changes: GraphChange[]; bind
     if (isConflicted(name)) conflicts++;
   }
   if (!bindingCurrent(binding)) return;
-  if (restart || (ui?.journalsOpen && changes.some((c) => c.kind === "journal"))) ui?.restartJournalFeed();
+  if (restart || (ui?.journalsOpen && !hasSummary && changes.some((c) => c.kind === "journal"))) ui?.restartJournalFeed();
   pushToast(msg("document-external-updates", { pages: changes.length, conflicts }), "info");
   } finally { finish(); }
 }
@@ -135,7 +136,8 @@ async function applyObservedChange(c: GraphChange, ui: ExternalChangeUi | undefi
     return;
   }
   const restartJournalFeed = () => {
-    if (!own && c.kind === "journal") ui?.restartJournalFeed();
+    // A summary's `days` key owns the refresh; only missing evidence restarts here (GH #987).
+    if (!own && c.kind === "journal" && !c.answers?.summary) ui?.restartJournalFeed();
   };
   const loadedName = own ? pageByName(c.name)?.name : c.path ? loadedPageByPath(c.path)?.name : undefined;
   const currentName = loadedName ?? c.name;

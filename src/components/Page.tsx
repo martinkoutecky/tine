@@ -105,10 +105,8 @@ let feedReferencesPending = false;
 let paintedFeedGeneration: number | null = null;
 const feedViewportAnchors = new Set<() => (() => void) | undefined>();
 const journalCompletionOwners = new Set<JournalsFeedOwner>();
-clearOnBindingInvalidated(() => {
-  feedViewportAnchors.clear(); journalCompletionOwners.clear();
-  publishedFeedEpoch = null; feedReferencesPending = false;
-});
+clearOnBindingInvalidated(() => { feedViewportAnchors.clear(); journalCompletionOwners.clear(); publishedFeedEpoch = null;
+  feedReferencesPending = false; });
 const oldestFeedDay = () => {
   const name = feedNames().at(-1);
   const date = name ? parseJournalTitle(name) : null;
@@ -266,9 +264,8 @@ async function runJournalFeedRestart(owner: JournalsFeedOwner, retried: boolean,
   loadingGeneration = generation;
   try {
     let retryDay = false;
-    // Only startup and rollover need the fast file-only answer. A settled
-    // window can take one authoritative answer, including referenced days,
-    // so removed days disappear without dropping the still-valid suffix.
+    // Startup and rollover take the fast file-only answer; a settled window takes one authoritative
+    // answer, referenced days included, so removed days go without dropping the valid suffix.
     const result = await admitRead(requestOwner, () => throughDay !== null
       ? backend().journalFeedPage(FEED_PAGE, null, !mergeReferences, throughDay)
       : backend().journalFeedPage(FEED_PAGE, null), response => withToday(response.pages).map(page => page.name), response => {
