@@ -6,6 +6,36 @@ import { blockRegions, editBlock } from "../render/parse";
 import { t } from "../i18n";
 import type { ExportNode } from "./exportText";
 
+/** Ordered candidates for a reference group's depth cutoff. O(source subtree). */
+export function referenceExportCandidates(roots: ExportNode[]): ExportNode[] {
+  const candidates: ExportNode[] = [];
+  const visit = (node: ExportNode) => {
+    if (node.checked) candidates.push(node);
+    node.children.forEach(visit);
+  };
+  for (const root of roots) {
+    candidates.push(root);
+    root.children.forEach(visit);
+  }
+  return candidates;
+}
+
+/** Retain the visible subtrees and promote any checked row they did not reach.
+ * O(visible nodes + candidates), with no walk below the cutoff. */
+export function referenceExportAtDepth(candidates: ExportNode[], depth: number): ExportNode[] {
+  const included = new Set<ExportNode>();
+  const take = (node: ExportNode, remaining: number): ExportNode => {
+    if (node.checked) included.add(node);
+    const children = remaining > 1 ? node.children.map(child => take(child, remaining - 1)) : [];
+    return { ...node, children };
+  };
+  const roots: ExportNode[] = [];
+  for (const node of candidates) {
+    if (!included.has(node)) roots.push(take(node, depth));
+  }
+  return roots;
+}
+
 export function projectExportNodes(nodes: ExportNode[], includeComments = true, inComment = false): ExportNode[] {
   const walk = (forest: ExportNode[], parent: boolean, thread: boolean): ExportNode[] => forest.flatMap(node => {
     const properties = blockRegions(node.raw, node.format ?? "md").properties.filter(p => p.primary).map(p => [p.key, p.value] as const);

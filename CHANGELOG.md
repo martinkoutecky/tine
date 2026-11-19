@@ -23,6 +23,8 @@ The format follows [Keep a Changelog](https://keepachangelog.com/); versions use
 - On Windows, a graph on a file system without file IDs (a WSL share such as `\\wsl.localhost`, a FAT32 or exFAT drive, a Samba share) can be saved again; since 0.9.0 every save failed with "The request is not supported (os error 50)" (reported by redstreet in #973; REG-973-WINDOWS-NO-FILE-ID).
 - Query results have even spacing when breadcrumbs are turned off, including between results from different source pages (#881).
 - Help for the `tine export` subcommands explains which graph path to pass and where static and live publications are written (#588).
+- **Level ≤** in Copy / export now limits how many levels of each selected reference are copied, including from source groups you haven’t scrolled to (#793, reported by vinyatu).
+- Reference export gives checked descendants below the depth limit their own branch and freezes the selection while reading source pages (#793).
 - The first Linked References panel you open reads only the pages that reference it again, as before 0.10: on a 10,000-page graph it took about half a second instead of a few milliseconds (REG-PERF-FIRST-LINKED-REFS-OPEN).
 - The first edit after All pages has shown its reference counts, made in Tine or in another editor, no longer pays for a scan of the whole graph: on a 10,000-page graph it took about 200 ms instead of 40 ms (REG-PERF-OUTSIDE-EDIT-REFRESH-COUNTS).
 
