@@ -36,6 +36,7 @@ const OTHER_TEXTAREAS = new Map<string, string>([
   ["src/components/ExportModal.qd6.test.tsx", "Readonly export-preview payload (ExportModal.tsx)."],
   ["src/components/ExportModal.test.tsx", "Readonly export-preview payload (ExportModal.tsx)."],
   ["src/components/FormulaEditor.test.tsx", "Standalone formula-editor-textarea (FormulaEditor.tsx)."],
+  ["src/components/LinkedReferences.copy.test.tsx", "Readonly export-preview payload (ExportModal.tsx)."],
   ["src/components/GraphVerification.test.tsx", "Graph report comparison input (GraphVerification.tsx)."],
   ["src/components/QueryTextPane.test.tsx", "Standalone query-text-pane-input (QueryBuilder.tsx)."],
   ["src/components/graphResourceEpoch.test.tsx", "Standalone query-text-pane-input (QueryBuilder.tsx)."],

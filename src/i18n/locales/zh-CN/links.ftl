@@ -40,6 +40,7 @@ references-copy-unlinked = 复制 / 导出未链接引用
 references-copy-linked-title = 复制 / 导出所选链接引用
 
 references-copy-unlinked-title = 复制 / 导出所选未链接引用
+references-export-source-changed = 无法打开所选引用以供导出。请关闭选择窗口后重试。
 
 references-filter-linked = 筛选链接引用
 

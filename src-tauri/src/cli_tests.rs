@@ -256,6 +256,37 @@ fn external_url_argv_never_becomes_a_relative_graph_path() {
 }
 
 #[test]
+fn export_help_describes_graph_and_output() {
+    for format in ["static", "live", "query"] {
+        let error = Cli::try_parse_from(["tine", "export", format, "--help"]).unwrap_err();
+        assert_eq!(error.kind(), clap::error::ErrorKind::DisplayHelp);
+        let help = error.to_string();
+        let description = |argument: &str| {
+            help.lines()
+                .filter_map(|line| line.trim_start().strip_prefix(argument))
+                .map(str::trim)
+                .find(|description| !description.is_empty())
+                .unwrap_or("")
+        };
+        assert!(
+            description("<GRAPH>").contains("relative or absolute"),
+            "{help}"
+        );
+        if format != "query" {
+            let output = description("--output <PARENT>");
+            assert!(
+                output.contains("absolute") && output.contains("outside the graph"),
+                "{help}"
+            );
+            assert!(
+                output.contains("new child") && output.contains("--name"),
+                "{help}"
+            );
+        }
+    }
+}
+
+#[test]
 fn export_requires_an_output_parent_and_accepts_both_formats() {
     for format in ["static", "live"] {
         assert!(Cli::try_parse_from(["tine", "export", format, "g"]).is_err());

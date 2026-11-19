@@ -1,10 +1,11 @@
-import { exportNodesFor, formatForPage, pageByName } from "../document";
-import { noticeChangedResults, samePreBlockResult, resolveResultRow } from "./queryResultIdentity";
+import { exportNodesFor, pageByName, resolveBlockRef } from "../document";
+import { noticeChangedResults, samePreBlockResult, resolveResultRow, referenceExportSource } from "./queryResultIdentity";
+import { blockDtoExternalId } from "../blockIdentity";
 import { resultTicket, resultsTicketActionable } from "../queryResultsEpoch";
 import { backend } from "../backend";
-import { graphOwner, readOwned } from "../owned";
+import { graphOwner, readOwned, type Owner } from "../owned";
 import { pushToast } from "../toasts";
-import { t } from "../i18n";
+import { msg, t } from "../i18n";
 import { openExportNodesModal } from "../ui";
 import { blockDtosToExportNodes } from "./ExportModal";
 import type { ExportNode } from "../editor/exportText";
@@ -13,10 +14,85 @@ import { projectExportNodes } from "../editor/exportProjection";
 
 export function uniqueResultRoots(blocks: BlockDto[]): BlockDto[] {
   const descendants = new Set<string>();
-  const visit = (children: BlockDto[]) => { for (const child of children) { descendants.add(child.id); visit(child.children); } };
-  for (const block of blocks) visit(block.children);
+  const visited = new Set<BlockDto>();
+  const visit = (block: BlockDto) => {
+    if (visited.has(block)) return;
+    visited.add(block);
+    for (const child of block.children) {
+      descendants.add(child.id);
+      visit(child);
+    }
+  };
+  for (const block of blocks) visit(block);
   const seen = new Set<string>();
   return blocks.filter(block => !descendants.has(block.id) && !seen.has(block.id) && !!seen.add(block.id));
+}
+
+function loadedSourcePage(group: RefGroup) {
+  const page = pageByName(group.page);
+  return page?.kind === group.kind && (!group.path || page.id === group.path) ? page : undefined;
+}
+
+async function readSourcePage(group: RefGroup, owner: Owner) {
+  const result = await readOwned(owner, group.path ? backend().getPageByPath(group.path) : backend().getPage(group.page, group.kind));
+  if (result.kind === "stale") return null;
+  const page = result.value;
+  if (!page || page.name !== group.page || page.kind !== group.kind || (group.path && page.id !== group.path)) {
+    throw new Error("source unavailable");
+  }
+  return page;
+}
+
+/** Open the page outline exporter for selected reference trees. Loaded roots
+ * use the ordinary page selection. Read each cold source page at most once
+ * without mounting it, then convert only the selected subtrees. Returns false
+ * if a source or the chooser has gone away. */
+export async function openReferenceResultsCopy(groups: RefGroup[], current: Owner): Promise<boolean> {
+  const owner = graphOwner(current);
+  const forest: ExportNode[] = [];
+  let count = 0;
+  try {
+    for (const group of groups) {
+      if (!owner()) return false;
+      const loaded = loadedSourcePage(group);
+      const outline = group.blocks.filter(block => !block.page_property && !block.page_preamble);
+      const headers = group.blocks.filter(block => block.page_property || block.page_preamble);
+      const sourcePage = loaded ? null : await readSourcePage(group, owner);
+      if (!loaded && !sourcePage) return false;
+      const format = loaded?.format ?? sourcePage?.format ?? "md";
+      const children = blockDtosToExportNodes(headers, format);
+      if (loaded) {
+        const ids = outline.map(block => {
+          const id = resolveBlockRef({
+            uuid: blockDtoExternalId(block), page: group.page, pageKind: group.kind,
+            ...(group.path ? { path: group.path } : {}),
+          }, { navigation: true });
+          if (id === null) throw new Error("reference moved");
+          return id;
+        });
+        children.push(...exportNodesFor([...new Set(ids)], true));
+      } else if (sourcePage) {
+        const roots = outline.map(block => {
+          const source = referenceExportSource(block, sourcePage);
+          if (!source) throw new Error("reference moved");
+          return source;
+        });
+        const references = new Map(roots.map((root, index) => [root.id, outline[index]]));
+        for (const root of uniqueResultRoots(roots)) {
+          const reference = references.get(root.id)!;
+          children.push(...blockDtosToExportNodes([root], format, !!reference.breadcrumb?.length, references));
+        }
+      }
+      count += group.blocks.length;
+      forest.push({ raw: group.page, format, children });
+    }
+    if (!owner()) return false;
+    openExportNodesModal(forest, count, true);
+    return true;
+  } catch {
+    if (owner()) pushToast(msg("references-export-source-changed"), "error");
+    return false;
+  }
 }
 
 /** Read selected source pages once each, sequentially. Selection is frozen at
@@ -32,11 +108,10 @@ export async function openQueryResultsCopy(groups: RefGroup[], pages: Pick<PageE
   try {
     for (const group of groups) {
       if (!owner()) return;
-      const loaded = pageByName(group.page);
-      const exact = loaded?.kind === group.kind && (!group.path || loaded.id === group.path);
-      let format = exact ? formatForPage(group.page) : "md";
+      const loaded = loadedSourcePage(group);
+      let format = loaded?.format ?? "md";
       let children: ExportNode[];
-      if (exact) {
+      if (loaded) {
         const ids: string[] = [];
         const propertyRoots: BlockDto[] = [];
         for (const block of group.blocks) {
@@ -54,10 +129,8 @@ export async function openQueryResultsCopy(groups: RefGroup[], pages: Pick<PageE
         count += ids.length + propertyRoots.length;
         children = [...blockDtosToExportNodes(propertyRoots, format), ...exportNodesFor(ids)];
       } else {
-        const result = await readOwned(owner, group.path ? backend().getPageByPath(group.path) : backend().getPage(group.page, group.kind));
-        if (result.kind === "stale") return;
-        const dto = result.value;
-        if (!dto || dto.name !== group.page || dto.kind !== group.kind || (group.path && (!("id" in dto) || dto.id !== group.path))) throw new Error("source unavailable");
+        const dto = await readSourcePage(group, owner);
+        if (!dto) return;
         const sourceFormat = dto.format ?? "md";
         format = sourceFormat;
         const roots: BlockDto[] = [];

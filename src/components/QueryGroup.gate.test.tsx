@@ -1,4 +1,5 @@
 import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
+import { createSignal } from "solid-js";
 import { render } from "solid-js/web";
 import { backend } from "../backend";
 import { resetStore } from "../document";
@@ -33,6 +34,39 @@ afterEach(() => {
 });
 
 describe("a query group header never renders without its rows", () => {
+  it.each([false, true])("marks lists without page context for compact spacing (flat: %s)", (flat) => {
+    vi.spyOn(backend(), "getPage").mockResolvedValue(null);
+    const root = document.createElement("div");
+    document.body.append(root);
+    const [showPage, setShowPage] = createSignal(true);
+    const group: RefGroup = { page: "Tasks", kind: "page", blocks: [{ id: "alpha", raw: "TODO alpha", collapsed: false, children: [] }] };
+    const dispose = render(() => <QueryGroup group={() => group} flat={flat} showPage={showPage()} showBreadcrumb={showPage()} />, root);
+    try {
+      const shell = root.querySelector(".query-group")!;
+      expect(root.querySelector(".query-page, .query-crumb")?.textContent).toBe("Tasks");
+      expect(shell.classList.contains("query-group-no-page")).toBe(false);
+      setShowPage(false);
+      expect(root.querySelector(".query-page, .query-crumb")).toBeNull();
+      expect(shell.classList.contains("query-group-no-page")).toBe(true);
+      expect(root.textContent).toContain("alpha");
+      setShowPage(true);
+      expect(shell.classList.contains("query-group-no-page")).toBe(false);
+    } finally { dispose(); }
+  });
+
+  it("keeps the group spacing when only the page heading is hidden and breadcrumbs still show (review 19d60bdea)", () => {
+    vi.spyOn(backend(), "getPage").mockResolvedValue(null);
+    const root = document.createElement("div");
+    document.body.append(root);
+    const group: RefGroup = { page: "Tasks", kind: "page", blocks: [{ id: "alpha", raw: "TODO alpha", collapsed: false, children: [] }] };
+    for (const showBreadcrumb of [true, undefined]) {
+      const dispose = render(() => <QueryGroup group={() => group} flat showPage={false} showBreadcrumb={showBreadcrumb} />, root);
+      try {
+        expect(root.querySelector(".query-group")!.classList.contains("query-group-no-page"), String(showBreadcrumb)).toBe(false);
+      } finally { dispose(); }
+    }
+  });
+
   it("reserves the complete previously mounted query shell, including its header (GH #810)", async () => {
     let intersect!: IntersectionObserverCallback;
     vi.stubGlobal("IntersectionObserver", class {

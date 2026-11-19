@@ -9,6 +9,10 @@ The format follows [Keep a Changelog](https://keepachangelog.com/); versions use
 ## [Unreleased]
 
 ### Fixed
+- Query results have even spacing when breadcrumbs are turned off, including between results from different source pages (#881).
+- Help for the `tine export` subcommands explains which graph path to pass and where static and live publications are written (#588).
+- **Level ≤** in Copy / export now limits how many levels of each selected reference are copied, including from source groups you haven’t scrolled to (#793, reported by vinyatu).
+- Reference export gives checked descendants below the depth limit their own branch and freezes the selection while reading source pages (#793).
 - Typing `[[` in a property value finds existing pages immediately, including in a newly inserted template. Block references and tags also open their search menus in property values. Picking a match keeps later values and markup after the caret. Ordinary property suggestions resume after you leave a closed reference and stay available for literal markers in code, math, URLs, link destinations or escaped text (#853).
 - The first Linked References panel you open reads only the pages that reference it again, as before 0.10: on a 10,000-page graph it took about half a second instead of a few milliseconds (REG-PERF-FIRST-LINKED-REFS-OPEN).
 - The first edit after All pages has shown its reference counts, made in Tine or in another editor, no longer pays for a scan of the whole graph: on a 10,000-page graph it took about 200 ms instead of 40 ms (REG-PERF-OUTSIDE-EDIT-REFRESH-COUNTS).
@@ -19,12 +23,19 @@ The format follows [Keep a Changelog](https://keepachangelog.com/); versions use
 - When two files claim the same page name (for example `pages/XX1.md` and `pages/笔记集/XX1.md`), you can delete one of them: open it from **Conflicts → Page name conflicts**, and its page menu offers **Delete file “…”**, which deletes exactly that file and leaves the other untouched. Deleting by name used to fail with "Multiple files share this page identity" and offered no way to remove the file (reported by EllisMorrow in #978; UI-GH978-DELETE-TWIN-FILE).
 - Closing Quick Capture with the window manager (Alt+F4, Cmd+W) no longer loses the text you typed or stops Quick Capture from opening until Tine is restarted: it hides like losing focus does, and the next capture shortcut shows the draft again (reported by corefusion in #967; UI-CAPTURE-WM-CLOSE-967).
 - A code block whose text wraps because of a theme or custom.css (not Tine's wrap setting) keeps its line numbers level with their lines: the numbers after a wrapped line sat one row too high and the last line had none (reported by BeyondTheJob in #970; UI-GH970-CODE-GUTTER-WRAP).
+- Mouse Back and Forward buttons work again in Windows graph windows and move one page per press (#948).
 - Quick share links are offered in every build of Tine, including the Flatpak
   and builds from source. They used to show "Coming soon" in any build made
   outside Tine's release workflow. A release is now refused instead while
   tine.page cannot open its links (reported by Dieterbe in discussion #968;
   REG-QS-ATTEST-STORES-09).
 - On Windows, a graph on a file system without file IDs (a WSL share such as `\\wsl.localhost`, a FAT32 or exFAT drive, a Samba share) can be saved again; since 0.9.0 every save failed with "The request is not supported (os error 50)" (reported by redstreet in #973; REG-973-WINDOWS-NO-FILE-ID).
+
+### Security
+
+- DOMPurify is updated to 3.4.18 and seroval to 1.6.12, which close published
+  advisories. Tine used none of the affected DOMPurify modes, so no known
+  exploit applied (reported by Dieterbe in #982).
 
 ## [0.10.0-beta.1] - 2026-11-16
 

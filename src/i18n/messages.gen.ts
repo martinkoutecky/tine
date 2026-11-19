@@ -2371,6 +2371,7 @@ export interface MessageArgs {
   "references-count-title": { "blocks": number; "pages": number };
   "references-expand-all": {};
   "references-expand-group": { "page": string | number };
+  "references-export-source-changed": {};
   "references-facet-cycle": {};
   "references-facet-orphan": {};
   "references-facets": {};
