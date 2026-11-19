@@ -53,3 +53,31 @@ it.each(["emcc", path.resolve("target/packager/bin/emcc")])(
     expect(fs.existsSync(path.join(outDir, "emscripten.config"))).toBe(false);
   },
 );
+
+it("anchors a packager's relative PATH entries and EM_CONFIG to the caller's directory (review F2)", () => {
+  vi.stubEnv("TINE_PDFJS_EMCC", "emcc");
+  vi.stubEnv("PATH", ["tools/bin", "", "/usr/bin"].join(path.delimiter));
+  vi.stubEnv("EM_CONFIG", "packager/emscripten.config");
+  vi.spyOn(console, "warn").mockImplementation(() => {});
+  vi.mocked(execFileSync).mockImplementationOnce(() => compilerVersion).mockImplementationOnce(() => {
+    throw new Error("compiler reached");
+  });
+  expect(() => buildOpenjpeg({ outDir })).toThrow("compiler reached");
+  expect(execFileSync).toHaveBeenNthCalledWith(1, "emcc", ["--version"], expect.objectContaining({
+    env: expect.objectContaining({
+      PATH: [path.resolve("tools/bin"), path.resolve("."), "/usr/bin"].join(path.delimiter),
+      EM_CONFIG: path.resolve("packager/emscripten.config"),
+    }),
+  }));
+});
+
+it("never reuses a cached decoder for a packager's toolchain (review F1)", () => {
+  vi.stubEnv("TINE_PDFJS_EMCC", "emcc");
+  vi.spyOn(console, "warn").mockImplementation(() => {});
+  fs.writeFileSync(path.join(outDir, "openjpeg.wasm"), "cached");
+  fs.writeFileSync(path.join(outDir, "BUILD_OPENJPEG.json"), JSON.stringify({ inputHash: "x", sha256: "y" }));
+  vi.mocked(execFileSync).mockImplementationOnce(() => compilerVersion).mockImplementationOnce(() => {
+    throw new Error("compiler reached");
+  });
+  expect(() => buildOpenjpeg({ outDir })).toThrow("compiler reached");
+});
