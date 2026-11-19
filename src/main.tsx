@@ -1,6 +1,7 @@
 import { msg } from "./i18n";
 import { render } from "solid-js/web";
 import { App } from "./App";
+import { ThreadJoinMasks } from "./components/ThreadJoinMasks";
 import "./session";
 import { installWorkspaceWindowSession } from "./session";
 import { restoreSession } from "./router";
@@ -102,7 +103,7 @@ const mount = () => {
   // index.html owns the immediate, dependency-free readiness frame. Remove it
   // only when Solid is ready to synchronously install the real application.
   root.replaceChildren();
-  render(() => <App />, root);
+  render(() => <><ThreadJoinMasks /><App /></>, root);
   if (isQuickShareViewer()) {
     const banner = document.createElement("div");
     document.body.prepend(banner);
