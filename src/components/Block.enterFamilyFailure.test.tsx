@@ -173,14 +173,39 @@ describe.each<EditorKind>(["textarea", "cm6"])("%s editor: the Enter family comm
 
   describe("template slash-completion (HONP4)", () => {
     const DAILY = [{ id: "tpl", raw: "from template", collapsed: false, children: [{ id: "tpl-child", raw: "template child", collapsed: false, children: [] }] }];
-    async function openTemplate(raw: string, blocks = DAILY): Promise<EditorDriver> {
-      vi.spyOn(backend(), "listTemplates").mockResolvedValue([{ name: "Daily", page: "Templates", kind: "page", blocks }]);
+    async function openTemplate(raw: string, blocks = DAILY, name = "Daily"): Promise<EditorDriver> {
+      vi.spyOn(backend(), "listTemplates").mockResolvedValue([{ name, page: "Templates", kind: "page", blocks }]);
       setGraphMeta(META); bumpGraphEpoch();
       const editor = mount(raw);
-      editor.reportInput({ bubbles: true, inputType: "insertText", data: "y" });
-      await vi.waitFor(() => expect(document.body.querySelector(".autocomplete .ac-label")?.textContent).toBe("Template: Daily"));
+      editor.reportInput({ bubbles: true, inputType: "insertText", data: raw.at(-1) });
+      await vi.waitFor(() => expect(document.body.querySelector(".autocomplete .ac-label")?.textContent).toBe(`Template: ${name}`));
       return editor;
     }
+
+    it.each(["typing", "paste"])("finds an existing page by %s in the inserted meeting template's empty project property (#853)", async method => {
+      const raw = "###\nevent:: #meeting\nproject::";
+      const editor = await openTemplate("/meeting", [{ id: "tpl", raw, collapsed: false, children: [] }], "meeting");
+      vi.spyOn(backend(), "quickSwitch").mockImplementation(async query => query === "pro"
+        ? [{ name: "Programming", kind: "page", date_key: null, path: "pages/Programming.md" }]
+        : []);
+      vi.spyOn(backend(), "queryFacets").mockResolvedValue([["project", []]]);
+      enter(editor);
+      const inserted = roots()[1];
+      const shown = await vi.waitFor(() => editorIn(root, inserted));
+      expect(shown.value()).toBe(raw);
+      expect(shown.selection()).toEqual([raw.length, raw.length]);
+      shown.type(" ");
+      if (method === "typing") {
+        for (const ch of "[[pro") shown.type(ch);
+      } else {
+        const paste = shown.paste({ text: "[[pro" });
+        if (!paste.defaultPrevented) shown.input(`${raw} [[pro`, raw.length + 6, { inputType: "insertFromPaste" });
+      }
+      await vi.waitFor(() => expect([...document.querySelectorAll(".autocomplete .ac-label")]
+        .map(row => row.textContent)).toContain("Programming"));
+      enter(shown);
+      expect(shown.value()).toMatch(/^###\nevent:: #meeting\nproject:: \[\[Programming\]\] ?$/);
+    });
 
     it.each([["after text", "intro /Daily", "intro "], ["in an empty block", "/Daily", null]] as const)(
       "%s: a failed insert keeps the trigger, in the editor and in the block", async (_, raw, _head) => {

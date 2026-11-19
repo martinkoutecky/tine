@@ -202,69 +202,16 @@ function triggerBeforeCaret(raw: string, caret: number, format: Format): Trigger
   const lineStart = raw.lastIndexOf("\n", caret - 1) + 1;
   const before = raw.slice(lineStart, caret);
 
-  // Property completion is line syntax, never inline prose/reference/fence.
-  // Unlike OG's chosen-name-only lifecycle, any parser-accepted Markdown
-  // value position offers values, regardless of how the key was entered.
-  const propertyTrigger = ((): Trigger | null => {
-    const valuePosition = propertyValuePosition(raw, caret, format);
-    if (valuePosition) {
-      const authored = raw.slice(valuePosition.start, caret);
-      const comma = authored.lastIndexOf(",");
-      const segmentOffset = comma === -1 ? 0 : comma + 1;
-      const segment = authored.slice(segmentOffset);
-      const leading = /^\s*/.exec(segment)?.[0].length ?? 0;
-      const query = segment.slice(leading);
-      const propertyValues = comma === -1
-        ? []
-        : authored.slice(0, comma).split(",").map(value => value.trim()).filter(Boolean);
-      return {
-        kind: "property-value",
-        query,
-        start: valuePosition.start + segmentOffset + leading,
-        end: caret,
-        property: propertyKeyFold(valuePosition.key),
-        ...(propertyValues.length ? { propertyValues } : {}),
-      };
-    }
+  // Use the persisted parser's property-key alphabet, including Unicode letters.
+  const nameBeforeDelimiter = before.endsWith("::") ? before.slice(0, -2) : null;
+  if (nameBeforeDelimiter !== null && (nameBeforeDelimiter === "" || isEditablePropertyKey(nameBeforeDelimiter))) {
+    return { kind: "property-name", query: nameBeforeDelimiter, start: lineStart, end: caret };
+  }
 
-    // The persisted parser's property-key alphabet (`isEditablePropertyKey`, the
-    // one answerer; Unicode letters included). In particular, a
-    // whitespace-separated prose phrase ending in `::` is not property syntax.
-    const nameBeforeDelimiter = before.endsWith("::") ? before.slice(0, -2) : null;
-    if (nameBeforeDelimiter !== null && (nameBeforeDelimiter === "" || isEditablePropertyKey(nameBeforeDelimiter))) {
-      return {
-        kind: "property-name",
-        query: nameBeforeDelimiter,
-        start: lineStart,
-        end: caret,
-      };
-    }
-
-    // OG's line-opening `::` lifecycle puts the caret BEFORE the delimiter and
-    // lets the user type the property name to its left. Keep the replacement
-    // span through the delimiter even though the caret is before it, so
-    // `::` -> caret 0 -> type `alp` yields `alp|::` and accepts as `alpha:: `.
-    if (raw.slice(caret, caret + 2) === "::" && (before === "" || isEditablePropertyKey(before))) {
-      return {
-        kind: "property-name",
-        query: before,
-        start: lineStart,
-        end: caret + 2,
-      };
-    }
-    return null;
-  })();
-  if (propertyTrigger) return propertyTrigger;
-
-  // Opening Markdown fence language. Do not pop a menu for a bare fence typed
-  // by hand (Enter keeps its established behavior); one language character is
-  // enough. The /Code block command explicitly opens the empty picker instead.
-  // The opener is the parser's: a container (or the fence being typed) that opens on this line.
-  // The one-character test only skips the parse for lines that cannot hold a fence delimiter.
-  if (before.includes("`") || before.includes("~")) {
-    const opener = codeFences(raw).find((f) => lineStart <= f.start && f.start - lineStart <= 3 && f.delimEnd <= caret && caret < f.openEnd);
-    const language = opener ? raw.slice(opener.delimEnd, caret) : "";
-    if (opener && /^[\w+#.-]+$/.test(language)) return { kind: "code-language", query: language, start: opener.delimEnd, end: caret };
+  // OG moves the caret before a line-opening `::`. Include the delimiter in
+  // the replacement span so `alp|::` accepts as `alpha:: `.
+  if (raw.slice(caret, caret + 2) === "::" && (before === "" || isEditablePropertyKey(before))) {
+    return { kind: "property-name", query: before, start: lineStart, end: caret + 2 };
   }
 
   // [[page and ((block — an opener with no closer since (the line has no
@@ -296,6 +243,40 @@ function triggerBeforeCaret(raw: string, caret: number, format: Format): Trigger
     if (isBareTagPrefix(query)) {
       return { kind: "tag", query, start: lineStart + hash, end: caret };
     }
+  }
+
+  // Explicit references and tags take precedence in property values (#853).
+  // Tine offers property values at any parser-accepted Markdown value position.
+  // OG starts the value picker after a name choice (6e7afa8eb, editor.cljs:2211).
+  const valuePosition = propertyValuePosition(raw, caret, format);
+  if (valuePosition) {
+    const authored = raw.slice(valuePosition.start, caret);
+    const comma = authored.lastIndexOf(",");
+    const segmentOffset = comma === -1 ? 0 : comma + 1;
+    const segment = authored.slice(segmentOffset);
+    const leading = /^\s*/.exec(segment)?.[0].length ?? 0;
+    const propertyValues = comma === -1
+      ? []
+      : authored.slice(0, comma).split(",").map(value => value.trim()).filter(Boolean);
+    return {
+      kind: "property-value",
+      query: segment.slice(leading),
+      start: valuePosition.start + segmentOffset + leading,
+      end: caret,
+      property: propertyKeyFold(valuePosition.key),
+      ...(propertyValues.length ? { propertyValues } : {}),
+    };
+  }
+
+  // Opening Markdown fence language. Do not pop a menu for a bare fence typed
+  // by hand (Enter keeps its established behavior); one language character is
+  // enough. The /Code block command explicitly opens the empty picker instead.
+  // The opener is the parser's: a container (or the fence being typed) that opens on this line.
+  // The one-character test only skips the parse for lines that cannot hold a fence delimiter.
+  if (before.includes("`") || before.includes("~")) {
+    const opener = codeFences(raw).find((f) => lineStart <= f.start && f.start - lineStart <= 3 && f.delimEnd <= caret && caret < f.openEnd);
+    const language = opener ? raw.slice(opener.delimEnd, caret) : "";
+    if (opener && /^[\w+#.-]+$/.test(language)) return { kind: "code-language", query: language, start: opener.delimEnd, end: caret };
   }
 
   // /command — `/` at start or after whitespace.
