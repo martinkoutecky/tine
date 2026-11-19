@@ -89,7 +89,7 @@ export function buildOpenjpeg({ outDir = openjpegBuildDir, force = false } = {})
 }
 
 if (process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {
-  // A packager's decoder is never reused, so the build's Vite asset step compiles it once.
-  if (process.env.TINE_PDFJS_EMCC) console.log("OpenJPEG: TINE_PDFJS_EMCC is set; the Vite asset step builds the decoder.");
+  // A packager's decoder is never reused, so within `npm run build` only the Vite asset step compiles it.
+  if (process.env.TINE_PDFJS_EMCC && process.argv.includes("--full-build")) console.log("OpenJPEG: TINE_PDFJS_EMCC is set; the Vite asset step builds the decoder.");
   else console.log(`OpenJPEG standard SIMD: ${buildOpenjpeg()}`);
 }

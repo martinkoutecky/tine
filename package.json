@@ -7,7 +7,7 @@
   "engines": { "node": ">=22.13.0" },
   "scripts": {
     "dev": "vite",
-    "build": "npm run build:pdf-decoder && node scripts/check-wasm-pin.mjs && npm run check:lsdoc-oracle && vite build",
+    "build": "node scripts/build-pdfjs-openjpeg.mjs --full-build && node scripts/check-wasm-pin.mjs && npm run check:lsdoc-oracle && vite build",
     "build:pdf-decoder": "node scripts/build-pdfjs-openjpeg.mjs",
     "build:quick-share-viewer": "node scripts/build-quick-share-viewer.mjs",
     "preview": "vite preview",
