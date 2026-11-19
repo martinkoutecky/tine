@@ -15,6 +15,9 @@ fs.writeFileSync(path.join(TMP, "pages", "Visible.md"), [
   "- Safe block [unsafe](javascript:globalThis.__tinePwned=1)",
   "  id:: quote\" space#/%",
   "- {{video javascript:globalThis.__tinePwned=2}}",
+  // A published page that embeds the twin name must not carry either
+  // excluded file's text into the site through rendering.
+  "- {{embed [[Twin]]}}",
   "",
 ].join("\n"));
 fs.writeFileSync(path.join(TMP, "pages", "Twin.md"), "public:: true\n- public twin\n");

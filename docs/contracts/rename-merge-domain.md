@@ -278,12 +278,15 @@ is shown exactly as written wherever it appears: the page's opening row, its
 Linked References row and a query's List row all render it with the block
 renderer (`AstBody` with `opening`, one parse per row), so every construct
 renders as it does in a block. The one difference: nothing is lifted into
-block chrome. A property node in it (a later Markdown property group, i.e.
-lines after the header's blank line, or a `#+key: value` line) shows as its
-exact source lines, whole lines from the parser's span with their spacing and
-no typography, never property chips or page properties; a leading task word or
-priority keeps its text (D-20261119-PG, a deliberate difference from Logseq, which shows
-such a group as nothing). While the header is edited, the frontend keeps the
+block chrome. Whatever the renderer would lift or drop shows as its exact
+source, from the parser's spans, once, one line break per line end (a Windows
+line end is one): every property node at any depth (a later Markdown property
+group, i.e. lines after the header's blank line, or a `#+key: value` line, also
+inside a quote or note container), from its line start; every blank or
+space-only line between top-level nodes and before the first; the first line's
+task word or priority; and every `{{query}}` or `{{tine-query}}` macro, which
+never runs there (D-20261119-PG, a deliberate difference from Logseq, which
+shows such a group as nothing). While the header is edited, the frontend keeps the
 parser's answer (`pageOpening`) instead of splitting the remaining pre-block
 again; display, the properties panel, and the copy and edit checks on a
 result's header and opening rows all read that one answer. A Markdown `#+key: value` line is prose

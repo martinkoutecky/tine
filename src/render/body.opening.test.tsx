@@ -114,3 +114,30 @@ it("encodes the opening text a linear number of times in its groups", () => {
 it("shows a #+key: value line as written, as it does a key:: value group", () => {
   expect(shown("prose\n#+b: [[X]]\nmore")).toEqual(["prose", "#+b: [[X]]", "more"]);
 });
+
+// Review 716a8eb3b: by construction, every source range the renderer does not
+// render itself (property nodes at any depth, separators, a first line's task
+// word or priority, leading blank lines, query macros) shows as that source,
+// once, with one line break per physical line end. For these shapes the
+// rendered lines are exactly the source lines.
+const exactShapes: [string, "md" | "org"][] = [
+  ["TODO k:: v", "md"], ["[#A] k:: v", "md"], ["TODO [#A] k:: v", "md"], ["TODO k::", "md"], ["TODO #+k: v", "md"],
+  ["TODO\nk:: v", "md"], ["DONE [#B]  k:: \nprose", "md"],
+  ["prose\r\n\r\nk:: v", "md"], ["a:: 1\r\n\r\nb:: 2", "md"], ["k:: v\r\n\r\nprose", "md"], ["k:: v\r\n\r\n", "md"],
+  ["prose\r\n\r\n#+k: v", "md"], ["prose\r\n\r\n#+k: v", "org"], ["#+a: 1\r\n\r\n#+b: 2\r\nprose", "org"],
+  ["prose\n \nk:: v", "md"], ["prose\n  \nk:: v", "md"], ["prose\n\t\nk:: v", "md"],
+  ["  \nprose\nk:: v", "md"], ["\n\nprose\nk:: v", "md"],
+  ["{{query (task TODO)}}", "md"], ["{{QUERY x}}", "md"], ["{{tine-query x}}", "md"], ["{{Tine-Query x}}", "md"],
+  ["prose {{query x}} more", "md"], ["prose {{query x}} more", "org"], ["k:: v\n{{tine-query (page p)}}", "md"],
+];
+it.each(exactShapes)("shows %j (%s) as its source lines", (text, format) => {
+  expect(shown(text, format)).toEqual(text.split(/\r?\n/));
+});
+
+it.each([
+  ["#+BEGIN_QUOTE\n#+k: v\n#+END_QUOTE", "md"], ["#+BEGIN_QUOTE\n#+k: v\n#+END_QUOTE", "org"],
+  ["#+BEGIN_NOTE\n#+k: v\n#+END_NOTE", "md"], ["#+BEGIN_NOTE\n#+k: v\n#+END_NOTE", "org"],
+] as const)("shows a #+key: value line inside a container as its source: %j (%s)", (text, format) => {
+  shown(text, format);
+  expect([...document.querySelectorAll(".source-text")].map((n) => n.textContent)).toContain("#+k: v\n");
+});

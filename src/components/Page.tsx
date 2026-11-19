@@ -58,6 +58,7 @@ import { PropertyKey } from "../render/PropertyKey";
 import { PageConflictPanel } from "./ConflictResolution";
 import { readOr } from "../resourceRead";
 import { ResourceFailure } from "./ResourceFailure";
+import type { AuthorNeighbors } from "./authorRuns";
 import { pageIdentityKey } from "../pageIdentity";
 import { ExternalChangeBar } from "./ExternalChangeBar";
 import { isElementNode, newIntersectionObserver, onAppReturn, requestFrame, useOwnerWindow, useWindowId } from "../windowRealm";
@@ -1047,6 +1048,12 @@ function PageSection(props: { page: FeedPage; seen?: boolean; children?: JSX.Ele
     return !firstPropertiesId() && id && docNode(id)?.originatedFromPageHeader ? id : null;
   };
   const openingRow = () => <PageOpeningRow page={props.page} onEdit={() => editPreamble()} />;
+  // Only a row that can be the header shown as a block (the first root, or
+  // one marked as the page header) carries the opening-row slot; every other
+  // root is a plain Block, with no per-row owner for the slot.
+  const rootRow = (id: string, neighbours: AuthorNeighbors) => untrack(() => id === props.page.roots[0] || !!docNode(id)?.originatedFromPageHeader)
+    ? <><Block id={id} authorNeighbors={neighbours} /><Show when={id === leadingHeaderId()}>{openingRow()}</Show></>
+    : <Block id={id} authorNeighbors={neighbours} />;
   const editSurface = () => pane.paneId === "main" ? "main" : `pane:${pane.paneId}`;
   // Every page section (including each journal day) owns its margin;
   // the available pane width chooses the tier, independent of route or split.
@@ -1315,7 +1322,7 @@ function PageSection(props: { page: FeedPage; seen?: boolean; children?: JSX.Ele
       <CommentResolutionScope roots={props.page.roots}><MarginContext.Provider value={margin.placement}>
       <div class="page-blocks" ref={outline} classList={{ "margin-active": margin.active() }}>
         <Show when={!leadingHeaderId()}>{openingRow()}</Show>
-        <SeenRows seen={seen}><SeenRemoved first={null} /><BlockList ids={rootsToRender()} render={(id, neighbours) => <><Block id={id} authorNeighbors={neighbours} />{id === leadingHeaderId() && openingRow()}</>} /></SeenRows>
+        <SeenRows seen={seen}><SeenRemoved first={null} /><BlockList ids={rootsToRender()} render={rootRow} /></SeenRows>
       </div>
       </MarginContext.Provider>
       <SeenRows seen={seen}><margin.Column /></SeenRows></CommentResolutionScope>

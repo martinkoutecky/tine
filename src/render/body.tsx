@@ -5,7 +5,7 @@ import { TableWrap, longCellClass } from "../components/TableWrap";
 // Block-body rendering: splits a block's text lines into paragraphs, fenced
 // code blocks (syntax-highlighted), and markdown tables.
 
-import { For, Index, Show, createContext, createMemo, createResource, useContext, type Accessor, type JSX } from "solid-js";
+import { For, Index, Show, createMemo, createResource, useContext, type JSX } from "solid-js";
 import { Dynamic } from "solid-js/web";
 import { astText, renderInlines, renderRawHtml, renderSanitizedHtml, MathView, CopyButton } from "./inline";
 import { EmojiText } from "./emoji";
@@ -17,8 +17,8 @@ import { toggleListItemAtIndex, formatForBlock, node as docNode } from "../docum
 import { PropertyRows } from "./PropertyRows";
 import { isPropertyLine } from "./block";
 import { TableV2, tableV2Options, type TableV2Options } from "./tableV2";
-import { blockRegions, isQuarantined, parserReady } from "./parse";
-import { utf8ToUtf16Cursor } from "./utf16Cursor";
+import { isQuarantined, parserReady } from "./parse";
+import { BodySourceContext, type CodeEditAction, type OpeningSource } from "./bodySource";
 import { parseBody, renderedProperties, stripPlanningLines } from "./facets";
 import { createNearBlockMount } from "../createNearBlockMount";
 import { BeginQuery } from "../components/BeginQuery";
@@ -162,30 +162,35 @@ export function renderBlocks(
   macroExpansion = false,
   format: Format = "md",
   tableOptions?: TableV2Options,
-  literalProperties?: LiteralProperties,
 ): JSX.Element {
+  // Opening text (D-20261119-PG), at any depth: a property node or separator
+  // is its source text, which carries its own line breaks. A rendered flow
+  // before it gets the break its title line does not render.
+  const opening = macroExpansion ? undefined : useContext(BodySourceContext)?.opening;
   const propertyEntries = renderedProperties(blocks, format);
-  const displayBlocks = literalProperties ? blocks
+  const displayBlocks = opening ? blocks
     : blocks.filter(block => block.kind !== "properties" || block.props === propertyEntries);
-  // A literal property group is a run of source lines in the text flow,
-  // without its last line break; a flow before it may already end in one.
-  const literal = (b: AstBlock): b is PropertyNode => !!literalProperties && (b.kind === "properties" || b.kind === "directive");
-  const flows = (b: AstBlock) => isInlineFlow(b) || literal(b);
-  const joins = (prev: AstBlock, b: AstBlock) => literal(b)
-    ? flows(prev) && !(isInlineFlow(prev) && endsInBreak(prev)) : flows(b) && flows(prev);
-  const view = (b: AstBlock) => literal(b) ? SourceText({ text: literalProperties!(b) }) : renderBlock(b, blockId, macroExpansion, format, tableOptions);
+  const literals = opening ? displayBlocks.map((b, i) => opening.literal(b, displayBlocks[i - 1])) : [];
+  const joins = (i: number) => {
+    const prev = displayBlocks[i - 1], b = displayBlocks[i];
+    if (literals[i - 1] !== undefined) return false;
+    if (literals[i] !== undefined) return isInlineFlow(prev) && !endsInBreak(prev);
+    return isInlineFlow(b) && isInlineFlow(prev);
+  };
+  const view = (b: AstBlock, i: number) => literals[i] === undefined ? renderBlock(b, blockId, macroExpansion, format, tableOptions)
+    : literals[i] ? SourceText({ text: literals[i]! }) : null;
   const content = (
     <For each={displayBlocks}>
       {(b, i) => (
         <>
-          <Show when={i() > 0 && joins(displayBlocks[i() - 1], b)}>
+          <Show when={i() > 0 && joins(i())}>
             <br />
           </Show>
           {/* A `# heading` block's size applies ONLY to the heading's own line (the
               first inline-flow node), NOT to continuation constructs in the same block
               (e.g. a `> quote` under it) — matching OG. The heading level comes from
               the facet cache (facetsOf); we wrap just block 0. */}
-          <Show when={i() === 0 && headingLevel && isInlineFlow(b) && b.kind !== "heading"} fallback={view(b)}>
+          <Show when={i() === 0 && headingLevel && isInlineFlow(b) && b.kind !== "heading"} fallback={view(b, i())}>
             <span class={`heading-text h${headingLevel}`} {...(coarseSpanAttrs(b.span) ?? {})}>{renderBlock(b, blockId, macroExpansion, format, tableOptions)}</span>
           </Show>
         </>
@@ -200,40 +205,39 @@ export function renderBlocks(
   );
 }
 
-/** Source text shown exactly as written: no inline parse, no typography, its
- *  spaces, tabs and line breaks kept (CRLF shows as one break). */
-function SourceText(props: { text: string }): JSX.Element {
-  return <span class="source-text" style={{ "white-space": "pre-wrap" }}>{props.text.replace(/\r\n/g, "\n")}</span>;
+/** Source text shown exactly as written: no inline parse, no typography,
+ *  its spaces, tabs and line breaks kept. */
+export function SourceText(props: { text: string }): JSX.Element {
+  return <span class="source-text" style={{ "white-space": "pre-wrap" }}>{props.text}</span>;
 }
 
-/** A property node: a `key:: value` group or a `#+key: value` line. */
-type PropertyNode = Extract<AstBlock, { kind: "properties" | "directive" }>;
-/** The exact source lines of a property node, in place of its chips. */
-type LiteralProperties = (group: PropertyNode) => string;
+/** An inline flow with nothing of its own to render: only spaces and breaks,
+ *  or a first line holding only a task word or priority. */
+function isSeparator(b: AstBlock): boolean {
+  return isInlineFlow(b) && b.inline.every((x) => x.k === "break" || x.k === "hardbreak" || (x.k === "plain" && !x.text.trim()));
+}
 
-/** Opening text (D-20261119-PG) is prose: every property node in it is its
- *  source lines, whole lines from the parser's span (so a leading tab or space
- *  stays). One shift and one UTF-16 walk per buffer; groups arrive in order. */
-function literalPropertiesOf(raw: string): LiteralProperties {
+/** What of opening text `raw` shows as its source: every property node (a
+ *  `key:: value` group or a `#+key: value` line) at any depth, from its line
+ *  start, and every top-level separator, from the end of the node before it.
+ *  The parser emits a span for every node. One shift and one UTF-16 walk per
+ *  buffer; nodes arrive in source order. */
+function openingSource(raw: string, top: readonly AstBlock[]): OpeningSource {
   const at = rebulletedSourceToRawUtf16Cursor(raw);
-  // The parser emits a span for every block node.
-  return (group) => {
-    const [first, last] = group.span!;
-    const start = at(first);
-    return raw.slice(raw.lastIndexOf("\n", start - 1) + 1, at(last)).replace(/\r?\n$/, "");
+  const separators = new Set(top.filter(isSeparator));
+  return {
+    literal(b, prev) {
+      const property = b.kind === "properties" || b.kind === "directive";
+      if (!property && !separators.has(b)) return undefined;
+      const after = prev ? at(prev.span![1]) : 0;
+      const start = at(b.span![0]);
+      return raw.slice(property ? Math.max(after, raw.lastIndexOf("\n", start - 1) + 1) : after, at(b.span![1]));
+    },
+    slice(span, starts) {
+      const text = raw.slice(at(span[0]), at(span[1]));
+      return text.startsWith(starts) ? text : undefined;
+    },
   };
-}
-
-/** A leading task marker or priority of opening text, with the spaces after
- *  it: Block.tsx draws them as chrome for a block, opening text keeps them as
- *  text. `ownLine` when nothing else is on that line. */
-function openingLead(raw: string, format: Format): { text: string; ownLine: boolean } | null {
-  const { marker_range, priority_range } = blockRegions(raw, format).header;
-  const lead = Math.max(marker_range?.[1] ?? 0, priority_range?.[1] ?? 0);
-  if (!lead) return null;
-  let end = utf8ToUtf16Cursor(raw)(lead);
-  while (raw[end] === " " || raw[end] === "\t") end++;
-  return { text: raw.slice(0, end), ownLine: end >= raw.length || raw[end] === "\n" || raw[end] === "\r" };
 }
 
 function renderBlock(b: AstBlock, blockId?: string, macroExpansion = false, format: Format = "md", tableOptions?: TableV2Options): JSX.Element {
@@ -412,8 +416,6 @@ function renderProps(b: Extract<AstBlock, { kind: "properties" }>, blockId?: str
 // renderer did not draw. Fragment hosts can provide only the code action,
 // leaving checkboxes inert without a matching raw source.
 // Only code widgets read editability; prose must not observe page-host revisions.
-type CodeEditAction = Accessor<((sourceByte: number) => void) | undefined>;
-export const BodySourceContext = createContext<{ raw?: string; codeEditAction?: CodeEditAction }>();
 
 // An in-block list from the AST (`ListItem[]`).
 function AstList(props: { items: AstListItem[]; blockId?: string; spanAttrs?: SpanDomAttrs; macroExpansion?: boolean; format?: Format; tableOptions?: TableV2Options }): JSX.Element {
@@ -494,16 +496,20 @@ function renderBody(raw: string, format: Format, blockId?: string, headingLevel?
 }
 
 /** Opening text: the same parse and renderer as a block body, with nothing
- *  lifted into chrome (no chips, badges, marker or live query). */
-function renderOpening(raw: string, format: Format, blockId?: string): JSX.Element {
+ *  lifted into chrome (no chips, badges, marker or live query). A Windows
+ *  line end is one line break, so the text is read with LF line ends. The
+ *  first line's task word, priority and leading blank lines are source text. */
+function renderOpening(text: string, format: Format, blockId?: string): JSX.Element {
+  const raw = text.replace(/\r\n/g, "\n");
   const parsed = parseBody(raw, format);
   if (isQuarantined(parsed)) return renderBlocks(parsed, blockId, undefined, false, format);
-  // A break-only paragraph is a blank line of the text: kept.
-  const blocks = parsed.filter((b) => !isInlineFlow(b) || b.inline.length > 0);
-  const lead = openingLead(raw, format);
-  return <BodySourceContext.Provider value={{ raw }}>
-    <Show when={lead}>{(l) => <><SourceText text={l().text} /><Show when={l().ownLine && blocks.length > 0}><br /></Show></>}</Show>
-    {renderBlocks(blocks, blockId, undefined, false, format, undefined, literalPropertiesOf(raw))}
+  const opening = openingSource(raw, parsed);
+  const first = parsed[0];
+  const firstInline = first && first.kind === "bullet" && !isSeparator(first) ? first.inline[0]?.span : undefined;
+  const lead = firstInline ? raw.slice(0, rebulletedSourceToRawUtf16Cursor(raw)(firstInline[0])) : "";
+  return <BodySourceContext.Provider value={{ raw, opening }}>
+    <Show when={lead}><SourceText text={lead} /></Show>
+    {renderBlocks(parsed, blockId, undefined, false, format)}
   </BodySourceContext.Provider>;
 }
 

@@ -43,7 +43,7 @@ import { renderPlain, renderQuotedPlain } from "./plainText";
 import { literalBlockOfLine } from "../editor/literalLines";
 import { visibleBody } from "./block";
 import { parseImageMetaBrace } from "./imageMeta";
-import { AstBody } from "./body";
+import { AstBody, SourceText } from "./body";
 import { codeFences } from "../editor/fences";
 import { backend } from "../backend";
 import { captureBinding } from "../binding";
@@ -64,6 +64,7 @@ import { SourceTaskCheckbox } from "../components/SourceTaskCheckbox";
 import { blockRef, setRaw, flushPage, formatForPage, formatForBlock, isBlockRefUuid, node as docNode, pageHeaderProperties } from "../document";
 import { PaneContext, focusedPaneId, openRouteInOtherPane } from "../panes";
 import { isQueryMacroName, queryMacroExtentAtSpan, type MacroExtent } from "../editor/queryMacro";
+import { BodySourceContext } from "./bodySource";
 import { QueryMacro, EmbedMacro, VideoMacro, TweetMacro, YoutubeTimestamp, ClozeMacro, ZoteroMacro } from "../components/Macro";
 import { NamespaceMacro } from "../components/Namespace";
 import { guideTargetForLink, isGuidePageName } from "../guide";
@@ -223,8 +224,16 @@ function renderInline(s: Inline, blockId?: string, spanMode = true, macroExpansi
       return <span class="org-target" {...((spanMode ? coarseSpanAttrs(s.span) : undefined) ?? {})}>{s.text}</span>;
     case "tag":
       return <PageRef name={astText(s.children)} blockId={blockId} tag spanAttrs={spanMode ? coarseSpanAttrs(s.span) : undefined} />;
-    case "macro":
+    case "macro": {
+      // Opening text (D-20261119-PG) shows a query macro as its source and
+      // never mounts a live query, as a hover preview does.
+      const opening = isQueryMacroName(s.name) ? useContext(BodySourceContext)?.opening : undefined;
+      if (opening) {
+        const source = !macroExpansion && s.span ? opening.slice(s.span, "{{") : undefined;
+        return <SourceText text={source ?? `{{${macroBody(s)}}}`} />;
+      }
       return renderMacroBody(macroBody(s), blockId, s.args, rawQueryMacro(s, blockId), hostSpan(s, spanMode, macroExpansion));
+    }
     case "latex":
       return <MathView tex={s.body} display={s.mode === "Displayed"} spanAttrs={spanMode ? coarseSpanAttrs(s.span) : undefined} />;
     case "timestamp":
