@@ -153,8 +153,10 @@ is resident and holds that exact panel, and otherwise applies the same rule to
 only the sources the explicit index lists for its names and their folded
 property keys (a first Linked References open never builds the graph-wide
 membership). A panel's members depend only on its names and own page, so both
-paths give one answer. Every listed page is
-registered under the names its panel resolver gives it. Parser-owned reference
+paths give one answer. Every listed page, and every spelling a
+reference target names (a property key whose fold another title also reaches
+included), is registered under the names its panel resolver gives it, so every
+All pages row counts the size of the panel its name opens. Parser-owned reference
 evidence contributes one source/block membership per reached panel, deduplicated
 across names. Source arrays and reverse panel leaves share immutable snapshots;
 publications replace changed contributions and registrations. A target can reach
