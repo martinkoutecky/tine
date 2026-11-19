@@ -29,10 +29,14 @@ const same = (a: string | null, b: string) => (a ?? "").trim() === b.trim();
 /** Make `edits` through the ordinary page-property write and save
  *  (`setPageProperty`: base-revision guard, normal save). Pages not loaded are
  *  loaded first; then, with no await in between, every property is checked
- *  against the value the backend read (a comparison, no reread) and written.
- *  Nothing is written unless every page is fresh and the binding is current.
- *  The binding is checked after every save; a failed save or a retired binding
- *  puts the edits back (`undo`). Cost: one page read per page not loaded, the
+ *  against the value the backend read (a comparison, no reread). Nothing is
+ *  written unless every page is fresh and the binding is current. The edits
+ *  are then made in order, each page checked again, written and published
+ *  before the next, so a crash between saves leaves a prefix of them (the
+ *  callers put an edit that adds a value before one that removes it); the
+ *  binding is checked after every save. A failed save, a page changed
+ *  meanwhile or a retired binding puts the made edits back (`undo`, in
+ *  reverse order). Cost: one page read per page not loaded, the
  *  edits, and one guarded save per page. `header`: the page-header root
  *  (by id) the caller decided before this edit (the day move's plan), so
  *  `undo` writes the old value back into that root even when this edit
@@ -57,16 +61,23 @@ export async function applyHelperEdits(edits: readonly HelperEdit[]): Promise<Ap
     const holds = (i: number, value: string | null) => !!pageByName(names[i]) && same(readPageProperty(names[i], edits[i].key), value ?? "");
     const stale = edits.findIndex((edit, i) => !owner() || !holds(i, edit.before));
     if (stale >= 0) return refuse("changed", edits[stale].page);
-    edits.forEach((edit, i) => setPageProperty(names[i], edit.key, edit.after));
+    // One page at a time, in order, each published before the next is edited
+    // (a crash between saves, KC2SE): the tag union is on disk before the
+    // source's tag line goes; the put-back runs in reverse.
     const undo = async () => {
       if (!owner()) return false;
       // A page no longer loaded cannot be put back: that is a failed restore.
       if (names.some((name) => !pageByName(name))) return false;
-      edits.forEach((edit, i) => { if (holds(i, edit.after)) setPageProperty(names[i], edit.key, edit.before, edit.header); });
-      const saved = await Promise.all(names.map((name) => flushPage(name)));
-      return owner() && saved.every(Boolean);
+      for (let i = edits.length - 1; i >= 0; i--) {
+        if (!holds(i, edits[i].after)) continue;
+        setPageProperty(names[i], edits[i].key, edits[i].before, edits[i].header);
+        if (!(await flushPage(names[i])) || !owner()) return false;
+      }
+      return true;
     };
     for (const [i, name] of names.entries()) {
+      if (!owner() || !holds(i, edits[i].before)) return refuse(await undo() ? "changed" : "unrestored", edits[i].page);
+      setPageProperty(name, edits[i].key, edits[i].after);
       if (!holds(i, edits[i].after) || !(await flushPage(name)) || !owner()) {
         return refuse(await undo() ? "unsaved" : "unrestored", edits[i].page);
       }

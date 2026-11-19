@@ -99,6 +99,8 @@ mod rename_would_change;
 #[path = "cm_merge_rules.rs"]
 mod cm_merge_rules;
 
+#[path = "cm_helper_preview_cost.rs"]
+mod cm_helper_preview_cost;
 #[path = "cm_rename_helpers.rs"]
 mod cm_rename_helpers;
 

@@ -146,12 +146,16 @@ A helper writes only through `setPageProperty` and the page host's guarded save
 (`pinPageNearViewport`) before the first is loaded and stay until the request and
 any put-back are over, on every exit, so neither many pages nor the request's own
 loads evict one; a put-back that finds a page gone counts as failed. Before writing, every page must still
-read the value the question read, and the graph binding must be current; the check
-and the writes happen with no wait between them. After each save the binding is
-checked again. If a save fails, the binding retires, or the request does not happen
-(refused, busy, an unsaved page, an error), the helper puts back its own values:
-each property that still holds the helper's value gets its old value back and is
-saved; anything else typed meanwhile stays. A retired binding puts nothing back
+read the value the question read, and the graph binding must be current; that check
+happens with no wait before the first write. The edits are then made one page at a
+time, in order, each page checked again, written and published before the next is
+edited, and the kept page's tag union comes before the removal of the source's
+`tags::` line, so a crash between two saves never leaves a tag on no page. After each
+save the binding is checked again. If a save fails, a page changed meanwhile, the
+binding retires, or the request does not happen (refused, busy, an unsaved page, an
+error), the helper puts back its own values in reverse order: each property that
+still holds the helper's value gets its old value back and is saved before the next;
+anything else typed meanwhile stays. A retired binding puts nothing back
 (the window no longer holds that graph). An `uncertain` request keeps the edits,
 since it may have committed.
 
@@ -194,6 +198,13 @@ loaded copy has unsaved input), so a twin merged away by the contested-name
 helper cannot receive the notes. After the confirmation the receiving page
 must be the file the dialog named, or still have no file, by the store's name
 answer (`resolve`); otherwise nothing moves and the rename is asked again.
+A crash after the alias save and before the move leaves the helper state above (the
+day without the alias line, its notes all on it). The move drafts the receiving
+page's text first, then saves the page, then the day; a crash between them reopens
+with the notes on both pages, the duplicate an interrupted move leaves
+(`docs/storage-model/spec/SPEC-s2.md` §1), never with a note on neither (proof
+`src/renameHelpers.interrupt.test.ts`, and a real kill at every boundary with a cold
+relaunch, `page_host/production_move_crash_tests.rs`).
 Cost: one read of the destination when not loaded, one name resolution, one
 host move, one write per file, plus the alias save for MOA.
 

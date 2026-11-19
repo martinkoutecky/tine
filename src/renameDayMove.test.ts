@@ -466,6 +466,40 @@ describe("renaming a day moves its notes to a page", () => {
     expect(writes.filter((key) => key === DAY_FILE)).toHaveLength(1 + aliasSaves);
   });
 
+  // KC2SE (reviews 2171d5664 / d4f72086d follow-up 1, PC-3, PC-8): the same
+  // operation counts on a 5,000-note day, own alias included; the window's
+  // wall time (median of 3, node + jsdom) is printed, not asserted (it moves
+  // with machine load; the linear-work test above pins the growth).
+  it("a 5,000-note day costs the same operations, and its move time is recorded", async () => {
+    const notes = Array.from({ length: 5_000 }, (_, i) => `note ${i} with some text`);
+    const times: number[] = [];
+    for (let run = 0; run < 3; run++) {
+      resetStore();
+      setToasts([]);
+      const day = page(DAY, DAY_FILE, notes.map(block), "alias:: Launch day");
+      loadFeed([day]);
+      const spies = await bindDisk([day]);
+      absent();
+      const reads = vi.mocked(backend().getPage);
+      offer(dayMove({ name: "Launch day", path: "pages/Launch day.md", release }));
+      const started = performance.now();
+      const done = renameOrMergePage(DAY, "Launch day", target);
+      await answer(true);
+      expect(await done).toEqual({ moved: "Launch day", kind: "page" });
+      expect(await flushAll()).toBe(true);
+      times.push(performance.now() - started);
+      expect(reads).toHaveBeenCalledTimes(1);
+      expect(spies.move).toHaveBeenCalledTimes(1);
+      expect(spies.submit).toHaveBeenCalledTimes(1);
+      expect(writes.filter((key) => key === "pages/Launch day.md")).toHaveLength(1);
+      expect(writes.filter((key) => key === DAY_FILE)).toHaveLength(2);
+      expect(saved("pages/Launch day.md")).toEqual(notes);
+      vi.restoreAllMocks();
+    }
+    times.sort((a, b) => a - b);
+    console.info(`KC2SE day move, 5,000 notes: median ${times[1].toFixed(0)} ms (${times.map((t) => t.toFixed(0)).join(", ")})`);
+  }, 60_000);
+
   // Round 4 (fresh review 0076d3d2b), finding 1: an own-alias move that does
   // not happen puts the alias back into the header it was released from, even
   // when the release emptied that header, so the day reads as before (no
