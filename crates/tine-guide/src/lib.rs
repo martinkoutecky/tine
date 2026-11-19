@@ -1976,6 +1976,7 @@ mod query_guide_tests {
             "**Count**, **Sum**, **Average**, or **None**",
             "Built-in columns such as Page and State have no property total",
             "leaves the total blank or shows why it is unavailable",
+            "With breadcrumbs off, results are evenly spaced across source pages",
             "`tine.fields::` remains the table's schema",
             "number of blocks or pages",
             "**declare type…**",

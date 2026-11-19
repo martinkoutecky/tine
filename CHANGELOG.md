@@ -9,6 +9,7 @@ The format follows [Keep a Changelog](https://keepachangelog.com/); versions use
 ## [Unreleased]
 
 ### Fixed
+- Query results have even spacing when breadcrumbs are turned off, including between results from different source pages (#881).
 - Help for the `tine export` subcommands explains which graph path to pass and where static and live publications are written (#588).
 - The first Linked References panel you open reads only the pages that reference it again, as before 0.10: on a 10,000-page graph it took about half a second instead of a few milliseconds (REG-PERF-FIRST-LINKED-REFS-OPEN).
 - The first edit after All pages has shown its reference counts, made in Tine or in another editor, no longer pays for a scan of the whole graph: on a 10,000-page graph it took about 200 ms instead of 40 ms (REG-PERF-OUTSIDE-EDIT-REFRESH-COUNTS).
