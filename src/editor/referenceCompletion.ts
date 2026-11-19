@@ -4,6 +4,7 @@ import { utf16ToUtf8ByteOffset, utf8ByteToUtf16Offset } from "../render/spans";
 import { parse_inline_json } from "../render/wasm/lsdoc_wasm.js";
 import { isBareTagPrefix } from "../tags";
 import type { Trigger } from "./autocomplete";
+import { offsetInLiteral } from "./inlineLiteral";
 
 function parseInline(source: string, format: Format): Inline[] {
   return JSON.parse(parse_inline_json(source, format === "org")) ?? [];
@@ -19,13 +20,60 @@ function inlineChildren(node: Inline): Inline[] | undefined {
   if (node.k === "link") return node.label;
 }
 
-function closedAt(nodes: Inline[], marker: number): Inline | undefined {
+function closedAt(nodes: Inline[], marker: number, afterBackslash = false): Inline | "literal" | undefined {
   for (const node of nodes) {
     if (!node.span || marker < node.span[0] || marker >= node.span[1]) continue;
     if (referenceKind(node) || node.k === "macro") return node;
+    if (node.k === "code" || node.k === "verbatim" || node.k === "latex") return "literal";
+    if (node.k === "link" && node.url.type === "complex") {
+      // A bare or angle URL's synthetic label covers its entire URL source.
+      const label = node.label?.[0];
+      if (label?.k === "plain" && label.span && (
+        (label.span[0] === node.span[0] && label.span[1] === node.span[1]) ||
+        (label.span[0] === node.span[0] + 1 && label.span[1] === node.span[1] - 1)
+      )) return "literal";
+    }
+    if (afterBackslash && node.k === "plain" && node.span_map) {
+      let previousEnd = node.span[0];
+      for (const [, start, length] of node.span_map) {
+        if (start === marker && previousEnd < marker) return "literal";
+        previousEnd = start + length;
+      }
+    }
     const children = inlineChildren(node);
-    if (children) return closedAt(children, marker);
+    if (children) return closedAt(children, marker, afterBackslash);
   }
+}
+
+function linePrefix(chunk: string): string {
+  const lf = chunk.indexOf("\n"), cr = chunk.indexOf("\r");
+  return chunk.slice(0, Math.min(lf === -1 ? chunk.length : lf, cr === -1 ? chunk.length : cr));
+}
+
+function literalAhead(raw: string, lineStart: number, caret: number, marker: number, format: Format): boolean {
+  const closers = format === "md" ? /[`$>]|\\[)\]]/ : /[~=$>]|\\[)\]]/;
+  let scanned = caret;
+  for (let size = Math.max(32, caret - lineStart); scanned < raw.length; size *= 2) {
+    const limit = Math.min(caret + size, raw.length);
+    const from = raw[scanned - 1] === "\\" ? scanned - 1 : scanned;
+    const chunk = linePrefix(raw.slice(from, limit));
+    const end = from + chunk.length;
+    if (end > scanned && closers.test(chunk) &&
+        closedAt(parseInline(raw.slice(lineStart, end), format), marker) === "literal") return true;
+    if (end < limit) return false;
+    scanned = limit;
+  }
+  return false;
+}
+
+function multilineLiteralAt(raw: string, at: number, format: Format): boolean {
+  const delimiters = format === "md" ? ["``", "$$"] : ["$$"];
+  return delimiters.some(delimiter => {
+    const open = raw.lastIndexOf(delimiter, at - 1);
+    if (open === -1) return false;
+    const close = raw.indexOf(delimiter, at + 1);
+    return close !== -1 && raw.slice(open + 2, close).includes("\n");
+  }) && offsetInLiteral(raw, format, at);
 }
 
 function startsReferenceBefore(nodes: Inline[], boundary: number): boolean {
@@ -34,12 +82,18 @@ function startsReferenceBefore(nodes: Inline[], boundary: number): boolean {
   ));
 }
 
+function hasSibling(raw: string, caret: number, replaceEnd: number, probeEnd: number, format: Format): boolean {
+  const suffix = raw.slice(caret, probeEnd);
+  return startsReferenceBefore(parseInline(suffix, format), utf16ToUtf8ByteOffset(suffix, replaceEnd - caret));
+}
+
 /** lsdoc allows a plain page or block ref to absorb another opener when the
  * first ref is unfinished. Parse that later text on its own before agreeing
  * to replace it. A genuine nested page ref has its own parser node. */
 function referenceEnd(raw: string, start: number, caret: number, kind: "page" | "block", format: Format,
   nestedOnly = false): number {
   const closer = kind === "page" ? "]]" : "))";
+  const otherCloser = kind === "page" ? "))" : "]]";
   // Empty editor auto-pairs are scaffolds. lsdoc requires a nonempty name.
   if (!nestedOnly && caret === start + 2 && raw.startsWith(closer, caret)) return caret + 2;
   if (!parserReady()) return caret;
@@ -48,24 +102,27 @@ function referenceEnd(raw: string, start: number, caret: number, kind: "page" | 
   // rereading the reference prefix and double until lsdoc resolves the span.
   let scanned = caret;
   let needsSibling = false;
+  let mayWrapSibling = false;
+  let lastReplaceEnd = caret;
+  let siblingProbeEnd = caret;
   for (let size = Math.max(32, caret - start); ; size *= 2) {
     const limit = Math.min(caret + size, raw.length);
     const from = Math.max(start + 2, scanned - 1);
-    const chunk = raw.slice(from, limit);
-    const newline = chunk.search(/[\r\n]/);
-    const done = newline !== -1 || limit === raw.length;
-    const end = newline === -1 ? limit : from + newline;
+    const chunk = linePrefix(raw.slice(from, limit));
+    const end = from + chunk.length;
+    const done = end < limit || limit === raw.length;
     scanned = limit;
-    const lineChunk = newline === -1 ? chunk : chunk.slice(0, newline);
-    if (!lineChunk.includes(closer) && !(needsSibling && (done || /\]\]|\)\)/.test(lineChunk)))) {
-      if (done) return caret;
+    if (!chunk.includes(closer) && !(needsSibling && chunk.includes(otherCloser)) &&
+        !(mayWrapSibling && /[`$>\\}*~=_^+/)\]]/.test(chunk))) {
+      if (done) break;
       continue;
     }
 
     const sample = raw.slice(start, end);
     const owner = parseInline(sample, format)[0];
     if (!owner?.span || owner.span[0] !== 0 || referenceKind(owner) !== kind) {
-      if (done) return caret;
+      lastReplaceEnd = caret;
+      if (done) break;
       continue;
     }
     const replaceEnd = start + utf8ByteToUtf16Offset(sample, owner.span[1]);
@@ -75,18 +132,20 @@ function referenceEnd(raw: string, start: number, caret: number, kind: "page" | 
     const mayNest = kind === "page" && later.includes("[[");
     needsSibling = later.includes("[[") || (later.includes("((") && (kind === "block" || later.includes(",")));
     if (!needsSibling) return nestedOnly ? caret : replaceEnd;
-    if (done || !mayNest) {
-      const suffix = raw.slice(caret, end);
-      const boundary = utf16ToUtf8ByteOffset(suffix, later.length);
-      if (startsReferenceBefore(parseInline(suffix, format), boundary)) return caret;
-      if (done) return nestedOnly ? caret : replaceEnd;
-    }
+    // A later delimiter may complete a wrapper around the apparent sibling.
+    mayWrapSibling = /[`$<\\{*~=_^+/]|(?:^|[^\[])\[(?!\[)/.test(later);
+    if (!mayNest && hasSibling(raw, caret, replaceEnd, end, format)) return caret;
+    lastReplaceEnd = replaceEnd;
+    siblingProbeEnd = mayNest ? end : caret;
+    if (done) break;
   }
+  if (nestedOnly || lastReplaceEnd === caret) return caret;
+  return siblingProbeEnd > caret && hasSibling(raw, caret, lastReplaceEnd, siblingProbeEnd, format) ? caret : lastReplaceEnd;
 }
 
 /** Owns the active reference marker, its query and its replacement span.
- * Reads the current line prefix and, for a page/block pick, only as far right
- * as needed to resolve its span. No graph or editor state is consulted. */
+ * Checks the current line for inline ownership and uses block regions for
+ * possible multiline literals. Right-hand delimiters bound the inline probes. */
 export function referenceCompletion(raw: string, before: string, lineStart: number, caret: number, format: Format): Trigger | null {
   const page = before.lastIndexOf("[[");
   const block = before.lastIndexOf("((");
@@ -97,11 +156,23 @@ export function referenceCompletion(raw: string, before: string, lineStart: numb
 
   let prefix: Inline[] | undefined;
   const closed = (at: number) => {
-    if (!parserReady() || !/\]\]|\)\)|\}\}/.test(before.slice(at))) return undefined;
+    if (!parserReady()) return undefined;
+    if (lineStart > 0 && multilineLiteralAt(raw, lineStart + at, format)) return "literal" as const;
+    const afterBackslash = before[at - 1] === "\\";
+    const mayOpenLiteral = (format === "md" ? /[`$<]|\\(?:\[|\()/ : /[~=$<]|\\(?:\[|\()/).test(before.slice(0, at));
+    if (!afterBackslash && !mayOpenLiteral && !before.includes("://") && !/\]\]|\)\)|\}\}/.test(before.slice(at))) return undefined;
     prefix ??= parseInline(before, format);
     const marker = utf16ToUtf8ByteOffset(before, at);
-    const owner = closedAt(prefix, marker);
-    if (owner || !before.endsWith("))") || raw[caret] !== ")") return owner;
+    const owner = closedAt(prefix, marker, afterBackslash);
+    if (owner) return owner;
+    if (mayOpenLiteral && literalAhead(raw, lineStart, caret, marker, format)) return "literal" as const;
+    if (afterBackslash && format === "org") {
+      // Org retains the escape byte in plain text. Ask lsdoc if the same
+      // opener can make a reference with a minimal complete name.
+      const sample = before.slice(0, at + 2) + (before[at] === "[" ? "x]]" : "x))");
+      if (!closedAt(parseInline(sample, format), marker)) return "literal" as const;
+    }
+    if (!before.endsWith("))") || raw[caret] !== ")") return undefined;
     // An unfinished Markdown wrapper can parse as a search URL that borrows
     // the last ')' of a block reference. Include the wrapper's next token.
     return closedAt(parseInline(before + ")", format), marker);
@@ -120,7 +191,7 @@ export function referenceCompletion(raw: string, before: string, lineStart: numb
         query: kind === "page" && replaceEnd > caret ? raw.slice(start + 2, replaceEnd - 2) : query,
         ...(replaceEnd > caret ? { replaceEnd } : {}) };
     }
-    if (!(tag && hash > marker) && ended?.k === "link" && ended.url.type === "page_ref" && ended.span) {
+    if (!(tag && hash > marker) && ended !== "literal" && ended?.k === "link" && ended.url.type === "page_ref" && ended.span) {
       const outer = lineStart + utf8ByteToUtf16Offset(before, ended.span[0]);
       if (outer < lineStart + page && raw.startsWith("[[", outer)) {
         const replaceEnd = referenceEnd(raw, outer, caret, "page", format, true);

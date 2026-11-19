@@ -119,11 +119,17 @@ Fence and property recognition are done: code containers come from `literal_bloc
 (`fences.ts`), property lines and hidden-property split/reattach from `properties` (`splitProps`).
 Both editors give an active `[[`, `((` or `#` trigger its usual reference search inside a
 Markdown property value. The shared reference completion decision uses lsdoc's inline spans
-to retire markers inside a reference the caret has left. An enclosing reference or a fresh tag
-can still offer its picker. Otherwise the ordinary property-value rules resume.
+to retire markers inside a reference the caret has left. It uses the same parser's literal and
+URL spans and Markdown escape source map to keep literal markers out of reference search.
+This includes a closed inline code or math span whose closer is to the right of the caret.
+For continuations involving more than one line, the parser's block regions supply the literal span.
+An enclosing reference or a fresh tag can still offer its picker. Otherwise the ordinary
+property-value rules resume.
 For a complete same-line reference, the decision supplies the replacement span and the whole
 page query (GH #888). The replacement preserves independently parsed later references. Bare tags
-replace through the caret.
+replace through the caret. When a sibling reference may own a closer, lookahead keeps the last
+delimiter-bounded parse window. The detector scans to the line boundary if necessary and sends
+no extra text to lsdoc when the remaining suffix contains no relevant delimiter.
 Both editors ask `properties.ts` for Markdown value positions through the existing
 accepted-property-line parser; only then does autocomplete split comma-separated
 query spans. Typing and pasting (including typing inside an existing value) share
