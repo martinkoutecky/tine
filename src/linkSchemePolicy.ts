@@ -45,7 +45,19 @@ export function checkExternalLink(
   if (refusedLinkScheme(scheme) || (platform === "browser" && nativeOnly)) {
     throw new Error(`${scheme}: links are never opened`);
   }
-  if (!isDirectExternalScheme(scheme) && !nativeOnly && confirmedScheme !== scheme) {
+  // Consent is stored lowercase; the native side compares schemes case-insensitively (#984 review).
+  if (!isDirectExternalScheme(scheme) && !nativeOnly && confirmedScheme?.toLowerCase() !== scheme) {
     throw new Error(`opening a ${scheme}: link needs your confirmation`);
   }
+}
+
+/** Whether an anchor may keep `dest` as its `href` (browser default navigation,
+ * middle-click, "open in new tab"). Refused schemes never do. In a published
+ * reader only web, mail and scheme-less (internal) destinations do: every
+ * other scheme goes through the checked opener or not at all (GH #984). O(URL bytes). */
+export function navigableHref(dest: string, published: boolean): boolean {
+  const scheme = linkScheme(dest);
+  if (scheme === null) return true;
+  if (refusedLinkScheme(scheme)) return false;
+  return !published || isDirectExternalScheme(scheme);
 }

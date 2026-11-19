@@ -1,5 +1,6 @@
 import policy from "../../fixtures/html-sanitize-policy.json";
 import DOMPurify from "dompurify";
+import { navigableHref } from "../linkSchemePolicy";
 
 // The raw-HTML render policy — the single allowlist that both render surfaces
 // apply to raw inline/block HTML embedded in a Markdown/Org block.
@@ -116,7 +117,7 @@ export interface HtmlPresentation { html: string; localImages: (string | null)[]
  * O(fragment bytes/nodes); no IPC, fetching, shared hooks or retained DOM cache.
  * Browser and native export security policies stay distinct in the shared JSON.
  */
-export function rawHtmlPresentation(text: string, allowIframe = false): HtmlPresentation {
+export function rawHtmlPresentation(text: string, allowIframe = false, published = false): HtmlPresentation {
   const root = document.implementation.createHTMLDocument("").createElement("div");
   root.innerHTML = text;
   const frame = allowIframe ? root.querySelector("iframe") : null;
@@ -154,6 +155,10 @@ export function rawHtmlPresentation(text: string, allowIframe = false): HtmlPres
       const value = element.getAttribute(attr);
       if (value !== null && hasDeniedResourceScheme(value)) element.removeAttribute(attr);
     }
+  }
+  // DOMPurify admits more URI schemes than the outbound-link policy (GH #984).
+  for (const anchor of root.querySelectorAll("a[href]")) {
+    if (!navigableHref(anchor.getAttribute("href") ?? "", published)) anchor.removeAttribute("href");
   }
   return { html: root.innerHTML, localImages: [...root.querySelectorAll("img")].map((image) => paths.get(image) ?? null), iframe: null };
 }
