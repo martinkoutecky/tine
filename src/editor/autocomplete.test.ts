@@ -540,10 +540,171 @@ describe("completion replacement (OG accept-range parity)", () => {
         const parsedBytes = inline.mock.calls.reduce((bytes, [source]) => bytes + Buffer.byteLength(source), 0);
         expect(parsedBytes).toBeGreaterThan(0);
         expect(parsedBytes).toBeLessThan(128);
+        expect(inline.mock.calls.length).toBeLessThanOrEqual(3);
       }
     } finally {
       inline.mockRestore();
     }
+  });
+
+  it.each([
+    ["`prior` [[pro", " title]]", "`later`", "pro title"],
+    ["[[pro", " gr_am]]", "end_", "pro gr_am"],
+  ])("keeps parser input bounded around %s%s with a later delimiter", (before, after, later, query) => {
+    const raw = before + after + " x".repeat(512 * 1024) + " " + later;
+    const inline = vi.spyOn(wasm, "parse_inline_json");
+    try {
+      expect(detectTrigger(raw, before.length)).toMatchObject({ kind: "page", query, replaceEnd: before.length + after.length });
+      expect(inline.mock.calls.length).toBeLessThanOrEqual(3);
+      expect(inline.mock.calls.reduce((bytes, [source]) => bytes + Buffer.byteLength(source), 0)).toBeLessThan(128);
+    } finally {
+      inline.mockRestore();
+    }
+  });
+
+  describe.each(["md", "org"] as const)("PICK-853c in %s", format => {
+    it.each([
+      ["((", " https://x.test/(keep)) tail"],
+      ["((", " http://x.test/(keep)) tail"],
+      ["((", " ftp://x.test/(keep)) tail"],
+      ["((", " https://x.test/?q=(keep)) tail"],
+      ["((", " https://x.test/#(keep)) tail"],
+      ["((", " https://x.test/[keep))] tail"],
+      ["((", " <https://x.test/(keep))> tail"],
+      ["((", " #keep))suffix"],
+      ["[[", " [x] #tag]], [[Existing]]"],
+      ["[[", "ramming #x]]"],
+      ["#[[", "ramming #x]]"],
+      ["[[", " **Keep**]]"],
+      ...(format === "org" ? [
+        ["[[", " /Keep ]] intact/"],
+        ["#[[", " /Keep ]] intact/"],
+        ["((", " /Keep )) intact/"],
+      ] : []),
+    ])("preserves markup after %spro before %s", (opener, suffix) => {
+      for (const newline of ["\n", "\r\n"]) {
+        const start = `Body${newline}project:: ${opener === "#[[" ? "#" : ""}`.length;
+        const prefix = `Body${newline}project:: ${opener}pro`;
+        const caret = prefix.length;
+        const raw = prefix + suffix + newline + "later";
+        const kind = opener === "((" ? "block" : "page";
+        const insert = kind === "block" ? "((programming-id))" : "[[Programming]]";
+        const trigger = detectTrigger(raw, caret, format)!;
+        expect(trigger).toEqual({ kind, query: "pro", start, end: caret });
+        expect(applyCompletion(raw, start, completionReplacementEnd(raw, trigger, insert), insert).raw)
+          .toBe(raw.slice(0, start) + insert + suffix + newline + "later");
+      }
+    });
+
+    it.each([
+      ["[[pro", " gr_am]]", "a/b ", "pro gr_am"],
+      ["[[pro", " [x] title]]", "a[bc] ", "pro [x] title"],
+    ])("bounds parser calls and bytes for %s%s before a 1 MiB %j tail", (prefix, title, pattern, query) => {
+      const inline = vi.spyOn(wasm, "parse_inline_json");
+      const block = vi.spyOn(wasm, "parse_block_bundle_json");
+      try {
+        const before = `project:: ${prefix}`;
+        const reference = before + title;
+        const tail = pattern.repeat(Math.ceil(1024 * 1024 / pattern.length)).slice(0, 1024 * 1024);
+        // Org reads `_am` as a subscript. The byte limit applies to both replacement decisions.
+        const plain = format !== "org" || !title.includes("_");
+        for (const separator of [" ", "\n", "\r\n"]) {
+          inline.mockClear();
+          block.mockClear();
+          expect(detectTrigger(reference + separator + tail, before.length, format)).toEqual({
+            kind: "page", query: plain ? query : "pro", start: "project:: ".length, end: before.length,
+            ...(plain ? { replaceEnd: reference.length } : {}),
+          });
+          expect(block).not.toHaveBeenCalled();
+          expect(inline.mock.calls.length).toBeLessThanOrEqual(3);
+          expect(inline.mock.calls.reduce((bytes, [source]) => bytes + Buffer.byteLength(source), 0)).toBeLessThan(128);
+        }
+      } finally {
+        block.mockRestore();
+        inline.mockRestore();
+      }
+    });
+
+    it.each([
+      ["((Alpha [[be|ta))", "block", "Alpha [[be"],
+      ...["[[", "#[["].flatMap(opener => [
+        [`${opener}Math ((not|ation]]`, "page", "Math ((notation"],
+        [`${opener}Math ((not|ation)) tail]]`, "page", "Math ((notation)) tail"],
+        [`${opener}Math ((nota)) ti|tle]]`, "page", "Math ((nota)) title"],
+      ]),
+    ])("uses the enclosing reference at %s", (marked, kind, query) => {
+      for (const newline of ["\n", "\r\n"]) {
+        const prefix = `Body${newline}project:: `;
+        const reference = marked.replace("|", "");
+        const start = prefix.length + Number(marked.startsWith("#"));
+        const caret = prefix.length + marked.indexOf("|");
+        const replaceEnd = prefix.length + reference.length;
+        const raw = prefix + reference + ", rest";
+        const trigger = detectTrigger(raw, caret, format)!;
+        expect(trigger).toEqual({ kind, query, start, end: caret, replaceEnd });
+        const insert = kind === "page" ? "[[Math]]" : "((target))";
+        expect(applyCompletion(raw, start, completionReplacementEnd(raw, trigger, insert), insert).raw)
+          .toBe(raw.slice(0, start) + insert + ", rest");
+      }
+    });
+
+    it.each([["[[Math ((not", "ation]]", "))", "page"], ["((Alpha [[be", "ta))", "]]", "block"]])(
+      "limits parser input to the enclosing reference in %s%s", (before, after, laterCloser, kind) => {
+        const raw = before + after + " x".repeat(512 * 1024) + laterCloser;
+        const inline = vi.spyOn(wasm, "parse_inline_json");
+        try {
+          expect(detectTrigger(raw, before.length, format)).toMatchObject({ kind, replaceEnd: before.length + after.length });
+          expect(inline.mock.calls.length).toBeLessThanOrEqual(3);
+          expect(inline.mock.calls.reduce((bytes, [source]) => bytes + Buffer.byteLength(source), 0)).toBeLessThan(128);
+        } finally {
+          inline.mockRestore();
+        }
+      },
+    );
+
+    it.each(["[[pro", "#[[pro", "((pro", "#pro"])("ignores %s on the opening line of multiline math", marker => {
+      for (const newline of ["\n", "\r\n"]) {
+        const before = `$$ text ${marker}`;
+        expect(detectTrigger(`${before}${newline}more${newline}$$`, before.length, format)).toBeNull();
+      }
+    });
+  });
+
+  it.each(["[keep](https://x.test/DEST/abc)", "![keep](https://x.test/DEST/abc)",
+    "[keep](<https://x.test/DEST/abc>)", "[keep](relative/DEST/abc)"])(
+    "uses the format's parser for Markdown-style destination %s", link => {
+      for (const [marker, kind] of [["[[pro|]]", "page"], ["#[[pro|]]", "page"], ["((pro|))", "block"], [" #pro|", "tag"]]) {
+        for (const newline of ["\n", "\r\n"]) {
+          const marked = `Body${newline}project:: ${link.replace("DEST", marker)}${newline}later`;
+          const raw = marked.replace("|", "");
+          expect(detectTrigger(raw, marked.indexOf("|"), "md"))
+            .toMatchObject({ kind: "property-value", property: "project" });
+          expect(detectTrigger(raw, marked.indexOf("|"), "org")).toMatchObject({ kind });
+        }
+      }
+    },
+  );
+
+  it.each(["[[pro|", "#[[pro|", "((pro|))", " #pro|"])("ignores %s in a native Org link destination", marker => {
+    for (const newline of ["\n", "\r\n"]) {
+      const org = `Body${newline}[[https://example.org/${marker}/abc][keep]]`;
+      expect(detectTrigger(org.replace("|", ""), org.indexOf("|"), "org")).toBeNull();
+    }
+  });
+
+  it.each([["{{embed [[pro|}}", "page"], ["{{embed ((pro|))}}", "block"], ["[label]([[pro|]])", "page"]])(
+    "keeps the reference picker available when authoring %s", (marked, kind) => {
+      expect(detectTrigger(marked.replace("|", ""), marked.indexOf("|"))).toMatchObject({ kind, query: "pro" });
+    },
+  );
+
+  it("keeps the wrapper when picking a block reference used as a Markdown link destination", () => {
+    const raw = "[label](((old id)))";
+    const trigger = detectTrigger(raw, raw.indexOf(" id"))!;
+    expect(trigger).toMatchObject({ kind: "block", query: "old" });
+    const insert = "((selected))";
+    expect(applyCompletion(raw, trigger.start, completionReplacementEnd(raw, trigger, insert), insert).raw)
+      .toBe("[label](((selected)))");
   });
 
   it.each([
@@ -613,11 +774,8 @@ describe("completion replacement (OG accept-range parity)", () => {
 
   it.each([
     " [x] title",
-    " [x] #tag",
-    " #[[child]] title",
     " [ title",
     " \\]] title",
-    " [[child]] title",
   ])("ranks and replaces the same whole page reference containing %s", suffix => {
     const prefix = "project:: [[pro";
     const raw = `${prefix}${suffix}]], [[Existing]]`;
@@ -626,6 +784,19 @@ describe("completion replacement (OG accept-range parity)", () => {
     const end = completionReplacementEnd(raw, trigger, "[[Programming]]");
     expect(applyCompletion(raw, trigger.start, end, "[[Programming]]").raw).toBe("project:: [[Programming]], [[Existing]]");
   });
+
+  it.each([" [x] #tag", " #[[child]] title", " [[child]] title"])(
+    "ranks the prefix and keeps markup in the page reference containing %s (PICK-853c)", suffix => {
+      const prefix = "project:: [[pro";
+      const following = `${suffix}]], [[Existing]]`;
+      const raw = prefix + following;
+      const trigger = detectTrigger(raw, prefix.length)!;
+      expect(trigger).toEqual({ kind: "page", query: "pro", start: "project:: ".length, end: prefix.length });
+      const insert = "[[Programming]]";
+      expect(applyCompletion(raw, trigger.start, completionReplacementEnd(raw, trigger, insert), insert).raw)
+        .toBe(`project:: ${insert}${following}`);
+    },
+  );
 
   it("ranks and replaces the whole bracketed tag without changing its marker", () => {
     const raw = "project:: #[[pro [x] title]], [[Existing]]";

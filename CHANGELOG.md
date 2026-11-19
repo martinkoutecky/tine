@@ -9,7 +9,7 @@ The format follows [Keep a Changelog](https://keepachangelog.com/); versions use
 ## [Unreleased]
 
 ### Fixed
-- Typing `[[` in a property value finds existing pages immediately, including in a newly inserted template. Block references and tags also open their search menus in property values. Picking a match keeps later values on the line. Ordinary property suggestions resume after you leave a closed reference and stay available for literal markers in code, math, URLs, or escaped text (#853).
+- Typing `[[` in a property value finds existing pages immediately, including in a newly inserted template. Block references and tags also open their search menus in property values. Picking a match keeps later values and markup after the caret. Ordinary property suggestions resume after you leave a closed reference and stay available for literal markers in code, math, URLs, link destinations or escaped text (#853).
 - The first Linked References panel you open reads only the pages that reference it again, as before 0.10: on a 10,000-page graph it took about half a second instead of a few milliseconds (REG-PERF-FIRST-LINKED-REFS-OPEN).
 - The first edit after All pages has shown its reference counts, made in Tine or in another editor, no longer pays for a scan of the whole graph: on a 10,000-page graph it took about 200 ms instead of 40 ms (REG-PERF-OUTSIDE-EDIT-REFRESH-COUNTS).
 

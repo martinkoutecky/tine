@@ -118,19 +118,22 @@ source-entry paths remain a follow-up.
 Fence and property recognition are done: code containers come from `literal_blocks`/`open_fence`
 (`fences.ts`), property lines and hidden-property split/reattach from `properties` (`splitProps`).
 Both editors give an active `[[`, `((` or `#` trigger its usual reference search inside a
-Markdown property value. The shared reference completion decision uses lsdoc's inline spans
-to retire markers inside a reference the caret has left. It uses the same parser's literal and
-URL spans and Markdown escape source map to keep literal markers out of reference search.
-This includes a closed inline code or math span whose closer is to the right of the caret.
-For continuations involving more than one line, the parser's block regions supply the literal span.
-An enclosing reference or a fresh tag can still offer its picker. Otherwise the ordinary
-property-value rules resume.
-For a complete same-line reference, the decision supplies the replacement span and the whole
-page query (GH #888). For an unfinished `[[`, `#[[` or `((`, a pick inserts a complete reference
-through the caret and keeps the text that follows (FORK-853b). The detector uses lsdoc's inline
-spans to check whether an apparent closer belongs to another construct. Bare tags replace through
-the caret. Lookahead grows in delimiter-bounded windows and can scan to the line boundary. The
-detector sends no extra text to lsdoc when the remaining suffix contains no relevant delimiter.
+Markdown property value. The authored inline parse selects the reference enclosing the caret
+and retires markers inside references the caret has left. Parser-owned URL and link destinations,
+inline code, math and escaped markers keep the reference picker closed. Markdown and Org each
+use their own parse. A Markdown-style destination in Org can contain a real Org reference.
+The block regions also cover multiline code and math, including the opening line of math.
+Outside a reference, a fresh tag can offer its picker and the ordinary property-value rules apply.
+
+For a closed same-line reference, a pick replaces through the closer when lsdoc reads the title
+text after the caret as plain. Literal brackets and escapes can be part of plain text. A reference,
+embed, tag, link, code, math or formatting after the caret keeps that source intact. The same
+applies if a code or math span within the title continues across the closer. In these cases and
+for unfinished `[[`, `#[[` or `((`, the pick inserts a complete reference through the caret
+(D-20261119-P853C, FORK-853b). Page search uses the whole title when a pick replaces the whole
+reference (GH #888). Other queries use the prefix through the caret. Bare tags replace through
+the caret. Delimiter lookahead may scan to the end of the line. Inline parsing uses the prefix
+through candidate terminators and the affected title text, with a fixed number of calls.
 Both editors ask `properties.ts` for Markdown value positions through the existing
 accepted-property-line parser; only then does autocomplete split comma-separated
 query spans. Typing and pasting (including typing inside an existing value) share
