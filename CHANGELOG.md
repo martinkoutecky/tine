@@ -10,6 +10,7 @@ The format follows [Keep a Changelog](https://keepachangelog.com/); versions use
 
 ### Fixed
 
+- Typing `[[` in a property value finds existing pages immediately, including in a newly inserted template. Block references and tags also open their search menus in property values (#853).
 - Quick share links are offered in every build of Tine, including the Flatpak
   and builds from source. They used to show "Coming soon" in any build made
   outside Tine's release workflow. A release is now refused instead while

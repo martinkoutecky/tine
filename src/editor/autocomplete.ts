@@ -190,9 +190,40 @@ export function detectTrigger(
   const lineStart = raw.lastIndexOf("\n", caret - 1) + 1;
   const before = raw.slice(lineStart, caret);
 
-  // Property completion is line syntax, never inline prose/reference/fence
-  // syntax. A value lifecycle exists only after this editor selected its key;
-  // merely moving into an existing `key:: value` line must not pop a menu.
+  // [[page and ((block — an opener with no closer since (the line has no
+  // newline). Whichever opener sits closer to the caret wins (you can type a
+  // `((` inside text that follows a `[[`, or vice-versa, e.g. `{{embed ((`).
+  const openPage = before.lastIndexOf("[[");
+  const openBlock = before.lastIndexOf("((");
+  if (openPage !== -1 && openPage > openBlock) {
+    const inner = before.slice(openPage + 2);
+    if (!inner.includes("]") && !inner.includes("[")) {
+      return { kind: "page", query: inner, start: lineStart + openPage, end: caret };
+    }
+  }
+  if (openBlock !== -1 && openBlock > openPage) {
+    const inner = before.slice(openBlock + 2);
+    if (!inner.includes(")") && !inner.includes("(")) {
+      return { kind: "block", query: inner, start: lineStart + openBlock, end: caret };
+    }
+  }
+
+  // #tag — `#` at start or after whitespace, followed by the same hard-stop
+  // contract as lsdoc's bare-tag lexer. Do not use `\w`: it is ASCII-only and
+  // closes the picker after CJK/Indic/emoji IME commits. Logseq OG 6e7afa8
+  // (`handle-last-input` + `close-autocomplete-if-outside`) likewise starts on
+  // the marker boundary and keeps arbitrary committed tag text active.
+  const hash = before.lastIndexOf("#");
+  if (hash !== -1 && (hash === 0 || /\s/u.test(before[hash - 1]))) {
+    const query = before.slice(hash + 1);
+    if (isBareTagPrefix(query)) {
+      return { kind: "tag", query, start: lineStart + hash, end: caret };
+    }
+  }
+
+  // An active reference takes precedence inside a property value (#853). Once
+  // it ends, value completion resumes if choosing the key or typing a value
+  // boundary started it. Moving into an existing value alone does not start it.
   // OG parity: handler/editor.cljs:1907-1924 (name trigger) and :2211-2226
   // (chosen key immediately transitions to value search), checkout 6e7afa8eb.
   const propertyTrigger = ((): Trigger | null => {
@@ -271,37 +302,6 @@ export function detectTrigger(
     const opener = codeFences(raw).find((f) => lineStart <= f.start && f.start - lineStart <= 3 && f.delimEnd <= caret && caret < f.openEnd);
     const language = opener ? raw.slice(opener.delimEnd, caret) : "";
     if (opener && /^[\w+#.-]+$/.test(language)) return { kind: "code-language", query: language, start: opener.delimEnd, end: caret };
-  }
-
-  // [[page and ((block — an opener with no closer since (the line has no
-  // newline). Whichever opener sits closer to the caret wins (you can type a
-  // `((` inside text that follows a `[[`, or vice-versa, e.g. `{{embed ((`).
-  const openPage = before.lastIndexOf("[[");
-  const openBlock = before.lastIndexOf("((");
-  if (openPage !== -1 && openPage > openBlock) {
-    const inner = before.slice(openPage + 2);
-    if (!inner.includes("]") && !inner.includes("[")) {
-      return { kind: "page", query: inner, start: lineStart + openPage, end: caret };
-    }
-  }
-  if (openBlock !== -1 && openBlock > openPage) {
-    const inner = before.slice(openBlock + 2);
-    if (!inner.includes(")") && !inner.includes("(")) {
-      return { kind: "block", query: inner, start: lineStart + openBlock, end: caret };
-    }
-  }
-
-  // #tag — `#` at start or after whitespace, followed by the same hard-stop
-  // contract as lsdoc's bare-tag lexer. Do not use `\w`: it is ASCII-only and
-  // closes the picker after CJK/Indic/emoji IME commits. Logseq OG 6e7afa8
-  // (`handle-last-input` + `close-autocomplete-if-outside`) likewise starts on
-  // the marker boundary and keeps arbitrary committed tag text active.
-  const hash = before.lastIndexOf("#");
-  if (hash !== -1 && (hash === 0 || /\s/u.test(before[hash - 1]))) {
-    const query = before.slice(hash + 1);
-    if (isBareTagPrefix(query)) {
-      return { kind: "tag", query, start: lineStart + hash, end: caret };
-    }
   }
 
   // /command — `/` at start or after whitespace.

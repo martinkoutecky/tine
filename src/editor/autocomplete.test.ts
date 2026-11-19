@@ -260,6 +260,26 @@ describe("detectTrigger", () => {
     });
   });
 
+  it.each([
+    ["", "[[", "page", "]]"],
+    ["", "[[", "page", ""],
+    ["other, ", "[[", "page", ""],
+    ["", "((", "block", "))"],
+    ["", "#", "tag", ""],
+  ])("prefers reference search in a property value with prefix %j and opener %s (#853)", (prefix, opener, kind, closer) => {
+    const before = `###\nproject:: ${prefix}`;
+    const end = before.length + opener.length + 3;
+    expect(detectTrigger(`${before}${opener}pro${closer}`, end, "project"))
+      .toEqual({ kind, query: "pro", start: before.length, end });
+  });
+
+  it.each(["[[Programming]]", "((block-id))", "#Programming"])("resumes property values after %s (#853)", (reference) => {
+    const raw = `project:: ${reference} more`;
+    expect(detectTrigger(raw, raw.length, "project")).toEqual({
+      kind: "property-value", property: "project", query: `${reference} more`, start: 10, end: raw.length,
+    });
+  });
+
   it("enters property-value completion only from a just-typed value boundary", () => {
     expect(propertyValueKeyAfterBoundary("Alpha_value:: ", 14, " ")).toBe("alpha-value");
     expect(propertyValueKeyAfterBoundary("alpha:: one,", 12, ",")).toBe("alpha");

@@ -66,6 +66,48 @@ afterEach(() => {
   document.body.innerHTML = "";
 });
 
+it.each(["typing", "paste"])("finds an existing page by %s in the inserted meeting template's empty project property (#853)", async (method) => {
+  const raw = "###\nevent:: #meeting\nproject::";
+  vi.spyOn(backend(), "listTemplates").mockResolvedValue([{
+    name: "meeting", page: "Templates", kind: "page",
+    blocks: [{ id: "meeting", raw, collapsed: false, children: [] }],
+  }]);
+  vi.spyOn(backend(), "quickSwitch").mockImplementation(async (query) => query === "pro"
+    ? [{ name: "Programming", kind: "page", date_key: null, path: "pages/Programming.md" }]
+    : []);
+  setGraphMeta(META);
+  bumpGraphEpoch();
+  loadSingle({ name: "Shared", kind: "page", title: "Shared", pre_block: null,
+    blocks: [{ id: "meeting-host", raw: "/meeting", collapsed: false, children: [] }] });
+  startEditing("meeting-host", "/meeting".length);
+  const root = document.createElement("div");
+  document.body.append(root);
+  const dispose = render(() => <For each={pageByName("Shared")?.roots ?? []}>{(id) => <Block id={id} />}</For>, root);
+  try {
+    const host = editorIn(root, "meeting-host");
+    host.focus();
+    host.reportInput({ bubbles: true, inputType: "insertText", data: "g" });
+    await vi.waitFor(() => expect(document.body.querySelector(".autocomplete .ac-label")?.textContent).toBe("Template: meeting"));
+    host.keydown({ key: "Enter", code: "Enter" });
+    const editor = await vi.waitFor(() => editorIn(root, pageByName("Shared")?.roots[0]));
+    expect(editor.value()).toBe(raw);
+    expect(editor.selection()).toEqual([raw.length, raw.length]);
+    editor.type(" ");
+    if (method === "typing") {
+      for (const ch of "[[pro") editor.type(ch);
+    } else {
+      const event = editor.paste({ text: "[[pro" });
+      if (!event.defaultPrevented) editor.input(`${raw} [[pro`, undefined, { inputType: "insertFromPaste" });
+    }
+    await vi.waitFor(() => expect([...document.querySelectorAll(".autocomplete .ac-label")]
+      .map((row) => row.textContent)).toContain("Programming"));
+    editor.keydown({ key: "Enter", code: "Enter" });
+    await vi.waitFor(() => expect(editor.value()).toMatch(/^###\nevent:: #meeting\nproject:: \[\[Programming\]\] ?$/));
+  } finally {
+    dispose();
+  }
+});
+
 it("routes slash-template insertion through applyTemplateVars with the current page", async () => {
   vi.spyOn(backend(), "listTemplates").mockResolvedValue([{
     name: "Daily",

@@ -118,6 +118,10 @@ follows a bullet marker), and the leading-ATX/list-marker grammar of a bare list
 (`format.ts` `trimBlockTrailingSpace`). The empty-card separator fix is included. Copy projection
 preserves a final raw newline, including the seven manager-approved corpus exceptions.
 
+While editing a Markdown property value, an active `[[`, `((` or `#` opens its usual reference
+search (#853). After the delimiter ends the reference search on input, the value picker resumes
+if selecting the property name or typing its space or comma boundary started it.
+
 Display-math Enter state excludes parser-owned trailing whitespace when deciding
 whether a closing delimiter is interior to a literal range (#862). Completed
 math therefore permits the next outline block even when prose follows it.

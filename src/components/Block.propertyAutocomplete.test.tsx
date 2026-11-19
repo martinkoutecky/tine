@@ -105,6 +105,35 @@ describe("property name/value autocomplete", () => {
     }
   });
 
+  it.each(["choosing a property name", "typing its value boundary"])("searches references and resumes value completion after %s (#853)", async (entry) => {
+    vi.spyOn(backend(), "queryFacets").mockResolvedValue([["project", ["[[Programming]] more"]]]);
+    vi.spyOn(backend(), "quickSwitch").mockImplementation(async (query) => query === "pro"
+      ? [{ name: "Programming", kind: "page", date_key: null, path: "pages/Programming.md" }]
+      : []);
+    const labels = () => [...document.querySelectorAll(".autocomplete .ac-label")].map((row) => row.textContent);
+    loadSingle(page(""));
+    startEditing("property-authoring", 0);
+    const { root, dispose } = mount(() => <Block id="property-authoring" />);
+    try {
+      const editor = editorIn(root);
+      inputAt(editor, "project::");
+      await vi.waitFor(() => expect(labels()).toContain("project"));
+      if (entry === "choosing a property name") {
+        enter(editor);
+        await vi.waitFor(() => expect(editor.value()).toBe("project:: "));
+      } else {
+        editor.type(" ");
+      }
+      await vi.waitFor(() => expect(labels()).toContain("[[Programming]] more"));
+      for (const ch of "[[pro") editor.type(ch);
+      await vi.waitFor(() => expect(labels()).toContain("Programming"));
+      for (const ch of "]]") editor.type(ch);
+      await vi.waitFor(() => expect(labels()).toContain('Create "[[pro]]"'));
+    } finally {
+      dispose();
+    }
+  });
+
   it("replaces only the property span, then offers values for the canonical key", async () => {
     const facets = vi.spyOn(backend(), "queryFacets").mockResolvedValue([
       ["alpha", ["one", "two"]],
