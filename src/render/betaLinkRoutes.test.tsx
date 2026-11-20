@@ -57,6 +57,11 @@ it.each([
   ["md", "[open](c:%5cnotes.txt)", "graph", "c:\\notes.txt"],
   ["md", "[open](C:%2Fnotes.pdf)", "external", "C:%2Fnotes.pdf"],
   ["md", "[open](c:%2fnotes.pdf)", "external", "c:%2fnotes.pdf"],
+  ["md", "[open](C:/assets/note.txt)", "external", "file:///C:/assets/note.txt"],
+  ["md", "[open](c:\\assets\\note.txt)", "external", "file:///c:/assets/note.txt"],
+  ["md", "[open](C:%2Fassets%2Fnote.txt)", "external", "file:///C:/assets/note.txt"],
+  ["md", "[open](C:assets/note.txt)", "graph", "C:assets/note.txt"],
+  ["org", "[[C:/assets/note.txt][open]]", "external", "file:///C:///assets/note.txt"],
 ] as const)("keeps the Beta %s route for %s", (format, source, route, target) => {
   setGraphMeta({ ...graphMeta()!, root: "/home/test/graph" });
   const asset = vi.spyOn(backend(), "openAsset").mockResolvedValue(undefined);
@@ -111,4 +116,19 @@ it.each(["raw HTML", "Hiccup"] as const)("keeps Beta's opt-in local image reads 
     preference.mockResolvedValue(false);
     await initLocalFileSettings();
   }
+});
+
+it.each(["java", "vbs", "da"])("keeps a refused scheme inert when a control byte splits it (%s…)", (head) => {
+  const name = { java: "javascript", vbs: "vbscript", da: "data" }[head]!;
+  const asset = vi.spyOn(backend(), "openAsset").mockResolvedValue(undefined);
+  const external = vi.spyOn(backend(), "openExternal").mockResolvedValue(undefined);
+  const host = document.body.appendChild(document.createElement("div"));
+  const dest = `${head}\u0001${name.slice(head.length)}:assets/manual.txt`;
+  const dispose = render(() => <InlineText text={`[open](${dest})`} format="md" />, host);
+  try {
+    const anchor = host.querySelector("a");
+    expect(anchor?.hasAttribute("href") ?? false).toBe(false);
+    anchor?.click();
+    expect([...asset.mock.calls, ...external.mock.calls]).toEqual([]);
+  } finally { dispose(); }
 });

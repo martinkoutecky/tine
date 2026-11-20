@@ -460,7 +460,8 @@ function renderLink(
   if (orgImage && (relative || web)) {
     return <AssetImage url={dest} decision={decision} alt="" blockId={blockId} token={token} spanAttrs={spanAttrs} />;
   }
-  const assetTarget = relative ? assetLinkRel(dest) : null;
+  // Beta: a literal drive prefix names a drive file, never an attachment.
+  const assetTarget = relative && !/^[a-z]:/i.test(dest) ? assetLinkRel(dest) : null;
   const fileTarget = assetTarget === null && (relative || decision === "file")
     ? fileLinkTarget(dest, decision) : null;
   if (isQuickShareViewer() && (assetTarget !== null || fileTarget !== null)) return <ShareMedia url={dest} />;
@@ -824,7 +825,7 @@ export function AssetImage(props: {
   // Hover actions (graph assets in a real block only — like OG's asset action bar):
   // copy the image to the OS clipboard, and trash it (drop the block reference + move
   // the file to the recoverable trash).
-  const assetActions = () => decision === "relative" && !!props.blockId;
+  const assetActions = () => isSchemeLess(decision) && !!props.blockId;
   const onCopyAsset = (e: MouseEvent) => {
     e.stopPropagation();
     const s = src();
