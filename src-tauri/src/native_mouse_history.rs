@@ -20,15 +20,21 @@ fn emit_navigation(window: &tauri::WebviewWindow, direction: &'static str) {
     );
 }
 
-/// Route native mouse history buttons into the frontend router for one graph
-/// webview. Linux and Windows need different native interception boundaries;
-/// other platforms use the DOM release handler (Wry synthesizes mouseup on macOS).
+/// Install the graph window's native history handler. Linux owns side buttons
+/// at the GTK widget. Windows divides ownership by the origin of the command.
 pub(crate) fn install(window: &tauri::WebviewWindow) {
     platform::install(window);
 }
 
+/// Who owns side-button presses in this build, handed to the frontend as
+/// `__TINE_MOUSE_HISTORY__` before it runs: `gtk` (the GTK widget consumes them),
+/// `webview2` (WebView2 delivers DOM events; the subclass takes forwarded copies) or
+/// `dom` (no native handler). The build knows this; a user agent can be changed (#948).
+pub(crate) const HISTORY_SOURCE: &str = platform::SOURCE;
+
 #[cfg(target_os = "linux")]
 mod platform {
+    pub(super) const SOURCE: &str = "gtk";
     use super::emit_navigation;
     use std::cell::Cell;
 
@@ -41,45 +47,66 @@ mod platform {
         let event_window = window.clone();
         let _ = window.with_webview(move |platform_webview| {
             use gtk::{
-                gdk::{EventButton, EventMask, EventMotion, EventType, FromEvent, ModifierType},
+                gdk::{EventButton, EventMask, EventType, FromEvent, ModifierType},
                 prelude::{WidgetExt, WidgetExtManual},
             };
 
-            let press = Cell::new(None::<(u32, f64, f64)>);
+            // One slot per side button (Back, Forward): both can be held at once (#948).
+            let presses = [Cell::new(None::<(f64, f64)>), Cell::new(None::<(f64, f64)>)];
+            let cancel_all = move |presses: &[Cell<Option<(f64, f64)>>; 2]| {
+                presses.iter().for_each(|p| p.set(None))
+            };
             platform_webview
                 .inner()
                 .add_events(EventMask::POINTER_MOTION_MASK);
             platform_webview.inner().connect_event(move |_, event| {
                 if event.event_type() == EventType::MotionNotify {
-                    if let (Some((_, x, y)), Ok(motion)) =
-                        (press.get(), <EventMotion as FromEvent>::from(event.clone()))
-                    {
-                        let (next_x, next_y) = motion.position();
-                        if (next_x - x).hypot(next_y - y) > 5.0 {
-                            press.set(None);
+                    // No held side button: nothing to cancel, and no event copy (review).
+                    if presses.iter().all(|p| p.get().is_none()) {
+                        return gtk::glib::Propagation::Proceed;
+                    }
+                    if let Some((next_x, next_y)) = event.coords() {
+                        for press in &presses {
+                            if press
+                                .get()
+                                .is_some_and(|(x, y)| (next_x - x).hypot(next_y - y) > 5.0)
+                            {
+                                press.set(None);
+                            }
                         }
                     }
                     return gtk::glib::Propagation::Proceed;
                 }
                 if !matches!(
                     event.event_type(),
-                    EventType::ButtonPress | EventType::ButtonRelease
+                    EventType::ButtonPress
+                        | EventType::DoubleButtonPress
+                        | EventType::TripleButtonPress
+                        | EventType::ButtonRelease
                 ) {
                     return gtk::glib::Propagation::Proceed;
                 }
                 let Ok(button_event) = <EventButton as FromEvent>::from(event.clone()) else {
                     return gtk::glib::Propagation::Proceed;
                 };
-                let direction = match button_event.button() {
-                    GDK_BUTTON_BACK => "back",
-                    GDK_BUTTON_FORWARD => "forward",
+                let (direction, press) = match button_event.button() {
+                    GDK_BUTTON_BACK => ("back", &presses[0]),
+                    GDK_BUTTON_FORWARD => ("forward", &presses[1]),
                     _ => {
                         // Another button owns a text selection/native drag.
-                        press.set(None);
+                        cancel_all(&presses);
                         return gtk::glib::Propagation::Proceed;
                     }
                 };
 
+                // GTK adds a double/triple press after the second/third plain
+                // press; Wry would turn it into a DOM mousedown (#948 review).
+                if matches!(
+                    event.event_type(),
+                    EventType::DoubleButtonPress | EventType::TripleButtonPress
+                ) {
+                    return gtk::glib::Propagation::Stop;
+                }
                 // GtkWidget::event runs before the more-specific
                 // button-{press,release}-event signal. Stop both halves here so
                 // Wry cannot also synthesize DOM input/default history; navigate
@@ -91,10 +118,10 @@ mod platform {
                             | ModifierType::BUTTON3_MASK,
                     );
                     let (x, y) = button_event.position();
-                    press.set((!occupied).then_some((button_event.button(), x, y)));
-                } else if let Some((button, x, y)) = press.take() {
+                    press.set((!occupied).then_some((x, y)));
+                } else if let Some((x, y)) = press.take() {
                     let (next_x, next_y) = button_event.position();
-                    if button == button_event.button() && (next_x - x).hypot(next_y - y) <= 5.0 {
+                    if (next_x - x).hypot(next_y - y) <= 5.0 {
                         emit_navigation(&event_window, direction);
                     }
                 }
@@ -106,6 +133,7 @@ mod platform {
 
 #[cfg(target_os = "windows")]
 mod platform {
+    pub(super) const SOURCE: &str = "webview2";
     use super::emit_navigation;
     use std::ffi::c_void;
 
@@ -113,15 +141,19 @@ mod platform {
     type SubclassProc =
         Option<unsafe extern "system" fn(Hwnd, u32, usize, isize, usize, usize) -> isize>;
 
-    // winuser.h / commctrl.h constants. WM_APPCOMMAND is generated by
-    // DefWindowProc for XBUTTON releases and bubbles from child HWNDs (the
-    // WebView2 content) to this top-level Tauri window.
+    // DefWindowProc can generate WM_APPCOMMAND for an XBUTTON release.
     const WM_NCDESTROY: u32 = 0x0082;
     const WM_APPCOMMAND: u32 = 0x0319;
     const FAPPCOMMAND_MASK: u16 = 0xf000;
+    const FAPPCOMMAND_MOUSE: u16 = 0x8000;
     const APPCOMMAND_BROWSER_BACKWARD: u16 = 1;
     const APPCOMMAND_BROWSER_FORWARD: u16 = 2;
     const HISTORY_SUBCLASS_ID: usize = 0x5449_4e45; // "TINE"
+
+    #[link(name = "user32")]
+    extern "system" {
+        fn IsChild(parent: Hwnd, child: Hwnd) -> i32;
+    }
 
     #[link(name = "comctl32")]
     extern "system" {
@@ -148,13 +180,22 @@ mod platform {
         if message == WM_APPCOMMAND && !window_ptr.is_null() {
             // GET_APPCOMMAND_LPARAM: command is the high word with the device
             // bits masked off by ~FAPPCOMMAND_MASK.
-            let command = ((lparam as usize >> 16) as u16) & !FAPPCOMMAND_MASK;
-            let direction = match command {
+            let command_and_device = (lparam as usize >> 16) as u16;
+            let direction = match command_and_device & !FAPPCOMMAND_MASK {
                 APPCOMMAND_BROWSER_BACKWARD => Some("back"),
                 APPCOMMAND_BROWSER_FORWARD => Some("forward"),
                 _ => None,
             };
             if let Some(direction) = direction {
+                // WebView2 owns mouse presses in its child HWNDs. If Win32 also
+                // forwards a mouse command, consume it here before it can reach
+                // the router. The host still owns its own mouse commands and
+                // standalone Back/Forward commands from keys or OEM devices.
+                let from_webview_mouse = command_and_device & FAPPCOMMAND_MASK == FAPPCOMMAND_MOUSE
+                    && unsafe { IsChild(hwnd, wparam as Hwnd) } != 0;
+                if from_webview_mouse {
+                    return 1;
+                }
                 // SAFETY: reference_data owns a boxed WebviewWindow until
                 // WM_NCDESTROY below; the subclass runs on its owning UI thread.
                 emit_navigation(unsafe { &*window_ptr }, direction);
@@ -200,5 +241,6 @@ mod platform {
 
 #[cfg(not(any(target_os = "linux", target_os = "windows")))]
 mod platform {
+    pub(super) const SOURCE: &str = "dom";
     pub(super) fn install(_window: &tauri::WebviewWindow) {}
 }

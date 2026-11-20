@@ -9,7 +9,7 @@ import { utf8ToUtf16Cursor } from "../render/utf16Cursor";
 import { reportUiFailure } from "../uiFailure";
 import { graphMeta } from "../graphSession";
 
-import { property_line_json, page_regions_json, page_header_json, page_preamble_content_json, page_parts_with_property } from "../render/wasm/lsdoc_wasm.js";
+import { property_line_json, page_regions_json, page_header_json, page_preamble_content_json, page_opening_groups_json, page_parts_with_property } from "../render/wasm/lsdoc_wasm.js";
 import type { RegionProperty } from "../render/parse";
 
 // Deferred catalog messages; property getters resolve in the consuming computation.
@@ -38,16 +38,19 @@ export function acceptedPropertyLine(line: string): { key: string; value: string
  * handler/editor.cljs:1907-1924,2211-2226), so drawer authoring stays literal.
  * Intentional OG difference: Markdown values need no prior name selection.
  * Parse only the current line, never the whole block on each keystroke. */
-export function propertyValuePosition(raw: string, caret: number, format: Format): { key: string; start: number } | null {
+export function propertyValuePosition(raw: string, before: string, lineStart: number, format: Format): { key: string; start: number } | null {
   if (format !== "md") return null;
-  const lineStart = raw.lastIndexOf("\n", caret - 1) + 1;
-  const lineEnd = raw.indexOf("\n", caret);
-  const line = raw.slice(lineStart, lineEnd === -1 ? raw.length : lineEnd);
-  if (!line.includes("::")) return null;
-  const property = acceptedPropertyLine(line);
-  if (!property || !line.startsWith(property.key) || !isEditablePropertyKey(property.key)) return null;
-  const start = lineStart + property.key.length + 2;
-  return caret > start ? { key: property.key, start } : null;
+  const delimiter = before.indexOf("::");
+  if (delimiter === -1 || before.length <= delimiter + 2) return null;
+  // The parser also accepts a tab-only empty value. Only that form depends on
+  // the rest of the line, since a nonempty value must begin with a space.
+  let property = acceptedPropertyLine(before);
+  if (property && property.value === "" && before[delimiter + 2] !== " ") {
+    const newline = raw.indexOf("\n", lineStart + before.length);
+    property = acceptedPropertyLine(raw.slice(lineStart, newline === -1 ? raw.length : newline));
+  }
+  if (!property || !before.startsWith(property.key) || !isEditablePropertyKey(property.key)) return null;
+  return { key: property.key, start: lineStart + property.key.length + 2 };
 }
 
 /** Whether the properties panel may write `key` (GH #164): letters, marks,
@@ -244,6 +247,28 @@ export function splitPagePreamble(raw: string | null | undefined, format: Format
     content: preambleContent(raw, entries.length > 0, remainder),
     remainder,
   };
+}
+
+/** A page's opening text split at its property nodes (D-20261119-PG):
+ *  `group` pieces are top-level `key:: value` groups or `#+key: value`
+ *  lines, whole source lines; the pieces between are block text. In source
+ *  order, joining to `text`. The parser's answer
+ *  (`page_preamble::opening_groups`); without a parser, one text piece.
+ *  O(text bytes). */
+export function openingSegments(text: string, format: Format): { text: string; group: boolean }[] {
+  if (!parserReady()) return [{ text, group: false }];
+  const groups = JSON.parse(page_opening_groups_json(text, format === "org")) as [number, number][];
+  const at = utf8ToUtf16Cursor(text);
+  const out: { text: string; group: boolean }[] = [];
+  let done = 0;
+  for (const [s, e] of groups) {
+    const start = at(s), end = at(e);
+    if (start > done) out.push({ text: text.slice(done, start), group: false });
+    out.push({ text: text.slice(start, end), group: true });
+    done = end;
+  }
+  if (done < text.length) out.push({ text: text.slice(done), group: false });
+  return out;
 }
 
 /** The preamble prose (see {@link splitPagePreamble}). Without a parser (not

@@ -65,11 +65,11 @@ impl Graph {
 
     pub(super) fn retire_failed_row(
         &self,
-        mut cache: std::sync::RwLockWriteGuard<'_, Option<Arc<Pages>>>,
+        mut cache: std::sync::RwLockWriteGuard<'_, InstalledCache>,
         path: &Path,
     ) {
         // A quiet retry must not erase an already reported launch error.
-        self.retire_row(cache.as_mut().map(Arc::make_mut), path, false);
+        self.retire_row(&mut cache, path, false);
         let rel = self.rel_path(path);
         let mut failures = self.derived.page_index_failures.write().unwrap();
         if !failures.contains(&rel) {
@@ -84,7 +84,7 @@ impl Graph {
             ParserPanicked.to_string(),
             "Tine unreadable file producer=index-panic",
         );
-        self.move_generation(cache.is_none(), &[path]);
+        self.move_generation(cache.pages.is_none(), &[path]);
     }
 
     fn list_unreadable(&self, rel: String, reason: String, producer: &'static str) {
@@ -121,7 +121,7 @@ impl Graph {
         if !self.disk_sourced(path) {
             return;
         }
-        self.retire_row(cache.as_mut().map(Arc::make_mut), path, true);
+        self.retire_row(&mut cache, path, true);
         if graph_text_eligible(&self.root, path, &self.current_config()) {
             self.list_unreadable(
                 self.rel_path(path),
@@ -129,7 +129,7 @@ impl Graph {
                 "Tine unreadable file producer=transaction-publish",
             );
         }
-        self.move_generation(cache.is_none(), &[path]);
+        self.move_generation(cache.pages.is_none(), &[path]);
     }
 
     /// Whether a retired page has a retry left and its bytes are the disk's.

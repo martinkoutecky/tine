@@ -15,11 +15,17 @@ import type { ParsedQuery, QueryResult } from "../../src/editor/queryIr";
 
 await initParser();
 const task = { id: "task", raw: "TODO Buy apples", children: [], collapsed: false };
+const next = { ...task, id: "next", raw: "TODO Buy pears" };
+const other = { ...task, id: "other", raw: "TODO Buy bread" };
 setDoc({ byId: {
   query: { id: "query", raw: "{{query (task TODO)}}", page: "Shopping", parent: null, children: [], collapsed: false },
-  parent: { id: "parent", raw: "Weekly groceries", page: "Shopping", parent: null, children: ["task"], collapsed: false },
+  parent: { id: "parent", raw: "Weekly groceries", page: "Shopping", parent: null, children: ["task", "next"], collapsed: false },
   task: { ...task, page: "Shopping", parent: "parent" },
+  next: { ...next, page: "Shopping", parent: "parent" },
+  other: { ...other, page: "Bakery", parent: null },
 }, pages: [{ name: "Shopping", title: "Shopping", kind: "page", roots: ["query", "parent"], preBlock: null,
+  format: "md", readOnly: false, guide: false },
+{ name: "Bakery", title: "Bakery", kind: "page", roots: ["other"], preBlock: null,
   format: "md", readOnly: false, guide: false }], feed: ["Shopping"], loaded: true });
 openPage("Shopping");
 const b = backend();
@@ -27,9 +33,10 @@ b.parseQuery = async (_text, _name, properties = []): Promise<ParsedQuery> => ({
   query: { anchor: "block", filter: taskFilter(["TODO"]), source: { kind: "og", original: "(task TODO)", og_options: "" } },
   view: { view: (properties.find(([key]) => key === "tine.view")?.[1] ?? "list") as "list" | "table" },
 });
-b.queryRun = async (): Promise<QueryResult> => ({ anchor: "block", groups: [{ page: "Shopping", kind: "page",
-  blocks: [{ ...task, breadcrumb: ["Weekly groceries"] }] }], diagnostics: [],
-  report: { ran: [], ignored: [], supported: true }, total: 1, exceeded: false });
+b.queryRun = async (): Promise<QueryResult> => ({ anchor: "block", groups: [
+  { page: "Shopping", kind: "page", blocks: [task, next].map(block => ({ ...block, breadcrumb: ["Weekly groceries"] })) },
+  { page: "Bakery", kind: "page", blocks: [other] },
+], diagnostics: [], report: { ran: [], ignored: [], supported: true }, total: 3, exceeded: false });
 b.queryRegistry = async () => ({ generation: 1, rows: [] });
 b.queryOgExpressible = async () => true;
 b.printQuery = async () => "(task TODO)";

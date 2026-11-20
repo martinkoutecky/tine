@@ -5,7 +5,7 @@ import { pageInstanceGeneration } from "../instance";
 import { stampCutSource } from "../host/wiring";
 import { type ExportNode } from "../../editor/exportText";
 import { type BlockDto } from "../../types";
-import { threadRootOf } from "../commentThreads";
+import { threadRootsOf } from "../commentThreads";
 
 /** Serialize a block (and, normally, its subtree) to Logseq markdown.
  *  - `stripId`: drop the internal `id::` property line (fence-aware) — OG does this
@@ -46,7 +46,7 @@ export function blockSubtreeMarkdown(
  */
 export function buildClipboardPayload(ids: string[]): ClipboardPayloadData | null {
   const selected = new Set(ids.filter((id) => !!doc.byId[id]));
-  const roots = [...selected].filter((id) => !hasSelectedAncestor(id, selected));
+  const roots = selectionRoots([...selected], selected);
   if (roots.length === 0) return null;
 
   let blockCount = 0;
@@ -92,29 +92,32 @@ export function buildClipboardPayload(ids: string[]): ClipboardPayloadData | nul
 }
 
 /** Build an ExportNode forest (raw + children) for the given block ids and their
- *  subtrees — input to the configurable text exporter (Copy / Export modal). */
-export function exportNodesFor(ids: string[]): ExportNode[] {
+ *  subtrees — input to the configurable text exporter (Copy / Export modal).
+ *  Reference export retains checked descendants for depth-based promotion.
+ *  O(ids + exported blocks + distinct source ancestors), no I/O. */
+export function exportNodesFor(ids: string[], retainCheckedDescendants = false): ExportNode[] {
   const set = new Set(ids);
   // A multi-selection (selectedIds) includes complete subtrees, so it can
   // contain BOTH a parent and its descendants. Export only the selection's roots
   // — a kept node's subtree already carries its children, so emitting a selected
   // child again as a top-level node would duplicate it (the "1 2 3 1 2 3" bug).
-  const toNode = (id: string): ExportNode | null => {
+  const roots = selectionRoots(ids, set);
+  const threads = threadRootsOf(retainCheckedDescendants ? ids : roots);
+  const toNode = (id: string, detachedRoot: boolean): ExportNode | null => {
     const n = doc.byId[id];
     if (!n) return null;
+    const checked = retainCheckedDescendants && !detachedRoot && set.has(id);
     return {
       raw: n.raw,
       format: pageByName(n.page)?.format ?? "md",
       hasParent: n.parent !== null,
-      children: n.children.map(toNode).filter((x): x is ExportNode => x != null),
+      ...(checked && { checked: true }),
+      ...((checked || detachedRoot) && threads.get(id) && { comment: { author: null, date: null } }),
+      children: n.children.map(child => toNode(child, false)).filter((x): x is ExportNode => x != null),
     };
   };
-  return ids
-    .filter((id) => !hasSelectedAncestor(id, set))
-    .map(id => {
-      const node = toNode(id);
-      return node && threadRootOf(id) ? { ...node, comment: { author: null, date: null } } : node;
-    })
+  return roots
+    .map(id => toNode(id, true))
     .filter((x): x is ExportNode => x != null);
 }
 
@@ -137,11 +140,16 @@ function markdownBlockLines(raw: string, level: number): string[] {
   return out;
 }
 
-function hasSelectedAncestor(id: string, selected: Set<string>): boolean {
-  let parent = doc.byId[id]?.parent ?? null;
-  while (parent !== null) {
-    if (selected.has(parent)) return true;
-    parent = doc.byId[parent]?.parent ?? null;
-  }
-  return false;
+function selectionRoots(ids: string[], selected: ReadonlySet<string>): string[] {
+  const covered = new Map<string, boolean>();
+  const hasSelectedAtOrAbove = (id: string | null): boolean => {
+    if (id === null) return false;
+    if (selected.has(id)) return true;
+    const known = covered.get(id);
+    if (known !== undefined) return known;
+    const result = hasSelectedAtOrAbove(doc.byId[id]?.parent ?? null);
+    covered.set(id, result);
+    return result;
+  };
+  return ids.filter(id => !hasSelectedAtOrAbove(doc.byId[id]?.parent ?? null));
 }

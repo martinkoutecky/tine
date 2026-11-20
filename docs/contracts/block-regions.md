@@ -15,6 +15,16 @@ start of a line may have a glued body suffix; edits retain that suffix, detachin
 it onto a body line when replacing the timestamp. Mid-prose timestamps remain
 body content.
 
+The render bundle and native date facets take their display tokens from this
+same region pass. A line-leading run can display consecutive SCHEDULED and
+DEADLINE tokens separated by whitespace, with any suffix after the run kept
+as body text. If the first timestamp spans a newline, the run can continue on
+its ending line. Following Logseq, native HTML, print and publication search
+text omit the planning tokens from the body. These consumers use
+`top_level_render_planning` with the existing block AST, without parsing again
+or building structural regions. Structural edits still use the first
+line-leading timestamp's range, which also covers CLOSED.
+
 `BlockRegions::apply` sets/removes properties and planning, strips copy metadata,
 projects visible body, normalizes planning, inserts drawer rows and closes a
 clock row. It uses regions for exactly the supplied raw and format. Clock value
@@ -117,6 +127,27 @@ source-entry paths remain a follow-up.
 
 Fence and property recognition are done: code containers come from `literal_blocks`/`open_fence`
 (`fences.ts`), property lines and hidden-property split/reattach from `properties` (`splitProps`).
+Both editors give an active `[[`, `((` or `#` trigger its usual reference search inside a
+Markdown property value. An inline parse of the authored line selects the reference enclosing the caret
+and retires markers inside references the caret has left. Parser-owned URL and link destinations,
+inline code, math and escaped markers keep the reference picker closed. Markdown and Org each
+use their own parse. A Markdown-style destination in Org can contain a real Org reference.
+The shared, cached block regions cover multiline code and math. Reference detection consults them
+on later lines or on a first line with a possible unclosed literal opener and another line below.
+Outside a reference, a fresh tag can offer its picker and the ordinary property-value rules apply.
+
+For a closed same-line reference, lsdoc also parses from the title start through the end of the line.
+A pick replaces through the closer if no non-plain node in that parse overlaps the range from the
+caret through the end of the closer. Literal brackets and escapes can be plain. A construct can span
+the caret or extend beyond the closer and still overlap the range. In these cases and
+for unfinished `[[`, `#[[` or `((`, the pick inserts a complete reference through the caret
+(D-20261119-P853C, FORK-853b). Page search uses the whole title when a pick replaces the whole
+reference (GH #888). Other queries use the prefix through the caret. Bare tags replace through
+the caret. A block pick captures the buffer and replacement range when accepted. Insertion after
+the target ID publishes uses that range while the editor, picker and buffer still match.
+Reference detection uses at most two inline parses, each bounded by the caret line's byte length,
+and only the authored-line parse for an unfinished reference. A block region cache miss parses the
+block once. Detection performs no file or IPC operations.
 Both editors ask `properties.ts` for Markdown value positions through the existing
 accepted-property-line parser; only then does autocomplete split comma-separated
 query spans. Typing and pasting (including typing inside an existing value) share

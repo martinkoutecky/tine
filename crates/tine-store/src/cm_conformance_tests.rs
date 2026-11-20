@@ -64,6 +64,63 @@ fn preamble_projection_keeps_prose_and_outline_positions() {
     store.close();
 }
 
+/// I-12: the presentation the bridge is told (`showHeaders`,
+/// `removeBlockChildren`) is the engine plan's own row gates, so conformance
+/// compares the rows Tine shows, never a setting the adapter chose. Both
+/// dialects, both anchors, the advanced form and the trailing options map; a
+/// `@page` query is checked under the legacy block-wise bridge too.
+#[test]
+fn presentation_is_the_plans_row_gates() {
+    use std::sync::Arc;
+    use tine_core::date::JournalDate;
+    use tine_core::query::{parse_query_text, QueryDialect};
+    let cases = [
+        ("[[Target]]", QueryDialect::Og),
+        ("(page-ref Target)", QueryDialect::Og),
+        ("(property related Target)", QueryDialect::Og),
+        ("(page-property type book)", QueryDialect::Og),
+        (
+            "[[Target]] {:remove-block-children? false}",
+            QueryDialect::Og,
+        ),
+        (
+            "{:query [:find (pull ?b [*]) :where [?b :block/refs ?p] [?p :block/name \"target\"]]}",
+            QueryDialect::Og,
+        ),
+        ("[[Target]]", QueryDialect::Tql),
+        ("@page and name = 'Target'", QueryDialect::Tql),
+    ];
+    let today = JournalDate::from_days(0);
+    let mut anchors = BTreeSet::new();
+    for (text, dialect) in cases {
+        let (query, _) = parse_query_text(text, dialect, today);
+        anchors.insert(format!("{:?}", query.anchor));
+        let told = shared::k::presentation(&query);
+        for block_rows in [false, true] {
+            let plan = crate::query::exec::Plan::new(
+                &query,
+                today,
+                block_rows,
+                false,
+                || {
+                    Arc::new(tine_core::query::registry::Registry::empty(
+                        &Default::default(),
+                    ))
+                },
+                || Arc::new(Default::default()),
+            );
+            let gates = plan.checkpoint_parts();
+            assert_eq!(
+                told,
+                json!({"showHeaders": gates.page_property_rows,
+                       "removeBlockChildren": gates.top_level_only}),
+                "{text} ({dialect:?}, block_rows {block_rows})"
+            );
+        }
+    }
+    assert_eq!(anchors.len(), 2, "both anchors covered: {anchors:?}");
+}
+
 /// Census Q5 item 3 (CM step 2, batch 10): the namespace parents have one
 /// rule (`model::namespace_parents`) read two ways, the whole-graph pass
 /// (`inventory(All)`, page queries, All Pages' counts) and the one-key range

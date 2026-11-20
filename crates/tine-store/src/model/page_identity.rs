@@ -856,7 +856,7 @@ fn file_contains_link_id(path: &Path, id: &str) -> io::Result<bool> {
     }
 }
 
-pub(super) fn list_graph_pages(graph: &Graph) -> Vec<PageEntry> {
+pub(super) fn list_graph_pages(graph: &Graph) -> (Vec<PageEntry>, super::derived::DiscoveryErrors) {
     #[cfg(test)]
     super::GRAPH_LIST_CALLS.with(|calls| calls.set(calls.get() + 1));
     let mut entries = Vec::new();
@@ -866,7 +866,7 @@ pub(super) fn list_graph_pages(graph: &Graph) -> Vec<PageEntry> {
     let journals = graph.journals_path();
     let config = graph.current_config();
     if !graph_text_directory_scannable(root, root, &config) {
-        return entries;
+        return (entries, Vec::new());
     }
     let mut failures = Vec::new();
     let walk_errors = walk_graph_page_files(root, root, &config, |path| {
@@ -898,8 +898,9 @@ pub(super) fn list_graph_pages(graph: &Graph) -> Vec<PageEntry> {
             .into_iter()
             .map(|(path, error)| (crate::FileId::from(graph.rel_path(&path)), error.into())),
     );
-    graph.replace_discovery_errors(failures);
-    entries
+    #[cfg(test)]
+    crate::store::pause_at_hook(&graph.discovery_walk_pause);
+    (entries, failures)
 }
 
 fn read_file_claim(

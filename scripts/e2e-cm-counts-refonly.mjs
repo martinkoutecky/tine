@@ -7,6 +7,10 @@
 // embed, and opens a reference-only page whose Linked References header
 // shows the same number. A page query (`(all-page-tags)`) lists a
 // reference-only tag page by name. Written by the cm-counts-refonly lane.
+// CM D3 (UI-CM-ALLPAGES-COUNT-ZERO-FOR-FOLDED-KEY-PAGE): a page named only by
+// a property key (`done-at::`, and `due-on` through the spellings `Due_On::`
+// and `due-on::`) counts its panel's size although a file page's title
+// (Done At, Due On) folds to the same key; before D3 those rows showed 0.
 import { spawn, execFileSync } from "node:child_process";
 import fs from "node:fs";
 import path from "node:path";
@@ -42,6 +46,15 @@ fs.writeFileSync(path.join(graph, "pages/Notes.md"), [
 ].join("\n"));
 // A file named like an OG built-in page: OG's All pages hides it too.
 fs.writeFileSync(path.join(graph, "pages/LATER.md"), "- a later file\n");
+// Property keys only: no file and no link spells done-at or due-on, while
+// Done At and Due On are file pages whose titles fold to those keys.
+fs.writeFileSync(path.join(graph, "pages/Done At.md"), "- done at\n");
+fs.writeFileSync(path.join(graph, "pages/Due On.md"), "- due on\n");
+fs.writeFileSync(path.join(graph, "pages/Tasks.md"), [
+  "- task", "  done-at:: today",
+  "- review", "  Due_On:: later",
+  "- second", "  due-on:: soon", "",
+].join("\n"));
 fs.writeFileSync(path.join(graph, "pages/Queries.md"), '- {{query (all-page-tags) {:title "Tag pages"}}}\n- {{tine-query @page and name = \'2040-10-26\'}}\n');
 fs.writeFileSync(path.join(graph, "journals", "2026_11_03.md"), "- journal\n");
 for (const dir of ["data", "config", "cache"]) fs.mkdirSync(path.join(run, dir));
@@ -87,7 +100,8 @@ try {
   await start();
   stage = "All pages counts are the Linked References panel sizes; a reference-only page is listed";
   await openAllPages();
-  const want = { Target: "1", Notes: "0", "Ref Only": "2", Ideas: "1", rel: "1" };
+  const want = { Target: "1", Notes: "0", "Ref Only": "2", Ideas: "1", rel: "1",
+    "done-at": "1", "Done At": "1", "due-on": "2", "Due On": "2", Tasks: "0" };
   let rows = {};
   try {
     await browser.waitUntil(async () => {
@@ -132,6 +146,22 @@ try {
   await browser.waitUntil(async () => (await linkedCount()) === "1", { timeout: 20_000 });
   assert.ok(!fs.existsSync(path.join(graph, "journals/2040_10_26.md")), "opening the unwritten journal creates no file");
 
+  stage = "a property-key-only page is one row per folded key (D3)";
+  assert.ok(!Object.keys(rows).some((title) => /^due_on$/i.test(title)), `Due_On:: adds no row of its own: ${JSON.stringify(rows)}`);
+  stage = "a property-key-only page opens from All pages and its header matches its count (D3)";
+  for (const [title, count] of [["done-at", "1"], ["due-on", "2"], ["Done At", "1"]]) {
+    await openAllPages();
+    assert.ok(await browser.execute((wanted) => {
+      const el = [...document.querySelectorAll(".all-pages-open")].find((node) => node.textContent?.trim() === wanted);
+      if (!(el instanceof HTMLElement)) return false;
+      el.click();
+      return true;
+    }, title), `the ${title} row is clickable`);
+    await browser.waitUntil(async () => (await currentPageTitle(browser)) === title, { timeout: 10_000 });
+    await browser.waitUntil(async () => (await linkedCount()) === count, { timeout: 20_000, timeoutMsg: `${title} header count ${await linkedCount()}, All pages ${count}` });
+  }
+  for (const name of ["done-at.md", "due-on.md", "due_on.md"]) assert.ok(!fs.existsSync(path.join(graph, "pages", name)), `opening writes no ${name}`);
+
   stage = "a page query lists the reference-only tag page by name (A15)";
   await openPageByName(browser, "Queries");
   stage = "a page query lists the unwritten journal";
@@ -148,7 +178,7 @@ try {
   await browser.waitUntil(async () => (await currentPageTitle(browser)) === "Ideas", { timeout: 10_000 });
   await browser.waitUntil(async () => (await linkedCount()) === "1", { timeout: 20_000, timeoutMsg: `Ideas header count ${await linkedCount()}` });
 
-  fs.writeFileSync(path.join(run, "receipt.json"), JSON.stringify({ commit, workingDiff: true, outcome: "PASS", journey: "All pages counts = panel sizes; reference-only page and unwritten journal rows; journal toggle; opening writes no file; page query lists the unwritten journal; built-ins hidden; no embed uuid row; (all-page-tags) lists a reference-only tag page", graph }, null, 2));
+  fs.writeFileSync(path.join(run, "receipt.json"), JSON.stringify({ commit, workingDiff: true, outcome: "PASS", journey: "All pages counts = panel sizes; reference-only page and unwritten journal rows; property-key-only pages done-at 1 and due-on 2 (Due_On:: folded) beside Done At and Due On, headers equal; journal toggle; opening writes no file; page query lists the unwritten journal; built-ins hidden; no embed uuid row; (all-page-tags) lists a reference-only tag page", graph }, null, 2));
   console.log(`PASS CM counts and reference-only pages. ${run}`);
 } catch (error) {
   try { await browser?.saveScreenshot(path.join(run, "failure.png")); } catch {}

@@ -62,9 +62,8 @@ fn a_named_page_opens_before_ready_and_an_alias_waits_for_the_index() {
 }
 
 /// BqbeQ: an empty today (no journal file) reads as absent while the initial
-/// parse is held, instead of waiting for it, and an existing day opens; a
-/// page whose alias spells today's title does not claim the journal, before
-/// or after the graph is ready (no alias resolves a journal).
+/// parse is held, and an existing day opens. Commas split a bare alias into
+/// separate names. A bracketed dated alias opens its declarer after publish.
 #[test]
 fn an_unclaimed_journal_day_is_absent_before_ready_and_aliases_never_claim_it() {
     let _integration_guard = crate::integration_lock();
@@ -74,7 +73,7 @@ fn an_unclaimed_journal_day_is_absent_before_ready_and_aliases_never_claim_it() 
     std::fs::write(root.path().join("journals/2026_10_18.md"), "- yesterday\n").unwrap();
     std::fs::write(
         root.path().join("pages/Owner.md"),
-        "alias:: Oct 19th, 2026\n\n- owns an alias spelled like a journal day\n",
+        "alias:: Oct 19th, 2026, [[Nov 2nd, 2026]]\n\n- owns a dated alias\n",
     )
     .unwrap();
     let hold = root.path().join(".tine-test-pause-load");
@@ -90,6 +89,7 @@ fn an_unclaimed_journal_day_is_absent_before_ready_and_aliases_never_claim_it() 
     };
     let today = journal("Oct 19th, 2026").recv_timeout(Duration::from_secs(5));
     let yesterday = journal("Oct 18th, 2026").recv_timeout(Duration::from_secs(5));
+    let dated_alias = journal("Nov 2nd, 2026").recv_timeout(Duration::from_secs(5));
     // The id an unclaimed day is created as, also before Ready (`resolve_page`).
     let absent = |name: &str| {
         let (send, receive) = mpsc::channel();
@@ -116,13 +116,22 @@ fn an_unclaimed_journal_day_is_absent_before_ready_and_aliases_never_claim_it() 
         yesterday.unwrap().unwrap().id.as_str(),
         "journals/2026_10_18.md"
     );
-    store.whole_graph().unwrap();
+    assert!(dated_alias
+        .expect("a dated alias waited for the graph-wide parse")
+        .is_none());
+    let view = store.whole_graph().unwrap();
+    assert!(matches!(
+        view.resolve("Nov 2nd, 2026", true),
+        tine_store::Resolved::Alias { .. }
+    ));
+    let alias = get_page(&store, "Nov 2nd, 2026", PageKind::Journal)
+        .unwrap()
+        .unwrap();
+    assert_eq!(alias.id.as_str(), "pages/Owner.md");
     assert!(get_page(&store, "Oct 19th, 2026", PageKind::Journal)
         .unwrap()
         .is_none());
-    let tine_store::Resolved::Absent { id: resolved } =
-        store.whole_graph().unwrap().resolve("Oct 19th, 2026", true)
-    else {
+    let tine_store::Resolved::Absent { id: resolved } = view.resolve("Oct 19th, 2026", true) else {
         panic!("an alias claimed a journal day")
     };
     assert_eq!(

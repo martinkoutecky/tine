@@ -4273,6 +4273,10 @@ html[data-mobile-editing-dock] .app-container[data-mobile-drawer-mode="true"] :i
 .block-checkbox:hover {
   border-color: var(--accent, #4c8bf5);
 }
+/* No block behind it (opening text): inert, a press on it is on the text. */
+.block-checkbox[aria-disabled="true"] {
+  cursor: inherit;
+}
 .block-checkbox.checked {
   background: var(--accent, #4c8bf5);
   border-color: var(--accent, #4c8bf5);
@@ -7670,6 +7674,12 @@ img.emoji {
 .embed-missing {
   font-size: 13px;
   color: var(--text-muted);
+}
+.query-group.query-group-no-page {
+  margin-bottom: 0;
+}
+.query-group-no-page > .live-ref-group > .comment-surface > .page-section {
+  padding-bottom: 0;
 }
 .link-depth-warning {
   margin: 2px 0;

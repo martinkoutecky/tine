@@ -24,8 +24,9 @@ describe("OG-DUPAL1 shared computation owners", () => {
   it("F10 I-12: clipboard formatting and ancestry belong to edits/serialize.ts shared primitives", () => {
     const text = source("src/document/edits/serialize.ts");
     expect(text.match(/raw\.split\("\\n"\)/g)).toHaveLength(1);
-    expect(text.match(/while \(parent !== null\)/g)).toHaveLength(1);
+    // One memoised ancestry walk answers "is an ancestor selected" (GH #793).
+    expect(text.match(/doc\.byId\[id\]\?\.parent/g)).toHaveLength(2);
     expect(text.match(/markdownBlockLines\(/g)).toHaveLength(3);
-    expect(text.match(/hasSelectedAncestor\(/g)).toHaveLength(3);
+    expect(text.match(/selectionRoots\(/g)).toHaveLength(3);
   });
 });

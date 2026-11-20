@@ -51,9 +51,27 @@ impl DocBlock {
             // recovers an author swallowed by a final quote (GH #895).
             let proj = crate::render::parse_projection(&self.raw, self.is_org);
             let (marker, priority, heading_level, mut properties) = header_facets(&proj.blocks);
-            let (scheduled, deadline) = planning_dates(&proj.blocks, &self.raw);
             let tags = tags_from_blocks(&proj.blocks);
-            let regions = crate::block_regions::from_blocks(&self.raw, self.is_org, &proj.blocks);
+            let (regions, planning) = crate::block_regions::from_blocks_with_planning(
+                &self.raw,
+                self.is_org,
+                &proj.blocks,
+            );
+            let mut scheduled = None;
+            let mut deadline = None;
+            for token in planning
+                .into_iter()
+                .filter(|token| token.top_level && token.canonical_keyword)
+            {
+                let slot = if token.kind == "Scheduled" {
+                    &mut scheduled
+                } else {
+                    &mut deadline
+                };
+                if slot.is_none() {
+                    *slot = token.value;
+                }
+            }
             crate::block_regions::extend_author_facet(&mut properties, &regions);
             let visible = regions
                 .apply(&self.raw, self.is_org, crate::block_regions::Edit::Visible)

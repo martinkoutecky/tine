@@ -118,6 +118,10 @@ it("reference-panel Copy/Export labels comment rows and omits them on request", 
     { id: "reply", raw: "REPLYMARKER [[Target]]", comment: true, breadcrumb: ["Body", "COMMENTMARKER"], collapsed: false, children: [] },
     { id: "plain", raw: "ORDINARY [[Target]]", breadcrumb: ["Body"], collapsed: false, children: [] },
   ] }];
+  vi.spyOn(backend(), "getPage").mockResolvedValue({
+    id: "pages/Source.md", name: "Source", title: "Source", kind: "page", format: "md",
+    pre_block: null, blocks: [{ id: "body", raw: "Body", collapsed: false, children: groups[0].blocks }],
+  });
   const host = document.createElement("div");
   document.body.append(host);
   const disposeChooser = render(() => <ReferenceExportChooser subject="Linked References" groups={groups} onClose={() => {}} />, host);

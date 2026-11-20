@@ -117,7 +117,8 @@ function pagePropertyParts(page: ReadonlyFeedPage, exclude: string | null, first
   // it, as the save drops them (`canonicalPageHeaderDraft`, GH #210 F1).
   const text = root?.originatedFromPageHeader ? withoutLeadingBlankLines(root.raw) : root?.raw ?? "";
   const rootPart: PropertyPart[] = root ? [{ kind: "root", id: root.id, text }] : [];
-  if (root?.originatedFromPageHeader) return rootPart;
+  // A header editor's pre-block is the opening text after it, never a header.
+  if (first?.originatedFromPageHeader) return rootPart;
   return page.preBlock || !root ? [{ kind: "preBlock", text: page.preBlock ?? "" }, ...rootPart] : rootPart;
 }
 
@@ -220,6 +221,19 @@ export function pagePropertyEdit(pageName: string, key: string, value: string | 
   };
 }
 
+/** Where page `page`'s header ends, as the parser answered it (D-20261119-PG):
+ *  its header text and its opening text, the prose before the first block,
+ *  shown as written. While `beginPageHeaderEdit`'s root is the header, the
+ *  header text is that root's draft and the opening text the one the parser
+ *  found then; the pre-block it left is never split a second time.
+ *  O(pre-block bytes). */
+export function pageOpening(page: ReadonlyFeedPage): { properties: string | null; content: string | null } {
+  const first = page.format === "md" ? doc.byId[page.roots[0]] : undefined;
+  if (first?.originatedFromPageHeader) return { properties: withoutLeadingBlankLines(first.raw) || null, content: first.headerOpening ?? null };
+  const { properties, content } = splitPagePreamble(page.preBlock, page.format);
+  return { properties, content };
+}
+
 /** Materialize an existing canonical Markdown page header as Tine's ordinary
  * first-root editor. This is representation-only: no undo entry, dirty flag or
  * save is created until the user actually changes the node. */
@@ -246,6 +260,7 @@ export function beginPageHeaderEdit(pageName: string): string | null {
         page: pageName,
         children: [],
         originatedFromPageHeader: true,
+        headerOpening: split.content,
       };
       s.pages[index].roots.unshift(id);
     })
@@ -365,17 +380,19 @@ export function adoptFoldedPageHeader(pageName: string, preBlock: string): void 
 export function promotePagePreamble(pageName: string): string | null {
   const page = pageByName(pageName);
   if (!page || !pageWritable(pageName)) return null;
-  const { properties, content } = splitPagePreamble(page.preBlock, page.format);
+  const { properties, content } = pageOpening(page);
   if (!content) return null;
   pushUndo(`promote-preamble:${pageName}`, [pageName]);
   const id = freshId();
   setDoc(
     produce((s) => {
       const index = s.pages.findIndex((p) => p.name === pageName);
-      s.pages[index].preBlock = properties;
+      const header = s.byId[s.pages[index].roots[0]];
+      // A header editor's root keeps the header; its pre-block is this text.
+      s.pages[index].preBlock = header?.originatedFromPageHeader ? null : properties;
       s.byId[id] = { id, raw: content, collapsed: false, parent: null, page: pageName, children: [] };
-      const markedHeader = s.byId[s.pages[index].roots[0]]?.originatedFromPageHeader;
-      s.pages[index].roots.splice(markedHeader ? 1 : 0, 0, id);
+      if (header?.originatedFromPageHeader) header.headerOpening = null;
+      s.pages[index].roots.splice(header?.originatedFromPageHeader ? 1 : 0, 0, id);
     })
   );
   markDirty(pageName, ["save-block", "insert-blocks"]);

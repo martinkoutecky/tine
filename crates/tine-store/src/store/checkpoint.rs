@@ -155,14 +155,11 @@ const MAGIC: &[u8; 8] = b"TINECKPT";
 // references count (OG hoists it into the page's properties), and a page's
 // format is its file's, never read from its text. Cached references, page
 // properties and aliases change for unchanged files; older caches rebuild.
-// 40 (CM dated titles, D-20261119-YL): a journal's identity and spellings
-// follow the effective title format. A configured title format that names no
-// single day (`MM-dd`, `d.M.yy`) renders and reads text as the default, and a
-// title format reads text before the file-name format, so with swapped
-// numeric formats a typed name means its title's day. Cached journal names,
-// name buckets, claimants, link targets and query memos use the folded date
-// key (A-20261120-DK). The body schema is unchanged and older caches rebuild.
-pub(crate) const FORMAT: u32 = 40;
+// 40 (shared planning lines): the cached date projection includes both
+// SCHEDULED and DEADLINE in a line-leading run, including when the first
+// timestamp crosses a newline. Rebuild older projections from the files.
+// 41: retained rows carry typed day claims.
+pub(crate) const FORMAT: u32 = 41;
 /// The lsdoc release tine-core parses with (`crates/tine-core/Cargo.toml`;
 /// `checkpoint_tests::the_parser_tag_matches_the_lsdoc_pin` keeps them equal).
 pub(crate) const PARSER: &str = "lsdoc v0.5.12";

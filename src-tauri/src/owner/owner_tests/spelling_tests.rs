@@ -330,6 +330,10 @@ fn an_add_to_a_day_is_saved_into_the_file_that_holds_it() {
 /// D-20261119-YL fallback), so the day goes by its default title.
 #[test]
 fn an_add_after_a_day_winner_is_deleted_goes_to_its_twin_under_the_fallback_title() {
+    // P and Q, not A and B: the standard graph already holds pages/a.md and
+    // pages/b.md, and on a case-folding volume (NTFS, APFS) writing A.md
+    // would overwrite a.md under its old spelling (hosted Windows, nightly
+    // 2026-11-19: the day stayed with pages/b.md and never converged).
     let graph = Graph::seeded(
         Default::default(),
         &[
@@ -337,20 +341,20 @@ fn an_add_after_a_day_winner_is_deleted_goes_to_its_twin_under_the_fallback_titl
                 "logseq/config.edn",
                 "{:file/name-format :triple-lowbar :journal/page-title-format \"MM-dd\"}\n",
             ),
-            ("pages/A.md", "title:: 2026-11-02\n\n- a\n"),
-            ("pages/B.md", "title:: 2026-11-02\n\n- b\n"),
+            ("pages/P.md", "title:: 2026-11-02\n\n- a\n"),
+            ("pages/Q.md", "title:: 2026-11-02\n\n- b\n"),
         ],
     );
     let slot = Arc::new(graph.slot());
     let (_endpoint, _gate) = super::endpoint(&graph, slot);
-    std::fs::remove_file(graph.root.join("pages/A.md")).unwrap();
+    std::fs::remove_file(graph.root.join("pages/P.md")).unwrap();
     settle(&graph, "outside delete", |view| {
         matches!(view.resolve("2026-11-02", true), Resolved::Existing { id, others }
-            if id.as_str() == "pages/B.md" && others.is_empty())
+            if id.as_str() == "pages/Q.md" && others.is_empty())
     });
-    assert_eq!(add_to_day(&graph, "2026-11-02"), "pages/B.md");
-    assert_eq!(disk(&graph, "pages/B.md").matches("- added").count(), 1);
-    assert!(!graph.root.join("pages/A.md").exists());
+    assert_eq!(add_to_day(&graph, "2026-11-02"), "pages/Q.md");
+    assert_eq!(disk(&graph, "pages/Q.md").matches("- added").count(), 1);
+    assert!(!graph.root.join("pages/P.md").exists());
     assert!(!graph.root.join("journals/2026_11_02.md").exists());
 }
 

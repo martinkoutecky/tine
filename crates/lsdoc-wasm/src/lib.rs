@@ -196,6 +196,17 @@ pub fn page_preamble_content_json(raw: &str, is_org: bool) -> String {
     serde_json::to_string(&tine_outline::page_preamble::preamble_content_range(raw, is_org).map(|r| [r.0, r.1])).unwrap()
 }
 
+/// Opening text's property nodes as UTF-8 byte ranges `[[start, end], ...]`
+/// in source order (I-12: the one answerer, `page_preamble::opening_groups`).
+#[wasm_bindgen]
+pub fn page_opening_groups_json(text: &str, is_org: bool) -> String {
+    let groups: Vec<[usize; 2]> = tine_outline::page_preamble::opening_groups(text, is_org)
+        .into_iter()
+        .map(|r| [r.0, r.1])
+        .collect();
+    serde_json::to_string(&groups).unwrap()
+}
+
 /// Whether a block property key is hidden from rendered chips (I-12: the one
 /// answerer the static export also asks). O(key bytes + hidden keys), no I/O.
 #[wasm_bindgen]
@@ -425,16 +436,21 @@ pub fn lsdoc_tag() -> String {
 }
 
 #[wasm_bindgen]
-pub fn parse_block_bundle_json(raw: &str, is_org: bool) -> String {
-    let mut blocks = lsdoc_block_parse::parse_block(raw, is_org);
-    let regions = block_regions::from_blocks(raw, is_org, &blocks);
+pub fn parse_block_bundle_json(raw: &str, is_org: bool, untitled: bool) -> String {
+    let mut blocks = if untitled {
+        lsdoc_block_parse::parse_untitled_block(raw, is_org)
+    } else {
+        lsdoc_block_parse::parse_block(raw, is_org)
+    };
+    let (regions, render_planning) = block_regions::from_blocks_with_planning(raw, is_org, &blocks);
     if !is_org {
         block_regions::strip_swallowed_rows(raw, &mut blocks);
     }
     format!(
-        "{{\"blocks\":{},\"regions\":{},\"sole_macro\":{}}}",
+        "{{\"blocks\":{},\"regions\":{},\"render_planning\":{},\"sole_macro\":{}}}",
         lsdoc::blocks_to_json(&blocks).unwrap(),
         serde_json::to_string(&regions).unwrap(),
+        serde_json::to_string(&render_planning).unwrap(),
         serde_json::to_string(&standalone_macro::sole_macro(&blocks)).unwrap()
     )
 }

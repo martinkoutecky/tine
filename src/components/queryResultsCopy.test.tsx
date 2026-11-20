@@ -1,12 +1,12 @@
 import { afterEach, beforeAll, expect, it, vi } from "vitest";
 import { backend } from "../backend";
 import { closeExportModal, exportModal } from "../ui";
-import { openQueryResultsCopy } from "./queryResultsCopy";
+import { openQueryResultsCopy, uniqueResultRoots } from "./queryResultsCopy";
 import { bumpGraphEpoch } from "../graphSession";
 import type { BlockDto, RefGroup } from "../types";
-import { adoptResults, captureResultsTicket } from "../queryResultsEpoch";
+import { adoptResults, captureResultsTicket, resultsSettled } from "../queryResultsEpoch";
 import { initParser } from "../render/parse";
-import { ensurePageLoaded, resetStore } from "../document";
+import { beginPageHeaderEdit, ensurePageLoaded, resetStore } from "../document";
 
 beforeAll(initParser);
 
@@ -44,6 +44,25 @@ it("copies duplicate matched descendants only once under the journal date title"
   ] }]);
 });
 
+it.each([64, 128])("reads each child list once across 50 chains of depth %s", depth => {
+  let reads = 0;
+  const rows: BlockDto[] = [];
+  const roots: BlockDto[] = [];
+  for (let chain = 0; chain < 50; chain++) {
+    let children: BlockDto[] = [];
+    for (let level = depth; level > 0; level--) {
+      const next = children;
+      const row = { ...block(`${chain}-${level}`, ""), get children() { reads++; return next; } };
+      rows.push(row);
+      children = [row];
+    }
+    roots.push(children[0]);
+  }
+  const deduped = uniqueResultRoots(rows);
+  expect(reads).toBe(50 * depth);
+  expect(deduped.map(row => row.id)).toEqual(roots.map(row => row.id));
+});
+
 it("hydrates the selected source subtree without copying unrelated roots", async () => {
   vi.spyOn(backend(), "getPageByPath").mockResolvedValue({ id: "pages/Copy.md", name: "Copy", title: "Copy", kind: "page", pre_block: null,
     blocks: [block("p", "Parent", [block("c", "Child")]), block("x", "Unrelated")] });
@@ -61,4 +80,33 @@ it("does not open a copy modal after switching graph during source hydration", a
   const pending = openQueryResultsCopy([{ page: "Copy", kind: "page", path: "pages/Copy.md", blocks: [block("p", "Parent")] }]);
   bumpGraphEpoch(); finish(null); await pending;
   expect(exportModal()).toBeNull();
+});
+
+// D-20261119-PG, review da945bc19 (AR-1): a result's synthetic rows are checked
+// against where the source's header ends, the one answer `pageOpening` gives,
+// so later property groups and an open header editor do not turn unchanged
+// rows into "results changed".
+it.each([["unloaded"], ["loaded"], ["loaded, header open"]] as const)("copies the header and opening rows of a page with later property groups (%s)", async state => {
+  const header = "related:: [[Target]]";
+  const opening = "later:: x\nlast:: y\n\nProse [[Target]]";
+  const source = { id: "pages/Groups.md", name: "Groups", title: "Groups", kind: "page" as const, format: "md" as const,
+    pre_block: `${header}\n\n${opening}\n`, blocks: [block("ordinary", "Unrelated outline")] };
+  vi.spyOn(backend(), "getPageByPath").mockResolvedValue(source);
+  if (state !== "unloaded") ensurePageLoaded(source);
+  const groups: RefGroup[] = [{ page: "Groups", kind: "page", path: source.id, blocks: [
+    { ...block("page-property:Page:groups", header), page_property: true },
+    { ...block("page-preamble:Page:groups", opening), page_preamble: true },
+  ] }];
+  // The user opens the source's header editor; the query's answer is adopted
+  // once that settles, as a rerun adopts it.
+  if (state === "loaded, header open") {
+    expect(beginPageHeaderEdit("Groups")).toBeTruthy();
+    await vi.waitFor(() => expect(resultsSettled()).toBe(true));
+  }
+  adoptResults(groups, captureResultsTicket());
+  await openQueryResultsCopy(groups);
+  const modal = exportModal();
+  expect(modal && "nodes" in modal && modal.nodes).toMatchObject([{ raw: "Groups", children: [
+    { raw: expect.stringContaining("related:: [[Target]]") }, { raw: opening, children: [] },
+  ] }]);
 });

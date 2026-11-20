@@ -774,6 +774,28 @@ function __tine_raw_page_identity_key(name) {
 }
 
 /**
+ * Opening text's property nodes as UTF-8 byte ranges `[[start, end], ...]`
+ * in source order (I-12: the one answerer, `page_preamble::opening_groups`).
+ * @param {string} text
+ * @param {boolean} is_org
+ * @returns {string}
+ */
+function __tine_raw_page_opening_groups_json(text, is_org) {
+    let deferred2_0;
+    let deferred2_1;
+    try {
+        const ptr0 = passStringToWasm0(text, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+        const len0 = WASM_VECTOR_LEN;
+        const ret = wasm.page_opening_groups_json(ptr0, len0, is_org);
+        deferred2_0 = ret[0];
+        deferred2_1 = ret[1];
+        return getStringFromWasm0(ret[0], ret[1]);
+    } finally {
+        wasm.__wbindgen_free(deferred2_0, deferred2_1, 1);
+    }
+}
+
+/**
  * The same page-property edit used by the native owner and the page form.
  * @param {string} parts_json
  * @param {boolean} is_org
@@ -855,15 +877,16 @@ function __tine_raw_page_regions_json(raw, is_org) {
 /**
  * @param {string} raw
  * @param {boolean} is_org
+ * @param {boolean} untitled
  * @returns {string}
  */
-function __tine_raw_parse_block_bundle_json(raw, is_org) {
+function __tine_raw_parse_block_bundle_json(raw, is_org, untitled) {
     let deferred2_0;
     let deferred2_1;
     try {
         const ptr0 = passStringToWasm0(raw, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
         const len0 = WASM_VECTOR_LEN;
-        const ret = wasm.parse_block_bundle_json(ptr0, len0, is_org);
+        const ret = wasm.parse_block_bundle_json(ptr0, len0, is_org, untitled);
         deferred2_0 = ret[0];
         deferred2_1 = ret[1];
         return getStringFromWasm0(ret[0], ret[1]);
@@ -1784,6 +1807,7 @@ export const page_alias_spellings = __tineGuard("page_alias_spellings", __tine_r
 export const page_file_format = __tineGuard("page_file_format", __tine_raw_page_file_format);
 export const page_header_json = __tineGuard("page_header_json", __tine_raw_page_header_json);
 export const page_identity_key = __tineGuard("page_identity_key", __tine_raw_page_identity_key);
+export const page_opening_groups_json = __tineGuard("page_opening_groups_json", __tine_raw_page_opening_groups_json);
 export const page_parts_with_property = __tineGuard("page_parts_with_property", __tine_raw_page_parts_with_property);
 export const page_preamble_content_json = __tineGuard("page_preamble_content_json", __tine_raw_page_preamble_content_json);
 export const page_regions_json = __tineGuard("page_regions_json", __tine_raw_page_regions_json);

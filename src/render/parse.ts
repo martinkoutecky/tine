@@ -112,6 +112,20 @@ export interface BlockRegions {
 export interface BlockIdentityFacts { raw: string; format: "md" | "org"; value: string | null }
 const soleMacroCache = new WeakMap<Block[], MacroInline | null>();
 const regionCache = new WeakMap<Block[], BlockRegions>();
+export interface RenderPlanning {
+  kind: "Scheduled" | "Deadline";
+  span_start: number;
+  line_start: number;
+  value: string | null;
+  has_trailing_body: boolean;
+  top_level: boolean;
+}
+const renderPlanningCache = new WeakMap<Block[], RenderPlanning[]>();
+const EMPTY_RENDER_PLANNING: readonly RenderPlanning[] = [];
+
+export function renderPlanningOf(blocks: Block[]): readonly RenderPlanning[] {
+  return renderPlanningCache.get(blocks) ?? EMPTY_RENDER_PLANNING;
+}
 
 
 function quarantine(key: string, text: string): Block[] {
@@ -150,12 +164,14 @@ function bumpParseStats(hit: boolean) {
 }
 
 /** Parse one block body (the blockView-stripped `view.lines.join("\n")`) into
- *  lsdoc's render AST. Synchronous — `initParser()` must have resolved first. */
-export function parseBlock(text: string, isOrg: boolean): Block[] {
+ *  lsdoc's render AST. Synchronous — `initParser()` must have resolved first.
+ *  `untitled`: text that is no block (a page's opening text), read with an
+ *  empty title so nothing is lifted off its first line as a block header. */
+export function parseBlock(text: string, isOrg: boolean, untitled = false): Block[] {
   if (!ready()) {
     throw new Error("parseBlock called before initParser() resolved");
   }
-  const key = (isOrg ? "o\n" : "m\n") + text;
+  const key = (untitled ? "u" : "") + (isOrg ? "o\n" : "m\n") + text;
   const hit = cache.get(key);
   if (hit !== undefined) {
     if (statsEnabled()) bumpParseStats(true);
@@ -164,19 +180,20 @@ export function parseBlock(text: string, isOrg: boolean): Block[] {
   if (statsEnabled()) bumpParseStats(false);
   let json: string;
   try {
-    json = parse_block_bundle_json(text, isOrg);
+    json = parse_block_bundle_json(text, isOrg, untitled);
   } catch {
     __tineReinstantiate();
     try {
-      json = parse_block_bundle_json(text, isOrg);
+      json = parse_block_bundle_json(text, isOrg, untitled);
     } catch {
       __tineReinstantiate();
       return quarantine(key, text);
     }
   }
-  const bundle = JSON.parse(json) as { blocks: Block[]; regions: BlockRegions; sole_macro: MacroInline | null };
+  const bundle = JSON.parse(json) as { blocks: Block[]; regions: BlockRegions; render_planning: RenderPlanning[]; sole_macro: MacroInline | null };
   soleMacroCache.set(bundle.blocks, bundle.sole_macro);
   regionCache.set(bundle.blocks, bundle.regions);
+  if (bundle.render_planning.length) renderPlanningCache.set(bundle.blocks, bundle.render_planning);
   return cache.remember(key, bundle.blocks, json.length);
 }
 

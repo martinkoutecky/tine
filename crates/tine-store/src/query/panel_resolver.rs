@@ -14,7 +14,7 @@ use std::collections::BTreeSet;
 ///
 /// The day's journal is the FIRST journal page of the day in page-list order.
 /// This agrees with batch 2's duplicate-day keeper: the snapshot's page list
-/// is built from `dedup_journal_days` (claimant order `compare_page_claimants`,
+/// projects the day buckets (claimant order `compare_page_claimants`,
 /// launch build and incremental upsert alike), so it holds one journal per day,
 /// the keeper, and "first" has nothing to choose between. It would disagree
 /// only if the list ever held two journals of one day: then this pick follows

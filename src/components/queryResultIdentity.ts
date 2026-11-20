@@ -7,7 +7,6 @@ import { blockRegions } from "../render/parse";
 import { formatForPage, node, pageByName, pageInstanceGeneration, pageRoots, type Node as ReadonlyNode } from "../document";
 import { resultTicket, resultsActionable, resultsEpoch, resultsTicketActionable } from "../queryResultsEpoch";
 import { bindingCurrent, captureBinding } from "../binding";
-import { splitPagePreamble } from "../editor/properties";
 
 export interface ResultRow { id: string; page: string; kind?: PageKind; path?: string; dto?: BlockDto; detached?: boolean }
 const mounted = new WeakMap<BlockDto, { source: ReadonlyNode; instance: number | null }>();
@@ -21,6 +20,14 @@ function dtoIndex(page: PageDto): Map<string, BlockDto[]> {
     visit(block.children);
   } };
   visit(page.blocks); dtoIndexes.set(page, index); return index;
+}
+
+/** Match a shallow reference against an exact source page read for export.
+ * Index the source once per read, then check the runtime key and original
+ * body so a reused positional key cannot silently export a different row. */
+export function referenceExportSource(reference: BlockDto, sourcePage: PageDto): BlockDto | null {
+  const matches = dtoIndex(sourcePage).get(reference.id);
+  return matches?.length === 1 && matches[0].raw === reference.raw ? matches[0] : null;
 }
 
 const mountedSynthetic = new WeakMap<BlockDto, number | null>();
@@ -165,8 +172,11 @@ export function samePagePropertyResult(hit: BlockDto, header: string | null, for
   return selected.length > 0 && JSON.stringify(selected) === JSON.stringify(properties(header));
 }
 
-/** Synthetic pre-block rows have no outline locator; validate their source part. */
-export function samePreBlockResult(hit: BlockDto, preBlock: string | null, format: Format): boolean {
-  return hit.page_preamble ? splitPagePreamble(preBlock, format).content === hit.raw
-    : samePagePropertyResult(hit, preBlock, format);
+/** Synthetic pre-block rows have no outline locator; validate their source
+ * part. `source` is where the source page's header ends and its opening text:
+ * `pageOpening` for a loaded page (it holds while the header is edited), the
+ * DTO preamble's `splitPagePreamble` otherwise. */
+export function samePreBlockResult(hit: BlockDto, source: { properties: string | null; content: string | null }, format: Format): boolean {
+  return hit.page_preamble ? source.content === hit.raw
+    : samePagePropertyResult(hit, source.properties, format);
 }

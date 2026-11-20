@@ -2,6 +2,7 @@
 //! kernel still owns them (regions) and the render AST drops them.
 
 use crate::block_regions::{line_ranges, raw_range, trimmed_range, BlockRegions, Property, Range};
+use crate::lsdoc_block_parse::Coords;
 use lsdoc::ast::{Block, Inline};
 
 /// Built-in metadata rows that mldoc folds into a final quote's lazy
@@ -74,7 +75,7 @@ fn rows(raw: &str, blocks: &[Block]) -> Vec<Property> {
     else {
         return Vec::new();
     };
-    let Some(range) = raw_range(raw, quote, false) else {
+    let Some(range) = raw_range(raw, quote, Coords::of(raw, false)) else {
         return Vec::new();
     };
     let mut found: Vec<Property> = Vec::new();
@@ -148,8 +149,9 @@ pub(crate) fn quote_tail(raw: &str) -> Option<QuoteTail> {
     }
     let blocks = crate::render::parse_block(raw, false);
     let line_start = |at: usize| raw[..at].rfind('\n').map_or(0, |p| p + 1);
+    let coords = Coords::of(raw, false);
     let quote_line = |b: &Block| match b {
-        Block::Quote { span, .. } => raw_range(raw, span, false).map(|r| line_start(r.0)),
+        Block::Quote { span, .. } => raw_range(raw, span, coords).map(|r| line_start(r.0)),
         _ => None,
     };
     // The header bullet of a titleless block carries no title text, marker or priority.
@@ -217,8 +219,9 @@ pub fn strip_swallowed_rows(raw: &str, blocks: &mut [Block]) {
     let Some(Block::Paragraph { inline, .. }) = children.last_mut() else {
         return;
     };
+    let coords = Coords::of(raw, false);
     let at = inline.iter().position(|i| match i {
-        Inline::Plain { span, .. } => raw_range(raw, span, false).is_some_and(|r| r.0 == start),
+        Inline::Plain { span, .. } => raw_range(raw, span, coords).is_some_and(|r| r.0 == start),
         _ => false,
     });
     if let Some(at) = at.filter(|at| {

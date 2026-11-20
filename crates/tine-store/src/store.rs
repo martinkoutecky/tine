@@ -408,6 +408,8 @@ mod link_oracle;
 mod load_panic_tests;
 #[cfg(test)]
 mod loading_save_tests;
+#[cfg(test)]
+mod move_occupant_tests;
 mod name_owners;
 mod name_search;
 mod page_lookup;
