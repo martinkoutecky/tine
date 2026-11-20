@@ -1394,8 +1394,10 @@ export function installKeybindings(overrides: Record<string, ShortcutBinding> = 
     const released = (e: PointerEvent) => {
       if (!press || e.pointerId !== press.id) return;
       moving(e);
-      // Pointer capture can retarget the release; ask where it physically happened.
-      press.up = documentOf(e).elementFromPoint?.(e.clientX, e.clientY) ?? e.target;
+      // Pointer capture can retarget the release; ask where it physically happened
+      // (nothing there, e.g. outside the view, is no match).
+      const at = documentOf(e);
+      press.up = at.elementFromPoint ? at.elementFromPoint(e.clientX, e.clientY) : e.target;
       if (modified(e)) press.moved = true;
     };
     const moving = (e: PointerEvent) => {
