@@ -466,14 +466,20 @@ export function setPageKind(name: string, id: string, kind: PageKind): void {
 
 /** Source format for a loaded page or its physical owner in the shared inventory.
  *  Only an unknown/new page falls back to the graph's preferred format. */
-export function formatForPage(name: string | undefined): Format {
+export function formatForPage(name: string | undefined, kind?: PageKind, path?: string): Format {
+  return sourceFormatForPage(name, kind, path) ?? graphMeta()?.preferred_format ?? "md";
+}
+
+/** Resolve a physical source's format in O(1), without reading its body.
+ * A name without a loaded page or inventory owner has no source format yet. */
+export function sourceFormatForPage(name: string | undefined, kind?: PageKind, path?: string): Format | undefined {
+  if (path) return page_file_format(path) as Format;
   if (name) {
     const p = pageByName(name);
-    if (p?.format) return p.format;
-    const path = ownerPath(resolvedTarget(name) ?? resolvedTarget(name, "journal"));
-    if (path) return page_file_format(path) as Format;
+    if (p?.format && (!kind || p.kind === kind)) return p.format;
+    const owner = ownerPath(kind ? resolvedTarget(name, kind) : resolvedTarget(name) ?? resolvedTarget(name, "journal"));
+    if (owner) return page_file_format(owner) as Format;
   }
-  return graphMeta()?.preferred_format ?? "md";
 }
 
 /** Like {@link formatForPage} but keyed by a block id (→ its page). */

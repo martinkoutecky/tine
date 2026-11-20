@@ -1,6 +1,7 @@
 import { For, Show, batch, createEffect, createMemo, createSignal, createUniqueId, on, onCleanup, onMount, untrack, useContext, type JSX, type Signal } from "solid-js";
 import { nearestAncestors } from "../render/blockTrail";
 import { ownSelectionSurface } from "../document";
+import { sourceFormatForPage } from "../document/model";
 import { createGraphResource } from "../graphResource";
 import { backend } from "../backend";
 import { graphOwner, latestOwner } from "../owned";
@@ -305,6 +306,9 @@ function MountedRefGroup(props: LiveRefGroupProps & { occurrence: RefOccurrence;
   // Page lookup observes the working-set index. Stop another page loading from
   // invalidating this group's breadcrumbs and rows when its source is unchanged.
   const sourcePage = createMemo(() => pageByName(props.page));
+  const sourceFormat = createMemo(() => graphMeta() && (props.surface === "ref" || props.surface === "query")
+    ? sourceFormatForPage(props.page, props.kind, props.path)
+    : formatForPage(props.page, props.kind, props.path));
   const liveNode = (id: string) => {
     const page = sourcePage();
     if (!page || page.kind !== props.kind || (props.path && page.id !== props.path)) return undefined;
@@ -533,9 +537,13 @@ function MountedRefGroup(props: LiveRefGroupProps & { occurrence: RefOccurrence;
   // GH #643 (query trails): "…" is the elision marker, not block text.
   const crumbLabel = (c: Crumb): JSX.Element => c.label === "…" && !c.id
     ? <>…</>
-    : <span class="ref-crumb-label"><InlineText text={c.label || "…"} format={c.id ? formatForBlock(c.id) : formatForPage(props.page)} /></span>;
+    : <Show when={sourceFormat()}>{format =>
+        <span class="ref-crumb-label"><InlineText text={c.label || "…"} format={format()} /></span>
+      }</Show>;
   const liveBreadcrumb = (id: string): Crumb[] | null => {
     if (!ready() || !liveNode(id)) return null;
+    const format = sourceFormat();
+    if (!format) return null;
 
     // The loaded source page is authoritative after hydration; never invent
     // ancestor IDs from result-row labels (src/render/blockTrail.ts).
@@ -543,7 +551,7 @@ function MountedRefGroup(props: LiveRefGroupProps & { occurrence: RefOccurrence;
     if (!trail) return null;
     // Labels are markup, rendered inline like the block itself (OG block.cljs
     // `breadcrumb`: `map-inline` over the title, no character cut); CSS caps width.
-    const tail = trail.ids.map((parent): Crumb => ({ id: parent, label: (visibleBody(docNode(parent)!.raw, formatForBlock(parent))[0] ?? "").trim() }));
+    const tail = trail.ids.map((parent): Crumb => ({ id: parent, label: (visibleBody(docNode(parent)!.raw, format)[0] ?? "").trim() }));
     return trail.more ? [{ label: "…" }, ...tail] : tail;
   };
   // A ref/query/embed group can render a block that ALSO lives in the main outline
@@ -807,17 +815,17 @@ function MountedRefGroup(props: LiveRefGroupProps & { occurrence: RefOccurrence;
                     <Show when={dtoById(id)}>
                       {(d) => props.excerpt
                         ? <ReferenceExcerptBlocks blocks={[d()]} evidence={evidenceById().has(id) ? [evidenceById().get(id)!] : []} page={props.page} kind={props.kind} path={props.path} fullState={props.occurrence.excerptFull} />
-                        : props.surface === "preview"
+                        : <Show when={sourceFormat()}>{format => props.surface === "preview"
                           // Until the source page is loaded the preview shows its
                           // capped copy; edits only ever reach the live block.
                           ? <RefBlocks blocks={[readOnlyRow(d())]} page={props.page} pageKind={props.kind} path={props.path}
-                              readOnly pageBody onOpenBlock={props.onOpenBlock} />
+                              sourceFormat={format()} readOnly pageBody onOpenBlock={props.onOpenBlock} />
                           : <RefBlocks blocks={[readOnlyRow(d())]} page={props.page} pageKind={props.kind} path={props.path}
-                              pageBody={props.surface === "embed"} localFolds={props.surface === "embed"}
+                              sourceFormat={format()} pageBody={props.surface === "embed"} localFolds={props.surface === "embed"}
                               readOnly={!d().page_property && !liveNode(id)}
                               queryResult={props.surface === "query"}
                               onEditPreamble={d().page_preamble ? () => { void editPreamble(d()); } : undefined}
-                              onEditPageProperties={(event) => { void editPageProperties(event); }} />}
+                              onEditPageProperties={(event) => { void editPageProperties(event); }} />}</Show>}
                     </Show>
                   }
                 >

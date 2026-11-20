@@ -5,7 +5,7 @@ import { t } from "../i18n";
 // cost is O(rendered blocks), bounded by the supplied result tree.
 
 import { For, Show, createMemo, createSignal, onCleanup, type JSX } from "solid-js";
-import type { BlockDto } from "../types";
+import type { BlockDto, Format } from "../types";
 import { pageProperties } from "../render/block";
 import { effectiveHeadingLevel, facetsFromDto, renderedProperties } from "../render/facets";
 import { taskCheckboxState } from "../markers";
@@ -46,6 +46,7 @@ export function RefBlocks(props: {
   pageKind?: "journal" | "page";
   /** Exact source file, when the caller knows it (a reference group does). */
   path?: string;
+  sourceFormat?: Format;
   depth?: number;
   /** GH #486: a click on a page-property row edits that page's properties
    *  (the caller owns the source page's edit path). Absent: read-only row. */
@@ -68,6 +69,7 @@ function RefBlocksAtDepth(props: {
   page?: string;
   pageKind?: "journal" | "page";
   path?: string;
+  sourceFormat?: Format;
   depth?: number;
   onEditPageProperties?: (event: MouseEvent) => void;
   onEditPreamble?: () => void;
@@ -87,6 +89,7 @@ function RefBlocksAtDepth(props: {
           page={props.page}
           pageKind={props.pageKind}
           path={props.path}
+          sourceFormat={props.sourceFormat}
           onEditPageProperties={props.onEditPageProperties}
           onEditPreamble={props.onEditPreamble}
           readOnly={props.readOnly}
@@ -106,6 +109,7 @@ function RefBlock(props: {
   page?: string;
   pageKind?: "journal" | "page";
   path?: string;
+  sourceFormat?: Format;
   onEditPageProperties?: (event: MouseEvent) => void;
   onEditPreamble?: () => void;
   readOnly?: boolean;
@@ -122,7 +126,7 @@ function RefBlock(props: {
   // source page cannot be read (D-20261023-VC, tine-agents evidence/m19-wave4).
   const facets = createMemo(() => facetsFromDto(props.block));
   const headingLevel = createMemo(() => effectiveHeadingLevel(facets(), props.depth));
-  const format = createMemo(() => formatForPage(props.page));
+  const format = createMemo(() => props.sourceFormat ?? formatForPage(props.page, props.pageKind, props.path));
   const annotation = () => annotationInfo(facets().properties);
   // Only an exact whole-block candidate needs query confirmation here.
   const beginQuery = createMemo(() =>
@@ -344,7 +348,7 @@ function RefBlock(props: {
         <div class="block-children-container">
           <div class="block-children">
             <RefBlocksAtDepth blocks={props.block.children} page={props.page} pageKind={props.pageKind} path={props.path}
-              queryResult={props.queryResult}
+              sourceFormat={format()} queryResult={props.queryResult}
               onEditPageProperties={props.onEditPageProperties}
               onEditPreamble={props.onEditPreamble}
               readOnly={props.readOnly} pageBody={props.pageBody} localFolds={props.localFolds} onOpenBlock={props.onOpenBlock}
