@@ -30,7 +30,16 @@ pub(crate) fn new_graph_root(parent: &Path, name: &str) -> Result<PathBuf, crate
 }
 
 pub(crate) fn canonical_existing_path(path: &Path) -> io::Result<PathBuf> {
+    #[cfg(test)]
+    CANONICALIZATIONS.with(|count| count.set(count.get() + 1));
     canonical_existing_path_with(path, |path| fs::canonicalize(path))
+}
+
+#[cfg(test)]
+thread_local! {
+    /// `canonical_existing_path` calls on this thread: per-operation probe
+    /// counts (PRINCIPLES 3) for the identity resolvers.
+    pub(crate) static CANONICALIZATIONS: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
 }
 
 pub(crate) fn canonical_existing_path_with(

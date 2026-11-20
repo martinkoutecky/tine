@@ -3,6 +3,7 @@
 //! properties primary, OG's rule); these functions only read it.
 
 use crate::block_regions::{parse_document, BlockRegions, Range};
+use lsdoc::ast::Block;
 use serde::Serialize;
 
 /// One Markdown page-header property: the parser's accepted key and value, its
@@ -140,14 +141,196 @@ pub fn preamble_content_range_in(raw: &str, is_org: bool, regions: &BlockRegions
     (!content.is_empty()).then(|| Range(start + leading, start + leading + content.len()))
 }
 
+/// Where a page's opening text (the prose [`preamble_content_range`] finds)
+/// has property groups: every top-level `key:: value` group or `#+key:
+/// value` line of the text read as untitled body text
+/// ([`parse_untitled_block`](crate::lsdoc_block_parse::parse_untitled_block),
+/// the parse the window renders it with: no block header, so a task word or
+/// priority is text), as whole source lines in source order
+/// (D-20261119-PG: groups after the header are opening text, shown exactly as
+/// written). The window shows these ranges as source and the rest as body
+/// text. Empty for parser-refused text, which renders wholly as body text.
+/// O(bytes).
+pub fn opening_groups(text: &str, is_org: bool) -> Vec<Range> {
+    use crate::lsdoc_block_parse::parse_untitled_block;
+    #[cfg(not(target_arch = "wasm32"))]
+    let Ok(blocks) = std::panic::catch_unwind(|| parse_untitled_block(text, is_org)) else {
+        return Vec::new();
+    };
+    #[cfg(target_arch = "wasm32")]
+    let blocks = parse_untitled_block(text, is_org);
+    top_property_nodes(text, &blocks, false)
+        .map(|(r, _)| r)
+        .collect()
+}
+
+/// The property nodes among `blocks` (one level, as the parser split them):
+/// each `key:: value` group (`true`) or `#+key: value` line (`false`), as
+/// whole source lines of `raw` with their last line end. The one answer to
+/// "which nodes are property nodes, and which lines are theirs": a page's
+/// header is the first group before its first block ([`parse_document`](crate::block_regions::parse_document)),
+/// and its opening text shows every group as written
+/// ([`opening_groups`]). `document`: spans are `raw`'s own, not
+/// a re-bulleted block's. O(nodes).
+pub(crate) fn top_property_nodes<'a>(
+    raw: &'a str,
+    blocks: &'a [Block],
+    document: bool,
+) -> impl Iterator<Item = (Range, bool)> + 'a {
+    let coords = crate::lsdoc_block_parse::Coords::of(raw, document);
+    blocks.iter().filter_map(move |b| match b {
+        Block::Properties { span, .. } | Block::Directive { span, .. } => {
+            crate::block_regions::raw_range(raw, span, coords).map(|r| {
+                (
+                    crate::block_regions::whole_line(raw, r),
+                    matches!(b, Block::Properties { .. }),
+                )
+            })
+        }
+        _ => None,
+    })
+}
+
 #[cfg(test)]
 mod tests {
-    use super::{page_header, preamble_content_range};
+    use super::{opening_groups, page_header, preamble_content_range};
+    use crate::block_regions::Range;
     use serde::Deserialize;
 
     fn text(raw: &str) -> Option<&str> {
         preamble_content_range(raw, false).map(|r| &raw[r.0..r.1])
     }
+
+    /// D-20261119-PG: opening text's top-level property nodes, as the parser
+    /// splits them, whole lines in source order; nothing nested, and no
+    /// paragraph that only looks like a group.
+    #[test]
+    fn opening_groups_are_the_top_level_property_nodes_as_whole_lines() {
+        let groups = |t: &str, org: bool| -> Vec<String> {
+            opening_groups(t, org)
+                .iter()
+                .map(|r| t[r.0..r.1].to_owned())
+                .collect()
+        };
+        assert_eq!(groups("prose\n\nk:: v\n\nmore", false), ["k:: v\n"]);
+        assert_eq!(groups("prose\nk:: v", false), ["k:: v"]);
+        assert_eq!(groups("a:: 1\n\nb:: 2", false), ["a:: 1\n", "b:: 2"]);
+        assert_eq!(groups("  k:: v\n\tj:: w", false), ["  k:: v\n\tj:: w"]);
+        assert_eq!(groups("prose\r\n\r\nk:: v\r\nmore", false), ["k:: v\r\n"]);
+        assert_eq!(groups("prose\n#+k: v\nmore", false), ["#+k: v\n"]);
+        assert_eq!(groups("prose\n#+k: v", true), ["#+k: v"]);
+        assert_eq!(
+            groups("#+BEGIN_QUOTE\n#+k: v\n#+END_QUOTE", false),
+            Vec::<String>::new()
+        );
+        assert_eq!(groups("> q\n#+k: v", false), Vec::<String>::new());
+        assert_eq!(groups("plain prose", false), Vec::<String>::new());
+        // Untitled: a task word or priority is text, so its line is prose.
+        assert_eq!(groups("TODO k:: v", false), Vec::<String>::new());
+        assert_eq!(
+            groups("TODO [#A] k:: v\nprose", false),
+            Vec::<String>::new()
+        );
+        assert_eq!(groups("TODO [#A] Prose [[T]]", false), Vec::<String>::new());
+    }
+
+    /// Review 0e6bd6530 F1: one untitled parse answers which lines are groups,
+    /// and each piece between them, parsed alone as the window renders it,
+    /// has the same top-level nodes it has in that parse (no directive hidden
+    /// in a quote one parse never makes). A task word, a priority or both
+    /// before `key::` lines, fences, quotes, notes, `#+` directives, query
+    /// containers and drawers; LF, CRLF, tab and blank-led; both formats.
+    #[test]
+    fn opening_groups_and_pieces_share_one_untitled_parse() {
+        use crate::lsdoc_block_parse::parse_untitled_block;
+        use lsdoc::ast::Block;
+        fn kinds(blocks: &[Block]) -> Vec<String> {
+            blocks
+                .iter()
+                .filter(|b| match b {
+                    Block::Properties { .. } | Block::Directive { .. } => false,
+                    Block::Bullet { inline, .. } | Block::Paragraph { inline, .. } => {
+                        !inline.iter().all(|i| format!("{i:?}").contains("Break")
+                            || matches!(i, lsdoc::ast::Inline::Plain { text, .. } if text.trim().is_empty()))
+                    }
+                    _ => true,
+                })
+                .map(|b| format!("{b:?}").split([' ', '{', '(']).next().unwrap().to_owned())
+                .collect()
+        }
+        for (shape, md, org) in OPENING_SHAPES {
+            for prefix in ["TODO ", "[#A] ", "TODO [#A] ", "TODO\t"] {
+                for (variant, is_org) in ["lf", "crlf", "blank"]
+                    .iter()
+                    .flat_map(|v| [(*v, false), (*v, true)])
+                {
+                    let base = shape.replace("{P}", prefix);
+                    let text = match variant {
+                        "crlf" => base.replace('\n', "\r\n"),
+                        "blank" => format!("\n{base}"),
+                        _ => base,
+                    };
+                    let want = if is_org { org } else { md };
+                    let ranges = opening_groups(&text, is_org);
+                    let got: Vec<String> = ranges
+                        .iter()
+                        .map(|r| text[r.0..r.1].trim_end().replace("\r\n", "\n"))
+                        .collect();
+                    assert_eq!(got, *want, "{text:?} org={is_org}");
+                    let mut pieces = Vec::new();
+                    let mut at = 0;
+                    for r in ranges.iter().chain([&Range(text.len(), text.len())]) {
+                        let piece = text[at..r.0].trim_matches(['\n', '\r']);
+                        if !piece.trim().is_empty() {
+                            pieces.extend(kinds(&parse_untitled_block(piece, is_org)));
+                        }
+                        at = r.1;
+                    }
+                    assert_eq!(
+                        pieces,
+                        kinds(&parse_untitled_block(&text, is_org)),
+                        "{text:?} org={is_org}"
+                    );
+                }
+            }
+        }
+    }
+
+    /// The review's opening shapes, `{P}` the task word and/or priority, with
+    /// the groups the parser finds (Markdown, Org), line ends as `\n`.
+    const OPENING_SHAPES: &[(&str, &[&str], &[&str])] = &[
+        ("{P}x\nk:: v", &["k:: v"], &[]),
+        ("{P}k:: **v**", &[], &[]),
+        ("{P}#+k: v", &[], &[]),
+        ("{P}> quote\n#+k: v", &["#+k: v"], &["#+k: v"]),
+        ("{P}> quote\nk:: v", &["k:: v"], &[]),
+        ("{P}\n```\nc\n```\n#+k: v", &["#+k: v"], &["#+k: v"]),
+        ("{P}\n~~~\nc\n~~~\nk:: v", &["k:: v"], &[]),
+        (
+            "{P}\n#+BEGIN_SRC\nc\n#+END_SRC\n#+k: v",
+            &["#+k: v"],
+            &["#+k: v"],
+        ),
+        ("{P}\n#+BEGIN_NOTE\nn\n#+END_NOTE\nk:: v", &["k:: v"], &[]),
+        (
+            "{P}\n#+BEGIN_QUOTE\nq\n#+END_QUOTE\n#+k: v",
+            &["#+k: v"],
+            &["#+k: v"],
+        ),
+        (
+            "{P}\n#+BEGIN_QUERY\n(task TODO)\n#+END_QUERY\n#+k: v",
+            &["#+k: v"],
+            &["#+k: v"],
+        ),
+        ("{P}\n{{query (task TODO)}}\nk:: v", &["k:: v"], &[]),
+        ("{P}\n:LOGBOOK:\nCLOCK: x\n:END:\nk:: v", &["k:: v"], &[]),
+        ("{P}\n:custom:\nv\n:END:\n#+k: v", &["#+k: v"], &["#+k: v"]),
+        (
+            "{P}\n:PROPERTIES:\n:a: 1\n:END:\nk:: v",
+            &[":PROPERTIES:\n:a: 1\n:END:\nk:: v"],
+            &[":PROPERTIES:\n:a: 1\n:END:"],
+        ),
+    ];
 
     #[test]
     fn the_prose_after_the_page_header_without_edge_newlines() {
@@ -359,5 +542,74 @@ mod tests {
             inputs.len(),
             &wrong[..wrong.len().min(20)]
         );
+    }
+
+    /// Review 28d081755 F1 (PC-3): mapping the groups measures the leading
+    /// trim once, not twice per group, so whitespace before many groups costs
+    /// one scan. Counted, and timed at 2,000 groups after 16 KB of lead.
+    #[test]
+    fn opening_groups_cost_is_linear() {
+        let text_of = |groups: usize| {
+            format!(
+                "{}{}",
+                "  \t\n".repeat(2 * groups),
+                "k:: v\nprose\n\n".repeat(groups)
+            )
+        };
+        let text = text_of(2_000);
+        crate::lsdoc_block_parse::LEAD_SCANS.with(|n| n.set(0));
+        let groups = opening_groups(&text, false);
+        assert_eq!(groups.len(), 2_000);
+        let scans = crate::lsdoc_block_parse::LEAD_SCANS.with(|n| n.replace(0));
+        assert!(scans <= 1, "{scans} leading-trim scans for one call");
+        // Doubling the input must not quadruple the time (one scan per group
+        // was quadratic: ~1.1 s at 2,000 groups against ~12 ms linear). The
+        // fastest of three runs keeps a loaded machine's noise out.
+        let fastest = |text: &str| {
+            (0..3)
+                .map(|_| {
+                    let started = std::time::Instant::now();
+                    std::hint::black_box(opening_groups(text, false));
+                    started.elapsed()
+                })
+                .min()
+                .unwrap()
+        };
+        let (small, large) = (fastest(&text_of(2_000)), fastest(&text_of(4_000)));
+        assert!(
+            large < small * 3,
+            "{small:?} -> {large:?} for doubled input"
+        );
+    }
+
+    /// Review e852e1b58: opening text is read with an empty title, so a task
+    /// word or priority on its first line is text, never a block header.
+    #[test]
+    fn untitled_parse_lifts_no_header() {
+        use lsdoc::ast::Block;
+        for is_org in [false, true] {
+            for text in [
+                "TODO x",
+                "[#A] y",
+                "TODO [#A] z",
+                "TODO \n:LOGBOOK:\nCLOCK: x\n:END:\nNext",
+                "DONE [#B]\n:custom:\nv\n:END:\nNext",
+            ] {
+                let blocks = crate::lsdoc_block_parse::parse_untitled_block(text, is_org);
+                assert!(
+                    blocks.iter().all(|b| !matches!(
+                        b,
+                        Block::Bullet {
+                            marker: Some(_),
+                            ..
+                        } | Block::Bullet {
+                            priority: Some(_),
+                            ..
+                        }
+                    )),
+                    "{text:?} org={is_org}: {blocks:?}"
+                );
+            }
+        }
     }
 }

@@ -36,7 +36,7 @@ import { AliasGroupHeader } from "./AliasGroup";
 import { LinkedReferences } from "./LinkedReferences";
 import { observeNear, unobserveNear } from "../lazyObserve";
 import { FailureBoundary } from "./FailureBoundary";
-import { BlockRenderBoundary } from "./BlockRenderBoundary";
+import { PageOpeningRow } from "./PageOpeningRow";
 import { UnlinkedReferences } from "./UnlinkedReferences";
 import { JournalSectionsHeader, TodaySections } from "./TodaySections";
 import { SheetTable } from "./SheetTable";
@@ -51,13 +51,14 @@ import { editingId, endEditForSurface, startEditing } from "../editorController"
 import type { PageRead, PageReadSource } from "../types";
 import { tagRef } from "../tags";
 import { copyGuideIntoGraph, ensureGuidePagesLoaded, isGuidePageName } from "../guide";
-import { rendersAsPageHeader, splitPagePreamble } from "../editor/properties";
+import { rendersAsPageHeader } from "../editor/properties";
 import { shouldOpenTextContextMenu } from "../contextMenuPolicy";
 import { PagePropertyValue } from "./PagePropertyValue";
 import { PropertyKey } from "../render/PropertyKey";
 import { PageConflictPanel } from "./ConflictResolution";
 import { readOr } from "../resourceRead";
 import { ResourceFailure } from "./ResourceFailure";
+import type { AuthorNeighbors } from "./authorRuns";
 import { pageIdentityKey } from "../pageIdentity";
 import { ExternalChangeBar } from "./ExternalChangeBar";
 import { isElementNode, newIntersectionObserver, onAppReturn, requestFrame, useOwnerWindow, useWindowId } from "../windowRealm";
@@ -1040,7 +1041,19 @@ function PageSection(props: { page: FeedPage; seen?: boolean; children?: JSX.Ele
   // root rendered as an ordinary block (being edited, or not a header) is excluded.
   const headerProperties = () => pageHeaderProperties(props.page, firstPropertiesId() ? null : props.page.roots[0] ?? null);
   const rootsToRender = () => firstPropertiesId() ? props.page.roots.slice(1) : props.page.roots;
-  const preambleContent = () => splitPagePreamble(props.page.preBlock, props.page.format).content;
+  // The opening text follows the header: below a header shown as a block (its
+  // editor), else first in the outline (the header box sits above it).
+  const leadingHeaderId = () => {
+    const id = props.page.roots[0];
+    return !firstPropertiesId() && id && docNode(id)?.originatedFromPageHeader ? id : null;
+  };
+  const openingRow = () => <PageOpeningRow page={props.page} onEdit={() => editPreamble()} />;
+  // Only a row that can be the header shown as a block (the first root, or
+  // one marked as the page header) carries the opening-row slot; every other
+  // root is a plain Block, with no per-row owner for the slot.
+  const rootRow = (id: string, neighbours: AuthorNeighbors) => untrack(() => id === props.page.roots[0] || !!docNode(id)?.originatedFromPageHeader)
+    ? <><Block id={id} authorNeighbors={neighbours} /><Show when={id === leadingHeaderId()}>{openingRow()}</Show></>
+    : <Block id={id} authorNeighbors={neighbours} />;
   const editSurface = () => pane.paneId === "main" ? "main" : `pane:${pane.paneId}`;
   // Every page section (including each journal day) owns its margin;
   // the available pane width chooses the tier, independent of route or split.
@@ -1308,24 +1321,8 @@ function PageSection(props: { page: FeedPage; seen?: boolean; children?: JSX.Ele
       </FailureBoundary>
       <CommentResolutionScope roots={props.page.roots}><MarginContext.Provider value={margin.placement}>
       <div class="page-blocks" ref={outline} classList={{ "margin-active": margin.active() }}>
-        <Show when={preambleContent()}>
-          {(content) => (
-            <div class="ls-block preamble-block" data-page-preamble={props.page.name}>
-              <div class="block-main">
-                <div class="block-controls">
-                  <span class="collapse-toggle" />
-                  <span class="bullet-container" title={t("page-ui-click-the-text-to-turn-it-into-an-editable")}>
-                    <span class="bullet" />
-                  </span>
-                </div>
-                <div class="block-content-wrapper" onClick={editPreamble}>
-                  <BlockRenderBoundary raw={content()}><div class="block-content"><InlineText text={content()} format={props.page.format} /></div></BlockRenderBoundary>
-                </div>
-              </div>
-            </div>
-          )}
-        </Show>
-        <SeenRows seen={seen}><SeenRemoved first={null} /><BlockList ids={rootsToRender()} /></SeenRows>
+        <Show when={!leadingHeaderId()}>{openingRow()}</Show>
+        <SeenRows seen={seen}><SeenRemoved first={null} /><BlockList ids={rootsToRender()} render={rootRow} /></SeenRows>
       </div>
       </MarginContext.Provider>
       <SeenRows seen={seen}><margin.Column /></SeenRows></CommentResolutionScope>

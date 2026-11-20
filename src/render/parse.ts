@@ -150,12 +150,14 @@ function bumpParseStats(hit: boolean) {
 }
 
 /** Parse one block body (the blockView-stripped `view.lines.join("\n")`) into
- *  lsdoc's render AST. Synchronous — `initParser()` must have resolved first. */
-export function parseBlock(text: string, isOrg: boolean): Block[] {
+ *  lsdoc's render AST. Synchronous — `initParser()` must have resolved first.
+ *  `untitled`: text that is no block (a page's opening text), read with an
+ *  empty title so nothing is lifted off its first line as a block header. */
+export function parseBlock(text: string, isOrg: boolean, untitled = false): Block[] {
   if (!ready()) {
     throw new Error("parseBlock called before initParser() resolved");
   }
-  const key = (isOrg ? "o\n" : "m\n") + text;
+  const key = (untitled ? "u" : "") + (isOrg ? "o\n" : "m\n") + text;
   const hit = cache.get(key);
   if (hit !== undefined) {
     if (statsEnabled()) bumpParseStats(true);
@@ -164,11 +166,11 @@ export function parseBlock(text: string, isOrg: boolean): Block[] {
   if (statsEnabled()) bumpParseStats(false);
   let json: string;
   try {
-    json = parse_block_bundle_json(text, isOrg);
+    json = parse_block_bundle_json(text, isOrg, untitled);
   } catch {
     __tineReinstantiate();
     try {
-      json = parse_block_bundle_json(text, isOrg);
+      json = parse_block_bundle_json(text, isOrg, untitled);
     } catch {
       __tineReinstantiate();
       return quarantine(key, text);

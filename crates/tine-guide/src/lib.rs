@@ -1389,11 +1389,18 @@ mod rename_guide_tests {
             "graph folders **inside your home folder only**",
             "the Flatpak bundle carries its own",
             "**Quick share in the Flatpak bundle.**",
-            "If that check fails, the bundle keeps quick share off",
+            "Our Flatpak offers **Link** like every other build",
         ] {
             assert!(
                 platforms.contains(outcome),
                 "missing Flatpak Guide outcome: {outcome}"
+            );
+        }
+        // Link sharing is offered in every build (D-20261117-QSG).
+        for stale in ["viewer can read its shares", "keeps quick share off"] {
+            assert!(
+                !platforms.contains(stale),
+                "Flatpak Guide must not say {stale}"
             );
         }
     }
@@ -1706,6 +1713,17 @@ mod rename_guide_tests {
             assert!(
                 share.contains(outcome),
                 "share onboarding must explain {outcome}"
+            );
+        }
+        // Link sharing is offered in every build (D-20261117-QSG): no Guide wording makes it build-dependent.
+        for stale in [
+            "Coming soon",
+            "compatible reader must be available",
+            "shown when sharing is available",
+        ] {
+            assert!(
+                !share.contains(stale),
+                "share onboarding must not say {stale}"
             );
         }
         let files = include_str!("templates/files-external-edits-backups.md");

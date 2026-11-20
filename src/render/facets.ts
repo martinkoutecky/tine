@@ -48,8 +48,8 @@ const EMPTY: Facets = {
  *  OG's ECMAScript left trim), so lsdoc breaks the marker/priority/heading onto
  *  `blocks[0]` — we must NOT prepend a second bullet (that double-bullets, nesting
  *  the body as a list item). */
-export function parseBody(raw: string, format: Format): Block[] {
-  return parseBlock(raw, format === "org");
+export function parseBody(raw: string, format: Format, untitled = false): Block[] {
+  return parseBlock(raw, format === "org", untitled);
 }
 
 // Loaded nodes own backend seeds (seededFacets.ts); large pages keep all hits.
@@ -259,6 +259,20 @@ const UTF8_DECODER = new TextDecoder();
 
 type PlanningSourceLine = { text: string; hasTrailingBody: boolean; lineStart: number };
 
+/** One body's source for planning-line checks: its UTF-8 bytes and the byte
+ *  length of its leading whitespace, prepared on the first planning timestamp
+ *  and shared by every inline flow of one render, so a body costs one encode
+ *  however many flows it has (review e852e1b58 F1). */
+export type PlanningSource = { readonly raw: string; prepared?: { bytes: Uint8Array; leadBytes: number } };
+export const planningSource = (raw: string): PlanningSource => ({ raw });
+function preparedOf(source: PlanningSource): { bytes: Uint8Array; leadBytes: number } {
+  const { raw } = source;
+  return (source.prepared ??= {
+    bytes: UTF8_ENCODER.encode(raw),
+    leadBytes: UTF8_ENCODER.encode(raw.slice(0, raw.length - raw.trimStart().length)).length,
+  });
+}
+
 const isPlanningTimestamp = (i: Inline): i is Extract<Inline, { k: "timestamp" }> =>
   i.k === "timestamp" && (i.ts === "Scheduled" || i.ts === "Deadline");
 
@@ -268,39 +282,59 @@ const isPlanningTimestamp = (i: Inline): i is Extract<Inline, { k: "timestamp" }
  *  `SCHEDULED: <a> DEADLINE: <b>` on one line is two planning timestamps (OG shows both as chips and nothing in the
  *  body). `hasTrailingBody` is about the text after the LAST timestamp of such a run: it is ordinary body content.
  *  Deliberate OG divergence: a parser-recognized mid-text `Discuss SCHEDULED: <…>` remains content in Tine. */
-function planningLinesOf(inlines: readonly Inline[], raw: string): Map<number, PlanningSourceLine> {
-  const found = new Map<number, PlanningSourceLine & { end: number; lineEnd: number }>();
-  const bytes = UTF8_ENCODER.encode(raw);
-  const leadBytes = UTF8_ENCODER.encode(raw.slice(0, raw.length - raw.trimStart().length)).length;
-  let last: { lineStart: number; end: number } | null = null;
+function planningLinesOf(inlines: readonly Inline[], source: PlanningSource): Map<number, PlanningSourceLine> {
+  // One pass in source order. A line's bounds are found once, by its first timestamp; each later one inspects only
+  // the gap since the previous accepted one, and the trailing body is judged once, when the line closes. So a line
+  // costs its length, however many timestamps it holds (review 0e6bd6530 F2).
+  const out = new Map<number, PlanningSourceLine>();
+  let line: { start: number; end: number; runEnd: number; alive: boolean; members: number[] } | null = null;
+  const blank = (bytes: Uint8Array, from: number, to: number) => {
+    planningScanStats.decoded += to - from;
+    return UTF8_DECODER.decode(bytes.subarray(from, to)).trim() === "";
+  };
+  const close = (bytes: Uint8Array) => {
+    if (!line || line.members.length === 0) return;
+    const hasTrailingBody = !blank(bytes, line.runEnd, line.end);
+    for (const index of line.members) out.get(index)!.hasTrailingBody = hasTrailingBody;
+  };
+  let prepared: { bytes: Uint8Array; leadBytes: number } | null = null;
   for (let index = 0; index < inlines.length; index++) {
     const i = inlines[index];
     if (!isPlanningTimestamp(i)) continue;
     const span = i.span;
     if (!span || span[0] < 2 || span[1] < span[0]) continue;
+    prepared ??= preparedOf(source);
+    const { bytes, leadBytes } = prepared;
     const start = span[0] - 2 + leadBytes;
     const end = span[1] - 2 + leadBytes;
     if (start < 0 || end < start || end > bytes.length) continue;
-    let lineStart = start;
-    while (lineStart > 0 && bytes[lineStart - 1] !== 0x0a) lineStart--;
-    let lineEnd = end;
-    while (lineEnd < bytes.length && bytes[lineEnd] !== 0x0a) lineEnd++;
-    const before = UTF8_DECODER.decode(bytes.slice(lineStart, start));
-    const afterEarlier = last !== null && last.lineStart === lineStart && UTF8_DECODER.decode(bytes.slice(last.end, start)).trim() === "";
-    if (before.trim() !== "" && !afterEarlier) continue;
-    found.set(index, { text: UTF8_DECODER.decode(bytes.slice(start, end)), hasTrailingBody: false, lineStart, end, lineEnd });
-    last = { lineStart, end };
+    let accept: boolean;
+    if (line && start >= line.start && start < line.end) {
+      // Same line: only the gap since the previous accepted timestamp.
+      accept = line.alive && start >= line.runEnd && blank(bytes, line.runEnd, start);
+    } else {
+      close(bytes);
+      let lineStart = start;
+      while (lineStart > 0 && bytes[lineStart - 1] !== 0x0a) lineStart--;
+      let lineEnd = end;
+      while (lineEnd < bytes.length && bytes[lineEnd] !== 0x0a) lineEnd++;
+      planningScanStats.scanned += lineEnd - lineStart;
+      line = { start: lineStart, end: lineEnd, runEnd: lineStart, alive: true, members: [] };
+      accept = blank(bytes, lineStart, start);
+    }
+    if (!accept) { line.alive = false; continue; }
+    planningScanStats.decoded += end - start;
+    out.set(index, { text: UTF8_DECODER.decode(bytes.subarray(start, end)), hasTrailingBody: false, lineStart: line.start });
+    line.runEnd = end;
+    line.members.push(index);
   }
-  // Trailing body is judged once per run, after its last timestamp.
-  const lastOfLine = new Map<number, number>();
-  for (const f of found.values()) lastOfLine.set(f.lineStart, Math.max(lastOfLine.get(f.lineStart) ?? 0, f.end));
-  const out = new Map<number, PlanningSourceLine>();
-  for (const [index, f] of found) {
-    const runEnd = lastOfLine.get(f.lineStart)!;
-    out.set(index, { text: f.text, lineStart: f.lineStart, hasTrailingBody: UTF8_DECODER.decode(bytes.slice(runEnd, f.lineEnd)).trim() !== "" });
-  }
+  if (prepared) close(prepared.bytes);
   return out;
 }
+
+/** Bytes `planningLinesOf` has walked to find line bounds (`scanned`) and handed to the decoder (`decoded`):
+ *  plain counters for the cost tests (PC-3), never read by the app. */
+export const planningScanStats = { scanned: 0, decoded: 0 };
 
 function angleText(line: string): string | null {
   const lt = line.indexOf("<");
@@ -314,9 +348,9 @@ export type PlanningChip = { ts: "Scheduled" | "Deadline"; value: string | null;
  *  date chip uses (`planningDates`): lsdoc's Timestamp, line-leading as `planningLinesOf` defines. `value` is the
  *  text between the angle brackets. The CM6 editor renders the same chip from this, so view and edit cannot
  *  disagree on what a planning line is. */
-export function planningChipsOf(inlines: readonly Inline[], raw: string): Map<Inline, PlanningChip> {
+export function planningChipsOf(inlines: readonly Inline[], source: PlanningSource): Map<Inline, PlanningChip> {
   const out = new Map<Inline, PlanningChip>();
-  for (const [index, line] of planningLinesOf(inlines, raw)) {
+  for (const [index, line] of planningLinesOf(inlines, source)) {
     const i = inlines[index];
     if (isPlanningTimestamp(i)) out.set(i, { ts: i.ts as "Scheduled" | "Deadline", value: angleText(line.text), hasTrailingBody: line.hasTrailingBody });
   }
@@ -335,9 +369,10 @@ export function stripPlanningLines(blocks: Block[], raw: string): Block[] {
   // block measurably regresses that path. This is only a cheap candidate gate;
   // lsdoc Timestamp + source-span boundaries still decide semantics below.
   if (!raw.includes("SCHEDULED:") && !raw.includes("DEADLINE:")) return blocks;
+  const source = planningSource(raw);
   return blocks.map((b) => {
     if (b.kind !== "paragraph" && b.kind !== "bullet" && b.kind !== "heading") return b;
-    const planning = planningLinesOf(b.inline, raw);
+    const planning = planningLinesOf(b.inline, source);
     if (planning.size === 0) return b;
 
     const remove = new Set(planning.keys());
@@ -368,9 +403,10 @@ export function stripPlanningLines(blocks: Block[], raw: string): Block[] {
 function planningDates(blocks: Block[], raw: string): { scheduled: string | null; deadline: string | null } {
   let scheduled: string | null = null;
   let deadline: string | null = null;
+  const source = planningSource(raw);
   for (const b of blocks) {
     if (b.kind !== "paragraph" && b.kind !== "bullet" && b.kind !== "heading") continue;
-    for (const [index, line] of planningLinesOf(b.inline, raw)) {
+    for (const [index, line] of planningLinesOf(b.inline, source)) {
       const i = b.inline[index];
       if (!isPlanningTimestamp(i)) continue;
       const value = angleText(line.text);
