@@ -25,11 +25,14 @@ panel's own search, which covers every group (the panel root carries
 chunks, retaining their geometry with the occurrence. Large root lists use the
 ordinary outline windows and model-based reveal/navigation scope.
 
-From blank space, Ctrl/Cmd+A starts in the nearest rendered outline. In a
+From blank space, including row padding and child indentation, Ctrl/Cmd+A
+starts in the nearest outline that owned the pointer press. In a
 Linked or Unlinked References group it first selects that group's live blocks.
 The next press selects the section's currently loaded groups in display order.
-Expanded breadcrumb context can repeat a hit on screen. Whole-outline copy
-includes each source subtree once and keeps the other visible hits in order.
+Expanded breadcrumb context can repeat a hit on screen. Keyboard extension
+steps from the selected occurrence. Whole-outline selection captures source
+roots in display order. Copy and Delete include each selected subtree once,
+including children hidden by a later fold.
 A plain blank click in another outline retires the current selection, as does
 closing or removing a group that participates in the selection. Blank space in a
 routed page's scroller uses the page or zoom outline when no closer outline

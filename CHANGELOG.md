@@ -9,7 +9,7 @@ The format follows [Keep a Changelog](https://keepachangelog.com/); versions use
 ## [Unreleased]
 
 ### Fixed
-- **Ctrl/Cmd+A** on blank outline space, including the page gutter, selects blocks so Copy keeps their nesting. Click another outline to start a fresh selection there. In Linked References, press it again to include the other loaded groups (#793).
+- **Ctrl/Cmd+A** on blank outline space, including row padding and the page gutter, selects blocks. Click another outline to start a fresh selection there. In Linked References, press it again to include the other loaded groups. Copy keeps the selected trees nested even if you fold a block before copying (#793).
 - Query results have even spacing when breadcrumbs are turned off, including between results from different source pages (#881).
 - Help for the `tine export` subcommands explains which graph path to pass and where static and live publications are written (#588).
 - **Level ≤** in Copy / export now limits how many levels of each selected reference are copied, including from source groups you haven’t scrolled to (#793, reported by vinyatu).
