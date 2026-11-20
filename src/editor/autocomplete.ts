@@ -3,7 +3,7 @@ import { activeLocale, msg, render, t, type Msg } from "../i18n";
 // trigger at the caret, and apply a chosen completion. No DOM — unit-testable.
 
 import { TEMPLATE_VARS } from "./templateVars";
-import { isBareTagPrefix, tagRef } from "../tags";
+import { tagRef } from "../tags";
 import { propertyKeyNorm } from "../propertyKey";
 import { QUERY_MACRO_SCAFFOLD, QUERY_MACRO_SCAFFOLD_CARET } from "./queryMacroName";
 import { searchFold } from "./searchFold";
@@ -11,6 +11,7 @@ import { pageIdentityKey } from "../pageIdentity";
 import { isEditablePropertyKey, propertyValuePosition } from "./properties";
 import { codeFences, lineStartsInFence } from "./fences";
 import type { Format } from "../render/ast";
+import { referenceCompletion } from "./referenceCompletion";
 import type { ObjectiveMatchClass } from "../types";
 
 // Deferred catalog messages; property getters resolve in the consuming computation.
@@ -165,6 +166,8 @@ export interface Trigger {
   start: number;
   /** Index in `raw` where the query ends (the caret). */
   end: number;
+  /** End of the existing reference when it extends beyond the caret. */
+  replaceEnd?: number;
   /** Canonical key owning a property-value query. */
   property?: string;
   /** Earlier comma-separated values on the same property line. */
@@ -179,82 +182,66 @@ export const propertyKeyFold = propertyKeyNorm;
  *  CM6-D9 made this the rule for both editors (Martin 2026-11-09), a deliberate
  *  difference from Logseq, whose `[[` and `/` handlers open their menus in code
  *  too (og/src/main/frontend/handler/editor.cljs:1606 and :1894, 6e7afa8eb).
- *  Inline code is not a fence and keeps its menus, as in CM6 before. The fence
- *  parse runs only when a trigger is pending, never for ordinary typing. An
- *  editor showing a projected code body says so through its adapter's
+ *  Reference completion also checks parser-owned inline literals. The fence
+ *  parse runs only when a trigger is pending. An editor showing a projected
+ *  code body says so through its adapter's
  *  `suppressTriggers` (editorCompletions.ts), since that buffer holds no fence. */
 export function detectTrigger(
   raw: string,
   caret: number,
   format: Format = "md",
 ): Trigger | null {
-  const trigger = triggerBeforeCaret(raw, caret, format);
-  return trigger && lineStartsInFence(raw, raw.lastIndexOf("\n", caret - 1) + 1, format) ? null : trigger;
+  const lineStart = raw.lastIndexOf("\n", caret - 1) + 1;
+  const trigger = triggerBeforeCaret(raw, caret, lineStart, format);
+  return trigger && lineStart > 0 && lineStartsInFence(raw, lineStart, format) ? null : trigger;
 }
 
-function triggerBeforeCaret(raw: string, caret: number, format: Format): Trigger | null {
+function triggerBeforeCaret(raw: string, caret: number, lineStart: number, format: Format): Trigger | null {
   // No trigger spans a newline: the `[[` inner forbids it, `#tag`/`/command`
   // are anchored at line start or after whitespace, and `<command` starts its
   // own logical line. So only the CURRENT line's
   // prefix can matter — slicing just that (not the whole `raw[0..caret]`) avoids
   // an O(block length) allocation per keystroke on long blocks. Returned indices
   // are offset back into `raw` by `lineStart`, so callers see absolute positions.
-  const lineStart = raw.lastIndexOf("\n", caret - 1) + 1;
   const before = raw.slice(lineStart, caret);
 
-  // Property completion is line syntax, never inline prose/reference/fence.
-  // Unlike OG's chosen-name-only lifecycle, any parser-accepted Markdown
-  // value position offers values, regardless of how the key was entered.
-  const propertyTrigger = ((): Trigger | null => {
-    const valuePosition = propertyValuePosition(raw, caret, format);
-    if (valuePosition) {
-      const authored = raw.slice(valuePosition.start, caret);
-      const comma = authored.lastIndexOf(",");
-      const segmentOffset = comma === -1 ? 0 : comma + 1;
-      const segment = authored.slice(segmentOffset);
-      const leading = /^\s*/.exec(segment)?.[0].length ?? 0;
-      const query = segment.slice(leading);
-      const propertyValues = comma === -1
-        ? []
-        : authored.slice(0, comma).split(",").map(value => value.trim()).filter(Boolean);
-      return {
-        kind: "property-value",
-        query,
-        start: valuePosition.start + segmentOffset + leading,
-        end: caret,
-        property: propertyKeyFold(valuePosition.key),
-        ...(propertyValues.length ? { propertyValues } : {}),
-      };
-    }
+  // Use the persisted parser's property-key alphabet, including Unicode letters.
+  const nameBeforeDelimiter = before.endsWith("::") ? before.slice(0, -2) : null;
+  if (nameBeforeDelimiter !== null && (nameBeforeDelimiter === "" || isEditablePropertyKey(nameBeforeDelimiter))) {
+    return { kind: "property-name", query: nameBeforeDelimiter, start: lineStart, end: caret };
+  }
 
-    // The persisted parser's property-key alphabet (`isEditablePropertyKey`, the
-    // one answerer; Unicode letters included). In particular, a
-    // whitespace-separated prose phrase ending in `::` is not property syntax.
-    const nameBeforeDelimiter = before.endsWith("::") ? before.slice(0, -2) : null;
-    if (nameBeforeDelimiter !== null && (nameBeforeDelimiter === "" || isEditablePropertyKey(nameBeforeDelimiter))) {
-      return {
-        kind: "property-name",
-        query: nameBeforeDelimiter,
-        start: lineStart,
-        end: caret,
-      };
-    }
+  // OG moves the caret before a line-opening `::`. Include the delimiter in
+  // the replacement span so `alp|::` accepts as `alpha:: `.
+  if (raw.slice(caret, caret + 2) === "::" && (before === "" || isEditablePropertyKey(before))) {
+    return { kind: "property-name", query: before, start: lineStart, end: caret + 2 };
+  }
 
-    // OG's line-opening `::` lifecycle puts the caret BEFORE the delimiter and
-    // lets the user type the property name to its left. Keep the replacement
-    // span through the delimiter even though the caret is before it, so
-    // `::` -> caret 0 -> type `alp` yields `alp|::` and accepts as `alpha:: `.
-    if (raw.slice(caret, caret + 2) === "::" && (before === "" || isEditablePropertyKey(before))) {
-      return {
-        kind: "property-name",
-        query: before,
-        start: lineStart,
-        end: caret + 2,
-      };
-    }
-    return null;
-  })();
-  if (propertyTrigger) return propertyTrigger;
+  const reference = referenceCompletion(raw, before, lineStart, caret, format);
+  if (reference) return reference;
+
+  // Explicit references and tags take precedence in property values (#853).
+  // Tine offers property values at any parser-accepted Markdown value position.
+  // OG starts the value picker after a name choice (6e7afa8eb, editor.cljs:2211).
+  const valuePosition = propertyValuePosition(raw, before, lineStart, format);
+  if (valuePosition) {
+    const authored = raw.slice(valuePosition.start, caret);
+    const comma = authored.lastIndexOf(",");
+    const segmentOffset = comma === -1 ? 0 : comma + 1;
+    const segment = authored.slice(segmentOffset);
+    const leading = /^\s*/.exec(segment)?.[0].length ?? 0;
+    const propertyValues = comma === -1
+      ? []
+      : authored.slice(0, comma).split(",").map(value => value.trim()).filter(Boolean);
+    return {
+      kind: "property-value",
+      query: segment.slice(leading),
+      start: valuePosition.start + segmentOffset + leading,
+      end: caret,
+      property: propertyKeyFold(valuePosition.key),
+      ...(propertyValues.length ? { propertyValues } : {}),
+    };
+  }
 
   // Opening Markdown fence language. Do not pop a menu for a bare fence typed
   // by hand (Enter keeps its established behavior); one language character is
@@ -265,37 +252,6 @@ function triggerBeforeCaret(raw: string, caret: number, format: Format): Trigger
     const opener = codeFences(raw).find((f) => lineStart <= f.start && f.start - lineStart <= 3 && f.delimEnd <= caret && caret < f.openEnd);
     const language = opener ? raw.slice(opener.delimEnd, caret) : "";
     if (opener && /^[\w+#.-]+$/.test(language)) return { kind: "code-language", query: language, start: opener.delimEnd, end: caret };
-  }
-
-  // [[page and ((block — an opener with no closer since (the line has no
-  // newline). Whichever opener sits closer to the caret wins (you can type a
-  // `((` inside text that follows a `[[`, or vice-versa, e.g. `{{embed ((`).
-  const openPage = before.lastIndexOf("[[");
-  const openBlock = before.lastIndexOf("((");
-  if (openPage !== -1 && openPage > openBlock) {
-    const inner = before.slice(openPage + 2);
-    if (!inner.includes("]") && !inner.includes("[")) {
-      return { kind: "page", query: inner + linkTextAfterCaret(raw, caret), start: lineStart + openPage, end: caret };
-    }
-  }
-  if (openBlock !== -1 && openBlock > openPage) {
-    const inner = before.slice(openBlock + 2);
-    if (!inner.includes(")") && !inner.includes("(")) {
-      return { kind: "block", query: inner, start: lineStart + openBlock, end: caret };
-    }
-  }
-
-  // #tag — `#` at start or after whitespace, followed by the same hard-stop
-  // contract as lsdoc's bare-tag lexer. Do not use `\w`: it is ASCII-only and
-  // closes the picker after CJK/Indic/emoji IME commits. Logseq OG 6e7afa8
-  // (`handle-last-input` + `close-autocomplete-if-outside`) likewise starts on
-  // the marker boundary and keeps arbitrary committed tag text active.
-  const hash = before.lastIndexOf("#");
-  if (hash !== -1 && (hash === 0 || /\s/u.test(before[hash - 1]))) {
-    const query = before.slice(hash + 1);
-    if (isBareTagPrefix(query)) {
-      return { kind: "tag", query, start: lineStart + hash, end: caret };
-    }
   }
 
   // /command — `/` at start or after whitespace.
@@ -329,7 +285,7 @@ function triggerBeforeCaret(raw: string, caret: number, format: Format): Trigger
  *  - Typing a `]` immediately before an existing `]` types THROUGH it instead of
  *    stacking a new one — so manually closing an auto-paired `[[…]]` can never
  *    pile up to `]]]]`. (The autocomplete-picker path is handled separately in
- *    Block.tsx's replaceTrigger, which swallows a trailing `]]`.) */
+ *    the shared replacement range, which includes the reference's own `]]`.) */
 export function autoPairEdit(
   value: string,
   caret: number,
@@ -433,33 +389,13 @@ export function applyCompletion(
   };
 }
 
-/** OG accept-range parity (GH #199): when a completion ends in a ref closer
- *  (`]]`/`))`/`}}`), the replacement must extend past the caret to swallow that
- *  closer even when the user typed text between the caret and it (editing inside
- *  an existing ref). Scans the CURRENT LINE only, forward from `end`. Returns the
- *  index just past the closer, or `end` unchanged when there is no matching closer
- *  ahead on this line. */
-export function refCompletionEnd(value: string, end: number, insertedText: string): number {
-  for (const pair of ["]]", "))", "}}"] as const) {
-    if (!insertedText.endsWith(pair)) continue;
-    const lineEnd = value.indexOf("\n", end);
-    const closer = value.indexOf(pair, end);
-    return closer !== -1 && (lineEnd === -1 || closer < lineEnd) ? closer + pair.length : end;
-  }
-  return end;
-}
-
-/** GH #888 (D-20261109-LK): with the caret inside a complete `[[link]]`, the
- *  page query is the whole link text, so the link's own page ranks first. This
- *  is the text a pick replaces (`refCompletionEnd` swallows through the `]]`).
- *  A deliberate difference from Logseq, whose page search reads only `[[` to
- *  the caret (og/src/main/frontend/components/editor.cljs:105-121 page-search,
- *  6e7afa8eb). A link being typed (no `]]` yet, or `]]` right after the caret)
- *  adds nothing. Text holding another bracket is not this link's text. */
-function linkTextAfterCaret(raw: string, caret: number): string {
-  const close = refCompletionEnd(raw, caret, "]]");
-  const after = close === caret ? "" : raw.slice(caret, close - 2);
-  return after.includes("[") || after.includes("]") ? "" : after;
+/** Reference triggers carry their replacement boundary. Slash macro commands
+ * retain the same-line `}}` handling from before the reference picker fix. */
+export function completionReplacementEnd(value: string, { kind, end, replaceEnd }: Trigger, insertedText: string): number {
+  if (kind !== "command" || !insertedText.endsWith("}}")) return replaceEnd ?? end;
+  const lineEnd = value.indexOf("\n", end);
+  const closer = value.indexOf("}}", end);
+  return closer !== -1 && (lineEnd === -1 || closer < lineEnd) ? closer + 2 : end;
 }
 
 /** Build the inserted text for a page reference (`[[Name]]`). */

@@ -1,9 +1,9 @@
 //! Read-only parsed input for graph-wide evaluators and renderers.
 
-use std::sync::Arc;
+use std::{path::Path, sync::Arc};
 
 use crate::doc::Document;
-use crate::model::{PageId, PageKind};
+use crate::model::{Format, PageId, PageKind};
 
 /// One physical page file. Duplicate logical page names stay separate so an
 /// evaluator can decide whether a name has an unambiguous source.
@@ -44,13 +44,13 @@ impl Corpus {
         counts
     }
 
-    /// Asset names these pages mention, by the same collector as orphan-asset
-    /// detection: raw and percent-decoded spellings, plus the first segment of
-    /// a nested reference. Cost O(page text bytes); no I/O.
+    /// Resolved attachment file names for these pages, by the same collector
+    /// as orphan detection. Cost O(page text bytes), no I/O.
     pub fn asset_refs(&self) -> std::collections::HashSet<String> {
         let mut names = std::collections::HashSet::new();
         for page in &self.pages {
-            crate::asset_refs::collect_document_asset_refs(&page.document, &mut names);
+            let format = Format::from_path(Path::new(page.id.as_str()));
+            crate::asset_refs::collect_document_asset_refs(&page.document, format, false, &mut names);
         }
         names
     }

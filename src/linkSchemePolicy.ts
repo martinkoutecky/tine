@@ -124,8 +124,9 @@ export function anchorDecision(dest: string): AnchorDecision {
 
   const hasSeparator = path.includes("/");
   let attachment = names?.[1] ?? null;
-  if (!needsNormalization && !file && (hasSeparator || path.length === "assets".length) && /assets/i.test(path)) {
-    attachment = attachment_path(path) ?? null;
+  if (!needsNormalization && !file && (hasSeparator || authoredPath.length === "assets".length) && /assets/i.test(authoredPath)) {
+    // D-20261120-A984: the folder must be written as assets in the destination.
+    attachment = attachment_path(authoredPath) ?? null;
   }
   const dotted = path.includes(".");
   const isPdf = dotted && /\.pdf$/i.test(path);

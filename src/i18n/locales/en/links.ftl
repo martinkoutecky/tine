@@ -33,6 +33,7 @@ references-copy-linked = Copy / export linked references
 references-copy-unlinked = Copy / export unlinked references
 references-copy-linked-title = Copy / export selected linked references
 references-copy-unlinked-title = Copy / export selected unlinked references
+references-export-source-changed = Couldn’t open the selected references for export. Close the chooser and try again.
 references-filter-linked = Filter linked references
 references-search-linked = Search linked reference text
 references-search-placeholder = Search reference text

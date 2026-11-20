@@ -425,10 +425,10 @@ fn parse_doc(path: &Path, content: &str) -> Document {
 /// Use the normal bounded input and format parser, isolating parser failures.
 /// [`tine_core::asset_refs::collect_document_asset_refs`], counted for cost
 /// tests: the one entry the store uses to scan a document for asset names.
-pub(crate) fn collect_document_asset_refs(doc: &Document, names: &mut HashSet<String>) {
+pub(crate) fn collect_document_asset_refs(doc: &Document, path: &Path, names: &mut HashSet<String>) {
     #[cfg(feature = "test-faults")]
     crate::cost_counters::asset_ref_document();
-    tine_core::asset_refs::collect_document_asset_refs(doc, names);
+    tine_core::asset_refs::collect_document_asset_refs(doc, Format::from_path(path), true, names);
 }
 
 pub(crate) fn collect_file_asset_refs(path: &Path, names: &mut HashSet<String>) -> io::Result<()> {
@@ -439,7 +439,7 @@ pub(crate) fn collect_file_asset_refs(path: &Path, names: &mut HashSet<String>) 
         .map_err(|error| io::Error::new(io::ErrorKind::InvalidData, error))?;
     std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
         let doc = parse_doc(path, content);
-        collect_document_asset_refs(&doc, names);
+        collect_document_asset_refs(&doc, path, names);
     }))
     .map_err(|_| io::Error::other("asset reference parser panicked"))?;
 
@@ -3859,8 +3859,8 @@ impl Graph {
     pub fn orphan_assets(&self) -> Vec<AssetInfo> {
         let mut referenced: std::collections::HashSet<String> = std::collections::HashSet::new();
         self.with_pages(|pages| {
-            for (_e, doc) in pages {
-                tine_core::asset_refs::collect_document_asset_refs(doc, &mut referenced);
+            for (entry, doc) in pages {
+                collect_document_asset_refs(doc, &entry.path, &mut referenced);
             }
         });
         let mut out = Vec::new();

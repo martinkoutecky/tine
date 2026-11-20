@@ -1389,11 +1389,18 @@ mod rename_guide_tests {
             "graph folders **inside your home folder only**",
             "the Flatpak bundle carries its own",
             "**Quick share in the Flatpak bundle.**",
-            "If that check fails, the bundle keeps quick share off",
+            "Our Flatpak offers **Link** like every other build",
         ] {
             assert!(
                 platforms.contains(outcome),
                 "missing Flatpak Guide outcome: {outcome}"
+            );
+        }
+        // Link sharing is offered in every build (D-20261117-QSG).
+        for stale in ["viewer can read its shares", "keeps quick share off"] {
+            assert!(
+                !platforms.contains(stale),
+                "Flatpak Guide must not say {stale}"
             );
         }
     }
@@ -1689,7 +1696,7 @@ mod rename_guide_tests {
             "**Update all** beside the Exports page title prepares folder exports and quick shares together",
             "Nothing is written or uploaded until you confirm",
             "each result is shown even if another export fails",
-            "Folder exports work even when quick share is off or disconnected",
+            "Folder exports work even when quick share is disconnected",
             "**Delete** removes the hosted gist",
             "Delete from a share's query on the **Exports page**",
             "even when its key is on another device",
@@ -1706,6 +1713,18 @@ mod rename_guide_tests {
             assert!(
                 share.contains(outcome),
                 "share onboarding must explain {outcome}"
+            );
+        }
+        // Link sharing is offered in every build (D-20261117-QSG): no Guide wording makes it build-dependent.
+        for stale in [
+            "Coming soon",
+            "compatible reader must be available",
+            "shown when sharing is available",
+            "quick share is off",
+        ] {
+            assert!(
+                !share.contains(stale),
+                "share onboarding must not say {stale}"
             );
         }
         let files = include_str!("templates/files-external-edits-backups.md");
@@ -1987,6 +2006,7 @@ mod query_guide_tests {
             "**Count**, **Sum**, **Average**, or **None**",
             "Built-in columns such as Page and State have no property total",
             "leaves the total blank or shows why it is unavailable",
+            "With breadcrumbs off, results are evenly spaced across source pages",
             "`tine.fields::` remains the table's schema",
             "number of blocks or pages",
             "**declare type…**",

@@ -7,7 +7,7 @@
 export function absent_link_is_journal(name: string, file_format: string, title_format: string): boolean;
 
 /**
- * Attachment target from a decoded slash-normalized path. O(path bytes), no I/O.
+ * Attachment target from the authored path. O(path bytes), no I/O.
  */
 export function attachment_path(path: string): string | undefined;
 

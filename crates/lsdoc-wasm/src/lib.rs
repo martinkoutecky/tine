@@ -934,7 +934,7 @@ mod pdf_key;
 #[path = "../../tine-core/src/asset_path.rs"]
 mod asset_path;
 
-/// Attachment target from a decoded slash-normalized path. O(path bytes), no I/O.
+/// Attachment target from the authored path. O(path bytes), no I/O.
 #[wasm_bindgen]
 pub fn attachment_path(path: &str) -> Option<String> {
     asset_path::attachment_path(path).map(str::to_owned)
@@ -945,12 +945,11 @@ pub fn attachment_path(path: &str) -> Option<String> {
 /// File URL shorthand requests the path alone. O(input bytes), no I/O.
 #[wasm_bindgen]
 pub fn decoded_link_path(dest: &str, file: bool) -> JsValue {
-    let decoded = asset_path::percent_decode(dest);
-    let path = asset_path::slash_normalized(&decoded);
-    let attachment = if file { None } else { asset_path::attachment_path(&path) };
+    let (path, attachment) = asset_path::decoded_local_path(dest, !file);
+    let attachment = attachment.map(|start| path[start..].trim_end_matches('/'));
     // A possible PDF can use the identity from this call if the classifier
     // selects the asset reader. Other suffixes need no candidate identity.
-    let pdf = (!file && path.as_bytes().rsplit(|&b| b == b'.').next().is_some_and(|ext| ext.eq_ignore_ascii_case(b"pdf")) && path.contains('.'))
+    let pdf = (!file && asset_path::is_pdf_path(&path))
         .then(|| asset_path::pdf_asset_file_decoded(&path, attachment));
     let value = JsValue::from_str(&path);
     if attachment.is_none() && pdf.is_none() {

@@ -825,12 +825,23 @@ fn query_leaf_assets_survive_a_move_and_budget_refusal_leaves_old_output() {
         ("notes.pdf", b"pdf".as_slice()),
         ("clip.ogg", b"audio".as_slice()),
         ("space name.png", b"space".as_slice()),
+        ("beta.png", b"case".as_slice()),
+        ("demo%20v2.png", b"percent-space".as_slice()),
+        ("demo%2Fv2.png", b"percent-separator".as_slice()),
+        ("demo%FFv2.png", b"percent-byte".as_slice()),
+        ("demo v2.png", b"decoy".as_slice()),
     ] {
         let path = graph.join("assets").join(path);
         fs::create_dir_all(path.parent().unwrap()).unwrap();
         fs::write(path, bytes).unwrap();
     }
-    let text = "- TODO assets\n  ![left](../assets/left/pic.png) ![right](../assets/right/pic.png)\n  [PDF](../assets/notes.pdf) [audio](../assets/clip.ogg) ![space](../assets/space%20name.png)\n";
+    let text = concat!(
+        "- TODO assets\n",
+        "  ![left](../assets/left/pic.png) ![right](../assets/right/pic.png)\n",
+        "  [PDF](../assets/notes.pdf) [audio](../assets/clip.ogg) ![space](../assets/space%20name.png)\n",
+        "  ![beta](../ASSETS/beta.png) ![percent](../assets/demo%2520v2.png)\n",
+        "  ![separator](../assets/demo%252Fv2.png) ![byte](../assets/demo%25FFv2.png)\n",
+    );
     fs::write(graph.join("pages/Public.md"), text).unwrap();
     store.refresh(tine_store::Depth::Stamps).unwrap();
     let mut request = QueryExportRequest {
@@ -888,12 +899,17 @@ fn query_leaf_assets_survive_a_move_and_budget_refusal_leaves_old_output() {
         ("notes.pdf", "pdf"),
         ("clip.ogg", "audio"),
         ("space name.png", "space"),
+        ("beta.png", "case"),
+        ("demo%20v2.png", "percent-space"),
+        ("demo%2Fv2.png", "percent-separator"),
+        ("demo%FFv2.png", "percent-byte"),
     ] {
         assert_eq!(
             fs::read(output.join("moved/assets").join(path)).unwrap(),
             expected.as_bytes()
         );
     }
+    assert!(!output.join("moved/assets/demo v2.png").exists());
     let html = fs::read_to_string(output.join("moved/public.html")).unwrap();
     assert!(!html.contains("../assets/"));
     assert!(html.contains("assets/left/pic.png"));

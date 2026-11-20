@@ -1,0 +1,31 @@
+{
+  "forms": [
+    {"format":"md","source":"[Open]($dest)","child":"my%20photo.png","name":"my photo.png","reader":"open"},
+    {"format":"md","source":"![Open]($dest)","child":"my%20photo.png","name":"my photo.png","reader":"image"},
+    {"format":"org","source":"[[$dest][Open]]","child":"my%20photo.png","name":"my photo.png","reader":"open"},
+    {"format":"org","source":"[[$dest]]","child":"my%20photo.png","name":"my photo.png","reader":"image"},
+    {"format":"md","source":"{{img $dest 100}}","child":"my%20photo.png","name":"my photo.png","reader":"image"},
+    {"format":"org","source":"{{IMG $dest 100}}","child":"my%20photo.png","name":"my photo.png","reader":"image"},
+    {"format":"md","source":"[Open]($dest)","child":"./guide.PDF","name":"guide.PDF","reader":"pdf"},
+    {"format":"md","source":"![Open]($dest)","child":"sub/./guide.PDF","name":"sub/guide.PDF","reader":"pdf"},
+    {"format":"org","source":"[[$dest][Open]]","child":"./guide.PDF","name":"guide.PDF","reader":"pdf"}
+  ],
+  "exactNames": [
+    ["demo%2520v2.png", "demo%20v2.png", "demo v2.png"],
+    ["demo%252Fv2.png", "demo%2Fv2.png", "demo/v2.png"],
+    ["demo%25FFv2.png", "demo%FFv2.png", "demo�v2.png"]
+  ],
+  "nonAttachments": [
+    ["md", "[Open](https://host.invalid/%61ssets/$file)", "remote-escaped.png"],
+    ["org", "[[https://host.invalid/ASSETS/$file][Open]]", "remote-written.png"],
+    ["md", "https://host.invalid/assets/$file", "remote-bare.png"],
+    ["md", "{{img https://host.invalid/assets/$file}}", "remote-macro.png"],
+    ["md", "[Open](file:assets/$file)", "file-shorthand.png"],
+    ["org", "[[file:../assets/$file]]", "file-url.png"],
+    ["md", "[Open](C%3A/assets/$file)", "drive.png"],
+    ["md", "[Open](other-assets/$file)", "other-folder.png"],
+    ["md", "[[$file/assets/other.png]]", "other.png"],
+    ["org", "[[assets/$file]]", "excluded.mp4"],
+    ["md", "[Open](guide.p%64f)", "guide.pdf"]
+  ]
+}

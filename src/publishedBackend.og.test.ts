@@ -1,4 +1,5 @@
 import { afterEach, beforeAll, describe, expect, it, vi } from "vitest";
+import attachmentCases from "../tests/regressions/gh984-attachments.json";
 import {
   __resetPublishedSnapshotForTest, loadPublishedSnapshot, publishedBackend, readBounded, validateSnapshot,
   type PublishedSnapshot,
@@ -268,6 +269,20 @@ describe("published reads are parser-decided, visible on failure and bounded (OG
     await api.readAsset("photo?v2.png", TEST_ASSET_MAX_BYTES);
     expect(await api.streamAsset("sub/a#b.mp3")).toBe("../assets/sub/a%23b.mp3");
     expect(fetched.mock.calls.map(([url]) => url)).toEqual(["../assets/photo%23v2.png", "../assets/photo%3Fv2.png"]);
+  });
+
+  it.each(attachmentCases.exactNames)("requests the copied percent-bearing asset for %s (F4a)", async (authored, name) => {
+    const href = `../assets/${authored}`;
+    const fetched = vi.fn(async (_url: string) => respond(bytesOf(1)));
+    const open = vi.fn();
+    vi.stubGlobal("fetch", fetched);
+    vi.stubGlobal("window", { open });
+    const api = publishedBackend(async () => snapshot);
+    await api.readAsset(name, TEST_ASSET_MAX_BYTES);
+    expect(fetched.mock.calls.map(([url]) => url)).toEqual([href]);
+    expect(await api.streamAsset(name)).toBe(href);
+    await api.openAsset(name, api.graphBindingGeneration());
+    expect(open).toHaveBeenCalledExactlyOnceWith(href, "_blank", "noopener");
   });
 
   it("honours the caller's byte cap on an asset, by declared length and by streamed length", async () => {

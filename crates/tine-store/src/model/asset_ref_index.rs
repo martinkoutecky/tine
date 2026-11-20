@@ -4,16 +4,15 @@
 //! generation builds it on first use with one walk of its pages, and a later
 //! generation carries it by the pages its publication changed, as the
 //! referenced-name index does. Each page's names come from the one collector
-//! the full scan used (`tine_core::asset_refs`: parser-accepted links and
-//! images in Markdown and Org, macros' `assets/` mentions and the conservative
-//! plaintext fallback), so the index protects exactly what the scan did.
+//! the full scan uses (`tine_core::asset_refs`): resolved Markdown and Org
+//! attachments and conservative plaintext mentions.
 use super::*;
 
 #[derive(Clone, Default)]
 pub(crate) struct AssetRefIndex {
     /// Each page holding at least one asset reference, by its absolute path.
     by_page: SharedMap<PathBuf, Arc<[String]>>,
-    /// How many pages reference each asset name (raw and decoded spellings).
+    /// How many pages keep each asset name live.
     by_name: SharedMap<String, usize>,
 }
 
@@ -60,7 +59,7 @@ impl AssetRefIndex {
 
     fn add(&mut self, path: &Path, doc: &Document) {
         let mut names = HashSet::new();
-        collect_document_asset_refs(doc, &mut names);
+        collect_document_asset_refs(doc, path, &mut names);
         if names.is_empty() {
             return;
         }
@@ -112,8 +111,13 @@ impl ReadSnapshot {
         {
             // Oracle: the carried index answers what a full scan does.
             let mut scanned = HashSet::new();
-            for (_, doc) in self.physical_pages.iter() {
-                tine_core::asset_refs::collect_document_asset_refs(doc, &mut scanned);
+            for (entry, doc) in self.physical_pages.iter() {
+                tine_core::asset_refs::collect_document_asset_refs(
+                    doc,
+                    Format::from_path(&entry.path),
+                    true,
+                    &mut scanned,
+                );
             }
             let indexed: HashSet<String> = index.names().cloned().collect();
             assert_eq!(

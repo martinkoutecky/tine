@@ -12,30 +12,79 @@ pub fn slash_normalized(path: &str) -> Cow<'_, str> {
     }
 }
 
-/// Resolve the suffix after the first case-insensitive `assets/` marker.
-/// The caller supplies decoded path bytes with forward slashes. O(path bytes).
+/// Resolve the suffix after the first case-insensitive asset marker. O(path bytes).
 pub fn asset_rel_path(path: &str) -> Option<&str> {
-    let marker = b"assets/";
+    asset_suffix(path, false)
+}
+
+fn asset_suffix(path: &str, folder: bool) -> Option<&str> {
+    let bytes = path.as_bytes();
     let offset = path
         .match_indices(['a', 'A'])
         .map(|(offset, _)| offset)
         .find(|&offset| {
-            path.as_bytes()
-                .get(offset..offset + marker.len())
-                .is_some_and(|part| part.eq_ignore_ascii_case(marker))
+            (!folder || offset == 0 || matches!(bytes[offset - 1], b'/' | b'\\'))
+                && bytes
+                    .get(offset..offset + 6)
+                    .is_some_and(|part| part.eq_ignore_ascii_case(b"assets"))
+                && matches!(bytes.get(offset + 6), Some(b'/' | b'\\'))
         })?;
-    Some(&path[offset + marker.len()..])
+    Some(&path[offset + 7..])
 }
 
-/// Attachment target from decoded slash-normalized path bytes. An exact
-/// final `assets` directory names the root. O(path bytes).
+/// Attachment suffix from the authored path. Its folder and separator must be
+/// written literally. An exact final `assets` names the root. O(path bytes).
 pub fn attachment_path(path: &str) -> Option<&str> {
-    let folder = path.trim_end_matches('/');
-    if folder.rsplit('/').next()?.eq_ignore_ascii_case("assets") {
+    let folder = path.trim_end_matches(['/', '\\']);
+    if folder.rsplit(['/', '\\']).next()?.eq_ignore_ascii_case("assets") {
         Some("")
     } else {
-        asset_rel_path(folder)
+        asset_suffix(folder, true)
     }
+}
+
+/// Decode a local path and carry the authored attachment boundary into the
+/// result. The optional offset locates the attachment suffix in the returned
+/// path. Split at the written separator so every input byte is decoded once.
+/// O(path bytes), no I/O. Plain slash-normalized paths are borrowed.
+pub fn decoded_local_path(path: &str, allow_attachment: bool) -> (Cow<'_, str>, Option<usize>) {
+    fn normalize(part: &str) -> Cow<'_, str> {
+        if part.contains('%') {
+            let decoded = percent_decode(part);
+            Cow::Owned(match slash_normalized(&decoded) {
+                Cow::Owned(normalized) => normalized,
+                Cow::Borrowed(_) => decoded,
+            })
+        } else {
+            slash_normalized(part)
+        }
+    }
+
+    match allow_attachment.then(|| attachment_path(path)).flatten() {
+        Some("") => {
+            let path = normalize(path);
+            let end = path.len();
+            (path, Some(end))
+        }
+        Some(name) => {
+            let start = path.trim_end_matches(['/', '\\']).len() - name.len();
+            if !path.contains(['%', '\\']) {
+                return (Cow::Borrowed(path), Some(start));
+            }
+            let (prefix, suffix) = path.split_at(start);
+            let mut path = normalize(prefix).into_owned();
+            let start = path.len();
+            path.push_str(&normalize(suffix));
+            (Cow::Owned(path), Some(start))
+        }
+        None => (normalize(path), None),
+    }
+}
+
+/// Whether a decoded path has a PDF extension, treating its suffix as file bytes.
+pub fn is_pdf_path(path: &str) -> bool {
+    let bytes = path.as_bytes();
+    bytes.len() >= 4 && bytes[bytes.len() - 4..].eq_ignore_ascii_case(b".pdf")
 }
 
 /// PDF identity is its path under `assets/` (case-insensitive directory name),
@@ -111,7 +160,7 @@ mod tests {
         assert_eq!(decoded, "../Assets/./文 %2F%ZZ%2�%.PDF");
         assert_eq!(asset_rel_path(&decoded), Some("./文 %2F%ZZ%2�%.PDF"));
         assert_eq!(
-            pdf_asset_file_decoded(&decoded, attachment_path(&decoded)),
+            pdf_asset_file_decoded(&decoded, asset_rel_path(&decoded)),
             "文 %2F%ZZ%2�%.PDF"
         );
         assert_eq!(attachment_path("docs.v1/myassets/"), None);
@@ -121,5 +170,21 @@ mod tests {
             "文 %2F%ZZ%2�%.PDF"
         );
         assert_eq!(pdf_asset_file(r"docs\"), r"docs\");
+    }
+
+    #[test]
+    fn asset_path_carries_only_the_written_attachment_boundary() {
+        for (written, resolved, attachment) in [
+            ("../%61ssets/photo.png", "../assets/photo.png", None),
+            ("assets%2Fphoto.png", "assets/photo.png", None),
+            ("../myassets/photo.png", "../myassets/photo.png", None),
+            ("../%61ssets/ASSETS/demo%2520.png", "../assets/ASSETS/demo%20.png", Some("demo%20.png")),
+            ("../%FF/ASSETS/demo%252F.png", "../�/ASSETS/demo%2F.png", Some("demo%2F.png")),
+            ("..\\AsSeTs\\nested%5Cphoto.png", "../AsSeTs/nested/photo.png", Some("nested/photo.png")),
+        ] {
+            let (path, start) = decoded_local_path(written, true);
+            assert_eq!(path, resolved, "{written}");
+            assert_eq!(start.map(|start| &path[start..]), attachment, "{written}");
+        }
     }
 }

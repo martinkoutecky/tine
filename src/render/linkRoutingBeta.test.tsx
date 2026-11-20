@@ -1,5 +1,6 @@
 import { afterEach, beforeAll, expect, it, vi } from "vitest";
 import { render } from "solid-js/web";
+import attachmentCases from "../../tests/regressions/gh984-attachments.json";
 import { clearAssetBlobCache } from "../assetCache";
 import { backend } from "../backend";
 import { graphMeta, setGraphMeta } from "../graphSession";
@@ -51,6 +52,57 @@ it("keeps the Beta attachment and folder openers", () => {
   expect(graph.mock.calls.map(([path]) => path)).toEqual(["docs.v1/myassets", "docs.v1/myAsSeTs", "docs.v1/myassets"]);
   expect(external).toHaveBeenCalledExactlyOnceWith("file:///home/user/myassets");
   expect(asset.mock.calls.map(([path]) => path)).toEqual(["", "subdir"]);
+});
+
+it("uses the same written attachment names as trash and publication (GH #984)", async () => {
+  const asset = vi.spyOn(backend(), "openAsset").mockResolvedValue();
+  const read = vi.spyOn(backend(), "readAsset").mockRejectedValue("not-found");
+  const pdf = vi.spyOn(panes, "openPdf").mockReturnValue(null);
+  const external = vi.spyOn(backend(), "openExternal").mockResolvedValue();
+  setGraphMeta({ ...graphMeta()!, root: "/home/user/graph" });
+  const host = document.createElement("div");
+  document.body.append(host);
+
+  const observe = async (source: string, format: "md" | "org") => {
+    const dispose = render(() => <InlineText text={source} format={format} />, host);
+    try {
+      host.querySelector("a")?.click();
+      await Promise.resolve();
+      return [asset, read, pdf, external].map((route) => route.mock.calls.map(([name]) => name));
+    } finally {
+      dispose();
+      for (const route of [asset, read, pdf, external]) route.mockClear();
+      clearAssetBlobCache();
+    }
+  };
+
+  for (const { format, source, child, name, reader } of attachmentCases.forms) {
+    for (let mask = 0; mask < 64; mask++) {
+      const folder = [..."assets"].map((letter, i) => mask & (1 << i) ? letter.toUpperCase() : letter).join("");
+      const link = source.replace("$dest", `../${folder}/${child}`);
+      const expected = ["open", "image", "pdf"].map((route) => route === reader ? [name] : []);
+      expect.soft((await observe(link, format as "md" | "org")).slice(0, 3), link).toEqual(expected);
+    }
+    for (const marker of ["%61ssets/", "assets%2F", "assets%5C", "%41ssets%5C"]) {
+      const dest = `../${marker}${child}`;
+      const link = source.replace("$dest", dest);
+      const folder = marker.startsWith("%41") ? "Assets" : "assets";
+      const outsidePdf = reader === "pdf" && (format === "org" || source.startsWith("!"))
+        ? [`file:///home/user/${folder}/${name}`] : [];
+      expect.soft((await observe(link, format as "md" | "org")).slice(0, 3), link).toEqual([[], [], outsidePdf]);
+      if (reader === "pdf" || reader === "open") {
+        expect.soft(anchorDecision(dest), link).toMatchObject({ kind: "relative", attachment: null, target: { kind: "outside" } });
+      }
+    }
+  }
+  for (const [url, name] of attachmentCases.exactNames) {
+    expect.soft((await observe(`![Open](../assets/${url})`, "md"))[1], url).toEqual([name]);
+  }
+  for (const [format, source, file] of attachmentCases.nonAttachments) {
+    const link = source.replace("$file", file);
+    const fallback = file === "guide.pdf" ? [file] : [];
+    expect.soft((await observe(link, format as "md" | "org")).slice(0, 3), link).toEqual([[], [], fallback]);
+  }
 });
 
 it.each(["mobile", "desktop with unknown root"])("keeps the Beta reader fallback on %s", (environment) => {
@@ -189,7 +241,7 @@ it("opens the same local target for equivalent destination bytes (GH #984)", asy
         click(source(dest, format), format);
         const expected = handoffs();
         expect(expected.flat()).toHaveLength(1);
-        for (const spelling of byteSpellings(dest)) {
+        for (const spelling of byteSpellings(dest).filter((value) => /[/\\]assets(?:[/\\]|$)/i.test(value))) {
           click(source(spelling, format), format);
           expect.soft(handoffs(), `${format} ${spelling}`).toEqual(expected);
         }
@@ -197,13 +249,6 @@ it("opens the same local target for equivalent destination bytes (GH #984)", asy
     }
   }
   for (const [spelling, decoded] of [
-    ["docs.v1/%61ssets/", "docs.v1/assets/"],
-    ["docs.v1/assets%2F", "docs.v1/assets/"],
-    ["docs.v1/ASSET%53%5c", "docs.v1/ASSETS/"],
-    ["../%61ssets/", "../assets/"],
-    ["/docs.v1/assets%2F", "/docs.v1/assets/"],
-    ["docs.v1/%41ssets/photo.png", "docs.v1/Assets/photo.png"],
-    ["docs.v1/assets%2fphoto.png", "docs.v1/assets/photo.png"],
     ["docs.v1/assets/%2F", "docs.v1/assets//"],
     ["docs.v1/assets/%5C", "docs.v1/assets//"],
     ["assets/sub%2Fphoto.png", "assets/sub/photo.png"],
@@ -266,10 +311,19 @@ it("opens the same local target for equivalent destination bytes (GH #984)", asy
     expect.soft(handoffs(), dest).toEqual(expected);
   }
   for (const [dest, expected] of [
+    ["docs.v1/%61ssets/", [[], ["docs.v1/assets"], [], []]],
+    ["docs.v1/assets%2F", [[], ["docs.v1/assets"], [], []]],
+    ["docs.v1/ASSET%53%5c", [[], ["docs.v1/ASSETS"], [], []]],
+    ["../%61ssets/", [[], [], ["file:///home/user/assets"], []]],
+    ["/docs.v1/assets%2F", [[], [], ["file:///docs.v1/assets/"], []]],
+    ["docs.v1/%41ssets/photo.png", [[], ["docs.v1/Assets/photo.png"], [], []]],
+    ["docs.v1/assets%2fphoto.png", [[], ["docs.v1/assets/photo.png"], [], []]],
+    ["%61ssets/photo.png", [[], ["assets/photo.png"], [], []]],
+    ["assets%2Fphoto.png", [[], ["assets/photo.png"], [], []]],
     ["docs.v1/assets%252F", [[], ["docs.v1/assets%2F"], [], []]],
     ["docs.v1/assets/photo.png%20", [["photo.png "], [], [], []]],
     ["assets/sub%20folder/photo.png", [["sub folder/photo.png"], [], [], []]],
-    ["C%3A%252Fassets%2Fimage.png", [["image.png"], [], [], []]],
+    ["C%3A%252Fassets%2Fimage.png", [[], ["C:%2Fassets/image.png"], [], []]],
   ] as const) {
     for (const format of formats) {
       click(source(dest, format), format);
@@ -297,7 +351,8 @@ it("opens the same local target for equivalent destination bytes (GH #984)", asy
         try {
           // Drain the mocked reads and their cache lease callbacks between mounts.
           await new Promise((resolve) => setTimeout(resolve, 0));
-          expect.soft(method.mock.calls.map(([target]) => target), dest).toEqual([path]);
+          const expected = /[/\\]assets[/\\]/i.test(dest) ? [path] : [];
+          expect.soft(method.mock.calls.map(([target]) => target), dest).toEqual(expected);
         } finally {
           dispose();
           method.mockClear();

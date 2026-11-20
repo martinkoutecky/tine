@@ -20,6 +20,12 @@ The format follows [Keep a Changelog](https://keepachangelog.com/); versions use
 - Adding to a page or a journal day while Tine is still loading the graph at launch no longer writes a second file for it beside your file; the add is refused as for any page that already has a file (REG-HELD-UNINDEXED-TWIN).
 - When you type in a page while an agent writes to it through the CLI, a resulting conflict review now compares against your last save that reached the disk, instead of falling back to a two-way review when an older save was proven only by the disk (#964; REG-GH964-LIVE-CONFLICT-BASE).
 - On Windows, a graph on a file system without file IDs (a WSL share such as `\\wsl.localhost`, a FAT32 or exFAT drive, a Samba share) can be saved again; since 0.9.0 every save failed with "The request is not supported (os error 50)" (reported by redstreet in #973; REG-973-WINDOWS-NO-FILE-ID).
+- The Guide's Share pages page no longer says that **Link** is greyed out with "Coming soon" or depends on your build; link sharing is offered in every build. The Flatpak section of Platforms says the same (D-20261117-QSG).
+- Query results have even spacing when breadcrumbs are turned off, including between results from different source pages (#881).
+- Help for the `tine export` subcommands explains which graph path to pass and where static and live publications are written (#588).
+- **Level ≤** in Copy / export now limits how many levels of each selected reference are copied, including from source groups you haven’t scrolled to (#793, reported by vinyatu).
+- Reference export gives checked descendants below the depth limit their own branch and freezes the selection while reading source pages (#793).
+- Typing `[[` in a property value finds existing pages immediately, including in a newly inserted template. Block references and tags also open their search menus in property values. Picking a match keeps later values and markup after the caret. Ordinary property suggestions resume after you leave a closed reference and stay available for literal markers in code, math, URLs, link destinations or escaped text (#853).
 - The first Linked References panel you open reads only the pages that reference it again, as before 0.10: on a 10,000-page graph it took about half a second instead of a few milliseconds (REG-PERF-FIRST-LINKED-REFS-OPEN).
 - The first edit after All pages has shown its reference counts, made in Tine or in another editor, no longer pays for a scan of the whole graph: on a 10,000-page graph it took about 200 ms instead of 40 ms (REG-PERF-OUTSIDE-EDIT-REFRESH-COUNTS).
 
@@ -29,6 +35,7 @@ The format follows [Keep a Changelog](https://keepachangelog.com/); versions use
 - Hovering a bullet no longer raises the red "Could not read this block's git history" toast in a graph that has no usable git repository (none, a broken or moved `.git`, a bare repository, one that does not hold the graph); the bullet just says Unknown. A history read that really fails inside a repository is shown once per graph, not on every hover (reported by EllisMorrow in #980; UI-GH980-NO-GIT-NO-ERROR).
 - Closing Quick Capture with the window manager (Alt+F4, Cmd+W) no longer loses the text you typed or stops Quick Capture from opening until Tine is restarted: it hides like losing focus does, and the next capture shortcut shows the draft again (reported by corefusion in #967; UI-CAPTURE-WM-CLOSE-967).
 - When two files claim the same page name (for example `pages/XX1.md` and `pages/笔记集/XX1.md`), you can delete one of them: open it from **Conflicts → Page name conflicts**, and its page menu offers **Delete file “…”**, which deletes exactly that file and leaves the other untouched. Deleting by name used to fail with "Multiple files share this page identity" and offered no way to remove the file (reported by EllisMorrow in #978; UI-GH978-DELETE-TWIN-FILE).
+- Mouse Back and Forward buttons work again in Windows graph windows and move one page per press (#948).
 - Quick share links are offered in every build of Tine, including the Flatpak
   and builds from source. They used to show "Coming soon" in any build made
   outside Tine's release workflow. A release is now refused instead while
@@ -68,7 +75,7 @@ The format follows [Keep a Changelog](https://keepachangelog.com/); versions use
   exploit applied (reported by Dieterbe in #982).
 - Published exports check the URL scheme before opening an external link. Web and email links open directly, and custom app links require confirmation. Custom and refused schemes cannot open local graph files or attachments through Markdown or Org links. They also cannot bypass the scheme check by middle-clicking or opening the link in a new tab, including in raw HTML (#984).
 - Windows drive links and embeds use the system file opener, including PDFs, encoded paths and Org links written with `://` (#984).
-- Local links and embeds resolve escaped attachment folders, child names, separators and file extensions the same way as their decoded spellings. For example, `guide.p%64f` opens in the PDF reader. Broken percent escapes stay literal while valid escapes in the same path still take effect. Invalid UTF-8 escape bytes become replacement characters in the resolved name. A separator written only as an escape cannot select the outside PDF reader (#984).
+- Local links and embeds decode file names once. Attachment links use a written `assets/` folder in any letter case, including when checking for unused attachments or copying files into an export. Links with an escaped folder name or separator follow ordinary file routing. Broken percent escapes stay literal, and invalid UTF-8 escape bytes become replacement characters. A bare link such as `guide.p%64f` still opens in the PDF reader (#984).
 
 ## [0.10.0-beta.1] - 2026-11-16
 

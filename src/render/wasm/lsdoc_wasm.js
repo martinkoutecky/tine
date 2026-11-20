@@ -19,7 +19,7 @@ function __tine_raw_absent_link_is_journal(name, file_format, title_format) {
 }
 
 /**
- * Attachment target from a decoded slash-normalized path. O(path bytes), no I/O.
+ * Attachment target from the authored path. O(path bytes), no I/O.
  * @param {string} path
  * @returns {string | undefined}
  */

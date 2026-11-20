@@ -8,6 +8,7 @@ icon:: ⌨️
 	- `tine --debug` turns on the diagnostic log for that run, exactly like `TINE_DEBUG=1`.
 - ## Publish a graph
 	- `tine export static GRAPH --output PARENT` writes the static HTML publication. `tine export live GRAPH --output PARENT` writes the read-only Tine app and keeps the static HTML site as its no-JavaScript and `file://` fallback.
+	- `GRAPH` is the path to your graph folder. It can be relative to your current directory or absolute.
 	- `PARENT` must be an existing folder outside the graph, given as an absolute path. Tine creates one new child folder in it, named after the graph (or after `--name`), and refuses to replace an existing folder of that name.
 	- Publication follows the graph's existing privacy settings: only pages with `public:: true` are included, unless `:publishing/all-pages-public?` is enabled. Add `--all-pages` to override that selection for one export.
 	- If a static export publishes zero pages under that selection, its warning explains that no page has `public:: true` and names `--all-pages`.
