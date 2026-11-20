@@ -12,6 +12,11 @@ function schemePrefix(dest: string): RegExpExecArray | null {
   return SCHEME_PREFIX.exec(dest.replace(/^[\u0000-\u0020]+|[\t\n\r]/g, ""));
 }
 
+/** The scheme left after removing every control byte and space. O(bytes). */
+function compactScheme(dest: string): string | undefined {
+  return SCHEME_PREFIX.exec(dest.replace(/[\u0000-\u0020]/g, ""))?.[1]?.toLowerCase();
+}
+
 /** The lowercased URL scheme for consent, reserving single letters for drives. O(bytes). */
 export function linkScheme(dest: string): string | null {
   return schemePrefix(dest)?.[1]?.toLowerCase() ?? null;
@@ -38,7 +43,8 @@ export function rememberableLinkScheme(scheme: string): boolean {
 export type AnchorDecision = "relative" | "web" | "mail" | "file" | "drive" | "defer" | "drop";
 export function anchorDecision(dest: string): AnchorDecision {
   const prefix = schemePrefix(dest);
-  if (!prefix) return "relative";
+  // Beta refused a scheme hidden by embedded control bytes or spaces too.
+  if (!prefix) return refusedLinkScheme(compactScheme(dest) ?? "") ? "drop" : "relative";
   const scheme = prefix[1]?.toLowerCase();
   if (!scheme) return "drive";
   if (refusedLinkScheme(scheme)) return "drop";
@@ -64,7 +70,7 @@ export function hasWebUrlPrefix(dest: string): boolean {
 /** Browser media may use web URLs and DOMPurify's data-URI subset. Local image
  * candidates still need the existing path resolver and opt-in. O(bytes), no I/O. */
 export function previewResourceDecision(dest: string): "local-candidate" | "browser" | "drop" {
-  const scheme = SCHEME_PREFIX.exec(dest.replace(/[\u0000-\u0020]/g, ""))?.[1]?.toLowerCase();
+  const scheme = compactScheme(dest);
   if (!scheme || scheme === "file") return "local-candidate";
   return WEB_SCHEMES.includes(scheme) || scheme === "data" ? "browser" : "drop";
 }
