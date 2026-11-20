@@ -40,7 +40,7 @@ vi.mock("./document/tree", async original => {
 });
 import { initParser } from "./render/parse";
 import { loadSingle } from "./document/workingSet";
-import { clearSelection, extendSelectionTo, isSelected, moveSelection, resetStore, selectBlock, selectedIds } from "./document";
+import { clearSelection, expandBlockSelection, extendSelectionTo, isSelected, moveSelection, resetStore, selectBlock, selectedIds, topSelected } from "./document";
 import { doc, setDoc } from "./document/model";
 import { ChangeKeyRegistry } from "./changeKeyRegistry";
 import type { BlockDto } from "./types";
@@ -81,6 +81,23 @@ async function heap() {
   gc(); gc();
   return process.memoryUsage().heapUsed;
 }
+
+it("select-all reads only scope roots without membership readers and defers visible rows", () => {
+  fixture(1000, "deep");
+  const roots = [...doc.pages[0].roots];
+  cost.visited.clear();
+  cost.counting = true;
+  try {
+    expandBlockSelection({ scope: { roots }, surface: "main" });
+    expect(topSelected()).toEqual(roots);
+    expect(new Set(cost.visited)).toEqual(new Set(roots));
+    moveSelection(-1, true);
+    expect(cost.visited.has("n1")).toBe(true);
+  } finally {
+    cost.counting = false;
+    cost.visited.clear();
+  }
+});
 
 it.each([1000, 10000, 50000].flatMap(size => (["flat", "deep", "folded"] as Shape[]).map(shape => ({ size, shape }))))(
   "cold selection costs visible rows: $size $shape", async ({ size, shape }) => {

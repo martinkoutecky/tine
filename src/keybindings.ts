@@ -35,7 +35,7 @@ import { zoomReset } from "./zoom";
 import { zoomInOnTarget, zoomOutOneLevel } from "./zoomCommands";
 import { activeWindowId, documentOf, isElementNode, MAIN_WINDOW_ID, onEachWindow, queryAllWindows, selectionOf } from "./windowRealm";
 import { dismissTopTransient, topTransientLayer } from "./transientLayers";
-import { outlineSelectionAt } from "./outlineSelectionTarget";
+import { outlineSelectionAt, selectAllDialogs, selectAllFields } from "./outlineSelectionTarget";
 import { carryDaysBack } from "./carry";
 import {
   openJournals,
@@ -1099,9 +1099,7 @@ export function installKeybindings(overrides: Record<string, ShortcutBinding> = 
 
   let seq: Chord[] = [];
   let seqTimer: ReturnType<typeof setTimeout> | null = null;
-  const lastClicks = new WeakMap<Document, WeakRef<Element>>();
-  const selectAllDialogs = "dialog, [role='dialog'], [role='alertdialog']";
-  const selectAllFields = `input, textarea, [contenteditable=""], [contenteditable="true"], [contenteditable="plaintext-only"], ${selectAllDialogs}`;
+  const outlineHits = new WeakMap<Document, NonNullable<ReturnType<typeof outlineSelectionAt>>>();
   const resetSeq = () => {
     seq = [];
     if (seqTimer) clearTimeout(seqTimer);
@@ -1225,18 +1223,15 @@ export function installKeybindings(overrides: Record<string, ShortcutBinding> = 
       const doc = documentOf(e);
       const target = e.target;
       const focused = isElementNode(target) && target !== doc.body && target !== doc.documentElement ? target : undefined;
-      const clicked = lastClicks.get(doc)?.deref();
-      // A pointer click can focus the pane's scroll container. Its own
-      // keyboard focus still belongs to the more specific outline clicked.
-      const at = clicked?.isConnected && (!focused || focused.contains(clicked)) ? clicked : focused;
-      const field = at?.closest(selectAllFields);
+      const field = focused?.closest(selectAllFields);
       if ((field?.isConnected && !isOutlineBlockEditorTarget(target))
           || topTransientLayer()?.root?.()?.matches(selectAllDialogs)) {
         resetSeq();
         return;
       }
       if (!editing) {
-        const outline = at?.isConnected && !paneSel() && !at.closest("[data-sheet-grid-id]") ? outlineSelectionAt(at) : undefined;
+        const hit = outlineHits.get(doc);
+        const outline = !paneSel() && hit?.current(focused) ? hit.boundary : undefined;
         if (hasSelection() || (!editingId() && outline !== undefined)) {
           if (hasSelection()) expandBlockSelection();
           else if (outline) {
@@ -1359,16 +1354,19 @@ export function installKeybindings(overrides: Record<string, ShortcutBinding> = 
   // in a workspace window reaches the same handler, and its window's listeners
   // go away with it.
   const uninstallWindows = onEachWindow((win, id) => {
-    const rememberClick = (e: MouseEvent) => {
+    const rememberOutlineHit = (e: MouseEvent) => {
+      // Keyboard and programmatic activation have no pointer-down.
+      if (e.type === "click" && e.detail !== 0) return;
       const at = e.target;
       if (e.button !== 0 || !isElementNode(at)) return;
-      lastClicks.set(win.document, new WeakRef(at));
-      if (!hasSelection() || e.shiftKey || e.ctrlKey || e.metaKey || e.altKey || paneSel() ||
-          at.closest(`${selectAllFields}, [data-sheet-grid-id], a, button, select, label, [role='button']`)) return;
-      const outline = outlineSelectionAt(at, true);
-      if (outline !== undefined) clearSelectionOutsideOutline(outline?.surface, outline?.page);
+      const hit = e.shiftKey || e.ctrlKey || e.metaKey || e.altKey || paneSel() ? undefined : outlineSelectionAt(at);
+      if (hit) {
+        outlineHits.set(win.document, hit);
+        clearSelectionOutsideOutline(hit.boundary?.surface, hit.page);
+      } else outlineHits.delete(win.document);
     };
-    win.addEventListener("click", rememberClick, true);
+    win.addEventListener("pointerdown", rememberOutlineHit, true);
+    win.addEventListener("click", rememberOutlineHit, true);
     win.addEventListener("keydown", handler, true);
     win.addEventListener("paste", pasteHandler, true);
     win.addEventListener("keydown", superTracker, true);
@@ -1381,8 +1379,9 @@ export function installKeybindings(overrides: Record<string, ShortcutBinding> = 
     const disposeMouse = installMouseHistory(win, win.document, navigateMouseHistory, historySource);
     if (id === MAIN_WINDOW_ID) mainMouse = disposeMouse;
     return () => {
-      win.removeEventListener("click", rememberClick, true);
-      lastClicks.delete(win.document);
+      win.removeEventListener("pointerdown", rememberOutlineHit, true);
+      win.removeEventListener("click", rememberOutlineHit, true);
+      outlineHits.delete(win.document);
       win.removeEventListener("keydown", handler, true);
       win.removeEventListener("paste", pasteHandler, true);
       win.removeEventListener("keydown", superTracker, true);

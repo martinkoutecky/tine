@@ -19,6 +19,7 @@ import { bumpGraphEpoch } from "./graphSession";
 import { applyGraphChange as handleGraphChange } from "./document";
 import { bindTestHost, type TestHost } from "./document/host/wiring.test.support";
 import { journalTitle, localDayKey } from "./journal";
+import { openPageInSidebar, setRightSidebar, setRightSidebarOpen } from "./ui";
 
 vi.mock("@tauri-apps/api/core", { spy: true });
 
@@ -139,6 +140,68 @@ it("keeps Journals day scopes after a routed page leaves the scroller", async ()
       expect(selectedIds()).toEqual([`day-${index}`]);
     }
   } finally { dispose(); }
+});
+
+it.each(["sidebar item", "zoom", "Journals day"].flatMap(surface =>
+  [".block-main", ".block-children"].map(zone => ({ surface, zone }))
+))("row padding and child indentation restart selection in $surface ($zone)", async ({ surface, zone }) => {
+  const today = new Date();
+  const yesterday = new Date(today.getFullYear(), today.getMonth(), today.getDate() - 1);
+  const outline = (id: string) => ({
+    id, raw: `Body ${id}`, collapsed: false,
+    children: [{ id: `${id}-child`, raw: `Child of ${id}`, collapsed: false, children: [] }],
+  });
+  const days = [today, yesterday].map((date, index): PageRead => ({
+    name: journalTitle(date), title: journalTitle(date), kind: "journal", id: `journals/${localDayKey(date)}.md`, pre_block: null,
+    blocks: [outline(`day-${index}`)],
+  }));
+  const routed: PageRead = {
+    name: "Routed", title: "Routed", kind: "page", id: "pages/Routed.md", pre_block: null,
+    blocks: [outline("routed-root")],
+  };
+  if (surface === "zoom") routed.blocks[0].children.push({ id: "embed-host", raw: "{{embed [[Other]]}}", collapsed: false, children: [] });
+  const other: PageRead = { name: "Other", title: "Other", kind: "page", id: "pages/Other.md", pre_block: null, blocks: [outline("other-root")] };
+  vi.spyOn(backend(), "getPage").mockImplementation(async name => [routed, other].find(page => page.name === name) ?? null);
+  vi.spyOn(backend(), "getPageByPath").mockImplementation(async path => [routed, other].find(page => page.id === path) ?? null);
+  vi.spyOn(backend(), "journalFeedPage").mockResolvedValue({ pages: days, next_before_day: null, done: true, as_of_day: localDayKey(today) });
+  const router = paneRouter("main");
+  const journal = surface === "Journals day";
+  setFirstLoadDone(false);
+  const host = document.createElement("div");
+  document.body.append(host);
+  const dispose = render(() => <App />, host);
+  try {
+    await vi.waitFor(() => expect(firstLoadDone()).toBe(true));
+    router.replaceActiveRoute(journal ? { kind: "journals" } : { kind: "page", name: routed.name, pageKind: "page" });
+    const find = async (selector: string) => vi.waitFor(() => {
+      const element = host.querySelector<HTMLElement>(selector);
+      expect(element).not.toBeNull();
+      return element!;
+    });
+    const routedBody = `.main-content [data-page-name="${routed.name}"] .page-blocks`;
+    if (!journal) await find(routedBody);
+    if (surface === "zoom") router.zoomToBlock({ name: routed.name, pageKind: "page", block: "routed-root" });
+    if (surface === "sidebar item") openPageInSidebar(other.name, other.kind, other.id);
+    const from = await find(journal ? `[data-page-name="${days[0].name}"] .page-blocks`
+      : surface === "zoom" ? ".zoomed-page .embed-block" : routedBody);
+    const id = journal ? "day-1" : surface === "zoom" ? "routed-root" : "other-root";
+    const scope = journal ? ".main-content" : surface === "zoom" ? ".zoomed-page" : ".right-sidebar";
+    const to = await find(`${scope} [data-block-id="${id}"] ${zone}`);
+    expect(selectAllFrom(from, host.querySelector<HTMLElement>(".main-content")!)).toBe(true);
+    expect(selectedIds()).toContain(journal ? "day-0" : surface === "zoom" ? "other-root" : "routed-root");
+    to.dispatchEvent(new MouseEvent("pointerdown", { bubbles: true, button: 0 }));
+    to.dispatchEvent(new MouseEvent("click", { bubbles: true, detail: 1 }));
+    expect(selectedIds()).toEqual([]);
+    const event = new KeyboardEvent("keydown", { key: "a", ctrlKey: true, bubbles: true, cancelable: true });
+    const home = to.closest<HTMLElement>(".main-content, .right-sidebar")!;
+    home.dispatchEvent(event);
+    expect(event.defaultPrevented).toBe(true);
+    expect(selectedIds()).toEqual([id, `${id}-child`, ...(surface === "zoom" ? ["embed-host"] : [])]);
+  } finally {
+    dispose();
+    setRightSidebar([]);
+    setRightSidebarOpen(false);
+  }
 });
 
 function page(name: string, kind: "page" | "journal", roots: string[]): FeedPage {

@@ -2,7 +2,7 @@ import { afterEach, beforeAll, expect, it, vi } from "vitest";
 import { render } from "solid-js/web";
 import { backend } from "../backend";
 import { clearClipboardPayload } from "../clipboard";
-import { resetStore, selectedIds } from "../document";
+import { node, resetStore, selectedIds } from "../document";
 import { endEdit } from "../editorController";
 import { setGraphMeta } from "../graphSession";
 import { installKeybindings } from "../keybindings";
@@ -11,8 +11,9 @@ import { resetReferenceSectionState } from "../referenceSectionState";
 import { initParser } from "../render/parse";
 import { mainPaneRouter, resetTabsToJournals } from "../router";
 import { maybeEditorIn } from "../tests/editorDriver";
+import { backendReadsQueries, blockRunResult } from "../tests/queryReadingsTestkit";
 import type { BlockDto, PageRead, RefGroup } from "../types";
-import { closeExportModal } from "../ui";
+import { closeExportModal, requestBlockReferences, setBlockReferencesRequest } from "../ui";
 import { ExportModal } from "./ExportModal";
 import { PageView } from "./Page";
 
@@ -46,6 +47,7 @@ afterEach(() => {
   endEdit("page-navigation");
   for (const dispose of disposers.splice(0).reverse()) dispose();
   closeExportModal();
+  setBlockReferencesRequest(null);
   clearClipboardPayload();
   resetStore();
   setGraphMeta(null);
@@ -411,4 +413,133 @@ it.each(["group to group", "Linked to Unlinked", "page to embed"])("starts in th
   expect(selectedIds()).toEqual(expected);
   expect(press("c", { ctrlKey: true }, root).defaultPrevented).toBe(true);
   expect(writeRich.mock.lastCall?.[0].split("\n")[0]).toBe(`- ${first}`);
+});
+
+function hitBlank(at: Element) {
+  at.dispatchEvent(new MouseEvent("pointerdown", { bubbles: true, button: 0 }));
+  at.dispatchEvent(new MouseEvent("click", { bubbles: true, detail: 1 }));
+}
+
+const blankSurfaces = [
+  ["Linked References", ".linked-references", coldHit.id],
+  ["Unlinked References", ".unlinked-references", "unlinked-root"],
+  ["embed", ".embed-block", "embedded-root"],
+  ["page body", ".page-blocks", "target-root"],
+  ["query results", ".query-group", coldHit.id],
+  ["block references", ".block-references-inner", coldHit.id],
+] as const;
+
+it.each(blankSurfaces.flatMap(([surface, outline, id]) => [
+  { surface, outline, id, zone: ".block-main" },
+  { surface, outline, id, zone: ".block-children-container > .block-children" },
+]))("row padding and child indentation restart selection in $surface ($zone)", async ({ surface, outline, id, zone }) => {
+  const targetId = "1d5ea000-0000-4000-a000-000000000001";
+  const routed = page("Target", [
+    block("target-root", `Target body\nid:: ${targetId}`, [block("target-child", "Body child")]),
+    block("embed-host", "{{embed [[Embedded]]}}"),
+    block("query-host", "{{query (task TODO)}}"),
+  ]);
+  const embedded = page("Embedded", [block("embedded-root", "Embedded body", [block("embedded-child", "Embed child")])]);
+  const mention = block("unlinked-child", "A plain mention of Target");
+  const unlinked = page("Unlinked", [block("unlinked-root", "Unlinked context", [mention])]);
+  vi.spyOn(backend(), "getUnlinkedRefs").mockResolvedValue([{
+    page: unlinked.name, kind: unlinked.kind, path: unlinked.id, blocks: [shallow(mention)],
+  }]);
+  vi.spyOn(backend(), "getBlockReferrers").mockResolvedValue([groups[1]]);
+  backendReadsQueries({ "(task TODO)": { form: "(task TODO)" } });
+  vi.spyOn(backend(), "queryRun").mockResolvedValue(blockRunResult([groups[1]]));
+  const { root } = await mountTarget([...sources, embedded, unlinked], groups, ["Alpha", "Beta", "Embedded", "Unlinked"], routed);
+  if (surface === "Unlinked References") {
+    root.querySelector<HTMLElement>(".unlinked-references .references-header")!.click();
+    const crumb = await vi.waitFor(() => {
+      const element = root.querySelector<HTMLElement>(".unlinked-references .ref-crumb[role=button]");
+      expect(element).not.toBeNull();
+      return element!;
+    });
+    crumb.click();
+  }
+  if (surface === "block references") requestBlockReferences(targetId);
+  const alpha = root.querySelector<HTMLElement>(".linked-references .reference-group")!;
+  const row = `${outline} [data-block-id="${id}"]`;
+  const expected = id === "target-root" ? ["target-root", "target-child", "embed-host", "query-host"]
+    : id === "embedded-root" ? ["embedded-root", "embedded-child"]
+    : id === "unlinked-root" ? ["unlinked-root", "unlinked-child"] : ["beta-hit", "beta-child", "beta-grandchild"];
+  const pointerTarget = await vi.waitFor(() => {
+    const hit = root.querySelector(`${row} > ${zone}`);
+    expect(hit).not.toBeNull();
+    return hit!;
+  });
+  hitBlank(alpha);
+  press("a", { ctrlKey: true });
+  expect(selectedIds()).toContain("alpha-hit");
+  hitBlank(pointerTarget);
+  if (surface !== "Linked References" || zone !== ".block-main") {
+    expect(selectedIds()).toEqual([]);
+    expect(press("a", { ctrlKey: true }).defaultPrevented).toBe(true);
+    expect(selectedIds()).toEqual(expected);
+  } else {
+    press("a", { ctrlKey: true });
+    expect(press("Delete").defaultPrevented).toBe(true);
+    expect(node("alpha-hit")?.raw).toBe(hit.raw);
+    expect(node("alpha-child")?.raw).toBe("Alpha child");
+    expect(node("beta-hit")).toBeUndefined();
+    expect(node("beta-child")).toBeUndefined();
+  }
+});
+
+function expectClipboard([plain, html]: [string, string], roots: BlockDto[]) {
+  function markdown(blocks: BlockDto[], depth = 0): string[] {
+    return blocks.flatMap(block => [`${"\t".repeat(depth)}- ${block.raw}`, ...markdown(block.children, depth + 1)]);
+  }
+  expect(plain).toBe(markdown(roots).join("\n"));
+  const copied = new DOMParser().parseFromString(html, "text/html");
+  function tree(list: Element | null): unknown[] {
+    return [...(list?.children ?? [])].map(li => [li.firstChild?.textContent, tree(li.querySelector(":scope > ul"))]);
+  }
+  function expected(blocks: BlockDto[]): unknown[] {
+    return blocks.map(block => [block.raw, expected(block.children)]);
+  }
+  expect(tree(copied.querySelector("body > ul"))).toEqual(expected(roots));
+}
+
+it.each([false, true])("copies the last folded root's subtree after select all (widened: %s)", async widened => {
+  const { root, liveRow, writeRich } = await mountTarget(sources, groups, ["Alpha", "Beta"]);
+  const beta = await vi.waitFor(() => {
+    const row = liveRow(coldHit.id);
+    expect(row).not.toBeNull();
+    return row!.closest<HTMLElement>(".reference-group")!;
+  });
+  const start = widened ? root.querySelector<HTMLElement>(".linked-references .reference-group")! : beta;
+  start.click();
+  press("a", { ctrlKey: true });
+  if (widened) press("a", { ctrlKey: true });
+  expect(liveRow("beta-child")).not.toBeNull();
+  liveRow(coldHit.id)!.querySelector<HTMLElement>(".collapse-toggle.has-children")!.click();
+  expect(liveRow("beta-child")).toBeNull();
+  expect(press("c", { ctrlKey: true }).defaultPrevented).toBe(true);
+  expectClipboard(writeRich.mock.lastCall!, widened ? [hit, nestedHit, coldHit] : [coldHit]);
+});
+
+it("steps back through both ends of a selection whose breadcrumb repeats a hit", async () => {
+  const q = block("alpha-q", "Second hit [[Target]]");
+  const r = block("alpha-r", "Third hit [[Target]]");
+  const { root, writeRich } = await mountTarget(
+    [{ ...sources[0], blocks: [hit, q, r] }, ...sources.slice(1)],
+    [{ ...groups[0], blocks: [hit, q, r, hit.children[0]].map(shallow) }, ...groups.slice(1)],
+  );
+  const alpha = root.querySelector<HTMLElement>(".linked-references .reference-group")!;
+  alpha.querySelector<HTMLElement>(".ref-crumb[role=button]")!.click();
+  expect(alpha.querySelectorAll(`[data-block-id="${hit.id}"]`)).toHaveLength(2);
+  alpha.click();
+  press("a", { ctrlKey: true });
+  for (const [key, roots] of [
+    ["ArrowUp", [hit, q, r]], // The last visible child back to its repeated parent.
+    ["ArrowUp", [hit, q, r]], // The repeated parent back to R.
+    ["ArrowUp", [hit, q]],
+    ["ArrowDown", [hit, q, r]], // Reverse back to R.
+  ] as const) {
+    expect(press(key, { shiftKey: true }).defaultPrevented).toBe(true);
+    expect(press("c", { ctrlKey: true }).defaultPrevented).toBe(true);
+    expectClipboard(writeRich.mock.lastCall!, [...roots]);
+  }
 });
