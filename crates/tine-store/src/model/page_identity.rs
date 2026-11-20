@@ -1085,6 +1085,66 @@ fn walk_graph_text_files(
     errors
 }
 
+/// The journal files graph discovery lists under the configured journals
+/// directory whose listing entry claims the day `key` ([`listed_entry`]'s
+/// claim), at their listed spellings, in path order: the walker's answer for
+/// one directory, for a lookup's late discovery. The directory is walked only
+/// when the walker would reach it from the root: each component a listed,
+/// non-link, scannable directory. A listing error on the way (other than a
+/// missing entry) is returned; an unlisted entry inside is skipped, as the
+/// walker skips it.
+pub(crate) fn journal_files_claiming(graph: &Graph, key: i64) -> io::Result<Vec<PathBuf>> {
+    let root = graph.root.as_path();
+    let config = graph.current_config();
+    let journals = graph.journals_path();
+    let Ok(relative) = journals.strip_prefix(root) else {
+        return Ok(Vec::new());
+    };
+    let mut dir = root.to_path_buf();
+    for component in relative.components() {
+        let std::path::Component::Normal(name) = component else {
+            return Ok(Vec::new());
+        };
+        let child = dir.join(name);
+        if !graph_text_directory_scannable(root, &child, &config) {
+            return Ok(Vec::new());
+        }
+        let entries = match fs::read_dir(&dir) {
+            Ok(entries) => entries,
+            Err(error) if error.kind() == io::ErrorKind::NotFound => return Ok(Vec::new()),
+            Err(error) => return Err(error),
+        };
+        let mut listed = None;
+        for entry in entries {
+            let entry = entry?;
+            if entry.file_name() == name {
+                listed = Some(entry.file_type()?);
+                break;
+            }
+        }
+        if !listed.is_some_and(|kind| kind.is_dir()) {
+            return Ok(Vec::new());
+        }
+        dir = child;
+    }
+    let format = graph.current_journal_format();
+    let mut hits = Vec::new();
+    let errors = walk_graph_text_files(root, &journals, &config, |path, eligible, _| {
+        if eligible {
+            let entry = listed_entry(graph, (&format, &journals, config.file_name_format), path);
+            if let Some(entry) = entry.filter(|entry| entry.date_key == Some(key)) {
+                hits.push(entry.path);
+            }
+        }
+        true
+    });
+    if let Some((_, error)) = errors.into_iter().find(|(path, _)| *path == journals) {
+        return Err(error);
+    }
+    hits.sort();
+    Ok(hits)
+}
+
 fn walk_graph_page_files(
     root: &Path,
     start: &Path,

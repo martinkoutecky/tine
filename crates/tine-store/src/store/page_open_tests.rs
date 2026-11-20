@@ -167,9 +167,9 @@ fn a_dated_file_read_by_path_after_delivery_reads_no_other_file() {
 /// volume a discovery candidate reaches a late journal spelled otherwise on
 /// disk, by case (`X …` asked, `x …` on disk; `Nov 2nd, 2026` asked,
 /// `NOV 2nd, 2026` on disk) or by Unicode composition (`Á …` asked, `A\u{301} …`
-/// on disk). A hard link stands for the asked spelling on Linux and the folding
-/// seam answers canonicalization and the write-target probes as such a volume
-/// does. The journal is found and published once, at its disk spelling.
+/// on disk). The folding seam answers the asked spelling's stat as such a
+/// volume does; the listing is the real one. The journal is found and
+/// published once, at its disk spelling.
 #[test]
 fn a_late_journal_reached_through_another_spelling_is_one_claimant_at_its_disk_spelling() {
     for (formats, title, disk, asked) in [
@@ -205,13 +205,9 @@ fn a_late_journal_reached_through_another_spelling_is_one_claimant_at_its_disk_s
         }
         let store = open(root.path(), None);
         store.whole_graph().unwrap();
-        // On Linux the watcher would list the hard link as a second file.
         store.watch.stop_background_for_test();
         let journals = root.path().join("journals");
         fs::write(journals.join(disk), "- late\n").unwrap();
-        if !journals.join(asked).exists() {
-            fs::hard_link(journals.join(disk), journals.join(asked)).unwrap();
-        }
         let read = crate::path_identity::with_folding_alias(
             &journals.join(asked),
             &journals.join(disk),
@@ -228,8 +224,11 @@ fn a_late_journal_reached_through_another_spelling_is_one_claimant_at_its_disk_s
 
 /// Review b98963b0d F1: late discovery probes only what graph discovery would
 /// list. A directory, symlink, FIFO or socket under the day's file name, and a
-/// hidden or nonportable candidate name, is no hit: the day's page and journal
-/// lookups answer at once, without an error.
+/// hidden or nonportable candidate name, is no hit; so is a journals directory
+/// that is a link or a file, a candidate name too long for the volume, and a
+/// configured-hidden file a folding volume reaches through another spelling
+/// (review 413a3ab82 F1). The day's page and journal lookups answer at once,
+/// without an error.
 #[cfg(unix)]
 #[test]
 fn late_discovery_skips_entries_graph_discovery_would_not_list() {
@@ -241,12 +240,24 @@ fn late_discovery_skips_entries_graph_discovery_would_not_list() {
         ("socket", None),
         ("hidden", Some(".yyyy_MM_dd")),
         ("nonportable", Some("yyyy_MM_dd?")),
+        ("journals-symlink", None),
+        ("journals-file", None),
+        ("overlong", Some("yyyy_MM_dd_LONG")),
+        ("configured-hidden-folded", Some("\u{c1} yyyy_MM_dd")),
     ] {
         let root = graph(3);
         if let Some(format) = file_format {
+            let format = format.replace("LONG", &"x".repeat(300));
+            let hidden = if case == "configured-hidden-folded" {
+                ":hidden [\"journals/A\u{301} 2026_11_02.md\"] "
+            } else {
+                ""
+            };
             fs::write(
                 root.path().join("logseq/config.edn"),
-                format!("{{:preferred-format :markdown :journal/file-name-format \"{format}\"}}\n"),
+                format!(
+                    "{{:preferred-format :markdown {hidden}:journal/file-name-format \"{format}\"}}\n"
+                ),
             )
             .unwrap();
         }
@@ -275,6 +286,24 @@ fn late_discovery_skips_entries_graph_discovery_would_not_list() {
                 fs::write(journals.join(".2026_11_02.md"), "- hidden\n").unwrap();
                 None
             }
+            "journals-symlink" => {
+                let outside = root.path().join("elsewhere");
+                fs::create_dir(&outside).unwrap();
+                fs::write(outside.join("2026_11_02.md"), "- outside\n").unwrap();
+                fs::remove_dir_all(&journals).unwrap();
+                std::os::unix::fs::symlink(&outside, &journals).unwrap();
+                None
+            }
+            "journals-file" => {
+                fs::remove_dir_all(&journals).unwrap();
+                fs::write(&journals, "not a directory").unwrap();
+                None
+            }
+            "overlong" => None,
+            "configured-hidden-folded" => {
+                fs::write(journals.join("A\u{301} 2026_11_02.md"), "- hidden\n").unwrap();
+                None
+            }
             _ => {
                 fs::write(journals.join("2026_11_02?.md"), "- nonportable\n").unwrap();
                 None
@@ -283,12 +312,25 @@ fn late_discovery_skips_entries_graph_discovery_would_not_list() {
         for kind in [PageKind::Journal, PageKind::Page] {
             let (send, receive) = mpsc::channel();
             let asking = Arc::clone(&store);
+            let folded = (case == "configured-hidden-folded").then(|| {
+                (
+                    journals.join("\u{c1} 2026_11_02.md"),
+                    journals.join("A\u{301} 2026_11_02.md"),
+                )
+            });
             std::thread::spawn(move || {
-                let _ = send.send(
+                let ask = || {
                     asking
                         .page_named("Nov 2nd, 2026", kind)
-                        .map(|read| read.map(|r| r.id)),
-                );
+                        .map(|read| read.map(|r| r.id))
+                };
+                let answer = match &folded {
+                    Some((asked, disk)) => {
+                        crate::path_identity::with_folding_alias(asked, disk, ask)
+                    }
+                    None => ask(),
+                };
+                let _ = send.send(answer);
             });
             let answer = receive
                 .recv_timeout(Duration::from_secs(10))

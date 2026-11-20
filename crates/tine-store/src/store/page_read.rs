@@ -204,71 +204,71 @@ impl Store {
         if !matches!(*self.load.status.lock().unwrap(), LoadStatus::Ready) {
             return Ok(None);
         }
-        let config = self.graph.current_config();
-        let directory = config.journals_dir.clone();
+        // Probes are a trigger only (late-discovery state model L1): a stat
+        // says whether something may be at a candidate name. A name no entry
+        // can have (too long, or under a non-directory) is no trigger. On a
+        // maybe, graph discovery's own listing answers which files are the
+        // day's, at their listed spellings (L2, L3; reviews db344b16e F1
+        // through 413a3ab82 F1). Neither needs the writer.
+        let directory = self.graph.current_config().journals_dir.clone();
+        let maybe = format.accepted_stems(day).into_iter().any(|stem| {
+            !stem.contains(['/', '\\'])
+                && crate::file_kind::GRAPH_TEXT_EXTENSIONS
+                    .iter()
+                    .any(|extension| {
+                        let path = self
+                            .graph
+                            .root
+                            .join(format!("{directory}/{stem}.{extension}"));
+                        #[cfg(test)]
+                        let path =
+                            crate::path_identity::folding_alias_source(&path).unwrap_or(path);
+                        #[cfg(feature = "test-faults")]
+                        crate::cost_counters::stamp_by_path();
+                        match fs::symlink_metadata(&path) {
+                            Ok(_) => true,
+                            Err(error) => !matches!(
+                                error.kind(),
+                                std::io::ErrorKind::NotFound
+                                    | std::io::ErrorKind::InvalidFilename
+                                    | std::io::ErrorKind::NotADirectory
+                            ),
+                        }
+                    })
+        });
+        if !maybe {
+            return Ok(None);
+        }
+        let hits = crate::model::journal_files_claiming(&self.graph, day.ordinal_key())
+            .map_err(|error| StoreError::Io(error.into()))?;
+        if hits.is_empty() {
+            return Ok(None);
+        }
         let writer = self.writer.lock().unwrap();
         if self.is_closed() {
             return Ok(None);
         }
-        // Every existing candidate is kept for the fallback read (review r4):
-        // a file the watcher already refused stays unchanged since observed,
-        // yet it is still no absence. Only unobserved ones are reconciled. A
-        // stat error other than NotFound is no absence either.
+        // Every listed hit is kept for the fallback read (review r4): a file
+        // the watcher already refused stays unchanged since observed, yet it
+        // is still no absence. Only unobserved ones are reconciled.
         let mut held = Vec::new();
         let mut unheld = Vec::new();
         let mut fresh = HashSet::new();
-        // On a case- or normalization-folding volume a candidate can reach a
-        // file spelled otherwise: each hit is taken at its disk spelling
-        // (`disk_spelling`), once, and only if that spelling's own stem
-        // claims the day by S3 (reviews db344b16e F1, cf7ede011 F1).
-        let mut found = HashSet::new();
-        for stem in format.accepted_stems(day) {
-            if stem.contains(['/', '\\']) {
-                continue;
+        for path in hits {
+            let now = match fs::symlink_metadata(&path) {
+                Ok(metadata) => crate::watch::stamp_from_metadata(&metadata),
+                Err(error) if error.kind() == std::io::ErrorKind::NotFound => continue,
+                Err(error) => return Err(StoreError::Io(error.into())),
+            };
+            let id = PageId::from(self.graph.rel_path(&path).as_str());
+            let disk = matches!(self.graph.source(&path), crate::model::Source::Disk);
+            if disk && !self.watch.unchanged_since_observed(&path, now.as_ref()) {
+                fresh.insert(path);
             }
-            for extension in crate::file_kind::GRAPH_TEXT_EXTENSIONS {
-                let id = PageId::from(format!("{directory}/{stem}.{extension}").as_str());
-                // Only what graph discovery would list: an eligible name
-                // (no hidden, nonportable or conflict-copy leaf) naming a
-                // regular file, never a symlink, directory, socket or FIFO
-                // (review b98963b0d F1).
-                if !crate::model::graph_text_relative_eligible(id.as_str(), &config) {
-                    continue;
-                }
-                let path = self.graph.root.join(id.as_str());
-                #[cfg(feature = "test-faults")]
-                crate::cost_counters::stamp_by_path();
-                let now = match fs::symlink_metadata(&path) {
-                    Ok(metadata) if metadata.file_type().is_file() => {
-                        crate::watch::stamp_from_metadata(&metadata)
-                    }
-                    Ok(_) => continue,
-                    Err(error) if error.kind() == std::io::ErrorKind::NotFound => continue,
-                    Err(error) => return Err(StoreError::Io(error.into())),
-                };
-                let (id, path) = match self.disk_spelling(&id) {
-                    Some(actual) => {
-                        let path = self.graph.root.join(actual.as_str());
-                        (actual, path)
-                    }
-                    None => (id, path),
-                };
-                let claims = Path::new(id.as_str())
-                    .file_stem()
-                    .and_then(|stem| stem.to_str())
-                    .is_some_and(|stem| format.file_claim_day(stem, true) == Some(day));
-                if !claims || !found.insert(id.clone()) {
-                    continue;
-                }
-                let disk = matches!(self.graph.source(&path), crate::model::Source::Disk);
-                if disk && !self.watch.unchanged_since_observed(&path, now.as_ref()) {
-                    fresh.insert(path);
-                }
-                if disk {
-                    unheld.push(id)
-                } else {
-                    held.push(id)
-                }
+            if disk {
+                unheld.push(id)
+            } else {
+                held.push(id)
             }
         }
         if held.is_empty() && unheld.is_empty() {

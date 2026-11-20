@@ -55,6 +55,7 @@ use page_identity::effective_page_name;
 // walk's provisional names against the answered ones.
 #[cfg(test)]
 pub(crate) use derived::{BUILD_FOLD_INDEX_BYTES, BUILD_LOCK_PROBES, BUILD_LOCK_TIME};
+pub(crate) use page_identity::journal_files_claiming;
 #[cfg(test)]
 pub(crate) use page_identity::launch_listing_walk;
 pub(crate) use page_identity::{
