@@ -1529,7 +1529,10 @@ mod rename_guide_tests {
             "compatible reader must be available",
             "shown when sharing is available",
         ] {
-            assert!(!share.contains(stale), "share onboarding must not say {stale}");
+            assert!(
+                !share.contains(stale),
+                "share onboarding must not say {stale}"
+            );
         }
         let files = include_str!("templates/files-external-edits-backups.md");
         assert!(files.contains("- ## Share pages"));

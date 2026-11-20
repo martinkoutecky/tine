@@ -235,8 +235,10 @@ fn the_os_extractor_opens_a_backup(
     g.close();
 }
 
-/// Windows: PowerShell's `Expand-Archive` (.NET's zip reader, what
-/// Explorer users reach for) extracts the backup byte-identical.
+/// Windows: .NET's zip reader (`ZipFile.ExtractToDirectory`, the engine behind
+/// `Expand-Archive`) extracts the backup byte-identical. The reader is called
+/// directly: the hosted runner image of 2026-11-16 ships an `Expand-Archive`
+/// that asks Windows PowerShell's .NET for an overload it lacks.
 #[cfg(windows)]
 #[test]
 fn windows_expand_archive_opens_a_backup() {
@@ -248,7 +250,7 @@ fn windows_expand_archive_opens_a_backup() {
                 "-NonInteractive",
                 "-Command",
                 &format!(
-                    "$ErrorActionPreference = 'Stop'; Expand-Archive -LiteralPath '{}' -DestinationPath '{}'",
+                    "$ErrorActionPreference = 'Stop'; Add-Type -AssemblyName System.IO.Compression.FileSystem; [System.IO.Compression.ZipFile]::ExtractToDirectory('{}', '{}')",
                     quote(zip),
                     quote(dest)
                 ),
