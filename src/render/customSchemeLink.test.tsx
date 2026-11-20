@@ -8,6 +8,8 @@ import { setToasts, toasts } from "../toasts";
 import { linkScheme } from "../components/ExternalLink";
 import { LinkSchemePrompt } from "../components/LinkSchemePrompt";
 import { initLinkSchemeSettings } from "../linkSchemeSettings";
+import schemes from "../../src-tauri/external-link-schemes.json";
+import { refusedLinkScheme } from "../linkSchemePolicy";
 
 // GH #503 (UI-CUSTOM-SCHEME-LINK-503): a link to another app's scheme
 // (`shortcuts://`, `zotero://`, `obsidian://` …) opens in that app after the
@@ -106,13 +108,14 @@ describe("custom URL schemes open in their app after a confirm (GH #503)", () =>
     expect(linkScheme("Zotero://x")).toBe("zotero");
   });
 
-  it("the never-opened scheme list matches the native opener's (one rule, two layers)", () => {
+  it("the native and browser openers use the same scheme table", () => {
     const ts = readFileSync("src/linkSchemePolicy.ts", "utf8");
     const rs = readFileSync("src-tauri/src/platform.rs", "utf8");
-    const list = (text: RegExpExecArray | null) => [...(text?.[1] ?? "").matchAll(/"([a-z]+)"/g)].map((m) => m[1]).sort();
-    const tsList = list(/NEVER_OPENED_SCHEMES = new Set\(\[([^\]]*)\]/.exec(ts));
-    const rsList = list(/NEVER_OPENED_SCHEMES: &\[&str\] = &\[([^\]]*)\]/.exec(rs));
-    expect(tsList.length).toBeGreaterThan(0);
-    expect(tsList).toEqual(rsList);
+    const build = readFileSync("src-tauri/build.rs", "utf8");
+    expect(ts).toContain('from "../src-tauri/external-link-schemes.json"');
+    expect(build).toContain('generate_external_link_schemes(&read("external-link-schemes.json"))');
+    expect(rs).toContain('include!(concat!(env!("OUT_DIR"), "/external_link_schemes.rs"))');
+    expect(schemes.refused.length).toBeGreaterThan(0);
+    expect(schemes.refused.every(refusedLinkScheme)).toBe(true);
   });
 });

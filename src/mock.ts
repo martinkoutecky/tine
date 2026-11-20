@@ -24,6 +24,7 @@ import { blockPickerLeg, mergeBlockPickerLegs } from "./editor/blockPickerMatch"
 import { searchFold } from "./editor/searchFold";
 import { parseJournalDayIn } from "./journal";
 import { mockJournalFiles } from "./mockJournalFiles";
+import { checkBrowserHandoff } from "./linkSchemePolicy";
 import { marginRegressionPages } from "./mockMarginPages";
 import { guideLevelRegressionPages } from "./mockGuidePages";
 import { mockAliases } from "./mockAliases";
@@ -1178,12 +1179,11 @@ export function mockBackend(extraPages: PageDto[] = conflictDemoBodies().map((bl
     async setStartOfWeek(): Promise<void> {
       // no-op in the browser mock
     },
-    async openExternal(url: string): Promise<void> {
+    async openExternal(url: string, confirmedScheme?: string): Promise<void> {
+      checkBrowserHandoff(url, confirmedScheme, window.document?.baseURI ?? window.location.href);
       try {
         window.open(url, "_blank", "noreferrer");
-      } catch {
-        // ignore
-      }
+      } catch { /* ignore */ }
     },
     async queryFacets(): Promise<[string, string[]][]> {
       const map = new Map<string, Set<string>>();

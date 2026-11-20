@@ -1,5 +1,10 @@
 import { readFileSync } from "node:fs";
 import { expect, it } from "vitest";
+it("the Guide explains consent and blocked destinations (GH #984)", () => {
+  const guide = readFileSync("crates/tine-guide/src/templates/pages-links-references-search.md", "utf8");
+  expect(guide).toContain("Press **Enter** on a focused app link to open the same consent prompt as a click.");
+  expect(guide).toContain("Links with blocked schemes");
+});
 it("the Guide explains Enter and unmatched children in live results (UI-QUERY-REF-ENTER-EDITOR-1113)", () => {
   const guide = readFileSync("crates/tine-guide/src/templates/queries.md", "utf8");
   for (const outcome of ["query result or Linked Reference", "creates a child and keeps typing there", "even when the child does not match the query"]) expect(guide).toContain(outcome);

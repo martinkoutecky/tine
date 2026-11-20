@@ -9,6 +9,8 @@ fn main() {
     let read = |file: &str| -> serde_json::Value {
         serde_json::from_str(&std::fs::read_to_string(file).expect(file)).expect(file)
     };
+    println!("cargo:rerun-if-changed=external-link-schemes.json");
+    generate_external_link_schemes(&read("external-link-schemes.json"));
     let switch = read("app-identity.json");
     let ship = switch["ship"].as_str().expect("app-identity.json: ship");
     let shipped = &switch["identities"][ship];
@@ -158,6 +160,33 @@ fn main() {
             ),
     )
     .expect("failed to run tauri-build");
+}
+
+/// Compile the same scheme table the TypeScript policy imports.
+fn generate_external_link_schemes(schemes: &serde_json::Value) {
+    let scheme = |name: &str| schemes[name].as_str().expect(name);
+    let scheme_list = |name: &str| {
+        schemes[name]
+            .as_array()
+            .expect(name)
+            .iter()
+            .map(|value| value.as_str().expect(name))
+            .collect::<Vec<_>>()
+    };
+    let generated = format!(
+        "const WEB_SCHEMES: &[&str] = &{:?};\n\
+         const MAIL_SCHEME: &str = {:?};\n\
+         const FILE_SCHEME: &str = {:?};\n\
+         const TINE_SCHEME: &str = {:?};\n\
+         const NEVER_OPENED_SCHEMES: &[&str] = &{:?};\n",
+        scheme_list("web"),
+        scheme("mail"),
+        scheme("localFile"),
+        scheme("deepLink"),
+        scheme_list("refused"),
+    );
+    let out = std::path::PathBuf::from(std::env::var_os("OUT_DIR").expect("build output"));
+    std::fs::write(out.join("external_link_schemes.rs"), generated).expect("generated link schemes");
 }
 
 /// Diagnostics accepts registered names, never arbitrary IPC text. Derive

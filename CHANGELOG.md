@@ -34,6 +34,8 @@ The format follows [Keep a Changelog](https://keepachangelog.com/); versions use
 
 ### Security
 
+- Published and rendered links check URL schemes before opening. Refused schemes are inert, and links to registered apps require consent for the exact scheme (#984).
+
 - DOMPurify is updated to 3.4.18 and seroval to 1.6.12, which close published
   advisories. Tine used none of the affected DOMPurify modes, so no known
   exploit applied (reported by Dieterbe in #982).
