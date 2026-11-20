@@ -109,7 +109,7 @@ describe("I-25 result groups defer membership work until visible", () => {
       await expect.poll(() => read.mock.calls.length).toBe(1);
       visibility(false);
       visibility();
-      await queueReferenceCommit(() => {}, () => true, () => 1);
+      await queueReferenceCommit(() => {}, () => true);
       expect(read).toHaveBeenCalledTimes(1);
     } finally {
       dispose();
@@ -138,7 +138,7 @@ it.each(["query", "block embed", "page embed"] as const)("reads and renders a vi
   }</For>, host);
   let releaseReads!: () => void;
   const heldRead = new Promise<void>(resolve => { releaseReads = resolve; });
-  const held = Array.from({ length: 2 }, () => queueReferenceRead(() => heldRead, () => true, () => 0));
+  const held = Array.from({ length: 2 }, () => queueReferenceRead(() => heldRead, () => true, { urgent: () => true }));
   const mounted: Element[] = [];
   const mounts = new MutationObserver(records => {
     for (const { target } of records) {

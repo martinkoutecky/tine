@@ -22,7 +22,7 @@ export function MeasuredContentWindow(props: { heightKey: string; estimate: numb
     if (mounted()) return;
     let current = true;
     void queueReferenceCommit(() => preserveAboveViewport(host, () => setMounted(true), undefined, true),
-      () => alive && current && wanted(), () => 0);
+      () => alive && current && wanted(), { host });
     onCleanup(() => { current = false; });
   });
   createEffect(() => {

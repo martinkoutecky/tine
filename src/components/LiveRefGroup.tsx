@@ -32,7 +32,7 @@ import { useOwnerWindow } from "../windowRealm";
 import { registerQueryResultFold } from "../collapseCommandSurface";
 import { observeViewportWindow } from "../viewportWindow";
 import { printingOutline, registerOutlineWindow } from "../outlineViewport";
-import { ReferencePriority, queueReferenceCommit, queueReferenceRead } from "../referenceAdmission";
+import { queueReferenceCommit, queueReferenceRead } from "../referenceAdmission";
 import { trackRetirementPin } from "../retirementPins";
 import { BlockList } from "./BlockList";
 import { CommentSurface } from "./CommentSurface";
@@ -134,7 +134,6 @@ export function LiveRefGroup(props: LiveRefGroupProps): JSX.Element {
   const [near, setNear] = createSignal(untrack(() => props.eager === true));
   const [sourceMounted, setSourceMounted] = createSignal(false);
   const [inWindow, setInWindow] = createSignal(untrack(() => props.eager === true));
-  const [visible, setVisible] = createSignal(false);
   const [forced, setForced] = createSignal(false);
   const [interaction, setInteraction] = createSignal(false);
   const [visited, setVisited] = createSignal(untrack(() => props.eager === true));
@@ -158,7 +157,6 @@ export function LiveRefGroup(props: LiveRefGroupProps): JSX.Element {
   const pinned = () => interaction() || occurrence.pendingEdits[0]() > 0 || (!!editingId() && docNode(editingId()!)?.page === props.page)
     || topSelected().some(id => docNode(id)?.page === props.page);
   const wanted = () => inWindow() || forced() || (near() && (pinned() || printingOutline()));
-  const priority = () => visible() || forced() ? ReferencePriority.Linked : ReferencePriority.Background;
   const reserved = reservedGroupHeight(() => {
     const owner = props.heightKey ?? props.hostBlockId;
     return owner === undefined ? undefined : JSON.stringify([
@@ -174,7 +172,7 @@ export function LiveRefGroup(props: LiveRefGroupProps): JSX.Element {
     let current = true;
     void queueReferenceCommit(() => {
       if (el) preserveAboveViewport(el, () => setNear(true), undefined, true);
-    }, () => current && alive && wanted(), priority);
+    }, () => current && alive && wanted(), { host: el, urgent: forced });
     onCleanup(() => { current = false; });
   });
   createEffect(() => {
@@ -195,10 +193,6 @@ export function LiveRefGroup(props: LiveRefGroupProps): JSX.Element {
           if (entry.isIntersecting) setForced(false);
         }, undefined, false, entry, margin);
       }, "viewport"));
-      onCleanup(observeViewportWindow(node, entry => {
-        setVisible(entry.isIntersecting);
-        if (entry.isIntersecting) setInWindow(true);
-      }, 0));
       return;
     }
     if (near()) return;
@@ -220,7 +214,7 @@ export function LiveRefGroup(props: LiveRefGroupProps): JSX.Element {
       <ReservedGroupGeometryContext.Provider value={occurrence.geometry}>
       <Show when={near()}><MountedRefGroup {...props} occurrence={occurrence} geometryHost={() => el}
         onSourceMounted={setSourceMounted}
-        readCurrent={() => alive && (!windowed() || !hasViewport() || wanted())} priority={windowed() ? priority : undefined}
+        readCurrent={() => alive && (!windowed() || !hasViewport() || wanted())} urgent={forced}
         sourcePinned={() => windowed() && (pinned() || forced())} /></Show>
       </ReservedGroupGeometryContext.Provider>
     </div>
@@ -231,12 +225,10 @@ export function LiveRefGroup(props: LiveRefGroupProps): JSX.Element {
 // rendering belong to each disposable child; unchanged rows stay keyed while
 // that child is mounted.
 function MountedRefGroup(props: LiveRefGroupProps & { occurrence: RefOccurrence; geometryHost: () => HTMLElement | undefined; onSourceMounted: (mounted: boolean) => void;
-  readCurrent: () => boolean; priority?: () => ReferencePriority; sourcePinned: () => boolean }): JSX.Element {
+  readCurrent: () => boolean; urgent: () => boolean; sourcePinned: () => boolean }): JSX.Element {
   const linkDepth = useContext(LinkDepthContext);
   const ownerWindow = useOwnerWindow() as Window & typeof globalThis;
   const scheduled = props.surface !== "preview" && typeof ownerWindow?.IntersectionObserver === "function";
-  const [visible, setVisible] = createSignal(false);
-  const priority = () => props.priority?.() ?? (visible() ? ReferencePriority.Visible : ReferencePriority.Background);
   // The host block's own outline and surface, read before this group provides its own.
   const hostScope = useContext(OutlineScopeContext);
   const readScope = {};
@@ -272,7 +264,8 @@ function MountedRefGroup(props: LiveRefGroupProps & { occurrence: RefOccurrence;
       const read = () => path ? backend().getPageByPath(path) : backend().getPage(p, k);
       // A different occurrence can install this source while the read waits.
       // The commit still checks the loaded identity and the captured generation.
-      const queuedRead = () => queueReferenceRead(() => pageByName(p) ? Promise.resolve(null) : read(), owner, priority);
+      const demand = { host: props.geometryHost(), urgent: props.urgent };
+      const queuedRead = () => queueReferenceRead(() => pageByName(p) ? Promise.resolve(null) : read(), owner, demand);
       const result = await admitRead(owner, scheduled ? queuedRead : read, dto => [p, ...(dto ? [dto.name] : [])], dto => {
         // The component may have unmounted while this read was in flight. Never
         // let an old graph's DTO enter the new graph's shared working set.
@@ -286,7 +279,7 @@ function MountedRefGroup(props: LiveRefGroupProps & { occurrence: RefOccurrence;
         if (ensurePageLoaded(dto)) return false;
         const loaded = pageByName(p);
         return loaded?.kind === k && (!path || loaded.id === path);
-      }, scheduled ? commit => queueReferenceCommit(commit, owner, priority) : undefined);
+      }, scheduled ? commit => queueReferenceCommit(commit, owner, demand) : undefined);
       return result.kind === "current" && result.value;
     },
     { storage: initial => {
@@ -302,13 +295,6 @@ function MountedRefGroup(props: LiveRefGroupProps & { occurrence: RefOccurrence;
       return [read, anchored];
     } }
   );
-  createEffect(() => {
-    if (!scheduled || props.priority || !readyResource.loading || untrack(() => pageByName(props.page))) return;
-    const host = props.geometryHost();
-    if (!host) return;
-    const stop = observeViewportWindow(host, entry => setVisible(entry.isIntersecting), 0);
-    onCleanup(() => { stop(); setVisible(false); });
-  });
   createEffect(on(() => [nearView(), !!pageByName(props.page)] as const, ([isNear, present], previous) => {
     // A spacer can leave and reenter the margin as preceding rows expand.
     if (previous && isNear && !present && !readyResource.loading && (!previous[0] || previous[1])) setAcquire(n => n + 1);

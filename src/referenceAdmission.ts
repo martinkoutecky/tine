@@ -1,19 +1,35 @@
 /** Shared source-read and commit budgets. Up to two reads run concurrently and
- * one commit runs per frame/task turn. Waiting jobs move to the tail of their
- * new priority in O(1); dispatch checks each owner once when dequeued. */
-import { createComputed, createRoot } from "solid-js";
+ * one commit runs per frame/task turn. This module alone decides which waiting
+ * job runs next: callers state facts (the element the work is for, whether it
+ * is urgent) and a job whose host is in view, or that is urgent, goes first.
+ * A job moves between the two FIFOs in O(1) when its facts change; dispatch
+ * checks each owner once when dequeued. */
+import { createComputed, createRoot, createSignal, type Accessor } from "solid-js";
+import { observeViewportWindow } from "./viewportWindow";
 import { requestFrame } from "./windowRealm";
 
-export const ReferencePriority = { Linked: 0, Visible: 1, Background: 2 } as const;
-export type ReferencePriority = typeof ReferencePriority[keyof typeof ReferencePriority];
-
-type Job = { current: () => boolean; run: () => void; drop: () => void; stopPriority?: () => void; previous?: Job; next?: Job };
+/** What the caller knows about the work; never a priority. */
+export interface Demand { host?: Element; urgent?: () => boolean }
+type Job = { current: () => boolean; run: () => void; drop: () => void; release?: () => void; previous?: Job; next?: Job };
 type Fifo = { first?: Job; last?: Job };
-type Queue = readonly [Fifo, Fifo, Fifo];
-const reads: Queue = [{}, {}, {}];
-const commits: Queue = [{}, {}, {}];
+type Queue = readonly [Fifo, Fifo];
+const reads: Queue = [{}, {}];
+const commits: Queue = [{}, {}];
 let activeReads = 0;
 let scheduled = false;
+
+// One observer per host with waiting work, released when its last job leaves.
+const hosts = new WeakMap<Element, { inView: Accessor<boolean>; jobs: number; stop: () => void }>();
+function watchHost(host: Element) {
+  let watch = hosts.get(host);
+  if (!watch) {
+    const [inView, setInView] = createSignal(false);
+    hosts.set(host, watch = { inView, jobs: 0, stop: observeViewportWindow(host as HTMLElement, entry => setInView(entry.isIntersecting), 0) });
+  }
+  watch.jobs++;
+  const current = watch;
+  return { inView: current.inView, release: () => { if (--current.jobs === 0) { current.stop(); hosts.delete(host); } } };
+}
 
 function unlink(fifo: Fifo, job: Job) {
   if (job.previous) job.previous.next = job.next;
@@ -23,11 +39,12 @@ function unlink(fifo: Fifo, job: Job) {
   job.previous = job.next = undefined;
 }
 
-function enqueue(queue: Queue, job: Job, priority: () => ReferencePriority) {
+function enqueue(queue: Queue, job: Job, demand: Demand) {
+  const host = demand.host && watchHost(demand.host);
   let fifo: Fifo | undefined;
-  job.stopPriority = createRoot(dispose => {
+  job.release = createRoot(dispose => {
     createComputed(() => {
-      const next = queue[priority()];
+      const next = queue[demand.urgent?.() || host?.inView() ? 0 : 1];
       if (next === fifo) return;
       if (fifo) unlink(fifo, job);
       job.previous = next.last;
@@ -36,7 +53,7 @@ function enqueue(queue: Queue, job: Job, priority: () => ReferencePriority) {
       next.last = job;
       fifo = next;
     });
-    return dispose;
+    return () => { dispose(); host?.release(); };
   }, null);
   wake();
 }
@@ -46,8 +63,8 @@ function take(queue: Queue): Job | undefined {
     while (fifo.first) {
       const job = fifo.first;
       unlink(fifo, job);
-      job.stopPriority?.();
-      job.stopPriority = undefined;
+      job.release?.();
+      job.release = undefined;
       if (job.current()) return job;
       job.drop();
     }
@@ -73,14 +90,14 @@ function wake() {
   // A hidden main window must not starve an active satellite's queue.
   setTimeout(once, 32);
 }
-export function queueReferenceCommit<T>(run: () => T, current: () => boolean, priority: () => ReferencePriority): Promise<T | undefined> {
+export function queueReferenceCommit<T>(run: () => T, current: () => boolean, demand: Demand = {}): Promise<T | undefined> {
   return new Promise((resolve, reject) => {
     enqueue(commits, { current, drop: () => resolve(undefined), run: () => {
       try { resolve(run()); } catch (error) { reject(error); }
-    } }, priority);
+    } }, demand);
   });
 }
-export function queueReferenceRead<T>(read: () => Promise<T>, current: () => boolean, priority: () => ReferencePriority): Promise<T | undefined> {
+export function queueReferenceRead<T>(read: () => Promise<T>, current: () => boolean, demand: Demand = {}): Promise<T | undefined> {
   return new Promise((resolve, reject) => {
     enqueue(reads, { current, drop: () => resolve(undefined), run: async () => {
       activeReads++;
@@ -93,6 +110,6 @@ export function queueReferenceRead<T>(read: () => Promise<T>, current: () => boo
         activeReads--;
         wake();
       }
-    } }, priority);
+    } }, demand);
   });
 }
