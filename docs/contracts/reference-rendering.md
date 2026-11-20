@@ -62,8 +62,11 @@ Already mounted embed/query sources stay pinned while Find is open, so scrolling
 cannot replace searched live descendants with shallow result copies. Closing
 Find releases that hold. Unvisited hosts and reference panels gain no hold.
 
-Visible admissions precede overscan work. At most two source reads wait
-concurrently. Shell creation and document admission yield between groups at
+Visible admissions precede overscan work. `src/referenceAdmission.ts` alone
+decides the order: callers name the element the work is for and whether it is
+urgent (a Find or navigation reveal), never a priority. Work whose element is in
+view, or that is urgent, runs first, oldest first; everything else follows,
+oldest first. At most two source reads wait concurrently. Shell creation and document admission yield between groups at
 frame/task boundaries. Queued obsolete work is discarded; in-flight replies
 must still own their graph and occurrence immediately before document admission.
 Backend reads are not forcibly interrupted. Browsing adds no authored writes;

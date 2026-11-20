@@ -3,7 +3,10 @@ import { backend } from "../backend";
 import { pushToast } from "../toasts";
 import { msg } from "../i18n";
 import { graphOwner, ownedWhen, readOwned } from "../owned";
-import { linkScheme, refusedLinkScheme, rememberableLinkScheme } from "../linkSchemePolicy";
+import {
+  DEFERRED_HREF, anchorDecision, anchorKeepsHref, linkScheme, refusedLinkScheme,
+  rememberableLinkScheme, type AnchorDecision,
+} from "../linkSchemePolicy";
 import { loadLinkSchemeSettings, rememberedLinkSchemes, setLinkSchemeRemembered } from "../linkSchemeSettings";
 import { askLinkScheme } from "../linkSchemePrompt";
 export { linkScheme } from "../linkSchemePolicy";
@@ -45,23 +48,15 @@ export async function openOutboundLink(dest: string, graphScoped = true): Promis
 
 /**
  * An outbound link in graph-authored content (master b61bb9d25303, I-22).
- * The href stays for presentation and copying, but the click never navigates
- * the WebView: it goes through `openOutboundLink`, and a refused or failed
- * open is shown to the user while the graph that showed the link is still
- * bound.
+ * The scheme controls the href. Activation goes through `openOutboundLink`.
  */
 export function ExternalLink(props: { dest: string; class?: string; children: JSX.Element }): JSX.Element {
   return (
     <a
       class={props.class ?? "external-link"}
-      href={props.dest}
       target="_blank"
       rel="noreferrer"
-      onClick={(event) => {
-        event.preventDefault();
-        event.stopPropagation();
-        void openOutboundLink(props.dest);
-      }}
+      {...outboundAnchorAttrs(props.dest, anchorDecision(props.dest), () => void openOutboundLink(props.dest))}
     >
       {props.children}
     </a>
@@ -73,4 +68,36 @@ export function ExternalLink(props: { dest: string; class?: string; children: JS
  *  all look like a dead link (GH #444, master c817fb150). */
 export function reportLinkOpenFailure(dest: string, error: unknown): void {
   pushToast(msg("external-link-couldn-t-open", { dest: String(dest), error: String(error) }), "error");
+}
+
+/** Anchor attributes for a graph-authored link. Deferred links have keyboard
+ * activation through the same route as a click. Refused anchors stay inert. */
+export function outboundAnchorAttrs(
+  dest: string,
+  decision: AnchorDecision,
+  activate: () => void,
+): JSX.AnchorHTMLAttributes<HTMLAnchorElement> {
+  const run = (event: Event) => {
+    event.preventDefault();
+    event.stopPropagation();
+    activate();
+  };
+  if (anchorKeepsHref(decision)) return { href: dest, onClick: run };
+  if (decision === "drop") return {};
+  return {
+    role: "link", tabindex: 0, onClick: run,
+    onKeyDown: (event) => { if (event.key === "Enter") run(event); },
+  };
+}
+
+/** Delegate click and Enter from sanitized raw HTML and Hiccup to consent. */
+export function activateDeferredAnchor(event: MouseEvent | KeyboardEvent): void {
+  if ("key" in event && event.key !== "Enter") return;
+  const node = event.target as Node | null;
+  const element = node?.nodeType === 1 ? (node as Element) : node?.parentElement;
+  const dest = element?.closest(`a[${DEFERRED_HREF}]`)?.getAttribute(DEFERRED_HREF);
+  if (!dest) return;
+  event.preventDefault();
+  event.stopPropagation();
+  void openOutboundLink(dest);
 }

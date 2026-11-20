@@ -3,6 +3,7 @@ import { Show, createEffect, createMemo, onCleanup, type JSX } from "solid-js";
 import { rawHtmlPresentation } from "./htmlSanitize";
 import { allowLocalFileImages } from "../localFileSettings";
 import { acquireLocalImageBlob } from "../assetCache";
+import { activateDeferredAnchor } from "../components/ExternalLink";
 import type { SpanDomAttrs } from "./spans";
 import { isQuickShareViewer } from "../publishedBackend";
 import { ShareMedia, shareHtml } from "../quickShare/ShareMedia";
@@ -15,9 +16,10 @@ import { ShareMedia, shareHtml } from "../quickShare/ShareMedia";
 const EMBED_REFERRER_HOSTS =
   /(?:^|\.)(?:youtube\.com|youtube-nocookie\.com|youtu\.be|vimeo\.com|loom\.com|bilibili\.com)$/i;
 function embedReferrerPolicy(src: string): "strict-origin-when-cross-origin" | "no-referrer" {
-  // Extract the host with a regex rather than `new URL()` — the referrer decision
-  // must not depend on a global others can shim, and a malformed src stays private.
-  const host = /^https?:\/\/([^/?#]+)/i.exec(src)?.[1]?.replace(/^[^@]*@/, "").replace(/:.*$/, "") ?? "";
+  // The presentation supplies a checked HTTP(S) source. Read its authority
+  // without relying on a global URL parser for the referrer decision.
+  const authority = src.slice(src.indexOf("//") + 2).split(/[/?#]/, 1)[0];
+  const host = authority.replace(/^[^@]*@/, "").replace(/:.*$/, "");
   return EMBED_REFERRER_HOSTS.test(host) ? "strict-origin-when-cross-origin" : "no-referrer";
 }
 
@@ -50,7 +52,7 @@ export function renderSanitizedHtml(text: string, spanAttrs?: SpanDomAttrs): JSX
 // document-order match to the scanned paths). Off by default; see ADR 0019.
 function RawHtmlContent(props: { text: string; spanAttrs?: SpanDomAttrs; allowIframe?: boolean }): JSX.Element {
   const presentation = createMemo(() => rawHtmlPresentation(props.text, props.allowIframe));
-  if (isQuickShareViewer()) return <Show when={presentation().iframe} fallback={<span class="raw-html" innerHTML={shareHtml(presentation().html, presentation().localImages)} {...(props.spanAttrs ?? {})} />}>
+  if (isQuickShareViewer()) return <Show when={presentation().iframe} fallback={<span class="raw-html" innerHTML={shareHtml(presentation().html, presentation().localImages)} onClick={activateDeferredAnchor} onKeyDown={activateDeferredAnchor} {...(props.spanAttrs ?? {})} />}>
     {(frame) => <ShareMedia url={frame().src} />}
   </Show>;
   let host: HTMLSpanElement | undefined;
@@ -77,7 +79,7 @@ function RawHtmlContent(props: { text: string; spanAttrs?: SpanDomAttrs; allowIf
       releases.forEach((release) => release());
     });
   });
-  return <Show when={presentation().iframe} fallback={<span ref={host} class="raw-html" innerHTML={presentation().html} {...(props.spanAttrs ?? {})} />}>
+  return <Show when={presentation().iframe} fallback={<span ref={host} class="raw-html" innerHTML={presentation().html} onClick={activateDeferredAnchor} onKeyDown={activateDeferredAnchor} {...(props.spanAttrs ?? {})} />}>
     {(frame) => renderIframe(frame().src, frame().width, frame().height, props.spanAttrs)}
   </Show>;
 }

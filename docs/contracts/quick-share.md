@@ -114,6 +114,12 @@ P        = gzip (RFC 1952) of the UTF-8 share document
   reader looks up. A document without it, or with an `answers.v` the viewer
   does not read, is read as before the field existed.
 
+The reader checks a link's scheme before choosing a file or media route.
+Web and mail links can open directly. Registered app links require consent
+for the exact scheme, matched case-insensitively. Script and browser-internal
+schemes, local file URLs and Tine deep links are refused at browser handoff.
+Relative links retain their existing destinations (GH #984).
+
 ### Published answers (`answers`, version 1)
 
 The published reader computes no name answer itself (CM step 2, census Q13).

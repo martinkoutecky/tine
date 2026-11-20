@@ -10,6 +10,7 @@ import { backend } from "../backend";
 import { blockRunResult } from "../tests/queryReadingsTestkit";
 import { clearAssetBlobCache } from "../assetCache";
 import { initLocalFileSettings } from "../localFileSettings";
+import * as linkSchemePolicy from "../linkSchemePolicy";
 
 // A few render paths reach back into the wasm parser (e.g. a properties block
 // renders each value via InlineText → parseBlock). Node supports WebAssembly +
@@ -356,6 +357,23 @@ describe("renderInlines", () => {
       preference.mockResolvedValue(false);
       await initLocalFileSettings();
     }
+  });
+
+  it("applies the same resource scheme policy to Hiccup images", () => {
+    const output = html(() => <AstBody raw={'[:img {:src "tel:+12025550120" :alt "preview"}]'} />);
+    expect(output).toContain('alt="preview"');
+    expect(output).not.toContain("tel:");
+  });
+
+  it("routes fixed page and block references without classifying their destinations", () => {
+    const decide = vi.spyOn(linkSchemePolicy, "anchorDecision");
+    const output = inl([
+      { k: "link", url: { type: "page_ref", v: "https://example.test" }, full: "[[https://example.test]]" },
+      { k: "link", url: { type: "block_ref", v: "18ee770d-b821-4af0-af69-7815dc3d0eb6" }, full: "((18ee770d-b821-4af0-af69-7815dc3d0eb6))" },
+    ]);
+    expect(output).toContain("page-ref");
+    expect(output).toContain("block-ref");
+    expect(decide).not.toHaveBeenCalled();
   });
 
   it("D29: embeds the iframe's src rather than a data-src lookalike", () => {

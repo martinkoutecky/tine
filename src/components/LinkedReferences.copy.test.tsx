@@ -712,7 +712,6 @@ it.each(blankSurfaces.flatMap(([surface, outline, id]) =>
   }
   if (surface === "block references") requestBlockReferences(targetId);
   const alpha = root.querySelector<HTMLElement>(".linked-references .reference-group")!;
-  const row = `${outline} [data-block-id="${id}"]`;
   const expected = id === "target-root" ? routed.blocks : id === "embedded-root" ? embedded.blocks
     : id === "unlinked-root" ? unlinked.blocks : [coldHit];
   // Source reads are scheduled (GH #1001): wait for the live row, not the listed placeholder.
