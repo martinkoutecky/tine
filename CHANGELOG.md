@@ -16,7 +16,7 @@ The format follows [Keep a Changelog](https://keepachangelog.com/); versions use
 - A journal day's title tooltip now says "Double-click to rename", as a page's does, since renaming a day (moving its notes to a page) has no menu row (D-20261119-DRM).
 
 ### Fixed
-- Linked References and query results use their source file’s formatting even while the source page is loading (UI-ORG-RESULT-ROW-FORMAT).
+- Linked References and query results, including tables and boards, use their source file’s formatting while the source page loads. Rows and breadcrumbs stay visible during an unrelated page rename (UI-ORG-RESULT-ROW-FORMAT).
 - Renaming a page that very large pages link to uses less memory: each linking page's rewrite proof and the check's reading of it are now let go as soon as that page has been checked, instead of being held until the whole rename was prepared (a 20,000-block page: 125 MB to 113 MB peak; REG-CM-RENAME-RETAINED-BYTES).
 - All Pages showed 0 references for a page reached only through a property key (`done-at:: today` reaching `Done At`) while its Linked References listed the block; the count and the panel now come from one answer (UI-CM-ALLPAGES-COUNT-ZERO-FOR-FOLDED-KEY-PAGE).
 - Adding to a page or a journal day while Tine is still loading the graph at launch no longer writes a second file for it beside your file; the add is refused as for any page that already has a file (REG-HELD-UNINDEXED-TWIN).

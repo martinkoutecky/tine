@@ -133,7 +133,7 @@ function tableBody(input: SheetInput, cfg: ReturnType<typeof sheetConfig>, rows:
     columns: [{ label: t("sheet-sheet-table-block"), formula: false }, ...fields.map((f) => ({ label: fieldLabel(f), formula: isFormulaField(f) }))],
     rows: kept.map((row) => ({
       ix: Number(row.id),
-      title: tableRowTitle(row),
+      title: tableRowTitle(row, formatForPage(row.page)),
       bg: bgOf(row.dto!),
       cells: fields.map((f) =>
         cellView(f, types.get(f), displayFieldValue(f, types.get(f), fieldValue(row, f)), formulaValue(row, f))
@@ -161,7 +161,7 @@ function boardBody(input: SheetInput, cfg: ReturnType<typeof sheetConfig>, rows:
       label: col.label,
       cards: col.rows.map((row) => ({
         ix: Number(row.id),
-        title: boardRowTitle(row),
+        title: boardRowTitle(row, formatForPage(row.page)),
         bg: bgOf(row.dto!),
         chips: boardCardChips(row, groupBy),
       })),

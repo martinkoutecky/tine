@@ -101,7 +101,7 @@
  * the same safe-reload gate, bypassing the outside-change policy. Working-set
  * read admission uses local generations, with one bounded reread; see
  * `docs/storage-contract.md`. */
-export { blockIsGridView, blockIsOpaqueSheetView, collapseEpochOf, node, onBlockRawChanged, onPageRawChanged, someBlockInTrees, childIds, pageRoots, loadedPage, feedNames, isLoaded, formatForBlock, formatForPage, mainPages, pageByName, pageReadOnly } from "./model";
+export { blockIsGridView, blockIsOpaqueSheetView, collapseEpochOf, node, onBlockRawChanged, onPageRawChanged, someBlockInTrees, childIds, pageRoots, loadedPage, feedNames, isLoaded, formatForBlock, formatForPage, mainPages, pageByName, pageReadOnly, sourceFormatForPage } from "./model";
 export type { ReadonlyFeedPage as FeedPage, ReadonlyNode as Node } from "./model";
 export { trackAssetWrite } from "./assetWrites";
 export { applyLiveResolution, bindHost, conflictReason, conflicts, consumedAnswer, createPage, CreatePageRefusal, flushAll, flushPage, installAliasDraftRouteHandler, isConflicted, liveConflictDraft, isDirty, isSaving, markDirty, refuseConflictedMove, resolveConflict, sameLiveDraft, subscribeOwnerFlush, unsavedDrafts, unsavedPageCount, type UnsavedState } from "./host/wiring";

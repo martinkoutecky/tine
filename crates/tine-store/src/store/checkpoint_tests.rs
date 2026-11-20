@@ -1509,13 +1509,13 @@ fn the_golden_body_is_pinned_to_format() {
     let digest: String = sha256(&bytes).iter().map(|b| format!("{b:02x}")).collect();
     assert_eq!(
         (FORMAT, digest.as_str()),
-        (39, GOLDEN),
+        (40, GOLDEN),
         "ADR 0070: the checkpoint body changed; bump FORMAT and re-pin GOLDEN"
     );
 }
 
 #[cfg(unix)]
-const GOLDEN: &str = "744461666cc2447a3f093883c8654d318cc305fd8ef4edd6880f9a7b0cd4cdf6";
+const GOLDEN: &str = "d0981ddc83c5dbfa18837ae6119a96a909b835bf36a9eb081641b9414f749ad2";
 
 /// GH #623 (FORMAT 6): which cached pages carried a VCS anchor line travels
 /// in the checkpoint, so a warm launch answers the conflict inventory with no

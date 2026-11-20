@@ -1,5 +1,5 @@
 import { visibleBody } from "../render/block";
-import { formatForPage } from "../document";
+import { sourceFormatForPage } from "../document";
 import { t } from "../i18n";
 import { MARKERS } from "../markers";
 import type { FieldSpec } from "./config";
@@ -120,8 +120,9 @@ export function buildBoardColumns<R extends FormulaEvalRow>(
 }
 
 /** A board card's title: the first visible body line. O(1). */
-export function boardRowTitle(row: FormulaEvalRow): string {
-  return visibleBody(rowRaw(row), formatForPage(row.page))[0] ?? "";
+export function boardRowTitle(row: FormulaEvalRow, format = sourceFormatForPage(row.page, row.kind, row.path)): string {
+  const raw = rowRaw(row);
+  return format ? visibleBody(raw, format)[0] ?? "" : raw;
 }
 
 /** One field's text as the card chips show it, live or from a DTO. O(1). */

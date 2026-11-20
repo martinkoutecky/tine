@@ -1,11 +1,12 @@
 import { For, Match, Switch, createMemo, type JSX } from "solid-js";
-import { formatForPage } from "../document";
+import { sourceFormatForPage } from "../document";
 import { InlineText } from "../render/inline";
 import { isFormulaField, type FieldId, type FieldValue } from "../sheet/fields";
 import { type FieldType } from "../sheet/config";
 import { cellView, isEnumFieldType, type CellView } from "../sheet/cellPresentation";
 import type { FormulaValue } from "../sheet/formula";
 import { markerLabelClickable } from "../editor/repeat";
+import type { FormulaEvalRow } from "../sheet/formulaEval";
 
 /** Render one field value in its declared presentation; read-only and O(value length).
  *  WHAT to show is `cellView` (shared with the static export); this only draws it. */
@@ -14,7 +15,7 @@ export function FieldValueView(props: {
   fieldType?: FieldType;
   value: FieldValue | null;
   formulaValue?: FormulaValue | null;
-  page: string;
+  source: Pick<FormulaEvalRow, "page" | "kind" | "path">;
   onControlClick?: (e: MouseEvent) => void;
 }): JSX.Element {
   const view = createMemo(() => cellView(props.field, props.fieldType, props.value, props.formulaValue));
@@ -76,7 +77,7 @@ export function FieldValueView(props: {
       </Match>
       <Match when={is("plain")}>{(v) => <>{v().text}</>}</Match>
       <Match when={is("inline")}>
-        {(v) => <InlineText text={v().text} format={formatForPage(props.page)} />}
+        {(v) => <InlineText text={v().text} format={sourceFormatForPage(props.source.page, props.source.kind, props.source.path) ?? null} />}
       </Match>
     </Switch>
   );

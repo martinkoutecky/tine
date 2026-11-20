@@ -1197,13 +1197,17 @@ pub(crate) fn block_hits_to_groups(hits: Vec<QueryHit>) -> Vec<tine_core::model:
     let mut groups: Vec<tine_core::model::RefGroup> = Vec::new();
     for hit in hits {
         let QueryHit::Block {
-            page, kind, block, ..
+            page,
+            kind,
+            path,
+            block,
+            ..
         } = hit
         else {
             continue;
         };
         if let Some(last) = groups.last_mut() {
-            if last.page == page && last.kind == kind {
+            if last.path.as_ref() == Some(&path) {
                 last.blocks.push(block);
                 continue;
             }
@@ -1211,6 +1215,7 @@ pub(crate) fn block_hits_to_groups(hits: Vec<QueryHit>) -> Vec<tine_core::model:
         groups.push(tine_core::model::RefGroup {
             page,
             kind,
+            path: Some(path),
             blocks: vec![block],
             evidence: Vec::new(),
         });

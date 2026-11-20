@@ -604,6 +604,9 @@ pub struct RefGroup {
     pub page: String,
     /// Source page kind.
     pub kind: PageKind,
+    /// Exact graph-root-relative file that owns these blocks, when available.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub path: Option<PageId>,
     /// Matching blocks or projected subtrees.
     pub blocks: Vec<BlockDto>,
     /// Result-only source evidence keyed by block id. Empty for ordinary query
@@ -1029,6 +1032,7 @@ pub fn ref_groups_estimated_bytes(groups: &[RefGroup]) -> usize {
         .iter()
         .map(|group| {
             group.page.len()
+                + group.path.as_ref().map_or(0, |path| path.as_str().len())
                 + group
                     .blocks
                     .iter()

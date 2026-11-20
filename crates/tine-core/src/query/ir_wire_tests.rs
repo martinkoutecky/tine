@@ -369,6 +369,7 @@ fn the_query_result_wire_format_is_tagged_by_anchor() {
             statistics: Some(statistics_wire_example()),
             rows: QueryRows::Block {
                 groups: vec![RefGroup {
+                    path: None,
                     page: "Home".to_string(),
                     kind: PageKind::Page,
                     blocks: vec![BlockDto {

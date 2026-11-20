@@ -5,6 +5,7 @@ import { formatForPage } from "../document";
 import { HL_COLOR_BG, HL_COLOR_SOLID } from "../pdf";
 import { openAnnotationPdf } from "../openAnnotationPdf";
 import { PdfAreaImage } from "./PdfAreaImage";
+import type { Format } from "../types";
 
 // The colored, clickable swatch rendered for a PDF highlight (annotation) block:
 // a dot + page badge (click → open the PDF at that page) and the highlight text.
@@ -14,6 +15,7 @@ export function AnnotationBody(props: {
   hlPage: number;
   line: string;
   page: string;
+  format?: Format;
   areaStamp?: string;
 }): JSX.Element {
   const openHighlightPdf = (e: MouseEvent) => {
@@ -32,7 +34,7 @@ export function AnnotationBody(props: {
         <strong class="hl-page-badge">P{props.hlPage}</strong>
       </span>{" "}
       <span class="hl-text" style={{ background: HL_COLOR_BG[props.color] ?? HL_COLOR_BG.yellow }}>
-        <InlineText text={props.line} format={formatForPage(props.page)} />
+        <InlineText text={props.line} format={props.format ?? formatForPage(props.page)} />
       </span>
       <Show when={props.areaStamp}>
         {stamp => <PdfAreaImage page={props.page} highlightId={props.highlightId} hlPage={props.hlPage} stamp={stamp()} onClick={openHighlightPdf} />}

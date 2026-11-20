@@ -1,4 +1,4 @@
-import { formatForBlock, formatForPage } from "../document";
+import { formatForBlock, sourceFormatForPage } from "../document";
 import { facetsFromDto, facetsOf, type Facets } from "../render/facets";
 import { isRenderHiddenProp, visibleBody } from "../render/block";
 import { liveFormulaRowNode, type FormulaEvalRow } from "./formulaEval";
@@ -87,7 +87,8 @@ export function rowRaw(row: FormulaEvalRow): string {
 }
 
 /** A table row's title cell text; an empty title over children reads as an em dash. */
-export function tableRowTitle(row: FormulaEvalRow): string {
-  const title = visibleBody(rowRaw(row), formatForPage(row.page)).join(" ");
+export function tableRowTitle(row: FormulaEvalRow, format = sourceFormatForPage(row.page, row.kind, row.path)): string {
+  const raw = rowRaw(row);
+  const title = format ? visibleBody(raw, format).join(" ") : raw;
   return title.trim() === "" && (liveFormulaRowNode(row, "mount")?.children.length ?? row.dto?.children.length ?? 0) > 0 ? "—" : title;
 }

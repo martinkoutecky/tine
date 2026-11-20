@@ -45,6 +45,12 @@ it("the Guide distinguishes referencing blocks from pages (GH #755)", () => {
   expect(refs).toContain("the count follows the active filter");
 });
 
+it("the Guide explains how Linked References and query results display Markdown and Org", () => {
+  expect(guide("pages-links-references-search")).toContain(
+    "Linked References and query results use the source file’s Markdown or Org formatting as soon as they appear.",
+  );
+});
+
 it("the Guide describes priority and marker page references", () => {
   const journals = guide("journals-tasks-scheduling");
   expect(journals).toContain("A header priority is also a reference to its letter's page");

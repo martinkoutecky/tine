@@ -99,6 +99,7 @@ impl<'a> RenderGraph<'a> {
             group: RefGroup {
                 page: page.name.clone(),
                 kind: page.kind,
+                path: None,
                 blocks,
                 evidence: Vec::new(),
             },

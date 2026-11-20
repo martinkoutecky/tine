@@ -75,6 +75,20 @@ describe("Linked References filters", () => {
       expect(root.querySelector('[aria-label="Copy / export linked references"]')).not.toBeNull();
     } finally { dispose(); }
   });
+  it("keeps groups from same-name files separate", async () => {
+    vi.spyOn(backend(), "getBacklinks").mockResolvedValue([
+      { page: "Source", kind: "page", path: "pages/a/Source.md", blocks: [block("md", "[[Target]]")] },
+      { page: "Source", kind: "page", path: "pages/b/Source.ORG", blocks: [block("org", "[[Target]]")] },
+    ]);
+    const root = document.createElement("div");
+    document.body.append(root);
+    const dispose = render(() => <LinkedReferences name="Target" />, root);
+    try {
+      await vi.waitFor(() => expect([...root.querySelectorAll(".test-ref-group")].map(group => group.textContent)).toEqual(["md", "org"]));
+      root.querySelector<HTMLButtonElement>(".reference-group-disclosure")!.click();
+      expect([...root.querySelectorAll(".test-ref-group")].map(group => group.textContent)).toEqual(["org"]);
+    } finally { dispose(); }
+  });
   it("keeps an expanded large section open after its component remounts", async () => {
     vi.spyOn(backend(), "getBacklinks").mockResolvedValue([{
       page: "Source", kind: "page",

@@ -134,10 +134,9 @@ pub(crate) fn answer_verb(slot: &GraphSlot, request: &Request) -> Result<Value, 
                     crate::commands::query_error_wire::reference_error(e),
                 )
             })?;
-            Ok(ok(
-                "refs",
-                json!({ "target": target, "block": block, "groups": &*groups }),
-            ))
+            let mut payload = json!({ "target": target, "block": block, "groups": &*groups });
+            omit_result_paths(&mut payload);
+            Ok(ok("refs", payload))
         }
         "search" => {
             let SearchArgs {
@@ -200,6 +199,7 @@ pub(crate) fn answer_verb(slot: &GraphSlot, request: &Request) -> Result<Value, 
             )
             .map_err(|e| read_failed(Diag::QueryFailed, e))?;
             let mut payload = to_value(&result)?;
+            omit_result_paths(&mut payload);
             // D-18: the cue for a Logseq form that adds no condition travels
             // with the answer, in both outputs.
             if let (Some(hint), Some(fields)) = (&parsed.og_hint, payload.as_object_mut()) {
@@ -359,6 +359,15 @@ pub(super) fn parse<T: serde::de::DeserializeOwned>(args: &Value) -> Result<T, E
 
 fn to_value(value: &impl serde::Serialize) -> Result<Value, ErrorBody> {
     serde_json::to_value(value).map_err(|e| internal(Diag::Encode, e.to_string()))
+}
+
+// Keep desktop source locators out of the CLI's existing result payloads.
+fn omit_result_paths(payload: &mut Value) {
+    if let Some(groups) = payload.get_mut("groups").and_then(Value::as_array_mut) {
+        for group in groups.iter_mut().filter_map(Value::as_object_mut) {
+            group.remove("path");
+        }
+    }
 }
 
 /// `ParsedQuery.og_hint` as the payload carries it: the DTO verbatim, plus
@@ -719,6 +728,7 @@ fn host_preview(
         group: tine_core::model::RefGroup {
             page: indexed.page.clone(),
             kind: indexed.kind,
+            path: None,
             blocks,
             evidence: Vec::new(),
         },

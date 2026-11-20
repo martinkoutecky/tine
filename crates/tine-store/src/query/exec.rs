@@ -961,18 +961,19 @@ pub(crate) fn execute_cancellable(
                 for (at, block) in rows {
                     let entry = groups[at].0;
                     let facts = &groups[at].1;
-                    if !budget.admit_estimated(&entry.name, shallow_dto_estimated_bytes(block, &[]))
-                    {
+                    let same_source = last == Some(at);
+                    if !budget.admit_estimated(
+                        &entry.name,
+                        if same_source {
+                            None
+                        } else {
+                            entry.rel_path.as_ref()
+                        },
+                        shallow_dto_estimated_bytes(block, &[]),
+                    ) {
                         continue;
                     }
-                    let same = match (last, out.last()) {
-                        (Some(previous), Some(group)) if sorted => {
-                            group.page == entry.name && group.kind == entry.kind || previous == at
-                        }
-                        (Some(previous), Some(_)) => previous == at,
-                        _ => false,
-                    };
-                    if same {
+                    if same_source {
                         out.last_mut()
                             .expect("group")
                             .blocks
@@ -981,6 +982,7 @@ pub(crate) fn execute_cancellable(
                         out.push(RefGroup {
                             page: entry.name.clone(),
                             kind: entry.kind,
+                            path: entry.rel_path.clone(),
                             blocks: vec![row_dto(facts, block)],
                             evidence: Vec::new(),
                         });

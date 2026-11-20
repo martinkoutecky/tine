@@ -19,7 +19,7 @@ import { createQuerySubscription } from "../querySubscription";
 import { ReferenceDisclosure } from "./ReferenceDisclosure";
 import { createMembershipResource, groupsContainEdit } from "../resultMembership";
 import { bindingOwner, advanceRevision, graphOwner, latestOwner, readOwned, revisionOwner, writeOwned, type Owned } from "../owned";
-import { blockProperty, blockWritable, formatForBlock, formatForPage, graphRewriteFrozen, setBlockProperty, setRaw, undo, undoTopTag, withUndoUnit, node as docNode } from "../document";
+import { blockProperty, blockWritable, formatForBlock, graphRewriteFrozen, setBlockProperty, setRaw, sourceFormatForPage, undo, undoTopTag, withUndoUnit, node as docNode } from "../document";
 import { createQueryFold } from "./macroFold";
 export { EmbedMacro } from "./EmbedMacro";
 import { QueryGroups } from "./QueryGroup";
@@ -503,14 +503,18 @@ function QueryMacroContent(props: Parameters<typeof QueryMacro>[0]): JSX.Element
     if (currentView() !== "search" && friendlySearch() === null) return [];
     const search = displayed()?.search;
     if (search) return search.hits;
-    return groups().flatMap((group) => group.blocks.map((block) => ({
-      entity: "block" as const,
-      page: group.page,
-      kind: group.kind,
-      block,
-      display_text: visibleBody(block.raw, formatForPage(group.page)).join(" "),
-      evidence: [],
-    })));
+    return groups().flatMap((group) => {
+      const format = sourceFormatForPage(group.page, group.kind, group.path);
+      return group.blocks.map((block) => ({
+        entity: "block" as const,
+        page: group.page,
+        kind: group.kind,
+        path: group.path,
+        block,
+        display_text: format ? visibleBody(block.raw, format).join(" ") : block.raw,
+        evidence: [],
+      }));
+    });
   });
   const total = () => {
     const both = displayed()?.both;
@@ -902,17 +906,18 @@ function QueryMacroContent(props: Parameters<typeof QueryMacro>[0]): JSX.Element
   const [sortOverride, setSortOverride] = createSignal<TableSort | null>(null);
   const sortState = (): TableSort | null => sortOverride() ?? hostSortState();
   const rows = createMemo<Row[]>(() =>
-    !legacyTable() || collapsed() ? [] : groups().flatMap((g) =>
-      g.blocks.map((b) => {
+    !legacyTable() || collapsed() ? [] : groups().flatMap((g) => {
+      const format = sourceFormatForPage(g.page, g.kind, g.path);
+      return g.blocks.map((b) => {
         const props: Record<string, string> = {};
         const byKey: Record<string, string> = {};
         for (const [k, val] of b.properties ?? []) {
           props[k] = val;
           byKey[columnKey(k)] ??= val;
         }
-        return { page: g.page, kind: g.kind, path: g.path, text: visibleBody(b.raw, formatForPage(g.page)).join(" "), props, byKey };
-      })
-    )
+        return { page: g.page, kind: g.kind, path: g.path, text: format ? visibleBody(b.raw, format).join(" ") : b.raw, props, byKey };
+      });
+    })
   );
   const hostCols = createMemo(() => hostColumns(hostProperty("query-properties")));
   /** Column ids in display order: `block`, `page`, then property keys. */

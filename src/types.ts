@@ -628,7 +628,7 @@ export interface MarkerConflictDiff {
 export interface RefGroup {
   page: string;
   kind: PageKind;
-  /** Exact owner for path-bearing search presentations; absent for legacy DSL results. */
+  /** Exact graph-root-relative file that owns these blocks, when available. */
   path?: string;
   blocks: BlockDto[];
   evidence?: ReferenceBlockEvidence[];
