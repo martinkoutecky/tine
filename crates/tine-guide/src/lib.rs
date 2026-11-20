@@ -1398,7 +1398,10 @@ mod rename_guide_tests {
         }
         // Link sharing is offered in every build (D-20261117-QSG).
         for stale in ["viewer can read its shares", "keeps quick share off"] {
-            assert!(!platforms.contains(stale), "Flatpak Guide must not say {stale}");
+            assert!(
+                !platforms.contains(stale),
+                "Flatpak Guide must not say {stale}"
+            );
         }
     }
 
@@ -1718,7 +1721,10 @@ mod rename_guide_tests {
             "compatible reader must be available",
             "shown when sharing is available",
         ] {
-            assert!(!share.contains(stale), "share onboarding must not say {stale}");
+            assert!(
+                !share.contains(stale),
+                "share onboarding must not say {stale}"
+            );
         }
         let files = include_str!("templates/files-external-edits-backups.md");
         assert!(files.contains("- ## Share pages"));
