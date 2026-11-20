@@ -1,9 +1,10 @@
 import { t } from "../i18n";
+import { anchorDecision } from "../linkSchemePolicy";
 
 function mediaDestination(value: string): { kind: "external"; url: URL } | { kind: "not-included" } {
+  if (anchorDecision(value) !== "web") return { kind: "not-included" };
   try {
-    const url = new URL(value);
-    return url.protocol === "https:" || url.protocol === "http:" ? { kind: "external", url } : { kind: "not-included" };
+    return { kind: "external", url: new URL(value) };
   } catch { return { kind: "not-included" }; }
 }
 

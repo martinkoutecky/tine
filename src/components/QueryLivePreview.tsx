@@ -18,7 +18,7 @@ import { sharedQueryResult } from "../queryResultCache";
 import { readLatestOr } from "../resourceRead";
 import { createAnswerDay } from "../journal";
 import { visibleBody } from "../render/block";
-import { formatForPage } from "../document";
+import { sourceFormatForPage } from "../document";
 import { bothFamilies } from "../queryTwin";
 import { SearchResultRow } from "./SearchResultRow";
 import type { ExecutionContext, PageRow, Query, ViewSettings } from "../editor/queryIr";
@@ -62,11 +62,14 @@ interface PreviewAnswer {
 }
 
 type PreviewBlock = PreviewAnswer["blocks"][number];
-const previewBlocks = (groups: RefGroup[]): PreviewBlock[] => groups.flatMap((group) => group.blocks.map((block) => ({
-  page: group.page,
-  breadcrumb: block.breadcrumb ?? [],
-  text: [block.marker, ...visibleBody(block.raw, formatForPage(group.page))].filter(Boolean).join(" "),
-})));
+const previewBlocks = (groups: RefGroup[]): PreviewBlock[] => groups.flatMap((group) => {
+  const format = sourceFormatForPage(group.page, group.kind, group.path, group.format);
+  return group.blocks.map((block) => ({
+    page: group.page,
+    breadcrumb: block.breadcrumb ?? [],
+    text: format ? [block.marker, ...visibleBody(block.raw, format)].filter(Boolean).join(" ") : block.raw,
+  }));
+});
 
 function without(groups: RefGroup[], hostBlockId: string | undefined): RefGroup[] {
   if (!hostBlockId) return groups;

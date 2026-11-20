@@ -5,7 +5,7 @@ import { t } from "../i18n";
 // cost is O(rendered blocks), bounded by the supplied result tree.
 
 import { For, Show, createMemo, createSignal, onCleanup, type JSX } from "solid-js";
-import type { BlockDto } from "../types";
+import type { BlockDto, Format } from "../types";
 import { pageProperties } from "../render/block";
 import { effectiveHeadingLevel, facetsFromDto, renderedProperties } from "../render/facets";
 import { taskCheckboxState } from "../markers";
@@ -45,8 +45,9 @@ export function RefBlocks(props: {
   blocks: BlockDto[];
   page?: string;
   pageKind?: "journal" | "page";
-  /** Exact source file, when the caller knows it (a reference group does). */
+  /** Exact source file for callers that open a path-bearing result. */
   path?: string;
+  sourceFormat?: Format | null;
   depth?: number;
   /** GH #486: a click on a page-property row edits that page's properties
    *  (the caller owns the source page's edit path). Absent: read-only row. */
@@ -61,7 +62,10 @@ export function RefBlocks(props: {
   localFolds?: boolean;
   onOpenBlock?: (id: string) => void;
 }): JSX.Element {
-  return <RefBlocksAtDepth {...props} treeDepth={1} />;
+  const format = createMemo(() => props.sourceFormat === undefined
+    ? formatForPage(props.page, props.pageKind, props.path)
+    : props.sourceFormat);
+  return <RefBlocksAtDepth {...props} sourceFormat={format()} treeDepth={1} />;
 }
 
 function RefBlocksAtDepth(props: {
@@ -69,6 +73,7 @@ function RefBlocksAtDepth(props: {
   page?: string;
   pageKind?: "journal" | "page";
   path?: string;
+  sourceFormat: Format | null;
   depth?: number;
   onEditPageProperties?: (event: MouseEvent) => void;
   onEditPreamble?: () => void;
@@ -88,6 +93,7 @@ function RefBlocksAtDepth(props: {
           page={props.page}
           pageKind={props.pageKind}
           path={props.path}
+          sourceFormat={props.sourceFormat}
           onEditPageProperties={props.onEditPageProperties}
           onEditPreamble={props.onEditPreamble}
           readOnly={props.readOnly}
@@ -107,6 +113,7 @@ function RefBlock(props: {
   page?: string;
   pageKind?: "journal" | "page";
   path?: string;
+  sourceFormat: Format | null;
   onEditPageProperties?: (event: MouseEvent) => void;
   onEditPreamble?: () => void;
   readOnly?: boolean;
@@ -125,32 +132,31 @@ function RefBlock(props: {
   // property chrome; `OpeningText` shows its later groups as written.
   const facets = createMemo(() => facetsFromDto(props.block.page_preamble ? {} : props.block));
   const headingLevel = createMemo(() => effectiveHeadingLevel(facets(), props.depth));
-  const format = createMemo(() => formatForPage(props.page));
   const annotation = () => annotationInfo(facets().properties);
   // Chosen once per row: a row's preamble flag is its DTO's.
-  const body = () => props.block.page_preamble
-    ? <OpeningText raw={props.block.raw} format={format()} />
-    : <AstBody raw={props.block.raw} format={format()} headingLevel={headingLevel()} />;
+  const body = (format: Format) => props.block.page_preamble
+    ? <OpeningText raw={props.block.raw} format={format} />
+    : <AstBody raw={props.block.raw} format={format} headingLevel={headingLevel()} />;
   // Only an exact whole-block candidate needs query confirmation here.
   const beginQuery = createMemo(() =>
-    !props.readOnly && /^\s*#\+BEGIN_QUERY\b/i.test(props.block.raw)
-      ? inspectBeginQuery(props.block.raw, format())
+    props.sourceFormat && !props.readOnly && /^\s*#\+BEGIN_QUERY\b/i.test(props.block.raw)
+      ? inspectBeginQuery(props.block.raw, props.sourceFormat)
       : null
   );
   const properties = createMemo(() =>
-    props.block.page_property ? visiblePageProperties(pageProperties(props.block.raw, format())) : []
+    props.sourceFormat && props.block.page_property ? visiblePageProperties(pageProperties(props.block.raw, props.sourceFormat)) : []
   );
   const propertyChunks = createMemo(() => {
     const rows = properties();
     if (rows.length <= 80) return [rows];
     return Array.from({ length: Math.ceil(rows.length / 16) }, (_, i) => rows.slice(i * 16, (i + 1) * 16));
   });
-  const propertyRows = (rows: readonly [string, string][]) => <For each={rows}>
+  const propertyRows = (rows: readonly [string, string][], format: Format) => <For each={rows}>
     {([key, value], i) => <>
       <Show when={i() > 0}><br /></Show>
       <span class="page-property-reference-row">
         <span class="prop-key"><PropertyKey name={key} /></span>{": "}
-        <span class="prop-value"><PagePropertyValue propertyKey={key} value={value} format={format()} /></span>
+        <span class="prop-value"><PagePropertyValue propertyKey={key} value={value} format={format} /></span>
       </span>
     </>}
   </For>;
@@ -280,8 +286,8 @@ function RefBlock(props: {
             }}>
           <div
             class="block-content"
-            dir={blockDirAttr(props.block.raw, format())}
-            classList={{ done: facets().done, [`heading h${headingLevel() ?? ""}`]: headingLevel() != null }}
+            dir={props.sourceFormat ? blockDirAttr(props.block.raw, props.sourceFormat) : undefined}
+            classList={{ done: facets().done, [`heading h${headingLevel() ?? ""}`]: !!props.sourceFormat && headingLevel() != null }}
             onClick={(event) => {
               if (props.block.page_preamble && props.onEditPreamble) {
                 if (forbidsEditEntry(event)) return;
@@ -303,44 +309,45 @@ function RefBlock(props: {
               <SourceTaskCheckbox marker={facets().marker} target={refTarget}
                 result={props.queryResult ? { id: props.block.id, dto: props.block, page: props.page ?? "", kind: props.pageKind, path: props.path } : undefined} />{" "}
             </Show>
-            <Show when={facets().marker}>
+            <Show when={props.sourceFormat && facets().marker}>
               <span class={`block-marker marker-${facets().marker?.toLowerCase()}`}>
                 {facets().marker}
               </span>{" "}
             </Show>
-            <Show when={facets().priority}>
+            <Show when={props.sourceFormat && facets().priority}>
               <span class={`block-priority priority-${facets().priority}`}>[#{facets().priority}]</span>{" "}
             </Show>
-            <Show
-              when={props.block.page_property}
-              fallback={
+            <Show when={props.sourceFormat} fallback={props.block.raw}>
+              {format => <>
                 <Show
-                  when={!props.block.page_preamble && beginQuery()}
+                  when={props.block.page_property}
                   fallback={
-                    <Show when={annotation()?.areaStamp} fallback={body()}>
-                      <AnnotationBody page={props.page ?? ""} highlightId={blockDtoExternalId(props.block)}
-                        color={annotation()!.color} hlPage={annotation()!.hlPage} areaStamp={annotation()!.areaStamp}
-                        line={visibleBody(props.block.raw, format()).join("\n")} />
+                    <Show when={!props.block.page_preamble && beginQuery()} fallback={
+                      <Show when={annotation()?.areaStamp} fallback={body(format())}>
+                        <AnnotationBody page={props.page ?? ""} highlightId={blockDtoExternalId(props.block)}
+                          color={annotation()!.color} hlPage={annotation()!.hlPage} areaStamp={annotation()!.areaStamp}
+                          line={visibleBody(props.block.raw, format()).join("\n")} format={format()} />
+                      </Show>
+                    }>
+                      {(match) => <BeginQuery match={match()} currentPage={props.page} />}
                     </Show>
                   }
                 >
-                  {(match) => <BeginQuery match={match()} currentPage={props.page} />}
+                  <For each={propertyChunks()}>{(rows, index) =>
+                    <Show when={properties().length > 80} fallback={propertyRows(rows, format())}>
+                      <MeasuredContentWindow heightKey={`properties:${props.block.id}:${index()}`} estimate={rows.length * 30}>{propertyRows(rows, format())}</MeasuredContentWindow>
+                    </Show>
+                  }</For>
                 </Show>
-              }
-            >
-              <For each={propertyChunks()}>{(rows, index) =>
-                <Show when={properties().length > 80} fallback={propertyRows(rows)}>
-                  <MeasuredContentWindow heightKey={`properties:${props.block.id}:${index()}`} estimate={rows.length * 30}>{propertyRows(rows)}</MeasuredContentWindow>
+                <Show when={!props.block.page_property && !props.block.page_preamble}>
+                  <PropertyRows entries={renderedProperties(props.block.raw, format())} format={format()} blockId={props.block.id} />
                 </Show>
-              }</For>
+              </>}
             </Show>
-            <Show when={!props.block.page_property && !props.block.page_preamble}>
-              <PropertyRows entries={renderedProperties(props.block.raw, format())} format={format()} blockId={props.block.id} />
-            </Show>
-            <Show when={facets().scheduled}>
+            <Show when={props.sourceFormat && facets().scheduled}>
               <span class="date-chip scheduled"><CalGlyph /> {facets().scheduled}</span>
             </Show>
-            <Show when={facets().deadline}>
+            <Show when={props.sourceFormat && facets().deadline}>
               <span class="date-chip deadline"><CalGlyph /> {facets().deadline}</span>
             </Show>
           </div>
@@ -351,7 +358,7 @@ function RefBlock(props: {
         <div class="block-children-container">
           <div class="block-children">
             <RefBlocksAtDepth blocks={props.block.children} page={props.page} pageKind={props.pageKind} path={props.path}
-              queryResult={props.queryResult}
+              sourceFormat={props.sourceFormat} queryResult={props.queryResult}
               onEditPageProperties={props.onEditPageProperties}
               onEditPreamble={props.onEditPreamble}
               readOnly={props.readOnly} pageBody={props.pageBody} localFolds={props.localFolds} onOpenBlock={props.onOpenBlock}

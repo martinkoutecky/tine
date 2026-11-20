@@ -449,7 +449,10 @@ fn close_query_result(
     match &mut result.rows {
         QueryRows::Page { pages } => pages.retain(|page| paths.contains(page.path.as_str())),
         QueryRows::Block { groups } => {
-            groups.retain(|group| names.contains(&(group.kind, page_key(&group.page))))
+            groups.retain_mut(|group| {
+                group.format = None;
+                names.contains(&(group.kind, page_key(&group.page)))
+            });
         }
     }
     result.total = match &result.rows {
@@ -701,7 +704,10 @@ pub(crate) fn snapshot_at(
         let closed: Vec<_> = groups
             .iter()
             .filter(|g| selected.contains(&(g.kind, page_key(&g.page))))
-            .cloned()
+            .map(|group| tine_core::model::RefGroup {
+                format: None,
+                ..group.clone()
+            })
             .collect();
         if !closed.is_empty() {
             backlinks.insert(page.name.clone(), closed);

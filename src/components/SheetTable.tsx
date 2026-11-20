@@ -12,7 +12,7 @@ export { resetSheetRowVirtualizationForTests } from "./SheetTableBody";
 import { captureResultDraft, noticeChangedResults, resultWriteTarget } from "./queryResultIdentity";
 import { retainResultDraft } from "../queryResultDrafts";
 import { For, Show, createEffect, createMemo, createSignal, onCleanup, onMount, useContext, type JSX } from "solid-js";
-import { blockPageReadOnly, blockProperty, blockWritable, formatForBlock, formatForPage, insertEmptyChildBlock, pageByName, pageReadOnly, readPageProperty, readPageProperties, setBlockProperty, setPageProperty, setRaw, withUndoUnit, node as docNode, pinPageWhileDrafting } from "../document";
+import { blockPageReadOnly, blockProperty, blockWritable, formatForBlock, insertEmptyChildBlock, pageByName, pageReadOnly, readPageProperty, readPageProperties, setBlockProperty, setPageProperty, setRaw, withUndoUnit, node as docNode, pinPageWhileDrafting } from "../document";
 import { facetsOf } from "../render/facets";
 import { observeNear, unobserveNear } from "../lazyObserve";
 import { BUILTIN_HIDE } from "../editor/properties";
@@ -1125,7 +1125,6 @@ function TitleCell(props: {
   });
   let contentRef: HTMLDivElement | undefined;
   const editing = () => editingId() === props.row.id && editingOwner() === cellOwner(cell());
-  const fmt = () => (liveFormulaRowNode(props.row) ? formatForBlock(props.row.id) : formatForPage(props.row.page));
   const raw = () => rowRaw(props.row);
   const bgColor = createMemo(() => {
     const f = recordFacets(props.row);
@@ -1198,7 +1197,7 @@ function TitleCell(props: {
               when={props.near}
               fallback={<span class="sheet-cell-defer">{tableRowTitle(props.row)}</span>}
             >
-              <Show when={props.query} fallback={<TitleBody row={props.row} format={fmt()} />}>
+              <Show when={props.query} fallback={<TitleBody row={props.row} />}>
                 <QueryResultTask row={props.row} />
                 {/* Not a <button>: the title holds block content (lists, links, refs), which a button may not
                     contain. A ref or link inside handles its own click and stops it; any other click opens the
@@ -1218,7 +1217,7 @@ function TitleCell(props: {
                     openQueryResult(props.row, event);
                   }}
                 >
-                  <TitleBody row={props.row} format={fmt()} />
+                  <TitleBody row={props.row} />
                 </div>
               </Show>
             </Show>
@@ -1414,7 +1413,7 @@ function FieldCell(props: {
               fieldType={props.fieldType}
               value={displayValue()}
               formulaValue={props.formulaValue}
-              page={props.row.page}
+              source={props.row}
               onControlClick={runControlAction}
             />
           </Show>

@@ -236,7 +236,7 @@ function mountLiveQuery(fx: QueryFixture, face: "table" | "board", groupBy?: str
     const block = { ...dto(r.raw), id: `q${i}` };
     byPage.set(r.page, [...(byPage.get(r.page) ?? []), block]);
   });
-  const groups = [...byPage].map(([page, blocks]) => ({ page, kind: "page" as const, blocks }));
+  const groups = [...byPage].map(([page, blocks]) => ({ page, kind: "page" as const, format: "md" as const, blocks }));
   const root = document.createElement("div");
   document.body.appendChild(root);
   disposers.push(

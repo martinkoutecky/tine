@@ -158,8 +158,10 @@ const MAGIC: &[u8; 8] = b"TINECKPT";
 // 40 (shared planning lines): the cached date projection includes both
 // SCHEDULED and DEADLINE in a line-leading run, including when the first
 // timestamp crosses a newline. Rebuild older projections from the files.
-// 41: retained rows carry typed day claims.
-pub(crate) const FORMAT: u32 = 41;
+// 41 (Org result rows): cached reference and query results carry their
+// source file's format before the page loads. Older caches rebuild.
+// 42 (dated titles): retained rows carry typed day claims.
+pub(crate) const FORMAT: u32 = 42;
 /// The lsdoc release tine-core parses with (`crates/tine-core/Cargo.toml`;
 /// `checkpoint_tests::the_parser_tag_matches_the_lsdoc_pin` keeps them equal).
 pub(crate) const PARSER: &str = "lsdoc v0.5.12";

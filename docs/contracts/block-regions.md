@@ -70,6 +70,11 @@ block-reference targets and referrer links thread the document block's format.
 Visible-body labels and export projections also require that source format;
 unloaded pages use the existing inventory's physical owner and the same
 `tine-outline::page_format::Format` rule as native code, without another read.
+Native reference and query groups carry the format of the file that supplied
+the row. Result bodies, titles and breadcrumbs use that format before the
+source page loads. Frontend search groups can supply a path for format lookup.
+When neither is supplied, the renderer looks up the source by page name.
+Retained text stays visible as plain text while its format is unknown.
 Markdown ATX label stripping applies only to Markdown. Rename planning and
 validation classify file extensions through `Format::from_path`, including
 mixed-case Org extensions. Clock edits take previous and next raw buffers at

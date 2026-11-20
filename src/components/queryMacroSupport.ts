@@ -1,12 +1,13 @@
 // Pure support for the query macro (`Macro.tsx` re-exports what other modules import from there).
 import type { Anchor, Diagnostic, PageRow, QueryReport, QueryResult, QueryStatistics } from "../editor/queryIr";
-import type { PageKind, QueryExecution, RefGroup } from "../types";
+import type { Format, PageKind, QueryExecution, RefGroup } from "../types";
 import { columnKey } from "./legacyQueryTable";
 
 export interface Row {
   page: string;
   kind: PageKind;
   path?: string;
+  format: Format | null;
   text: string;
   props: Record<string, string>;
   /** `props` under OG's normalised column key (`columnKey`), first spelling wins. */

@@ -308,9 +308,9 @@ export function PeekPopup(props: {
             </div>
           </Show>
           <Show when={props.page} fallback={
-            <RefBlocks blocks={props.blocks()} page={props.page} pageKind={props.pageKind} path={props.path} readOnly pageBody onOpenBlock={openSource} />
+            <RefBlocks blocks={props.blocks()} page={props.page} pageKind={props.pageKind} path={props.path} sourceFormat={props.format} readOnly pageBody onOpenBlock={openSource} />
           }>
-            {(page) => <LiveRefGroup page={page()} kind={props.pageKind ?? "page"} path={props.path} blocks={props.blocks()}
+            {(page) => <LiveRefGroup page={page()} kind={props.pageKind ?? "page"} path={props.path} format={props.format} blocks={props.blocks()}
               surface="preview" surfaceKey={surfaceKey} eager onOpenBlock={openSource} />}
           </Show>
           </>}>{customContent()}</Show>

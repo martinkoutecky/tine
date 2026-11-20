@@ -4,7 +4,6 @@ import { For, Match, Switch, type JSX } from "solid-js";
 import { openPageTarget, openPageTargetInNewTab } from "../router";
 import { openPageInSidebar, openPageContextMenu } from "../ui";
 import { shouldOpenTextContextMenu } from "../contextMenuPolicy";
-import { formatForPage } from "../document";
 import { InlineText } from "../render/inline";
 import { openRouteInOtherPane } from "../panes";
 import { internalLinkAuxClick, internalLinkDest, internalLinkMouseDown } from "../linkGesture";
@@ -41,7 +40,7 @@ export function QueryLegacyTable(props: {
                 <Switch fallback={<td>{cellText(r, c)}</td>}>
                   <Match when={c === "block"}>
                     <td>
-                      <InlineText text={r.text} format={formatForPage(r.page)} />
+                      <InlineText text={r.text} format={r.format} />
                     </td>
                   </Match>
                   <Match when={c === "page"}>

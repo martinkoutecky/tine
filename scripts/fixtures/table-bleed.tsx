@@ -23,7 +23,7 @@ export async function mount(raw: string, depth: number, paneWidth: number, forma
   if (eager) renderedBlocks.add("table");
   document.body.innerHTML = '<div id="fixture"></div>';
   return render(() => <div class="pane-leaf" style={{ width: `${paneWidth}px`, height: "650px", flex: "none", margin: "0 auto" }}>
-    <div class="main-content"><div class="main-content-inner" style={{ "max-width": "720px", width: "100%" }}><h1>Table bleed</h1>{surface.startsWith("query") ? <div class="query-block"><QueryResultsRegion><QueryLegacyTable cols={["block", "page"]} rows={[{ text: cell, page: cell.replace(/a/g, "b"), kind: "page", props: {}, byKey: {} }]} sortBy={() => {}} arrow={() => ""} /></QueryResultsRegion></div>
+    <div class="main-content"><div class="main-content-inner" style={{ "max-width": "720px", width: "100%" }}><h1>Table bleed</h1>{surface.startsWith("query") ? <div class="query-block"><QueryResultsRegion><QueryLegacyTable cols={["block", "page"]} rows={[{ text: cell, page: cell.replace(/a/g, "b"), kind: "page", format: "md", props: {}, byKey: {} }]} sortBy={() => {}} arrow={() => ""} /></QueryResultsRegion></div>
       : surface === "sheet" ? <SheetContainer><SheetTable ownerId="table" rowSource="children" /></SheetContainer>
       : surface === "sidebar" ? <div class="right-sidebar-body"><div class="rs-item-body"><Block id={block.id} /></div></div>
       : surface === "embed" ? <div class="embed-block"><Block id={block.id} /></div>

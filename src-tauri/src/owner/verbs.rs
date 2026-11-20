@@ -101,14 +101,17 @@ pub(crate) fn answer_verb(slot: &GraphSlot, request: &Request) -> Result<Value, 
             let graph = whole_graph(slot)?;
             let max_nodes = max_nodes.unwrap_or(PREVIEW_NODES).clamp(1, PREVIEW_NODES);
             match graph.preview_block(&uuid, max_nodes) {
-                Ok(Some(preview)) => {
+                Ok(Some(mut preview)) => {
                     let page = resolve_read_page(&graph, &preview.group.page)?;
                     // One host read gives the content, positions and
                     // fingerprints together (review 6); the store preview is
                     // the fallback, positions only, when the page is busy.
                     let block = match host_preview(slot, &page, &preview.group, &uuid, max_nodes)? {
                         Some(block) => block,
-                        None => to_value(&preview)?,
+                        None => {
+                            preview.group.format = None;
+                            to_value(&preview)?
+                        }
                     };
                     Ok(ok("block", json!({ "block": block })))
                 }
@@ -134,10 +137,9 @@ pub(crate) fn answer_verb(slot: &GraphSlot, request: &Request) -> Result<Value, 
                     crate::commands::query_error_wire::reference_error(e),
                 )
             })?;
-            Ok(ok(
-                "refs",
-                json!({ "target": target, "block": block, "groups": &*groups }),
-            ))
+            let mut payload = json!({ "target": target, "block": block, "groups": &*groups });
+            omit_result_formats(&mut payload);
+            Ok(ok("refs", payload))
         }
         "search" => {
             let SearchArgs {
@@ -200,6 +202,7 @@ pub(crate) fn answer_verb(slot: &GraphSlot, request: &Request) -> Result<Value, 
             )
             .map_err(|e| read_failed(Diag::QueryFailed, e))?;
             let mut payload = to_value(&result)?;
+            omit_result_formats(&mut payload);
             // D-18: the cue for a Logseq form that adds no condition travels
             // with the answer, in both outputs.
             if let (Some(hint), Some(fields)) = (&parsed.og_hint, payload.as_object_mut()) {
@@ -359,6 +362,15 @@ pub(super) fn parse<T: serde::de::DeserializeOwned>(args: &Value) -> Result<T, E
 
 fn to_value(value: &impl serde::Serialize) -> Result<Value, ErrorBody> {
     serde_json::to_value(value).map_err(|e| internal(Diag::Encode, e.to_string()))
+}
+
+// Keep desktop rendering metadata out of the CLI's existing result payloads.
+fn omit_result_formats(payload: &mut Value) {
+    if let Some(groups) = payload.get_mut("groups").and_then(Value::as_array_mut) {
+        for group in groups.iter_mut().filter_map(Value::as_object_mut) {
+            group.remove("format");
+        }
+    }
 }
 
 /// `ParsedQuery.og_hint` as the payload carries it: the DTO verbatim, plus
@@ -701,6 +713,7 @@ fn host_preview(
         group: tine_core::model::RefGroup {
             page: indexed.page.clone(),
             kind: indexed.kind,
+            format: None,
             blocks,
             evidence: Vec::new(),
         },

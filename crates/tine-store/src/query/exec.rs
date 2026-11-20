@@ -973,6 +973,7 @@ pub(crate) fn execute_cancellable(
                         out.push(RefGroup {
                             page: entry.name.clone(),
                             kind: entry.kind,
+                            format: entry.source_format(),
                             blocks: vec![row_dto(facts, block)],
                             evidence: Vec::new(),
                         });
