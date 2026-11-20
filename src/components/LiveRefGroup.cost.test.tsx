@@ -23,12 +23,13 @@ afterEach(() => {
 
 function observeViewportForTest() {
   const observers: { targets: Set<Element>; rootMargin?: string; intersect: IntersectionObserverCallback }[] = [];
+  let detached = 0;
   vi.stubGlobal("IntersectionObserver", class {
     targets = new Set<Element>();
     constructor(intersect: IntersectionObserverCallback, options?: IntersectionObserverInit) {
       observers.push({ targets: this.targets, rootMargin: options?.rootMargin, intersect });
     }
-    observe(element: Element) { this.targets.add(element); }
+    observe(element: Element) { this.targets.add(element); if (!element.isConnected) detached += 1; }
     unobserve(element: Element) { this.targets.delete(element); }
     disconnect() { this.targets.clear(); }
   });
@@ -38,6 +39,7 @@ function observeViewportForTest() {
   };
   return {
     get observed() { return new Set(observers.flatMap(observer => [...observer.targets])); },
+    get detached() { return detached; },
     visibility: (isIntersecting = true) => [...observers].forEach(observer => deliver(observer, [...observer.targets], isIntersecting)),
     intersect: (margin: string, targets: Element[], isIntersecting = true) => {
       for (const observer of [...observers]) if (observer.rootMargin === margin) deliver(observer, targets, isIntersecting);
@@ -111,6 +113,48 @@ describe("I-25 result groups defer membership work until visible", () => {
       visibility();
       await queueReferenceCommit(() => {}, () => true);
       expect(read).toHaveBeenCalledTimes(1);
+    } finally {
+      dispose();
+      complete.forEach(finish => finish());
+    }
+  });
+
+  it("retries once when a query group re-entered the near margin during a read that found no page", async () => {
+    const { visibility } = observeViewportForTest();
+    const complete: (() => void)[] = [];
+    const read = vi.spyOn(backend(), "getPage").mockImplementation(() => new Promise(resolve => complete.push(() => resolve(null))));
+    const host = document.createElement("div");
+    document.body.append(host);
+    const dispose = render(() => <LiveRefGroup surface="query" page="Source" kind="page"
+      blocks={[{ id: "hit", raw: "Result", children: [], collapsed: false }]} />, host);
+    try {
+      visibility();
+      await expect.poll(() => read.mock.calls.length).toBe(1);
+      visibility(false);
+      visibility();
+      complete.shift()!();
+      await expect.poll(() => read.mock.calls.length).toBe(2);
+      complete.shift()!();
+      await queueReferenceCommit(() => {}, () => true);
+      expect(read).toHaveBeenCalledTimes(2);
+    } finally {
+      dispose();
+      complete.forEach(finish => finish());
+    }
+  });
+
+  it.each(["query", "embed"] as const)("a %s group's queued source read watches its host only once the host is attached", async surface => {
+    const viewport = observeViewportForTest();
+    const complete: (() => void)[] = [];
+    const read = vi.spyOn(backend(), "getPage").mockImplementation(() => new Promise(resolve => complete.push(() => resolve(null))));
+    const host = document.createElement("div");
+    document.body.append(host);
+    const group = { page: "Source", kind: "page" as const, blocks: [{ id: "hit", raw: "Result", children: [], collapsed: false }] };
+    const dispose = render(() => surface === "query" ? <LiveRefGroup {...group} surface="query" eager /> : <LiveRefGroup {...group} surface="embed" />, host);
+    try {
+      viewport.visibility();
+      await expect.poll(() => read.mock.calls.length).toBe(1);
+      expect(viewport.detached).toBe(0);
     } finally {
       dispose();
       complete.forEach(finish => finish());
