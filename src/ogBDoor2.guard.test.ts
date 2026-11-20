@@ -17,7 +17,8 @@ describe("OG-B-DOOR2 shared-answer boundaries", () => {
     expect(read("crates/tine-store/src/query.rs")).not.toContain("fn org_property_line");
     expect(read("crates/tine-core/src/reference_evidence.rs")).not.toContain("fn property_values");
     const regions = read("crates/tine-outline/src/block_regions.rs");
-    expect(regions, "I-15: imitate the accepted-key map; do not search a folded property list per entry").not.toContain("props.iter().find");
+    const scan = read("crates/tine-outline/src/block_regions/scan.rs");
+    expect(regions + scan, "I-15: imitate the accepted-key map; do not search a folded property list per entry").not.toContain("props.iter().find");
     expect(regions, "I-15: whole-file literal exclusion uses exclude_literals' monotone cursor").toContain("exclude_literals(&mut result.properties");
   });
 

@@ -417,9 +417,8 @@ function AstList(props: { items: AstListItem[]; blockId?: string; spanAttrs?: Sp
  *  shared with the facet cache), MINUS the nodes whose chrome Block.tsx draws —
  *  `properties` (chips) and standalone SCHEDULED/DEADLINE lines (date badges). The
  *  marker/priority/heading are facet FIELDS on `blocks[0]` (not inline), so the body
- *  renders markerless automatically. A planning `Timestamp` only ever appears on a
- *  standalone planning line (lsdoc never makes one mid-text), so dropping any block
- *  that contains one drops exactly the badge lines. */
+ *  renders markerless automatically. The bundle identifies the exact planning
+ *  timestamps to hide, leaving any body text in the same inline flow. */
 function bodyBlocks(parsed: AstBlock[], raw: string): AstBlock[] {
   if (isQuarantined(parsed)) return parsed;
   // Drop `properties` (chips in chrome), then remove only the parser-confirmed

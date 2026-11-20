@@ -15,6 +15,16 @@ start of a line may have a glued body suffix; edits retain that suffix, detachin
 it onto a body line when replacing the timestamp. Mid-prose timestamps remain
 body content.
 
+The render bundle and native date facets take their display tokens from this
+same region pass. A line-leading run can display consecutive SCHEDULED and
+DEADLINE tokens separated by whitespace, with any suffix after the run kept
+as body text. If the first timestamp spans a newline, the run can continue on
+its ending line. Following Logseq, native HTML, print and publication search
+text omit the planning tokens from the body. These consumers use
+`top_level_render_planning` with the existing block AST, without parsing again
+or building structural regions. Structural edits still use the first
+line-leading timestamp's range, which also covers CLOSED.
+
 `BlockRegions::apply` sets/removes properties and planning, strips copy metadata,
 projects visible body, normalizes planning, inserts drawer rows and closes a
 clock row. It uses regions for exactly the supplied raw and format. Clock value
