@@ -27,26 +27,28 @@ impl Graph {
         let mut guard = self.derived.cache.write().unwrap();
         let Some(spelled) = change() else { return };
         self.held.bump();
-        let mut listing = self.derived.launch_listing.write().unwrap();
-        let mut names = listing
-            .as_mut()
-            .filter(|(gen, _)| *gen == self.cache_generation())
-            .map(|(_, names)| names);
-        let affected = self.affected(guard.as_deref(), &spelled, names.as_deref());
+        let generation = self.cache_generation();
+        let affected = self.affected(&guard, &spelled, generation);
         let mut memo = Memo::default();
         let mut settled = false;
         let mut renamed = false;
         for path in &affected {
             let authority = self.authority_in(&mut memo, path);
-            if let Some(names) = names.as_mut() {
-                renamed |= names.settle(path, &authority);
-            }
-            settled |= self.settle(guard.as_mut(), authority, path);
+            let (rows, names) = self.settle(&mut guard, authority, path, generation);
+            settled |= rows;
+            renamed |= names;
         }
         // The generation-keyed listings named settled pages as before.
         if settled {
             let paths: Vec<&Path> = affected.iter().map(PathBuf::as_path).collect();
-            self.move_generation(guard.is_none(), &paths);
+            self.move_generation(guard.pages.is_none(), &paths);
+            if let Some((gen, _)) = guard
+                .inventory
+                .as_mut()
+                .filter(|(gen, _)| *gen == generation)
+            {
+                *gen = generation + 1;
+            }
         }
         if renamed {
             self.forget_name_memos();
@@ -57,9 +59,9 @@ impl Graph {
     /// one of theirs: the identity candidates a transition can move.
     fn affected(
         &self,
-        pages: Option<&Pages>,
+        cache: &InstalledCache,
         spelled: &[PathBuf],
-        names: Option<&names::LaunchNames>,
+        generation: u64,
     ) -> BTreeSet<PathBuf> {
         let folds: HashSet<String> = spelled
             .iter()
@@ -67,16 +69,25 @@ impl Graph {
             .map(fold_leaf)
             .collect();
         let mut paths: BTreeSet<PathBuf> = spelled.iter().cloned().collect();
-        if let Some(names) = names {
+        if let Some((_, inventory)) = cache
+            .inventory
+            .as_ref()
+            .filter(|(gen, _)| *gen == generation)
+        {
             for fold in &folds {
-                paths.extend(names.affected(fold).cloned());
+                paths.extend(inventory.affected(fold).cloned());
             }
         }
-        if let Some(pages) = pages {
+        if let Some(pages) = cache.pages.as_deref() {
             let mut index = self.derived.cache_index.write().unwrap();
             let index = index.get_or_insert_with(|| build_page_cache_index(pages));
             for fold in &folds {
-                paths.extend(index.folded(fold).iter().cloned());
+                paths.extend(
+                    index
+                        .folded(fold)
+                        .iter()
+                        .filter_map(|slot| pages.get(*slot).map(|(entry, _)| entry.path.clone())),
+                );
             }
         }
         let mut errors: Vec<String> = self.derived.page_index_failures.read().unwrap().clone();
@@ -84,10 +95,7 @@ impl Graph {
             (self.derived.unreadable_pages.read().unwrap().iter())
                 .map(|(id, _)| id.as_str().to_owned()),
         );
-        errors.extend(
-            (self.derived.discovery_errors.read().unwrap().iter())
-                .map(|(id, _)| id.as_str().to_owned()),
-        );
+        errors.extend((cache.discovery.iter()).map(|(id, _)| id.as_str().to_owned()));
         paths.extend(
             errors
                 .into_iter()
@@ -111,41 +119,53 @@ impl Graph {
     /// moves nothing leaves it the published generation's, which a launch
     /// checkpoint capture requires (else every capture is "unpublished"
     /// until the next publication).
-    fn settle(&self, cache: Option<&mut Arc<Pages>>, authority: Authority, path: &Path) -> bool {
+    fn settle(
+        &self,
+        cache: &mut InstalledCache,
+        authority: Authority,
+        path: &Path,
+        generation: u64,
+    ) -> (bool, bool) {
+        let (renamed, absent) = cache
+            .inventory
+            .as_mut()
+            .filter(|(gen, _)| *gen == generation)
+            .map_or((false, false), |(_, inventory)| {
+                inventory.settle(path, &authority)
+            });
         match authority {
-            Authority::Disk => return false,
+            Authority::Disk if !absent => return (false, renamed),
+            Authority::Disk | Authority::Withheld => {
+                self.retire_row(cache, path, true);
+            }
             Authority::Owner(key, bytes) => {
                 let at = self.root.join(self.held.spellings().spelling(&key));
                 if at != path {
-                    self.retire_row(cache.map(Arc::make_mut), path, true);
-                } else if let Some(cache) = cache {
+                    self.retire_row(cache, path, true);
+                } else if let Some(pages) = cache.pages.as_mut() {
                     let rev = std::str::from_utf8(&bytes).ok().map(content_rev);
                     // Undecodable bytes have no revision and no row: still settled.
                     if rev.is_some()
                         && self.derived.disk_revs.read().unwrap().get(path) == rev.as_ref()
                     {
-                        return false;
+                        return (false, renamed);
                     } else {
-                        let pages = Arc::make_mut(cache);
                         match self.owned_row(&key, &bytes, None) {
-                            Ok(Some(row)) => self.put_row(pages, row),
+                            Ok(Some(row)) => self.put_row(Arc::make_mut(pages), row),
                             Ok(None) => {
-                                self.retire_row(Some(pages), path, true);
+                                self.retire_row(cache, path, true);
                             }
                             Err(error) => {
-                                self.retire_row(Some(pages), path, true);
+                                self.retire_row(cache, path, true);
                                 self.list_held_row_failure(path, &error);
                             }
                         }
                     }
                 }
             }
-            Authority::Withheld => {
-                self.retire_row(cache.map(Arc::make_mut), path, true);
-            }
         }
         self.held.retired.lock().unwrap().insert(path.to_path_buf());
-        true
+        (true, renamed)
     }
 
     /// Hand `key`'s index to its owner. A new hold settles the page and its
@@ -314,15 +334,23 @@ impl Graph {
             let Some(indexed) = keys.get_mut(key) else {
                 return Err(());
             };
+            let same = match (indexed.as_ref(), &bytes) {
+                (Some(Some(before)), Some(after)) => Arc::ptr_eq(before, after),
+                (Some(None), None) => true,
+                _ => false,
+            };
+            if !same {
+                self.held.bump();
+            }
             *indexed = Some(bytes.clone());
         }
         // Bytes with no revision (undecodable) have no row to be unchanged from.
         let unchanged = (rev.is_some() || bytes.is_none())
             && self.derived.disk_revs.read().unwrap().get(&path).cloned() == rev;
-        if !unchanged || guard.is_none() {
+        if !unchanged || guard.pages.is_none() {
             let before = self.cache_gen.load(Ordering::Acquire);
             let mut renamed = true;
-            if let Some(cache) = guard.as_mut() {
+            if let Some(cache) = guard.pages.as_mut() {
                 // Derived before the lock unless the installed row changed
                 // since (the writer excludes that; this keeps it exact).
                 if row.is_none() {
@@ -344,11 +372,11 @@ impl Graph {
                     }
                     // The owner's absence: settled like a transition.
                     None => {
-                        self.settle(Some(cache), self.authority(&path), &path);
+                        self.settle(&mut guard, self.authority(&path), &path, before);
                     }
                 }
             }
-            self.move_generation(guard.is_none(), &[&path]);
+            self.move_generation(guard.pages.is_none(), &[&path]);
             // The memos list the page's earlier name: still valid only when
             // this publication named it as before.
             if !renamed {

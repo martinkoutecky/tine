@@ -8,7 +8,7 @@
 //! for the hash diff and final publication. Build and name certification run
 //! beside the writer.
 
-use std::collections::{HashMap, HashSet};
+use std::collections::HashSet;
 use std::sync::atomic::Ordering;
 
 use super::WatchHandle;
@@ -31,6 +31,7 @@ impl WatchHandle {
     /// the launch build and swaps the result in, retrying if the observed
     /// state moved. Step 3 publishes a snapshot recomputed from that cache.
     pub(crate) fn rebuild_all(&self) -> Result<(), LoadError> {
+        let _rebuild = self.rebuild.lock().unwrap();
         #[cfg(test)]
         REBUILD_WRITER_TIME.with(|time| time.set(std::time::Duration::ZERO));
         let mut status = self.core.load.status.lock().unwrap();
@@ -47,6 +48,8 @@ impl WatchHandle {
             LoadStatus::Loading => unreachable!(),
         }
         self.reconcile_refresh(DiffTrigger::Rebuild)?;
+        #[cfg(test)]
+        crate::store::pause_at_hook(&self.core.graph.rebuild_before_build_pause);
         let cancelled = || self.core.closed.load(Ordering::Acquire);
         let mut writer = None;
         for _ in 0..REBUILD_ATTEMPTS {
@@ -74,12 +77,6 @@ impl WatchHandle {
         if cancelled() {
             return Err(LoadError::Closed);
         }
-        // The install replaced the unreadable rows with the build's own;
-        // the watcher's walk errors belong beside them.
-        let walk_errors = self.core.unreadable_dirs.lock().unwrap().clone();
-        self.core
-            .graph
-            .replace_unreadable_walk_errors(&HashMap::new(), &walk_errors);
         // Rebuilt indexes from the whole cache: contained as the first
         // publication is (an index-stage panic costs its rows; one no row
         // explains fails the graph, and never poisons the writer).
@@ -89,6 +86,8 @@ impl WatchHandle {
                     .changes
                     .publish_rebuilt(Origin::External, Vec::new(), false);
             });
+        #[cfg(test)]
+        crate::store::pause_at_hook(&self.core.graph.rebuild_after_publish_pause);
         #[cfg(test)]
         REBUILD_WRITER_TIME.with(|time| time.set(time.get() + writer_at.elapsed()));
         drop(writer);
@@ -259,6 +258,15 @@ mod tests {
 
     #[test]
     fn releasing_an_owner_only_claim_removes_it_from_the_rebuilt_listing() {
+        owner_only_release(false);
+    }
+
+    #[test]
+    fn shutting_down_removes_an_owner_only_claim_from_the_rebuilt_listing() {
+        owner_only_release(true);
+    }
+
+    fn owner_only_release(shutdown: bool) {
         let dir = tempfile::tempdir().unwrap();
         let page = PageId::from("pages/Old.md");
         let path = dir.path().join(page.as_str());
@@ -276,19 +284,147 @@ mod tests {
         store.watch.reconcile_refresh(DiffTrigger::Rebuild).unwrap();
         fs::remove_file(path).unwrap();
         assert!(store.graph.rebuild_cache_cancellable(|| false));
+        let generation = store.graph.cache_generation();
         {
             let _writer = store.writer.lock().unwrap();
-            let generation = store.graph.cache_generation();
-            store.watch.release_hold(page.as_str());
-            assert_eq!(store.graph.cache_generation(), generation);
+            if shutdown {
+                store.watch.release_holds();
+            } else {
+                store.watch.release_hold(page.as_str());
+            }
             store
                 .changes
                 .publish_rebuilt(Origin::External, Vec::new(), false);
         }
+        let view = store.whole_graph().unwrap();
         assert!(matches!(
-            store.whole_graph().unwrap().resolve("Recovered", false),
+            view.resolve("Recovered", false),
             crate::Resolved::Absent { .. }
         ));
+        assert!(
+            view.corpus(None, false)
+                .pages
+                .iter()
+                .all(|page| page.name != "Recovered"),
+            "the removed page is still in the corpus"
+        );
+        assert!(
+            store.graph.cache_generation() > generation,
+            "a retired row moves the generation"
+        );
+        store.close();
+    }
+
+    struct Pause(crate::store::TestPause);
+
+    impl Pause {
+        fn at(hook: &std::sync::Mutex<Option<crate::store::TestPause>>) -> Self {
+            let pause = Self(Default::default());
+            *hook.lock().unwrap() = Some(pause.0.clone());
+            pause
+        }
+
+        fn reached(&self) -> bool {
+            let (state, ready) = &*self.0;
+            ready
+                .wait_timeout_while(state.lock().unwrap(), Duration::from_secs(2), |s| !s.0)
+                .unwrap()
+                .0
+                 .0
+        }
+
+        fn resume(&self) {
+            let (state, ready) = &*self.0;
+            state.lock().unwrap().1 = true;
+            ready.notify_all();
+        }
+    }
+
+    impl Drop for Pause {
+        fn drop(&mut self) {
+            self.resume();
+        }
+    }
+
+    #[test]
+    fn a_rejected_name_walk_cannot_restore_a_repaired_error() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("pages/Old.md");
+        fs::create_dir(path.parent().unwrap()).unwrap();
+        fs::write(&path, b"title:: \xff\n- unreadable\n").unwrap();
+        let store = std::sync::Arc::new(open(dir.path()));
+        store.watch.stop_background_for_test();
+        assert!(!store.graph.reported_unreadable_pages().is_empty());
+        let pause = Pause::at(&store.graph.discovery_walk_pause);
+        let walking = store.clone();
+        let walk = std::thread::spawn(move || walking.graph.prepare_rebuilt_name_listing());
+        assert!(pause.reached());
+        *store.graph.discovery_walk_pause.lock().unwrap() = None;
+        let generation = store.graph.cache_generation();
+        fs::write(&path, "title:: Repaired\n- readable again\n").unwrap();
+        store.refresh(crate::Depth::Stamps).unwrap();
+        assert!(store.graph.cache_generation() > generation);
+        assert!(store.graph.reported_unreadable_pages().is_empty());
+        pause.resume();
+        walk.join().unwrap();
+        assert!(
+            store.graph.reported_unreadable_pages().is_empty(),
+            "the rejected walk restored the repaired error"
+        );
+        store.close();
+    }
+
+    #[test]
+    fn overlapping_rescans_publish_consistent_views() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("pages/Named.md");
+        fs::create_dir(path.parent().unwrap()).unwrap();
+        fs::write(&path, "title:: First\n- text\n").unwrap();
+        let store = std::sync::Arc::new(open(dir.path()));
+        store.watch.stop_background_for_test();
+
+        let first_install = Pause::at(&store.graph.warm_after_install_pause);
+        let first_capture = Pause::at(&store.graph.rebuild_names_captured_pause);
+        let first_publication = Pause::at(&store.graph.rebuild_after_publish_pause);
+        let first = {
+            let store = store.clone();
+            std::thread::spawn(move || store.refresh(crate::Depth::Rebuild))
+        };
+        assert!(first_install.reached());
+        let second_install = Pause::at(&store.graph.warm_after_install_pause);
+        let second_start = Pause::at(&store.graph.rebuild_before_build_pause);
+        let second = {
+            let store = store.clone();
+            std::thread::spawn(move || store.refresh(crate::Depth::Rebuild))
+        };
+        let overlapping_build = second_start.reached();
+        first_install.resume();
+        assert!(first_capture.reached());
+        fs::write(&path, "title:: Second\n- text\n").unwrap();
+        if overlapping_build {
+            second_start.resume();
+            assert!(second_install.reached());
+        }
+        first_capture.resume();
+        assert!(first_publication.reached());
+        let before = store.whole_graph().unwrap();
+        first_publication.resume();
+        first.join().unwrap().unwrap();
+        second_start.resume();
+        second_install.resume();
+        second.join().unwrap().unwrap();
+        let after = store.whole_graph().unwrap();
+        for (view, title) in [(before, "First"), (after, "Second")] {
+            assert!(matches!(
+                view.resolve(title, false),
+                crate::Resolved::Existing { .. }
+            ));
+            assert_eq!(
+                view.corpus(None, false).pages[0].name,
+                title,
+                "lookup and corpus are from different rebuilds"
+            );
+        }
         store.close();
     }
 

@@ -859,15 +859,19 @@ path the current page list does not list. Any other such read drops the
 claimant memo, and the next lookup lists again. A read of a file a host holds
 changes no memo: its owner's bytes name it, not the file ((G)). Name lists and
 path reads outside the writer change a memo only at the generation and held
-epoch they observed. Launch and rebuild certify their listing before taking
-the cache write guard, which checks the stamp and installs the rows and the
-inventory together. A rebuild can reuse its reads across an ownership change
-at the same generation. An unchanged release keeps the owner's observed name
-until the watcher delivers any newer bytes. Ownership transitions settle any
-withheld listing rows for their affected paths in memory. Publication reuses
-the inventory while its generation is current, including all journal
-claimants. Rescan certifies a replacement listing outside the writer if the
-installed generation is superseded. The first lookup of an absent name
+epoch they observed. Launch and rebuild prepare the inventory and classify
+discovery errors before taking the cache write guard. One stamp check covers
+the parsed rows, their name-only claims and the discovery errors. Parsed rows
+supply their own names, including duplicate journal claimants. A rebuild
+can reuse its reads across an ownership change at the same generation.
+An unchanged release keeps the owner's observed name until the watcher
+delivers any newer bytes. If the rebuild observed the file absent, release
+retires its claim, parsed row and errors together. Rescan certifies a
+replacement listing outside the writer if the installed generation is
+superseded. A replacement walk whose stamp has moved leaves the current names
+and errors intact. Each store serializes explicit Rescans from hash
+reconciliation through publication. Page opens use the store writer as
+usual. The first lookup of an absent name
 of each kind after launch still lists once, because
 the launch index does not vouch for files that arrived after it. Proof:
 `crates/tine-store/tests/og_perf_publish.rs`,
@@ -877,6 +881,11 @@ the launch index does not vouch for files that arrived after it. Proof:
 `a_path_read_of_a_held_file_does_not_join_the_claimant_memo`),
 `crates/tine-store/src/page_host/recovery_tests.rs`
 (`rebuild_keeps_the_name_of_a_page_released_before_publication`),
+`crates/tine-store/src/watch/rebuild.rs`
+(`overlapping_rescans_publish_consistent_views`,
+`a_rejected_name_walk_cannot_restore_a_repaired_error`,
+`releasing_an_owner_only_claim_removes_it_from_the_rebuilt_listing`,
+`shutting_down_removes_an_owner_only_claim_from_the_rebuilt_listing`),
 `crates/tine-store/src/store/panic_isolation_tests.rs`
 (`an_own_create_a_capture_missed_is_named_after_refresh`).
 

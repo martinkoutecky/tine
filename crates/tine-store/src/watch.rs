@@ -894,6 +894,7 @@ impl Core {
 
 pub(crate) struct WatchHandle {
     core: Arc<Core>,
+    rebuild: Mutex<()>,
     mode: Arc<Mutex<WatchMode>>,
     wake: Sender<()>,
     thread: Mutex<Option<std::thread::JoinHandle<()>>>,
@@ -990,6 +991,7 @@ impl WatchHandle {
         let thread = std::thread::spawn(move || run(worker_core, worker_mode, worker_wake, rx));
         Self {
             core,
+            rebuild: Mutex::new(()),
             mode,
             wake,
             thread: Mutex::new(Some(thread)),

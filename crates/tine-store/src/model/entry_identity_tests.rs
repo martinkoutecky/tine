@@ -286,7 +286,7 @@ fn a_pass_lists_a_colliding_directory_once() {
         )
         .unwrap();
     }
-    let listed = crate::model::page_identity::list_graph_pages(&store.graph);
+    let (listed, _) = crate::model::page_identity::list_graph_pages(&store.graph);
     let listings = |pass: &dyn Fn()| {
         LISTINGS.with(|n| n.set(0));
         pass();

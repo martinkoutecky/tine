@@ -226,8 +226,9 @@ fn rebuild_release(nested: usize, check: bool, during_certification: bool) {
         } else {
             let cache = crate::model::BUILD_LOCK_TIME.with(|time| time.get());
             let writer = crate::watch::REBUILD_WRITER_TIME.with(|time| time.get());
+            let folds = crate::model::BUILD_FOLD_INDEX_BYTES.with(|bytes| bytes.get());
             println!(
-                "rescan_us={} cache_us={} writer_us={} probes={probes:?}",
+                "rescan_us={} cache_us={} writer_us={} probes={probes:?} folded_index_bytes={folds}",
                 wall.as_micros(),
                 cache.as_micros(),
                 writer.as_micros()

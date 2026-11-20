@@ -5,72 +5,71 @@
 //!
 //! **Stamp rule** (REG-NAME-LOOKUP-DURING-RELEASE-KEEPS-PAGE). A release or
 //! an open's hold moves the held map and no generation, under the cache lock
-//! and the writer. A memo walked or patched without the writer changes only
-//! at the (generation, held epoch) it began at, checked under the cache lock
-//! ([`Graph::install_name_memo`]). The writer-only writers (the snapshot's
-//! roots, the journal scan, adopting a publication's index, retagging) run
-//! where no transition can.
+//! and the writer. Name observations change a memo and its discovery
+//! errors only at their (generation, held epoch), under the cache lock.
 
 use super::*;
 
-/// The build's physical claims. A path observed both on disk and by its
-/// owner keeps its observed name; claims observed on one side only follow
-/// ownership until the next publication.
-pub(super) struct LaunchNames {
-    entries: Certified,
-    conditional: HashMap<String, HashMap<PathBuf, ConditionalName>>,
-}
+const LISTING_ERROR: &str = "Tine unreadable file producer=listing-name-discovery";
 
-struct ConditionalName {
-    entry: PageEntry,
+/// The claims that the installed parsed rows alone cannot describe, keyed
+/// by folded leaf so an ownership change visits only its affected paths.
+#[derive(Clone, Default)]
+pub(super) struct Inventory(SharedMap<(String, PathBuf), Claim>);
+
+#[derive(Clone)]
+struct Claim {
+    name_only: Option<PageEntry>,
     disk: bool,
+    owner: bool,
     listed: bool,
 }
 
-impl LaunchNames {
-    pub(super) fn affected(&self, fold: &str) -> impl Iterator<Item = &PathBuf> {
-        self.conditional
-            .get(fold)
-            .into_iter()
-            .flat_map(HashMap::keys)
+impl Inventory {
+    pub(super) fn affected<'a>(&'a self, fold: &'a str) -> impl Iterator<Item = &'a PathBuf> {
+        self.0
+            .iter_from(&(fold.to_owned(), PathBuf::new()))
+            .take_while(move |((leaf, _), _)| leaf == fold)
+            .map(|((_, path), _)| path)
     }
 
-    pub(super) fn settle(&mut self, path: &Path, authority: &Authority) -> bool {
+    /// Returns whether a name-only claim moved and whether disk was absent
+    /// at a path whose owner has now released it.
+    pub(super) fn settle(&mut self, path: &Path, authority: &Authority) -> (bool, bool) {
         let Some(fold) = leaf_fold(path) else {
-            return false;
+            return (false, false);
         };
-        let Some(row) = self
-            .conditional
-            .get_mut(&fold)
-            .and_then(|rows| rows.get_mut(path))
-        else {
-            return false;
+        let key = (fold, path.to_owned());
+        let Some(claim) = self.0.get(&key) else {
+            return (false, false);
         };
-        let listed = if row.disk {
-            matches!(authority, Authority::Disk)
-        } else {
-            matches!(authority, Authority::Owner(..))
+        let disk = matches!(authority, Authority::Disk);
+        let listed = match authority {
+            Authority::Disk => claim.disk,
+            Authority::Owner(..) => claim.owner,
+            Authority::Withheld => false,
         };
-        std::mem::replace(&mut row.listed, listed) != listed
+        let changed = listed != claim.listed && claim.name_only.is_some();
+        let absent = disk && !claim.disk;
+        if absent {
+            self.0.remove(&key);
+        } else if changed {
+            self.0.get_mut(&key).unwrap().listed = listed;
+        }
+        (changed, absent)
     }
 
-    fn entries(&self) -> impl Iterator<Item = &PageEntry> {
-        self.entries.0.iter().chain(
-            self.conditional
-                .values()
-                .flat_map(HashMap::values)
-                .filter_map(|row| row.listed.then_some(&row.entry)),
-        )
-    }
-
-    fn into_entries(mut self) -> Certified {
-        self.entries.0.extend(
-            self.conditional
-                .into_values()
-                .flat_map(HashMap::into_values)
-                .filter_map(|row| row.listed.then_some(row.entry)),
-        );
-        self.entries
+    fn entries(&self, pages: Option<&Pages>) -> Certified {
+        let parsed = pages
+            .into_iter()
+            .flat_map(Pages::iter)
+            .map(|(entry, _)| entry);
+        let names = self
+            .0
+            .values()
+            .filter(|claim| claim.listed)
+            .filter_map(|claim| claim.name_only.as_ref());
+        Certified(parsed.chain(names).cloned().collect())
     }
 }
 
@@ -94,11 +93,6 @@ impl Graph {
         self.derived.find_entry_cache.read().unwrap().is_some()
     }
 
-    /// The cache generation and the held epoch a name memo is derived at.
-    fn name_stamp(&self) -> (u64, u64) {
-        (self.cache_gen.load(Ordering::Acquire), self.held.epoch())
-    }
-
     /// Run `install` for a name memo derived since `stamp` only while
     /// neither moved, checked under the cache lock: a transition moves the
     /// held map and bumps the epoch inside it. A release or an open's hold
@@ -111,62 +105,72 @@ impl Graph {
         (self.name_stamp() == stamp).then(install)
     }
 
-    /// Certify the build observations without the cache lock. A masked disk
-    /// row at the owner's spelling already has an observed name: the owner's
-    /// row remains the disk observation if a release keeps the generation.
-    pub(super) fn prepare_launch_names(
+    /// Certify the disk observations and record only the exceptions to the
+    /// parsed rows: name-only files, withheld paths and owner-only paths.
+    pub(super) fn prepare_inventory(
         &self,
-        named: Vec<PageEntry>,
+        named: impl IntoIterator<Item = PageEntry>,
+        parsed: impl Fn(&Path) -> bool,
+        failures: &[(crate::FileId, crate::IoError)],
+        owners: impl FnOnce() -> Vec<(PathBuf, Option<PageEntry>)>,
         memo: &mut Memo,
-    ) -> LaunchNames {
-        let mut conditional = HashMap::<_, HashMap<_, _>>::new();
-        let (mut entries, disk_count) = self.certify_withheld(named, None, memo, |entry| {
-            if let Some(fold) = leaf_fold(&entry.path) {
-                conditional.entry(fold).or_default().insert(
-                    entry.path.clone(),
-                    ConditionalName {
-                        entry: entry.clone(),
-                        disk: true,
-                        listed: false,
-                    },
-                );
+    ) -> Inventory {
+        let held = !self.held.is_empty();
+        let mut extra = HashMap::new();
+        for entry in named {
+            let listed = !held || self.disk_sourced_in(memo, &entry.path);
+            if !listed || !parsed(&entry.path) {
+                if let Some(fold) = leaf_fold(&entry.path) {
+                    extra.insert(
+                        (fold, entry.path.clone()),
+                        Claim {
+                            name_only: Some(entry),
+                            disk: true,
+                            owner: false,
+                            listed,
+                        },
+                    );
+                }
             }
-        });
-        for entry in entries.0.split_off(disk_count) {
-            let Some(fold) = leaf_fold(&entry.path) else {
+        }
+        #[cfg(test)]
+        if held {
+            crate::store::pause_at_hook(&self.certify_pause);
+        }
+        // A failed directory walk did not observe the absence of its files.
+        let incomplete: HashSet<_> = failures
+            .iter()
+            .map(|(id, _)| self.root.join(id.as_str()))
+            .collect();
+        for (path, name_only) in owners() {
+            let Some(fold) = leaf_fold(&path) else {
                 continue;
             };
-            let rows = conditional.entry(fold).or_default();
-            if rows.remove(&entry.path).is_some() {
-                entries.0.push(entry);
-            } else {
-                rows.insert(
-                    entry.path.clone(),
-                    ConditionalName {
-                        entry,
-                        disk: false,
+            let key = (fold, path);
+            let disk = extra.remove(&key).is_some()
+                || key.1.ancestors().any(|path| incomplete.contains(path));
+            if name_only.is_some() || !disk {
+                extra.insert(
+                    key,
+                    Claim {
+                        name_only,
+                        disk,
+                        owner: true,
                         listed: true,
                     },
                 );
             }
         }
-        conditional.retain(|_, rows| !rows.is_empty());
-        LaunchNames {
-            entries,
-            conditional,
-        }
+        Inventory(extra.into_iter().collect())
     }
 
     /// The writer's rebuild publication can use the installed inventory.
     pub(crate) fn rebuild_names_are_current(&self) -> bool {
-        let _cache = self.derived.cache.read().unwrap();
-        let gen = self.cache_generation();
-        self.derived
-            .launch_listing
-            .read()
-            .unwrap()
+        let cache = self.derived.cache.read().unwrap();
+        cache
+            .inventory
             .as_ref()
-            .is_some_and(|(listed, _)| *listed == gen)
+            .is_some_and(|(gen, _)| *gen == self.cache_generation())
     }
 
     /// An installed generation was superseded before Rescan could publish.
@@ -174,10 +178,117 @@ impl Graph {
     /// the stamp it observed.
     pub(crate) fn prepare_rebuilt_name_listing(&self) {
         let stamp = self.name_stamp();
-        let names = self.prepare_launch_names(list_graph_pages(self), &mut Memo::default());
-        self.install_name_memo(stamp, || {
-            *self.derived.launch_listing.write().unwrap() = Some((stamp.0, names));
+        let Some(pages) = self.peek_pages() else {
+            return;
+        };
+        let (named, failures) = list_graph_pages(self);
+        let parsed: HashSet<_> = pages
+            .iter()
+            .map(|(entry, _)| entry.path.as_path())
+            .collect();
+        let mut memo = Memo::default();
+        let names = self.prepare_inventory(
+            named,
+            |path| parsed.contains(path),
+            &failures,
+            || {
+                self.held
+                    .published()
+                    .into_iter()
+                    .map(|(key, bytes)| {
+                        let path = self.root.join(self.held.spellings().spelling(&key));
+                        if parsed.contains(path.as_path()) {
+                            (path, None)
+                        } else {
+                            (path, self.owned_entry(&key, &bytes))
+                        }
+                    })
+                    .collect()
+            },
+            &mut memo,
+        );
+        let failures = self.classify_discovery_errors(&failures, &mut memo, LISTING_ERROR);
+        self.install_names(stamp, None, Some(failures), |cache| {
+            cache.inventory = Some((stamp.0, names));
         });
+    }
+
+    /// Install a walk's names and classified discovery failures at one stamp.
+    fn install_names<T>(
+        &self,
+        stamp: (u64, u64),
+        kind: Option<PageKind>,
+        failures: Option<DiscoveryErrors>,
+        install: impl FnOnce(&mut InstalledCache) -> T,
+    ) -> Option<T> {
+        let journals = self.journals_path();
+        let journals = journals.strip_prefix(&self.root).unwrap_or(&journals);
+        let mut cache = self.derived.cache.write().unwrap();
+        if self.name_stamp() != stamp {
+            return None;
+        }
+        let mut retired = Vec::new();
+        if let Some(failures) = failures {
+            if let Some(kind) = kind {
+                cache.discovery.retain(|(id, _)| {
+                    Path::new(id.as_str()).starts_with(journals) != (kind == PageKind::Journal)
+                });
+                cache.discovery.extend(failures);
+            } else {
+                retired = std::mem::replace(&mut cache.discovery, failures);
+            }
+        }
+        let installed = install(&mut cache);
+        drop(cache);
+        drop(retired);
+        Some(installed)
+    }
+
+    fn walk_names(&self, kind: Option<PageKind>) -> (Certified, DiscoveryErrors) {
+        let (entries, failures) = list_graph_pages_kind(self, kind);
+        let mut memo = Memo::default();
+        let failures = self.classify_discovery_errors(&failures, &mut memo, LISTING_ERROR);
+        (self.certify(entries, kind, &mut memo), failures)
+    }
+
+    pub(in crate::model) fn physical_page_entries(&self) -> Vec<PageEntry> {
+        loop {
+            let stamp = self.name_stamp();
+            let (entries, failures) = self.walk_names(None);
+            if self
+                .install_names(stamp, None, Some(failures), |_| ())
+                .is_some()
+            {
+                return entries.0;
+            }
+        }
+    }
+
+    #[cfg(test)]
+    pub(in crate::model) fn test_install_discovery(&self, failures: DiscoveryErrors) {
+        let stamp = self.name_stamp();
+        let failures =
+            self.classify_discovery_errors(&failures, &mut Memo::default(), LISTING_ERROR);
+        self.install_names(stamp, None, Some(failures), |_| ())
+            .unwrap();
+    }
+
+    fn observed_names(&self, gen: u64) -> (Certified, Option<DiscoveryErrors>) {
+        let inventory = {
+            let cache = self.derived.cache.read().unwrap();
+            cache
+                .inventory
+                .as_ref()
+                .filter(|(listed, _)| *listed == gen)
+                .map(|(_, inventory)| (inventory.clone(), cache.pages.clone()))
+        };
+        match inventory {
+            Some((inventory, pages)) => (inventory.entries(pages.as_deref()), None),
+            None => {
+                let (entries, failures) = self.walk_names(None);
+                (entries, Some(failures))
+            }
+        }
     }
 
     /// Every page and journal in the graph, one per duplicate journal day.
@@ -195,21 +306,13 @@ impl Graph {
                     return Arc::clone(entries);
                 }
             }
-            let launch = self
-                .derived
-                .launch_listing
-                .read()
-                .unwrap()
-                .as_ref()
-                .filter(|(gen, _)| *gen == stamp.0)
-                .map(|(_, names)| Certified(names.entries().cloned().collect()));
-            let entries = launch.unwrap_or_else(|| self.certify(list_graph_pages(self), None));
+            let (entries, failures) = self.observed_names(stamp.0);
             // A duplicate-day journal (canonical + leftover title-named file)
             // shows once in quick-switch and All Pages: both resolve to one page.
             let entries = Arc::new(EntryList::from(
                 dedup_journal_days(&self.current_config().journals_dir, entries.0).as_slice(),
             ));
-            let installed = self.install_name_memo(stamp, || {
+            let installed = self.install_names(stamp, None, failures, |_| {
                 *self.derived.page_list_cache.write().unwrap() =
                     Some((stamp.0, Arc::clone(&entries)));
             });
@@ -227,7 +330,7 @@ impl Graph {
             if let Some(found) = self.cached_claimants(&key, gen) {
                 return found;
             }
-            let listed = self.certify(list_graph_pages_kind(self, Some(kind)), Some(kind));
+            let (listed, failures) = self.walk_names(Some(kind));
             let journals_dir = self.current_config().journals_dir.clone();
             let mut built = FindEntryIndex::new();
             built.entries = Arc::new(page_claimants(&journals_dir, &listed.0));
@@ -246,7 +349,7 @@ impl Graph {
                         &row.path,
                     )
             };
-            let found = self.install_name_memo(stamp, || {
+            let found = self.install_names(stamp, Some(kind), Some(failures), |_| {
                 let mut guard = self.derived.find_entry_cache.write().unwrap();
                 match guard.as_mut() {
                     Some((g, index)) if *g == gen => {
@@ -357,19 +460,25 @@ impl Graph {
     /// deferred publication, an owner's first journal): no transition can
     /// move the held map during its walk (stamp rule, module doc).
     pub(crate) fn scan_journal_names(&self) -> Vec<PageEntry> {
-        let gen = self.cache_gen.load(Ordering::Acquire);
-        let entries = self.certify(
-            list_graph_pages_kind(self, Some(PageKind::Journal)),
-            Some(PageKind::Journal),
-        );
-        let mut index = FindEntryIndex::new();
-        index.entries = Arc::new(page_claimants(
-            &self.current_config().journals_dir,
-            &entries.0,
-        ));
-        index.mark_kind_loaded(PageKind::Journal);
-        *self.derived.find_entry_cache.write().unwrap() = Some((gen, index));
-        entries.0
+        loop {
+            let stamp = self.name_stamp();
+            let kind = Some(PageKind::Journal);
+            let (entries, failures) = self.walk_names(kind);
+            let mut index = FindEntryIndex::new();
+            index.entries = Arc::new(page_claimants(
+                &self.current_config().journals_dir,
+                &entries.0,
+            ));
+            index.mark_kind_loaded(PageKind::Journal);
+            if self
+                .install_names(stamp, kind, Some(failures), |_| {
+                    *self.derived.find_entry_cache.write().unwrap() = Some((stamp.0, index));
+                })
+                .is_some()
+            {
+                return entries.0;
+            }
+        }
     }
 
     /// [`Self::snapshot_name_roots`] in the shapes the tests compare.
@@ -393,38 +502,33 @@ impl Graph {
 
     /// The page list and the effective-name claimants, from one certified
     /// inventory (R2): the snapshot's roots and the memos hold the same rows.
-    /// The capture calls it under the writer, so its walk needs no stamp.
+    /// The capture calls it under the writer.
     pub(crate) fn snapshot_name_roots(&self) -> (Arc<EntryList>, Arc<ClaimantMap>) {
-        let cache = self.derived.cache.read().unwrap();
-        let gen = self.cache_gen.load(Ordering::Acquire);
-        // The build that produced this generation already listed and named
-        // every file from its own reads (GH #623: one read per file); a
-        // later generation walks again.
-        let launch = self.derived.launch_listing.write().unwrap().take();
-        drop(cache);
-        let entries = match launch.filter(|(listed_gen, _)| *listed_gen == gen) {
-            Some((_, names)) => names.into_entries(),
-            None => self.certify(list_graph_pages(self), None),
-        };
-        let claimants = Arc::new(page_claimants(
-            &self.current_config().journals_dir,
-            &entries.0,
-        ));
-        *self.derived.find_entry_cache.write().unwrap() = Some((
-            gen,
-            FindEntryIndex {
-                entries: Arc::clone(&claimants),
-                // Reuse known claims, but a first miss must discover files
-                // that arrived after this published snapshot.
-                pages_loaded: false,
-                journals_loaded: false,
-            },
-        ));
-        let list = Arc::new(EntryList::from(
-            dedup_journal_days(&self.current_config().journals_dir, entries.0).as_slice(),
-        ));
-        *self.derived.page_list_cache.write().unwrap() = Some((gen, Arc::clone(&list)));
-        (list, claimants)
+        loop {
+            let stamp = self.name_stamp();
+            let (entries, failures) = self.observed_names(stamp.0);
+            let config = self.current_config();
+            let claimants = Arc::new(page_claimants(&config.journals_dir, &entries.0));
+            let list = Arc::new(EntryList::from(
+                dedup_journal_days(&config.journals_dir, entries.0).as_slice(),
+            ));
+            let installed = self.install_names(stamp, None, failures, |cache| {
+                *self.derived.find_entry_cache.write().unwrap() = Some((
+                    stamp.0,
+                    FindEntryIndex {
+                        entries: Arc::clone(&claimants),
+                        // The first miss can discover files that arrived after this view.
+                        pages_loaded: false,
+                        journals_loaded: false,
+                    },
+                ));
+                *self.derived.page_list_cache.write().unwrap() = Some((stamp.0, Arc::clone(&list)));
+                cache.inventory.take()
+            });
+            if installed.is_some() {
+                return (list, claimants);
+            }
+        }
     }
 
     /// Adopt a publication's name index as the name memos of generation `gen`
