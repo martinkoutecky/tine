@@ -4,6 +4,7 @@ import { join } from "node:path";
 import baseline from "../crates/tine-core/tests/fixtures/structural-recognizers.json";
 
 const rule = "I-12: ask lsdoc through the block-region door; no regex over content structure. Exemplar: crates/tine-outline/src/block_regions.rs";
+const regionOwners = new Set(["crates/tine-outline/src/block_regions.rs", "crates/tine-outline/src/block_regions/scan.rs"]);
 function production(source: string, rust: boolean): string {
   // rustfmt gives cfg(test) items an unindented closing brace. Tests are exempt,
   // including inline tests in production Rust modules.
@@ -23,7 +24,7 @@ function scan(dir: string, relative = ""): Record<string,number> {
     if (entry.isDirectory()) {
       if (["target","node_modules","tests","examples","fixtures","wasm"].includes(entry.name)) continue;
       Object.assign(result,scan(join(dir,entry.name),file));
-    } else if (/\.(rs|tsx?|js)$/.test(file) && !/\.test\.|_tests\.rs$|testSetup/.test(file) && file!=="crates/tine-outline/src/block_regions.rs") {
+    } else if (/\.(rs|tsx?|js)$/.test(file) && !/\.test\.|_tests\.rs$|testSetup/.test(file) && !regionOwners.has(file)) {
       const n=count(readFileSync(join(dir,entry.name),"utf8"),file.endsWith(".rs"));
       if (n) result[file]=n;
     }

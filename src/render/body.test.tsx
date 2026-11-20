@@ -1,7 +1,8 @@
-import { describe, it, expect, beforeAll, beforeEach } from "vitest";
+import { describe, it, expect, beforeAll, beforeEach, vi } from "vitest";
 import { render } from "solid-js/web";
 import { AstBody, renderBlocks, estimateBodyReserve } from "./body";
 import { initParser, parseBlock } from "./parse";
+import * as parser from "./parse";
 import { renderedBlocks } from "../lazyObserve";
 import { resetStore } from "../document";
 import { loadSingle } from "../document/workingSet";
@@ -31,6 +32,25 @@ async function htmlOf(el: () => unknown): Promise<string> {
 }
 
 describe("AstBody (no-IO degrade path)", () => {
+  it("hides the planning tokens selected by the render bundle", async () => {
+    const raw = "Review café\r\nSCHEDULED: <2026-11-19 Thu>\tDEADLINE: <2026-11-20 Fri> keep this";
+    const body = () => <AstBody raw={raw} format="md" />;
+    const html = await htmlOf(body);
+    expect(html).toContain("keep this");
+    expect(html).not.toContain("2026-11-19");
+    expect(html).not.toContain("2026-11-20");
+
+    const planning = vi.spyOn(parser, "renderPlanningOf").mockReturnValue([]);
+    try {
+      const withoutPlanning = await htmlOf(body);
+      expect(withoutPlanning).toContain("2026-11-19");
+      expect(withoutPlanning).toContain("2026-11-20");
+      expect(withoutPlanning).toContain("keep this");
+    } finally {
+      planning.mockRestore();
+    }
+  });
+
   it("ignores a fenced checkbox line before the first rendered checkbox", async () => {
     const raw = "Task\n```md\n+ [ ] code\n```\n+ [ ] real";
     loadSingle({ name: "Test", kind: "page", title: "Test", pre_block: null, blocks: [{ id: "body", raw, collapsed: false, children: [] }], format: "md" });

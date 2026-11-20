@@ -253,6 +253,40 @@ fn pre_native_header_checkpoints_rebuild_once_then_load() {
     assert_eq!(fs::read_to_string(path).unwrap(), text);
 }
 
+#[test]
+fn pre_shared_planning_line_checkpoints_are_rebuilt() {
+    let root = graph();
+    let page = root.path().join("pages/Planning.md");
+    let id = "83897d40-79d2-438d-b60e-11a116c2b57e";
+    fs::write(
+        &page,
+        format!(
+            "- Review\n  SCHEDULED: <2026-11-19\n   Thu> DEADLINE: <2026-11-20 Fri>\n  id:: {id}\n"
+        ),
+    )
+    .unwrap();
+    set_mtime(&page, old());
+    let cp = root.path().join("launch.bin");
+    write_checkpoint(root.path(), &cp);
+    let mut bytes = fs::read(&cp).unwrap();
+    bytes[8..12].copy_from_slice(&39_u32.to_le_bytes());
+    fs::write(&cp, bytes).unwrap();
+
+    let store = open_cp(root.path(), &cp);
+    let graph = store.whole_graph_reconciled().unwrap();
+    assert_eq!(load_outcome(&store), "format");
+    assert!(parse_passes(&store) > 0);
+    let blocks = graph.blocks(&[id.to_owned()], true).unwrap();
+    let block = &blocks[0].as_ref().unwrap().blocks[0];
+    assert!(block
+        .scheduled
+        .as_deref()
+        .unwrap()
+        .starts_with("2026-11-19"));
+    assert_eq!(block.deadline.as_deref(), Some("2026-11-20 Fri"));
+    store.close();
+}
+
 /// FORMAT 22 (D-20261102-CM4 CM-REFONLY): a format-21 referenced-name index
 /// lacks property-key and task-marker (and priority) pages; it must rebuild, so the
 /// reference-only pages appear on a warm launch over unchanged files.
@@ -1483,7 +1517,7 @@ fn the_golden_body_is_pinned_to_format() {
     // irrelevant; `a_loaded_checkpoint_equals_a_fresh_build` covers many files).
     for (rel, text) in [(
         "pages/A.md",
-        "alias:: Ay\nicon:: x\n\n- TODO [#A] [[B]] #t ((x)) `c` [[Ay]]\n  - child SCHEDULED: <2026-01-03 Sat>\n",
+        "alias:: Ay\nicon:: x\n\n- TODO [#A] [[B]] #t ((x)) `c` [[Ay]]\n  - child\n    SCHEDULED: <2026-01-03\n     Sat> DEADLINE: <2026-01-04 Sun>\n",
     )] {
         fs::write(root.join(rel), text).unwrap();
         set_mtime(&root.join(rel), fixed);
@@ -1509,13 +1543,13 @@ fn the_golden_body_is_pinned_to_format() {
     let digest: String = sha256(&bytes).iter().map(|b| format!("{b:02x}")).collect();
     assert_eq!(
         (FORMAT, digest.as_str()),
-        (39, GOLDEN),
+        (40, GOLDEN),
         "ADR 0070: the checkpoint body changed; bump FORMAT and re-pin GOLDEN"
     );
 }
 
 #[cfg(unix)]
-const GOLDEN: &str = "744461666cc2447a3f093883c8654d318cc305fd8ef4edd6880f9a7b0cd4cdf6";
+const GOLDEN: &str = "bb92a76d9fa105bf6ff3a654c443fef64d73874aa64970716ae351cf16aa2b99";
 
 /// GH #623 (FORMAT 6): which cached pages carried a VCS anchor line travels
 /// in the checkpoint, so a warm launch answers the conflict inventory with no

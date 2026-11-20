@@ -18,12 +18,14 @@
 //! coordinates, O(file bytes + AST nodes). Org directives are readable page
 //! properties, but never primary block properties for structural editing.
 
-use lsdoc::ast::{Block, Inline, ListItem, Span};
+use lsdoc::ast::{Block, Span};
 use serde::{Deserialize, Serialize};
-use std::collections::HashMap;
 
 mod preservation;
 mod property_drawers;
+mod scan;
+pub use scan::{top_level_render_planning, RenderPlanning};
+use scan::{visit_blocks, PlanningScan};
 
 /// Validate the content of an already native-owned physical drawer marker.
 /// Matching uses mldoc's exact indentation alphabet; this does not establish
@@ -321,6 +323,7 @@ pub struct Planning {
     #[serde(with = "json_value")]
     pub date: serde_json::Value,
 }
+
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct Drawer {
     pub name: String,
@@ -358,13 +361,17 @@ pub(crate) fn raw_range(raw: &str, span: &Option<Span>, coords: Coords) -> Optio
 }
 pub(crate) fn whole_line(raw: &str, r: Range) -> Range {
     let start = raw[..r.0].rfind('\n').map_or(0, |p| p + 1);
-    let end = if r.1 > start && raw.as_bytes()[r.1 - 1] == b'\n' {
-        r.1
-    } else {
-        raw[r.1..].find('\n').map_or(raw.len(), |p| r.1 + p + 1)
-    };
-    Range(start, end)
+    Range(start, end_of_line(raw, r.1, start))
 }
+
+fn end_of_line(raw: &str, end: usize, start: usize) -> usize {
+    if end > start && raw.as_bytes()[end - 1] == b'\n' {
+        end
+    } else {
+        raw[end..].find('\n').map_or(raw.len(), |p| end + p + 1)
+    }
+}
+
 pub(crate) fn line_ranges(raw: &str, range: Range) -> Vec<Range> {
     let mut at = range.0;
     range
@@ -408,7 +415,18 @@ pub fn parse(raw: &str, is_org: bool) -> BlockRegions {
 
 /// Derive regions from render's existing AST; O(block bytes), zero parses.
 pub fn from_blocks(raw: &str, is_org: bool, blocks: &[Block]) -> BlockRegions {
-    mapped_regions(raw, is_org, blocks, false)
+    mapped_regions(raw, is_org, blocks, false, &mut PlanningScan::default())
+}
+
+/// Structural and display planning ranges from the render AST in one pass.
+pub fn from_blocks_with_planning(
+    raw: &str,
+    is_org: bool,
+    blocks: &[Block],
+) -> (BlockRegions, Vec<RenderPlanning>) {
+    let mut planning = PlanningScan::for_render();
+    let regions = mapped_regions(raw, is_org, blocks, false, &mut planning);
+    (regions, planning.into_render())
 }
 
 /// Parser-owned regions for a whole file or preamble, without a block wrapper.
@@ -421,7 +439,13 @@ pub fn parse_document(raw: &str, is_org: bool) -> BlockRegions {
             ..Default::default()
         };
     };
-    mapped_regions(raw, is_org, &parsed.blocks, true)
+    mapped_regions(
+        raw,
+        is_org,
+        &parsed.blocks,
+        true,
+        &mut PlanningScan::default(),
+    )
 }
 
 /// The accepted header of a block's first node, with token spans when `locate`.
@@ -462,7 +486,13 @@ pub fn header_tokens(raw: &str, is_org: bool) -> Header {
     header_of(raw, &crate::render::parse_block(raw, is_org), true)
 }
 
-fn mapped_regions(raw: &str, is_org: bool, blocks: &[Block], document: bool) -> BlockRegions {
+fn mapped_regions(
+    raw: &str,
+    is_org: bool,
+    blocks: &[Block],
+    document: bool,
+    planning: &mut PlanningScan,
+) -> BlockRegions {
     let mut result = BlockRegions::default();
     result.header = header_of(raw, blocks, !document);
     // A whole document has no headline: its page-level rows keep the first
@@ -472,7 +502,15 @@ fn mapped_regions(raw: &str, is_org: bool, blocks: &[Block], document: bool) -> 
     } else {
         crate::lsdoc_block_parse::headline_end(raw, blocks)
     };
-    visit_blocks(raw, is_org, blocks, Coords::of(raw, document), &mut result);
+    visit_blocks(
+        raw,
+        is_org,
+        blocks,
+        Coords::of(raw, document),
+        &mut result,
+        planning,
+        true,
+    );
     if !document && !is_org {
         crate::swallowed_rows::add_regions(raw, blocks, &mut result);
     }
@@ -568,202 +606,6 @@ fn exclude_literals<T>(entries: &mut Vec<T>, literals: &[Range], start: impl Fn(
         }
         !literals.get(cursor).is_some_and(|r| r.contains(at))
     });
-}
-
-fn visit_blocks(raw: &str, org: bool, blocks: &[Block], coords: Coords, out: &mut BlockRegions) {
-    for block in blocks {
-        match block {
-            Block::Src { span, .. }
-            | Block::Example { span, .. }
-            | Block::Export { span, .. }
-            | Block::CommentBlock { span, .. }
-            | Block::DisplayedMath { span, .. }
-            | Block::LatexEnv { span, .. }
-            | Block::RawHtml { span, .. } => {
-                if let Some(r) = raw_range(raw, span, coords) {
-                    out.literals.push(r);
-                    let (kind, lang) = match block {
-                        Block::Src { lang, .. } => ("src", lang.as_str()),
-                        Block::Example { .. } => ("example", ""),
-                        _ => ("other", ""),
-                    };
-                    out.literal_blocks
-                        .push(LiteralBlock::new(raw, kind, lang, r));
-                }
-            }
-            Block::Custom { span, children, .. } => {
-                if let Some(r) = raw_range(raw, span, coords) {
-                    out.literals.push(r);
-                    out.literal_blocks
-                        .push(LiteralBlock::new(raw, "other", "", r));
-                }
-                visit_blocks(raw, org, children, coords, out);
-            }
-            Block::Quote { children, .. } => visit_blocks(raw, org, children, coords, out),
-            Block::Paragraph { inline, .. }
-            | Block::Bullet { inline, .. }
-            | Block::Heading { inline, .. }
-            | Block::FootnoteDef { inline, .. } => visit_inline(raw, inline, coords, out),
-            Block::List { items, .. } => visit_items(raw, org, items, coords, out),
-            Block::Table { header, rows, .. } => {
-                for row in header.iter().chain(rows) {
-                    for cell in row {
-                        visit_inline(raw, cell, coords, out);
-                    }
-                }
-            }
-            Block::Properties { props, span } => {
-                if let Some(r) = raw_range(raw, span, coords) {
-                    let r = whole_line(raw, r);
-                    let index = out.property_regions.len();
-                    out.property_regions.push(r);
-                    // Index accepted parser keys once, rather than searching
-                    // the entire folded property node for every source entry.
-                    let mut names = HashMap::new();
-                    for property in props {
-                        let name = &property.0;
-                        names.entry(name.to_ascii_lowercase()).or_insert(name);
-                    }
-                    for line in line_ranges(raw, r) {
-                        let t = trimmed_range(raw, line);
-                        let s = t.slice(raw);
-                        // A Properties node can fold Markdown lines, a drawer
-                        // and directives together. Split only this accepted node;
-                        // preserve each entry's source spelling and syntax.
-                        let markdown = s.split_once("::").map(|(k, v)| (k, v, 0, 2, !org));
-                        let directive = s
-                            .strip_prefix("#+")
-                            .and_then(|s| s.split_once(':'))
-                            .map(|(k, v)| (k, v, 2, 1, false));
-                        let drawer = s
-                            .strip_prefix(':')
-                            .and_then(|s| s.split_once(':'))
-                            .map(|(k, v)| (k, v, 1, 1, org));
-                        let candidates = if org {
-                            [directive, drawer, markdown]
-                        } else {
-                            [markdown, directive, drawer]
-                        };
-                        // Other-format entries own spans (template id removal), not
-                        // metadata; a `#+` line's references count (OG hoists it).
-                        let Some((key, value, prefix, delim, appropriate)) = candidates
-                            .into_iter()
-                            .flatten()
-                            .find(|(key, ..)| names.contains_key(&key.to_ascii_lowercase()))
-                        else {
-                            continue;
-                        };
-                        let name = names[&key.to_ascii_lowercase()];
-                        let ks = t.0 + prefix;
-                        let vs = ks + key.len() + delim;
-                        let value_range = trimmed_range(raw, Range(vs, t.1));
-                        out.properties.push(Property {
-                            key: name.clone(),
-                            value: value.trim().to_string(),
-                            line,
-                            key_range: Range(ks, ks + key.len()),
-                            value_range,
-                            region: index,
-                            primary: appropriate,
-                            directive: org && prefix == 2,
-                            applicable: appropriate || prefix == 2,
-                        });
-                    }
-                }
-            }
-            Block::Directive { name, value, span } if org => {
-                if let Some(r) = raw_range(raw, span, coords) {
-                    let line = whole_line(raw, r);
-                    let region = out.property_regions.len();
-                    out.property_regions.push(line);
-                    // Locate sub-tokens only inside lsdoc's accepted directive.
-                    let t = trimmed_range(raw, line);
-                    if let Some(colon) = t.slice(raw).find(':') {
-                        let key_range = Range(t.0 + 2, t.0 + colon);
-                        let value_range = trimmed_range(raw, Range(t.0 + colon + 1, t.1));
-                        out.properties.push(Property {
-                            key: name.clone(),
-                            value: value.clone(),
-                            line,
-                            key_range,
-                            value_range,
-                            region,
-                            primary: false,
-                            directive: true,
-                            applicable: true,
-                        });
-                    }
-                }
-            }
-            Block::Drawer { name, span } => {
-                if let Some(r) = raw_range(raw, span, coords) {
-                    let r = whole_line(raw, r);
-                    let lines = line_ranges(raw, r);
-                    if let Some(last) = lines.last() {
-                        let clocks = if name.eq_ignore_ascii_case("LOGBOOK") {
-                            lines
-                                .iter()
-                                .skip(1)
-                                .take(lines.len().saturating_sub(2))
-                                .filter(|r| r.slice(raw).trim_start().starts_with("CLOCK:"))
-                                .copied()
-                                .collect()
-                        } else {
-                            Vec::new()
-                        };
-                        out.drawers.push(Drawer {
-                            name: name.clone(),
-                            range: r,
-                            close: last.0,
-                            clocks,
-                        });
-                    }
-                }
-            }
-            _ => {}
-        }
-    }
-}
-fn visit_items(raw: &str, org: bool, items: &[ListItem], coords: Coords, out: &mut BlockRegions) {
-    for item in items {
-        visit_blocks(raw, org, &item.content, coords, out);
-        visit_inline(raw, &item.name, coords, out);
-        visit_items(raw, org, &item.items, coords, out);
-    }
-}
-fn visit_inline(raw: &str, inline: &[Inline], coords: Coords, out: &mut BlockRegions) {
-    for i in inline {
-        match i {
-            Inline::Code { span, .. } | Inline::Verbatim { span, .. } => {
-                if let Some(r) = raw_range(raw, span, coords) {
-                    out.literals.push(r);
-                }
-            }
-            Inline::Timestamp { ts, date, span }
-                if matches!(ts.as_str(), "Scheduled" | "Deadline" | "Closed") =>
-            {
-                if let Some(r) = raw_range(raw, span, coords) {
-                    let line = whole_line(raw, r);
-                    // The Timestamp owns the planning prefix. A glued suffix
-                    // remains body text; only whitespace may precede the token.
-                    if raw[line.0..r.0].trim().is_empty() {
-                        out.planning.push(Planning {
-                            kind: ts.clone(),
-                            line,
-                            timestamp: r,
-                            date: date.clone(),
-                        });
-                    }
-                }
-            }
-            Inline::Emphasis { children, .. }
-            | Inline::Subscript { children, .. }
-            | Inline::Superscript { children, .. }
-            | Inline::Tag { children, .. } => visit_inline(raw, children, coords, out),
-            Inline::Link { label, .. } => visit_inline(raw, label, coords, out),
-            _ => {}
-        }
-    }
 }
 
 pub use crate::page_preamble::{
