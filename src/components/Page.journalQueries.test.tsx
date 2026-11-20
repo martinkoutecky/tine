@@ -100,6 +100,7 @@ it.each(["config diagnostic", "Sections lookup error", "Sections read error", "p
       return target!;
     });
     at.dispatchEvent(new MouseEvent("pointerdown", { bubbles: true, button: 0 }));
+    at.dispatchEvent(new MouseEvent("pointerup", { bubbles: true, button: 0 }));
     at.click();
     const select = press("a", true);
     const roots = selectedIds();
@@ -160,6 +161,7 @@ it.each(journalSurfaces.flatMap(surface => removalKeys.map(action => ({ ...surfa
     };
     const click = (at: Element) => {
       at.dispatchEvent(new MouseEvent("pointerdown", { bubbles: true, button: 0 }));
+      at.dispatchEvent(new MouseEvent("pointerup", { bubbles: true, button: 0 }));
       at.dispatchEvent(new MouseEvent("click", { bubbles: true, detail: 1 }));
     };
     const references = surface === "inline block references";

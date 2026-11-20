@@ -216,3 +216,11 @@ it.each([["prepend", ["E", "A", "D"]], ["append", ["A", "D", "E"]], ["replace an
     deleteSelection();
     expect(doc.byId.E).toBeDefined();
   });
+
+it("Ctrl+A on a backward page range restarts the ladder at its anchor, as on Beta (GH #793)", () => {
+  load();
+  selectBlock("E");
+  extendSelectionTo("A");
+  expandBlockSelection();
+  expect(topSelected()).toEqual(["E"]);
+});

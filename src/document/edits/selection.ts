@@ -364,6 +364,13 @@ export function hasSelection(): boolean {
 }
 /** The blank-space Ctrl/Cmd+A gesture that made the selection, or null. O(1). */
 export function blankOutlineSelection(): object | null { const w = whole(); return w && !w.tops ? w : null; }
+/** Capture the current selection. The returned check answers whether a pending
+ * Cut still owns it: the same blank gesture (none for an ordinary one) and the
+ * same blocks. O(selected) per call. */
+export function selectionClaim(): () => boolean {
+  const gesture = blankOutlineSelection(), ids = JSON.stringify(selectedIds());
+  return () => blankOutlineSelection() === gesture && JSON.stringify(selectedIds()) === ids;
+}
 export function moveSelection(dir: 1 | -1, extend: boolean) {
   const f = selFocus();
   if (!f) return;
@@ -440,9 +447,14 @@ export function expandBlockSelection(target?: OutlineSelectionTarget): boolean |
   if (!a || !f) return;
   const { order, index, end } = selectionTopology();
   if (order.length < 2) return;
-  // Whole-outline selection is the top of the ladder; further presses no-op.
+  // Whole-outline selection is the top of the ladder; further presses no-op. A
+  // scoped outline (results may list a row twice) asks the interval in either
+  // direction; a page body keeps Beta's anchor-first test.
   const { lo, hi } = selectionState();
-  if (lo === 0 && hi === order.length - 1) { selectWhole(ladderTop()); return; }
+  if (activeSelectionScope ? lo === 0 && hi === order.length - 1 : a === order[0] && end[index.get(f)!] === order.length - 1) {
+    if (activeSelectionScope && !whole()) selectWhole(ladderTop());
+    return;
+  }
   let head = selectAllHead;
   if (head === null || !index.has(head)) head = a;
   const idx = index.get(head);
@@ -467,7 +479,7 @@ export function expandBlockSelection(target?: OutlineSelectionTarget): boolean |
 
 /** The ladder's whole-outline marker; a page body (no scope) keeps Beta's endpoints. */
 const ladderTop = (): Whole | false => activeSelectionScope ? { tops: selectionTopology().tops } : false;
-const sameIds = (a: readonly string[], b: readonly string[]) => a.length === b.length && a.every((id, at) => id === b[at]);
+const sameIds = (a: readonly string[], b: readonly string[]) => a === b || (a.length === b.length && a.every((id, at) => id === b[at]));
 function selectWhole(marker: Whole | false) {
   const { order } = selectionTopology();
   batch(() => { setSelAnchor(order[0]); setSelFocus(order[order.length - 1]); setWhole(marker); });

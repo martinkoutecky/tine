@@ -439,6 +439,7 @@ it.each(["group to group", "Linked to Unlinked", "page to embed"])("starts in th
 
 function hitBlank(at: Element) {
   at.dispatchEvent(new MouseEvent("pointerdown", { bubbles: true, button: 0 }));
+  at.dispatchEvent(new MouseEvent("pointerup", { bubbles: true, button: 0 }));
   at.dispatchEvent(new MouseEvent("click", { bubbles: true, detail: 1 }));
 }
 
@@ -926,16 +927,36 @@ it.each(removalKeys)("ends an earlier selection when a blank hit has no live row
 });
 
 it.each([
-  ["from a button to the group header", ".reference-group-disclosure", ".reference-group-header", 0],
-  ["beyond the drag threshold and back", ".reference-group-header", ".reference-group-header", 20],
-] as const)("does not arm blank selection after a drag %s", async (_, from, to, moved) => {
+  ["from a button to the group header", ".reference-group-disclosure", ".reference-group-disclosure", ".reference-group-header", 0, false],
+  ["from the header onto its button", ".reference-group-header", ".reference-group-disclosure", ".reference-group-header", 0, false],
+  ["beyond the drag threshold and back", ".reference-group-header", ".reference-group-header", ".reference-group-header", 20, false],
+  ["with Shift released before the click", ".reference-group-header", ".reference-group-header", ".reference-group-header", 0, true],
+] as const)("does not arm blank selection after a press %s", async (_, from, up, to, moved, shiftKey) => {
   const { root } = await mountTarget();
   const group = root.querySelector(".linked-references .reference-group")!;
-  group.querySelector(from)!.dispatchEvent(new MouseEvent("pointerdown", { bubbles: true, button: 0 }));
+  group.querySelector(from)!.dispatchEvent(new MouseEvent("pointerdown", { bubbles: true, button: 0, shiftKey }));
   if (moved) window.dispatchEvent(new MouseEvent("pointermove", { clientX: moved }));
+  group.querySelector(up)!.dispatchEvent(new MouseEvent("pointerup", { bubbles: true, button: 0 }));
   group.querySelector(to)!.dispatchEvent(new MouseEvent("click", { bubbles: true, detail: 1 }));
   expect(press("a", { ctrlKey: true }).defaultPrevented).toBe(false);
   expect(selectedIds()).toEqual([]);
+});
+
+it("does not let an empty Cut remove a later selection", async () => {
+  const { root, liveRow, writeRich } = await mountTarget(sources, groups, ["Alpha", "Beta"]);
+  const card = await vi.waitFor(() => liveRow(coldHit.id)!.closest(".reference-group")!);
+  hitBlank(card);
+  expect(press("a", { ctrlKey: true }).defaultPrevented).toBe(true);
+  deleteBlock(coldHit.id);
+  const cuts = vi.spyOn(cut, "cutBlocks");
+  press("x", { ctrlKey: true });
+  const editor = await openBlockEditor(root, target.blocks[0].id);
+  editor.keydown({ key: "Escape" });
+  expect(selectedIds()).toEqual([target.blocks[0].id]);
+  await cuts.mock.results.at(-1)?.value;
+  expect(node(target.blocks[0].id)?.raw).toBe(target.blocks[0].raw);
+  expect(selectedIds()).toEqual([target.blocks[0].id]);
+  expect(writeRich).not.toHaveBeenCalled();
 });
 
 it("does not let a pending ordinary Cut remove a later blank selection of the same blocks", async () => {

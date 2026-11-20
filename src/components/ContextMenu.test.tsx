@@ -3,7 +3,7 @@ import { render } from "solid-js/web";
 import type { JSX } from "solid-js";
 import { ContextMenu, deletePageMenuLabel, pageMenuAvailability } from "./ContextMenu";
 import { initParser } from "../render/parse";
-import { blockProperty, pageByName, readPageProperty, resetStore, setPageProperty } from "../document";
+import { blockProperty, expandBlockSelection, extendSelectionTo, pageByName, readPageProperty, resetStore, selectBlock, selectedIds, setPageProperty } from "../document";
 import { editingId, endEdit } from "../editorController";
 import { type Node as StoreNode } from "../document/model";
 import type { RenameDone } from "../types";
@@ -460,6 +460,27 @@ describe("BlockMenu — convert an outline into a grid (Show children as →)", 
     });
     expect(peekClipboardPayload()?.blocks[0].children[0].raw).toContain("collapsed:: true");
     expect(doc.byId.parent).toBeUndefined();
+    dispose();
+  });
+
+  it("does not let a pending menu Cut remove a later blank selection of the same blocks (GH #793)", async () => {
+    load();
+    let finish!: () => void;
+    vi.spyOn(backend(), "writeRich").mockReturnValue(new Promise<void>((resolve) => { finish = resolve; }));
+    const dispose = mount(() => <ContextMenu />);
+    const scope = { roots: ["parent", "leaf"] };
+    selectBlock("parent", scope);
+    extendSelectionTo("leaf", scope);
+    const ids = selectedIds();
+    openContextMenu(10, 10, "parent");
+    [...document.querySelectorAll<HTMLElement>(".ctx-item")]
+      .find((el) => el.textContent?.trim() === "Cut blocks")!.click();
+    expect(expandBlockSelection({ scope, surface: "main" })).toBe(true);
+    expect(selectedIds()).toEqual(ids);
+    finish();
+    await vi.waitFor(() => expect(peekClipboardPayload()?.op).toBe("copy"));
+    expect(doc.byId.parent).toBeDefined();
+    expect(doc.byId.leaf).toBeDefined();
     dispose();
   });
 
