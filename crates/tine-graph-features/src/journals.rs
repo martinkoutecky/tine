@@ -1,5 +1,6 @@
 //! Journal feed, duplicate-day reconciliation, and filename migration. All
-//! reads use the store's area inventory; writes are guarded transactions.
+//! reads use the store's claimant index and area inventory; writes are
+//! guarded transactions.
 
 use serde::{Deserialize, Serialize};
 use std::collections::{BTreeMap, HashSet};
@@ -119,7 +120,7 @@ fn virtual_day(store: &Store, day: Day) -> FeedRead {
     let config = store.config();
     let title = format(store).title(JournalDate::from_ordinal(day.0));
     FeedRead {
-        id: store.journal_id(day, true),
+        id: store.journal_id(day),
         doc: tine_core::model::PageDto {
             name: title.clone(),
             title,
@@ -152,11 +153,10 @@ fn load_feed_read(
 /// Page file-backed journal days immediately, always leaving graph-wide
 /// additions pending for a separate completion request, even on a Ready graph.
 /// Unreadable files are skipped and named; store/index failures fail the read.
-/// First-page cost O((J + D) log(J + D) + R + returned page bytes), plus indexed
-/// alias lookups for date-shaped names on completion. Loaded scroll steps seek
+/// First-page cost O((J + D) log(J + D) + R + returned page bytes). Loaded scroll steps seek
 /// the day index and visit bounded windows; reference-name enumeration remains
-/// O(R log D). J is journal files plus the days files outside the journals
-/// directory hold (`Store::journal_days`), R reference names, D referenced dates.
+/// O(R log D). J is the journal files in any directory, R reference names,
+/// D referenced dates.
 /// No reference-content scan or graph file write.
 /// Before a name index exists, active selection also discovers ordinary
 /// preambles once per invalidation (O(P)); it does not wait for graph parsing.
@@ -194,8 +194,7 @@ pub fn feed_page_through(
     if let (Some(graph), Some(before)) = (&graph, before_day) {
         return indexed_feed_page(store, graph, limit, before, through_day, as_of_day);
     }
-    // First-page and file-only requests retain listing failures and discover
-    // files that no watcher publication has named yet.
+    // First-page and file-only requests use the discovery diagnostics.
     let (entries, listing_unreadable) = feed_days_through(store, Day(as_of_day))?;
     let referenced: std::collections::BTreeSet<_> = graph
         .as_ref()
@@ -210,9 +209,7 @@ pub fn feed_page_through(
         .unwrap_or_default();
     let mut days: BTreeMap<_, _> = entries.into_iter().collect();
     for day in referenced.iter().filter(|day| day.0 <= as_of_day) {
-        if let Some(id) = active_journal_id(store, *day) {
-            days.entry(*day).or_insert(id);
-        }
+        days.entry(*day).or_insert_with(|| store.journal_id(*day));
     }
     let by_id: BTreeMap<_, _> = days.iter().map(|(day, id)| (id.clone(), *day)).collect();
     let entries: Vec<_> = days.into_iter().rev().collect();
@@ -233,16 +230,19 @@ pub fn feed_page_through(
         })
     })?;
     page.references_pending = graph.is_none();
-    // The listing's own unreadable entries are reported with the first page
-    // only, so a paged feed names each one once per load.
+    // Report discovery failures once, including paths with no day row.
     if before_day.is_none() {
-        page.unreadable.splice(0..0, listing_unreadable);
+        let reported: HashSet<_> = page.unreadable.iter().map(String::as_str).collect();
+        let discovery = listing_unreadable
+            .into_iter()
+            .filter(|failure| !reported.contains(failure.as_str()))
+            .collect::<Vec<_>>();
+        page.unreadable.splice(0..0, discovery);
         // Upcoming shows references, not journal bodies: proposed identities
         // suffice and avoid reading every future journal file on feed open.
         page.upcoming = referenced
             .into_iter()
             .filter(|day| day.0 > as_of_day)
-            .filter(|day| active_journal_id(store, *day).is_some())
             .map(|day| virtual_day(store, day))
             .collect();
     }
@@ -270,7 +270,7 @@ fn indexed_feed_page(
         .iter()
         .copied()
         .filter(|day| day.0 <= as_of)
-        .filter_map(|day| active_journal_id(store, day).map(|id| (day, id)))
+        .map(|day| (day, store.journal_id(day)))
         .collect();
     let by_id: BTreeMap<_, _> = references
         .iter()
@@ -345,10 +345,8 @@ fn indexed_feed_page(
                 if referenced.is_empty() {
                     return None;
                 }
-                // Preserve the full union's id-to-greatest-day answer even when
-                // a short-year format maps different centuries to the same path.
-                // Only a missing body needs this lookup. It reads the file list,
-                // not parsed pages: a file that failed to read keeps its day.
+                // A short-year stem can be proposed for several centuries.
+                // The missing-body fallback uses the greatest day for that path.
                 let physical_day = graph
                     .inventory(tine_store::InventoryScope::JournalFile(id))
                     .0
@@ -550,7 +548,7 @@ pub fn absent_journal_id(store: &Store, name: &str) -> Result<Option<PageId>, St
     {
         return Ok(None);
     }
-    Ok(Some(store.journal_id(Day(date.ordinal_key()), false)))
+    Ok(Some(store.journal_id(Day(date.ordinal_key()))))
 }
 
 fn format(store: &Store) -> JournalFormat {
@@ -632,40 +630,9 @@ fn indexed_days_through(graph: &tine_store::WholeGraph, cutoff: Day) -> Vec<(Day
     days.into_iter().rev().collect()
 }
 
-/// `feed_journals_desc_through` plus the listing's unreadable entries.
+/// `feed_journals_desc_through` plus the claim discovery's unreadable entries.
 fn feed_days_through(store: &Store, cutoff: Day) -> io::Result<(Vec<(Day, PageId)>, Vec<String>)> {
-    let (files, unreadable) = listing(store)?;
-    let mut days = BTreeMap::new();
-    for entry in files {
-        if entry.page.is_some() {
-            if let Some(day) = entry.day.filter(|day| *day <= cutoff) {
-                days.entry(day).or_insert(());
-            }
-        }
-    }
-    // A day only a file outside the journals directory holds (CM SPEC §2.1,
-    // D-20261111-CMR14 CM-DAYFILE) is in the day index, not this listing.
-    for day in store
-        .journal_days()
-        .into_iter()
-        .filter(|day| *day <= cutoff)
-    {
-        days.entry(day).or_insert(());
-    }
-    let days = days
-        .into_keys()
-        .rev()
-        .filter_map(|day| active_journal_id(store, day).map(|id| (day, id)))
-        .collect();
-    Ok((days, unreadable))
-}
-
-/// A physical journal (or its proposed path) belongs in the feed only when
-/// it is also the opening file. An ordinary owner masks the entire journal
-/// day, including reference-only insertion; it is not an empty virtual day.
-fn active_journal_id(store: &Store, day: Day) -> Option<PageId> {
-    let active = store.journal_id(day, true);
-    (active == store.journal_id(day, false)).then_some(active)
+    store.journal_file_openings(cutoff).map_err(store_error)
 }
 
 fn migration_target(entry: &FileEntry, fmt: &JournalFormat) -> Option<String> {
@@ -673,7 +640,7 @@ fn migration_target(entry: &FileEntry, fmt: &JournalFormat) -> Option<String> {
     if fmt.is_canonical_stem(source_stem) {
         return None;
     }
-    let date = fmt.parse_file_stem(source_stem)?;
+    let date = JournalDate::from_ordinal(entry.day?.0);
     let wanted = fmt.file_stem(date);
     let ext = entry.rel.rsplit_once('.')?.1;
     let target = format!("{wanted}.{ext}");
@@ -734,8 +701,8 @@ impl Listing {
 /// top-level journal whose stem parses as a `:journal/page-title-format` title
 /// gets `to` from `:journal/file-name-format`, unless that file exists,
 /// another journal file (any extension, including a second title) has the
-/// same day, or `to` is not a valid journal file name. `Err` is the reason;
-/// `None` means the file is not a title-named journal. Cost O(log J).
+/// same day, or `to` is invalid for that day. `Err` carries the reason.
+/// `None` marks a file outside the migration. Cost O(log J).
 fn migration_plan(
     entry: &FileEntry,
     listing: &Listing,
@@ -753,7 +720,12 @@ fn migration_plan(
         Err(format!("target {target} already exists"))
     } else if same_day {
         Err("another same-day journal file exists (see duplicate journal days)".to_owned())
-    } else if store.file_id(Area::Journals, &target).is_err() {
+    } else if store.file_id(Area::Journals, &target).is_err()
+        || fmt
+            .parse_file_stem(target.rsplit_once('.')?.0)
+            .map(|day| Day(day.ordinal_key()))
+            != entry.day
+    {
         Err("target filename is invalid".to_owned())
     } else {
         Ok(target)
@@ -956,10 +928,9 @@ fn migration_source(store: &Store, entry: &FileId) -> io::Result<(Vec<u8>, tine_
 /// Duplicate-day files with first-line previews, the keeper first. The keeper
 /// (`canonical`, one per day) is the file the day opens: the claimant order's
 /// owner that `Store::page_named` reads (CM step 2 OW-2, PQ-1 2026-11-02, I-12),
-/// so a merge keeps the page the user sees. Remaining paths use the shared
-/// claimant order. When its owner could not be read, the first of that order
-/// is the keeper. If an ordinary page owns the name, no journal is canonical;
-/// the complete bucket appears in the name-conflict overview. A file
+/// so a merge keeps the page the user sees. Remaining journal-directory
+/// paths use the order of the area listing. The typed claim decides the
+/// keeper even when its body cannot be read. A file
 /// whose preview cannot be read stays listed with `preview_error` (one bad file
 /// never hides the day, I-22); listing entries that cannot be read at all are
 /// named by the conflict inventory and the journal feed. A failed area scan or
@@ -998,31 +969,14 @@ pub fn journal_conflicts(store: &Store) -> io::Result<Vec<JournalConflict>> {
                 preview_error,
             });
         }
-        // Its title names the day alone (D-20261119-YL).
         let title = fmt.title(JournalDate::from_ordinal(day.0));
-        // The file the day opens. A read error here only loses the ranking
-        // (recovery, not refusal): the listing order below still names a keeper.
-        let opened = store
-            .page_named(&title, tine_core::model::PageKind::Journal)
-            .ok()
-            .flatten()
-            .map(|read| read.id.as_str().to_owned());
-        let journals_dir = store.config().config.journals_dir.clone();
-        journal_files.sort_by(|a, b| {
-            let opens = |file: &JournalFile| opened.as_deref() == Some(file.path.as_str());
-            let claimant = |file: &JournalFile| tine_core::model::PageEntry {
-                name: title.clone(),
-                kind: tine_core::model::PageKind::Journal,
-                date_key: Some(day.0),
-                rel_path: Some(tine_store::PageId::from(file.path.as_str())),
-                path: Default::default(),
-            };
-            opens(b).cmp(&opens(a)).then_with(|| {
-                tine_core::model::compare_page_claimants(&journals_dir, &claimant(a), &claimant(b))
-            })
-        });
-        for (i, file) in journal_files.iter_mut().enumerate() {
-            file.canonical = opened.as_deref().map_or(i == 0, |path| path == file.path);
+        let opening = store.journal_id(day);
+        if let Some(at) = journal_files
+            .iter()
+            .position(|file| file.path == opening.as_str())
+        {
+            journal_files[..=at].rotate_right(1);
+            journal_files[0].canonical = true;
         }
         conflicts.push(JournalConflict {
             title,

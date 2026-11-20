@@ -185,30 +185,14 @@ fn a_write_that_names_its_page_spends_its_lower_bound() {
         EXISTING,
         "add to that page by another spelling"
     );
-    // A date is looked up as a page name and then as the day's journal.
+    // The same lookup opens ordinary names and typed days.
     add(&graph, json!({ "page": "2026-11-02", "content": "- day" }));
-    assert_eq!(
-        spent(&slot),
-        OpCounts {
-            lookups: 4,
-            ..CREATED
-        },
-        "a date"
-    );
+    assert_eq!(spent(&slot), CREATED, "a date");
     add(
         &graph,
         json!({ "page": "Nov 2nd, 2026", "content": "- day" }),
     );
-    assert_eq!(
-        spent(&slot),
-        // A day's title is looked up once, as the day (CM-DATE: no ordinary
-        // page is named by a date, so there is no page lookup first).
-        OpCounts {
-            lookups: 1,
-            ..EXISTING
-        },
-        "that day again"
-    );
+    assert_eq!(spent(&slot), EXISTING, "that day again");
 
     let create = |name: &str| graph.connect().call("page.create", json!({ "name": name }));
     assert!(create("a").is_err());

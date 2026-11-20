@@ -1,0 +1,228 @@
+{
+  "backlinks": {
+    "Inbox": [
+      {
+        "blocks": [
+          {
+            "children": [],
+            "collapsed": false,
+            "id": "75143738-034a-8dd7-b08f-38fa7295e7fd",
+            "raw": "[[11-02]]",
+            "tags": []
+          }
+        ],
+        "kind": "page",
+        "page": "Notes"
+      }
+    ],
+    "Notes": []
+  },
+  "conflicts": [],
+  "counts": [
+    [
+      [
+        "pages/Inbox.md",
+        1
+      ],
+      [
+        "pages/Notes.md",
+        0
+      ]
+    ],
+    []
+  ],
+  "inventory": [
+    {
+      "day": null,
+      "is_journal": false,
+      "key": "11-02",
+      "link": {
+        "kind": "page",
+        "name": "Inbox"
+      },
+      "name": "11-02",
+      "namespace_excluded": true,
+      "target": {
+        "kind": "alias",
+        "owners": [
+          "pages/Inbox.md"
+        ]
+      }
+    },
+    {
+      "day": null,
+      "is_journal": false,
+      "key": "inbox",
+      "link": {
+        "kind": "page",
+        "name": "Inbox"
+      },
+      "name": "Inbox",
+      "target": {
+        "id": "pages/Inbox.md",
+        "kind": "existing",
+        "others": []
+      }
+    },
+    {
+      "day": null,
+      "is_journal": false,
+      "key": "notes",
+      "link": {
+        "kind": "page",
+        "name": "Notes"
+      },
+      "name": "Notes",
+      "target": {
+        "id": "pages/Notes.md",
+        "kind": "existing",
+        "others": []
+      }
+    }
+  ],
+  "journalFileFormat": null,
+  "journalTitle": {
+    "effective": "MMM do, yyyy",
+    "refusal": {
+      "missing": "year"
+    }
+  },
+  "journalTitleFormat": "MM-dd",
+  "keyOf": {
+    "11-02": "11-02",
+    "Inbox": "inbox",
+    "Notes": "notes"
+  },
+  "namespaceTree": [],
+  "open": {
+    "11-02": {
+      "journal": [
+        "journal",
+        "11-02"
+      ],
+      "page": [
+        "page",
+        "inbox"
+      ]
+    },
+    "Inbox": {
+      "journal": [
+        "journal",
+        "inbox"
+      ],
+      "page": [
+        "page",
+        "inbox"
+      ]
+    },
+    "Notes": {
+      "journal": [
+        "journal",
+        "notes"
+      ],
+      "page": [
+        "page",
+        "notes"
+      ]
+    }
+  },
+  "owner": {
+    "11-02": {
+      "journal": null,
+      "page": "pages/Inbox.md"
+    },
+    "Inbox": {
+      "journal": null,
+      "page": "pages/Inbox.md"
+    },
+    "Notes": {
+      "journal": null,
+      "page": "pages/Notes.md"
+    }
+  },
+  "pages": [
+    {
+      "key": "inbox",
+      "kind": "page",
+      "linkedRefs": 1,
+      "name": "Inbox",
+      "owner": "pages/Inbox.md",
+      "parent": null
+    },
+    {
+      "key": "notes",
+      "kind": "page",
+      "linkedRefs": 0,
+      "name": "Notes",
+      "owner": "pages/Notes.md",
+      "parent": null
+    }
+  ],
+  "spellings": {
+    "11-02": {
+      "backend": [
+        "page",
+        "inbox"
+      ],
+      "day": null,
+      "model": [
+        "page",
+        "inbox"
+      ]
+    },
+    "Inbox": {
+      "backend": [
+        "page",
+        "inbox"
+      ],
+      "day": null,
+      "model": [
+        "page",
+        "inbox"
+      ]
+    },
+    "Notes": {
+      "backend": [
+        "page",
+        "notes"
+      ],
+      "day": null,
+      "model": [
+        "page",
+        "notes"
+      ]
+    }
+  },
+  "tree": [
+    {
+      "children": [],
+      "page": [
+        "page",
+        "inbox"
+      ]
+    },
+    {
+      "children": [],
+      "page": [
+        "page",
+        "notes"
+      ]
+    }
+  ],
+  "treeParent": [
+    {
+      "page": [
+        "page",
+        "inbox"
+      ],
+      "parent": null
+    },
+    {
+      "page": [
+        "page",
+        "notes"
+      ],
+      "parent": null
+    }
+  ]
+}

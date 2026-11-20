@@ -517,10 +517,6 @@ impl EntryList {
     pub(crate) fn get_path(&self, path: &std::path::Path) -> Option<&PageEntry> {
         self.paths.get(path).and_then(|slot| self.rows.get(slot))
     }
-    /// The journal listed for `day`: one per day, the claimant order's first.
-    pub(crate) fn get_day(&self, day: i64) -> Option<&PageEntry> {
-        self.days.get(&day).and_then(|slot| self.rows.get(slot))
-    }
     pub(crate) fn iter(&self) -> impl Iterator<Item = &PageEntry> {
         self.rows.values()
     }
@@ -535,27 +531,6 @@ impl EntryList {
             self.paths.remove(path);
             self.projected.take();
         }
-    }
-    /// One journal entry per day, ascending by day. O(J) to iterate.
-    #[cfg(any(test, feature = "test-faults"))]
-    pub(crate) fn journal_days(&self) -> impl Iterator<Item = &PageEntry> {
-        self.days
-            .iter()
-            .inspect(|_| {
-                #[cfg(feature = "test-faults")]
-                crate::cost_counters::journal_day_visit();
-            })
-            .filter_map(|(_, slot)| self.rows.get(slot))
-    }
-    /// A descending day window: O(log J) seek plus O(log P) slot lookup per day.
-    pub(crate) fn journal_days_before(&self, before: i64) -> impl Iterator<Item = &PageEntry> {
-        self.days
-            .rev_before(&before)
-            .inspect(|_| {
-                #[cfg(feature = "test-faults")]
-                crate::cost_counters::journal_day_visit();
-            })
-            .filter_map(|(_, slot)| self.rows.get(slot))
     }
     pub(crate) fn remove_day(&mut self, day: i64) {
         if let Some(path) = self
@@ -579,6 +554,7 @@ impl EntryList {
         self.rows.insert(slot, entry);
         self.projected.take();
     }
+    #[cfg(test)]
     pub(crate) fn materialize(&self) -> Arc<Vec<PageEntry>> {
         Arc::clone(
             self.projected

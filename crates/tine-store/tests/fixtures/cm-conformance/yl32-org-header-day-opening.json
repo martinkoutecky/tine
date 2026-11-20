@@ -1,0 +1,9 @@
+{
+  "files": {
+    "pages/!Diary.org": "#+TITLE: Nov 2nd, 2020\n\n* the diary\n",
+    "pages/2020_11_02.md": "- another claimant\n",
+    "pages/Notes.org": "#+TITLE: Nov 3rd, 2020\n\n* the only claimant\n",
+    "pages/Refs.md": "- [[Nov 2nd, 2020]] and [[2020-11-03]]\n"
+  },
+  "navigate": ["Nov 2nd, 2020", "2020-11-02", "Nov 3rd, 2020", "2020-11-03"]
+}

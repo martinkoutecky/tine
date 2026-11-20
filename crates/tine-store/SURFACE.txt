@@ -126,12 +126,10 @@ field store::WatchBatch.reconcile_started
 fn transaction::Store::read_is_current
 
 ## Identity (ceiling: 12)
-# CM step 2 (CM-DAYFILE, D-20261111-CMR14): a date-named pages file is its day,
-# so the feed before the first view must list days the journals directory
-# listing cannot see. `journal_id` answers one given day and a parameter cannot
-# make it enumerate days without probing every date; `journal_days` lists the
-# keys of the same in-memory day index `journal_id` reads (O(D), no I/O).
-fn store::Store::journal_days
+# CM-DAYFILE: a pages file can claim a day by header. The first feed
+# enumerates physical openings from the same complete claims as
+# journal_id(day), with their discovery diagnostics. See docs/storage-contract.md.
+fn store::Store::journal_file_openings
 # GS-FIX2: is_graph_text/is_asset_sidecar classify file types, not spelling
 # candidates. Expose the existing Unicode case-only predicate so the pull
 # planner and host/transaction publication share one candidate policy;

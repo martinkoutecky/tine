@@ -716,17 +716,8 @@ impl Core {
             // would build the whole graph here, under the writer. The page
             // already reads from its file; the launch pass takes the row in.
             if !files.is_empty() || unreadable_changed {
-                let journals = format!("{}/", self.graph.current_config().journals_dir);
-                let journal_set_changed = files.iter().any(|(id, kind, _)| {
-                    id.as_str().starts_with(&journals)
-                        && matches!(kind, ChangeKind::Created | ChangeKind::Removed)
-                });
-                self.changes.defer_publication(
-                    Origin::External,
-                    files,
-                    pages,
-                    (HashSet::new(), journal_set_changed),
-                );
+                self.changes
+                    .defer_publication(Origin::External, files, pages, HashSet::new());
             }
         } else if !files.is_empty() || config_changed || unreadable_changed {
             self.changes.publish_watched(

@@ -1287,10 +1287,6 @@ const RULE5_DOCS: &[(&str, &str)] = &[
         "the diagnostics dump reports internal build state by design; no caller branches on it",
     ),
     (
-        "fn store::Store::journal_id",
-        "cost note: the id comes from the held day index, no disk read",
-    ),
-    (
         "fn store::Store::may_carry_vcs_markers",
         "the rule 5 exemplar: an unknown answer folds into the conservative `true`",
     ),

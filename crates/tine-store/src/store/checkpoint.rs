@@ -203,6 +203,37 @@ struct Body<P> {
     racy: Vec<PathBuf>,
 }
 
+/// The runtime claim root is captured by reference under the writer. Project
+/// it into the checkpoint body after releasing the writer.
+struct Captured {
+    graph: GraphState<PagesOut>,
+    claimants: Arc<crate::model::ClaimantMap>,
+    stamps: Vec<(PathBuf, Stamp)>,
+    racy: Vec<PathBuf>,
+}
+
+impl Captured {
+    fn body(self) -> Body<PagesOut> {
+        let mut claimants = BTreeMap::<_, Vec<_>>::new();
+        let mut name_by_path = SharedMap::default();
+        for entry in self.claimants.values().flatten() {
+            let key = tine_core::refs::page_key(&entry.name);
+            claimants
+                .entry((entry.kind == PageKind::Journal, key))
+                .or_default()
+                .push(entry.clone());
+            name_by_path.insert(entry.path.clone(), (entry.kind, entry.name.clone()));
+        }
+        Body {
+            graph: self.graph,
+            claimants: Arc::new(claimants.into_iter().collect()),
+            name_by_path: Arc::new(name_by_path),
+            stamps: self.stamps,
+            racy: self.racy,
+        }
+    }
+}
+
 /// Why a checkpoint was not loaded; every one falls back to the initial build.
 /// Closed tokens for diagnostics. The first ten are about the file; the rest
 /// are launch races: something reached the graph before the install, under
@@ -313,8 +344,7 @@ pub(crate) fn config_key(config: &tine_core::config::Config) -> [u8; 32] {
         property_pages_enabled,
         property_pages_excludelist,
         favorites_page,
-        journal_file_name_format,
-        journal_page_title_format,
+        journal_settings,
         preferred_format,
         file_name_format,
         enable_search_remove_accents,
@@ -349,6 +379,8 @@ pub(crate) fn config_key(config: &tine_core::config::Config) -> [u8; 32] {
         logbook: _,
         guide_announced: _,
     } = config;
+    let (journal_file_name_format, journal_page_title_format) =
+        journal_settings.configured_patterns();
     let fields: [(&str, String); 15] = [
         ("journals_dir", format!("{journals_dir:?}")),
         ("pages_dir", format!("{pages_dir:?}")),
@@ -651,9 +683,9 @@ impl ChangeFeed {
         let Body {
             graph,
             claimants,
-            name_by_path,
             stamps,
             racy,
+            ..
         } = loaded.body;
         // `PageEntry::path` is not serialized: rebuild each claimant's under
         // this root, as `checkpoint_install` does for the rows and the list.
@@ -661,30 +693,30 @@ impl ChangeFeed {
         // `candidate.path != path`, so the stale claimant outlived every
         // edit and the journal reconcile read `""` (ENOENT) as unreadable.
         let root = &self.graph.root;
-        let claimants = Arc::new(
+        let config = self.config.read().unwrap().clone();
+        let entries = claimants.values().flatten().cloned().map(|mut entry| {
+            if entry.rel_path.is_some() {
+                entry.path = root.join(entry.rel_path_str());
+            }
+            entry
+        });
+        let claimants = Arc::new(crate::model::page_claimants(
+            &config.config.journals_dir,
+            entries,
+        ));
+        let claim_by_path = Arc::new(
             claimants
                 .iter()
-                .map(|(key, entries)| {
-                    let entries = entries
+                .flat_map(|(claim, entries)| {
+                    entries
                         .iter()
-                        .cloned()
-                        .map(|mut entry| {
-                            if entry.rel_path.is_some() {
-                                entry.path = root.join(entry.rel_path_str());
-                            }
-                            entry
-                        })
-                        .collect();
-                    (key.clone(), entries)
+                        .filter_map(|entry| Some((entry.rel_path.clone()?, claim.clone())))
                 })
                 .collect(),
         );
-        let config = self.config.read().unwrap().clone();
         let (evaluator, list) = self
             .graph
             .checkpoint_install(graph, (*config.config).clone())?;
-        *self.journal_ids.lock().unwrap() =
-            journal_ids_from_entries(&config.config.journals_dir, list.iter());
         let mut state = self.state.lock().unwrap();
         state.rev += 1;
         let mut snapshot = Snapshot {
@@ -695,7 +727,7 @@ impl ChangeFeed {
             journal_format: self.graph.current_journal_format(),
             list,
             claimants,
-            name_by_path,
+            claim_by_path,
             unreadable: Arc::new(Vec::new()),
             answers: Default::default(),
             folds_only: false,
@@ -1118,21 +1150,23 @@ impl Publisher {
 
     #[cfg(test)]
     fn capture(&self) -> Result<(Body<PagesOut>, [u8; 32]), &'static str> {
-        self.capture_held().0
+        self.capture_held()
+            .0
+            .map(|(captured, key)| (captured.body(), key))
     }
 
     /// The capture and how long it held the writer lock: every save, rescan
     /// and watcher cycle of this graph waits behind that interval (GH #623:
     /// a page click right after a focus return was seen waiting about 3 s;
     /// the diagnostics now say whether this interval can be the cause).
-    fn capture_held(&self) -> (Result<(Body<PagesOut>, [u8; 32]), &'static str>, Duration) {
+    fn capture_held(&self) -> (Result<(Captured, [u8; 32]), &'static str>, Duration) {
         let _writer = self.writer.lock().unwrap();
         let held = Instant::now();
         let captured = self.capture_locked();
         (captured, held.elapsed())
     }
 
-    fn capture_locked(&self) -> Result<(Body<PagesOut>, [u8; 32]), &'static str> {
+    fn capture_locked(&self) -> Result<(Captured, [u8; 32]), &'static str> {
         if !matches!(*self.load.status.lock().unwrap(), LoadStatus::Ready) {
             return Err("loading");
         }
@@ -1175,10 +1209,9 @@ impl Publisher {
         }
         racy.sort();
         Ok((
-            Body {
+            Captured {
                 graph,
                 claimants: Arc::clone(&snapshot.claimants),
-                name_by_path: Arc::clone(&snapshot.name_by_path),
                 stamps,
                 racy,
             },
@@ -1194,7 +1227,7 @@ impl Publisher {
             Ok(captured) => captured,
             Err(reason) => return (CheckpointWrite::Skipped(reason), held),
         };
-        (self.write_captured(body, config_key), held)
+        (self.write_captured(body.body(), config_key), held)
     }
 
     fn write_captured(&self, body: Body<PagesOut>, config_key: [u8; 32]) -> CheckpointWrite {

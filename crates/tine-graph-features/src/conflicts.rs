@@ -218,22 +218,27 @@ fn graph_text_stem(store: &Store, file: &FileId) -> Option<(PageKind, String)> {
     Some((kind, stem))
 }
 
-/// A VCS-marker row's page name from its file name alone, for bytes the
+/// A VCS-marker row's kind and name from its file name alone, for bytes the
 /// store cannot name ([`page_answer_of`] answers every other row from the
 /// bytes the listing already read): the journal date title, else the stem
 /// decoded under the graph's file-name format.
-fn marker_row_name(store: &Store, kind: PageKind, stem: &str) -> String {
+fn marker_stem_answer(store: &Store, kind: PageKind, stem: &str) -> (PageKind, String) {
     let config = store.config();
-    if kind == PageKind::Journal {
-        let journal_format = config.journal_format();
-        journal_format
-            .parse_file_stem(stem)
-            .map(|day| journal_format.title(day))
-            .unwrap_or_else(|| stem.to_owned())
+    let in_journals = kind == PageKind::Journal;
+    let name = if in_journals {
+        stem.to_owned()
     } else {
         decode_page_name(stem, config.file_name_format)
+    };
+    let format = config.journal_format();
+    match format.file_claim_day(&name, in_journals) {
+        Some(day) => (PageKind::Journal, format.title(day)),
+        None => (kind, name),
     }
 }
+
+#[cfg(test)]
+mod marker_tests;
 
 /// The kind and name page file `id` has when it holds `bytes`: the store's
 /// one answer (census Q2, `Store::page_of` over the `effective_page_name`

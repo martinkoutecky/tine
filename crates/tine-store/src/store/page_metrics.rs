@@ -30,8 +30,11 @@ impl Snapshot {
             .and_then(|old| {
                 old.graph.resident_backlink_memberships().map(|before| {
                         let after = self.graph.scan_all_backlink_memberships();
-                        let changes = if Arc::ptr_eq(&self.graph, &old.graph) { Some(&[][..]) }
-                            else { self.graph.backlink_count_changes_since(&old.graph) };
+                        let changes = if Arc::ptr_eq(&self.graph, &old.graph) {
+                            Some(&[][..])
+                        } else {
+                            self.graph.backlink_count_changes_since(&old.graph)
+                        };
                         let full = changes.is_none() || !self.graph.day_support_built();
                         let mut keys: BTreeSet<_> = if full {
                             before
@@ -80,10 +83,22 @@ impl Snapshot {
                         }
                         let rows = |snapshot: &Self, journal, key: &str, count| {
                             let mut rows = BTreeMap::new();
-                            if let Some(entry) = snapshot
-                                .claimants
-                                .get(&(journal, key.to_owned()))
-                                .and_then(|entries| entries.first())
+                            let claim = if journal {
+                                snapshot
+                                    .journal_format
+                                    .parse_key(key)
+                                    .map(|day| crate::model::Claim::Day(day.ordinal_key()))
+                            } else {
+                                Some(crate::model::Claim::Name(key.to_owned()))
+                            };
+                            if let Some(entry) = claim
+                                .as_ref()
+                                .and_then(|claim| snapshot.claimants.get(claim))
+                                .and_then(|entries| {
+                                    entries
+                                        .iter()
+                                        .find(|entry| (entry.kind == PageKind::Journal) == journal)
+                                })
                             {
                                 rows.insert(entry.rel_path_str().to_owned(), count);
                             }

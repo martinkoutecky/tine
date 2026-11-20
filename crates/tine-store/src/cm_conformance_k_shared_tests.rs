@@ -617,15 +617,14 @@ fn model_claim(journal: &JournalFormat, f: &Value) -> Page {
         .as_str()
         .filter(|_| f["dir"] == "pages")
         .unwrap_or_else(|| f["stem"].as_str().unwrap());
-    let day = if f["dir"] == "journals" {
+    let in_journals = f["dir"] == "journals";
+    let claim_name = if in_journals {
         let raw = f["rawStem"].as_str().unwrap();
-        journal
-            .parse_file_stem(raw.strip_prefix(STEM_TAG).unwrap_or(raw))
-            .or_else(|| journal.parse_text(name))
+        raw.strip_prefix(STEM_TAG).unwrap_or(raw)
     } else {
-        journal.parse_text(name)
+        name
     };
-    match day {
+    match journal.file_claim_day(claim_name, in_journals) {
         Some(d) => ("journal".to_owned(), day_token(d)),
         None => ("page".to_owned(), page_key(name)),
     }

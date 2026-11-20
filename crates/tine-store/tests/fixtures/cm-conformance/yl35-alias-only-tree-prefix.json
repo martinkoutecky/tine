@@ -1,0 +1,8 @@
+{
+  "config": { "journalTitleFormat": "yyyy/MM/dd" },
+  "files": {
+    "journals/2026_11_02.md": "- day\n",
+    "pages/Inbox.md": "alias:: 2026/11\n\n- the inbox\n"
+  },
+  "navigate": ["2026/11", "2026/11/02"]
+}

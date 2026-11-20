@@ -404,7 +404,7 @@ fn direct_first_read_updates_journal_day_and_derived_answers() {
             .unwrap()
             .ordinal_key(),
     );
-    assert_eq!(store.journal_id(day, false), id);
+    assert_eq!(store.journal_id(day), id);
     let view = store.whole_graph().unwrap();
     assert!(
         matches!(view.resolve("Sep 25th, 2026", true), Resolved::Existing { id: found, .. } if found == id)

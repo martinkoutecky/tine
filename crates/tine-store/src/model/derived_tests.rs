@@ -3,7 +3,7 @@
 //! roots come from its owner's last published bytes. `hold` and `publish`
 //! are the only calls whose API differs at the pre-A-H2 baseline.
 
-use crate::model::{content_rev, PageKind};
+use crate::model::{content_rev, PageKind, GRAPH_LIST_CALLS, GRAPH_PREAMBLE_READS};
 use crate::{Depth, PageId, Resolved, Store};
 use std::fs;
 use std::path::Path;
@@ -211,6 +211,64 @@ fn wait_paused(pause: &Pause) {
             .unwrap()
             .0;
     }
+}
+
+#[test]
+fn simultaneous_cold_feed_and_lookup_share_one_claim_walk() {
+    let dir = tempfile::tempdir().unwrap();
+    let pages = dir.path().join("pages");
+    fs::create_dir(&pages).unwrap();
+    fs::write(
+        pages.join("!Diary.org"),
+        "#+TITLE: Nov 2nd, 2026\n\n* diary\n",
+    )
+    .unwrap();
+    fs::write(pages.join("2026_11_02.md"), "- alternate\n").unwrap();
+    let load_pause = dir.path().join(".tine-test-pause-load");
+    fs::write(&load_pause, "").unwrap();
+    let store = Arc::new(Store::open(dir.path(), Default::default()).unwrap().0);
+    hold(&store, "pages/Unpublished.md");
+    let paused: Pause = Arc::new((Mutex::new((false, false)), Condvar::new()));
+    *store.graph.certify_pause.lock().unwrap() = Some(Arc::clone(&paused));
+    let feed = {
+        let store = Arc::clone(&store);
+        std::thread::spawn(move || {
+            let day = crate::Day(20261102);
+            let (rows, _) = store.journal_file_openings(day).unwrap();
+            (
+                rows,
+                GRAPH_LIST_CALLS.with(|calls| calls.get()),
+                GRAPH_PREAMBLE_READS.with(|reads| reads.get()),
+            )
+        })
+    };
+    wait_paused(&paused);
+    let (send, recv) = std::sync::mpsc::channel();
+    let lookup = {
+        let store = Arc::clone(&store);
+        std::thread::spawn(move || {
+            send.send(()).unwrap();
+            let read = store.cold_page_named("2026-11-02").unwrap().unwrap();
+            (
+                read.id,
+                GRAPH_LIST_CALLS.with(|calls| calls.get()),
+                GRAPH_PREAMBLE_READS.with(|reads| reads.get()),
+            )
+        })
+    };
+    recv.recv_timeout(Duration::from_secs(5)).unwrap();
+    paused.0.lock().unwrap().1 = true;
+    paused.1.notify_all();
+    let (rows, feed_walks, feed_reads) = feed.join().unwrap();
+    let (looked_up, lookup_walks, lookup_reads) = lookup.join().unwrap();
+    fs::remove_file(load_pause).unwrap();
+    store.close();
+    assert_eq!(looked_up.as_str(), "pages/!Diary.org");
+    assert_eq!(rows, [(crate::Day(20261102), looked_up)]);
+    assert_eq!(
+        (feed_walks, lookup_walks, feed_reads, lookup_reads),
+        (1, 0, 2, 0)
+    );
 }
 
 /// R1 freshness: an owner publication between a build's reads and its
@@ -615,7 +673,7 @@ fn a_journal_only_the_capture_names_joins_the_day_index() {
         Some(PageId::from(key)),
         "the page list names the day"
     );
-    assert_eq!(store.journal_id(crate::Day(20310601), false).as_str(), key);
+    assert_eq!(store.journal_id(crate::Day(20310601)).as_str(), key);
     drop(view);
     store.close();
 }

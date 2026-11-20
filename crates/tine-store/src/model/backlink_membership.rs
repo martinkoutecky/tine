@@ -604,8 +604,7 @@ impl BacklinkMembership {
             || old.config.ignored_page_references_keywords
                 != graph.config.ignored_page_references_keywords
             || old.config.separated_by_commas != graph.config.separated_by_commas
-            || old.config.journal_file_name_format != graph.config.journal_file_name_format
-            || old.config.journal_page_title_format != graph.config.journal_page_title_format;
+            || old.config.journal_settings != graph.config.journal_settings;
         if config_changed || (paths.is_empty() && !Arc::ptr_eq(&old.pages, &graph.pages)) {
             return Self::scan_all_build(graph);
         }

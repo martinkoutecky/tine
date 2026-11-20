@@ -172,10 +172,6 @@ pub(super) fn index(store: &Store, publication: &Publication) -> Indexing {
     // It defers as a publication does, which keeps a launch checkpoint declined.
     if pending && publication.own.is_none() && bytes.is_some() && deferred.is_none() {
         store.defer_retired();
-        let journals = format!("{}/", store.config().journals_dir);
-        if kind == ChangeKind::Created && id.as_str().starts_with(&journals) {
-            store.refresh_journal_names();
-        }
         let raced = store.watch.note_own_observed(&[(id, rev)], &stamps);
         store.watch.reconcile_raced(&raced);
         return indexed;

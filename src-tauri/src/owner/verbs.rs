@@ -92,7 +92,7 @@ pub(crate) fn answer_verb(slot: &GraphSlot, request: &Request) -> Result<Value, 
         "journal" => {
             let JournalArgs { date } = parse(args)?;
             let day = journal_day(slot, date.as_deref())?;
-            let id = slot.store.journal_id(Day(day.ordinal_key()), true);
+            let id = slot.store.journal_id(Day(day.ordinal_key()));
             page_answer(slot, id, "journal", None)
         }
         "block.show" => {
@@ -510,10 +510,7 @@ fn claimed(
     graph: &WholeGraph,
     name: &str,
 ) -> Result<(Vec<PageId>, bool), PageId> {
-    match claimants(lookup(slot, graph, name, false)) {
-        Err(_) => claimants(lookup(slot, graph, name, true)),
-        found => found,
-    }
+    claimants(lookup(slot, graph, name, false))
 }
 
 /// One lookup of `name` in `graph` for a write, counted (`op_counts`).
@@ -572,27 +569,12 @@ impl Named {
 /// creates that day's journal, as the app opens `[[name]]`
 /// (`JournalFormat::absent_link_is_journal`, the rule `WholeGraph::link_target`
 /// uses; OG files such a name under `journals/`: `transact-file-tx-if-not-exists!`).
-/// Any other name creates an ordinary page. A name claimed by an ordinary page
-/// of exactly that spelling keeps that page (D-20261107-KD), as `resolve`
-/// answers it. Cost: one lookup when a page, file or alias claims the name;
-/// else the journal format's date check, and for a date one more lookup, of
-/// the day's journal.
+/// Any other name creates an ordinary page. The store's opening answer
+/// supplies the claimant, alias declarer, or proposed file in one lookup.
 pub(super) fn named_page(slot: &GraphSlot, graph: &WholeGraph, name: &str) -> Named {
-    let id = match claimants(lookup(slot, graph, name, false)) {
-        Ok((candidates, alias)) => return Named::Claimed { candidates, alias },
-        Err(id) => id,
-    };
-    if !slot
-        .store
-        .config()
-        .journal_format()
-        .absent_link_is_journal(name)
-    {
-        return Named::New(id);
-    }
-    match claimants(lookup(slot, graph, name, true)) {
+    match claimants(lookup(slot, graph, name, false)) {
         Ok((candidates, alias)) => Named::Claimed { candidates, alias },
-        Err(day) => Named::New(day),
+        Err(id) => Named::New(id),
     }
 }
 
@@ -614,14 +596,18 @@ pub(super) fn journal_write_page(
     graph: &WholeGraph,
     day: JournalDate,
 ) -> Result<PageId, ErrorBody> {
-    let title = slot.store.config().journal_format().title(day);
-    if let Resolved::Existing { id, mut others } = lookup(slot, graph, &title, true) {
-        if !others.is_empty() {
-            others.insert(0, id);
-            return Err(several_claimants(&title, &others, false));
+    super::op_counts::count(&slot.root_key, super::op_counts::Op::Lookup);
+    let day = Day(day.ordinal_key());
+    if let Some(row) = graph.inventory(InventoryScope::JournalDay(day)).0.first() {
+        if let Resolved::Existing { id, others } = &row.target {
+            if !others.is_empty() {
+                let candidates: Vec<_> = std::iter::once(id).chain(others).cloned().collect();
+                return Err(several_claimants(&row.name, &candidates, false));
+            }
+            return Ok(id.clone());
         }
     }
-    Ok(slot.store.journal_id(Day(day.ordinal_key()), false))
+    Ok(slot.store.journal_id(day))
 }
 
 /// The refusal of a write whose page name several files (or alias owners)

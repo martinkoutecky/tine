@@ -38,8 +38,10 @@ fn move_twin_checks_use_the_published_name_answerer() {
     assert!(twin.contains("self.store.move_claimant(&entry.name, entry.kind)"),
         "I-12/I-25: a move consults the published identity index; exemplar store/snapshot.rs move_claimant");
     let snapshot = include_str!("../src/store/snapshot.rs");
+    let opening = include_str!("../src/store/name_owners.rs");
     assert!(
-        snapshot.contains("name_claimants(&snapshot.claimants, name, kind)"),
-        "I-12: move and WholeGraph resolve share name_claimants; exemplar store/snapshot.rs"
+        snapshot.contains(".claims(&snapshot.claimants)")
+            && opening.contains("identity.claims(claimants)"),
+        "I-12: move and resolution share OpeningName::claims"
     );
 }

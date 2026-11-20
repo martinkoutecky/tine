@@ -1313,7 +1313,12 @@ fn a_twin_claimed_name_keeps_its_icon_across_a_config_reload() {
         let moved = std::time::Instant::now();
         let format = |store: &Store| {
             let view = store.whole_graph().unwrap();
-            view.config.config.journal_file_name_format.clone()
+            view.config
+                .config
+                .journal_settings
+                .configured_patterns()
+                .0
+                .map(str::to_owned)
         };
         while format(&live.store).as_deref() != Some("yyyy-MM-dd") {
             assert!(

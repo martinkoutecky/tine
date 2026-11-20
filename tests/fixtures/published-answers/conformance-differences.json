@@ -60,6 +60,18 @@
     "published getPage page [[2026-11-02]]: live journals/2026_11_02.md, published null",
     "published getPage page [[2027-11-02]]: live journals/2027_11_02.md, published null"
   ],
+  "yl31-markdown-header-day-opening": [
+    "published getPage journal [[2020-11-02]]: live pages/!Diary.md, published null",
+    "published getPage journal [[2020_11_02]]: live pages/!Diary.md, published null",
+    "published getPage page [[2020-11-02]]: live pages/!Diary.md, published null",
+    "published getPage page [[2020_11_02]]: live pages/!Diary.md, published null"
+  ],
+  "yl32-org-header-day-opening": [
+    "published getPage journal [[2020-11-02]]: live pages/!Diary.org, published null",
+    "published getPage journal [[2020_11_02]]: live pages/!Diary.org, published null",
+    "published getPage page [[2020-11-02]]: live pages/!Diary.org, published null",
+    "published getPage page [[2020_11_02]]: live pages/!Diary.org, published null"
+  ],
   "yl4-two-digit-year-falls-back": [
     "published navigate [[Jan 1st, 2000]]: live (\"journal\", \"Day 2000-01-01\"), published (\"journal\", \"jan 1st, 2000\")"
   ]

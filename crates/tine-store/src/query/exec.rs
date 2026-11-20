@@ -577,8 +577,8 @@ impl Plan {
         config: &ParseConfig,
     ) -> bool {
         self.ref_classes(graph);
-        let atoms = EvalCache::default();
-        if self.skips(entry, facts, config, &atoms) {
+        let atoms = EvalCache::new(graph);
+        if self.skips(entry, facts, &atoms) {
             return false;
         }
         #[cfg(feature = "test-faults")]
@@ -609,13 +609,7 @@ impl Plan {
     /// of whose references denotes such a day. Both read only the page's
     /// reference set ([`PageFacts::refs`]); the day test parses only
     /// digit-bearing names, once per name per execution (`cache`).
-    fn skips(
-        &self,
-        entry: &PageEntry,
-        facts: &PageFacts,
-        config: &ParseConfig,
-        cache: &EvalCache,
-    ) -> bool {
+    fn skips(&self, entry: &PageEntry, facts: &PageFacts, cache: &EvalCache) -> bool {
         self.anchor == Anchor::Block
             && (required_refs(&self.filter).is_some_and(|operands| {
                 let classes = cache
@@ -628,14 +622,12 @@ impl Plan {
                             || class.has_days()
                                 && std::iter::once(&refs::normalize(&entry.name))
                                     .chain(facts.refs())
-                                    .any(|name| {
-                                        class.holds(name, |key| cache.reference_day(key, config))
-                                    })
+                                    .any(|name| class.holds(name, |key| cache.reference_day(key)))
                     }
                 })
             }) || required_reference_days(&self.filter).is_some_and(|preds| {
                 !facts.refs().iter().any(|name| {
-                    let day = cache.reference_day(name, config);
+                    let day = cache.reference_day(name);
                     day.is_some()
                         && preds.iter().any(|pred| {
                             eval::reference_date_pred(pred, day, self.today) == Some(true)
@@ -860,7 +852,7 @@ pub(crate) fn execute_cancellable(
     graph.with_pages(|pages| -> Result<(), StatisticsResourceLimit> {
         let candidates = candidates::Candidates::new(graph, pages, plan);
         let config = candidates.config();
-        let atoms = EvalCache::default();
+        let atoms = EvalCache::new(graph);
         atoms.spell_ref_classes(graph, &plan.filter);
         let Some(links) = plan.link_answers(graph, &candidates, config, &atoms, cancelled) else {
             stopped = true;
@@ -875,7 +867,7 @@ pub(crate) fn execute_cancellable(
                         return Ok(());
                     }
                     let facts = candidates.facts(entry, doc);
-                    if plan.skips(entry, &facts, config, &atoms) {
+                    if plan.skips(entry, &facts, &atoms) {
                         continue;
                     }
                     let mut hits = Vec::new();
@@ -1118,7 +1110,7 @@ fn count(graph: &ReadSnapshot, plan: &Plan, cancelled: &dyn Fn() -> bool) -> Opt
     graph.with_pages(|pages| {
         let candidates = candidates::Candidates::new(graph, pages, plan);
         let config = candidates.config();
-        let atoms = EvalCache::default();
+        let atoms = EvalCache::new(graph);
         atoms.spell_ref_classes(graph, &plan.filter);
         let links = plan.link_answers(graph, &candidates, config, &atoms, cancelled)?;
         let mut count = 0usize;
@@ -1128,7 +1120,7 @@ fn count(graph: &ReadSnapshot, plan: &Plan, cancelled: &dyn Fn() -> bool) -> Opt
                 return None;
             }
             let facts = candidates.facts(entry, doc);
-            if plan.skips(entry, &facts, config, &atoms) {
+            if plan.skips(entry, &facts, &atoms) {
                 continue;
             }
             let ctx = plan.ctx(entry, doc, &facts, config, &atoms, &links);

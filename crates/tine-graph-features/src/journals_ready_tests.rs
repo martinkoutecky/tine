@@ -1,5 +1,88 @@
 use super::*;
 
+#[test]
+fn first_feed_opens_header_day_claimants_before_and_after_load() {
+    let mut observations = Vec::new();
+    for (file, heading, bullet) in [
+        ("!Diary.md", "title::", "-"),
+        ("!Diary.org", "#+TITLE:", "*"),
+    ] {
+        for stem_twin in [true, false] {
+            let root = tempfile::tempdir().unwrap();
+            let pages = root.path().join("pages");
+            std::fs::create_dir(&pages).unwrap();
+            let pause = root.path().join(".tine-test-pause-load");
+            std::fs::write(&pause, "").unwrap();
+            std::fs::write(
+                pages.join(file),
+                format!("{heading} Nov 2nd, 2020\n\n{bullet} diary\n"),
+            )
+            .unwrap();
+            if stem_twin {
+                std::fs::write(pages.join("2020_11_02.md"), "- other claimant\n").unwrap();
+            }
+            let store = Store::open(root.path(), Default::default()).unwrap().0;
+            let day = Day(20201102);
+            let expected = format!("pages/{file}");
+            let observe = || {
+                let active = store.journal_id(day);
+                let feed = feed_page(&store, 3, None).unwrap();
+                let names = feed.pages.into_iter().map(|row| row.id).collect::<Vec<_>>();
+                let named = store
+                    .page_named("2020-11-02", tine_core::model::PageKind::Journal)
+                    .unwrap()
+                    .unwrap()
+                    .id;
+                (active, names, named)
+            };
+            let cold = observe();
+            assert!(matches!(store.is_graph_ready(), Ok(false)));
+            std::fs::remove_file(pause).unwrap();
+            store.whole_graph().unwrap();
+            let ready = observe();
+            store.close();
+            observations.push((expected, stem_twin, cold, ready));
+        }
+    }
+    for (expected, twin, cold, ready) in &observations {
+        let id = PageId::from(expected.as_str());
+        let answer = (id.clone(), vec![id.clone()], id);
+        assert_eq!(cold, &answer, "cold, stem twin: {twin}, {observations:?}");
+        assert_eq!(ready, &answer, "ready, stem twin: {twin}");
+    }
+}
+
+#[test]
+fn a_refused_yearless_title_keeps_file_and_reference_days_in_the_scrolled_window() {
+    let root = tempfile::tempdir().unwrap();
+    for dir in ["journals", "pages", "logseq"] {
+        std::fs::create_dir(root.path().join(dir)).unwrap();
+    }
+    for (file, text) in [
+        (
+            "logseq/config.edn",
+            "{:journal/page-title-format \"MM-dd\"}\n",
+        ),
+        ("journals/2021_11_02.md", "- newer\n"),
+        ("journals/2019_11_02.md", "- earlier file\n"),
+        ("pages/Inbox.md", "- [[2020-11-02]] [[11-02]]\n"),
+    ] {
+        std::fs::write(root.path().join(file), text).unwrap();
+    }
+    let store = Store::open(root.path(), Default::default()).unwrap().0;
+    let first = feed_page_through(&store, 1, None, None, true).unwrap();
+    assert_eq!(first.next_before_day, Some(20211102));
+    let scrolled = feed_page_through(&store, 3, first.next_before_day, None, true).unwrap();
+    let rows: Vec<_> = scrolled
+        .pages
+        .iter()
+        .map(|row| (row.doc.name.as_str(), row.doc.rev.is_some()))
+        .collect();
+    assert_eq!(rows, [("Nov 2nd, 2020", false), ("Nov 2nd, 2019", true)]);
+    assert!(scrolled.done);
+    store.close();
+}
+
 /// Hl2_0 review hold: the feed carried the graph's config restriction in the
 /// page's own `read_only`, so a Markdown journal stayed uneditable (and showed
 /// the Org banner) after the config was repaired. Like the page adapter, the
@@ -224,8 +307,7 @@ fn gf4_ready_feed_matches_legacy_days_bodies_and_cursors() {
             .collect();
         let mut days: BTreeMap<_, _> = entries.into_iter().collect();
         for day in referenced.iter().filter(|d| d.0 <= as_of_day) {
-            days.entry(*day)
-                .or_insert_with(|| store.journal_id(*day, false));
+            days.entry(*day).or_insert_with(|| store.journal_id(*day));
         }
         let by_id: BTreeMap<_, _> = days.iter().map(|(day, id)| (id.clone(), *day)).collect();
         let mut page = collect_feed_page(
@@ -283,7 +365,7 @@ fn gf4_ready_feed_matches_legacy_days_bodies_and_cursors() {
 /// Cost audit 2026-11-02 row 8 (D-10): a Journals scroll step on a loaded
 /// graph pages through the view's day index, never the journals directory,
 /// and answers exactly what the per-step listing answered; the first page
-/// still lists the directory once (unreadable entries, unpublished files).
+/// reports unreadable entries from the claim discovery.
 #[test]
 fn scroll_steps_page_from_the_day_index_and_match_the_listing() {
     for journals_enabled in [true, false] {
@@ -363,7 +445,11 @@ fn scroll_steps_page_from_the_day_index_and_match_the_listing() {
         };
         let listed = journal_listings();
         let opened = feed_page_through(&store, 3, None, None, true).unwrap();
-        assert_eq!(journal_listings() - listed, 1, "the first page lists once");
+        assert_eq!(
+            journal_listings() - listed,
+            0,
+            "the first page uses the published claims and their diagnostics"
+        );
         assert_eq!(
             opened.unreadable.len(),
             usize::from(cfg!(unix)),

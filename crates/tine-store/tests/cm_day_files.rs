@@ -77,8 +77,11 @@ fn a_date_named_pages_file_alone_is_the_day_and_stays_where_it_is() {
         );
     }
     // The day index and opening by name use the file that holds the day.
-    assert_eq!(store.journal_id(NOV_2, true).as_str(), day);
-    assert_eq!(store.journal_id(NOV_2, false).as_str(), day);
+    assert_eq!(store.journal_id(NOV_2).as_str(), day);
+    assert_eq!(
+        store.journal_file_openings(NOV_2).unwrap().0,
+        [(NOV_2, PageId::from(day.as_str()))]
+    );
     assert_eq!(
         opens(&store, "Nov 2nd, 2026", PageKind::Journal),
         Some((day.clone(), PageKind::Journal))
@@ -110,6 +113,49 @@ fn a_date_named_pages_file_alone_is_the_day_and_stays_where_it_is() {
 }
 
 #[test]
+fn unreadable_journal_and_page_keep_their_observed_day_and_an_encoded_journal_stem_stays_raw() {
+    let _guard = crate::integration_lock();
+    let root = tempfile::tempdir().unwrap();
+    for dir in ["journals", "pages", "logseq"] {
+        fs::create_dir(root.path().join(dir)).unwrap();
+    }
+    fs::write(
+        root.path().join("logseq/config.edn"),
+        "{:journal/page-title-format \"/yyyyMMdd/\"}\n",
+    )
+    .unwrap();
+    let journal = "journals/20261102.md";
+    let page = "pages/2026-11-03.md";
+    let encoded = "journals/2026%2D11%2D04.md";
+    for (file, content) in [
+        (journal, &b"\xff\n"[..]),
+        (page, &b"\xff\n"[..]),
+        (encoded, &b"title:: Nov 4th, 2026\n\n- raw\n"[..]),
+    ] {
+        fs::write(root.path().join(file), content).unwrap();
+    }
+    let store = Store::open(root.path(), Default::default()).unwrap().0;
+    let view = store.whole_graph().unwrap();
+    for (day, path) in [(NOV_2, journal), (Day(20261103), page)] {
+        assert_eq!(store.journal_id(day).as_str(), path);
+        assert!(view
+            .unreadable_files()
+            .iter()
+            .any(|(id, _)| id.as_str() == path));
+        let read = store.page_named(&day.0.to_string(), PageKind::Journal);
+        assert!(
+            matches!(read, Err(error) if !matches!(error, tine_store::StoreError::NotFound(_)))
+        );
+    }
+    assert_eq!(existing(&view.resolve("2026%2D11%2D04", false)), [encoded]);
+    assert!(matches!(
+        view.resolve("2026-11-04", true),
+        Resolved::Absent { .. }
+    ));
+    store.close();
+}
+
+#[test]
 fn with_both_files_the_journals_one_opens_and_the_other_is_a_visible_conflict() {
     let _guard = crate::integration_lock();
     let files = [
@@ -127,8 +173,8 @@ fn with_both_files_the_journals_one_opens_and_the_other_is_a_visible_conflict() 
     for (name, is_journal) in [("2026-11-02", false), ("Nov 2nd, 2026", true)] {
         assert_eq!(existing(&view.resolve(name, is_journal)), both, "{name}");
     }
-    assert_eq!(store.journal_id(NOV_2, true).as_str(), both[0]);
-    assert_eq!(store.journal_id(NOV_2, false).as_str(), both[0]);
+    assert_eq!(store.journal_id(NOV_2).as_str(), both[0]);
+    assert_eq!(store.journal_id(NOV_2).as_str(), both[0]);
     assert_eq!(
         opens(&store, "2026-11-02", PageKind::Page),
         Some((both[0].to_owned(), PageKind::Journal))
@@ -191,8 +237,8 @@ fn before_the_first_view_a_day_opens_the_same_file() {
         let early = (
             opens(&store, "Nov 2nd, 2026", PageKind::Journal),
             opens(&store, "2026-11-02", PageKind::Page),
-            store.journal_id(NOV_2, true).as_str().to_owned(),
-            store.journal_id(NOV_2, false).as_str().to_owned(),
+            store.journal_id(NOV_2).as_str().to_owned(),
+            store.journal_id(NOV_2).as_str().to_owned(),
         );
         fs::remove_file(pause).unwrap();
         let day = Some((expected.to_owned(), PageKind::Journal));
@@ -225,7 +271,7 @@ fn a_title_that_is_a_date_makes_the_file_that_day() {
         existing(&view.resolve("2026-11-02", false)),
         ["pages/meeting.md"]
     );
-    assert_eq!(store.journal_id(NOV_2, true).as_str(), "pages/meeting.md");
+    assert_eq!(store.journal_id(NOV_2).as_str(), "pages/meeting.md");
     assert!(matches!(
         view.resolve("meeting", false),
         Resolved::Absent { .. }
@@ -311,9 +357,9 @@ fn fallback_titles(day_file: &str) {
             opens(store, "11-02", PageKind::Page),
             Some(("pages/11-02.md".to_owned(), PageKind::Page))
         );
-        assert_eq!(store.journal_id(NOV_2, true).as_str(), day_file);
+        assert_eq!(store.journal_id(NOV_2).as_str(), day_file);
         assert_eq!(
-            store.journal_id(nov_2_2027, true).as_str(),
+            store.journal_id(nov_2_2027).as_str(),
             "journals/2027_11_02.md"
         );
     };
@@ -333,15 +379,17 @@ fn fallback_titles(day_file: &str) {
 /// a page and as a journal.
 fn day_answers(store: &Store, days: &[Day], names: &[&str]) -> Vec<String> {
     let view = store.whole_graph().unwrap();
-    let mut indexed = store.journal_days();
+    let mut indexed: Vec<_> = store
+        .journal_file_openings(Day(99991231))
+        .unwrap()
+        .0
+        .into_iter()
+        .map(|(day, _)| day)
+        .collect();
     indexed.sort();
     let mut out = vec![format!("indexed days {indexed:?}")];
     for day in days {
-        out.push(format!(
-            "{day:?}: active {}, index {}",
-            store.journal_id(*day, true).as_str(),
-            store.journal_id(*day, false).as_str()
-        ));
+        out.push(format!("{day:?}: {}", store.journal_id(*day).as_str()));
     }
     for name in names {
         for is_journal in [false, true] {
@@ -397,7 +445,7 @@ fn an_outside_retitle_moves_a_file_off_the_day_it_held() {
     let (nov_3, nov_4) = (Day(20261103), Day(20261104));
     // Ready first, so the retitle is an incremental update, not the load.
     store.whole_graph().unwrap();
-    assert_eq!(store.journal_id(nov_3, false).as_str(), file);
+    assert_eq!(store.journal_id(nov_3).as_str(), file);
     fs::write(
         dir.path().join(file),
         "title:: 2026-11-04\n\n- notes, retitled\n",
@@ -420,15 +468,9 @@ fn an_outside_retitle_moves_a_file_off_the_day_it_held() {
         cold_answers(dir.path(), &[file], &days, &names),
         "incremental after the retitle equals a cold open"
     );
-    assert_eq!(
-        store.journal_id(nov_3, false).as_str(),
-        "journals/2026_11_03.md"
-    );
-    assert_eq!(
-        store.journal_id(nov_3, true).as_str(),
-        "journals/2026_11_03.md"
-    );
-    assert_eq!(store.journal_id(nov_4, false).as_str(), file);
+    assert_eq!(store.journal_id(nov_3).as_str(), "journals/2026_11_03.md");
+    assert_eq!(store.journal_id(nov_3).as_str(), "journals/2026_11_03.md");
+    assert_eq!(store.journal_id(nov_4).as_str(), file);
 }
 
 /// Two pages files titled by one full date share that day; the winner
@@ -446,7 +488,7 @@ fn deleting_a_day_winner_promotes_its_twin_under_the_fallback_title() {
         (rels[2], "title:: 2026-11-02\n\n- b\n"),
     ]);
     store.whole_graph().unwrap();
-    assert_eq!(store.journal_id(NOV_2, false).as_str(), "pages/A.md");
+    assert_eq!(store.journal_id(NOV_2).as_str(), "pages/A.md");
     fs::remove_file(dir.path().join(rels[1])).unwrap();
     settle(&store, "outside delete", |store| {
         let view = store.whole_graph().unwrap();
@@ -459,7 +501,7 @@ fn deleting_a_day_winner_promotes_its_twin_under_the_fallback_title() {
         cold_answers(dir.path(), &rels, &days, &names),
         "incremental after the delete equals a cold open"
     );
-    assert_eq!(store.journal_id(NOV_2, false).as_str(), "pages/B.md");
+    assert_eq!(store.journal_id(NOV_2).as_str(), "pages/B.md");
     assert!(!dir.path().join(rels[1]).exists(), "nothing recreates A");
 }
 
@@ -475,10 +517,7 @@ fn a_day_with_no_file_is_created_in_the_journals_directory() {
             other => panic!("{name}: {other:?}"),
         }
     }
-    assert_eq!(
-        store.journal_id(NOV_2, true).as_str(),
-        "journals/2026_11_02.md"
-    );
+    assert_eq!(store.journal_id(NOV_2).as_str(), "journals/2026_11_02.md");
 }
 
 /// Re-scan until the incremental answers equal a cold open's, or fail with
@@ -513,21 +552,21 @@ fn a_retitle_to_another_year_moves_the_day_under_the_fallback_title() {
     // One file, retitled to the other year.
     let (dir, store) = graph(&[(rels[0], config), (rels[1], "title:: 2026-11-02\n\n- a\n")]);
     store.whole_graph().unwrap();
-    assert_eq!(store.journal_id(NOV_2, false).as_str(), rels[1]);
+    assert_eq!(store.journal_id(NOV_2).as_str(), rels[1]);
     fs::write(
         dir.path().join(rels[1]),
         "title:: 2027-11-02\n\n- a, retitled\n",
     )
     .unwrap();
     settle_to_cold(&store, dir.path(), &rels, &days, &names);
-    assert_eq!(store.journal_id(nov_2_2027, false).as_str(), rels[1]);
+    assert_eq!(store.journal_id(nov_2_2027).as_str(), rels[1]);
     // A second file titled by the same date of another year.
     let (dir, store) = graph(&[(rels[0], config), (rels[1], "title:: 2026-11-02\n\n- a\n")]);
     store.whole_graph().unwrap();
     fs::write(dir.path().join(rels[2]), "title:: 2027-11-02\n\n- b\n").unwrap();
     settle_to_cold(&store, dir.path(), &rels, &days, &names);
-    assert_eq!(store.journal_id(NOV_2, false).as_str(), rels[1]);
-    assert_eq!(store.journal_id(nov_2_2027, false).as_str(), rels[2]);
+    assert_eq!(store.journal_id(NOV_2).as_str(), rels[1]);
+    assert_eq!(store.journal_id(nov_2_2027).as_str(), rels[2]);
 }
 
 /// The graph `files`, opened with its load paused: `page_named` answers from
@@ -580,11 +619,7 @@ fn a_title_variant_in_a_days_bucket_opens_that_day() {
         let want = Some((day.to_owned(), PageKind::Journal));
         let (dir, store, pause) = paused_graph(&files);
         assert_eq!(opens(&store, name, PageKind::Page), want, "{format}: cold");
-        assert_eq!(
-            store.journal_id(NOV_2, false).as_str(),
-            day,
-            "{format}: cold day"
-        );
+        assert_eq!(store.journal_id(NOV_2).as_str(), day, "{format}: cold day");
         fs::remove_file(pause).unwrap();
         let view = store.whole_graph().unwrap();
         assert_eq!(
@@ -597,11 +632,7 @@ fn a_title_variant_in_a_days_bucket_opens_that_day() {
             want,
             "{format}: ready open"
         );
-        assert_eq!(
-            store.journal_id(NOV_2, false).as_str(),
-            day,
-            "{format}: ready day"
-        );
+        assert_eq!(store.journal_id(NOV_2).as_str(), day, "{format}: ready day");
         drop(dir);
     }
 }
@@ -622,7 +653,7 @@ fn a_journal_claimed_by_its_folded_stem_keeps_the_day_after_an_arrival() {
     ]);
     store.whole_graph().unwrap();
     assert_eq!(
-        store.journal_id(NOV_2, false).as_str(),
+        store.journal_id(NOV_2).as_str(),
         rels[2],
         "the folded stem already claims the day"
     );
@@ -638,8 +669,8 @@ fn a_journal_claimed_by_its_folded_stem_keeps_the_day_after_an_arrival() {
         cold_answers(dir.path(), &rels, &days, &names),
         "incremental after the arrival equals a cold open"
     );
-    assert_eq!(store.journal_id(NOV_2, false).as_str(), rels[2]);
-    assert_eq!(store.journal_id(NOV_2, true).as_str(), rels[2]);
+    assert_eq!(store.journal_id(NOV_2).as_str(), rels[2]);
+    assert_eq!(store.journal_id(NOV_2).as_str(), rels[2]);
 }
 
 #[test]
@@ -688,11 +719,7 @@ fn a_journal_file_named_by_a_refused_title_format_keeps_its_day() {
         want,
         "cold"
     );
-    assert_eq!(
-        store.journal_id(NOV_2, true).as_str(),
-        legacy,
-        "cold ensure"
-    );
+    assert_eq!(store.journal_id(NOV_2).as_str(), legacy, "cold ensure");
     fs::remove_file(pause).unwrap();
     let view = store.whole_graph().unwrap();
     assert_eq!(existing(&view.resolve("Nov 2nd, 2026", true)), [legacy]);
@@ -701,16 +728,8 @@ fn a_journal_file_named_by_a_refused_title_format_keeps_its_day() {
         want,
         "ready"
     );
-    assert_eq!(
-        store.journal_id(NOV_2, true).as_str(),
-        legacy,
-        "ready ensure"
-    );
-    assert_eq!(
-        store.journal_id(NOV_2, false).as_str(),
-        legacy,
-        "ready index"
-    );
+    assert_eq!(store.journal_id(NOV_2).as_str(), legacy, "ready ensure");
+    assert_eq!(store.journal_id(NOV_2).as_str(), legacy, "ready index");
     match view.resolve("2.11.26", false) {
         Resolved::Absent { id } => assert_eq!(id.as_str(), "pages/2%2E11%2E26.md"),
         other => panic!("typed 2.11.26: {other:?}"),
@@ -740,8 +759,8 @@ fn swapped_numeric_formats_keep_file_days_and_read_text_by_the_title() {
     let (dir, store, pause) = paused_graph(&files);
     assert_eq!(store.config().journal_format().title_refusal(), None);
     let check = |store: &Store, when: &str| {
-        assert_eq!(store.journal_id(NOV_2, true).as_str(), nov, "{when}");
-        assert_eq!(store.journal_id(feb_11, true).as_str(), feb, "{when}");
+        assert_eq!(store.journal_id(NOV_2).as_str(), nov, "{when}");
+        assert_eq!(store.journal_id(feb_11).as_str(), feb, "{when}");
         for (typed, file) in [("2026_02_11", nov), ("2026_11_02", feb)] {
             assert_eq!(
                 opens(store, typed, PageKind::Journal),

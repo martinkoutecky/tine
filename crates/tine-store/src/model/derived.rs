@@ -44,7 +44,7 @@
 //! installed.
 
 use super::entry_identity::{fold_leaf, Identity, Memo, Spellings};
-use super::page_identity::{list_graph_pages, list_graph_pages_kind, listed_entry, page_claimants};
+use super::page_identity::{list_graph_pages, listed_entry};
 use super::*;
 use std::collections::{BTreeSet, HashSet};
 use std::sync::atomic::{AtomicU64, Ordering};
@@ -169,14 +169,12 @@ pub(crate) struct Derived {
     /// without re-walking the graph on every keystroke.
     /// A publication's patched list is adopted as is ([`Graph::adopt_name_index`]).
     page_list_cache: RwLock<Option<(u64, Arc<EntryList>)>>,
-    /// Memoized exact `find_entry(name, kind)` claimants, keyed by
-    /// `cache_gen`. It keeps `find_entry`'s duplicate selection: the
-    /// date-stem file first, else the first match of the walk.
+    /// Typed claim buckets from a publication or a stamped cold walk.
     find_entry_cache: RwLock<Option<(u64, FindEntryIndex)>>,
-    /// The launch pass's complete effective-name listing (duplicate journal
-    /// days included), keyed by `cache_gen`: the first publication's name
-    /// index is built from it instead of a second walk.
-    launch_listing: RwLock<Option<(u64, Certified)>>,
+    cold_claim_walk: std::sync::Mutex<()>,
+    /// The launch pass's page list and typed claim buckets, keyed by
+    /// `cache_gen`. The first publication adopts both roots.
+    launch_names: RwLock<Option<(u64, NameRoots)>>,
     /// `path → content_rev` of the bytes each cached document was parsed
     /// from. Invariant: an entry exists IFF the page is cached, and
     /// `disk_revs[path] == content_rev(disk bytes)` ⟹ the cached doc
@@ -212,7 +210,8 @@ impl Default for Derived {
             discovery_errors: RwLock::new(Vec::new()),
             page_list_cache: RwLock::new(None),
             find_entry_cache: RwLock::new(None),
-            launch_listing: RwLock::new(None),
+            cold_claim_walk: std::sync::Mutex::new(()),
+            launch_names: RwLock::new(None),
             disk_revs: RwLock::new(HashMap::new()),
             vcs_anchored: RwLock::new(HashSet::new()),
             touched: Mutex::new(BTreeSet::new()),
@@ -318,18 +317,14 @@ impl Graph {
         entry: &PageEntry,
         except: Option<&Path>,
     ) -> Option<PathBuf> {
-        let claim = |e: &PageEntry| claimant_key(&(e.kind, tine_core::refs::page_key(&e.name)));
+        let claim = Claim::of(entry);
         self.unindexed_held_keys().into_iter().find_map(|key| {
             let path = self.root.join(self.held.spellings().spelling(&key));
             if path == entry.path || except == Some(path.as_path()) {
                 return None;
             }
             let other = self.page_entry_in(&path, None)?;
-            let same = match (entry.date_key, other.date_key) {
-                (Some(day), Some(other_day)) => day == other_day,
-                _ => claim(entry) == claim(&other),
-            };
-            same.then_some(path)
+            (claim == Claim::of(&other)).then_some(path)
         })
     }
 
@@ -598,22 +593,9 @@ impl Graph {
         entries.retain(|entry| self.disk_sourced_in(&mut memo, &entry.path));
         #[cfg(test)]
         crate::store::pause_at_hook(&self.certify_pause);
-        let formats = (
-            self.current_journal_format(),
-            self.journals_path(),
-            self.current_config().file_name_format,
-        );
         for (key, bytes) in self.held.published() {
             if let Some(entry) = self.owned_entry(&key, &bytes) {
-                // As the listing: an ordinary-kind listing keeps a day only a
-                // `title::` names.
-                let title_day = kind == Some(PageKind::Page)
-                    && entry.kind == PageKind::Journal
-                    && !super::page_identity::journal_listing_covers(
-                        (&formats.0, &formats.1, formats.2),
-                        &entry.path,
-                    );
-                if kind.is_none_or(|kind| kind == entry.kind) || title_day {
+                if kind.is_none_or(|kind| kind == entry.kind) {
                     entries.push(entry);
                 }
             }
@@ -749,14 +731,9 @@ impl Graph {
         }
     }
 
-    /// A full listing's discovery failures for `kind` (or every kind)
-    /// replace that kind's previous ones; held pages record none.
-    pub(super) fn replace_discovery_errors(
-        &self,
-        kind: Option<PageKind>,
-        failures: Vec<(crate::FileId, crate::IoError)>,
-    ) {
-        let journals = self.journals_path();
+    /// Replace discovery failures covered by the listing. Held pages
+    /// record none.
+    pub(super) fn replace_discovery_errors(&self, failures: Vec<(crate::FileId, crate::IoError)>) {
         let _cache = self.derived.cache.read().unwrap();
         let mut memo = Memo::default();
         let failures: Vec<_> = failures
@@ -770,13 +747,7 @@ impl Graph {
                 .map(|error| (id, error))
             })
             .collect();
-        let mut known = self.derived.discovery_errors.write().unwrap();
-        known.retain(|(id, _)| match kind {
-            None => false,
-            Some(PageKind::Journal) => !self.root.join(id.as_str()).starts_with(&journals),
-            Some(PageKind::Page) => self.root.join(id.as_str()).starts_with(&journals),
-        });
-        known.extend(failures);
+        *self.derived.discovery_errors.write().unwrap() = failures;
     }
 
     // ---- whole-cache installs -----------------------------------------------
@@ -947,16 +918,6 @@ impl Graph {
         }
         drop(guard);
         Ok(())
-    }
-
-    /// The launch build's listing, installed at generation `gen` (R2): the
-    /// page list memo and the first publication's name inventory.
-    pub(super) fn install_launch_listing(&self, gen: u64, named: Vec<PageEntry>) {
-        let named = self.certify(named, None);
-        let deduped = dedup_journal_days(&self.current_config().journals_dir, named.0.clone());
-        *self.derived.page_list_cache.write().unwrap() =
-            Some((gen, Arc::new(EntryList::from(deduped.as_slice()))));
-        *self.derived.launch_listing.write().unwrap() = Some((gen, named));
     }
 
     /// Why a checkpoint's rows would not install now (the checks

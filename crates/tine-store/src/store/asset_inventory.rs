@@ -18,8 +18,8 @@ impl Snapshot {
         let mut unparsed = Arc::clone(previous);
         for rel in changed {
             let path = graph.root.join(rel);
-            let set_aside =
-                self.name_by_path.contains_key(&path) && !self.graph.asset_cache_covers(rel, &path);
+            let set_aside = self.claim_by_path.contains_key(&PageId::from(rel.as_str()))
+                && !self.graph.asset_cache_covers(rel, &path);
             if set_aside != unparsed.contains_key(&path) {
                 let map = Arc::make_mut(&mut unparsed);
                 if set_aside {
@@ -37,10 +37,12 @@ impl Snapshot {
     fn unparsed(&self, graph: &Graph) -> &Arc<SharedMap<PathBuf, ()>> {
         let unparsed = self.unparsed.get_or_init(|| {
             Arc::new(
-                self.name_by_path
+                self.claim_by_path
                     .iter()
-                    .filter(|(path, _)| !self.graph.asset_cache_covers(&graph.rel_path(path), path))
-                    .map(|(path, _)| (path.clone(), ()))
+                    .filter_map(|(id, _)| {
+                        let path = graph.root.join(id.as_str());
+                        (!self.graph.asset_cache_covers(id.as_str(), &path)).then_some((path, ()))
+                    })
                     .collect(),
             )
         });
@@ -62,10 +64,13 @@ impl Snapshot {
                 })
                 .map(|(entry, _)| &entry.path)
                 .collect();
-            let scanned: Vec<_> = (self.name_by_path.iter())
-                .filter(|(path, _)| !parsed.contains(path))
-                .map(|(path, _)| path.clone())
+            let mut scanned: Vec<_> = self
+                .claim_by_path
+                .iter()
+                .map(|(id, _)| graph.root.join(id.as_str()))
+                .filter(|path| !parsed.contains(path))
                 .collect();
+            scanned.sort();
             let carried: Vec<_> = unparsed.iter().map(|(path, _)| path.clone()).collect();
             assert_eq!(
                 carried, scanned,

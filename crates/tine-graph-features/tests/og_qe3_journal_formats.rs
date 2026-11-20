@@ -28,7 +28,7 @@ fn config_resolves_modern_then_legacy_then_default() {
         ),
     ] {
         assert_eq!(
-            Config::parse(edn).journal_page_title_format.as_deref(),
+            Config::parse(edn).journal_settings.configured_patterns().1,
             expected,
             "{edn}"
         );
@@ -70,7 +70,7 @@ fn feed_and_routed_page_use_every_og_format_without_rewriting_files() {
             let feed = journals::feed_page(&store, 10, None).unwrap();
             assert_eq!(feed.pages.len(), 1, "{pattern}/{ext}");
             assert_eq!(feed.pages[0].doc.title, title, "{pattern}/{ext}");
-            let routed = store.page(&store.journal_id(Day(20240105), false)).unwrap();
+            let routed = store.page(&store.journal_id(Day(20240105))).unwrap();
             assert_eq!(routed.doc.title, title);
             assert!(routed
                 .doc
@@ -94,7 +94,12 @@ fn settings_modern_write_preserves_legacy_key_and_wins_after_reopen() {
     fs::write(&path, original).unwrap();
     let store = Store::open(dir.path(), Default::default()).unwrap().0;
     assert_eq!(
-        store.config().config.journal_page_title_format.as_deref(),
+        store
+            .config()
+            .config
+            .journal_settings
+            .configured_patterns()
+            .1,
         Some("E, dd-MM-yyyy")
     );
     config::set_journal_page_title_format(&store, "yyyy-MM-dd").unwrap();
@@ -103,7 +108,12 @@ fn settings_modern_write_preserves_legacy_key_and_wins_after_reopen() {
     assert!(written.contains(":date-formatter \"E, dd-MM-yyyy\""));
     let store = Store::open(dir.path(), Default::default()).unwrap().0;
     assert_eq!(
-        store.config().config.journal_page_title_format.as_deref(),
+        store
+            .config()
+            .config
+            .journal_settings
+            .configured_patterns()
+            .1,
         Some("yyyy-MM-dd")
     );
     store.close();

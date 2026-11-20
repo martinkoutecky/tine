@@ -92,43 +92,38 @@ impl WholeGraph {
     /// See [`WholeGraph::corpus`]: the parsed pages whose `page_key` is
     /// `name`'s, in page order.
     pub(super) fn corpus_named(&self, name: &str) -> tine_core::Corpus {
-        let key = tine_core::refs::page_key(name);
+        let opening = crate::model::OpeningName::new(&self.journal_format, name, false);
+        let key = &opening.key;
         let mut found: Vec<(usize, CorpusPage)> = Vec::new();
-        for journal in [false, true] {
-            let Some(claimants) = self.claimants.get(&(journal, key.clone())) else {
+        for claimant in opening.claims(&self.claimants) {
+            let Some((slot, (entry, document))) = self.graph.parsed_page(claimant.rel_path_str())
+            else {
                 continue;
             };
-            for claimant in claimants {
-                let Some((slot, (entry, document))) =
-                    self.graph.parsed_page(claimant.rel_path_str())
-                else {
-                    continue;
-                };
-                let Some(id) = entry.rel_path.clone() else {
-                    continue;
-                };
-                if tine_core::refs::page_key(&entry.name) != key
-                    || found.iter().any(|(known, _)| *known == slot)
-                {
-                    continue;
-                }
-                found.push((
-                    slot,
-                    CorpusPage {
-                        id,
-                        name: entry.name.clone(),
-                        kind: entry.kind,
-                        document: Arc::clone(document),
-                    },
-                ));
+            let Some(id) = entry.rel_path.clone() else {
+                continue;
+            };
+            if tine_core::refs::page_key(&entry.name) != *key
+                || found.iter().any(|(known, _)| *known == slot)
+            {
+                continue;
             }
+            found.push((
+                slot,
+                CorpusPage {
+                    id,
+                    name: entry.name.clone(),
+                    kind: entry.kind,
+                    document: Arc::clone(document),
+                },
+            ));
         }
         found.sort_by_key(|(slot, _)| *slot);
         #[cfg(test)]
         {
             let scanned: Vec<_> = (self.graph.pages_in_order())
                 .filter(|(entry, _)| {
-                    entry.rel_path.is_some() && tine_core::refs::page_key(&entry.name) == key
+                    entry.rel_path.is_some() && tine_core::refs::page_key(&entry.name) == *key
                 })
                 .map(|(entry, _)| entry.rel_path_str().to_owned())
                 .collect();

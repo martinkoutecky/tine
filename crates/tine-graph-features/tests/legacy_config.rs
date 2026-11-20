@@ -188,7 +188,10 @@ fn set_journal_page_title_format_round_trips() {
         "other keys clobbered: {after}"
     );
     assert_eq!(
-        Config::parse(&after).journal_page_title_format.as_deref(),
+        Config::parse(&after)
+            .journal_settings
+            .configured_patterns()
+            .1,
         Some("yyyy-MM-dd")
     );
     config::set_journal_page_title_format(&store, "MMMM do, yyyy").unwrap();

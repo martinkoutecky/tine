@@ -1,0 +1,8 @@
+{
+  "config": { "journalTitleFormat": "MM-dd" },
+  "files": {
+    "pages/Inbox.md": "alias:: 11-02\n\n- the inbox\n",
+    "pages/Notes.md": "- [[11-02]]\n"
+  },
+  "navigate": ["11-02"]
+}

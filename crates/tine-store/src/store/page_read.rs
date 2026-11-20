@@ -418,10 +418,7 @@ impl Store {
             .is_some_and(|snapshot| {
                 snapshot
                     .claimants
-                    .get(&(
-                        entry.kind == PageKind::Journal,
-                        tine_core::refs::page_key(&entry.name),
-                    ))
+                    .get(&crate::model::Claim::of(&entry))
                     .is_some_and(|claimants| claimants.iter().any(|claimant| claimant.path == path))
             });
         let raced = self.watch.note_own(&[(id.file(), Some(rev.clone()))]);

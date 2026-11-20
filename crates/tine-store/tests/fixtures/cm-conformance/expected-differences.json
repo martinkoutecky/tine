@@ -541,6 +541,12 @@
       ],
       "yl3-valid-alternate-title": [
         "frontend all pages: row journals/2026_11_02.md (count 1) owns no model page"
+      ],
+      "yl31-markdown-header-day-opening": [
+        "frontend all pages: row pages/!Diary.md (count 1) owns no model page"
+      ],
+      "yl32-org-header-day-opening": [
+        "frontend all pages: row pages/!Diary.org (count 1) owns no model page"
       ]
     }
   },
@@ -788,6 +794,14 @@
       ],
       "yl3-valid-alternate-title": [
         "pages/physical.md: launch walk \"physical\", answer Some(\"02.11.2026\")"
+      ],
+      "yl31-markdown-header-day-opening": [
+        "pages/!Diary.md: launch walk \"!Diary\", answer Some(\"Nov 2nd, 2020\")",
+        "pages/Notes.md: launch walk \"Notes\", answer Some(\"Nov 3rd, 2020\")"
+      ],
+      "yl32-org-header-day-opening": [
+        "pages/!Diary.org: launch walk \"!Diary\", answer Some(\"Nov 2nd, 2020\")",
+        "pages/Notes.org: launch walk \"Notes\", answer Some(\"Nov 3rd, 2020\")"
       ],
       "yl5-slash-date-under-alternate-title": [
         "pages/dayphysical.md: launch walk \"dayphysical\", answer Some(\"26.10.2026\")"
@@ -1288,6 +1302,11 @@
       "yl29-slash-header-org": [],
       "yl3-valid-alternate-title": [],
       "yl30-folded-title-refusal": [],
+      "yl31-markdown-header-day-opening": [],
+      "yl32-org-header-day-opening": [],
+      "yl33-fileless-folded-day": [],
+      "yl34-refused-title-ordinary-alias": [],
+      "yl35-alias-only-tree-prefix": [],
       "yl4-two-digit-year-falls-back": [],
       "yl5-slash-date-under-alternate-title": [],
       "yl6-slash-date-under-fallback-title": [],

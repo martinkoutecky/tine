@@ -25,6 +25,79 @@ fn proposal(from: &str, to: &str) -> JournalFilenameMigration {
 }
 
 #[test]
+fn folded_stem_day_claims_block_duplicate_migrations() {
+    let _integration_guard = crate::integration_lock();
+    for (format, folded, twin) in [
+        ("/yyyyMMdd/", "20261102.md", "2026_11_02.md"),
+        ("É yyyy_MM_dd", "é 2026_11_02.md", "É 2026_11_02.org"),
+        ("É yyyy_MM_dd", "E\u{301} 2026_11_02.md", "É 2026_11_02.org"),
+        ("É yyyy_MM_dd", "e\u{301} 2026_11_02.md", "É 2026_11_02.org"),
+    ] {
+        let root = tempfile::tempdir().unwrap();
+        for dir in ["journals", "logseq"] {
+            fs::create_dir(root.path().join(dir)).unwrap();
+        }
+        fs::write(
+            root.path().join("logseq/config.edn"),
+            format!("{{:journal/page-title-format \"{format}\"}}\n"),
+        )
+        .unwrap();
+        // In the composed/lowercase case the twins use different extensions
+        // so they can coexist on case-insensitive and normalizing volumes.
+        fs::write(root.path().join("journals").join(folded), "- folded\n").unwrap();
+        fs::write(root.path().join("journals").join(twin), "- twin\n").unwrap();
+        let store = Store::open(root.path(), Default::default()).unwrap().0;
+        assert_eq!(
+            journals::journal_conflicts(&store)
+                .unwrap()
+                .iter()
+                .map(|day| day.files.len())
+                .collect::<Vec<_>>(),
+            [2],
+            "{format}: {folded}"
+        );
+        assert!(
+            journals::journal_filename_migrations(&store)
+                .unwrap()
+                .is_empty(),
+            "{format}: {folded}"
+        );
+        store.close();
+    }
+}
+
+#[test]
+fn migration_omits_a_free_destination_that_reads_as_another_century() {
+    let _integration_guard = crate::integration_lock();
+    let root = tempfile::tempdir().unwrap();
+    for dir in ["journals", "logseq"] {
+        fs::create_dir(root.path().join(dir)).unwrap();
+    }
+    fs::write(
+        root.path().join("logseq/config.edn"),
+        "{:journal/file-name-format \"d.M.yy\"}\n",
+    )
+    .unwrap();
+    for name in ["Nov 2nd, 1926.md", "Nov 3rd, 2026.md"] {
+        fs::write(root.path().join("journals").join(name), "- entry\n").unwrap();
+    }
+    let store = std::sync::Arc::new(Store::open(root.path(), Default::default()).unwrap().0);
+    assert_eq!(
+        journals::journal_filename_migrations(&store).unwrap(),
+        [proposal("Nov 3rd, 2026.md", "3.11.26.md")]
+    );
+    let host = crate::test_host(&store);
+    let stale = [proposal("Nov 2nd, 1926.md", "2.11.26.md")];
+    let applied = journals::migrate_journal_filenames(&store, &host, &stale).unwrap();
+    assert_eq!(applied.migrated, 0);
+    assert_eq!(applied.skipped[0].file, "Nov 2nd, 1926.md");
+    assert!(!root.path().join("journals/2.11.26.md").exists());
+    assert!(root.path().join("journals/Nov 2nd, 1926.md").is_file());
+    drop(host);
+    store.close();
+}
+
+#[test]
 fn apply_renames_only_the_confirmed_proposals() {
     let _integration_guard = crate::integration_lock();
     let (root, store) = fixture("confirmed", &["Jun 19th, 2026.md", "Jun 21st, 2026.md"]);

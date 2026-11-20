@@ -45,9 +45,7 @@ pub struct PageInventoryEntryWire {
     pub is_journal: bool,
     pub day: Option<i64>,
     pub target: ResolvedWire,
-    /// What a `[[name]]` link opens when that is not this entry itself
-    /// (`WholeGraph::link_target`): sent only then, so most entries cost no
-    /// bytes. `PageRef` routes by it; the frontend decides nothing itself.
+    /// The native opening for `[[name]]`, as read by `PageRef`.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub link: Option<LinkWire>,
     /// Listed only because a listed name lies under it (`n` for `n/y`):

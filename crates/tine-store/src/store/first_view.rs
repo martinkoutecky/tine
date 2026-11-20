@@ -1,5 +1,4 @@
-//! Publications before the first complete view (BqbeQ, D-20261019-B6), and
-//! the journal-day index they keep current.
+//! Publications before the first complete view (BqbeQ, D-20261019-B6).
 //!
 //! While the initial load builds the graph and no view exists yet (no
 //! launch checkpoint is served), capturing a view would build the whole
@@ -82,19 +81,6 @@ impl Store {
     pub(crate) fn deferred_rev(&self, file: &FileId) -> Option<Option<FileRev>> {
         self.changes.deferred.lock().unwrap().last_rev(file)
     }
-
-    /// A journal file appeared where no publication will name it.
-    pub(crate) fn refresh_journal_names(&self) {
-        self.changes.refresh_journal_names();
-    }
-
-    pub(crate) fn refresh_journal_ids(&self) {
-        let found = journal_ids_from_entries(
-            &self.graph.current_config().journals_dir,
-            self.graph.list_pages_shared().as_ref(),
-        );
-        *self.journal_ids.lock().unwrap() = found;
-    }
 }
 
 impl ChangeFeed {
@@ -105,29 +91,15 @@ impl ChangeFeed {
             && self.snapshot.read().unwrap().is_none()
     }
 
-    /// The day index from the journal directory's file names (no file opened).
-    fn refresh_journal_names(&self) {
-        *self.journal_ids.lock().unwrap() = journal_ids_from_entries(
-            &self.graph.current_config().journals_dir,
-            &self.graph.scan_journal_names(),
-        );
-    }
-
     /// Defer a publication (see the module doc): a transaction's, or a
-    /// watcher observation's. A journal file created or removed updates the
-    /// day index from the journal directory's file names (no file opened),
-    /// so `journal_id` names it before the first view. The caller holds the
-    /// writer.
+    /// watcher observation's. The caller holds the writer.
     pub(crate) fn defer_publication(
         &self,
         origin: Origin,
         mut files: Vec<(FileId, ChangeKind, Option<FileRev>)>,
         mut pages: Vec<(FileId, PageKind, String)>,
-        (raced, journal_set_changed): (HashSet<PathBuf>, bool),
+        raced: HashSet<PathBuf>,
     ) {
-        if journal_set_changed {
-            self.refresh_journal_names();
-        }
         let mut deferred = self.deferred.lock().unwrap();
         deferred.any = true;
         // An echo of the deferred change before it (a released hold rereads
@@ -229,30 +201,6 @@ impl ChangeFeed {
             watch.reconcile_raced(&change.raced);
         }
     }
-}
-
-/// Each day's opening file among `entries` (a journal-kind entry with a
-/// day, in any directory, CM SPEC §2.1), by the claimant order with the
-/// configured `journals_dir` first.
-pub(crate) fn journal_ids_from_entries<'a>(
-    journals_dir: &str,
-    entries: impl IntoIterator<Item = &'a PageEntry>,
-) -> HashMap<Day, PageId> {
-    let mut claimants: HashMap<Day, Vec<PageEntry>> = HashMap::new();
-    for entry in entries {
-        if entry.kind == PageKind::Journal {
-            if let Some(day) = entry.date_key {
-                claimants.entry(Day(day)).or_default().push(entry.clone());
-            }
-        }
-    }
-    claimants
-        .into_iter()
-        .filter_map(|(day, mut entries)| {
-            entries.sort_by(|a, b| crate::model::compare_page_claimants(journals_dir, a, b));
-            entries.into_iter().next()?.rel_path.map(|id| (day, id))
-        })
-        .collect()
 }
 
 /// Run a publication that builds the graph-wide indexes from the whole page

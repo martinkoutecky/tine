@@ -79,7 +79,7 @@ pub(crate) fn page_file_claim(
     format: &JournalFormat,
     name: String,
 ) -> (String, PageKind, Option<i64>) {
-    match format.parse_text(&name) {
+    match format.file_claim_day(&name, false) {
         Some(day) => (
             format.title(day),
             PageKind::Journal,
@@ -101,78 +101,60 @@ pub(crate) struct OpeningName {
     pub(crate) key: String,
     pub(crate) day: Option<tine_core::date::JournalDate>,
     pub(crate) undated_journal: bool,
-    day_key: Option<String>,
 }
 
 impl OpeningName {
     pub(crate) fn new(format: &JournalFormat, name: &str, as_journal: bool) -> Self {
         let key = tine_core::refs::page_key(name);
         let day = format.parse_key(&key);
-        let day_key = day.map(|day| tine_core::refs::page_key(&format.title(day)));
         let undated_journal = as_journal && day.is_none();
         Self {
             key,
             day,
             undated_journal,
-            day_key,
         }
+    }
+
+    pub(crate) fn claim(&self) -> Claim {
+        self.day.map_or_else(
+            || Claim::Name(self.key.clone()),
+            |day| Claim::Day(day.ordinal_key()),
+        )
     }
 
     /// The physical holders in a complete claimant index. The preferred
     /// file ranks first. Visits only this identity's buckets and does no I/O.
-    pub(crate) fn claims<'a>(
-        &self,
-        claimants: &'a ClaimantMap,
-        journals_dir: &str,
-    ) -> impl Iterator<Item = &'a PageEntry> + use<'a> {
-        let key = self.day_key.as_ref().unwrap_or(&self.key);
-        let day = self.day.map(|day| day.ordinal_key());
-        let bucket = |journal| {
-            claimants
-                .get(&(journal, key.clone()))
-                .map(Vec::as_slice)
-                .unwrap_or_default()
-        };
-        let journals = bucket(true);
-        let pages = if day.is_none() && (!self.undated_journal || !journals.is_empty()) {
-            bucket(false)
-        } else {
-            &[]
-        };
-        let held = move |entry: &&PageEntry| entry.date_key == day;
-        let first = match (pages.first(), journals.first()) {
-            (Some(page), Some(journal)) => {
-                compare_page_claimants(journals_dir, page, journal).is_le()
-            }
-            (Some(_), None) => true,
-            _ => false,
-        };
-        let (first, second) = if first {
-            (pages, journals)
-        } else {
-            (journals, pages)
-        };
-        first.iter().chain(second).filter(held)
+    pub(crate) fn claims<'a>(&self, claimants: &'a ClaimantMap) -> &'a [PageEntry] {
+        let bucket = claimants
+            .get(&self.claim())
+            .map(Vec::as_slice)
+            .unwrap_or_default();
+        if self.undated_journal
+            && !bucket
+                .first()
+                .is_some_and(|entry| entry.kind == PageKind::Journal)
+        {
+            return &[];
+        }
+        bucket
     }
 }
 
 /// The same claimant ordering for cold direct reads, journal open and
 /// snapshots. `journals_dir`: the configured journals directory, which ranks
 /// first ([`compare_page_claimants`]).
-pub(super) fn page_claimants(journals_dir: &str, entries: &[PageEntry]) -> ClaimantMap {
-    let mut claimants: HashMap<(PageKind, String), Vec<PageEntry>> = HashMap::new();
+pub(crate) fn page_claimants(
+    journals_dir: &str,
+    entries: impl IntoIterator<Item = PageEntry>,
+) -> ClaimantMap {
+    let mut claimants: HashMap<Claim, Vec<PageEntry>> = HashMap::new();
     for entry in entries {
-        claimants
-            .entry((entry.kind, tine_core::refs::page_key(&entry.name)))
-            .or_default()
-            .push(entry.clone());
+        claimants.entry(Claim::of(&entry)).or_default().push(entry);
     }
     for entries in claimants.values_mut() {
         entries.sort_by(|a, b| compare_page_claimants(journals_dir, a, b));
     }
-    (claimants.into_iter())
-        .map(|(key, entries)| (claimant_key(&key), entries))
-        .collect()
+    claimants.into_iter().collect()
 }
 
 #[cfg(test)]
@@ -215,13 +197,14 @@ mod claim_lookup_tests {
             Some(20261103),
             "journals/other.md",
         );
-        let entries = page_claimants("journals", &[day.clone(), undated, other]);
+        let entries = page_claimants("journals", [day.clone(), undated, other]);
         for spelling in ["X 2026_02_11", "x 2026_02_11"] {
             let opening = OpeningName::new(&format, spelling, false);
             assert_eq!(opening.day.map(|day| day.ordinal_key()), Some(nov2));
             assert_eq!(
                 opening
-                    .claims(&entries, "journals")
+                    .claims(&entries)
+                    .iter()
                     .map(PageEntry::rel_path_str)
                     .collect::<Vec<_>>(),
                 vec![day.rel_path_str()]
@@ -367,17 +350,14 @@ mod cold_index_tests {
         GRAPH_PREAMBLE_READS.with(|reads| reads.set(0));
         let (store, _, _) = crate::Store::open(&dir, Default::default()).unwrap();
         let open_reads = GRAPH_PREAMBLE_READS.with(|reads| reads.replace(0));
-        let journal = store.journal_id(
-            crate::Day(
-                tine_core::date::JournalDate {
-                    year: 2026,
-                    month: 9,
-                    day: 29,
-                }
-                .ordinal_key(),
-            ),
-            false,
-        );
+        let journal = store.journal_id(crate::Day(
+            tine_core::date::JournalDate {
+                year: 2026,
+                month: 9,
+                day: 29,
+            }
+            .ordinal_key(),
+        ));
         assert_eq!(store.page(&journal).unwrap().doc.blocks[0].raw, "journal");
         let feed_reads = GRAPH_PREAMBLE_READS.with(|reads| reads.get());
         fs::remove_file(dir.join(".tine-test-pause-load")).unwrap();
@@ -395,7 +375,10 @@ mod cold_index_tests {
         store.close();
         let _ = fs::remove_dir_all(&dir);
         assert_eq!(open_reads, 0, "I-12/E: Store::open must not open ordinary page preambles before journal paint; exemplar page_identity.rs");
-        assert_eq!(feed_reads, 0, "I-12/E: a journal-kind claimant lookup must not open ordinary page files; exemplar page_identity.rs");
+        assert_eq!(
+            feed_reads, 3,
+            "the cold day index reads each of the three ordinary preambles exactly once"
+        );
     }
 
     #[test]
@@ -579,6 +562,17 @@ pub(crate) fn graph_text_eligible(root: &Path, path: &Path, config: &Config) -> 
             .is_some_and(|stem| !is_sync_conflict(stem))
 }
 
+/// A graph-text path whose filename cannot be represented by a PageId.
+pub(crate) fn graph_text_has_undecodable_name(root: &Path, path: &Path, config: &Config) -> bool {
+    path.file_name()
+        .is_some_and(|name| name.to_str().is_none() && !name.as_encoded_bytes().starts_with(b"."))
+        && is_page_file(path)
+        && !configured_hidden(
+            &path.strip_prefix(root).unwrap_or(path).to_string_lossy(),
+            config,
+        )
+}
+
 pub(crate) fn graph_text_relative_eligible(relative: &str, config: &Config) -> bool {
     graph_text_eligible(Path::new(""), Path::new(relative), config)
 }
@@ -702,25 +696,32 @@ impl Graph {
         let Some(id) = block else {
             let Some(name) = page else { return Ok(true) };
             let format = self.current_journal_format();
-            let claims = self.complete_name_claimants();
             let opening = OpeningName::new(&format, name, false);
-            return Ok(opening
-                .claims(&claims, &config.journals_dir)
-                .next()
-                .is_some()
-                || !self.unreadable_pages().is_empty());
+            let claim = opening.claim();
+            let journals = self.journals_path();
+            let formats = (&*format, journals.as_path(), config.file_name_format);
+            let mut possible = false;
+            let errors = walk_graph_page_files(&self.root, &self.root, &config, |path| {
+                let Some(stem) = path.file_stem().and_then(|stem| stem.to_str()) else {
+                    return true;
+                };
+                possible = match read_file_claim(formats, &path, stem) {
+                    Ok((name, _, day)) => claim == Claim::observed(&name, day),
+                    Err(error) => error.kind() != io::ErrorKind::NotFound,
+                };
+                !possible
+            });
+            return Ok(possible || !errors.is_empty());
         };
         let mut possible = false;
         let mut failure = None;
         let errors = walk_graph_page_files(&self.root, &self.root, &config, |path| {
-            if possible || failure.is_some() {
-                return;
-            }
             let probe = file_contains_link_id(&path, id);
             match probe {
                 Ok(found) => possible |= found,
                 Err(error) => failure = Some(error),
             }
+            !possible && failure.is_none()
         });
         if let Some(error) = failure.or_else(|| errors.into_iter().next().map(|(_, error)| error)) {
             return Err(error);
@@ -758,6 +759,33 @@ impl Graph {
 #[cfg(test)]
 mod link_prefilter_tests {
     use super::*;
+
+    #[test]
+    fn page_link_prefilter_stops_after_the_first_ordinary_or_day_claim() {
+        let observed =
+            [("Target", "Target"), ("2026-11-02", "Nov 2nd, 2026")].map(|(name, title)| {
+                let temp = tempfile::tempdir().unwrap();
+                let pages = temp.path().join("pages");
+                fs::create_dir_all(pages.join("later")).unwrap();
+                fs::write(pages.join("First.md"), format!("title:: {title}\n- body\n")).unwrap();
+                fs::write(pages.join("later/Other.md"), "- other\n").unwrap();
+                GRAPH_PREAMBLE_READS.with(|reads| reads.set(0));
+                let found = crate::Store::read_link_identity_at(
+                    temp.path(),
+                    crate::link_identity::LinkProbe::Page {
+                        name,
+                        approved_external_assets: None,
+                    },
+                );
+                (
+                    name,
+                    found.target_possible,
+                    GRAPH_PREAMBLE_READS.with(|reads| reads.get()),
+                )
+            });
+        assert_eq!(observed, [("Target", true, 1), ("2026-11-02", true, 1)]);
+    }
+
     #[test]
     fn link_id_prefilter_spans_chunks_and_uses_graph_discovery_scope() {
         let temp = tempfile::tempdir().unwrap();
@@ -829,43 +857,8 @@ fn file_contains_link_id(path: &Path, id: &str) -> io::Result<bool> {
 }
 
 pub(super) fn list_graph_pages(graph: &Graph) -> Vec<PageEntry> {
-    list_graph_pages_kind(graph, None)
-}
-
-/// Kind selection precedes preamble reads. A journal-kind listing walks the
-/// journals directory, whose files are named by their file names, and of
-/// every other file reads only those whose decoded file name is a date
-/// (`pages/2026-11-02.md`, SPEC §2.1), to see whether a `title::` names
-/// another page. A file that is a day only through its `title::` is found
-/// by a listing that reads every title, including the complete listing
-/// used for cold named opens;
-/// `Graph::find_claimants` keeps such rows when it merges a journal-kind
-/// listing.
-pub(crate) fn list_graph_pages_kind(graph: &Graph, kind: Option<PageKind>) -> Vec<PageEntry> {
     #[cfg(test)]
     super::GRAPH_LIST_CALLS.with(|calls| calls.set(calls.get() + 1));
-    list_pages(graph, kind)
-}
-
-/// Whether a journal-kind listing covers `path`: a journals-directory file,
-/// or another file whose decoded file name is a date. The rows it does not
-/// cover are the files that are days only through their `title::`.
-pub(crate) fn journal_listing_covers(
-    (format, journals, name_format): (&JournalFormat, &Path, FileNameFormat),
-    path: &Path,
-) -> bool {
-    path.starts_with(journals)
-        || path
-            .file_stem()
-            .and_then(|stem| stem.to_str())
-            .is_some_and(|stem| {
-                format
-                    .parse_text(&decode_page_name(stem, name_format))
-                    .is_some()
-            })
-}
-
-fn list_pages(graph: &Graph, kind: Option<PageKind>) -> Vec<PageEntry> {
     let mut entries = Vec::new();
     let root = &graph.root;
     let format = graph.current_journal_format();
@@ -877,48 +870,20 @@ fn list_pages(graph: &Graph, kind: Option<PageKind>) -> Vec<PageEntry> {
     }
     let mut failures = Vec::new();
     let walk_errors = walk_graph_page_files(root, root, &config, |path| {
-        let in_journals = path.starts_with(&journals);
-        match kind {
-            Some(PageKind::Page) if in_journals => return,
-            Some(PageKind::Journal)
-                if !journal_listing_covers((&format, &journals, name_format), &path) =>
-            {
-                return
-            }
-            _ => {}
-        }
         let Some(stem) = path.file_stem().and_then(|stem| stem.to_str()) else {
-            return;
+            return true;
         };
-        let (name, claimed, date_key) = if in_journals {
-            let (name, date_key) = super::journal_stem_name(&format, stem);
-            (name, PageKind::Journal, date_key)
-        } else {
-            let name = match effective_page_name(&path, stem, name_format) {
-                Ok(name) => name,
+        let (name, claimed, date_key) =
+            match read_file_claim((&format, &journals, name_format), &path, stem) {
+                Ok(claim) => claim,
                 Err(error) => {
-                    // A journal-kind listing replaces only the journals
-                    // directory's failures (`replace_discovery_errors`); the
-                    // other files' failures are an ordinary listing's.
-                    if kind != Some(PageKind::Journal) {
-                        failures.push((crate::FileId::from(graph.rel_path(&path)), error.into()));
+                    if error.kind() == io::ErrorKind::NotFound {
+                        return true;
                     }
-                    // Keep the physical claim; the file is reported as
-                    // unreadable and the readable names stay available.
-                    decode_page_name(stem, name_format)
+                    failures.push((crate::FileId::from(graph.rel_path(&path)), error.into()));
+                    page_file_claim(&format, decode_page_name(stem, name_format))
                 }
             };
-            page_file_claim(&format, name)
-        };
-        // An ordinary-kind listing reads every title, so it also keeps a file
-        // that is a day only through its `title::` (doc of
-        // `list_graph_pages_kind`).
-        let title_day = kind == Some(PageKind::Page)
-            && claimed == PageKind::Journal
-            && !journal_listing_covers((&format, &journals, name_format), &path);
-        if kind.is_some_and(|kind| kind != claimed) && !title_day {
-            return;
-        }
         entries.push(PageEntry {
             name,
             kind: claimed,
@@ -926,14 +891,28 @@ fn list_pages(graph: &Graph, kind: Option<PageKind>) -> Vec<PageEntry> {
             rel_path: Some(graph.rel_path(&path).into()),
             path,
         });
+        true
     });
     failures.extend(
         walk_errors
             .into_iter()
             .map(|(path, error)| (crate::FileId::from(graph.rel_path(&path)), error.into())),
     );
-    graph.replace_discovery_errors(kind, failures);
+    graph.replace_discovery_errors(failures);
     entries
+}
+
+fn read_file_claim(
+    (format, journals, name_format): (&JournalFormat, &Path, FileNameFormat),
+    path: &Path,
+    stem: &str,
+) -> io::Result<(String, PageKind, Option<i64>)> {
+    if path.starts_with(journals) {
+        let (name, day) = super::journal_stem_name(format, stem);
+        Ok((name, PageKind::Journal, day))
+    } else {
+        effective_page_name(path, stem, name_format).map(|name| page_file_claim(format, name))
+    }
 }
 
 /// The launch load pass's listing (GH #623, storage spec §5.1 step 1): the
@@ -986,9 +965,10 @@ pub(crate) fn launch_listing_walk(graph: &Graph) -> LaunchListing {
         }
         if !eligible {
             tracked_only.push(path);
-            return;
+            return true;
         }
         entries.extend(listed_entry(graph, (&format, &journals, name_format), path));
+        true
     });
     (entries, tracked_only, errors, stamps)
 }
@@ -1048,11 +1028,12 @@ pub(crate) fn effective_page_name_from_text(
 
 /// [`walk_graph_page_files`] over every watch-relevant file, saying whether
 /// each is graph text (`graph_text_eligible`) or tracked only (a conflict copy).
+/// A visitor returning false stops traversal.
 fn walk_graph_text_files(
     root: &Path,
     start: &Path,
     config: &Config,
-    mut visit: impl FnMut(PathBuf, bool, &fs::DirEntry),
+    mut visit: impl FnMut(PathBuf, bool, &fs::DirEntry) -> bool,
 ) -> Vec<(PathBuf, io::Error)> {
     let mut errors = Vec::new();
     let mut pending = vec![start.to_path_buf()];
@@ -1083,9 +1064,18 @@ fn walk_graph_text_files(
                     continue;
                 }
             };
-            if kind.is_file() && graph_text_watch_relevant(root, &path, config) {
-                let eligible = graph_text_eligible(root, &path, config);
-                visit(path, eligible, &entry);
+            if kind.is_file() {
+                if graph_text_watch_relevant(root, &path, config) {
+                    let eligible = graph_text_eligible(root, &path, config);
+                    if !visit(path, eligible, &entry) {
+                        return errors;
+                    }
+                } else if graph_text_has_undecodable_name(root, &path, config) {
+                    errors.push((
+                        path,
+                        io::Error::new(io::ErrorKind::InvalidData, "non-UTF-8 file name"),
+                    ));
+                }
             } else if kind.is_dir() && graph_text_directory_scannable(root, &path, config) {
                 pending.push(path);
             }
@@ -1098,11 +1088,9 @@ fn walk_graph_page_files(
     root: &Path,
     start: &Path,
     config: &Config,
-    mut visit: impl FnMut(PathBuf),
+    mut visit: impl FnMut(PathBuf) -> bool,
 ) -> Vec<(PathBuf, io::Error)> {
     walk_graph_text_files(root, start, config, |path, eligible, _| {
-        if eligible {
-            visit(path);
-        }
+        !eligible || visit(path)
     })
 }

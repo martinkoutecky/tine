@@ -678,24 +678,23 @@ on 64-bit: about 8 B per view, 96 B per template-bearing page and 24 B per templ
 plus name bytes; pages without templates add nothing (estimate from the layout, not
 measured).
 
-`InventoryScope::JournalFilesBefore { before, limit }` lists the journal days
-files claim in the captured view from the existing day index, as a bounded window
-strictly below the cursor in descending day order, without sorting: O(log J)
-to seek, then O(log P + C²) per examined day for the existing slot lookup and
-claimant spelling deduplication (P page entries, C same-name claimants). Days
-masked by ordinary owners are examined and skipped. The Journals feed merges these windows with referenced
-days and continues past missing or unreadable bodies until the requested count
-is filled. Referenced days retain the existing O(R log D + date-name alias
-lookups) enumeration; there is no new resident or persisted index. Virtual
-fallback keeps the full union's greatest day per file identity, including
-short-year filenames shared by different centuries. A missing body recovers
-its captured physical day through `InventoryScope::JournalFile`, which names the
-file by its filename stem as the file list does, so a body that failed to read
-at load keeps its day (O(log P + C²), no parse or disk access); reference
-identity includes days outside the cursor window. The first page still lists
-the journals directory, which reports unreadable entries and shows files
-no publication has named yet. A journal file written outside the watcher reaches
-later steps by the ordinary rescan (focus return, poll, `refresh`).
+`InventoryScope::JournalFilesBefore { before, limit }` seeks the view's
+typed claimant index below the cursor in descending day order. The seek
+costs O(log P), followed by one row per day and one ID per competing file.
+The first page and direct lookups share a cold claim walk and its discovery
+diagnostics. The walk lists once and opens each non-journal preamble at most
+once for a stable observation stamp. Publications patch each changed file's
+old and new buckets. `Store::journal_id` looks up a typed day directly.
+
+The feed merges the windows with referenced days and continues past missing
+or unreadable bodies until the requested count is filled. Referenced days
+retain the existing O(R log D + date-name alias lookups) enumeration. When a
+body goes missing, `InventoryScope::JournalFile` reads the observed path's
+day and claimant bucket in O(log P + C), where C is the number of competing
+files. The existing virtual completion uses the union's greatest day per
+path, including paths a short-year filename format shares across centuries.
+A file delivered outside the watcher reaches later steps by the ordinary
+rescan (focus return, poll, `refresh`).
 R5 adds prepared referrer text to the existing rewrite protocol, with no new persisted record.
 
 Clone setup (D-20261031-GCL) shares GS1's existing Unicode candidate rule through
@@ -1040,12 +1039,19 @@ An exact-path open uses its given file.
 
 A journal file's physical stem routes keep their order: the configured
 filename format, the configured title format, then the same fixed forms.
-When these extract no day, K takes the effective name's text claim.
-Discovery, `accepted_stems` and the day's write target retain the physical
-stem routes. Cold named reads build a complete physical claimant index
-with one listing and at most one preamble read per non-journal file.
-Subsequent reads reuse the generation's buckets. The winner is read
-through the existing validated path and revision checks.
+When these extract no day, the folded text route reads the stem. Outside
+the journals directory the folded text route reads the parsed preamble
+title or, when absent, the decoded stem. Discovery, the journals area
+listing and filename-based conflict labels share the claim rule. Filename
+migration uses the area listing's day.
+
+Cold named reads, active day lookup and the first Journals feed use
+complete physical claims. Before the first publication, a lookup builds
+the generation's memo with one listing and at most one preamble read per
+non-journal file. Later lookups reuse the buckets. The winner is read
+through the existing validated path and revision checks. The closed-graph
+deep-link prefilter uses the same claim predicate and stops on the first
+match. Read or listing uncertainty leaves the target possible.
 
 `JournalFormat::new` admits a configured text route only if its parser
 reads every rendered day's folded title as that day. A refused title

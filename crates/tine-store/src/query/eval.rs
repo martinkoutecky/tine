@@ -191,13 +191,11 @@ fn planning_text<'a>(
 /// (folded per call site, compiled once per distinct pattern). Dies with the
 /// execution; at most [`EvalCache::MAX_ENTRIES`] values are retained (the rest
 /// are recomputed).
-#[derive(Default)]
 pub(crate) struct EvalCache {
     atoms: RefCell<AtomSlots>,
     likes: RefCell<HashMap<String, Rc<LikePattern>>>,
-    /// The graph's date answerer ([`reference_day`]), compiled once per
-    /// execution: the configuration is fixed for it.
-    reference_format: OnceCell<tine_core::date::JournalFormat>,
+    /// The graph's date decision for this execution.
+    reference_format: tine_core::date::JournalFormat,
     /// Reference name -> the journal day it denotes, for the digit-bearing
     /// names only (every other name is no day without a parse).
     reference_days: RefCell<HashMap<String, Option<i64>>>,
@@ -214,6 +212,16 @@ type AtomSlots = ([HashMap<String, HashMap<String, Rc<[Atom]>>>; 2], usize);
 
 impl EvalCache {
     const MAX_ENTRIES: usize = 65_536;
+
+    pub(crate) fn new(graph: &crate::model::ReadSnapshot) -> Self {
+        Self {
+            atoms: RefCell::default(),
+            likes: RefCell::default(),
+            reference_format: graph.config().journal_format(),
+            reference_days: RefCell::default(),
+            ref_classes: OnceCell::new(),
+        }
+    }
 
     /// Fix this execution's reference classes over `graph` (the snapshot it
     /// runs on). Called once, before any page is evaluated.
@@ -250,17 +258,14 @@ impl EvalCache {
     /// The journal day reference `name` denotes, read as [`reference_day`]
     /// reads it, each distinct digit-bearing name parsed once per execution
     /// (at most [`Self::MAX_ENTRIES`] retained; the rest are re-parsed).
-    pub(crate) fn reference_day(&self, name: &str, config: &ParseConfig) -> Option<i64> {
+    pub(crate) fn reference_day(&self, name: &str) -> Option<i64> {
         if !name.bytes().any(|byte| byte.is_ascii_digit()) {
             return None;
         }
         if let Some(day) = self.reference_days.borrow().get(name) {
             return *day;
         }
-        let format = self
-            .reference_format
-            .get_or_init(|| config.journal_format());
-        let day = reference_day(name, format);
+        let day = reference_day(name, &self.reference_format);
         let mut days = self.reference_days.borrow_mut();
         if days.len() < Self::MAX_ENTRIES {
             days.insert(name.to_owned(), day);
@@ -720,13 +725,7 @@ fn eval_direct_ref(pred: &Filter, name: &str, ctx: &EvalCtx) -> bool {
                     op,
                     value,
                 },
-        } => reference_date_leaf(
-            *attr,
-            *op,
-            value,
-            ctx.cache.reference_day(name, ctx.config),
-            ctx.today,
-        ),
+        } => reference_date_leaf(*attr, *op, value, ctx.cache.reference_day(name), ctx.today),
         _ => eval_ref_element(pred, name, ctx),
     }
 }
@@ -750,9 +749,7 @@ fn eval_ref_element(pred: &Filter, name: &str, ctx: &EvalCtx) -> bool {
                     value: Value::Text { text },
                 },
         } => match ctx.ref_classes.class(text) {
-            Some(class) => class.holds(&refs::page_key(name), |key| {
-                ctx.cache.reference_day(key, ctx.config)
-            }),
+            Some(class) => class.holds(&refs::page_key(name), |key| ctx.cache.reference_day(key)),
             None => refs::page_key(name) == refs::page_key(text),
         },
         _ => eval_name_element(pred, name),
@@ -784,7 +781,7 @@ fn closure_holds(
             .flat_map(|name| refs::namespace_refs(name))
             .chain(ancestors.keys().map(String::as_str))
             .chain(std::iter::once(page_key))
-            .any(|name| class.holds(name, |key| ctx.cache.reference_day(key, ctx.config)))
+            .any(|name| class.holds(name, |key| ctx.cache.reference_day(key)))
 }
 
 /// Tag elements expose only their name, compared literally: block
@@ -1159,7 +1156,7 @@ fn eval_page_name(op: CmpOp, value: &Value, page_name: &str, ctx: &EvalCtx) -> b
         key == requested
             || (ctx.is_journal
                 && ctx.journal.is_some()
-                && ctx.cache.reference_day(text, ctx.config) == ctx.journal)
+                && ctx.cache.reference_day(text) == ctx.journal)
     };
     let listed = || {
         value

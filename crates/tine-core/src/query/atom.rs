@@ -48,35 +48,21 @@ pub fn atom_key(text: &str) -> String {
 }
 
 impl ParseConfig {
-    /// The graph's journal date answerer over the effective title format: it
-    /// parses and renders as [`crate::config::Config::journal_format`] does.
-    pub fn journal_format(&self) -> crate::date::JournalFormat {
-        crate::date::JournalFormat::new(
-            self.journal_file_name_format.as_deref(),
-            self.journal_title.as_deref(),
-        )
-    }
-
     /// The parse-relevant slice of `config`, with the effective title format
-    /// the graph's one date decision gives (`Config::journal_format`, whose
-    /// check is memoized per pattern). O(configured keys).
+    /// from the held decision. O(configured keys and pattern bytes to copy).
     pub fn from_config(config: &crate::config::Config) -> ParseConfig {
+        let decision = config.journal_format();
         ParseConfig {
             separated_by_commas: config.separated_by_commas.clone(),
             ignored_page_references_keywords: config.ignored_page_references_keywords.clone(),
             hidden_properties: config.block_hidden_properties.clone(),
-            journal_file_name_format: config.journal_file_name_format.clone(),
-            ..ParseConfig::default()
+            journal_title: (decision.title_format() != crate::date::DEFAULT_TITLE_FORMAT)
+                .then(|| decision.title_format().to_owned()),
+            journal_title_reader: decision.title_reader().into(),
+            journal_file_name_format: (decision.file_text_route()
+                && decision.file_format() != crate::date::DEFAULT_FILE_FORMAT)
+                .then(|| decision.file_format().to_owned()),
         }
-        .with_effective_title(config.journal_format().title_format())
-    }
-
-    /// This slice with `effective` as the journal title format, which the
-    /// caller has from a decided [`crate::date::JournalFormat::title_format`].
-    pub fn with_effective_title(mut self, effective: &str) -> ParseConfig {
-        self.journal_title =
-            (effective != crate::date::DEFAULT_TITLE_FORMAT).then(|| effective.to_owned());
-        self
     }
 
     /// The effective journal title format, `None` for the default.
@@ -364,14 +350,14 @@ fn classify_day(text: &str, config: &ParseConfig) -> Option<i64> {
     if let Some(day) = compact_day(trimmed) {
         return Some(day);
     }
-    crate::date::Format::compile(
-        config
-            .journal_title
-            .as_deref()
-            .unwrap_or(crate::date::DEFAULT_TITLE_FORMAT),
-    )
-    .parse(trimmed)
-    .map(|date| date.ordinal_key())
+    config
+        .journal_title_reader
+        .get_or_init(|| match config.journal_title.as_deref() {
+            Some(title) => crate::date::Format::compile(title).into(),
+            None => crate::date::JournalFormat::default().title_reader(),
+        })
+        .parse(trimmed)
+        .map(|date| date.ordinal_key())
 }
 
 fn iso_day(text: &str) -> Option<i64> {
@@ -780,7 +766,7 @@ mod tests {
     /// D2 preserves a comma-bearing journal title for date classification.
     #[test]
     fn d2_preserves_a_comma_bearing_journal_title_as_a_date() {
-        let config = ParseConfig::default().with_effective_title("MMM do, yyyy");
+        let config = ParseConfig::from_config(&crate::config::Config::default());
         assert_eq!(
             texts(&md("k", "Sep 4th, 2026", &config)),
             vec!["Sep 4th, 2026"]
@@ -790,7 +776,9 @@ mod tests {
         assert_eq!(texts(&quoted), vec!["\"Sep 4th, 2026\""]);
 
         // A comma-free title format classifies straight through.
-        let iso = ParseConfig::default().with_effective_title("do MMM yyyy");
+        let iso = ParseConfig::from_config(&crate::config::Config::parse(
+            r#"{:journal/page-title-format "do MMM yyyy"}"#,
+        ));
         let atoms = md("k", "4th Sep 2026", &iso);
         assert_eq!(atoms[0].day, Some(20260904));
     }

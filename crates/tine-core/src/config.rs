@@ -6,6 +6,7 @@
 //! readers decode string tokens through `edn::parse_strict`, the same decoder
 //! used by sidecars. Missing or malformed individual values use defaults.
 
+use crate::date::JournalFormat;
 use std::collections::HashMap;
 
 /// OG shortcut values retain a single string or all vector alternatives over IPC.
@@ -133,14 +134,8 @@ pub struct Config {
     /// (labels, nesting, order). Logseq ignores the key; `:favorites` stays the
     /// flat membership list Logseq reads.
     pub favorites_page: Option<String>,
-    /// `:journal/file-name-format` — Logseq's journal filename format (cljs-time /
-    /// Joda tokens). `None` uses `"yyyy_MM_dd"`. The store compiles a configured
-    /// format and uses it to propose names for new journal files.
-    pub journal_file_name_format: Option<String>,
-    /// Journal TITLE format: nonempty `:journal/page-title-format`, then legacy
-    /// `:date-formatter`. Missing, malformed or empty strings use the next key,
-    /// then `"MMM do, yyyy"` for `None`; file naming is separate.
-    pub journal_page_title_format: Option<String>,
+    /// The authored journal settings and their single compiled decision.
+    pub journal_settings: JournalDateSettings,
     /// `:preferred-format` — the format ("Markdown"/"Org") for NEW pages and
     /// journals. Existing files keep their own format (decided per-file by
     /// extension). Default markdown.
@@ -285,8 +280,7 @@ impl Default for Config {
             quick_capture_default_page: None,
             quick_capture_insert_today: false,
             quick_capture_redirect_page: false,
-            journal_file_name_format: None,
-            journal_page_title_format: None,
+            journal_settings: JournalDateSettings::default(),
             preferred_format: crate::model::Format::Md,
             file_name_format: FileNameFormat::Legacy,
             macros: HashMap::new(),
@@ -299,6 +293,38 @@ impl Default for Config {
             logical_outdenting: false,
             logbook: LogbookSettings::default(),
             guide_announced: false,
+        }
+    }
+}
+
+/// Authored journal patterns with their compiled, immutable decision.
+#[derive(Clone, Debug)]
+pub struct JournalDateSettings {
+    file_format: Option<String>,
+    title_format: Option<String>,
+    decision: JournalFormat,
+}
+
+impl JournalDateSettings {
+    /// Authored filename and title settings, preserving absence for
+    /// configuration identity and checkpoint keys.
+    pub fn configured_patterns(&self) -> (Option<&str>, Option<&str>) {
+        (self.file_format.as_deref(), self.title_format.as_deref())
+    }
+}
+
+impl PartialEq for JournalDateSettings {
+    fn eq(&self, other: &Self) -> bool {
+        self.configured_patterns() == other.configured_patterns()
+    }
+}
+
+impl Default for JournalDateSettings {
+    fn default() -> Self {
+        Self {
+            file_format: None,
+            title_format: None,
+            decision: JournalFormat::default(),
         }
     }
 }
@@ -316,11 +342,8 @@ impl Default for LogbookSettings {
 impl Config {
     /// The graph's journal date answerer: the one place the two config
     /// strings become a [`crate::date::JournalFormat`] (I-12, CM step 2).
-    pub fn journal_format(&self) -> crate::date::JournalFormat {
-        crate::date::JournalFormat::new(
-            self.journal_file_name_format.as_deref(),
-            self.journal_page_title_format.as_deref(),
-        )
+    pub fn journal_format(&self) -> JournalFormat {
+        self.journal_settings.decision.clone()
     }
 
     /// Parse supported EDN keys independently, defaulting missing or malformed
@@ -412,8 +435,14 @@ impl Config {
             cfg.journal_config_diagnostics
                 .extend(unsupported_journal_pattern_diagnostic(key, pattern));
         }
-        cfg.journal_file_name_format = file_format;
-        cfg.journal_page_title_format = title_format.map(|(_, v)| v);
+        let title_format = title_format.map(|(_, v)| v);
+        if file_format.is_some() || title_format.is_some() {
+            cfg.journal_settings = JournalDateSettings {
+                decision: JournalFormat::new(file_format.as_deref(), title_format.as_deref()),
+                file_format,
+                title_format,
+            };
+        }
         // OG stores `:preferred-format "Markdown"|"Org"` (a capitalized string), but
         // its schema also accepts the keyword form `:preferred-format :org` — read
         // both so a keyword-configured graph isn't silently treated as markdown.
@@ -1383,11 +1412,11 @@ mod tests {
             ]
         );
         assert_eq!(
-            cfg.journal_file_name_format.as_deref(),
+            cfg.journal_settings.configured_patterns().0,
             Some("yyyy-MM-dd-ww")
         );
         assert_eq!(
-            cfg.journal_page_title_format.as_deref(),
+            cfg.journal_settings.configured_patterns().1,
             Some("yyyy-MM-dd 'w'ww-E")
         );
         // The legacy key is named when it supplies the title pattern; a

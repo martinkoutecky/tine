@@ -840,7 +840,7 @@ fn first_route<'a>(routes: impl IntoIterator<Item = &'a Format>, s: &str) -> Opt
 /// decided once per config load in native code), so no title pattern is
 /// checked on the graph window's load or config path (D-20261119-YL). A
 /// [`JournalFormat`] holds the same routes. O(patterns) to build.
-#[derive(Clone)]
+#[derive(Clone, Debug)]
 pub struct TextRoutes(Vec<(Format, Format)>);
 
 impl TextRoutes {
@@ -865,7 +865,7 @@ impl TextRoutes {
             let key = strip_boundary_slashes(s.trim());
             let mut chars = Vec::with_capacity(key.len());
             chars.extend(key.bytes().map(|byte| byte.to_ascii_lowercase() as char));
-            return self.read_chars(&chars);
+            return self.day_of_key(&chars);
         }
         self.parse_key(&page_key(s))
     }
@@ -878,10 +878,10 @@ impl TextRoutes {
         }
         let mut chars = Vec::with_capacity(key.len());
         chars.extend(key.chars());
-        self.read_chars(&chars)
+        self.day_of_key(&chars)
     }
 
-    fn read_chars(&self, chars: &[char]) -> Option<JournalDate> {
+    fn day_of_key(&self, chars: &[char]) -> Option<JournalDate> {
         self.0.iter().find_map(|(_, read)| read.parse_chars(chars))
     }
 
@@ -896,12 +896,15 @@ impl TextRoutes {
 /// and the two route lists that read a day back: one for text
 /// ([`text_routes`]), one for a journal file's stem ([`file_stem_routes`]).
 #[deny(missing_docs)]
-#[derive(Clone)]
-pub struct JournalFormat {
+#[derive(Clone, Debug)]
+pub struct JournalFormat(std::sync::Arc<JournalDecision>);
+
+#[derive(Debug)]
+struct JournalDecision {
     file: Format,
     /// The effective title renderer: the configured pattern when its titles
     /// name one day each, else the default (D-20261119-YL).
-    title: Format,
+    title: std::sync::Arc<Format>,
     file_pat: String,
     file_text_route: bool,
     title_pat: String,
@@ -944,9 +947,9 @@ impl JournalFormat {
         let file = Format::compile(&file_pat);
         let file_text_route =
             file_pat == DEFAULT_FILE_FORMAT || checked_title(&file_pat, &file).is_none();
-        JournalFormat {
+        JournalFormat(std::sync::Arc::new(JournalDecision {
             file,
-            title,
+            title: std::sync::Arc::new(title),
             title_pat: effective.to_string(),
             text_routes: TextRoutes::new(
                 file_text_route.then_some(file_pat.as_str()),
@@ -957,31 +960,46 @@ impl JournalFormat {
             file_text_route,
             configured_title_pat: title_pat,
             title_refusal,
-        }
+        }))
     }
 
     /// Default Logseq formats (`yyyy_MM_dd` / `MMM do, yyyy`).
     pub fn default() -> JournalFormat {
-        Self::new(None, None)
+        static DEFAULT: std::sync::LazyLock<JournalFormat> =
+            std::sync::LazyLock::new(|| JournalFormat::new(None, None));
+        DEFAULT.clone()
     }
 
     /// The day a piece of text names (a page name, a link target, a query
     /// argument, a typed title), folded to its page key, by [`text_routes`]. `None` means no
     /// route matched: the text is an ordinary name.
     pub fn parse_text(&self, s: &str) -> Option<JournalDate> {
-        self.text_routes.parse(s)
+        self.0.text_routes.parse(s)
     }
 
     /// The day of an already-folded page key ([`Self::parse_text]).
     pub fn parse_key(&self, key: &str) -> Option<JournalDate> {
-        self.text_routes.parse_key(key)
+        self.0.text_routes.parse_key(key)
     }
 
     /// The day a journal file's stem names, trimmed, by [`file_stem_routes`]:
     /// a file's calendar identity, never the meaning of typed text. `None`
     /// means the stem names no day.
     pub fn parse_file_stem(&self, stem: &str) -> Option<JournalDate> {
-        first_route(&self.file_stem_routes, stem.trim())
+        first_route(&self.0.file_stem_routes, stem.trim())
+    }
+
+    /// The day a graph text file claims (K Date13.claim). In the journals
+    /// directory `name` is the raw stem and the physical routes get first
+    /// choice. Elsewhere `name` is the preamble title or decoded stem. The
+    /// text route reads the folded key of that name. Cost O(name bytes).
+    pub fn file_claim_day(&self, name: &str, in_journals: bool) -> Option<JournalDate> {
+        if in_journals {
+            if let Some(day) = self.parse_file_stem(name) {
+                return Some(day);
+            }
+        }
+        self.parse_text(name)
     }
 
     /// Every rendering of `d` by a text route that [`Self::parse_text`] reads
@@ -994,8 +1012,9 @@ impl JournalFormat {
         // The first text route is the effective title, whose admission
         // (or the default's pinned check) proved it reads
         // its own rendering of every day in JOURNAL_YEARS back.
-        let mut spellings = Vec::with_capacity(self.text_routes.0.len());
-        for (i, (render, _)) in self.text_routes.0.iter().enumerate() {
+        let routes = &self.0.text_routes.0;
+        let mut spellings = Vec::with_capacity(routes.len());
+        for (i, (render, _)) in routes.iter().enumerate() {
             let s = render.format(d);
             if !spellings.contains(&s)
                 && ((i == 0 && JOURNAL_YEARS.contains(&d.year)) || self.parse_text(&s) == Some(d))
@@ -1018,7 +1037,7 @@ impl JournalFormat {
     /// Other accepted forms (a month name's other length, any ordinal
     /// suffix, another weekday, case, surrounding space) are not listed.
     pub fn accepted_stems(&self, d: JournalDate) -> Vec<String> {
-        let routes = &self.file_stem_routes;
+        let routes = &self.0.file_stem_routes;
         let mut out = Vec::with_capacity(routes.len());
         for route in routes {
             let stem = route.format(d);
@@ -1059,18 +1078,24 @@ impl JournalFormat {
     /// rule; the store's `link_target` and the frontend (through wasm) both
     /// call it.
     pub fn absent_link_is_journal(&self, name: &str) -> bool {
-        self.text_routes.absent_link_is_journal(name)
+        self.0.text_routes.absent_link_is_journal(name)
     }
 
     /// Display title for a date, in the effective title format
     /// ([`Self::title_format`]): it names `d` alone.
     pub fn title(&self, d: JournalDate) -> String {
-        self.title.format(d)
+        self.0.title.format(d)
+    }
+
+    /// The admitted authored title reader used by the property value grammar.
+    #[cfg_attr(target_arch = "wasm32", allow(dead_code))]
+    pub(crate) fn title_reader(&self) -> std::sync::Arc<Format> {
+        std::sync::Arc::clone(&self.0.title)
     }
 
     /// Filename stem for a date, in the user's `:journal/file-name-format`.
     pub fn file_stem(&self, d: JournalDate) -> String {
-        self.file.format(d)
+        self.0.file.format(d)
     }
 
     /// Whether `stem` names the canonical file of its day: a `yyyy_MM_dd` /
@@ -1081,6 +1106,7 @@ impl JournalFormat {
     pub fn is_canonical_stem(&self, stem: &str) -> bool {
         JournalDate::from_file_stem(stem).is_some()
             || self
+                .0
                 .file
                 .parse(stem)
                 .is_some_and(|d| self.writes_stem(d, stem))
@@ -1091,31 +1117,31 @@ impl JournalFormat {
     /// [`Self::is_canonical_stem`] builds on it and also admits the ISO and
     /// underscore stems, which are never strays but not the written name.
     pub fn writes_stem(&self, day: JournalDate, stem: &str) -> bool {
-        self.file.format(day) == stem
+        self.0.file.format(day) == stem
     }
 
     /// The effective page-title format: the configured one, including
     /// unsupported literals, unless refused ([`Self::title_refusal`]), then
     /// [`DEFAULT_TITLE_FORMAT`].
     pub fn title_format(&self) -> &str {
-        &self.title_pat
+        &self.0.title_pat
     }
     /// The configured page-title format ([`DEFAULT_TITLE_FORMAT`] when none).
     pub fn configured_title_format(&self) -> &str {
-        &self.configured_title_pat
+        &self.0.configured_title_pat
     }
     /// Why the configured page-title format is not used, if it is not.
     pub fn title_refusal(&self) -> Option<&TitleFormatRefusal> {
-        self.title_refusal.as_ref()
+        self.0.title_refusal.as_ref()
     }
     /// Configured filename format string, including unsupported literals.
     pub fn file_format(&self) -> &str {
-        &self.file_pat
+        &self.0.file_pat
     }
 
     /// Whether the configured filename format also passes the text round trip.
     pub fn file_text_route(&self) -> bool {
-        self.file_text_route
+        self.0.file_text_route
     }
 }
 

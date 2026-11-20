@@ -404,15 +404,17 @@ fn an_own_save_while_the_launch_pass_installs_keeps_the_install() {
 /// The day answers B1 is about, for the launch-patch case below.
 fn day_answers(store: &Store) -> Vec<String> {
     let view = store.whole_graph().unwrap();
-    let mut days = store.journal_days();
+    let mut days: Vec<_> = store
+        .journal_file_openings(Day(99991231))
+        .unwrap()
+        .0
+        .into_iter()
+        .map(|(day, _)| day)
+        .collect();
     days.sort();
     let mut out = vec![format!("indexed days {days:?}")];
     for day in [Day(20261102), Day(20261103)] {
-        out.push(format!(
-            "{day:?}: active {}, index {}",
-            store.journal_id(day, true).as_str(),
-            store.journal_id(day, false).as_str()
-        ));
+        out.push(format!("{day:?}: {}", store.journal_id(day).as_str()));
     }
     for name in ["Nov 2nd, 2026", "Nov 3rd, 2026"] {
         for is_journal in [false, true] {
@@ -504,8 +506,8 @@ fn a_date_titled_pages_file_held_through_the_launch_install_reads_its_title_day(
     let absent = |day: &str| format!("Absent {{ id: PageId(\"journals/{day}.md\") }}");
     let expected_held = vec![
         "indexed days []".to_owned(),
-        "Day(20261102): active journals/2026_11_02.md, index journals/2026_11_02.md".to_owned(),
-        "Day(20261103): active journals/2026_11_03.md, index journals/2026_11_03.md".to_owned(),
+        "Day(20261102): journals/2026_11_02.md".to_owned(),
+        "Day(20261103): journals/2026_11_03.md".to_owned(),
         format!("Nov 2nd, 2026 (false): {}", absent("2026_11_02")),
         format!("Nov 2nd, 2026 (true): {}", absent("2026_11_02")),
         format!("Nov 3rd, 2026 (false): {}", absent("2026_11_03")),

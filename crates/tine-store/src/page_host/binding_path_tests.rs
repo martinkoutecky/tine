@@ -405,7 +405,7 @@ fn an_absent_day_opens_a_file_delivered_unobserved_under_another_accepted_name()
     let day = tine_core::date::JournalDate::from_file_stem("2026_11_10").unwrap();
     assert_eq!(
         live.store
-            .journal_id(crate::Day(day.ordinal_key()), false)
+            .journal_id(crate::Day(day.ordinal_key()))
             .as_str(),
         "journals/2026-11-10.md",
         "a creating save targets the delivered file"
@@ -639,7 +639,7 @@ fn an_absent_day_opens_an_unpadded_delivery_and_proposes_no_duplicate() {
     let day = tine_core::date::JournalDate::from_file_stem("2026_11_01").unwrap();
     assert_eq!(
         live.store
-            .journal_id(crate::Day(day.ordinal_key()), false)
+            .journal_id(crate::Day(day.ordinal_key()))
             .as_str(),
         "journals/2026-11-1.md",
         "a creating save targets the delivered file"

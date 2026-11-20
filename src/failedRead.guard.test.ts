@@ -135,7 +135,8 @@ it("I-2: trash asset checks use the latest publication under the writer; exempla
   expect(inventory).toContain("view.unreadable_files()");
   expect(inventory).toContain("view.graph.asset_refs().references(name)");
   expect(inventory).toContain("set_aside.contains(name)");
-  expect(inventory).toContain("name_by_path");
+  expect(inventory).toContain("view._snapshot.unparsed(&self.graph).iter()");
+  expect(inventory).toMatch(/self\.claim_by_path\s*\.iter\(\)/);
   const commands = readFileSync("src-tauri/src/commands.rs", "utf8");
   const trash = commands.slice(commands.indexOf("pub(crate) async fn trash_asset"), commands.indexOf("pub(crate) async fn asset_trash_stats"));
   expect(trash, "I-22: the reference check can wait for initial parsing; keep trash off the UI thread").toContain("spawn_blocking");

@@ -1,0 +1,216 @@
+{
+  "backlinks": {
+    "Notes": [],
+    "X 2026_02_11": [
+      {
+        "blocks": [
+          {
+            "children": [],
+            "collapsed": false,
+            "id": "75143738-034a-8dd7-b08f-38fa7295e7fd",
+            "raw": "[[x 2026_02_11]]",
+            "tags": []
+          }
+        ],
+        "kind": "page",
+        "page": "Notes"
+      }
+    ]
+  },
+  "conflicts": [],
+  "counts": [
+    [
+      [
+        "pages/Notes.md",
+        0
+      ]
+    ],
+    [
+      [
+        "X 2026_02_11",
+        1
+      ]
+    ]
+  ],
+  "inventory": [
+    {
+      "day": null,
+      "is_journal": false,
+      "key": "notes",
+      "link": {
+        "kind": "page",
+        "name": "Notes"
+      },
+      "name": "Notes",
+      "target": {
+        "id": "pages/Notes.md",
+        "kind": "existing",
+        "others": []
+      }
+    },
+    {
+      "day": 20261102,
+      "is_journal": true,
+      "key": "x 2026_02_11",
+      "link": {
+        "kind": "journal",
+        "name": "X 2026_02_11"
+      },
+      "name": "X 2026_02_11",
+      "target": {
+        "id": "journals/x 2026_11_02.md",
+        "kind": "absent"
+      }
+    }
+  ],
+  "journalFileFormat": "x yyyy_MM_dd",
+  "journalTitle": {
+    "effective": "X yyyy_dd_MM",
+    "refusal": null
+  },
+  "journalTitleFormat": "X yyyy_dd_MM",
+  "keyOf": {
+    "Notes": "notes",
+    "X 2026_02_11": "Day 2026-11-02"
+  },
+  "namespaceTree": [],
+  "open": {
+    "Notes": {
+      "journal": [
+        "journal",
+        "notes"
+      ],
+      "page": [
+        "page",
+        "notes"
+      ]
+    },
+    "X 2026_02_11": {
+      "journal": [
+        "journal",
+        "Day 2026-11-02"
+      ],
+      "page": [
+        "page",
+        "x 2026_02_11"
+      ]
+    },
+    "x 2026_02_11": {
+      "journal": [
+        "journal",
+        "Day 2026-11-02"
+      ],
+      "page": [
+        "page",
+        "x 2026_02_11"
+      ]
+    }
+  },
+  "owner": {
+    "Notes": {
+      "journal": null,
+      "page": "pages/Notes.md"
+    },
+    "X 2026_02_11": {
+      "journal": null,
+      "page": null
+    },
+    "x 2026_02_11": {
+      "journal": null,
+      "page": null
+    }
+  },
+  "pages": [
+    {
+      "key": "Day 2026-11-02",
+      "kind": "journal",
+      "linkedRefs": 1,
+      "name": "X 2026_02_11",
+      "owner": null,
+      "parent": null
+    },
+    {
+      "key": "notes",
+      "kind": "page",
+      "linkedRefs": 0,
+      "name": "Notes",
+      "owner": "pages/Notes.md",
+      "parent": null
+    }
+  ],
+  "spellings": {
+    "Notes": {
+      "backend": [
+        "page",
+        "notes"
+      ],
+      "day": null,
+      "model": [
+        "page",
+        "notes"
+      ]
+    },
+    "X 2026_02_11": {
+      "backend": [
+        "journal",
+        "Day 2026-11-02"
+      ],
+      "day": [
+        2026,
+        11,
+        2
+      ],
+      "model": [
+        "journal",
+        "Day 2026-11-02"
+      ]
+    },
+    "x 2026_02_11": {
+      "backend": [
+        "journal",
+        "Day 2026-11-02"
+      ],
+      "day": [
+        2026,
+        11,
+        2
+      ],
+      "model": [
+        "journal",
+        "Day 2026-11-02"
+      ]
+    }
+  },
+  "tree": [
+    {
+      "children": [],
+      "page": [
+        "page",
+        "notes"
+      ]
+    },
+    {
+      "children": [],
+      "page": [
+        "journal",
+        "Day 2026-11-02"
+      ]
+    }
+  ],
+  "treeParent": [
+    {
+      "page": [
+        "journal",
+        "Day 2026-11-02"
+      ],
+      "parent": null
+    },
+    {
+      "page": [
+        "page",
+        "notes"
+      ],
+      "parent": null
+    }
+  ]
+}

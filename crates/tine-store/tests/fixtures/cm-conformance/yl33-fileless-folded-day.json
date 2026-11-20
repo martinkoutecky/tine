@@ -1,0 +1,10 @@
+{
+  "config": {
+    "journalTitleFormat": "X yyyy_dd_MM",
+    "journalFileFormat": "x yyyy_MM_dd"
+  },
+  "files": {
+    "pages/Notes.md": "- [[x 2026_02_11]]\n"
+  },
+  "navigate": ["x 2026_02_11", "X 2026_02_11"]
+}

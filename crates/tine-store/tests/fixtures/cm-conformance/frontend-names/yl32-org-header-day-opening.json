@@ -1,0 +1,20 @@
+{
+  "fileNameFormat": "legacy",
+  "files": [
+    {
+      "format": "org",
+      "name": "Nov 2nd, 2020",
+      "path": "pages/!Diary.org",
+      "preBlock": "#+TITLE: Nov 2nd, 2020\n",
+      "title": "Nov 2nd, 2020"
+    },
+    {
+      "format": "org",
+      "name": "Nov 3rd, 2020",
+      "path": "pages/Notes.org",
+      "preBlock": "#+TITLE: Nov 3rd, 2020\n",
+      "title": "Nov 3rd, 2020"
+    }
+  ],
+  "links": []
+}

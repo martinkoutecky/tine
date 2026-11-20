@@ -95,7 +95,7 @@ fn setters() -> Vec<(&'static str, Setter, fn(&Config) -> bool)> {
         (
             ":journal/page-title-format",
             |s| config::set_journal_page_title_format(s, "yyyy-MM-dd"),
-            |c| c.journal_page_title_format.as_deref() == Some("yyyy-MM-dd"),
+            |c| c.journal_settings.configured_patterns().1 == Some("yyyy-MM-dd"),
         ),
         (
             ":default-templates",

@@ -471,21 +471,20 @@ fn lazy_marks_cover_every_lazy_slot_the_checkpoint_writes() {
     assert_eq!(lazy, marked, "{RULE}");
 }
 
-/// Every shipped function (in every crate and the app) that reads a field
-/// named `journal_page_title_format` (the configured title, on `Config` or
-/// `GraphMeta`), as `file::fn`.
+/// The shipped functions that use a selected field or method, as `file::fn`.
 #[derive(Default)]
 struct RawTitleReaders {
     file: String,
     in_impl: Option<String>,
     found: BTreeSet<String>,
+    names: &'static [&'static str],
 }
 
 impl RawTitleReaders {
     fn function(&mut self, name: &str, block: &syn::Block) {
         let mut reads = Reads::default();
         reads.visit_block(block);
-        if reads.names.contains("journal_page_title_format") {
+        if self.names.iter().any(|field| reads.names.contains(*field)) {
             let owner = self
                 .in_impl
                 .as_deref()
@@ -523,14 +522,56 @@ impl<'ast> Visit<'ast> for RawTitleReaders {
     }
 }
 
-/// D-20261119-YL: the configured journal title is read only by the one
-/// decision (`Config::journal_format`), which every consumer asks for the
-/// effective title; `ParseConfig` holds only the effective one (a private
-/// field). The other readers here never interpret it: the config parser that
-/// writes it, the checkpoint key, and two change detectors (a configured
-/// change is a superset of an effective one).
+/// D-20261119-YL: configured patterns stay in the decision. The few raw
+/// projections serve authored display, checkpoint hashing and equality.
 #[test]
 fn only_the_one_decision_reads_the_configured_journal_title() {
+    assert_date_readers(
+        &[
+            "journal_page_title_format",
+            "configured_patterns",
+            "configured_title_format",
+        ],
+        &[
+            "crates/tine-core/src/config.rs::JournalDateSettings::eq",
+            "crates/tine-core/src/model.rs::GraphMeta::from_config",
+            "crates/tine-store/src/store/checkpoint.rs::config_key",
+        ],
+    );
+}
+
+#[test]
+fn only_day_of_key_reads_compiled_text_routes_for_identity() {
+    assert_date_readers(
+        &["day_of_key"],
+        &[
+            "crates/tine-core/src/date.rs::TextRoutes::parse",
+            "crates/tine-core/src/date.rs::TextRoutes::parse_key",
+        ],
+    );
+    assert_date_readers(
+        &["parse_chars"],
+        &[
+            "crates/tine-core/src/date.rs::Format::parse",
+            "crates/tine-core/src/date.rs::TextRoutes::day_of_key",
+            "crates/tine-core/src/date.rs::first_route",
+        ],
+    );
+}
+
+#[test]
+fn only_file_claim_day_interprets_an_observed_journal_stem() {
+    assert_date_readers(
+        &["parse_file_stem"],
+        &[
+            "crates/tine-core/src/date.rs::JournalFormat::accepted_stems",
+            "crates/tine-core/src/date.rs::JournalFormat::file_claim_day",
+            "crates/tine-graph-features/src/journals.rs::migration_plan",
+        ],
+    );
+}
+
+fn assert_date_readers(names: &'static [&'static str], expected: &[&str]) {
     let workspace = crate_dir("../..");
     let mut files = Vec::new();
     for entry in fs::read_dir(workspace.join("crates")).unwrap() {
@@ -540,7 +581,10 @@ fn only_the_one_decision_reads_the_configured_journal_title() {
         }
     }
     rust_files(&workspace.join("src-tauri/src"), &mut files);
-    let mut readers = RawTitleReaders::default();
+    let mut readers = RawTitleReaders {
+        names,
+        ..RawTitleReaders::default()
+    };
     for path in &files {
         readers.file = path
             .strip_prefix(&workspace)
@@ -549,19 +593,9 @@ fn only_the_one_decision_reads_the_configured_journal_title() {
             .into_owned();
         readers.visit_file(&parse(path));
     }
-    let allowed: BTreeSet<String> = [
-        "crates/tine-core/src/config.rs::Config::journal_format",
-        "crates/tine-core/src/config.rs::Config::parse",
-        "crates/tine-store/src/store/checkpoint.rs::config_key",
-        "crates/tine-store/src/model/fileless_names.rs::DaySupport::carry",
-        "crates/tine-store/src/model/backlink_membership.rs::BacklinkMembership::succeeding",
-    ]
-    .into_iter()
-    .map(str::to_owned)
-    .collect();
+    let allowed: BTreeSet<String> = expected.iter().map(|name| (*name).to_owned()).collect();
     assert_eq!(
         readers.found, allowed,
-        "a consumer reads the configured journal title; ask `Config::journal_format()` \
-         (or `GraphMeta::journal_title.effective`) for the effective one (D-20261119-YL)"
+        "unexpected date readers for {names:?}"
     );
 }

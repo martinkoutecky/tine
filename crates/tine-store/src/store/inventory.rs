@@ -2,6 +2,7 @@
 //! reference-only names, the file-claimed subset a page rename needs, and the
 //! members of one alias group.
 use super::*;
+use crate::model::{Claim, ClaimantMap, OpeningName};
 
 /// Physical names, aliases, and names that occur only in references. Inventory
 /// scopes order by page identity key, except descending journal-day windows.
@@ -74,6 +75,31 @@ fn owner_link(graph: &ReadSnapshot, path: &str) -> Option<LinkTarget> {
     })
 }
 
+fn journal_inventory_entry(entries: &[PageEntry]) -> Option<InventoryEntry> {
+    let (winner, others) = entries.split_first()?;
+    #[cfg(feature = "test-faults")]
+    crate::cost_counters::journal_day_visit();
+    Some(InventoryEntry {
+        name: winner.name.clone(),
+        target: Resolved::Existing {
+            id: winner.rel_path.clone()?,
+            others: others
+                .iter()
+                .filter_map(|entry| entry.rel_path.clone())
+                .collect(),
+        },
+        is_journal: true,
+        day: winner.date_key.map(Day),
+        link: Some(LinkTarget {
+            name: winner.name.clone(),
+            is_journal: true,
+        }),
+        namespace_parent: false,
+        parent: None,
+        empty_alias: false,
+    })
+}
+
 /// The route for a link, from the same opening answer as direct reads.
 fn link_target_in(
     claimants: &crate::model::ClaimantMap,
@@ -106,7 +132,7 @@ fn link_target_in(
 
 /// Attach the store's link and typed namespace answers to an inventory row.
 fn with_link(
-    claimants: &SharedMap<(bool, String), Vec<PageEntry>>,
+    claimants: &ClaimantMap,
     graph: &ReadSnapshot,
     format: &JournalFormat,
     mut entry: InventoryEntry,
@@ -168,10 +194,11 @@ pub enum InventoryScope<'a> {
     ActiveFilesUnder(&'a str),
     /// The file-claimed name of this page in this view, if present.
     File(&'a PageId),
-    /// This journal file's row in the view's day index, as `JournalFiles`
-    /// lists it, also when the file failed to read: empty unless the file is
-    /// a journal and its name's opening claimant.
+    /// The active day claimed by this path in the captured view, including
+    /// a journal whose body could not be read.
     JournalFile(&'a PageId),
+    /// The active file and its competing files for a typed day.
+    JournalDay(Day),
     /// Every name: file-claimed names, aliases and reference-only names.
     All,
     /// Physical files in conflicting claim buckets, opening file first in
@@ -221,18 +248,16 @@ impl WholeGraph {
         let keys: std::collections::BTreeSet<_> = match names {
             Some(names) => names
                 .iter()
-                .map(|name| tine_core::refs::page_key(name))
+                .map(|name| OpeningName::new(&self.journal_format, name, false).claim())
                 .collect(),
-            None => self
-                .claimants
-                .iter()
-                .map(|((_, key), _)| key.clone())
-                .collect(),
+            None => self.claimants.iter().map(|(key, _)| key.clone()).collect(),
         };
         keys.into_iter()
             .filter_map(|key| {
-                let claims = self.all_name_claimants(&key);
-                (claims.len() > 1).then_some(claims)
+                self.claimants
+                    .get(&key)
+                    .filter(|claims| claims.len() > 1)
+                    .cloned()
             })
             .collect()
     }
@@ -295,17 +320,9 @@ impl WholeGraph {
     /// the per-page alias index: O(log P + a log P) for a aliases.
     ///
     /// [`InventoryScope::JournalFilesBefore`] lists at most `limit` file-claimed
-    /// days below an exclusive cursor, in descending order, from the existing
-    /// day index (duplicate-day strays are `others`, as in `All`). The day
-    /// tree seek costs O(log J); selected slots and claimant buckets use their
-    /// existing tree lookups and claimant spelling deduplication
-    /// (O(log P + C²) per candidate, C same-name claimants).
-    /// Masked days must be examined and skipped. No new index or disk access.
-    ///
-    /// [`InventoryScope::JournalFile`] names the file by its filename stem, as
-    /// the file list does (so a file that failed to read keeps its day), then
-    /// resolves that name as `JournalFiles` does: O(log P + C²) for C name
-    /// claimants, no parse and no disk access.
+    /// days below an exclusive cursor, in descending order, from the typed
+    /// claim index. The seek costs O(log P), followed by one row per day
+    /// and one ID per conflicting file. No parse or disk access.
     ///
     /// [`InventoryScope::File`] uses the existing page-position map and
     /// resolves its name in this view: O(log P + C) for C name claimants,
@@ -340,35 +357,30 @@ impl WholeGraph {
                 ))
             }
             InventoryScope::JournalFilesBefore { before, limit } => Arc::new(Inventory(
-                self.list
-                    .journal_days_before(before.0)
-                    .filter_map(|page| {
-                        self.claimed_entries(page, tine_core::refs::page_key(&page.name))
-                            .into_iter()
-                            .next()
-                            // A lossy title can make several source days open
-                            // one winner day. Emit it at its own indexed day.
-                            .filter(|entry| entry.day == page.date_key.map(Day))
-                    })
-                    .filter(|entry| entry.is_journal)
+                self.claimants
+                    .rev_before(&Claim::Day(before.0))
+                    .take_while(|(claim, _)| matches!(claim, Claim::Day(_)))
                     .take(limit)
+                    .filter_map(|(_, entries)| journal_inventory_entry(entries))
                     .collect(),
             )),
             InventoryScope::JournalFile(id) => {
-                let stem = std::path::Path::new(id.as_str())
-                    .file_stem()
-                    .and_then(|stem| stem.to_str());
-                let entry = stem.and_then(|stem| {
-                    let (name, _) = crate::model::journal_stem_name(&self.journal_format, stem);
-                    let claimants = self.all_name_claimants(&name);
-                    let winner = claimants.first()?;
-                    (winner.kind == PageKind::Journal && winner.rel_path.as_ref() == Some(id))
-                        .then(|| self.claimed_entries(winner, tine_core::refs::page_key(&name)))?
-                        .into_iter()
-                        .next()
+                let entry = self._snapshot.claim_by_path.get(id).and_then(|claim| {
+                    let Claim::Day(_) = claim else { return None };
+                    let entries = self.claimants.get(claim)?;
+                    (entries.first()?.rel_path.as_ref() == Some(id))
+                        .then(|| journal_inventory_entry(entries))
+                        .flatten()
                 });
                 Arc::new(Inventory(entry.into_iter().collect()))
             }
+            InventoryScope::JournalDay(day) => Arc::new(Inventory(
+                self.claimants
+                    .get(&Claim::Day(day.0))
+                    .and_then(|entries| journal_inventory_entry(entries))
+                    .into_iter()
+                    .collect(),
+            )),
             InventoryScope::File(id) => Arc::new(Inventory(
                 self.graph
                     .physical_pages
@@ -486,13 +498,9 @@ impl WholeGraph {
             #[cfg(any(test, feature = "test-faults"))]
             InventoryScope::JournalFiles => {
                 let mut entries: Vec<_> = self
-                    .list
-                    .journal_days()
-                    .filter_map(|page| {
-                        self.claimed_entries(page, tine_core::refs::page_key(&page.name))
-                            .into_iter()
-                            .next()
-                    })
+                    .claimants
+                    .iter_from(&Claim::Day(i64::MIN))
+                    .filter_map(|(_, entries)| journal_inventory_entry(entries))
                     .collect();
                 sort_inventory(&mut entries);
                 Arc::new(Inventory(entries))
@@ -525,7 +533,7 @@ impl WholeGraph {
             if !visited.insert(key.clone()) {
                 continue;
             }
-            for entry in self.claimed_entries(page, key) {
+            for entry in self.claimed_entries(page) {
                 let key = tine_core::refs::page_key(&entry.name);
                 if !entry.is_journal {
                     page_claimed_names.insert(key.clone());
@@ -629,7 +637,7 @@ impl WholeGraph {
             {
                 continue;
             }
-            entries.extend(self.claimed_entries(page, page_key));
+            entries.extend(self.claimed_entries(page));
         }
         sort_inventory(&mut entries);
         entries
@@ -644,7 +652,7 @@ impl WholeGraph {
                 .opening_entry(&key)
                 .filter(|page| (page.kind == PageKind::Journal) == journal);
             match claimant {
-                Some(page) => entries.extend(self.claimed_entries(page, key)),
+                Some(page) => entries.extend(self.claimed_entries(page)),
                 None => entries.push(self.named_entry(&spelling)),
             }
         }
@@ -694,12 +702,10 @@ impl WholeGraph {
             .collect()
     }
 
-    /// One entry per spelling of `page`'s claimant bucket (`key` is its page
-    /// key), each with the target `resolve` gives: the bucket's first
-    /// claimant, then every other claimant.
-    fn claimed_entries(&self, page: &PageEntry, _key: String) -> Vec<InventoryEntry> {
-        let opening = crate::model::OpeningName::new(&self.journal_format, &page.name, false);
-        let mut claimants = opening.claims(&self.claimants, &self.config.config.journals_dir);
+    /// One row per spelling in the claimant bucket, with the active file
+    /// and any competing files as its target.
+    fn claimed_entries(&self, page: &PageEntry) -> Vec<InventoryEntry> {
+        let mut claimants = self.claimants.get(&Claim::of(page)).into_iter().flatten();
         let Some(winner) = claimants.next() else {
             return Vec::new();
         };
@@ -756,17 +762,11 @@ impl Snapshot {
         key: &str,
         day: Option<JournalDate>,
     ) -> Option<InventoryEntry> {
-        let claimed = |journal: bool| {
-            self.claimants
-                .get(&(journal, key.to_owned()))
-                .is_some_and(|claimants| claimants.iter().any(|c| c.rel_path.is_some()))
-        };
-        let active_journal = self
-            .graph
-            .real_page_owners()
-            .opening_entry(key)
-            .is_some_and(|entry| entry.kind == PageKind::Journal);
-        if day.is_none() && (claimed(false) || claimed(true)) || day.is_some() && active_journal {
+        let claim = day.map_or_else(
+            || Claim::Name(key.to_owned()),
+            |day| Claim::Day(day.ordinal_key()),
+        );
+        if self.claimants.contains_key(&claim) {
             return None;
         }
         let spelling = table.get(key).map(|referrers| referrers.spelling.as_str());

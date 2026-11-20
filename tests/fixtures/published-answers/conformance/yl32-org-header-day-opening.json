@@ -1,0 +1,154 @@
+{
+  "aliases": [],
+  "answers": {
+    "alias_groups": [],
+    "inventory": [
+      {
+        "day": null,
+        "is_journal": false,
+        "key": "2020-11-03",
+        "link": {
+          "kind": "journal",
+          "name": "Nov 3rd, 2020"
+        },
+        "name": "2020-11-03",
+        "target": {
+          "id": "pages/Notes.org",
+          "kind": "existing",
+          "others": []
+        }
+      },
+      {
+        "day": 20201102,
+        "is_journal": true,
+        "key": "nov 2nd, 2020",
+        "name": "Nov 2nd, 2020",
+        "target": {
+          "id": "pages/!Diary.org",
+          "kind": "existing",
+          "others": []
+        }
+      },
+      {
+        "day": 20201103,
+        "is_journal": true,
+        "key": "nov 3rd, 2020",
+        "name": "Nov 3rd, 2020",
+        "target": {
+          "id": "pages/Notes.org",
+          "kind": "existing",
+          "others": []
+        }
+      },
+      {
+        "day": null,
+        "is_journal": false,
+        "key": "refs",
+        "name": "Refs",
+        "target": {
+          "id": "pages/Refs.md",
+          "kind": "existing",
+          "others": []
+        }
+      }
+    ],
+    "journals": {
+      "content_days": [
+        20201102,
+        20201103
+      ],
+      "file_name_format": "yyyy_MM_dd",
+      "title_format": "MMM do, yyyy"
+    },
+    "resolve": [
+      {
+        "kind": "journal",
+        "name": "2020-11-03",
+        "target": {
+          "id": "pages/Notes.org",
+          "kind": "existing",
+          "others": []
+        }
+      },
+      {
+        "kind": "page",
+        "name": "Nov 2nd, 2020",
+        "target": {
+          "id": "pages/!Diary.org",
+          "kind": "existing",
+          "others": []
+        }
+      },
+      {
+        "kind": "page",
+        "name": "Nov 3rd, 2020",
+        "target": {
+          "id": "pages/Notes.org",
+          "kind": "existing",
+          "others": []
+        }
+      }
+    ],
+    "v": 1
+  },
+  "backlinks": {},
+  "block_ref_counts": {},
+  "entries": [
+    {
+      "date_key": 20201102,
+      "kind": "journal",
+      "name": "Nov 2nd, 2020",
+      "path": "pages/!Diary.org"
+    },
+    {
+      "date_key": 20201103,
+      "kind": "journal",
+      "name": "Nov 3rd, 2020",
+      "path": "pages/Notes.org"
+    },
+    {
+      "date_key": null,
+      "kind": "page",
+      "name": "Refs",
+      "path": "pages/Refs.md"
+    }
+  ],
+  "exported_at": "",
+  "home": "Nov 2nd, 2020",
+  "icons": {},
+  "name": "Site",
+  "pages": [
+    {
+      "blocks": [],
+      "format": "org",
+      "kind": "journal",
+      "name": "Nov 2nd, 2020",
+      "path": "pages/!Diary.org",
+      "pre_block": null,
+      "read_only": true,
+      "title": "Nov 2nd, 2020"
+    },
+    {
+      "blocks": [],
+      "format": "org",
+      "kind": "journal",
+      "name": "Nov 3rd, 2020",
+      "path": "pages/Notes.org",
+      "pre_block": null,
+      "read_only": true,
+      "title": "Nov 3rd, 2020"
+    },
+    {
+      "blocks": [],
+      "format": "md",
+      "kind": "page",
+      "name": "Refs",
+      "path": "pages/Refs.md",
+      "pre_block": null,
+      "read_only": true,
+      "title": "Refs"
+    }
+  ],
+  "queries": [],
+  "schema": 1
+}

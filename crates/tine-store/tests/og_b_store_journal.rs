@@ -12,7 +12,8 @@ fn absent_journal_proposals_share_the_path_rule() {
                 "{{:journals-directory \"diary\" :preferred-format \"{preferred}\" :journal/file-name-format \"{format}\"}}"
             )).unwrap();
             let store = Store::open(dir.path(), Default::default()).unwrap().0;
-            let from_day = store.journal_id(Day(20260930), false);
+            let from_day = store.journal_id(Day(20260930));
+            assert_eq!(store.journal_id(Day(20260930)), from_day);
             let view = store.whole_graph().unwrap();
             let Resolved::Absent { id } = view.resolve(stem, true) else {
                 panic!("fixture day is absent")
@@ -30,6 +31,7 @@ fn absent_journal_proposals_share_the_path_rule() {
     let source = [
         include_str!("../src/store.rs"),
         include_str!("../src/store/name_owners.rs"),
+        include_str!("../src/store/page_identity.rs"),
     ];
     let count: usize = source
         .iter()

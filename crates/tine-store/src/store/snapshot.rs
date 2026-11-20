@@ -1,18 +1,7 @@
 //! Immutable publication capture: changed paths and names patch persistent roots.
 use super::*;
-use crate::model::derived::Named;
+use crate::model::{derived::Named, Claim, OpeningName};
 use std::collections::HashSet;
-
-fn name_claimants<'a>(
-    index: &'a SharedMap<(bool, String), Vec<PageEntry>>,
-    name: &str,
-    kind: PageKind,
-) -> &'a [PageEntry] {
-    index
-        .get(&(kind == PageKind::Journal, tine_core::refs::page_key(name)))
-        .map(Vec::as_slice)
-        .unwrap_or_default()
-}
 
 impl Store {
     /// Use the latest published identity index for a move's same-name check.
@@ -20,20 +9,13 @@ impl Store {
     /// never wait for the load worker while holding the transaction writer lock.
     pub(crate) fn move_claimant(&self, name: &str, kind: PageKind) -> Option<PageEntry> {
         if let Some(snapshot) = self.changes.snapshot.read().unwrap().as_ref() {
-            return name_claimants(&snapshot.claimants, name, kind)
-                .first()
+            return OpeningName::new(&snapshot.journal_format, name, kind == PageKind::Journal)
+                .claims(&snapshot.claimants)
+                .iter()
+                .find(|entry| entry.kind == kind)
                 .cloned();
         }
         self.graph.find_entry(name, kind)
-    }
-
-    /// Every journal-kind claimant of the day title `title`, in claimant
-    /// order: the published names, or the live index before a view exists.
-    pub(crate) fn day_claimants(&self, title: &str) -> Vec<PageEntry> {
-        if let Some(snapshot) = self.changes.snapshot.read().unwrap().as_ref() {
-            return name_claimants(&snapshot.claimants, title, PageKind::Journal).to_vec();
-        }
-        self.graph.find_claimants(title, PageKind::Journal)
     }
 
     /// Whether `entry`, read by path, is the winning claimant of its name
@@ -42,8 +24,8 @@ impl Store {
     /// other file is opened; a file the index does not list under this name
     /// yet (new, or retitled before the watcher saw it) is ranked against
     /// the listed claimants by the one claimant order. A journal, or a stale
-    /// or absent publication, asks the live index (a journal walk lists
-    /// journal file names only). Erring towards "not canonical" is safe: the
+    /// or absent publication, asks the live claimant index. Erring towards
+    /// "not canonical" is safe: the
     /// page is then parsed directly and its revision still comes from the
     /// bytes served.
     pub(crate) fn canonical_claim(&self, entry: &PageEntry) -> bool {
@@ -56,7 +38,11 @@ impl Store {
                 .as_ref()
                 .filter(|snapshot| snapshot.cache_generation == self.graph.cache_generation())
             {
-                let listed = name_claimants(&snapshot.claimants, &entry.name, entry.kind);
+                let listed = snapshot
+                    .claimants
+                    .get(&Claim::of(entry))
+                    .map(Vec::as_slice)
+                    .unwrap_or_default();
                 if listed.iter().any(|claimant| claimant.path == entry.path) {
                     return listed[0].path == entry.path;
                 }
@@ -69,18 +55,6 @@ impl Store {
         self.graph
             .find_entry(&entry.name, entry.kind)
             .is_some_and(|found| found.path == entry.path)
-    }
-}
-
-impl WholeGraph {
-    pub(super) fn all_name_claimants(&self, name: &str) -> Vec<PageEntry> {
-        let mut entries: Vec<_> = [PageKind::Page, PageKind::Journal]
-            .into_iter()
-            .flat_map(|kind| name_claimants(&self.claimants, name, kind).iter().cloned())
-            .collect();
-        let journals_dir = &self.config.config.journals_dir;
-        entries.sort_by(|a, b| crate::model::compare_page_claimants(journals_dir, a, b));
-        entries
     }
 }
 
@@ -169,10 +143,12 @@ impl Snapshot {
     /// claimant index recorded it from the file's bytes. An incremental
     /// update takes the day a file held from here, never from its path or
     /// its displayed name. O(claimants of that name).
-    fn held_entry(&self, path: &Path) -> Option<&PageEntry> {
-        let (kind, name) = self.name_by_path.get(path)?;
-        let key = (*kind == PageKind::Journal, tine_core::refs::page_key(name));
-        (self.claimants.get(&key)?.iter()).find(|entry| entry.path == path)
+    fn held_entry(&self, id: &PageId) -> Option<&PageEntry> {
+        let key = self.claim_by_path.get(id)?;
+        self.claimants
+            .get(key)?
+            .iter()
+            .find(|entry| entry.rel_path.as_ref() == Some(id))
     }
 
     /// The active pages changed by this publication, including opening
@@ -282,11 +258,12 @@ impl Snapshot {
                 {
                     return None;
                 }
-                let old_name = old.and_then(|snapshot| snapshot.name_by_path.get(&path));
+                let page = PageId::from(id.as_str());
+                let old_entry = old.and_then(|snapshot| snapshot.held_entry(&page));
                 // A removal is the entry the previous generation held (R2):
                 // no file is read for it, and it keeps the day it held.
                 let removed = || {
-                    let held = old?.held_entry(&path)?;
+                    let held = old_entry?;
                     Some((ChangeKind::Removed, held.clone()))
                 };
                 if *kind == ChangeKind::Removed {
@@ -304,7 +281,7 @@ impl Snapshot {
                     },
                 };
                 let kind = match retired.contains(id) {
-                    true if old_name.is_none() => ChangeKind::Created,
+                    true if old_entry.is_none() => ChangeKind::Created,
                     _ => *kind,
                 };
                 // A journals-directory file is named by its file name alone; a
@@ -315,8 +292,11 @@ impl Snapshot {
                 // A journal title names one day (D-20261119-YL), so kind and
                 // name settle whether the claim changed.
                 if kind == ChangeKind::Modified
-                    && old_name
-                        .is_some_and(|(kind, name)| *kind == entry.kind && *name == entry.name)
+                    && old_entry.is_some_and(|old| {
+                        old.kind == entry.kind
+                            && old.name == entry.name
+                            && old.date_key == entry.date_key
+                    })
                 {
                     return None;
                 }
@@ -332,16 +312,19 @@ impl Snapshot {
             .iter()
             .map(|(_, entry)| entry.path.clone())
             .collect();
-        let mut name_by_path = old
-            .map(|old| Arc::clone(&old.name_by_path))
+        let mut claim_by_path = old
+            .map(|old| Arc::clone(&old.claim_by_path))
             .unwrap_or_default();
         let (list, claimants) = if config_changed || rebuild || old.is_none() {
             let (list, claimants) = graph.snapshot_name_roots();
-            name_by_path = Arc::new(
+            claim_by_path = Arc::new(
                 claimants
-                    .values()
-                    .flatten()
-                    .map(|entry| (entry.path.clone(), (entry.kind, entry.name.clone())))
+                    .iter()
+                    .flat_map(|(claim, entries)| {
+                        entries
+                            .iter()
+                            .filter_map(|entry| Some((entry.rel_path.clone()?, claim.clone())))
+                    })
                     .collect(),
             );
             (list, claimants)
@@ -351,65 +334,46 @@ impl Snapshot {
             let mut claimants = Arc::clone(&previous.claimants);
             let journals_dir = graph.current_config().journals_dir.clone();
             for (kind, entry) in changed_names {
+                let Some(id) = &entry.rel_path else { continue };
                 let path = entry.path.clone();
                 let buckets = Arc::make_mut(&mut claimants);
-                // The day this file named before, when a retitle moved it off
-                // that day: its next claimant takes the day.
-                let old_day = (previous.held_entry(&path))
-                    .filter(|old| old.kind == PageKind::Journal)
-                    .filter(|old| old.date_key.is_some() && old.date_key != entry.date_key)
-                    .map(|old| (old.clone(), old.name.clone()));
-                if let Some((old_kind, old_name)) = previous.name_by_path.get(&path) {
-                    let old_key = (
-                        *old_kind == PageKind::Journal,
-                        tine_core::refs::page_key(old_name),
-                    );
-                    if let Some(bucket) = buckets.get_mut(&old_key) {
+                let old_key = claim_by_path.get(id).cloned();
+                if let Some(old_key) = &old_key {
+                    Arc::make_mut(&mut claim_by_path).remove(id);
+                    if let Some(bucket) = buckets.get_mut(old_key) {
                         bucket.retain(|candidate| candidate.path != path);
                         if bucket.is_empty() {
-                            buckets.remove(&old_key);
+                            buckets.remove(old_key);
                         }
                     }
                 }
-                Arc::make_mut(&mut name_by_path).remove(&path);
-                if kind != ChangeKind::Removed {
-                    Arc::make_mut(&mut name_by_path)
-                        .insert(path.clone(), (entry.kind, entry.name.clone()));
-                    let key = (
-                        entry.kind == PageKind::Journal,
-                        tine_core::refs::page_key(&entry.name),
-                    );
-                    if !buckets.contains_key(&key) {
+                let new_key = (kind != ChangeKind::Removed).then(|| Claim::of(&entry));
+                if let Some(key) = &new_key {
+                    Arc::make_mut(&mut claim_by_path).insert(id.clone(), key.clone());
+                    if !buckets.contains_key(key) {
                         buckets.insert(key.clone(), Vec::new());
                     }
-                    let bucket = buckets.get_mut(&key).unwrap();
+                    let bucket = buckets.get_mut(key).unwrap();
                     bucket.push(entry.clone());
                     bucket
                         .sort_by(|a, b| crate::model::compare_page_claimants(&journals_dir, a, b));
                 }
                 let list = Arc::make_mut(&mut list);
                 list.remove_path(&path);
-                // A day's winner is the first claimant of its title that
-                // holds that day: the title's normalized bucket can also hold
-                // an undated file (`journals/20261102.md` under `/yyyyMMdd/`).
-                let day_winner = |name: &str, day: i64| {
-                    (buckets.get(&(true, tine_core::refs::page_key(name))))
-                        .and_then(|bucket| bucket.iter().find(|e| e.date_key == Some(day)))
-                };
-                if let Some((old, old_name)) = old_day {
-                    let day = old.date_key.unwrap();
-                    list.remove_day(day);
-                    if let Some(winner) = day_winner(&old_name, day) {
-                        list.push(winner.clone());
+                for key in old_key
+                    .as_ref()
+                    .filter(|key| Some(*key) != new_key.as_ref())
+                    .into_iter()
+                    .chain(new_key.as_ref())
+                {
+                    if let Claim::Day(day) = key {
+                        list.remove_day(*day);
+                        if let Some(winner) = buckets.get(key).and_then(|bucket| bucket.first()) {
+                            list.push(winner.clone());
+                        }
                     }
                 }
-                if entry.kind == PageKind::Journal && entry.date_key.is_some() {
-                    let day = entry.date_key.unwrap();
-                    list.remove_day(day);
-                    if let Some(winner) = day_winner(&entry.name, day) {
-                        list.push(winner.clone());
-                    }
-                } else if kind != ChangeKind::Removed {
+                if matches!(new_key, Some(Claim::Name(_))) {
                     list.push(entry);
                 }
             }
@@ -424,7 +388,7 @@ impl Snapshot {
         let journal_keys: HashSet<_> = if config_changed || rebuild || old.is_none() {
             claimants
                 .iter()
-                .filter(|((journal, _), entries)| *journal && entries.len() > 1)
+                .filter(|(key, entries)| matches!(key, Claim::Day(_)) && entries.len() > 1)
                 .map(|(key, _)| key.clone())
                 .collect()
         } else {
@@ -433,15 +397,15 @@ impl Snapshot {
             files
                 .iter()
                 .flat_map(|(id, _, _)| {
-                    let path = graph.root.join(id.as_str());
+                    let page = PageId::from(id.as_str());
                     [
-                        name_by_path.get(&path),
-                        old.and_then(|old| old.name_by_path.get(&path)),
+                        claim_by_path.get(&page),
+                        old.and_then(|old| old.claim_by_path.get(&page)),
                     ]
                     .into_iter()
                     .flatten()
-                    .filter(|(kind, _)| *kind == PageKind::Journal)
-                    .map(|(_, name)| (true, tine_core::refs::page_key(name)))
+                    .filter(|key| matches!(key, Claim::Day(_)))
+                    .cloned()
                     .collect::<Vec<_>>()
                 })
                 .collect()
@@ -547,7 +511,7 @@ impl Snapshot {
             journal_format,
             list,
             claimants,
-            name_by_path,
+            claim_by_path,
             unreadable: graph.reported_unreadable_pages(),
             answers: Default::default(),
             folds_only,
@@ -632,17 +596,6 @@ impl ChangeFeed {
                 super::checkpoint::config_key(&old.config.config)
                     != super::checkpoint::config_key(&self.config.read().unwrap().config)
             });
-        // Every file the capture may name, whatever its raw kind: the capture
-        // adds a file no publication named yet (a retired or touched row, a
-        // Modified file with no previous name), and a file in any directory
-        // may be a day (CM SPEC §2.1), so the day index patches what the page
-        // list and claimants patch (`patch_journal_ids` keeps the days).
-        let journals_dir = self.graph.current_config().journals_dir.clone();
-        let journal_files = |pending: &PendingFiles| -> Vec<PathBuf> {
-            (pending.files().iter())
-                .map(|(id, _, _)| self.graph.root.join(id.as_str()))
-                .collect()
-        };
         let rev = GraphRev(self.rev().0 + 1);
         let targets = self.registered_targets();
         let capture = |pending: &PendingFiles, config_changed: bool| {
@@ -702,15 +655,6 @@ impl ChangeFeed {
             without
         });
         let Some(mut snapshot) = captured else {
-            // Any created or removed file may be a day (CM SPEC §2.1).
-            let journal_set_changed = (files.iter())
-                .any(|(_, kind, _)| matches!(kind, ChangeKind::Created | ChangeKind::Removed));
-            if old.is_none() || config_changed || rebuild || journal_set_changed {
-                *self.journal_ids.lock().unwrap() = journal_ids_from_entries(
-                    &journals_dir,
-                    self.graph.list_pages_shared().as_ref(),
-                );
-            }
             // Under the writer, so a panic that reached it would poison every
             // later save: the graph fails instead, `refresh()` retries, and
             // the retry patches these files.
@@ -720,17 +664,6 @@ impl ChangeFeed {
             self.load.fail_publication(&self.graph);
             return self.rev();
         };
-        // The day index and the name memos follow the names this capture
-        // patched: no listing walk (GH #623 R2).
-        match old.as_deref() {
-            Some(old) if !config_changed && !rebuild => {
-                self.patch_journal_ids(old, &snapshot, &journal_files(&pending))
-            }
-            _ => {
-                *self.journal_ids.lock().unwrap() =
-                    journal_ids_from_entries(&journals_dir, snapshot.list.iter())
-            }
-        }
         self.graph.adopt_name_index(
             old.as_ref().map(|old| old.cache_generation),
             snapshot.cache_generation,
@@ -772,36 +705,6 @@ impl ChangeFeed {
         }
         rev
     }
-
-    /// Patch the day index for the files a capture took: the day each one
-    /// held before and holds now, as each generation's entry records it (a
-    /// `title::` can move a file between days, CM SPEC §2.1; never re-derived
-    /// from the path or name) takes the journal `snapshot` lists for it (one per day,
-    /// the claimant order's first), or none. A file whose name did not
-    /// change rewrites its day to the same id.
-    fn patch_journal_ids(&self, old: &Snapshot, snapshot: &Snapshot, paths: &[PathBuf]) {
-        if paths.is_empty() {
-            return;
-        }
-        let mut ids = self.journal_ids.lock().unwrap();
-        for path in paths {
-            let days = [snapshot.held_entry(path), old.held_entry(path)]
-                .into_iter()
-                .flatten()
-                .filter(|entry| entry.kind == PageKind::Journal)
-                .filter_map(|entry| entry.date_key);
-            for day in days {
-                match snapshot
-                    .list
-                    .get_day(day)
-                    .and_then(|entry| entry.rel_path.clone())
-                {
-                    Some(id) => ids.insert(Day(day), id),
-                    None => ids.remove(&Day(day)),
-                };
-            }
-        }
-    }
 }
 
 /// What final publication already observed of the files it published, so
@@ -837,7 +740,11 @@ impl Store {
     /// Whether the published snapshot names a page at `path`.
     pub(crate) fn snapshot_knows(&self, path: &Path) -> bool {
         let snapshot = self.changes.snapshot.read().unwrap();
-        (snapshot.as_ref()).is_some_and(|snapshot| snapshot.name_by_path.contains_key(path))
+        snapshot.as_ref().is_some_and(|snapshot| {
+            snapshot
+                .claim_by_path
+                .contains_key(&PageId::from(self.graph.rel_path(path)))
+        })
     }
 
     pub(crate) fn publish_own(
@@ -865,24 +772,14 @@ impl Store {
         let config_changed = observed
             .iter()
             .any(|(id, _)| id.as_str() == "logseq/config.edn");
-        // Any created or removed file may be a day (CM SPEC §2.1), as in
-        // `capture`'s failed-publication path.
-        let journal_set_changed = config_changed
-            || files
-                .iter()
-                .any(|(_, kind, _)| matches!(kind, ChangeKind::Created | ChangeKind::Removed));
         if matches!(*self.load.status.lock().unwrap(), LoadStatus::Failed(_)) {
-            if journal_set_changed {
-                self.refresh_journal_ids();
-            }
             self.watch.reconcile_raced(&raced);
             return (self.changes.rev(), None);
         }
         // Before the first complete view, the publication waits for it
         // (`first_view.rs`): the current revision, no change yet.
         if self.defers_publication(config_changed) {
-            self.changes
-                .defer_publication(origin, files, pages, (raced, journal_set_changed));
+            self.changes.defer_publication(origin, files, pages, raced);
             return (self.changes.rev(), None);
         }
         // A publication that does not wait while changes still do (a config

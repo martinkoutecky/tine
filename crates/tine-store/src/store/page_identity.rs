@@ -1,6 +1,7 @@
 //! Store page identity and validated OS path handoff.
 
 use super::*;
+use crate::model::{Claim, ClaimantMap, OpeningName};
 
 // File ids are slash-separated, already validated lexical paths. Test the
 // component boundary without allocating a directory prefix on every read.
@@ -10,6 +11,81 @@ fn in_directory(path: &str, directory: &str) -> bool {
 }
 
 impl Store {
+    /// Return the active claimant of the day or propose the configured path.
+    /// The first cold selection reads one preamble per non-journal file
+    /// without waiting for the parse. Published or memoized lookups read no files.
+    /// A proposal gives no existence guarantee. Handle twins, changes
+    /// and unreadable paths through the guarded save; invalid days are
+    /// not rejected here.
+    pub fn journal_id(&self, day: Day) -> PageId {
+        let date = JournalDate::from_ordinal(day.0);
+        let (claimants, format, config) = self.journal_opening_claimants();
+        claimants
+            .get(&Claim::Day(day.0))
+            .and_then(|entries| entries.first())
+            .and_then(|entry| entry.rel_path.clone())
+            .unwrap_or_else(|| proposed_journal_id(&config, format.file_stem(date)))
+    }
+
+    /// File-backed journal openings through `cutoff`, newest first.
+    /// Uses the same complete claims as `journal_id`; journal bodies
+    /// are read later for rows the feed serves. Visits the included day
+    /// buckets in order. A cold memo miss adds one
+    /// graph listing and one preamble per non-journal candidate.
+    pub fn journal_file_openings(
+        &self,
+        cutoff: Day,
+    ) -> Result<(Vec<(Day, PageId)>, Vec<String>), StoreError> {
+        if self.is_closed() {
+            return Err(StoreError::Closed);
+        }
+        let snapshot = self.changes.snapshot.read().unwrap().clone();
+        let (claimants, failures) = match snapshot {
+            Some(snapshot) => (
+                Arc::clone(&snapshot.claimants),
+                Arc::clone(&snapshot.unreadable),
+            ),
+            None => (
+                self.graph.complete_name_claimants(),
+                self.graph.reported_unreadable_pages(),
+            ),
+        };
+        let days = claimants
+            .rev_before(&Claim::Day(cutoff.0.saturating_add(1)))
+            .map_while(|(claim, entries)| match claim {
+                Claim::Day(day) => Some((Day(*day), entries)),
+                Claim::Name(_) => None,
+            })
+            .filter_map(|(day, entries)| Some((day, entries.first()?.rel_path.clone()?)))
+            .collect();
+        let failures = failures
+            .iter()
+            .map(|(id, reason)| format!("{}: {reason}", id.as_str()))
+            .collect();
+        Ok((days, failures))
+    }
+
+    fn journal_opening_claimants(
+        &self,
+    ) -> (
+        Arc<ClaimantMap>,
+        Arc<JournalFormat>,
+        Arc<tine_core::config::Config>,
+    ) {
+        if let Some(snapshot) = self.changes.snapshot.read().unwrap().as_ref() {
+            return (
+                Arc::clone(&snapshot.claimants),
+                Arc::clone(&snapshot.journal_format),
+                Arc::clone(&snapshot.config.config),
+            );
+        }
+        (
+            self.graph.complete_name_claimants(),
+            self.graph.current_journal_format(),
+            self.graph.current_config(),
+        )
+    }
+
     /// [`Self::page_named_from_files`] for the CM conformance harness's
     /// cold direct-lookup check (D-20261119-YL round 4b).
     #[cfg(test)]
@@ -36,10 +112,9 @@ impl Store {
         as_journal: bool,
     ) -> Result<Option<PageRead>, StoreError> {
         let format = self.graph.current_journal_format();
-        let config = self.graph.current_config();
         let claims = self.graph.complete_name_claimants();
-        let opening = crate::model::OpeningName::new(&format, name, as_journal);
-        let Some(claim) = opening.claims(&claims, &config.journals_dir).next() else {
+        let opening = OpeningName::new(&format, name, as_journal);
+        let Some(claim) = opening.claims(&claims).first() else {
             return Ok(None);
         };
         let id = claim.rel_path.as_ref().expect("physical claimant");

@@ -104,7 +104,6 @@ pub struct Store {
     pub(crate) writer: Arc<Mutex<()>>,
     load: Arc<LoadState>,
     config_state: Arc<RwLock<ConfigState>>,
-    journal_ids: Arc<Mutex<HashMap<Day, PageId>>>,
     pub(crate) changes: Arc<ChangeFeed>,
     pub(crate) watch: crate::watch::WatchHandle,
     #[cfg(any(test, feature = "test-faults"))]
@@ -344,7 +343,6 @@ pub(crate) struct ChangeFeed {
     graph: Arc<Graph>,
     /// Where a publication that cannot capture reports the graph failed.
     load: Arc<LoadState>,
-    journal_ids: Arc<Mutex<HashMap<Day, PageId>>>,
     config: Arc<RwLock<ConfigState>>,
     snapshot: RwLock<Option<Arc<Snapshot>>>,
     /// Why live notifications are refused right now (`None` while watching or
@@ -378,8 +376,8 @@ struct Snapshot {
     config: ConfigState,
     journal_format: Arc<JournalFormat>,
     list: Arc<EntryList>,
-    claimants: Arc<SharedMap<(bool, String), Vec<PageEntry>>>,
-    name_by_path: Arc<SharedMap<PathBuf, (PageKind, String)>>,
+    claimants: Arc<crate::model::ClaimantMap>,
+    claim_by_path: Arc<SharedMap<PageId, crate::model::Claim>>,
     unreadable: Arc<Vec<(FileId, String)>>,
     answers: Answers,
     /// This publication only folded or unfolded blocks (GH #623 item 3).
@@ -398,7 +396,7 @@ pub(crate) mod checkpoint;
 mod diagnostics;
 mod first_view;
 mod page_metrics;
-pub(crate) use first_view::{contain_index_publication, journal_ids_from_entries};
+pub(crate) use first_view::contain_index_publication;
 #[cfg(test)]
 mod fold_save_tests;
 mod inventory;
@@ -454,12 +452,7 @@ impl ChangeFeed {
         }
     }
 
-    fn new(
-        graph: Arc<Graph>,
-        load: Arc<LoadState>,
-        config: Arc<RwLock<ConfigState>>,
-        journal_ids: Arc<Mutex<HashMap<Day, PageId>>>,
-    ) -> Self {
+    fn new(graph: Arc<Graph>, load: Arc<LoadState>, config: Arc<RwLock<ConfigState>>) -> Self {
         Self {
             unlinked_targets: Default::default(),
             query_targets: Default::default(),
@@ -473,7 +466,6 @@ impl ChangeFeed {
             graph,
             load,
             config,
-            journal_ids,
             snapshot: RwLock::new(None),
             watch_status: Mutex::new((None, None)),
             checkpoint: std::sync::OnceLock::new(),
@@ -907,10 +899,6 @@ impl Store {
         graph.install_live_config();
         let writer = Arc::new(Mutex::new(()));
         let load = Arc::new(LoadState::new(LoadStatus::Ready));
-        let journal_ids = Arc::new(Mutex::new(journal_ids_from_entries(
-            &graph.current_config().journals_dir,
-            graph.list_pages_shared().as_ref(),
-        )));
         let config_state = Arc::new(RwLock::new(ConfigState::of(
             &graph,
             Arc::new(graph.config.clone()),
@@ -920,7 +908,6 @@ impl Store {
             Arc::clone(&graph),
             Arc::clone(&load),
             Arc::clone(&config_state),
-            Arc::clone(&journal_ids),
         ));
         changes.initialize();
         let watch = crate::watch::WatchHandle::start(
@@ -928,7 +915,6 @@ impl Store {
             Arc::clone(&writer),
             Arc::clone(&load),
             Arc::clone(&changes),
-            Arc::clone(&journal_ids),
             Arc::clone(&config_state),
             WatchMode::Notify,
             crate::watch::Baseline::Walk,
@@ -938,7 +924,6 @@ impl Store {
             graph,
             writer,
             load,
-            journal_ids,
             changes,
             watch,
             faults: Mutex::new(std::collections::HashSet::new()),
@@ -1156,8 +1141,6 @@ impl Store {
                     CheckedOpenError::Io(error) => OpenError::Io(error.into()),
                 })?;
         graph.install_live_config();
-        let journals = graph.scan_journal_names();
-        let journal_ids = journal_ids_from_entries(&graph.current_config().journals_dir, &journals);
         let problem = graph.config_read_problem.clone();
         let graph = Arc::new(graph);
         let config = ConfigState::of(&graph, Arc::new(graph.config.clone()), problem);
@@ -1168,13 +1151,11 @@ impl Store {
         );
         let load = Arc::new(LoadState::new(LoadStatus::Loading));
         let writer = Arc::new(Mutex::new(()));
-        let journal_ids = Arc::new(Mutex::new(journal_ids));
         let config_state = Arc::new(RwLock::new(config.clone()));
         let changes = Arc::new(ChangeFeed::new(
             Arc::clone(&graph),
             Arc::clone(&load),
             Arc::clone(&config_state),
-            Arc::clone(&journal_ids),
         ));
         graph.diag.open_done();
         let watch = crate::watch::WatchHandle::start(
@@ -1182,7 +1163,6 @@ impl Store {
             Arc::clone(&writer),
             Arc::clone(&load),
             Arc::clone(&changes),
-            Arc::clone(&journal_ids),
             Arc::clone(&config_state),
             opts.watch,
             crate::watch::Baseline::FromLoad,
@@ -1293,7 +1273,6 @@ impl Store {
                 writer,
                 load,
                 config_state,
-                journal_ids,
                 changes,
                 watch,
                 #[cfg(any(test, feature = "test-faults"))]
@@ -1503,59 +1482,6 @@ impl Store {
         self.load.closed.load(Ordering::Acquire)
     }
 
-    /// Return a cached physical journal id or propose a configured path (directory,
-    /// filename format, preferred extension). The day index covers accessible files
-    /// before open and refreshes before relevant publications: direct reads/writes,
-    /// transactions, restore, watcher and refresh. With `active_only = false`,
-    /// cost O(format + path bytes), with no parse or disk read.
-    /// Unreadable subtrees or unobserved external creations
-    /// can yield a duplicate-day proposal. It does not indicate existence: `page(id)`
-    /// may return `NotFound`. Invalid `Day` is not rejected and may yield nonsense.
-    /// Use guarded `CreateNew` saves; handle conflicts, twins, I/O and target-safety
-    /// refusals, including unreadable destination directories.
-    /// `active_only` selects the day's opening claimant in any directory (a
-    /// date-named pages file is the day, D-20261111-CMR14 CM-DAYFILE). False
-    /// retains the day index for guarded mutations and exact-file inspection.
-    /// Active lookup uses the published
-    /// names, or the live preamble index before a view exists (one O(P) discovery
-    /// per invalidation, then indexed lookups); it never reads journal bodies.
-    pub fn journal_id(&self, day: Day, active_only: bool) -> PageId {
-        let date = JournalDate::from_ordinal(day.0);
-        if active_only {
-            let title = self.graph.current_journal_format().title(date);
-            // The day's claimants in any directory, in the one claimant order
-            // (CM SPEC §§2.1–2.2): the title names this day alone
-            // (D-20261119-YL). The lookup also works before Ready and after a
-            // contained load failure, without waiting or reading journal
-            // bodies.
-            if let Some(entry) =
-                (self.day_claimants(&title).into_iter()).find(|entry| entry.date_key == Some(day.0))
-            {
-                return PageId::from(self.graph.rel_path(&entry.path));
-            }
-        }
-        if let Some(id) = self.journal_ids.lock().unwrap().get(&day) {
-            return id.clone();
-        }
-        proposed_journal_id(
-            &self.graph.current_config(),
-            self.graph.current_journal_format().file_stem(date),
-        )
-    }
-    /// Every day the day index holds a file for, in any directory (a
-    /// date-named pages file is its day, CM SPEC §2.1), unordered. The index
-    /// [`Self::journal_id`] reads with `active_only = false`. O(D) for D
-    /// indexed days (one copy of the keys), no I/O.
-    ///
-    /// The journals feed's first page needs it because that page is served
-    /// before the first view exists and without waiting for it
-    /// (`feed_page_through` with references off): the journals-directory
-    /// listing it walks cannot see a day a pages file holds, and
-    /// `InventoryScope::JournalFilesBefore` / the indexed feed window answer
-    /// only from a view (`WholeGraph`). Later scroll steps use that window.
-    pub fn journal_days(&self) -> Vec<Day> {
-        self.journal_ids.lock().unwrap().keys().copied().collect()
-    }
     /// Count entries and bytes by kind in graph trash. `scan_area(Area::Trash)`
     /// can list files and `move_file` can move one to a live area with a guard,
     /// but there is no dedicated untrash workflow or recovery-root import.
@@ -1841,6 +1767,21 @@ impl Store {
             root.clone()
         };
         let mut listing = Listing::default();
+        let journal_claims = (area == Area::Journals).then(|| {
+            let config = self.graph.current_config();
+            let snapshot = self
+                .changes
+                .snapshot
+                .read()
+                .unwrap()
+                .as_ref()
+                .filter(|snapshot| {
+                    snapshot.config.config.journal_settings == config.journal_settings
+                        && snapshot.config.config.journals_dir == config.journals_dir
+                })
+                .cloned();
+            (config.journal_format(), snapshot)
+        });
         // One directory per call; subdirectories are queued, not recursed into,
         // so a delivered tree of any depth costs heap, not stack (I-22).
         fn walk(
@@ -1850,6 +1791,7 @@ impl Store {
             dir: &Path,
             out: &mut Listing,
             pending: &mut Vec<PathBuf>,
+            journal_claims: Option<&(JournalFormat, Option<Arc<Snapshot>>)>,
         ) {
             let forced = scan_entry::forced_list_failure(root, dir);
             let entries = match forced.map_or_else(|| fs::read_dir(dir), Err) {
@@ -1941,22 +1883,27 @@ impl Store {
                     match meta {
                         Ok(meta) => {
                             if let Ok(id) = store.file_id(area, &rel) {
-                                out.files.push(FileEntry {
-                                    page: store.as_page(&id),
-                                    day: if area == Area::Journals {
-                                        std::path::Path::new(&rel)
-                                            .file_stem()
+                                let page = store.as_page(&id);
+                                let day = page.as_ref().zip(journal_claims).and_then(
+                                    |(page, (format, snapshot))| {
+                                        if let Some(claim) = snapshot
+                                            .as_ref()
+                                            .and_then(|snapshot| snapshot.claim_by_path.get(page))
+                                        {
+                                            return match claim {
+                                                crate::model::Claim::Day(day) => Some(Day(*day)),
+                                                crate::model::Claim::Name(_) => None,
+                                            };
+                                        }
+                                        path.file_stem()
                                             .and_then(|stem| stem.to_str())
-                                            .and_then(|stem| {
-                                                store
-                                                    .graph
-                                                    .current_journal_format()
-                                                    .parse_file_stem(stem)
-                                            })
+                                            .and_then(|stem| format.file_claim_day(stem, true))
                                             .map(|date| Day(date.ordinal_key()))
-                                    } else {
-                                        None
                                     },
+                                );
+                                out.files.push(FileEntry {
+                                    page,
+                                    day,
                                     id,
                                     area,
                                     rel,
@@ -1985,7 +1932,15 @@ impl Store {
             Ok(_) => {
                 let mut pending = vec![start];
                 while let Some(dir) = pending.pop() {
-                    walk(self, area, &root, &dir, &mut listing, &mut pending);
+                    walk(
+                        self,
+                        area,
+                        &root,
+                        &dir,
+                        &mut listing,
+                        &mut pending,
+                        journal_claims.as_ref(),
+                    );
                 }
             }
             Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
@@ -2254,7 +2209,7 @@ pub struct FileEntry {
     pub rel: String,
     /// Page identity for page or journal text, if applicable.
     pub page: Option<PageId>,
-    /// Parsed journal day under configured and fallback formats; cost O(1).
+    /// The day a graph-text file listed in the journals area claims.
     pub day: Option<Day>,
     /// Metadata for a successfully statted entry. Stat failures appear in
     /// `Listing::unreadable` instead.
@@ -2840,7 +2795,7 @@ pub struct WholeGraph {
     pub(crate) config: ConfigState,
     journal_format: Arc<JournalFormat>,
     pub(crate) list: Arc<EntryList>,
-    claimants: Arc<SharedMap<(bool, String), Vec<PageEntry>>>,
+    claimants: Arc<crate::model::ClaimantMap>,
 }
 
 mod template_names;

@@ -1,0 +1,13 @@
+{
+  "fileNameFormat": "legacy",
+  "files": [
+    {
+      "format": "md",
+      "name": "Inbox",
+      "path": "pages/Inbox.md",
+      "preBlock": "alias:: 11-02",
+      "title": null
+    }
+  ],
+  "links": []
+}

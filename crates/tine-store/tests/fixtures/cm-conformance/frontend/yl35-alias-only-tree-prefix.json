@@ -1,0 +1,288 @@
+{
+  "backlinks": {
+    "2026": [
+      {
+        "blocks": [
+          {
+            "children": [],
+            "collapsed": false,
+            "id": "page-property:Page:inbox",
+            "raw": "alias:: 2026/11",
+            "tags": []
+          }
+        ],
+        "kind": "page",
+        "page": "Inbox"
+      }
+    ],
+    "2026/11/02": [],
+    "Inbox": []
+  },
+  "conflicts": [],
+  "counts": [
+    [
+      [
+        "pages/Inbox.md",
+        0
+      ],
+      [
+        "journals/2026_11_02.md",
+        0
+      ]
+    ],
+    [
+      [
+        "2026",
+        1
+      ]
+    ]
+  ],
+  "inventory": [
+    {
+      "day": null,
+      "is_journal": false,
+      "key": "2026",
+      "link": {
+        "kind": "page",
+        "name": "2026"
+      },
+      "name": "2026",
+      "namespace_parent": true,
+      "target": {
+        "id": "pages/2026.md",
+        "kind": "absent"
+      }
+    },
+    {
+      "day": null,
+      "is_journal": false,
+      "key": "2026/11",
+      "link": {
+        "kind": "page",
+        "name": "Inbox"
+      },
+      "name": "2026/11",
+      "namespace_excluded": true,
+      "target": {
+        "kind": "alias",
+        "owners": [
+          "pages/Inbox.md"
+        ]
+      }
+    },
+    {
+      "day": 20261102,
+      "is_journal": true,
+      "key": "2026/11/02",
+      "link": {
+        "kind": "journal",
+        "name": "2026/11/02"
+      },
+      "name": "2026/11/02",
+      "target": {
+        "id": "journals/2026_11_02.md",
+        "kind": "existing",
+        "others": []
+      }
+    },
+    {
+      "day": null,
+      "is_journal": false,
+      "key": "inbox",
+      "link": {
+        "kind": "page",
+        "name": "Inbox"
+      },
+      "name": "Inbox",
+      "target": {
+        "id": "pages/Inbox.md",
+        "kind": "existing",
+        "others": []
+      }
+    }
+  ],
+  "journalFileFormat": null,
+  "journalTitle": {
+    "effective": "yyyy/MM/dd",
+    "refusal": null
+  },
+  "journalTitleFormat": "yyyy/MM/dd",
+  "keyOf": {
+    "2026": "2026",
+    "2026/11": "2026/11",
+    "2026/11/02": "Day 2026-11-02",
+    "Inbox": "inbox"
+  },
+  "namespaceTree": [],
+  "open": {
+    "2026": {
+      "journal": [
+        "journal",
+        "2026"
+      ],
+      "page": [
+        "page",
+        "2026"
+      ]
+    },
+    "2026/11": {
+      "journal": [
+        "journal",
+        "2026/11"
+      ],
+      "page": [
+        "page",
+        "inbox"
+      ]
+    },
+    "2026/11/02": {
+      "journal": [
+        "journal",
+        "Day 2026-11-02"
+      ],
+      "page": [
+        "journal",
+        "Day 2026-11-02"
+      ]
+    },
+    "Inbox": {
+      "journal": [
+        "journal",
+        "inbox"
+      ],
+      "page": [
+        "page",
+        "inbox"
+      ]
+    }
+  },
+  "owner": {
+    "2026": {
+      "journal": null,
+      "page": null
+    },
+    "2026/11": {
+      "journal": null,
+      "page": "pages/Inbox.md"
+    },
+    "2026/11/02": {
+      "journal": "journals/2026_11_02.md",
+      "page": "journals/2026_11_02.md"
+    },
+    "Inbox": {
+      "journal": null,
+      "page": "pages/Inbox.md"
+    }
+  },
+  "pages": [
+    {
+      "key": "Day 2026-11-02",
+      "kind": "journal",
+      "linkedRefs": 0,
+      "name": "2026/11/02",
+      "owner": "journals/2026_11_02.md",
+      "parent": null
+    },
+    {
+      "key": "2026",
+      "kind": "page",
+      "linkedRefs": 1,
+      "name": "2026",
+      "owner": null,
+      "parent": null
+    },
+    {
+      "key": "inbox",
+      "kind": "page",
+      "linkedRefs": 0,
+      "name": "Inbox",
+      "owner": "pages/Inbox.md",
+      "parent": null
+    }
+  ],
+  "spellings": {
+    "2026/11": {
+      "backend": [
+        "page",
+        "inbox"
+      ],
+      "day": null,
+      "model": [
+        "page",
+        "inbox"
+      ]
+    },
+    "2026/11/02": {
+      "backend": [
+        "journal",
+        "Day 2026-11-02"
+      ],
+      "day": [
+        2026,
+        11,
+        2
+      ],
+      "model": [
+        "journal",
+        "Day 2026-11-02"
+      ]
+    },
+    "Inbox": {
+      "backend": [
+        "page",
+        "inbox"
+      ],
+      "day": null,
+      "model": [
+        "page",
+        "inbox"
+      ]
+    }
+  },
+  "tree": [
+    {
+      "children": [],
+      "page": [
+        "journal",
+        "Day 2026-11-02"
+      ]
+    },
+    {
+      "children": [],
+      "page": [
+        "page",
+        "inbox"
+      ]
+    },
+    {
+      "children": [],
+      "page": [
+        "page",
+        "2026"
+      ]
+    }
+  ],
+  "treeParent": [
+    {
+      "page": [
+        "journal",
+        "Day 2026-11-02"
+      ],
+      "parent": null
+    },
+    {
+      "page": [
+        "page",
+        "2026"
+      ],
+      "parent": null
+    },
+    {
+      "page": [
+        "page",
+        "inbox"
+      ],
+      "parent": null
+    }
+  ]
+}

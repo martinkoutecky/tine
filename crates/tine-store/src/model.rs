@@ -55,10 +55,12 @@ use page_identity::effective_page_name;
 // walk's provisional names against the answered ones.
 #[cfg(test)]
 pub(crate) use page_identity::launch_listing_walk;
-pub(crate) use page_identity::{configured_hidden, portable_component, OpeningName};
 pub(crate) use page_identity::{
-    graph_text_directory_scannable, graph_text_eligible, graph_text_relative_eligible,
-    graph_text_watch_relevant,
+    configured_hidden, page_claimants, portable_component, OpeningName,
+};
+pub(crate) use page_identity::{
+    graph_text_directory_scannable, graph_text_eligible, graph_text_has_undecodable_name,
+    graph_text_relative_eligible, graph_text_watch_relevant,
 };
 use page_parse::{
     carry_saved_runtime_ids, identify_old_blocks, isolate_page_parse, page_dto, parse_page_content,
@@ -2459,43 +2461,31 @@ fn prune_result_cache<T>(
     }
 }
 
-/// Effective-name claimants keyed `(is journal, page key)`, each bucket in
-/// claimant order: the published snapshot's index and the claimant memo
-/// share one persistent map.
-pub(crate) type ClaimantMap = SharedMap<(bool, String), Vec<PageEntry>>;
-
-pub(crate) fn claimant_key((kind, key): &(PageKind, String)) -> (bool, String) {
-    (*kind == PageKind::Journal, key.clone())
+/// The identity held by an observed row, independent of its display title.
+#[derive(Clone, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
+pub(crate) enum Claim {
+    Name(String),
+    Day(i64),
 }
+
+impl Claim {
+    pub(crate) fn of(entry: &PageEntry) -> Self {
+        Self::observed(&entry.name, entry.date_key)
+    }
+
+    fn observed(name: &str, day: Option<i64>) -> Self {
+        day.map_or_else(|| Self::Name(tine_core::refs::page_key(name)), Self::Day)
+    }
+}
+
+/// The claimant memo and published snapshot share the ordered buckets.
+pub(crate) type ClaimantMap = SharedMap<Claim, Vec<PageEntry>>;
+pub(crate) type NameRoots = (Arc<EntryList>, Arc<ClaimantMap>);
 
 struct FindEntryIndex {
     entries: Arc<ClaimantMap>,
-    pages_loaded: bool,
-    journals_loaded: bool,
-}
-
-impl FindEntryIndex {
-    fn new() -> Self {
-        Self {
-            entries: Arc::default(),
-            pages_loaded: false,
-            journals_loaded: false,
-        }
-    }
-
-    fn has_kind(&self, kind: PageKind) -> bool {
-        match kind {
-            PageKind::Journal => self.journals_loaded,
-            PageKind::Page => self.pages_loaded,
-        }
-    }
-
-    fn mark_kind_loaded(&mut self, kind: PageKind) {
-        match kind {
-            PageKind::Journal => self.journals_loaded = true,
-            PageKind::Page => self.pages_loaded = true,
-        }
-    }
+    complete: bool,
+    held_epoch: u64,
 }
 
 /// Validate one config-controlled graph directory. Logseq permits nested relative
@@ -2940,13 +2930,10 @@ impl Graph {
             .filter(|e| e.date_key.is_some())
             .collect(),
         };
-        // A day with more than one file (e.g. a leftover title-named duplicate of
-        // a `yyyy_MM_dd` file) must appear ONCE — both files resolve to the same
-        // page name, so otherwise the day renders twice. The stray stays visible
-        // via tine_graph_features::journals::journal_conflicts for reconciliation.
-        let mut js = dedup_journal_days(&self.current_config().journals_dir, raw);
-        js.sort_by_key(|e| std::cmp::Reverse(e.date_key.unwrap_or(0)));
-        js
+        page_claimants(&self.current_config().journals_dir, raw)
+            .rev_before(&Claim::Day(i64::MAX))
+            .filter_map(|(_, entries)| entries.first().cloned())
+            .collect()
     }
 
     /// Feed membership is narrower than the raw journal inventory: future
@@ -4577,31 +4564,6 @@ pub(crate) static TEST_FULL_INDEX_PANIC_ROOTS: std::sync::Mutex<Vec<PathBuf>> =
 #[cfg(any(test, feature = "test-faults"))]
 pub(crate) const TEST_INDEX_PANIC_SENTINEL: &str = "__TINE_TEST_INDEX_PANIC__";
 
-/// Collapse journal entries that resolve to the SAME date down to one (the
-/// canonical `yyyy_MM_dd` file) — a leftover title-named duplicate must not show
-/// the day twice in the feed, quick-switch, or All-Pages. Non-journal entries and
-/// the input order are preserved.
-fn dedup_journal_days(journals_dir: &str, entries: Vec<PageEntry>) -> Vec<PageEntry> {
-    let mut idx_of: std::collections::HashMap<i64, usize> = std::collections::HashMap::new();
-    let mut out: Vec<PageEntry> = Vec::new();
-    for e in entries {
-        match e.date_key {
-            Some(k) if e.kind == PageKind::Journal => {
-                if let Some(&i) = idx_of.get(&k) {
-                    if compare_page_claimants(journals_dir, &e, &out[i]).is_lt() {
-                        out[i] = e;
-                    }
-                } else {
-                    idx_of.insert(k, out.len());
-                    out.push(e);
-                }
-            }
-            _ => out.push(e),
-        }
-    }
-    out
-}
-
 #[cfg(test)]
 thread_local! {
 pub(crate) static GRAPH_LIST_CALLS: std::cell::Cell<usize> = std::cell::Cell::new(0);
@@ -4620,7 +4582,7 @@ fn count_cache_linear_scan(n: usize) {
 /// day. Without an extracted day, the stem makes the same text claim as any
 /// other effective name.
 pub(crate) fn journal_stem_name(fmt: &JournalFormat, stem: &str) -> (String, Option<i64>) {
-    match fmt.parse_file_stem(stem).or_else(|| fmt.parse_text(stem)) {
+    match fmt.file_claim_day(stem, true) {
         Some(d) => (fmt.title(d), Some(d.ordinal_key())),
         None => (stem.to_string(), None),
     }
@@ -5247,13 +5209,10 @@ mod tests {
     fn listing_does_not_report_a_file_that_vanished_during_naming() {
         let dir = tempfile::tempdir().unwrap();
         let graph = Graph::open(dir.path());
-        graph.replace_discovery_errors(
-            None,
-            vec![(
-                crate::FileId::from("pages/Gone.md".to_owned()),
-                io::Error::from(io::ErrorKind::NotFound).into(),
-            )],
-        );
+        graph.replace_discovery_errors(vec![(
+            crate::FileId::from("pages/Gone.md".to_owned()),
+            io::Error::from(io::ErrorKind::NotFound).into(),
+        )]);
         assert!(
             graph.reported_unreadable_pages().is_empty(),
             "{:?}",
@@ -10668,7 +10627,7 @@ mod tests {
 
             guide: false,
         };
-        let id = store.journal_id(tine_store::Day(20260710), false);
+        let id = store.journal_id(tine_store::Day(20260710));
         assert!(matches!(
             host_writer.save(
                 tine_store::EditKind::ReplacePage,

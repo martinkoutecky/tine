@@ -7,8 +7,8 @@
 use super::*;
 use crate::model::OpeningName;
 
-pub(super) enum Opening<'a, C> {
-    File(&'a PageEntry, C),
+pub(super) enum Opening<'a> {
+    File(&'a PageEntry, &'a [PageEntry]),
     Alias(Vec<String>),
     Absent,
 }
@@ -21,14 +21,10 @@ pub(super) fn open_name<'a>(
     format: &JournalFormat,
     name: &str,
     as_journal: bool,
-) -> (
-    OpeningName,
-    Opening<'a, impl Iterator<Item = &'a PageEntry> + use<'a>>,
-) {
+) -> (OpeningName, Opening<'a>) {
     let identity = OpeningName::new(format, name, as_journal);
-    let mut claims = identity.claims(claimants, &graph.config().journals_dir);
-    let opening = if let Some(entry) = claims.next() {
-        Opening::File(entry, claims)
+    let opening = if let Some((entry, others)) = identity.claims(claimants).split_first() {
+        Opening::File(entry, others)
     } else if identity.undated_journal {
         Opening::Absent
     } else if let Some(paths) = graph
@@ -47,37 +43,29 @@ impl WholeGraph {
     /// name), the declarers included even when a file claims it. Cost: as
     /// `resolve`, plus the alias lookup and the day's spellings.
     pub fn name_owners(&self, name: &str) -> NameOwners {
-        let spellings = match self.journal_format.parse_text(name) {
+        let identity = OpeningName::new(&self.journal_format, name, false);
+        let spellings = match identity.day {
             Some(day) => {
                 let title = self.journal_format.title(day);
                 let mut keys =
                     crate::query::journal_spelling_keys(&self.journal_format, day, &title);
-                keys.push(tine_core::refs::page_key(name));
+                keys.push(identity.key.clone());
                 let mut seen = HashSet::new();
                 keys.retain(|key| seen.insert(key.clone()));
                 keys
             }
-            None => vec![tine_core::refs::page_key(name)],
+            None => vec![identity.key.clone()],
         };
-        let identity = OpeningName::new(&self.journal_format, name, false);
         NameOwners {
-            claimants: identity
-                .claims(&self.claimants, &self.config.config.journals_dir)
-                .cloned()
-                .collect(),
-            declarers: self.declarers_of(name),
+            claimants: identity.claims(&self.claimants).to_vec(),
+            declarers: self
+                .graph
+                .alias_owner_paths(&identity.key, identity.day)
+                .map(|paths| paths.into_iter().map(PageId::from).collect())
+                .unwrap_or_default(),
             spellings,
             journals_dir: self.config.config.journals_dir.clone(),
         }
-    }
-
-    /// The pages declaring `name` as an alias, in path order.
-    fn declarers_of(&self, name: &str) -> Vec<PageId> {
-        let day = self.journal_format.parse_text(name);
-        (self.graph)
-            .alias_owner_paths(&tine_core::refs::page_key(name), day)
-            .map(|paths| paths.into_iter().map(PageId::from).collect())
-            .unwrap_or_default()
     }
 
     /// Resolve a name in this captured view. The caller supplies whether the
@@ -113,7 +101,10 @@ impl WholeGraph {
         match opening {
             Opening::File(entry, others) => Resolved::Existing {
                 id: entry.rel_path.clone().expect("physical claimant"),
-                others: others.filter_map(|entry| entry.rel_path.clone()).collect(),
+                others: others
+                    .iter()
+                    .filter_map(|entry| entry.rel_path.clone())
+                    .collect(),
             },
             Opening::Alias(paths) => Resolved::Alias {
                 owners: paths.into_iter().map(PageId::from).collect(),

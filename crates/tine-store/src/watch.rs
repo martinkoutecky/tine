@@ -39,9 +39,11 @@ use crate::launch_diag::{
 };
 use crate::model::{Graph, SyncFileResult};
 use crate::store::{
-    ChangeFeed, ChangeKind, ConfigState, Day, FileId, FileRev, LoadError, LoadState, LoadStatus,
-    Origin, PageId, WatchBatch, WatchMode,
+    ChangeFeed, ChangeKind, ConfigState, FileId, FileRev, LoadError, LoadState, LoadStatus, Origin,
+    WatchBatch, WatchMode,
 };
+#[cfg(test)]
+use crate::PageId;
 
 /// Boundary between "a burst of ordinary edits" and "an external revision"
 /// (a VCS checkout, branch switch or first big sync; master 1229f32fb, GH
@@ -313,6 +315,14 @@ fn collect_dir(
                         files.insert(path, value);
                     }
                 }
+            } else if kind.is_file()
+                && crate::model::graph_text_has_undecodable_name(root, &path, config)
+            {
+                record_walk_error(
+                    unreadable,
+                    path,
+                    std::io::Error::new(std::io::ErrorKind::InvalidData, "non-UTF-8 file name"),
+                );
             } else if kind.is_dir()
                 && crate::model::graph_text_directory_scannable(root, &path, config)
                 && !path
@@ -550,7 +560,6 @@ pub(crate) struct Core {
     writer: Arc<Mutex<()>>,
     load: Arc<LoadState>,
     changes: Arc<ChangeFeed>,
-    journal_ids: Arc<Mutex<HashMap<Day, PageId>>>,
     config: Arc<RwLock<ConfigState>>,
     assets: AssetObserver,
     snapshot: Mutex<HashMap<PathBuf, Stamp>>,
@@ -911,7 +920,6 @@ impl WatchHandle {
         writer: Arc<Mutex<()>>,
         load: Arc<LoadState>,
         changes: Arc<ChangeFeed>,
-        journal_ids: Arc<Mutex<HashMap<Day, PageId>>>,
         config: Arc<RwLock<ConfigState>>,
         watch: WatchMode,
         baseline: Baseline,
@@ -940,7 +948,6 @@ impl WatchHandle {
             writer,
             load,
             changes,
-            journal_ids,
             config,
             assets: AssetObserver::new(asset_scope),
             snapshot: Mutex::new(snapshot),
@@ -1736,7 +1743,7 @@ mod tests {
             drained,
             "N3: a drain requested before the watch was installed was never answered"
         );
-        let id = PageId::from("pages/a.md");
+        let id = crate::PageId::from("pages/a.md");
         assert_eq!(
             store.page(&id).unwrap().doc.blocks[0].raw,
             "before install",

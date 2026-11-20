@@ -404,7 +404,7 @@ fn new_journal_appears_in_journals_desc_via_cache() {
 
         guide: false,
     };
-    let id = store.journal_id(tine_store::Day(20260618), false);
+    let id = store.journal_id(tine_store::Day(20260618));
     assert!(matches!(
         host_writer.save(
             tine_store::EditKind::ReplacePage,
@@ -1269,7 +1269,7 @@ fn new_journal_saved_with_date_stem_not_title() {
 
         guide: false,
     };
-    let id = store.journal_id(tine_store::Day(20260618), false);
+    let id = store.journal_id(tine_store::Day(20260618));
     assert!(matches!(
         host_writer.save(
             tine_store::EditKind::ReplacePage,

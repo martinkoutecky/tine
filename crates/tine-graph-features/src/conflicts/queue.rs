@@ -12,7 +12,7 @@ use tine_core::model::{sync_conflict_base, PageKind, SyncConflict};
 use tine_store::{Area, FileId, PageId, Store};
 
 use super::{
-    area_listing, duplicate_journal_diff, format, graph_text_stem, id, marker_row_name,
+    area_listing, duplicate_journal_diff, format, graph_text_stem, id, marker_stem_answer,
     page_answer_of, sort_copies, store_failed, sync_conflict_diff, sync_copies, sync_copy_entry,
     sync_copy_winner, vcs_marker_conflict_diff, Unreadable,
 };
@@ -132,7 +132,7 @@ fn marker_entry(store: &Store, file: &FileId) -> io::Result<Option<VcsMarkerConf
     // day in pages/ is a journal, K SPEC §2.1; no further read). Bytes the
     // store cannot name keep the file-name answer.
     let (kind, name) = page_answer_of(store, &PageId::from(file.as_str()), &bytes)
-        .unwrap_or_else(|| (kind, marker_row_name(store, kind, &stem)));
+        .unwrap_or_else(|| marker_stem_answer(store, kind, &stem));
     Ok(Some(VcsMarkerConflict {
         path: file.as_str().to_owned(),
         name,

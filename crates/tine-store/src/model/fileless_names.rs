@@ -98,8 +98,7 @@ impl DaySupport {
         let mut support = old.day_support.get()?.clone();
         let before = old.referenced_name_table_built()?;
         let after = next.referenced_name_table_built()?;
-        if old.config.journal_file_name_format != next.config.journal_file_name_format
-            || old.config.journal_page_title_format != next.config.journal_page_title_format
+        if old.config.journal_settings != next.config.journal_settings
             || (paths.is_empty() && !std::sync::Arc::ptr_eq(&old.pages, &next.pages))
         {
             return None;

@@ -5,7 +5,7 @@ use std::fs;
 use std::time::SystemTime;
 
 use super::{collect_with_revs, stamp, Core, RestoreBaseline, WatchHandle};
-use crate::store::{journal_ids_from_entries, ChangeKind, LoadStatus, Origin};
+use crate::store::{ChangeKind, LoadStatus, Origin};
 
 fn collect_restore(core: &Core) -> RestoreBaseline {
     let mut files = collect_with_revs(&core.graph.root, &core.graph.current_config());
@@ -125,10 +125,6 @@ impl WatchHandle {
             *self.core.load.status.lock().unwrap(),
             LoadStatus::Failed(_)
         ) {
-            *self.core.journal_ids.lock().unwrap() = journal_ids_from_entries(
-                &self.core.graph.current_config().journals_dir,
-                self.core.graph.list_pages_shared().as_ref(),
-            );
             self.core.changes.rev()
         } else {
             self.core

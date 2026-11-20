@@ -9,7 +9,7 @@ use super::property_key_norm;
 /// The parse-relevant slice of the graph config the atomizer and registry
 /// read (master `config::ParseConfig`, SPEC §5.8), filled from `config.edn`
 /// by [`ParseConfig::from_config`].
-#[derive(Debug, Clone, Default, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+#[derive(Debug, Clone, Default, serde::Serialize, serde::Deserialize)]
 pub struct ParseConfig {
     pub separated_by_commas: Vec<String>,
     pub ignored_page_references_keywords: Vec<String>,
@@ -17,11 +17,24 @@ pub struct ParseConfig {
     /// The effective journal title format (`None`: the default), never the
     /// configured one: a refused title format is no date route
     /// (D-20261119-YL). Private, so the only way in is
-    /// [`ParseConfig::from_config`], which takes it from the one decision
-    /// (`Config::journal_format`), or [`ParseConfig::with_effective_title`].
+    /// [`ParseConfig::from_config`], which takes it from the held decision.
     pub(super) journal_title: Option<String>,
     pub journal_file_name_format: Option<String>,
+    #[serde(skip)]
+    pub(super) journal_title_reader: std::sync::OnceLock<std::sync::Arc<crate::date::Format>>,
 }
+
+impl PartialEq for ParseConfig {
+    fn eq(&self, other: &Self) -> bool {
+        self.separated_by_commas == other.separated_by_commas
+            && self.ignored_page_references_keywords == other.ignored_page_references_keywords
+            && self.hidden_properties == other.hidden_properties
+            && self.journal_title == other.journal_title
+            && self.journal_file_name_format == other.journal_file_name_format
+    }
+}
+
+impl Eq for ParseConfig {}
 
 impl ParseConfig {
     pub(crate) fn default_ref() -> &'static Self {

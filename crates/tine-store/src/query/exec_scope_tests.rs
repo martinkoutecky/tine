@@ -157,17 +157,10 @@ fn bhkru_future_day_condition_walks_only_pages_that_mention_such_a_day() {
         let plan = plan(graph, &query, today, false);
         graph.with_pages(|pages| {
             let candidates = candidates::Candidates::new(graph, pages, &plan);
-            let atoms = EvalCache::default();
+            let atoms = EvalCache::new(graph);
             let mut names: Vec<String> = candidates
                 .pages()
-                .filter(|(entry, doc)| {
-                    !plan.skips(
-                        entry,
-                        &candidates.facts(entry, doc),
-                        candidates.config(),
-                        &atoms,
-                    )
-                })
+                .filter(|(entry, doc)| !plan.skips(entry, &candidates.facts(entry, doc), &atoms))
                 .map(|(entry, _)| entry.name.clone())
                 .collect();
             names.sort();
