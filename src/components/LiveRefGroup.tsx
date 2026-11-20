@@ -242,16 +242,19 @@ function MountedRefGroup(props: LiveRefGroupProps & { occurrence: RefOccurrence;
   // no loads left to do, however many source pages it references.
   const [nearView, setNearView] = createSignal(true);
   const [acquire, setAcquire] = createSignal(0);
+  // The first read waits for the host to attach, so the scheduler watches it in its own window.
+  const [attached, setAttached] = createSignal(false);
   onCleanup(pinPageNearViewport(() => nearView() || props.sourcePinned()
     || (inPageFindOpen() && (props.surface === "embed" || props.surface === "query")) ? props.page : null));
   onMount(() => {
+    setAttached(true);
     const host = props.geometryHost();
     if (host) onCleanup(trackNear(host, setNearView));
   });
   // Load the source page only once the group is near the viewport. A string
   // source: the parent recomputing an equal group must not read again.
   const [readyResource] = createGraphResource(
-    () => JSON.stringify([props.page, props.kind, props.path ?? null, acquire()]),
+    () => attached() && JSON.stringify([props.page, props.kind, props.path ?? null, acquire()]),
     async (source) => {
       const [p, k, savedPath] = JSON.parse(source) as [string, PageKind, string | null];
       const path = savedPath ?? undefined;
@@ -295,9 +298,12 @@ function MountedRefGroup(props: LiveRefGroupProps & { occurrence: RefOccurrence;
       return [read, anchored];
     } }
   );
-  createEffect(on(() => [nearView(), !!pageByName(props.page)] as const, ([isNear, present], previous) => {
-    // A spacer can leave and reenter the margin as preceding rows expand.
-    if (previous && isNear && !present && !readyResource.loading && (!previous[0] || previous[1])) setAcquire(n => n + 1);
+  let reentered = false;
+  createEffect(on(() => [nearView(), !!pageByName(props.page), !!readyResource.loading] as const, ([isNear, present, loading], previous) => {
+    // A spacer can leave and reenter the margin as preceding rows expand; a
+    // re-entry during a read retries once that read settles without the page.
+    if (previous && isNear && !present && (!previous[0] || previous[1])) reentered = true;
+    if (reentered && !loading) { reentered = false; if (isNear && !present) setAcquire(n => n + 1); }
   }));
   // A source page that failed to load leaves the group on its DTO path below,
   // which is the same path it uses before the page is near the viewport.
