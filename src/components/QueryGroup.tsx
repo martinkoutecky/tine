@@ -145,7 +145,7 @@ function MountedQueryGroup(props: QueryGroupProps & { selectionOwner: ReturnType
           >
             {page()}
           </div></Show>
-          <LiveRefGroup selectionOwner={props.selectionOwner} page={page()} kind={kind()} path={g().path} blocks={g().blocks} surface="query" showBreadcrumb={props.showBreadcrumb !== false} eager hostBlockId={props.hostBlockId} bulkFold={props.bulkFold} />
+          <LiveRefGroup selectionOwner={props.selectionOwner} page={page()} kind={kind()} path={g().path} format={g().format} blocks={g().blocks} surface="query" showBreadcrumb={props.showBreadcrumb !== false} eager hostBlockId={props.hostBlockId} bulkFold={props.bulkFold} />
         </>
       )}
     </Show>

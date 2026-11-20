@@ -94,7 +94,7 @@ export function BlockReferences(props: { id: string }): JSX.Element {
               <div class="reference-blocks" ref={el => registerOutlineBlankZone(el, owner)}>
                 {/* OG shows each referrer's ancestor breadcrumb in the block-ref
                     panel (:breadcrumb-show? true) for "where does this live" context. */}
-                <LiveRefGroup selectionOwner={owner} heightKey={`block-refs:${props.id}`} page={g.page} kind={g.kind} path={g.path} blocks={g.blocks} surface="ref" showBreadcrumb />
+                <LiveRefGroup selectionOwner={owner} heightKey={`block-refs:${props.id}`} page={g.page} kind={g.kind} path={g.path} format={g.format} blocks={g.blocks} surface="ref" showBreadcrumb />
               </div>
               </Show>
             </div>;

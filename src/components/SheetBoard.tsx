@@ -10,7 +10,7 @@ import { clearOnBindingInvalidated } from "../binding";
 import { resultWriteTarget } from "./queryResultIdentity";
 import { For, Show, createEffect, createMemo, createSignal, mapArray, onCleanup, onMount, untrack, useContext, type JSX } from "solid-js";
 import { observeNear, unobserveNear } from "../lazyObserve";
-import { blockPageReadOnly, formatForBlock, formatForPage, readPageProperty, readPageProperties, node as docNode } from "../document";
+import { blockPageReadOnly, formatForBlock, readPageProperty, readPageProperties, sourceFormatForPage, node as docNode } from "../document";
 import { facetsOf } from "../render/facets";
 import { InlineText } from "../render/inline";
 import { BlockRenderBoundary } from "./BlockRenderBoundary";
@@ -626,7 +626,7 @@ function BoardCard(props: {
     col: props.colIndex,
   });
   const editing = () => editingId() === props.row.id && editingOwner() === cellOwner(cell());
-  const fmt = () => (liveFormulaRowNode(props.row) ? formatForBlock(props.row.id) : formatForPage(props.row.page));
+  const sourceFormat = createMemo(() => sourceFormatForPage(props.row.page, props.row.kind, props.row.path, props.row.format) ?? null);
   const [near, setNear] = createSignal(renderedBoardCards.has(props.row.id));
   const observeCard = (el: Element) => {
     if (near()) {
@@ -882,11 +882,11 @@ function BoardCard(props: {
           <BlockRenderBoundary raw={rowRaw(props.row)}>
           <Show
             when={near()}
-            fallback={<div class="sheet-board-card-title sheet-cell-defer">{boardRowTitle(props.row)}</div>}
+            fallback={<div class="sheet-board-card-title sheet-cell-defer">{boardRowTitle(props.row, sourceFormat())}</div>}
           >
             <div class="sheet-board-card-title">
               <Show when={props.query}><QueryResultTask row={props.row} /></Show>
-              <InlineText text={boardRowTitle(props.row)} format={fmt()} />
+              <InlineText text={boardRowTitle(props.row, sourceFormat())} format={sourceFormat()} />
             </div>
             <CardChips row={props.row} groupBy={props.groupBy} onFieldClick={onChipClick} />
           </Show>

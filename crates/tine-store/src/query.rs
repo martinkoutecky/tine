@@ -63,6 +63,7 @@ impl ConstructionBudget {
 
     fn admit_estimated(&mut self, page: &str, payload_bytes: usize) -> bool {
         self.total = self.total.saturating_add(1);
+        // Fixed overhead includes the inline source format.
         let bytes = payload_bytes.saturating_add(page.len()).saturating_add(256);
         if self.exceeded
             || self.rows >= self.max_rows
@@ -345,6 +346,7 @@ fn collect_bounded(
                     RefGroup {
                         page: entry.name.clone(),
                         kind: entry.kind,
+                        format: entry.source_format(),
                         blocks: matched,
                         evidence: Vec::new(),
                     },
@@ -1082,6 +1084,7 @@ fn collect_reference_occurrences_bounded(
                         RefGroup {
                             page: entry.name.clone(),
                             kind: entry.kind,
+                            format: entry.source_format(),
                             blocks,
                             evidence,
                         },
@@ -2088,6 +2091,7 @@ pub(crate) fn resolve_blocks_bounded(
 struct SelectedExportRoot {
     page: String,
     kind: PageKind,
+    format: Option<Format>,
     id: String,
 }
 
@@ -2183,6 +2187,7 @@ pub(crate) fn export_query_subtrees(
                 roots.push(SelectedExportRoot {
                     page: group.page.clone(),
                     kind: group.kind,
+                    format: group.format,
                     id: block.id.clone(),
                 });
                 remaining_roots -= 1;
@@ -2300,6 +2305,7 @@ pub(crate) fn export_query_subtrees(
                         groups.push(RefGroup {
                             page: root.page,
                             kind: root.kind,
+                            format: root.format,
                             blocks: vec![dto],
                             evidence: Vec::new(),
                         });
@@ -2356,6 +2362,7 @@ pub(crate) fn preview_block_with_budget(
         group: RefGroup {
             page: entry.name.clone(),
             kind: entry.kind,
+            format: entry.source_format(),
             blocks,
             evidence: Vec::new(),
         },
@@ -2448,6 +2455,7 @@ fn resolve_ids_in_page<'a>(
                     RefGroup {
                         page: entry.name.clone(),
                         kind: entry.kind,
+                        format: entry.source_format(),
                         blocks: vec![result_dto(b)],
                         evidence: Vec::new(),
                     },
@@ -4640,14 +4648,48 @@ mod tests {
         fs::create_dir_all(dir.join("pages/a")).unwrap();
         fs::create_dir_all(dir.join("pages/b")).unwrap();
         fs::write(dir.join("pages/a/Note.md"), "- first [[Target]]\n").unwrap();
-        fs::write(dir.join("pages/b/Note.md"), "- second [[Target]]\n").unwrap();
+        fs::write(dir.join("pages/b/Note.org"), "* second [[Target]]\n").unwrap();
         let graph = test_snapshot(&dir);
         let groups = backlinks(&graph, "Target");
         assert_eq!(groups.len(), 1);
         assert_eq!(groups[0].page, "Note");
+        assert_eq!(groups[0].format, Some(Format::Md));
         assert_eq!(groups[0].blocks.len(), 1);
         assert_eq!(groups[0].evidence.len(), 1);
         assert_eq!(groups[0].blocks[0].raw, "first [[Target]]");
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn reference_and_query_groups_carry_only_the_source_format() {
+        use std::fs;
+        let dir = crate::test_support::fresh_dir("tine-ref-format-");
+        fs::create_dir_all(dir.join("pages")).unwrap();
+        fs::write(dir.join("pages/Target.md"), "- target\n").unwrap();
+        fs::write(
+            dir.join("pages/Source.ORG"),
+            "* /linked/ [[Target]]\n* plainly Target\n",
+        )
+        .unwrap();
+        fs::write(
+            dir.join("pages/Other.md"),
+            "- _linked_ [[Target]]\n- plainly Target\n",
+        )
+        .unwrap();
+        let graph = test_snapshot(&dir);
+        for groups in [
+            backlinks(&graph, "Target"),
+            unlinked_refs(&graph, "Target"),
+            run_query(&graph, "[[Target]]"),
+            search(&graph, "plainly", 10),
+        ] {
+            for (page, format) in [("Source", "org"), ("Other", "md")] {
+                let source = groups.iter().find(|group| group.page == page).unwrap();
+                let wire = serde_json::to_value(source).unwrap();
+                assert_eq!(wire["format"], format);
+                assert!(wire.get("path").is_none());
+            }
+        }
         let _ = fs::remove_dir_all(&dir);
     }
 

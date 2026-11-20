@@ -16,6 +16,7 @@ The format follows [Keep a Changelog](https://keepachangelog.com/); versions use
 - A journal day's title tooltip now says "Double-click to rename", as a page's does, since renaming a day (moving its notes to a page) has no menu row (D-20261119-DRM).
 
 ### Fixed
+- Linked References and query results, including tables and boards, use their source file’s formatting while the source page loads. Rows and breadcrumbs stay visible during an unrelated page rename (UI-ORG-RESULT-ROW-FORMAT).
 - Shared scheduling and deadline lines show both date chips after reopening a graph, and print and publication skip building unused regions when hiding planning dates (REG-CM-PLANNING-CHECKPOINT, REG-CM-PLANNING-EXPORT-COST).
 - Markdown and Org blocks with many planning timestamps on one line open faster, with the date chips and any trailing text still visible (REG-CM-PLANNING-LINE-COST).
 - Property lines after the first blank line at the top of a page, which are the page's opening text rather than its properties, are shown again exactly as written instead of as an empty row, on the page, under Linked References and in query results (task words and priorities at their start included); editing the page properties above them no longer shows them as page properties or moves the editor below them, saving leaves them byte for byte as they were, and copying query results that include such a page no longer reports them as changed (UI-CM-OPENING-PROPERTY-GROUPS).

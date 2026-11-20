@@ -71,7 +71,7 @@ export function EmbedMacro(props: { body: string; blockId?: string; span?: Span 
       const g = await resolveBlockBatched(uuid);
       // embedId = the embedded block's own id, so its ref-count badge is hidden
       // inside the embed (OG hide-block-refs-count?); its children keep theirs.
-      return g ? { page: g.page, kind: g.kind, path: g.path, blocks: g.blocks, embedId: g.blocks[0]?.id } : null;
+      return g ? { page: g.page, kind: g.kind, path: g.path, format: g.format, blocks: g.blocks, embedId: g.blocks[0]?.id } : null;
     }
     const pageName = pageTarget();
     if (pageName) {
@@ -81,7 +81,7 @@ export function EmbedMacro(props: { body: string; blockId?: string; span?: Span 
       if (result.kind === "stale") return null;
       const p = result.value ?? resolveGuidePageDto(pageName);
       setAnsweredPage(p?.name);
-      return p ? { page: p.name, kind: "page" as PageKind, path: result.value?.id, blocks: p.blocks, embedId: undefined } : null;
+      return p ? { page: p.name, kind: "page" as PageKind, path: result.value?.id, format: p.format, blocks: p.blocks, embedId: undefined } : null;
     }
     return null;
   }, (value, id) => !!value && blocksContainEdit(value.blocks, id), () => true, false,
@@ -187,10 +187,11 @@ export function EmbedMacro(props: { body: string; blockId?: string; span?: Span 
           </Show>
           <Show when={!insidePeek} fallback={
             <LinkDepthContext.Provider value={linkDepth + 1}>
-              <RefBlocks page={embedded()!.page} pageKind={embedded()!.kind} path={embedded()!.path} blocks={embedded()!.blocks} readOnly pageBody localFolds />
+              <RefBlocks page={embedded()!.page} pageKind={embedded()!.kind} path={embedded()!.path}
+                sourceFormat={embedded()!.format} blocks={embedded()!.blocks} readOnly pageBody localFolds />
             </LinkDepthContext.Provider>
           }>
-            <LiveRefGroup selectionOwner={outlineOwner} page={embedded()!.page} kind={embedded()!.kind} path={embedded()!.path} blocks={embedded()!.blocks} embedId={embedded()!.embedId} wholePage={!!pageTarget()} hostBlockId={props.blockId} surface="embed" />
+            <LiveRefGroup selectionOwner={outlineOwner} page={embedded()!.page} kind={embedded()!.kind} path={embedded()!.path} format={embedded()!.format} blocks={embedded()!.blocks} embedId={embedded()!.embedId} wholePage={!!pageTarget()} hostBlockId={props.blockId} surface="embed" />
           </Show>
         </Show>
       </Show>

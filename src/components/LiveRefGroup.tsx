@@ -5,7 +5,7 @@ import { bindLiveOutlineSelection, bindOutlineSelection, createOutlineOwner, Out
 import { createGraphResource } from "../graphResource";
 import { backend } from "../backend";
 import { graphOwner, latestOwner } from "../owned";
-import { admitRead, beginPageHeaderEdit, blockProperty, blockRef, resolveBlockRef, collapseEpochOf, ensurePageLoaded, formatForBlock, formatForPage, pageByName, pinPageNearViewport, setBlockProperty, setCollapsed, setCollapsedBlocks, node as docNode } from "../document";
+import { admitRead, beginPageHeaderEdit, blockProperty, blockRef, resolveBlockRef, collapseEpochOf, ensurePageLoaded, formatForBlock, pageByName, pinPageNearViewport, setBlockProperty, setCollapsed, setCollapsedBlocks, sourceFormatForPage, node as docNode } from "../document";
 import { loadSourcePage } from "../sourcePage";
 import { blockDtoExternalId } from "../blockIdentity";
 import { Block, BulletOpenContext, CollapseSurfaceContext, EmbedNavExitContext, OutlineScopeContext, SurfaceContext, type CollapseSurfaceApi } from "./Block";
@@ -14,7 +14,7 @@ import { detectMacro } from "./Rendered";
 import { inPageFindOpen } from "../inpageFind";
 import { isBlockEmbedMacro } from "./blockParts";
 import { observeNear, trackNear, unobserveNear } from "../lazyObserve";
-import type { BlockDto, PageKind, ReferenceBlockEvidence } from "../types";
+import type { BlockDto, Format, PageKind, ReferenceBlockEvidence } from "../types";
 import { graphEpoch, graphMeta } from "../graphSession";
 import { OccurrenceControls, ReferenceExcerptBlocks, occurrenceSelection } from "./ReferenceEvidence";
 import { editingId, startEditing } from "../editorController";
@@ -85,6 +85,7 @@ interface LiveRefGroupProps {
   page: string;
   kind: PageKind;
   path?: string;
+  format?: Format;
   blocks: BlockDto[];
   embedId?: string;
   /** A page transclusion renders the loaded page's current roots, rather than
@@ -320,6 +321,7 @@ function MountedRefGroup(props: LiveRefGroupProps & { occurrence: RefOccurrence;
   // Page lookup observes the working-set index. Stop another page loading from
   // invalidating this group's breadcrumbs and rows when its source is unchanged.
   const sourcePage = createMemo(() => pageByName(props.page));
+  const sourceFormat = createMemo(() => sourceFormatForPage(props.page, props.kind, props.path, props.format) ?? null);
   const liveNode = (id: string) => {
     const page = sourcePage();
     if (!page || page.kind !== props.kind || (props.path && page.id !== props.path)) return undefined;
@@ -548,9 +550,11 @@ function MountedRefGroup(props: LiveRefGroupProps & { occurrence: RefOccurrence;
   // GH #643 (query trails): "…" is the elision marker, not block text.
   const crumbLabel = (c: Crumb): JSX.Element => c.label === "…" && !c.id
     ? <>…</>
-    : <span class="ref-crumb-label"><InlineText text={c.label || "…"} format={c.id ? formatForBlock(c.id) : formatForPage(props.page)} /></span>;
+    : <span class="ref-crumb-label"><InlineText text={c.label || "…"} format={sourceFormat()} /></span>;
   const liveBreadcrumb = (id: string): Crumb[] | null => {
     if (!ready() || !liveNode(id)) return null;
+    const format = sourceFormat();
+    if (!format) return null;
 
     // The loaded source page is authoritative after hydration; never invent
     // ancestor IDs from result-row labels (src/render/blockTrail.ts).
@@ -558,7 +562,7 @@ function MountedRefGroup(props: LiveRefGroupProps & { occurrence: RefOccurrence;
     if (!trail) return null;
     // Labels are markup, rendered inline like the block itself (OG block.cljs
     // `breadcrumb`: `map-inline` over the title, no character cut); CSS caps width.
-    const tail = trail.ids.map((parent): Crumb => ({ id: parent, label: (visibleBody(docNode(parent)!.raw, formatForBlock(parent))[0] ?? "").trim() }));
+    const tail = trail.ids.map((parent): Crumb => ({ id: parent, label: (visibleBody(docNode(parent)!.raw, format)[0] ?? "").trim() }));
     return trail.more ? [{ label: "…" }, ...tail] : tail;
   };
   // A ref/query/embed group can render a block that ALSO lives in the main outline
@@ -826,9 +830,9 @@ function MountedRefGroup(props: LiveRefGroupProps & { occurrence: RefOccurrence;
                           // Until the source page is loaded the preview shows its
                           // capped copy; edits only ever reach the live block.
                           ? <RefBlocks blocks={[readOnlyRow(d())]} page={props.page} pageKind={props.kind} path={props.path}
-                              readOnly pageBody onOpenBlock={props.onOpenBlock} />
+                              sourceFormat={sourceFormat()} readOnly pageBody onOpenBlock={props.onOpenBlock} />
                           : <RefBlocks blocks={[readOnlyRow(d())]} page={props.page} pageKind={props.kind} path={props.path}
-                              pageBody={props.surface === "embed"} localFolds={props.surface === "embed"}
+                              sourceFormat={sourceFormat()} pageBody={props.surface === "embed"} localFolds={props.surface === "embed"}
                               readOnly={!d().page_property && !liveNode(id)}
                               queryResult={props.surface === "query"}
                               onEditPreamble={d().page_preamble ? () => { void editPreamble(d()); } : undefined}

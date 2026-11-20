@@ -624,6 +624,7 @@ export function ReferenceSection(input: { name: string; unlinked?: boolean; jour
                       blocks={group().blocks}
                       evidence={group().evidence}
                       path={group().path}
+                      format={group().format}
                       surface="ref"
                       showBreadcrumb
                       excerpt={props.unlinked}

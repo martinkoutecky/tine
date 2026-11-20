@@ -8,7 +8,7 @@ use serde::{Deserialize, Serialize};
 use std::cmp::Ordering;
 use std::collections::{BinaryHeap, HashMap, HashSet};
 use tine_core::doc::DocBlock;
-use tine_core::model::{PageEntry, PageKind};
+use tine_core::model::{Format, PageEntry, PageKind};
 use tine_core::query::ir::FriendlyPageMatchScope;
 use tine_core::query::ir::{SortDir, ViewSettings};
 use tine_core::query::sort::{compare_sort_decorations, SortDecor};
@@ -1197,7 +1197,11 @@ pub(crate) fn block_hits_to_groups(hits: Vec<QueryHit>) -> Vec<tine_core::model:
     let mut groups: Vec<tine_core::model::RefGroup> = Vec::new();
     for hit in hits {
         let QueryHit::Block {
-            page, kind, block, ..
+            page,
+            kind,
+            path,
+            block,
+            ..
         } = hit
         else {
             continue;
@@ -1211,6 +1215,7 @@ pub(crate) fn block_hits_to_groups(hits: Vec<QueryHit>) -> Vec<tine_core::model:
         groups.push(tine_core::model::RefGroup {
             page,
             kind,
+            format: Some(Format::from_path(path.as_str().as_ref())),
             blocks: vec![block],
             evidence: Vec::new(),
         });

@@ -22,7 +22,7 @@ function mountQueryTable() {
     feed: ["Sheet"], loaded: true,
   });
   const groups: RefGroup[] = [{
-    page: "Lists", kind: "page",
+    page: "Lists", kind: "page", format: "md",
     blocks: [
       { id: "r1", raw: "Shopping notes #lists\n* apples\n* pears", properties: [], children: [], collapsed: false },
       { id: "r2", raw: "Numbered steps #lists\n1. first\n2. second", properties: [], children: [], collapsed: false },

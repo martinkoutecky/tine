@@ -171,7 +171,7 @@ function pageToExportNodes(page: PageDto): ExportNode[] {
 }
 
 function refGroupToExportNodes(group: RefGroup): ExportNode[] {
-  return blockDtosToExportNodes(group.blocks, formatForPage(group.page));
+  return blockDtosToExportNodes(group.blocks, group.format ?? formatForPage(group.page, group.kind, group.path));
 }
 
 type PageReadCache = Map<string, Promise<PageDto | null>>;
@@ -190,7 +190,7 @@ export function queryGroupsToExportNodes(result: QueryExportResult): ExportNode[
   return result.groups.map((group) => ({
     raw: group.page,
     format: "md",
-    children: blockDtosToExportNodes(group.blocks, formatForPage(group.page)),
+    children: refGroupToExportNodes(group),
   }));
 }
 

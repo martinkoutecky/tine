@@ -1,7 +1,7 @@
 import { t } from "../i18n";
 import { DialogActions } from "./DialogActions";
-import { For, Show, createEffect, createSignal, onCleanup, type JSX } from "solid-js";
-import { formatForPage } from "../document";
+import { For, Show, createEffect, createMemo, createSignal, onCleanup, type JSX } from "solid-js";
+import { sourceFormatForPage } from "../document";
 import { visibleBody } from "../render/block";
 import { EmojiText } from "../render/emoji";
 import { openReferenceResultsCopy } from "./queryResultsCopy";
@@ -62,7 +62,13 @@ export function ReferenceExportChooser(props: {
           <button type="button" disabled={opening() || !count()} onClick={() => setSelected(new Set())}>{t("reference-export-chooser-none")}</button>
         </div>
         <div class="ref-export-list" role="group" aria-label={t("reference-export-chooser-entries", { subject: String(props.subject) })}>
-          <For each={groups}>{(group) => (
+          <For each={groups}>{(group) => {
+            const format = createMemo(() => sourceFormatForPage(group.page, group.kind, group.path, group.format));
+            const title = (block: BlockDto) => {
+              const sourceFormat = format();
+              return sourceFormat ? visibleBody(block.raw, sourceFormat)[0] ?? "" : block.raw;
+            };
+            return (
             <div class="ref-export-group">
               <div class="ref-export-group-name"><EmojiText text={group.page} /></div>
               <For each={group.blocks}>{(block) => {
@@ -70,11 +76,12 @@ export function ReferenceExportChooser(props: {
                 return <label class="ref-export-row">
                   <input type="checkbox" checked={selected().has(key)} disabled={opening()}
                     onChange={(event) => toggle(key, event.currentTarget.checked)} />
-                  <span class="ref-export-text"><EmojiText text={visibleBody(block.raw, formatForPage(group.page))[0] ?? ""} /></span>
+                  <span class="ref-export-text"><EmojiText text={title(block)} /></span>
                 </label>;
               }}</For>
             </div>
-          )}</For>
+            );
+          }}</For>
           <Show when={total === 0}><div class="ref-export-empty">{t("reference-export-chooser-no-entries-in-this-section")}</div></Show>
         </div>
         <DialogActions

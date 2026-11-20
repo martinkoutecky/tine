@@ -1153,8 +1153,9 @@ function blockInlines(blocks: AstBlock[]): Inline[] {
 /** Render a single line of inline markup (a property value, breadcrumb, ref-block
  *  preview line, …) — anything NOT a full block body. Parses via the in-browser
  *  wasm parser (src/render/parse.ts) and renders the inline run; `blockId` is
- *  threaded to inline `{{query}}` macros so they can rewrite the owning block. */
-export function InlineText(props: { text: string; blockId?: string; format?: Format; macroExpansion?: boolean; preserveMarker?: boolean }): JSX.Element {
+ *  threaded to inline `{{query}}` macros so they can rewrite the owning block.
+ *  Pass a null format to display text whose source format is unknown. */
+export function InlineText(props: { text: string; blockId?: string; format?: Format | null; macroExpansion?: boolean; preserveMarker?: boolean }): JSX.Element {
   // Only parse once the wasm parser is ready — `parseBlock` THROWS otherwise, and
   // unlike AstBody these callers (property values, breadcrumbs, ref previews, PDF
   // annotations) have no error boundary. When the parser isn't ready, OR when the
@@ -1162,7 +1163,7 @@ export function InlineText(props: { text: string; blockId?: string; format?: For
   // `| a | b |`, `[^1]: …`, `$$…$$`, …), fall back to the literal text so the
   // content is never dropped — matching the old inline-only renderer.
   const inlines = createMemo(() => {
-    if (!parserReady()) return null;
+    if (props.format === null || !parserReady()) return null;
     const inline = blockInlines(parseBlock(props.text, props.format === "org"));
     // A reference has already separated its task state from the body. A task
     // word still in that body is literal content (e.g. `TODO TODO buy milk`),
@@ -1176,7 +1177,7 @@ export function InlineText(props: { text: string; blockId?: string; format?: For
   });
   return (
     <Show when={inlines() && inlines()!.length > 0} fallback={<EmojiText text={props.text} />}>
-      {renderInlines(inlines()!, props.blockId, false, props.macroExpansion ?? false, props.format, props.text)}
+      {renderInlines(inlines()!, props.blockId, false, props.macroExpansion ?? false, props.format ?? undefined, props.text)}
     </Show>
   );
 }
@@ -1419,6 +1420,7 @@ function BlockRefView(props: { id: string; label?: string; spanAttrs?: SpanDomAt
           blocks={() => capped().blocks}
           page={preview()!.group.page}
           path={preview()!.group.path}
+          format={preview()!.group.format}
           pageKind={preview()!.group.kind}
           blockId={props.id}
           truncatedCount={previewTruncated}

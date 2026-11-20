@@ -199,7 +199,7 @@ describe("SheetBoard", () => {
     });
     const groups: RefGroup[] = [
       { page: "Twin", kind: "page", blocks: [{ id: shared, raw: "TODO Page DTO", collapsed: false, children: [] }] },
-      { page: "Twin", kind: "journal", blocks: [{ id: shared, raw: "DOING Journal DTO", marker: "DOING", collapsed: false, children: [] }] },
+      { page: "Twin", kind: "journal", format: "md", blocks: [{ id: shared, raw: "DOING Journal DTO", marker: "DOING", collapsed: false, children: [] }] },
     ];
     adoptResults(groups, captureResultsTicket());
     const { root, dispose } = mount(() => (
