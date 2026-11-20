@@ -6,7 +6,7 @@ import { resetNearObserverForTests } from "../lazyObserve";
 import { resetReferenceSectionState } from "../referenceSectionState";
 import type { BlockDto, PageRead, RefGroup } from "../types";
 import { LinkedReferences } from "./LinkedReferences";
-import { queueReferenceCommit, queueReferenceRead } from "../referenceAdmission";
+import { ReferencePriority, queueReferenceCommit, queueReferenceRead } from "../referenceAdmission";
 
 afterEach(() => {
   resetNearObserverForTests();
@@ -47,7 +47,7 @@ it.each([null, 'filters:: {"Hub" true}'])("loading one source page leaves every 
   document.body.append(root);
   const dispose = render(() => <LinkedReferences name="Hub" />, root);
   try {
-    await queueReferenceCommit(() => undefined, () => true, () => Infinity);
+    await queueReferenceCommit(() => undefined, () => true, () => ReferencePriority.Background);
     await vi.waitFor(() => expect(pending.size).toBe(2));
     await vi.waitFor(() => expect(root.querySelectorAll(".ref-block")).toHaveLength(groups.length));
     await new Promise(resolve => setTimeout(resolve, 0));
