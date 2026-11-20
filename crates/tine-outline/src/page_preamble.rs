@@ -549,22 +549,36 @@ mod tests {
     /// one scan. Counted, and timed at 2,000 groups after 16 KB of lead.
     #[test]
     fn opening_groups_cost_is_linear() {
-        let text = format!(
-            "{}{}",
-            "  \t\n".repeat(4_000),
-            "k:: v\nprose\n\n".repeat(2_000)
-        );
+        let text_of = |groups: usize| {
+            format!(
+                "{}{}",
+                "  \t\n".repeat(2 * groups),
+                "k:: v\nprose\n\n".repeat(groups)
+            )
+        };
+        let text = text_of(2_000);
         crate::lsdoc_block_parse::LEAD_SCANS.with(|n| n.set(0));
-        let started = std::time::Instant::now();
         let groups = opening_groups(&text, false);
-        let elapsed = started.elapsed();
         assert_eq!(groups.len(), 2_000);
         let scans = crate::lsdoc_block_parse::LEAD_SCANS.with(|n| n.replace(0));
         assert!(scans <= 1, "{scans} leading-trim scans for one call");
-        // Linear is ~12 ms in a debug build; one scan per group was ~1.1 s.
+        // Doubling the input must not quadruple the time (one scan per group
+        // was quadratic: ~1.1 s at 2,000 groups against ~12 ms linear). The
+        // fastest of three runs keeps a loaded machine's noise out.
+        let fastest = |text: &str| {
+            (0..3)
+                .map(|_| {
+                    let started = std::time::Instant::now();
+                    std::hint::black_box(opening_groups(text, false));
+                    started.elapsed()
+                })
+                .min()
+                .unwrap()
+        };
+        let (small, large) = (fastest(&text_of(2_000)), fastest(&text_of(4_000)));
         assert!(
-            elapsed < std::time::Duration::from_millis(50),
-            "{elapsed:?}"
+            large < small * 3,
+            "{small:?} -> {large:?} for doubled input"
         );
     }
 
