@@ -50,7 +50,7 @@ it("22a: a live-draft conflict routes to the in-page review and never offers Kee
   openAsLoaded(test);
   await conflictedInHost(test, "Live");
   const opened: PageTarget[] = [];
-  installRouterBridge({ route: () => ({ kind: "journals" }), focusBlock: () => {}, scheduleSessionSave: () => {}, openPageTarget: (t) => opened.push(t) });
+  installRouterBridge({ route: () => ({ kind: "journals" }), focusBlock: () => {}, scheduleSessionSave: () => {}, openPageTarget: (t) => opened.push(t), viewOwnerPath: (_name, _kind, path) => path });
   dispose = render(() => <ConflictBar />, host);
   const buttons = [...host.querySelectorAll("button")];
   expect(buttons.map((button) => button.textContent?.trim())).toEqual(["Review"]);

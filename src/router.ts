@@ -10,8 +10,7 @@ import { revealCommentMarginFor } from "./commentMargin";
 
 import { createMemo, createRoot, createSignal, type Accessor } from "solid-js";
 import { pushRecent } from "./ui";
-import { navigationTarget } from "./pageIndex";
-import { viewOwnerPath } from "./viewOwner";
+import { navigationTarget, ownerPath, resolvedTarget } from "./pageIndex";
 import { blockRef, resolveBlockRef, settleBlockRef, expandAncestors, extendFeedForScroll, type HistoryRouteContext, node as docNode, loadedPage } from "./document";
 import { backend } from "./backend";
 import { captureBinding, stillBound } from "./binding";
@@ -240,6 +239,17 @@ export function sameRoute(a: Route, b: Route): boolean {
 /** Reuse compares destinations, while history/session equality stays exact.
  * Name routes and file routes can reach the same canonical file (GH #711).
  * Ask the shared inventory; never equate a same-name stray with its owner. */
+/** The one answer to "which file does this view show", for tab routes and
+ *  (through the router bridge) sidebar items: its own exact path; else, for a
+ *  name-only view, the file loaded under that name (what it displays, also
+ *  while the inventory is refreshing); else the store's owner for the name. */
+export function viewOwnerPath(name: string, pageKind: PageKind, path: string | undefined): string | undefined {
+  if (path) return path;
+  const loaded = loadedPage(name);
+  if (loaded?.id && loaded.kind === pageKind) return loaded.id;
+  return ownerPath(resolvedTarget(name, pageKind));
+}
+
 export function sameNavigationRoute(a: Route, b: Route): boolean {
   if (sameRoute(a, b)) return true;
   if (a.kind !== "page" || b.kind !== "page" || a.pageKind !== b.pageKind
@@ -1481,4 +1491,4 @@ export function restoreSession(): Promise<void> {
   return mainRouterInstance().restoreSession();
 }
 
-installRouterBridge({ route, focusBlock, scheduleSessionSave, openPageTarget });
+installRouterBridge({ route, focusBlock, scheduleSessionSave, openPageTarget, viewOwnerPath });
