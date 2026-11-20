@@ -156,52 +156,78 @@ fn recovered_page_at_depth(depth: crate::Depth, cold: bool) {
 }
 
 #[test]
-fn rebuild_keeps_the_name_of_a_page_released_during_the_listing() {
+fn rebuild_keeps_the_name_of_a_page_released_before_publication() {
+    use crate::model::{GRAPH_LIST_CALLS, GRAPH_PREAMBLE_READS};
     use crate::{Depth, PageId};
 
     let dir = tempfile::tempdir().unwrap();
     let page = PageId::from("pages/Old.md");
     fs::create_dir(dir.path().join("pages")).unwrap();
-    fs::write(
-        dir.path().join(page.as_str()),
-        "title:: Recovered\n- text\n",
-    )
-    .unwrap();
+    let path = dir.path().join(page.as_str());
+    fs::write(&path, "title:: Recovered\n- text\n").unwrap();
+    // The watcher already knows the released file's stable disk revision.
+    fs::File::options()
+        .write(true)
+        .open(path)
+        .unwrap()
+        .set_modified(
+            std::time::SystemTime::UNIX_EPOCH + std::time::Duration::from_secs(1_000_000_000),
+        )
+        .unwrap();
     let store = Arc::new(Store::open(dir.path(), Default::default()).unwrap().0);
     store.whole_graph_reconciled().unwrap();
     store.watch.stop_background_for_test();
     store.hold_page(&page).unwrap();
-    let passes = || {
+    fn passes(store: &Store) -> u64 {
         store.diagnostics()["launch"]["loadPassesTotal"]
             .as_u64()
             .unwrap()
+    }
+    let rescan = |store: &Store| {
+        let before = passes(store);
+        GRAPH_LIST_CALLS.with(|calls| calls.set(0));
+        GRAPH_PREAMBLE_READS.with(|reads| reads.set(0));
+        store.refresh(Depth::Rebuild).unwrap();
+        (
+            GRAPH_LIST_CALLS.with(|calls| calls.get()),
+            GRAPH_PREAMBLE_READS.with(|reads| reads.get()),
+            passes(store) - before,
+        )
     };
-    let before = passes();
+    let ordinary = rescan(&store);
 
     let pause = Pause::new();
-    *store.graph.certify_pause.lock().unwrap() = Some(pause.0.clone());
+    *store.graph.warm_after_install_pause.lock().unwrap() = Some(pause.0.clone());
     let reading = store.clone();
     let read = std::thread::spawn(move || {
-        reading.refresh(Depth::Rebuild).unwrap();
-        reading.whole_graph().unwrap().resolve("Recovered", false)
+        let counts = rescan(&reading);
+        (
+            reading.whole_graph().unwrap().resolve("Recovered", false),
+            counts,
+        )
     });
-    // Certification dropped the disk entry while held. Return the page to
-    // the watcher before certification collects the current owner entries.
-    pause.wait("rebuild did not reach name certification");
-    *store.graph.certify_pause.lock().unwrap() = None;
+    // Return the unchanged page to the watcher after installing the cache
+    // and before publishing the view that uses its name inventory.
+    pause.wait("rebuild did not install its cache");
+    *store.graph.warm_after_install_pause.lock().unwrap() = None;
     {
         let _writer = store.writer.lock().unwrap();
+        let generation = store.graph.cache_generation();
+        let epoch = store.graph.held.epoch();
         store.watch.release_hold(page.as_str());
+        assert_eq!(store.graph.cache_generation(), generation);
+        assert_ne!(store.graph.held.epoch(), epoch);
     }
     pause.resume();
-    let resolved = read.join().unwrap();
-    let after = passes();
+    let (resolved, released) = read.join().unwrap();
     store.close();
     assert!(
         matches!(&resolved, Resolved::Existing { id, .. } if *id == page),
         "recovered page missing: {resolved:?}"
     );
-    assert_eq!(after, before + 1, "the listing race adds no parse pass");
+    // Rescan lists once to build and once to recheck stamps before swapping.
+    assert_eq!(ordinary, (2, 0, 1), "ordinary Rescan work");
+    assert_eq!(released, ordinary, "a release adds no listing work");
 }
 
 #[test]

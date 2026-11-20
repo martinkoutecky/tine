@@ -50,21 +50,16 @@ impl Graph {
         (self.name_stamp() == stamp).then(install)
     }
 
-    /// Offer the launch or rebuild listing to the page list and the next
-    /// snapshot at the installed cache's stamp. If ownership or the cache
-    /// moved before certification finished, publication lists afresh.
-    pub(in crate::model) fn install_launch_listing(
-        &self,
-        stamp: (u64, u64),
-        named: Vec<PageEntry>,
-    ) {
+    /// Certify the launch or rebuild listing under the cache write guard that
+    /// installs its rows. The next publication can reuse it while that
+    /// generation is current, including after a hold or release of unchanged
+    /// bytes.
+    pub(super) fn install_launch_listing(&self, gen: u64, named: Vec<PageEntry>) {
         let named = self.certify(named, None);
         let deduped = dedup_journal_days(&self.current_config().journals_dir, named.0.clone());
         let list = Arc::new(EntryList::from(deduped.as_slice()));
-        let _ = self.install_name_memo(stamp, || {
-            *self.derived.page_list_cache.write().unwrap() = Some((stamp.0, list));
-            *self.derived.launch_listing.write().unwrap() = Some((stamp.0, named));
-        });
+        *self.derived.page_list_cache.write().unwrap() = Some((gen, list));
+        *self.derived.launch_listing.write().unwrap() = Some((gen, named));
     }
 
     /// Every page and journal in the graph, one per duplicate journal day.

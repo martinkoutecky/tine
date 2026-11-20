@@ -21,10 +21,10 @@
 //! **Critical section.** Every install takes the cache lock (write for
 //! rows; at least read for error collections) and then reads the held map:
 //! lock order cache → held → collection, authority decided inside it. A
-//! whole build decides at the held epoch it checks again under the lock,
-//! and so does a name memo (the page list, the claimant index): one walked
-//! outside it installs only if neither the generation nor the held epoch
-//! moved since the walk began ([`Graph::install_name_memo`]).
+//! whole build decides at the held epoch it checks again under the lock and
+//! certifies its name listing in that same critical section. A name memo
+//! walked outside it installs only if neither the generation nor the held
+//! epoch moved since the walk began ([`Graph::install_name_memo`]).
 //! Holds, releases and respellings are one ownership transition
 //! ([`Graph::transition`], REVIEW-3a4): under the cache lock it changes the
 //! held map, bumps the held epoch and settles every row and error whose
@@ -786,16 +786,18 @@ impl Graph {
     /// indexed bytes gets the row those bytes give. Declines when a cache
     /// mutation, a publication or a hold raced the build, handing the build
     /// back unchanged, or (without `replace`) when a cache exists.
-    /// `discovery`, a full listing's name failures, replaces the known ones
-    /// when given. Returns the installed cache's generation and held epoch.
+    /// When given, `named` and `discovery` are the launch pass's full listing
+    /// and name failures. A successful install takes and certifies the listing
+    /// for this generation, and replaces the known discovery failures.
     pub(super) fn install_built(
         &self,
         mut built: PageCacheBuild,
         (expected_gen, held_epoch): (u64, u64),
         replace: bool,
         observed: Option<&HashMap<PathBuf, crate::watch::Stamp>>,
+        named: Option<&mut Vec<PageEntry>>,
         mut discovery: Option<Vec<(crate::FileId, crate::IoError)>>,
-    ) -> Result<(u64, u64), super::launch_patch::Declined> {
+    ) -> Result<(), super::launch_patch::Declined> {
         use super::launch_patch::Declined;
         // Identities are decided at the build's epoch (checked again under
         // the lock), so a disk row a hold now owns is left out. The pages
@@ -947,8 +949,10 @@ impl Graph {
         } else {
             expected_gen
         };
-        drop(guard);
-        Ok((generation, held_epoch))
+        if let Some(named) = named {
+            self.install_launch_listing(generation, std::mem::take(named));
+        }
+        Ok(())
     }
 
     /// Why a checkpoint's rows would not install now (the checks

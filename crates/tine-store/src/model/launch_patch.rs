@@ -57,9 +57,15 @@ impl Graph {
             if replace || now == at {
                 let discovery = Some(std::mem::take(&mut pass.discovery));
                 let built = std::mem::take(&mut pass.built);
-                match self.install_built(built, at, replace, Some(&pass.stamps), discovery) {
-                    Ok(stamp) => {
-                        self.install_launch_listing(stamp, pass.named);
+                match self.install_built(
+                    built,
+                    at,
+                    replace,
+                    Some(&pass.stamps),
+                    Some(&mut pass.named),
+                    discovery,
+                ) {
+                    Ok(()) => {
                         return Some(Installed {
                             stamps: pass.stamps,
                             racy: pass.racy,

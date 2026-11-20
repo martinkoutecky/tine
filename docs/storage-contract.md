@@ -859,11 +859,12 @@ path the current page list does not list. Any other such read drops the
 claimant memo, and the next lookup lists again. A read of a file a host holds
 changes no memo: its owner's bytes name it, not the file ((G)). Name lists and
 path reads outside the writer change a memo only at the generation and held
-epoch they observed. The launch and rebuild passes also check those stamps
-before reusing their listing for publication. A release or an open's hold
-moves the held map without changing the generation. Every hold and release
-takes the writer, which keeps listings under the writer consistent. The first
-lookup of an absent name of each kind after launch still lists once, because
+epoch they observed. Launch and rebuild certify their listing under the
+cache write guard that installs their rows. Publication reuses that inventory
+while the installed generation is current, even after a hold or release that
+leaves the generation unchanged. Every hold and release takes the writer, which
+keeps listings under the writer consistent. The first lookup of an absent name
+of each kind after launch still lists once, because
 the launch index does not vouch for files that arrived after it. Proof:
 `crates/tine-store/tests/og_perf_publish.rs`,
 `crates/tine-store/src/model/derived_tests.rs`
@@ -871,7 +872,7 @@ the launch index does not vouch for files that arrived after it. Proof:
 `a_name_walk_during_a_release_keeps_the_released_page`,
 `a_path_read_of_a_held_file_does_not_join_the_claimant_memo`),
 `crates/tine-store/src/page_host/recovery_tests.rs`
-(`rebuild_keeps_the_name_of_a_page_released_during_the_listing`),
+(`rebuild_keeps_the_name_of_a_page_released_before_publication`),
 `crates/tine-store/src/store/panic_isolation_tests.rs`
 (`an_own_create_a_capture_missed_is_named_after_refresh`).
 

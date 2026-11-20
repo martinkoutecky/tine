@@ -3276,7 +3276,10 @@ impl Graph {
                 // because the cache was still None), its disk write is already
                 // done — rebuild so we don't install a stale snapshot. We hold
                 // build_lock, so no other builder competes.
-                if self.install_built(built, gen0, false, None, None).is_ok() {
+                if self
+                    .install_built(built, gen0, false, None, None, None)
+                    .is_ok()
+                {
                     break;
                 }
             }
@@ -5263,6 +5266,7 @@ mod tests {
                 PageCacheBuild::with_capacity(0),
                 (graph.cache_generation(), graph.held.epoch()),
                 false,
+                None,
                 None,
                 Some(vec![(
                     crate::FileId::from("pages/Gone.md".to_owned()),
