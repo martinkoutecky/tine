@@ -74,7 +74,7 @@ impl BlockRegions {
                 Block::Bullet { span, .. } | Block::Heading { span, .. } => Some(span),
                 _ => None,
             })
-            .and_then(|span| raw_range(raw, span, true))
+            .and_then(|span| raw_range(raw, span, Coords::of(raw, true)))
             .map_or(raw.len(), |r| r.0);
         let (mut first, mut last, mut at) = (None, None, 0);
         for span in self

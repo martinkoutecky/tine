@@ -85,6 +85,8 @@ fn rename_merge_and_journal_rename_proposals_are_documented_in_the_bundled_guide
         "rewrite an alias declaration as plain comma-separated names",
         "A Markdown page's properties are the property lines at its very top, up to the first blank or other line",
         "the page shows it, its links count, a rename updates them",
+        // D-20261119-PG: later property groups are opening text, shown as written.
+        "a later group of `key:: value` lines after that blank line stays those lines, not page properties",
         // UI-CM-ORG-PREAMBLE-ROW: the Org page view (review of 717cc3085).
         "An Org page's opening text is the text before its first heading, apart from the `#+` property lines",
         "clicking that row makes the text the page's first heading and edits it there",

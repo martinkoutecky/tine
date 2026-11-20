@@ -36,8 +36,8 @@ import { queueReferenceCommit, queueReferenceRead } from "../referenceAdmission"
 import { trackRetirementPin } from "../retirementPins";
 import { BlockList } from "./BlockList";
 import { CommentSurface } from "./CommentSurface";
-import { promotePagePreamble, pageInstanceGeneration, selectionIncludesPage } from "../document";
-import { rendersAsPageHeader, splitPagePreamble } from "../editor/properties";
+import { pageOpening, promotePagePreamble, pageInstanceGeneration, selectionIncludesPage } from "../document";
+import { rendersAsPageHeader } from "../editor/properties";
 import { t } from "../i18n";
 import { retainResultDraft } from "../queryResultDrafts";
 
@@ -406,8 +406,8 @@ function MountedRefGroup(props: LiveRefGroupProps & { occurrence: RefOccurrence;
     if (!ready()) return kept;
     const page = sourcePage();
     if (!page || page.kind !== props.kind || (props.path && page.id !== props.path)) return kept;
-    const first = docNode(page.roots[0] ?? "");
-    const raw = first?.originatedFromPageHeader ? first.raw : page.preBlock ?? "";
+    // Only the header (D-20261119-PG): a pre-block also holds the opening text.
+    const raw = pageOpening(page).properties ?? "";
     if (raw.trimEnd() === b.raw.trimEnd()) {
       readOnlyRows.delete(b);
       return b;
@@ -449,7 +449,7 @@ function MountedRefGroup(props: LiveRefGroupProps & { occurrence: RefOccurrence;
   const promoteLoadedPreamble = (hit: BlockDto): void => {
     const page = pageByName(props.page);
     if (!page || (props.surface === "query" && !resultsTicketActionable(resultTicket(hit)))
-      || splitPagePreamble(page.preBlock, page.format).content !== hit.raw) {
+      || pageOpening(page).content !== hit.raw) {
       if (props.surface === "query") noticeChangedResults(1);
       return;
     }

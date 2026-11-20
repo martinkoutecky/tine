@@ -103,7 +103,7 @@ pub(super) fn isolate_page_parse(
                 "Tine search index skipped a page after parse/projection panic producer=page-parse",
             );
             Err(PageParseFailure::Panic(
-                e.rel_path_str().to_owned(),
+                e,
                 format!("page parse/projection panicked: {detail}"),
             ))
         }

@@ -40,7 +40,7 @@ pub fn is_linkable_property_separator(ch: char) -> bool {
     ch == ',' || ch == '，'
 }
 
-use crate::lsdoc_block_parse::{block_lead, first_line_end, raw_offset};
+use crate::lsdoc_block_parse::{block_lead, first_line_end, Coords};
 use crate::page_filename as reference_filename;
 pub use crate::swallowed_rows::{extend_author_facet, strip_swallowed_rows};
 
@@ -351,19 +351,12 @@ pub struct BlockRegions {
 }
 
 // The only conversion from prepared single-block coordinates to raw coordinates.
-pub(crate) fn raw_range(raw: &str, span: &Option<Span>, document: bool) -> Option<Range> {
+pub(crate) fn raw_range(raw: &str, span: &Option<Span>, coords: Coords) -> Option<Range> {
     let Span(start, end) = span.as_ref()?;
-    let at = |at: usize| {
-        if document {
-            at.min(raw.len())
-        } else {
-            raw_offset(raw, at)
-        }
-    };
-    let r = Range(at(*start), at(*end));
+    let r = Range(coords.raw(raw, *start), coords.raw(raw, *end));
     (r.0 < r.1 && raw.is_char_boundary(r.0) && raw.is_char_boundary(r.1)).then_some(r)
 }
-fn whole_line(raw: &str, r: Range) -> Range {
+pub(crate) fn whole_line(raw: &str, r: Range) -> Range {
     let start = raw[..r.0].rfind('\n').map_or(0, |p| p + 1);
     let end = if r.1 > start && raw.as_bytes()[r.1 - 1] == b'\n' {
         r.1
@@ -479,7 +472,7 @@ fn mapped_regions(raw: &str, is_org: bool, blocks: &[Block], document: bool) -> 
     } else {
         crate::lsdoc_block_parse::headline_end(raw, blocks)
     };
-    visit_blocks(raw, is_org, blocks, document, &mut result);
+    visit_blocks(raw, is_org, blocks, Coords::of(raw, document), &mut result);
     if !document && !is_org {
         crate::swallowed_rows::add_regions(raw, blocks, &mut result);
     }
@@ -514,15 +507,15 @@ fn mapped_regions(raw: &str, is_org: bool, blocks: &[Block], document: bool) -> 
     // node after opening text and the lines after a folded one. A `#` key
     // stays a property, as in a block (OG's `valid-property-name?` drops it).
     let (mut top, mut first_node) = (Vec::new(), None);
-    for b in blocks
+    let before_first_block = blocks
         .iter()
-        .take_while(|b| !matches!(b, Block::Bullet { .. } | Block::Heading { .. }))
+        .position(|b| matches!(b, Block::Bullet { .. } | Block::Heading { .. }))
+        .unwrap_or(blocks.len());
+    for (r, properties) in
+        crate::page_preamble::top_property_nodes(raw, &blocks[..before_first_block], true)
     {
-        if let Block::Properties { span, .. } | Block::Directive { span, .. } = b {
-            let r = raw_range(raw, span, true).map(|r| whole_line(raw, r));
-            top.extend(r);
-            first_node = first_node.or(r.filter(|_| matches!(b, Block::Properties { .. })));
-        }
+        top.push(r);
+        first_node = first_node.or(Some(r).filter(|_| properties));
     }
     let first_node = first_node.filter(|r| {
         raw[..r.0]
@@ -577,7 +570,7 @@ fn exclude_literals<T>(entries: &mut Vec<T>, literals: &[Range], start: impl Fn(
     });
 }
 
-fn visit_blocks(raw: &str, org: bool, blocks: &[Block], document: bool, out: &mut BlockRegions) {
+fn visit_blocks(raw: &str, org: bool, blocks: &[Block], coords: Coords, out: &mut BlockRegions) {
     for block in blocks {
         match block {
             Block::Src { span, .. }
@@ -587,7 +580,7 @@ fn visit_blocks(raw: &str, org: bool, blocks: &[Block], document: bool, out: &mu
             | Block::DisplayedMath { span, .. }
             | Block::LatexEnv { span, .. }
             | Block::RawHtml { span, .. } => {
-                if let Some(r) = raw_range(raw, span, document) {
+                if let Some(r) = raw_range(raw, span, coords) {
                     out.literals.push(r);
                     let (kind, lang) = match block {
                         Block::Src { lang, .. } => ("src", lang.as_str()),
@@ -599,28 +592,28 @@ fn visit_blocks(raw: &str, org: bool, blocks: &[Block], document: bool, out: &mu
                 }
             }
             Block::Custom { span, children, .. } => {
-                if let Some(r) = raw_range(raw, span, document) {
+                if let Some(r) = raw_range(raw, span, coords) {
                     out.literals.push(r);
                     out.literal_blocks
                         .push(LiteralBlock::new(raw, "other", "", r));
                 }
-                visit_blocks(raw, org, children, document, out);
+                visit_blocks(raw, org, children, coords, out);
             }
-            Block::Quote { children, .. } => visit_blocks(raw, org, children, document, out),
+            Block::Quote { children, .. } => visit_blocks(raw, org, children, coords, out),
             Block::Paragraph { inline, .. }
             | Block::Bullet { inline, .. }
             | Block::Heading { inline, .. }
-            | Block::FootnoteDef { inline, .. } => visit_inline(raw, inline, document, out),
-            Block::List { items, .. } => visit_items(raw, org, items, document, out),
+            | Block::FootnoteDef { inline, .. } => visit_inline(raw, inline, coords, out),
+            Block::List { items, .. } => visit_items(raw, org, items, coords, out),
             Block::Table { header, rows, .. } => {
                 for row in header.iter().chain(rows) {
                     for cell in row {
-                        visit_inline(raw, cell, document, out);
+                        visit_inline(raw, cell, coords, out);
                     }
                 }
             }
             Block::Properties { props, span } => {
-                if let Some(r) = raw_range(raw, span, document) {
+                if let Some(r) = raw_range(raw, span, coords) {
                     let r = whole_line(raw, r);
                     let index = out.property_regions.len();
                     out.property_regions.push(r);
@@ -679,7 +672,7 @@ fn visit_blocks(raw: &str, org: bool, blocks: &[Block], document: bool, out: &mu
                 }
             }
             Block::Directive { name, value, span } if org => {
-                if let Some(r) = raw_range(raw, span, document) {
+                if let Some(r) = raw_range(raw, span, coords) {
                     let line = whole_line(raw, r);
                     let region = out.property_regions.len();
                     out.property_regions.push(line);
@@ -703,7 +696,7 @@ fn visit_blocks(raw: &str, org: bool, blocks: &[Block], document: bool, out: &mu
                 }
             }
             Block::Drawer { name, span } => {
-                if let Some(r) = raw_range(raw, span, document) {
+                if let Some(r) = raw_range(raw, span, coords) {
                     let r = whole_line(raw, r);
                     let lines = line_ranges(raw, r);
                     if let Some(last) = lines.last() {
@@ -731,25 +724,25 @@ fn visit_blocks(raw: &str, org: bool, blocks: &[Block], document: bool, out: &mu
         }
     }
 }
-fn visit_items(raw: &str, org: bool, items: &[ListItem], document: bool, out: &mut BlockRegions) {
+fn visit_items(raw: &str, org: bool, items: &[ListItem], coords: Coords, out: &mut BlockRegions) {
     for item in items {
-        visit_blocks(raw, org, &item.content, document, out);
-        visit_inline(raw, &item.name, document, out);
-        visit_items(raw, org, &item.items, document, out);
+        visit_blocks(raw, org, &item.content, coords, out);
+        visit_inline(raw, &item.name, coords, out);
+        visit_items(raw, org, &item.items, coords, out);
     }
 }
-fn visit_inline(raw: &str, inline: &[Inline], document: bool, out: &mut BlockRegions) {
+fn visit_inline(raw: &str, inline: &[Inline], coords: Coords, out: &mut BlockRegions) {
     for i in inline {
         match i {
             Inline::Code { span, .. } | Inline::Verbatim { span, .. } => {
-                if let Some(r) = raw_range(raw, span, document) {
+                if let Some(r) = raw_range(raw, span, coords) {
                     out.literals.push(r);
                 }
             }
             Inline::Timestamp { ts, date, span }
                 if matches!(ts.as_str(), "Scheduled" | "Deadline" | "Closed") =>
             {
-                if let Some(r) = raw_range(raw, span, document) {
+                if let Some(r) = raw_range(raw, span, coords) {
                     let line = whole_line(raw, r);
                     // The Timestamp owns the planning prefix. A glued suffix
                     // remains body text; only whitespace may precede the token.
@@ -766,8 +759,8 @@ fn visit_inline(raw: &str, inline: &[Inline], document: bool, out: &mut BlockReg
             Inline::Emphasis { children, .. }
             | Inline::Subscript { children, .. }
             | Inline::Superscript { children, .. }
-            | Inline::Tag { children, .. } => visit_inline(raw, children, document, out),
-            Inline::Link { label, .. } => visit_inline(raw, label, document, out),
+            | Inline::Tag { children, .. } => visit_inline(raw, children, coords, out),
+            Inline::Link { label, .. } => visit_inline(raw, label, coords, out),
             _ => {}
         }
     }

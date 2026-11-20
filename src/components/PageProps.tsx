@@ -2,7 +2,7 @@ import { msg, t } from "../i18n";
 import { For, Show, createEffect, createMemo, createSignal, onCleanup, onMount, untrack, type JSX } from "solid-js";
 import { pagePropsPanel, closePageProps, type PropsPanelScope } from "../ui";
 import {
-  blockPageReadOnly, blockProperty, formatForBlock, node, pageByName, pageReadOnly, pageInstanceGeneration,
+  blockPageReadOnly, blockProperty, formatForBlock, node, pageByName, pageOpening, pageReadOnly, pageInstanceGeneration,
   readPageProperties, readPageProperty, setBlockProperty, setPageProperty,
 } from "../document";
 import { PAGE_PROP_SPECS, isEditablePropertyKey, FORM_MANAGED, hides, type PagePropSpec } from "../editor/properties";
@@ -31,11 +31,19 @@ export function PageProps(): JSX.Element {
 // Machine-managed keys (`id`, `collapsed`, `logseq.order-list-type`, `tine.*`)
 // keep their own surfaces. Other hidden editor keys remain editable here.
 // The Rust policy owns this list independently of textarea visibility.
-function machineManaged(scope: PropsPanelScope, key: string): boolean {
-  const raw = scope.kind === "block" ? node(scope.id)?.raw ?? "" : pageByName(scope.name)?.preBlock ?? "";
-  const format = scope.kind === "block" ? formatForBlock(scope.id) : pageByName(scope.name)?.format ?? "md";
-  const own = blockRegions(raw, format).properties.filter((p) => p.primary).map((p): [string, string] => [p.key, p.value]);
+// `own` is the scope's own properties ({@link ownProperties}), read once per
+// change of the scope's source by the panel and shared by its callers.
+function machineManaged(own: [string, string][], key: string): boolean {
   return hides(FORM_MANAGED, key, own);
+}
+
+/** The scope's own primary properties: a block's, or a page's header's,
+ *  never its opening text's (D-20261119-PG). One parse of that source. */
+function ownProperties(scope: PropsPanelScope): [string, string][] {
+  const page = scope.kind === "page" ? pageByName(scope.name) : undefined;
+  const raw = scope.kind === "block" ? node(scope.id)?.raw ?? "" : (page && pageOpening(page).properties) ?? "";
+  const format = scope.kind === "block" ? formatForBlock(scope.id) : page?.format ?? "md";
+  return blockRegions(raw, format).properties.filter((p) => p.primary).map((p): [string, string] => [p.key, p.value]);
 }
 
 function existingProperties(scope: PropsPanelScope): [string, string][] {
@@ -86,12 +94,12 @@ function scopeLabel(scope: PropsPanelScope): { title: string; subject: string } 
 
 /** Presets (page scope only, shown even when absent) then every other property
  *  the scope has. Presets stay FIRST so the first `.pp-input` is a preset. */
-function rowsFor(scope: PropsPanelScope): PagePropSpec[] {
+function rowsFor(scope: PropsPanelScope, own: [string, string][]): PagePropSpec[] {
   const rows = scope.kind === "page" ? [...PAGE_PROP_SPECS] : [];
   const seen = new Set(rows.map((spec) => spec.key.toLowerCase()));
   for (const [key] of existingProperties(scope)) {
     const lower = key.toLowerCase();
-    if (seen.has(lower) || machineManaged(scope, lower)) continue;
+    if (seen.has(lower) || machineManaged(own, lower)) continue;
     seen.add(lower);
     rows.push({ key, label: key, hint: "", kind: "text" });
   }
@@ -117,7 +125,8 @@ function Panel(props: { scope: PropsPanelScope; x: number; y: number; binding: B
   onMount(() => setTop(Math.max(8, Math.min(props.y, h - (el?.offsetHeight ?? 380) - 8))));
   // Keyed by the KEY SET: an unrelated store change (reload, save) must not
   // remount the fields and discard what the user is halfway through typing.
-  const rows = createMemo(() => rowsFor(props.scope), undefined, { equals: sameKeys });
+  const own = createMemo(() => ownProperties(props.scope));
+  const rows = createMemo(() => rowsFor(props.scope, own()), undefined, { equals: sameKeys });
   const writable = createMemo(() => scopeWritable(props.scope));
   const subject = untrack(() => subjectOf(props.scope));
   const name = props.scope.kind === "page" ? props.scope.name : node(props.scope.id)?.page;
@@ -142,7 +151,7 @@ function Panel(props: { scope: PropsPanelScope; x: number; y: number; binding: B
           fallback={<div class="pp-hint">{t("page-props-read-only", { kind: props.scope.kind })}</div>}
         >
           <For each={rows()}>{(spec) => <Field scope={props.scope} spec={spec} write={write} />}</For>
-          <AddRow scope={props.scope} write={write} />
+          <AddRow scope={props.scope} own={own} write={write} />
         </Show>
         <div class="pp-foot">
           <button class="pp-done" onClick={closePageProps}>{t("page-props-done")}</button>
@@ -227,7 +236,7 @@ function Field(props: { scope: PropsPanelScope; spec: PagePropSpec; write: Write
   );
 }
 
-function AddRow(props: { scope: PropsPanelScope; write: Write }): JSX.Element {
+function AddRow(props: { scope: PropsPanelScope; own: () => [string, string][]; write: Write }): JSX.Element {
   const [key, setKey] = createSignal("");
   const [value, setValue] = createSignal("");
   // isEditablePropertyKey is the grammar every Tine reader finds again, so an
@@ -239,7 +248,7 @@ function AddRow(props: { scope: PropsPanelScope; write: Write }): JSX.Element {
     const k = trimmed();
     if (!k) return null;
     if (!isEditablePropertyKey(k)) return t("page-prose-key-grammar");
-    if (machineManaged(props.scope, k)) return t("page-prose-key-managed", { key: k });
+    if (machineManaged(props.own(), k)) return t("page-prose-key-managed", { key: k });
     if (readOne(props.scope, k) !== null) return t("page-prose-key-exists", { key: k });
     return null;
   });

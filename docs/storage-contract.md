@@ -660,7 +660,7 @@ per-edit work, and never deletes or overwrites a graph file to repair a cache.
 `whole_graph_reconciled()` never serves the checkpoint: it waits for the launch
 diff, for graph-wide destructive operations and for a one-shot lookup that
 missed in the checkpoint (a cold-start `tine://` link, GH #181). The public operation
-surface is 60 operations: the methods of `Store`, `Transaction` and `PagePlan` plus every
+surface is 61 operations: the methods of `Store`, `Transaction` and `PagePlan` plus every
 public function taking either. `crates/tine-store/SURFACE.txt` budgets it per
 concept and `crates/tine-store/tests/shallow_ratchet.rs` keeps this count true.
 `InventoryScope::File(PageId)` extends the existing inventory question with
@@ -857,18 +857,35 @@ claimants lack, before the watcher publishes it, adds it only when no other
 name can claim that file: a journal (its file name is its name) or a page
 path the current page list does not list. Any other such read drops the
 claimant memo, and the next lookup lists again. A read of a file a host holds
-changes no memo: its owner's bytes name it, not the file ((G)). A lookup that
-lists, or a read that adds, outside the writer changes a memo only at the
-generation and held epoch it began at (a release or an open's hold moves the
-held map and no generation); the writer's own listings need no such check,
-since every hold and release takes the writer. The first lookup of an absent
-name of each kind after launch still lists once, because the launch index does
-not vouch for files that arrived after it. Proof:
+changes no memo: its owner's bytes name it, not the file ((G)). Name lists and
+path reads outside the writer change a memo only at the generation and held
+epoch they observed. Launch and rebuild prepare the inventory and classify
+discovery errors before taking the cache write guard. One stamp check covers
+the parsed rows, their name-only claims and the discovery errors. Parsed rows
+supply their own names, including duplicate journal claimants. A rebuild
+can reuse its reads across an ownership change at the same generation.
+An unchanged release keeps the owner's observed name until the watcher
+delivers any newer bytes. If the rebuild observed the file absent, release
+retires its claim, parsed row and errors together. Rescan certifies a
+replacement listing outside the writer if the installed generation is
+superseded. A replacement walk whose stamp has moved leaves the current names
+and errors intact. Each store serializes explicit Rescans from hash
+reconciliation through publication. Page opens use the store writer as
+usual. The first lookup of an absent name
+of each kind after launch still lists once, because
+the launch index does not vouch for files that arrived after it. Proof:
 `crates/tine-store/tests/og_perf_publish.rs`,
 `crates/tine-store/src/model/derived_tests.rs`
 (`a_journal_only_the_capture_names_joins_the_day_index`,
 `a_name_walk_during_a_release_keeps_the_released_page`,
 `a_path_read_of_a_held_file_does_not_join_the_claimant_memo`),
+`crates/tine-store/src/page_host/recovery_tests.rs`
+(`rebuild_keeps_the_name_of_a_page_released_before_publication`),
+`crates/tine-store/src/watch/rebuild.rs`
+(`overlapping_rescans_publish_consistent_views`,
+`a_rejected_name_walk_cannot_restore_a_repaired_error`,
+`releasing_an_owner_only_claim_removes_it_from_the_rebuilt_listing`,
+`shutting_down_removes_an_owner_only_claim_from_the_rebuilt_listing`),
 `crates/tine-store/src/store/panic_isolation_tests.rs`
 (`an_own_create_a_capture_missed_is_named_after_refresh`).
 
@@ -2486,6 +2503,27 @@ A case-only destination file that is listed for a different page (its
 `title::` names another page) is not a spelling move: the rename planner
 refuses it `FileTaken` with that page's name and plans nothing (CM step 2
 R14), so the move preflight above never sees it.
+
+The same refusal covers an ordinary rename whose destination a case-folding
+volume answers through another listed spelling: renaming `A` to `B` while
+`pages/b.md` is page `C`'s refuses `FileTaken` naming `C`, instead of
+replanning until `WouldBlock` (scenario: an external editor or sync delivery
+left that file there). Which entry occupies a destination is one answer,
+`Store::move_occupant`, used by both this planner check and the transaction's
+no-replace move guard. It first checks the destination as that guard does
+(a valid id inside its area, no ancestor linked out of the graph, the graph
+write-target check) and probes nothing otherwise, so an absolute,
+parent-relative or out-of-graph destination is refused (`InvalidTarget`)
+rather than named (scenario: malformed input, or an external editor or sync
+delivery replacing a graph folder with a link out of it). A final symlink is
+its own entry and is never followed to the page it points at; only a regular
+entry resolves to its listed folded spelling. Cost per destination candidate:
+the guard's fixed destination check, one `lstat`, and two more
+canonicalizations when a regular entry answers (proof
+`crates/tine-store/src/store/move_occupant_tests.rs`,
+`crates/tine-graph-features/tests/cm_merge_rules.rs`
+`rename_onto_a_case_spelled_link_does_not_blame_its_target`, and the K
+witness `folded_occupant` row on Windows).
 
 Case-only moves first try the existing atomic no-replace primitive on Linux,
 Windows, macOS, Android and iOS. Only an already-exists refusal permits an

@@ -103,14 +103,13 @@ impl Graph {
 
     /// The listed paths a whole-graph build leaves out: those a held or
     /// unknown identity names ((G)); their rows are their owners'.
-    pub(super) fn withheld(&self, listed: &[PageEntry]) -> HashSet<PathBuf> {
+    pub(super) fn withheld(&self, listed: &[PageEntry], memo: &mut Memo) -> HashSet<PathBuf> {
         if self.held.is_empty() {
             return HashSet::new();
         }
-        let mut memo = Memo::default();
         listed
             .iter()
-            .filter(|entry| !self.disk_sourced_in(&mut memo, &entry.path))
+            .filter(|entry| !self.disk_sourced_in(memo, &entry.path))
             .map(|entry| entry.path.clone())
             .collect()
     }
