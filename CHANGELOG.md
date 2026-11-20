@@ -9,7 +9,7 @@ The format follows [Keep a Changelog](https://keepachangelog.com/); versions use
 ## [Unreleased]
 
 ### Fixed
-- The Guide's Share pages page no longer says that **Link** is greyed out with "Coming soon" or depends on your build; link sharing is offered in every build.
+- The Guide's Share pages page no longer says that **Link** is greyed out with "Coming soon" or depends on your build; link sharing is offered in every build. The Flatpak section of Platforms says the same (D-20261117-QSG).
 - Query results have even spacing when breadcrumbs are turned off, including between results from different source pages (#881).
 - Help for the `tine export` subcommands explains which graph path to pass and where static and live publications are written (#588).
 - **Level ≤** in Copy / export now limits how many levels of each selected reference are copied, including from source groups you haven’t scrolled to (#793, reported by vinyatu).
