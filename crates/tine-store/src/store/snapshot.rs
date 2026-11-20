@@ -344,6 +344,10 @@ impl Snapshot {
             .unwrap_or_default();
         let (list, claimants) = if config_changed || rebuild || old.is_none() {
             let (list, claimants) = graph.snapshot_name_roots();
+            #[cfg(test)]
+            if rebuild {
+                super::pause_at_hook(&graph.rebuild_names_captured_pause);
+            }
             name_by_path = Arc::new(
                 claimants
                     .values()

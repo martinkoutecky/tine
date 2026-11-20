@@ -764,7 +764,7 @@ fn file_contains_link_id(path: &Path, id: &str) -> io::Result<bool> {
     }
 }
 
-pub(super) fn list_graph_pages(graph: &Graph) -> Vec<PageEntry> {
+pub(super) fn list_graph_pages(graph: &Graph) -> (Vec<PageEntry>, super::derived::DiscoveryErrors) {
     list_graph_pages_kind(graph, None)
 }
 
@@ -777,7 +777,10 @@ pub(super) fn list_graph_pages(graph: &Graph) -> Vec<PageEntry> {
 /// every title (an ordinary-kind or whole listing, e.g. the launch pass);
 /// `Graph::find_claimants` keeps such rows when it merges a journal-kind
 /// listing.
-pub(crate) fn list_graph_pages_kind(graph: &Graph, kind: Option<PageKind>) -> Vec<PageEntry> {
+pub(super) fn list_graph_pages_kind(
+    graph: &Graph,
+    kind: Option<PageKind>,
+) -> (Vec<PageEntry>, super::derived::DiscoveryErrors) {
     #[cfg(test)]
     super::GRAPH_LIST_CALLS.with(|calls| calls.set(calls.get() + 1));
     list_pages(graph, kind)
@@ -797,7 +800,10 @@ pub(crate) fn journal_listing_covers(
             .is_some_and(|stem| format.parse(&decode_page_name(stem, name_format)).is_some())
 }
 
-fn list_pages(graph: &Graph, kind: Option<PageKind>) -> Vec<PageEntry> {
+fn list_pages(
+    graph: &Graph,
+    kind: Option<PageKind>,
+) -> (Vec<PageEntry>, super::derived::DiscoveryErrors) {
     let mut entries = Vec::new();
     let root = &graph.root;
     let format = graph.current_journal_format();
@@ -805,7 +811,7 @@ fn list_pages(graph: &Graph, kind: Option<PageKind>) -> Vec<PageEntry> {
     let journals = graph.journals_path();
     let config = graph.current_config();
     if !graph_text_directory_scannable(root, root, &config) {
-        return entries;
+        return (entries, Vec::new());
     }
     let mut failures = Vec::new();
     let walk_errors = walk_graph_page_files(root, root, &config, |path| {
@@ -830,7 +836,7 @@ fn list_pages(graph: &Graph, kind: Option<PageKind>) -> Vec<PageEntry> {
                 Ok(name) => name,
                 Err(error) => {
                     // A journal-kind listing replaces only the journals
-                    // directory's failures (`replace_discovery_errors`); the
+                    // directory's failures; the
                     // other files' failures are an ordinary listing's.
                     if kind != Some(PageKind::Journal) {
                         failures.push((crate::FileId::from(graph.rel_path(&path)), error.into()));
@@ -864,8 +870,9 @@ fn list_pages(graph: &Graph, kind: Option<PageKind>) -> Vec<PageEntry> {
             .into_iter()
             .map(|(path, error)| (crate::FileId::from(graph.rel_path(&path)), error.into())),
     );
-    graph.replace_discovery_errors(kind, failures);
-    entries
+    #[cfg(test)]
+    crate::store::pause_at_hook(&graph.discovery_walk_pause);
+    (entries, failures)
 }
 
 /// The launch load pass's listing (GH #623, storage spec §5.1 step 1): the

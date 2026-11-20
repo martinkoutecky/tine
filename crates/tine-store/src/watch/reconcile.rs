@@ -114,9 +114,15 @@ impl Core {
     ) -> Result<(), LoadError> {
         if include_config {
             let _writer = self.writer.lock().unwrap();
+            #[cfg(test)]
+            let locked_at = Instant::now();
             // An actual config change retains its existing full reparse protocol.
             // Otherwise this bounded check visits no page paths.
             self.reconcile_inner(Some(&HashSet::new()), true, scan_semantics, batch, trigger)?;
+            #[cfg(test)]
+            if matches!(trigger, DiffTrigger::Rebuild) {
+                super::REBUILD_WRITER_TIME.with(|time| time.set(time.get() + locked_at.elapsed()));
+            }
         }
         loop {
             if self.closed.load(Ordering::Acquire) {
@@ -136,10 +142,12 @@ impl Core {
                 times,
             };
             let _writer = self.writer.lock().unwrap();
+            #[cfg(test)]
+            let locked_at = Instant::now();
             if generation != self.graph.cache_generation() || revision != self.changes.rev() {
                 continue;
             }
-            return self.reconcile_prepared(
+            let result = self.reconcile_prepared(
                 None,
                 false,
                 scan_semantics,
@@ -149,6 +157,11 @@ impl Core {
                 Some(prepared),
                 completion,
             );
+            #[cfg(test)]
+            if matches!(trigger, DiffTrigger::Rebuild) {
+                super::REBUILD_WRITER_TIME.with(|time| time.set(time.get() + locked_at.elapsed()));
+            }
+            return result;
         }
     }
 
