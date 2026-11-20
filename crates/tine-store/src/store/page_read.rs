@@ -210,39 +210,56 @@ impl Store {
         // maybe, graph discovery's own listing answers which files are the
         // day's, at their listed spellings (L2, L3; reviews db344b16e F1
         // through 413a3ab82 F1). Neither needs the writer.
+        // A stat error other than those is no absence (storage contract):
+        // the first one answers when the listing finds no hit (review
+        // 9d82701e6 F2).
         let directory = self.graph.current_config().journals_dir.clone();
-        let maybe = format.accepted_stems(day).into_iter().any(|stem| {
-            !stem.contains(['/', '\\'])
-                && crate::file_kind::GRAPH_TEXT_EXTENSIONS
-                    .iter()
-                    .any(|extension| {
-                        let path = self
-                            .graph
-                            .root
-                            .join(format!("{directory}/{stem}.{extension}"));
-                        #[cfg(test)]
-                        let path =
-                            crate::path_identity::folding_alias_source(&path).unwrap_or(path);
-                        #[cfg(feature = "test-faults")]
-                        crate::cost_counters::stamp_by_path();
-                        match fs::symlink_metadata(&path) {
-                            Ok(_) => true,
-                            Err(error) => !matches!(
-                                error.kind(),
-                                std::io::ErrorKind::NotFound
-                                    | std::io::ErrorKind::InvalidFilename
-                                    | std::io::ErrorKind::NotADirectory
-                            ),
-                        }
-                    })
-        });
+        let mut maybe = false;
+        let mut probe_error = None;
+        'probe: for stem in format.accepted_stems(day) {
+            if stem.contains(['/', '\\']) {
+                continue;
+            }
+            for extension in crate::file_kind::GRAPH_TEXT_EXTENSIONS {
+                let path = self
+                    .graph
+                    .root
+                    .join(format!("{directory}/{stem}.{extension}"));
+                #[cfg(test)]
+                let path = crate::path_identity::folding_alias_source(&path).unwrap_or(path);
+                #[cfg(feature = "test-faults")]
+                crate::cost_counters::stamp_by_path();
+                match fs::symlink_metadata(&path) {
+                    Ok(_) => {
+                        maybe = true;
+                        break 'probe;
+                    }
+                    Err(error)
+                        if matches!(
+                            error.kind(),
+                            std::io::ErrorKind::NotFound
+                                | std::io::ErrorKind::InvalidFilename
+                                | std::io::ErrorKind::NotADirectory
+                        ) => {}
+                    Err(error) => {
+                        maybe = true;
+                        probe_error.get_or_insert(error);
+                    }
+                }
+            }
+        }
         if !maybe {
             return Ok(None);
         }
         let hits = crate::model::journal_files_claiming(&self.graph, day.ordinal_key())
             .map_err(|error| StoreError::Io(error.into()))?;
+        #[cfg(test)]
+        AFTER_LISTING.with(|hook| hook.borrow().as_ref().map(|hook| hook()));
         if hits.is_empty() {
-            return Ok(None);
+            return match probe_error {
+                Some(error) => Err(StoreError::Io(error.into())),
+                None => Ok(None),
+            };
         }
         let writer = self.writer.lock().unwrap();
         if self.is_closed() {
@@ -255,8 +272,11 @@ impl Store {
         let mut unheld = Vec::new();
         let mut fresh = HashSet::new();
         for path in hits {
+            // A hit replaced since the listing by anything but a regular
+            // file is no hit, as the listing would now say (review 9d82701e6 F1).
             let now = match fs::symlink_metadata(&path) {
-                Ok(metadata) => crate::watch::stamp_from_metadata(&metadata),
+                Ok(metadata) if metadata.is_file() => crate::watch::stamp_from_metadata(&metadata),
+                Ok(_) => continue,
                 Err(error) if error.kind() == std::io::ErrorKind::NotFound => continue,
                 Err(error) => return Err(StoreError::Io(error.into())),
             };
@@ -563,4 +583,12 @@ mod tests {
         ));
         store.close();
     }
+}
+
+#[cfg(test)]
+thread_local! {
+    /// Runs between late discovery's listing and its final stats (review
+    /// 9d82701e6 F1).
+    pub(super) static AFTER_LISTING: std::cell::RefCell<Option<Box<dyn Fn()>>> =
+        const { std::cell::RefCell::new(None) };
 }

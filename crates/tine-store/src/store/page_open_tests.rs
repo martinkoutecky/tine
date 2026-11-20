@@ -342,6 +342,68 @@ fn late_discovery_skips_entries_graph_discovery_would_not_list() {
     }
 }
 
+/// Review 9d82701e6 F1: a listed late journal replaced by a FIFO before the
+/// final stat is no hit; the lookup neither opens it nor blocks.
+#[cfg(unix)]
+#[test]
+fn a_late_journal_replaced_by_a_fifo_after_the_listing_is_no_hit() {
+    let root = graph(3);
+    let store = open(root.path(), None);
+    store.whole_graph().unwrap();
+    store.watch.stop_background_for_test();
+    let day = root.path().join("journals/2026_11_02.md");
+    fs::write(&day, "- late\n").unwrap();
+    let (send, receive) = mpsc::channel();
+    let asking = Arc::clone(&store);
+    let fifo = day.clone();
+    std::thread::spawn(move || {
+        super::page_read::AFTER_LISTING.with(|hook| {
+            *hook.borrow_mut() = Some(Box::new(move || {
+                fs::remove_file(&fifo).unwrap();
+                let made = std::process::Command::new("mkfifo")
+                    .arg(&fifo)
+                    .status()
+                    .unwrap();
+                assert!(made.success());
+            }))
+        });
+        let answer = asking
+            .page_named("Nov 2nd, 2026", PageKind::Journal)
+            .map(|read| read.map(|r| r.id));
+        let _ = send.send(answer);
+    });
+    let answer = receive
+        .recv_timeout(Duration::from_secs(10))
+        .expect("the lookup blocked on the FIFO");
+    assert_eq!(answer.unwrap(), None);
+    store.close();
+}
+
+/// Review 9d82701e6 F2 and the storage contract: a journals directory that
+/// lists but cannot be searched answers its stat error, never an empty day.
+#[cfg(unix)]
+#[test]
+fn an_unsearchable_journals_directory_is_no_absence() {
+    use std::os::unix::fs::PermissionsExt;
+    let root = graph(3);
+    let store = open(root.path(), None);
+    store.whole_graph().unwrap();
+    store.watch.stop_background_for_test();
+    let journals = root.path().join("journals");
+    for name in fs::read_dir(&journals).unwrap() {
+        fs::remove_file(name.unwrap().path()).unwrap();
+    }
+    fs::set_permissions(&journals, fs::Permissions::from_mode(0o600)).unwrap();
+    let answer = store.page_named("Nov 2nd, 2026", PageKind::Journal);
+    fs::set_permissions(&journals, fs::Permissions::from_mode(0o755)).unwrap();
+    assert!(
+        matches!(answer, Err(StoreError::Io(_))),
+        "{:?}",
+        answer.map(|r| r.map(|r| r.id))
+    );
+    store.close();
+}
+
 #[test]
 fn a_page_open_before_ready_needs_neither_the_load_nor_the_writer() {
     let root = graph(5);
