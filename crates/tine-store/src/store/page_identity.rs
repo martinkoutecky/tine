@@ -10,6 +10,17 @@ fn in_directory(path: &str, directory: &str) -> bool {
 }
 
 impl Store {
+    /// [`Self::page_named_from_files`] for the CM conformance harness's
+    /// cold direct-lookup check (D-20261119-YL round 4b).
+    #[cfg(test)]
+    pub(crate) fn cold_page_named(
+        &self,
+        name: &str,
+        kind: PageKind,
+    ) -> Result<Option<PageRead>, StoreError> {
+        self.page_named_from_files(name, kind)
+    }
+
     /// The file-name listing answer: read a page by effective name, or a day
     /// by any accepted spelling (its files in any directory, CM SPEC §2.1),
     /// without waiting for the initial parse. A page some file is named for
@@ -31,7 +42,9 @@ impl Store {
         kind: PageKind,
     ) -> Result<Option<PageRead>, StoreError> {
         // The ready view's lookup rule, without reclassifying the file.
-        let lookup = crate::model::claim_lookup(&self.graph.current_journal_format(), name, kind);
+        let format = self.graph.current_journal_format();
+        let lookup = crate::model::claim_lookup(&format, name, kind)
+            .by_key(&format, &self.graph.find_claimants(name, PageKind::Journal));
         let held = |kind| {
             (self.graph.find_claimants(&lookup.name, kind).into_iter())
                 .find(|entry| lookup.holds(entry))

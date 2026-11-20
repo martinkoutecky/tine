@@ -470,3 +470,98 @@ fn lazy_marks_cover_every_lazy_slot_the_checkpoint_writes() {
     assert!(!lazy.contains("unwrap"), "{RULE}: scanner read a lock call");
     assert_eq!(lazy, marked, "{RULE}");
 }
+
+/// Every shipped function (in every crate and the app) that reads a field
+/// named `journal_page_title_format` (the configured title, on `Config` or
+/// `GraphMeta`), as `file::fn`.
+#[derive(Default)]
+struct RawTitleReaders {
+    file: String,
+    in_impl: Option<String>,
+    found: BTreeSet<String>,
+}
+
+impl RawTitleReaders {
+    fn function(&mut self, name: &str, block: &syn::Block) {
+        let mut reads = Reads::default();
+        reads.visit_block(block);
+        if reads.names.contains("journal_page_title_format") {
+            let owner = self
+                .in_impl
+                .as_deref()
+                .map(|i| format!("{i}::"))
+                .unwrap_or_default();
+            self.found.insert(format!("{}::{owner}{name}", self.file));
+        }
+    }
+}
+
+impl<'ast> Visit<'ast> for RawTitleReaders {
+    fn visit_item(&mut self, item: &'ast syn::Item) {
+        if !test_only(item_attrs(item)) {
+            visit::visit_item(self, item);
+        }
+    }
+    fn visit_item_impl(&mut self, item: &'ast syn::ItemImpl) {
+        let outer = self.in_impl.take();
+        self.in_impl = match &*item.self_ty {
+            syn::Type::Path(path) => path.path.segments.last().map(|s| s.ident.to_string()),
+            _ => None,
+        };
+        visit::visit_item_impl(self, item);
+        self.in_impl = outer;
+    }
+    fn visit_impl_item_fn(&mut self, item: &'ast syn::ImplItemFn) {
+        if !test_only(&item.attrs) {
+            self.function(&item.sig.ident.to_string(), &item.block);
+        }
+    }
+    fn visit_item_fn(&mut self, item: &'ast syn::ItemFn) {
+        if !test_only(&item.attrs) {
+            self.function(&item.sig.ident.to_string(), &item.block);
+        }
+    }
+}
+
+/// D-20261119-YL: the configured journal title is read only by the one
+/// decision (`Config::journal_format`), which every consumer asks for the
+/// effective title; `ParseConfig` holds only the effective one (a private
+/// field). The other readers here never interpret it: the config parser that
+/// writes it, the checkpoint key, and two change detectors (a configured
+/// change is a superset of an effective one).
+#[test]
+fn only_the_one_decision_reads_the_configured_journal_title() {
+    let workspace = crate_dir("../..");
+    let mut files = Vec::new();
+    for entry in fs::read_dir(workspace.join("crates")).unwrap() {
+        let src = entry.unwrap().path().join("src");
+        if src.is_dir() {
+            rust_files(&src, &mut files);
+        }
+    }
+    rust_files(&workspace.join("src-tauri/src"), &mut files);
+    let mut readers = RawTitleReaders::default();
+    for path in &files {
+        readers.file = path
+            .strip_prefix(&workspace)
+            .unwrap()
+            .to_string_lossy()
+            .into_owned();
+        readers.visit_file(&parse(path));
+    }
+    let allowed: BTreeSet<String> = [
+        "crates/tine-core/src/config.rs::Config::journal_format",
+        "crates/tine-core/src/config.rs::Config::parse",
+        "crates/tine-store/src/store/checkpoint.rs::config_key",
+        "crates/tine-store/src/model/fileless_names.rs::DaySupport::carry",
+        "crates/tine-store/src/model/backlink_membership.rs::BacklinkMembership::succeeding",
+    ]
+    .into_iter()
+    .map(str::to_owned)
+    .collect();
+    assert_eq!(
+        readers.found, allowed,
+        "a consumer reads the configured journal title; ask `Config::journal_format()` \
+         (or `GraphMeta::journal_title.effective`) for the effective one (D-20261119-YL)"
+    );
+}

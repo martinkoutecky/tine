@@ -765,7 +765,7 @@ pub fn facts(view: &WholeGraph, journal: &JournalFormat, input: &Value, model: &
 ///   contributes (an alias, an occurrence, their namespace prefixes and
 ///   alias components).
 /// - `K3 (§2.2 journals directory first)`: a row naming which file holds a
-///   claim (active files, owners, counts), where the model selects a
+///   claim (active files, owners, counts, a direct lookup's holder), where the model selects a
 ///   journals-directory file and Tine selects another claimant.
 /// - `K1 (§2.1 file claim, reference)`: about a block whose reference is
 ///   spelled as a reclaimed claim, or a name of its alias component (the
@@ -782,7 +782,8 @@ pub fn attribute(facts: &Facts, mut diff: Diff) -> Diff {
         .any(|p| facts.reclaimed.contains_key(*p) && !facts.losing.contains(*p));
     // Which file holds a claim: the active-file, owner and count rows name
     // the holder's path in their detail.
-    let holder_row = ["active files", "owners", "counts"].contains(&diff.class.as_str());
+    let holder_row =
+        ["active files", "owners", "counts", "direct lookup holder"].contains(&diff.class.as_str());
     let class = if holder_row && facts.journal_first.iter().any(|p| diff.detail.contains(p)) {
         "K3 (§2.2 journals directory first)"
     } else if about(&facts.claim_keys) || reclaimed_active {
@@ -880,6 +881,147 @@ pub fn corpus(roots: Vec<GraphSpec>, manifest: &str, n: u64) -> Vec<GraphSpec> {
         .collect()
 }
 
+/// A cold direct lookup: the file a name opens asked as a page through the
+/// store's file listing, before the first view
+/// (`Store::page_named_from_files`, reachable only from the store crate's
+/// own tests), or the read error.
+pub type ColdLookup<'f> =
+    &'f dyn Fn(&super::super::store_crate::Store, &str) -> Result<Option<String>, String>;
+
+/// Direct lookup (D-20261119-YL round 4b): what a name opens asked as a
+/// page, with no link decision ahead of it, ready
+/// (`WholeGraph::resolve(name, false)`, which `Store::page_named` reads) and
+/// cold (`cold`, a [`ColdLookup`] per name; real-file claims only, as the
+/// file listing resolves no alias), against K: the page K navigates the
+/// name to and that page's owner file. A name is its text key, so a case,
+/// composition or slash variant of a day's title opens the day.
+pub fn compare_direct_lookup(
+    view: &WholeGraph,
+    journal: &JournalFormat,
+    model: &Value,
+    cold: &BTreeMap<String, Result<Option<String>, String>>,
+) -> Vec<Diff> {
+    let owners: BTreeMap<Page, Option<&str>> = (model["owners"].as_array().unwrap().iter())
+        .map(|row| (page_pair(&row["page"]), row["path"].as_str()))
+        .collect();
+    // Tine's page for a file it opened, or for a name nothing claims.
+    let page_of = |name: &str, file: Option<&str>| match file {
+        Some(file) => {
+            let inv = view.inventory(InventoryScope::File(&PageId::from(file)));
+            inv.0.first().map(|e| entry_page(journal, e))
+        }
+        None => Some(match journal.parse_text(name) {
+            Some(day) => ("journal".to_owned(), day_token(day)),
+            None => ("page".to_owned(), page_key(name)),
+        }),
+    };
+    let mut diffs = Vec::new();
+    for (name, page) in model["navigate"].as_object().unwrap() {
+        let want = page_pair(page);
+        let want_file = owners.get(&want).copied().flatten();
+        let resolved = view.resolve(name, false);
+        let ready = match &resolved {
+            Resolved::Existing { id, .. } => Some(id.as_str().to_owned()),
+            Resolved::Alias { owners } => owners.first().map(|id| id.as_str().to_owned()),
+            Resolved::Absent { .. } => None,
+        };
+        // The file listing resolves no alias (`page_named_from_files`): a
+        // name only an alias holds is compared ready only.
+        let cold = match resolved {
+            Resolved::Alias { .. } => None,
+            _ => Some(("cold", cold[name].clone())),
+        };
+        for (path, answer) in std::iter::once(("ready", Ok(ready))).chain(cold) {
+            let file = match answer {
+                Ok(file) => file,
+                Err(error) => {
+                    diffs.push(
+                        Diff::new(
+                            "direct lookup",
+                            format!("{path} {name:?}: model {want:?} in {want_file:?}, Tine read error {error}"),
+                        )
+                        .at_key(name)
+                        .at_key(&want.1),
+                    );
+                    continue;
+                }
+            };
+            let got = page_of(name, file.as_deref());
+            if got.as_ref() != Some(&want) || file.as_deref() != want_file {
+                // The right page from another of its files names a holder.
+                let class = if got.as_ref() == Some(&want) {
+                    "direct lookup holder"
+                } else {
+                    "direct lookup"
+                };
+                diffs.push(
+                    Diff::new(
+                        class,
+                        format!(
+                            "{path} {name:?}: model {want:?} in {want_file:?}, Tine {got:?} in {file:?}"
+                        ),
+                    )
+                    .at_key(name)
+                    .at_key(&want.1)
+                    .at_key(got.as_ref().map_or(name, |got| got.1.as_str())),
+                );
+            }
+        }
+    }
+    diffs
+}
+
+/// Known differences: rows owned by a card, kept by hand in part `known` of
+/// `expected-differences.json` (never rewritten by `CM_REFRESH`) as
+/// `{reason: {fixture: ["class: detail"]}}`, the class without `FINDING: `.
+/// Such a row is attributed `KNOWN (<reason>)`: a finding no longer fails,
+/// and a row a class explains says it is the card's too. A listed row that no
+/// longer occurs fails, so the list shrinks with each fix.
+struct Known {
+    rows: BTreeMap<(String, String), String>,
+    seen: BTreeSet<(String, String)>,
+}
+
+impl Known {
+    fn read(manifest: &str) -> Known {
+        let path = fixture_dir(manifest).join("expected-differences.json");
+        let file: Value = serde_json::from_str(&fs::read_to_string(path).unwrap()).unwrap();
+        let mut rows = BTreeMap::new();
+        for (reason, fixtures) in file["known"].as_object().into_iter().flatten() {
+            for (fixture, lines) in fixtures.as_object().unwrap() {
+                for line in strings(lines) {
+                    rows.insert((fixture.clone(), line), reason.clone());
+                }
+            }
+        }
+        Known {
+            rows,
+            seen: BTreeSet::new(),
+        }
+    }
+
+    fn attribute(&mut self, fixture: &str, mut diff: Diff) -> Diff {
+        let class = diff.class.strip_prefix("FINDING: ").unwrap_or(&diff.class);
+        let row = (fixture.to_owned(), format!("{class}: {}", diff.detail));
+        if let Some(reason) = self.rows.get(&row) {
+            diff.class = format!("KNOWN ({reason}): {class}");
+            self.seen.insert(row);
+        }
+        diff
+    }
+
+    fn assert_all_seen(&self) {
+        let stale: Vec<_> = (self.rows.iter())
+            .filter(|(row, _)| !self.seen.contains(*row))
+            .map(|((fixture, line), reason)| format!("{fixture}: {line} ({reason})"))
+            .collect();
+        assert!(
+            stale.is_empty(),
+            "known differences that no longer occur (remove them from part `known`): {stale:#?}"
+        );
+    }
+}
+
 /// The static comparison against the confirmed model. `links` reads Tine's
 /// link table (crate private in the store) as typed model pairs.
 pub fn store_conformance(
@@ -887,6 +1029,7 @@ pub fn store_conformance(
     roots: Vec<GraphSpec>,
     manifest: &str,
     links: impl Fn(&WholeGraph, &GraphSpec, &Value, &mut Vec<Diff>) -> BTreeSet<(Page, Page)>,
+    cold_lookup: ColdLookup,
     mut consumers: impl FnMut(
         &super::super::store_crate::Store,
         &WholeGraph,
@@ -902,16 +1045,13 @@ pub fn store_conformance(
         .and_then(|s| s.parse().ok())
         .unwrap_or(300);
     let specs = corpus(roots, manifest, n);
+    let mut known = Known::read(manifest);
     let total = specs.len();
     let mut runs = 0;
     let mut closers = Vec::new();
     for spec in specs {
         let dir = tempfile::tempdir().unwrap();
         spec.write(dir.path());
-        let store = super::super::store_crate::Store::open(dir.path(), Default::default())
-            .unwrap()
-            .0;
-        let view = store.whole_graph().unwrap();
         let input = model_input(&spec);
         let model = run_bridge(bridge, &input)
             .unwrap_or_else(|e| panic!("{}: the confirmed-model bridge failed: {e}", spec.name));
@@ -920,14 +1060,35 @@ pub fn store_conformance(
             "{}: the static comparison runs against the confirmed model",
             spec.name
         );
+        // The cold lookups run while the first load is held, before any view.
+        let pause = dir.path().join(".tine-test-pause-load");
+        fs::write(&pause, "").unwrap();
+        let store = super::super::store_crate::Store::open(dir.path(), Default::default())
+            .unwrap()
+            .0;
+        let cold: BTreeMap<String, Result<Option<String>, String>> =
+            (model["navigate"].as_object().unwrap().keys())
+                .map(|name| (name.clone(), cold_lookup(&store, name)))
+                .collect();
+        fs::remove_file(&pause).unwrap();
+        let view = store.whole_graph().unwrap();
         let mut found = compare(&view, &spec, &input, &model);
+        found.extend(compare_direct_lookup(
+            &view,
+            &spec.journal_format(),
+            &model,
+            &cold,
+        ));
         found.extend(consumers(&store, &view, &spec, &input, &model));
         let mut link_diffs = Vec::new();
         let actual = links(&view, &spec, &input, &mut link_diffs);
         found.extend(link_diffs);
         found.extend(compare_links(&actual, &model));
         let facts = facts(&view, &spec.journal_format(), &input, &model);
-        let mut diffs: Vec<_> = found.into_iter().map(|d| attribute(&facts, d)).collect();
+        let mut diffs: Vec<_> = found
+            .into_iter()
+            .map(|d| known.attribute(&spec.name, attribute(&facts, d)))
+            .collect();
         diffs.sort();
         diffs.dedup();
         assert!(
@@ -974,6 +1135,7 @@ pub fn store_conformance(
         findings.is_empty(),
         "differences from the confirmed model that no class explains: {findings:#?}"
     );
+    known.assert_all_seen();
     check_expected(
         manifest,
         "storeK",

@@ -2473,6 +2473,7 @@ export interface MessageArgs {
   "rename-refused-taken": { "file": string | number };
   "rename-refused-title-identity": { "file": string | number };
   "rename-refused-unindexed": { "file": string | number };
+  "rename-refused-unreadable": { "file": string | number };
   "rename-refused-unsaved": { "page": string | number };
   "rename-refused-unsaved-mention": { "from": string | number; "page": string | number };
   "rename-save-and-retry": {};

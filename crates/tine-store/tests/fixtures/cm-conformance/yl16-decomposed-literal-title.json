@@ -1,0 +1,29 @@
+{
+ "config": {
+  "journalTitleFormat": "É yyyy-MM-dd"
+ },
+ "files": {
+  "journals/2026_11_02.md": "- the day\n",
+  "pages/É 2026-11-02.md": "- an ordinary page\n",
+  "pages/Notes.md": "- title [[É 2026-11-02]]\n- page [[É 2026-11-02]]\n"
+ },
+ "navigate": [
+  "É 2026-11-02",
+  "É 2026-11-02",
+  "2026-11-02"
+ ],
+ "queries": [
+  {
+   "anchor": "block",
+   "q": {
+    "refs": "É 2026-11-02"
+   }
+  },
+  {
+   "anchor": "block",
+   "q": {
+    "refs": "É 2026-11-02"
+   }
+  }
+ ]
+}

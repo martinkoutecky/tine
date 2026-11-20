@@ -1345,16 +1345,22 @@ impl JournalFormat {
     /// `October 22nd, 2026`) are found by parsing them, not here.
     /// O(routes²).
     pub fn spellings(&self, d: JournalDate) -> Vec<String> {
-        Self::renderings(&self.text_routes.0, d)
+        // The first text route is the effective title, whose admission
+        // ([`title_refusal`], or the default's pinned check) proved it reads
+        // its own rendering of every day in JOURNAL_YEARS back.
+        Self::renderings(&self.text_routes.0, d, JOURNAL_YEARS.contains(&d.year))
     }
 
     /// The renderings of `d` by `routes` that the first of them to read each
-    /// reads back as `d`, deduplicated.
-    fn renderings(routes: &[Format], d: JournalDate) -> Vec<String> {
+    /// reads back as `d`, deduplicated; `first_reads_itself` says the first
+    /// route's rendering is known to, so it is not parsed again.
+    fn renderings(routes: &[Format], d: JournalDate, first_reads_itself: bool) -> Vec<String> {
         let mut out: Vec<String> = Vec::with_capacity(routes.len());
-        for f in routes {
+        for (i, f) in routes.iter().enumerate() {
             let s = f.format(d);
-            if !out.contains(&s) && first_route(routes, &s) == Some(d) {
+            if !out.contains(&s)
+                && ((i == 0 && first_reads_itself) || first_route(routes, &s) == Some(d))
+            {
                 out.push(s);
             }
         }
@@ -1374,10 +1380,11 @@ impl JournalFormat {
     /// suffix, another weekday, case, surrounding space) are not listed.
     pub fn accepted_stems(&self, d: JournalDate) -> Vec<String> {
         let routes = &self.file_stem_routes;
-        let widths = routes.iter().flat_map(|f| f.renderings_by_width(d));
-        let mut seen = std::collections::HashSet::new();
-        let mut out: Vec<String> = Vec::new();
-        for s in Self::renderings(routes, d).into_iter().chain(widths) {
+        // The routes' own renderings are checked by `renderings`; only the
+        // width variants still need their read-back.
+        let mut out = Self::renderings(routes, d, false);
+        let mut seen: std::collections::HashSet<String> = out.iter().cloned().collect();
+        for s in routes.iter().flat_map(|f| f.renderings_by_width(d)) {
             if !seen.contains(&s) && self.parse_file_stem(&s) == Some(d) {
                 seen.insert(s.clone());
                 out.push(s);

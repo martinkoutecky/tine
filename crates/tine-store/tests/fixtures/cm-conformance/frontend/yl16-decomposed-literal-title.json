@@ -1,0 +1,232 @@
+{
+  "backlinks": {
+    "Notes": []
+  },
+  "conflicts": [
+    "Day 2026-11-02"
+  ],
+  "counts": [
+    [
+      [
+        "pages/Notes.md",
+        0
+      ],
+      [
+        "journals/2026_11_02.md",
+        2
+      ]
+    ],
+    []
+  ],
+  "inventory": [
+    {
+      "day": null,
+      "is_journal": false,
+      "key": "notes",
+      "name": "Notes",
+      "target": {
+        "id": "pages/Notes.md",
+        "kind": "existing",
+        "others": []
+      }
+    },
+    {
+      "day": 20261102,
+      "is_journal": true,
+      "key": "é 2026-11-02",
+      "link": {
+        "kind": "journal",
+        "name": "É 2026-11-02"
+      },
+      "name": "É 2026-11-02",
+      "target": {
+        "id": "journals/2026_11_02.md",
+        "kind": "existing",
+        "others": [
+          "pages/É 2026-11-02.md"
+        ]
+      }
+    },
+    {
+      "day": 20261102,
+      "is_journal": true,
+      "key": "é 2026-11-02",
+      "name": "É 2026-11-02",
+      "target": {
+        "id": "journals/2026_11_02.md",
+        "kind": "existing",
+        "others": [
+          "pages/É 2026-11-02.md"
+        ]
+      }
+    }
+  ],
+  "journalFileFormat": null,
+  "journalTitle": {
+    "effective": "É yyyy-MM-dd",
+    "refusal": null
+  },
+  "journalTitleFormat": "É yyyy-MM-dd",
+  "keyOf": {
+    "É 2026-11-02": "é 2026-11-02",
+    "Notes": "notes",
+    "É 2026-11-02": "Day 2026-11-02"
+  },
+  "namespaceTree": [],
+  "open": {
+    "2026-11-02": {
+      "journal": [
+        "journal",
+        "Day 2026-11-02"
+      ],
+      "page": [
+        "journal",
+        "Day 2026-11-02"
+      ]
+    },
+    "É 2026-11-02": {
+      "journal": [
+        "journal",
+        "Day 2026-11-02"
+      ],
+      "page": [
+        "journal",
+        "Day 2026-11-02"
+      ]
+    },
+    "Notes": {
+      "journal": [
+        "journal",
+        "notes"
+      ],
+      "page": [
+        "page",
+        "notes"
+      ]
+    },
+    "É 2026-11-02": {
+      "journal": [
+        "journal",
+        "Day 2026-11-02"
+      ],
+      "page": [
+        "journal",
+        "Day 2026-11-02"
+      ]
+    }
+  },
+  "owner": {
+    "2026-11-02": {
+      "journal": "journals/2026_11_02.md",
+      "page": "journals/2026_11_02.md"
+    },
+    "É 2026-11-02": {
+      "journal": "journals/2026_11_02.md",
+      "page": "journals/2026_11_02.md"
+    },
+    "Notes": {
+      "journal": null,
+      "page": "pages/Notes.md"
+    },
+    "É 2026-11-02": {
+      "journal": "journals/2026_11_02.md",
+      "page": "journals/2026_11_02.md"
+    }
+  },
+  "pages": [
+    {
+      "key": "notes",
+      "kind": "page",
+      "linkedRefs": 0,
+      "name": "Notes",
+      "owner": "pages/Notes.md",
+      "parent": null
+    }
+  ],
+  "spellings": {
+    "2026-11-02": {
+      "backend": [
+        "journal",
+        "Day 2026-11-02"
+      ],
+      "day": [
+        2026,
+        11,
+        2
+      ],
+      "model": [
+        "journal",
+        "Day 2026-11-02"
+      ]
+    },
+    "É 2026-11-02": {
+      "backend": [
+        "journal",
+        "Day 2026-11-02"
+      ],
+      "day": null,
+      "model": [
+        "journal",
+        "Day 2026-11-02"
+      ]
+    },
+    "Notes": {
+      "backend": [
+        "page",
+        "notes"
+      ],
+      "day": null,
+      "model": [
+        "page",
+        "notes"
+      ]
+    },
+    "É 2026-11-02": {
+      "backend": [
+        "journal",
+        "Day 2026-11-02"
+      ],
+      "day": [
+        2026,
+        11,
+        2
+      ],
+      "model": [
+        "journal",
+        "Day 2026-11-02"
+      ]
+    }
+  },
+  "tree": [
+    {
+      "children": [],
+      "page": [
+        "journal",
+        "Day 2026-11-02"
+      ]
+    },
+    {
+      "children": [],
+      "page": [
+        "page",
+        "notes"
+      ]
+    }
+  ],
+  "treeParent": [
+    {
+      "page": [
+        "journal",
+        "Day 2026-11-02"
+      ],
+      "parent": null
+    },
+    {
+      "page": [
+        "page",
+        "notes"
+      ],
+      "parent": null
+    }
+  ]
+}

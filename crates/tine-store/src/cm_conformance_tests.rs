@@ -263,6 +263,11 @@ fn conceptual_model_conformance() {
         roots,
         env!("CARGO_MANIFEST_DIR"),
         typed_link_pairs,
+        &|store, name| {
+            (store.cold_page_named(name, PageKind::Page))
+                .map(|read| read.map(|read| read.id.as_str().to_owned()))
+                .map_err(|e| format!("{e:?}"))
+        },
         |store, view, spec, input, model| {
             for (path, text) in &spec.files {
                 let doc = shared::parse_file(path, text);
@@ -272,14 +277,12 @@ fn conceptual_model_conformance() {
                     "{path}: shared extractor"
                 );
             }
+            let mut found = Vec::new();
             if frontend_names.contains(&spec.name) {
                 let ctx = Ctx::new(view, spec.journal_format(), input, model);
-                let date_diffs = shared::compare_reference_days(&ctx);
-                assert!(
-                    date_diffs.is_empty(),
-                    "{}: native reference-day query answers: {date_diffs:?}",
-                    spec.name
-                );
+                // Attributed like every other difference: one no class or
+                // known difference explains fails the comparison.
+                found.extend(shared::compare_reference_days(&ctx));
                 let mut case = shared::frontend_case(
                     &ctx,
                     spec.journal_title_format.as_deref(),
@@ -305,7 +308,8 @@ fn conceptual_model_conformance() {
                 case["owner"] = json!(owner);
                 cases.insert(spec.name.clone(), case);
             }
-            compare_namespace_parent_answers(view)
+            found.extend(compare_namespace_parent_answers(view));
+            found
         },
     );
     check_frontend_cases("frontend", cases,

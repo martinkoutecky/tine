@@ -180,20 +180,23 @@ export function graphTitleRefusal(meta: { journal_page_title_format: string; jou
   return journalTitleRefusalMessage(meta.journal_page_title_format ?? "", meta.journal_title);
 }
 
-/** The notice this graph load shows, with the diagnostic it says. */
-let shownRefusal: { root: string; key: string | null; toast: number | null } | null = null;
-/** Say once per graph load that the configured title format is not used
- *  (D-20261119-YL); Settings keeps saying so while it is refused. The one
- *  notice handler, after a graph load (`load`), a published config change
- *  and a successful Settings save. The same diagnostic again says nothing
- *  more; a new graph or a changed diagnostic retires the shown notice and
- *  says the new one. It auto-dismisses. No persisted state. O(1) warm. */
+/** This graph load's notice: whether it has warned, the diagnostic last
+ *  published, and the notice on screen. */
+let shownRefusal: { root: string; warned: boolean; key: string | null; toast: number | null } | null = null;
+/** Say at most once per graph load that the configured title format is not
+ *  used (D-20261119-YL); Settings keeps saying so while it is refused. The one
+ *  notice handler, after a graph load (`load`, or a new root), a published
+ *  config change and a successful Settings save. Within a load a changed
+ *  diagnostic retires the shown notice, which no longer describes the
+ *  setting, and says nothing new. It auto-dismisses. No persisted state. O(1). */
 export function noticeTitleRefusal(meta: { root: string; journal_page_title_format: string; journal_title: JournalTitleStatus }, load: boolean): void {
   const notice = graphTitleRefusal(meta);
   const key = notice ? textKey(notice) : null;
-  if (!load && shownRefusal?.root === meta.root && shownRefusal.key === key) return;
+  const current = load || shownRefusal?.root !== meta.root ? null : shownRefusal;
+  if (current?.key === key) return;
   if (shownRefusal?.toast != null) dismissToast(shownRefusal.toast);
-  shownRefusal = { root: meta.root, key, toast: notice ? showRefusal(notice) : null };
+  const warn = notice != null && !current?.warned;
+  shownRefusal = { root: meta.root, warned: warn || !!current?.warned, key, toast: warn ? showRefusal(notice) : null };
 }
 function showRefusal(notice: Msg): number {
   return pushToast(notice, "warn");

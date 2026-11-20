@@ -1279,6 +1279,15 @@ fn an_unreadable_dated_survivor_refuses_the_merge_naming_its_file() {
         unlock();
         let error = result.expect_err("an unreadable survivor refuses the merge");
         assert!(error.to_string().contains(&survivor_rel), "{ext}: {error}");
+        // Typed, so the window localizes it (no English phrase in the wire).
+        assert_eq!(
+            crate::pages::RewriteBlocked::of(&error),
+            Some(&crate::pages::RewriteBlocked::Unreadable {
+                file: survivor_rel.clone()
+            }),
+            "{ext}: {error}"
+        );
+        assert_eq!(error.kind(), std::io::ErrorKind::PermissionDenied, "{ext}");
         assert_eq!(
             disk::read_to_string(root.join("pages/referrer.md")).unwrap(),
             "- [[B]]\n",

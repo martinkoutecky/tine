@@ -95,13 +95,27 @@ describe("the notice", () => {
     expect(notices()).toHaveLength(0);
   });
 
-  it("retires when the diagnostic changes or the setting is corrected", () => {
+  it("warns at most once per load: a changed diagnostic retires the shown notice and says nothing new", () => {
     applyConfigDerivedState(meta("MM-dd"), null);
-    applyConfigDerivedState(meta("dd-MM"), meta("MM-dd"));
     expect(shown()).toHaveLength(1);
-    expect(shown()[0]).toContain('not "dd-MM"');
+    applyConfigDerivedState(meta("dd-MM"), meta("MM-dd"));
+    expect(notices()).toHaveLength(0);
     applyConfigDerivedState(meta("yyyy-MM-dd"), meta("dd-MM"));
     expect(notices()).toHaveLength(0);
+  });
+
+  it("warns at most once per load when the setting is corrected and refused again", () => {
+    applyConfigDerivedState(meta("MM-dd"), null);
+    expect(shown()).toHaveLength(1);
+    applyConfigDerivedState(meta("yyyy-MM-dd"), meta("MM-dd"));
+    expect(notices()).toHaveLength(0);
+    applyConfigDerivedState(meta("MM-dd"), meta("yyyy-MM-dd"));
+    expect(notices()).toHaveLength(0);
+    // Settings keeps saying why while it is refused.
+    expect(graphTitleRefusal(meta("MM-dd"))).not.toBeNull();
+    // The next load warns again.
+    applyConfigDerivedState(meta("MM-dd"), null);
+    expect(shown()).toHaveLength(1);
   });
 
   it("retires on a graph switch; the next load says its own once", () => {

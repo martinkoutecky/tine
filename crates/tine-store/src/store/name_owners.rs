@@ -35,7 +35,10 @@ impl WholeGraph {
     fn claimants_of(&self, name: &str, kind: PageKind) -> Vec<PageEntry> {
         // A date in any accepted spelling is that day, held by its files in
         // any directory (CM SPEC §2.1, D-20261110-CM CM-DATE).
-        let lookup = crate::model::claim_lookup(&self.journal_format, name, kind);
+        let lookup = crate::model::claim_lookup(&self.journal_format, name, kind).by_key(
+            &self.journal_format,
+            self.key_claimants(name, PageKind::Journal),
+        );
         let mut entries = self.name_claimants(&lookup.name, lookup.kind);
         entries.retain(|entry| lookup.holds(entry));
         if !entries.is_empty() && lookup.day.is_none() {

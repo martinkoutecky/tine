@@ -66,6 +66,7 @@ rename-refused-different-formats = Cannot merge: { $source } and { $target } use
 rename-refused-merge-conflict-markers = Cannot merge: Resolve the conflict markers in { $file }, then try again. Nothing was merged.
 rename-refused-same-file = Cannot merge: { $file } is both the source and the remaining file. Choose two different files.
 rename-refused-stale-source = Cannot rename: { $file } no longer identifies the page you chose. Reopen the page and start the rename again.
+rename-refused-unreadable = Cannot merge: Tine could not read { $file }. Close any program that holds it open, then try again. Nothing was merged.
 rename-refused-title-identity = Cannot rename or merge: changing the references inside the title of { $file } would give the page a different name. Edit that title so its references do not name the page being renamed, then try again. Nothing was renamed or merged.
 rename-refused-body-layout = Cannot merge: Tine cannot preserve the block structure of { $file } when joining the files. Align the top-level blocks with the left edge in that file, save it and try again. Nothing was merged.
 rename-refused-indented-body = Cannot merge: the first block of { $file } is indented, so Tine cannot keep its blocks at the top level when joining the files. Align the top-level blocks with the left edge in that file, save it and try again. Nothing was merged.

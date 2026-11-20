@@ -179,9 +179,11 @@ export async function installQuickCaptureReceiver(live: WriteOwner = ownedWhen((
       }
       if (saveOwner()) {
         const into = written?.kind ?? (title ? "page" : "journal");
+        // A journal written into before midnight is no longer today's: name it.
+        const today = into === "journal" && (!written || written.name === journalTitle(appNow()));
         if (!ok) pushToast(msg("app-capture-couldn-t-be-saved-its-text"), "error");
-        else if (into === "page") pushToast(msg("app-captured-to", { title: written?.name ?? title }), "info");
-        else pushToast(msg("app-captured-to-today-s-journal"), "info");
+        else if (today) pushToast(msg("app-captured-to-today-s-journal"), "info");
+        else pushToast(msg("app-captured-to", { title: written?.name ?? title }), "info");
         if (ok && written) {
           const open = route();
           if (shouldRedirect(options, written.name, open.kind === "page" ? open.name : null)) {

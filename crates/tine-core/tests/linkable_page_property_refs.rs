@@ -6,7 +6,8 @@ fn configured_property_atoms_share_reference_names_and_source_spans() {
         (false, "related:: Alpha，[[Beta]], `Code`, *Emphasis*, Gamma\nalias:: Editor\nquoted:: \"Literal, Value\"\nordinary:: Lone, Value"),
         (true, ":PROPERTIES:\n:related: Alpha，[[Beta]], ~Code~, /Emphasis/, Gamma\n:alias: Editor\n:quoted: \"Literal, Value\"\n:ordinary: Lone, Value\n:END:"),
     ] {
-        let config = ParseConfig { separated_by_commas: vec!["related".into(), "quoted".into()], ..Default::default() };
+        let mut config = ParseConfig::default();
+        config.separated_by_commas = vec!["related".into(), "quoted".into()];
         let mut block = property_projection_with_config(raw, is_org, &config);
         for name in ["Alpha", "Beta", "Gamma", "Editor"] {
             assert!(block.projection().refs_contains(name), "{name}: {:?}", block.projection().refs_page());
@@ -20,7 +21,8 @@ fn configured_property_atoms_share_reference_names_and_source_spans() {
         block.set_raw(if is_org { ":PROPERTIES:\n:related: Delta\n:END:" } else { "related:: Delta" });
         assert!(block.projection().refs_contains("Delta"));
         assert!(!block.projection().refs_contains("Gamma"));
-        let config = ParseConfig { ignored_page_references_keywords: vec!["related".into()], ..config };
+        let mut config = config;
+        config.ignored_page_references_keywords = vec!["related".into()];
         block.set_property_ref_config(&config);
         assert!(!block.projection().refs_contains("Delta"));
     }

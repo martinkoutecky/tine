@@ -249,6 +249,7 @@ it("GH #832: redirect-page? opens the page the capture landed on", async () => {
 // before midnight redirects to the day it was written into, whenever its
 // flush, acknowledgement or retry completes, never to a today recomputed at
 // another moment; an idless delivery that landed is a success.
+const captured = () => toasts().map((toast) => toast.message).filter((message) => message.startsWith("Captured"));
 function beforeMidnight() {
   let now = new Date(2026, 10, 2, 23, 59).getTime();
   vi.spyOn(Date, "now").mockImplementation(() => now);
@@ -279,6 +280,8 @@ it.each(["acknowledgement", "flush", "idless flush"])("a capture whose %s comple
   expect(clock.day).toBe("Nov 2nd, 2026");
   expect(rootsOf(clock.day)).toEqual(["late"]);
   expect(route()).toMatchObject({ kind: "page", name: clock.day, pageKind: "journal" });
+  // Review HOLD 4 F4: it names that day; "today's journal" is now another.
+  expect(captured().at(-1)).toBe("Captured to “Nov 2nd, 2026”");
 });
 
 it("a capture retried the next day redirects to the day it was written into", async () => {
@@ -294,6 +297,7 @@ it("a capture retried the next day redirects to the day it was written into", as
   expect(h.ack).toHaveBeenLastCalledWith("capture", "quick-capture-ack", { id: payload.id, ok: true });
   expect(rootsOf(clock.day)).toEqual(["late"]);
   expect(route()).toMatchObject({ kind: "page", name: clock.day, pageKind: "journal" });
+  expect(captured().at(-1)).toBe("Captured to “Nov 2nd, 2026”");
 });
 
 // Review HOLD 7 F7: a retry flushes what an earlier delivery inserted. Its

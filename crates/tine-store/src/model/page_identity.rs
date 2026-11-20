@@ -110,17 +110,48 @@ pub(crate) struct ClaimLookup<'a> {
     pub(crate) day: Option<i64>,
 }
 
-impl ClaimLookup<'_> {
+impl<'a> ClaimLookup<'a> {
     /// Whether `entry`, a claimant of [`Self::name`], holds the name looked
     /// up: the claimant names the day asked for, or no day for a name that is
-    /// no day. A spelling that parses to a day is held only by that day's
-    /// files (model r6 O3: "a journal holds every accepted spelling of its
-    /// day"); a name that is no day only by undated files. One normalized
-    /// bucket can hold both: `page_key` folds case, composition and the
-    /// slashes a title format may carry (`x 2026_02_11` under `X yyyy_dd_MM`,
-    /// `20261102` under `/yyyyMMdd/`). O(1) per claimant.
+    /// no day. A day is held only by that day's files (model r6 O3: "a
+    /// journal holds every accepted spelling of its day"), never by another
+    /// day's or an undated file that shares its normalized bucket
+    /// (`journals/20261102.md` under `/yyyyMMdd/`); a name that is no day
+    /// only by undated files. Which day a name asks for is
+    /// [`Self::by_key`]'s answer. O(1) per claimant.
     pub(crate) fn holds(&self, entry: &PageEntry) -> bool {
         entry.date_key == self.day
+    }
+
+    /// The lookup by the name's text key. A name that parses to no day still
+    /// names one when its key is a day's key: the journal claimants of the
+    /// key (`journal_claimants`) are that day's files. That is a case,
+    /// composition or slash variant of the day's title (`x 2026_02_11` under
+    /// `X yyyy_dd_MM`, `20261102` under `/yyyyMMdd/`; the confirmed model,
+    /// D-20261119-YL round 4b). A key two days' files share names neither.
+    /// O(claimants of the key).
+    pub(crate) fn by_key(
+        self,
+        format: &tine_core::date::JournalFormat,
+        journal_claimants: &[PageEntry],
+    ) -> ClaimLookup<'a> {
+        if self.day.is_some() {
+            return self;
+        }
+        let mut days = journal_claimants.iter().filter_map(|entry| entry.date_key);
+        let Some(day) = days.next() else {
+            return self;
+        };
+        if days.any(|other| other != day) {
+            return self;
+        }
+        ClaimLookup {
+            name: format
+                .title(tine_core::date::JournalDate::from_ordinal(day))
+                .into(),
+            kind: PageKind::Journal,
+            day: Some(day),
+        }
     }
 }
 
@@ -162,6 +193,72 @@ pub(super) fn page_claimants(journals_dir: &str, entries: &[PageEntry]) -> Claim
     (claimants.into_iter())
         .map(|(key, entries)| (claimant_key(&key), entries))
         .collect()
+}
+
+#[cfg(test)]
+mod claim_lookup_tests {
+    use super::*;
+    use crate::PageId;
+    use tine_core::date::{JournalDate, JournalFormat};
+
+    fn entry(name: &str, kind: PageKind, day: Option<i64>, rel: &str) -> PageEntry {
+        PageEntry {
+            name: name.to_owned(),
+            kind,
+            date_key: day,
+            rel_path: Some(PageId::from(rel)),
+            path: PathBuf::from(rel),
+        }
+    }
+
+    /// D-20261119-YL round 4b: a name is its text key. A variant of a day's
+    /// title that parses to no day still asks for that day when the key's
+    /// journal claimants name that one day; the day is held only by its own
+    /// files, never by another day's or an undated one (round 1).
+    #[test]
+    fn a_name_asks_for_the_day_its_key_names_and_another_day_never_holds_it() {
+        let format = JournalFormat::new(None, Some("X yyyy_dd_MM"));
+        let nov2 = JournalDate::from_ordinal(20261102).ordinal_key();
+        let day = entry(
+            "X 2026_02_11",
+            PageKind::Journal,
+            Some(nov2),
+            "journals/2026_11_02.md",
+        );
+        let undated = entry(
+            "x 2026_02_11",
+            PageKind::Journal,
+            None,
+            "journals/x 2026_02_11.md",
+        );
+        let other = entry(
+            "X 2026_02_11",
+            PageKind::Journal,
+            Some(20261103),
+            "journals/other.md",
+        );
+        // The variant parses to no day; its key's journal claimants say which.
+        let typed = claim_lookup(&format, "x 2026_02_11", PageKind::Page);
+        assert_eq!(typed.day, None);
+        let keyed = typed.by_key(&format, &[day.clone(), undated.clone()]);
+        assert_eq!((keyed.day, keyed.kind), (Some(nov2), PageKind::Journal));
+        assert_eq!(keyed.name, "X 2026_02_11");
+        assert!(keyed.holds(&day) && !keyed.holds(&undated) && !keyed.holds(&other));
+        // A key two days' files share names neither day.
+        let split = claim_lookup(&format, "x 2026_02_11", PageKind::Page)
+            .by_key(&format, &[day.clone(), other.clone()]);
+        assert_eq!(split.day, None);
+        assert!(!split.holds(&day) && !split.holds(&other) && split.holds(&undated));
+        // No dated claimant: an ordinary name, held by undated files only.
+        let plain = claim_lookup(&format, "x 2026_02_11", PageKind::Page)
+            .by_key(&format, &[undated.clone()]);
+        assert_eq!((plain.day, plain.kind), (None, PageKind::Page));
+        // A spelling that parses is that day whatever its key holds.
+        let parsed =
+            claim_lookup(&format, "X 2026_02_11", PageKind::Page).by_key(&format, &[other.clone()]);
+        assert_eq!(parsed.day, Some(nov2));
+        assert!(!parsed.holds(&other));
+    }
 }
 
 #[cfg(test)]
@@ -638,11 +735,15 @@ impl Graph {
                     }),
                     None => Ok(None),
                 };
+                // A dated file of the name's key is a claimant too: a name
+                // that parses to no day names that day by its key
+                // ([`ClaimLookup::by_key`]); a may-exist answer.
                 claimed.map(|entry| {
                     entry.is_some_and(|entry| {
                         tine_core::refs::page_key(&entry.name)
                             == tine_core::refs::page_key(&lookup.name)
-                            && lookup.holds(&entry)
+                            && (lookup.holds(&entry)
+                                || lookup.day.is_none() && entry.date_key.is_some())
                     })
                 })
             } else {

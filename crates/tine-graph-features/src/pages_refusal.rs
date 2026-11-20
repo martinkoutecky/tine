@@ -24,12 +24,17 @@ pub enum RewriteBlocked {
     StaleSource { file: String },
     /// O4: more than one physical file claims the selected source page.
     DuplicateFiles { files: Vec<String> },
+    /// The merge survivor `file` could not be read (missing, or locked by
+    /// another program); its header decides the merged name, so nothing is
+    /// chosen without it.
+    Unreadable { file: String },
 }
 
 impl RewriteBlocked {
     pub(super) fn error(self) -> io::Error {
         let kind = match self {
             Self::DuplicateFiles { .. } => io::ErrorKind::AlreadyExists,
+            Self::Unreadable { .. } => io::ErrorKind::Other,
             Self::DifferentFormats { .. } | Self::SameFile { .. } => io::ErrorKind::InvalidInput,
             Self::Unindexed { .. } | Self::MergeConflictMarkers { .. } => {
                 io::ErrorKind::InvalidData
@@ -38,6 +43,16 @@ impl RewriteBlocked {
             Self::ReadOnlyOrg { .. } => io::ErrorKind::PermissionDenied,
         };
         io::Error::new(kind, self)
+    }
+
+    /// The refusal of a merge whose survivor `file` failed to read with
+    /// `error`: content Tine cannot read safely is [`Self::Unindexed`], any
+    /// other failure [`Self::Unreadable`], keeping the failure's kind.
+    pub(super) fn unreadable(file: String, error: &io::Error) -> io::Error {
+        if error.kind() == io::ErrorKind::InvalidData {
+            return Self::Unindexed { file }.error();
+        }
+        io::Error::new(error.kind(), Self::Unreadable { file })
     }
 
     /// This boundary's refusal before renaming or merging files.
@@ -56,6 +71,7 @@ impl std::fmt::Display for RewriteBlocked {
             Self::MergeConflictMarkers { file } => write!(f, "cannot merge: resolve the conflict markers in {file}, then try again; nothing was merged"),
             Self::SameFile { file } => write!(f, "cannot merge: {file} is both the source and the remaining file; choose two different files"),
             Self::StaleSource { file } => write!(f, "cannot rename: {file} no longer identifies the page you chose; reopen the page and start the rename again"),
+            Self::Unreadable { file } => write!(f, "cannot merge: Tine could not read {file}; close any program that holds it open, then try again; nothing was merged"),
             Self::DuplicateFiles { files } => write!(f, "these files claim the same page: {}; merge one file into the other or remove one (open it from Conflicts, Page name conflicts, and choose “Delete file” in its page menu), then try again", files.iter().map(|f| format!("“{f}”")).collect::<Vec<_>>().join(", ")),
         }
     }

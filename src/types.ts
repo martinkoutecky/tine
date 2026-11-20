@@ -262,7 +262,7 @@ export type RenameRefusal =
   | { kind: "conflictMarkers"; file: string }
   | { kind: "capture"; name: string; image: string; page: string }
   | { kind: "contested"; name: string; files: string[] }
-  | { kind: "staleMerge" | "unindexed" | "readOnlyOrg" | "mergeConflictMarkers" | "sameFile" | "staleSource"; file: string }
+  | { kind: "staleMerge" | "unindexed" | "readOnlyOrg" | "mergeConflictMarkers" | "sameFile" | "staleSource" | "unreadable"; file: string }
   | { kind: "duplicateFiles"; files: string[] }
   | { kind: "differentFormats"; source: string; target: string };
 

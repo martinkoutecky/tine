@@ -769,9 +769,8 @@ fn plan_request(
             let mut spelling = entry.name.clone();
             if let Some(day) = entry.day.filter(|_| entry.is_journal) {
                 let day = tine_core::date::JournalDate::from_ordinal(day.0);
-                let (text, rev) = crate::parsed_text::read(store, &id.file()).map_err(|error| {
-                    io::Error::new(error.kind(), format!("cannot merge into {into}: {error}"))
-                })?;
+                let (text, rev) = crate::parsed_text::read(store, &id.file())
+                    .map_err(|error| RewriteBlocked::unreadable(into.to_owned(), &error))?;
                 if let Some(title) = tine_core::model::page_title_from_header(
                     &text,
                     Format::from_path(into.as_ref()),

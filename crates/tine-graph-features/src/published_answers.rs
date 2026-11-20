@@ -177,11 +177,7 @@ pub(crate) fn answers(
         "journals": {
             // The effective title format (D-20261119-YL), so a reader of any
             // generation renders the titles the rows name.
-            "title_format": tine_core::date::JournalFormat::new(
-                Some(&meta.journal_file_name_format),
-                Some(&meta.journal_page_title_format),
-            )
-            .title_format(),
+            "title_format": meta.journal_title.effective,
             "file_name_format": meta.journal_file_name_format,
             "content_days": content_days,
         },

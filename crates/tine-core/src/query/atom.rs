@@ -48,23 +48,40 @@ pub fn atom_key(text: &str) -> String {
 }
 
 impl ParseConfig {
-    /// The graph's journal date answerer, as [`crate::config::Config::journal_format`].
+    /// The graph's journal date answerer over the effective title format: it
+    /// parses and renders as [`crate::config::Config::journal_format`] does.
     pub fn journal_format(&self) -> crate::date::JournalFormat {
         crate::date::JournalFormat::new(
             self.journal_file_name_format.as_deref(),
-            self.journal_page_title_format.as_deref(),
+            self.journal_title.as_deref(),
         )
     }
 
-    /// The parse-relevant slice of `config`. O(configured keys).
+    /// The parse-relevant slice of `config`, with the effective title format
+    /// the graph's one date decision gives (`Config::journal_format`, whose
+    /// check is memoized per pattern). O(configured keys).
     pub fn from_config(config: &crate::config::Config) -> ParseConfig {
         ParseConfig {
             separated_by_commas: config.separated_by_commas.clone(),
             ignored_page_references_keywords: config.ignored_page_references_keywords.clone(),
             hidden_properties: config.block_hidden_properties.clone(),
-            journal_page_title_format: config.journal_page_title_format.clone(),
             journal_file_name_format: config.journal_file_name_format.clone(),
+            ..ParseConfig::default()
         }
+        .with_effective_title(config.journal_format().title_format())
+    }
+
+    /// This slice with `effective` as the journal title format, which the
+    /// caller has from a decided [`crate::date::JournalFormat::title_format`].
+    pub fn with_effective_title(mut self, effective: &str) -> ParseConfig {
+        self.journal_title =
+            (effective != crate::date::DEFAULT_TITLE_FORMAT).then(|| effective.to_owned());
+        self
+    }
+
+    /// The effective journal title format, `None` for the default.
+    pub fn effective_journal_title(&self) -> Option<&str> {
+        self.journal_title.as_deref()
     }
 }
 
@@ -335,9 +352,10 @@ fn parse_number(text: &str) -> Option<f64> {
 }
 
 /// The date rule: `yyyy-mm-dd`, or an 8-digit `yyyymmdd` that is a valid
-/// calendar date in 1900–2100, or a title in `journal_page_title_format` ONLY
-/// (the title pattern alone, never the file pattern or the default fallback
-/// routes `JournalFormat::parse_text` walks — B6).
+/// calendar date in 1900–2100, or a title in the effective journal title
+/// format ONLY (the title pattern alone, never the file pattern or the
+/// default fallback routes `JournalFormat::parse_text` walks — B6; a refused
+/// configured title is never read, D-20261119-YL).
 fn classify_day(text: &str, config: &ParseConfig) -> Option<i64> {
     let trimmed = text.trim();
     if let Some(day) = iso_day(trimmed) {
@@ -348,7 +366,7 @@ fn classify_day(text: &str, config: &ParseConfig) -> Option<i64> {
     }
     crate::date::Format::compile(
         config
-            .journal_page_title_format
+            .journal_title
             .as_deref()
             .unwrap_or(crate::date::DEFAULT_TITLE_FORMAT),
     )
@@ -746,9 +764,9 @@ mod tests {
     /// pattern and never `JournalFormat`'s default fallback list.
     #[test]
     fn a_journal_title_is_a_date_but_the_file_stem_is_text() {
-        let mut config = ParseConfig::default();
-        config.journal_file_name_format = Some("yyyy_MM_dd".into());
-        config.journal_page_title_format = Some("MMM do, yyyy".into());
+        let config = ParseConfig::from_config(&crate::config::Config::parse(
+            r#"{:journal/file-name-format "yyyy_MM_dd" :journal/page-title-format "MMM do, yyyy"}"#,
+        ));
         assert_eq!(
             classify_text("Sep 4th, 2026", AtomOrigin::Plain, &config),
             ObservedType::Date
@@ -762,8 +780,7 @@ mod tests {
     /// D2 preserves a comma-bearing journal title for date classification.
     #[test]
     fn d2_preserves_a_comma_bearing_journal_title_as_a_date() {
-        let mut config = ParseConfig::default();
-        config.journal_page_title_format = Some("MMM do, yyyy".into());
+        let config = ParseConfig::default().with_effective_title("MMM do, yyyy");
         assert_eq!(
             texts(&md("k", "Sep 4th, 2026", &config)),
             vec!["Sep 4th, 2026"]
@@ -773,10 +790,56 @@ mod tests {
         assert_eq!(texts(&quoted), vec!["\"Sep 4th, 2026\""]);
 
         // A comma-free title format classifies straight through.
-        let mut iso = ParseConfig::default();
-        iso.journal_page_title_format = Some("do MMM yyyy".into());
+        let iso = ParseConfig::default().with_effective_title("do MMM yyyy");
         let atoms = md("k", "4th Sep 2026", &iso);
         assert_eq!(atoms[0].day, Some(20260904));
+    }
+
+    /// D-20261119-YL: a refused configured title is no date route; the
+    /// effective title (the default) is. ISO and compact dates stay dates.
+    #[test]
+    fn a_refused_title_format_classifies_by_the_effective_title() {
+        for (pattern, written, not_a_date) in [
+            ("MM-dd", "11-02", ObservedType::Text),
+            ("d.M.yy", "2.11.26", ObservedType::Text),
+            ("dd/MM/yy", "02/11/26", ObservedType::Text),
+            ("yyyydM", "2026211", ObservedType::Number),
+        ] {
+            let config = ParseConfig::from_config(&crate::config::Config::parse(&format!(
+                r#"{{:journal/page-title-format "{pattern}"}}"#
+            )));
+            assert!(
+                crate::config::Config::parse(&format!(
+                    r#"{{:journal/page-title-format "{pattern}"}}"#
+                ))
+                .journal_format()
+                .title_refusal()
+                .is_some(),
+                "{pattern} is refused"
+            );
+            for (text, class, day) in [
+                ("Nov 2nd, 2026", ObservedType::Date, Some(20261102)),
+                (written, not_a_date, None),
+                ("2026-11-02", ObservedType::Date, Some(20261102)),
+                ("20261102", ObservedType::Date, Some(20261102)),
+            ] {
+                assert_eq!(
+                    classify_text(text, AtomOrigin::Plain, &config),
+                    class,
+                    "{pattern}: {text}"
+                );
+                assert_eq!(md("k", text, &config)[0].day, day, "{pattern}: {text}");
+            }
+        }
+        // An accepted title format is the date route.
+        let config = ParseConfig::from_config(&crate::config::Config::parse(
+            r#"{:journal/page-title-format "dd.MM.yyyy"}"#,
+        ));
+        assert_eq!(md("k", "02.11.2026", &config)[0].day, Some(20261102));
+        assert_eq!(
+            classify_text("Nov 2nd, 2026", AtomOrigin::Plain, &config),
+            ObservedType::Text
+        );
     }
 
     #[test]

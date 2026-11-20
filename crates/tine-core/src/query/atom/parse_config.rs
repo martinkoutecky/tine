@@ -14,7 +14,12 @@ pub struct ParseConfig {
     pub separated_by_commas: Vec<String>,
     pub ignored_page_references_keywords: Vec<String>,
     pub hidden_properties: Vec<String>,
-    pub journal_page_title_format: Option<String>,
+    /// The effective journal title format (`None`: the default), never the
+    /// configured one: a refused title format is no date route
+    /// (D-20261119-YL). Private, so the only way in is
+    /// [`ParseConfig::from_config`], which takes it from the one decision
+    /// (`Config::journal_format`), or [`ParseConfig::with_effective_title`].
+    pub(super) journal_title: Option<String>,
     pub journal_file_name_format: Option<String>,
 }
 

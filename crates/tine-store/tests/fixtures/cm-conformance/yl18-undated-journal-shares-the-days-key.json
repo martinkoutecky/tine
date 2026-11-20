@@ -1,0 +1,29 @@
+{
+ "config": {
+  "journalTitleFormat": "/yyyyMMdd/"
+ },
+ "files": {
+  "journals/2026_11_02.md": "- the day\n",
+  "journals/20261102.md": "- not a day\n",
+  "pages/Notes.md": "- title [[/20261102/]]\n- undated [[20261102]]\n"
+ },
+ "navigate": [
+  "/20261102/",
+  "20261102",
+  "2026-11-02"
+ ],
+ "queries": [
+  {
+   "anchor": "block",
+   "q": {
+    "refs": "/20261102/"
+   }
+  },
+  {
+   "anchor": "block",
+   "q": {
+    "refs": "20261102"
+   }
+  }
+ ]
+}

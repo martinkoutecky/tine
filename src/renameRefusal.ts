@@ -37,6 +37,7 @@ export function renameRefusalMessage(reason: RenameRefusal): Msg {
     case "mergeConflictMarkers": return msg("rename-refused-merge-conflict-markers", { file: reason.file });
     case "sameFile": return msg("rename-refused-same-file", { file: reason.file });
     case "staleSource": return msg("rename-refused-stale-source", { file: reason.file });
+    case "unreadable": return msg("rename-refused-unreadable", { file: reason.file });
     case "duplicateFiles": return msg("rename-refused-duplicate-files", { files: reason.files.join(", ") });
   }
 }

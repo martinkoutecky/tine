@@ -134,6 +134,7 @@ it.each([
   [{ kind: "unindexed", file: "pages/A.md" }, "Tine cannot read pages/A.md safely"],
   [{ kind: "readOnlyOrg", file: "pages/A.org" }, "Tine cannot save pages/A.org without changing its content"],
   [{ kind: "staleSource", file: "pages/A.md" }, "pages/A.md no longer identifies the page you chose"],
+  [{ kind: "unreadable", file: "pages/A.md" }, "Tine could not read pages/A.md"],
   [{ kind: "titleIdentity", file: "pages/A.md" }, "changing the references inside the title of pages/A.md would give the page a different name"],
   [{ kind: "duplicateFiles", files: ["pages/A.md", "pages/B.md"] }, "these files claim the same page: pages/A.md, pages/B.md"],
 ])("localizes the remaining refusal %# and keeps it until dismissed", async (reason, explanation) => {

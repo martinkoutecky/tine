@@ -547,14 +547,18 @@ fn paused_graph(files: &[(&str, &str)]) -> (tempfile::TempDir, Store, std::path:
     (dir, store, pause)
 }
 
-/// Review HOLD 7 F2: one normalized name bucket can hold an ordinary identity
-/// and a dated journal. A lookup holds only the claimants of the day it asked
-/// for (`None`: no day), cold and ready, in three bucket shapes: a literal that
-/// differs only by case (`x 2026_02_11` under `X yyyy_dd_MM`), by Unicode
-/// composition (decomposed É under a literal É), and by the slashes `page_key`
-/// drops (`20261102` under `/yyyyMMdd/`).
+/// Review HOLD 7 F2, settled by the model (D-20261119-YL round 4b): one
+/// normalized name bucket can hold an ordinary identity and a dated journal.
+/// A name is its text key, so a variant of the day's title that differs only
+/// by case (`x 2026_02_11` under `X yyyy_dd_MM`), by Unicode composition
+/// (decomposed É under a literal É), or by the slashes `page_key` drops
+/// (`20261102` under `/yyyyMMdd/`) is that day: it opens the day's journal
+/// file, cold and ready, and the ordinary page loses (the journals directory
+/// first, CM SPEC §2.2). The day stays the day's own file (`journal_id`). A
+/// different day's file in the bucket never holds it (`ClaimLookup` unit
+/// tests; the conformance harness's direct-lookup check).
 #[test]
-fn a_normalized_bucket_holds_only_the_requested_day() {
+fn a_title_variant_in_a_days_bucket_opens_that_day() {
     let _guard = crate::integration_lock();
     let decomposed = "E\u{301} 2026-11-02";
     for (format, page, name) in [
@@ -572,19 +576,20 @@ fn a_normalized_bucket_holds_only_the_requested_day() {
             ("journals/2026_11_02.md", "- the day\n"),
             (page, "- an ordinary page\n"),
         ];
-        let want = Some((page.to_owned(), PageKind::Page));
+        let day = "journals/2026_11_02.md";
+        let want = Some((day.to_owned(), PageKind::Journal));
         let (dir, store, pause) = paused_graph(&files);
         assert_eq!(opens(&store, name, PageKind::Page), want, "{format}: cold");
         assert_eq!(
             store.journal_id(NOV_2, false).as_str(),
-            "journals/2026_11_02.md",
+            day,
             "{format}: cold day"
         );
         fs::remove_file(pause).unwrap();
         let view = store.whole_graph().unwrap();
         assert_eq!(
             existing(&view.resolve(name, false)),
-            [page],
+            [day],
             "{format}: ready"
         );
         assert_eq!(
@@ -594,7 +599,7 @@ fn a_normalized_bucket_holds_only_the_requested_day() {
         );
         assert_eq!(
             store.journal_id(NOV_2, false).as_str(),
-            "journals/2026_11_02.md",
+            day,
             "{format}: ready day"
         );
         drop(dir);

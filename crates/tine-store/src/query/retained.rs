@@ -12,7 +12,7 @@ pub(in crate::query) fn parse_config_bytes(config: &tine_core::query::atom::Pars
         &config.separated_by_commas,
         &config.ignored_page_references_keywords,
         &config.hidden_properties,
-        &config.journal_page_title_format,
+        config.effective_journal_title(),
         &config.journal_file_name_format,
     ))
 }

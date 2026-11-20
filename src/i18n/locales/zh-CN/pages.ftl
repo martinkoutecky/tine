@@ -84,6 +84,7 @@ rename-refused-different-formats = 无法合并：{ $source } 和 { $target } �
 rename-refused-merge-conflict-markers = 无法合并：请先解决 { $file } 中的冲突标记，再重试。未合并任何页面。
 rename-refused-same-file = 无法合并：{ $file } 同时是来源文件和要保留的文件。请选择两个不同的文件。
 rename-refused-stale-source = 无法重命名：{ $file } 已不再对应你选择的页面。请重新打开页面，再开始重命名。
+rename-refused-unreadable = 无法合并：Tine 无法读取 { $file }。请关闭正在占用它的程序，再重试。未合并任何页面。
 rename-refused-title-identity = 无法重命名或合并：修改 { $file } 标题中的引用会让页面使用另一个名称。请先编辑标题，让其中的引用不再指向正在重命名的页面，再重试。未重命名或合并任何页面。
 rename-refused-body-layout = 无法合并：合并文件时，Tine 无法保留 { $file } 的块结构。请在该文件中将顶层块与左边缘对齐，保存后重试。未合并任何页面。
 rename-refused-indented-body = 无法合并：{ $file } 的第一个块有缩进，因此合并文件时 Tine 无法将其块保留在顶层。请在该文件中将顶层块与左边缘对齐，保存后重试。未合并任何页面。
