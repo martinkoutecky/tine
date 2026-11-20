@@ -1012,7 +1012,7 @@ function writeSelectionToClipboard(cut: boolean, blank: object | null = null): v
     const owns = selectionClaim();
     void cutBlocks(ids, text, () => owns() ? selectionMarkdown() : "", () => deleteSelection())
       .catch(() => pushToast(msg("commands-couldn-t-cut-selection-clipboard-write-failed"), "error"))
-      .finally(() => { if (blank && owns()) clearSelection(); });
+      .finally(() => { if (blank && blank === blankOutlineSelection()) clearSelection(); });
   } else {
     void copyBlockOutline("copy", text, buildClipboardPayload(ids))
       .catch(() => pushToast(msg("commands-couldn-t-copy-selection-clipboard-write-failed"), "error"));
@@ -1394,7 +1394,8 @@ export function installKeybindings(overrides: Record<string, ShortcutBinding> = 
     const released = (e: PointerEvent) => {
       if (!press || e.pointerId !== press.id) return;
       moving(e);
-      press.up = e.target;
+      // Pointer capture can retarget the release; ask where it physically happened.
+      press.up = documentOf(e).elementFromPoint?.(e.clientX, e.clientY) ?? e.target;
       if (modified(e)) press.moved = true;
     };
     const moving = (e: PointerEvent) => {

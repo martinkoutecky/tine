@@ -452,7 +452,8 @@ export function expandBlockSelection(target?: OutlineSelectionTarget): boolean |
   // direction; a page body keeps Beta's anchor-first test.
   const { lo, hi } = selectionState();
   if (activeSelectionScope ? lo === 0 && hi === order.length - 1 : a === order[0] && end[index.get(f)!] === order.length - 1) {
-    if (activeSelectionScope && !whole()) selectWhole(ladderTop());
+    const w = whole();
+    if (activeSelectionScope && !(w && w.tops && sameIds(w.tops, selectionTopology().tops))) selectWhole(ladderTop());
     return;
   }
   let head = selectAllHead;
