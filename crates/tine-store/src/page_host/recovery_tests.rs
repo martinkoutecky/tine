@@ -157,23 +157,53 @@ fn recovered_page_at_depth(depth: crate::Depth, cold: bool) {
 
 #[test]
 fn rebuild_keeps_the_name_of_a_page_released_before_publication() {
+    rebuild_release(0, true, false);
+    rebuild_release(0, true, true);
+}
+
+#[test]
+#[ignore = "synthetic Rescan timing probe"]
+fn measure_recovery_rescan() {
+    for _ in 0..11 {
+        rebuild_release(1000, false, false);
+    }
+}
+
+fn rebuild_release(nested: usize, check: bool, during_certification: bool) {
     use crate::model::{GRAPH_LIST_CALLS, GRAPH_PREAMBLE_READS};
     use crate::{Depth, PageId};
 
     let dir = tempfile::tempdir().unwrap();
-    let page = PageId::from("pages/Old.md");
+    let page = PageId::from("pages/straße.md");
     fs::create_dir(dir.path().join("pages")).unwrap();
     let path = dir.path().join(page.as_str());
-    fs::write(&path, "title:: Recovered\n- text\n").unwrap();
-    // The watcher already knows the released file's stable disk revision.
-    fs::File::options()
-        .write(true)
-        .open(path)
-        .unwrap()
-        .set_modified(
-            std::time::SystemTime::UNIX_EPOCH + std::time::Duration::from_secs(1_000_000_000),
-        )
-        .unwrap();
+    let write_settled = |path: &std::path::Path, text: &str| {
+        fs::write(path, text).unwrap();
+        fs::File::options()
+            .write(true)
+            .open(path)
+            .unwrap()
+            .set_modified(
+                std::time::SystemTime::UNIX_EPOCH + std::time::Duration::from_secs(1_000_000_000),
+            )
+            .unwrap();
+    };
+    write_settled(&path, "title:: Recovered\n- text\n");
+    let collision = path.with_file_name("STRASSE.md");
+    if !collision.exists() {
+        write_settled(&collision, "- other\n");
+    }
+    if check {
+        let journals = dir.path().join("journals");
+        fs::create_dir(&journals).unwrap();
+        write_settled(&journals.join("2026_06_26.md"), "- canonical\n");
+        write_settled(&journals.join("2026_06_26.org"), "* duplicate\n");
+    }
+    for i in 0..nested {
+        let parent = dir.path().join(format!("pages/nested-{i}"));
+        fs::create_dir(&parent).unwrap();
+        write_settled(&parent.join(format!("Page-{i}.md")), "- text\n");
+    }
     let store = Arc::new(Store::open(dir.path(), Default::default()).unwrap().0);
     store.whole_graph_reconciled().unwrap();
     store.watch.stop_background_for_test();
@@ -183,11 +213,26 @@ fn rebuild_keeps_the_name_of_a_page_released_before_publication() {
             .as_u64()
             .unwrap()
     }
-    let rescan = |store: &Store| {
+    let rescan = move |store: &Store| {
         let before = passes(store);
         GRAPH_LIST_CALLS.with(|calls| calls.set(0));
         GRAPH_PREAMBLE_READS.with(|reads| reads.set(0));
+        let start = std::time::Instant::now();
         store.refresh(Depth::Rebuild).unwrap();
+        let wall = start.elapsed();
+        let probes = crate::model::BUILD_LOCK_PROBES.with(|counts| counts.get());
+        if check {
+            assert_eq!(probes, [0; 4], "filesystem calls under cache write lock");
+        } else {
+            let cache = crate::model::BUILD_LOCK_TIME.with(|time| time.get());
+            let writer = crate::watch::REBUILD_WRITER_TIME.with(|time| time.get());
+            println!(
+                "rescan_us={} cache_us={} writer_us={} probes={probes:?}",
+                wall.as_micros(),
+                cache.as_micros(),
+                writer.as_micros()
+            );
+        }
         (
             GRAPH_LIST_CALLS.with(|calls| calls.get()),
             GRAPH_PREAMBLE_READS.with(|reads| reads.get()),
@@ -197,19 +242,20 @@ fn rebuild_keeps_the_name_of_a_page_released_before_publication() {
     let ordinary = rescan(&store);
 
     let pause = Pause::new();
-    *store.graph.warm_after_install_pause.lock().unwrap() = Some(pause.0.clone());
+    let hook = if during_certification {
+        &store.graph.certify_pause
+    } else {
+        &store.graph.warm_after_install_pause
+    };
+    *hook.lock().unwrap() = Some(pause.0.clone());
     let reading = store.clone();
     let read = std::thread::spawn(move || {
         let counts = rescan(&reading);
-        (
-            reading.whole_graph().unwrap().resolve("Recovered", false),
-            counts,
-        )
+        (reading.whole_graph().unwrap(), counts)
     });
-    // Return the unchanged page to the watcher after installing the cache
-    // and before publishing the view that uses its name inventory.
-    pause.wait("rebuild did not install its cache");
-    *store.graph.warm_after_install_pause.lock().unwrap() = None;
+    // Exercise both sides of the cache install before Rescan publishes.
+    pause.wait("rebuild did not reach the controlled release");
+    *hook.lock().unwrap() = None;
     {
         let _writer = store.writer.lock().unwrap();
         let generation = store.graph.cache_generation();
@@ -219,7 +265,17 @@ fn rebuild_keeps_the_name_of_a_page_released_before_publication() {
         assert_ne!(store.graph.held.epoch(), epoch);
     }
     pause.resume();
-    let (resolved, released) = read.join().unwrap();
+    let (view, released) = read.join().unwrap();
+    let resolved = view.resolve("Recovered", false);
+    if check {
+        let format = store.graph.current_journal_format();
+        let title = format.title(format.parse("2026_06_26").unwrap());
+        assert!(
+            matches!(view.resolve(&title, true), Resolved::Existing { id, others }
+            if id.as_str() == "journals/2026_06_26.md"
+            && others.iter().any(|id| id.as_str() == "journals/2026_06_26.org"))
+        );
+    }
     store.close();
     assert!(
         matches!(&resolved, Resolved::Existing { id, .. } if *id == page),
@@ -228,6 +284,43 @@ fn rebuild_keeps_the_name_of_a_page_released_before_publication() {
     // Rescan lists once to build and once to recheck stamps before swapping.
     assert_eq!(ordinary, (2, 0, 1), "ordinary Rescan work");
     assert_eq!(released, ordinary, "a release adds no listing work");
+}
+
+#[test]
+fn page_open_completes_while_rebuild_certification_is_paused() {
+    let dir = tempfile::tempdir().unwrap();
+    let page = crate::PageId::from("pages/A.md");
+    fs::create_dir(dir.path().join("pages")).unwrap();
+    fs::write(dir.path().join(page.as_str()), "- contents\n").unwrap();
+    fs::write(dir.path().join("pages/B.md"), "- open this\n").unwrap();
+    let store = Arc::new(Store::open(dir.path(), Default::default()).unwrap().0);
+    store.whole_graph_reconciled().unwrap();
+    store.watch.stop_background_for_test();
+    store.hold_page(&page).unwrap();
+
+    let pause = Pause::new();
+    *store.graph.certify_pause.lock().unwrap() = Some(pause.0.clone());
+    let rebuilding = store.clone();
+    let rebuild = std::thread::spawn(move || rebuilding.refresh(crate::Depth::Rebuild));
+    pause.wait("rebuild did not reach name certification");
+    let opening = store.clone();
+    let (sent, opened) = std::sync::mpsc::channel();
+    let open = std::thread::spawn(move || {
+        sent.send(opening.page(&crate::PageId::from("pages/B.md")))
+            .unwrap();
+    });
+    let read = opened.recv_timeout(std::time::Duration::from_secs(2));
+    pause.resume();
+    rebuild.join().unwrap().unwrap();
+    open.join().unwrap();
+    store.close();
+    assert_eq!(
+        read.expect("page open waited on certification")
+            .unwrap()
+            .doc
+            .name,
+        "B"
+    );
 }
 
 #[test]

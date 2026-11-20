@@ -859,11 +859,15 @@ path the current page list does not list. Any other such read drops the
 claimant memo, and the next lookup lists again. A read of a file a host holds
 changes no memo: its owner's bytes name it, not the file ((G)). Name lists and
 path reads outside the writer change a memo only at the generation and held
-epoch they observed. Launch and rebuild certify their listing under the
-cache write guard that installs their rows. Publication reuses that inventory
-while the installed generation is current, even after a hold or release that
-leaves the generation unchanged. Every hold and release takes the writer, which
-keeps listings under the writer consistent. The first lookup of an absent name
+epoch they observed. Launch and rebuild certify their listing before taking
+the cache write guard, which checks the stamp and installs the rows and the
+inventory together. A rebuild can reuse its reads across an ownership change
+at the same generation. An unchanged release keeps the owner's observed name
+until the watcher delivers any newer bytes. Ownership transitions settle any
+withheld listing rows for their affected paths in memory. Publication reuses
+the inventory while its generation is current, including all journal
+claimants. Rescan certifies a replacement listing outside the writer if the
+installed generation is superseded. The first lookup of an absent name
 of each kind after launch still lists once, because
 the launch index does not vouch for files that arrived after it. Proof:
 `crates/tine-store/tests/og_perf_publish.rs`,

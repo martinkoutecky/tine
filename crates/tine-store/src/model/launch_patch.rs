@@ -34,6 +34,7 @@ pub(super) struct LaunchPass {
     pub(super) discovery: Vec<(crate::FileId, crate::IoError)>,
     /// The pages a hold withheld from the build when it listed the files.
     pub(super) withheld: HashSet<PathBuf>,
+    pub(super) identities: entry_identity::Memo,
 }
 
 /// An installed pass's file observations.
@@ -44,7 +45,8 @@ pub(super) struct Installed {
 
 impl Graph {
     /// Install `pass`, built from the files as of `start` (generation, held
-    /// epoch). The forced rebuild (`replace`) installs only at `start`.
+    /// epoch). A forced rebuild may reuse its reads after a hold or release
+    /// of unchanged bytes. Other moves supersede those observations.
     pub(super) fn install_pass(
         &self,
         mut pass: LaunchPass,
@@ -54,6 +56,9 @@ impl Graph {
         let mut at = start;
         for _ in 0..PATCH_ROUNDS {
             let now = (self.cache_gen.load(Ordering::Acquire), self.held.epoch());
+            if replace && now.0 != start.0 {
+                return None;
+            }
             if replace || now == at {
                 let discovery = Some(std::mem::take(&mut pass.discovery));
                 let built = std::mem::take(&mut pass.built);
@@ -62,7 +67,7 @@ impl Graph {
                     at,
                     replace,
                     Some(&pass.stamps),
-                    Some(&mut pass.named),
+                    Some((&pass.named, &mut pass.identities)),
                     discovery,
                 ) {
                     Ok(()) => {
@@ -70,6 +75,14 @@ impl Graph {
                             stamps: pass.stamps,
                             racy: pass.racy,
                         });
+                    }
+                    Err(Declined::Raced(built, discovery))
+                        if replace && self.cache_gen.load(Ordering::Acquire) == start.0 =>
+                    {
+                        pass.built = built;
+                        pass.discovery = discovery.unwrap_or_default();
+                        at = (start.0, self.held.epoch());
+                        continue;
                     }
                     // A hold, release or save landed while the install ran
                     // unlocked (a page host releasing an own create's hold):
@@ -91,6 +104,7 @@ impl Graph {
                 paths.extend(pass.withheld.iter().cloned());
             }
             self.rederive(&mut pass, &paths)?;
+            pass.identities = entry_identity::Memo::default();
             at = (gen, epoch);
         }
         None

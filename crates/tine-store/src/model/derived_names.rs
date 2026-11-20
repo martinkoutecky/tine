@@ -13,6 +13,67 @@
 
 use super::*;
 
+/// The build's physical claims. A path observed both on disk and by its
+/// owner keeps its observed name; claims observed on one side only follow
+/// ownership until the next publication.
+pub(super) struct LaunchNames {
+    entries: Certified,
+    conditional: HashMap<String, HashMap<PathBuf, ConditionalName>>,
+}
+
+struct ConditionalName {
+    entry: PageEntry,
+    disk: bool,
+    listed: bool,
+}
+
+impl LaunchNames {
+    pub(super) fn affected(&self, fold: &str) -> impl Iterator<Item = &PathBuf> {
+        self.conditional
+            .get(fold)
+            .into_iter()
+            .flat_map(HashMap::keys)
+    }
+
+    pub(super) fn settle(&mut self, path: &Path, authority: &Authority) -> bool {
+        let Some(fold) = leaf_fold(path) else {
+            return false;
+        };
+        let Some(row) = self
+            .conditional
+            .get_mut(&fold)
+            .and_then(|rows| rows.get_mut(path))
+        else {
+            return false;
+        };
+        let listed = if row.disk {
+            matches!(authority, Authority::Disk)
+        } else {
+            matches!(authority, Authority::Owner(..))
+        };
+        std::mem::replace(&mut row.listed, listed) != listed
+    }
+
+    fn entries(&self) -> impl Iterator<Item = &PageEntry> {
+        self.entries.0.iter().chain(
+            self.conditional
+                .values()
+                .flat_map(HashMap::values)
+                .filter_map(|row| row.listed.then_some(&row.entry)),
+        )
+    }
+
+    fn into_entries(mut self) -> Certified {
+        self.entries.0.extend(
+            self.conditional
+                .into_values()
+                .flat_map(HashMap::into_values)
+                .filter_map(|row| row.listed.then_some(row.entry)),
+        );
+        self.entries
+    }
+}
+
 impl Graph {
     /// The claimant index's answer for `key` at cache generation `gen`, if
     /// it has one; `None` means only a walk can answer.
@@ -50,16 +111,73 @@ impl Graph {
         (self.name_stamp() == stamp).then(install)
     }
 
-    /// Certify the launch or rebuild listing under the cache write guard that
-    /// installs its rows. The next publication can reuse it while that
-    /// generation is current, including after a hold or release of unchanged
-    /// bytes.
-    pub(super) fn install_launch_listing(&self, gen: u64, named: Vec<PageEntry>) {
-        let named = self.certify(named, None);
-        let deduped = dedup_journal_days(&self.current_config().journals_dir, named.0.clone());
-        let list = Arc::new(EntryList::from(deduped.as_slice()));
-        *self.derived.page_list_cache.write().unwrap() = Some((gen, list));
-        *self.derived.launch_listing.write().unwrap() = Some((gen, named));
+    /// Certify the build observations without the cache lock. A masked disk
+    /// row at the owner's spelling already has an observed name: the owner's
+    /// row remains the disk observation if a release keeps the generation.
+    pub(super) fn prepare_launch_names(
+        &self,
+        named: Vec<PageEntry>,
+        memo: &mut Memo,
+    ) -> LaunchNames {
+        let mut conditional = HashMap::<_, HashMap<_, _>>::new();
+        let (mut entries, disk_count) = self.certify_withheld(named, None, memo, |entry| {
+            if let Some(fold) = leaf_fold(&entry.path) {
+                conditional.entry(fold).or_default().insert(
+                    entry.path.clone(),
+                    ConditionalName {
+                        entry: entry.clone(),
+                        disk: true,
+                        listed: false,
+                    },
+                );
+            }
+        });
+        for entry in entries.0.split_off(disk_count) {
+            let Some(fold) = leaf_fold(&entry.path) else {
+                continue;
+            };
+            let rows = conditional.entry(fold).or_default();
+            if rows.remove(&entry.path).is_some() {
+                entries.0.push(entry);
+            } else {
+                rows.insert(
+                    entry.path.clone(),
+                    ConditionalName {
+                        entry,
+                        disk: false,
+                        listed: true,
+                    },
+                );
+            }
+        }
+        conditional.retain(|_, rows| !rows.is_empty());
+        LaunchNames {
+            entries,
+            conditional,
+        }
+    }
+
+    /// The writer's rebuild publication can use the installed inventory.
+    pub(crate) fn rebuild_names_are_current(&self) -> bool {
+        let _cache = self.derived.cache.read().unwrap();
+        let gen = self.cache_generation();
+        self.derived
+            .launch_listing
+            .read()
+            .unwrap()
+            .as_ref()
+            .is_some_and(|(listed, _)| *listed == gen)
+    }
+
+    /// An installed generation was superseded before Rescan could publish.
+    /// Take its replacement listing outside the writer, landing it only at
+    /// the stamp it observed.
+    pub(crate) fn prepare_rebuilt_name_listing(&self) {
+        let stamp = self.name_stamp();
+        let names = self.prepare_launch_names(list_graph_pages(self), &mut Memo::default());
+        self.install_name_memo(stamp, || {
+            *self.derived.launch_listing.write().unwrap() = Some((stamp.0, names));
+        });
     }
 
     /// Every page and journal in the graph, one per duplicate journal day.
@@ -77,7 +195,15 @@ impl Graph {
                     return Arc::clone(entries);
                 }
             }
-            let entries = self.certify(list_graph_pages(self), None);
+            let launch = self
+                .derived
+                .launch_listing
+                .read()
+                .unwrap()
+                .as_ref()
+                .filter(|(gen, _)| *gen == stamp.0)
+                .map(|(_, names)| Certified(names.entries().cloned().collect()));
+            let entries = launch.unwrap_or_else(|| self.certify(list_graph_pages(self), None));
             // A duplicate-day journal (canonical + leftover title-named file)
             // shows once in quick-switch and All Pages: both resolve to one page.
             let entries = Arc::new(EntryList::from(
@@ -269,19 +395,15 @@ impl Graph {
     /// inventory (R2): the snapshot's roots and the memos hold the same rows.
     /// The capture calls it under the writer, so its walk needs no stamp.
     pub(crate) fn snapshot_name_roots(&self) -> (Arc<EntryList>, Arc<ClaimantMap>) {
+        let cache = self.derived.cache.read().unwrap();
         let gen = self.cache_gen.load(Ordering::Acquire);
         // The build that produced this generation already listed and named
         // every file from its own reads (GH #623: one read per file); a
         // later generation walks again.
-        let launch = self
-            .derived
-            .launch_listing
-            .write()
-            .unwrap()
-            .take()
-            .filter(|(listed_gen, _)| *listed_gen == gen);
-        let entries = match launch {
-            Some((_, entries)) => entries,
+        let launch = self.derived.launch_listing.write().unwrap().take();
+        drop(cache);
+        let entries = match launch.filter(|(listed_gen, _)| *listed_gen == gen) {
+            Some((_, names)) => names.into_entries(),
             None => self.certify(list_graph_pages(self), None),
         };
         let claimants = Arc::new(page_claimants(
@@ -345,8 +467,8 @@ impl Graph {
         ));
     }
 
-    /// The forced rebuild re-reads the listing: the generation-keyed memos
-    /// go (dropping a memo is always safe).
+    /// When an ownership transition exposes a withheld listing row without
+    /// moving the generation, memos at that generation must be recaptured.
     pub(in crate::model) fn forget_name_memos(&self) {
         *self.derived.page_list_cache.write().unwrap() = None;
         *self.derived.find_entry_cache.write().unwrap() = None;

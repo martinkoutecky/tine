@@ -5,8 +5,8 @@
 //! Unit cost: one stat plus one full read per graph file for the hash pass,
 //! then the cold-launch parse (one read plus one parse per file, parallel);
 //! no bytes are written and nothing is persisted. It holds the writer lock
-//! only for the swap and the publication, or for the whole build once
-//! concurrent saves have made two optimistic builds decline.
+//! for the hash diff and final publication. Build and name certification run
+//! beside the writer.
 
 use std::collections::{HashMap, HashSet};
 use std::sync::atomic::Ordering;
@@ -15,20 +15,24 @@ use super::WatchHandle;
 use crate::launch_diag::DiffTrigger;
 use crate::store::{LoadError, LoadStatus, Origin};
 
-/// Optimistic rebuild attempts that build beside concurrent saves before the
-/// build runs under the writer lock; the total bounds a graph that never settles.
+/// Bound retries when files or ownership keep changing during Rescan.
 const REBUILD_ATTEMPTS: u32 = 8;
+
+#[cfg(test)]
+thread_local! {
+    pub(crate) static REBUILD_WRITER_TIME: std::cell::Cell<std::time::Duration> = const { std::cell::Cell::new(std::time::Duration::ZERO) };
+}
 
 impl WatchHandle {
     /// The forced rebuild behind `Store::refresh(Depth::Rebuild)` (Settings "Rescan
     /// graph"). Step 1 hashes every file ignoring every stamp and publishes
     /// the ones whose bytes moved, with their page events, through the
     /// ordinary reconcile. Step 2 re-reads and re-parses every file through
-    /// the launch build and swaps the result in; saves racing the parse make
-    /// the swap decline, so after two declined attempts the build runs under
-    /// the writer lock (saves wait, nothing is lost). Step 3 publishes a
-    /// snapshot whose derived state is recomputed from the new cache.
+    /// the launch build and swaps the result in, retrying if the observed
+    /// state moved. Step 3 publishes a snapshot recomputed from that cache.
     pub(crate) fn rebuild_all(&self) -> Result<(), LoadError> {
+        #[cfg(test)]
+        REBUILD_WRITER_TIME.with(|time| time.set(std::time::Duration::ZERO));
         let mut status = self.core.load.status.lock().unwrap();
         while matches!(*status, LoadStatus::Loading) {
             status = self.core.load.ready.wait(status).unwrap();
@@ -44,22 +48,29 @@ impl WatchHandle {
         }
         self.reconcile_refresh(DiffTrigger::Rebuild)?;
         let cancelled = || self.core.closed.load(Ordering::Acquire);
-        let mut attempt = 0u32;
-        let writer = loop {
+        let mut writer = None;
+        for _ in 0..REBUILD_ATTEMPTS {
             if cancelled() {
                 return Err(LoadError::Closed);
             }
-            if attempt >= REBUILD_ATTEMPTS {
-                return Err(LoadError::Failed {
-                    reason: "graph kept changing during the rescan".into(),
-                });
-            }
-            let locked = (attempt >= 2).then(|| self.core.writer.lock().unwrap());
             if self.core.graph.rebuild_cache_cancellable(cancelled) {
-                break locked.unwrap_or_else(|| self.core.writer.lock().unwrap());
+                let mut guard = self.core.writer.lock().unwrap();
+                if !self.core.graph.rebuild_names_are_current() {
+                    drop(guard);
+                    self.core.graph.prepare_rebuilt_name_listing();
+                    guard = self.core.writer.lock().unwrap();
+                }
+                if self.core.graph.rebuild_names_are_current() {
+                    writer = Some(guard);
+                    break;
+                }
             }
-            attempt += 1;
-        };
+        }
+        let writer = writer.ok_or_else(|| LoadError::Failed {
+            reason: "graph kept changing during the rescan".into(),
+        })?;
+        #[cfg(test)]
+        let writer_at = std::time::Instant::now();
         if cancelled() {
             return Err(LoadError::Closed);
         }
@@ -78,6 +89,8 @@ impl WatchHandle {
                     .changes
                     .publish_rebuilt(Origin::External, Vec::new(), false);
             });
+        #[cfg(test)]
+        REBUILD_WRITER_TIME.with(|time| time.set(time.get() + writer_at.elapsed()));
         drop(writer);
         if !published {
             return Err(LoadError::Failed {
@@ -151,6 +164,132 @@ mod tests {
         let corpus = graph.corpus(None, false);
         let found = corpus.pages.iter().find(|p| p.name == page).unwrap();
         found.document.roots[0].raw().to_string()
+    }
+
+    #[test]
+    fn an_edit_after_the_rescan_hash_is_named_on_watch_delivery() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("pages/Old.md");
+        fs::create_dir(path.parent().unwrap()).unwrap();
+        let write_title = |title: &str, seconds: u64| {
+            fs::write(&path, format!("title:: {title}\n- text\n")).unwrap();
+            fs::File::options()
+                .write(true)
+                .open(&path)
+                .unwrap()
+                .set_modified(SystemTime::UNIX_EPOCH + Duration::from_secs(seconds))
+                .unwrap();
+        };
+        write_title("Recovered", 1_000_000_000);
+        let store = open(dir.path());
+        store.watch.stop_background_for_test();
+        let page = PageId::from("pages/Old.md");
+        store.hold_page(&page).unwrap();
+        let resolves = |title| {
+            matches!(store.whole_graph().unwrap().resolve(title, false),
+                crate::Resolved::Existing { id, .. } if id == page)
+        };
+
+        // Drive the production Rescan stages so the file changes between the
+        // hash pass and the build, without the watcher delivering it yet.
+        store.watch.reconcile_refresh(DiffTrigger::Rebuild).unwrap();
+        write_title("Disk name", 1_000_000_001);
+        assert!(store.graph.rebuild_cache_cancellable(|| false));
+        {
+            let _writer = store.writer.lock().unwrap();
+            let generation = store.graph.cache_generation();
+            let held = store.graph.held.epoch();
+            store.watch.release_hold(page.as_str());
+            assert_ne!(store.graph.held.epoch(), held);
+            assert_eq!(store.graph.cache_generation(), generation);
+            store
+                .changes
+                .publish_rebuilt(Origin::External, Vec::new(), false);
+        }
+        assert!(resolves("Recovered"));
+        assert!(!resolves("Disk name"));
+
+        let subscription = store.subscribe();
+        {
+            let _writer = store.writer.lock().unwrap();
+            let paths = [store.graph.root.join(page.as_str())].into_iter().collect();
+            store.watch.reconcile_raced(&paths);
+        }
+        let event = subscription
+            .try_recv()
+            .unwrap()
+            .expect("external title delivery");
+        assert_eq!(event.origin, Origin::External);
+        assert!(event.files.iter().any(|(id, kind, _)| {
+            id.as_str() == page.as_str() && *kind == ChangeKind::Modified
+        }));
+        assert!(resolves("Disk name"));
+        assert!(!resolves("Recovered"));
+        store.close();
+    }
+
+    #[test]
+    fn releasing_an_unreadable_page_restores_its_listed_name() {
+        let dir = tempfile::tempdir().unwrap();
+        let page = PageId::from("pages/Unreadable.md");
+        fs::create_dir(dir.path().join("pages")).unwrap();
+        fs::write(dir.path().join(page.as_str()), b"- \xff\n").unwrap();
+        let store = open(dir.path());
+        store.watch.stop_background_for_test();
+        {
+            let _writer = store.writer.lock().unwrap();
+            store.graph.hold_unhosted(page.as_str());
+        }
+        assert!(store.graph.rebuild_cache_cancellable(|| false));
+        {
+            let _writer = store.writer.lock().unwrap();
+            let generation = store.graph.cache_generation();
+            store.watch.release_hold(page.as_str());
+            assert_eq!(store.graph.cache_generation(), generation);
+            store
+                .changes
+                .publish_rebuilt(Origin::External, Vec::new(), false);
+        }
+        assert!(
+            matches!(store.whole_graph().unwrap().resolve("Unreadable", false),
+            crate::Resolved::Existing { id, .. } if id == page)
+        );
+        store.close();
+    }
+
+    #[test]
+    fn releasing_an_owner_only_claim_removes_it_from_the_rebuilt_listing() {
+        let dir = tempfile::tempdir().unwrap();
+        let page = PageId::from("pages/Old.md");
+        let path = dir.path().join(page.as_str());
+        fs::create_dir(path.parent().unwrap()).unwrap();
+        fs::write(&path, "title:: Recovered\n- text\n").unwrap();
+        fs::File::options()
+            .write(true)
+            .open(&path)
+            .unwrap()
+            .set_modified(SystemTime::UNIX_EPOCH + Duration::from_secs(1_000_000_000))
+            .unwrap();
+        let store = open(dir.path());
+        store.watch.stop_background_for_test();
+        store.hold_page(&page).unwrap();
+        store.watch.reconcile_refresh(DiffTrigger::Rebuild).unwrap();
+        fs::remove_file(path).unwrap();
+        assert!(store.graph.rebuild_cache_cancellable(|| false));
+        {
+            let _writer = store.writer.lock().unwrap();
+            let generation = store.graph.cache_generation();
+            store.watch.release_hold(page.as_str());
+            assert_eq!(store.graph.cache_generation(), generation);
+            store
+                .changes
+                .publish_rebuilt(Origin::External, Vec::new(), false);
+        }
+        assert!(matches!(
+            store.whole_graph().unwrap().resolve("Recovered", false),
+            crate::Resolved::Absent { .. }
+        ));
+        store.close();
     }
 
     /// The Settings "Rescan graph" button must catch what the focus-return

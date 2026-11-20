@@ -292,7 +292,12 @@ fn a_pass_lists_a_colliding_directory_once() {
         pass();
         LISTINGS.with(|n| n.get())
     };
-    let withheld = listings(&|| assert_eq!(store.graph.withheld(&listed).len(), 1000));
+    let withheld = listings(&|| {
+        assert_eq!(
+            store.graph.withheld(&listed, &mut Memo::default()).len(),
+            1000
+        );
+    });
     assert_eq!(
         withheld, 1,
         "REVIEW-3a4 #6: one withheld pass listed pages/ {withheld} times"

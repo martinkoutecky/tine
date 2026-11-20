@@ -16,41 +16,62 @@ impl Graph {
     }
 
     /// The one ownership transition (module doc, REVIEW-3a4): in one cache
-    /// critical section `change` moves the held map (false: it changed
-    /// nothing), then every path whose authority that can move is settled:
+    /// critical section `change` moves the held map and returns the paths
+    /// it released or respelled (None: no change). Every affected path
+    /// is then settled:
     /// `spelled`, the keys' spellings before and after, and every installed
     /// row or error whose leaf collides with one of theirs. The caller holds
     /// the writer and publishes the settled paths
     /// ([`crate::Store::publish_retired`]).
-    fn transition(&self, spelled: &[PathBuf], change: impl FnOnce() -> bool) {
+    fn transition(&self, change: impl FnOnce() -> Option<Vec<PathBuf>>) {
         let mut guard = self.derived.cache.write().unwrap();
-        if !change() {
-            return;
-        }
+        let Some(spelled) = change() else { return };
         self.held.bump();
-        let affected = self.affected(guard.as_deref(), spelled);
+        let mut listing = self.derived.launch_listing.write().unwrap();
+        let mut names = listing
+            .as_mut()
+            .filter(|(gen, _)| *gen == self.cache_generation())
+            .map(|(_, names)| names);
+        let affected = self.affected(guard.as_deref(), &spelled, names.as_deref());
         let mut memo = Memo::default();
         let mut settled = false;
+        let mut renamed = false;
         for path in &affected {
-            settled |= self.settle(guard.as_mut(), &mut memo, path);
+            let authority = self.authority_in(&mut memo, path);
+            if let Some(names) = names.as_mut() {
+                renamed |= names.settle(path, &authority);
+            }
+            settled |= self.settle(guard.as_mut(), authority, path);
         }
         // The generation-keyed listings named settled pages as before.
         if settled {
             let paths: Vec<&Path> = affected.iter().map(PathBuf::as_path).collect();
             self.move_generation(guard.is_none(), &paths);
         }
-        drop(guard);
+        if renamed {
+            self.forget_name_memos();
+        }
     }
 
     /// `spelled` and every cached row or recorded error whose leaf folds as
     /// one of theirs: the identity candidates a transition can move.
-    fn affected(&self, pages: Option<&Pages>, spelled: &[PathBuf]) -> BTreeSet<PathBuf> {
+    fn affected(
+        &self,
+        pages: Option<&Pages>,
+        spelled: &[PathBuf],
+        names: Option<&names::LaunchNames>,
+    ) -> BTreeSet<PathBuf> {
         let folds: HashSet<String> = spelled
             .iter()
             .filter_map(|path| path.file_name())
             .map(fold_leaf)
             .collect();
         let mut paths: BTreeSet<PathBuf> = spelled.iter().cloned().collect();
+        if let Some(names) = names {
+            for fold in &folds {
+                paths.extend(names.affected(fold).cloned());
+            }
+        }
         if let Some(pages) = pages {
             let mut index = self.derived.cache_index.write().unwrap();
             let index = index.get_or_insert_with(|| build_page_cache_index(pages));
@@ -90,8 +111,8 @@ impl Graph {
     /// moves nothing leaves it the published generation's, which a launch
     /// checkpoint capture requires (else every capture is "unpublished"
     /// until the next publication).
-    fn settle(&self, cache: Option<&mut Arc<Pages>>, memo: &mut Memo, path: &Path) -> bool {
-        match self.authority_in(memo, path) {
+    fn settle(&self, cache: Option<&mut Arc<Pages>>, authority: Authority, path: &Path) -> bool {
+        match authority {
             Authority::Disk => return false,
             Authority::Owner(key, bytes) => {
                 let at = self.root.join(self.held.spellings().spelling(&key));
@@ -177,21 +198,17 @@ impl Graph {
 
     fn hold_indexed(&self, key: String, current: Option<Arc<[u8]>>) {
         let path = self.root.join(self.held.spellings().spelling(&key));
-        let row = self.with_cached(&path, |row| row.cloned()).flatten();
-        let disk = self.cached_rev(&path).map(|rev| DiskObs {
-            rev,
-            anchored: self.derived.vcs_anchored.read().unwrap().contains(&path),
-        });
-        self.transition(&[path], || {
+        let claim = self.cached_observation(&path);
+        self.transition(|| {
             let mut keys = self.held.keys.write().unwrap();
             if keys.contains_key(&key) {
-                return false;
+                return None;
             }
-            if let (Some((entry, doc)), Some(disk)) = (row, disk) {
-                let claim = (entry, doc, disk);
+            if let Some(claim) = claim {
                 self.held.claims.lock().unwrap().insert(key.clone(), claim);
             }
-            keys.insert(key, current.map(Some)).is_none()
+            keys.insert(key, current.map(Some));
+            Some(vec![path])
         });
     }
 
@@ -209,15 +226,13 @@ impl Graph {
     pub(crate) fn release(&self, key: &str) -> Vec<PathBuf> {
         let path = self.root.join(self.held.spellings().spelling(key));
         let mut reread = Vec::new();
-        self.transition(std::slice::from_ref(&path), || {
-            if self.held.keys.write().unwrap().remove(key).is_none() {
-                return false;
-            }
+        self.transition(|| {
+            self.held.keys.write().unwrap().remove(key)?;
             self.held.claims.lock().unwrap().remove(key);
             let withheld = self.held.withheld.lock().unwrap().remove(key);
             reread.push(path.clone());
             reread.extend(withheld.into_iter().flatten());
-            true
+            Some(vec![path])
         });
         reread
     }
@@ -227,7 +242,7 @@ impl Graph {
     /// holds the writer.
     pub(crate) fn release_all(&self) -> Vec<PathBuf> {
         let mut reread = Vec::new();
-        self.transition(&[], || {
+        self.transition(|| {
             let keys: Vec<String> = (self.held.keys.write().unwrap().drain())
                 .map(|(key, _)| key)
                 .collect();
@@ -245,7 +260,7 @@ impl Graph {
                     .drain()
                     .flat_map(|(_, paths)| paths),
             );
-            true
+            Some(reread.clone())
         });
         reread
     }
@@ -255,8 +270,10 @@ impl Graph {
     /// installed at the new spelling. The caller holds the writer.
     pub(crate) fn respelled(&self, key: &str, from: &Path) {
         let to = self.root.join(self.held.spellings().spelling(key));
-        self.transition(&[from.to_path_buf(), to], || {
-            self.held.indexed_of(key).is_some()
+        self.transition(|| {
+            self.held
+                .indexed_of(key)
+                .map(|_| vec![from.to_path_buf(), to])
         });
     }
 
@@ -327,7 +344,7 @@ impl Graph {
                     }
                     // The owner's absence: settled like a transition.
                     None => {
-                        self.settle(Some(cache), &mut Memo::default(), &path);
+                        self.settle(Some(cache), self.authority(&path), &path);
                     }
                 }
             }

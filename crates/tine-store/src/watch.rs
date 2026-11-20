@@ -17,6 +17,8 @@ mod generation_tests;
 mod launch;
 mod racy;
 mod rebuild;
+#[cfg(test)]
+pub(crate) use rebuild::REBUILD_WRITER_TIME;
 mod reconcile;
 mod restore;
 mod runtime;

@@ -54,6 +54,8 @@ use page_identity::effective_page_name;
 // Conceptual model conformance (census Q2): the harness runs the launch
 // walk's provisional names against the answered ones.
 #[cfg(test)]
+pub(crate) use derived::{BUILD_LOCK_PROBES, BUILD_LOCK_TIME};
+#[cfg(test)]
 pub(crate) use page_identity::launch_listing_walk;
 pub(crate) use page_identity::{claim_lookup, configured_hidden, portable_component};
 pub(crate) use page_identity::{
@@ -2252,7 +2254,7 @@ pub(crate) struct LaunchObservations {
 
 #[derive(Default)]
 struct PageCacheBuild {
-    pages: Vec<ParsedPage>,
+    pages: Vec<derived::Row>,
     failures: Vec<String>,
     unreadable: Vec<(String, String)>,
 }
@@ -2302,8 +2304,8 @@ impl PageCacheBuild {
 
     fn collect(&mut self, parsed: PageParseResult) -> bool {
         match parsed {
-            Ok(Some(page)) => {
-                self.pages.push(page);
+            Ok(Some((entry, doc, obs))) => {
+                self.pages.push((entry, Arc::new(doc), obs));
                 true
             }
             Ok(None) => false,
@@ -2347,8 +2349,12 @@ impl PageCacheIndex {
     }
     /// The cached paths whose leaf folds to `fold`.
     fn folded(&mut self, fold: &str) -> &[PathBuf] {
+        self.folded_paths().get(fold).map_or(&[], Vec::as_slice)
+    }
+
+    fn folded_paths(&mut self) -> &HashMap<String, Vec<PathBuf>> {
         let paths = &self.by_path;
-        let folds = self.by_fold.get_or_insert_with(|| {
+        self.by_fold.get_or_insert_with(|| {
             let mut folds: HashMap<String, Vec<PathBuf>> = HashMap::new();
             for path in paths.keys() {
                 if let Some(fold) = leaf_fold(path) {
@@ -2356,8 +2362,7 @@ impl PageCacheIndex {
                 }
             }
             folds
-        });
-        folds.get(fold).map_or(&[], Vec::as_slice)
+        })
     }
 }
 fn build_page_cache_index(pages: &Pages) -> PageCacheIndex {
@@ -3318,9 +3323,7 @@ impl Graph {
         if cancelled() {
             return false;
         }
-        if replace {
-            self.forget_name_memos();
-        } else if self.cache_built() {
+        if !replace && self.cache_built() {
             return true; // already built (e.g. by a query) — nothing to warm
         }
         // Build WITHOUT holding build_lock during the parse, so an on-demand
@@ -3349,7 +3352,8 @@ impl Graph {
         let entries = listed.clone();
         // A held page's row is its owner's ((G), `install_built`): the build
         // never reads it, and the watcher rereads its file.
-        let withheld = self.withheld(&listed);
+        let mut identities = entry_identity::Memo::default();
+        let withheld = self.withheld(&listed, &mut identities);
         let entries: Vec<PageEntry> = (entries.into_iter())
             .filter(|entry| !withheld.contains(&entry.path))
             .collect();
@@ -3536,6 +3540,21 @@ impl Graph {
         if cancelled() {
             return pass.finish(&self.diag, began, diag::OUTCOME_CANCELLED, false);
         }
+        // A previously held path may be released without superseding the
+        // build. Carry its installed observation as the disk-side fallback;
+        // the installer still uses the owner whenever the path is held.
+        if replace {
+            for path in &withheld {
+                if let Some(row) = self.cached_observation(path) {
+                    let entry = &row.0;
+                    names.insert(
+                        path.clone(),
+                        (entry.name.clone(), entry.kind, entry.date_key),
+                    );
+                    built.pages.push(row);
+                }
+            }
+        }
         // The named listing: what `list_graph_pages` answers, from the reads.
         let named: Vec<PageEntry> = listed
             .into_iter()
@@ -3564,6 +3583,7 @@ impl Graph {
             named,
             discovery,
             withheld,
+            identities,
         };
         let installed = self.install_pass(built, gen0, replace);
         let installed_any = installed.is_some();

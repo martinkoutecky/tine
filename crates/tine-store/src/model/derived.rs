@@ -21,8 +21,8 @@
 //! **Critical section.** Every install takes the cache lock (write for
 //! rows; at least read for error collections) and then reads the held map:
 //! lock order cache → held → collection, authority decided inside it. A
-//! whole build decides at the held epoch it checks again under the lock and
-//! certifies its name listing in that same critical section. A name memo
+//! whole build certifies its rows and name listing before taking the lock,
+//! then checks the held epoch and installs them together. A name memo
 //! walked outside it installs only if neither the generation nor the held
 //! epoch moved since the walk began ([`Graph::install_name_memo`]).
 //! Holds, releases and respellings are one ownership transition
@@ -49,6 +49,20 @@ use super::*;
 use std::collections::{BTreeSet, HashSet};
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Mutex;
+
+#[cfg(test)]
+thread_local! {
+    pub(crate) static BUILD_LOCK_PROBES: std::cell::Cell<[u64; 4]> = const { std::cell::Cell::new([0; 4]) };
+    pub(crate) static BUILD_LOCK_TIME: std::cell::Cell<std::time::Duration> = const { std::cell::Cell::new(std::time::Duration::ZERO) };
+}
+
+#[cfg(test)]
+fn install_probe_counts() -> [u64; 4] {
+    let (_, stat, canonical) = super::write_target::TARGET_PROBES.with(|counts| counts.get());
+    let lists = super::entry_identity::LISTINGS.with(|n| n.get());
+    let same_file = super::entry_identity::SAME_FILE_CALLS.with(|n| n.get());
+    [stat, canonical, lists as u64, same_file as u64]
+}
 
 /// What a held key's owner last published since the hold began: `None`
 /// until the first publication, `Some(None)` for no file. The bytes are the
@@ -176,7 +190,7 @@ pub(crate) struct Derived {
     /// The launch pass's complete effective-name listing (duplicate journal
     /// days included), keyed by `cache_gen`: the first publication's name
     /// index is built from it instead of a second walk.
-    launch_listing: RwLock<Option<(u64, Certified)>>,
+    launch_listing: RwLock<Option<(u64, names::LaunchNames)>>,
     /// `path → content_rev` of the bytes each cached document was parsed
     /// from. Invariant: an entry exists IFF the page is cached, and
     /// `disk_revs[path] == content_rev(disk bytes)` ⟹ the cached doc
@@ -580,6 +594,17 @@ impl Graph {
         self.derived.disk_revs.read().unwrap().get(path).cloned()
     }
 
+    /// The installed observation of a path the rebuild did not read. The
+    /// rebuild's generation check binds it to the rest of the build.
+    pub(super) fn cached_observation(&self, path: &Path) -> Option<Row> {
+        let guard = self.derived.cache.read().unwrap();
+        let pages = guard.as_ref()?;
+        let (entry, doc) = pages.get(self.cached_page_index_for_path(pages, path)?)?;
+        let rev = self.derived.disk_revs.read().unwrap().get(path)?.clone();
+        let anchored = self.derived.vcs_anchored.read().unwrap().contains(path);
+        Some((entry.clone(), Arc::clone(doc), DiskObs { rev, anchored }))
+    }
+
     #[cfg(test)]
     pub(super) fn cache_index_built(&self) -> bool {
         self.derived.cache_index.read().unwrap().is_some()
@@ -590,12 +615,30 @@ impl Graph {
     /// `entries` (a listing of `kind`, or of every kind) with (G) applied:
     /// rows a held or unknown identity names are dropped, and every held key
     /// whose owner indexed bytes is listed once, named from those bytes.
-    pub(super) fn certify(&self, mut entries: Vec<PageEntry>, kind: Option<PageKind>) -> Certified {
+    pub(super) fn certify(&self, entries: Vec<PageEntry>, kind: Option<PageKind>) -> Certified {
+        self.certify_withheld(entries, kind, &mut Memo::default(), |_| {})
+            .0
+    }
+
+    fn certify_withheld(
+        &self,
+        mut entries: Vec<PageEntry>,
+        kind: Option<PageKind>,
+        memo: &mut Memo,
+        mut withhold: impl FnMut(&PageEntry),
+    ) -> (Certified, usize) {
         if self.held.is_empty() {
-            return Certified(entries);
+            let len = entries.len();
+            return (Certified(entries), len);
         }
-        let mut memo = Memo::default();
-        entries.retain(|entry| self.disk_sourced_in(&mut memo, &entry.path));
+        entries.retain(|entry| {
+            let disk = self.disk_sourced_in(memo, &entry.path);
+            if !disk {
+                withhold(entry);
+            }
+            disk
+        });
+        let disk_count = entries.len();
         #[cfg(test)]
         crate::store::pause_at_hook(&self.certify_pause);
         let formats = (
@@ -618,7 +661,7 @@ impl Graph {
                 }
             }
         }
-        Certified(entries)
+        (Certified(entries), disk_count)
     }
 
     pub(super) fn physical_page_entries(&self) -> Vec<PageEntry> {
@@ -791,12 +834,12 @@ impl Graph {
     /// for this generation, and replaces the known discovery failures.
     pub(super) fn install_built(
         &self,
-        mut built: PageCacheBuild,
+        built: PageCacheBuild,
         (expected_gen, held_epoch): (u64, u64),
         replace: bool,
         observed: Option<&HashMap<PathBuf, crate::watch::Stamp>>,
-        named: Option<&mut Vec<PageEntry>>,
-        mut discovery: Option<Vec<(crate::FileId, crate::IoError)>>,
+        named: Option<(&[PageEntry], &mut Memo)>,
+        discovery: Option<Vec<(crate::FileId, crate::IoError)>>,
     ) -> Result<(), super::launch_patch::Declined> {
         use super::launch_patch::Declined;
         // Identities are decided at the build's epoch (checked again under
@@ -807,11 +850,13 @@ impl Graph {
         // A held page's own failures, added to the build's after the checks
         // (a raced install drops them; the retry recomputes them).
         let (mut owned_failures, mut owned_unreadable) = (Vec::new(), Vec::new());
-        let (held, mut kept, mut memo) = (!self.held.is_empty(), Vec::new(), Memo::default());
+        let (held, mut kept) = (!self.held.is_empty(), Vec::new());
+        let mut on_demand = Memo::default();
+        let (named, memo) =
+            named.map_or((None, &mut on_demand), |(named, memo)| (Some(named), memo));
         if held {
             let pages = built.pages.iter();
-            kept =
-                (pages.map(|(entry, _, _)| self.disk_sourced_in(&mut memo, &entry.path))).collect();
+            kept = (pages.map(|(entry, _, _)| self.disk_sourced_in(memo, &entry.path))).collect();
             owned = self
                 .held
                 .published()
@@ -844,22 +889,86 @@ impl Graph {
                 Some((entry.rel_path_str().to_owned(), mtime?))
             })
             .collect();
-        for owned in &mut owned {
+        for owned in &owned {
             if let Some((entry, _, _)) = &owned.row {
                 if let Some(mtime) = stat(&entry.path) {
                     mtimes.insert(entry.rel_path_str().to_owned(), mtime);
                 }
             }
         }
+        let mut disk = |rel: &str| !held || self.disk_sourced_in(memo, &self.root.join(rel));
+        let mut failures: Vec<_> = built
+            .failures
+            .iter()
+            .filter(|rel| disk(rel))
+            .cloned()
+            .collect();
+        let mut unreadable: Vec<_> = built
+            .unreadable
+            .iter()
+            .filter(|(rel, _)| disk(rel))
+            .cloned()
+            .collect();
+        let discovered = discovery.as_ref().map(|errors| {
+            errors
+                .iter()
+                .filter(|(id, _)| disk(id.as_str()))
+                .filter_map(|(id, error)| {
+                    unreadable_error(
+                        error.clone(),
+                        "Tine unreadable file producer=launch-discovery",
+                    )
+                    .map(|error| (id.clone(), error))
+                })
+                .collect()
+        });
+        failures.append(&mut owned_failures);
+        unreadable.append(&mut owned_unreadable);
+        // Discovery errors already join these rows at reported_unreadable_pages.
+        unreadable.sort_by(|a, b| a.0.cmp(&b.0));
+        unreadable.dedup_by(|a, b| a.0 == b.0);
+        let unreadable = Arc::new(
+            unreadable
+                .into_iter()
+                .map(|(path, reason)| (crate::FileId::from(path), reason))
+                .collect(),
+        );
+        let rows = built
+            .pages
+            .iter()
+            .enumerate()
+            .filter(|(at, _)| kept.get(*at) != Some(&false))
+            .map(|(_, row)| row)
+            .chain(owned.iter().filter_map(|owned| owned.row.as_ref()));
+        let mut revs = HashMap::new();
+        let mut anchored = HashSet::new();
+        let pages = Arc::new(Pages::from(
+            rows.map(|(entry, doc, obs)| {
+                revs.insert(entry.path.clone(), obs.rev.clone());
+                if obs.anchored {
+                    anchored.insert(entry.path.clone());
+                }
+                (entry.clone(), Arc::clone(doc))
+            })
+            .collect::<Vec<_>>(),
+        ));
+        let mut index = build_page_cache_index(&pages);
+        let launch = named.map(|named| self.prepare_launch_names(named.to_vec(), memo));
+        if launch.is_some() {
+            // The first hold or release can land before snapshot publication.
+            // It should look up just the changed folds under the cache guard.
+            index.folded_paths();
+        }
+
         #[cfg(test)]
         crate::store::pause_at_hook(&self.install_lock_pause);
         let mut guard = self.derived.cache.write().unwrap();
+        #[cfg(test)]
+        let (before_probes, locked_at) = (install_probe_counts(), std::time::Instant::now());
         if guard.is_some() && !replace {
             return Err(Declined::CacheBuilt);
         }
-        // R1: each owner's row was derived from the bytes it indexes now
-        // (every publication also moves `cache_gen`; this is the
-        // certificate, checked in the installing critical section).
+        // R1: each owner's row was derived from the bytes it indexes now.
         let raced = self.cache_gen.load(Ordering::Acquire) != expected_gen
             || self.held.epoch() != held_epoch
             || !owned.iter().all(|owned| {
@@ -871,87 +980,63 @@ impl Graph {
         if raced {
             return Err(Declined::Raced(built, discovery));
         }
-        if held {
-            // The few failed files, at the same epoch (the lock is held).
-            let mut disk = |rel: &str| self.disk_sourced_in(&mut memo, &self.root.join(rel));
-            built.failures.retain(|rel| disk(rel));
-            built.unreadable.retain(|(rel, _)| disk(rel));
-            if let Some(discovery) = discovery.as_mut() {
-                discovery.retain(|(id, _)| disk(id.as_str()));
-            }
-            built.failures.append(&mut owned_failures);
-            built.unreadable.append(&mut owned_unreadable);
-        }
-        let (failures, mut unreadable) = (built.failures, built.unreadable);
-        let mut rows: Vec<Row> = (built.pages.into_iter())
-            .enumerate()
-            .filter(|(at, _)| kept.get(*at) != Some(&false))
-            .map(|(_, (entry, doc, obs))| (entry, Arc::new(doc), obs))
-            .collect();
-        rows.extend(owned.into_iter().filter_map(|owned| owned.row));
-        if let Some(discovery) = discovery {
-            *self.derived.discovery_errors.write().unwrap() = discovery
-                .into_iter()
-                .filter_map(|(id, error)| {
-                    unreadable_error(error, "Tine unreadable file producer=launch-discovery")
-                        .map(|error| (id, error))
-                })
-                .collect();
-        }
-        unreadable.extend(
-            self.derived
-                .discovery_errors
-                .read()
-                .unwrap()
-                .iter()
-                .map(|(id, error)| (id.as_str().to_owned(), error.to_string())),
-        );
-        // One row per path: a discovery and a parse failure of the same file
-        // are one unreadable file (the stable sort keeps the parse reason).
-        unreadable.sort_by(|a, b| a.0.cmp(&b.0));
-        unreadable.dedup_by(|a, b| a.0 == b.0);
-        let revs: HashMap<PathBuf, String> = rows
-            .iter()
-            .map(|(entry, _, obs)| (entry.path.clone(), obs.rev.clone()))
-            .collect();
-        let anchored: HashSet<PathBuf> = rows
-            .iter()
-            .filter(|(_, _, obs)| obs.anchored)
-            .map(|(entry, _, _)| entry.path.clone())
-            .collect();
-        let pages = Pages::from(
-            rows.into_iter()
-                .map(|(entry, doc, _)| (entry, doc))
-                .collect::<Vec<_>>(),
-        );
-        let index = build_page_cache_index(&pages);
+        let old_discovered = discovered.map(|new| {
+            std::mem::replace(&mut *self.derived.discovery_errors.write().unwrap(), new)
+        });
         // Cache, then revisions (cache → disk_revs), so no reader observes a
         // fresh revision paired with a stale cache.
-        *guard = Some(Arc::new(pages));
-        *self.derived.observed_mtimes.write().unwrap() = Arc::new(mtimes);
-        *self.derived.page_index_failures.write().unwrap() = failures;
-        self.derived.index_retired.write().unwrap().clear();
-        *self.derived.unreadable_pages.write().unwrap() = Arc::new(
-            unreadable
-                .into_iter()
-                .map(|(path, reason)| (crate::store::FileId::from(path), reason))
-                .collect(),
+        let old_pages = guard.replace(pages);
+        let old_mtimes = std::mem::replace(
+            &mut *self.derived.observed_mtimes.write().unwrap(),
+            Arc::new(mtimes),
         );
-        *self.derived.cache_index.write().unwrap() = Some(index);
-        *self.derived.disk_revs.write().unwrap() = revs;
-        *self.derived.vcs_anchored.write().unwrap() = anchored;
+        let old_failures = std::mem::replace(
+            &mut *self.derived.page_index_failures.write().unwrap(),
+            failures,
+        );
+        let old_retired = std::mem::take(&mut *self.derived.index_retired.write().unwrap());
+        let old_unreadable = std::mem::replace(
+            &mut *self.derived.unreadable_pages.write().unwrap(),
+            unreadable,
+        );
+        let old_index = self.derived.cache_index.write().unwrap().replace(index);
+        let old_revs = std::mem::replace(&mut *self.derived.disk_revs.write().unwrap(), revs);
+        let old_anchors =
+            std::mem::replace(&mut *self.derived.vcs_anchored.write().unwrap(), anchored);
         self.forget_cold_moves();
-        let generation = if replace {
-            // A replaced cache is new content under the old generation: the
-            // generation-keyed page list, name index and block index must
-            // rebuild against it. Bumped after the content, as everywhere.
-            self.cache_gen.fetch_add(1, Ordering::Release) + 1
-        } else {
-            expected_gen
-        };
-        if let Some(named) = named {
-            self.install_launch_listing(generation, std::mem::take(named));
+        let old_names = launch.and_then(|names| {
+            let generation = expected_gen + u64::from(replace);
+            self.derived
+                .launch_listing
+                .write()
+                .unwrap()
+                .replace((generation, names))
+        });
+        if replace {
+            // The cache and its listing are visible at the new generation together.
+            self.cache_gen.fetch_add(1, Ordering::Release);
         }
+        #[cfg(test)]
+        {
+            let after_probes = install_probe_counts();
+            BUILD_LOCK_PROBES.with(|counts| {
+                counts.set(std::array::from_fn(|i| after_probes[i] - before_probes[i]));
+            });
+            BUILD_LOCK_TIME.with(|time| time.set(locked_at.elapsed()));
+        }
+        drop(guard);
+        drop((
+            old_pages,
+            old_names,
+            old_index,
+            old_revs,
+            old_anchors,
+            old_discovered,
+            old_mtimes,
+            old_failures,
+            old_retired,
+            old_unreadable,
+        ));
         Ok(())
     }
 
