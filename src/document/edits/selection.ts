@@ -148,7 +148,9 @@ const selectionState = createRoot(() => createMemo(() => {
   const j = f ? index.get(f) : undefined;
   let lo = 0, hi = -1;
   const w = whole();
-  if (w && (!w.tops || sameIds(w.tops, topology.tops))) hi = order.length - 1;
+  // A marker alone answers what is selected: the whole outline while it still
+  // names these top-level rows, nothing once a refresh changed them.
+  if (w) { if (!w.tops || sameIds(w.tops, topology.tops)) hi = order.length - 1; }
   else if (i !== undefined && j !== undefined) {
     lo = Math.min(i, j);
     let last = order[Math.max(i, j)];
@@ -447,14 +449,17 @@ export function expandBlockSelection(target?: OutlineSelectionTarget): boolean |
   if (!a || !f) return;
   const { order, index, end } = selectionTopology();
   if (order.length < 2) return;
-  // Whole-outline selection is the top of the ladder; further presses no-op. A
-  // scoped outline (results may list a row twice) asks the interval in either
-  // direction; a page body keeps Beta's anchor-first test.
+  // Whole-outline selection is the top of the ladder. At a marker, a press keeps
+  // it (re-pointed once to the current rows, O(1) after) or, once a refresh
+  // emptied it, selects the whole current outline. A page body keeps Beta's test.
+  const w = whole(), { tops } = selectionTopology();
+  if (w) {
+    if (w.tops !== tops) w.tops && sameIds(w.tops, tops) ? setWhole({ tops }) : selectWhole(ladderTop());
+    return;
+  }
   const { lo, hi } = selectionState();
   if (activeSelectionScope ? lo === 0 && hi === order.length - 1 : a === order[0] && end[index.get(f)!] === order.length - 1) {
-    // Renew unless the marker already names this topology's rows (O(1)).
-    const w = whole();
-    if (activeSelectionScope && (!w || w.tops !== selectionTopology().tops)) selectWhole(ladderTop());
+    if (activeSelectionScope) selectWhole(ladderTop());
     return;
   }
   let head = selectAllHead;
