@@ -114,6 +114,7 @@ describe("custom URL schemes open in their app after a confirm (GH #503)", () =>
     const build = readFileSync("src-tauri/build.rs", "utf8");
     expect(ts).toContain('from "../src-tauri/external-link-schemes.json"');
     expect(build).toContain('generate_external_link_schemes(&read("external-link-schemes.json"))');
+    expect(rs).not.toMatch(/NEVER_OPENED_SCHEMES: &\[&str\] = &\[/);
     expect(rs).toContain('include!(concat!(env!("OUT_DIR"), "/external_link_schemes.rs"))');
     expect(schemes.refused.length).toBeGreaterThan(0);
     expect(schemes.refused.every(refusedLinkScheme)).toBe(true);

@@ -1,9 +1,9 @@
 import schemes from "../src-tauri/external-link-schemes.json";
 
-const NATIVE_SCHEMES = [schemes.localFile, schemes.deepLink];
-const WEB_SCHEMES = schemes.webPrefixes.map((prefix) => prefix.split(":")[0]);
-const MAIL_SCHEME = schemes.mailPrefix.slice(0, -1);
-const DIRECT_OPEN_PREFIXES = [...schemes.webPrefixes, schemes.mailPrefix];
+// Native platform.rs rechecks every OS handoff against the same refused list.
+const NATIVE_SCHEMES = ["file", "tine"];
+const WEB_SCHEMES = ["http", "https"];
+const MAIL_SCHEME = "mailto";
 // One-letter prefixes reserve a browser href but name a drive in graph content.
 const SCHEME_PREFIX = /^(?:([a-z][a-z0-9+.-]+)|[a-z]):/i;
 
@@ -44,7 +44,7 @@ export function anchorDecision(dest: string): AnchorDecision {
   if (refusedLinkScheme(scheme)) return "drop";
   if (WEB_SCHEMES.includes(scheme)) return "web";
   if (scheme === MAIL_SCHEME) return "mail";
-  if (scheme === schemes.localFile && dest.trim().slice(0, scheme.length + 1).toLowerCase() === `${scheme}:`) return "file";
+  if (scheme === "file" && dest.trim().slice(0, scheme.length + 1).toLowerCase() === `${scheme}:`) return "file";
   return "defer";
 }
 
@@ -58,55 +58,35 @@ export function anchorKeepsHref(decision: AnchorDecision): boolean {
 
 /** A literal HTTP(S) URL prefix for browser embeds, allowing case variants. */
 export function hasWebUrlPrefix(dest: string): boolean {
-  return schemes.webPrefixes.some((prefix) => dest.slice(0, prefix.length).toLowerCase() === prefix);
+  return /^https?:\/\//i.test(dest);
 }
 
 /** Browser media may use web URLs and DOMPurify's data-URI subset. Local image
  * candidates still need the existing path resolver and opt-in. O(bytes), no I/O. */
 export function previewResourceDecision(dest: string): "local-candidate" | "browser" | "drop" {
   const scheme = SCHEME_PREFIX.exec(dest.replace(/[\u0000-\u0020]/g, ""))?.[1]?.toLowerCase();
-  if (!scheme || scheme === schemes.localFile) return "local-candidate";
+  if (!scheme || scheme === "file") return "local-candidate";
   return WEB_SCHEMES.includes(scheme) || scheme === "data" ? "browser" : "drop";
 }
 
-/** Reject a destination before browser or native IPC handoff. Registered
- * schemes require exact ASCII case-insensitive consent (D-20261103-S503).
- * Native file URLs and Tine links have dedicated routes. O(URL bytes), no I/O. */
-export function checkExternalLink(
-  dest: string,
-  confirmedScheme: string | undefined,
-  platform: "browser" | "native",
-): void {
-  const rawScheme = platform === "native" ? SCHEME_PREFIX.exec(dest)?.[1] : undefined;
-  const scheme = platform === "native" ? rawScheme?.toLowerCase() : linkScheme(dest);
-  if (!scheme) throw new Error("unsupported url scheme");
-  const nativeOnly = NATIVE_SCHEMES.includes(scheme);
-  if (nativeOnly && rawScheme === scheme) return;
-  if (refusedLinkScheme(scheme) || nativeOnly) {
-    throw new Error(`${scheme}: links are never opened`);
-  }
-  if (platform === "browser") {
-    new URL(dest);
-    if (isWebOrMailScheme(scheme)) return;
-  } else {
-    if (DIRECT_OPEN_PREFIXES.some((prefix) => dest.startsWith(prefix))) return;
-    if (WEB_SCHEMES.includes(scheme) && !hasWebUrlPrefix(dest)) throw new Error("unsupported web URL");
-  }
-  const confirmed = confirmedScheme?.replace(/[A-Z]/g, (c) => c.toLowerCase());
-  if (confirmed !== scheme) throw new Error(`opening a ${scheme}: link needs your confirmation`);
-}
-
-/** Check browser handoffs against the browser's own base for relative URLs.
- * Pass the authored spelling to the handoff after checking its resolved scheme. */
+/** Check a browser handoff (published reader, browser preview) before
+ * `window.open`; relative URLs resolve against the browser's own base. Web and
+ * mail open; registered schemes need exact ASCII case-insensitive consent
+ * (D-20261103-S503); file, Tine and refused schemes never open. O(URL bytes). */
 export function checkBrowserHandoff(dest: string, confirmedScheme: string | undefined, base: string): void {
   if (anchorDecision(dest) === "relative") {
     const here = new URL(base);
     const there = new URL(dest, here);
     if (there.protocol === here.protocol && there.host === here.host) return;
-    checkExternalLink(there.href, undefined, "browser");
-    return;
+    return checkBrowserHandoff(there.href, undefined, base);
   }
-  checkExternalLink(dest, confirmedScheme, "browser");
+  const scheme = linkScheme(dest);
+  if (!scheme) throw new Error("unsupported url scheme");
+  if (refusedLinkScheme(scheme) || NATIVE_SCHEMES.includes(scheme)) throw new Error(`${scheme}: links are never opened`);
+  new URL(dest);
+  if (isWebOrMailScheme(scheme)) return;
+  const confirmed = confirmedScheme?.replace(/[A-Z]/g, (c) => c.toLowerCase());
+  if (confirmed !== scheme) throw new Error(`opening a ${scheme}: link needs your confirmation`);
 }
 
 /** Host-owned marker for an anchor activated by the checked opener. */

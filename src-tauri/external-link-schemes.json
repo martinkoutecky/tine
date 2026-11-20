@@ -1,7 +1,1 @@
-{
-  "webPrefixes": ["http://", "https://"],
-  "mailPrefix": "mailto:",
-  "localFile": "file",
-  "deepLink": "tine",
-  "refused": ["javascript", "vbscript", "data", "blob", "about"]
-}
+{ "refused": ["javascript", "vbscript", "data", "blob", "about"] }

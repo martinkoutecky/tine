@@ -162,40 +162,20 @@ fn main() {
     .expect("failed to run tauri-build");
 }
 
-/// Compile the same scheme table the TypeScript policy imports.
+/// The refused schemes the TypeScript policy imports, compiled for the native gate.
 fn generate_external_link_schemes(schemes: &serde_json::Value) {
-    let scheme = |name: &str| schemes[name].as_str().expect(name);
-    let scheme_list = |name: &str| {
-        schemes[name]
-            .as_array()
-            .expect(name)
-            .iter()
-            .map(|value| value.as_str().expect(name))
-            .collect::<Vec<_>>()
-    };
-    let web_prefixes = scheme_list("webPrefixes");
-    let web_schemes = web_prefixes
+    let refused: Vec<&str> = schemes["refused"]
+        .as_array()
+        .expect("refused")
         .iter()
-        .copied()
-        .map(|prefix| prefix.split_once(':').expect("web prefix").0)
-        .collect::<Vec<_>>();
-    let mut direct_open_prefixes = web_prefixes;
-    direct_open_prefixes.push(scheme("mailPrefix"));
-    let generated = format!(
-        "const WEB_SCHEMES: &[&str] = &{:?};\n\
-         const DIRECT_OPEN_PREFIXES: &[&str] = &{:?};\n\
-         const FILE_SCHEME: &str = {:?};\n\
-         const TINE_SCHEME: &str = {:?};\n\
-         const NEVER_OPENED_SCHEMES: &[&str] = &{:?};\n",
-        web_schemes,
-        direct_open_prefixes,
-        scheme("localFile"),
-        scheme("deepLink"),
-        scheme_list("refused"),
-    );
+        .map(|value| value.as_str().expect("refused"))
+        .collect();
     let out = std::path::PathBuf::from(std::env::var_os("OUT_DIR").expect("build output"));
-    std::fs::write(out.join("external_link_schemes.rs"), generated)
-        .expect("generated link schemes");
+    std::fs::write(
+        out.join("external_link_schemes.rs"),
+        format!("const NEVER_OPENED_SCHEMES: &[&str] = &{refused:?};\n"),
+    )
+    .expect("generated link schemes");
 }
 
 /// Diagnostics accepts registered names, never arbitrary IPC text. Derive
