@@ -266,3 +266,33 @@ it.each([
   setRoots(next);
   expect(topSelected()).not.toContain("E");
 });
+
+it("an expired Ctrl+A selection stays empty when the old rows return (GH #793)", () => {
+  load();
+  const [roots, setRoots] = createSignal<readonly string[]>(["A", "D"]);
+  const scope: OutlineScope = { get roots() { return roots(); } };
+  selectBlock("A", scope);
+  extendSelectionTo("D1", scope);
+  expandBlockSelection();
+  expect(topSelected()).toEqual(["A", "D"]);
+  setRoots(["A", "E", "D"]);
+  expect(selectedIds()).toEqual([]);
+  setRoots(["A", "D"]);
+  expect(selectedIds()).toEqual([]);
+  expandBlockSelection();
+  expect(topSelected()).toEqual(["A", "D"]);
+});
+
+it("Ctrl+A renews an expired selection over a single remaining row (GH #793)", () => {
+  load();
+  const [roots, setRoots] = createSignal<readonly string[]>(["A", "D"]);
+  const scope: OutlineScope = { get roots() { return roots(); } };
+  selectBlock("A", scope);
+  extendSelectionTo("D1", scope);
+  expandBlockSelection();
+  setDoc("byId", "D", "collapsed", true);
+  setRoots(["D"]);
+  expect(selectedIds()).toEqual([]);
+  expandBlockSelection();
+  expect(topSelected()).toEqual(["D"]);
+});
