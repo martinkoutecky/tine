@@ -9,6 +9,13 @@
       "nonRequirements": ["No automatic repair loop, new model outcome, release burn-in or other-platform runtime certification."],
       "stability": "burn-in"
     },
+    "scripts/e2e-gh1001-query-scroll.mjs": {
+      "setup":"Synthetic routed page with three queries and 28 nested results, a plain outline, and a scratch account and graph. An opt-in scratch copy of the anonymized corpus can be measured with and without custom CSS.",
+      "contracts":[{"class":"core-operation","userOutcome":"An expanded query shows its nested results and the reader can scroll down through them and back up on the routed page.","blocking":false,"authority":"GH #1001"}],
+      "acceptableVariations":["Frame times and exact layout depend on the engine and machine. The journey records them as measurements."],
+      "nonRequirements":["Absolute frame-rate gate or a screenshot comparison."],
+      "stability":"burn-in"
+    },
     "scripts/e2e-gh944-journal-agenda.mjs": {
       "setup":"Synthetic realistic graph with 1500 pages and 500 journals, dated tasks, scratch HOME/XDG and account-home shim; frozen custom-protocol binaries with embedded origin asserted, Linux native at 1920x1080.",
       "contracts":[{"class":"stateful-ux","userOutcome":"Scheduled & Deadline stays present while typing characters and creating blocks in today's journal, expanded and collapsed, in the feed and on a routed journal page.","blocking":false,"authority":"GH #944 comment 5"}],

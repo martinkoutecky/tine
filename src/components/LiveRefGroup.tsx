@@ -28,6 +28,7 @@ import { ResultWriteTargetContext, liveWriteTarget, noticeChangedResults, resolv
 import { resultTicket, resultsTicketActionable } from "../queryResultsEpoch";
 import { ReservedGroupGeometryContext, reservedGroupHeight } from "../reservedGroupHeight";
 import { preserveAboveViewport } from "../scrollContainer";
+import { useOwnerWindow } from "../windowRealm";
 import { registerQueryResultFold } from "../collapseCommandSurface";
 import { observeViewportWindow } from "../viewportWindow";
 import { printingOutline, registerOutlineWindow } from "../outlineViewport";
@@ -220,8 +221,7 @@ export function LiveRefGroup(props: LiveRefGroupProps): JSX.Element {
       <Show when={near()}><MountedRefGroup {...props} occurrence={occurrence} geometryHost={() => el}
         onSourceMounted={setSourceMounted}
         readCurrent={() => alive && (!windowed() || !hasViewport() || wanted())} priority={priority}
-        sourcePinned={() => windowed() && (pinned() || forced())}
-        schedule={windowed() && hasViewport()} /></Show>
+        sourcePinned={() => windowed() && (pinned() || forced())} /></Show>
       </ReservedGroupGeometryContext.Provider>
     </div>
   );
@@ -231,8 +231,9 @@ export function LiveRefGroup(props: LiveRefGroupProps): JSX.Element {
 // rendering belong to each disposable child; unchanged rows stay keyed while
 // that child is mounted.
 function MountedRefGroup(props: LiveRefGroupProps & { occurrence: RefOccurrence; geometryHost: () => HTMLElement | undefined; onSourceMounted: (mounted: boolean) => void;
-  readCurrent: () => boolean; priority: () => number; sourcePinned: () => boolean; schedule: boolean }): JSX.Element {
+  readCurrent: () => boolean; priority: () => number; sourcePinned: () => boolean }): JSX.Element {
   const linkDepth = useContext(LinkDepthContext);
+  const ownerWindow = useOwnerWindow() as Window & typeof globalThis;
   // The host block's own outline and surface, read before this group provides its own.
   const hostScope = useContext(OutlineScopeContext);
   const readScope = {};
@@ -252,15 +253,15 @@ function MountedRefGroup(props: LiveRefGroupProps & { occurrence: RefOccurrence;
     const host = props.geometryHost();
     if (host) onCleanup(trackNear(host, setNearView));
   });
-  createEffect(on(() => [nearView(), !!pageByName(props.page)] as const, ([isNear, present], previous) => {
-    if (previous && isNear && !present && (!previous[0] || previous[1])) setAcquire(n => n + 1);
-  }));
   // Load the source page only once the group is near the viewport. A string
   // source: the parent recomputing an equal group must not read again.
   const [readyResource] = createGraphResource(
     () => JSON.stringify([props.page, props.kind, props.path ?? null, acquire()]),
     async (source) => {
-      const scheduled = props.schedule;
+      // Queries and embeds can approach in the same observer delivery as
+      // references. Share the read and document-admission budget across them.
+      const scheduled = props.surface !== "preview"
+        && typeof ownerWindow?.IntersectionObserver === "function";
       const priority = props.priority;
       const [p, k, savedPath] = JSON.parse(source) as [string, PageKind, string | null];
       const path = savedPath ?? undefined;
@@ -300,6 +301,10 @@ function MountedRefGroup(props: LiveRefGroupProps & { occurrence: RefOccurrence;
       return [read, anchored];
     } }
   );
+  createEffect(on(() => [nearView(), !!pageByName(props.page)] as const, ([isNear, present], previous) => {
+    // A spacer can leave and reenter the margin as preceding rows expand.
+    if (previous && isNear && !present && !readyResource.loading && (!previous[0] || previous[1])) setAcquire(n => n + 1);
+  }));
   // A source page that failed to load leaves the group on its DTO path below,
   // which is the same path it uses before the page is near the viewport.
   // Page lookup observes the working-set index. Stop another page loading from
