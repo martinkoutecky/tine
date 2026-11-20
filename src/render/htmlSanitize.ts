@@ -1,5 +1,6 @@
 import policy from "../../fixtures/html-sanitize-policy.json";
 import DOMPurify from "dompurify";
+import { deferAnchorHref } from "../linkSchemePolicy";
 
 // The raw-HTML render policy — the single allowlist that both render surfaces
 // apply to raw inline/block HTML embedded in a Markdown/Org block.
@@ -148,6 +149,7 @@ export function rawHtmlPresentation(text: string, allowIframe = false): HtmlPres
     ALLOW_DATA_ATTR: false,
     IN_PLACE: true,
   });
+  for (const anchor of root.querySelectorAll("a[href]")) deferAnchorHref(anchor);
   for (const [element, kept] of colors) if (root.contains(element)) element.setAttribute("style", kept);
   for (const element of root.querySelectorAll<HTMLElement>("[src], [poster]")) {
     for (const attr of ["src", "poster"] as const) {

@@ -1,6 +1,7 @@
 import type { JSX } from "solid-js";
 import { backend } from "../backend";
-import { openOutboundLink, reportLinkOpenFailure } from "../components/ExternalLink";
+import { openOutboundLink, outboundAnchorAttrs, reportLinkOpenFailure } from "../components/ExternalLink";
+import type { AnchorDecision } from "../linkSchemePolicy";
 import { graphOwner, readOwned } from "../owned";
 import { graphMeta } from "../graphSession";
 import { filePathUrl, resolvedFilePath, type FileLinkTarget } from "./relativeFileLink";
@@ -11,28 +12,27 @@ import type { SpanDomAttrs } from "./spans";
  * Cost: lexical path resolution on render, one native command per click. */
 export function RelativeFileLink(props: {
   dest: string;
+  decision: AnchorDecision;
   target: FileLinkTarget;
   spanAttrs?: SpanDomAttrs;
   children: JSX.Element;
 }): JSX.Element {
   const resolved = () => resolvedFilePath(props.target, graphMeta()?.root ?? "");
+  const activate = () => {
+    const target = props.target;
+    if (target.kind === "outside") {
+      void openOutboundLink(filePathUrl(resolved()));
+    } else {
+      void readOwned(graphOwner(), backend().openGraphFile(target.path, backend().graphBindingGeneration()))
+        .catch((error) => reportLinkOpenFailure(props.dest, error));
+    }
+  };
   return (
     <a
       class="external-link file-link"
-      href={props.dest}
       title={resolved()}
       {...(props.spanAttrs ?? {})}
-      onClick={(event) => {
-        event.preventDefault();
-        event.stopPropagation();
-        const target = props.target;
-        if (target.kind === "outside") {
-          void openOutboundLink(filePathUrl(resolved()));
-        } else {
-          void readOwned(graphOwner(), backend().openGraphFile(target.path, backend().graphBindingGeneration()))
-            .catch((error) => reportLinkOpenFailure(props.dest, error));
-        }
-      }}
+      {...outboundAnchorAttrs(props.dest, props.decision, activate)}
     >
       {props.children}
     </a>
