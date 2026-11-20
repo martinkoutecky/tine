@@ -163,6 +163,44 @@ fn a_dated_file_read_by_path_after_delivery_reads_no_other_file() {
     }
 }
 
+/// Review db344b16e F1: on a case-folding volume two discovery candidates,
+/// `X 2026_11_02` (file-name format) and `x 2026_11_02` (title format), stat
+/// one file, here spelled `x 2026_11_02.md` on disk. A hard link stands for
+/// the other spelling and the canonicalization hook reports the disk
+/// spelling, as such a volume does. The late journal is published once, at
+/// its disk spelling: not under a spelling no directory lists, and not as a
+/// same-day conflict.
+#[test]
+fn a_late_journal_reached_by_two_spellings_is_one_claimant_at_its_disk_spelling() {
+    let root = graph(3);
+    fs::write(
+        root.path().join("logseq/config.edn"),
+        "{:preferred-format :markdown :journal/file-name-format \"X yyyy_MM_dd\" \
+         :journal/page-title-format \"x yyyy_MM_dd\"}\n",
+    )
+    .unwrap();
+    let store = open(root.path(), None);
+    store.whole_graph().unwrap();
+    // On Linux the watcher would list the hard link as a second file.
+    store.watch.stop_background_for_test();
+    let disk = root.path().join("journals/x 2026_11_02.md");
+    fs::write(&disk, "- late\n").unwrap();
+    fs::hard_link(&disk, root.path().join("journals/X 2026_11_02.md")).unwrap();
+    crate::path_identity::FOLDED_SPELLING.with(|hook| {
+        *hook.borrow_mut() = Some(Box::new(|path: &Path| {
+            (path.file_name()? == "X 2026_11_02.md").then(|| path.with_file_name("x 2026_11_02.md"))
+        }))
+    });
+    let read = store.page_named("x 2026_11_02", PageKind::Journal);
+    crate::path_identity::FOLDED_SPELLING.with(|hook| hook.borrow_mut().take());
+    let read = read.unwrap().expect("the day's file is found");
+    assert_eq!(read.id.as_str(), "journals/x 2026_11_02.md");
+    let view = store.whole_graph().unwrap();
+    let conflicts = view.inventory(InventoryScope::ConflictingFiles(None));
+    assert!(conflicts.0.is_empty(), "one file, one claimant");
+    store.close();
+}
+
 #[test]
 fn a_page_open_before_ready_needs_neither_the_load_nor_the_writer() {
     let root = graph(5);

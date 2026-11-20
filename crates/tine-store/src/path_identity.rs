@@ -32,7 +32,20 @@ pub(crate) fn new_graph_root(parent: &Path, name: &str) -> Result<PathBuf, crate
 pub(crate) fn canonical_existing_path(path: &Path) -> io::Result<PathBuf> {
     #[cfg(test)]
     CANONICALIZATIONS.with(|count| count.set(count.get() + 1));
+    #[cfg(test)]
+    if let Some(folded) = FOLDED_SPELLING.with(|hook| hook.borrow().as_ref().and_then(|f| f(path)))
+    {
+        return Ok(folded);
+    }
     canonical_existing_path_with(path, |path| fs::canonicalize(path))
+}
+
+#[cfg(test)]
+thread_local! {
+    /// Stands in for a case- or normalization-folding volume on this thread:
+    /// the disk spelling canonicalization reports for a path, if any.
+    pub(crate) static FOLDED_SPELLING: std::cell::RefCell<Option<Box<dyn Fn(&Path) -> Option<PathBuf>>>> =
+        std::cell::RefCell::new(None);
 }
 
 #[cfg(test)]
