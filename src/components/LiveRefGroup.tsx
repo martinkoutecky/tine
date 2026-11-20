@@ -1,6 +1,6 @@
 import { For, Show, batch, createEffect, createMemo, createSignal, createUniqueId, on, onCleanup, onMount, untrack, useContext, type JSX, type Signal } from "solid-js";
 import { nearestAncestors } from "../render/blockTrail";
-import { ownSelectionSurface, type OutlineSelectionTarget, type OutlineScope } from "../document";
+import { ownSelectionSurface, type OutlineScope } from "../document";
 import { bindLiveOutlineSelection, bindOutlineSelection } from "../outlineSelectionTarget";
 import { createGraphResource } from "../graphResource";
 import { backend } from "../backend";
@@ -79,8 +79,6 @@ function keepUnchanged<T extends object>(previous: Map<string, T> | undefined, e
 // reuses existing rows and never yanks the caret out of a block being edited.
 interface LiveRefGroupProps {
   selectionHost?: HTMLElement;
-  registerSelection?: (target: OutlineSelectionTarget) => () => void;
-  widenSelection?: OutlineSelectionTarget["widen"];
   /** Owner-provided identity for reference groups; never derived from a row. */
   heightKey?: string;
   page: string;
@@ -218,7 +216,7 @@ export function LiveRefGroup(props: LiveRefGroupProps): JSX.Element {
   const estimate = () => Math.max(1, props.blocks.reduce((lines, block) => lines + (block.page_property ? block.raw.split("\n").length : 1), 0)) * 1.9;
 
   return (
-    <div ref={host => { el = host; if (!props.selectionHost) bindOutlineSelection(host); }} class="live-ref-group" data-find-source-mounted={sourceMounted()}
+    <div ref={host => { el = host; if (!props.selectionHost && props.surface !== "preview") bindOutlineSelection(host); }} class="live-ref-group" data-find-source-mounted={sourceMounted()}
       style={!near() ? { "min-height": reserved() ? `${reserved()}px` : `${estimate()}em` } : undefined}>
       <ReservedGroupGeometryContext.Provider value={occurrence.geometry}>
       <Show when={near()}><MountedRefGroup {...props} occurrence={occurrence} geometryHost={() => el}
@@ -651,10 +649,8 @@ function MountedRefGroup(props: LiveRefGroupProps & { occurrence: RefOccurrence;
     splitAsChild: props.surface === "query" || props.surface === "ref" ? id => resultRootIds().has(id) : undefined,
   };
   onMount(() => {
-    const target = { scope, surface, widen: props.widenSelection };
     const host = props.selectionHost ?? props.geometryHost();
-    if (host) bindLiveOutlineSelection(host, { surface, read: () => target });
-    if (props.registerSelection) onCleanup(props.registerSelection(target));
+    if (host) bindLiveOutlineSelection(host, { scope, surface });
   });
   // GH #792: the one-level fold commands treat a query block's result rows as its children.
   if (props.surface === "query") onCleanup(registerQueryResultFold({

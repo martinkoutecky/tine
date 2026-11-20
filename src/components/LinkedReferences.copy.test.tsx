@@ -2,11 +2,13 @@ import { afterEach, beforeAll, expect, it, vi } from "vitest";
 import { render } from "solid-js/web";
 import { backend } from "../backend";
 import { clearClipboardPayload } from "../clipboard";
+import * as cut from "../cut";
 import { node, resetStore, selectedIds } from "../document";
 import { endEdit } from "../editorController";
 import { setGraphMeta } from "../graphSession";
 import { installKeybindings } from "../keybindings";
 import { resetNearObserverForTests } from "../lazyObserve";
+import { exitPaneSelect } from "../paneSelect";
 import { resetReferenceSectionState } from "../referenceSectionState";
 import { initParser } from "../render/parse";
 import { mainPaneRouter, resetTabsToJournals } from "../router";
@@ -51,6 +53,7 @@ afterEach(() => {
   setBlockReferencesRequest(null);
   clearClipboardPayload();
   resetStore();
+  exitPaneSelect();
   setGraphMeta(null);
   resetTabsToJournals();
   resetNearObserverForTests();
@@ -306,7 +309,7 @@ it("keeps child and grandchild levels after Ctrl+A with multiple reference group
   expect(roots[1].querySelector(":scope > ul > li")?.textContent).toBe(nestedHit.children[0].raw);
 });
 
-it("copies trees from reference whitespace and widens only to loaded groups", async () => {
+it("copies only the clicked group after repeated select all", async () => {
   setGraphMeta({ root: "/graphs/A", ref_default_open_blocks_level: 5 } as never);
   const grandchild = block("alpha-grandchild", "Alpha grandchild");
   const tree = { ...hit, children: [{ ...hit.children[0], children: [grandchild] }] };
@@ -317,21 +320,20 @@ it("copies trees from reference whitespace and widens only to loaded groups", as
   const reads = readByPath.mock.calls.length;
   const submit = vi.spyOn(backend(), "pageSubmit");
   expect(readByPath).not.toHaveBeenCalledWith("pages/Gamma.md");
+  root.querySelector<HTMLElement>(".linked-references")!.click();
+  expect(press("a", { ctrlKey: true }).defaultPrevented).toBe(false);
+  expect(selectedIds()).toEqual([]);
   const [alphaGroup, betaGroup, gammaGroup] = root.querySelectorAll<HTMLElement>(".reference-group");
   root.tabIndex = -1;
   root.focus(); // The browser gives the clicked group's pane scroller keyboard focus.
   alphaGroup.click();
-  const alpha = "- Alpha reference [[Target]]\n\t- Alpha child\n\t\t- Alpha grandchild\n- Other Alpha reference [[Target]]\n\t- Other Alpha child";
-  const beta = "- Beta reference [[Target]]\n\t- Beta child\n\t\t- Beta grandchild";
-  for (const [index, plain] of [alpha, [alpha, beta].join("\n"), [alpha, beta].join("\n")].entries()) {
-    expect(press("a", { ctrlKey: true }, root).defaultPrevented, `select-all press ${index + 1}`).toBe(true);
-    expect(press("c", { ctrlKey: true }, root).defaultPrevented).toBe(true);
-    expect(writeRich).toHaveBeenCalledTimes(index + 1);
-    expect(writeRich.mock.calls[index][0]).toBe(plain);
-    const html = new DOMParser().parseFromString(writeRich.mock.calls[index][1], "text/html");
-    const grandchildren = [...html.querySelectorAll("body > ul > li > ul > li > ul > li")].map(li => li.textContent);
-    expect(grandchildren).toEqual(index === 0 ? ["Alpha grandchild"] : ["Alpha grandchild", "Beta grandchild"]);
-  }
+  expect(press("a", { ctrlKey: true }, root).defaultPrevented).toBe(true);
+  expect(press("a", { ctrlKey: true }, root).defaultPrevented).toBe(true);
+  expect(press("c", { ctrlKey: true }, root).defaultPrevented).toBe(true);
+  expect(writeRich).toHaveBeenCalledTimes(1);
+  expectClipboard(writeRich.mock.lastCall!, [tree, nestedHit]);
+  expect(selectedIds()).toEqual([]);
+  expect(press("Delete").defaultPrevented).toBe(false);
   betaGroup.querySelector<HTMLButtonElement>(".reference-group-disclosure")!.click();
   expect(press("c", { ctrlKey: true }).defaultPrevented).toBe(false);
   gammaGroup.click();
@@ -343,7 +345,7 @@ it("copies trees from reference whitespace and widens only to loaded groups", as
 
 it("selects the routed page outline from blank space and preserves native select-all in fields", async () => {
   const { root, writeRich } = await mountTarget();
-  root.querySelector<HTMLElement>(".page-blocks")!.click();
+  const body = root.querySelector<HTMLElement>(".page-blocks")!;
   for (const field of [document.createElement("input"), document.createElement("textarea"), document.createElement("div")]) {
     if (field.tagName === "DIV") field.setAttribute("contenteditable", "true");
     root.append(field);
@@ -351,13 +353,16 @@ it("selects the routed page outline from blank space and preserves native select
     expect(press("a", { ctrlKey: true }, field).defaultPrevented).toBe(false);
     field.remove();
   }
+  body.click();
   expect(press("a", { ctrlKey: true }).defaultPrevented).toBe(true);
+  expect(press("c", { ctrlKey: true }).defaultPrevented).toBe(true);
+  expect(writeRich.mock.calls[0][0]).toBe("- Target page body");
   const dialog = document.createElement("div");
   dialog.setAttribute("role", "dialog");
   root.append(dialog);
+  body.click();
   expect(press("a", { ctrlKey: true }, dialog).defaultPrevented).toBe(false);
-  expect(press("c", { ctrlKey: true }).defaultPrevented).toBe(true);
-  expect(writeRich.mock.calls[0][0]).toBe("- Target page body");
+  expect(selectedIds()).toEqual([]);
 });
 
 it.each([false, true])("copies every reference root when expanded context repeats the first hit (trailing group: %s)", async (trailing) => {
@@ -375,15 +380,13 @@ it.each([false, true])("copies every reference root when expanded context repeat
   expect(alpha.querySelectorAll(`[data-block-id="${hit.id}"]`)).toHaveLength(2);
   alpha.click();
   const expected = [hit.raw, other.raw, ...(trailing ? [trailingHit.raw] : [])];
-  for (const roots of [expected, [...expected, coldHit.raw]]) {
-    expect(press("a", { ctrlKey: true }).defaultPrevented).toBe(true);
-    expect(press("c", { ctrlKey: true }).defaultPrevented).toBe(true);
-    const [plain, html] = writeRich.mock.lastCall!;
-    expect(plain.split("\n").filter(line => line.startsWith("- "))).toEqual(roots.map(raw => `- ${raw}`));
-    expect(plain).toContain(`\n\t- ${hit.children[0].raw}`);
-    const copied = new DOMParser().parseFromString(html, "text/html");
-    expect([...copied.querySelectorAll("body > ul > li")].map(li => li.firstChild?.textContent)).toEqual(roots);
-  }
+  expect(press("a", { ctrlKey: true }).defaultPrevented).toBe(true);
+  expect(press("c", { ctrlKey: true }).defaultPrevented).toBe(true);
+  const [plain, html] = writeRich.mock.lastCall!;
+  expect(plain.split("\n").filter(line => line.startsWith("- "))).toEqual(expected.map(raw => `- ${raw}`));
+  expect(plain).toContain(`\n\t- ${hit.children[0].raw}`);
+  const copied = new DOMParser().parseFromString(html, "text/html");
+  expect([...copied.querySelectorAll("body > ul > li")].map(li => li.firstChild?.textContent)).toEqual(expected);
 });
 
 it.each(["group to group", "Linked to Unlinked", "page to embed"])("starts in the newly clicked outline from %s", async (journey) => {
@@ -436,6 +439,74 @@ function hitBlank(at: Element) {
   at.dispatchEvent(new MouseEvent("pointerdown", { bubbles: true, button: 0 }));
   at.dispatchEvent(new MouseEvent("click", { bubbles: true, detail: 1 }));
 }
+
+it.each(["Shift-click", "click elsewhere", "Escape"])("ends blank selection on %s before two Deletes", async gesture => {
+  const sibling = block("untouched-sibling", "Undisplayed source sibling");
+  const { root, liveRow } = await mountTarget([
+    { ...sources[0], blocks: [hit, { ...sources[0].blocks[1], children: [nestedHit, sibling] }] },
+    ...sources.slice(1),
+  ], groups, ["Alpha", "Beta"]);
+  await vi.waitFor(() => expect(liveRow(coldHit.id)).not.toBeNull());
+  const submit = vi.spyOn(backend(), "pageSubmit");
+  const group = liveRow(hit.id)!.closest(".reference-group")!;
+  hitBlank(group);
+  expect(press("a", { ctrlKey: true }).defaultPrevented).toBe(true);
+  expect(selectedIds()).toContain(nestedHit.id);
+  if (gesture === "Shift-click") {
+    const content = liveRow(hit.id)!.querySelector(".block-content-wrapper")!;
+    for (const type of ["pointerdown", "mousedown", "click"]) {
+      content.dispatchEvent(new MouseEvent(type, { bubbles: true, cancelable: true, shiftKey: true, detail: 1 }));
+    }
+  } else if (gesture === "click elsewhere") {
+    hitBlank(root);
+  } else press("Escape");
+  const afterGesture = selectedIds();
+  const deleted = [press("Delete"), press("Delete")];
+  expect(afterGesture).toEqual([]);
+  expect(selectedIds()).toEqual([]);
+  expect(deleted.every(e => !e.defaultPrevented)).toBe(true);
+  for (const block of [hit, hit.children[0], nestedHit, sibling, coldHit, target.blocks[0]]) {
+    expect(node(block.id)?.raw).toBe(block.raw);
+  }
+  expect(submit).not.toHaveBeenCalled();
+});
+
+it.each([".embed-action-source", ".qc-actions summary"].flatMap(control => [false, true].map(selected => ({ control, selected }))))(
+  "retires a blank page hit when focus moves to $control (already selected: $selected)", async ({ control, selected }) => {
+    const embedded = page("Embedded", [block("focus-embed-root", "Embed source")]);
+    const routed = { ...target, blocks: [
+      ...target.blocks, block("focus-embed-host", "{{embed [[Embedded]]}}"),
+      block("focus-query-host", "{{query (task TODO)}}"),
+    ] };
+    backendReadsQueries({ "(task TODO)": { form: "(task TODO)" } });
+    vi.spyOn(backend(), "queryRun").mockResolvedValue(blockRunResult([groups[1]]));
+    const { root } = await mountTarget([...sources, embedded], groups, ["Alpha", "Beta", "Embedded"], routed);
+    const button = await vi.waitFor(() => {
+      const element = root.querySelector<HTMLElement>(control);
+      expect(element).not.toBeNull();
+      return element!;
+    });
+    const submit = vi.spyOn(backend(), "pageSubmit");
+    hitBlank(root.querySelector(".page-blocks")!);
+    if (selected) {
+      expect(press("a", { ctrlKey: true }).defaultPrevented).toBe(true);
+      expect(selectedIds()).toEqual(routed.blocks.map(block => block.id));
+    }
+    button.focus();
+    expect(document.activeElement).toBe(button);
+    const afterFocus = selectedIds();
+    const select = press("a", { ctrlKey: true }, button);
+    const remove = press("Delete", {}, button);
+    expect(afterFocus).toEqual([]);
+    expect(select.defaultPrevented).toBe(false);
+    expect(remove.defaultPrevented).toBe(false);
+    expect(selectedIds()).toEqual([]);
+    for (const block of [...routed.blocks, embedded.blocks[0], hit, coldHit]) {
+      expect(node(block.id)?.raw).toBe(block.raw);
+    }
+    expect(submit).not.toHaveBeenCalled();
+  },
+);
 
 const blankSurfaces = [
   ["Linked References", ".linked-references", coldHit.id],
@@ -519,49 +590,23 @@ function expectClipboard([plain, html]: [string, string], roots: BlockDto[]) {
   expect(tree(copied.querySelector("body > ul"))).toEqual(expected(roots));
 }
 
-it.each([false, true])("copies the last folded root's subtree after select all (widened: %s)", async widened => {
-  const { root, liveRow, writeRich } = await mountTarget(sources, groups, ["Alpha", "Beta"]);
+it("copies the last folded root's subtree from the clicked group", async () => {
+  const { liveRow, writeRich } = await mountTarget(sources, groups, ["Alpha", "Beta"]);
   const beta = await vi.waitFor(() => {
     const row = liveRow(coldHit.id);
     expect(row).not.toBeNull();
     return row!.closest<HTMLElement>(".reference-group")!;
   });
-  const start = widened ? root.querySelector<HTMLElement>(".linked-references .reference-group")! : beta;
-  start.click();
-  press("a", { ctrlKey: true });
-  if (widened) press("a", { ctrlKey: true });
   expect(liveRow("beta-child")).not.toBeNull();
   liveRow(coldHit.id)!.querySelector<HTMLElement>(".collapse-toggle.has-children")!.click();
   expect(liveRow("beta-child")).toBeNull();
-  expect(press("c", { ctrlKey: true }).defaultPrevented).toBe(true);
-  expectClipboard(writeRich.mock.lastCall!, widened ? [hit, nestedHit, coldHit] : [coldHit]);
-});
-
-it("steps back through both ends of a selection whose breadcrumb repeats a hit", async () => {
-  const q = block("alpha-q", "Second hit [[Target]]");
-  const r = block("alpha-r", "Third hit [[Target]]");
-  const { root, writeRich } = await mountTarget(
-    [{ ...sources[0], blocks: [hit, q, r] }, ...sources.slice(1)],
-    [{ ...groups[0], blocks: [hit, q, r, hit.children[0]].map(shallow) }, ...groups.slice(1)],
-  );
-  const alpha = root.querySelector<HTMLElement>(".linked-references .reference-group")!;
-  alpha.querySelector<HTMLElement>(".ref-crumb[role=button]")!.click();
-  expect(alpha.querySelectorAll(`[data-block-id="${hit.id}"]`)).toHaveLength(2);
-  alpha.click();
+  beta.click();
   press("a", { ctrlKey: true });
-  for (const [key, roots] of [
-    ["ArrowUp", [hit, q, r]], // The last visible child back to its repeated parent.
-    ["ArrowUp", [hit, q, r]], // The repeated parent back to R.
-    ["ArrowUp", [hit, q]],
-    ["ArrowDown", [hit, q, r]], // Reverse back to R.
-  ] as const) {
-    expect(press(key, { shiftKey: true }).defaultPrevented).toBe(true);
-    expect(press("c", { ctrlKey: true }).defaultPrevented).toBe(true);
-    expectClipboard(writeRich.mock.lastCall!, [...roots]);
-  }
+  expect(press("c", { ctrlKey: true }).defaultPrevented).toBe(true);
+  expectClipboard(writeRich.mock.lastCall!, [coldHit]);
 });
 
-it.each(["plain", "full text", "widened live breadcrumb", "direct Delete"])("leaves Unlinked Reference excerpts out of Copy and Delete (%s)", async mode => {
+it.each(["plain", "full text", "live breadcrumb", "direct Delete"])("leaves Unlinked Reference excerpts out of Copy and Delete (%s)", async mode => {
   const mention = block("mention", "Mention of Target");
   const excerpt = block("excerpt", "Another mention of Target", [block("hidden", "Undisplayed child")]);
   const parent = block("mention-parent", "Breadcrumb parent", [mention]);
@@ -580,16 +625,17 @@ it.each(["plain", "full text", "widened live breadcrumb", "direct Delete"])("lea
   if (mode === "full text") {
     group.querySelector<HTMLElement>('[data-reference-block="excerpt"] .reference-show-full')!.click();
   }
-  if (mode === "widened live breadcrumb") {
+  if (mode === "live breadcrumb") {
     group.querySelector<HTMLElement>(".ref-crumb[role=button]")!.click();
     expect(liveRow(parent.id)).not.toBeNull();
   }
   hitBlank(group);
   press("a", { ctrlKey: true });
-  if (mode === "widened live breadcrumb") {
-    press("a", { ctrlKey: true });
+  if (mode === "live breadcrumb") {
     press("c", { ctrlKey: true });
     expectClipboard(writeRich.mock.lastCall!, [parent]);
+    hitBlank(group);
+    press("a", { ctrlKey: true });
   } else if (mode !== "direct Delete") {
     expect(press("c", { ctrlKey: true }).defaultPrevented).toBe(false);
     expect(writeRich).not.toHaveBeenCalled();
@@ -598,10 +644,10 @@ it.each(["plain", "full text", "widened live breadcrumb", "direct Delete"])("lea
   expect(node(excerpt.id)?.raw).toBe(excerpt.raw);
   expect(node("hidden")?.raw).toBe("Undisplayed child");
   expect(node(hit.id)?.raw).toBe(hit.raw);
-  expect(!!node(parent.id)).toBe(mode !== "widened live breadcrumb");
+  expect(!!node(parent.id)).toBe(mode !== "live breadcrumb");
 });
 
-it("leaves the undisplayed parent and sibling intact on a second Delete", async () => {
+it.each(["Delete", "Backspace", "Cut"])("leaves the undisplayed parent and sibling intact after %s then Delete", async gesture => {
   const sibling = block("beta-unrelated", "Other child of the source parent");
   const parent = block("beta-parent", "Unselected parent", [coldHit, sibling]);
   const { root } = await mountTarget(
@@ -614,11 +660,36 @@ it("leaves the undisplayed parent and sibling intact on a second Delete", async 
   });
   hitBlank(group);
   press("a", { ctrlKey: true });
-  press("Delete");
-  expect(node(coldHit.id)).toBeUndefined();
-  press("Delete");
+  expect(selectedIds()).toEqual([coldHit.id, coldHit.children[0].id, coldHit.children[0].children[0].id]);
+  expect((gesture === "Cut" ? press("x", { ctrlKey: true }) : press(gesture)).defaultPrevented).toBe(true);
+  await vi.waitFor(() => expect(node(coldHit.id)).toBeUndefined());
+  expect(selectedIds()).toEqual([]);
+  expect(press("Delete").defaultPrevented).toBe(false);
   expect(node(parent.id)?.children).toEqual([sibling.id]);
   expect(node(sibling.id)?.raw).toBe(sibling.raw);
+  expect(node(hit.id)?.raw).toBe(hit.raw);
+  expect(node(target.blocks[0].id)?.raw).toBe(target.blocks[0].raw);
+});
+
+it("leaves a pending Cut as a copy after the same group is selected again", async () => {
+  const { root, writeRich } = await mountTarget();
+  const write = Promise.withResolvers<void>();
+  writeRich.mockReturnValueOnce(write.promise);
+  const operation = vi.spyOn(cut, "cutBlocks");
+  const group = root.querySelector(".linked-references .reference-group")!;
+  hitBlank(group);
+  expect(press("a", { ctrlKey: true }).defaultPrevented).toBe(true);
+  expect(press("x", { ctrlKey: true }).defaultPrevented).toBe(true);
+  hitBlank(group);
+  expect(selectedIds()).toEqual([]);
+  expect(press("a", { ctrlKey: true }).defaultPrevented).toBe(true);
+  write.resolve();
+  await operation.mock.results[0].value;
+  expectClipboard(writeRich.mock.lastCall!, [hit, nestedHit]);
+  expect(selectedIds()).toContain(hit.id);
+  expect(node(hit.id)?.raw).toBe(hit.raw);
+  expect(node(nestedHit.id)?.raw).toBe(nestedHit.raw);
+  expect(node(target.blocks[0].id)?.raw).toBe(target.blocks[0].raw);
 });
 
 it("uses the live reference outline after a blank hit on its cold shell", async () => {
@@ -631,35 +702,6 @@ it("uses the live reference outline after a blank hit on its cold shell", async 
   expect(press("a", { ctrlKey: true }).defaultPrevented).toBe(true);
   press("c", { ctrlKey: true });
   expectClipboard(writeRich.mock.lastCall!, [coldHit]);
-});
-
-it("keeps a live-row hit when its reference outline retires into the shell", async () => {
-  const { liveRow, writeRich } = await mountTarget();
-  const row = liveRow(hit.id)!;
-  const disclosure = row.closest(".reference-group")!.querySelector(".reference-group-disclosure")!;
-  const toggle = () => disclosure.dispatchEvent(new MouseEvent("click", { bubbles: true, detail: 1 }));
-  hitBlank(row);
-  toggle();
-  expect(row.isConnected).toBe(false);
-  expect(press("a", { ctrlKey: true }).defaultPrevented).toBe(true);
-  expect(press("c", { ctrlKey: true }).defaultPrevented).toBe(false);
-  toggle();
-  await vi.waitFor(() => expect(liveRow(hit.id)).not.toBeNull());
-  expect(press("a", { ctrlKey: true }).defaultPrevented).toBe(true);
-  press("c", { ctrlKey: true });
-  expectClipboard(writeRich.mock.lastCall!, [hit, nestedHit]);
-});
-
-it("keeps a blank hit when a breadcrumb replaces the clicked live row", async () => {
-  const { liveRow, writeRich } = await mountTarget();
-  const original = liveRow(nestedHit.id)!;
-  const alpha = original.closest(".reference-group")!;
-  hitBlank(original);
-  alpha.querySelector(".ref-crumb[role=button]")!.dispatchEvent(new MouseEvent("click", { bubbles: true, detail: 1 }));
-  expect(original.isConnected).toBe(false);
-  expect(press("a", { ctrlKey: true }).defaultPrevented).toBe(true);
-  press("c", { ctrlKey: true });
-  expectClipboard(writeRich.mock.lastCall!, [hit, sources[0].blocks[1]]);
 });
 
 it.each(["keyboard", "Shift-click", "drag"])("keeps the full reference range after Ctrl+A and a fold (%s)", async gesture => {
@@ -702,7 +744,7 @@ it.each(["keyboard", "Shift-click", "drag"])("keeps the full reference range aft
   expectClipboard(writeRich.mock.lastCall!, [first, last]);
 });
 
-it("uses the blank selection scope for Shift-click in a routed comment group", async () => {
+it("copies the clicked comment group on a routed page", async () => {
   const comment = (id: string, text: string, children: BlockDto[] = []) => ({
     ...block(id, `${text}\ntine.quote:: words`, children), properties: [["tine.quote", "words"]] as [string, string][],
   });
@@ -720,9 +762,6 @@ it("uses the blank selection scope for Shift-click in a routed comment group", a
   hitBlank(group);
   expect(press("a", { ctrlKey: true }).defaultPrevented).toBe(true);
   expect(selectedIds()).toEqual([first.id, second.id, "reply-2", third.id]);
-  group.querySelector('[data-block-id="thread-2"] > .block-main .block-content-wrapper')!
-    .dispatchEvent(new MouseEvent("mousedown", { bubbles: true, cancelable: true, shiftKey: true }));
-  expect(selectedIds()).toEqual([first.id, second.id, "reply-2"]);
   expect(press("c", { ctrlKey: true }).defaultPrevented).toBe(true);
   expect(writeRich.mock.lastCall?.[0]).toContain("\t- Nested reply");
   const html = new DOMParser().parseFromString(writeRich.mock.lastCall![1], "text/html");

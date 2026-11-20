@@ -31,7 +31,7 @@ export function CommentGroup(props: { ids: readonly string[]; render?: (id: stri
     return !!parent && !!selector() && passageKey(parent.raw, selector()!, formatForBlock(first())) !== null;
   };
   return <div class="comment-group" data-comment-group={first()}
-    ref={el => bindOutlineSelection(el, { surface: selectionSurface, read: () => ({ scope }) })}>
+    ref={el => bindOutlineSelection(el, { surface: selectionSurface, scope })}>
     <Show when={props.ids.length > 1}><CommentQuoteHeader parentId={firstNode().parent} selector={selector()} /></Show>
     <CommentGroupContext.Provider value={() => props.ids}>
       <For each={scope.roots}>{id => props.render ? props.render(id) : <Block id={id} />}</For>

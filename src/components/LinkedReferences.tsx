@@ -1,7 +1,7 @@
 import { createReferenceGroupCollapse } from "../referenceGroupCollapse";
 import { bulkCollapseTarget } from "../collapseToggle";
 import { t } from "../i18n";
-import { For, Show, createResource, createSignal, createMemo, createEffect, createUniqueId, mergeProps, on, onCleanup, onMount, useContext, type JSX } from "solid-js";
+import { For, Show, createResource, createSignal, createMemo, createEffect, mergeProps, on, onCleanup, onMount, type JSX } from "solid-js";
 import { backend } from "../backend";
 import { classifyReferenceLoadError, referenceLoadErrorMessage, type ReferenceLoadError } from "../referenceLoadError";
 import { graphOwner, latestOwner, readOwned } from "../owned";
@@ -26,8 +26,7 @@ import { ReferenceDisclosure } from "./ReferenceDisclosure";
 import { createMembershipResource, groupsContainEdit } from "../resultMembership";
 import { activeSurface } from "../editorController";
 import { navigationName } from "../pageIndex";
-import { node, ownSelectionSurface, readPageProperty, setPageProperty, type OutlineSelectionTarget, type OutlineScope } from "../document";
-import { SurfaceContext } from "./Block";
+import { readPageProperty, setPageProperty } from "../document";
 import { bindOutlineSelection } from "../outlineSelectionTarget";
 import { parseReferenceFilters, writeReferenceFilters } from "../referenceFilters";
 import { referenceKey, referenceRevision, registerUnlinkedReader } from "../referenceKeys";
@@ -127,32 +126,6 @@ export function ReferenceSection(input: { name: string; unlinked?: boolean; jour
   const name = createMemo(() => input.name);
   const props = mergeProps(input, { get name() { return name(); } });
   const section = props.unlinked ? "unlinked" : "linked";
-  const surface = `references:${createUniqueId()}`;
-  ownSelectionSurface(surface, name, useContext(SurfaceContext));
-  const mountedOutlines = new Map<OutlineSelectionTarget, () => number>();
-  // SELALL-793: Logseq stops at all blocks in its current outline. Tine's
-  // section rung snapshots the loaded groups, in display order, then stops.
-  const widenSelection = (): OutlineSelectionTarget | undefined => {
-    const roots: string[] = [];
-    const members: string[] = [];
-    const byPage = new Map<string, OutlineScope>();
-    for (const [target] of [...mountedOutlines].sort(([, a], [, b]) => a() - b())) {
-      const group = target.scope.roots;
-      const page = group.length ? node(group[0])?.page : undefined;
-      if (page === undefined) continue;
-      roots.push(...group);
-      members.push(target.surface);
-      byPage.set(page, target.scope);
-    }
-    if (!roots.length) return undefined;
-    return {
-      surface, members,
-      scope: {
-        roots, navOnly: true,
-        collapsed: (id, stored) => byPage.get(node(id)?.page ?? "")?.collapsed?.(id, stored) ?? stored,
-      },
-    };
-  };
   const heading = () => t(props.unlinked ? "references-unlinked" : "references-linked");
   const savedFilterKey = () => props.unlinked ? `unlinked\0${props.name}` : props.name;
   const readScope = {};
@@ -475,10 +448,7 @@ export function ReferenceSection(input: { name: string; unlinked?: boolean; jour
       <Show when={exportChooserOpen()}>
         <ReferenceExportChooser subject={heading()} groups={shown()} onClose={() => setExportChooserOpen(false)} />
       </Show>
-      <div ref={el => {
-        bindOutlineSelection(el, { surface, read: widenSelection });
-        onMount(() => onCleanup(trackViewportAnchor(el)));
-      }} class={`${section}-references`}
+      <div ref={el => onMount(() => onCleanup(trackViewportAnchor(el)))} class={`${section}-references`}
         {...{
           [FIND_REFERENCES_ATTR]: section, [FIND_REFERENCES_PAGE_ATTR]: props.name,
           // Unlinked answers only once opened; known-empty has nothing to search.
@@ -648,11 +618,6 @@ export function ReferenceSection(input: { name: string; unlinked?: boolean; jour
                   >
                     <LiveRefGroup
                       selectionHost={host}
-                      widenSelection={widenSelection}
-                      registerSelection={target => {
-                        mountedOutlines.set(target, index);
-                        return () => { mountedOutlines.delete(target); };
-                      }}
                       heightKey={`page-refs:${props.name}`}
                       page={group().page}
                       kind={group().kind}

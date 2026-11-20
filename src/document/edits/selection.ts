@@ -89,7 +89,7 @@ function selectableRows(id: string, order: string[]): string[] {
 type Endpoint = string | { id: string; occurrence: number };
 const [selAnchor, setSelAnchor] = createSignal<Endpoint | null>(null);
 const [selFocus, setSelFocus] = createSignal<Endpoint | null>(null);
-const [wholeRoots, setWholeRoots] = createSignal<string[] | null>(null);
+const [wholeSelection, setWholeSelection] = createSignal<{ roots: string[]; blank: boolean } | null>(null);
 const [selectionView, setSelectionView] = createSignal<{ id: string; scope: OutlineScope | null } | null>(null);
 
 // View topology belongs to the selection, not its moving endpoints. Rebuild
@@ -175,8 +175,8 @@ function exactRoots(ids: string[]) {
 // Repeated query rows need an explicit union of their subtrees; distinct query
 // rows use the same interval and ancestor membership as an ordinary outline.
 const selectionState = createRoot(() => createMemo(() => {
-  const whole = wholeRoots();
-  if (whole) return { topology: null, lo: 0, hi: -1, exact: exactRoots(whole) };
+  const whole = wholeSelection();
+  if (whole) return { topology: null, lo: 0, hi: -1, exact: exactRoots(whole.roots) };
   const a = selAnchor();
   const f = selFocus();
   const topology = selectionTopology();
@@ -340,7 +340,6 @@ export function isSelected(id: string): boolean {
 // Hierarchical Ctrl/Cmd+A (GH #262): the ancestor whose visible subtree the
 // current select-all sequence covers. Any other selection mutation resets it.
 let selectAllHead: string | null = null;
-let widenOutline: OutlineSelectionTarget["widen"];
 // Remember crossed subtree boundaries so reversal can restore a nested anchor
 // after an upward step selected its parent. Entries are indices in this topology.
 let keyboardPath: number[] = [];
@@ -350,20 +349,18 @@ export function selectBlock(id: string, scope: OutlineScope | null = null, surfa
   startBlockSelection(id, scope, surface);
 }
 
-/** A rendered outline and its lifetime, optionally with a wider loaded outline. */
+/** A rendered outline and its lifetime. */
 export interface OutlineSelectionTarget {
   scope: OutlineScope;
   surface: string;
-  widen?: () => OutlineSelectionTarget | undefined;
-  members?: readonly string[];
 }
 
-function selectWholeRoots(roots: string[]) {
+function selectWholeRoots(roots: string[], blank = false) {
   selectAllHead = null;
-  batch(() => { setWholeRoots(roots); setSelectionView(null); setSelAnchor(null); setSelFocus(null); });
+  batch(() => { setWholeSelection({ roots, blank }); setSelectionView(null); setSelAnchor(null); setSelFocus(null); });
 }
 
-function startBlockSelection(id: string, scope: OutlineScope | null, surface: string, whole?: OutlineSelectionTarget & { roots: string[] }) {
+function startBlockSelection(id: string, scope: OutlineScope | null, surface: string, blankRoots?: string[]) {
   const owner = selectionSurfaces.get(surface);
   endEdit("select-block");
   notifyOutlineSelectionStarted(id);
@@ -371,18 +368,13 @@ function startBlockSelection(id: string, scope: OutlineScope | null, surface: st
   selectedSurfaces = owner ? new Set() : undefined;
   selectedSurfaceKey = owner ? surface : undefined;
   for (let selected = owner; selected; selected = selected.parent) selectedSurfaces!.add(selected);
-  for (const key of whole?.members ?? []) {
-    const member = selectionSurfaces.get(key);
-    if (member) selectedSurfaces?.add(member);
-  }
   activeSelectionScope = scope;
   selectAllHead = null;
-  widenOutline = whole?.widen;
   keyboardPath = [];
   keyboardTopology = null;
-  if (whole) selectWholeRoots(whole.roots);
+  if (blankRoots) selectWholeRoots(blankRoots, true);
   else batch(() => {
-    setWholeRoots(null);
+    setWholeSelection(null);
     setSelectionView({ id, scope });
     setSelAnchor(id);
     setSelFocus(id);
@@ -391,26 +383,19 @@ function startBlockSelection(id: string, scope: OutlineScope | null, surface: st
 export function clearSelection() {
   selectedSurfaces = undefined;
   selectedSurfaceKey = undefined;
-  batch(() => { setSelAnchor(null); setSelFocus(null); setSelectionView(null); setWholeRoots(null); });
+  batch(() => { setSelAnchor(null); setSelFocus(null); setSelectionView(null); setWholeSelection(null); });
   activeSelectionScope = null;
   selectAllHead = null;
-  widenOutline = undefined;
   keyboardPath = [];
   keyboardTopology = null;
 }
-/** Retire structural selection when blank space belongs to another outline.
- * Journals days share a pane surface but have separate source pages. Compare
- * ownership in O(1), with the existing membership updates on retirement. */
-export function clearSelectionOutsideOutline(surface: string | undefined, page?: string) {
-  const at = selAnchor();
-  const anchor = at === null ? wholeRoots()?.[0] : endpointId(at);
-  if (anchor && (surface === undefined || surface !== selectedSurfaceKey ||
-      (page !== undefined && doc.byId[anchor]?.page !== page))) clearSelection();
-}
+/** Whether the current selection came from blank-space Ctrl/Cmd+A. O(1). */
+export function hasBlankOutlineSelection(): boolean { return wholeSelection()?.blank === true; }
+
 // Whole selections need a visible order only when a gesture moves an endpoint.
 function topologyForRange() {
   if (!selectionView()) {
-    const id = wholeRoots()?.find(id => !!doc.byId[id]);
+    const id = wholeSelection()?.roots.find(id => !!doc.byId[id]);
     if (id) setSelectionView({ id, scope: activeSelectionScope });
   }
   return selectionTopology();
@@ -419,6 +404,7 @@ function topologyForRange() {
 /** Extend the current block selection's focus to `id` (mouse-drag / shift-click).
  *  Starts a fresh selection anchored at `id` if none is active. */
 export function extendSelectionTo(id: string, scope: OutlineScope | null = activeSelectionScope) {
+  if (hasBlankOutlineSelection()) { clearSelection(); return; }
   notifyOutlineSelectionStarted(id);
   if (!hasSelection()) {
     activeSelectionScope = scope;
@@ -429,19 +415,19 @@ export function extendSelectionTo(id: string, scope: OutlineScope | null = activ
   const topology = topologyForRange();
   if (!topology.index.has(id)) return;
   selectAllHead = null;
-  widenOutline = undefined;
   keyboardPath = [];
   batch(() => {
-    if (wholeRoots()) setSelAnchor(endpointAt(topology, 0));
-    setWholeRoots(null);
+    if (wholeSelection()) setSelAnchor(endpointAt(topology, 0));
+    setWholeSelection(null);
     setSelFocus(id);
   });
 }
 export function hasSelection(): boolean {
-  return wholeRoots() !== null || selAnchor() !== null;
+  return wholeSelection() !== null || selAnchor() !== null;
 }
 export function moveSelection(dir: 1 | -1, extend: boolean) {
-  const whole = wholeRoots();
+  if (hasBlankOutlineSelection()) { clearSelection(); return; }
+  const whole = wholeSelection();
   const f = selFocus();
   if (!whole && f === null) return;
   const topology = topologyForRange();
@@ -478,10 +464,9 @@ export function moveSelection(dir: 1 | -1, extend: boolean) {
   else keyboardPath.push(ni);
   const next = endpointAt(topology, ni);
   selectAllHead = null;
-  widenOutline = undefined;
   batch(() => {
     if (whole && extend) setSelAnchor(endpointAt(topology, 0));
-    setWholeRoots(null);
+    setWholeSelection(null);
     setSelFocus(next);
     if (!extend) setSelAnchor(next);
   });
@@ -496,21 +481,20 @@ export function selectBlockSubtree(id: string, scope: OutlineScope | null = null
   selectAllHead = id;
 }
 
-/** Ctrl/Cmd+A from whitespace selects the supplied outline. A repeated press
- *  can take its wider loaded outline, if supplied. In block-selection mode
- *  otherwise, widen the selection one
+/** Ctrl/Cmd+A from whitespace selects the supplied outline. In ordinary
+ *  block-selection mode, widen the selection one
  *  ancestor level at a time — subtree, parent subtree, …, the whole visible
  *  outline, where it stays (idempotent) — or start the ladder at the current
  *  selection's anchor when no select-all sequence is in progress (GH #262). */
 export function expandBlockSelection(target?: OutlineSelectionTarget) {
-  const whole = target ?? widenOutline?.();
-  if (whole) {
-    const roots = whole.scope.roots;
+  if (target) {
+    const roots = target.scope.roots;
     const id = roots.find(id => !!doc.byId[id]);
-    if (id) startBlockSelection(id, whole.scope, whole.surface, { ...whole, roots: selectableRows(id, [...roots]) });
+    if (id) startBlockSelection(id, target.scope, target.surface, selectableRows(id, [...roots]));
+    else clearSelection();
     return;
   }
-  if (wholeRoots()) return;
+  if (wholeSelection()) return;
   keyboardPath = [];
   const anchor = selAnchor();
   const focus = selFocus();
@@ -610,7 +594,7 @@ export function selectionIncludesPage(page: string): boolean {
 }
 
 function selectionRemovalSurvivor(): string | null {
-  if (wholeRoots()) return null;
+  if (wholeSelection()) return null;
   const roots = topSelected();
   const first = roots[0];
   const last = roots.at(-1);
