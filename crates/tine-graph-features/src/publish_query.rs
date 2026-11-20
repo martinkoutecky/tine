@@ -789,10 +789,8 @@ fn app_files(
     Ok(())
 }
 
-/// Read the assets exactly the supplied parsed pages mention, through the
-/// store's validated asset reader. Candidate names come from tine-core's one
-/// asset-reference collector (`Corpus::asset_refs`, shared with orphan-asset
-/// detection). Missing files and non-files warn; `TooLarge` refuses the
+/// Read the resolved attachment names from `Corpus::asset_refs` through the
+/// store's validated asset reader. Missing files and non-files warn; `TooLarge` refuses the
 /// caller's cumulative byte budget before publication. Reads are bounded by
 /// the remaining budget. Cost O(selected text + asset bytes); no graph writes.
 fn publication_assets(
@@ -801,40 +799,11 @@ fn publication_assets(
     budget: u64,
     warnings: &mut Vec<String>,
 ) -> Result<Vec<(String, Vec<u8>)>, tine_store::StoreError> {
-    let mut names = corpus.asset_refs();
-    // The orphan scanner keeps raw and decoded URL spellings. A browser
-    // decodes the URL, so copy only the decoded name when both were seen.
-    let encoded: Vec<_> = names
-        .iter()
-        .filter(|name| name.contains('%'))
-        .cloned()
-        .collect();
-    for name in encoded {
-        if tine_core::asset_refs::percent_decode(&name) != name {
-            names.remove(&name);
-        }
-    }
-    // The shared orphan answerer also marks ancestors (PDF area-image
-    // directories). Publication copies files, so remove those directory
-    // markers while preserving the complete nested reference.
-    let referenced: Vec<_> = names.iter().cloned().collect();
-    for name in referenced {
-        for parent in Path::new(&name).ancestors().skip(1) {
-            if let Some(parent) = parent.to_str() {
-                names.remove(parent);
-            }
-        }
-    }
-    let mut names: Vec<_> = names.into_iter().collect();
+    let mut names: Vec<_> = corpus.asset_refs().into_iter().collect();
     names.sort();
     let mut out = Vec::new();
     let mut remaining = budget;
     for name in names {
-        // The scanner over-collects on purpose (orphan detection must not
-        // miss a reference), so a candidate may be prose after `assets/`
-        // rather than a file name. One that cannot name a file is simply
-        // not an asset: skip it like a missing one instead of failing the
-        // whole publication. A real read failure of an asset still fails.
         let Ok(id) = store.file_id(tine_store::Area::Assets, &name) else {
             continue;
         };
@@ -1330,22 +1299,145 @@ pub fn publish_static(
 mod snapshot_consistency_tests {
     use super::*;
 
-    // The asset-reference scanner over-collects (orphan detection must not miss a
-    // reference), so prose after `assets/` becomes a candidate name. A candidate
-    // longer than a file name may be must be skipped like a missing asset, not
-    // fail the whole publication (the Guide's own `assets/` sentence did).
     #[test]
-    fn prose_after_assets_prefix_does_not_fail_publication_assets() {
+    fn written_attachments_match_the_reader() {
+        #[derive(Deserialize)]
+        struct Form {
+            format: String,
+            source: String,
+            child: String,
+            name: String,
+        }
+        #[derive(Deserialize)]
+        #[serde(rename_all = "camelCase")]
+        struct Cases {
+            forms: Vec<Form>,
+            exact_names: Vec<(String, String, String)>,
+            non_attachments: Vec<(String, String, String)>,
+        }
+        let cases: Cases = serde_json::from_str(include_str!(
+            "../../../tests/regressions/gh984-attachments.json"
+        ))
+        .unwrap();
+        let dir = tempfile::tempdir().unwrap();
+        let root = dir.path();
+        for area in ["pages", "journals", "assets"] {
+            std::fs::create_dir(root.join(area)).unwrap();
+        }
+        let mut expected = HashSet::new();
+        let mut unrelated = HashSet::new();
+        let mut pages = [String::new(), String::new()];
+        let mut add = |format: &str, source: &str, name: &str, live: bool| {
+            let i = usize::from(format == "org");
+            pages[i].push_str(if i == 1 { "* " } else { "- " });
+            pages[i].push_str(source);
+            pages[i].push('\n');
+            let path = root.join("assets").join(name);
+            std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+            std::fs::write(path, name.as_bytes()).unwrap();
+            if live {
+                expected.insert(name.to_owned());
+            } else {
+                unrelated.insert(name.to_owned());
+            }
+        };
+        let numbered = |path: &str, number: &str| match path.rsplit_once('/') {
+            Some((parent, leaf)) => format!("{parent}/{number}-{leaf}"),
+            None => format!("{number}-{path}"),
+        };
+        for (index, form) in cases.forms.iter().enumerate() {
+            for (variant, folder) in (0..64)
+                .map(|mask| {
+                    "assets"
+                        .chars()
+                        .enumerate()
+                        .map(|(i, c)| if mask & (1 << i) == 0 { c } else { c.to_ascii_uppercase() })
+                        .collect::<String>()
+                })
+                .chain(["%61ssets", "assets%2F", "assets%5C", "%41ssets%5C"].map(str::to_owned))
+                .enumerate()
+            {
+                let number = format!("{index}-{variant}");
+                let separator = if variant < 65 { "/" } else { "" };
+                let dest = format!("../{folder}{separator}{}", numbered(&form.child, &number));
+                let source = form.source.replace("$dest", &dest);
+                add(&form.format, &source, &numbered(&form.name, &number), variant < 64);
+            }
+        }
+        for (url, name, decoded_twice) in cases.exact_names {
+            add("md", &format!("![Open](../assets/{url})"), &name, true);
+            add("md", "ordinary percentage prose 50% complete", &decoded_twice, false);
+        }
+        for (format, source, file) in cases.non_attachments {
+            add(&format, &source.replace("$file", &file), &file, false);
+        }
+        for (format, page) in ["md", "org"].into_iter().zip(pages) {
+            std::fs::write(root.join(format!("pages/{format}.{format}")), page).unwrap();
+        }
+        for (format, name, live) in [
+            ("md", "md-preamble.png", false),
+            ("org", "org-preamble.png", true),
+        ] {
+            std::fs::write(root.join(format!("pages/preamble-{format}.{format}")), format!("[[ASSETS/{name}]]\n")).unwrap();
+            std::fs::write(root.join("assets").join(name), name.as_bytes()).unwrap();
+            if live {
+                expected.insert(name.to_owned());
+            } else {
+                unrelated.insert(name.to_owned());
+            }
+        }
+        let (store, _, _) = Store::open(root, Default::default()).unwrap();
+        let corpus = store.whole_graph().unwrap().corpus(None, true);
+        let live = store.referenced_assets().unwrap();
+        let orphans: HashSet<_> = crate::assets::orphan_assets(&store)
+            .unwrap()
+            .into_iter()
+            .map(|entry| entry.name)
+            .collect();
+        let mut warnings = Vec::new();
+        let copied = publication_assets(&store, &corpus, 32 * 1024 * 1024, &mut warnings).unwrap();
+        let copied = copied.into_iter().map(|(path, bytes)| {
+            let name = path.strip_prefix("assets/").unwrap();
+            assert_eq!(bytes, name.as_bytes());
+            name.to_owned()
+        }).collect::<HashSet<_>>();
+        let difference = |want: &HashSet<String>, have: &HashSet<String>| {
+            let mut diff: Vec<_> = want.difference(have).cloned().collect();
+            diff.sort();
+            diff
+        };
+        let missing_live = difference(&expected, &live);
+        let wrong_live = unrelated.intersection(&live).collect::<Vec<_>>();
+        let missing_copies = difference(&expected, &copied);
+        let wrong_copies = difference(&copied, &expected);
+        let listed_live = expected.intersection(&orphans).collect::<Vec<_>>();
+        assert!(
+            missing_live.is_empty() && wrong_live.is_empty() && missing_copies.is_empty()
+                && wrong_copies.is_empty() && listed_live.is_empty() && warnings.is_empty(),
+            "missing live ({}) {:?}, wrong live ({}) {:?}, missing copies ({}) {:?}, wrong copies ({}) {:?}, live in trash ({}) {:?}, warnings ({}) {:?}",
+            missing_live.len(), &missing_live[..missing_live.len().min(12)],
+            wrong_live.len(), &wrong_live[..wrong_live.len().min(12)],
+            missing_copies.len(), &missing_copies[..missing_copies.len().min(12)],
+            wrong_copies.len(), &wrong_copies[..wrong_copies.len().min(12)],
+            listed_live.len(), &listed_live[..listed_live.len().min(12)],
+            warnings.len(), &warnings[..warnings.len().min(12)],
+        );
+        store.close();
+    }
+
+    #[test]
+    fn prose_after_assets_prefix_does_not_add_publication_assets() {
         let dir = tempfile::tempdir().unwrap();
         let root = dir.path();
         std::fs::create_dir_all(root.join("pages")).unwrap();
         std::fs::create_dir_all(root.join("journals")).unwrap();
         std::fs::create_dir_all(root.join("assets")).unwrap();
         std::fs::write(root.join("assets/pic.png"), b"png").unwrap();
+        std::fs::write(root.join("assets/prose.png"), b"private").unwrap();
         let prose = "x".repeat(300);
         std::fs::write(
             root.join("pages/a.md"),
-            format!("- Files in `assets/ {prose}` are watched.\n- ![p](../assets/pic.png)\n"),
+            format!("- Files in `assets/ {prose}` are watched.\n- `assets/prose.png`\n- ![p](../assets/pic.png)\n"),
         )
         .unwrap();
         let (store, _, _) = Store::open(root, Default::default()).unwrap();

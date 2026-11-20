@@ -11,7 +11,9 @@ Org position: `file:../x.pdf`, `../x.pdf`, `..\x.pdf`, `docs/x.pdf`, `./x.pdf` a
 `file:x.pdf`. `anchorDecision` supplies the lexical file target (GH #457).
 `relativeFileLink.ts` resolves it from the graph root, preserving authored `..`
 steps without a filesystem probe. Local paths are percent-decoded once and
-backslashes become slashes before drive, asset, PDF or relative routing. Malformed
+backslashes become slashes before drive, PDF or relative routing. Attachment
+links require a written `assets/` folder in any ASCII letter case. Their file
+names are decoded once. Malformed
 and truncated percent escapes stay literal. Invalid UTF-8 bytes become Unicode
 replacement characters, using the same decoder as the PDF highlights writer. A
 Windows drive path always goes to the checked system file opener, including

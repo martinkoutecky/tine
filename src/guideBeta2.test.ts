@@ -21,6 +21,7 @@ it("the Guide explains published link checks and file and PDF routes (GH #984)",
   expect(pdf).toContain("A drive path such as `C:/Papers/paper.pdf` opens in your system's default app");
   expect(pdf).toContain("`![label](docs/paper.pdf)` looks for `paper.pdf` in your graph's `assets/`.");
   expect(pdf).toContain("A bare link to `guide.p%64f` opens `guide.pdf` from `assets/`.");
+  expect(pdf).toContain("Any letter case, such as `ASSETS/`, works in Tine and the published reader.");
 });
 
 it("the PDF Guide teaches touchscreen pinch and one-finger scrolling", () => {

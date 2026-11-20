@@ -151,9 +151,8 @@ function searchTargetIsPage(v: string): boolean {
   return !/^\(\([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}\)\)$/i.test(v);
 }
 
-function isOgOrgPageRefImageTarget(target: string): boolean {
-  const isLocalAsset = /^[./]*assets/.test(target);
-  return (isLocalAsset || OG_ORG_PAGE_REF_MEDIA_SUFFIX.test(target))
+function isOgOrgPageRefImageTarget(target: string, attachment: string | null): boolean {
+  return (attachment !== null || OG_ORG_PAGE_REF_MEDIA_SUFFIX.test(target))
     && !OG_ORG_PAGE_REF_IMAGE_EXCLUSIONS.has(extOf(target));
 }
 
@@ -443,7 +442,8 @@ function renderLink(
     ? anchorDecision(url.v) : undefined;
   const orgImage = url.type === "page_ref" && localDecision !== undefined
     && isOgOrgPageRefImageTarget(localDecision.kind === "relative" ? localDecision.path
-      : localDecision.kind === "drive" ? localDecision.target.path : url.v);
+      : localDecision.kind === "drive" ? localDecision.target.path : url.v,
+      localDecision.kind === "relative" ? localDecision.attachment : null);
   if ((url.type === "page_ref" && !orgImage && localDecision?.kind !== "drive")
       || (url.type === "search" && localDecision?.kind === "relative" && searchTargetIsPage(localDecision.path))) {
     // OG `page-reference` brackets a labelled link like a bare one (GH #966).

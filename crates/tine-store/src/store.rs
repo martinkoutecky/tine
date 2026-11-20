@@ -2833,8 +2833,8 @@ impl WholeGraph {
         let mut names = HashSet::new();
         {
             let pages = &self.graph.physical_pages;
-            for (_, doc) in pages.iter() {
-                crate::model::collect_document_asset_refs(doc, &mut names);
+            for (entry, doc) in pages.iter() {
+                crate::model::collect_document_asset_refs(doc, &entry.path, &mut names);
             }
         }
         Arc::new(names)

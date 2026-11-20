@@ -36,7 +36,7 @@ The format follows [Keep a Changelog](https://keepachangelog.com/); versions use
 
 - Published exports check the URL scheme before opening an external link. Web and email links open directly, and custom app links require confirmation. Custom and refused schemes cannot open local graph files or attachments through Markdown or Org links. They also cannot bypass the scheme check by middle-clicking or opening the link in a new tab, including in raw HTML (#984).
 - Windows drive links and embeds use the system file opener, including PDFs, encoded paths and Org links written with `://` (#984).
-- Local links and embeds resolve escaped attachment folders, child names, separators and file extensions the same way as their decoded spellings. For example, `guide.p%64f` opens in the PDF reader. Broken percent escapes stay literal while valid escapes in the same path still take effect. Invalid UTF-8 escape bytes become replacement characters in the resolved name. A separator written only as an escape cannot select the outside PDF reader (#984).
+- Local links and embeds decode file names once. Attachment links use a written `assets/` folder in any letter case, including when checking for unused attachments or copying files into an export. Links with an escaped folder name or separator follow ordinary file routing. Broken percent escapes stay literal, and invalid UTF-8 escape bytes become replacement characters. A bare link such as `guide.p%64f` still opens in the PDF reader (#984).
 - DOMPurify is updated to 3.4.18 and seroval to 1.6.12, which close published
   advisories. Tine used none of the affected DOMPurify modes, so no known
   exploit applied (reported by Dieterbe in #982).

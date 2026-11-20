@@ -2366,8 +2366,12 @@ leaf. After retirement the previous leaf remains in recovery, even if installati
 has not happened. Callers inspect output/recovery on any post-rename I/O failure.
 
 `tine-graph-features::publish_query::publication_assets` takes names from
-`tine_core::Corpus::asset_refs` (the orphan detector's collector), reads each
-through `Store::file_id(Area::Assets)` + `Store::read`, and bounds reads during
+`tine_core::Corpus::asset_refs` (the orphan detector's collector). It copies
+resolved local links and image macros with a written `assets/` folder in any
+ASCII letter case. File names are decoded once, so `demo%2520v2.png` names
+`demo%20v2.png`. The orphan inventory also preserves conservative plaintext
+mentions. Publication reads each resolved name through
+`Store::file_id(Area::Assets)` + `Store::read`, and bounds reads during
 copying. Its caller supplies the cumulative budget and a warning collection. Query exports use one Rust default of 1 GiB, optionally
 replaced by the device-local Settings limit. `TooLarge` becomes typed
 `AssetBudgetExceeded` / IPC `assetBudget`; no leaf or recovery is touched on that
