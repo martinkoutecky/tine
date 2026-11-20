@@ -27,7 +27,9 @@ export const FORBID_EDIT_SELECTOR = [
   // A query host must not replace them with its editor on the earlier press.
   ".ref-block",
   ".block-marker",
-  ".block-checkbox",
+  // A checkbox with no block line to tick (opening text) is inert: a press on
+  // it is a press on the text.
+  '.block-checkbox:not([aria-disabled="true"])',
   // {{cloze}} reveals in place on click (GH #763).
   ".cloze",
   ".clock-badge",

@@ -660,7 +660,7 @@ per-edit work, and never deletes or overwrites a graph file to repair a cache.
 `whole_graph_reconciled()` never serves the checkpoint: it waits for the launch
 diff, for graph-wide destructive operations and for a one-shot lookup that
 missed in the checkpoint (a cold-start `tine://` link, GH #181). The public operation
-surface is 60 operations: the methods of `Store`, `Transaction` and `PagePlan` plus every
+surface is 61 operations: the methods of `Store`, `Transaction` and `PagePlan` plus every
 public function taking either. `crates/tine-store/SURFACE.txt` budgets it per
 concept and `crates/tine-store/tests/shallow_ratchet.rs` keeps this count true.
 `InventoryScope::File(PageId)` extends the existing inventory question with
@@ -2486,6 +2486,27 @@ A case-only destination file that is listed for a different page (its
 `title::` names another page) is not a spelling move: the rename planner
 refuses it `FileTaken` with that page's name and plans nothing (CM step 2
 R14), so the move preflight above never sees it.
+
+The same refusal covers an ordinary rename whose destination a case-folding
+volume answers through another listed spelling: renaming `A` to `B` while
+`pages/b.md` is page `C`'s refuses `FileTaken` naming `C`, instead of
+replanning until `WouldBlock` (scenario: an external editor or sync delivery
+left that file there). Which entry occupies a destination is one answer,
+`Store::move_occupant`, used by both this planner check and the transaction's
+no-replace move guard. It first checks the destination as that guard does
+(a valid id inside its area, no ancestor linked out of the graph, the graph
+write-target check) and probes nothing otherwise, so an absolute,
+parent-relative or out-of-graph destination is refused (`InvalidTarget`)
+rather than named (scenario: malformed input, or an external editor or sync
+delivery replacing a graph folder with a link out of it). A final symlink is
+its own entry and is never followed to the page it points at; only a regular
+entry resolves to its listed folded spelling. Cost per destination candidate:
+the guard's fixed destination check, one `lstat`, and two more
+canonicalizations when a regular entry answers (proof
+`crates/tine-store/src/store/move_occupant_tests.rs`,
+`crates/tine-graph-features/tests/cm_merge_rules.rs`
+`rename_onto_a_case_spelled_link_does_not_blame_its_target`, and the K
+witness `folded_occupant` row on Windows).
 
 Case-only moves first try the existing atomic no-replace primitive on Linux,
 Windows, macOS, Android and iOS. Only an already-exists refusal permits an
