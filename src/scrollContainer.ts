@@ -124,10 +124,13 @@ export function preserveAboveViewport(el: Element, change: () => void, root?: El
   if (!root || adjusting.has(root)) { change(); return; }
   const pending = deferred ? deferredRestores : transaction;
   if (pending?.has(root)) { change(); return; }
-  const bottom = el.getBoundingClientRect().bottom;
+  const box = el.getBoundingClientRect();
+  const bottom = box.bottom;
   const viewport = root.getBoundingClientRect();
   const above = bottom <= viewport.top;
-  if (!deferred && bottom > viewport.top) { change(); return; }
+  // Only replies above or inside the viewport can move the reader during
+  // deferred publication.
+  if (box.top >= viewport.bottom || (!deferred && !above)) { change(); return; }
   // A containing spacer can absorb a nested group's growth. Its own bottom
   // moving then says nothing about the reader. Hit-test a stable visible row
   // instead; a bounded number of probes avoids scanning mounted/page rows.

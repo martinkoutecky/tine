@@ -28,6 +28,7 @@ import { ResultWriteTargetContext, liveWriteTarget, noticeChangedResults, resolv
 import { resultTicket, resultsTicketActionable } from "../queryResultsEpoch";
 import { ReservedGroupGeometryContext, reservedGroupHeight } from "../reservedGroupHeight";
 import { preserveAboveViewport } from "../scrollContainer";
+import { useOwnerWindow } from "../windowRealm";
 import { registerQueryResultFold } from "../collapseCommandSurface";
 import { observeViewportWindow } from "../viewportWindow";
 import { printingOutline, registerOutlineWindow } from "../outlineViewport";
@@ -134,7 +135,6 @@ export function LiveRefGroup(props: LiveRefGroupProps): JSX.Element {
   const [near, setNear] = createSignal(untrack(() => props.eager === true));
   const [sourceMounted, setSourceMounted] = createSignal(false);
   const [inWindow, setInWindow] = createSignal(untrack(() => props.eager === true));
-  const [visible, setVisible] = createSignal(false);
   const [forced, setForced] = createSignal(false);
   const [interaction, setInteraction] = createSignal(false);
   const [visited, setVisited] = createSignal(untrack(() => props.eager === true));
@@ -158,7 +158,6 @@ export function LiveRefGroup(props: LiveRefGroupProps): JSX.Element {
   const pinned = () => interaction() || occurrence.pendingEdits[0]() > 0 || (!!editingId() && docNode(editingId()!)?.page === props.page)
     || topSelected().some(id => docNode(id)?.page === props.page);
   const wanted = () => inWindow() || forced() || (near() && (pinned() || printingOutline()));
-  const priority = () => visible() || forced() ? 0 : 1;
   const reserved = reservedGroupHeight(() => {
     const owner = props.heightKey ?? props.hostBlockId;
     return owner === undefined ? undefined : JSON.stringify([
@@ -174,7 +173,7 @@ export function LiveRefGroup(props: LiveRefGroupProps): JSX.Element {
     let current = true;
     void queueReferenceCommit(() => {
       if (el) preserveAboveViewport(el, () => setNear(true), undefined, true);
-    }, () => current && alive && wanted(), priority);
+    }, () => current && alive && wanted(), { host: el, urgent: forced });
     onCleanup(() => { current = false; });
   });
   createEffect(() => {
@@ -195,10 +194,6 @@ export function LiveRefGroup(props: LiveRefGroupProps): JSX.Element {
           if (entry.isIntersecting) setForced(false);
         }, undefined, false, entry, margin);
       }, "viewport"));
-      onCleanup(observeViewportWindow(node, entry => {
-        setVisible(entry.isIntersecting);
-        if (entry.isIntersecting) setInWindow(true);
-      }, 0));
       return;
     }
     if (near()) return;
@@ -220,9 +215,8 @@ export function LiveRefGroup(props: LiveRefGroupProps): JSX.Element {
       <ReservedGroupGeometryContext.Provider value={occurrence.geometry}>
       <Show when={near()}><MountedRefGroup {...props} occurrence={occurrence} geometryHost={() => el}
         onSourceMounted={setSourceMounted}
-        readCurrent={() => alive && (!windowed() || !hasViewport() || wanted())} priority={priority}
-        sourcePinned={() => windowed() && (pinned() || forced())}
-        schedule={windowed() && hasViewport()} /></Show>
+        readCurrent={() => alive && (!windowed() || !hasViewport() || wanted())} urgent={forced}
+        sourcePinned={() => windowed() && (pinned() || forced())} /></Show>
       </ReservedGroupGeometryContext.Provider>
     </div>
   );
@@ -232,8 +226,10 @@ export function LiveRefGroup(props: LiveRefGroupProps): JSX.Element {
 // rendering belong to each disposable child; unchanged rows stay keyed while
 // that child is mounted.
 function MountedRefGroup(props: LiveRefGroupProps & { occurrence: RefOccurrence; geometryHost: () => HTMLElement | undefined; onSourceMounted: (mounted: boolean) => void;
-  readCurrent: () => boolean; priority: () => number; sourcePinned: () => boolean; schedule: boolean }): JSX.Element {
+  readCurrent: () => boolean; urgent: () => boolean; sourcePinned: () => boolean }): JSX.Element {
   const linkDepth = useContext(LinkDepthContext);
+  const ownerWindow = useOwnerWindow() as Window & typeof globalThis;
+  const scheduled = props.surface !== "preview" && typeof ownerWindow?.IntersectionObserver === "function";
   // The host block's own outline and surface, read before this group provides its own.
   const hostScope = useContext(OutlineScopeContext);
   const readScope = {};
@@ -247,22 +243,20 @@ function MountedRefGroup(props: LiveRefGroupProps & { occurrence: RefOccurrence;
   // no loads left to do, however many source pages it references.
   const [nearView, setNearView] = createSignal(true);
   const [acquire, setAcquire] = createSignal(0);
+  // The first read waits for the host to attach, so the scheduler watches it in its own window.
+  const [attached, setAttached] = createSignal(false);
   onCleanup(pinPageNearViewport(() => nearView() || props.sourcePinned()
     || (inPageFindOpen() && (props.surface === "embed" || props.surface === "query")) ? props.page : null));
   onMount(() => {
+    setAttached(true);
     const host = props.geometryHost();
     if (host) onCleanup(trackNear(host, setNearView));
   });
-  createEffect(on(() => [nearView(), !!pageByName(props.page)] as const, ([isNear, present], previous) => {
-    if (previous && isNear && !present && (!previous[0] || previous[1])) setAcquire(n => n + 1);
-  }));
   // Load the source page only once the group is near the viewport. A string
   // source: the parent recomputing an equal group must not read again.
   const [readyResource] = createGraphResource(
-    () => JSON.stringify([props.page, props.kind, props.path ?? null, acquire()]),
+    () => attached() && JSON.stringify([props.page, props.kind, props.path ?? null, acquire()]),
     async (source) => {
-      const scheduled = props.schedule;
-      const priority = props.priority;
       const [p, k, savedPath] = JSON.parse(source) as [string, PageKind, string | null];
       const path = savedPath ?? undefined;
       const occupied = pageByName(p);
@@ -272,7 +266,11 @@ function MountedRefGroup(props: LiveRefGroupProps & { occurrence: RefOccurrence;
       const owner = latestOwner(readScope, "page", graphOwner(() => alive && props.readCurrent() &&
         graphEpoch() === epoch && (graphMeta()?.root ?? "") === root));
       const read = () => path ? backend().getPageByPath(path) : backend().getPage(p, k);
-      const result = await admitRead(owner, () => scheduled ? queueReferenceRead(read, owner, priority) : read(), dto => [p, ...(dto ? [dto.name] : [])], dto => {
+      // A different occurrence can install this source while the read waits.
+      // The commit still checks the loaded identity and the captured generation.
+      const demand = { host: props.geometryHost(), urgent: props.urgent };
+      const queuedRead = () => queueReferenceRead(() => pageByName(p) ? Promise.resolve(null) : read(), owner, demand);
+      const result = await admitRead(owner, scheduled ? queuedRead : read, dto => [p, ...(dto ? [dto.name] : [])], dto => {
         // The component may have unmounted while this read was in flight. Never
         // let an old graph's DTO enter the new graph's shared working set.
         if (graphEpoch() !== epoch || (graphMeta()?.root ?? "") !== root) return false;
@@ -285,7 +283,7 @@ function MountedRefGroup(props: LiveRefGroupProps & { occurrence: RefOccurrence;
         if (ensurePageLoaded(dto)) return false;
         const loaded = pageByName(p);
         return loaded?.kind === k && (!path || loaded.id === path);
-      }, scheduled ? commit => queueReferenceCommit(commit, owner, priority) : undefined);
+      }, scheduled ? commit => queueReferenceCommit(commit, owner, demand) : undefined);
       return result.kind === "current" && result.value;
     },
     { storage: initial => {
@@ -301,6 +299,13 @@ function MountedRefGroup(props: LiveRefGroupProps & { occurrence: RefOccurrence;
       return [read, anchored];
     } }
   );
+  let reentered = false;
+  createEffect(on(() => [nearView(), !!pageByName(props.page), !!readyResource.loading] as const, ([isNear, present, loading], previous) => {
+    // A spacer can leave and reenter the margin as preceding rows expand; a
+    // re-entry during a read retries once that read settles without the page.
+    if (previous && isNear && !present && (!previous[0] || previous[1])) reentered = true;
+    if (reentered && !loading) { reentered = false; if (isNear && !present) setAcquire(n => n + 1); }
+  }));
   // A source page that failed to load leaves the group on its DTO path below,
   // which is the same path it uses before the page is near the viewport.
   // Page lookup observes the working-set index. Stop another page loading from
