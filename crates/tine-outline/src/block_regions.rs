@@ -24,7 +24,7 @@ use serde::{Deserialize, Serialize};
 mod preservation;
 mod property_drawers;
 mod scan;
-pub use scan::RenderPlanning;
+pub use scan::{top_level_render_planning, RenderPlanning};
 use scan::{visit_blocks, PlanningScan};
 
 /// Validate the content of an already native-owned physical drawer marker.

@@ -1,9 +1,9 @@
 // Single frontend source for a block's HEADER FACETS (marker / priority / heading
 // level / scheduled / deadline / properties), read off the ONE lsdoc parse — never
 // re-derived by a hand-rolled regex (that was `blockView`, which could disagree with
-// Rust `doc.rs` and lsdoc). Mirrors the Rust projection (crates/tine-core/src/doc.rs
-// header_facets + planning_dates), so the chip a block shows matches what the backend
-// computed for search/query/carry.
+// Rust `doc.rs` and lsdoc). Uses the same planning tokens as the native projection,
+// so the chip a block shows matches what the backend computes for
+// search/query/carry.
 //
 // PERFORMANCE (P1): the chip renders for every mounted block, incl. off-screen, so we
 // must NOT parse every block on load. The store SEEDS this cache from the backend

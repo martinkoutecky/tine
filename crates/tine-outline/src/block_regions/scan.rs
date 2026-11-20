@@ -22,6 +22,26 @@ pub struct RenderPlanning {
     pub canonical_keyword: bool,
 }
 
+/// Collect top-level display planning from a block's existing AST.
+/// Visits top-level nodes and their direct inline flows, with no structural regions.
+pub fn top_level_render_planning(raw: &str, blocks: &[Block]) -> Vec<RenderPlanning> {
+    let coords = Coords::of(raw, false);
+    let mut planning = PlanningScan::for_render();
+    for inline in blocks.iter().filter_map(flow_inline) {
+        visit_inline(raw, inline, coords, None, &mut planning, Some(true));
+    }
+    planning.into_render()
+}
+
+fn flow_inline(block: &Block) -> Option<&[Inline]> {
+    match block {
+        Block::Paragraph { inline, .. }
+        | Block::Bullet { inline, .. }
+        | Block::Heading { inline, .. } => Some(inline),
+        _ => None,
+    }
+}
+
 pub(super) fn visit_blocks(
     raw: &str,
     org: bool,
@@ -32,6 +52,10 @@ pub(super) fn visit_blocks(
     top_level: bool,
 ) {
     for block in blocks {
+        if let Some(inline) = flow_inline(block) {
+            visit_inline(raw, inline, coords, Some(out), planning, Some(top_level));
+            continue;
+        }
         match block {
             Block::Src { span, .. }
             | Block::Example { span, .. }
@@ -62,19 +86,14 @@ pub(super) fn visit_blocks(
             Block::Quote { children, .. } => {
                 visit_blocks(raw, org, children, coords, out, planning, false)
             }
-            Block::Paragraph { inline, .. }
-            | Block::Bullet { inline, .. }
-            | Block::Heading { inline, .. } => {
-                visit_inline(raw, inline, coords, out, planning, Some(top_level))
-            }
             Block::FootnoteDef { inline, .. } => {
-                visit_inline(raw, inline, coords, out, planning, None)
+                visit_inline(raw, inline, coords, Some(out), planning, None)
             }
             Block::List { items, .. } => visit_items(raw, org, items, coords, out, planning),
             Block::Table { header, rows, .. } => {
                 for row in header.iter().chain(rows) {
                     for cell in row {
-                        visit_inline(raw, cell, coords, out, planning, None);
+                        visit_inline(raw, cell, coords, Some(out), planning, None);
                     }
                 }
             }
@@ -200,7 +219,7 @@ fn visit_items(
 ) {
     for item in items {
         visit_blocks(raw, org, &item.content, coords, out, planning, false);
-        visit_inline(raw, &item.name, coords, out, planning, None);
+        visit_inline(raw, &item.name, coords, Some(out), planning, None);
         visit_items(raw, org, &item.items, coords, out, planning);
     }
 }
@@ -267,7 +286,7 @@ fn visit_inline(
     raw: &str,
     inline: &[Inline],
     coords: Coords,
-    out: &mut BlockRegions,
+    mut out: Option<&mut BlockRegions>,
     planning: &mut PlanningScan,
     render_flow: Option<bool>,
 ) {
@@ -275,18 +294,24 @@ fn visit_inline(
     for i in inline {
         match i {
             Inline::Code { span, .. } | Inline::Verbatim { span, .. } => {
+                let Some(out) = out.as_deref_mut() else {
+                    continue;
+                };
                 if let Some(r) = raw_range(raw, span, coords) {
                     out.literals.push(r);
+                    #[cfg(test)]
+                    INLINE_LITERAL_RECORDS.set(INLINE_LITERAL_RECORDS.get() + 1);
                 }
             }
             Inline::Timestamp { ts, date, span }
-                if matches!(ts.as_str(), "Scheduled" | "Deadline" | "Closed") =>
+                if matches!(ts.as_str(), "Scheduled" | "Deadline")
+                    || (ts == "Closed" && out.is_some()) =>
             {
                 if let (Some(r), Some(Span(start, _))) = (raw_range(raw, span, coords), span) {
                     let (line, first_nonblank) = planning.line(raw, r);
                     // The Timestamp owns the planning prefix. A glued suffix
                     // remains body text; only whitespace may precede the token.
-                    if r.0 <= first_nonblank {
+                    if let Some(out) = out.as_deref_mut().filter(|_| r.0 <= first_nonblank) {
                         out.planning.push(Planning {
                             kind: ts.clone(),
                             line,
@@ -346,10 +371,14 @@ fn visit_inline(
             Inline::Emphasis { children, .. }
             | Inline::Subscript { children, .. }
             | Inline::Superscript { children, .. }
-            | Inline::Tag { children, .. } => {
-                visit_inline(raw, children, coords, out, planning, None)
+            | Inline::Tag { children, .. }
+            | Inline::Link {
+                label: children, ..
+            } => {
+                if let Some(out) = out.as_deref_mut() {
+                    visit_inline(raw, children, coords, Some(out), planning, None);
+                }
             }
-            Inline::Link { label, .. } => visit_inline(raw, label, coords, out, planning, None),
             _ => {}
         }
     }
@@ -361,12 +390,32 @@ fn visit_inline(
 #[cfg(test)]
 thread_local! {
     static PLANNING_BOUNDARY_BYTES: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
+    static INLINE_LITERAL_RECORDS: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::block_regions::from_blocks_with_planning;
+    use crate::block_regions::{from_blocks_with_planning, top_level_render_planning};
+
+    #[test]
+    fn export_planning_builds_no_literal_records() {
+        for (org, delimiter) in [(false, "`"), (true, "~"), (true, "=")] {
+            let raw = format!(
+                "Review {} {delimiter}SCHEDULED: <2026-11-19 Thu>{delimiter}\nDEADLINE: <2026-11-20 Fri>",
+                format!("{delimiter}code{delimiter} ").repeat(999)
+            );
+            let blocks = crate::lsdoc_block_parse::parse_block(&raw, org);
+            INLINE_LITERAL_RECORDS.set(0);
+            from_blocks_with_planning(&raw, org, &blocks);
+            assert_eq!(INLINE_LITERAL_RECORDS.get(), 1000, "{delimiter}");
+            INLINE_LITERAL_RECORDS.set(0);
+            let planning = top_level_render_planning(&raw, &blocks);
+            assert_eq!(planning.len(), 1, "{delimiter}");
+            assert_eq!(planning[0].kind, "Deadline", "{delimiter}");
+            assert_eq!(INLINE_LITERAL_RECORDS.get(), 0, "{delimiter}");
+        }
+    }
 
     #[test]
     fn planning_region_scan_is_linear() {

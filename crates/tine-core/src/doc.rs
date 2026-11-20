@@ -594,16 +594,14 @@ fn inline_is_empty(i: &lsdoc::ast::Inline) -> bool {
 pub fn strip_planning_lines(
     mut blocks: Vec<lsdoc::ast::Block>,
     raw: &str,
-    is_org: bool,
 ) -> Vec<lsdoc::ast::Block> {
     use lsdoc::ast::{Block, Inline, Span};
     if !raw.contains("SCHEDULED:") && !raw.contains("DEADLINE:") {
         return blocks;
     }
-    let (_, planning) = crate::block_regions::from_blocks_with_planning(raw, is_org, &blocks);
+    let planning = crate::block_regions::top_level_render_planning(raw, &blocks);
     let by_start: std::collections::HashMap<_, _> = planning
         .iter()
-        .filter(|token| token.top_level)
         .map(|token| (token.span_start, token))
         .collect();
     if by_start.is_empty() {

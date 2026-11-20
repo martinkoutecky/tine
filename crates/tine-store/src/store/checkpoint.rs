@@ -155,7 +155,10 @@ const MAGIC: &[u8; 8] = b"TINECKPT";
 // references count (OG hoists it into the page's properties), and a page's
 // format is its file's, never read from its text. Cached references, page
 // properties and aliases change for unchanged files; older caches rebuild.
-pub(crate) const FORMAT: u32 = 39;
+// 40 (shared planning lines): the cached date projection includes both
+// SCHEDULED and DEADLINE in a line-leading run, including when the first
+// timestamp crosses a newline. Rebuild older projections from the files.
+pub(crate) const FORMAT: u32 = 40;
 /// The lsdoc release tine-core parses with (`crates/tine-core/Cargo.toml`;
 /// `checkpoint_tests::the_parser_tag_matches_the_lsdoc_pin` keeps them equal).
 pub(crate) const PARSER: &str = "lsdoc v0.5.12";
