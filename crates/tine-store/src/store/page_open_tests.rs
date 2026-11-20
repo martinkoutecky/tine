@@ -226,6 +226,80 @@ fn a_late_journal_reached_through_another_spelling_is_one_claimant_at_its_disk_s
     }
 }
 
+/// Review b98963b0d F1: late discovery probes only what graph discovery would
+/// list. A directory, symlink, FIFO or socket under the day's file name, and a
+/// hidden or nonportable candidate name, is no hit: the day's page and journal
+/// lookups answer at once, without an error.
+#[cfg(unix)]
+#[test]
+fn late_discovery_skips_entries_graph_discovery_would_not_list() {
+    use std::os::unix::net::UnixListener;
+    for (case, file_format) in [
+        ("dir", None),
+        ("symlink", None),
+        ("fifo", None),
+        ("socket", None),
+        ("hidden", Some(".yyyy_MM_dd")),
+        ("nonportable", Some("yyyy_MM_dd?")),
+    ] {
+        let root = graph(3);
+        if let Some(format) = file_format {
+            fs::write(
+                root.path().join("logseq/config.edn"),
+                format!("{{:preferred-format :markdown :journal/file-name-format \"{format}\"}}\n"),
+            )
+            .unwrap();
+        }
+        let store = open(root.path(), None);
+        store.whole_graph().unwrap();
+        store.watch.stop_background_for_test();
+        let journals = root.path().join("journals");
+        let day = journals.join("2026_11_02.md");
+        let _listener = match case {
+            "dir" => fs::create_dir(&day).map(|_| None).unwrap(),
+            "symlink" => {
+                fs::write(root.path().join("elsewhere.md"), "- outside\n").unwrap();
+                std::os::unix::fs::symlink(root.path().join("elsewhere.md"), &day).unwrap();
+                None
+            }
+            "fifo" => {
+                let made = std::process::Command::new("mkfifo")
+                    .arg(&day)
+                    .status()
+                    .unwrap();
+                assert!(made.success());
+                None
+            }
+            "socket" => Some(UnixListener::bind(&day).unwrap()),
+            "hidden" => {
+                fs::write(journals.join(".2026_11_02.md"), "- hidden\n").unwrap();
+                None
+            }
+            _ => {
+                fs::write(journals.join("2026_11_02?.md"), "- nonportable\n").unwrap();
+                None
+            }
+        };
+        for kind in [PageKind::Journal, PageKind::Page] {
+            let (send, receive) = mpsc::channel();
+            let asking = Arc::clone(&store);
+            std::thread::spawn(move || {
+                let _ = send.send(
+                    asking
+                        .page_named("Nov 2nd, 2026", kind)
+                        .map(|read| read.map(|r| r.id)),
+                );
+            });
+            let answer = receive
+                .recv_timeout(Duration::from_secs(10))
+                .unwrap_or_else(|_| panic!("{case} {kind:?}: the lookup blocked"));
+            assert!(answer.is_ok(), "{case} {kind:?}: {answer:?}");
+            assert_eq!(answer.unwrap(), None, "{case} {kind:?}: no hit");
+        }
+        store.close();
+    }
+}
+
 #[test]
 fn a_page_open_before_ready_needs_neither_the_load_nor_the_writer() {
     let root = graph(5);

@@ -204,7 +204,8 @@ impl Store {
         if !matches!(*self.load.status.lock().unwrap(), LoadStatus::Ready) {
             return Ok(None);
         }
-        let directory = self.graph.current_config().journals_dir.clone();
+        let config = self.graph.current_config();
+        let directory = config.journals_dir.clone();
         let writer = self.writer.lock().unwrap();
         if self.is_closed() {
             return Ok(None);
@@ -227,11 +228,21 @@ impl Store {
             }
             for extension in crate::file_kind::GRAPH_TEXT_EXTENSIONS {
                 let id = PageId::from(format!("{directory}/{stem}.{extension}").as_str());
+                // Only what graph discovery would list: an eligible name
+                // (no hidden, nonportable or conflict-copy leaf) naming a
+                // regular file, never a symlink, directory, socket or FIFO
+                // (review b98963b0d F1).
+                if !crate::model::graph_text_relative_eligible(id.as_str(), &config) {
+                    continue;
+                }
                 let path = self.graph.root.join(id.as_str());
                 #[cfg(feature = "test-faults")]
                 crate::cost_counters::stamp_by_path();
                 let now = match fs::symlink_metadata(&path) {
-                    Ok(metadata) => crate::watch::stamp_from_metadata(&metadata),
+                    Ok(metadata) if metadata.file_type().is_file() => {
+                        crate::watch::stamp_from_metadata(&metadata)
+                    }
+                    Ok(_) => continue,
                     Err(error) if error.kind() == std::io::ErrorKind::NotFound => continue,
                     Err(error) => return Err(StoreError::Io(error.into())),
                 };
