@@ -392,7 +392,7 @@ export function clearSelection() {
 /** Whether the current selection came from blank-space Ctrl/Cmd+A. O(1). */
 export function hasBlankOutlineSelection(): boolean { return wholeSelection()?.blank === true; }
 
-// Whole selections need a visible order only when a gesture moves an endpoint.
+// Restore the current visible order when a whole selection needs range positions.
 function topologyForRange() {
   if (!selectionView()) {
     const id = wholeSelection()?.roots.find(id => !!doc.byId[id]);
@@ -594,13 +594,17 @@ export function selectionIncludesPage(page: string): boolean {
 }
 
 function selectionRemovalSurvivor(): string | null {
-  if (wholeSelection()) return null;
+  if (hasBlankOutlineSelection()) return null;
   const roots = topSelected();
   const first = roots[0];
   const last = roots.at(-1);
   if (!first || !last) return null;
-  const { order, index, end } = selectionTopology();
-  return order[end[index.get(last)!] + 1] ?? order[index.get(first)! - 1] ?? doc.byId[first]?.parent ?? null;
+  const { order, index, end } = topologyForRange();
+  const firstAt = index.get(first);
+  const lastAt = index.get(last);
+  return (lastAt === undefined ? undefined : order[end[lastAt] + 1])
+    ?? (firstAt === undefined ? undefined : order[firstAt - 1])
+    ?? doc.byId[first]?.parent ?? null;
 }
 
 function reselectSurvivingBlock(id: string | null, surface: string | undefined) {

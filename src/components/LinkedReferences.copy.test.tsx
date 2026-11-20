@@ -88,7 +88,7 @@ async function mountTarget(sourcePages = sources, referenceGroups = groups, visi
     disconnect() {}
   });
   vi.spyOn(backend(), "getPage").mockImplementation(async name => name === routedPage.name ? routedPage : sourcePages.find(source => source.name === name) ?? null);
-  const readByPath = vi.spyOn(backend(), "getPageByPath").mockImplementation(async path => sourcePages.find(source => source.id === path) ?? null);
+  const readByPath = vi.spyOn(backend(), "getPageByPath").mockImplementation(async path => path === routedPage.id ? routedPage : sourcePages.find(source => source.id === path) ?? null);
   const backlinks = vi.spyOn(backend(), "getBacklinks").mockResolvedValue(referenceGroups);
   const writeText = vi.spyOn(backend(), "writeText").mockResolvedValue(undefined);
   const writeRich = vi.spyOn(backend(), "writeRich").mockResolvedValue(undefined);
@@ -123,12 +123,12 @@ function press(key: string, options: KeyboardEventInit = {}, target: Element = d
   return event;
 }
 
-async function openAlphaEditor(root: HTMLElement) {
-  const content = root.querySelector<HTMLElement>(`[data-block-id="${hit.id}"] > .block-main .block-content`)!;
+async function openBlockEditor(root: ParentNode, id: string) {
+  const content = root.querySelector(`[data-block-id="${id}"] > .block-main .block-content`)!;
   content.dispatchEvent(new MouseEvent("mousedown", { bubbles: true, button: 0 }));
   document.dispatchEvent(new MouseEvent("mouseup", { bubbles: true, button: 0 }));
   return vi.waitFor(() => {
-    const editor = maybeEditorIn(root, hit.id);
+    const editor = maybeEditorIn(root, id);
     expect(editor).not.toBeNull();
     return editor!;
   });
@@ -249,7 +249,7 @@ it.each([["Alpha", "1"], ["Alpha", "2"], ["Beta", "1"], ["Beta", "2"]])(
 
 it("copies selected roots from different source depths as siblings, with their children nested as in Logseq", async () => {
   const { root, writeRich } = await mountTarget();
-  const editor = await openAlphaEditor(root);
+  const editor = await openBlockEditor(root, hit.id);
   editor.keydown({ key: "Escape" });
   for (let i = 0; i < 4; i++) press("a", { ctrlKey: true });
   press("c", { ctrlKey: true });
@@ -278,13 +278,13 @@ it("keeps child and grandchild levels after Ctrl+A with multiple reference group
     }
   });
   const readsBeforeCopy = readByPath.mock.calls.length;
-  const mouseEditor = await openAlphaEditor(root);
+  const mouseEditor = await openBlockEditor(root, hit.id);
   mouseEditor.keydown({ key: "Escape" });
   expect(press("c", { ctrlKey: true }).defaultPrevented).toBe(true);
   expect(writeRich).toHaveBeenCalledOnce();
   const singleTree = writeRich.mock.calls[0];
 
-  const editor = await openAlphaEditor(root);
+  const editor = await openBlockEditor(root, hit.id);
   editor.keydown({ key: "a", ctrlKey: true });
   // jsdom has no native textarea select-all default action.
   if (editor.kind === "textarea") editor.selectByUser(0, editor.value().length);
@@ -669,6 +669,72 @@ it.each(["Delete", "Backspace", "Cut"])("leaves the undisplayed parent and sibli
   expect(node(sibling.id)?.raw).toBe(sibling.raw);
   expect(node(hit.id)?.raw).toBe(hit.raw);
   expect(node(target.blocks[0].id)?.raw).toBe(target.blocks[0].raw);
+});
+
+it.each([
+  ["nested zoom", ".zoomed-page", "Delete"],
+  ["nested block embed", ".embed-block", "Backspace"],
+  ["child-only Linked References", ".linked-references", "Cut"],
+  ["child-only Unlinked References", ".unlinked-references", "Delete"],
+  ["child-only block references", ".block-references", "Backspace"],
+  ["child-only query results", ".query-group", "Cut"],
+])("reselects the surviving parent after editor Ctrl+A in %s (%s, %s)", async (surface, selector, action) => {
+  const uuid = "1d5ea000-0000-4000-a000-000000000002";
+  const leaf = block("scope-leaf", "Last scoped block");
+  const tree = block("scope-root", surface === "nested block embed" ? `Scoped tree\nid:: ${uuid}` : "Scoped tree", [leaf]);
+  const sibling = block("scope-sibling", "Another branch");
+  const parent = block("scope-parent", "Source parent", [tree, sibling]);
+  const source = page("Source", [parent]);
+  const result = { page: source.name, kind: source.kind, path: source.id, blocks: [shallow(tree)] };
+  const routed = { ...target, blocks: [...target.blocks] };
+  if (surface === "nested zoom") routed.blocks.push(parent);
+  if (surface === "nested block embed") {
+    routed.blocks.push(block("embed-host", `{{embed ((${uuid}))}}`));
+    vi.spyOn(backend(), "resolveBlocks").mockImplementation(async ids => ids.map(id => id === uuid ? result : null));
+  }
+  if (surface === "child-only block references") vi.spyOn(backend(), "getBlockReferrers").mockResolvedValue([result]);
+  if (surface === "child-only Unlinked References") {
+    vi.spyOn(backend(), "getUnlinkedRefs").mockResolvedValue([{ ...result, blocks: [shallow(leaf)] }]);
+  }
+  if (surface === "child-only query results") {
+    routed.blocks.push(block("query-host", "{{query (task TODO)}}"));
+    backendReadsQueries({ "(task TODO)": { form: "(task TODO)" } });
+    vi.spyOn(backend(), "queryRun").mockResolvedValue(blockRunResult([result]));
+  }
+  const linked = surface === "child-only Linked References" ? [...groups, result] : groups;
+  const { root, writeRich } = await mountTarget([...sources, source], linked, ["Alpha", "Source"], routed);
+  if (surface === "nested zoom") mainPaneRouter.zoomToBlock({ name: routed.name, pageKind: "page", block: tree.id });
+  if (surface === "child-only block references") requestBlockReferences(target.blocks[0].id);
+  if (surface === "child-only Unlinked References") {
+    root.querySelector<HTMLElement>(`${selector} .references-header`)!.click();
+    const crumb = await vi.waitFor(() => {
+      const crumb = [...root.querySelectorAll<HTMLElement>(`${selector} .ref-crumb[role=button]`)]
+        .find(crumb => crumb.textContent === tree.raw);
+      expect(crumb).toBeDefined();
+      return crumb!;
+    });
+    crumb.click();
+  }
+  const outline = await vi.waitFor(() => {
+    const outline = root.querySelector(selector);
+    expect(outline?.querySelector(`.ls-block:not(.ref-block)[data-block-id="${leaf.id}"] > .block-main`)).toBeTruthy();
+    return outline!;
+  });
+  const editor = await openBlockEditor(outline, leaf.id);
+  editor.keydown({ key: "a", ctrlKey: true });
+  // jsdom has no native textarea select-all default action.
+  if (editor.kind === "textarea") editor.selectByUser(0, editor.value().length);
+  expect(editor.keydown({ key: "a", ctrlKey: true }).defaultPrevented).toBe(true);
+  expect(selectedIds()).toEqual([leaf.id]);
+  for (let step = 0; step < 2; step++) expect(press("a", { ctrlKey: true }).defaultPrevented).toBe(true);
+  expect(selectedIds()).toEqual([tree.id, leaf.id]);
+  expect((action === "Cut" ? press("x", { ctrlKey: true }) : press(action)).defaultPrevented).toBe(true);
+  await vi.waitFor(() => expect(node(tree.id)).toBeUndefined());
+  if (action === "Cut") expectClipboard(writeRich.mock.lastCall!, [tree]);
+  expect(node(leaf.id)).toBeUndefined();
+  expect(node(parent.id)?.children).toEqual([sibling.id]);
+  expect(node(target.blocks[0].id)?.raw).toBe(target.blocks[0].raw);
+  expect(selectedIds()).toEqual([parent.id, sibling.id]);
 });
 
 it("leaves a pending Cut as a copy after the same group is selected again", async () => {

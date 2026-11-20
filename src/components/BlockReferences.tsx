@@ -51,7 +51,7 @@ export function BlockReferences(props: { id: string }): JSX.Element {
     <>
       <ResourceFailure of={groupsResource} what="references to this block" onRetry={() => void refetch()} />
     <Show when={groups() && groups()!.length > 0}>
-      <div class="block-references-inner" ref={el => bindOutlineSelection(el)} {...{ [FIND_REFERENCES_ATTR]: "block", [FIND_REFERENCES_PAGE_ATTR]: props.id }}>
+      <div class="block-references-inner" {...{ [FIND_REFERENCES_ATTR]: "block", [FIND_REFERENCES_PAGE_ATTR]: props.id }}>
         <div class="block-references-header">
           {t("editor-references-linked-reference", { count: count() })}
           <Show when={(groups() ?? []).length > 1}>

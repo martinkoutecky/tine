@@ -29,7 +29,7 @@ export function bindLiveOutlineSelection(element: Element, boundary: OutlineSele
 
 export const selectAllDialogs = "dialog, [role='dialog'], [role='alertdialog']";
 export const selectAllFields = 'input, textarea, select, [contenteditable=""], [contenteditable="true"], [contenteditable="plaintext-only"]';
-const interactive = `${selectAllFields}, ${selectAllDialogs}, [data-sheet-grid-id], a, button, label, summary, [role='button'], .block-controls, .block-content-wrapper, .reference-page, .references-header, .linked-references, .unlinked-references, .query-page, .query-crumb`;
+const interactive = `${selectAllFields}, ${selectAllDialogs}, [data-sheet-grid-id], a, button, label, summary, [role='button'], .block-controls, .block-content-wrapper, .reference-page, .references-header, .linked-references, .unlinked-references, .block-references, .query-page, .query-crumb, .today-queries, .agenda-block`;
 
 /** Resolve blank outline space at click in O(DOM depth). Row padding
  * and child indentation belong to the enclosing outline. Embedded outlines
