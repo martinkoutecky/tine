@@ -775,34 +775,6 @@ it.each(["Copy", ...removalKeys])("keeps the last folded root's subtree in blank
   for (const row of [hit, sources[1].blocks[1], target.blocks[0]]) expect(node(row.id)?.raw).toBe(row.raw);
 });
 
-it("extends from the first occurrence through intervening roots in a routed reference range", async () => {
-  const q = block("alpha-q", "Intervening Q [[Target]]");
-  const r = block("alpha-r", "Intervening R [[Target]]");
-  const { root, writeRich } = await mountTarget(
-    [{ ...sources[0], blocks: [hit, q, r] }, ...sources.slice(1)],
-    [{ ...groups[0], blocks: [hit, q, r, hit.children[0]].map(shallow) }, ...groups.slice(1)],
-  );
-  const card = root.querySelector<HTMLElement>(".linked-references .reference-group")!;
-  card.querySelector<HTMLElement>(".ref-crumb[role=button]")!.click();
-  const rows = [...card.querySelectorAll<HTMLElement>(".live-ref-group .page-blocks > .ls-block")];
-  expect(rows.map(row => row.dataset.blockId)).toEqual([hit.id, q.id, r.id, hit.id]);
-  const editor = await openBlockEditor(card, q.id);
-  press("Escape", {}, editor.element);
-  expect(topSelected()).toEqual([q.id]);
-  for (let i = 0; i < 2; i++) expect(press("a", { ctrlKey: true }).defaultPrevented).toBe(true);
-  expect(topSelected()).toEqual([hit.id, q.id, r.id]);
-  for (let i = 0; i < 2; i++) {
-    expect(press("ArrowUp", { shiftKey: true }).defaultPrevented).toBe(true);
-    expect(topSelected()).toEqual([hit.id, q.id, r.id]);
-  }
-  expect(press("ArrowUp", { shiftKey: true }).defaultPrevented).toBe(true);
-  expect(topSelected()).toEqual([hit.id, q.id]);
-  expect(press("ArrowDown", { shiftKey: true }).defaultPrevented).toBe(true);
-  expect(topSelected()).toEqual([hit.id, q.id, r.id]);
-  expect(pressAction("Copy").defaultPrevented).toBe(true);
-  expectClipboard(writeRich.mock.lastCall!, [hit, q, r]);
-});
-
 it.each(["plain", "full text", "live breadcrumb", "direct Delete"])("leaves Unlinked Reference excerpts out of Copy and Delete (%s)", async mode => {
   const mention = block("mention", "Mention of Target");
   const excerpt = block("excerpt", "Another mention of Target", [block("hidden", "Undisplayed child")]);

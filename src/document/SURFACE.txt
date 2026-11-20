@@ -189,7 +189,6 @@ seenPageSnapshot  # why: "changed since you last looked" sends the page's unsave
 selectBlock
 selectBlockSubtree  # why: Ctrl/Cmd+A escalation from the editor (GH #262); batch17a
 selectedIds
-selectionIncludesPage  # why: pin selected live reference pages through a shared page index; batch-fix-793-selall
 selectionMarkdown
 selectionScope  # why: one-level fold commands resolve the selected occurrence's collapse surface instead of its source (GH #768); batch-fix-gh768
 setBlockProperty

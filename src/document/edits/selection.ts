@@ -71,10 +71,6 @@ function selectionOrder(id: string | null, scope: OutlineScope | null = activeSe
   if (!id) return [];
   const page = doc.byId[id]?.page;
   const order = scope ? scopedVisibleOrder(scope) : visibleData().index.has(id) ? visibleOrder() : page ? pageVisibleOrder(page) : [];
-  return selectableRows(id, order);
-}
-
-function selectableRows(id: string, order: string[]): string[] {
   return untrack(() => {
     if (threadRootOf(id) !== null) return order;
     const threads = threadRootsOf(order);
@@ -86,10 +82,12 @@ function selectableRows(id: string, order: string[]): string[] {
 // Multi-block selection (Escape from editing; Shift+Arrows extend) + ops
 // ---------------------------------------------------------------------------
 
-type Endpoint = string | { id: string; occurrence: number };
-const [selAnchor, setSelAnchor] = createSignal<Endpoint | null>(null);
-const [selFocus, setSelFocus] = createSignal<Endpoint | null>(null);
-const [wholeSelection, setWholeSelection] = createSignal<{ roots: string[]; blank: boolean } | null>(null);
+const [selAnchor, setSelAnchor] = createSignal<string | null>(null);
+const [selFocus, setSelFocus] = createSignal<string | null>(null);
+// The interval is the whole outline: the select-all ladder reached its top, or
+// blank-space Ctrl/Cmd+A selected it (GH #793). Endpoint ids cannot say this
+// when a query lists a row twice.
+const [whole, setWhole] = createSignal<false | "ladder" | "blank">(false);
 const [selectionView, setSelectionView] = createSignal<{ id: string; scope: OutlineScope | null } | null>(null);
 
 // View topology belongs to the selection, not its moving endpoints. Rebuild
@@ -100,19 +98,6 @@ const selectionTopology = createRoot(() => createMemo(() => {
   const order = view ? selectionOrder(view.id, view.scope) : [];
   const index = new Map<string, number>();
   for (let at = 0; at < order.length; at++) index.set(order[at], at);
-  const occurrences = index.size !== order.length ? new Map<string, number[]>() : undefined;
-  const ordinals = occurrences && new Map<number, number>();
-  if (occurrences && ordinals) {
-    for (let at = 0; at < order.length; at++) {
-      const id = order[at];
-      const positions = occurrences.get(id);
-      if (positions) {
-        ordinals.set(at, positions.length);
-        positions.push(at);
-      }
-      else if (index.get(id) !== at) occurrences.set(id, [at]);
-    }
-  }
   const end = order.map((_, at) => at);
   const previous: number[] = [];
   const stack: number[] = [];
@@ -141,73 +126,57 @@ const selectionTopology = createRoot(() => createMemo(() => {
     previous.push(prev);
   }
   for (const at of stack) end[at] = order.length - 1;
-  return { order, index, end, previous, generation: ++topologyGeneration, occurrences, ordinals };
+  return { order, index, end, previous, generation: ++topologyGeneration,
+    duplicates: index.size !== order.length };
 }));
-
-type SelectionTopology = ReturnType<typeof selectionTopology>;
-const endpointId = (endpoint: Endpoint) => typeof endpoint === "string" ? endpoint : endpoint.id;
-function endpointIndex(topology: SelectionTopology, endpoint: Endpoint) {
-  if (typeof endpoint === "string") return topology.index.get(endpoint);
-  const copies = topology.occurrences?.get(endpoint.id);
-  return copies ? copies[endpoint.occurrence] : endpoint.occurrence === 0 ? topology.index.get(endpoint.id) : undefined;
-}
-function endpointAt(topology: SelectionTopology, at: number): Endpoint {
-  const id = topology.order[at];
-  const copies = topology.occurrences?.get(id);
-  return copies ? { id, occurrence: topology.ordinals?.get(at) ?? 0 } : id;
-}
-
-function exactRoots(ids: string[]) {
-  const rootSet = new Set<string>();
-  for (const id of ids) if (doc.byId[id]) rootSet.add(id);
-  // Result rows can list a child before its parent. The source subtree is
-  // emitted once, at the selected ancestor's own place in display order.
-  for (const id of rootSet) {
-    for (let p = doc.byId[id]?.parent; p; p = doc.byId[p]?.parent) {
-      if (rootSet.has(p)) { rootSet.delete(id); break; }
-    }
-  }
-  return { roots: rootSet.size === ids.length ? ids : [...rootSet], rootSet };
-}
 
 // An ordinary outline selection is one interval in visible preorder.
 // Keep that interval, rather than enumerating its old contents on every key.
 // Repeated query rows need an explicit union of their subtrees; distinct query
 // rows use the same interval and ancestor membership as an ordinary outline.
 const selectionState = createRoot(() => createMemo(() => {
-  const whole = wholeSelection();
-  if (whole) return { topology: null, lo: 0, hi: -1, exact: exactRoots(whole.roots) };
   const a = selAnchor();
   const f = selFocus();
   const topology = selectionTopology();
-  const { order, index, end, occurrences } = topology;
-  const i = a === null ? undefined : endpointIndex(topology, a);
-  const j = f === null ? undefined : endpointIndex(topology, f);
-  const hasInterval = i !== undefined && j !== undefined;
+  const { order, index, end, duplicates } = topology;
+  const i = a ? index.get(a) : undefined;
+  const j = f ? index.get(f) : undefined;
   let lo = 0, hi = -1;
-  if (hasInterval) {
+  if (whole()) hi = order.length - 1;
+  else if (i !== undefined && j !== undefined) {
     lo = Math.min(i, j);
-    let last = Math.max(i, j);
+    let last = order[Math.max(i, j)];
     // An endpoint can be inside a parent the range already selected. Complete
     // that outermost selected parent too, in either direction (GH #262/#941).
-    for (let parent = doc.byId[order[last]]?.parent; parent; parent = doc.byId[parent]?.parent) {
+    for (let parent = doc.byId[last]?.parent; parent; parent = doc.byId[parent]?.parent) {
       const at = index.get(parent);
       if (at === undefined || at < Math.min(i, j) || at > Math.max(i, j)) break;
-      last = at;
+      last = parent;
     }
-    hi = end[last];
+    hi = end[index.get(last)!];
   }
-  if (!occurrences) return { topology, lo, hi, exact: null };
+  if (!duplicates) return { topology, lo, hi, exact: null };
   // O(view rows in range): keep the selected roots only. Membership is an
   // ancestor walk and the descendant list is materialized on demand, so an
   // endpoint step never pays for folded subtrees.
   const roots: string[] = [];
-  if (hasInterval) {
-    for (let at = Math.min(i, j); at <= Math.max(i, j); at = end[at] + 1) {
-      roots.push(order[at]);
-    }
+  const rootSet = new Set<string>();
+  for (let at = lo; at <= hi; at = end[at] + 1) {
+    if (doc.byId[order[at]] && !rootSet.has(order[at])) { rootSet.add(order[at]); roots.push(order[at]); }
   }
-  return { topology, lo, hi, exact: exactRoots(roots) };
+  // Query rows may list a child before its (folded) parent: keep only roots no
+  // selected ancestor already carries, so each block is emitted once.
+  const covered = (id: string) => {
+    for (let p = doc.byId[id]?.parent; p; p = doc.byId[p]?.parent) if (rootSet.has(p)) return true;
+    return false;
+  };
+  if (roots.some(covered)) {
+    const kept = roots.filter((id) => !covered(id));
+    rootSet.clear();
+    for (const id of kept) rootSet.add(id);
+    roots.splice(0, roots.length, ...kept);
+  }
+  return { topology, lo, hi, exact: { roots, rootSet } };
 }));
 
 /** Subtree ids of `roots` in display preorder; stops and returns null once more
@@ -230,27 +199,23 @@ const selectionSnapshot = createRoot(() => createMemo(() => {
   const state = selectionState();
   const owner = getOwner();
   let ids: Accessor<string[]> | undefined, roots: string[] | undefined;
-  let pages: Accessor<ReadonlySet<string>> | undefined;
   const selectedRoots = () => roots ??= selectionRoots(state)!;
   return {
     ids: () => (ids ??= runWithOwner(owner, () => createMemo(() => subtreeIds(selectedRoots())!))!)(),
     roots: selectedRoots,
-    pages: () => (pages ??= runWithOwner(owner, () => createMemo(() =>
-      new Set(selectedRoots().map(id => doc.byId[id]?.page))))!)(),
   };
 }));
 
 function selectionRoots(state: ReturnType<typeof selectionState>, limit = Infinity, lo = state.lo, hi = state.hi): string[] | null {
   if (state.exact) return state.exact.roots.length > limit ? null : state.exact.roots;
-  const { topology } = state;
   const roots: string[] = [];
-  for (let at = lo; at <= hi; at = topology.end[at] + 1) {
-    const id = topology.order[at];
+  for (let at = lo; at <= hi; at = state.topology.end[at] + 1) {
+    const id = state.topology.order[at];
     let covered = false;
     // A query can put a selected ancestor after its child. The ancestor
     // carries that child once, regardless of their display positions.
     for (let parent = doc.byId[id]?.parent; parent; parent = doc.byId[parent]?.parent) {
-      const parentAt = topology.index.get(parent);
+      const parentAt = state.topology.index.get(parent);
       if (parentAt !== undefined && parentAt >= lo && parentAt <= hi) { covered = true; break; }
     }
     if (covered) continue;
@@ -346,21 +311,6 @@ let keyboardPath: number[] = [];
 let keyboardTopology: number | null = null;
 
 export function selectBlock(id: string, scope: OutlineScope | null = null, surface = activeSurface() ?? "main") {
-  startBlockSelection(id, scope, surface);
-}
-
-/** A rendered outline and its lifetime. */
-export interface OutlineSelectionTarget {
-  scope: OutlineScope;
-  surface: string;
-}
-
-function selectWholeRoots(roots: string[], blank = false) {
-  selectAllHead = null;
-  batch(() => { setWholeSelection({ roots, blank }); setSelectionView(null); setSelAnchor(null); setSelFocus(null); });
-}
-
-function startBlockSelection(id: string, scope: OutlineScope | null, surface: string, blankRoots?: string[]) {
   const owner = selectionSurfaces.get(surface);
   endEdit("select-block");
   notifyOutlineSelectionStarted(id);
@@ -372,68 +322,49 @@ function startBlockSelection(id: string, scope: OutlineScope | null, surface: st
   selectAllHead = null;
   keyboardPath = [];
   keyboardTopology = null;
-  if (blankRoots) selectWholeRoots(blankRoots, true);
-  else batch(() => {
-    setWholeSelection(null);
-    setSelectionView({ id, scope });
-    setSelAnchor(id);
-    setSelFocus(id);
-  });
+  batch(() => { setSelectionView({ id, scope }); setSelAnchor(id); setSelFocus(id); setWhole(false); });
+}
+
+/** A rendered outline and its selection lifetime. */
+export interface OutlineSelectionTarget {
+  scope: OutlineScope;
+  surface: string;
 }
 export function clearSelection() {
   selectedSurfaces = undefined;
   selectedSurfaceKey = undefined;
-  batch(() => { setSelAnchor(null); setSelFocus(null); setSelectionView(null); setWholeSelection(null); });
+  batch(() => { setSelAnchor(null); setSelFocus(null); setSelectionView(null); setWhole(false); });
   activeSelectionScope = null;
   selectAllHead = null;
   keyboardPath = [];
   keyboardTopology = null;
 }
-/** Whether the current selection came from blank-space Ctrl/Cmd+A. O(1). */
-export function hasBlankOutlineSelection(): boolean { return wholeSelection()?.blank === true; }
-
-// Restore the current visible order when a whole selection needs range positions.
-function topologyForRange() {
-  if (!selectionView()) {
-    const id = wholeSelection()?.roots.find(id => !!doc.byId[id]);
-    if (id) setSelectionView({ id, scope: activeSelectionScope });
-  }
-  return selectionTopology();
-}
-
 /** Extend the current block selection's focus to `id` (mouse-drag / shift-click).
  *  Starts a fresh selection anchored at `id` if none is active. */
 export function extendSelectionTo(id: string, scope: OutlineScope | null = activeSelectionScope) {
-  if (hasBlankOutlineSelection()) { clearSelection(); return; }
   notifyOutlineSelectionStarted(id);
-  if (!hasSelection()) {
+  if (selAnchor() === null) {
     activeSelectionScope = scope;
     setSelectionView({ id, scope });
     setSelAnchor(id);
   }
-  if (scope !== activeSelectionScope) return;
-  const topology = topologyForRange();
-  if (!topology.index.has(id)) return;
+  if (scope !== activeSelectionScope || !selectionTopology().index.has(id)) return;
   selectAllHead = null;
   keyboardPath = [];
-  batch(() => {
-    if (wholeSelection()) setSelAnchor(endpointAt(topology, 0));
-    setWholeSelection(null);
-    setSelFocus(id);
-  });
+  batch(() => { setWhole(false); setSelFocus(id); });
 }
 export function hasSelection(): boolean {
-  return wholeSelection() !== null || selAnchor() !== null;
+  return selAnchor() !== null;
 }
+/** Whether the selection came from blank-space Ctrl/Cmd+A. O(1). */
+export function hasBlankOutlineSelection(): boolean { return whole() === "blank"; }
 export function moveSelection(dir: 1 | -1, extend: boolean) {
-  if (hasBlankOutlineSelection()) { clearSelection(); return; }
-  const whole = wholeSelection();
   const f = selFocus();
-  if (!whole && f === null) return;
-  const topology = topologyForRange();
+  if (!f) return;
+  const topology = selectionTopology();
   const { order, index, end, previous } = topology;
-  const i = whole ? order.length - 1 : endpointIndex(topology, f!);
-  if (i === undefined || i < 0) return;
+  const i = index.get(f);
+  if (i === undefined) return;
   // D-20261112-SU10 makes both directions sibling-subtree steps. Logseq's
   // select-block-up-down/get-next-block-non-collapsed-skip supplies the downward
   // skip; upward promotion also avoids stopping inside the preceding subtree.
@@ -447,11 +378,11 @@ export function moveSelection(dir: 1 | -1, extend: boolean) {
   let skip = i;
   if (extend && !reversing && dir > 0) {
     const a = selAnchor();
-    const ai = whole ? 0 : a === null ? i : endpointIndex(topology, a) ?? i;
+    const ai = a ? index.get(a) ?? i : i;
     const lo = Math.min(i, ai), hi = Math.max(i, ai);
     // Only an ancestor inside the selected range counts: query rows may list a
     // folded parent after its child, and that parent is not selected.
-    for (let p = doc.byId[order[i]]?.parent; p; p = doc.byId[p]?.parent) {
+    for (let p = doc.byId[f]?.parent; p; p = doc.byId[p]?.parent) {
       const at = index.get(p);
       if (at === undefined || at < lo || at > hi) break;
       skip = at;
@@ -462,15 +393,14 @@ export function moveSelection(dir: 1 | -1, extend: boolean) {
   if (!extend) keyboardPath = [];
   else if (reversing) keyboardPath.pop();
   else keyboardPath.push(ni);
-  const next = endpointAt(topology, ni);
+  const next = order[ni];
   selectAllHead = null;
   batch(() => {
-    if (whole && extend) setSelAnchor(endpointAt(topology, 0));
-    setWholeSelection(null);
+    setWhole(false);
     setSelFocus(next);
     if (!extend) setSelAnchor(next);
   });
-  scrollBlockRowIntoView(order[ni]);
+  scrollBlockRowIntoView(next);
 }
 
 /** Ctrl/Cmd+A while editing a block, with the block's text already fully
@@ -481,54 +411,50 @@ export function selectBlockSubtree(id: string, scope: OutlineScope | null = null
   selectAllHead = id;
 }
 
-/** Ctrl/Cmd+A from whitespace selects the supplied outline. In ordinary
- *  block-selection mode, widen the selection one
+/** Repeated Ctrl/Cmd+A in block-selection mode: widen the selection one
  *  ancestor level at a time — subtree, parent subtree, …, the whole visible
  *  outline, where it stays (idempotent) — or start the ladder at the current
- *  selection's anchor when no select-all sequence is in progress (GH #262). */
-export function expandBlockSelection(target?: OutlineSelectionTarget) {
+ *  selection's anchor when no select-all sequence is in progress (GH #262).
+ *  With a target (blank-space Ctrl/Cmd+A, GH #793), select that outline whole;
+ *  returns false when it has no live rows. */
+export function expandBlockSelection(target?: OutlineSelectionTarget): boolean | undefined {
   if (target) {
-    const roots = target.scope.roots;
-    const id = roots.find(id => !!doc.byId[id]);
+    const id = target.scope.roots.find(id => !!doc.byId[id]);
     if (!id) return false;
-    startBlockSelection(id, target.scope, target.surface, selectableRows(id, [...roots]));
-    return hasBlankOutlineSelection();
+    selectBlock(id, target.scope, target.surface);
+    const { order } = selectionTopology();
+    batch(() => { setSelAnchor(order[0]); setSelFocus(order[order.length - 1]); setWhole("blank"); });
+    return true;
   }
-  if (wholeSelection()) return;
+  if (whole()) return;
   keyboardPath = [];
-  const anchor = selAnchor();
-  const focus = selFocus();
-  if (anchor === null || focus === null) return;
-  const topology = selectionTopology();
-  const { order, index, end } = topology;
-  const a = endpointId(anchor);
-  const ai = endpointIndex(topology, anchor);
-  const fi = endpointIndex(topology, focus);
-  if (ai === undefined || fi === undefined) return;
-  const state = selectionState();
-  if (state.lo === 0 && state.hi === order.length - 1) {
-    selectWholeRoots(selectionRoots(state)!);
-    return;
-  }
+  const a = selAnchor();
+  const f = selFocus();
+  if (!a || !f) return;
+  const { order, index, end } = selectionTopology();
+  if (order.length < 2) return;
+  // Whole-outline selection is the top of the ladder; further presses no-op.
+  const { lo, hi } = selectionState();
+  if (lo === 0 && hi === order.length - 1) { setWhole("ladder"); return; }
   let head = selectAllHead;
   if (head === null || !index.has(head)) head = a;
-  const idx = head === a ? ai : index.get(head);
+  const idx = index.get(head);
   if (idx === undefined) return;
   // A head whose subtree is fully inside the current selection (exactly or
   // because the user extended past it) is covered: climb from there.
-  if (a === head && end[fi] >= end[idx]) {
+  if (a === head && end[index.get(f)!] >= end[idx]) {
     // This subtree is already fully selected: climb to its parent, or to the
     // whole outline when the head is already a root (within the active scope).
     const parent = doc.byId[head]?.parent ?? null;
     if (parent !== null && index.has(parent)) {
       head = parent;
     } else {
-      selectWholeRoots(selectionRoots({ topology, lo: 0, hi: order.length - 1, exact: null })!);
+      batch(() => { setSelAnchor(order[0]); setSelFocus(order[order.length - 1]); setWhole("ladder"); });
+      selectAllHead = null;
       return;
     }
   }
-  const endpoint = head === a ? anchor : head;
-  batch(() => { setSelAnchor(endpoint); setSelFocus(endpoint); });
+  batch(() => { setSelAnchor(head); setSelFocus(head); });
   selectAllHead = head;
 }
 
@@ -587,23 +513,13 @@ export function topSelected(): string[] {
   return selectionSnapshot().roots();
 }
 
-/** Does the selection pin this source page? The first reader builds the
- * shared index in O(selected roots), and each lookup costs O(1). No I/O. */
-export function selectionIncludesPage(page: string): boolean {
-  return selectionSnapshot().pages().has(page);
-}
-
 function selectionRemovalSurvivor(): string | null {
   const roots = topSelected();
   const first = roots[0];
   const last = roots.at(-1);
   if (!first || !last) return null;
-  const { order, index, end } = topologyForRange();
-  const firstAt = index.get(first);
-  const lastAt = index.get(last);
-  return (lastAt === undefined ? undefined : order[end[lastAt] + 1])
-    ?? (firstAt === undefined ? undefined : order[firstAt - 1])
-    ?? doc.byId[first]?.parent ?? null;
+  const { order, index, end } = selectionTopology();
+  return order[end[index.get(last)!] + 1] ?? order[index.get(first)! - 1] ?? doc.byId[first]?.parent ?? null;
 }
 
 function reselectSurvivingBlock(id: string | null, surface: string | undefined) {
@@ -664,23 +580,19 @@ export function outdentSelection() {
 }
 
 export function deleteSelection() {
+  // A blank-space selection ends with any removal attempt and leaves no survivor.
   const blank = hasBlankOutlineSelection();
   const survivor = blank ? null : selectionRemovalSurvivor();
   const surface = selectedSurfaceKey;
   const ids = topSelected().filter((id) => doc.byId[id]);
-  if (!ids.length) {
-    if (blank) clearSelection();
-    return;
-  }
+  if (blank) clearSelection();
+  if (!ids.length) return;
   const pages = [...new Set(ids.map((id) => doc.byId[id].page))];
   // One change for the whole selection — deleting each block separately fires a
   // reactive update per block (15 reflows for 15 bullets); one mutation
   // collapses it to a single update so the cut feels instant.
   const change = outlineChange({ verb: "delete", keys: ids }, pages);
-  if ("refused" in change) {
-    if (blank) clearSelection();
-    return;
-  }
+  if ("refused" in change) return;
   const notice = prepareReferenceChangeNotice(ids, true);
   pushUndo(notice.tag, pages);
   applyOutlineChange(change);
