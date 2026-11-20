@@ -85,9 +85,9 @@ function selectionOrder(id: string | null, scope: OutlineScope | null = activeSe
 const [selAnchor, setSelAnchor] = createSignal<string | null>(null);
 const [selFocus, setSelFocus] = createSignal<string | null>(null);
 // The interval is the whole outline: the select-all ladder reached its top, or
-// blank-space Ctrl/Cmd+A selected it (GH #793). Endpoint ids cannot say this
-// when a query lists a row twice.
-const [whole, setWhole] = createSignal<false | "ladder" | "blank">(false);
+// blank-space Ctrl/Cmd+A selected it (GH #793; a fresh object per gesture, so a
+// pending Cut knows its own). Endpoint ids cannot say this when a query lists a row twice.
+const [whole, setWhole] = createSignal<false | "ladder" | object>(false);
 const [selectionView, setSelectionView] = createSignal<{ id: string; scope: OutlineScope | null } | null>(null);
 
 // View topology belongs to the selection, not its moving endpoints. Rebuild
@@ -356,8 +356,8 @@ export function extendSelectionTo(id: string, scope: OutlineScope | null = activ
 export function hasSelection(): boolean {
   return selAnchor() !== null;
 }
-/** Whether the selection came from blank-space Ctrl/Cmd+A. O(1). */
-export function hasBlankOutlineSelection(): boolean { return whole() === "blank"; }
+/** The blank-space Ctrl/Cmd+A gesture that made the selection, or null. O(1). */
+export function blankOutlineSelection(): object | null { const w = whole(); return typeof w === "object" ? w : null; }
 export function moveSelection(dir: 1 | -1, extend: boolean) {
   const f = selFocus();
   if (!f) return;
@@ -420,11 +420,12 @@ export function selectBlockSubtree(id: string, scope: OutlineScope | null = null
 export function expandBlockSelection(target?: OutlineSelectionTarget): boolean | undefined {
   if (target) {
     // Snapshot the roots: a later result refresh must not change what Delete removes.
-    const scope = { ...target.scope, roots: [...target.scope.roots] }, id = scope.roots.find(id => !!doc.byId[id]);
+    const scope: OutlineScope = Object.create(target.scope, { roots: { value: [...target.scope.roots] } });
+    const id = scope.roots.find(id => !!doc.byId[id]);
     if (!id) return false;
     selectBlock(id, scope, target.surface);
     const { order } = selectionTopology();
-    batch(() => { setSelAnchor(order[0]); setSelFocus(order[order.length - 1]); setWhole("blank"); });
+    batch(() => { setSelAnchor(order[0]); setSelFocus(order[order.length - 1]); setWhole({}); });
     return true;
   }
   if (whole()) return;
@@ -582,7 +583,7 @@ export function outdentSelection() {
 
 export function deleteSelection() {
   // A blank-space selection ends with any removal attempt and leaves no survivor.
-  const blank = hasBlankOutlineSelection();
+  const blank = blankOutlineSelection();
   const survivor = blank ? null : selectionRemovalSurvivor();
   const surface = selectedSurfaceKey;
   const ids = topSelected().filter((id) => doc.byId[id]);

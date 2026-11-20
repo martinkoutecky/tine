@@ -192,8 +192,10 @@ describe("complete subtree selection units (GH #941)", () => {
 it("blank select-all keeps the roots it was given when a refresh republishes them (GH #793)", () => {
   load();
   const [roots, setRoots] = createSignal<readonly string[]>(["A", "D"]);
-  const scope: OutlineScope = { get roots() { return roots(); } };
+  let reads = 0;
+  const scope: OutlineScope = { get roots() { reads++; return roots(); } };
   expect(expandBlockSelection({ scope, surface: "ref" })).toBe(true);
+  expect(reads).toBe(1);
   setRoots(["A", "D", "E"]);
   expect(topSelected()).toEqual(["A", "D"]);
   setRoots([]);

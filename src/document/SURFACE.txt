@@ -27,6 +27,7 @@ applyLiveResolution  # why: conflict dock applies a live-buffer resolution throu
 authoredBlockId  # why: `tine page current` links only a block whose text carries an authored id::, never the runtime key (CURRENT-PAGE-LINKS, discussion 925); batch-og-page-current-links
 beginPageHeaderEdit
 bindHost  # why: graph open binds the page host client; explicit L9-01 draft adoption can refresh loaded pages from relaunched host custody without requiring publication; batch-og-s3b
+blankOutlineSelection  # why: retire only the selection from blank-space Ctrl/Cmd+A (GH #793); batch-fix-793-narrow
 blockExternalId
 blockHasFoldableBody  # why: the bullet arrow, keyboard folds and setCollapsed share one answer to whether a block has a body to fold (children, a page embed, a query macro: OG collapsable?) (GH #619); batch-fix-gh619-query-oct18
 blockHasPageEmbed  # why: host disclosure and keyboard folds share parser-owned page-embed eligibility (GH #694); batch-embed-find
@@ -91,7 +92,6 @@ followPageIdentity  # why: a title:: name change moves home and favorites throug
 formatForBlock
 formatForPage
 graphRewriteFrozen  # why: hide query crossing Undo while graph rewrites freeze edits; batch14q4a-followup
-hasBlankOutlineSelection  # why: retire only the selection from blank-space Ctrl/Cmd+A (GH #793); batch-fix-793-narrow
 hasMessageDate  # why: dated margin replies are messages with outline bodies (MC5/MC6, #891); batch-mc-messages-1111
 hasSelection
 indentBlock
