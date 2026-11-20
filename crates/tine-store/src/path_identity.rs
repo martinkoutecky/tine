@@ -33,19 +33,45 @@ pub(crate) fn canonical_existing_path(path: &Path) -> io::Result<PathBuf> {
     #[cfg(test)]
     CANONICALIZATIONS.with(|count| count.set(count.get() + 1));
     #[cfg(test)]
-    if let Some(folded) = FOLDED_SPELLING.with(|hook| hook.borrow().as_ref().and_then(|f| f(path)))
-    {
-        return Ok(folded);
+    if let Some(source) = folding_alias_source(path) {
+        return canonical_existing_path_with(&source, |path| fs::canonicalize(path));
     }
     canonical_existing_path_with(path, |path| fs::canonicalize(path))
 }
 
 #[cfg(test)]
 thread_local! {
-    /// Stands in for a case- or normalization-folding volume on this thread:
-    /// the disk spelling canonicalization reports for a path, if any.
-    pub(crate) static FOLDED_SPELLING: std::cell::RefCell<Option<Box<dyn Fn(&Path) -> Option<PathBuf>>>> =
-        std::cell::RefCell::new(None);
+    static FOLDING_ALIAS: std::cell::RefCell<Option<(PathBuf, PathBuf)>> = const { std::cell::RefCell::new(None) };
+}
+
+/// The entry a folding volume reaches through `path`, under
+/// [`with_folding_alias`]: the one seam standing in for a case- or
+/// normalization-folding volume (canonicalization here, lstat in the
+/// write-target probes).
+#[cfg(test)]
+pub(crate) fn folding_alias_source(path: &Path) -> Option<PathBuf> {
+    FOLDING_ALIAS.with(|alias| {
+        alias
+            .borrow()
+            .as_ref()
+            .and_then(|(asked, source)| (asked == path).then(|| source.clone()))
+    })
+}
+
+/// Supply the canonical answer of a folding volume without creating a second
+/// directory entry on Linux. Always remove the seam, including on unwind.
+#[cfg(test)]
+pub(crate) fn with_folding_alias<T>(asked: &Path, source: &Path, run: impl FnOnce() -> T) -> T {
+    struct Clear;
+    impl Drop for Clear {
+        fn drop(&mut self) {
+            FOLDING_ALIAS.with(|alias| *alias.borrow_mut() = None);
+        }
+    }
+    FOLDING_ALIAS
+        .with(|alias| *alias.borrow_mut() = Some((asked.to_path_buf(), source.to_path_buf())));
+    let _clear = Clear;
+    run()
 }
 
 #[cfg(test)]

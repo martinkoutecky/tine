@@ -216,6 +216,11 @@ impl Store {
         let mut held = Vec::new();
         let mut unheld = Vec::new();
         let mut fresh = HashSet::new();
+        // On a case- or normalization-folding volume a candidate can reach a
+        // file spelled otherwise: each hit is taken at its disk spelling
+        // (`disk_spelling`), once, and only if that spelling's own stem
+        // claims the day by S3 (reviews db344b16e F1, cf7ede011 F1).
+        let mut found = HashSet::new();
         for stem in format.accepted_stems(day) {
             if stem.contains(['/', '\\']) {
                 continue;
@@ -230,6 +235,20 @@ impl Store {
                     Err(error) if error.kind() == std::io::ErrorKind::NotFound => continue,
                     Err(error) => return Err(StoreError::Io(error.into())),
                 };
+                let (id, path) = match self.disk_spelling(&id) {
+                    Some(actual) => {
+                        let path = self.graph.root.join(actual.as_str());
+                        (actual, path)
+                    }
+                    None => (id, path),
+                };
+                let claims = Path::new(id.as_str())
+                    .file_stem()
+                    .and_then(|stem| stem.to_str())
+                    .is_some_and(|stem| format.file_claim_day(stem, true) == Some(day));
+                if !claims || !found.insert(id.clone()) {
+                    continue;
+                }
                 let disk = matches!(self.graph.source(&path), crate::model::Source::Disk);
                 if disk && !self.watch.unchanged_since_observed(&path, now.as_ref()) {
                     fresh.insert(path);

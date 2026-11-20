@@ -271,12 +271,7 @@ fn probe_lstat(path: &Path) -> io::Result<fs::Metadata> {
     #[cfg(test)]
     probe_fault(path, ProbeStep::Lstat)?;
     #[cfg(test)]
-    if let Some(source) = FOLDING_ALIAS.with(|alias| {
-        alias
-            .borrow()
-            .as_ref()
-            .and_then(|(asked, source)| (asked == path).then(|| source.clone()))
-    }) {
+    if let Some(source) = crate::path_identity::folding_alias_source(path) {
         return fs::symlink_metadata(source);
     }
     fs::symlink_metadata(path)
@@ -291,15 +286,6 @@ fn probe_canonical(path: &Path) -> io::Result<PathBuf> {
     #[cfg(test)]
     probe_fault(path, ProbeStep::Canonical)?;
     #[cfg(test)]
-    if let Some(source) = FOLDING_ALIAS.with(|alias| {
-        alias
-            .borrow()
-            .as_ref()
-            .and_then(|(asked, source)| (asked == path).then(|| source.clone()))
-    }) {
-        return canonical_existing_path(&source);
-    }
-    #[cfg(test)]
     if let Some(resolution) = PROBE_DISPLACED.with(|displaced| {
         displaced
             .borrow()
@@ -309,27 +295,6 @@ fn probe_canonical(path: &Path) -> io::Result<PathBuf> {
         return Ok(resolution);
     }
     canonical_existing_path(path)
-}
-
-#[cfg(test)]
-thread_local! {
-    static FOLDING_ALIAS: std::cell::RefCell<Option<(PathBuf, PathBuf)>> = const { std::cell::RefCell::new(None) };
-}
-
-/// Supply the canonical answer of a folding volume without creating a second
-/// directory entry on Linux. Always remove the seam, including on unwind.
-#[cfg(test)]
-pub(crate) fn with_folding_alias<T>(asked: &Path, source: &Path, run: impl FnOnce() -> T) -> T {
-    struct Clear;
-    impl Drop for Clear {
-        fn drop(&mut self) {
-            FOLDING_ALIAS.with(|alias| *alias.borrow_mut() = None);
-        }
-    }
-    FOLDING_ALIAS
-        .with(|alias| *alias.borrow_mut() = Some((asked.to_path_buf(), source.to_path_buf())));
-    let _clear = Clear;
-    run()
 }
 
 /// Managed graph directories must retain their own identity, not merely land

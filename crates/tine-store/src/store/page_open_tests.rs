@@ -163,42 +163,67 @@ fn a_dated_file_read_by_path_after_delivery_reads_no_other_file() {
     }
 }
 
-/// Review db344b16e F1: on a case-folding volume two discovery candidates,
-/// `X 2026_11_02` (file-name format) and `x 2026_11_02` (title format), stat
-/// one file, here spelled `x 2026_11_02.md` on disk. A hard link stands for
-/// the other spelling and the canonicalization hook reports the disk
-/// spelling, as such a volume does. The late journal is published once, at
-/// its disk spelling: not under a spelling no directory lists, and not as a
-/// same-day conflict.
+/// Reviews db344b16e F1 and cf7ede011 F1, model check 2 §4: on a folding
+/// volume a discovery candidate reaches a late journal spelled otherwise on
+/// disk, by case (`X …` asked, `x …` on disk; `Nov 2nd, 2026` asked,
+/// `NOV 2nd, 2026` on disk) or by Unicode composition (`Á …` asked, `A\u{301} …`
+/// on disk). A hard link stands for the asked spelling on Linux and the folding
+/// seam answers canonicalization and the write-target probes as such a volume
+/// does. The journal is found and published once, at its disk spelling.
 #[test]
-fn a_late_journal_reached_by_two_spellings_is_one_claimant_at_its_disk_spelling() {
-    let root = graph(3);
-    fs::write(
-        root.path().join("logseq/config.edn"),
-        "{:preferred-format :markdown :journal/file-name-format \"X yyyy_MM_dd\" \
-         :journal/page-title-format \"x yyyy_MM_dd\"}\n",
-    )
-    .unwrap();
-    let store = open(root.path(), None);
-    store.whole_graph().unwrap();
-    // On Linux the watcher would list the hard link as a second file.
-    store.watch.stop_background_for_test();
-    let disk = root.path().join("journals/x 2026_11_02.md");
-    fs::write(&disk, "- late\n").unwrap();
-    fs::hard_link(&disk, root.path().join("journals/X 2026_11_02.md")).unwrap();
-    crate::path_identity::FOLDED_SPELLING.with(|hook| {
-        *hook.borrow_mut() = Some(Box::new(|path: &Path| {
-            (path.file_name()? == "X 2026_11_02.md").then(|| path.with_file_name("x 2026_11_02.md"))
-        }))
-    });
-    let read = store.page_named("x 2026_11_02", PageKind::Journal);
-    crate::path_identity::FOLDED_SPELLING.with(|hook| hook.borrow_mut().take());
-    let read = read.unwrap().expect("the day's file is found");
-    assert_eq!(read.id.as_str(), "journals/x 2026_11_02.md");
-    let view = store.whole_graph().unwrap();
-    let conflicts = view.inventory(InventoryScope::ConflictingFiles(None));
-    assert!(conflicts.0.is_empty(), "one file, one claimant");
-    store.close();
+fn a_late_journal_reached_through_another_spelling_is_one_claimant_at_its_disk_spelling() {
+    for (formats, title, disk, asked) in [
+        (
+            Some(("X yyyy_MM_dd", "x yyyy_MM_dd")),
+            "x 2026_11_02",
+            "x 2026_11_02.md",
+            "X 2026_11_02.md",
+        ),
+        (
+            Some(("\u{c1} yyyy_MM_dd", "A\u{301} yyyy_MM_dd")),
+            "A\u{301} 2026_11_02",
+            "A\u{301} 2026_11_02.md",
+            "\u{c1} 2026_11_02.md",
+        ),
+        (
+            None,
+            "Nov 2nd, 2026",
+            "NOV 2nd, 2026.md",
+            "Nov 2nd, 2026.md",
+        ),
+    ] {
+        let root = graph(3);
+        if let Some((file_format, title_format)) = formats {
+            fs::write(
+                root.path().join("logseq/config.edn"),
+                format!(
+                    "{{:preferred-format :markdown :journal/file-name-format \"{file_format}\" \
+                     :journal/page-title-format \"{title_format}\"}}\n"
+                ),
+            )
+            .unwrap();
+        }
+        let store = open(root.path(), None);
+        store.whole_graph().unwrap();
+        // On Linux the watcher would list the hard link as a second file.
+        store.watch.stop_background_for_test();
+        let journals = root.path().join("journals");
+        fs::write(journals.join(disk), "- late\n").unwrap();
+        if !journals.join(asked).exists() {
+            fs::hard_link(journals.join(disk), journals.join(asked)).unwrap();
+        }
+        let read = crate::path_identity::with_folding_alias(
+            &journals.join(asked),
+            &journals.join(disk),
+            || store.page_named(title, PageKind::Journal),
+        );
+        let read = read.unwrap().expect("the day's file is found");
+        assert_eq!(read.id.as_str(), format!("journals/{disk}"));
+        let view = store.whole_graph().unwrap();
+        let conflicts = view.inventory(InventoryScope::ConflictingFiles(None));
+        assert!(conflicts.0.is_empty(), "{disk}: one file, one claimant");
+        store.close();
+    }
 }
 
 #[test]

@@ -639,7 +639,7 @@ mod spelling_tests {
             created: false,
             moved: false,
         };
-        crate::model::write_target::with_folding_alias(&dst, &src, || {
+        crate::path_identity::with_folding_alias(&dst, &src, || {
             assert_eq!(
                 crate::model::canonical_existing_ancestor(&dst).unwrap().1,
                 src
@@ -939,7 +939,7 @@ mod spelling_tests {
                 created: false,
                 moved: false,
             };
-            crate::model::write_target::with_folding_alias(&dst, &src, || {
+            crate::path_identity::with_folding_alias(&dst, &src, || {
                 store.inject_fault(FaultPoint::CaseMoveAliasRefusal);
                 tx.publish_move(&mut undo, &src, &dst).unwrap();
             });
