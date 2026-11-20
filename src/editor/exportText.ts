@@ -61,6 +61,8 @@ export const DEFAULT_EXPORT_OPTIONS: ExportOptions = {
 export interface ExportNode {
   id?: string;
   hasParent?: boolean;
+  /** A checked reference beneath another checked reference. */
+  checked?: true;
   comment?: { author: string | null; date: string | null };
   raw: string;
   format?: Format; // md when absent

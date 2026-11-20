@@ -17,5 +17,6 @@
   "src/render/block.ts": 3,
   "src/render/facets.ts": 1,
   "src/sheet/renameField.ts": 2,
-  "src/sheet/tablePresentation.ts": 3
+  "src/sheet/tablePresentation.ts": 3,
+  "src/editor/referenceCompletion.ts": 1
 }

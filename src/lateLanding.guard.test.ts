@@ -185,6 +185,7 @@ const OWNER_PARAM_HELPERS = new Set([
   "src/carry.ts#ensureLoaded",
   "src/capture.tsx#Capture.refreshCaptureConfig", // both callers pass their latestOwner show/submit token
   "src/components/ExportModal.tsx#warmMacro",
+  "src/components/queryResultsCopy.ts#readSourcePage", // its caller passes graphOwner(current)
   "src/components/ExportModal.tsx#warmQueryMacros",
   "src/document/workingSet.ts#admitPageFile",
   "src/journalFeedRead.ts#readJournalFeedWindow",
