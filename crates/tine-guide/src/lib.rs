@@ -1696,7 +1696,7 @@ mod rename_guide_tests {
             "**Update all** beside the Exports page title prepares folder exports and quick shares together",
             "Nothing is written or uploaded until you confirm",
             "each result is shown even if another export fails",
-            "Folder exports work even when quick share is off or disconnected",
+            "Folder exports work even when quick share is disconnected",
             "**Delete** removes the hosted gist",
             "Delete from a share's query on the **Exports page**",
             "even when its key is on another device",
@@ -1720,6 +1720,7 @@ mod rename_guide_tests {
             "Coming soon",
             "compatible reader must be available",
             "shown when sharing is available",
+            "quick share is off",
         ] {
             assert!(
                 !share.contains(stale),
