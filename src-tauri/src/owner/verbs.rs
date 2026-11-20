@@ -633,7 +633,9 @@ fn several_claimants(name: &str, candidates: &[PageId], alias: bool) -> ErrorBod
 }
 
 /// The journal day `date` names: today when absent, else `YYYY-MM-DD` (or
-/// `YYYY_MM_DD`), else a title in the graph's journal format.
+/// `YYYY_MM_DD`), else a title in the graph's journal format. A typed
+/// calendar input under the CLI contract, not a page spelling: the dated
+/// titles model's S2 does not apply to it (review ca24f8f2c F6).
 pub(super) fn journal_day(slot: &GraphSlot, date: Option<&str>) -> Result<JournalDate, ErrorBody> {
     let Some(date) = date.map(str::trim) else {
         return Ok(JournalDate::today());

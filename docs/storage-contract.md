@@ -1101,13 +1101,14 @@ journal kind. Tree, macro and hierarchy attach only a listed typed parent;
 alias-only names remain excluded, without jumping to an ancestor. Frozen
 published v1 rows omit this new field and retain their previous readers.
 
-An ordinary file claiming the configured canonical day title remains distinct
-from the virtual journal named by another accepted spelling (SPEC §2.3).
-Both typed inventory rows can have that displayed title. The virtual journal
-retains an unclaimed opening spelling in its existing `link` field; entity
-gestures preserve it while a literal link using the ordinary filename still
-opens that file. Count panels distinguish `(kind,key)` in the same count walk.
-A virtual journal has no physical self page to exclude from references or links.
+A file outside `journals/` whose name (its `title::` or `#+TITLE`, else its
+decoded stem) the journal title routes read as a day claims that day, not a
+name: it joins the day's claimants beside any journal file of that day, and
+the one claimant order picks the file the day opens. Every
+spelling of the day opens that file; there is no separate ordinary page under
+the canonical title and no alternate opening spelling for a virtual twin. A
+day no file claims is a virtual journal, which has no physical self page to
+exclude from references or links.
 
 Which references name a journal day (Linked References, `[[day]]` backlink
 counts' needles) is every spelling the journal answerer accepts for that day:

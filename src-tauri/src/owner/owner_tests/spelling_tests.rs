@@ -387,3 +387,29 @@ fn an_add_to_a_day_goes_to_that_year_under_the_fallback_title() {
     );
     assert_eq!(disk(&graph, other), "- last year\n");
 }
+
+/// Review ca24f8f2c F6, manager ruling: a CLI date argument is a typed
+/// calendar input under the CLI contract (`YYYY-MM-DD`), not a page spelling,
+/// so state model S2 does not apply to it. Under the title format
+/// `yyyy-dd-MM`, the link `[[2026-02-11]]` names November 2 while
+/// `--date 2026-02-11` names February 11.
+#[test]
+fn a_cli_date_argument_is_a_calendar_date_not_a_page_spelling() {
+    let graph = Graph::seeded(
+        Default::default(),
+        &[(
+            "logseq/config.edn",
+            "{:journal/page-title-format \"yyyy-dd-MM\"}\n",
+        )],
+    );
+    let slot = graph.slot();
+    let day = super::super::verbs::journal_day(&slot, Some("2026-02-11")).unwrap();
+    assert_eq!((day.year, day.month, day.day), (2026, 2, 11));
+    let link = slot
+        .store
+        .config()
+        .journal_format()
+        .parse_text("2026-02-11")
+        .unwrap();
+    assert_eq!((link.year, link.month, link.day), (2026, 11, 2));
+}

@@ -564,7 +564,6 @@ fn only_file_claim_day_interprets_an_observed_journal_stem() {
     assert_date_readers(
         &["parse_file_stem"],
         &[
-            "crates/tine-core/src/date.rs::JournalFormat::accepted_stems",
             "crates/tine-core/src/date.rs::JournalFormat::file_claim_day",
             "crates/tine-graph-features/src/journals.rs::migration_plan",
         ],

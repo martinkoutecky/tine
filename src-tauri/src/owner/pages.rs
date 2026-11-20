@@ -64,7 +64,18 @@ pub(super) fn create_named_page(slot: &GraphSlot, args: &Value) -> Result<Value,
     )
 }
 
+#[cfg(test)]
+thread_local! {
+    /// Stands in for the window's save during a flush (review ca24f8f2c F1).
+    pub(super) static FLUSH_SAVES: std::cell::RefCell<Option<Box<dyn FnOnce()>>> =
+        std::cell::RefCell::new(None);
+}
+
 fn flush_window(slot: &GraphSlot, page: Option<&str>) -> Result<(), ErrorBody> {
+    #[cfg(test)]
+    if let Some(save) = FLUSH_SAVES.with(|hook| hook.borrow_mut().take()) {
+        save();
+    }
     if let Some(window) = slot.window.get() {
         let result = match page {
             Some(name) => window.flush_page(name),
@@ -254,13 +265,14 @@ pub(super) fn rename_named_page(slot: &GraphSlot, args: &Value) -> Result<Value,
         .as_ref()
         .map(|page| slot.store.page(page).map_err(|e| store_refused(e, page)))
         .transpose()?;
-    // The page's own name: what the planner is asked about, and what the
-    // window and the reply show. A journal's title names its day alone
-    // (D-20261119-YL), so a day typed in any spelling is refused as that day.
-    let old = parsed.as_ref().map_or_else(
-        || args.old.trim().to_owned(),
-        |parsed| parsed.doc.name.clone(),
-    );
+    // The planner is asked about the name the user typed, as every request
+    // check (O0, O2) is: a flush above can retitle the file, and the typed
+    // name must then no longer reach it (review ca24f8f2c F1). The page's own
+    // name is what the window and the reply show.
+    let typed = args.old.trim();
+    let old = parsed
+        .as_ref()
+        .map_or_else(|| typed.to_owned(), |parsed| parsed.doc.name.clone());
     let kind = parsed
         .as_ref()
         .map_or(tine_core::model::PageKind::Page, |parsed| parsed.doc.kind);
@@ -275,7 +287,7 @@ pub(super) fn rename_named_page(slot: &GraphSlot, args: &Value) -> Result<Value,
         tine_graph_features::pages::rename_or_merge_page(
             &slot.store,
             host,
-            &old,
+            typed,
             new,
             path,
             None,

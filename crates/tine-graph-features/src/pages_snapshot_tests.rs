@@ -1304,6 +1304,61 @@ fn an_unreadable_dated_survivor_refuses_the_merge_naming_its_file() {
     }
 }
 
+/// Review ca24f8f2c F4 and F5: a dated survivor unreadable since launch has
+/// no parsed row, yet it claims its day by its path. Rename-and-merge and the
+/// Settings duplicate-day merge (`merge_pages`) both refuse it as unreadable,
+/// naming the file, never as unindexed or as a bare permission error.
+#[cfg(unix)]
+#[test]
+fn a_survivor_unreadable_since_launch_refuses_as_unreadable_naming_its_file() {
+    use std::os::unix::fs::PermissionsExt;
+    for ext in ["md", "markdown", "org"] {
+        let root = crate::test_support::fresh_dir("tine-merge-survivor-unreadable-launch-");
+        disk::create_dir_all(root.join("pages")).unwrap();
+        disk::create_dir_all(root.join("journals")).unwrap();
+        let survivor_rel = format!("journals/2027_10_26.{ext}");
+        let survivor = root.join(&survivor_rel);
+        let source_rel = format!("pages/B.{ext}");
+        let body = if ext == "org" { "* body\n" } else { "- body\n" };
+        disk::write(root.join(&source_rel), body).unwrap();
+        disk::write(&survivor, body).unwrap();
+        disk::set_permissions(&survivor, disk::Permissions::from_mode(0o000)).unwrap();
+        let store = Arc::new(Store::open(&root, Default::default()).unwrap().0);
+        store.whole_graph().unwrap();
+        let refused = |error: std::io::Error, what: &str| {
+            assert_eq!(
+                crate::pages::RewriteBlocked::of(&error),
+                Some(&crate::pages::RewriteBlocked::Unreadable {
+                    file: survivor_rel.clone()
+                }),
+                "{ext} {what}: {error}"
+            );
+        };
+        let renamed = hosted(&store, |host| {
+            rename_page_after_inventory(
+                &store,
+                host,
+                "B",
+                "2027-10-26",
+                None,
+                RenameChoice::MergeInto(&survivor_rel),
+                &[],
+                || {},
+            )
+        });
+        refused(renamed.expect_err("refused"), "rename");
+        let merged = hosted(&store, |host| {
+            crate::pages::merge_pages(&store, host, &source_rel, &survivor_rel)
+        });
+        refused(merged.expect_err("refused"), "settings merge");
+        disk::set_permissions(&survivor, disk::Permissions::from_mode(0o644)).unwrap();
+        assert_eq!(disk::read_to_string(&survivor).unwrap(), body, "{ext}");
+        assert!(root.join(&source_rel).exists(), "{ext}");
+        store.close();
+        disk::remove_dir_all(root).unwrap();
+    }
+}
+
 /// [`a_survivor_title_changed_after_its_read_replans_the_merge`] for an Org
 /// survivor: its `#+TITLE` read by the plan is guarded by that read's
 /// revision, so an outside edit after it replans.

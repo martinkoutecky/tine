@@ -764,13 +764,18 @@ fn plan_request(
     let mut selected = None;
     if let Some(into) = merge_into {
         let id = PageId::from(into);
-        let inventory = graph.inventory(tine_store::InventoryScope::File(&id));
+        // A parsed row, else the day the file claims by its path: a survivor
+        // unreadable since launch has no row but still claims its day, and
+        // its read must refuse as unreadable (review ca24f8f2c F4).
+        let mut inventory = graph.inventory(tine_store::InventoryScope::File(&id));
+        if inventory.0.is_empty() {
+            inventory = graph.inventory(tine_store::InventoryScope::JournalFile(&id));
+        }
         if let Some(entry) = inventory.0.first() {
             let mut spelling = entry.name.clone();
             if let Some(day) = entry.day.filter(|_| entry.is_journal) {
                 let day = tine_core::date::JournalDate::from_ordinal(day.0);
-                let (text, rev) = crate::parsed_text::read(store, &id.file())
-                    .map_err(|error| RewriteBlocked::unreadable(into.to_owned(), &error))?;
+                let (text, rev) = crate::pages::survivor_text(store, &id)?;
                 if let Some(title) = tine_core::model::page_title_from_header(
                     &text,
                     Format::from_path(into.as_ref()),

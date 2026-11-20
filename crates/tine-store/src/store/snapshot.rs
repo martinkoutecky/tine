@@ -18,39 +18,37 @@ impl Store {
         self.graph.find_entry(name, kind)
     }
 
-    /// Whether `entry`, read by path, is the winning claimant of its name
-    /// (GH #623 BR3). An ordinary page is answered from the published name
-    /// index while that index describes the current cache generation, so no
-    /// other file is opened; a file the index does not list under this name
-    /// yet (new, or retitled before the watcher saw it) is ranked against
-    /// the listed claimants by the one claimant order. A journal, or a stale
-    /// or absent publication, asks the live claimant index. Erring towards
+    /// Whether `entry`, read by path, is the winning claimant of its name or
+    /// day (GH #623 BR3). It is answered from the published claim index while
+    /// that index describes the current cache generation, so no other file
+    /// is opened; a file the index does not list under its claim yet (new,
+    /// delivered, or retitled before the watcher saw it) is ranked against
+    /// the listed claimants by the one claimant order (state model S4). A
+    /// stale or absent publication asks the live claimant index. Erring towards
     /// "not canonical" is safe: the
     /// page is then parsed directly and its revision still comes from the
     /// bytes served.
     pub(crate) fn canonical_claim(&self, entry: &PageEntry) -> bool {
-        if entry.kind == PageKind::Page {
-            if let Some(snapshot) = self
-                .changes
-                .snapshot
-                .read()
-                .unwrap()
-                .as_ref()
-                .filter(|snapshot| snapshot.cache_generation == self.graph.cache_generation())
-            {
-                let listed = snapshot
-                    .claimants
-                    .get(&Claim::of(entry))
-                    .map(Vec::as_slice)
-                    .unwrap_or_default();
-                if listed.iter().any(|claimant| claimant.path == entry.path) {
-                    return listed[0].path == entry.path;
-                }
-                let journals_dir = &snapshot.config.config.journals_dir;
-                return listed.iter().all(|claimant| {
-                    crate::model::compare_page_claimants(journals_dir, entry, claimant).is_lt()
-                });
+        if let Some(snapshot) = self
+            .changes
+            .snapshot
+            .read()
+            .unwrap()
+            .as_ref()
+            .filter(|snapshot| snapshot.cache_generation == self.graph.cache_generation())
+        {
+            let listed = snapshot
+                .claimants
+                .get(&Claim::of(entry))
+                .map(Vec::as_slice)
+                .unwrap_or_default();
+            if listed.iter().any(|claimant| claimant.path == entry.path) {
+                return listed[0].path == entry.path;
             }
+            let journals_dir = &snapshot.config.config.journals_dir;
+            return listed.iter().all(|claimant| {
+                crate::model::compare_page_claimants(journals_dir, entry, claimant).is_lt()
+            });
         }
         self.graph
             .find_entry(&entry.name, entry.kind)

@@ -365,6 +365,14 @@ fn read_text(store: &Store, file: &FileId) -> io::Result<(String, FileRev)> {
     crate::parsed_text::read(store, file)
 }
 
+/// A merge's survivor or source text: a failed read refuses naming the file
+/// (unreadable, or unindexed for bytes the parser cannot take), in Settings
+/// and in the rename planner alike (review ca24f8f2c F4, F5).
+pub(crate) fn survivor_text(store: &Store, id: &PageId) -> io::Result<(String, FileRev)> {
+    read_text(store, &id.file())
+        .map_err(|error| RewriteBlocked::unreadable(id.as_str().into(), &error))
+}
+
 fn text_file(store: &Store, rel: &str) -> io::Result<FileId> {
     let config = store.config();
     for (area, dir) in [
@@ -1365,10 +1373,10 @@ fn merged_survivor(
         }
         .error());
     }
-    let (src_text, src_rev) = read_text(store, &src.file())?;
+    let (src_text, src_rev) = survivor_text(store, src)?;
     let (dst_text, dst_rev) = match dst_read {
         Some(read) => read,
-        None => read_text(store, &dst.file())?,
+        None => survivor_text(store, dst)?,
     };
     let format = Format::from_path(src.as_str().as_ref());
     for (id, text) in [(src, &src_text), (dst, &dst_text)] {

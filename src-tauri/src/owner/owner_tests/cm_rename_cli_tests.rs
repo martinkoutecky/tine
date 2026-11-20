@@ -289,3 +289,39 @@ fn cli_a_typed_day_is_refused_under_the_fallback_title() {
     assert!(body.message.contains("journal day"), "{}", body.message);
     assert_eq!(files(&graph.root), before, "nothing written");
 }
+
+/// The planner is asked about the spelling the user typed, never the name
+/// the file reads as after the window's flush: a flush that saves a new
+/// title must not have the file's new identity renamed (review ca24f8f2c F1).
+#[test]
+fn cli_rename_never_renames_the_identity_a_flush_gave_the_file() {
+    for (path, retitled) in [
+        ("pages/Old.md", "title:: Other\n\n- body\n"),
+        ("pages/Old.org", "#+TITLE: Other\n\n* body\n"),
+    ] {
+        let graph = Graph::seeded(
+            Default::default(),
+            &[(path, "- body\n"), ("pages/r.md", "- [[Other]]\n")],
+        );
+        let slot = graph.slot();
+        let (file, store) = (graph.root.join(path), std::sync::Arc::clone(&slot.store));
+        super::super::pages::FLUSH_SAVES.with(|hook| {
+            *hook.borrow_mut() = Some(Box::new(move || {
+                std::fs::write(file, retitled).unwrap();
+                store.refresh(tine_store::Depth::Stamps).unwrap();
+            }))
+        });
+        let before_r = std::fs::read_to_string(graph.root.join("pages/r.md")).unwrap();
+        let _ = verb(&slot, "page.rename", json!({"old":"Old","new":"New"}));
+        assert_eq!(
+            std::fs::read_to_string(graph.root.join("pages/r.md")).unwrap(),
+            before_r,
+            "{path}: Other's referrer is untouched"
+        );
+        assert_eq!(
+            std::fs::read_to_string(graph.root.join(path)).unwrap(),
+            retitled,
+            "{path}: the flushed file keeps its title"
+        );
+    }
+}

@@ -132,6 +132,57 @@ fn a_page_open_after_the_file_set_changes_reads_no_other_file() {
     store.close();
 }
 
+/// A dated file delivered after Ready and read by path before the watcher
+/// sees it claims its day from its own observation (state model S4): the
+/// read opens a constant number of preambles (its own, and an ordinary
+/// page's title check), whatever the graph's size (review
+/// ca24f8f2c F2: a journal fell back to the cold claimant walk).
+#[test]
+fn a_dated_file_read_by_path_after_delivery_reads_no_other_file() {
+    for (path, text) in [
+        ("journals/2026_11_02.md", "- delivered\n"),
+        ("pages/Diary.md", "title:: Nov 2nd, 2026\n\n- delivered\n"),
+    ] {
+        let root = graph(200);
+        let store = open(root.path(), None);
+        store.whole_graph().unwrap();
+        fs::write(root.path().join(path), text).unwrap();
+        GRAPH_LIST_CALLS.with(|calls| calls.set(0));
+        GRAPH_PREAMBLE_READS.with(|reads| reads.set(0));
+        let read = store.page(&PageId::from(path)).unwrap();
+        assert_eq!(read.doc.blocks[0].raw, "delivered");
+        let (walks, reads) = (
+            GRAPH_LIST_CALLS.with(|calls| calls.get()),
+            GRAPH_PREAMBLE_READS.with(|reads| reads.get()),
+        );
+        assert!(
+            walks == 0 && reads <= 3,
+            "{path}: {walks} walks, {reads} preamble reads; a delivered dated file must not walk the graph"
+        );
+        store.close();
+    }
+}
+
+/// A journal delivered after Ready under a stem that claims its day only
+/// through S3's folded text route (`nov 2nd, 2026`, a lowercase month) is
+/// found by the day's named read before the watcher sees it (model C5;
+/// review ca24f8f2c F3: discovery listed only the physical renderings).
+#[test]
+fn a_late_journal_whose_folded_stem_claims_the_day_is_found_by_name() {
+    for stem in ["nov 2nd, 2026", "2026_11_02"] {
+        let root = graph(3);
+        let store = open(root.path(), None);
+        store.whole_graph().unwrap();
+        fs::write(root.path().join(format!("journals/{stem}.md")), "- late\n").unwrap();
+        let read = store
+            .page_named("Nov 2nd, 2026", PageKind::Journal)
+            .unwrap()
+            .unwrap_or_else(|| panic!("{stem}: the day's file is found"));
+        assert_eq!(read.id.as_str(), format!("journals/{stem}.md"));
+        store.close();
+    }
+}
+
 #[test]
 fn a_page_open_before_ready_needs_neither_the_load_nor_the_writer() {
     let root = graph(5);
