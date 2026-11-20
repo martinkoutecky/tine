@@ -20,26 +20,29 @@ vi.mock("./document/model", async (importOriginal) => ({
 import { openBlockInSidebar, openPageInSidebar, rightSidebar, setRightSidebar } from "./ui";
 import { sameNavigationRoute } from "./router";
 
-// UI-ORG-RESULT-ROW-FORMAT, reviews 62c50db18 F1 and c81135cba F1: result rows
-// carry their source file. Opening one must not close or duplicate the
-// name-only view of that same file, also while the inventory is refreshing
-// (an unrelated rename); a different file of the same name still replaces it.
+// UI-ORG-RESULT-ROW-FORMAT, reviews 62c50db18 F1, c81135cba F1 and
+// cb69e3d96 F1: result rows carry their source file. Opening one must not
+// close the name-only view of that same file; a different same-name file
+// still replaces it. The answer comes from the inventory only: a loaded
+// same-name file is never taken for the name's owner, and while the
+// inventory cannot say, nothing is evicted and no tab is reused on file grounds.
 describe.each([
   { label: "Markdown page", name: "Src", pageKind: "page", path: "pages/Src.md", other: "pages/dup/Src.md" },
   { label: "Org page", name: "Src", pageKind: "page", path: "pages/Src.org", other: "pages/Src.md" },
   { label: "Markdown journal", name: "Nov 2nd, 2026", pageKind: "journal", path: "journals/2026_11_02.md", other: "journals/2026_11_02.org" },
   { label: "Org journal", name: "Nov 2nd, 2026", pageKind: "journal", path: "journals/2026_11_02.org", other: "journals/2026_11_02.md" },
 ] as const)("one owner answer for views, $label", ({ name, pageKind, path, other }) => {
-  describe.each([
-    { source: "inventory", arrange: () => owners.set(`${pageKind}:${name}`, path) },
-    { source: "loaded page, inventory pending", arrange: () => loaded.set(name, { id: path, kind: pageKind }) },
-  ])("answer from $source", ({ arrange }) => {
-    beforeEach(() => {
-      owners.clear();
-      loaded.clear();
-      arrange();
-      setRightSidebar([]);
-    });
+  const byName = { kind: "page", name, pageKind } as const;
+  const byPath = { kind: "page", name, pageKind, path } as const;
+  const byOther = { kind: "page", name, pageKind, path: other } as const;
+  beforeEach(() => {
+    owners.clear();
+    loaded.clear();
+    setRightSidebar([]);
+  });
+
+  describe("inventory names the file", () => {
+    beforeEach(() => { owners.set(`${pageKind}:${name}`, path); });
 
     it("a block of the same file opened after the name-only page keeps the page", () => {
       setRightSidebar([{ kind: "page", name, pageKind }]);
@@ -65,12 +68,34 @@ describe.each([
       expect(rightSidebar().map((i) => i.kind)).toEqual(["block"]);
     });
 
-    it("a tab showing the file by name is reused for its exact path, in both orders", () => {
-      const byName = { kind: "page", name, pageKind } as const;
-      const byPath = { kind: "page", name, pageKind, path } as const;
+    it("a name-only tab is reused for its owner's exact path, in both orders, and never for another file", () => {
       expect(sameNavigationRoute(byName, byPath)).toBe(true);
       expect(sameNavigationRoute(byPath, byName)).toBe(true);
-      expect(sameNavigationRoute(byName, { ...byPath, path: other })).toBe(false);
+      expect(sameNavigationRoute(byName, byOther)).toBe(false);
+    });
+
+    it("a loaded same-name alternate does not make the name mean that file (cb69e3d96 F1)", () => {
+      loaded.set(name, { id: other, kind: pageKind });
+      expect(sameNavigationRoute(byName, byOther)).toBe(false);
+      expect(sameNavigationRoute(byName, byPath)).toBe(true);
+      setRightSidebar([{ kind: "page", name, pageKind }]);
+      openBlockInSidebar({ uuid: "u1", page: name, pageKind, path });
+      expect(rightSidebar().map((i) => i.kind)).toEqual(["block", "page"]);
+    });
+  });
+
+  describe("inventory cannot say (refresh), file loaded under the name", () => {
+    beforeEach(() => { loaded.set(name, { id: path, kind: pageKind }); });
+
+    it.each([path, other])("an exact result block of %s keeps the name-only page", (resultPath) => {
+      setRightSidebar([{ kind: "page", name, pageKind }]);
+      openBlockInSidebar({ uuid: "u1", page: name, pageKind, path: resultPath });
+      expect(rightSidebar().map((i) => i.kind)).toEqual(["block", "page"]);
+    });
+
+    it("no tab is reused on file grounds", () => {
+      expect(sameNavigationRoute(byName, byPath)).toBe(false);
+      expect(sameNavigationRoute(byPath, byName)).toBe(false);
     });
   });
 });

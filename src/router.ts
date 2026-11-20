@@ -239,15 +239,13 @@ export function sameRoute(a: Route, b: Route): boolean {
 /** Reuse compares destinations, while history/session equality stays exact.
  * Name routes and file routes can reach the same canonical file (GH #711).
  * Ask the shared inventory; never equate a same-name stray with its owner. */
-/** The one answer to "which file does this view show", for tab routes and
- *  (through the router bridge) sidebar items: its own exact path; else, for a
- *  name-only view, the file loaded under that name (what it displays, also
- *  while the inventory is refreshing); else the store's owner for the name. */
+/** The one answer to "which file does this view name", for tab routes and
+ *  (through the router bridge) sidebar items: its own exact path; else the
+ *  inventory owner of its name; undefined while the inventory cannot say. A
+ *  loaded same-name file is not an answer (two files claiming one name are a
+ *  separate question, card on the queue). */
 export function viewOwnerPath(name: string, pageKind: PageKind, path: string | undefined): string | undefined {
-  if (path) return path;
-  const loaded = loadedPage(name);
-  if (loaded?.id && loaded.kind === pageKind) return loaded.id;
-  return ownerPath(resolvedTarget(name, pageKind));
+  return path || ownerPath(resolvedTarget(name, pageKind));
 }
 
 export function sameNavigationRoute(a: Route, b: Route): boolean {

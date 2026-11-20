@@ -9,5 +9,8 @@ import type { SidebarItem } from "./ui";
 export function sameSidebarOwner(item: SidebarItem, name: string, pageKind: PageKind, path: string | undefined): boolean {
   const itemName = item.kind === "page" ? item.name : item.page;
   if (itemName !== name || item.pageKind !== pageKind) return false;
-  return viewOwnerPath(itemName, item.pageKind, item.path) === viewOwnerPath(name, pageKind, path);
+  const kept = viewOwnerPath(itemName, item.pageKind, item.path);
+  const opened = viewOwnerPath(name, pageKind, path);
+  // Unknown proves nothing: keep the item until both files are known.
+  return kept === undefined || opened === undefined || kept === opened;
 }
