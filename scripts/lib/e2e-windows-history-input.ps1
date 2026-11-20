@@ -1,7 +1,7 @@
 param(
   [Parameter(Mandatory)][int]$ProcessId,
   [Parameter(Mandatory)][ValidateRange(1, 2)][int]$Button,
-  [Parameter(Mandatory)][ValidateSet('mouse', 'native', 'native-first', 'forwarded')][string]$Delivery
+  [Parameter(Mandatory)][ValidateSet('mouse', 'native', 'native-first', 'child-only')][string]$Delivery
 )
 $ErrorActionPreference = 'Stop'
 
@@ -60,8 +60,8 @@ public static class HistoryInput {
         if (child == IntPtr.Zero || child == window || GetAncestor(child, GA_ROOT) != window)
             throw new InvalidOperationException("The pointer is not over Tine's WebView2 child window");
 
-        if (delivery == "native-first" || delivery == "forwarded") AppCommand(window, child, button);
-        if (delivery == "forwarded") return;
+        if (delivery == "native-first" || delivery == "child-only") AppCommand(window, child, button);
+        if (delivery == "child-only") return;
 
         // INPUT_MOUSE is zero. The mouse member is the largest member of INPUT's union.
         var input = new[] {

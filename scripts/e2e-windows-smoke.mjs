@@ -112,7 +112,7 @@ try {
   for (const name of historyPages.slice(1)) await openPageByLink(browser, name);
   // Leave an extra page in each direction so excess steps stay observable.
   await browser.keys(["Alt", "ArrowLeft"]);
-  for (const delivery of ["mouse", "native", "native-first", "browser-first"]) {
+  for (const delivery of ["mouse", "native", "native-first", "browser-first", "child-only"]) {
     for (const [button, start, delta] of [[1, 6, -1], [2, 0, 1]]) {
       for (let press = 1; press <= 6; press++) {
         const before = historyPages[start + (press - 1) * delta];
@@ -124,7 +124,7 @@ try {
         pressHistoryButton(button, delivery === "browser-first" ? "mouse" : delivery);
         try {
           await browser.waitUntil(async () => (await currentPageTitle(browser)) === expected, { timeout: 5_000 });
-          if (delivery === "browser-first") pressHistoryButton(button, "forwarded");
+          if (delivery === "browser-first") pressHistoryButton(button, "child-only");
           const observed = await currentPageTitle(browser);
           if (observed !== expected) throw new Error(`unexpected extra step to ${observed}`);
         } catch (error) {
