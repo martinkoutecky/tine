@@ -15,7 +15,7 @@ import { registerTransientLayer } from "../transientLayers";
 import { reportUiFailure } from "../uiFailure";
 import { readOr } from "../resourceRead";
 import { assetRelPath } from "../media";
-import { anchorDecision } from "../linkSchemePolicy";
+import { anchorDecision, isSchemeLess } from "../linkSchemePolicy";
 import { mime_from_path } from "../render/wasm/lsdoc_wasm";
 import { queryAllWindows, requestFrame, useOwnerWindow, viewportOf } from "../windowRealm";
 import { createGraphResource } from "../graphResource";
@@ -76,7 +76,7 @@ export function AudioOverlay(): JSX.Element {
     const decision = anchorDecision(url);
     // The browser screenshot fixture supplies its own inline WAV.
     const external = decision === "web" || (!isTauri() && /^data:audio\//.test(url));
-    return { url, external, asset: decision === "relative" ? assetRelPath(url) : null };
+    return { url, external, asset: isSchemeLess(decision) ? assetRelPath(url) : null };
   });
   const [srcResource] = createGraphResource(
     source,

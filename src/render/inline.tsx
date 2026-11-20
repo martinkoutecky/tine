@@ -24,7 +24,7 @@ import { graphEpoch, graphMeta } from "../graphSession";
 import { changed, changedAny, pageChangeKey } from "../changeKeys";
 import { pushToast } from "../toasts";
 import { openOutboundLink, outboundAnchorAttrs, reportLinkOpenFailure } from "../components/ExternalLink";
-import { anchorDecision, type AnchorDecision } from "../linkSchemePolicy";
+import { anchorDecision, hasWebUrlPrefix, isSchemeLess, type AnchorDecision } from "../linkSchemePolicy";
 import { copyImageFromSrc } from "../copyImage";
 import { parseBlock, parserReady } from "./parse";
 import { mime_from_path } from "./wasm/lsdoc_wasm";
@@ -438,29 +438,31 @@ function renderLink(
 ): JSX.Element {
   const url = s.url;
   const spanAttrs = spanMode ? coarseSpanAttrs(s.span) : undefined;
-  const token: MediaToken = { full: s.full, metadata: s.metadata, span: spanMode ? s.span : undefined };
-  const dest = urlDest(url);
-  const decision = anchorDecision(dest);
-  const relative = decision === "relative";
-  const web = decision === "web";
+  if (url.type === "block_ref") {
+    const label = s.label && s.label.length ? astText(s.label) : undefined;
+    return <BlockRefView id={url.v} label={label} spanAttrs={spanAttrs} blockId={blockId} span={hostSpan(s, spanMode, macroExpansion)} />;
+  }
   const orgImage = url.type === "page_ref" && format === "org" && isOgOrgPageRefImageTarget(url.v);
-  if ((url.type === "page_ref" && !orgImage) || (url.type === "search" && relative && searchTargetIsPage(url.v))) {
+  const searchDecision = url.type === "search" ? anchorDecision(url.v) : undefined;
+  if ((url.type === "page_ref" && !orgImage)
+      || (url.type === "search" && searchDecision && isSchemeLess(searchDecision) && searchTargetIsPage(url.v))) {
     // OG `page-reference` brackets a labelled link like a bare one (GH #966).
     const alias = s.label && s.label.length
       ? <PageReferenceLabel>{renderInlines(s.label, blockId, spanMode, macroExpansion, format)}</PageReferenceLabel>
       : undefined;
     return <PageRef name={url.v} alias={alias} blockId={blockId} spanAttrs={spanAttrs} />;
   }
-  if (url.type === "block_ref") {
-    const label = s.label && s.label.length ? astText(s.label) : undefined;
-    return <BlockRefView id={url.v} label={label} spanAttrs={spanAttrs} blockId={blockId} span={hostSpan(s, spanMode, macroExpansion)} />;
-  }
+  const dest = urlDest(url);
+  const decision = searchDecision ?? anchorDecision(dest);
+  const relative = isSchemeLess(decision);
+  const web = decision === "web";
+  const token: MediaToken = { full: s.full, metadata: s.metadata, span: spanMode ? s.span : undefined };
   if (orgImage && (relative || web)) {
     return <AssetImage url={dest} decision={decision} alt="" blockId={blockId} token={token} spanAttrs={spanAttrs} />;
   }
   const assetTarget = relative ? assetLinkRel(dest) : null;
-  const fileTarget = assetTarget === null && (relative || decision === "file" || decision === "drive")
-    ? fileLinkTarget(dest) : null;
+  const fileTarget = assetTarget === null && (relative || decision === "file")
+    ? fileLinkTarget(dest, decision) : null;
   if (isQuickShareViewer() && (assetTarget !== null || fileTarget !== null)) return <ShareMedia url={dest} />;
   // OG 6e7afa8eb block.cljs show-link?/media-link: Markdown requires !, Org media does not.
   // GH #732: a relative file link reads as the absolute file: URL its resolver names.
@@ -505,7 +507,7 @@ function renderLink(
   // util/text.cljs:31 media-link?): a BARE http(s) URL ending in a media
   // extension auto-renders inline as media. Keyed on s.full (OG full_text) so a
   // labeled [text](x.png) — full_text not http-prefixed — stays a plain link.
-  if (web && !s.image && /^https?:\/\//i.test(s.full.trimStart())) {
+  if (web && !s.image && hasWebUrlPrefix(s.full.trimStart())) {
     const k = mediaKind(dest);
     if (k === "image")
       return <AssetImage url={dest} decision={decision} alt="" blockId={blockId} token={token} spanAttrs={spanAttrs} />;
@@ -776,7 +778,7 @@ export function AssetImage(props: {
   });
   const decision = props.decision ?? anchorDecision(props.url);
   const external = decision === "web";
-  const rel = () => decision === "relative" ? assetRelPath(props.url) : null;
+  const rel = () => isSchemeLess(decision) ? assetRelPath(props.url) : null;
   // Served from a shared, graph-scoped blob cache so repeated references and
   // re-mounts don't re-read the file or mint duplicate blob URLs. The cache owns
   // the URL's lifetime (cleared on graph switch), so we don't revoke on unmount.

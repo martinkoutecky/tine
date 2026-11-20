@@ -162,31 +162,20 @@ fn main() {
     .expect("failed to run tauri-build");
 }
 
-/// Compile the same scheme table the TypeScript policy imports.
+/// The refused schemes the TypeScript policy imports, compiled for the native gate.
 fn generate_external_link_schemes(schemes: &serde_json::Value) {
-    let scheme = |name: &str| schemes[name].as_str().expect(name);
-    let scheme_list = |name: &str| {
-        schemes[name]
-            .as_array()
-            .expect(name)
-            .iter()
-            .map(|value| value.as_str().expect(name))
-            .collect::<Vec<_>>()
-    };
-    let generated = format!(
-        "const WEB_SCHEMES: &[&str] = &{:?};\n\
-         const MAIL_SCHEME: &str = {:?};\n\
-         const FILE_SCHEME: &str = {:?};\n\
-         const TINE_SCHEME: &str = {:?};\n\
-         const NEVER_OPENED_SCHEMES: &[&str] = &{:?};\n",
-        scheme_list("web"),
-        scheme("mail"),
-        scheme("localFile"),
-        scheme("deepLink"),
-        scheme_list("refused"),
-    );
+    let refused: Vec<&str> = schemes["refused"]
+        .as_array()
+        .expect("refused")
+        .iter()
+        .map(|value| value.as_str().expect("refused"))
+        .collect();
     let out = std::path::PathBuf::from(std::env::var_os("OUT_DIR").expect("build output"));
-    std::fs::write(out.join("external_link_schemes.rs"), generated).expect("generated link schemes");
+    std::fs::write(
+        out.join("external_link_schemes.rs"),
+        format!("const NEVER_OPENED_SCHEMES: &[&str] = &{refused:?};\n"),
+    )
+    .expect("generated link schemes");
 }
 
 /// Diagnostics accepts registered names, never arbitrary IPC text. Derive

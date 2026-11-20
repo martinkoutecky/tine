@@ -1,6 +1,6 @@
 import policy from "../../fixtures/html-sanitize-policy.json";
 import DOMPurify from "dompurify";
-import { deferAnchorHref } from "../linkSchemePolicy";
+import { deferAnchorHref, hasWebUrlPrefix, previewResourceDecision } from "../linkSchemePolicy";
 
 // The raw-HTML render policy — the single allowlist that both render surfaces
 // apply to raw inline/block HTML embedded in a Markdown/Org block.
@@ -41,18 +41,6 @@ export const RAW_HTML_TAGS = policy.tags;
  *  codec. `width`/`height` were already admitted for images and also bound the
  *  video box. URL-bearing `src`/`poster` receive the scheme guard below. */
 export const RAW_HTML_ATTRS = policy.browser.attributes;
-
-/** Defense-in-depth on top of DOMPurify: reject `javascript:` in `src`/`poster`
- *  even under control-character-obfuscated spellings. `data:` is deliberately
- *  NOT denied here — DOMPurify (= OG's sanitizer, security.cljs:5-11) allows
- *  `data:` URIs on media tags (DATA_URI_TAGS: img/audio/video/source), and
- *  base64-embedded images in raw HTML are a real user payload; scripts do not
- *  execute in an image/media src context. */
-function hasDeniedResourceScheme(value: string): boolean {
-  const compact = value.replace(/[\u0000-\u0020]/g, "");
-  const scheme = /^([a-z][a-z0-9+.-]*):/i.exec(compact)?.[1]?.toLowerCase();
-  return scheme !== undefined && policy.browser.deniedResourceSchemes.includes(scheme);
-}
 
 // --- Local-file `<img>` support (opt-in; see localFileSettings + ADR 0019) ---
 // The sanitizer strips a `file:`/absolute-path `src`, so a raw-HTML `<img>` pointing
@@ -122,7 +110,7 @@ export function rawHtmlPresentation(text: string, allowIframe = false): HtmlPres
   root.innerHTML = text;
   const frame = allowIframe ? root.querySelector("iframe") : null;
   const src = frame?.getAttribute("src");
-  if (frame && src && /^https?:\/\//i.test(src)) {
+  if (frame && src && hasWebUrlPrefix(src)) {
     const dimension = (name: "width" | "height") => {
       const attr = frame.getAttribute(name)?.trim();
       const style = frame.style.getPropertyValue(name);
@@ -134,8 +122,19 @@ export function rawHtmlPresentation(text: string, allowIframe = false): HtmlPres
     };
     return { html: "", localImages: [], iframe: { src, width: dimension("width"), height: dimension("height") } };
   }
-  const paths = new WeakMap<Element, string | null>();
-  for (const image of root.querySelectorAll("img")) paths.set(image, localImagePath(image.getAttribute("src") ?? ""));
+  const paths = new WeakMap<Element, string>();
+  for (const element of root.querySelectorAll("[src], [poster]")) {
+    for (const attr of ["src", "poster"] as const) {
+      const value = element.getAttribute(attr);
+      if (value === null) continue;
+      const decision = previewResourceDecision(value);
+      if (decision === "drop") element.removeAttribute(attr);
+      if (decision === "local-candidate" && attr === "src" && element.localName === "img") {
+        const path = localImagePath(value);
+        if (path !== null) paths.set(element, path);
+      }
+    }
+  }
   // DOMPurify runs IN_PLACE, so surviving elements keep identity: capture the colour
   // declarations first and put them back on whatever survives.
   const colors = new Map<Element, string>();
@@ -151,11 +150,5 @@ export function rawHtmlPresentation(text: string, allowIframe = false): HtmlPres
   });
   for (const anchor of root.querySelectorAll("a[href]")) deferAnchorHref(anchor);
   for (const [element, kept] of colors) if (root.contains(element)) element.setAttribute("style", kept);
-  for (const element of root.querySelectorAll<HTMLElement>("[src], [poster]")) {
-    for (const attr of ["src", "poster"] as const) {
-      const value = element.getAttribute(attr);
-      if (value !== null && hasDeniedResourceScheme(value)) element.removeAttribute(attr);
-    }
-  }
   return { html: root.innerHTML, localImages: [...root.querySelectorAll("img")].map((image) => paths.get(image) ?? null), iframe: null };
 }

@@ -48,9 +48,6 @@
       "poster",
       "type"
     ],
-    "deniedResourceSchemes": [
-      "javascript"
-    ],
     "styleProperties": [
       "color",
       "background-color",

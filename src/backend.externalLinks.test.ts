@@ -2,32 +2,9 @@ import { afterEach, expect, it, vi } from "vitest";
 import { publishedBackend, type PublishedSnapshot } from "./publishedBackend";
 import { mockBackend } from "./mock";
 
-const { invoke } = vi.hoisted(() => ({ invoke: vi.fn(async () => undefined) }));
-vi.mock("@tauri-apps/api/core", () => ({ invoke, convertFileSrc: (path: string) => path }));
-
 afterEach(() => {
   vi.unstubAllGlobals();
   vi.resetModules();
-  invoke.mockClear();
-});
-
-it("checks desktop external links before IPC and preserves native routes", async () => {
-  vi.stubGlobal("window", { __TAURI_INTERNALS__: {} });
-  const { backend } = await import("./backend");
-  const api = backend();
-  const refusals = await Promise.allSettled([
-    api.openExternal(" java\nscript:assets/refused", "javascript"),
-    api.openExternal("zotero://select/items/ABC"),
-  ]);
-  expect(invoke).not.toHaveBeenCalled();
-  expect(refusals.map(({ status }) => status)).toEqual(["rejected", "rejected"]);
-  for (const url of ["https://example.org", "mailto:a@b.c", "file:///tmp/note.txt", "tine://today"]) {
-    await api.openExternal(url);
-    expect(invoke).toHaveBeenLastCalledWith("open_external", { url, confirmedScheme: null });
-  }
-  const url = "zotero://select/items/ABC";
-  await api.openExternal(url, "ZOTERO");
-  expect(invoke).toHaveBeenLastCalledWith("open_external", { url, confirmedScheme: "ZOTERO" });
 });
 
 const reader = () => publishedBackend(async (): Promise<PublishedSnapshot> => {

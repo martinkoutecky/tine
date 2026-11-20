@@ -1,7 +1,1 @@
-{
-  "web": ["http", "https"],
-  "mail": "mailto",
-  "localFile": "file",
-  "deepLink": "tine",
-  "refused": ["javascript", "vbscript", "data", "blob", "about"]
-}
+{ "refused": ["javascript", "vbscript", "data", "blob", "about"] }

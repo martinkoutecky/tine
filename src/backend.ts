@@ -1,7 +1,5 @@
 import { t } from "./i18n";
 import { configUnreadableText, errorFamily } from "./errorFamily";
-import { checkExternalLink } from "./linkSchemePolicy";
-
 // Backend abstraction. In the Tauri app we call Rust via `invoke`. In a plain
 // browser (Vite dev / Playwright screenshots) we fall back to an in-memory mock
 // seeded from a fixture graph, so the whole UI is exercisable without the shell.
@@ -583,8 +581,7 @@ class TauriBackend implements Backend {
   readCustomCss() {
     return this.call<string>("read_custom_css");
   }
-  async openExternal(url: string, confirmedScheme?: string) {
-    checkExternalLink(url, confirmedScheme, "native");
+  openExternal(url: string, confirmedScheme?: string) {
     return this.call<void>("open_external", { url, confirmedScheme: confirmedScheme ?? null });
   }
   openAsset(name: string, bindingGeneration: number) {
