@@ -86,9 +86,10 @@ const [selAnchor, setSelAnchor] = createSignal<string | null>(null);
 const [selFocus, setSelFocus] = createSignal<string | null>(null);
 // The interval is the whole outline (GH #793). Blank-space Ctrl/Cmd+A: a fresh
 // object per gesture over frozen roots, so a pending Cut knows its own. Ladder
-// top: whole while the outline keeps the same top-level rows (`tops`); after a
-// result refresh the endpoints decide, as on Beta. Endpoint ids cannot say
-// "whole" when a query lists a row twice.
+// top: whole while the topology keeps the same `tops` array (it is reused only
+// while the top-level rows stay equal); once a refresh changed them it selects
+// nothing, even if the old rows return. Endpoint ids cannot say "whole" when a
+// query lists a row twice.
 type Whole = { tops?: readonly string[] };
 const [whole, setWhole] = createSignal<false | Whole>(false);
 const [selectionView, setSelectionView] = createSignal<{ id: string; scope: OutlineScope | null } | null>(null);
@@ -96,7 +97,7 @@ const [selectionView, setSelectionView] = createSignal<{ id: string; scope: Outl
 // View topology belongs to the selection, not its moving endpoints. Rebuild
 // only when the view/tree changes; keypresses use its index and subtree ends.
 let topologyGeneration = 0;
-const selectionTopology = createRoot(() => createMemo(() => {
+const selectionTopology = createRoot(() => createMemo((last?: { tops: readonly string[] }) => {
   const view = selectionView();
   const order = view ? selectionOrder(view.id, view.scope) : [];
   const index = new Map<string, number>();
@@ -131,7 +132,7 @@ const selectionTopology = createRoot(() => createMemo(() => {
     previous.push(prev);
   }
   for (const at of stack) end[at] = order.length - 1;
-  return { order, index, end, previous, tops, generation: ++topologyGeneration,
+  return { order, index, end, previous, tops: last && sameIds(last.tops, tops) ? last.tops : tops, generation: ++topologyGeneration,
     duplicates: index.size !== order.length };
 }));
 
@@ -150,7 +151,7 @@ const selectionState = createRoot(() => createMemo(() => {
   const w = whole();
   // A marker alone answers what is selected: the whole outline while it still
   // names these top-level rows, nothing once a refresh changed them.
-  if (w) { if (!w.tops || sameIds(w.tops, topology.tops)) hi = order.length - 1; }
+  if (w) { if (!w.tops || w.tops === topology.tops) hi = order.length - 1; }
   else if (i !== undefined && j !== undefined) {
     lo = Math.min(i, j);
     let last = order[Math.max(i, j)];
@@ -447,16 +448,15 @@ export function expandBlockSelection(target?: OutlineSelectionTarget): boolean |
   const a = selAnchor();
   const f = selFocus();
   if (!a || !f) return;
-  const { order, index, end } = selectionTopology();
-  if (order.length < 2) return;
-  // Whole-outline selection is the top of the ladder. At a marker, a press keeps
-  // it (re-pointed once to the current rows, O(1) after) or, once a refresh
-  // emptied it, selects the whole current outline. A page body keeps Beta's test.
-  const w = whole(), { tops } = selectionTopology();
+  const { order, index, end, tops } = selectionTopology();
+  // Whole-outline selection is the top of the ladder: a press keeps a live marker
+  // and renews an expired one over the current rows. A page body keeps Beta's test.
+  const w = whole();
   if (w) {
-    if (w.tops !== tops) w.tops && sameIds(w.tops, tops) ? setWhole({ tops }) : selectWhole(ladderTop());
+    if (w.tops !== tops && order.length) selectWhole(ladderTop());
     return;
   }
+  if (order.length < 2) return;
   const { lo, hi } = selectionState();
   if (activeSelectionScope ? lo === 0 && hi === order.length - 1 : a === order[0] && end[index.get(f)!] === order.length - 1) {
     if (activeSelectionScope) selectWhole(ladderTop());
@@ -486,7 +486,7 @@ export function expandBlockSelection(target?: OutlineSelectionTarget): boolean |
 
 /** The ladder's whole-outline marker; a page body (no scope) keeps Beta's endpoints. */
 const ladderTop = (): Whole | false => activeSelectionScope ? { tops: selectionTopology().tops } : false;
-const sameIds = (a: readonly string[], b: readonly string[]) => a === b || (a.length === b.length && a.every((id, at) => id === b[at]));
+function sameIds(a: readonly string[], b: readonly string[]) { return a === b || (a.length === b.length && a.every((id, at) => id === b[at])); }
 function selectWhole(marker: Whole | false) {
   const { order } = selectionTopology();
   batch(() => { setSelAnchor(order[0]); setSelFocus(order[order.length - 1]); setWhole(marker); });
