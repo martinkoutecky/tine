@@ -1027,28 +1027,25 @@ impl JournalFormat {
 
     /// Journal file stems that claim `d` ([`Self::file_claim_day`], state
     /// model S3): each file-stem route's rendering, those differing only in
-    /// numeric field width (`2026-11-1`, `2026_11_01`), the day's text
-    /// [`Self::spellings`], and the folded key of each, deduplicated and kept
-    /// only when S3 assigns the stem to `d` (a two-digit year outside
-    /// 2000-2099 does not): where a file of the day may be found by name
-    /// without listing a directory (GH #863 D3, model C5). Bounded by
-    /// `renderings_by_width` (at most 4 per route with one year, month and
-    /// day field, for a year past 999, never more than [`WIDTH_RENDERINGS_MAX`]
-    /// per route) plus twice the spellings. Other accepted forms (a month
-    /// name's other length, any ordinal suffix, another weekday, mixed case,
-    /// surrounding space) are unbounded and left to the watcher.
+    /// numeric field width (`2026-11-1`, `2026_11_01`) and the day's text
+    /// [`Self::spellings`], deduplicated and kept only when S3 assigns the
+    /// stem to `d` (a two-digit year outside 2000-2099 does not): where a
+    /// file of the day may be found by name without listing a directory
+    /// (GH #863 D3, model C5). Bounded by `renderings_by_width` (at most 4
+    /// per route with one year, month and day field, for a year past 999,
+    /// never more than [`WIDTH_RENDERINGS_MAX`] per route) plus the
+    /// spellings. Other accepted forms (a month name's other length, any
+    /// ordinal suffix, another weekday, other case or composition,
+    /// surrounding space) are left to the watcher: a second spelling of one
+    /// file is a second path for it on a case-insensitive volume (review
+    /// eee36767a F2).
     pub fn accepted_stems(&self, d: JournalDate) -> Vec<String> {
         let routes = &self.0.file_stem_routes;
-        let mut out: Vec<String> = Vec::with_capacity(2 * routes.len());
+        let mut out: Vec<String> = Vec::with_capacity(routes.len());
         let mut seen = std::collections::HashSet::new();
         let renderings = routes.iter().map(|route| route.format(d));
         let widths = routes.iter().flat_map(|route| route.renderings_by_width(d));
-        let spelled: Vec<String> = renderings.chain(widths).chain(self.spellings(d)).collect();
-        let folded: Vec<String> = spelled
-            .iter()
-            .map(|s| crate::page_identity::page_key(s))
-            .collect();
-        for candidate in spelled.into_iter().chain(folded) {
+        for candidate in renderings.chain(widths).chain(self.spellings(d)) {
             if !seen.contains(&candidate) && self.file_claim_day(&candidate, true) == Some(d) {
                 seen.insert(candidate.clone());
                 out.push(candidate);
@@ -1509,8 +1506,8 @@ mod fmt_tests {
 
     /// GH #863 D3: the stems a day's file may carry include every numeric
     /// width the parser accepts (default settings read `2026-11-1` as
-    /// November 1) and the folded text spellings, each claims that day, and
-    /// the list is bounded.
+    /// November 1) and the text spellings, each claims that day, and the
+    /// list is bounded.
     #[test]
     fn accepted_stems_cover_the_parsers_numeric_widths() {
         let fmt = JournalFormat::default();
@@ -1539,16 +1536,16 @@ mod fmt_tests {
         unique.sort();
         unique.dedup();
         assert_eq!(unique.len(), stems.len(), "deduplicated: {stems:?}");
-        // Each claims the day by S3; the folded text spellings follow
-        // (review ca24f8f2c F3: `nov 1st, 2026` claims November 1).
+        // Each claims the day by S3. No other case of a spelling is listed:
+        // on a case-insensitive volume it is a second path for one file
+        // (review eee36767a F2).
         for stem in &stems {
             assert_eq!(fmt.file_claim_day(stem, true), Some(day), "{stem}");
         }
-        assert_eq!(stems[6..], ["nov 1st, 2026", "nov 01st, 2026"], "{stems:?}");
-        // Bounded: one-digit month and day double each numeric pattern, and
-        // each text spelling adds its folded key.
-        assert_eq!(fmt.accepted_stems(d(2026, 1, 1)).len(), 12);
-        assert_eq!(fmt.accepted_stems(d(2026, 11, 22)).len(), 4);
+        assert_eq!(stems.len(), 6, "{stems:?}");
+        // Bounded: one-digit month and day double each numeric pattern.
+        assert_eq!(fmt.accepted_stems(d(2026, 1, 1)).len(), 10);
+        assert_eq!(fmt.accepted_stems(d(2026, 11, 22)).len(), 3);
         // A two-digit year reads 2000 + digits: no other century is listed.
         let short = JournalFormat::new(Some("d.M.yy"), Some("d.M.yy"));
         let stems = short.accepted_stems(d(2005, 1, 5));

@@ -163,26 +163,6 @@ fn a_dated_file_read_by_path_after_delivery_reads_no_other_file() {
     }
 }
 
-/// A journal delivered after Ready under a stem that claims its day only
-/// through S3's folded text route (`nov 2nd, 2026`, a lowercase month) is
-/// found by the day's named read before the watcher sees it (model C5;
-/// review ca24f8f2c F3: discovery listed only the physical renderings).
-#[test]
-fn a_late_journal_whose_folded_stem_claims_the_day_is_found_by_name() {
-    for stem in ["nov 2nd, 2026", "2026_11_02"] {
-        let root = graph(3);
-        let store = open(root.path(), None);
-        store.whole_graph().unwrap();
-        fs::write(root.path().join(format!("journals/{stem}.md")), "- late\n").unwrap();
-        let read = store
-            .page_named("Nov 2nd, 2026", PageKind::Journal)
-            .unwrap()
-            .unwrap_or_else(|| panic!("{stem}: the day's file is found"));
-        assert_eq!(read.id.as_str(), format!("journals/{stem}.md"));
-        store.close();
-    }
-}
-
 #[test]
 fn a_page_open_before_ready_needs_neither_the_load_nor_the_writer() {
     let root = graph(5);

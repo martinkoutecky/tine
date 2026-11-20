@@ -530,11 +530,11 @@ mod journal_feed_tests {
 /// The file a journal day no file claims would be created as, answered
 /// without the graph-wide parse (BqbeQ: saving an empty today's daily
 /// template opened the page through `resolve_page`, which waited for it).
-/// A journal is claimed by its files alone and no alias resolves a journal, so
-/// such a day resolves to `Resolved::Absent` at its configured id, the id the
-/// feed gives the same virtual day (`Store::journal_id`). `None` when `name` is
-/// not a day under the current title or file-name format, or a file claims it:
-/// the graph answers then, with every claimant. Cost: one `page_named` lookup
+/// A day with no file and no page answering its name (no file claims it, no
+/// alias declares it) is opened at its configured id, the id the feed gives the
+/// same virtual day (`Store::journal_id`). `None` when `name` is not a day
+/// under the current title or file-name format, or the day's named read finds
+/// a page: the graph answers then, with every claimant. Cost: one `page_named` lookup
 /// (a file-name listing check before Ready; one file read if a file claims the
 /// day) and O(path bytes). No write.
 pub fn absent_journal_id(store: &Store, name: &str) -> Result<Option<PageId>, StoreError> {

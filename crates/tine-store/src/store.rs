@@ -1975,12 +1975,11 @@ impl Store {
     /// An accessible path below an unreadable directory is read directly.
     /// Observed edits may wait for parsing, another writer, restore or site
     /// publication. Case aliases return the file's actual disk spelling.
-    /// Canonicality is answered from the published name index while it
-    /// describes the current cache generation, so a read opens no other file
-    /// (GH #623 BR3: rebuilding the live name index read every page preamble
-    /// under the writer, ~2.8 s on Windows, and queued every other open
-    /// behind it); a journal, or a stale publication, still asks the live
-    /// index. Before Ready (initial parse, or a launch checkpoint served
+    /// Canonicality is answered from the published claim index (a name or a
+    /// day) while it describes the current cache generation, so a read opens
+    /// no other file (GH #623 BR3: rebuilding the live name index read every
+    /// page preamble under the writer, ~2.8 s on Windows, and queued every
+    /// other open behind it); only a stale publication asks the live index. Before Ready (initial parse, or a launch checkpoint served
     /// while the launch diff runs) a read takes no writer and publishes
     /// nothing: it parses the file directly, the revision comes from the
     /// same bytes, and the load or launch diff takes the file in, so a page
