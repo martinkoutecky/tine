@@ -3,7 +3,7 @@ import { render } from "solid-js/web";
 import { backend } from "../backend";
 import { clearClipboardPayload } from "../clipboard";
 import * as cut from "../cut";
-import { deleteBlock, blankOutlineSelection, node, resetStore, selectedIds, topSelected } from "../document";
+import { deleteBlock, blankOutlineSelection, extendSelectionTo, node, resetStore, selectedIds, topSelected } from "../document";
 import { setDoc } from "../document/model";
 import { endEdit } from "../editorController";
 import { setGraphMeta } from "../graphSession";
@@ -908,6 +908,53 @@ it.each([
   expect(node(parent.id)?.children).toEqual([sibling.id]);
   expect(node(target.blocks[0].id)?.raw).toBe(target.blocks[0].raw);
   expect(selectedIds()).toEqual([parent.id, sibling.id]);
+});
+
+it.each(removalKeys)("ends an earlier selection when a blank hit has no live rows, before %s", async action => {
+  const { root, writeRich } = await mountTarget();
+  const body = await openBlockEditor(root, target.blocks[0].id);
+  body.keydown({ key: "Escape" });
+  expect(selectedIds()).toEqual([target.blocks[0].id]);
+  const cuts = vi.spyOn(cut, "cutBlocks");
+  hitBlank(root.querySelector(".linked-references .reference-group:last-of-type")!);
+  expect(press("a", { ctrlKey: true }).defaultPrevented).toBe(false);
+  expect(selectedIds()).toEqual([]);
+  pressAction(action);
+  await cuts.mock.results.at(-1)?.value;
+  expect(node(target.blocks[0].id)?.raw).toBe(target.blocks[0].raw);
+  expect(writeRich).not.toHaveBeenCalled();
+});
+
+it.each([
+  ["from a button to the group header", ".reference-group-disclosure", ".reference-group-header", 0],
+  ["beyond the drag threshold and back", ".reference-group-header", ".reference-group-header", 20],
+] as const)("does not arm blank selection after a drag %s", async (_, from, to, moved) => {
+  const { root } = await mountTarget();
+  const group = root.querySelector(".linked-references .reference-group")!;
+  group.querySelector(from)!.dispatchEvent(new MouseEvent("pointerdown", { bubbles: true, button: 0 }));
+  if (moved) window.dispatchEvent(new MouseEvent("pointermove", { clientX: moved }));
+  group.querySelector(to)!.dispatchEvent(new MouseEvent("click", { bubbles: true, detail: 1 }));
+  expect(press("a", { ctrlKey: true }).defaultPrevented).toBe(false);
+  expect(selectedIds()).toEqual([]);
+});
+
+it("does not let a pending ordinary Cut remove a later blank selection of the same blocks", async () => {
+  const { root, writeRich } = await mountTarget();
+  const write = Promise.withResolvers<void>();
+  writeRich.mockReturnValueOnce(write.promise);
+  const operation = vi.spyOn(cut, "cutBlocks");
+  const editor = await openBlockEditor(root, hit.id);
+  editor.keydown({ key: "Escape" });
+  extendSelectionTo(nestedHit.id);
+  const ids = selectedIds();
+  expect(press("x", { ctrlKey: true }).defaultPrevented).toBe(true);
+  hitBlank(root.querySelector(".linked-references .reference-group")!);
+  expect(press("a", { ctrlKey: true }).defaultPrevented).toBe(true);
+  expect(selectedIds()).toEqual(ids);
+  write.resolve();
+  await operation.mock.results[0].value;
+  expect(node(hit.id)?.raw).toBe(hit.raw);
+  expect(node(nestedHit.id)?.raw).toBe(nestedHit.raw);
 });
 
 it("leaves a pending Cut as a copy after the same group is selected again", async () => {

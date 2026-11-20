@@ -201,3 +201,18 @@ it("blank select-all keeps the roots it was given when a refresh republishes the
   setRoots([]);
   expect(topSelected()).toEqual(["A", "D"]);
 });
+
+it.each([["prepend", ["E", "A", "D"]], ["append", ["A", "D", "E"]], ["replace an endpoint", ["A", "E"]]] as const)(
+  "the select-all ladder's top does not take rows a refresh publishes (%s, GH #793)", (_, refreshed) => {
+    load();
+    const [roots, setRoots] = createSignal<readonly string[]>(["A", "D"]);
+    const scope: OutlineScope = { get roots() { return roots(); } };
+    selectBlock("A", scope);
+    extendSelectionTo("D1", scope);
+    expandBlockSelection();
+    expect(topSelected()).toEqual(["A", "D"]);
+    setRoots(refreshed);
+    expect(topSelected()).not.toContain("E");
+    deleteSelection();
+    expect(doc.byId.E).toBeDefined();
+  });

@@ -84,10 +84,13 @@ function selectionOrder(id: string | null, scope: OutlineScope | null = activeSe
 
 const [selAnchor, setSelAnchor] = createSignal<string | null>(null);
 const [selFocus, setSelFocus] = createSignal<string | null>(null);
-// The interval is the whole outline: the select-all ladder reached its top, or
-// blank-space Ctrl/Cmd+A selected it (GH #793; a fresh object per gesture, so a
-// pending Cut knows its own). Endpoint ids cannot say this when a query lists a row twice.
-const [whole, setWhole] = createSignal<false | "ladder" | object>(false);
+// The interval is the whole outline (GH #793). Blank-space Ctrl/Cmd+A: a fresh
+// object per gesture over frozen roots, so a pending Cut knows its own. Ladder
+// top: whole while the outline keeps the same top-level rows (`tops`); after a
+// result refresh the endpoints decide, as on Beta. Endpoint ids cannot say
+// "whole" when a query lists a row twice.
+type Whole = { tops?: readonly string[] };
+const [whole, setWhole] = createSignal<false | Whole>(false);
 const [selectionView, setSelectionView] = createSignal<{ id: string; scope: OutlineScope | null } | null>(null);
 
 // View topology belongs to the selection, not its moving endpoints. Rebuild
@@ -102,6 +105,7 @@ const selectionTopology = createRoot(() => createMemo(() => {
   const previous: number[] = [];
   const stack: number[] = [];
   const stacked = new Map<string, number>();
+  const tops: string[] = [];
   const depths = depthsOf(order);
   for (let at = 0; at < order.length; at++) {
     let ancestor: number | undefined;
@@ -114,6 +118,7 @@ const selectionTopology = createRoot(() => createMemo(() => {
       end[popped] = at - 1;
       stacked.delete(order[popped]);
     }
+    if (ancestor === undefined) tops.push(order[at]);
     stacked.set(order[at], stack.length);
     stack.push(at);
     let prev = at - 1;
@@ -126,7 +131,7 @@ const selectionTopology = createRoot(() => createMemo(() => {
     previous.push(prev);
   }
   for (const at of stack) end[at] = order.length - 1;
-  return { order, index, end, previous, generation: ++topologyGeneration,
+  return { order, index, end, previous, tops, generation: ++topologyGeneration,
     duplicates: index.size !== order.length };
 }));
 
@@ -142,7 +147,8 @@ const selectionState = createRoot(() => createMemo(() => {
   const i = a ? index.get(a) : undefined;
   const j = f ? index.get(f) : undefined;
   let lo = 0, hi = -1;
-  if (whole()) hi = order.length - 1;
+  const w = whole();
+  if (w && (!w.tops || sameIds(w.tops, topology.tops))) hi = order.length - 1;
   else if (i !== undefined && j !== undefined) {
     lo = Math.min(i, j);
     let last = order[Math.max(i, j)];
@@ -357,7 +363,7 @@ export function hasSelection(): boolean {
   return selAnchor() !== null;
 }
 /** The blank-space Ctrl/Cmd+A gesture that made the selection, or null. O(1). */
-export function blankOutlineSelection(): object | null { const w = whole(); return typeof w === "object" ? w : null; }
+export function blankOutlineSelection(): object | null { const w = whole(); return w && !w.tops ? w : null; }
 export function moveSelection(dir: 1 | -1, extend: boolean) {
   const f = selFocus();
   if (!f) return;
@@ -419,16 +425,15 @@ export function selectBlockSubtree(id: string, scope: OutlineScope | null = null
  *  returns false when it has no live rows. */
 export function expandBlockSelection(target?: OutlineSelectionTarget): boolean | undefined {
   if (target) {
-    // Snapshot the roots: a later result refresh must not change what Delete removes.
+    // Read the live roots once: a later result refresh must not change what Delete removes.
     const scope: OutlineScope = Object.create(target.scope, { roots: { value: [...target.scope.roots] } });
     const id = scope.roots.find(id => !!doc.byId[id]);
     if (!id) return false;
     selectBlock(id, scope, target.surface);
-    const { order } = selectionTopology();
-    batch(() => { setSelAnchor(order[0]); setSelFocus(order[order.length - 1]); setWhole({}); });
+    selectWhole({});
     return true;
   }
-  if (whole()) return;
+  if (blankOutlineSelection()) return;
   keyboardPath = [];
   const a = selAnchor();
   const f = selFocus();
@@ -437,7 +442,7 @@ export function expandBlockSelection(target?: OutlineSelectionTarget): boolean |
   if (order.length < 2) return;
   // Whole-outline selection is the top of the ladder; further presses no-op.
   const { lo, hi } = selectionState();
-  if (lo === 0 && hi === order.length - 1) { setWhole("ladder"); return; }
+  if (lo === 0 && hi === order.length - 1) { selectWhole(ladderTop()); return; }
   let head = selectAllHead;
   if (head === null || !index.has(head)) head = a;
   const idx = index.get(head);
@@ -451,13 +456,21 @@ export function expandBlockSelection(target?: OutlineSelectionTarget): boolean |
     if (parent !== null && index.has(parent)) {
       head = parent;
     } else {
-      batch(() => { setSelAnchor(order[0]); setSelFocus(order[order.length - 1]); setWhole("ladder"); });
       selectAllHead = null;
+      selectWhole(ladderTop());
       return;
     }
   }
   batch(() => { setSelAnchor(head); setSelFocus(head); });
   selectAllHead = head;
+}
+
+/** The ladder's whole-outline marker; a page body (no scope) keeps Beta's endpoints. */
+const ladderTop = (): Whole | false => activeSelectionScope ? { tops: selectionTopology().tops } : false;
+const sameIds = (a: readonly string[], b: readonly string[]) => a.length === b.length && a.every((id, at) => id === b[at]);
+function selectWhole(marker: Whole | false) {
+  const { order } = selectionTopology();
+  batch(() => { setSelAnchor(order[0]); setSelFocus(order[order.length - 1]); setWhole(marker); });
 }
 
 /** Cycle every non-empty block in the active selection as one document
