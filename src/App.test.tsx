@@ -69,6 +69,88 @@ afterEach(() => {
   resetPaneLayoutToSingle({ tabs: [{ history: [{ kind: "journals" }], pos: 0, pinned: false }], activeIndex: 0 });
 });
 
+it.each(["routed page", "Journals day", "sidebar page", "narrow sidebar page", "narrow sidebar block"] as const)(
+  "uses the blank selection scope for Shift-click in %s", async surface => {
+    const child = { id: "second-child", raw: "Second child", collapsed: false, children: [] };
+    const blocks = [
+      { id: "first", raw: "First block", collapsed: false, children: [] },
+      { id: "second", raw: "Second block", collapsed: false, children: [child] },
+      { id: "third", raw: "Third block", collapsed: false, children: [] },
+    ];
+    const today = new Date();
+    const yesterday = new Date(today.getFullYear(), today.getMonth(), today.getDate() - 1);
+    const journal = surface === "Journals day";
+    const parkedBlock = surface === "narrow sidebar block";
+    const shown: PageRead = journal
+      ? { name: journalTitle(today), title: journalTitle(today), kind: "journal", id: `journals/${localDayKey(today)}.md`, pre_block: null, blocks }
+      : { name: "Outline", title: "Outline", kind: "page", id: "pages/Outline.md", pre_block: null,
+        blocks: parkedBlock ? [{ id: "parked", raw: "Parked root", collapsed: false, children: blocks }] : blocks };
+    const other: PageRead = journal
+      ? { ...shown, name: journalTitle(yesterday), title: journalTitle(yesterday), id: `journals/${localDayKey(yesterday)}.md`,
+        blocks: [{ ...blocks[0], id: "other", raw: "Other day" }] }
+      : { ...shown, name: "Other", title: "Other", id: "pages/Other.md",
+        blocks: [{ ...blocks[0], id: "other", raw: "Other page" }] };
+    vi.spyOn(backend(), "getPage").mockImplementation(async name => [shown, other].find(page => page.name === name) ?? null);
+    vi.spyOn(backend(), "getPageByPath").mockImplementation(async path => [shown, other].find(page => page.id === path) ?? null);
+    vi.spyOn(backend(), "journalFeedPage").mockResolvedValue({ pages: journal ? [shown, other] : [], next_before_day: null, done: true, as_of_day: localDayKey(today) });
+    const writeRich = vi.spyOn(backend(), "writeRich").mockResolvedValue(undefined);
+    const sidebar = surface.includes("sidebar");
+    const narrow = surface.startsWith("narrow");
+    if (narrow) vi.stubGlobal("matchMedia", (query: string) => ({
+      matches: query.includes("max-width: 639px"), addEventListener() {}, removeEventListener() {},
+    }));
+    setFirstLoadDone(false);
+    const host = document.createElement("div"); document.body.append(host);
+    const dispose = render(() => <App />, host);
+    try {
+      await vi.waitFor(() => expect(firstLoadDone()).toBe(true));
+      paneRouter("main").replaceActiveRoute(journal ? { kind: "journals" } : { kind: "page", name: (sidebar ? other : shown).name, pageKind: "page" });
+      if (parkedBlock) {
+        setRightSidebar([{ kind: "block", uuid: "parked", page: shown.name, pageKind: "page", path: shown.id, blockPos: [0] }]);
+        setRightSidebarOpen(true);
+      }
+      else if (sidebar) openPageInSidebar(shown.name, shown.kind, shown.id);
+      const find = (selector: string) => vi.waitFor(() => {
+        const element = host.querySelector<HTMLElement>(selector);
+        expect(element, selector).not.toBeNull();
+        return element!;
+      });
+      const home = await find(sidebar ? ".right-sidebar" : ".main-content");
+      const row = await find(`${sidebar ? ".right-sidebar" : ".main-content"} [data-block-id="second"] > .block-main`);
+      if (narrow) expect(home.getAttribute("role")).toBe("dialog");
+      expect(selectAllFrom(row, narrow ? home.querySelector("button")! : home)).toBe(true);
+      expect(selectedIds()).toEqual([...(parkedBlock ? ["parked"] : []), "first", "second", "second-child", "third"]);
+      if (!parkedBlock) {
+        if (journal || sidebar) {
+          const outsider = await find('.main-content [data-block-id="other"] .block-content-wrapper');
+          outsider.dispatchEvent(new MouseEvent("mousedown", { bubbles: true, cancelable: true, shiftKey: true }));
+          expect(selectedIds()).toEqual(["first", "second", "second-child", "third"]);
+        }
+        row.querySelector(".block-content-wrapper")!.dispatchEvent(new MouseEvent("mousedown", { bubbles: true, cancelable: true, shiftKey: true }));
+        expect(selectedIds()).toEqual(["first", "second", "second-child"]);
+        home.dispatchEvent(new KeyboardEvent("keydown", { key: "c", ctrlKey: true, bubbles: true, cancelable: true }));
+        expect(writeRich.mock.lastCall?.[0]).toBe("- First block\n- Second block\n\t- Second child");
+        const copied = new DOMParser().parseFromString(writeRich.mock.lastCall![1], "text/html");
+        expect(copied.querySelector("body > ul > li:nth-child(2) > ul > li")?.textContent).toBe("Second child");
+      }
+      if (surface === "routed page") {
+        click(row);
+        paneRouter("main").replaceActiveRoute({ kind: "page", name: other.name, pageKind: "page" });
+        await find('.main-content [data-block-id="other"]');
+        const key = new KeyboardEvent("keydown", { key: "a", ctrlKey: true, bubbles: true, cancelable: true });
+        home.dispatchEvent(key);
+        expect(key.defaultPrevented).toBe(false);
+        expect(selectedIds()).toEqual([]);
+      }
+    } finally {
+      dispose();
+      setRightSidebar([]);
+      setRightSidebarOpen(false);
+      vi.unstubAllGlobals();
+    }
+  },
+);
+
 it.each([false, true])("selects the routed page or zoom from scroller whitespace (split pane: %s)", async (split) => {
   const roots = [
     { id: "zoom-root", raw: "Zoom root", collapsed: true, children: [{ id: "zoom-child", raw: "Zoom child", collapsed: false, children: [] }] },

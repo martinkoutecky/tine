@@ -6,34 +6,38 @@ interface OutlineBoundary {
   page?: string;
   read: () => Omit<OutlineSelectionTarget, "surface"> | undefined;
 }
-const outlines = new WeakMap<Element, { boundary: OutlineBoundary | null }>();
+const outlines = new WeakMap<Element, { boundary: OutlineBoundary | null; live?: OutlineBoundary }>();
 
-/** Bind a rendered outline boundary. An empty or cold outline still owns the
- * gesture. O(1) registration, with a disposer for an existing shell. A routed
- * page also binds its ancestor scroller until this view unmounts. */
-export function bindOutlineSelection(element: Element, boundary: OutlineBoundary | null = null, routed = false): () => void {
+/** Own an outline hit for the lifetime of this shell. O(1) registration and
+ * cleanup. A routed page also owns hits on its scroller until it unmounts. */
+export function bindOutlineSelection(element: Element, boundary: OutlineBoundary | null = null, routed = false): void {
   if (routed) onMount(() => {
     const scroller = element.closest(".main-content");
-    if (scroller) onCleanup(bindOutlineSelection(scroller, boundary));
+    if (scroller) bindOutlineSelection(scroller, boundary);
   });
-  const previous = outlines.get(element);
-  const binding = { boundary };
-  outlines.set(element, binding);
-  return () => {
-    if (outlines.get(element) !== binding) return;
-    if (previous !== undefined) outlines.set(element, previous);
-    else outlines.delete(element);
-  };
+  const owner = { boundary };
+  outlines.set(element, owner);
+  onCleanup(() => { if (outlines.get(element) === owner) outlines.delete(element); });
+}
+
+/** Publish the live scope on its existing shell in O(1), for this binding's
+ * lifetime. A cold or retired binding leaves the shell's ownership intact. */
+export function bindLiveOutlineSelection(element: Element, boundary: OutlineBoundary): void {
+  const owner = outlines.get(element);
+  if (!owner) return;
+  owner.live = boundary;
+  onCleanup(() => { if (owner.live === boundary) owner.live = undefined; });
 }
 
 export const selectAllDialogs = "dialog, [role='dialog'], [role='alertdialog']";
-export const selectAllFields = `input, textarea, [contenteditable=""], [contenteditable="true"], [contenteditable="plaintext-only"], ${selectAllDialogs}`;
-const interactive = `${selectAllFields}, [data-sheet-grid-id], a, button, select, label, [role='button'], .block-controls, .block-content-wrapper, .reference-page, .references-header`;
+export const selectAllFields = 'input, textarea, select, [contenteditable=""], [contenteditable="true"], [contenteditable="plaintext-only"]';
+const interactive = `${selectAllFields}, ${selectAllDialogs}, [data-sheet-grid-id], a, button, label, [role='button'], .block-controls, .block-content-wrapper, .reference-page, .references-header`;
 
 /** Resolve blank outline space at pointer-down in O(DOM depth). Row padding
  * and child indentation belong to the enclosing outline. Embedded outlines
  * are reached before the parent's text wrapper. A cold outline owns its hit
- * without loading its source. A stored hit expires with its binding or node. */
+ * without loading its source. A stored hit reads the shell's current scope
+ * and expires when the owner or its page leaves. */
 export function outlineSelectionAt(element: Element) {
   for (let at: Element | null = element; at; at = at.parentElement) {
     if (at.matches(interactive)) return;
@@ -42,16 +46,21 @@ export function outlineSelectionAt(element: Element) {
     const registered = new WeakRef(binding);
     const page = binding.boundary?.page;
     const host = new WeakRef(at);
-    const hit = new WeakRef(element);
     return {
-      get boundary() { return registered.deref()?.boundary; },
+      get boundary() {
+        const owner = registered.deref();
+        return owner?.live ?? owner?.boundary;
+      },
       page,
+      ownedBy(container: Element) {
+        const owner = host.deref();
+        return !!owner && container.contains(owner);
+      },
       current(focused?: Element) {
-        const node = hit.deref();
         const owner = host.deref();
         const binding = registered.deref();
-        return !!node?.isConnected && !!owner && !!binding && outlines.get(owner) === binding
-          && owner.contains(node) && binding.boundary?.page === page && (!focused || focused.contains(node));
+        return !!owner?.isConnected && !!binding && outlines.get(owner) === binding
+          && binding.boundary?.page === page && (!focused || focused.contains(owner) || owner.contains(focused));
       },
     };
   }

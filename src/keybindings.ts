@@ -1224,14 +1224,18 @@ export function installKeybindings(overrides: Record<string, ShortcutBinding> = 
       const target = e.target;
       const focused = isElementNode(target) && target !== doc.body && target !== doc.documentElement ? target : undefined;
       const field = focused?.closest(selectAllFields);
+      const focusedDialog = focused?.closest(selectAllDialogs);
+      const storedHit = outlineHits.get(doc);
+      const hit = !paneSel() && storedHit?.current(focusedDialog ?? focused) ? storedHit : undefined;
+      const top = topTransientLayer()?.root?.();
       if ((field?.isConnected && !isOutlineBlockEditorTarget(target))
-          || topTransientLayer()?.root?.()?.matches(selectAllDialogs)) {
+          || (focusedDialog && !hit?.ownedBy(focusedDialog))
+          || (top?.matches(selectAllDialogs) && !hit?.ownedBy(top))) {
         resetSeq();
         return;
       }
       if (!editing) {
-        const hit = outlineHits.get(doc);
-        const outline = !paneSel() && hit?.current(focused) ? hit.boundary : undefined;
+        const outline = hit?.boundary;
         if (hasSelection() || (!editingId() && outline !== undefined)) {
           if (hasSelection()) expandBlockSelection();
           else if (outline) {

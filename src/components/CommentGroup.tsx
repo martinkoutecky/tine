@@ -21,6 +21,7 @@ export function quoteInGroup(id: string): () => boolean {
 export function CommentGroup(props: { ids: readonly string[]; render?: (id: string) => JSX.Element }): JSX.Element {
   const surface = useContext(SurfaceContext);
   const selectionSurface = `comment-group:${createUniqueId()}`;
+  const scope = { get roots() { return props.ids; } };
   ownSelectionSurface(selectionSurface, undefined, surface);
   const first = () => props.ids[0];
   const firstNode = blockNodeBinding(first).node;
@@ -30,10 +31,10 @@ export function CommentGroup(props: { ids: readonly string[]; render?: (id: stri
     return !!parent && !!selector() && passageKey(parent.raw, selector()!, formatForBlock(first())) !== null;
   };
   return <div class="comment-group" data-comment-group={first()}
-    ref={el => bindOutlineSelection(el, { surface: selectionSurface, read: () => ({ scope: { roots: props.ids } }) })}>
+    ref={el => bindOutlineSelection(el, { surface: selectionSurface, read: () => ({ scope }) })}>
     <Show when={props.ids.length > 1}><CommentQuoteHeader parentId={firstNode().parent} selector={selector()} /></Show>
     <CommentGroupContext.Provider value={() => props.ids}>
-      <For each={props.ids}>{id => props.render ? props.render(id) : <Block id={id} />}</For>
+      <For each={scope.roots}>{id => props.render ? props.render(id) : <Block id={id} />}</For>
     </CommentGroupContext.Provider>
     <Show when={blockWritable(first()) && resolved()}>
       {/* Keep blur from collapsing the empty composer and moving this button during its press. */}

@@ -30,6 +30,7 @@ import { BUILTIN_HIDE, splitProps } from "../editor/properties";
 import { clickBeyondRenderedEnd, codeCardOffsetFromRange, editorOffsetFromRenderedRange } from "../render/spans";
 import { documentOf, isElementTag } from "../windowRealm";
 import { rowHostOf, rowPositionOf, type RowHost } from "./block/embedRowHost";
+import { outlineSelectionAt } from "../outlineSelectionTarget";
 import { bodyScopeOf } from "../document";
 
 // Pointer-based drag reorder (HTML5 DnD is unreliable in WebKitGTK).
@@ -204,10 +205,13 @@ export function beginEditGesture(
       const from: RowHost = rowPositionOf(row) ?? { id: editing, scope: outlineScope };
       selectBlock(from.id, from.scope, from.surface);
     }
-    // Never across an outline boundary: an unscoped selection must not run into an
-    // embed's rows (it would take the source parent with it), nor out of one.
-    if (selectionScope() !== anchor.scope) return;
-    extendSelectionTo(anchor.id, anchor.scope);
+    // A scoped selection compares the clicked row's rendered boundary with
+    // the scope that started it. A whole-block embed root stands for its host.
+    const selectedScope = selectionScope();
+    const boundary = selectedScope && startRow && !startHost ? outlineSelectionAt(startRow)?.boundary : undefined;
+    const scope = boundary?.read()?.scope ?? anchor.scope;
+    if (selectedScope !== scope) return;
+    extendSelectionTo(anchor.id, scope);
     return;
   }
   const home = scrollHome(e.target); // before the press re-renders its target

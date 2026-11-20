@@ -108,6 +108,7 @@ function Capture() {
   let titleRef: HTMLInputElement | undefined;
 
   const roots = () => pageByName(SCRATCH)?.roots ?? [];
+  const selectionScope = { get roots() { return roots(); } };
 
   const seed = () => {
     // The scratch page has no file, so a re-seed matches the incumbent and is
@@ -762,7 +763,7 @@ function Capture() {
               }
             }}
           />
-          <div class="page-blocks" ref={el => bindOutlineSelection(el, { surface: "main", read: () => ({ scope: { roots: roots() } }) })}>
+          <div class="page-blocks" ref={el => bindOutlineSelection(el, { surface: "main", read: () => ({ scope: selectionScope }) })}>
             <For each={roots()}>{(rid) => <Block id={rid} />}</For>
           </div>
           <Show when={!bindingAlternatives(submitBinding()).length}>
