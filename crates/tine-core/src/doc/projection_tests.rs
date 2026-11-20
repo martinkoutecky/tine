@@ -172,6 +172,10 @@ fn planning_dates_off_lsdoc_timestamp_code_robust() {
         "code-embedded planning is not badged"
     );
     assert_eq!(DocBlock::new("plain block").scheduled(), None);
+    assert_eq!(
+        DocBlock::new("Review\nscheduled: <2026-06-28 Sun>").scheduled(),
+        None
+    );
 }
 
 #[test]

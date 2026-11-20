@@ -225,6 +225,7 @@ impl Memo {
 #[cfg(test)]
 thread_local! {
     pub(crate) static LISTINGS: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
+    pub(crate) static SAME_FILE_CALLS: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
 }
 
 impl Graph {
@@ -282,6 +283,8 @@ impl Graph {
             let listed = memo
                 .listing(&dir)
                 .is_some_and(|names| names.contains(leaf) && names.contains(&name));
+            #[cfg(test)]
+            SAME_FILE_CALLS.with(|n| n.set(n.get() + 1));
             match same_file::is_same_file(&query, dir.join(&name)) {
                 // Two entries the directory lists, of different files.
                 Ok(false) if listed => continue,

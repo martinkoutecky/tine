@@ -112,6 +112,20 @@ export interface BlockRegions {
 export interface BlockIdentityFacts { raw: string; format: "md" | "org"; value: string | null }
 const soleMacroCache = new WeakMap<Block[], MacroInline | null>();
 const regionCache = new WeakMap<Block[], BlockRegions>();
+export interface RenderPlanning {
+  kind: "Scheduled" | "Deadline";
+  span_start: number;
+  line_start: number;
+  value: string | null;
+  has_trailing_body: boolean;
+  top_level: boolean;
+}
+const renderPlanningCache = new WeakMap<Block[], RenderPlanning[]>();
+const EMPTY_RENDER_PLANNING: readonly RenderPlanning[] = [];
+
+export function renderPlanningOf(blocks: Block[]): readonly RenderPlanning[] {
+  return renderPlanningCache.get(blocks) ?? EMPTY_RENDER_PLANNING;
+}
 
 
 function quarantine(key: string, text: string): Block[] {
@@ -176,9 +190,10 @@ export function parseBlock(text: string, isOrg: boolean, untitled = false): Bloc
       return quarantine(key, text);
     }
   }
-  const bundle = JSON.parse(json) as { blocks: Block[]; regions: BlockRegions; sole_macro: MacroInline | null };
+  const bundle = JSON.parse(json) as { blocks: Block[]; regions: BlockRegions; render_planning: RenderPlanning[]; sole_macro: MacroInline | null };
   soleMacroCache.set(bundle.blocks, bundle.sole_macro);
   regionCache.set(bundle.blocks, bundle.regions);
+  if (bundle.render_planning.length) renderPlanningCache.set(bundle.blocks, bundle.render_planning);
   return cache.remember(key, bundle.blocks, json.length);
 }
 

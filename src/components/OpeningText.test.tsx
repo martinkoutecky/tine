@@ -4,7 +4,6 @@ import type { JSX } from "solid-js";
 import { AstBody } from "../render/body";
 import { initParser } from "../render/parse";
 import { openingSegments } from "../editor/properties";
-import { planningScanStats } from "../render/facets";
 import { OpeningText } from "./OpeningText";
 import { OPENING_DRAWER_CASES, OPENING_SHAPE_CASES, expectOpeningShape, shownLines } from "../tests/openingClickCases";
 
@@ -185,11 +184,9 @@ it.each([
 });
 
 // Review 0e6bd6530 F2 (PC-3): a line of many planning timestamps costs its
-// length: its bounds are found once, each timestamp inspects only the gap
-// since the previous one, and the trailing body is judged once. Counts the
-// bytes walked for line bounds and every byte handed to the decoder (a copy),
-// doubling the timestamps on one line.
-it.each(["md", "org"] as const)("scans a %s line of 128, 256 and 512 planning timestamps linearly", (format) => {
+// length. The region pass counts line-boundary bytes in Rust. Keep the
+// end-to-end count of every byte handed to the decoder here as runs double.
+it.each(["md", "org"] as const)("decodes a %s line of 128, 256 and 512 planning timestamps linearly", (format) => {
   const cost = (n: number) => {
     const run = Array.from({ length: n }, (_, i) => (i % 2 ? "DEADLINE: <2026-11-20 Fri>" : "SCHEDULED: <2026-11-19 Thu>")).join(" \t");
     const text = `prose\n${run} trailing prose\n${run}`;
@@ -200,15 +197,13 @@ it.each(["md", "org"] as const)("scans a %s line of 128, 256 and 512 planning ti
       decoded += input ? input.byteLength : 0;
       return decode.call(this, input, options);
     };
-    const before = planningScanStats.scanned;
     try { mount(() => <OpeningText raw={text} format={format} />); } finally { proto.decode = decode; }
     document.body.replaceChildren();
-    return { scanned: planningScanStats.scanned - before, decoded, bytes: text.length };
+    return { decoded, bytes: text.length };
   };
   const [a, b, c] = [cost(128), cost(256), cost(512)];
   expect(a.decoded).toBeGreaterThan(a.bytes);
   for (const [small, large] of [[a, b], [b, c]]) {
-    expect(large.scanned).toBeLessThanOrEqual(2.2 * small.scanned + 64);
     expect(large.decoded).toBeLessThanOrEqual(2.2 * small.decoded + 64);
   }
 });

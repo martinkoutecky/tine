@@ -17,6 +17,8 @@ mod generation_tests;
 mod launch;
 mod racy;
 mod rebuild;
+#[cfg(test)]
+pub(crate) use rebuild::REBUILD_WRITER_TIME;
 mod reconcile;
 mod restore;
 mod runtime;
@@ -892,6 +894,7 @@ impl Core {
 
 pub(crate) struct WatchHandle {
     core: Arc<Core>,
+    rebuild: Mutex<()>,
     mode: Arc<Mutex<WatchMode>>,
     wake: Sender<()>,
     thread: Mutex<Option<std::thread::JoinHandle<()>>>,
@@ -988,6 +991,7 @@ impl WatchHandle {
         let thread = std::thread::spawn(move || run(worker_core, worker_mode, worker_wake, rx));
         Self {
             core,
+            rebuild: Mutex::new(()),
             mode,
             wake,
             thread: Mutex::new(Some(thread)),
