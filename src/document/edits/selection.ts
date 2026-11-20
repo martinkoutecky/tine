@@ -419,9 +419,10 @@ export function selectBlockSubtree(id: string, scope: OutlineScope | null = null
  *  returns false when it has no live rows. */
 export function expandBlockSelection(target?: OutlineSelectionTarget): boolean | undefined {
   if (target) {
-    const id = target.scope.roots.find(id => !!doc.byId[id]);
+    // Snapshot the roots: a later result refresh must not change what Delete removes.
+    const scope = { ...target.scope, roots: [...target.scope.roots] }, id = scope.roots.find(id => !!doc.byId[id]);
     if (!id) return false;
-    selectBlock(id, target.scope, target.surface);
+    selectBlock(id, scope, target.surface);
     const { order } = selectionTopology();
     batch(() => { setSelAnchor(order[0]); setSelFocus(order[order.length - 1]); setWhole("blank"); });
     return true;

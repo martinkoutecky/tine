@@ -1,4 +1,5 @@
 import { afterEach, beforeAll, describe, expect, it, vi } from "vitest";
+import { createSignal } from "solid-js";
 const counts = vi.hoisted(() => ({ orders: 0, children: 0, entries: 0 }));
 vi.mock("./document/commentOrder", async original => {
   const order = await original<typeof import("./document/commentOrder")>();
@@ -186,4 +187,15 @@ describe("complete subtree selection units (GH #941)", () => {
     moveSelection(1, true);
     expect(topSelected()).toEqual(["child", "middle"]);
   });
+});
+
+it("blank select-all keeps the roots it was given when a refresh republishes them (GH #793)", () => {
+  load();
+  const [roots, setRoots] = createSignal<readonly string[]>(["A", "D"]);
+  const scope: OutlineScope = { get roots() { return roots(); } };
+  expect(expandBlockSelection({ scope, surface: "ref" })).toBe(true);
+  setRoots(["A", "D", "E"]);
+  expect(topSelected()).toEqual(["A", "D"]);
+  setRoots([]);
+  expect(topSelected()).toEqual(["A", "D"]);
 });
