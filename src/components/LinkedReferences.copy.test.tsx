@@ -932,6 +932,7 @@ it.each([
   ["beyond the drag threshold and back", ".reference-group-header", ".reference-group-header", ".reference-group-header", 20, false],
   ["with Shift released before the click", ".reference-group-header", ".reference-group-header", ".reference-group-header", 0, true],
   ["captured by the header but released on its button", ".reference-group-header", "captured", ".reference-group-header", 0, false],
+  ["captured by the header but released outside the view", ".reference-group-header", "outside", ".reference-group-header", 0, false],
 ] as const)("does not arm blank selection after a press %s", async (_, from, up, to, moved, shiftKey) => {
   const { root } = await mountTarget();
   const group = root.querySelector(".linked-references .reference-group")!;
@@ -940,7 +941,7 @@ it.each([
   const button = group.querySelector(".reference-group-disclosure");
   Object.defineProperty(document, "elementFromPoint", { configurable: true, value: () => up === "captured" ? button : null });
   try {
-    group.querySelector(up === "captured" ? from : up)!.dispatchEvent(new MouseEvent("pointerup", { bubbles: true, button: 0 }));
+    group.querySelector(up === "captured" || up === "outside" ? from : up)!.dispatchEvent(new MouseEvent("pointerup", { bubbles: true, button: 0 }));
   } finally {
     Reflect.deleteProperty(document, "elementFromPoint");
   }
