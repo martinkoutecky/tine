@@ -52,7 +52,7 @@ import {
   route,
 } from "./router";
 import { journalTitle, parseJournalTitle, appNow } from "./journal";
-import { undo, redo, hasBlankOutlineSelection, hasSelection, moveSelection, cycleSelectionTasks, expandBlockSelection, moveSelectionItems, indentSelection, outdentSelection, deleteSelection, selectionMarkdown, selectionScope, clearSelection, selectedIds, singleSelectedId, topSelected, blockIsGridView, pageVisibleOrder, selectBlock, visibleOrder, toggleUndoRedoMode, buildClipboardPayload, node as docNode, loadedPage } from "./document";
+import { undo, redo, blankOutlineSelection, hasSelection, moveSelection, cycleSelectionTasks, expandBlockSelection, moveSelectionItems, indentSelection, outdentSelection, deleteSelection, selectionMarkdown, selectionScope, clearSelection, selectedIds, singleSelectedId, topSelected, blockIsGridView, pageVisibleOrder, selectBlock, visibleOrder, toggleUndoRedoMode, buildClipboardPayload, node as docNode, loadedPage } from "./document";
 import { editingId, startEditing } from "./editorController";
 import { copyBlockOutline } from "./clipboard";
 import { cutBlocks } from "./cut";
@@ -1002,12 +1002,11 @@ function focusedGridSurface(gridId: string): string | null {
   return surfaces.size === 1 ? [...surfaces][0] : null;
 }
 
-function writeSelectionToClipboard(cut: boolean, blank = false): void {
+function writeSelectionToClipboard(cut: boolean, blank: object | null = null): void {
   const ids = selectedIds();
   const text = selectionMarkdown();
   if (cut) {
-    const roots = blank ? topSelected() : undefined;
-    const ownsBlankSelection = () => blank && roots === topSelected();
+    const ownsBlankSelection = () => !!blank && blank === blankOutlineSelection();
     void cutBlocks(ids, text, () =>
       (!blank || ownsBlankSelection()) && JSON.stringify(selectedIds()) === JSON.stringify(ids) ? selectionMarkdown() : "",
       () => deleteSelection())
@@ -1127,7 +1126,7 @@ export function installKeybindings(overrides: Record<string, ShortcutBinding> = 
     const doc = documentOf(e);
     const hit = modKey === "a" ? outlineHits.get(doc) : undefined;
     outlineHits.delete(doc);
-    const blank = hasBlankOutlineSelection();
+    const blank = blankOutlineSelection();
     const blankClipboard = modKey === "c" || modKey === "x";
     const blankDelete = (e.key === "Delete" || e.key === "Backspace")
       && !e.shiftKey && !e.altKey && !e.ctrlKey && !e.metaKey;
@@ -1263,7 +1262,7 @@ export function installKeybindings(overrides: Record<string, ShortcutBinding> = 
     }
 
     if (blank && !editing && (blankClipboard || blankDelete)) {
-      if (blankClipboard) writeSelectionToClipboard(modKey === "x", true);
+      if (blankClipboard) writeSelectionToClipboard(modKey === "x", blank);
       else deleteSelection();
       e.preventDefault();
       resetSeq();
@@ -1380,7 +1379,7 @@ export function installKeybindings(overrides: Record<string, ShortcutBinding> = 
   const uninstallWindows = onEachWindow((win, id) => {
     const retireBlankSelection = () => {
       outlineHits.delete(win.document);
-      if (hasBlankOutlineSelection()) clearSelection();
+      if (blankOutlineSelection()) clearSelection();
     };
     const rememberOutlineHit = (e: MouseEvent) => {
       retireBlankSelection();

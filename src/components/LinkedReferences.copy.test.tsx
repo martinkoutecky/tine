@@ -3,7 +3,8 @@ import { render } from "solid-js/web";
 import { backend } from "../backend";
 import { clearClipboardPayload } from "../clipboard";
 import * as cut from "../cut";
-import { deleteBlock, hasBlankOutlineSelection, node, resetStore, selectedIds, topSelected } from "../document";
+import { deleteBlock, blankOutlineSelection, node, resetStore, selectedIds, topSelected } from "../document";
+import { setDoc } from "../document/model";
 import { endEdit } from "../editorController";
 import { setGraphMeta } from "../graphSession";
 import { installKeybindings } from "../keybindings";
@@ -652,9 +653,9 @@ it.each(["Delete", "Backspace"])("retires a blank selection on %s after its root
   expect(topSelected()).toEqual([coldHit.id]);
   deleteBlock(coldHit.id);
   expect(node(coldHit.id)).toBeUndefined();
-  expect(hasBlankOutlineSelection()).toBe(true);
+  expect(blankOutlineSelection()).toBeTruthy();
   expect(pressAction(action).defaultPrevented).toBe(true);
-  expect(hasBlankOutlineSelection()).toBe(false);
+  expect(blankOutlineSelection()).toBeNull();
   expect(pressAction("Delete").defaultPrevented).toBe(false);
   for (const row of [hit, sources[1].blocks[1], target.blocks[0]]) expect(node(row.id)?.raw).toBe(row.raw);
 });
@@ -928,6 +929,24 @@ it("leaves a pending Cut as a copy after the same group is selected again", asyn
   expect(node(hit.id)?.raw).toBe(hit.raw);
   expect(node(nestedHit.id)?.raw).toBe(nestedHit.raw);
   expect(node(target.blocks[0].id)?.raw).toBe(target.blocks[0].raw);
+});
+
+it("completes a pending blank Cut when its group's outline is recomputed", async () => {
+  const { root, writeRich } = await mountTarget();
+  const write = Promise.withResolvers<void>();
+  writeRich.mockReturnValueOnce(write.promise);
+  const operation = vi.spyOn(cut, "cutBlocks");
+  hitBlank(root.querySelector(".linked-references .reference-group")!);
+  expect(press("a", { ctrlKey: true }).defaultPrevented).toBe(true);
+  expect(press("x", { ctrlKey: true }).defaultPrevented).toBe(true);
+  const before = topSelected();
+  setDoc("byId", hit.id, "collapsed", true); // same roots, recomputed topology
+  expect(topSelected()).not.toBe(before);
+  write.resolve();
+  await operation.mock.results[0].value;
+  expectClipboard(writeRich.mock.lastCall!, [hit, nestedHit]);
+  expect(node(hit.id)).toBeUndefined();
+  expect(node(nestedHit.id)).toBeUndefined();
 });
 
 it("uses the live reference outline after a blank hit on its cold shell", async () => {
