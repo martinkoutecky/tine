@@ -237,3 +237,32 @@ it("Ctrl+A again at a scoped top after a refresh keeps the whole outline through
   setDoc("byId", "D", "collapsed", true);
   expect(topSelected()).toEqual(["A", "E", "D"]);
 });
+
+it("Ctrl+A again at a scoped top after a fold keeps the endpoints, so a refresh cannot widen it (GH #793)", () => {
+  load();
+  const [roots, setRoots] = createSignal<readonly string[]>(["A", "D"]);
+  const scope: OutlineScope = { get roots() { return roots(); } };
+  selectBlock("A", scope);
+  extendSelectionTo("D1", scope);
+  expandBlockSelection();
+  setDoc("byId", "D", "collapsed", true);
+  expandBlockSelection();
+  expect(topSelected()).toEqual(["A", "D"]);
+  setRoots(["A", "E", "D"]);
+  expect(topSelected()).not.toContain("E");
+});
+
+it.each([
+  ["prepends", ["E", "A", "D"]],
+  ["inserts", ["A", "E", "D"]],
+  ["appends", ["A", "D", "E"]],
+])("a refresh that %s a top-level row never widens a Ctrl+A selection (GH #793)", (_, next) => {
+  load();
+  const [roots, setRoots] = createSignal<readonly string[]>(["A", "D"]);
+  const scope: OutlineScope = { get roots() { return roots(); } };
+  selectBlock("A", scope);
+  extendSelectionTo("D1", scope);
+  expandBlockSelection();
+  setRoots(next);
+  expect(topSelected()).not.toContain("E");
+});

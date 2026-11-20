@@ -939,7 +939,7 @@ it.each([
   group.querySelector(from)!.dispatchEvent(new MouseEvent("pointerdown", { bubbles: true, button: 0, shiftKey }));
   if (moved) window.dispatchEvent(new MouseEvent("pointermove", { clientX: moved }));
   const button = group.querySelector(".reference-group-disclosure");
-  Object.defineProperty(document, "elementFromPoint", { configurable: true, value: () => up === "captured" ? button : null });
+  Object.defineProperty(document, "elementFromPoint", { configurable: true, value: () => up === "captured" ? button : up === "outside" ? null : group.querySelector(up) });
   try {
     group.querySelector(up === "captured" || up === "outside" ? from : up)!.dispatchEvent(new MouseEvent("pointerup", { bubbles: true, button: 0 }));
   } finally {
