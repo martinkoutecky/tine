@@ -38,16 +38,19 @@ export function acceptedPropertyLine(line: string): { key: string; value: string
  * handler/editor.cljs:1907-1924,2211-2226), so drawer authoring stays literal.
  * Intentional OG difference: Markdown values need no prior name selection.
  * Parse only the current line, never the whole block on each keystroke. */
-export function propertyValuePosition(raw: string, caret: number, format: Format): { key: string; start: number } | null {
+export function propertyValuePosition(raw: string, before: string, lineStart: number, format: Format): { key: string; start: number } | null {
   if (format !== "md") return null;
-  const lineStart = raw.lastIndexOf("\n", caret - 1) + 1;
-  const lineEnd = raw.indexOf("\n", caret);
-  const line = raw.slice(lineStart, lineEnd === -1 ? raw.length : lineEnd);
-  if (!line.includes("::")) return null;
-  const property = acceptedPropertyLine(line);
-  if (!property || !line.startsWith(property.key) || !isEditablePropertyKey(property.key)) return null;
-  const start = lineStart + property.key.length + 2;
-  return caret > start ? { key: property.key, start } : null;
+  const delimiter = before.indexOf("::");
+  if (delimiter === -1 || before.length <= delimiter + 2) return null;
+  // The parser also accepts a tab-only empty value. Only that form depends on
+  // the rest of the line, since a nonempty value must begin with a space.
+  let property = acceptedPropertyLine(before);
+  if (property && property.value === "" && before[delimiter + 2] !== " ") {
+    const newline = raw.indexOf("\n", lineStart + before.length);
+    property = acceptedPropertyLine(raw.slice(lineStart, newline === -1 ? raw.length : newline));
+  }
+  if (!property || !before.startsWith(property.key) || !isEditablePropertyKey(property.key)) return null;
+  return { key: property.key, start: lineStart + property.key.length + 2 };
 }
 
 /** Whether the properties panel may write `key` (GH #164): letters, marks,

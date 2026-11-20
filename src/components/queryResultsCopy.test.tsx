@@ -1,7 +1,7 @@
 import { afterEach, beforeAll, expect, it, vi } from "vitest";
 import { backend } from "../backend";
 import { closeExportModal, exportModal } from "../ui";
-import { openQueryResultsCopy } from "./queryResultsCopy";
+import { openQueryResultsCopy, uniqueResultRoots } from "./queryResultsCopy";
 import { bumpGraphEpoch } from "../graphSession";
 import type { BlockDto, RefGroup } from "../types";
 import { adoptResults, captureResultsTicket, resultsSettled } from "../queryResultsEpoch";
@@ -42,6 +42,25 @@ it("copies duplicate matched descendants only once under the journal date title"
   expect(modal && "nodes" in modal && modal.nodes).toMatchObject([{ raw: "Oct 13th, 2026", format: "md", children: [
     { raw: "Parent", format: "md", children: [{ raw: "Child", format: "md", children: [] }] },
   ] }]);
+});
+
+it.each([64, 128])("reads each child list once across 50 chains of depth %s", depth => {
+  let reads = 0;
+  const rows: BlockDto[] = [];
+  const roots: BlockDto[] = [];
+  for (let chain = 0; chain < 50; chain++) {
+    let children: BlockDto[] = [];
+    for (let level = depth; level > 0; level--) {
+      const next = children;
+      const row = { ...block(`${chain}-${level}`, ""), get children() { reads++; return next; } };
+      rows.push(row);
+      children = [row];
+    }
+    roots.push(children[0]);
+  }
+  const deduped = uniqueResultRoots(rows);
+  expect(reads).toBe(50 * depth);
+  expect(deduped.map(row => row.id)).toEqual(roots.map(row => row.id));
 });
 
 it("hydrates the selected source subtree without copying unrelated roots", async () => {

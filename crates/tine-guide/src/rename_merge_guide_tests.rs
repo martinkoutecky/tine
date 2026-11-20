@@ -87,6 +87,9 @@ fn rename_merge_and_journal_rename_proposals_are_documented_in_the_bundled_guide
         "the page shows it, its links count, a rename updates them",
         // D-20261119-PG: later property groups are opening text, shown as written.
         "a later group of `key:: value` lines after that blank line stays those lines, not page properties",
+        // UI-CM-ORG-PREAMBLE-ROW: the Org page view (review of 717cc3085).
+        "An Org page's opening text is the text before its first heading, apart from the `#+` property lines",
+        "clicking that row makes the text the page's first heading and edits it there",
         "nothing was renamed or merged",
         "Pending edits may already have been saved before a refusal; those saves stay",
         "Tine lists the files where either happened",

@@ -433,6 +433,7 @@ enum ExportFormat {
     override_usage = "tine export query [OPTIONS] <GRAPH> <((UUID))|--query <TEXT>|--page <PAGE>>"
 )]
 struct QueryExportArgs {
+    /// Graph directory (relative or absolute path).
     #[arg(value_name = "GRAPH", value_hint = clap::ValueHint::DirPath)]
     graph: PathBuf,
 
@@ -472,10 +473,11 @@ struct LiveExportArgs {
 
 #[derive(Debug, Args)]
 struct ExportArgs {
+    /// Graph directory (relative or absolute path).
     #[arg(value_name = "GRAPH", value_hint = clap::ValueHint::DirPath)]
     graph: PathBuf,
 
-    /// Existing absolute folder outside the graph; a new child is created in it.
+    /// Existing absolute directory outside the graph. The site goes in a new child of this directory. Use --name to name the child.
     #[arg(long, required = true, value_name = "PARENT", value_hint = clap::ValueHint::DirPath)]
     output: PathBuf,
 

@@ -22,6 +22,14 @@ function dtoIndex(page: PageDto): Map<string, BlockDto[]> {
   visit(page.blocks); dtoIndexes.set(page, index); return index;
 }
 
+/** Match a shallow reference against an exact source page read for export.
+ * Index the source once per read, then check the runtime key and original
+ * body so a reused positional key cannot silently export a different row. */
+export function referenceExportSource(reference: BlockDto, sourcePage: PageDto): BlockDto | null {
+  const matches = dtoIndex(sourcePage).get(reference.id);
+  return matches?.length === 1 && matches[0].raw === reference.raw ? matches[0] : null;
+}
+
 const mountedSynthetic = new WeakMap<BlockDto, number | null>();
 /** Whether a synthetic result row (a page's properties or the prose before its
  * first block, which have no live node of their own) is live. The rule is

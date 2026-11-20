@@ -4,8 +4,9 @@ Simple query block lists expose **Show breadcrumbs** beneath the View buttons.
 Default is shown. Disabling writes `tine.breadcrumbs:: false` through the normal
 undoable block property edit; enabling removes the property. The shared list
 renderer hides ancestor trails and grouped page headings (or globally sorted
-page crumbs). Group membership and result editing are unchanged. The switch is
-absent for page results and Table, Board or Search views, where it has no effect.
+page crumbs). Rows have the same spacing within and across pages when page
+headings and crumbs are hidden. Group membership and result editing are unchanged.
+The switch is absent for page results and Table, Board or Search views, where it has no effect.
 Collapse preserves the choice. Main panes, sidebars and embeds use the same
 property. Logseq treats the unknown property as ordinary block metadata and
 keeps its usual query context; this simple-query presentation is Tine-specific.

@@ -1,9 +1,13 @@
 import { afterEach, expect, it, vi } from "vitest";
 import { batch, createComputed, createRoot, getOwner } from "solid-js";
+import { unwrap } from "solid-js/store";
 import { loadFeed, resetStore } from "./workingSet";
 import { depthOf, depthsOf } from "./tree";
 import { isCommentId, threadRootOf, threadRootsOf } from "./commentThreads";
 import { selectBlock, moveSelection, topSelected, clearSelection } from "./edits/selection";
+import { exportNodesFor } from "./edits/serialize";
+import { referenceExportAtDepth, referenceExportCandidates } from "../editor/exportProjection";
+import { DEFAULT_EXPORT_OPTIONS, exportOutline } from "../editor/exportText";
 import { doc, setDoc } from "./model";
 import * as model from "./model";
 import { blockRegions } from "../render/parse";
@@ -33,6 +37,16 @@ function page(format: Format) {
     block("body", [block("comment", [block("nested", [block("reply")], true)], true), block("child")], true),
     block("tail"),
   ] };
+}
+
+function countParentReads(ids: string[]) {
+  let reads = 0;
+  for (const id of ids) {
+    const node = unwrap(doc.byId[id]);
+    const parent = node.parent;
+    Object.defineProperty(node, "parent", { get() { reads++; return parent; }, configurable: true });
+  }
+  return () => reads;
 }
 
 it.each([false, true])("batch answers preserve outermost threads and source depths across pages (reverse=%s)", reverse => {
@@ -67,6 +81,58 @@ it("batch scopes include omitted ancestors and recompute after raw and parent ed
   });
   expect(depthsOf(ids)).toEqual([1, 1, 1]);
   expect(threadRootsOf(ids).get("md-reply")).toBeNull();
+});
+
+it.each([64, 128])("projects 50 loaded reference chains of depth %s with linear parent reads", depth => {
+  const roots: BlockDto[] = [];
+  const ids: string[] = [];
+  for (let chain = 0; chain < 50; chain++) {
+    let children: BlockDto[] = [];
+    for (let level = depth; level > 0; level--) {
+      const id = `${chain}-${level}`;
+      ids.push(id);
+      children = [{ id, raw: id, children, collapsed: false }];
+    }
+    roots.push(children[0]);
+  }
+  loadFeed([{ name: "Chains", title: "Chains", kind: "page", format: "md", pre_block: null, blocks: roots }]);
+  const parentReads = countParentReads(ids);
+
+  const forest = exportNodesFor(ids, true);
+  expect(forest.map(root => root.raw)).toEqual(roots.map(root => root.raw));
+  const levelOne = referenceExportAtDepth(referenceExportCandidates(forest), 1);
+  expect(levelOne.map(node => node.raw)).toEqual(roots.flatMap((_, chain) =>
+    Array.from({ length: depth }, (_, level) => `${chain}-${level + 1}`)));
+  expect(parentReads()).toBeLessThanOrEqual(7 * ids.length);
+});
+
+it.each([false, true])("keeps parent reads linear for shared unchecked ancestors (checked root=%s)", checkedRoot => {
+  const block = (id: string, children: BlockDto[] = []): BlockDto => ({ id, raw: id, children, collapsed: false });
+  const leaves = Array.from({ length: 50 }, (_, index) => block(`leaf-${index}`));
+  const ancestors = Array.from({ length: 127 }, (_, index) => `ancestor-${index}`);
+  const roots = ancestors.reduceRight((children, id) => [block(id, children)], leaves);
+  loadFeed([{ name: "Shared", title: "Shared", kind: "page", format: "md", pre_block: null, blocks: roots }]);
+  const leafIds = leaves.map(leaf => leaf.id);
+  const ids = checkedRoot ? [...leafIds, roots[0].id] : leafIds;
+  const allIds = [...leafIds, ...ancestors];
+  const parentReads = countParentReads(allIds);
+
+  const forest = exportNodesFor(ids, true);
+  expect(forest.map(root => root.raw)).toEqual(checkedRoot ? [roots[0].id] : leafIds);
+  expect(parentReads()).toBeLessThanOrEqual(7 * allIds.length);
+});
+
+it.each(["md", "org"] as const)("keeps detached and promoted reference replies inside their source thread (%s)", format => {
+  loadFeed([page(format)]);
+  const options = { ...DEFAULT_EXPORT_OPTIONS, maxDepth: 1 };
+  const exportFirstLevel = (ids: string[], includeComments: boolean) => {
+    const forest = exportNodesFor(ids.map(id => `${format}-${id}`), true);
+    const visible = referenceExportAtDepth(referenceExportCandidates(forest), 1);
+    return exportOutline(visible, { ...options, includeComments });
+  };
+  expect(exportFirstLevel(["body", "reply"], true)).toContain("[Comment] reply");
+  expect(exportFirstLevel(["body", "reply"], false)).toBe("- body");
+  expect(exportFirstLevel(["reply"], false)).toBe("");
 });
 
 it.each(["md", "org"] as const)("thread readers follow membership deltas, including reparent and replacement (%s)", format => {

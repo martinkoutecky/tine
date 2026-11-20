@@ -533,16 +533,16 @@ export function closePageProps() {
 
 // "Copy / export as" modal — a live-preview text export of a block subtree or a
 // multi-block selection, with indent-style + remove options (mirrors OG Logseq).
-export type ExportRequest = { ids: string[] } | { nodes: import("./editor/exportText").ExportNode[]; count: number };
+export type ExportRequest = { ids: string[] } | { nodes: import("./editor/exportText").ExportNode[]; count: number; groupedDepth?: true };
 export const [exportModal, setExportModal] = graphScopedSignal<ExportRequest>();
 /** Open the shared export modal for a selection of document block ids. */
 export function openExportModal(ids: string[]) {
   if (ids.length) setExportModal({ ids });
 }
-/** Open the shared export modal for an already materialized, read-only forest.
- * The caller supplies its visible block count; this does not write graph data. */
-export function openExportNodesModal(nodes: import("./editor/exportText").ExportNode[], count: number) {
-  if (nodes.length) setExportModal({ nodes, count });
+/** Open the shared export modal for a read-only forest with its visible block
+ * count. With grouped depth, the page labels sit above level 1. */
+export function openExportNodesModal(nodes: import("./editor/exportText").ExportNode[], count: number, groupedDepth?: true) {
+  if (nodes.length) setExportModal({ nodes, count, ...(groupedDepth && { groupedDepth }) });
 }
 export function closeExportModal() {
   setExportModal(null);

@@ -15,6 +15,7 @@ import { APP_ID } from "./lib/app-identity.mjs";
 import { ensureMainWindow } from "./lib/e2e-main-window.mjs";
 import { currentPageTitle, openPageByName } from "./lib/e2e-navigation.mjs";
 import { waitForFileText } from "./e2e-file-poll.mjs";
+import { editorSelector, editorState } from "./lib/e2e-block-editor.mjs";
 import { tauriCapabilities, webdriverServerArgs } from "./e2e-capabilities.mjs";
 
 const root = path.resolve(import.meta.dirname, "..");
@@ -124,7 +125,28 @@ try {
     await waitForFileText(path.join(graph, rel), (text) => text === after, { timeoutMs: 15_000 });
   }
 
-  fs.writeFileSync(path.join(run, "receipt.json"), JSON.stringify({ commit, workingDiff: true, outcome: "PASS", journey: "preamble prose counts in All pages (Target 4, Ghost 1), is a Linked References row, and is renamed (Markdown with and without page properties, Org); All pages hides a uuid name and a draws/ name", graph }, null, 2));
+  // The Org page view shows its opening text as the first row, editable in
+  // place exactly like Markdown's (GH #85 promotion, principle 6).
+  stage = "the Org page shows its opening text as an editable first row";
+  await openPageByName(browser, "Notes");
+  const preamble = `.main-content [data-page-preamble="Notes"] .block-content-wrapper`;
+  await browser.waitUntil(async () => (await browser.$(preamble).isExisting())
+    && (await browser.$(preamble).getText()).includes("Org prose"), { timeout: 15_000, timeoutMsg: "the Org page shows no opening-text row" });
+  await browser.$(preamble).click();
+  await browser.$(editorSelector(".main-content")).waitForExist({ timeout: 15_000 });
+  await browser.waitUntil(async () => {
+    const state = await editorState(browser, ".main-content");
+    return state?.focused && state.value === "Org prose [[New]]";
+  }, { timeout: 15_000, timeoutMsg: "clicking the Org opening text did not edit it" });
+  await browser.keys(["Control", "a"]);
+  await browser.$(editorSelector(".main-content")).addValue("Edited org prose [[New]]");
+  await browser.keys("Escape");
+  // The whole file: the edited opening text became the first heading and the
+  // following heading is unchanged (not nested, renamed or duplicated).
+  await waitForFileText(path.join(graph, "pages/Notes.org"),
+    (text) => text === "* Edited org prose [[New]]\n* heading\n", { timeoutMs: 15_000 });
+
+  fs.writeFileSync(path.join(run, "receipt.json"), JSON.stringify({ commit, workingDiff: true, outcome: "PASS", journey: "preamble prose counts in All pages (Target 4, Ghost 1), is a Linked References row, and is renamed (Markdown with and without page properties, Org); the Org page shows it as an editable first row; All pages hides a uuid name and a draws/ name", graph }, null, 2));
   console.log(`PASS CM preamble. ${run}`);
 } catch (error) {
   try { await browser?.saveScreenshot(path.join(run, "failure.png")); } catch {}

@@ -7675,6 +7675,12 @@ img.emoji {
   font-size: 13px;
   color: var(--text-muted);
 }
+.query-group.query-group-no-page {
+  margin-bottom: 0;
+}
+.query-group-no-page > .live-ref-group > .comment-surface > .page-section {
+  padding-bottom: 0;
+}
 .link-depth-warning {
   margin: 2px 0;
   font-size: 13px;
