@@ -273,7 +273,32 @@ top-level directives before the first headline and the head drawer, except a
 directive or drawer strictly between two lines of other text, and the prose runs
 from the first to the last of that other text, so page properties may follow
 it). Every other non-blank byte of a pre-block is prose, so it is indexed,
-renamed and kept like any block text. A Markdown `#+key: value` line is prose
+renamed and kept like any block text. That prose is the page's opening text, and the page's opening row, its Linked
+References row and a query's List row all show it the same way (`OpeningText`).
+Opening text is read with an empty title
+(`lsdoc_block_parse::parse_untitled_block`), so no block header is
+recognized: a task word or priority on its first line is ordinary text with
+no task chrome or behaviour (opening text is not a task), and nothing is
+lifted or put back. That one reading answers both questions. The parser names
+the property groups (`page_preamble::opening_groups`): every top-level
+`key:: value` group or `#+key: value` line of the untitled parse, as whole
+source lines (a task line is prose, so `TODO k:: v` is no group). Each group
+shows exactly as written, one line per source line (a Windows line end is
+one), never as property chips or page properties (D-20261119-PG, a deliberate
+difference from Logseq, which shows such a group as nothing). Each blank line
+between pieces shows as one. Every other piece renders as body text
+(`AstBody` with `untitled`), as the same text would after a block's first
+line: queries run, and nested directives and drawers are hidden. A piece is
+parsed again on its own; between top-level nodes that gives the nodes the
+whole text's parse has (`opening_groups_and_pieces_share_one_untitled_parse`).
+A click enters
+editing by the same predicate as a block (`forbidsEditEntry`): a link,
+disclosure or media control keeps its click and the file is untouched. A
+checklist checkbox in it has no block line to tick, so it is inert, and a press
+on it is a press on the text. While the header is edited, the frontend keeps the
+parser's answer (`pageOpening`) instead of splitting the remaining pre-block
+again; display, the properties panel, and the copy and edit checks on a
+result's header and opening rows all read that one answer. A Markdown `#+key: value` line is prose
 whose references count, as Logseq hoists it. The format is the file's, never
 inferred from the text.
 Header checking costs O(header bytes), uses the same native description as the

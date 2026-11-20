@@ -971,6 +971,79 @@ fn case_only_rename_onto_another_pages_file_refuses_with_the_reason() {
     assert_eq!(snapshot(&root), before, "nothing written");
 }
 
+/// R14, review c1909f09f: a destination that is a separately listed symlink
+/// is its own entry, as the no-replace move guard treats it. The planner must
+/// not follow the link and blame the page the link points at.
+#[cfg(unix)]
+fn renaming_onto_a_listed_link_blames_no_linked_page(
+    label: &str,
+    link: &str,
+    target: &str,
+    new: &str,
+) {
+    let _guard = crate::integration_lock();
+    let (root, store) = fixture(
+        label,
+        &[
+            ("pages/A.md", "- a\n"),
+            (&format!("pages/{target}"), "title:: C\n\n- c\n"),
+        ],
+    );
+    std::os::unix::fs::symlink(target, root.join("pages").join(link)).unwrap();
+    let listed: Vec<_> = fs::read_dir(root.join("pages"))
+        .unwrap()
+        .map(|entry| entry.unwrap().file_name())
+        .collect();
+    if !listed.iter().any(|name| name == link) || !listed.iter().any(|name| name == target) {
+        eprintln!("SKIP: the link and its target are not listed separately here");
+        store.close();
+        return;
+    }
+    let before = snapshot(&root);
+    let offer = rename_offer(&store, "A", new, None);
+    assert!(
+        !matches!(
+            &offer,
+            Ok(RenameOffer::Refused { reason: RenameBlocked::FileTaken { page, .. }, .. }) if page == "C"
+        ),
+        "the link's target page is not the occupant: {offer:?}"
+    );
+    let result = rename(&store, "A", new, RenameChoice::Rename);
+    if let Err(error) = &result {
+        assert!(
+            !matches!(RenameBlocked::of(error), Some(RenameBlocked::FileTaken { page, .. }) if page == "C"),
+            "{error}"
+        );
+    }
+    assert!(
+        result.is_err(),
+        "the listed link keeps the destination occupied"
+    );
+    assert!(fs::symlink_metadata(root.join("pages").join(link))
+        .unwrap()
+        .file_type()
+        .is_symlink());
+    assert_eq!(snapshot(&root), before, "nothing written");
+}
+
+#[cfg(unix)]
+#[test]
+fn rename_onto_a_case_spelled_link_does_not_blame_its_target() {
+    renaming_onto_a_listed_link_blames_no_linked_page("link-case", "B.md", "b.md", "B");
+}
+
+#[cfg(unix)]
+#[test]
+fn rename_onto_a_normalization_spelled_link_does_not_blame_its_target() {
+    // The link is the NFC spelling, its target the NFD one: one fold key.
+    renaming_onto_a_listed_link_blames_no_linked_page(
+        "link-nfc",
+        "\u{e9}.md",
+        "e\u{301}.md",
+        "\u{e9}",
+    );
+}
+
 /// CM step 2 slice 1 (model r6): the request-level rules, on these helpers.
 #[path = "cm_requests.rs"]
 mod cm_requests;

@@ -361,20 +361,20 @@ fn discover_markdown_candidates(trimmed: &str) -> Vec<Candidate> {
     candidates
 }
 
-fn prepare_markdown(trimmed: &str) -> Preparation {
+fn prepare_markdown(trimmed: &str, head: &str) -> Preparation {
     // Most blocks have neither a backtick nor a property separator. Keep their
     // pre-fix cost shape: one required re-bulleted String and no protection
     // census, source clone, restoration walk, or fallback. This cheap immutable
     // prefilter also keeps ordinary properties (`key:: value`) on the fast path.
     if !trimmed.contains('`') || !trimmed.contains("::") {
-        return Preparation::Plain(format!("- {trimmed}"));
+        return Preparation::Plain(format!("{head}{trimmed}"));
     }
 
     // Discovery is immutable. Only an actual line-leading inline-code candidate
     // earns the exceptional copy/mutation work below.
     let candidates = discover_markdown_candidates(trimmed);
     if candidates.is_empty() {
-        return Preparation::Plain(format!("- {trimmed}"));
+        return Preparation::Plain(format!("{head}{trimmed}"));
     }
 
     let mut protected_input = trimmed.as_bytes().to_vec();
@@ -403,7 +403,7 @@ fn prepare_markdown(trimmed: &str) -> Preparation {
             }
         }
         protected.push(ProtectedCode {
-            // The prepared outline bullet contributes `- `.
+            // The prepared outline bullet contributes `- ` (or `-\n`).
             start: candidate.opener + 2,
             end: candidate.close + candidate.ticks + 2,
             text: trimmed[content_start..candidate.close].to_string(),
@@ -413,17 +413,19 @@ fn prepare_markdown(trimmed: &str) -> Preparation {
     let protected_text =
         String::from_utf8(protected_input).expect("ASCII replacement preserves UTF-8");
     Preparation::Protected(Prepared {
-        input: format!("- {protected_text}"),
+        input: format!("{head}{protected_text}"),
         protected,
     })
 }
 
-fn prepare(raw: &str, is_org: bool) -> Preparation {
+/// The re-bulleted parser input. `untitled` puts the text on the line after
+/// an empty title: the same two bytes before it, so offsets map alike.
+fn prepare(raw: &str, is_org: bool, untitled: bool) -> Preparation {
     let trimmed = trim_block_start(raw);
-    if is_org {
-        Preparation::Plain(format!("* {trimmed}"))
-    } else {
-        prepare_markdown(trimmed)
+    match (is_org, untitled) {
+        (true, false) => Preparation::Plain(format!("* {trimmed}")),
+        (true, true) => Preparation::Plain(format!("*\n{trimmed}")),
+        (false, untitled) => prepare_markdown(trimmed, if untitled { "-\n" } else { "- " }),
     }
 }
 
@@ -492,11 +494,34 @@ fn restore_blocks(blocks: &mut [Block], protected: &[ProtectedCode], restored: &
 
 /// Where a block's parsed text starts: the block boundary's leading trim.
 pub(crate) fn block_lead(raw: &str) -> usize {
+    #[cfg(test)]
+    LEAD_SCANS.with(|n| n.set(n.get() + 1));
     raw.len() - trim_block_start(raw).len()
+}
+// Leading-trim scans per operation, pinned by `opening_groups_cost_is_linear` (PC-3).
+#[cfg(test)]
+thread_local! {
+    pub(crate) static LEAD_SCANS: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
 }
 /// A prepared single-block offset (after the `* `/`- ` wrapper) in raw.
 pub(crate) fn raw_offset(raw: &str, at: usize) -> usize {
-    (at.saturating_sub(2) + block_lead(raw)).min(raw.len())
+    Coords::of(raw, false).raw(raw, at)
+}
+/// How a parse's offsets map to `raw`: a whole document's are its own; a
+/// prepared single block's sit after the wrapper and the leading trim, which
+/// is measured once here, so mapping each node is O(1).
+#[derive(Clone, Copy)]
+pub(crate) struct Coords(Option<usize>);
+impl Coords {
+    pub(crate) fn of(raw: &str, document: bool) -> Self {
+        Coords((!document).then(|| block_lead(raw)))
+    }
+    pub(crate) fn raw(self, raw: &str, at: usize) -> usize {
+        match self.0 {
+            None => at.min(raw.len()),
+            Some(lead) => (at.saturating_sub(2) + lead).min(raw.len()),
+        }
+    }
 }
 /// The end of the first line after the leading trim, after its newline.
 pub(crate) fn first_line_end(raw: &str) -> usize {
@@ -546,9 +571,16 @@ pub(crate) fn headline_end(raw: &str, blocks: &[Block]) -> Option<usize> {
 }
 
 pub fn parse_block(raw: &str, is_org: bool) -> Vec<Block> {
-    let mut blocks = parse_block_inner(raw, is_org);
+    let mut blocks = parse_block_inner(raw, is_org, false);
     restore_bare_task(raw, is_org, &mut blocks);
     blocks
+}
+
+/// `raw` read as body text with an empty title: its first line is a body
+/// line like any other, so no task word or priority is lifted off it as a
+/// block's header. A page's opening text is no block (D-20261119-PG).
+pub fn parse_untitled_block(raw: &str, is_org: bool) -> Vec<Block> {
+    parse_block_inner(raw, is_org, true)
 }
 
 fn restore_bare_task(raw: &str, is_org: bool, blocks: &mut [Block]) {
@@ -611,7 +643,7 @@ fn restore_bare_task(raw: &str, is_org: bool, blocks: &mut [Block]) {
         return;
     }
     let title = &raw[head..end];
-    let title_blocks = parse_block_inner(title, is_org);
+    let title_blocks = parse_block_inner(title, is_org, false);
     if let Some(
         Block::Bullet {
             marker: Some(accepted),
@@ -678,11 +710,11 @@ thread_local! {
     static PARSES: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
 }
 
-fn parse_block_inner(raw: &str, is_org: bool) -> Vec<Block> {
+fn parse_block_inner(raw: &str, is_org: bool, untitled: bool) -> Vec<Block> {
     #[cfg(test)]
     PARSES.with(|n| n.set(n.get() + 1));
     admit_block_source(raw);
-    let prepared = match prepare(raw, is_org) {
+    let prepared = match prepare(raw, is_org, untitled) {
         Preparation::Plain(input) => {
             return bounded_blocks(lsdoc::parse(&input, if is_org { "org" } else { "md" }))
         }
@@ -696,7 +728,11 @@ fn parse_block_inner(raw: &str, is_org: bool) -> Vec<Block> {
     } else {
         // Fail closed: an unanticipated parser shape may retain lsdoc's original
         // classification, but transformed bytes must never leak into the AST.
-        bounded_blocks(lsdoc::parse(&format!("- {}", trim_block_start(raw)), "md"))
+        let head = if untitled { "-\n" } else { "- " };
+        bounded_blocks(lsdoc::parse(
+            &format!("{head}{}", trim_block_start(raw)),
+            "md",
+        ))
     }
 }
 
@@ -713,7 +749,7 @@ fn parse_projection_inner(raw: &str, is_org: bool) -> Projection {
     #[cfg(test)]
     PARSES.with(|n| n.set(n.get() + 1));
     admit_block_source(raw);
-    let prepared = match prepare(raw, is_org) {
+    let prepared = match prepare(raw, is_org, false) {
         Preparation::Plain(input) => {
             return bounded_projection(lsdoc::parse_format_without_property_page_refs(
                 &input,
@@ -1202,13 +1238,13 @@ mod preparation_tests {
             "inline `code` without a separator",
             "a:: value with `later code`",
         ] {
-            let Preparation::Plain(input) = prepare(raw, false) else {
+            let Preparation::Plain(input) = prepare(raw, false, false) else {
                 panic!("ordinary block entered protection path: {raw}")
             };
             assert_eq!(input, format!("- {raw}"));
         }
 
-        let Preparation::Plain(input) = prepare("DONE finished", true) else {
+        let Preparation::Plain(input) = prepare("DONE finished", true, false) else {
             panic!("Org must never enter the Markdown protection path")
         };
         assert_eq!(input, "* DONE finished");
@@ -1216,7 +1252,7 @@ mod preparation_tests {
 
     #[test]
     fn property_lookalike_enters_the_exceptional_path() {
-        let Preparation::Protected(prepared) = prepare("`a:: b` tail", false) else {
+        let Preparation::Protected(prepared) = prepare("`a:: b` tail", false, false) else {
             panic!("line-leading inline code requires protection")
         };
         assert_eq!(prepared.protected.len(), 1);

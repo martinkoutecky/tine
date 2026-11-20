@@ -9,6 +9,7 @@ import type { BlockDto, Format } from "../types";
 import { pageProperties } from "../render/block";
 import { effectiveHeadingLevel, facetsFromDto, renderedProperties } from "../render/facets";
 import { taskCheckboxState } from "../markers";
+import { OpeningText } from "./OpeningText";
 import { AstBody } from "../render/body";
 import { BlockRenderBoundary } from "./BlockRenderBoundary";
 import { blockWritable, formatForPage, node as docNode, resolveBlockRef, setCollapsed } from "../document";
@@ -25,7 +26,7 @@ import { BeginQuery } from "./BeginQuery";
 import { inspectBeginQuery } from "../render/beginQuery";
 import { blockDtoExternalId } from "../blockIdentity";
 import { SourceTaskCheckbox } from "./SourceTaskCheckbox";
-import { isElementNode } from "../windowRealm";
+import { forbidsEditEntry } from "../editor/editTargets";
 import { CalGlyph } from "./blockParts";
 import { blockDirAttr } from "../render/textDirection";
 import { noteLayoutDirAttr } from "../noteLayoutSetting";
@@ -127,9 +128,15 @@ function RefBlock(props: {
   // M-19: the body shares AstBody with Block, so fences and dates match the
   // live row. Measured: no slower on the normal path; slower only while a
   // source page cannot be read (D-20261023-VC, tine-agents evidence/m19-wave4).
-  const facets = createMemo(() => facetsFromDto(props.block));
+  // A preamble row is opening text (D-20261119-PG): no task, heading, date or
+  // property chrome; `OpeningText` shows its later groups as written.
+  const facets = createMemo(() => facetsFromDto(props.block.page_preamble ? {} : props.block));
   const headingLevel = createMemo(() => effectiveHeadingLevel(facets(), props.depth));
   const annotation = () => annotationInfo(facets().properties);
+  // Chosen once per row: a row's preamble flag is its DTO's.
+  const body = (format: Format) => props.block.page_preamble
+    ? <OpeningText raw={props.block.raw} format={format} />
+    : <AstBody raw={props.block.raw} format={format} headingLevel={headingLevel()} />;
   // Only an exact whole-block candidate needs query confirmation here.
   const beginQuery = createMemo(() =>
     props.sourceFormat && !props.readOnly && /^\s*#\+BEGIN_QUERY\b/i.test(props.block.raw)
@@ -283,7 +290,7 @@ function RefBlock(props: {
             classList={{ done: facets().done, [`heading h${headingLevel() ?? ""}`]: !!props.sourceFormat && headingLevel() != null }}
             onClick={(event) => {
               if (props.block.page_preamble && props.onEditPreamble) {
-                if (isElementNode(event.target) && event.target.closest("a, button, .page-ref, .tag")) return;
+                if (forbidsEditEntry(event)) return;
                 event.stopPropagation();
                 props.onEditPreamble();
                 return;
@@ -291,7 +298,7 @@ function RefBlock(props: {
               // GH #486: the same gesture as the source page's properties area
               // (Page.tsx editPageHeader); links and buttons keep their own click.
               if (!props.block.page_property || !props.onEditPageProperties) return;
-              if (isElementNode(event.target) && event.target.closest("a, button, .page-ref, .tag")) return;
+              if (forbidsEditEntry(event)) return;
               event.stopPropagation();
               props.onEditPageProperties(event);
             }}
@@ -315,8 +322,8 @@ function RefBlock(props: {
                 <Show
                   when={props.block.page_property}
                   fallback={
-                    <Show when={beginQuery()} fallback={
-                      <Show when={annotation()?.areaStamp} fallback={<AstBody raw={props.block.raw} format={format()} headingLevel={headingLevel()} />}>
+                    <Show when={!props.block.page_preamble && beginQuery()} fallback={
+                      <Show when={annotation()?.areaStamp} fallback={body(format())}>
                         <AnnotationBody page={props.page ?? ""} highlightId={blockDtoExternalId(props.block)}
                           color={annotation()!.color} hlPage={annotation()!.hlPage} areaStamp={annotation()!.areaStamp}
                           line={visibleBody(props.block.raw, format()).join("\n")} format={format()} />
@@ -332,7 +339,7 @@ function RefBlock(props: {
                     </Show>
                   }</For>
                 </Show>
-                <Show when={!props.block.page_property}>
+                <Show when={!props.block.page_property && !props.block.page_preamble}>
                   <PropertyRows entries={renderedProperties(props.block.raw, format())} format={format()} blockId={props.block.id} />
                 </Show>
               </>}
