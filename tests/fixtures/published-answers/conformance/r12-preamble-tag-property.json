@@ -1,0 +1,219 @@
+{
+  "aliases": [],
+  "answers": {
+    "alias_groups": [],
+    "inventory": [
+      {
+        "day": null,
+        "is_journal": false,
+        "key": "header",
+        "name": "Header",
+        "target": {
+          "id": "pages/Header.md",
+          "kind": "existing",
+          "others": []
+        }
+      },
+      {
+        "day": null,
+        "is_journal": false,
+        "key": "header org",
+        "name": "Header Org",
+        "target": {
+          "id": "pages/Header Org.org",
+          "kind": "existing",
+          "others": []
+        }
+      },
+      {
+        "day": null,
+        "is_journal": false,
+        "key": "linked",
+        "name": "Linked",
+        "target": {
+          "id": "pages/Linked.md",
+          "kind": "absent"
+        }
+      },
+      {
+        "day": null,
+        "is_journal": false,
+        "key": "markdown",
+        "name": "Markdown",
+        "target": {
+          "id": "pages/Markdown.md",
+          "kind": "existing",
+          "others": []
+        }
+      },
+      {
+        "day": null,
+        "is_journal": false,
+        "key": "org",
+        "name": "Org",
+        "target": {
+          "id": "pages/Org.org",
+          "kind": "existing",
+          "others": []
+        }
+      },
+      {
+        "day": null,
+        "is_journal": false,
+        "key": "related",
+        "name": "related",
+        "target": {
+          "id": "pages/related.md",
+          "kind": "absent"
+        }
+      },
+      {
+        "day": null,
+        "is_journal": false,
+        "key": "status",
+        "name": "status",
+        "target": {
+          "id": "pages/status.md",
+          "kind": "absent"
+        }
+      },
+      {
+        "day": null,
+        "is_journal": false,
+        "key": "target",
+        "name": "Target",
+        "target": {
+          "id": "pages/Target.md",
+          "kind": "existing",
+          "others": []
+        }
+      },
+      {
+        "day": null,
+        "is_journal": false,
+        "key": "topic",
+        "name": "Topic",
+        "target": {
+          "id": "pages/Topic.md",
+          "kind": "existing",
+          "others": []
+        }
+      }
+    ],
+    "journals": {
+      "content_days": [],
+      "file_name_format": "yyyy_MM_dd",
+      "title_format": "MMM do, yyyy"
+    },
+    "resolve": [],
+    "v": 1
+  },
+  "backlinks": {},
+  "block_ref_counts": {},
+  "entries": [
+    {
+      "date_key": null,
+      "kind": "page",
+      "name": "Header",
+      "path": "pages/Header.md"
+    },
+    {
+      "date_key": null,
+      "kind": "page",
+      "name": "Header Org",
+      "path": "pages/Header Org.org"
+    },
+    {
+      "date_key": null,
+      "kind": "page",
+      "name": "Markdown",
+      "path": "pages/Markdown.md"
+    },
+    {
+      "date_key": null,
+      "kind": "page",
+      "name": "Org",
+      "path": "pages/Org.org"
+    },
+    {
+      "date_key": null,
+      "kind": "page",
+      "name": "Target",
+      "path": "pages/Target.md"
+    },
+    {
+      "date_key": null,
+      "kind": "page",
+      "name": "Topic",
+      "path": "pages/Topic.md"
+    }
+  ],
+  "exported_at": "",
+  "home": "Header",
+  "icons": {},
+  "name": "Site",
+  "pages": [
+    {
+      "blocks": [],
+      "format": "md",
+      "kind": "page",
+      "name": "Header",
+      "path": "pages/Header.md",
+      "pre_block": null,
+      "read_only": true,
+      "title": "Header"
+    },
+    {
+      "blocks": [],
+      "format": "org",
+      "kind": "page",
+      "name": "Header Org",
+      "path": "pages/Header Org.org",
+      "pre_block": null,
+      "read_only": true,
+      "title": "Header Org"
+    },
+    {
+      "blocks": [],
+      "format": "md",
+      "kind": "page",
+      "name": "Markdown",
+      "path": "pages/Markdown.md",
+      "pre_block": null,
+      "read_only": true,
+      "title": "Markdown"
+    },
+    {
+      "blocks": [],
+      "format": "org",
+      "kind": "page",
+      "name": "Org",
+      "path": "pages/Org.org",
+      "pre_block": null,
+      "read_only": true,
+      "title": "Org"
+    },
+    {
+      "blocks": [],
+      "format": "md",
+      "kind": "page",
+      "name": "Target",
+      "path": "pages/Target.md",
+      "pre_block": null,
+      "read_only": true,
+      "title": "Target"
+    },
+    {
+      "blocks": [],
+      "format": "md",
+      "kind": "page",
+      "name": "Topic",
+      "path": "pages/Topic.md",
+      "pre_block": null,
+      "read_only": true,
+      "title": "Topic"
+    }
+  ],
+  "queries": [],
+  "schema": 1
+}

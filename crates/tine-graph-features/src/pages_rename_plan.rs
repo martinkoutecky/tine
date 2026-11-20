@@ -1013,9 +1013,16 @@ fn plan_request(
         // second spelling). Moving onto it would replace that page, which
         // the no-replace move refuses at commit; retrying cannot help, so
         // refuse now with the reason. Scenario (I-8): an external editor or
-        // a sync delivery left a file at the destination name.
+        // a sync delivery left a file at the destination name. On a
+        // case-folding volume the destination's entry may be listed under
+        // another spelling (`B.md` reaches `b.md`); `move_occupant` names it,
+        // the same answer the no-replace move guard uses. An unreadable
+        // destination is left to the guard, which refuses with its error.
         if let Some(page) = store
-            .as_page(&to)
+            .move_occupant(&to)
+            .ok()
+            .flatten()
+            .and_then(|file| store.as_page(&file))
             .filter(|page| !ids.contains(page))
             .and_then(|page| name_of(&graph, &page))
         {

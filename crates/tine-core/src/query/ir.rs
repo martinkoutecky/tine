@@ -1156,6 +1156,17 @@ impl Query {
         }
     }
 
+    /// Whether the page-properties header block is one of the query's block
+    /// rows: true for every query written block-anchored. Logseq stores the
+    /// header as the page's first block (`:block/pre-block? true`), and its query
+    /// path never filters it out, so a block query matches and shows it
+    /// (D-20261004 D3, GH #617). A `@page` query that the legacy bridge lists
+    /// block by block does not show it. The one answer: the engine's plan and
+    /// the conceptual-model bridge's `showHeaders` both read it.
+    pub fn shows_header_rows(&self) -> bool {
+        self.anchor == Anchor::Block
+    }
+
     /// Whether block rows keep only the top-level matches (a match whose
     /// immediate parent also matched is absorbed), OG's rule for every block
     /// result. Only an advanced query can turn it off, with

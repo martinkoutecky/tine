@@ -1,7 +1,7 @@
 import { blockRegions, parseBlock } from "../render/parse";
 import { utf8ToUtf16Cursor } from "../render/utf16Cursor";
 import type { Block, Inline } from "../render/ast";
-import { planningChipsOf, type PlanningChip } from "../render/facets";
+import { planningChipsOf, planningSource, type PlanningChip } from "../render/facets";
 
 export interface PreviewSpan {
   from: number;
@@ -51,12 +51,13 @@ export function previewSpans(raw: string, format: "md" | "org"): PreviewSpan[] {
   }
   // lsdoc plans per inline flow: a planning timestamp may follow another one on its line (`SCHEDULED: <a> DEADLINE: <b>`).
   const chips = new Map<Inline, PlanningChip>();
+  const planning = planningSource(raw);
   const visit = (value: unknown): void => {
     if (Array.isArray(value)) { value.forEach(visit); return; }
     if (!value || typeof value !== "object") return;
     const n = value as Inline | Block;
     if (!("k" in n) && (n.kind === "paragraph" || n.kind === "bullet" || n.kind === "heading")) {
-      for (const [inline, chip] of planningChipsOf(n.inline, raw)) chips.set(inline, chip);
+      for (const [inline, chip] of planningChipsOf(n.inline, planning)) chips.set(inline, chip);
     }
     if (n.span) {
       const from = cursor(n.span[0] - 2 + lead);

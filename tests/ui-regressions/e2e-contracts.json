@@ -990,7 +990,7 @@
       "contracts": [
         {
           "class": "exact-safety-interoperability",
-          "userOutcome": "Prose before a page's first bullet (Markdown, with or without page properties) or first heading (Org) is a referencing block: All pages counts Target 4 (two preambles, one Org preamble, one bullet) and lists Ghost (named only by a #Ghost in a preamble) with 1 while the page property tags:: Other still counts Other 1; Target's Linked References header shows 4 and lists the preamble rows; renaming Target to New through its title rewrites [[Target]] in each preamble on disk and leaves every other byte, including the page properties, unchanged; All pages lists no page named by a UUID and none whose name starts with draws/.",
+          "userOutcome": "Prose before a page's first bullet (Markdown, with or without page properties) or first heading (Org) is a referencing block: All pages counts Target 4 (two preambles, one Org preamble, one bullet) and lists Ghost (named only by a #Ghost in a preamble) with 1 while the page property tags:: Other still counts Other 1; Target's Linked References header shows 4 and lists the preamble rows; renaming Target to New through its title rewrites [[Target]] in each preamble on disk and leaves every other byte, including the page properties, unchanged; All pages lists no page named by a UUID and none whose name starts with draws/; the Org page Notes shows its opening text as its first row, and clicking it edits that text in place, which Escape saves as the page's first heading (* Edited org prose [[New]]) with the following heading unchanged.",
           "blocking": true,
           "authority": "CM step 2 batch 8 brief (OG graph-parser with-pre-block-if-exists, handler/page.cljs get-all-pages)"
         }
@@ -1034,6 +1034,12 @@
           "class": "core-operation",
           "userOutcome": "All pages shows each page's Backlinks count as the number of blocks its unfiltered Linked References panel lists (Target 1: its own block and a code span do not count, and one block naming it by two links and a property counts once), lists the pages that only blocks name (Ref Only 2, the tag page Ideas 1, the property-key page rel 1) and no TODO row, no LATER row although pages/LATER.md exists (OG get-all-pages hides built-in names), and no row for a {{embed ((uuid))}} block's uuid; opening Target, and Ref Only from All pages, shows the same number in the Linked References header; a {{query (all-page-tags)}} block lists Ideas, which opens; opening a reference-only page writes no file.",
           "blocking": true
+        },
+        {
+          "class": "core-operation",
+          "userOutcome": "A page named only by a property key counts its Linked References panel in All pages although a file page's title folds to the same key: done-at 1 (from done-at::) beside Done At 1, and due-on 2 (from Due_On:: and due-on::, one row, no Due_On row) beside Due On 2; opening done-at, due-on and Done At from All pages shows the same number in the Linked References header, and writes no file.",
+          "blocking": true,
+          "authority": "CM D3 (one answerer for every All pages row); UI-CM-ALLPAGES-COUNT-ZERO-FOR-FOLDED-KEY-PAGE"
         }
       ],
       "acceptableVariations": [
@@ -1422,7 +1428,7 @@
       "stability": "stable"
     },
     "scripts/e2e-page-properties.mjs": {
-      "contracts": [{ "class": "core-operation", "userOutcome": "Page property actions preserve literal header structure through edit, guarded save, reload, and keyboard traversal; Enter at the start of the page properties keeps them the page header and the page saving, and a keyboard move above them is refused with a short info notice and leaves the file alone (GH #210 F1, D-20261019-H210F2).", "blocking": true }],
+      "contracts": [{ "class": "core-operation", "userOutcome": "Page property actions preserve literal header structure through edit, guarded save, reload, and keyboard traversal; Enter at the start of the page properties keeps them the page header and the page saving, and a keyboard move above them is refused with a short info notice and leaves the file alone (GH #210 F1, D-20261019-H210F2). Property groups after the header's blank line are opening text shown exactly as written, also while the header is edited, and a header edit saves them byte for byte (D-20261119-PG).", "blocking": true }],
       "acceptableVariations": ["Panel layout and native form-control styling may evolve.", "Custom property and add-property controls may participate in native Tab traversal before Done; Done can be activated by keyboard."],
       "nonRequirements": ["Exact section spacing, control dimensions, or debounce timing.", "A fixed five-preset-only Tab sequence.", "Sidebar navigation or a fixed post-paint delay before opening a fixture page."],
       "stability": "stable"

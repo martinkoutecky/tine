@@ -1,5 +1,6 @@
 import { maybeEditorIn, type EditorDriver } from "../tests/editorDriver";
 import { openCommentThread } from "../tests/commentEntry";
+import { OPENING_CONTROL_CASES, OPENING_DRAWER_CASES, OPENING_SHAPE_SURFACE_CASES, expectOpeningShape, pointerClick, shownLines } from "../tests/openingClickCases";
 import { resetNearObserverForTests } from "../lazyObserve";
 import { afterEach, beforeAll, describe, expect, it, vi } from "vitest";
 import { Show, type JSX } from "solid-js";
@@ -2585,6 +2586,60 @@ describe("Markdown preamble content", () => {
     });
   }
 
+  // REG-CM-OPENING-PROPERTY-GROUPS (D-20261119-PG): a Markdown page's header is its first property
+  // group; later groups are opening text, shown as written, and a header edit neither re-reads
+  // them as a header nor changes a byte of them on save.
+  it("shows later property groups as opening text, also while the header is edited", async () => {
+    const bodyId = "55555555-5555-4555-8555-555555555555";
+    const header = "alias:: Record\nai-prompt:: [[Prompt-Test]]";
+    const opening = "page-level:: [[Level-Two]]\nlayout:: wide\n\ntimestamp:: 2025\n--:: --\nmethods:: [[Method-A]]";
+    const preBlock = `${header}\n\n${opening}`;
+    const dto = {
+      name: "Groups",
+      kind: "page" as const,
+      title: "Groups",
+      pre_block: preBlock,
+      blocks: [{ id: bodyId, raw: "b", collapsed: false, children: [] }],
+    };
+    setDoc({
+      byId: { [bodyId]: node(bodyId, "b", dto.name) },
+      pages: [page(dto.name, "page", [bodyId], dto.pre_block)],
+      feed: [], loaded: true,
+    });
+    vi.spyOn(backend(), "getPage").mockResolvedValue(unpinned(dto));
+    mainPaneRouter.openPage(dto.name, "page", { inPlace: true });
+    const { root, dispose } = mount(() => <PageView />);
+    const shownOpening = () => root.querySelector(".preamble-block .block-content-wrapper")?.textContent ?? "";
+    const propertyKeys = () => [...root.querySelectorAll(".page-properties .prop-key")].map((k) => k.textContent?.trim());
+    try {
+      await tick(); await tick();
+      for (const line of opening.split("\n")) expect(shownOpening()).toContain(line);
+      expect(propertyKeys()).toContain("ai-prompt");
+      expect(propertyKeys()).not.toContain("page-level");
+      expect(propertyKeys()).not.toContain("timestamp");
+
+      ([...root.querySelectorAll<HTMLElement>(".page-properties .prop-row")]
+        .find((row) => row.querySelector(".prop-key")?.textContent?.trim() === "ai-prompt"))!.click();
+      await tick();
+      const headerId = pageByName(dto.name)!.roots[0];
+      const editor = maybeEditorIn(root.querySelector<HTMLElement>(`[data-block-id="${headerId}"]`)!) as EditorDriver;
+      expect(editor.value()).toBe(header);
+      for (const line of opening.split("\n")) expect(shownOpening()).toContain(line);
+      // The header editor stays above the opening text, as the file has them.
+      const headerRow = root.querySelector(`[data-block-id="${headerId}"]`)!;
+      expect(headerRow.compareDocumentPosition(root.querySelector(".preamble-block")!) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+      expect(propertyKeys()).not.toContain("page-level");
+      expect(propertyKeys()).not.toContain("timestamp");
+
+      editor.input(header.replace("Prompt-Test", "Prompt-Edited"), undefined, { eventKind: "plain" });
+      await tick();
+      expect(pageToDto(dto.name)?.pre_block).toBe(preBlock.replace("Prompt-Test", "Prompt-Edited"));
+      for (const line of opening.split("\n")) expect(shownOpening()).toContain(line);
+    } finally {
+      dispose();
+    }
+  });
+
   // REG-CM-ORG-TEXT-BETWEEN-DIRECTIVES: Org text between opening directives is shown as the
   // opening-text row, and editing it promotes exactly that text, keeping the directives on
   // both sides of it in the header.
@@ -2620,6 +2675,149 @@ describe("Markdown preamble content", () => {
         const promoted = pageByName(dto.name)!.roots[0];
         expect(doc.byId[promoted].raw).toBe(prose);
         expect(pageByName(dto.name)?.preBlock).toBe(header);
+        expect(editingId()).toBe(promoted);
+      } finally {
+        dispose();
+      }
+    });
+  }
+
+  // UI-CM-OPENING-PROPERTY-GROUPS, review fe3946dc9 F1: the opening row enters editing by the
+  // ordinary block predicate, so a link, disclosure or media control keeps its click and the
+  // page is untouched; a click on the text itself still opens the editor.
+  for (const [opening, format, target] of OPENING_CONTROL_CASES) {
+    it(`keeps a ${target} click in the ${format} opening text ${JSON.stringify(opening)} its own`, async () => {
+      const bodyId = "77777777-7777-4777-8777-777777777777";
+      const dto = {
+        name: "Controls", kind: "page" as const, title: "Controls", pre_block: opening, format,
+        blocks: [{ id: bodyId, raw: "Head", collapsed: false, children: [] }],
+      };
+      setDoc({
+        byId: { [bodyId]: node(bodyId, "Head", dto.name) },
+        pages: [{ ...page(dto.name, "page", [bodyId], dto.pre_block), format }],
+        feed: [], loaded: true,
+      });
+      vi.spyOn(backend(), "getPage").mockResolvedValue(unpinned(dto));
+      vi.spyOn(window, "open").mockImplementation(() => null);
+      mainPaneRouter.openPage(dto.name, "page", { inPlace: true });
+      const { root, dispose } = mount(() => <PageView />);
+      try {
+        await tick(); await tick();
+        const control = root.querySelector<HTMLElement>(`.preamble-block .block-content ${target}`);
+        expect(control).not.toBeNull();
+        control!.addEventListener("click", (e) => e.preventDefault());
+        pointerClick(control!);
+        await tick();
+        expect(pageByName(dto.name)!.roots).toEqual([bodyId]);
+        expect(pageByName(dto.name)!.preBlock).toBe(opening);
+        expect(isDirty(dto.name)).toBe(false);
+        expect(editingId()).toBeNull();
+
+        pointerClick(root.querySelector(".preamble-block .block-content")!);
+        await tick();
+        const promoted = pageByName(dto.name)!.roots[0];
+        expect(promoted).not.toBe(bodyId);
+        expect(doc.byId[promoted].raw).toBe(opening);
+        expect(editingId()).toBe(promoted);
+      } finally {
+        dispose();
+      }
+    });
+  }
+
+  // Review 0e6bd6530 F1: groups and pieces from one untitled parse, on the page row.
+  for (const c of OPENING_SHAPE_SURFACE_CASES) {
+    it(`shows the groups of the ${c[1]} opening text ${JSON.stringify(c[0])} on the page`, async () => {
+      const bodyId = "77777777-7777-4777-8777-777777777779";
+      const dto = {
+        name: "Shapes", kind: "page" as const, title: "Shapes", pre_block: c[0], format: c[1],
+        blocks: [{ id: bodyId, raw: "Head", collapsed: false, children: [] }],
+      };
+      setDoc({
+        byId: { [bodyId]: node(bodyId, "Head", dto.name) },
+        pages: [{ ...page(dto.name, "page", [bodyId], dto.pre_block), format: c[1] }],
+        feed: [], loaded: true,
+      });
+      vi.spyOn(backend(), "getPage").mockResolvedValue(unpinned(dto));
+      mainPaneRouter.openPage(dto.name, "page", { inPlace: true });
+      const { root, dispose } = mount(() => <PageView />);
+      try {
+        await tick(); await tick();
+        const row = root.querySelector(".preamble-block .block-content");
+        expect(row).not.toBeNull();
+        expectOpeningShape(row!, c, expect);
+      } finally {
+        dispose();
+      }
+    });
+  }
+
+  // Review e852e1b58 F2: opening text has no block header, so a task word or
+  // priority line, a drawer and the next line show as the two lines written.
+  for (const [opening, format, lines] of OPENING_DRAWER_CASES) {
+    it(`shows the ${format} opening text ${JSON.stringify(opening)} line for line`, async () => {
+      const bodyId = "77777777-7777-4777-8777-777777777778";
+      const dto = {
+        name: "Drawers", kind: "page" as const, title: "Drawers", pre_block: opening, format,
+        blocks: [{ id: bodyId, raw: "Head", collapsed: false, children: [] }],
+      };
+      setDoc({
+        byId: { [bodyId]: node(bodyId, "Head", dto.name) },
+        pages: [{ ...page(dto.name, "page", [bodyId], dto.pre_block), format }],
+        feed: [], loaded: true,
+      });
+      vi.spyOn(backend(), "getPage").mockResolvedValue(unpinned(dto));
+      mainPaneRouter.openPage(dto.name, "page", { inPlace: true });
+      const { root, dispose } = mount(() => <PageView />);
+      try {
+        await tick(); await tick();
+        const row = root.querySelector(".preamble-block .block-content");
+        expect(row).not.toBeNull();
+        expect(shownLines(row!)).toEqual(lines);
+        expect(row!.querySelector(".block-marker, .block-priority, input[type=checkbox]")).toBeNull();
+      } finally {
+        dispose();
+      }
+    });
+  }
+
+  // UI-CM-OPENING-PROPERTY-GROUPS, review 28d081755 F3: a checklist in opening text has no
+  // block to tick, so its checkbox is inert and a click on it opens the opening row's editor,
+  // leaving the text exactly as written. Markdown and Org list kinds, also inside quote and note.
+  for (const [opening, format] of [
+    ["Intro\n\n1. [ ] item", "md"], ["Intro\n\n1. [x] item", "md"],
+    ["Intro\n\n+ [ ] item", "md"], ["Intro\n\n* [ ] item", "md"],
+    ["Intro\n\n> 1. [ ] quoted", "md"], ["Intro\n\n#+BEGIN_NOTE\n+ [x] noted\n#+END_NOTE", "md"],
+    ["Intro\n\n1. [ ] item", "org"], ["Intro\n\n+ [X] item", "org"], ["Intro\n\n- [ ] item", "org"],
+    ["Intro\n\n#+BEGIN_QUOTE\n1. [ ] quoted\n#+END_QUOTE", "org"], ["Intro\n\n#+BEGIN_NOTE\n- [X] noted\n#+END_NOTE", "org"],
+  ] as const) {
+    it(`opens the editor on a checkbox click in the ${format} opening text ${JSON.stringify(opening)}`, async () => {
+      const bodyId = "66666666-6666-4666-8666-666666666666";
+      const dto = {
+        name: "Checklist",
+        kind: "page" as const,
+        title: "Checklist",
+        pre_block: opening,
+        format,
+        blocks: [{ id: bodyId, raw: "Head", collapsed: false, children: [] }],
+      };
+      setDoc({
+        byId: { [bodyId]: node(bodyId, "Head", dto.name) },
+        pages: [{ ...page(dto.name, "page", [bodyId], dto.pre_block), format }],
+        feed: [], loaded: true,
+      });
+      vi.spyOn(backend(), "getPage").mockResolvedValue(unpinned(dto));
+      mainPaneRouter.openPage(dto.name, "page", { inPlace: true });
+      const { root, dispose } = mount(() => <PageView />);
+      try {
+        await tick(); await tick();
+        const box = root.querySelector<HTMLElement>(".preamble-block .block-checkbox");
+        expect(box?.getAttribute("aria-disabled")).toBe("true");
+        box!.click();
+        await tick();
+        const promoted = pageByName(dto.name)!.roots[0];
+        expect(promoted).not.toBe(bodyId);
+        expect(doc.byId[promoted].raw).toBe(opening);
         expect(editingId()).toBe(promoted);
       } finally {
         dispose();

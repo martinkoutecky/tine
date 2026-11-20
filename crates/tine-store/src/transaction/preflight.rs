@@ -22,16 +22,15 @@ impl<'a> PagePlan<'a> {
                 StoreError::Io(error) => Why::Failed(error.into()),
                 other => Why::Refused(Refusal::InvalidTarget(format!("{other:?}"))),
             })?;
-        let checked = if file.as_str().starts_with("assets/") {
-            self.store.graph.ensure_asset_write_target(&path)
-        } else {
-            self.store.graph.ensure_write_target(&path)
-        };
-        checked.map_err(|error| match error.kind() {
-            io::ErrorKind::InvalidInput => Why::Refused(Refusal::InvalidTarget(error.to_string())),
-            // Uninspectable now (REG-WIN-WRITE-TARGET-TRANSIENT): a failure, not outside.
-            _ => Why::Failed(error.into()),
-        })?;
+        self.store
+            .ensure_write_target(file, &path)
+            .map_err(|error| match error.kind() {
+                io::ErrorKind::InvalidInput => {
+                    Why::Refused(Refusal::InvalidTarget(error.to_string()))
+                }
+                // Uninspectable now (REG-WIN-WRITE-TARGET-TRANSIENT): a failure, not outside.
+                _ => Why::Failed(error.into()),
+            })?;
         Ok(path)
     }
 

@@ -9,7 +9,7 @@ import { utf8ToUtf16Cursor } from "../render/utf16Cursor";
 import { reportUiFailure } from "../uiFailure";
 import { graphMeta } from "../graphSession";
 
-import { property_line_json, page_regions_json, page_header_json, page_preamble_content_json, page_parts_with_property } from "../render/wasm/lsdoc_wasm.js";
+import { property_line_json, page_regions_json, page_header_json, page_preamble_content_json, page_opening_groups_json, page_parts_with_property } from "../render/wasm/lsdoc_wasm.js";
 import type { RegionProperty } from "../render/parse";
 
 // Deferred catalog messages; property getters resolve in the consuming computation.
@@ -247,6 +247,28 @@ export function splitPagePreamble(raw: string | null | undefined, format: Format
     content: preambleContent(raw, entries.length > 0, remainder),
     remainder,
   };
+}
+
+/** A page's opening text split at its property nodes (D-20261119-PG):
+ *  `group` pieces are top-level `key:: value` groups or `#+key: value`
+ *  lines, whole source lines; the pieces between are block text. In source
+ *  order, joining to `text`. The parser's answer
+ *  (`page_preamble::opening_groups`); without a parser, one text piece.
+ *  O(text bytes). */
+export function openingSegments(text: string, format: Format): { text: string; group: boolean }[] {
+  if (!parserReady()) return [{ text, group: false }];
+  const groups = JSON.parse(page_opening_groups_json(text, format === "org")) as [number, number][];
+  const at = utf8ToUtf16Cursor(text);
+  const out: { text: string; group: boolean }[] = [];
+  let done = 0;
+  for (const [s, e] of groups) {
+    const start = at(s), end = at(e);
+    if (start > done) out.push({ text: text.slice(done, start), group: false });
+    out.push({ text: text.slice(start, end), group: true });
+    done = end;
+  }
+  if (done < text.length) out.push({ text: text.slice(done), group: false });
+  return out;
 }
 
 /** The preamble prose (see {@link splitPagePreamble}). Without a parser (not

@@ -1,0 +1,34 @@
+{
+  "fileNameFormat": "legacy",
+  "files": [
+    {
+      "format": "org",
+      "name": "Header Org",
+      "path": "pages/Header Org.org",
+      "preBlock": "#+RELATED: [[Target]]\n#+TAGS: Topic\n\nProse #Topic",
+      "title": null
+    },
+    {
+      "format": "md",
+      "name": "Header",
+      "path": "pages/Header.md",
+      "preBlock": "related:: [[Target]]\ntags:: Topic\n\nProse #Topic",
+      "title": null
+    },
+    {
+      "format": "md",
+      "name": "Markdown",
+      "path": "pages/Markdown.md",
+      "preBlock": "Prose [[Target]] #Topic\nstatus:: [[Linked]]",
+      "title": null
+    },
+    {
+      "format": "org",
+      "name": "Org",
+      "path": "pages/Org.org",
+      "preBlock": "Prose [[Target]] #Topic\n:status: [[Linked]]",
+      "title": null
+    }
+  ],
+  "links": []
+}

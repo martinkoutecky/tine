@@ -27,6 +27,10 @@ export interface Node {
    * header. Spread-based undo snapshots retain it; DTO serialization consumes
    * it and never sends it over the wire. */
   originatedFromPageHeader?: boolean;
+  /** On a header root `beginPageHeaderEdit` made: the page's opening text,
+   * the parser's range when the editor began. While this root is the header
+   * the pre-block holds only what followed it, and nothing splits that again. */
+  headerOpening?: string | null;
 }
 
 export interface FeedPage {

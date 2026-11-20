@@ -66,6 +66,16 @@ pub fn requested_queries(spec: &GraphSpec) -> (Vec<QuerySpec>, Vec<QuerySpec>) {
     spec.queries.iter().cloned().partition(|q| !has_given(&q.q))
 }
 
+/// The model's `QueryPresentation` for a parsed query: Tine's own answers,
+/// never restated here (I-12). The store harness checks they are the plan's
+/// row gates (`presentation_is_the_plans_row_gates`).
+pub fn presentation(parsed: &tine_core::query::ir::Query) -> Value {
+    json!({
+        "showHeaders": parsed.shows_header_rows(),
+        "removeBlockChildren": parsed.removes_block_children(),
+    })
+}
+
 /// The bridge's input: Tine's parser and configuration answers only. No
 /// owner, no rename and no operation field is supplied.
 pub fn model_input(spec: &GraphSpec) -> Value {
@@ -88,9 +98,10 @@ pub fn model_input(spec: &GraphSpec) -> Value {
                 QueryDialect::Og
             };
             let (parsed, _) = parse_query_text(&q.tine, dialect, JournalDate::from_days(0));
-            json!({"anchor": q.anchor, "q": q.q,
-            "showHeaders": parsed.anchor == tine_core::query::ir::Anchor::Block,
-            "removeBlockChildren": parsed.removes_block_children()})
+            let mut query = presentation(&parsed);
+            query["anchor"] = json!(q.anchor);
+            query["q"] = q.q.clone();
+            query
         })
         .collect::<Vec<_>>());
     let mut raw_stems = Vec::new();

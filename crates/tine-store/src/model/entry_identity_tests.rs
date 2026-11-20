@@ -286,13 +286,18 @@ fn a_pass_lists_a_colliding_directory_once() {
         )
         .unwrap();
     }
-    let listed = crate::model::page_identity::list_graph_pages(&store.graph);
+    let (listed, _) = crate::model::page_identity::list_graph_pages(&store.graph);
     let listings = |pass: &dyn Fn()| {
         LISTINGS.with(|n| n.set(0));
         pass();
         LISTINGS.with(|n| n.get())
     };
-    let withheld = listings(&|| assert_eq!(store.graph.withheld(&listed).len(), 1000));
+    let withheld = listings(&|| {
+        assert_eq!(
+            store.graph.withheld(&listed, &mut Memo::default()).len(),
+            1000
+        );
+    });
     assert_eq!(
         withheld, 1,
         "REVIEW-3a4 #6: one withheld pass listed pages/ {withheld} times"
