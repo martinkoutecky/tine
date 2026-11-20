@@ -715,8 +715,9 @@ it.each(blankSurfaces.flatMap(([surface, outline, id]) =>
   const row = `${outline} [data-block-id="${id}"]`;
   const expected = id === "target-root" ? routed.blocks : id === "embedded-root" ? embedded.blocks
     : id === "unlinked-root" ? unlinked.blocks : [coldHit];
+  // Source reads are scheduled (GH #1001): wait for the live row, not the listed placeholder.
   const pointerTarget = await vi.waitFor(() => {
-    const hit = root.querySelector(`${row} > ${zone}`);
+    const hit = root.querySelector(`${outline} .ls-block:not(.ref-block)[data-block-id="${id}"] > ${zone}`);
     expect(hit).not.toBeNull();
     return hit!;
   });
