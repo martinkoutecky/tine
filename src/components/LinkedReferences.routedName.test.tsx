@@ -101,7 +101,7 @@ it.each([false, true])("loading one source page leaves every other Linked Refere
   } finally {
     dispose();
     for (const [name, resolve] of pending) resolve(page(name, []));
-    const drained = queueReferenceRead(async () => true, () => true, () => 0);
+    const drained = queueReferenceRead(async () => true, () => true);
     await vi.runAllTimersAsync();
     await drained;
   }
