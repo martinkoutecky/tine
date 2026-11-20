@@ -27,7 +27,7 @@ import { DEFAULT_TITLE_FORMAT, setJournalTitleFormat } from "./journal";
 import { pageIdentityKey } from "./pageIdentity";
 import { clearDrawerOpener, mobileDrawerMode, captureDrawerOpener, restoreDrawerFocus, type DrawerSide } from "./mobileDrawers";
 import { navigationTarget } from "./pageIndex";
-import { sameSidebarOwner } from "./sidebarOwner";
+import { sameSidebarOwner } from "./viewOwner";
 import { forgetDeletedFavorite } from "./favorites";
 import { changeGraphSetting } from "./graphPreferences";
 

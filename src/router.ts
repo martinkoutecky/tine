@@ -10,7 +10,8 @@ import { revealCommentMarginFor } from "./commentMargin";
 
 import { createMemo, createRoot, createSignal, type Accessor } from "solid-js";
 import { pushRecent } from "./ui";
-import { navigationTarget, ownerPath, resolvedTarget } from "./pageIndex";
+import { navigationTarget } from "./pageIndex";
+import { viewOwnerPath } from "./viewOwner";
 import { blockRef, resolveBlockRef, settleBlockRef, expandAncestors, extendFeedForScroll, type HistoryRouteContext, node as docNode, loadedPage } from "./document";
 import { backend } from "./backend";
 import { captureBinding, stillBound } from "./binding";
@@ -239,16 +240,12 @@ export function sameRoute(a: Route, b: Route): boolean {
 /** Reuse compares destinations, while history/session equality stays exact.
  * Name routes and file routes can reach the same canonical file (GH #711).
  * Ask the shared inventory; never equate a same-name stray with its owner. */
-function sameNavigationRoute(a: Route, b: Route): boolean {
+export function sameNavigationRoute(a: Route, b: Route): boolean {
   if (sameRoute(a, b)) return true;
   if (a.kind !== "page" || b.kind !== "page" || a.pageKind !== b.pageKind
     || a.block !== b.block || a.blockPos !== b.blockPos) return false;
-  const physicalPath = (r: typeof a): string | undefined => {
-    if (r.path) return r.path;
-    return ownerPath(resolvedTarget(r.name, r.pageKind));
-  };
-  const path = physicalPath(a);
-  return path !== undefined && path === physicalPath(b);
+  const path = viewOwnerPath(a.name, a.pageKind, a.path);
+  return path !== undefined && path === viewOwnerPath(b.name, b.pageKind, b.path);
 }
 
 const CLOSED_CAP = 10;
