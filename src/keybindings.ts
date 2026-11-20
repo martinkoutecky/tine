@@ -36,6 +36,7 @@ import { zoomInOnTarget, zoomOutOneLevel } from "./zoomCommands";
 import { activeWindowId, documentOf, isElementNode, MAIN_WINDOW_ID, onEachWindow, queryAllWindows, selectionOf } from "./windowRealm";
 import { dismissTopTransient, topTransientLayer } from "./transientLayers";
 import { outlineSelectionAt, selectAllDialogs, selectAllFields } from "./outlineSelectionTarget";
+import { DRAG_THRESHOLD_PX } from "./components/blockGestures";
 import { carryDaysBack } from "./carry";
 import {
   openJournals,
@@ -1006,12 +1007,14 @@ function writeSelectionToClipboard(cut: boolean, blank: object | null = null): v
   const ids = selectedIds();
   const text = selectionMarkdown();
   if (cut) {
-    const ownsBlankSelection = () => !!blank && blank === blankOutlineSelection();
+    // The Cut owns the selection it started from: the same gesture (none for an
+    // ordinary selection) and the same blocks.
+    const sameGesture = () => blankOutlineSelection() === blank;
     void cutBlocks(ids, text, () =>
-      (!blank || ownsBlankSelection()) && JSON.stringify(selectedIds()) === JSON.stringify(ids) ? selectionMarkdown() : "",
+      sameGesture() && JSON.stringify(selectedIds()) === JSON.stringify(ids) ? selectionMarkdown() : "",
       () => deleteSelection())
       .catch(() => pushToast(msg("commands-couldn-t-cut-selection-clipboard-write-failed"), "error"))
-      .finally(() => { if (ownsBlankSelection()) clearSelection(); });
+      .finally(() => { if (blank && sameGesture()) clearSelection(); });
   } else {
     void copyBlockOutline("copy", text, buildClipboardPayload(ids))
       .catch(() => pushToast(msg("commands-couldn-t-copy-selection-clipboard-write-failed"), "error"));
@@ -1255,7 +1258,8 @@ export function installKeybindings(overrides: Record<string, ShortcutBinding> = 
         if (blank || (owner?.outline && expandBlockSelection(owner.outline))) {
           selectionOf(e)?.removeAllRanges();
           e.preventDefault();
-        }
+        } else clearSelection(); // a hit with no live rows never leaves another outline selected
+
         resetSeq();
         return;
       }
@@ -1381,15 +1385,33 @@ export function installKeybindings(overrides: Record<string, ShortcutBinding> = 
       outlineHits.delete(win.document);
       if (blankOutlineSelection()) clearSelection();
     };
+    // A click is a blank hit only if its primary press started on the clicked element
+    // and never moved beyond the drag threshold or was cancelled (GH #793).
+    let press: { id: number; at: EventTarget | null; x: number; y: number; moved: boolean } | undefined;
+    const pressed = (e: PointerEvent) => {
+      retireBlankSelection();
+      press = { id: e.pointerId, at: e.target, x: e.clientX, y: e.clientY, moved: e.button !== 0 };
+    };
+    const moving = (e: PointerEvent) => {
+      if (press && !press.moved && e.pointerId === press.id) {
+        press.moved = Math.abs(e.clientX - press.x) > DRAG_THRESHOLD_PX || Math.abs(e.clientY - press.y) > DRAG_THRESHOLD_PX;
+      }
+    };
+    const unpress = () => { if (press) press.moved = true; };
     const rememberOutlineHit = (e: MouseEvent) => {
       retireBlankSelection();
-      const at = e.target;
+      const at = e.target, p = press;
+      press = undefined;
+      if (p && (p.moved || p.at !== at)) return;
       if (e.button !== 0 || !isElementNode(at) || e.shiftKey || e.ctrlKey || e.metaKey || e.altKey || paneSel()) return;
       // Click follows native focus routing. The hit is used by the next key only.
       const hit = outlineSelectionAt(at);
       if (hit) outlineHits.set(win.document, hit);
     };
-    win.addEventListener("pointerdown", retireBlankSelection, true);
+    win.addEventListener("pointerdown", pressed, true);
+    win.addEventListener("pointermove", moving, { capture: true, passive: true });
+    win.addEventListener("pointercancel", unpress, true);
+    win.addEventListener("dragstart", unpress, true);
     win.addEventListener("focusin", retireBlankSelection, true);
     win.addEventListener("focusout", retireBlankSelection, true);
     win.addEventListener("wheel", retireBlankSelection, { capture: true, passive: true });
@@ -1407,7 +1429,10 @@ export function installKeybindings(overrides: Record<string, ShortcutBinding> = 
     const disposeMouse = installMouseHistory(win, win.document, navigateMouseHistory, historySource);
     if (id === MAIN_WINDOW_ID) mainMouse = disposeMouse;
     return () => {
-      win.removeEventListener("pointerdown", retireBlankSelection, true);
+      win.removeEventListener("pointerdown", pressed, true);
+      win.removeEventListener("pointermove", moving, true);
+      win.removeEventListener("pointercancel", unpress, true);
+      win.removeEventListener("dragstart", unpress, true);
       win.removeEventListener("focusin", retireBlankSelection, true);
       win.removeEventListener("focusout", retireBlankSelection, true);
       win.removeEventListener("wheel", retireBlankSelection, true);

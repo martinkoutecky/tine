@@ -160,7 +160,7 @@ async function referenceDrop(sourceId: string, targetId: string, position: Block
 // selects raw text in the editor, and the moment the pointer enters a different
 // block the gesture escalates to Tine's block selection (deterministic: purely
 // "did the pointer enter a different block", never timing).
-const DRAG_THRESHOLD_PX = 4;
+export const DRAG_THRESHOLD_PX = 4;
 
 interface EditGesture {
   blockId: string;
