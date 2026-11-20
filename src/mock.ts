@@ -23,6 +23,7 @@ import { matcherMatches, matchHighlights, parseSearchQuery, simpleTerm } from ".
 import { blockPickerLeg, mergeBlockPickerLegs } from "./editor/blockPickerMatch";
 import { searchFold } from "./editor/searchFold";
 import { parseJournalDayIn } from "./journal";
+import { ownerPath } from "./inventoryRows";
 import { mockJournalFiles } from "./mockJournalFiles";
 import { marginRegressionPages } from "./mockMarginPages";
 import { guideLevelRegressionPages } from "./mockGuidePages";
@@ -844,19 +845,23 @@ export function mockBackend(extraPages: PageDto[] = conflictDemoBodies().map((bl
       return "/mock";
     },
     async pageInventory(): Promise<PageInventory> {
-      // One row per (kind, folded name), like the real inventory: physical
-      // pages/journals first, then reference-only (and alias) names.
+      // Match the live inventory's typed keys and explicit opening links.
       const key = (name: string) => name.trim().toLowerCase().normalize("NFC");
       const rows = new Map<string, PageInventoryEntry>();
+      const byPath = new Map(all.map((page) => [mockPagePath(page), page]));
       const add = (name: string, kind: "journal" | "page") => {
         const slot = `${kind}:${key(name)}`;
         if (!key(name) || rows.has(slot)) return;
+        const target = mockResolve(name, kind);
+        const path = ownerPath(target);
+        const owner = path === undefined ? undefined : byPath.get(path);
         rows.set(slot, {
           key: key(name),
           name,
           is_journal: kind === "journal",
           day: kind === "journal" ? mockJournalDayKey(name) : null,
-          target: mockResolve(name, kind),
+          target,
+          link: { name: owner?.name ?? name, kind: owner?.kind ?? kind },
         });
       };
       for (const page of all) add(page.name, page.kind);

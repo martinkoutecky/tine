@@ -77,6 +77,10 @@
       "day": 20261022,
       "is_journal": true,
       "key": "22.10.2026",
+      "link": {
+        "kind": "journal",
+        "name": "22.10.2026"
+      },
       "name": "22.10.2026",
       "target": {
         "id": "journals/2026_10_22.md",
@@ -88,6 +92,10 @@
       "day": 20261023,
       "is_journal": true,
       "key": "23.10.2026",
+      "link": {
+        "kind": "journal",
+        "name": "23.10.2026"
+      },
       "name": "23.10.2026",
       "target": {
         "id": "journals/2026_10_23.md",
@@ -98,6 +106,10 @@
       "day": null,
       "is_journal": false,
       "key": "notes",
+      "link": {
+        "kind": "page",
+        "name": "Notes"
+      },
       "name": "Notes",
       "target": {
         "id": "pages/Notes.md",

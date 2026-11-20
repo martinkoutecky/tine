@@ -75,6 +75,10 @@
       "day": null,
       "is_journal": false,
       "key": "11-02",
+      "link": {
+        "kind": "page",
+        "name": "11-02"
+      },
       "name": "11-02",
       "target": {
         "id": "pages/11-02.md",
@@ -85,6 +89,10 @@
       "day": null,
       "is_journal": false,
       "key": "notes",
+      "link": {
+        "kind": "page",
+        "name": "Notes"
+      },
       "name": "Notes",
       "target": {
         "id": "pages/Notes.md",
@@ -96,6 +104,10 @@
       "day": 20261120,
       "is_journal": true,
       "key": "nov 20th, 2026",
+      "link": {
+        "kind": "journal",
+        "name": "Nov 20th, 2026"
+      },
       "name": "Nov 20th, 2026",
       "target": {
         "id": "journals/2026_11_20.md",
@@ -107,6 +119,10 @@
       "day": 20261102,
       "is_journal": true,
       "key": "nov 2nd, 2026",
+      "link": {
+        "kind": "journal",
+        "name": "Nov 2nd, 2026"
+      },
       "name": "Nov 2nd, 2026",
       "target": {
         "id": "journals/2026_11_02.md",
@@ -118,6 +134,7 @@
   "journalFileFormat": "MMM do, ddyy",
   "journalTitle": {
     "effective": "MMM do, yyyy",
+    "file_text_route": false,
     "refusal": {
       "missing": "year"
     }

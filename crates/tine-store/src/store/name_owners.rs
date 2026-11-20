@@ -5,6 +5,42 @@
 //! removed source, dropped declarations) patches a [`WholeGraph::name_owners`]
 //! answer and asks the same rule, so it cannot disagree with the resolver.
 use super::*;
+use crate::model::OpeningName;
+
+pub(super) enum Opening<'a, C> {
+    File(&'a PageEntry, C),
+    Alias(Vec<String>),
+    Absent,
+}
+
+/// The spelling's opening in a complete snapshot. The same physical
+/// selection also serves cold reads, where the alias relation is unavailable.
+pub(super) fn open_name<'a>(
+    claimants: &'a crate::model::ClaimantMap,
+    graph: &ReadSnapshot,
+    format: &JournalFormat,
+    name: &str,
+    as_journal: bool,
+) -> (
+    OpeningName,
+    Opening<'a, impl Iterator<Item = &'a PageEntry> + use<'a>>,
+) {
+    let identity = OpeningName::new(format, name, as_journal);
+    let mut claims = identity.claims(claimants, &graph.config().journals_dir);
+    let opening = if let Some(entry) = claims.next() {
+        Opening::File(entry, claims)
+    } else if identity.undated_journal {
+        Opening::Absent
+    } else if let Some(paths) = graph
+        .alias_owner_paths(&identity.key, identity.day)
+        .filter(|paths| !paths.is_empty())
+    {
+        Opening::Alias(paths)
+    } else {
+        Opening::Absent
+    };
+    (identity, opening)
+}
 
 impl WholeGraph {
     /// The inputs [`Self::resolve`] decides `name` from (as an ordinary
@@ -23,30 +59,16 @@ impl WholeGraph {
             }
             None => vec![tine_core::refs::page_key(name)],
         };
+        let identity = OpeningName::new(&self.journal_format, name, false);
         NameOwners {
-            claimants: self.claimants_of(name, PageKind::Page),
+            claimants: identity
+                .claims(&self.claimants, &self.config.config.journals_dir)
+                .cloned()
+                .collect(),
             declarers: self.declarers_of(name),
             spellings,
             journals_dir: self.config.config.journals_dir.clone(),
         }
-    }
-
-    /// The real files claiming `name` asked as `kind`, in claimant order.
-    fn claimants_of(&self, name: &str, kind: PageKind) -> Vec<PageEntry> {
-        // A date in any accepted spelling is that day, held by its files in
-        // any directory (CM SPEC §2.1, D-20261110-CM CM-DATE).
-        let lookup = crate::model::claim_lookup(&self.journal_format, name, kind).by_key(
-            &self.journal_format,
-            self.key_claimants(name, PageKind::Journal),
-        );
-        let mut entries = self.name_claimants(&lookup.name, lookup.kind);
-        entries.retain(|entry| lookup.holds(entry));
-        if !entries.is_empty() && lookup.day.is_none() {
-            // A name that is no day is one identity across both kinds.
-            entries = self.all_name_claimants(&lookup.name);
-            entries.retain(|entry| lookup.holds(entry));
-        }
-        entries
     }
 
     /// The pages declaring `name` as an alias, in path order.
@@ -62,8 +84,9 @@ impl WholeGraph {
     /// name is a journal title; a name that parses as a date is that day
     /// whatever the caller says (CM SPEC §2.1, D-20261110-CM CM-DATE), held
     /// by its files in any directory, and a day with no file proposes one in
-    /// the journals directory (CM-DAYFILE). A non-date name the caller calls
-    /// a journal may propose a new journal file. Real files win over aliases
+    /// the journals directory (CM-DAYFILE). An explicit journal request for
+    /// an undated name needs a journal claimant or proposes a new journal.
+    /// Real files win over aliases
     /// ([`NameOwners::opens`], the one owner rule).
     /// Claimants rank the journals directory first, then unsigned UTF-8
     /// graph-relative paths (SPEC §2.2); the extension and matching filename
@@ -80,29 +103,24 @@ impl WholeGraph {
     /// O(1) indexed lookup after the snapshot's one-time O(all aliases)
     /// alias-key build when no real file wins.
     pub fn resolve(&self, name: &str, is_journal: bool) -> Resolved {
-        let kind = if is_journal {
-            PageKind::Journal
-        } else {
-            PageKind::Page
-        };
-        let dir = &self.config.config.journals_dir;
-        let entries = self.claimants_of(name, kind);
-        if let Some(id) = owner(dir, &entries, &[]) {
-            let others = entries.iter().filter_map(|entry| entry.rel_path.clone());
-            return Resolved::Existing {
-                id: id.clone(),
-                others: others.filter(|other| other != id).collect(),
-            };
-        }
-        if !is_journal || self.journal_format.parse_text(name).is_some() {
-            let owners = self.declarers_of(name);
-            if let Some(first) = owner(dir, &[], &owners) {
-                debug_assert_eq!(Some(first), owners.first(), "owners in path order");
-                return Resolved::Alias { owners };
-            }
-        }
-        Resolved::Absent {
-            id: self.proposed_file(name, is_journal),
+        let (identity, opening) = open_name(
+            &self.claimants,
+            &self.graph,
+            &self.journal_format,
+            name,
+            is_journal,
+        );
+        match opening {
+            Opening::File(entry, others) => Resolved::Existing {
+                id: entry.rel_path.clone().expect("physical claimant"),
+                others: others.filter_map(|entry| entry.rel_path.clone()).collect(),
+            },
+            Opening::Alias(paths) => Resolved::Alias {
+                owners: paths.into_iter().map(PageId::from).collect(),
+            },
+            Opening::Absent => Resolved::Absent {
+                id: self.proposed_file_for(name, is_journal, identity.day),
+            },
         }
     }
 
@@ -110,18 +128,15 @@ impl WholeGraph {
     /// answer), whatever claims or declares the name now: for a name a
     /// helper frees first (a released alias). O(name bytes), no I/O.
     pub fn proposed_file(&self, name: &str, is_journal: bool) -> PageId {
-        let kind = if is_journal {
-            PageKind::Journal
-        } else {
-            PageKind::Page
-        };
+        self.proposed_file_for(name, is_journal, self.journal_format.parse_text(name))
+    }
+
+    fn proposed_file_for(&self, name: &str, is_journal: bool, day: Option<JournalDate>) -> PageId {
         let config = &self.config.config;
         // A day with no file gets a new one in the journals directory
         // (D-20261111-CMR14 CM-DAYFILE).
-        if crate::model::claim_lookup(&self.journal_format, name, kind).kind == PageKind::Journal {
-            let stem = self
-                .journal_format
-                .parse_text(name)
+        if is_journal || day.is_some() {
+            let stem = day
                 .map(|date| self.journal_format.file_stem(date))
                 .unwrap_or_else(|| name.to_owned());
             return proposed_journal_id(config, stem);

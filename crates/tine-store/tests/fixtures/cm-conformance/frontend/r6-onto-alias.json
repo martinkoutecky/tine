@@ -41,6 +41,10 @@
       "day": null,
       "is_journal": false,
       "key": "a",
+      "link": {
+        "kind": "page",
+        "name": "a"
+      },
       "name": "a",
       "target": {
         "id": "pages/a.md",
@@ -52,6 +56,10 @@
       "day": null,
       "is_journal": false,
       "key": "b",
+      "link": {
+        "kind": "page",
+        "name": "b"
+      },
       "name": "b",
       "target": {
         "id": "pages/b.md",
@@ -80,6 +88,10 @@
       "day": null,
       "is_journal": false,
       "key": "p",
+      "link": {
+        "kind": "page",
+        "name": "p"
+      },
       "name": "p",
       "target": {
         "id": "pages/p.md",

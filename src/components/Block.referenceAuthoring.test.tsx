@@ -147,8 +147,8 @@ describe.each<EditorKind>(["textarea", "cm6"])("reference authoring (%s editor)"
       { ...entry("Tine"), name: "Tine Outliner" },
     ]);
     vi.spyOn(backend(), "pageInventory").mockResolvedValue({ rev: "1", entries: [
-      { key: "tine", name: "Tine", is_journal: false, day: null, target: { kind: "existing", id: "pages/Tine.md", others: [] } },
-      ...["TineOutline", "Tine Outliner"].map((name) => ({ key: name.toLowerCase(), name, is_journal: false, day: null, target: { kind: "alias" as const, owners: ["pages/Tine.md"] } })),
+      { key: "tine", name: "Tine", is_journal: false, day: null, target: { kind: "existing", id: "pages/Tine.md", others: [] }, link: { name: "Tine", kind: "page" } },
+      ...["TineOutline", "Tine Outliner"].map((name) => ({ key: name.toLowerCase(), name, is_journal: false, day: null, target: { kind: "alias" as const, owners: ["pages/Tine.md"] }, link: { name: "Tine", kind: "page" as const } })),
     ] });
     await refreshPageIndex();
     const input = kind === "page" ? "[[tin" : "#tin";
@@ -553,9 +553,9 @@ describe.each<EditorKind>(["textarea", "cm6"])("reference authoring (%s editor)"
       entry("Tinsel"),
     ]);
     vi.spyOn(backend(), "pageInventory").mockResolvedValue({ rev: "1", entries: [
-      { key: "welcome to tine", name: "Welcome to Tine", is_journal: false, day: null, target: { kind: "existing", id: "pages/Welcome to Tine.md", others: [] } },
-      { key: "tine greet", name: "Tine greet", is_journal: false, day: null, target: { kind: "alias", owners: ["pages/Welcome to Tine.md"] } },
-      { key: "tinsel", name: "Tinsel", is_journal: false, day: null, target: { kind: "existing", id: "pages/Tinsel.md", others: [] } },
+      { key: "welcome to tine", name: "Welcome to Tine", is_journal: false, day: null, target: { kind: "existing", id: "pages/Welcome to Tine.md", others: [] }, link: { name: "Welcome to Tine", kind: "page" } },
+      { key: "tine greet", name: "Tine greet", is_journal: false, day: null, target: { kind: "alias", owners: ["pages/Welcome to Tine.md"] }, link: { name: "Welcome to Tine", kind: "page" } },
+      { key: "tinsel", name: "Tinsel", is_journal: false, day: null, target: { kind: "existing", id: "pages/Tinsel.md", others: [] }, link: { name: "Tinsel", kind: "page" } },
     ] });
     resetPageIndex();
     await refreshPageIndex();

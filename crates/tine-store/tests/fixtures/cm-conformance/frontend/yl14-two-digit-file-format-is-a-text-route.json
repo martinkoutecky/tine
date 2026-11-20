@@ -1,7 +1,6 @@
 {
   "backlinks": {
-    "Notes": [],
-    "Nov 2nd, 2026": [
+    "2.11.26": [
       {
         "blocks": [
           {
@@ -10,7 +9,16 @@
             "id": "75143738-034a-8dd7-b08f-38fa7295e7fd",
             "raw": "typed file spelling [[2.11.26]]",
             "tags": []
-          },
+          }
+        ],
+        "kind": "page",
+        "page": "Notes"
+      }
+    ],
+    "Notes": [],
+    "Nov 2nd, 2026": [
+      {
+        "blocks": [
           {
             "children": [],
             "collapsed": false,
@@ -33,16 +41,39 @@
       ],
       [
         "journals/2.11.26.md",
-        2
+        1
       ]
     ],
-    []
+    [
+      [
+        "2.11.26",
+        1
+      ]
+    ]
   ],
   "inventory": [
     {
       "day": null,
       "is_journal": false,
+      "key": "2.11.26",
+      "link": {
+        "kind": "page",
+        "name": "2.11.26"
+      },
+      "name": "2.11.26",
+      "target": {
+        "id": "pages/2%2E11%2E26.md",
+        "kind": "absent"
+      }
+    },
+    {
+      "day": null,
+      "is_journal": false,
       "key": "notes",
+      "link": {
+        "kind": "page",
+        "name": "Notes"
+      },
       "name": "Notes",
       "target": {
         "id": "pages/Notes.md",
@@ -54,6 +85,10 @@
       "day": 20261102,
       "is_journal": true,
       "key": "nov 2nd, 2026",
+      "link": {
+        "kind": "journal",
+        "name": "Nov 2nd, 2026"
+      },
       "name": "Nov 2nd, 2026",
       "target": {
         "id": "journals/2.11.26.md",
@@ -65,10 +100,12 @@
   "journalFileFormat": "d.M.yy",
   "journalTitle": {
     "effective": "MMM do, yyyy",
+    "file_text_route": false,
     "refusal": null
   },
   "journalTitleFormat": null,
   "keyOf": {
+    "2.11.26": "2.11.26",
     "Notes": "notes",
     "Nov 2nd, 2026": "Day 2026-11-02"
   },
@@ -77,11 +114,11 @@
     "2.11.26": {
       "journal": [
         "journal",
-        "Day 2026-11-02"
+        "2.11.26"
       ],
       "page": [
-        "journal",
-        "Day 2026-11-02"
+        "page",
+        "2.11.26"
       ]
     },
     "Notes": {
@@ -107,8 +144,8 @@
   },
   "owner": {
     "2.11.26": {
-      "journal": "journals/2.11.26.md",
-      "page": "journals/2.11.26.md"
+      "journal": null,
+      "page": null
     },
     "Notes": {
       "journal": null,
@@ -123,9 +160,17 @@
     {
       "key": "Day 2026-11-02",
       "kind": "journal",
-      "linkedRefs": 2,
+      "linkedRefs": 1,
       "name": "Nov 2nd, 2026",
       "owner": "journals/2.11.26.md",
+      "parent": null
+    },
+    {
+      "key": "2.11.26",
+      "kind": "page",
+      "linkedRefs": 1,
+      "name": "2.11.26",
+      "owner": null,
       "parent": null
     },
     {
@@ -140,17 +185,13 @@
   "spellings": {
     "2.11.26": {
       "backend": [
-        "journal",
-        "Day 2026-11-02"
+        "page",
+        "2.11.26"
       ],
-      "day": [
-        2026,
-        11,
-        2
-      ],
+      "day": null,
       "model": [
-        "journal",
-        "Day 2026-11-02"
+        "page",
+        "2.11.26"
       ]
     },
     "Notes": {
@@ -194,6 +235,13 @@
         "page",
         "notes"
       ]
+    },
+    {
+      "children": [],
+      "page": [
+        "page",
+        "2.11.26"
+      ]
     }
   ],
   "treeParent": [
@@ -201,6 +249,13 @@
       "page": [
         "journal",
         "Day 2026-11-02"
+      ],
+      "parent": null
+    },
+    {
+      "page": [
+        "page",
+        "2.11.26"
       ],
       "parent": null
     },

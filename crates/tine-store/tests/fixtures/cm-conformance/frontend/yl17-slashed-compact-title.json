@@ -23,28 +23,11 @@
       "day": 20261102,
       "is_journal": true,
       "key": "20261102",
-      "name": "/20261102/",
-      "parent": {
-        "kind": "journal",
-        "name": "/20261102/"
-      },
-      "target": {
-        "id": "journals/2026_11_02.md",
-        "kind": "existing",
-        "others": [
-          "pages/20261102.md"
-        ]
-      }
-    },
-    {
-      "day": 20261102,
-      "is_journal": true,
-      "key": "20261102",
       "link": {
         "kind": "journal",
         "name": "/20261102/"
       },
-      "name": "20261102",
+      "name": "/20261102/",
       "target": {
         "id": "journals/2026_11_02.md",
         "kind": "existing",
@@ -57,6 +40,10 @@
       "day": null,
       "is_journal": false,
       "key": "notes",
+      "link": {
+        "kind": "page",
+        "name": "Notes"
+      },
       "name": "Notes",
       "target": {
         "id": "pages/Notes.md",
@@ -73,7 +60,6 @@
   "journalTitleFormat": "/yyyyMMdd/",
   "keyOf": {
     "/20261102/": "Day 2026-11-02",
-    "20261102": "20261102",
     "Notes": "notes"
   },
   "namespaceTree": [],
@@ -183,7 +169,11 @@
         "journal",
         "Day 2026-11-02"
       ],
-      "day": null,
+      "day": [
+        2026,
+        11,
+        2
+      ],
       "model": [
         "journal",
         "Day 2026-11-02"

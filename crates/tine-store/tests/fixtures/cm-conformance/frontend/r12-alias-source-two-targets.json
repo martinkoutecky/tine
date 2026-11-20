@@ -92,6 +92,10 @@
       "day": null,
       "is_journal": false,
       "key": "c",
+      "link": {
+        "kind": "page",
+        "name": "c"
+      },
       "name": "c",
       "target": {
         "id": "pages/c.md",
@@ -103,6 +107,10 @@
       "day": null,
       "is_journal": false,
       "key": "machine learning",
+      "link": {
+        "kind": "page",
+        "name": "Machine Learning"
+      },
       "name": "Machine Learning",
       "target": {
         "id": "pages/Machine Learning.md",
@@ -131,6 +139,10 @@
       "day": null,
       "is_journal": false,
       "key": "one",
+      "link": {
+        "kind": "page",
+        "name": "one"
+      },
       "name": "one",
       "target": {
         "id": "pages/one.md",
@@ -142,6 +154,10 @@
       "day": null,
       "is_journal": false,
       "key": "two",
+      "link": {
+        "kind": "page",
+        "name": "two"
+      },
       "name": "two",
       "target": {
         "id": "pages/two.md",

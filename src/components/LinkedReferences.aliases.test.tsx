@@ -17,8 +17,8 @@ afterEach(() => { document.body.innerHTML = ""; localStorage.clear(); resetStore
 
 async function setup(pre: string | null = null, overlap = false, unlinked = false, format: "md" | "org" = "md") {
   vi.spyOn(backend(), "pageInventory").mockResolvedValue({ rev: "1", entries: [
-    { name: "Germany", key: "germany", is_journal: false, day: null, target: { kind: "existing", id: "pages/Germany.md", others: [] } },
-    ...["DE", "Deutschland"].map(name => ({ name, key: name.toLowerCase(), is_journal: false, day: null, target: { kind: "alias" as const, owners: ["pages/Germany.md"] } })),
+    { name: "Germany", key: "germany", is_journal: false, day: null, target: { kind: "existing", id: "pages/Germany.md", others: [] }, link: { name: "Germany", kind: "page" } },
+    ...["DE", "Deutschland"].map(name => ({ name, key: name.toLowerCase(), is_journal: false, day: null, target: { kind: "alias" as const, owners: ["pages/Germany.md"] }, link: { name: "Germany", kind: "page" as const } })),
   ] });
   await refreshPageIndex();
   loadSingle({ name: "Target", kind: "page", title: "Target", pre_block: pre, format, blocks: [] });
@@ -109,9 +109,9 @@ it("follows live inventory changes and real-page precedence without another grap
   const s = await setup();
   await vi.waitFor(() => expect(chips(s.root)).toEqual(["Germany 26", "Zebra 1"]));
   vi.mocked(backend().pageInventory).mockResolvedValue({ rev: "2", entries: [
-    { name: "Germany", key: "germany", is_journal: false, day: null, target: { kind: "existing", id: "pages/Germany.md", others: [] } },
-    { name: "DE", key: "de", is_journal: false, day: null, target: { kind: "existing", id: "pages/DE.md", others: [] } },
-    { name: "Deutschland", key: "deutschland", is_journal: false, day: null, target: { kind: "alias", owners: ["pages/Germany.md"] } },
+    { name: "Germany", key: "germany", is_journal: false, day: null, target: { kind: "existing", id: "pages/Germany.md", others: [] }, link: { name: "Germany", kind: "page" } },
+    { name: "DE", key: "de", is_journal: false, day: null, target: { kind: "existing", id: "pages/DE.md", others: [] }, link: { name: "DE", kind: "page" } },
+    { name: "Deutschland", key: "deutschland", is_journal: false, day: null, target: { kind: "alias", owners: ["pages/Germany.md"] }, link: { name: "Germany", kind: "page" } },
   ] });
   await refreshPageIndex();
   await vi.waitFor(() => expect(chips(s.root)).toEqual(["DE 15", "Germany 11", "Zebra 1"]));

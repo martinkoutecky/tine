@@ -150,6 +150,10 @@
       "day": null,
       "is_journal": false,
       "key": "c",
+      "link": {
+        "kind": "page",
+        "name": "c"
+      },
       "name": "c",
       "target": {
         "id": "pages/c.md",
@@ -161,6 +165,10 @@
       "day": null,
       "is_journal": false,
       "key": "old",
+      "link": {
+        "kind": "page",
+        "name": "old"
+      },
       "name": "old",
       "namespace_parent": true,
       "target": {
@@ -189,6 +197,10 @@
       "day": null,
       "is_journal": false,
       "key": "other",
+      "link": {
+        "kind": "page",
+        "name": "other"
+      },
       "name": "other",
       "target": {
         "id": "pages/other.md",
@@ -200,6 +212,10 @@
       "day": null,
       "is_journal": false,
       "key": "owner",
+      "link": {
+        "kind": "page",
+        "name": "owner"
+      },
       "name": "owner",
       "target": {
         "id": "pages/owner.md",
@@ -211,6 +227,10 @@
       "day": null,
       "is_journal": false,
       "key": "real",
+      "link": {
+        "kind": "page",
+        "name": "real"
+      },
       "name": "real",
       "namespace_parent": true,
       "target": {
@@ -222,6 +242,10 @@
       "day": null,
       "is_journal": false,
       "key": "real/alias",
+      "link": {
+        "kind": "page",
+        "name": "real/alias"
+      },
       "name": "real/alias",
       "target": {
         "id": "pages/real%2Falias.md",
@@ -233,6 +257,10 @@
       "day": null,
       "is_journal": false,
       "key": "ref",
+      "link": {
+        "kind": "page",
+        "name": "ref"
+      },
       "name": "ref",
       "namespace_parent": true,
       "target": {
@@ -244,6 +272,10 @@
       "day": null,
       "is_journal": false,
       "key": "ref/only",
+      "link": {
+        "kind": "page",
+        "name": "ref/only"
+      },
       "name": "ref/only",
       "target": {
         "id": "pages/ref%2Fonly.md",

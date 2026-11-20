@@ -41,6 +41,10 @@
       "day": null,
       "is_journal": false,
       "key": "meeting",
+      "link": {
+        "kind": "page",
+        "name": "meeting"
+      },
       "name": "meeting",
       "target": {
         "id": "pages/meeting.md",
@@ -52,6 +56,10 @@
       "day": 20261026,
       "is_journal": true,
       "key": "oct 26th, 2026",
+      "link": {
+        "kind": "journal",
+        "name": "Oct 26th, 2026"
+      },
       "name": "Oct 26th, 2026",
       "target": {
         "id": "journals/2026_10_26.md",
@@ -63,6 +71,10 @@
       "day": null,
       "is_journal": false,
       "key": "p",
+      "link": {
+        "kind": "page",
+        "name": "p"
+      },
       "name": "p",
       "target": {
         "id": "pages/p.md",

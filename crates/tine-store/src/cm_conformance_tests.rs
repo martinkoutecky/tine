@@ -264,7 +264,8 @@ fn conceptual_model_conformance() {
         env!("CARGO_MANIFEST_DIR"),
         typed_link_pairs,
         &|store, name| {
-            (store.cold_page_named(name, PageKind::Page))
+            store
+                .cold_page_named(name)
                 .map(|read| read.map(|read| read.id.as_str().to_owned()))
                 .map_err(|e| format!("{e:?}"))
         },

@@ -574,7 +574,7 @@ fn a_title_variant_in_a_days_bucket_opens_that_day() {
         let files = [
             ("logseq/config.edn", config.as_str()),
             ("journals/2026_11_02.md", "- the day\n"),
-            (page, "- an ordinary page\n"),
+            (page, "- a second day claimant\n"),
         ];
         let day = "journals/2026_11_02.md";
         let want = Some((day.to_owned(), PageKind::Journal));
@@ -589,7 +589,7 @@ fn a_title_variant_in_a_days_bucket_opens_that_day() {
         let view = store.whole_graph().unwrap();
         assert_eq!(
             existing(&view.resolve(name, false)),
-            [day],
+            [day, page],
             "{format}: ready"
         );
         assert_eq!(
@@ -606,12 +606,10 @@ fn a_title_variant_in_a_days_bucket_opens_that_day() {
     }
 }
 
-/// Review HOLD 7 F2, the snapshot: under `/yyyyMMdd/` the undated
-/// `journals/20261102.md` shares the day's journal bucket and sorts ahead of
-/// `journals/2026_11_02.md`. The day's file arriving outside the app takes
-/// the day, as a cold open has it; the undated file never does.
+/// K's text fallback gives the undecorated stem a day after the physical
+/// stem routes miss. A later arrival adds a conflict and keeps the winner.
 #[test]
-fn an_undated_journal_in_the_days_bucket_never_takes_the_day() {
+fn a_journal_claimed_by_its_folded_stem_keeps_the_day_after_an_arrival() {
     let _guard = crate::integration_lock();
     let rels = [
         "logseq/config.edn",
@@ -620,19 +618,19 @@ fn an_undated_journal_in_the_days_bucket_never_takes_the_day() {
     ];
     let (dir, store) = graph(&[
         (rels[0], "{:journal/page-title-format \"/yyyyMMdd/\"}\n"),
-        (rels[2], "- not a day\n"),
+        (rels[2], "- the folded day\n"),
     ]);
     store.whole_graph().unwrap();
     assert_eq!(
         store.journal_id(NOV_2, false).as_str(),
-        rels[1],
-        "no file yet"
+        rels[2],
+        "the folded stem already claims the day"
     );
     fs::write(dir.path().join(rels[1]), "- the day\n").unwrap();
     settle(&store, "outside arrival", |store| {
         let view = store.whole_graph().unwrap();
         matches!(view.resolve("/20261102/", true), Resolved::Existing { id, others }
-            if id.as_str() == rels[1] || others.iter().any(|o| o.as_str() == rels[1]))
+            if id.as_str() == rels[2] && others.iter().any(|o| o.as_str() == rels[1]))
     });
     let (days, names) = ([NOV_2], ["/20261102/", "20261102"]);
     assert_eq!(
@@ -640,8 +638,27 @@ fn an_undated_journal_in_the_days_bucket_never_takes_the_day() {
         cold_answers(dir.path(), &rels, &days, &names),
         "incremental after the arrival equals a cold open"
     );
-    assert_eq!(store.journal_id(NOV_2, false).as_str(), rels[1]);
-    assert_eq!(store.journal_id(NOV_2, true).as_str(), rels[1]);
+    assert_eq!(store.journal_id(NOV_2, false).as_str(), rels[2]);
+    assert_eq!(store.journal_id(NOV_2, true).as_str(), rels[2]);
+}
+
+#[test]
+fn an_explicit_journal_request_leaves_ordinary_names_to_page_routes() {
+    let _guard = crate::integration_lock();
+    let (_dir, store, pause) = paused_graph(&[("pages/Note.md", "alias:: Other\n- a page\n")]);
+    for name in ["Note", "Other"] {
+        assert_eq!(opens(&store, name, PageKind::Journal), None, "cold {name}");
+    }
+    fs::remove_file(pause).unwrap();
+    let view = store.whole_graph().unwrap();
+    for name in ["Note", "Other"] {
+        assert_eq!(opens(&store, name, PageKind::Journal), None, "ready {name}");
+        assert_eq!(
+            opens(&store, name, PageKind::Page),
+            Some(("pages/Note.md".into(), PageKind::Page))
+        );
+        assert_eq!(view.link_target(name).name, "Note");
+    }
 }
 
 /// D-20261119-YL model round 4: a journal file named under a title format

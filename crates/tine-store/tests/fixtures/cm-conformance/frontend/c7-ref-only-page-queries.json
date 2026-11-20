@@ -94,6 +94,10 @@
       "day": null,
       "is_journal": false,
       "key": "a",
+      "link": {
+        "kind": "page",
+        "name": "A"
+      },
       "name": "A",
       "target": {
         "id": "pages/A.md",
@@ -105,6 +109,10 @@
       "day": null,
       "is_journal": false,
       "key": "b",
+      "link": {
+        "kind": "page",
+        "name": "B"
+      },
       "name": "B",
       "target": {
         "id": "pages/B.md",
@@ -115,6 +123,10 @@
       "day": null,
       "is_journal": false,
       "key": "proj",
+      "link": {
+        "kind": "page",
+        "name": "proj"
+      },
       "name": "proj",
       "namespace_parent": true,
       "target": {
@@ -126,6 +138,10 @@
       "day": null,
       "is_journal": false,
       "key": "proj/sub",
+      "link": {
+        "kind": "page",
+        "name": "proj/sub"
+      },
       "name": "proj/sub",
       "target": {
         "id": "pages/proj%2Fsub.md",
@@ -136,6 +152,10 @@
       "day": null,
       "is_journal": false,
       "key": "todo",
+      "link": {
+        "kind": "page",
+        "name": "TODO"
+      },
       "name": "TODO",
       "target": {
         "id": "pages/TODO.md",

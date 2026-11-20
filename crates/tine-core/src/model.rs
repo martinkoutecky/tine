@@ -927,6 +927,9 @@ pub struct JournalTitleStatus {
     pub effective: String,
     /// Why the configured title format is not used; `None` when it is.
     pub refusal: Option<JournalTitleRefusal>,
+    /// False when the filename pattern does not pass the folded text round trip.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub file_text_route: Option<bool>,
 }
 
 impl JournalTitleStatus {
@@ -954,6 +957,7 @@ impl JournalTitleStatus {
             },
         });
         JournalTitleStatus {
+            file_text_route: (!journal_format.file_text_route()).then_some(false),
             effective: journal_format.title_format().to_string(),
             refusal,
         }

@@ -37,6 +37,10 @@
       "day": null,
       "is_journal": false,
       "key": "a",
+      "link": {
+        "kind": "page",
+        "name": "a"
+      },
       "name": "a",
       "target": {
         "id": "pages/a.md",
@@ -48,6 +52,10 @@
       "day": null,
       "is_journal": false,
       "key": "public-key",
+      "link": {
+        "kind": "page",
+        "name": "public-key"
+      },
       "name": "public-key",
       "target": {
         "id": "pages/public-key.md",

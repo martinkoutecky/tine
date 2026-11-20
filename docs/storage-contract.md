@@ -1026,47 +1026,39 @@ claimed by an unrelated ordinary file, the string-only group wire carries an
 unclaimed authored spelling of that day. The day appears once, never as its
 unrelated ordinary claimant, and every spelling excludes its own day. Proof:
 `crates/tine-store/tests/alias_groups.rs`.
+Links and direct named reads select a physical file through
+`OpeningName::claims` (conceptual model §2.2, A-20261120-DK). A spelling's
+page key selects a day before file claims are consulted. The text routes try
+the effective title, the configured filename text route if admitted, and
+the fixed forms `MMM do, yyyy`, `yyyy-MM-dd` and `yyyy_MM_dd` in order.
+Case, Unicode composition and one slash at each end follow `page_key`.
+For a day, its files are ranked with the journals directory first, then
+by graph-relative path in unsigned UTF-8 order. An unclaimed identity may
+open its first alias owner. An explicit journal request for a spelling that
+names no day requires a journal claimant or proposes a new journal file.
+An exact-path open uses its given file.
 
-What a `[[name]]` link opens has one answerer, `WholeGraph::link_target`
-(`store/inventory.rs::link_target_in`; conceptual-model Q8, CM step 2). A name
-first takes the opening claimant of that literal name. In particular an
-ordinary date-named file retains its own spelling (D-20261107-KD); another
-accepted spelling can still name the day's journal. Without a literal file,
-the graph's journal answerer for text (`JournalFormat::parse_text`, the text
-routes in order: the effective title format, the file-name format, then
-`MMM do, yyyy`, `yyyy-MM-dd`, `yyyy_MM_dd`; a refused title format is no route;
-D-20261102-JDL, D-20261119-YL) tries that day's active journal, then the
-alias owner. A journal file's own day comes from its stem by a separate list,
-`JournalFormat::parse_file_stem` (the file-name format, the configured title
-format even when refused, then the same fixed forms), which discovery,
-`accepted_stems` and the day's write target use too, so an existing journal
-file keeps its day. An active claimant always opens itself, including an empty or
-blank file (D-20261106-R13-C4). Live entries never set the retired `empty_alias`
-flag. Named routes, links and exact-path opens all retain that file. An
-alias owned by a journal opens the journal. A name nothing claims or aliases is
-a journal exactly when it parses as a day (`JournalFormat::absent_link_is_journal`,
-exported to the frontend through wasm so the unknown-name fallback runs the same
-code). Whether the configured title format is used is decided once per config,
-natively (`JournalFormat::new`), and published in `GraphMeta.journal_title`
-(`{effective, refusal}`; a Settings save returns it too). The frontend renders
-titles in `effective` and builds its text routes from it (`date::TextRoutes`
-through wasm); no frontend or wasm code checks a title pattern. `page_inventory` entries carry the answer as an optional
-`link: {name, kind}`, sent only when it differs from the entry itself (most
-entries carry nothing). The field is in-memory and derived per read: nothing is
-persisted or checkpointed. An `inventoryDelta` entry carries it computed at the
-delta's `rev` (a link depends on the key's alias owners, which travel in the
-delta, and on file claims, whose change refetches). Reactive alternate-date
-readers subscribe to both their literal bucket and the canonical journal
-bucket they read, including a currently absent canonical row. Proof:
-`src/pageIndex.test.ts`, `src/render/PageRef.workingSet.test.tsx`. Content changes alone do
-not change name routing. Published `answers` v1 stores the lookup answers at
-publication time (`docs/contracts/quick-share.md`). Existing snapshots retain
-their stored redirects, including the former empty-alias answer; new snapshots
-record real-file-first opening. The frozen reader never reclassifies old rows.
-Proof: `crates/tine-store/tests/inventory_delta.rs`
-`a_delta_keeps_the_link_answer_fresh`,
-`real_file_opens_itself_even_when_empty_and_aliased`,
-`real_file_opening_is_independent_of_content_and_alias_edits`, `src/cmConformanceNavigate.test.ts`.
+A journal file's physical stem routes keep their order: the configured
+filename format, the configured title format, then the same fixed forms.
+When these extract no day, K takes the effective name's text claim.
+Discovery, `accepted_stems` and the day's write target retain the physical
+stem routes. Cold named reads build a complete physical claimant index
+with one listing and at most one preamble read per non-journal file.
+Subsequent reads reuse the generation's buckets. The winner is read
+through the existing validated path and revision checks.
+
+`JournalFormat::new` admits a configured text route only if its parser
+reads every rendered day's folded title as that day. A refused title
+selects `MMM do, yyyy` and publishes the reason in `GraphMeta.journal_title`.
+A refused filename text route is omitted from the same metadata decision.
+The frontend uses the effective title for display and the native text routes
+through wasm. Every live name inventory row and delta entry carries its
+opening as `link: {name, kind}`, including identity openings. An alternate
+day spelling without a row follows the native date answer to the canonical
+title bucket. Reactive readers track that bucket even before it has a row.
+These live answers are derived per read. Frozen published `answers` v1
+retains its recorded redirects. Proof: `crates/tine-store/tests/inventory_delta.rs`,
+`src/pageIndex.test.ts` and `src/cmConformanceNavigate.test.ts`.
 
 Date-shaped alias endpoints use the configured journal interpretation even
 without a real journal. The existing alias relation maintains only its

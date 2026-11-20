@@ -71,8 +71,8 @@ async function runCase(c: Case): Promise<string[]> {
   backendMock.pageInventory.mockReset().mockResolvedValue({ rev: "1", entries: c.inventory });
   await (await import("./render/parse")).initParser();
   const journal = await import("./journal");
-  // graph.ts: setJournalFormats(meta.journal_title.effective, meta.journal_file_name_format).
-  journal.setJournalFormats(c.journalTitle.effective, c.journalFileFormat);
+  // Mirror the graph metadata consumed by applyConfigDerivedState.
+  journal.setJournalFormats(c.journalTitle.effective, c.journalTitle.file_text_route === false ? "" : c.journalFileFormat);
   const index = await import("./pageIndex");
   // Each graph gets fresh inventory state without reinitializing the module tree.
   index.resetPageIndex();

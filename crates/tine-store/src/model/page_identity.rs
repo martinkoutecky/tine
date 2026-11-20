@@ -95,84 +95,64 @@ pub(crate) fn set_page_file_claim(format: &JournalFormat, entry: &mut PageEntry,
     (entry.name, entry.kind, entry.date_key) = page_file_claim(format, name);
 }
 
-/// Which name claims answer a lookup of `name`: a date, in any accepted
-/// spelling, is claimed by the files of its day, keyed by the day's title
-/// (CM SPEC §2.1: no ordinary-date claim ahead of date interpretation); any
-/// other name by the files of that name. The one rule behind
-/// `WholeGraph::resolve` and the file-listing answer
-/// `Store::page_named_from_files` (I-12).
-pub(crate) struct ClaimLookup<'a> {
-    /// The name the claimants are looked up by.
-    pub(crate) name: std::borrow::Cow<'a, str>,
-    /// The kind of those claimants: a journal for a date.
-    pub(crate) kind: PageKind,
-    /// The day `name` parses to (`JournalDate::ordinal_key`).
-    pub(crate) day: Option<i64>,
+/// The claim a spelling requests. A day is held by that day's files in any
+/// directory. An ordinary name is held by the undated files at its key.
+pub(crate) struct OpeningName {
+    pub(crate) key: String,
+    pub(crate) day: Option<tine_core::date::JournalDate>,
+    pub(crate) undated_journal: bool,
+    day_key: Option<String>,
 }
 
-impl<'a> ClaimLookup<'a> {
-    /// Whether `entry`, a claimant of [`Self::name`], holds the name looked
-    /// up: the claimant names the day asked for, or no day for a name that is
-    /// no day. A day is held only by that day's files (model r6 O3: "a
-    /// journal holds every accepted spelling of its day"), never by another
-    /// day's or an undated file that shares its normalized bucket
-    /// (`journals/20261102.md` under `/yyyyMMdd/`); a name that is no day
-    /// only by undated files. Which day a name asks for is
-    /// [`Self::by_key`]'s answer. O(1) per claimant.
-    pub(crate) fn holds(&self, entry: &PageEntry) -> bool {
-        entry.date_key == self.day
+impl OpeningName {
+    pub(crate) fn new(format: &JournalFormat, name: &str, as_journal: bool) -> Self {
+        let key = tine_core::refs::page_key(name);
+        let day = format.parse_key(&key);
+        let day_key = day.map(|day| tine_core::refs::page_key(&format.title(day)));
+        let undated_journal = as_journal && day.is_none();
+        Self {
+            key,
+            day,
+            undated_journal,
+            day_key,
+        }
     }
 
-    /// The lookup by the name's text key. A name that parses to no day still
-    /// names one when its key is a day's key: the journal claimants of the
-    /// key (`journal_claimants`) are that day's files. That is a case,
-    /// composition or slash variant of the day's title (`x 2026_02_11` under
-    /// `X yyyy_dd_MM`, `20261102` under `/yyyyMMdd/`; the confirmed model,
-    /// D-20261119-YL round 4b). A key two days' files share names neither.
-    /// O(claimants of the key).
-    pub(crate) fn by_key(
-        self,
-        format: &tine_core::date::JournalFormat,
-        journal_claimants: &[PageEntry],
-    ) -> ClaimLookup<'a> {
-        if self.day.is_some() {
-            return self;
-        }
-        let mut days = journal_claimants.iter().filter_map(|entry| entry.date_key);
-        let Some(day) = days.next() else {
-            return self;
+    /// The physical holders in a complete claimant index. The preferred
+    /// file ranks first. Visits only this identity's buckets and does no I/O.
+    pub(crate) fn claims<'a>(
+        &self,
+        claimants: &'a ClaimantMap,
+        journals_dir: &str,
+    ) -> impl Iterator<Item = &'a PageEntry> + use<'a> {
+        let key = self.day_key.as_ref().unwrap_or(&self.key);
+        let day = self.day.map(|day| day.ordinal_key());
+        let bucket = |journal| {
+            claimants
+                .get(&(journal, key.clone()))
+                .map(Vec::as_slice)
+                .unwrap_or_default()
         };
-        if days.any(|other| other != day) {
-            return self;
-        }
-        ClaimLookup {
-            name: format
-                .title(tine_core::date::JournalDate::from_ordinal(day))
-                .into(),
-            kind: PageKind::Journal,
-            day: Some(day),
-        }
-    }
-}
-
-/// `kind` is the caller's kind for a name that is no date: a journals-
-/// directory file whose name is no date is looked up as a journal.
-pub(crate) fn claim_lookup<'a>(
-    format: &tine_core::date::JournalFormat,
-    name: &'a str,
-    kind: PageKind,
-) -> ClaimLookup<'a> {
-    match format.parse_text(name) {
-        Some(day) => ClaimLookup {
-            name: format.title(day).into(),
-            kind: PageKind::Journal,
-            day: Some(day.ordinal_key()),
-        },
-        None => ClaimLookup {
-            name: name.into(),
-            kind,
-            day: None,
-        },
+        let journals = bucket(true);
+        let pages = if day.is_none() && (!self.undated_journal || !journals.is_empty()) {
+            bucket(false)
+        } else {
+            &[]
+        };
+        let held = move |entry: &&PageEntry| entry.date_key == day;
+        let first = match (pages.first(), journals.first()) {
+            (Some(page), Some(journal)) => {
+                compare_page_claimants(journals_dir, page, journal).is_le()
+            }
+            (Some(_), None) => true,
+            _ => false,
+        };
+        let (first, second) = if first {
+            (pages, journals)
+        } else {
+            (journals, pages)
+        };
+        first.iter().chain(second).filter(held)
     }
 }
 
@@ -211,13 +191,11 @@ mod claim_lookup_tests {
         }
     }
 
-    /// D-20261119-YL round 4b: a name is its text key. A variant of a day's
-    /// title that parses to no day still asks for that day when the key's
-    /// journal claimants name that one day; the day is held only by its own
-    /// files, never by another day's or an undated one (round 1).
+    /// Case variants request the same day even when another configured
+    /// format would otherwise read those fields in a different order.
     #[test]
     fn a_name_asks_for_the_day_its_key_names_and_another_day_never_holds_it() {
-        let format = JournalFormat::new(None, Some("X yyyy_dd_MM"));
+        let format = JournalFormat::new(Some("x yyyy_MM_dd"), Some("X yyyy_dd_MM"));
         let nov2 = JournalDate::from_ordinal(20261102).ordinal_key();
         let day = entry(
             "X 2026_02_11",
@@ -237,27 +215,18 @@ mod claim_lookup_tests {
             Some(20261103),
             "journals/other.md",
         );
-        // The variant parses to no day; its key's journal claimants say which.
-        let typed = claim_lookup(&format, "x 2026_02_11", PageKind::Page);
-        assert_eq!(typed.day, None);
-        let keyed = typed.by_key(&format, &[day.clone(), undated.clone()]);
-        assert_eq!((keyed.day, keyed.kind), (Some(nov2), PageKind::Journal));
-        assert_eq!(keyed.name, "X 2026_02_11");
-        assert!(keyed.holds(&day) && !keyed.holds(&undated) && !keyed.holds(&other));
-        // A key two days' files share names neither day.
-        let split = claim_lookup(&format, "x 2026_02_11", PageKind::Page)
-            .by_key(&format, &[day.clone(), other.clone()]);
-        assert_eq!(split.day, None);
-        assert!(!split.holds(&day) && !split.holds(&other) && split.holds(&undated));
-        // No dated claimant: an ordinary name, held by undated files only.
-        let plain = claim_lookup(&format, "x 2026_02_11", PageKind::Page)
-            .by_key(&format, &[undated.clone()]);
-        assert_eq!((plain.day, plain.kind), (None, PageKind::Page));
-        // A spelling that parses is that day whatever its key holds.
-        let parsed =
-            claim_lookup(&format, "X 2026_02_11", PageKind::Page).by_key(&format, &[other.clone()]);
-        assert_eq!(parsed.day, Some(nov2));
-        assert!(!parsed.holds(&other));
+        let entries = page_claimants("journals", &[day.clone(), undated, other]);
+        for spelling in ["X 2026_02_11", "x 2026_02_11"] {
+            let opening = OpeningName::new(&format, spelling, false);
+            assert_eq!(opening.day.map(|day| day.ordinal_key()), Some(nov2));
+            assert_eq!(
+                opening
+                    .claims(&entries, "journals")
+                    .map(PageEntry::rel_path_str)
+                    .collect::<Vec<_>>(),
+                vec![day.rel_path_str()]
+            );
+        }
     }
 }
 
@@ -461,6 +430,31 @@ mod cold_index_tests {
         assert_eq!(GRAPH_PREAMBLE_READS.with(|reads| reads.get()), 8,
             "I-12/E: direct reads reuse the snapshot's complete claimant index; exemplar page_identity.rs");
         let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn the_first_cold_date_read_checks_each_preamble_once() {
+        let dir = tempfile::tempdir().unwrap();
+        fs::create_dir(dir.path().join("pages")).unwrap();
+        let pause = dir.path().join(".tine-test-pause-load");
+        fs::write(&pause, "").unwrap();
+        fs::write(
+            dir.path().join("pages/Diary.org"),
+            "#+TITLE: Nov 2nd, 2026\n\n* entry\n",
+        )
+        .unwrap();
+        fs::write(dir.path().join("pages/Notes.md"), "- unrelated\n").unwrap();
+        let (store, _, _) = crate::Store::open(dir.path(), Default::default()).unwrap();
+        GRAPH_LIST_CALLS.with(|calls| calls.set(0));
+        GRAPH_PREAMBLE_READS.with(|reads| reads.set(0));
+        for spelling in ["2026-11-02", "NOV 2ND, 2026"] {
+            let read = store.cold_page_named(spelling).unwrap().unwrap();
+            assert_eq!(read.id.as_str(), "pages/Diary.org");
+        }
+        assert_eq!(GRAPH_LIST_CALLS.with(|calls| calls.get()), 1);
+        assert_eq!(GRAPH_PREAMBLE_READS.with(|reads| reads.get()), 2);
+        fs::remove_file(pause).unwrap();
+        store.close();
     }
 }
 
@@ -705,50 +699,24 @@ impl Graph {
         page: Option<&str>,
     ) -> io::Result<bool> {
         let config = self.current_config();
-        let format = self.current_journal_format();
-        let journals = self.journals_path();
+        let Some(id) = block else {
+            let Some(name) = page else { return Ok(true) };
+            let format = self.current_journal_format();
+            let claims = self.complete_name_claimants();
+            let opening = OpeningName::new(&format, name, false);
+            return Ok(opening
+                .claims(&claims, &config.journals_dir)
+                .next()
+                .is_some()
+                || !self.unreadable_pages().is_empty());
+        };
         let mut possible = false;
         let mut failure = None;
         let errors = walk_graph_page_files(&self.root, &self.root, &config, |path| {
             if possible || failure.is_some() {
                 return;
             }
-            let probe = if let Some(id) = block {
-                file_contains_link_id(&path, id)
-            } else if let Some(name) = page {
-                let lookup = claim_lookup(&format, name, PageKind::Page);
-                let entry = listed_entry(
-                    self,
-                    (&format, &journals, config.file_name_format),
-                    path.clone(),
-                );
-                let claimed = match entry {
-                    Some(entry) if path.starts_with(&journals) => Ok(Some(entry)),
-                    Some(mut entry) => effective_page_name(
-                        &path,
-                        path.file_stem().unwrap().to_str().unwrap(),
-                        config.file_name_format,
-                    )
-                    .map(|found| {
-                        set_page_file_claim(&format, &mut entry, found);
-                        Some(entry)
-                    }),
-                    None => Ok(None),
-                };
-                // A dated file of the name's key is a claimant too: a name
-                // that parses to no day names that day by its key
-                // ([`ClaimLookup::by_key`]); a may-exist answer.
-                claimed.map(|entry| {
-                    entry.is_some_and(|entry| {
-                        tine_core::refs::page_key(&entry.name)
-                            == tine_core::refs::page_key(&lookup.name)
-                            && (lookup.holds(&entry)
-                                || lookup.day.is_none() && entry.date_key.is_some())
-                    })
-                })
-            } else {
-                Ok(true)
-            };
+            let probe = file_contains_link_id(&path, id);
             match probe {
                 Ok(found) => possible |= found,
                 Err(error) => failure = Some(error),
@@ -868,9 +836,9 @@ pub(super) fn list_graph_pages(graph: &Graph) -> Vec<PageEntry> {
 /// journals directory, whose files are named by their file names, and of
 /// every other file reads only those whose decoded file name is a date
 /// (`pages/2026-11-02.md`, SPEC §2.1), to see whether a `title::` names
-/// another page; a cold journal lookup reads no other page title. A file
-/// that is a day only through its `title::` is found by a listing that reads
-/// every title (an ordinary-kind or whole listing, e.g. the launch pass);
+/// another page. A file that is a day only through its `title::` is found
+/// by a listing that reads every title, including the complete listing
+/// used for cold named opens;
 /// `Graph::find_claimants` keeps such rows when it merges a journal-kind
 /// listing.
 pub(crate) fn list_graph_pages_kind(graph: &Graph, kind: Option<PageKind>) -> Vec<PageEntry> {

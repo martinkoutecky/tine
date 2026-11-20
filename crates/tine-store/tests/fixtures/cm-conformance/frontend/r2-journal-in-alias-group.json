@@ -82,6 +82,10 @@
       "day": null,
       "is_journal": false,
       "key": "launch",
+      "link": {
+        "kind": "page",
+        "name": "Launch"
+      },
       "name": "Launch",
       "target": {
         "id": "pages/Launch.md",
@@ -93,6 +97,10 @@
       "day": null,
       "is_journal": false,
       "key": "n",
+      "link": {
+        "kind": "page",
+        "name": "n"
+      },
       "name": "n",
       "target": {
         "id": "pages/n.md",
@@ -104,6 +112,10 @@
       "day": 20261026,
       "is_journal": true,
       "key": "oct 26th, 2026",
+      "link": {
+        "kind": "journal",
+        "name": "Oct 26th, 2026"
+      },
       "name": "Oct 26th, 2026",
       "target": {
         "id": "journals/2026_10_26.md",

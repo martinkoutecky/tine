@@ -152,16 +152,16 @@ mod inventory_adapter_tests {
         assert_eq!(
             rows(&wire),
             vec![
-                r#"{"key":"alpha","name":"Alpha","is_journal":false,"day":null,"target":{"kind":"existing","id":"pages/nested/Alpha.org","others":[]}}"#,
-                r#"{"key":"another ref","name":"Another Ref","is_journal":false,"day":null,"target":{"kind":"absent","id":"pages/Another Ref.md"}}"#,
-                r#"{"key":"display alpha","name":"Display Alpha","is_journal":false,"day":null,"target":{"kind":"existing","id":"pages/Alpha.md","others":[]}}"#,
-                r#"{"key":"display beta","name":"Display Beta","is_journal":false,"day":null,"target":{"kind":"existing","id":"pages/Beta.org","others":[]}}"#,
-                r#"{"key":"jun 26th, 2026","name":"Jun 26th, 2026","is_journal":true,"day":20260626,"target":{"kind":"existing","id":"journals/2026_06_26.md","others":["journals/Jun 26th, 2026.org"]}}"#,
-                r#"{"key":"only linked","name":"Only Linked","is_journal":false,"day":null,"target":{"kind":"absent","id":"pages/Only Linked.md"}}"#,
+                r#"{"key":"alpha","name":"Alpha","is_journal":false,"day":null,"target":{"kind":"existing","id":"pages/nested/Alpha.org","others":[]},"link":{"name":"Alpha","kind":"page"}}"#,
+                r#"{"key":"another ref","name":"Another Ref","is_journal":false,"day":null,"target":{"kind":"absent","id":"pages/Another Ref.md"},"link":{"name":"Another Ref","kind":"page"}}"#,
+                r#"{"key":"display alpha","name":"Display Alpha","is_journal":false,"day":null,"target":{"kind":"existing","id":"pages/Alpha.md","others":[]},"link":{"name":"Display Alpha","kind":"page"}}"#,
+                r#"{"key":"display beta","name":"Display Beta","is_journal":false,"day":null,"target":{"kind":"existing","id":"pages/Beta.org","others":[]},"link":{"name":"Display Beta","kind":"page"}}"#,
+                r#"{"key":"jun 26th, 2026","name":"Jun 26th, 2026","is_journal":true,"day":20260626,"target":{"kind":"existing","id":"journals/2026_06_26.md","others":["journals/Jun 26th, 2026.org"]},"link":{"name":"Jun 26th, 2026","kind":"journal"}}"#,
+                r#"{"key":"only linked","name":"Only Linked","is_journal":false,"day":null,"target":{"kind":"absent","id":"pages/Only Linked.md"},"link":{"name":"Only Linked","kind":"page"}}"#,
                 r#"{"key":"shared","name":"Shared","is_journal":false,"day":null,"target":{"kind":"alias","owners":["pages/Alpha.md","pages/Beta.org"]},"link":{"name":"Display Alpha","kind":"page"},"namespace_excluded":true}"#,
                 // A namespace parent (model rule 1): no file, flagged.
-                r#"{"key":"team","name":"Team","is_journal":false,"day":null,"target":{"kind":"absent","id":"pages/Team.md"},"namespace_parent":true}"#,
-                r#"{"key":"team/child","name":"Team/Child","is_journal":false,"day":null,"target":{"kind":"existing","id":"pages/Team%2FChild.md","others":[]}}"#,
+                r#"{"key":"team","name":"Team","is_journal":false,"day":null,"target":{"kind":"absent","id":"pages/Team.md"},"link":{"name":"Team","kind":"page"},"namespace_parent":true}"#,
+                r#"{"key":"team/child","name":"Team/Child","is_journal":false,"day":null,"target":{"kind":"existing","id":"pages/Team%2FChild.md","others":[]},"link":{"name":"Team/Child","kind":"page"}}"#,
             ]
         );
         std::fs::remove_dir_all(root).unwrap();

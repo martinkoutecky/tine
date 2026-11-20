@@ -47,7 +47,11 @@ pub(crate) const ANSWERS_VERSION: u32 = 1;
 pub(crate) fn home_name_taken(inventory: &Inventory, spellings: &Inventory, name: &str) -> bool {
     let key = page_key(name);
     inventory.0.iter().chain(&spellings.0).any(|entry| {
-        (!matches!(entry.target, Resolved::Absent { .. }) || entry.link.is_some())
+        (!matches!(entry.target, Resolved::Absent { .. })
+            || entry
+                .link
+                .as_ref()
+                .is_some_and(|link| link.name != entry.name || link.is_journal != entry.is_journal))
             && page_key(&entry.name) == key
     })
 }
@@ -76,26 +80,35 @@ pub(crate) fn answers(
     // including their ordinary target and the shared answer for their link.
     // This compatibility shape retires with answers v2, not in live All.
     let spellings = graph.inventory(InventoryScope::PublishedV1Spellings(inventory));
-    let mut rows: Vec<PageInventoryEntryWire> = inventory
-        .0
-        .iter()
-        .chain(&spellings.0)
-        .map(|entry| PageInventoryEntryWire {
-            not_namespace: false,
-            namespace_excluded: false,
-            parent: None,
-            // Frozen v1 viewers read alias lookup rows as ordinary names.
-            // Their stored `link` still carries the declarer's actual kind.
-            is_journal: entry.is_journal
-                && !matches!(entry.target, tine_store::Resolved::Alias { .. }),
-            day: if matches!(entry.target, tine_store::Resolved::Alias { .. }) {
-                None
-            } else {
-                entry.day.map(|day| day.0)
-            },
-            ..entry_wire(entry)
-        })
-        .collect();
+    let mut rows: Vec<PageInventoryEntryWire> =
+        inventory
+            .0
+            .iter()
+            .chain(&spellings.0)
+            .map(|entry| {
+                let mut wire = entry_wire(entry);
+                // Frozen v1 encodes identity openings by omitting the link.
+                if entry.link.as_ref().is_some_and(|link| {
+                    link.name == entry.name && link.is_journal == entry.is_journal
+                }) {
+                    wire.link = None;
+                }
+                PageInventoryEntryWire {
+                    not_namespace: false,
+                    namespace_excluded: false,
+                    parent: None,
+                    // Frozen v1 viewers read alias lookup rows as ordinary names.
+                    // Their stored link carries the declarer's actual kind.
+                    is_journal: entry.is_journal && !matches!(entry.target, Resolved::Alias { .. }),
+                    day: if matches!(entry.target, Resolved::Alias { .. }) {
+                        None
+                    } else {
+                        entry.day.map(|day| day.0)
+                    },
+                    ..wire
+                }
+            })
+            .collect();
     rows.sort_by(|a, b| (&a.key, &a.name).cmp(&(&b.key, &b.name)));
     let mut resolve = Vec::new();
     let answered: HashSet<(String, bool)> = rows
@@ -178,7 +191,11 @@ pub(crate) fn answers(
             // The effective title format (D-20261119-YL), so a reader of any
             // generation renders the titles the rows name.
             "title_format": meta.journal_title.effective,
-            "file_name_format": meta.journal_file_name_format,
+            "file_name_format": if meta.journal_title.file_text_route == Some(false) {
+                ""
+            } else {
+                &meta.journal_file_name_format
+            },
             "content_days": content_days,
         },
     }))

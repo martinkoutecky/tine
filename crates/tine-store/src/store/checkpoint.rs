@@ -160,9 +160,8 @@ const MAGIC: &[u8; 8] = b"TINECKPT";
 // single day (`MM-dd`, `d.M.yy`) renders and reads text as the default, and a
 // title format reads text before the file-name format, so with swapped
 // numeric formats a typed name means its title's day. Cached journal names,
-// name buckets, claimants, link targets and query memos change for unchanged
-// files under such configs; the body schema is unchanged and older caches
-// rebuild.
+// name buckets, claimants, link targets and query memos use the folded date
+// key (A-20261120-DK). The body schema is unchanged and older caches rebuild.
 pub(crate) const FORMAT: u32 = 40;
 /// The lsdoc release tine-core parses with (`crates/tine-core/Cargo.toml`;
 /// `checkpoint_tests::the_parser_tag_matches_the_lsdoc_pin` keeps them equal).

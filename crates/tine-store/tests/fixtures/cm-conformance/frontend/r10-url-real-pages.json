@@ -55,6 +55,10 @@
       "day": null,
       "is_journal": false,
       "key": "cc",
+      "link": {
+        "kind": "page",
+        "name": "cc"
+      },
       "name": "cc",
       "target": {
         "id": "pages/cc.md",
@@ -66,6 +70,10 @@
       "day": null,
       "is_journal": false,
       "key": "https:",
+      "link": {
+        "kind": "page",
+        "name": "https:"
+      },
       "name": "https:",
       "target": {
         "id": "pages/scheme.md",
@@ -77,6 +85,10 @@
       "day": null,
       "is_journal": false,
       "key": "https://a.b/c",
+      "link": {
+        "kind": "page",
+        "name": "https://a.b/c"
+      },
       "name": "https://a.b/c",
       "not_namespace": true,
       "target": {

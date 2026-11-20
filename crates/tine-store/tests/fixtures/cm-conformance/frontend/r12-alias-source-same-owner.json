@@ -53,6 +53,10 @@
       "day": null,
       "is_journal": false,
       "key": "c",
+      "link": {
+        "kind": "page",
+        "name": "c"
+      },
       "name": "c",
       "target": {
         "id": "pages/c.md",
@@ -64,6 +68,10 @@
       "day": null,
       "is_journal": false,
       "key": "machine learning",
+      "link": {
+        "kind": "page",
+        "name": "Machine Learning"
+      },
       "name": "Machine Learning",
       "target": {
         "id": "pages/Machine Learning.md",

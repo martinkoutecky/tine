@@ -293,7 +293,12 @@ fn fileless_dates_are_one_journal_in_full_and_incremental_inventory() {
         assert!(rows[0].day.is_some());
         assert_eq!(rows[0].namespace_parent, parent);
         assert!(matches!(rows[0].target, crate::Resolved::Absent { .. }));
-        assert!(rows[0].link.is_none(), "the journal opens itself");
+        let opening = rows[0]
+            .link
+            .as_ref()
+            .expect("the store carries the opening");
+        assert!(opening.is_journal, "the journal opens itself");
+        assert_eq!(opening.name, title);
         // Exercise both narrowed and whole-universe page candidates, and
         // their actual journal/day facts rather than just a displayed name.
         for source in [

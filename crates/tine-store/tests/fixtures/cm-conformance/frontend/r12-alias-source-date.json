@@ -36,6 +36,10 @@
       "day": null,
       "is_journal": false,
       "key": "c",
+      "link": {
+        "kind": "page",
+        "name": "c"
+      },
       "name": "c",
       "target": {
         "id": "pages/c.md",
@@ -81,6 +85,10 @@
       "day": null,
       "is_journal": false,
       "key": "owner",
+      "link": {
+        "kind": "page",
+        "name": "owner"
+      },
       "name": "owner",
       "target": {
         "id": "pages/owner.md",

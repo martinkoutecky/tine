@@ -116,6 +116,10 @@
       "day": 20261110,
       "is_journal": true,
       "key": "2026_10_11",
+      "link": {
+        "kind": "journal",
+        "name": "2026_10_11"
+      },
       "name": "2026_10_11",
       "target": {
         "id": "journals/10.11.2026.md",
@@ -126,6 +130,10 @@
       "day": 20261022,
       "is_journal": true,
       "key": "2026_22_10",
+      "link": {
+        "kind": "journal",
+        "name": "2026_22_10"
+      },
       "name": "2026_22_10",
       "target": {
         "id": "journals/22.10.2026.md",
@@ -137,6 +145,10 @@
       "day": null,
       "is_journal": false,
       "key": "launch",
+      "link": {
+        "kind": "page",
+        "name": "Launch"
+      },
       "name": "Launch",
       "target": {
         "id": "pages/Launch.md",
@@ -148,6 +160,10 @@
       "day": null,
       "is_journal": false,
       "key": "n",
+      "link": {
+        "kind": "page",
+        "name": "n"
+      },
       "name": "n",
       "target": {
         "id": "pages/n.md",

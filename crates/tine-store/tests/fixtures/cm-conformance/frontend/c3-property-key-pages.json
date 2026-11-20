@@ -112,6 +112,10 @@
       "day": null,
       "is_journal": false,
       "key": "book",
+      "link": {
+        "kind": "page",
+        "name": "Book"
+      },
       "name": "Book",
       "target": {
         "id": "pages/Book.md",
@@ -123,6 +127,10 @@
       "day": null,
       "is_journal": false,
       "key": "done-at",
+      "link": {
+        "kind": "page",
+        "name": "done-at"
+      },
       "name": "done-at",
       "target": {
         "id": "pages/done-at.md",
@@ -133,6 +141,10 @@
       "day": null,
       "is_journal": false,
       "key": "rating",
+      "link": {
+        "kind": "page",
+        "name": "rating"
+      },
       "name": "rating",
       "target": {
         "id": "pages/rating.md",
@@ -143,6 +155,10 @@
       "day": null,
       "is_journal": false,
       "key": "shelf",
+      "link": {
+        "kind": "page",
+        "name": "Shelf"
+      },
       "name": "Shelf",
       "target": {
         "id": "pages/Shelf.md",
@@ -154,6 +170,10 @@
       "day": null,
       "is_journal": false,
       "key": "status",
+      "link": {
+        "kind": "page",
+        "name": "status"
+      },
       "name": "status",
       "target": {
         "id": "pages/status.md",
@@ -165,6 +185,10 @@
       "day": null,
       "is_journal": false,
       "key": "type",
+      "link": {
+        "kind": "page",
+        "name": "type"
+      },
       "name": "type",
       "target": {
         "id": "pages/type.md",

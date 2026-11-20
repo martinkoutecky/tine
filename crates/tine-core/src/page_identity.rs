@@ -18,14 +18,30 @@ pub fn page_key(name: &str) -> String {
     // ASCII is already NFC; boundary slashes cannot affect ASCII case folding.
     // Allocate only the returned key, including on hot namespace lookups.
     if trimmed.is_ascii() {
-        let without_leading = trimmed.strip_prefix('/').unwrap_or(trimmed);
-        return without_leading
-            .strip_suffix('/')
-            .unwrap_or(without_leading)
-            .to_ascii_lowercase();
+        return strip_boundary_slashes(trimmed).to_ascii_lowercase();
     }
-    let lowered = trimmed.to_lowercase();
-    let without_leading = lowered.strip_prefix('/').unwrap_or(&lowered);
-    let without_boundaries = without_leading.strip_suffix('/').unwrap_or(without_leading);
-    without_boundaries.nfc().collect()
+    fold_literal(trimmed, true, true)
+}
+
+/// Strip the opening and closing slash of trimmed page-key input.
+pub(crate) fn strip_boundary_slashes(text: &str) -> &str {
+    let text = text.strip_prefix('/').unwrap_or(text);
+    text.strip_suffix('/').unwrap_or(text)
+}
+
+/// Lowercase and compose one page-key literal. Only literals at a text
+/// boundary can lose one slash.
+pub(crate) fn fold_literal(text: &str, first: bool, last: bool) -> String {
+    let lowered = text.to_lowercase();
+    let text = if first {
+        lowered.strip_prefix('/').unwrap_or(&lowered)
+    } else {
+        &lowered
+    };
+    let text = if last {
+        text.strip_suffix('/').unwrap_or(text)
+    } else {
+        text
+    };
+    text.nfc().collect()
 }

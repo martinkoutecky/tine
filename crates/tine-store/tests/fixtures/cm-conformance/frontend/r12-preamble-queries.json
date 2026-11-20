@@ -137,6 +137,10 @@
       "day": null,
       "is_journal": false,
       "key": "markdown",
+      "link": {
+        "kind": "page",
+        "name": "Markdown"
+      },
       "name": "Markdown",
       "target": {
         "id": "pages/Markdown.md",
@@ -148,6 +152,10 @@
       "day": null,
       "is_journal": false,
       "key": "mixed",
+      "link": {
+        "kind": "page",
+        "name": "Mixed"
+      },
       "name": "Mixed",
       "target": {
         "id": "pages/Mixed.md",
@@ -159,6 +167,10 @@
       "day": null,
       "is_journal": false,
       "key": "mixed org",
+      "link": {
+        "kind": "page",
+        "name": "Mixed Org"
+      },
       "name": "Mixed Org",
       "target": {
         "id": "pages/Mixed Org.org",
@@ -170,6 +182,10 @@
       "day": null,
       "is_journal": false,
       "key": "org",
+      "link": {
+        "kind": "page",
+        "name": "Org"
+      },
       "name": "Org",
       "target": {
         "id": "pages/Org.org",
@@ -181,6 +197,10 @@
       "day": null,
       "is_journal": false,
       "key": "related",
+      "link": {
+        "kind": "page",
+        "name": "related"
+      },
       "name": "related",
       "target": {
         "id": "pages/related.md",
@@ -191,6 +211,10 @@
       "day": null,
       "is_journal": false,
       "key": "target",
+      "link": {
+        "kind": "page",
+        "name": "Target"
+      },
       "name": "Target",
       "target": {
         "id": "pages/Target.md",

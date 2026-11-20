@@ -43,6 +43,10 @@
       "day": null,
       "is_journal": false,
       "key": "notes",
+      "link": {
+        "kind": "page",
+        "name": "Notes"
+      },
       "name": "Notes",
       "target": {
         "id": "pages/Notes.md",
@@ -54,6 +58,10 @@
       "day": null,
       "is_journal": false,
       "key": "project alpha",
+      "link": {
+        "kind": "page",
+        "name": "Project Alpha"
+      },
       "name": "Project Alpha",
       "target": {
         "id": "pages/Project Alpha.md",

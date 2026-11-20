@@ -636,7 +636,7 @@ pub(crate) fn graph_equivalent_page_names_with(
             edges
                 .date(key)
                 .map(JournalDate::from_ordinal)
-                .or_else(|| format.parse_text(key))
+                .or_else(|| format.parse_key(key))
         };
         let Some(day) = day else { return Vec::new() };
         if !visited_days.borrow_mut().insert(day) {

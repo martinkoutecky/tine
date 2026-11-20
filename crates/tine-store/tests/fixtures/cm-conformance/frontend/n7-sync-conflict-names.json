@@ -94,6 +94,10 @@
       "day": null,
       "is_journal": false,
       "key": "a",
+      "link": {
+        "kind": "page",
+        "name": "a"
+      },
       "name": "a",
       "namespace_parent": true,
       "target": {
@@ -105,6 +109,10 @@
       "day": null,
       "is_journal": false,
       "key": "a/b",
+      "link": {
+        "kind": "page",
+        "name": "a/b"
+      },
       "name": "a/b",
       "target": {
         "id": "pages/a.b.md",
@@ -116,6 +124,10 @@
       "day": null,
       "is_journal": false,
       "key": "bar",
+      "link": {
+        "kind": "page",
+        "name": "Bar"
+      },
       "name": "Bar",
       "target": {
         "id": "pages/foo.md",
@@ -127,6 +139,10 @@
       "day": null,
       "is_journal": false,
       "key": "linker",
+      "link": {
+        "kind": "page",
+        "name": "linker"
+      },
       "name": "linker",
       "target": {
         "id": "pages/linker.md",
@@ -138,6 +154,10 @@
       "day": 20261026,
       "is_journal": true,
       "key": "oct 26th, 2026",
+      "link": {
+        "kind": "journal",
+        "name": "Oct 26th, 2026"
+      },
       "name": "Oct 26th, 2026",
       "target": {
         "id": "journals/2026_10_26.md",

@@ -2058,19 +2058,22 @@ impl Store {
             if let Some((doc, source)) = self.held_page(&path)? {
                 return self.page_read(id, doc, source);
             }
-            let entry = self.page_entry(&id, &path)?;
-            let doc = self.parse_page(&path, &entry, false)?;
+            let doc = self.parse_page(&path, None)?;
             return self.page_read(id, doc, PageReadSource::Disk);
         }
         let (_writer, before_generation, id, path) = self.ready_page_writer(id)?;
         if let Some((doc, source)) = self.held_page(&path)? {
             return self.page_read(id, doc, source);
         }
+        if matches!(*self.load.status.lock().unwrap(), LoadStatus::Failed(_)) {
+            let doc = self.parse_page(&path, None)?;
+            return self.page_read(id, doc, PageReadSource::Disk);
+        }
         let entry = self.page_entry(&id, &path)?;
         let canonical = self.canonical_claim(&entry);
         let read = self.page_read(
             id,
-            self.parse_page(&path, &entry, canonical)?,
+            self.parse_page(&path, canonical.then_some(&entry))?,
             PageReadSource::Disk,
         )?;
         if self.graph.cache_generation() != before_generation
@@ -2083,10 +2086,10 @@ impl Store {
 
     /// Resolve a page name (or alias) and read its file: the one page-by-name door (GH #623).
     /// Once ready, cost O(index lookup + page bytes). Before ready or after a failed parse,
-    /// a title-only or uncached lookup can build an O(P) file/preamble index (P graph files),
-    /// reused until invalidation. Before ready, a file claiming the name opens without
-    /// waiting for the graph index (the file-name listing below): claimant order ranks a
-    /// file named for the page above any `title::` claimant, as the index would.
+    /// an uncached lookup builds an O(P) complete claimant index (one
+    /// preamble per non-journal file or candidate), reused until invalidation.
+    /// A file claim opens without waiting for the background parse. Cold and
+    /// ready reads use the same claimant order, including title-only claims.
     /// An alias or an unclaimed page waits
     /// for the graph, never absent early; an unclaimed journal day does not (no aliases)
     /// unless a launch checkpoint is served (`first_view_pending`).
@@ -2102,25 +2105,25 @@ impl Store {
     /// unclaimed (an owner before its first publication, an unreadable file)
     /// answers with its own read or read error, never an empty day.
     pub fn page_named(&self, name: &str, kind: PageKind) -> Result<Option<PageRead>, StoreError> {
+        let journal = kind == PageKind::Journal;
         if matches!(*self.load.status.lock().unwrap(), LoadStatus::Loading) {
-            let read = self.page_named_from_files(name, kind)?;
+            let read = self.page_named_from_files(name, journal)?;
             // Journal/date-page fallback claimants are files only (BqbeQ);
             // a served checkpoint answers an unclaimed day itself.
-            if read.is_some() || (kind == PageKind::Journal && self.first_view_pending()) {
+            if read.is_some() || (journal && self.first_view_pending()) {
                 return Ok(read);
             }
         }
-        let journal = kind == PageKind::Journal;
         let mut looked = false;
         let mut day = None;
         let (view, resolved) = loop {
             let view = match self.whole_graph() {
                 Ok(view) => view,
-                Err(LoadError::Failed { .. }) => return self.page_named_from_files(name, kind),
+                Err(LoadError::Failed { .. }) => return self.page_named_from_files(name, journal),
                 Err(LoadError::Closed) => return Err(StoreError::Closed),
             };
             let resolved = view.resolve(name, journal);
-            if journal && !looked && matches!(resolved, Resolved::Absent { .. }) {
+            if !looked && matches!(resolved, Resolved::Absent { .. }) {
                 looked = true;
                 day = self.reconcile_unindexed_day(name, &view)?;
                 if day.is_some() {
@@ -2137,7 +2140,7 @@ impl Store {
                 None => return Ok(None),
             },
             Resolved::Absent { .. } => {
-                return day.map_or(Ok(None), |day| self.unindexed_day_read(day, &view))
+                return day.map_or(Ok(None), |day| self.unindexed_day_read(day))
             }
         };
         drop(view);

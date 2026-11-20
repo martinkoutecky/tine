@@ -484,7 +484,10 @@ fn assert_private_pages_matter(store: &Store) {
         .iter()
         .find(|row| row.name == "Empty Name")
         .unwrap();
-    assert!(!empty.empty_alias && empty.link.is_none(), "{empty:?}");
+    assert!(!empty.empty_alias, "{empty:?}");
+    let opening = empty.link.as_ref().expect("the store carries the opening");
+    assert_eq!(opening.name, "Empty Name");
+    assert!(!opening.is_journal);
 }
 
 /// The request selecting the exported pages by name; `host` is the page the

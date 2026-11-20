@@ -152,6 +152,10 @@
       "day": null,
       "is_journal": false,
       "key": "%e9",
+      "link": {
+        "kind": "page",
+        "name": "%E9"
+      },
       "name": "%E9",
       "target": {
         "id": "pages/%E9.md",
@@ -163,6 +167,10 @@
       "day": null,
       "is_journal": false,
       "key": "a",
+      "link": {
+        "kind": "page",
+        "name": "a"
+      },
       "name": "a",
       "namespace_parent": true,
       "target": {
@@ -174,6 +182,10 @@
       "day": null,
       "is_journal": false,
       "key": "a.b",
+      "link": {
+        "kind": "page",
+        "name": "a.b"
+      },
       "name": "a.b",
       "target": {
         "id": "pages/a.b.md",
@@ -185,6 +197,10 @@
       "day": null,
       "is_journal": false,
       "key": "a/b",
+      "link": {
+        "kind": "page",
+        "name": "a/b"
+      },
       "name": "a/b",
       "target": {
         "id": "pages/a___b.md",
@@ -196,6 +212,10 @@
       "day": null,
       "is_journal": false,
       "key": "bad%e9",
+      "link": {
+        "kind": "page",
+        "name": "bad%E9"
+      },
       "name": "bad%E9",
       "target": {
         "id": "pages/bad%E9.md",
@@ -207,6 +227,10 @@
       "day": null,
       "is_journal": false,
       "key": "café",
+      "link": {
+        "kind": "page",
+        "name": "café"
+      },
       "name": "café",
       "target": {
         "id": "pages/caf%C3%A9.md",
@@ -218,6 +242,10 @@
       "day": null,
       "is_journal": false,
       "key": "lead",
+      "link": {
+        "kind": "page",
+        "name": "lead"
+      },
       "name": "lead",
       "target": {
         "id": "pages/___lead.md",
@@ -229,6 +257,10 @@
       "day": null,
       "is_journal": false,
       "key": "links",
+      "link": {
+        "kind": "page",
+        "name": "links"
+      },
       "name": "links",
       "target": {
         "id": "pages/links.md",
@@ -240,6 +272,10 @@
       "day": null,
       "is_journal": false,
       "key": "trail",
+      "link": {
+        "kind": "page",
+        "name": "trail"
+      },
       "name": "trail",
       "target": {
         "id": "pages/trail___.md",
@@ -251,6 +287,10 @@
       "day": null,
       "is_journal": false,
       "key": "x",
+      "link": {
+        "kind": "page",
+        "name": "x"
+      },
       "name": "x",
       "namespace_parent": true,
       "target": {
@@ -262,6 +302,10 @@
       "day": null,
       "is_journal": false,
       "key": "x/y",
+      "link": {
+        "kind": "page",
+        "name": "x/y"
+      },
       "name": "x/y",
       "target": {
         "id": "pages/x______y.md",

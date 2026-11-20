@@ -1,0 +1,15 @@
+{
+  "config": {
+    "journalTitleFormat": "É yyyy-MM-dd"
+  },
+  "files": {
+    "pages/Diary.md": "title:: É 2026-11-02\n\n- the day\n",
+    "pages/É 2026-11-02.md": "- another claim\n",
+    "pages/Notes.md": "- title [[É 2026-11-02]]\n- variant [[É 2026-11-02]]\n"
+  },
+  "navigate": [
+    "É 2026-11-02",
+    "É 2026-11-02",
+    "2026-11-02"
+  ]
+}

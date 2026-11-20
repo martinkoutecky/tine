@@ -66,6 +66,10 @@
       "day": null,
       "is_journal": false,
       "key": "a.b",
+      "link": {
+        "kind": "page",
+        "name": "a.b"
+      },
       "name": "a.b",
       "target": {
         "id": "pages/a.b.org",
@@ -77,6 +81,10 @@
       "day": null,
       "is_journal": false,
       "key": "ab",
+      "link": {
+        "kind": "page",
+        "name": "ab"
+      },
       "name": "ab",
       "target": {
         "id": "pages/ab.md",
@@ -87,6 +95,10 @@
       "day": null,
       "is_journal": false,
       "key": "note",
+      "link": {
+        "kind": "page",
+        "name": "note"
+      },
       "name": "note",
       "target": {
         "id": "pages/note.org",
@@ -98,6 +110,10 @@
       "day": null,
       "is_journal": false,
       "key": "ten",
+      "link": {
+        "kind": "page",
+        "name": "ten"
+      },
       "name": "ten",
       "target": {
         "id": "pages/ten.md",
@@ -108,6 +124,10 @@
       "day": null,
       "is_journal": false,
       "key": "ten/child",
+      "link": {
+        "kind": "page",
+        "name": "Ten/Child"
+      },
       "name": "Ten/Child",
       "target": {
         "id": "pages/Ten___Child.org",

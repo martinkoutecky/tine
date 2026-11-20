@@ -153,11 +153,7 @@ impl FilelessName {
     /// The same fallback used by links. Real claims and aliases are checked
     /// by the caller before asking what an otherwise unclaimed name means.
     pub(crate) fn new(format: &JournalFormat, name: &str) -> Self {
-        let day = name
-            .bytes()
-            .any(|b| b.is_ascii_digit())
-            .then(|| format.parse_text(name))
-            .flatten();
+        let day = format.parse_text(name);
         Self {
             name: day.map_or_else(|| name.to_owned(), |day| format.title(day)),
             opening_name: None,

@@ -246,6 +246,8 @@ mod journal_guide_tests {
             "Settings → **Journals** shows the format in use and why",
             "Tine changes no file and keeps the setting in `config.edn` as it is",
             "A link such as `[[11-02]]` is then an ordinary page link.",
+            "Journal links use the same date for case, Unicode composition and surrounding slash variants",
+            "A filename format that cannot read each rendered day back from that page name is used for physical journal file names only.",
         ] {
             assert!(journals.contains(promise), "missing: {promise}");
         }

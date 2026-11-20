@@ -303,16 +303,7 @@
     "randomGraphs": 0
   },
   "frontend": {
-    "fixtures": {
-      "yl16-decomposed-literal-title": [
-        "frontend owner navigationName [[2026-11-02]]: backend opens journals/2026_11_02.md (É 2026-11-02), frontend names É 2026-11-02"
-      ],
-      "yl18-undated-journal-shares-the-days-key": [
-        "frontend owner navigationName [[2026-11-02]]: backend opens journals/2026_11_02.md (/20261102/), frontend names 20261102",
-        "frontend owner ownerPath journal [[/20261102/]]: backend opens journals/2026_11_02.md, ownerPath gives journals/20261102.md",
-        "frontend owner ownerPath journal [[20261102]]: backend opens journals/2026_11_02.md, ownerPath gives journals/20261102.md"
-      ]
-    }
+    "fixtures": {}
   },
   "frontendCounts": {
     "fixtures": {
@@ -522,14 +513,31 @@
         "frontend all pages: row journals/2026_11_02.md (count 2) owns no model page"
       ],
       "yl16-decomposed-literal-title": [
-        "frontend all pages: row journals/2026_11_02.md (count 2) owns no model page",
-        "frontend page list: lists \"é 2026-11-02\", which is no model page"
+        "frontend all pages: row journals/2026_11_02.md (count 2) owns no model page"
       ],
       "yl17-slashed-compact-title": [
         "frontend all pages: row journals/2026_11_02.md (count 2) owns no model page"
       ],
       "yl18-undated-journal-shares-the-days-key": [
-        "frontend all pages: row journals/20261102.md (count —) owns no model page"
+        "frontend all pages: row journals/20261102.md (count 2) owns no model page"
+      ],
+      "yl24-case-header-md": [
+        "frontend all pages: row pages/Diary.md (count 2) owns no model page"
+      ],
+      "yl25-case-header-org": [
+        "frontend all pages: row pages/Diary.org (count 2) owns no model page"
+      ],
+      "yl26-composition-header-md": [
+        "frontend all pages: row pages/Diary.md (count 2) owns no model page"
+      ],
+      "yl27-composition-header-org": [
+        "frontend all pages: row pages/Diary.org (count 2) owns no model page"
+      ],
+      "yl28-slash-header-md": [
+        "frontend all pages: row pages/20261102.md (count 2) owns no model page"
+      ],
+      "yl29-slash-header-org": [
+        "frontend all pages: row pages/20261102.md (count 2) owns no model page"
       ],
       "yl3-valid-alternate-title": [
         "frontend all pages: row journals/2026_11_02.md (count 1) owns no model page"
@@ -706,42 +714,7 @@
     "random": {},
     "randomGraphs": 0
   },
-  "known": {
-    "refs keyed by folded name; card PVTI_lAHOAAbLVc4BhPsyzhKUCJo": {
-      "yl15-case-folded-literal-title": [
-        "date answerers: query `journal` fact misses a native date spelling: query \"any(direct_refs, journal = true)\": native list reads [\"X 2026_02_11\", \"X 2026_02_11\"] in block (\"pages/Notes.md\", 0) as a day, the query does not"
-      ],
-      "yl16-decomposed-literal-title": [
-        "date answerers: query `journal` fact misses a native date spelling: query \"any(direct_refs, journal = true)\": native list reads [\"É 2026-11-02\", \"É 2026-11-02\"] in block (\"pages/Notes.md\", 0) as a day, the query does not",
-        "links: link (\"page\", \"notes\") -> (\"journal\", \"Day 2026-11-02\"): model=true, Tine=false",
-        "links: link (\"page\", \"notes\") -> (\"journal\", \"é 2026-11-02\"): model=false, Tine=true"
-      ],
-      "yl17-slashed-compact-title": [
-        "date answerers: query `journal` fact misses a native date spelling: query \"any(direct_refs, journal = true)\": native list reads [\"/20261102/\", \"/20261102/\"] in block (\"pages/Notes.md\", 0) as a day, the query does not",
-        "links: link (\"page\", \"notes\") -> (\"journal\", \"20261102\"): model=false, Tine=true",
-        "links: link (\"page\", \"notes\") -> (\"journal\", \"Day 2026-11-02\"): model=true, Tine=false",
-        "namespace tree: (\"journal\", \"Day 2026-11-02\"): model None, Tine Some({(\"journal\", \"Day 2026-11-02\")})",
-        "tree: (\"journal\", \"Day 2026-11-02\"): model Some({}), Tine Some({(\"journal\", \"Day 2026-11-02\")})"
-      ],
-      "yl18-undated-journal-shares-the-days-key": [
-        "K1 (§2.1 file claim): conflicts: \"20261102\" conflicted: model=false, Tine=true",
-        "K1 (§2.1 file claim): links: link (\"page\", \"notes\") -> (\"journal\", \"20261102\"): model=false, Tine=true",
-        "K1 (§2.1 file claim): namespace tree: (\"journal\", \"20261102\"): model None, Tine Some({(\"journal\", \"Day 2026-11-02\")})",
-        "K1 (§2.1 file claim): pages: page (\"journal\", \"20261102\"): model=false, Tine=true",
-        "K1 (§2.1 file claim): tree: (\"journal\", \"20261102\"): model None, Tine Some({(\"journal\", \"Day 2026-11-02\")})",
-        "K3 (§2.2 journals directory first): counts: (\"journal\", \"Day 2026-11-02\") (journals/20261102.md): model 2, Tine None",
-        "K3 (§2.2 journals directory first): direct lookup holder: cold \"/20261102/\": model (\"journal\", \"Day 2026-11-02\") in Some(\"journals/20261102.md\"), Tine Some((\"journal\", \"Day 2026-11-02\")) in Some(\"journals/2026_11_02.md\")",
-        "K3 (§2.2 journals directory first): direct lookup holder: cold \"2026-11-02\": model (\"journal\", \"Day 2026-11-02\") in Some(\"journals/20261102.md\"), Tine Some((\"journal\", \"Day 2026-11-02\")) in Some(\"journals/2026_11_02.md\")",
-        "K3 (§2.2 journals directory first): direct lookup holder: cold \"20261102\": model (\"journal\", \"Day 2026-11-02\") in Some(\"journals/20261102.md\"), Tine Some((\"journal\", \"Day 2026-11-02\")) in Some(\"journals/2026_11_02.md\")",
-        "K3 (§2.2 journals directory first): direct lookup holder: ready \"/20261102/\": model (\"journal\", \"Day 2026-11-02\") in Some(\"journals/20261102.md\"), Tine Some((\"journal\", \"Day 2026-11-02\")) in Some(\"journals/2026_11_02.md\")",
-        "K3 (§2.2 journals directory first): direct lookup holder: ready \"2026-11-02\": model (\"journal\", \"Day 2026-11-02\") in Some(\"journals/20261102.md\"), Tine Some((\"journal\", \"Day 2026-11-02\")) in Some(\"journals/2026_11_02.md\")",
-        "K3 (§2.2 journals directory first): direct lookup holder: ready \"20261102\": model (\"journal\", \"Day 2026-11-02\") in Some(\"journals/20261102.md\"), Tine Some((\"journal\", \"Day 2026-11-02\")) in Some(\"journals/2026_11_02.md\")",
-        "date answerers: query `journal` fact misses a native date spelling: query \"any(direct_refs, journal = true)\": native list reads [\"/20261102/\", \"/20261102/\"] in block (\"pages/Notes.md\", 0) as a day, the query does not",
-        "links: link (\"page\", \"notes\") -> (\"journal\", \"Day 2026-11-02\"): model=true, Tine=false",
-        "namespace tree: (\"journal\", \"Day 2026-11-02\"): model None, Tine Some({})"
-      ]
-    }
-  },
+  "known": {},
   "names": {
     "fixtures": {
       "n2-triple-lowbar-codec": [
@@ -795,6 +768,24 @@
       "yl1-yearless-title-falls-back": [
         "pages/physical.md: launch walk \"physical\", answer Some(\"Nov 2nd, 2026\")"
       ],
+      "yl24-case-header-md": [
+        "pages/Diary.md: launch walk \"Diary\", answer Some(\"X 2026_02_11\")"
+      ],
+      "yl25-case-header-org": [
+        "pages/Diary.org: launch walk \"Diary\", answer Some(\"X 2026_02_11\")"
+      ],
+      "yl26-composition-header-md": [
+        "pages/Diary.md: launch walk \"Diary\", answer Some(\"É 2026-11-02\")"
+      ],
+      "yl27-composition-header-org": [
+        "pages/Diary.org: launch walk \"Diary\", answer Some(\"É 2026-11-02\")"
+      ],
+      "yl28-slash-header-md": [
+        "pages/Diary.md: launch walk \"Diary\", answer Some(\"/20261102/\")"
+      ],
+      "yl29-slash-header-org": [
+        "pages/Diary.org: launch walk \"Diary\", answer Some(\"/20261102/\")"
+      ],
       "yl3-valid-alternate-title": [
         "pages/physical.md: launch walk \"physical\", answer Some(\"02.11.2026\")"
       ],
@@ -825,10 +816,10 @@
     "r1-title-names-page": "The \"launch walk\" lines are declared, not bugs (CM step 2 batch 3, A7): page_identity.rs `launch_listing_walk` names a file by its file name as a provisional name, replaced by the answerer (`name_from`) for every file the launch reads; an unreadable file keeps the file-name name, as `discover_page_name` does, and is recorded as a discovery failure.",
     "r10-relative-real-pages": "The \"launch walk\" lines are declared, not bugs (CM step 2 batch 3, A7): page_identity.rs `launch_listing_walk` names a file by its file name as a provisional name, replaced by the answerer (`name_from`) for every file the launch reads; an unreadable file keeps the file-name name, as `discover_page_name` does, and is recorded as a discovery failure.",
     "r10-url-real-pages": "The \"launch walk\" lines are declared, not bugs (CM step 2 batch 3, A7): page_identity.rs `launch_listing_walk` names a file by its file name as a provisional name, replaced by the answerer (`name_from`) for every file the launch reads; an unreadable file keeps the file-name name, as `discover_page_name` does, and is recorded as a discovery failure.",
-    "yl15-case-folded-literal-title": "A name is its text key (page_key folds case, composition and boundary slashes), so a case, composition or slash variant of a day's title is that day (the confirmed model; D-20261119-YL round 4b). Direct lookup (resolve, page_named, the file listing) follows it on this branch (ClaimLookup::by_key). The KNOWN rows (part `known`) are references keyed by the folded name: the reference-day query fact, the link table and the namespace trees still read the folded key's text as typed, not as the day; pre-existing on develop, card PVTI_lAHOAAbLVc4BhPsyzhKUCJo. The `frontendCounts` All Pages row of the day's file that owns no model page is the conflicted day (the ordinary page claims it too), as in yl1 and yl3.",
-    "yl16-decomposed-literal-title": "A name is its text key (page_key folds case, composition and boundary slashes), so a case, composition or slash variant of a day's title is that day (the confirmed model; D-20261119-YL round 4b). Direct lookup (resolve, page_named, the file listing) follows it on this branch (ClaimLookup::by_key). The KNOWN rows (part `known`) are references keyed by the folded name: the reference-day query fact, the link table and the namespace trees still read the folded key's text as typed, not as the day; pre-existing on develop, card PVTI_lAHOAAbLVc4BhPsyzhKUCJo. The `frontend` navigationName row is the same family in the frontend's page index: the day's key also holds the ordinary page `É 2026-11-02`, and the frontend names the day by that entry's spelling. The `frontendCounts` All Pages row of the day's file that owns no model page is the conflicted day (the ordinary page claims it too), as in yl1 and yl3. Its page-list row `é 2026-11-02` is the ordinary page's folded name, the KNOWN family.",
-    "yl17-slashed-compact-title": "A name is its text key (page_key folds case, composition and boundary slashes), so a case, composition or slash variant of a day's title is that day (the confirmed model; D-20261119-YL round 4b). Direct lookup (resolve, page_named, the file listing) follows it on this branch (ClaimLookup::by_key). The KNOWN rows (part `known`) are references keyed by the folded name: the reference-day query fact, the link table and the namespace trees still read the folded key's text as typed, not as the day; pre-existing on develop, card PVTI_lAHOAAbLVc4BhPsyzhKUCJo. The `frontendCounts` All Pages row of the day's file that owns no model page is the conflicted day (the ordinary page claims it too), as in yl1 and yl3.",
-    "yl18-undated-journal-shares-the-days-key": "A name is its text key (page_key folds case, composition and boundary slashes), so a case, composition or slash variant of a day's title is that day (the confirmed model; D-20261119-YL round 4b). Direct lookup (resolve, page_named, the file listing) follows it on this branch (ClaimLookup::by_key). The KNOWN rows (part `known`) are references keyed by the folded name: the reference-day query fact, the link table and the namespace trees still read the folded key's text as typed, not as the day; pre-existing on develop, card PVTI_lAHOAAbLVc4BhPsyzhKUCJo. The K1/K3 rows (part `known`, the same card) are the same folded-name family for a file name, not fixed on this branch: K reads journals/20261102.md, whose name folds to the day's title, as a claimant of the day that wins by path order; Tine classifies that file by its literal name `20261102`, an undated journal page, which never holds the day (round 1: no undated or other-day file takes a day), so every spelling of the day opens journals/2026_11_02.md (K3 direct lookup holder, counts) and the undated page stays a page of its own (K1). The `frontend` rows are that split in the frontend's page index: its journal bucket for the key lists the undated file first (ownerPath) and names the day by it (navigationName); the published getPage rows are the same index read by the static site. Its `frontendCounts` row journals/20261102.md is the undated page Tine shows conflicted with the day (K1 conflicts row)."
+    "yl15-case-folded-literal-title": "The title and its case variant fold to one November 2 date key. The pages-directory file is a second claimant of that day. The journals-directory file wins.",
+    "yl16-decomposed-literal-title": "The composed and decomposed spellings fold to one November 2 date key. The pages-directory file is a second claimant of that day. The journals-directory file wins.",
+    "yl17-slashed-compact-title": "The title's boundary slashes fold away. The bare stem claims the same day as the journals-directory file, which wins. The trailing slash supplies no edge from the day to itself.",
+    "yl18-undated-journal-shares-the-days-key": "The raw stem 20261102 misses the physical stem routes. Its folded text claim names November 2 under /yyyyMMdd/, so journals/20261102.md wins both spellings by path order. The frontend counts case omits the conflicted model page, while All Pages displays the active physical file. The unexported typed ISO spelling has no published lookup row."
   },
   "storeK": {
     "fixtures": {
@@ -1279,40 +1270,24 @@
       "yl12-swapped-numeric-title": [],
       "yl13-legacy-refused-title-file-keeps-its-day": [],
       "yl14-two-digit-file-format-is-a-text-route": [],
-      "yl15-case-folded-literal-title": [
-        "KNOWN (refs keyed by folded name; card PVTI_lAHOAAbLVc4BhPsyzhKUCJo): date answerers: query `journal` fact misses a native date spelling: query \"any(direct_refs, journal = true)\": native list reads [\"X 2026_02_11\", \"X 2026_02_11\"] in block (\"pages/Notes.md\", 0) as a day, the query does not"
-      ],
-      "yl16-decomposed-literal-title": [
-        "KNOWN (refs keyed by folded name; card PVTI_lAHOAAbLVc4BhPsyzhKUCJo): date answerers: query `journal` fact misses a native date spelling: query \"any(direct_refs, journal = true)\": native list reads [\"É 2026-11-02\", \"É 2026-11-02\"] in block (\"pages/Notes.md\", 0) as a day, the query does not",
-        "KNOWN (refs keyed by folded name; card PVTI_lAHOAAbLVc4BhPsyzhKUCJo): links: link (\"page\", \"notes\") -> (\"journal\", \"Day 2026-11-02\"): model=true, Tine=false",
-        "KNOWN (refs keyed by folded name; card PVTI_lAHOAAbLVc4BhPsyzhKUCJo): links: link (\"page\", \"notes\") -> (\"journal\", \"é 2026-11-02\"): model=false, Tine=true"
-      ],
-      "yl17-slashed-compact-title": [
-        "KNOWN (refs keyed by folded name; card PVTI_lAHOAAbLVc4BhPsyzhKUCJo): date answerers: query `journal` fact misses a native date spelling: query \"any(direct_refs, journal = true)\": native list reads [\"/20261102/\", \"/20261102/\"] in block (\"pages/Notes.md\", 0) as a day, the query does not",
-        "KNOWN (refs keyed by folded name; card PVTI_lAHOAAbLVc4BhPsyzhKUCJo): links: link (\"page\", \"notes\") -> (\"journal\", \"20261102\"): model=false, Tine=true",
-        "KNOWN (refs keyed by folded name; card PVTI_lAHOAAbLVc4BhPsyzhKUCJo): links: link (\"page\", \"notes\") -> (\"journal\", \"Day 2026-11-02\"): model=true, Tine=false",
-        "KNOWN (refs keyed by folded name; card PVTI_lAHOAAbLVc4BhPsyzhKUCJo): namespace tree: (\"journal\", \"Day 2026-11-02\"): model None, Tine Some({(\"journal\", \"Day 2026-11-02\")})",
-        "KNOWN (refs keyed by folded name; card PVTI_lAHOAAbLVc4BhPsyzhKUCJo): tree: (\"journal\", \"Day 2026-11-02\"): model Some({}), Tine Some({(\"journal\", \"Day 2026-11-02\")})"
-      ],
-      "yl18-undated-journal-shares-the-days-key": [
-        "KNOWN (refs keyed by folded name; card PVTI_lAHOAAbLVc4BhPsyzhKUCJo): K1 (§2.1 file claim): conflicts: \"20261102\" conflicted: model=false, Tine=true",
-        "KNOWN (refs keyed by folded name; card PVTI_lAHOAAbLVc4BhPsyzhKUCJo): K1 (§2.1 file claim): links: link (\"page\", \"notes\") -> (\"journal\", \"20261102\"): model=false, Tine=true",
-        "KNOWN (refs keyed by folded name; card PVTI_lAHOAAbLVc4BhPsyzhKUCJo): K1 (§2.1 file claim): namespace tree: (\"journal\", \"20261102\"): model None, Tine Some({(\"journal\", \"Day 2026-11-02\")})",
-        "KNOWN (refs keyed by folded name; card PVTI_lAHOAAbLVc4BhPsyzhKUCJo): K1 (§2.1 file claim): pages: page (\"journal\", \"20261102\"): model=false, Tine=true",
-        "KNOWN (refs keyed by folded name; card PVTI_lAHOAAbLVc4BhPsyzhKUCJo): K1 (§2.1 file claim): tree: (\"journal\", \"20261102\"): model None, Tine Some({(\"journal\", \"Day 2026-11-02\")})",
-        "KNOWN (refs keyed by folded name; card PVTI_lAHOAAbLVc4BhPsyzhKUCJo): K3 (§2.2 journals directory first): counts: (\"journal\", \"Day 2026-11-02\") (journals/20261102.md): model 2, Tine None",
-        "KNOWN (refs keyed by folded name; card PVTI_lAHOAAbLVc4BhPsyzhKUCJo): K3 (§2.2 journals directory first): direct lookup holder: cold \"/20261102/\": model (\"journal\", \"Day 2026-11-02\") in Some(\"journals/20261102.md\"), Tine Some((\"journal\", \"Day 2026-11-02\")) in Some(\"journals/2026_11_02.md\")",
-        "KNOWN (refs keyed by folded name; card PVTI_lAHOAAbLVc4BhPsyzhKUCJo): K3 (§2.2 journals directory first): direct lookup holder: cold \"2026-11-02\": model (\"journal\", \"Day 2026-11-02\") in Some(\"journals/20261102.md\"), Tine Some((\"journal\", \"Day 2026-11-02\")) in Some(\"journals/2026_11_02.md\")",
-        "KNOWN (refs keyed by folded name; card PVTI_lAHOAAbLVc4BhPsyzhKUCJo): K3 (§2.2 journals directory first): direct lookup holder: cold \"20261102\": model (\"journal\", \"Day 2026-11-02\") in Some(\"journals/20261102.md\"), Tine Some((\"journal\", \"Day 2026-11-02\")) in Some(\"journals/2026_11_02.md\")",
-        "KNOWN (refs keyed by folded name; card PVTI_lAHOAAbLVc4BhPsyzhKUCJo): K3 (§2.2 journals directory first): direct lookup holder: ready \"/20261102/\": model (\"journal\", \"Day 2026-11-02\") in Some(\"journals/20261102.md\"), Tine Some((\"journal\", \"Day 2026-11-02\")) in Some(\"journals/2026_11_02.md\")",
-        "KNOWN (refs keyed by folded name; card PVTI_lAHOAAbLVc4BhPsyzhKUCJo): K3 (§2.2 journals directory first): direct lookup holder: ready \"2026-11-02\": model (\"journal\", \"Day 2026-11-02\") in Some(\"journals/20261102.md\"), Tine Some((\"journal\", \"Day 2026-11-02\")) in Some(\"journals/2026_11_02.md\")",
-        "KNOWN (refs keyed by folded name; card PVTI_lAHOAAbLVc4BhPsyzhKUCJo): K3 (§2.2 journals directory first): direct lookup holder: ready \"20261102\": model (\"journal\", \"Day 2026-11-02\") in Some(\"journals/20261102.md\"), Tine Some((\"journal\", \"Day 2026-11-02\")) in Some(\"journals/2026_11_02.md\")",
-        "KNOWN (refs keyed by folded name; card PVTI_lAHOAAbLVc4BhPsyzhKUCJo): date answerers: query `journal` fact misses a native date spelling: query \"any(direct_refs, journal = true)\": native list reads [\"/20261102/\", \"/20261102/\"] in block (\"pages/Notes.md\", 0) as a day, the query does not",
-        "KNOWN (refs keyed by folded name; card PVTI_lAHOAAbLVc4BhPsyzhKUCJo): links: link (\"page\", \"notes\") -> (\"journal\", \"Day 2026-11-02\"): model=true, Tine=false",
-        "KNOWN (refs keyed by folded name; card PVTI_lAHOAAbLVc4BhPsyzhKUCJo): namespace tree: (\"journal\", \"Day 2026-11-02\"): model None, Tine Some({})"
-      ],
+      "yl15-case-folded-literal-title": [],
+      "yl16-decomposed-literal-title": [],
+      "yl17-slashed-compact-title": [],
+      "yl18-undated-journal-shares-the-days-key": [],
+      "yl19-case-collision": [],
       "yl2-yearless-label-is-an-ordinary-alias": [],
+      "yl20-composition-collision": [],
+      "yl21-leading-slash-collision": [],
+      "yl22-trailing-slash-collision": [],
+      "yl23-paired-slash-collision": [],
+      "yl24-case-header-md": [],
+      "yl25-case-header-org": [],
+      "yl26-composition-header-md": [],
+      "yl27-composition-header-org": [],
+      "yl28-slash-header-md": [],
+      "yl29-slash-header-org": [],
       "yl3-valid-alternate-title": [],
+      "yl30-folded-title-refusal": [],
       "yl4-two-digit-year-falls-back": [],
       "yl5-slash-date-under-alternate-title": [],
       "yl6-slash-date-under-fallback-title": [],

@@ -160,6 +160,40 @@ impl Graph {
         }
     }
 
+    /// Complete physical claims for a cold named read. On a miss, walk once
+    /// and read at most one preamble per non-journal file. Warm lookups share
+    /// the generation's claimant map.
+    pub(crate) fn complete_name_claimants(&self) -> Arc<ClaimantMap> {
+        loop {
+            let stamp = self.name_stamp();
+            if let Some((gen, index)) = self.derived.find_entry_cache.read().unwrap().as_ref() {
+                if *gen == stamp.0 && index.pages_loaded && index.journals_loaded {
+                    return Arc::clone(&index.entries);
+                }
+            }
+            let listed = self.certify(list_graph_pages(self), None);
+            let entries = Arc::new(page_claimants(
+                &self.current_config().journals_dir,
+                &listed.0,
+            ));
+            if self
+                .install_name_memo(stamp, || {
+                    *self.derived.find_entry_cache.write().unwrap() = Some((
+                        stamp.0,
+                        FindEntryIndex {
+                            entries: Arc::clone(&entries),
+                            pages_loaded: true,
+                            journals_loaded: true,
+                        },
+                    ));
+                })
+                .is_some()
+            {
+                return entries;
+            }
+        }
+    }
+
     /// A direct path read can observe a new or retitled file before the
     /// watcher. A live file missing from its bucket joins it when no other
     /// bucket can name it: a journals-directory file (its file name is its

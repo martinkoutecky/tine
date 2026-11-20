@@ -8,12 +8,12 @@
   "counts": [
     [
       [
-        "pages/Notes.md",
-        0
-      ],
-      [
         "journals/2026_11_02.md",
         2
+      ],
+      [
+        "pages/Notes.md",
+        0
       ]
     ],
     []
@@ -23,6 +23,10 @@
       "day": null,
       "is_journal": false,
       "key": "notes",
+      "link": {
+        "kind": "page",
+        "name": "Notes"
+      },
       "name": "Notes",
       "target": {
         "id": "pages/Notes.md",
@@ -34,24 +38,11 @@
       "day": 20261102,
       "is_journal": true,
       "key": "x 2026_02_11",
-      "name": "X 2026_02_11",
-      "target": {
-        "id": "journals/2026_11_02.md",
-        "kind": "existing",
-        "others": [
-          "pages/x 2026_02_11.md"
-        ]
-      }
-    },
-    {
-      "day": 20261102,
-      "is_journal": true,
-      "key": "x 2026_02_11",
       "link": {
         "kind": "journal",
         "name": "X 2026_02_11"
       },
-      "name": "x 2026_02_11",
+      "name": "X 2026_02_11",
       "target": {
         "id": "journals/2026_11_02.md",
         "kind": "existing",
@@ -69,8 +60,7 @@
   "journalTitleFormat": "X yyyy_dd_MM",
   "keyOf": {
     "Notes": "notes",
-    "X 2026_02_11": "Day 2026-11-02",
-    "x 2026_02_11": "x 2026_02_11"
+    "X 2026_02_11": "Day 2026-11-02"
   },
   "namespaceTree": [],
   "open": {
@@ -190,7 +180,11 @@
         "journal",
         "Day 2026-11-02"
       ],
-      "day": null,
+      "day": [
+        2026,
+        11,
+        2
+      ],
       "model": [
         "journal",
         "Day 2026-11-02"

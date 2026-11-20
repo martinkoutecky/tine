@@ -94,6 +94,10 @@
       "day": null,
       "is_journal": false,
       "key": "2026",
+      "link": {
+        "kind": "page",
+        "name": "2026"
+      },
       "name": "2026",
       "target": {
         "id": "pages/2026.md",
@@ -105,6 +109,10 @@
       "day": null,
       "is_journal": false,
       "key": "2026/10",
+      "link": {
+        "kind": "page",
+        "name": "2026/10"
+      },
       "name": "2026/10",
       "namespace_parent": true,
       "target": {
@@ -116,6 +124,10 @@
       "day": null,
       "is_journal": false,
       "key": "2026/x",
+      "link": {
+        "kind": "page",
+        "name": "2026/x"
+      },
       "name": "2026/x",
       "target": {
         "id": "pages/2026%2Fx.md",
@@ -126,6 +138,10 @@
       "day": 20261026,
       "is_journal": true,
       "key": "26.10.2026",
+      "link": {
+        "kind": "journal",
+        "name": "26.10.2026"
+      },
       "name": "26.10.2026",
       "target": {
         "id": "pages/dayphysical.md",
@@ -137,6 +153,10 @@
       "day": null,
       "is_journal": false,
       "key": "r",
+      "link": {
+        "kind": "page",
+        "name": "R"
+      },
       "name": "R",
       "target": {
         "id": "pages/R.md",

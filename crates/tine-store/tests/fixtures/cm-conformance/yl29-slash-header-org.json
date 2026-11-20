@@ -1,0 +1,15 @@
+{
+  "config": {
+    "journalTitleFormat": "/yyyyMMdd/"
+  },
+  "files": {
+    "pages/Diary.org": "#+TITLE: /20261102/\n\n* the day\n",
+    "pages/20261102.md": "- another claim\n",
+    "pages/Notes.md": "- title [[/20261102/]]\n- variant [[20261102]]\n"
+  },
+  "navigate": [
+    "/20261102/",
+    "20261102",
+    "2026-11-02"
+  ]
+}

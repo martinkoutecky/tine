@@ -558,15 +558,25 @@ impl GraphSpec {
     /// The graph's `config.edn` entries (none when the fixture configures
     /// nothing).
     fn config_entries(&self) -> Vec<String> {
+        use tine_core::edn::{to_string, Edn};
         let mut config = Vec::new();
         if let Some(f) = &self.favorites_page {
-            config.push(format!(":tine/favorites-page {f:?}"));
+            config.push(format!(
+                ":tine/favorites-page {}",
+                to_string(&Edn::Str(f.clone()))
+            ));
         }
         if let Some(f) = &self.journal_title_format {
-            config.push(format!(":journal/page-title-format {f:?}"));
+            config.push(format!(
+                ":journal/page-title-format {}",
+                to_string(&Edn::Str(f.clone()))
+            ));
         }
         if let Some(f) = &self.journal_file_format {
-            config.push(format!(":journal/file-name-format {f:?}"));
+            config.push(format!(
+                ":journal/file-name-format {}",
+                to_string(&Edn::Str(f.clone()))
+            ));
         }
         if let Some(f) = &self.file_name_format {
             config.push(format!(":file/name-format :{f}"));

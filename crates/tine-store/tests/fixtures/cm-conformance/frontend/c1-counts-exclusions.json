@@ -107,6 +107,10 @@
       "day": null,
       "is_journal": false,
       "key": "favs",
+      "link": {
+        "kind": "page",
+        "name": "Favs"
+      },
       "name": "Favs",
       "target": {
         "id": "pages/Favs.md",
@@ -135,6 +139,10 @@
       "day": null,
       "is_journal": false,
       "key": "hub",
+      "link": {
+        "kind": "page",
+        "name": "Hub"
+      },
       "name": "Hub",
       "target": {
         "id": "pages/Hub.md",
@@ -146,6 +154,10 @@
       "day": 20261026,
       "is_journal": true,
       "key": "oct 26th, 2026",
+      "link": {
+        "kind": "journal",
+        "name": "Oct 26th, 2026"
+      },
       "name": "Oct 26th, 2026",
       "target": {
         "id": "journals/2026_10_26.md",
@@ -157,6 +169,10 @@
       "day": null,
       "is_journal": false,
       "key": "topic",
+      "link": {
+        "kind": "page",
+        "name": "topic"
+      },
       "name": "topic",
       "target": {
         "id": "pages/topic.md",
@@ -167,6 +183,10 @@
       "day": null,
       "is_journal": false,
       "key": "x",
+      "link": {
+        "kind": "page",
+        "name": "x"
+      },
       "name": "x",
       "target": {
         "id": "pages/x.md",

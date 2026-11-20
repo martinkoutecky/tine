@@ -7,9 +7,9 @@ import type { PageInventoryEntry, ResolvedPage } from "../types";
 
 // Seed the one page index the way the backend would answer (ported from the
 // deleted frontend alias-map seeding: the same names, now as inventory rows).
-async function seedIndex(...rows: Array<[name: string, target: ResolvedPage]>) {
-  const entries: PageInventoryEntry[] = rows.map(([name, target]) => ({
-    key: pageIdentityKey(name), name, is_journal: false, day: null, target,
+async function seedIndex(...rows: Array<[name: string, target: ResolvedPage, opening?: string]>) {
+  const entries: PageInventoryEntry[] = rows.map(([name, target, opening = name]) => ({
+    key: pageIdentityKey(name), name, is_journal: false, day: null, target, link: { name: opening, kind: "page" },
   }));
   vi.spyOn(backend(), "pageInventory").mockResolvedValue({ rev: "1", entries });
   resetPageIndex();
@@ -41,7 +41,10 @@ describe("known graph open gesture", () => {
 
 describe("favorite alias navigation", () => {
   it("resolves the canonical page for normal, sidebar, new-tab, and context gestures", async () => {
-    await seedIndex(["Canonical", file("pages/Canonical.md")], ["shortcut", { kind: "alias", owners: ["pages/Canonical.md"] }]);
+    await seedIndex(
+      ["Canonical", file("pages/Canonical.md")],
+      ["shortcut", { kind: "alias", owners: ["pages/Canonical.md"] }, "Canonical"],
+    );
     const deps: SidebarPageOpenDeps = {
       normal: vi.fn(),
       sidebar: vi.fn(),

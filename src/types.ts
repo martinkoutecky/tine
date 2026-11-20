@@ -873,7 +873,7 @@ export type JournalTitleRefusal =
   | { readonly day: JournalDateParts; readonly written: string; readonly read_as: JournalDateParts | null };
 /** The title format that renders journal titles, and why the configured one
  * is not used if it is not. Rust `JournalTitleStatus`. */
-export type JournalTitleStatus = { readonly effective: string; readonly refusal: JournalTitleRefusal | null };
+export type JournalTitleStatus = { readonly effective: string; readonly refusal: JournalTitleRefusal | null; readonly file_text_route?: false };
 /** What a Settings title-format save resolves to, under GraphMeta's field
  * names (Rust `JournalTitleSaved`). */
 export type JournalTitleSaved = { readonly journal_config_diagnostics: string[]; readonly journal_title: JournalTitleStatus };

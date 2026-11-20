@@ -13,21 +13,15 @@ impl Store {
     /// [`Self::page_named_from_files`] for the CM conformance harness's
     /// cold direct-lookup check (D-20261119-YL round 4b).
     #[cfg(test)]
-    pub(crate) fn cold_page_named(
-        &self,
-        name: &str,
-        kind: PageKind,
-    ) -> Result<Option<PageRead>, StoreError> {
-        self.page_named_from_files(name, kind)
+    pub(crate) fn cold_page_named(&self, name: &str) -> Result<Option<PageRead>, StoreError> {
+        self.page_named_from_files(name, false)
     }
 
     /// The file-name listing answer: read a page by effective name, or a day
     /// by any accepted spelling (its files in any directory, CM SPEC §2.1),
-    /// without waiting for the initial parse. A page some file is named for
-    /// is found from a listing of file names and the matching files;
-    /// otherwise the first lookup or invalidation builds a live O(P)
-    /// file/preamble index, seeing files created after `open`, and warm
-    /// lookups reuse it. This remains available after a failed initial
+    /// without waiting for the initial parse. The first lookup or
+    /// invalidation builds a live O(P) file/preamble index, reading at most
+    /// one preamble per candidate. Warm lookups reuse it. This remains available after a failed initial
     /// parse; aliases require a successful graph view and are not resolved
     /// here. When files claim the same name or day, it uses the same
     /// claimant order as `WholeGraph::resolve` (journals directory first,
@@ -39,36 +33,17 @@ impl Store {
     pub(super) fn page_named_from_files(
         &self,
         name: &str,
-        kind: PageKind,
+        as_journal: bool,
     ) -> Result<Option<PageRead>, StoreError> {
-        // The ready view's lookup rule, without reclassifying the file.
         let format = self.graph.current_journal_format();
-        let lookup = crate::model::claim_lookup(&format, name, kind)
-            .by_key(&format, &self.graph.find_claimants(name, PageKind::Journal));
-        let held = |kind| {
-            (self.graph.find_claimants(&lookup.name, kind).into_iter())
-                .find(|entry| lookup.holds(entry))
-        };
-        // A day a pages file's `title::` names (CM-DAYFILE) is read only by
-        // the pages listing; a journals listing keeps the rows it found.
-        if lookup.day.is_some() {
-            self.graph.find_claimants(&lookup.name, PageKind::Page);
-        }
-        let journals_dir = &self.graph.current_config().journals_dir;
-        // A name that is no day is one identity across both kinds (a
-        // journals-directory file whose name is no date, SPEC §2.1).
-        let entry = held(lookup.kind).and_then(|_| {
-            [PageKind::Page, PageKind::Journal]
-                .into_iter()
-                .filter(|kind| lookup.day.is_none() || *kind == PageKind::Journal)
-                .filter_map(held)
-                .min_by(|a, b| crate::model::compare_page_claimants(journals_dir, a, b))
-        });
-        let Some(entry) = entry else {
+        let config = self.graph.current_config();
+        let claims = self.graph.complete_name_claimants();
+        let opening = crate::model::OpeningName::new(&format, name, as_journal);
+        let Some(claim) = opening.claims(&claims, &config.journals_dir).next() else {
             return Ok(None);
         };
-        let id = PageId::from(self.graph.rel_path(&entry.path));
-        match self.page(&id) {
+        let id = claim.rel_path.as_ref().expect("physical claimant");
+        match self.page(id) {
             Ok(read) => Ok(Some(read)),
             Err(StoreError::NotFound(_)) => Ok(None),
             Err(error) => Err(error),

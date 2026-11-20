@@ -149,9 +149,8 @@ build graph (closure, below). The same field is written by the static export
   title asked as a page), only where the answer is a file or an alias.
 - `alias_groups`: `{name, aliases, pages}`, the page header's alias group of
   every exported page whose group is not empty.
-- `journals`: the effective `:journal/page-title-format` and
-  `:journal/file-name-format` (the two configuration values a snapshot carries
-  on purpose; the reader's date parser needs them) and the days whose journal
+- `journals`: the effective `:journal/page-title-format`, the admitted
+  filename text format (an empty string omits that route), and the days whose journal
   has content. The effective title format is the configured one unless it
   names no single day, then the default `MMM do, yyyy` (D-20261119-YL), so a
   reader renders the titles the rows name. The two values are the whole input

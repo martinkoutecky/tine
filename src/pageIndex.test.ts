@@ -5,7 +5,8 @@ const backendMock = vi.hoisted(() => ({ pageInventory: vi.fn(), graphBindingGene
 vi.mock("./backend", () => ({ backend: () => backendMock }));
 
 function entry(name: string, target: ResolvedPage, key = name.toLowerCase().normalize("NFC")): PageInventoryEntry {
-  return { key, name, is_journal: false, day: null, target };
+  const destination = target.kind === "alias" ? (target.owners[0]?.split("/").at(-1)?.replace(/\.(md|org)$/, "") ?? name) : name;
+  return { key, name, is_journal: false, day: null, target, link: { name: destination, kind: "page" } };
 }
 const file = (name: string, id = `pages/${name.replaceAll("/", "___")}.md`, others: string[] = []) =>
   entry(name, { kind: "existing", id, others });
@@ -197,12 +198,14 @@ describe("page index: the one frontend name answerer", () => {
   it("keeps a real page's named route even if a retired empty-alias flag arrives", async () => {
     backendMock.pageInventory.mockResolvedValue(inventory(1,
       file("Machine Learning"),
-      { ...file("ML"), link: { name: "Machine Learning", kind: "page" }, empty_alias: true },
-      { ...file("2026-10-26"), link: { name: "Oct 26th, 2026", kind: "journal" } },
+      { ...file("ML"), empty_alias: true },
+      { ...file("Oct 26th, 2026", "journals/2026_10_26.md"), is_journal: true, day: 20261026,
+        link: { name: "Oct 26th, 2026", kind: "journal" } },
     ));
     const { installPageIndex, linkTarget, navigationTarget, navigationName, resolvedTarget, ownerPath } = await load();
     installPageIndex();
-    await vi.waitFor(() => expect(linkTarget("ML")).toEqual({ name: "Machine Learning", kind: "page" }));
+    await vi.waitFor(() => expect(ownerPath(resolvedTarget("ML"))).toBe("pages/ML.md"));
+    expect(linkTarget("ML")).toEqual({ name: "ML", kind: "page" });
     expect(navigationTarget("ml")).toEqual({ name: "ML", kind: "page" });
     expect(navigationName("ML")).toBe("ML");
     expect(ownerPath(resolvedTarget("ML"))).toBe("pages/ML.md");
@@ -213,9 +216,8 @@ describe("page index: the one frontend name answerer", () => {
     ui.openPageInSidebar("ML", "page");
     expect(ui.rightSidebar()[0]).toMatchObject({ kind: "page", name: "ML", pageKind: "page" });
     ui.setRightSidebar([]);
-    // A date-named page with content keeps its named route (its link moves
-    // for the day, not for an alias).
-    expect(navigationTarget("2026-10-26")).toEqual({ name: "2026-10-26", kind: "page" });
+    expect(navigationTarget("2026-10-26")).toEqual({ name: "Oct 26th, 2026", kind: "journal" });
+    expect(linkTarget("2026-10-26")).toEqual(navigationTarget("2026-10-26"));
   });
 
   // The frontend half of the Rust `page_inventory_wire_matches_legacy_fixture`
@@ -330,13 +332,14 @@ describe("page index: name-only inventory deltas", () => {
     expect(namespaces).toEqual(["Oct 23rd, 2026", "Oct 23rd, 2026"]);
     expect(navigationNames).toEqual(["Alpha", "Beta"]);
     index.patchPageIndex(3n, { keys: ["oct 23rd, 2026"], entries: [] });
-    expect(links.at(-1)).toBe("2026-10-23");
+    expect(links.at(-1)).toBe("Oct 23rd, 2026");
     index.patchPageIndex(4n, { keys: ["oct 23rd, 2026"], entries: [day("Alpha")] });
     expect(links.at(-1)).toBe("Alpha");
     expect(backendMock.pageInventory).not.toHaveBeenCalled();
-    backendMock.pageInventory.mockResolvedValue(inventory(5, file("Alpha"), file("Beta"), day("Alpha"), file("2026-10-23")));
+    const listedSpelling: PageInventoryEntry = { ...day("Alpha"), key: "2026-10-23", name: "2026-10-23" };
+    backendMock.pageInventory.mockResolvedValue(inventory(5, file("Alpha"), file("Beta"), day("Alpha"), listedSpelling));
     await index.refreshPageIndex();
-    expect(links.at(-1)).toBe("2026-10-23");
+    expect(links.at(-1)).toBe("Alpha");
     const runs = links.length;
     index.patchPageIndex(6n, { keys: ["oct 23rd, 2026"], entries: [day("Beta")] });
     expect(links.length).toBe(runs);
@@ -388,12 +391,14 @@ describe("page index: name-only inventory deltas", () => {
       createComputed(() => names.push(index.navigationName("Shortcut")));
       return dispose;
     });
-    backendMock.pageInventory.mockResolvedValue(inventory(3, file("Renamed", "pages/Foo.md"), shortcut));
+    backendMock.pageInventory.mockResolvedValue(inventory(3, file("Renamed", "pages/Foo.md"),
+      { ...shortcut, link: { name: "Renamed", kind: "page" } }));
     await index.refreshPageIndex();
     expect(names).toEqual(["Foo", "Renamed"]);
     index.resetPageIndex();
     expect(names.at(-1)).toBe("Shortcut");
-    backendMock.pageInventory.mockResolvedValue(inventory(4, file("Again", "pages/Foo.md"), shortcut));
+    backendMock.pageInventory.mockResolvedValue(inventory(4, file("Again", "pages/Foo.md"),
+      { ...shortcut, link: { name: "Again", kind: "page" } }));
     await index.refreshPageIndex();
     expect(names.at(-1)).toBe("Again");
     dispose();

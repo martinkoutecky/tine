@@ -1,0 +1,93 @@
+{
+  "aliases": [],
+  "answers": {
+    "alias_groups": [],
+    "inventory": [
+      {
+        "day": null,
+        "is_journal": false,
+        "key": "notes",
+        "name": "Notes",
+        "target": {
+          "id": "pages/Notes.md",
+          "kind": "existing",
+          "others": []
+        }
+      },
+      {
+        "day": 20261102,
+        "is_journal": true,
+        "key": "é 2026-11-02",
+        "name": "É 2026-11-02",
+        "target": {
+          "id": "pages/Diary.md",
+          "kind": "existing",
+          "others": []
+        }
+      }
+    ],
+    "journals": {
+      "content_days": [
+        20261102
+      ],
+      "file_name_format": "yyyy_MM_dd",
+      "title_format": "É yyyy-MM-dd"
+    },
+    "resolve": [
+      {
+        "kind": "page",
+        "name": "É 2026-11-02",
+        "target": {
+          "id": "pages/Diary.md",
+          "kind": "existing",
+          "others": []
+        }
+      }
+    ],
+    "v": 1
+  },
+  "backlinks": {},
+  "block_ref_counts": {},
+  "entries": [
+    {
+      "date_key": null,
+      "kind": "page",
+      "name": "Notes",
+      "path": "pages/Notes.md"
+    },
+    {
+      "date_key": 20261102,
+      "kind": "journal",
+      "name": "É 2026-11-02",
+      "path": "pages/Diary.md"
+    }
+  ],
+  "exported_at": "",
+  "home": "Notes",
+  "icons": {},
+  "name": "Site",
+  "pages": [
+    {
+      "blocks": [],
+      "format": "md",
+      "kind": "page",
+      "name": "Notes",
+      "path": "pages/Notes.md",
+      "pre_block": null,
+      "read_only": true,
+      "title": "Notes"
+    },
+    {
+      "blocks": [],
+      "format": "md",
+      "kind": "journal",
+      "name": "É 2026-11-02",
+      "path": "pages/Diary.md",
+      "pre_block": null,
+      "read_only": true,
+      "title": "É 2026-11-02"
+    }
+  ],
+  "queries": [],
+  "schema": 1
+}

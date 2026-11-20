@@ -37,6 +37,10 @@
       "day": null,
       "is_journal": false,
       "key": "kb",
+      "link": {
+        "kind": "page",
+        "name": "kb"
+      },
       "name": "kb",
       "target": {
         "id": "pages/kb.md",
@@ -47,6 +51,10 @@
       "day": 20261026,
       "is_journal": true,
       "key": "oct 26th, 2026",
+      "link": {
+        "kind": "journal",
+        "name": "Oct 26th, 2026"
+      },
       "name": "Oct 26th, 2026",
       "target": {
         "id": "journals/2026_10_26.md",

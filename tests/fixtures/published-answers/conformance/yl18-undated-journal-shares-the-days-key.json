@@ -4,10 +4,10 @@
     "alias_groups": [],
     "inventory": [
       {
-        "day": null,
+        "day": 20261102,
         "is_journal": true,
         "key": "20261102",
-        "name": "20261102",
+        "name": "/20261102/",
         "target": {
           "id": "journals/20261102.md",
           "kind": "existing",
@@ -27,20 +27,32 @@
       }
     ],
     "journals": {
-      "content_days": [],
+      "content_days": [
+        20261102
+      ],
       "file_name_format": "yyyy_MM_dd",
       "title_format": "/yyyyMMdd/"
     },
-    "resolve": [],
+    "resolve": [
+      {
+        "kind": "page",
+        "name": "/20261102/",
+        "target": {
+          "id": "journals/20261102.md",
+          "kind": "existing",
+          "others": []
+        }
+      }
+    ],
     "v": 1
   },
   "backlinks": {},
   "block_ref_counts": {},
   "entries": [
     {
-      "date_key": null,
+      "date_key": 20261102,
       "kind": "journal",
-      "name": "20261102",
+      "name": "/20261102/",
       "path": "journals/20261102.md"
     },
     {
@@ -51,7 +63,7 @@
     }
   ],
   "exported_at": "",
-  "home": "20261102",
+  "home": "/20261102/",
   "icons": {},
   "name": "Site",
   "pages": [
@@ -59,11 +71,11 @@
       "blocks": [],
       "format": "md",
       "kind": "journal",
-      "name": "20261102",
+      "name": "/20261102/",
       "path": "journals/20261102.md",
       "pre_block": null,
       "read_only": true,
-      "title": "20261102"
+      "title": "/20261102/"
     },
     {
       "blocks": [],

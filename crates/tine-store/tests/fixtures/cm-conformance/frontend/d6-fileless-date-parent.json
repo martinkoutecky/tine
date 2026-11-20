@@ -111,6 +111,10 @@
       "day": 20261023,
       "is_journal": true,
       "key": "2026_23_10",
+      "link": {
+        "kind": "journal",
+        "name": "2026_23_10"
+      },
       "name": "2026_23_10",
       "namespace_parent": true,
       "target": {
@@ -122,6 +126,10 @@
       "day": null,
       "is_journal": false,
       "key": "23.10.2026/child",
+      "link": {
+        "kind": "page",
+        "name": "23.10.2026/child"
+      },
       "name": "23.10.2026/child",
       "parent": {
         "kind": "journal",
@@ -136,6 +144,10 @@
       "day": null,
       "is_journal": false,
       "key": "notes",
+      "link": {
+        "kind": "page",
+        "name": "Notes"
+      },
       "name": "Notes",
       "target": {
         "id": "pages/Notes.md",
@@ -147,6 +159,10 @@
       "day": null,
       "is_journal": false,
       "key": "ordinary",
+      "link": {
+        "kind": "page",
+        "name": "Ordinary"
+      },
       "name": "Ordinary",
       "target": {
         "id": "pages/Ordinary.md",
@@ -157,6 +173,10 @@
       "day": null,
       "is_journal": false,
       "key": "owner",
+      "link": {
+        "kind": "page",
+        "name": "Owner"
+      },
       "name": "Owner",
       "target": {
         "id": "pages/Owner.md",

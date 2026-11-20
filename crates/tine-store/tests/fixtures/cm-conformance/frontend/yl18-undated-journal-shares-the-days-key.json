@@ -12,7 +12,7 @@
         0
       ],
       [
-        "journals/2026_11_02.md",
+        "journals/20261102.md",
         2
       ]
     ],
@@ -20,31 +20,14 @@
   ],
   "inventory": [
     {
-      "day": null,
+      "day": 20261102,
       "is_journal": true,
       "key": "20261102",
       "link": {
         "kind": "journal",
-        "name": "20261102"
+        "name": "/20261102/"
       },
       "name": "/20261102/",
-      "parent": {
-        "kind": "journal",
-        "name": "20261102"
-      },
-      "target": {
-        "id": "journals/20261102.md",
-        "kind": "existing",
-        "others": [
-          "journals/2026_11_02.md"
-        ]
-      }
-    },
-    {
-      "day": null,
-      "is_journal": true,
-      "key": "20261102",
-      "name": "20261102",
       "target": {
         "id": "journals/20261102.md",
         "kind": "existing",
@@ -57,6 +40,10 @@
       "day": null,
       "is_journal": false,
       "key": "notes",
+      "link": {
+        "kind": "page",
+        "name": "Notes"
+      },
       "name": "Notes",
       "target": {
         "id": "pages/Notes.md",
@@ -73,7 +60,6 @@
   "journalTitleFormat": "/yyyyMMdd/",
   "keyOf": {
     "/20261102/": "Day 2026-11-02",
-    "20261102": "20261102",
     "Notes": "notes"
   },
   "namespaceTree": [],
@@ -121,16 +107,16 @@
   },
   "owner": {
     "/20261102/": {
-      "journal": "journals/2026_11_02.md",
-      "page": "journals/2026_11_02.md"
+      "journal": "journals/20261102.md",
+      "page": "journals/20261102.md"
     },
     "2026-11-02": {
-      "journal": "journals/2026_11_02.md",
-      "page": "journals/2026_11_02.md"
+      "journal": "journals/20261102.md",
+      "page": "journals/20261102.md"
     },
     "20261102": {
-      "journal": "journals/2026_11_02.md",
-      "page": "journals/2026_11_02.md"
+      "journal": "journals/20261102.md",
+      "page": "journals/20261102.md"
     },
     "Notes": {
       "journal": null,
@@ -183,7 +169,11 @@
         "journal",
         "Day 2026-11-02"
       ],
-      "day": null,
+      "day": [
+        2026,
+        11,
+        2
+      ],
       "model": [
         "journal",
         "Day 2026-11-02"

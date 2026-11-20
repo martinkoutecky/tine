@@ -12,16 +12,12 @@
 // (pinned in cm_conformance_published.rs), so it answers as the app. The only
 // differences left, in `tests/fixtures/published-answers/conformance-differences.json`
 // (reasons in the design note), are spellings no exported page writes: d1's
-// typed `25-10-2026` and d6's `23.10.2026`, yl1/yl3/yl12/yl13/yl15-yl18's typed
-// ISO days (`2026-11-02`, named there only by `title::` headers or the
+// typed `25-10-2026` and d6's `23.10.2026`, and typed ISO days in the YL
+// fixtures (`2026-11-02`, named there only by `title::` headers or the
 // navigation list), and yl4's `Jan 1st, 2000` (only `[[1.1.00]]` wrote it, an
 // ordinary page since a refused title format is no text route, D-20261119-YL).
-// yl18's `[[/20261102/]]` and `[[20261102]]` are the one exception: an
-// undated journal whose name folds to the day's title shares the day's key,
-// the live store opens the day's own file and the published index the undated
-// one (names keyed by the folded name, card PVTI_lAHOAAbLVc4BhPsyzhKUCJo). OWN2 closes the former twin-day
-// getPage difference because the shared opening path now agrees. A site
-// visitor reaches them only by typing the address. `CM_REFRESH=1` rewrites it.
+// A site visitor reaches these spellings by typing the address.
+// `CM_REFRESH=1` rewrites the ledger.
 import { readdirSync, readFileSync, writeFileSync } from "node:fs";
 import path from "node:path";
 import { describe, expect, it, vi } from "vitest";

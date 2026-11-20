@@ -56,6 +56,10 @@
       "day": null,
       "is_journal": false,
       "key": "file-name",
+      "link": {
+        "kind": "page",
+        "name": "file-name"
+      },
       "name": "file-name",
       "target": {
         "id": "pages/file-name.md",
@@ -66,6 +70,10 @@
       "day": null,
       "is_journal": false,
       "key": "notes",
+      "link": {
+        "kind": "page",
+        "name": "Notes"
+      },
       "name": "Notes",
       "target": {
         "id": "pages/Notes.md",
@@ -77,6 +85,10 @@
       "day": null,
       "is_journal": false,
       "key": "real name",
+      "link": {
+        "kind": "page",
+        "name": "Real Name"
+      },
       "name": "Real Name",
       "target": {
         "id": "pages/file-name.md",

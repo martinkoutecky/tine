@@ -66,7 +66,7 @@ const list = (keys: Iterable<string>) => `[${[...keys].sort().join(", ")}]`;
 async function runCase(c: Case): Promise<string[]> {
   backendMock.pageInventory.mockReset().mockResolvedValue({ rev: "1", entries: c.inventory });
   await (await import("./render/parse")).initParser();
-  (await import("./journal")).setJournalFormats(c.journalTitle.effective, c.journalFileFormat);
+  (await import("./journal")).setJournalFormats(c.journalTitle.effective, c.journalTitle.file_text_route === false ? "" : c.journalFileFormat);
   const index = await import("./pageIndex");
   // Each graph gets fresh inventory state without reinitializing the module tree.
   index.resetPageIndex();

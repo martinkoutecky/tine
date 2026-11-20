@@ -61,6 +61,10 @@
       "day": null,
       "is_journal": false,
       "key": "c",
+      "link": {
+        "kind": "page",
+        "name": "c"
+      },
       "name": "c",
       "target": {
         "id": "pages/c.md",
@@ -106,6 +110,10 @@
       "day": null,
       "is_journal": false,
       "key": "ml/child",
+      "link": {
+        "kind": "page",
+        "name": "ML/child"
+      },
       "name": "ML/child",
       "target": {
         "id": "pages/ML%2Fchild.md",
@@ -117,6 +125,10 @@
       "day": null,
       "is_journal": false,
       "key": "ml/linked",
+      "link": {
+        "kind": "page",
+        "name": "ML/linked"
+      },
       "name": "ML/linked",
       "target": {
         "id": "pages/ML%2Flinked.md",
@@ -127,6 +139,10 @@
       "day": null,
       "is_journal": false,
       "key": "owner",
+      "link": {
+        "kind": "page",
+        "name": "owner"
+      },
       "name": "owner",
       "target": {
         "id": "pages/owner.md",

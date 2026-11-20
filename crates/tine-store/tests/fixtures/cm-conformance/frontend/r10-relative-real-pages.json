@@ -55,6 +55,10 @@
       "day": null,
       "is_journal": false,
       "key": ".",
+      "link": {
+        "kind": "page",
+        "name": "."
+      },
       "name": ".",
       "target": {
         "id": "pages/dot.md",
@@ -66,6 +70,10 @@
       "day": null,
       "is_journal": false,
       "key": "./x",
+      "link": {
+        "kind": "page",
+        "name": "./x"
+      },
       "name": "./x",
       "not_namespace": true,
       "target": {
@@ -78,6 +86,10 @@
       "day": null,
       "is_journal": false,
       "key": "cc",
+      "link": {
+        "kind": "page",
+        "name": "cc"
+      },
       "name": "cc",
       "target": {
         "id": "pages/cc.md",

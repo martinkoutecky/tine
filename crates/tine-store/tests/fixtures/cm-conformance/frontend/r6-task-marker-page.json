@@ -75,6 +75,10 @@
       "day": null,
       "is_journal": false,
       "key": "a",
+      "link": {
+        "kind": "page",
+        "name": "A"
+      },
       "name": "A",
       "target": {
         "id": "pages/A.md",
@@ -86,6 +90,10 @@
       "day": null,
       "is_journal": false,
       "key": "a]",
+      "link": {
+        "kind": "page",
+        "name": "A]"
+      },
       "name": "A]",
       "target": {
         "id": "pages/A].md",
@@ -96,6 +104,10 @@
       "day": null,
       "is_journal": false,
       "key": "p",
+      "link": {
+        "kind": "page",
+        "name": "p"
+      },
       "name": "p",
       "target": {
         "id": "pages/p.md",
@@ -107,6 +119,10 @@
       "day": null,
       "is_journal": false,
       "key": "todo",
+      "link": {
+        "kind": "page",
+        "name": "TODO"
+      },
       "name": "TODO",
       "target": {
         "id": "pages/TODO.md",

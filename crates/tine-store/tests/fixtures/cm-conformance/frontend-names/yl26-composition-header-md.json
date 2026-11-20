@@ -1,0 +1,13 @@
+{
+  "fileNameFormat": "legacy",
+  "files": [
+    {
+      "format": "md",
+      "name": "É 2026-11-02",
+      "path": "pages/Diary.md",
+      "preBlock": "title:: É 2026-11-02",
+      "title": "É 2026-11-02"
+    }
+  ],
+  "links": []
+}

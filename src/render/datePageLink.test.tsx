@@ -27,23 +27,16 @@ it("GH #959: inline and list page references share bracket visibility while alia
 });
 
 it.each([
-  ["Oct 26th, 2026", false, "page"],
-  ["2026-10-26", false, "page"],
-  ["Oct 26th, 2026", true, "journal"],
-  ["2026-10-26", true, "journal"],
-] as const)("clicking [[%s]] on a routed page (journal exists: %s) opens %s", async (name, journal, expected) => {
-  // The backend's link answer (`WholeGraph::link_target`, CM step 2): a date
-  // spelling opens that day's journal when its file exists, even over an
-  // ordinary page claiming the same spelling; the window routes by it.
+  ["Oct 26th, 2026", "pages/imported.md"],
+  ["2026-10-26", "pages/imported.md"],
+  ["Oct 26th, 2026", "journals/2026_10_26.md"],
+  ["2026-10-26", "journals/2026_10_26.md"],
+] as const)("clicking [[%s]] opens the journal held by %s", async (name, id) => {
+  const title = "Oct 26th, 2026";
   const entries: PageInventoryEntry[] = [{
-    key: name.toLowerCase(), name, is_journal: false, day: null,
-    target: { kind: "existing", id: "pages/imported.md", others: [] },
-    ...(journal ? { link: { name: "Oct 26th, 2026", kind: "journal" as const } } : {}),
+    key: title.toLowerCase(), name: title, is_journal: true, day: 20261026,
+    target: { kind: "existing", id, others: [] }, link: { name: title, kind: "journal" },
   }];
-  if (journal) entries.push({
-    key: "oct 26th, 2026", name: "Oct 26th, 2026", is_journal: true, day: 20261026,
-    target: { kind: "existing", id: "journals/2026_10_26.md", others: [] },
-  });
   vi.spyOn(backend(), "pageInventory").mockResolvedValue({ rev: "1", entries });
   await refreshPageIndex();
   resetPaneLayoutToSingle({ tabs: [{ history: [{ kind: "page", name: "Source", pageKind: "page" }], pos: 0, pinned: false }], activeIndex: 0 });
@@ -52,24 +45,24 @@ it.each([
   const dispose = render(() => <InlineText text={`[[${name}]]`} />, host);
   try {
     host.querySelector<HTMLElement>(".page-ref")!.click();
-    expect(router.route()).toMatchObject({ kind: "page", name: journal ? "Oct 26th, 2026" : name, pageKind: expected });
+    expect(router.route()).toMatchObject({ kind: "page", name: title, pageKind: "journal" });
     expect(host.querySelector(".page-ref")!.hasAttribute("data-missing-page")).toBe(false);
-    expect(itemKind(name)).toBe(expected);
+    expect(itemKind(name)).toBe("journal");
   } finally { dispose(); }
 });
 
-it("a link in a loaded routed page displays the existing date page's content", async () => {
+it("a link in a loaded page displays the journal held by a file in pages/", async () => {
   const name = "Oct 26th, 2026";
   const source = { id: "pages/Source.md", name: "Source", title: "Source", kind: "page" as const, pre_block: null,
     blocks: [{ id: "source-link", raw: `[[${name}]]`, collapsed: false, children: [] }] };
-  const target = { ...source, id: "pages/imported.md", name, title: name,
+  const target = { ...source, id: "pages/imported.md", name, title: name, kind: "journal" as const,
     blocks: [{ id: "target-content", raw: "Imported date page content", collapsed: false, children: [] }] };
   vi.spyOn(backend(), "pageInventory").mockResolvedValue({ rev: "1", entries: [
-    { key: name.toLowerCase(), name, is_journal: false, day: null, target: { kind: "existing", id: target.id, others: [] } },
+    { key: name.toLowerCase(), name, is_journal: true, day: 20261026, target: { kind: "existing", id: target.id, others: [] }, link: { name, kind: "journal" } },
   ] });
   await refreshPageIndex();
-  vi.spyOn(backend(), "getPage").mockImplementation(async (requested, kind) => requested === "Source" ? source : kind === "page" ? target : null);
-  vi.spyOn(backend(), "getPageByPath").mockImplementation(async path => path === source.id ? source : target);
+  vi.spyOn(backend(), "getPage").mockImplementation(async (requested, kind) => requested === "Source" ? source : requested === name && kind === "journal" ? target : null);
+  vi.spyOn(backend(), "getPageByPath").mockImplementation(async path => path === source.id ? source : path === target.id ? target : null);
   vi.spyOn(backend(), "taggedPages").mockResolvedValue({ anchor: "page", pages: [], total: 0, exceeded: false, diagnostics: [], report: { supported: true, ran: [], ignored: [] } });
   loadSingle(source);
   resetPaneLayoutToSingle({ tabs: [{ history: [{ kind: "page", name: "Source", pageKind: "page" }], pos: 0, pinned: false }], activeIndex: 0 });
@@ -82,6 +75,6 @@ it("a link in a loaded routed page displays the existing date page's content", a
     link.click();
     await vi.waitFor(() => expect(host.textContent).toContain("Imported date page content"));
     expect(missing).toBe(false);
-    expect(paneRouter("main").route()).toMatchObject({ name, pageKind: "page" });
+    expect(paneRouter("main").route()).toMatchObject({ name, pageKind: "journal" });
   } finally { dispose(); }
 });

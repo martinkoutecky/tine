@@ -73,13 +73,6 @@ impl Store {
 }
 
 impl WholeGraph {
-    pub(super) fn name_claimants(&self, name: &str, kind: PageKind) -> Vec<PageEntry> {
-        self.key_claimants(name, kind).to_vec()
-    }
-    /// [`Self::name_claimants`], borrowed.
-    pub(super) fn key_claimants(&self, name: &str, kind: PageKind) -> &[PageEntry] {
-        name_claimants(&self.claimants, name, kind)
-    }
     pub(super) fn all_name_claimants(&self, name: &str) -> Vec<PageEntry> {
         let mut entries: Vec<_> = [PageKind::Page, PageKind::Journal]
             .into_iter()

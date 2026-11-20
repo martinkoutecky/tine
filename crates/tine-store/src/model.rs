@@ -55,7 +55,7 @@ use page_identity::effective_page_name;
 // walk's provisional names against the answered ones.
 #[cfg(test)]
 pub(crate) use page_identity::launch_listing_walk;
-pub(crate) use page_identity::{claim_lookup, configured_hidden, portable_component};
+pub(crate) use page_identity::{configured_hidden, portable_component, OpeningName};
 pub(crate) use page_identity::{
     graph_text_directory_scannable, graph_text_eligible, graph_text_relative_eligible,
     graph_text_watch_relevant,
@@ -3182,13 +3182,13 @@ impl Graph {
     /// Parse a path whose graph-relative identity was validated by the caller.
     /// Store page reads use this for lexical page symlinks as well as strays.
     pub(crate) fn load_by_validated_path(&self, abs: &Path) -> io::Result<Option<PageDto>> {
-        let Some(entry) = self.entry_for_path(&abs) else {
-            return Ok(None);
-        };
         let content = match read_parse_input(&abs) {
             Ok(c) => c,
             Err(e) if e.kind() == io::ErrorKind::NotFound => return Ok(None),
             Err(e) => return Err(e),
+        };
+        let Some(entry) = self.entry_for_path_in(abs, Some(&content)) else {
+            return Ok(None);
         };
         Ok(Some(Self::dto_of(&entry, &content)))
     }
@@ -4616,10 +4616,11 @@ fn count_cache_linear_scan(n: usize) {
 }
 
 /// A journal file's page name and day from its filename stem, the one rule
-/// the file list names journal files by: a stem the format cannot parse names
-/// itself and claims no day.
+/// the file list names journal files by: a parsed physical stem keeps its
+/// day. Without an extracted day, the stem makes the same text claim as any
+/// other effective name.
 pub(crate) fn journal_stem_name(fmt: &JournalFormat, stem: &str) -> (String, Option<i64>) {
-    match fmt.parse_file_stem(stem) {
+    match fmt.parse_file_stem(stem).or_else(|| fmt.parse_text(stem)) {
         Some(d) => (fmt.title(d), Some(d.ordinal_key())),
         None => (stem.to_string(), None),
     }

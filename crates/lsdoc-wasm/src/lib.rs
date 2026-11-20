@@ -882,11 +882,9 @@ thread_local! {
     static TEXT_ROUTES: std::cell::RefCell<Option<(String, String, date::TextRoutes)>> = const { std::cell::RefCell::new(None) };
 }
 
-/// The graph's text routes (`tine_core::date::TextRoutes`) for its file-name
-/// format and its *effective* title format ("" = default), as the native core
-/// published them in `GraphMeta.journal_title.effective`: no title pattern is
-/// checked here (D-20261119-YL). Cached for the last pair: the frontend asks
-/// with one graph's formats at a time.
+/// The text routes the native core published in `GraphMeta.journal_title`:
+/// the filename text route (empty omits it) and the effective title format.
+/// Cache the compiled routes for the current graph's pair.
 fn with_text_routes<T>(file: &str, effective_title: &str, f: impl FnOnce(&date::TextRoutes) -> T) -> T {
     TEXT_ROUTES.with(|cell| {
         let mut cell = cell.borrow_mut();

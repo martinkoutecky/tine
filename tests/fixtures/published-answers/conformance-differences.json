@@ -1,6 +1,6 @@
 {
   "d1-file-format-links": [
-    "published navigate [[25-10-2026]]: live (\"journal\", \"Day 2026-10-25\"), published (\"journal\", \"25-10-2026\")"
+    "published navigate [[25-10-2026]]: live (\"journal\", \"Day 2026-10-25\"), published (\"journal\", \"oct 25th, 2026\")"
   ],
   "yl1-yearless-title-falls-back": [
     "published getPage journal [[2026-11-02]]: live journals/2026_11_02.md, published null",
@@ -27,12 +27,32 @@
     "published getPage page [[2026-11-02]]: live journals/2026_11_02.md, published null"
   ],
   "yl18-undated-journal-shares-the-days-key": [
-    "published getPage journal [[/20261102/]]: live journals/2026_11_02.md, published journals/20261102.md",
-    "published getPage journal [[2026-11-02]]: live journals/2026_11_02.md, published null",
-    "published getPage journal [[20261102]]: live journals/2026_11_02.md, published journals/20261102.md",
-    "published getPage page [[/20261102/]]: live journals/2026_11_02.md, published null",
-    "published getPage page [[2026-11-02]]: live journals/2026_11_02.md, published null",
-    "published getPage page [[20261102]]: live journals/2026_11_02.md, published null"
+    "published getPage journal [[2026-11-02]]: live journals/20261102.md, published null",
+    "published getPage page [[2026-11-02]]: live journals/20261102.md, published null"
+  ],
+  "yl24-case-header-md": [
+    "published getPage journal [[2026-11-02]]: live pages/Diary.md, published null",
+    "published getPage page [[2026-11-02]]: live pages/Diary.md, published null"
+  ],
+  "yl25-case-header-org": [
+    "published getPage journal [[2026-11-02]]: live pages/Diary.org, published null",
+    "published getPage page [[2026-11-02]]: live pages/Diary.org, published null"
+  ],
+  "yl26-composition-header-md": [
+    "published getPage journal [[2026-11-02]]: live pages/Diary.md, published null",
+    "published getPage page [[2026-11-02]]: live pages/Diary.md, published null"
+  ],
+  "yl27-composition-header-org": [
+    "published getPage journal [[2026-11-02]]: live pages/Diary.org, published null",
+    "published getPage page [[2026-11-02]]: live pages/Diary.org, published null"
+  ],
+  "yl28-slash-header-md": [
+    "published getPage journal [[2026-11-02]]: live pages/20261102.md, published null",
+    "published getPage page [[2026-11-02]]: live pages/20261102.md, published null"
+  ],
+  "yl29-slash-header-org": [
+    "published getPage journal [[2026-11-02]]: live pages/20261102.md, published null",
+    "published getPage page [[2026-11-02]]: live pages/20261102.md, published null"
   ],
   "yl3-valid-alternate-title": [
     "published getPage journal [[2026-11-02]]: live journals/2026_11_02.md, published null",

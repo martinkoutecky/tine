@@ -7,15 +7,10 @@
         "day": null,
         "is_journal": false,
         "key": "2.11.26",
-        "link": {
-          "kind": "journal",
-          "name": "Nov 2nd, 2026"
-        },
         "name": "2.11.26",
         "target": {
-          "id": "journals/2.11.26.md",
-          "kind": "existing",
-          "others": []
+          "id": "pages/2%2E11%2E26.md",
+          "kind": "absent"
         }
       },
       {
@@ -45,19 +40,10 @@
       "content_days": [
         20261102
       ],
-      "file_name_format": "d.M.yy",
+      "file_name_format": "",
       "title_format": "MMM do, yyyy"
     },
     "resolve": [
-      {
-        "kind": "journal",
-        "name": "2.11.26",
-        "target": {
-          "id": "journals/2.11.26.md",
-          "kind": "existing",
-          "others": []
-        }
-      },
       {
         "kind": "page",
         "name": "Nov 2nd, 2026",

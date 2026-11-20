@@ -75,6 +75,10 @@
       "day": null,
       "is_journal": false,
       "key": "b",
+      "link": {
+        "kind": "page",
+        "name": "B"
+      },
       "name": "B",
       "target": {
         "id": "pages/n%2Fy.md",
@@ -86,6 +90,10 @@
       "day": null,
       "is_journal": false,
       "key": "n",
+      "link": {
+        "kind": "page",
+        "name": "N"
+      },
       "name": "N",
       "namespace_parent": true,
       "target": {
@@ -97,6 +105,10 @@
       "day": null,
       "is_journal": false,
       "key": "n/y",
+      "link": {
+        "kind": "page",
+        "name": "N/y"
+      },
       "name": "N/y",
       "target": {
         "id": "pages/N%2Fy.md",
@@ -108,6 +120,10 @@
       "day": null,
       "is_journal": false,
       "key": "p",
+      "link": {
+        "kind": "page",
+        "name": "p"
+      },
       "name": "p",
       "target": {
         "id": "pages/p.md",

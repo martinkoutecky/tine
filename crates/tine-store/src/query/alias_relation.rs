@@ -103,7 +103,7 @@ impl crate::model::ReadSnapshot {
             edges
                 .date(key)
                 .map(JournalDate::from_ordinal)
-                .or_else(|| format.parse_text(key))
+                .or_else(|| format.parse_key(key))
         });
         let Some(day) = day else {
             return relation.owner_paths(key);

@@ -41,6 +41,7 @@ interface Held {
   /** Page-kind and journal-kind entries by `key`. */
   pages: Map<string, PageInventoryEntry>;
   journals: Map<string, PageInventoryEntry>;
+  linkRow(key: string): PageInventoryEntry | undefined;
   /** Display name of every physical file id. */
   nameById: Map<string, string>;
 }
@@ -96,6 +97,7 @@ function build(inventory: PageInventory, rev: bigint): Held {
   const pages = new Map<string, PageInventoryEntry>();
   const journals = new Map<string, PageInventoryEntry>();
   const nameById = new Map<string, string>();
+  const nativeLinks = !isPublishedExport();
   for (const entry of inventory.entries) {
     const bucket = entries.get(entry.key);
     if (bucket) bucket.push(entry);
@@ -105,13 +107,17 @@ function build(inventory: PageInventory, rev: bigint): Held {
     // the same page, so whichever is kept navigates identically.
     (entry.is_journal ? journals : pages).set(entry.key, entry);
     if (entry.target.kind === "existing") {
-      for (const id of [entry.target.id, ...entry.target.others]) {
+      if (!nameById.has(entry.target.id)) {
+        nameById.set(entry.target.id, (nativeLinks ? entry.link?.name : undefined) ?? entry.name);
+      }
+      for (const id of entry.target.others) {
         if (!nameById.has(id)) nameById.set(id, entry.name);
       }
     }
   }
   const files = inventory.entries.filter((entry) => entry.target.kind === "existing");
-  return { generation, rev, entries, order: new InventoryOrder([...entries.keys()], compareCodePoints), ordered: inventory.entries, files, pages, journals, nameById };
+  return { generation, rev, entries, order: new InventoryOrder([...entries.keys()], compareCodePoints), ordered: inventory.entries, files, pages, journals, nameById,
+    linkRow: (key) => entries.get(key)?.[0] };
 }
 
 /** Rust's `str` order (UTF-8 bytes, i.e. code points), which the backend sorts
@@ -332,7 +338,9 @@ function ensureInstalled() {
       if (current.refsCurrent) return current.refs!;
       const rows: PageEntry[] = [];
       for (const entry of orderedEntries(current)) {
-        if (entry.target.kind !== "absent" || (entry.link && (isPublishedExport() || !entry.is_journal || entry.link.kind !== "journal")) || hidden_from_all_pages(entry.name)) continue;
+        const redirects = entry.link && (entry.link.name !== entry.name
+          || entry.link.kind !== (entry.is_journal ? "journal" : "page"));
+        if (entry.target.kind !== "absent" || (redirects && (isPublishedExport() || !entry.is_journal || entry.link?.kind !== "journal")) || hidden_from_all_pages(entry.name)) continue;
         rows.push({ name: entry.name, kind: entry.is_journal ? "journal" : "page", date_key: entry.day, path: "" });
       }
       current.refsCurrent = true;
@@ -358,14 +366,16 @@ function ensureInstalled() {
   return installed;
 }
 
-/** The backend's answer for `name`, or `undefined` before the first load and
- *  for a name the inventory does not list (neither is a file or an alias). */
+/** The inventory's answer for `name`, including a journal's alternate date
+ *  spelling in a live graph. */
 export function resolvedTarget(name: string, kind: PageKind = "page"): ResolvedPage | undefined {
   ensureInstalled();
   if (!inventoryAvailable()) return undefined;
   const key = pageIdentityKey(name);
   const current = nameAnswer(key);
-  return (kind === "journal" ? current?.journals : current?.pages)?.get(key)?.target;
+  if (kind === "page") return current?.pages.get(key)?.target;
+  return current?.journals.get(key)?.target
+    ?? (isPublishedExport() ? undefined : journalRowIn(current, name, nameAnswer)?.target);
 }
 
 // The pure row readers live in `inventoryRows.ts`, shared with the published
@@ -416,16 +426,7 @@ export function navigationTarget(name: string): LinkDestination {
   if (!inventoryAvailable()) return { name, kind: "page" };
   const key = pageIdentityKey(name);
   const answer = nameAnswer(key);
-  if (!isPublishedExport()) {
-    const entry = answer?.pages.get(key) ?? answer?.journals.get(key);
-    if (entry?.target.kind === "existing") {
-      const id = ownerPath(entry.target);
-      return { name: (id === undefined ? undefined : answer?.nameById.get(id)) ?? entry.name,
-        kind: entry.is_journal ? "journal" : "page" };
-    }
-    if (entry?.target.kind === "alias" && !entry.link) return { name: navigationName(name), kind: "page" };
-    return linkTargetIn(answer, name, true, nameAnswer);
-  }
+  if (!isPublishedExport()) return linkTargetIn(answer, name, true, nameAnswer);
   const entry = answer?.pages.get(key);
   if ((entry?.target.kind === "alias" || (isPublishedExport() && entry?.empty_alias)) && entry.link) return entry.link;
   return { name: navigationName(name), kind: "page" };
@@ -439,8 +440,8 @@ export function navigationName(name: string): string {
   if (!inventoryAvailable()) return name;
   const key = pageIdentityKey(name);
   const answer = nameAnswer(key);
-  const entry = answer?.pages.get(key) ?? (!isPublishedExport() ? answer?.journals.get(key) : undefined);
-  if (!entry && !isPublishedExport()) return linkTargetIn(answer, name, true, nameAnswer).name;
+  if (!isPublishedExport()) return linkTargetIn(answer, name, true, nameAnswer).name;
+  const entry = answer?.pages.get(key);
   const target = entry?.target;
   if (!target || target.kind === "absent") return name;
   if (target.kind === "alias" && entry?.link) return entry.link.name;

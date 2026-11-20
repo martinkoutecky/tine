@@ -1,0 +1,9 @@
+{
+  "config": { "journalTitleFormat": "MMḾ dd yyyy" },
+  "files": {
+    "journals/2026_01_02.md": "- January journal\n",
+    "journals/2026_02_02.md": "- February journal\n",
+    "pages/Notes.md": "- [[Jań 02 2026]]\n- [[Feb́ 02 2026]]\n- [[Jan 2nd, 2026]]\n- [[Feb 2nd, 2026]]\n"
+  },
+  "navigate": ["Jań 02 2026", "Feb́ 02 2026", "Jan 2nd, 2026", "Feb 2nd, 2026"]
+}

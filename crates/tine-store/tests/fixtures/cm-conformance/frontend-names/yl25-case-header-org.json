@@ -1,0 +1,13 @@
+{
+  "fileNameFormat": "legacy",
+  "files": [
+    {
+      "format": "org",
+      "name": "X 2026_02_11",
+      "path": "pages/Diary.org",
+      "preBlock": "#+TITLE: X 2026_02_11\n",
+      "title": "X 2026_02_11"
+    }
+  ],
+  "links": []
+}

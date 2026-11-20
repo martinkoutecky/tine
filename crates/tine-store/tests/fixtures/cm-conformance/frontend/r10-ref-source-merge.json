@@ -52,6 +52,10 @@
       "day": null,
       "is_journal": false,
       "key": "kb",
+      "link": {
+        "kind": "page",
+        "name": "kb"
+      },
       "name": "kb",
       "target": {
         "id": "pages/kb.md",
@@ -62,6 +66,10 @@
       "day": null,
       "is_journal": false,
       "key": "n",
+      "link": {
+        "kind": "page",
+        "name": "n"
+      },
       "name": "n",
       "namespace_parent": true,
       "target": {
@@ -73,6 +81,10 @@
       "day": null,
       "is_journal": false,
       "key": "n/y",
+      "link": {
+        "kind": "page",
+        "name": "n/y"
+      },
       "name": "n/y",
       "target": {
         "id": "pages/n%2Fy.md",
@@ -84,6 +96,10 @@
       "day": 20261026,
       "is_journal": true,
       "key": "oct 26th, 2026",
+      "link": {
+        "kind": "journal",
+        "name": "Oct 26th, 2026"
+      },
       "name": "Oct 26th, 2026",
       "target": {
         "id": "journals/2026_10_26.md",
@@ -95,6 +111,10 @@
       "day": null,
       "is_journal": false,
       "key": "q",
+      "link": {
+        "kind": "page",
+        "name": "q"
+      },
       "name": "q",
       "target": {
         "id": "pages/q.md",

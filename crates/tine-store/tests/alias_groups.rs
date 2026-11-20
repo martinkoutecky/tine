@@ -234,12 +234,16 @@ fn configured_date_aliases_survive_a_warm_checkpoint() {
 }
 
 #[test]
-fn configured_date_aliases_keep_case_sensitive_literals_and_loose_digits() {
+fn configured_date_aliases_fold_literals_and_accept_loose_digits() {
     let _guard = crate::integration_lock();
     let format = tine_core::date::JournalFormat::new(Some("dd.MM.yyyy"), Some("X-yyyy_d_MM"));
     assert!(
         format.parse_text("X-2026_03_10").is_some(),
         "recognized authored spelling"
+    );
+    assert_eq!(
+        format.parse_text("x-2026_03_10"),
+        format.parse_text("X-2026_03_10")
     );
     let (dir, store) = graph(&[
         ("logseq/config.edn", "{:journal/file-name-format \"dd.MM.yyyy\" :journal/page-title-format \"X-yyyy_d_MM\"}\n"),
@@ -256,7 +260,7 @@ fn configured_date_aliases_keep_case_sensitive_literals_and_loose_digits() {
             .expect("canonical day spelling");
         assert!(day.is_journal);
         assert_eq!(matches!(day.target, Resolved::Alias { .. }), aliased);
-        for name in ["X-2026_3_10", "X-2026_03_10", "2026-10-03"] {
+        for name in ["X-2026_3_10", "X-2026_03_10", "x-2026_03_10", "2026-10-03"] {
             assert_eq!(
                 view.backlinks(name).unwrap()[0].blocks.len(),
                 count,

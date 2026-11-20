@@ -233,6 +233,10 @@
       "day": null,
       "is_journal": false,
       "key": "a",
+      "link": {
+        "kind": "page",
+        "name": "A"
+      },
       "name": "A",
       "target": {
         "id": "pages/A.md",
@@ -243,6 +247,10 @@
       "day": null,
       "is_journal": false,
       "key": "b",
+      "link": {
+        "kind": "page",
+        "name": "B"
+      },
       "name": "B",
       "target": {
         "id": "pages/B.md",
@@ -253,6 +261,10 @@
       "day": null,
       "is_journal": false,
       "key": "c",
+      "link": {
+        "kind": "page",
+        "name": "C"
+      },
       "name": "C",
       "target": {
         "id": "pages/C.md",
@@ -263,6 +275,10 @@
       "day": null,
       "is_journal": false,
       "key": "canceled",
+      "link": {
+        "kind": "page",
+        "name": "CANCELED"
+      },
       "name": "CANCELED",
       "target": {
         "id": "pages/CANCELED.md",
@@ -273,6 +289,10 @@
       "day": null,
       "is_journal": false,
       "key": "doing",
+      "link": {
+        "kind": "page",
+        "name": "DOING"
+      },
       "name": "DOING",
       "target": {
         "id": "pages/DOING.md",
@@ -283,6 +303,10 @@
       "day": null,
       "is_journal": false,
       "key": "done",
+      "link": {
+        "kind": "page",
+        "name": "DONE"
+      },
       "name": "DONE",
       "target": {
         "id": "pages/DONE.md",
@@ -293,6 +317,10 @@
       "day": null,
       "is_journal": false,
       "key": "later",
+      "link": {
+        "kind": "page",
+        "name": "LATER"
+      },
       "name": "LATER",
       "target": {
         "id": "pages/LATER.md",
@@ -303,6 +331,10 @@
       "day": null,
       "is_journal": false,
       "key": "now",
+      "link": {
+        "kind": "page",
+        "name": "NOW"
+      },
       "name": "NOW",
       "target": {
         "id": "pages/NOW.md",
@@ -313,6 +345,10 @@
       "day": 20261026,
       "is_journal": true,
       "key": "oct 26th, 2026",
+      "link": {
+        "kind": "journal",
+        "name": "Oct 26th, 2026"
+      },
       "name": "Oct 26th, 2026",
       "target": {
         "id": "journals/2026_10_26.md",
@@ -324,6 +360,10 @@
       "day": null,
       "is_journal": false,
       "key": "p",
+      "link": {
+        "kind": "page",
+        "name": "p"
+      },
       "name": "p",
       "target": {
         "id": "pages/p.md",
@@ -335,6 +375,10 @@
       "day": null,
       "is_journal": false,
       "key": "todo",
+      "link": {
+        "kind": "page",
+        "name": "todo"
+      },
       "name": "todo",
       "target": {
         "id": "pages/todo.md",
@@ -346,6 +390,10 @@
       "day": null,
       "is_journal": false,
       "key": "waiting",
+      "link": {
+        "kind": "page",
+        "name": "WAITING"
+      },
       "name": "WAITING",
       "target": {
         "id": "pages/WAITING.md",

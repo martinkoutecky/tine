@@ -55,6 +55,10 @@
       "day": null,
       "is_journal": false,
       "key": "foo",
+      "link": {
+        "kind": "page",
+        "name": "Foo"
+      },
       "name": "Foo",
       "target": {
         "id": "pages/Foo.md",
@@ -66,6 +70,10 @@
       "day": null,
       "is_journal": false,
       "key": "foo/bar",
+      "link": {
+        "kind": "page",
+        "name": "Foo/bar"
+      },
       "name": "Foo/bar",
       "target": {
         "id": "pages/Foo%2Fbar.md",
@@ -77,6 +85,10 @@
       "day": null,
       "is_journal": false,
       "key": "p",
+      "link": {
+        "kind": "page",
+        "name": "p"
+      },
       "name": "p",
       "target": {
         "id": "pages/p.md",

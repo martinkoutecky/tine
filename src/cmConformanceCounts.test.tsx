@@ -164,7 +164,7 @@ async function headerCount(name: string, groups: RefGroup[]): Promise<string> {
 
 async function runCase(c: Case): Promise<string[]> {
   resetPageIndex();
-  setJournalFormats(c.journalTitle.effective, c.journalFileFormat);
+  setJournalFormats(c.journalTitle.effective, c.journalTitle.file_text_route === false ? "" : c.journalFileFormat);
   vi.spyOn(backend(), "pageInventory").mockResolvedValue({ rev: "1", entries: c.inventory });
   bumpGraphEpoch();
   await refreshPageIndex();

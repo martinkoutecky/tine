@@ -42,7 +42,7 @@
         20261102,
         20261120
       ],
-      "file_name_format": "MMM do, ddyy",
+      "file_name_format": "",
       "title_format": "MMM do, yyyy"
     },
     "resolve": [

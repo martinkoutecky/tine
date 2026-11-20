@@ -97,7 +97,7 @@ export function applyConfigDerivedState(meta: GraphMeta, previous: GraphMeta | n
     || previous.journal_file_name_format !== meta.journal_file_name_format;
   // The native core decided the effective title format (D-20261119-YL); it
   // moves only with the configured one.
-  if (journalFormatsMoved) setJournalFormats(meta.journal_title.effective, meta.journal_file_name_format);
+  if (journalFormatsMoved) setJournalFormats(meta.journal_title.effective, meta.journal_title.file_text_route === false ? "" : meta.journal_file_name_format);
   if (journalFormatsMoved) noticeTitleRefusal(meta, !previous);
   const fileNameFormatMoved = !previous || previous.file_name_format !== meta.file_name_format;
   if (fileNameFormatMoved) setFileNameFormat(meta.file_name_format);

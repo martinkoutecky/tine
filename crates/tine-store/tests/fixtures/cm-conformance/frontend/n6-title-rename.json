@@ -55,6 +55,10 @@
       "day": null,
       "is_journal": false,
       "key": "custom name",
+      "link": {
+        "kind": "page",
+        "name": "Custom Name"
+      },
       "name": "Custom Name",
       "target": {
         "id": "pages/custom.md",
@@ -66,6 +70,10 @@
       "day": null,
       "is_journal": false,
       "key": "linker",
+      "link": {
+        "kind": "page",
+        "name": "linker"
+      },
       "name": "linker",
       "target": {
         "id": "pages/linker.md",
@@ -77,6 +85,10 @@
       "day": null,
       "is_journal": false,
       "key": "shown title",
+      "link": {
+        "kind": "page",
+        "name": "Shown Title"
+      },
       "name": "Shown Title",
       "target": {
         "id": "pages/stem-name.md",

@@ -1,0 +1,15 @@
+{
+  "config": {
+    "journalTitleFormat": "É yyyy_dd_MM",
+    "journalFileFormat": "é yyyy_MM_dd"
+  },
+  "files": {
+    "journals/2026-02-11.md": "- February day\n",
+    "journals/2026-11-02.md": "- November day\n",
+    "pages/Notes.md": "- title [[É 2026_02_11]]\n- other route [[é 2026_02_11]]\n"
+  },
+  "navigate": [
+    "É 2026_02_11",
+    "é 2026_02_11"
+  ]
+}

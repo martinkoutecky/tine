@@ -20,11 +20,8 @@ pub struct InventoryEntry {
     pub is_journal: bool,
     /// Parsed journal day, if any.
     pub day: Option<Day>,
-    /// What a `[[name]]` link opens ([`WholeGraph::link_target`]), only when
-    /// that differs from this entry's own (name, kind): an alias (its owner),
-    /// a date spelling (its day's journal), an alias spelled as a date.
-    /// A virtual journal whose display title has an ordinary literal claimant
-    /// carries an unclaimed spelling here to preserve its typed opening.
+    /// What a `[[name]]` link opens, carried on every row of the name inventory.
+    /// Physical-file lists can omit the answer when they only list files.
     pub link: Option<LinkTarget>,
     /// Listed only because a listed name lies under it: `n` for a page file
     /// or a reference named `n/y` (model rule 1, SPEC §3.2; OG creates these
@@ -68,22 +65,6 @@ fn fileless_entry(
     }
 }
 
-/// The page the alias `key` opens, if any page declares it: the alias owner
-/// rule's one answer (AL2/CI4), of the owner's own kind. A declarer is a
-/// parsed page of this generation, so its path is always placed.
-fn alias_owner_link(
-    graph: &ReadSnapshot,
-    key: &str,
-    day: Option<JournalDate>,
-) -> Option<LinkTarget> {
-    let path = if day.is_some() {
-        graph.alias_owner_paths(key, day)?.into_iter().next()?
-    } else {
-        graph.alias_owner_path(key)?
-    };
-    owner_link(graph, &path)
-}
-
 fn owner_link(graph: &ReadSnapshot, path: &str) -> Option<LinkTarget> {
     let slot = *graph.pages.positions.get(path)?;
     let (entry, _) = graph.pages.get(slot)?;
@@ -93,88 +74,42 @@ fn owner_link(graph: &ReadSnapshot, path: &str) -> Option<LinkTarget> {
     })
 }
 
-/// What `[[name]]` opens: the one answer (CM step 2, census Q8), used for the
-/// inventory's `link` field ([`WholeGraph::inventory`], the publication delta)
-/// and by [`WholeGraph::link_target`].
-/// - A date by the graph's one date answerer ([`JournalFormat::parse_text`]): the
-///   day's journal file, else an ordinary page of exactly this name, else
-///   the owner of an alias spelled so (model rule 4, S6), else the virtual
-///   journal ([`JournalFormat::absent_link_is_journal`]).
-/// - Any other name: the ordinary page claiming it, else the first alias
-///   owner in path order, of the owner's own kind (a journal's alias opens
-///   the journal), else an absent ordinary page.
-/// - R13-C4: a real file always opens itself, regardless of content.
-/// O(1) claimant lookups plus O(owners). `declared` is whether some page
-/// declares the name as an alias, when the caller already knows (the full
-/// inventory does); `None` reads the alias relation.
-pub(crate) fn link_target_in(
-    claimants: &SharedMap<(bool, String), Vec<PageEntry>>,
+/// The route for a link, from the same opening answer as direct reads.
+fn link_target_in(
+    claimants: &crate::model::ClaimantMap,
     graph: &ReadSnapshot,
     format: &JournalFormat,
     name: &str,
-    _declared: Option<bool>,
 ) -> LinkTarget {
-    let key = tine_core::refs::page_key(name);
-    let claimed = |journal: bool, key: String| {
-        claimants
-            .get(&(journal, key))
-            .filter(|claimants| !claimants.is_empty())
-    };
-    let fallback = crate::model::fileless_names::FilelessName::new(format, name);
-    let owner = || alias_owner_link(graph, &key, fallback.day);
-    let opens = |claimants: &[PageEntry], is_journal: bool| LinkTarget {
-        name: claimants[0].name.clone(),
-        is_journal,
-    };
-    let owners = graph.real_page_owners();
-    if let Some(entry) = owners.opening_entry(&key) {
-        return LinkTarget {
-            name: entry.name.clone(),
-            is_journal: entry.kind == PageKind::Journal,
-        };
-    }
-    // A date in any spelling is its day, held by journal-kind files in any
-    // directory; no ordinary file claims a date (CM SPEC §2.1).
-    if fallback.day.is_some() {
-        if let Some(journals) = claimed(true, tine_core::refs::page_key(&fallback.name)) {
-            if let Some(entry) = owners.opening_entry(&tine_core::refs::page_key(&fallback.name)) {
-                if entry.kind == PageKind::Journal {
-                    return opens(journals, true);
-                }
+    use super::name_owners::{open_name, Opening};
+    let (identity, answer) = open_name(claimants, graph, format, name, false);
+    match answer {
+        Opening::File(entry, _) => {
+            return LinkTarget {
+                name: entry.name.clone(),
+                is_journal: entry.kind == PageKind::Journal,
             }
         }
-        if let Some(owner) = owner() {
-            return owner;
+        Opening::Alias(paths) => {
+            if let Some(owner) = owner_link(graph, &paths[0]) {
+                return owner;
+            }
         }
-        return LinkTarget {
-            name: if owners
-                .opening_entry(&tine_core::refs::page_key(&fallback.name))
-                .is_some()
-            {
-                name.to_owned()
-            } else {
-                fallback.name
-            },
-            is_journal: true,
-        };
+        Opening::Absent => {}
     }
-    if let Some(pages) = claimed(false, key.clone()) {
-        return opens(pages, false);
+    let day = identity.day;
+    LinkTarget {
+        name: day.map_or_else(|| name.to_owned(), |day| format.title(day)),
+        is_journal: day.is_some(),
     }
-    owner().unwrap_or_else(|| LinkTarget {
-        name: fallback.name,
-        is_journal: false,
-    })
 }
 
-/// `entry` with its `link` set when the link opens something other than the
-/// entry itself. Real files have no content-dependent redirect.
+/// Attach the store's link and typed namespace answers to an inventory row.
 fn with_link(
     claimants: &SharedMap<(bool, String), Vec<PageEntry>>,
     graph: &ReadSnapshot,
     format: &JournalFormat,
     mut entry: InventoryEntry,
-    declared: Option<bool>,
 ) -> InventoryEntry {
     if let Some((prefix, key)) =
         crate::model::namespace_parents::parent_prefixes(&entry.name).last()
@@ -193,24 +128,12 @@ fn with_link(
                     is_journal: fallback.day.is_some(),
                 }
             });
-        entry.parent = (target.is_journal || target.name != prefix).then_some(target);
+        let same_day = entry.is_journal && target.is_journal && target.name == entry.name;
+        entry.parent =
+            (!same_day && (target.is_journal || target.name != prefix)).then_some(target);
     }
-    if matches!(entry.target, Resolved::Existing { .. })
-        && !entry.name.bytes().any(|byte| byte.is_ascii_digit())
-    {
-        return entry;
-    }
-    let alias = match &entry.target {
-        Resolved::Alias { owners } => owners.first().and_then(|id| owner_link(graph, id.as_str())),
-        _ => None,
-    };
-    let link = entry
-        .link
-        .take()
-        .or(alias)
-        .unwrap_or_else(|| link_target_in(claimants, graph, format, &entry.name, declared));
-    if link.is_journal != entry.is_journal || link.name != entry.name {
-        entry.link = Some(link);
+    if entry.link.is_none() || !matches!(entry.target, Resolved::Existing { .. }) {
+        entry.link = Some(link_target_in(claimants, graph, format, &entry.name));
     }
     entry
 }
@@ -514,7 +437,6 @@ impl WholeGraph {
                                     parent: None,
                                     empty_alias: false,
                                 },
-                                None,
                             )
                         })
                         .collect(),
@@ -584,13 +506,7 @@ impl WholeGraph {
     /// this per-name form is the conformance harnesses' oracle.
     #[cfg(any(test, feature = "test-faults"))]
     pub fn link_target(&self, name: &str) -> LinkTarget {
-        link_target_in(
-            &self.claimants,
-            &self.graph,
-            &self.journal_format,
-            name,
-            None,
-        )
+        link_target_in(&self.claimants, &self.graph, &self.journal_format, name)
     }
 
     fn full_inventory(&self) -> Arc<Inventory> {
@@ -603,8 +519,6 @@ impl WholeGraph {
             .into_iter()
             .map(|(alias, _, owner)| (tine_core::refs::page_key(&alias), alias, owner))
             .collect();
-        // Declared alias keys supplied to the shared link answerer.
-        let declared: HashSet<&str> = aliases.iter().map(|(key, _, _)| key.as_str()).collect();
         let mut claimed = Vec::new();
         for page in self.list.iter() {
             let key = tine_core::refs::page_key(&page.name);
@@ -616,7 +530,7 @@ impl WholeGraph {
                 if !entry.is_journal {
                     page_claimed_names.insert(key.clone());
                 }
-                claimed.push((entry, Some(declared.contains(key.as_str()))));
+                claimed.push(entry);
             }
         }
         let references = self.graph.referenced_name_table();
@@ -689,16 +603,8 @@ impl WholeGraph {
         }));
         let mut entries: Vec<_> = claimed
             .into_iter()
-            .chain(entries.into_iter().map(|entry| (entry, None)))
-            .map(|(entry, declared)| {
-                with_link(
-                    &self.claimants,
-                    &self.graph,
-                    &self.journal_format,
-                    entry,
-                    declared,
-                )
-            })
+            .chain(entries)
+            .map(|entry| with_link(&self.claimants, &self.graph, &self.journal_format, entry))
             .collect();
         sort_inventory(&mut entries);
         #[cfg(feature = "test-faults")]
@@ -792,13 +698,16 @@ impl WholeGraph {
     /// key), each with the target `resolve` gives: the bucket's first
     /// claimant, then every other claimant.
     fn claimed_entries(&self, page: &PageEntry, _key: String) -> Vec<InventoryEntry> {
-        let claimants = self.all_name_claimants(&page.name);
-        let winner = claimants.first().unwrap_or(page);
+        let opening = crate::model::OpeningName::new(&self.journal_format, &page.name, false);
+        let mut claimants = opening.claims(&self.claimants, &self.config.config.journals_dir);
+        let Some(winner) = claimants.next() else {
+            return Vec::new();
+        };
         let is_journal = winner.kind == PageKind::Journal;
         let mut names: Vec<String> = Vec::new();
         let mut ids: Vec<PageId> = Vec::new();
         {
-            for claimant in &claimants {
+            for claimant in std::iter::once(winner).chain(claimants) {
                 if let Some(id) = &claimant.rel_path {
                     if !names.contains(&claimant.name) {
                         names.push(claimant.name.clone());
@@ -817,7 +726,10 @@ impl WholeGraph {
                 },
                 is_journal,
                 day: winner.date_key.map(Day),
-                link: None,
+                link: Some(LinkTarget {
+                    name: winner.name.clone(),
+                    is_journal,
+                }),
                 namespace_parent: false,
                 parent: None,
                 empty_alias: false,
@@ -904,7 +816,7 @@ impl Snapshot {
                 return None;
             }
             return self.graph.fileless_page_for_day(day).map(|answer| {
-                fileless_entry(
+                self.linked(fileless_entry(
                     answer,
                     Resolved::Absent {
                         id: proposed_journal_id(
@@ -912,7 +824,7 @@ impl Snapshot {
                             self.journal_format.file_stem(day),
                         ),
                     },
-                )
+                ))
             });
         }
         // A key no reference names may still be a namespace parent.
@@ -937,13 +849,7 @@ impl Snapshot {
     }
 
     fn linked(&self, entry: InventoryEntry) -> InventoryEntry {
-        with_link(
-            &self.claimants,
-            &self.graph,
-            &self.journal_format,
-            entry,
-            None,
-        )
+        with_link(&self.claimants, &self.graph, &self.journal_format, entry)
     }
 }
 

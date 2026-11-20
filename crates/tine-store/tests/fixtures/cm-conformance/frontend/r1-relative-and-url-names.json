@@ -113,6 +113,10 @@
       "day": null,
       "is_journal": false,
       "key": "../x/y",
+      "link": {
+        "kind": "page",
+        "name": "../x/y"
+      },
       "name": "../x/y",
       "not_namespace": true,
       "target": {
@@ -124,6 +128,10 @@
       "day": null,
       "is_journal": false,
       "key": "./x",
+      "link": {
+        "kind": "page",
+        "name": "./x"
+      },
       "name": "./x",
       "not_namespace": true,
       "target": {
@@ -135,6 +143,10 @@
       "day": null,
       "is_journal": false,
       "key": "a",
+      "link": {
+        "kind": "page",
+        "name": "a"
+      },
       "name": "a",
       "namespace_parent": true,
       "target": {
@@ -146,6 +158,10 @@
       "day": null,
       "is_journal": false,
       "key": "a/b",
+      "link": {
+        "kind": "page",
+        "name": "a/b"
+      },
       "name": "a/b",
       "target": {
         "id": "pages/a%2Fb.md",
@@ -156,6 +172,10 @@
       "day": null,
       "is_journal": false,
       "key": "https://a.b/c",
+      "link": {
+        "kind": "page",
+        "name": "https://a.b/c"
+      },
       "name": "https://a.b/c",
       "not_namespace": true,
       "target": {
@@ -167,6 +187,10 @@
       "day": null,
       "is_journal": false,
       "key": "notes",
+      "link": {
+        "kind": "page",
+        "name": "Notes"
+      },
       "name": "Notes",
       "target": {
         "id": "pages/Notes.md",

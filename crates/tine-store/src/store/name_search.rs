@@ -21,12 +21,12 @@ impl WholeGraph {
                 let spellings =
                     crate::query::journal_spelling_keys(&self.journal_format, date, &title);
                 if spellings.iter().any(|spelling| {
-                    self.name_claimants(spelling, PageKind::Page)
-                        .iter()
-                        .any(|entry| entry.kind == PageKind::Page)
+                    self.claimants
+                        .get(&(false, spelling.clone()))
+                        .is_some_and(|entries| !entries.is_empty())
                         || self
                             .graph
-                            .alias_owner_paths(&tine_core::refs::page_key(spelling), None)
+                            .alias_owner_paths(spelling, None)
                             .is_some_and(|owners| {
                                 owners
                                     .iter()

@@ -44,7 +44,7 @@ describe("the effective journal title format", () => {
     expect(parseJournalTitle("Nov 2nd, 2027")?.getFullYear()).toBe(2027);
   });
 
-  it("uses a valid configured format; a refused one reads no text, a file-name format still does", () => {
+  it("accepts a valid format and omits refused title and filename text routes", () => {
     applyConfigDerivedState({ ...meta("dd.MM.yyyy"), journal_file_name_format: "" } as GraphMeta, null);
     expect(journalTitle(new Date(2026, 10, 2))).toBe("02.11.2026");
     applyConfigDerivedState({ ...meta("d.M.yy"), journal_file_name_format: "" } as GraphMeta, null);
@@ -52,9 +52,10 @@ describe("the effective journal title format", () => {
     // A refused title format is no text route: `[[5.1.26]]` is an ordinary page.
     expect(parseJournalTitle("5.1.26")).toBeNull();
     expect(parseJournalTitle("Jan 5th, 2026")?.getFullYear()).toBe(2026);
-    // The same pattern as the file-name format is a text route.
-    setJournalFormats("MMM do, yyyy", "d.M.yy");
-    expect(parseJournalTitle("5.1.26")?.getFullYear()).toBe(2026);
+    const defaults = meta("MMM do, yyyy");
+    applyConfigDerivedState({ ...defaults, journal_file_name_format: "d.M.yy",
+      journal_title: { ...defaults.journal_title, file_text_route: false } }, null);
+    expect(parseJournalTitle("5.1.26")).toBeNull();
     expect(renderEnglish(journalTitleRefusalMessage("d.M.yy", status("d.M.yy"))!)).toContain('titles 1900-01-01 "1.1.00", which opens 2000-01-01');
   });
 });

@@ -42,6 +42,10 @@
       "day": null,
       "is_journal": false,
       "key": "old",
+      "link": {
+        "kind": "page",
+        "name": "old"
+      },
       "name": "old",
       "namespace_parent": true,
       "target": {
@@ -70,6 +74,10 @@
       "day": null,
       "is_journal": false,
       "key": "old/sub/child",
+      "link": {
+        "kind": "page",
+        "name": "old/sub/child"
+      },
       "name": "old/sub/child",
       "target": {
         "id": "pages/old%2Fsub%2Fchild.md",
@@ -81,6 +89,10 @@
       "day": null,
       "is_journal": false,
       "key": "owner",
+      "link": {
+        "kind": "page",
+        "name": "owner"
+      },
       "name": "owner",
       "target": {
         "id": "pages/owner.md",

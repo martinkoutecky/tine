@@ -31,10 +31,12 @@ afterEach(() => {
 const existing = (name: string): PageInventoryEntry => ({
   key: name.toLowerCase(), name, is_journal: false, day: null,
   target: { kind: "existing", id: `pages/${name}.md`, others: [] },
+  link: { name, kind: "page" },
 });
-const alias = (name: string, owners: string[]): PageInventoryEntry => ({
+const alias = (name: string, owner: string): PageInventoryEntry => ({
   key: name.toLowerCase(), name, is_journal: false, day: null,
-  target: { kind: "alias", owners: owners.map((owner) => `pages/${owner}.md`) },
+  target: { kind: "alias", owners: [`pages/${owner}.md`] },
+  link: { name: owner, kind: "page" },
 });
 
 /** A chain Alpha -alias-> Beta -alias-> Gamma, with fileless `al` (Alpha's)
@@ -42,7 +44,7 @@ const alias = (name: string, owners: string[]): PageInventoryEntry => ({
 async function chainGraph() {
   vi.spyOn(backend(), "pageInventory").mockResolvedValue({
     rev: "1",
-    entries: [existing("Alpha"), existing("Beta"), existing("Gamma"), existing("Lonely"), alias("al", ["Alpha"]), alias("be", ["Beta"])],
+    entries: [existing("Alpha"), existing("Beta"), existing("Gamma"), existing("Lonely"), alias("al", "Alpha"), alias("be", "Beta")],
   });
   await refreshPageIndex();
   const page = (name: string, pre_block: string | null) => ({ id: `pages/${name}.md`, name, title: name, kind: "page" as const, pre_block, blocks: [] });

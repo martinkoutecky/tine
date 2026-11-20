@@ -77,6 +77,10 @@
       "day": null,
       "is_journal": false,
       "key": "birthday",
+      "link": {
+        "kind": "page",
+        "name": "Birthday"
+      },
       "name": "Birthday",
       "target": {
         "id": "pages/Birthday.md",
@@ -88,6 +92,10 @@
       "day": null,
       "is_journal": false,
       "key": "notes",
+      "link": {
+        "kind": "page",
+        "name": "Notes"
+      },
       "name": "Notes",
       "target": {
         "id": "pages/Notes.md",
@@ -99,6 +107,10 @@
       "day": 20261102,
       "is_journal": true,
       "key": "nov 2nd, 2026",
+      "link": {
+        "kind": "journal",
+        "name": "Nov 2nd, 2026"
+      },
       "name": "Nov 2nd, 2026",
       "target": {
         "id": "journals/2026_11_02.md",
@@ -110,6 +122,10 @@
       "day": 20271102,
       "is_journal": true,
       "key": "nov 2nd, 2027",
+      "link": {
+        "kind": "journal",
+        "name": "Nov 2nd, 2027"
+      },
       "name": "Nov 2nd, 2027",
       "target": {
         "id": "journals/2027_11_02.md",

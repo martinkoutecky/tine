@@ -16,7 +16,7 @@ import { onAppReturn } from "./windowRealm";
 export const DEFAULT_TITLE_FORMAT = "MMM do, yyyy";
 /** The effective title format (`GraphMeta.journal_title.effective`). */
 let effectiveTitleFormat = DEFAULT_TITLE_FORMAT;
-/** The configured `:journal/file-name-format`; "" means the default. */
+/** The published filename text route. An empty string omits the route. */
 let fileFormat = "";
 
 /** The app's wall clock (GH #607). The backend's time-zone rules are the
@@ -286,6 +286,13 @@ function journalParts(name: string): JournalDateParts | null {
  * the Rust rule `JournalFormat::absent_link_is_journal` through wasm. */
 export function absentLinkIsJournal(name: string): boolean {
   return absent_link_is_journal(name, fileFormat, effectiveTitleFormat);
+}
+
+/** The canonical journal title requested by this spelling, from the Rust
+ *  page-key parser. Ordinary names have no journal title. */
+export function journalOpeningTitle(name: string): string | undefined {
+  const day = journalParts(name);
+  return day ? format_journal_date(day.y, day.m, day.d, effectiveTitleFormat) : undefined;
 }
 
 /// A `[[name]]` link / quick-switch pick opens the journal (not an empty page)

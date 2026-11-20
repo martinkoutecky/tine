@@ -145,8 +145,20 @@ pub fn model_input(spec: &GraphSpec) -> Value {
     all.extend(more);
     let mut literal_keys: BTreeMap<String, String> =
         all.iter().map(|s| (s.clone(), page_key(s))).collect();
-    let mut canonical_dates: BTreeMap<String, String> = (all.iter())
-        .filter_map(|s| journal.parse_text(s).map(|d| (page_key(s), day_token(d))))
+    let mut canonical_dates = BTreeMap::new();
+    for (spelling, key) in &literal_keys {
+        let from_key = canonical_dates
+            .entry(key.clone())
+            .or_insert_with(|| journal.parse_key(key).map(day_token));
+        assert_eq!(
+            *from_key,
+            journal.parse_text(spelling).map(day_token),
+            "inconsistent date for {spelling:?} at page key {key:?}"
+        );
+    }
+    let mut canonical_dates: BTreeMap<_, _> = canonical_dates
+        .into_iter()
+        .filter_map(|(key, day)| day.map(|day| (key, day)))
         .collect();
     for (tagged, day) in stem_days {
         literal_keys.insert(tagged.clone(), tagged.clone());
@@ -598,8 +610,8 @@ pub struct Facts {
 }
 
 /// The model's claim of an input file (SPEC §2.1), as the bridge reads it
-/// from the supplied givens: a journals-directory file by its raw file stem,
-/// any other file by its effective name.
+/// from the supplied givens: a journals-directory file by its raw file stem
+/// when it yields a day, otherwise by its effective name.
 fn model_claim(journal: &JournalFormat, f: &Value) -> Page {
     let name = f["title"]
         .as_str()
@@ -607,7 +619,9 @@ fn model_claim(journal: &JournalFormat, f: &Value) -> Page {
         .unwrap_or_else(|| f["stem"].as_str().unwrap());
     let day = if f["dir"] == "journals" {
         let raw = f["rawStem"].as_str().unwrap();
-        journal.parse_file_stem(raw.strip_prefix(STEM_TAG).unwrap_or(raw))
+        journal
+            .parse_file_stem(raw.strip_prefix(STEM_TAG).unwrap_or(raw))
+            .or_else(|| journal.parse_text(name))
     } else {
         journal.parse_text(name)
     };
@@ -920,18 +934,24 @@ pub fn compare_direct_lookup(
         let want = page_pair(page);
         let want_file = owners.get(&want).copied().flatten();
         let resolved = view.resolve(name, false);
-        let ready = match &resolved {
+        let file_of = |resolved: &Resolved| match resolved {
             Resolved::Existing { id, .. } => Some(id.as_str().to_owned()),
             Resolved::Alias { owners } => owners.first().map(|id| id.as_str().to_owned()),
             Resolved::Absent { .. } => None,
         };
+        let ready = file_of(&resolved);
+        let link = view.link_target(name);
+        let link_file = file_of(&view.resolve(&link.name, link.is_journal));
         // The file listing resolves no alias (`page_named_from_files`): a
         // name only an alias holds is compared ready only.
         let cold = match resolved {
             Resolved::Alias { .. } => None,
             _ => Some(("cold", cold[name].clone())),
         };
-        for (path, answer) in std::iter::once(("ready", Ok(ready))).chain(cold) {
+        for (path, answer) in [("ready", Ok(ready)), ("link", Ok(link_file))]
+            .into_iter()
+            .chain(cold)
+        {
             let file = match answer {
                 Ok(file) => file,
                 Err(error) => {
