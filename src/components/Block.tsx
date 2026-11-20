@@ -103,6 +103,7 @@ import { propertyEditorSession } from "../editor/propertySession";
 import { blockNodeBinding } from "../editor/nodeBinding";
 import { editorCommitRecovery } from "../editor/commitRecovery";
 import { commitBlockEditorExit, editorMarkerBaseline } from "../editor/commitExit";
+import { registerOutlineBlankZone } from "../outlineSelectionTarget";
 import { editorWindowFocus } from "../editor/windowFocus";
 import { createCodeBodyEditor } from "../editor/codeBodyEditor";
 import { codeBodyExitTrim, codeBodyProjection, codeLanguageCaret, codeLanguageChange, codeSourceCaret } from "../editor/codeFence";
@@ -301,7 +302,6 @@ export function Block(props: { id: string; hideRefCount?: boolean; forceExpanded
     composer: <Show when={commentClasses()["comment-card"]}><CommentMessages id={props.id} collapsed={collapsed()} expand={expandThread} /><CommentComposer id={props.id} surface={surfaceKey} card={() => mainEl?.parentElement} collapsed={collapsed} expand={expandThread} /></Show>,
   } : null);
   const stickyParent = () => stickyParents() && !bulletless() && (props.forceExpanded || !collapsed()) && (macro() ? blockHasPageEmbed(props.id) && !editing() : hasChildren());
-
   return (
     <div
       class="ls-block"
@@ -323,7 +323,7 @@ export function Block(props: { id: string; hideRefCount?: boolean; forceExpanded
         };
       })()}
       data-block-id={props.id} data-author={storedAuthor() ?? undefined}
-      ref={(el) => { if (embedRow) bindRowHost(el, rowHost); bindRowPosition(el, () => rowHost() ?? { id: props.id, scope: outlineScope, surface: surfaceKey }); }}
+      ref={(el) => { registerOutlineBlankZone(el); if (embedRow) bindRowHost(el, rowHost); bindRowPosition(el, () => rowHost() ?? { id: props.id, scope: outlineScope, surface: surfaceKey }); }}
       data-sticky-parent={stickyParent() ? "" : undefined}
       data-block-ref={parserReady() ? blockExternalId(props.id, propertySession.identity(node().raw, fmt())) ?? props.id : undefined}
     >
@@ -333,7 +333,7 @@ export function Block(props: { id: string; hideRefCount?: boolean; forceExpanded
       <div
         class="block-main"
         ref={(el) => {
-          mainEl = el;
+          mainEl = el; registerOutlineBlankZone(el);
           // GH #501: touch swipes on the row while a touch input exists, following
           // it if it appears or goes away (src/blockSwipe.ts).
           followBlockSwipe(el, { get id() { return rowHost()?.id ?? props.id; }, get scope() { return rowHost() ? rowHost()!.scope : outlineScope; },
@@ -446,9 +446,9 @@ export function Block(props: { id: string; hideRefCount?: boolean; forceExpanded
             </SheetContainer>
           </Match>
           <Match when={true}>
-            <div class="block-children-container">
+            <div class="block-children-container" ref={registerOutlineBlankZone}>
               <CollapseAllBorder id={props.id} readOnly={readOnly()} surface={viewCollapseSurface()} />
-              <div class="block-children">
+              <div class="block-children" ref={registerOutlineBlankZone}>
                 <For {...blockListProps(outlineChildren, (id, neighbours) => <Block id={id} authorNeighbors={neighbours} />,
                   { head: props.id, index: commentIndex, after: () => { const sides = props.authorNeighbors?.(); return sides?.results ? undefined : sides?.next ?? sides?.after; } })} />
               </div>

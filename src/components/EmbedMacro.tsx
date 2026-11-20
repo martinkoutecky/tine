@@ -9,7 +9,7 @@ import { blockDtoExternalId } from "../blockIdentity";
 import { nearestAncestors } from "../render/blockTrail";
 import { visibleBody } from "../render/block";
 import { CollapseSurfaceContext } from "./Block";
-import { bindOutlineSelection } from "../outlineSelectionTarget";
+import { bindOutlineSelection, createOutlineOwner } from "../outlineSelectionTarget";
 import { hostFolded } from "./macroFold";
 import { resolveBlockBatched } from "../resolveBatch";
 import { embedBlockTarget, embedPageTarget } from "../embedTarget";
@@ -109,9 +109,9 @@ export function EmbedMacro(props: { body: string; blockId?: string; span?: Span 
     const id = e && dto ? resolveBlockRef({ uuid: blockDtoExternalId(dto), page: e.page, pageKind: e.kind, ...(e.path ? { path: e.path } : {}) }) : null;
     return id && docNode(id) ? nearestAncestors(id) : null;
   };
-  let host!: HTMLDivElement;
+  const outlineOwner = createOutlineOwner();
   return (
-    <div class="embed-block" ref={el => { host = el; bindOutlineSelection(el); }} data-foreign-source="embed" classList={{ "embed-page": !!pageTarget() }}
+    <div class="embed-block" ref={el => bindOutlineSelection(el, outlineOwner)} data-foreign-source="embed" classList={{ "embed-page": !!pageTarget() }}
       data-find-host={props.blockId} data-find-answered={!!embedded() && !foldedPageBody() && !selfPageEmbed()}>
       <Show when={!insidePeek && (editable() || source())}>
         {/* mousedown: not the host's edit gesture, and keep a touch editor's focus.
@@ -190,7 +190,7 @@ export function EmbedMacro(props: { body: string; blockId?: string; span?: Span 
               <RefBlocks page={embedded()!.page} pageKind={embedded()!.kind} path={embedded()!.path} blocks={embedded()!.blocks} readOnly pageBody localFolds />
             </LinkDepthContext.Provider>
           }>
-            <LiveRefGroup selectionHost={host} page={embedded()!.page} kind={embedded()!.kind} path={embedded()!.path} blocks={embedded()!.blocks} embedId={embedded()!.embedId} wholePage={!!pageTarget()} hostBlockId={props.blockId} surface="embed" />
+            <LiveRefGroup selectionOwner={outlineOwner} page={embedded()!.page} kind={embedded()!.kind} path={embedded()!.path} blocks={embedded()!.blocks} embedId={embedded()!.embedId} wholePage={!!pageTarget()} hostBlockId={props.blockId} surface="embed" />
           </Show>
         </Show>
       </Show>

@@ -23,7 +23,7 @@ import { applyTaskWorkflow, datePicker } from "./ui";
 import { ensurePageLoaded, pageByName, blockSubtreeMarkdown, deleteBlock, setRaw, node as docNode } from "./document";
 import { endEdit, startEditing } from "./editorController";
 import { installKeybindings, matchesCommand } from "./keybindings";
-import { bindOutlineSelection } from "./outlineSelectionTarget";
+import { bindOutlineSelection, createOutlineOwner, OutlineBlankOwner } from "./outlineSelectionTarget";
 import { bindingAlternatives, type ShortcutBinding } from "./shortcutBindings";
 import { backend } from "./backend";
 import { initPinyinMatchingSetting, pinyinMatchingEnabled } from "./launcherRanking";
@@ -109,6 +109,7 @@ function Capture() {
 
   const roots = () => pageByName(SCRATCH)?.roots ?? [];
   const selectionScope = { get roots() { return roots(); } };
+  const outlineOwner = createOutlineOwner({ surface: "main", scope: selectionScope });
 
   const seed = () => {
     // The scratch page has no file, so a re-seed matches the incumbent and is
@@ -763,9 +764,11 @@ function Capture() {
               }
             }}
           />
-          <div class="page-blocks" ref={el => bindOutlineSelection(el, { surface: "main", scope: selectionScope })}>
-            <For each={roots()}>{(rid) => <Block id={rid} />}</For>
-          </div>
+          <OutlineBlankOwner.Provider value={outlineOwner}>
+            <div class="page-blocks" ref={el => bindOutlineSelection(el, outlineOwner)}>
+              <For each={roots()}>{(rid) => <Block id={rid} />}</For>
+            </div>
+          </OutlineBlankOwner.Provider>
           <Show when={!bindingAlternatives(submitBinding()).length}>
             <div class="capture-actions">
               <button type="button" onClick={submit} disabled={captureStatus() === "saving"}>{t("capture-file-capture")}</button>

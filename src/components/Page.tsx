@@ -31,7 +31,7 @@ import { pushToast } from "../toasts";
 import { focusPageTrailing } from "./pageTrailing";
 import { ensureJournalTemplateForDay, renameOrMergePage, renameOutcomeMessage, switchGraph } from "../graph";
 import { Block, OutlineScopeContext } from "./Block";
-import { bindOutlineSelection } from "../outlineSelectionTarget";
+import { bindOutlineSelection, createOutlineOwner, OutlineBlankOwner, registerOutlineBlankZone } from "../outlineSelectionTarget";
 import { TaggedPages } from "./TaggedPages";
 import { AliasGroupHeader } from "./AliasGroup";
 import { LinkedReferences } from "./LinkedReferences";
@@ -930,6 +930,7 @@ function ZoomedView(props: { id: string }): JSX.Element {
   const crumb = (id: string) => visibleBody(docNode(id).raw, formatForBlock(id))[0] || "…";
   const editSurface = () => pane.paneId === "main" ? "main" : `pane:${pane.paneId}`;
   const scope = { get roots() { return [props.id]; }, get forceExpandedRoot() { return props.id; } };
+  const owner = createOutlineOwner({ surface: editSurface(), scope });
   const focusTrailing = () => {
     const root = docNode(props.id);
     if (!root || pageReadOnly(pageByName(root.page)) || pageByName(root.page)?.guide) return;
@@ -941,7 +942,7 @@ function ZoomedView(props: { id: string }): JSX.Element {
   };
 
   return (
-    <div class="page zoomed-page" ref={el => bindOutlineSelection(el, { surface: editSurface(), scope }, true)}>
+    <div class="page zoomed-page" ref={el => bindOutlineSelection(el, owner, true)}>
       <div class="zoom-breadcrumb">
         <a
           class="crumb crumb-page"
@@ -987,13 +988,13 @@ function ZoomedView(props: { id: string }): JSX.Element {
           )}
         </For>
       </div>
-      <div class="zoomed-block">
+      <div class="zoomed-block" ref={el => registerOutlineBlankZone(el, owner)}>
         {/* A zoom root is a viewing boundary: reveal its immediate subtree even
             when collapsed on the parent page, without mutating collapsed::.
             Descendants still honor their own individual collapse state. */}
-        <OutlineScopeContext.Provider value={scope}>
+        <OutlineScopeContext.Provider value={scope}><OutlineBlankOwner.Provider value={owner}>
           <CommentSurface main page={pageByName(pageName())} roots={[props.id]}><Block id={props.id} forceExpanded /></CommentSurface>
-        </OutlineScopeContext.Provider>
+        </OutlineBlankOwner.Provider></OutlineScopeContext.Provider>
       </div>
       <Show when={!pageReadOnly(pageByName(pageName())) && !pageByName(pageName())?.guide}>
         <TrailingBlockTarget onActivate={focusTrailing} />
@@ -1057,6 +1058,7 @@ function PageSection(props: { page: FeedPage; routed: boolean; children?: JSX.El
     ? <><Block id={id} authorNeighbors={neighbours} /><Show when={id === leadingHeaderId()}>{openingRow()}</Show></>
     : <Block id={id} authorNeighbors={neighbours} />;
   const editSurface = () => pane.paneId === "main" ? "main" : `pane:${pane.paneId}`;
+  const owner = createOutlineOwner({ surface: editSurface(), get page() { return props.page.name; }, scope });
   // Every page section (including each journal day) owns its margin;
   // the available pane width chooses the tier, independent of route or split.
   let outline: HTMLDivElement | undefined;
@@ -1141,7 +1143,7 @@ function PageSection(props: { page: FeedPage; routed: boolean; children?: JSX.El
   const isTodayJournal = () => props.page.kind === "journal"
     && props.page.name === journalTitle(localDateFromDayKey(currentDayKey()));
   return (
-    <div class="page-section" data-page-name={props.page.name} ref={el => bindOutlineSelection(el, { surface: editSurface(), get page() { return props.page.name; }, scope }, props.routed)}>
+    <div class="page-section" data-page-name={props.page.name} ref={el => bindOutlineSelection(el, owner, props.routed)}>
       <Show when={props.page.kind === "page"}>
         <NamespaceCrumb name={props.page.name} />
       </Show>
@@ -1321,12 +1323,12 @@ function PageSection(props: { page: FeedPage; routed: boolean; children?: JSX.El
       <FailureBoundary region="The conflict panel">
         <PageConflictPanel name={props.page.name} path={props.page.id} />
       </FailureBoundary>
-      <CommentResolutionScope roots={props.page.roots}><MarginContext.Provider value={margin.placement}>
-      <div class="page-blocks" ref={outline} classList={{ "margin-active": margin.active() }}>
+      <CommentResolutionScope roots={props.page.roots}><MarginContext.Provider value={margin.placement}><OutlineBlankOwner.Provider value={owner}>
+      <div class="page-blocks" ref={el => { outline = el; registerOutlineBlankZone(el, owner); }} classList={{ "margin-active": margin.active() }}>
         <Show when={!leadingHeaderId()}>{openingRow()}</Show>
-        <SeenRows seen={seen}><SeenRemoved first={null} /><BlockList ids={rootsToRender()} render={rootRow} /></SeenRows>
+        <SeenRows seen={seen}><SeenRemoved first={null} /><BlockList ids={scope.roots} render={rootRow} /></SeenRows>
       </div>
-      </MarginContext.Provider>
+      </OutlineBlankOwner.Provider></MarginContext.Provider>
       <SeenRows seen={seen}><margin.Column /></SeenRows></CommentResolutionScope>
       {props.children}
       <PageTypingTarget page={() => props.page} surface={editSurface()} />

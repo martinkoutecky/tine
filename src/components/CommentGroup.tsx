@@ -2,7 +2,7 @@ import { createContext, createUniqueId, For, Show, useContext, type JSX } from "
 import { Block, SurfaceContext } from "./Block";
 import { CommentQuoteHeader } from "./CommentParts";
 import { blockWritable, formatForBlock, node, ownSelectionSurface } from "../document";
-import { bindOutlineSelection } from "../outlineSelectionTarget";
+import { bindOutlineSelection, createOutlineOwner, OutlineBlankOwner } from "../outlineSelectionTarget";
 import { quoteSelectorOf } from "../comments";
 import { facetsOf } from "../render/facets";
 import { appendThreadForPassage } from "../commentActions";
@@ -22,6 +22,7 @@ export function CommentGroup(props: { ids: readonly string[]; render?: (id: stri
   const surface = useContext(SurfaceContext);
   const selectionSurface = `comment-group:${createUniqueId()}`;
   const scope = { get roots() { return props.ids; } };
+  const owner = createOutlineOwner({ surface: selectionSurface, scope });
   ownSelectionSurface(selectionSurface, undefined, surface);
   const first = () => props.ids[0];
   const firstNode = blockNodeBinding(first).node;
@@ -31,10 +32,12 @@ export function CommentGroup(props: { ids: readonly string[]; render?: (id: stri
     return !!parent && !!selector() && passageKey(parent.raw, selector()!, formatForBlock(first())) !== null;
   };
   return <div class="comment-group" data-comment-group={first()}
-    ref={el => bindOutlineSelection(el, { surface: selectionSurface, scope })}>
+    ref={el => bindOutlineSelection(el, owner)}>
     <Show when={props.ids.length > 1}><CommentQuoteHeader parentId={firstNode().parent} selector={selector()} /></Show>
     <CommentGroupContext.Provider value={() => props.ids}>
-      <For each={scope.roots}>{id => props.render ? props.render(id) : <Block id={id} />}</For>
+      <OutlineBlankOwner.Provider value={owner}>
+        <For each={scope.roots}>{id => props.render ? props.render(id) : <Block id={id} />}</For>
+      </OutlineBlankOwner.Provider>
     </CommentGroupContext.Provider>
     <Show when={blockWritable(first()) && resolved()}>
       {/* Keep blur from collapsing the empty composer and moving this button during its press. */}

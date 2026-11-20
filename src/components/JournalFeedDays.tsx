@@ -117,9 +117,12 @@ function JournalDay(props: { name: string; children: (page: FeedPage) => JSX.Ele
   const page = () => pageByName(props.name);
   const releaseReserveIfFilled = () => {
     const body = el.firstElementChild;
-    if (!body || !page()) return;
-    const style = el.ownerDocument.defaultView!.getComputedStyle(body);
-    const natural = body.getBoundingClientRect().height + (parseFloat(style.marginTop) || 0) + (parseFloat(style.marginBottom) || 0);
+    if (!body || !page() || !reserve()) return;
+    const win = el.ownerDocument.defaultView!;
+    const style = win.getComputedStyle(body);
+    const frame = win.getComputedStyle(el);
+    const natural = [style.marginTop, style.marginBottom, frame.paddingTop, frame.paddingBottom, frame.borderTopWidth, frame.borderBottomWidth]
+      .reduce((height, length) => height + (parseFloat(length) || 0), body.getBoundingClientRect().height);
     if (natural >= height() - 0.5) setReserve(false);
   };
   const reload = async () => {

@@ -24,6 +24,7 @@ import { observeViewportWindow } from "../viewportWindow";
 import { trackRetirementPin } from "../retirementPins";
 import { inPageFindOpen } from "../inpageFind";
 import { authorSiblingNeighbors, type AuthorNeighbors, type ListRun } from "./authorRuns";
+import { registerOutlineBlankZone } from "../outlineSelectionTarget";
 
 const GROUP = 24;
 const WINDOW_AT = 80;
@@ -180,7 +181,7 @@ function WindowedList(props: { groups: readonly WindowGroup[]; render: (id: stri
     resize?.observe(container);
     onCleanup(() => resize?.disconnect());
   });
-  return <div ref={container} class="outline-list"><For each={props.groups}>{(group, index) =>
+  return <div ref={el => { container = el; registerOutlineBlankZone(el); }} class="outline-list"><For each={props.groups}>{(group, index) =>
     <BlockWindow ids={group.ids} first={index() === 0} width={width()} font={font()} observe={observe} render={props.render} />
   }</For></div>;
 }
@@ -281,7 +282,7 @@ function BlockWindow(props: { ids: () => readonly string[]; first: boolean; widt
       host.removeEventListener("mousedown", press, true);
     });
   });
-  return <div ref={host} class="outline-window" data-outline-window data-find-source-mounted={mounted()}>
+  return <div ref={el => { host = el; registerOutlineBlankZone(el); }} class="outline-window" data-outline-window data-find-source-mounted={mounted()}>
     <Show when={mounted()} fallback={
       <div aria-hidden="true" style={{ height: `${height() || geometry().estimate() || props.ids().length * 30}px` }} />
     }>

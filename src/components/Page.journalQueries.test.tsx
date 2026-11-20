@@ -3,7 +3,7 @@ import { render } from "solid-js/web";
 import { PageView } from "./Page";
 import { backend } from "../backend";
 import { initParser } from "../render/parse";
-import { clearSelection, node, resetStore, selectedIds } from "../document";
+import { clearSelection, node, resetStore, selectedIds, topSelected } from "../document";
 import { resetTabsToJournals } from "../router";
 import { currentDayKey, journalTitle, appNow } from "../journal";
 import { setGraphMeta } from "../graphSession";
@@ -38,7 +38,85 @@ const journalSurfaces = [
   { surface: "inline block references", shell: ".block-references" },
 ];
 
-it.each(journalSurfaces.flatMap(surface => ["Delete", "Backspace", "Cut"].map(action => ({ ...surface, action }))))(
+const removalKeys = ["Delete", "Backspace", "Cut"];
+
+it.each(["config diagnostic", "Sections lookup error", "Sections read error", "pending query groups"].flatMap(
+  zone => removalKeys.map(action => ({ zone, action })),
+))("leaves Ctrl+A and $action native on the journal $zone", async ({ zone, action }) => {
+  const today = journalTitle(appNow());
+  const body = { id: "body", raw: "Keep this day", collapsed: false, children: [] };
+  const task = { id: "task", raw: "TODO Keep this source", collapsed: false, children: [] };
+  const source: PageRead = { id: "pages/Tasks.md", name: "Tasks", title: "Tasks", kind: "page", pre_block: null, blocks: [task] };
+  const pending = zone === "pending query groups";
+  const diagnostic = zone === "config diagnostic";
+  if (zone === "Sections lookup error") vi.mocked(locateSectionsPages).mockRejectedValueOnce(new Error("lookup failed"));
+  if (zone === "Sections read error") {
+    vi.mocked(locateSectionsPages).mockResolvedValueOnce(["Sections"]);
+    vi.spyOn(backend(), "getPage").mockRejectedValue(new Error("read failed"));
+  }
+  setGraphMeta({
+    disable_scheduled_and_deadline_query: true,
+    journal_config_diagnostics: diagnostic ? ["Invalid config value"] : [],
+    default_journal_queries: pending ? [{ title: "Tasks", body: "query (task TODO)", error: null }] : [],
+  } as GraphMeta);
+  if (pending) {
+    vi.stubGlobal("requestAnimationFrame", () => 1);
+    vi.stubGlobal("IntersectionObserver", class {
+      constructor(private notify: IntersectionObserverCallback) {}
+      observe(target: Element) {
+        if (target.closest(".query-group")?.querySelector(".query-page")?.textContent === "Tasks" || target === document.querySelector(".query-group")) {
+          queueMicrotask(() => this.notify([{ target, isIntersecting: true } as IntersectionObserverEntry], this as unknown as IntersectionObserver));
+        }
+      }
+      unobserve() {}
+      disconnect() {}
+    });
+    backendReadsQueries({ "(task TODO)": { form: "(task TODO)" } });
+    vi.spyOn(backend(), "queryRun").mockResolvedValue(blockRunResult([
+      { page: source.name, kind: source.kind, path: source.id, blocks: [task] },
+      ...Array.from({ length: 32 }, (_, i) => ({ page: `Source ${i}`, kind: source.kind, blocks: [{ ...task, id: `task-${i}` }] })),
+    ]));
+    vi.spyOn(backend(), "getPageByPath").mockImplementation(async path => path === source.id ? source : null);
+  }
+  vi.spyOn(backend(), "journalFeedPage").mockResolvedValue({ pages: [{
+    id: "journals/today.md", name: today, title: today, kind: "journal", pre_block: null, blocks: [body],
+  }], as_of_day: currentDayKey(), next_before_day: null, done: true });
+  const write = vi.spyOn(backend(), "writeRich").mockResolvedValue(undefined);
+  const cuts = vi.spyOn(cut, "cutBlocks");
+  const host = document.body.appendChild(document.createElement("div"));
+  const uninstall = installKeybindings();
+  const dispose = render(() => <PageView />, host);
+  const press = (key: string, ctrlKey = false) => {
+    const event = new KeyboardEvent("keydown", { key, ctrlKey, bubbles: true, cancelable: true });
+    host.dispatchEvent(event);
+    return event.defaultPrevented;
+  };
+  try {
+    const selector = diagnostic ? ".config-diagnostic" : pending ? ".query-pending-groups" : ".resource-failure";
+    const at = await vi.waitFor(() => {
+      const target = host.querySelector<HTMLElement>(selector);
+      expect(target).toBeTruthy();
+      if (pending) expect(node(task.id)?.raw).toBe(task.raw);
+      return target!;
+    });
+    at.dispatchEvent(new MouseEvent("pointerdown", { bubbles: true, button: 0 }));
+    at.click();
+    const select = press("a", true);
+    const roots = selectedIds();
+    const remove = action === "Cut" ? press("x", true) : press(action);
+    await cuts.mock.results.at(-1)?.value;
+    expect({ select, roots, remove, body: node(body.id)?.raw }).toEqual({ select: false, roots: [], remove: false, body: body.raw });
+    if (pending) expect(node(task.id)?.raw).toBe(task.raw);
+    expect(write).not.toHaveBeenCalled();
+  } finally {
+    clearSelection();
+    dispose();
+    uninstall();
+    vi.unstubAllGlobals();
+  }
+});
+
+it.each(journalSurfaces.flatMap(surface => removalKeys.map(action => ({ ...surface, action }))))(
   "keeps the journal body after Ctrl+A on $surface chrome and $action", async ({ surface, shell, action }) => {
     const today = journalTitle(appNow());
     const uuid = "1d5ea000-0000-4000-a000-000000000001";
@@ -47,20 +125,23 @@ it.each(journalSurfaces.flatMap(surface => ["Delete", "Backspace", "Cut"].map(ac
     const source: PageRead = {
       id: "pages/Tasks.md", name: "Tasks", title: "Tasks", kind: "page", pre_block: null, blocks: [task],
     };
+    const otherTask = { ...task, id: "other-task", raw: "TODO Another result" };
+    const otherSource: PageRead = { ...source, id: "pages/Other.md", name: "Other", blocks: [otherTask] };
     const sections: PageRead = {
       ...source, id: "pages/Sections.md", name: "Sections", title: "Sections", blocks: [{ ...task, raw: "{{query (task TODO)}}" }],
     };
     const group = { page: source.name, kind: source.kind, path: source.id, blocks: [task] };
+    const otherGroup = { page: otherSource.name, kind: otherSource.kind, path: otherSource.id, blocks: [otherTask] };
     if (surface === "Journals Sections query") vi.mocked(locateSectionsPages).mockResolvedValueOnce([sections.name]);
     setGraphMeta({
       disable_scheduled_and_deadline_query: surface !== "agenda",
       default_journal_queries: surface === "configured query" ? [{ title: "Tasks", body: "query (task TODO)", error: null }] : [],
     } as GraphMeta);
     backendReadsQueries({ "(task TODO)": { form: "(task TODO)" }, [agendaTql()]: { form: agendaTql(), kind: "tql" } });
-    vi.spyOn(backend(), "queryRun").mockResolvedValue(blockRunResult([group]));
+    vi.spyOn(backend(), "queryRun").mockResolvedValue(blockRunResult([group, otherGroup]));
     vi.spyOn(backend(), "getBlockReferrers").mockResolvedValue([group]);
     vi.spyOn(backend(), "getPage").mockImplementation(async name => [sections, source].find(page => page.name === name) ?? null);
-    vi.spyOn(backend(), "getPageByPath").mockImplementation(async path => path === source.id ? source : null);
+    vi.spyOn(backend(), "getPageByPath").mockImplementation(async path => [source, otherSource].find(page => page.id === path) ?? null);
     vi.spyOn(backend(), "journalFeedPage").mockResolvedValue({ pages: [{
       id: "journals/today.md", name: today, title: today, kind: "journal", pre_block: null, blocks: [body],
     }], as_of_day: currentDayKey(), next_before_day: null, done: true });
@@ -87,11 +168,12 @@ it.each(journalSurfaces.flatMap(surface => ["Delete", "Backspace", "Cut"].map(ac
       const area = await vi.waitFor(() => {
         const region = host.querySelector(shell);
         expect(region?.querySelector(`.ls-block:not(.ref-block)[data-block-id="${task.id}"]`)).toBeTruthy();
+        if (!references) expect(node(otherTask.id)?.raw).toBe(otherTask.raw);
         return region!;
       });
-      const chrome = references ? [".block-references-inner", ".block-references-header"] : [".query-header", ".query-count"];
+      const chrome = references ? [".block-references-inner", ".block-references-header"] : [".query-header", ".query-count", ".query-results-region"];
       const zones = [area, ...chrome.map(selector => area.querySelector(selector)!)];
-      const offset = ["Delete", "Backspace", "Cut"].indexOf(action);
+      const offset = removalKeys.indexOf(action);
       host.focus();
       for (const at of [...zones.slice(offset), ...zones.slice(0, offset)]) {
         click(at);
@@ -101,12 +183,27 @@ it.each(journalSurfaces.flatMap(surface => ["Delete", "Backspace", "Cut"].map(ac
         expect({ select, remove, body: node(body.id)?.raw, selected: selectedIds() }).toEqual({
           select: false, remove: false, body: body.raw, selected: [],
         });
+        expect(node(task.id)?.raw).toBe(task.raw);
+        if (!references) expect(node(otherTask.id)?.raw).toBe(otherTask.raw);
       }
       expect(write).not.toHaveBeenCalled();
       expect(submit).not.toHaveBeenCalled();
-      click(area.querySelector(references ? ".reference-group" : ".query-group")!);
+      const card = area.querySelector(`[data-block-id="${task.id}"]`)!.closest(references ? ".reference-group" : ".query-group")!;
+      click(card);
       expect(press("a", true)).toBe(true);
-      expect(selectedIds()).toEqual([task.id]);
+      expect(topSelected()).toEqual([task.id]);
+      expect(press("c", true)).toBe(true);
+      const [text, html] = write.mock.lastCall!;
+      expect(text).toBe(`- ${task.raw}`);
+      expect(new DOMParser().parseFromString(html, "text/html").querySelector("body > ul > li")?.textContent).toBe(task.raw);
+      expect(selectedIds()).toEqual([]);
+      click(card);
+      expect(press("a", true)).toBe(true);
+      expect(action === "Cut" ? press("x", true) : press(action)).toBe(true);
+      await cutBlocks.mock.results.at(-1)?.value;
+      expect(node(task.id)).toBeUndefined();
+      expect(node(body.id)?.raw).toBe(body.raw);
+      if (!references) expect(node(otherTask.id)?.raw).toBe(otherTask.raw);
     } finally {
       clearSelection();
       setBlockReferencesRequest(null);

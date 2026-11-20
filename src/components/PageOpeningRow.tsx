@@ -4,6 +4,7 @@ import { t } from "../i18n";
 import { OpeningText } from "./OpeningText";
 import { BlockRenderBoundary } from "./BlockRenderBoundary";
 import { forbidsEditEntry } from "../editor/editTargets";
+import { registerOutlineBlankZone } from "../outlineSelectionTarget";
 
 /** A page's opening text, the prose before its first block (GH #85), as the
  *  row a click turns into an editable block (`onEdit`). Its text is
@@ -13,8 +14,8 @@ export function PageOpeningRow(props: { page: FeedPage; onEdit: () => void }): J
   return (
     <Show when={pageOpening(props.page).content}>
       {(content) => (
-        <div class="ls-block preamble-block" data-page-preamble={props.page.name}>
-          <div class="block-main">
+        <div class="ls-block preamble-block" data-page-preamble={props.page.name} ref={registerOutlineBlankZone}>
+          <div class="block-main" ref={registerOutlineBlankZone}>
             <div class="block-controls">
               <span class="collapse-toggle" />
               <span class="bullet-container" title={t("page-ui-click-the-text-to-turn-it-into-an-editable")}>
