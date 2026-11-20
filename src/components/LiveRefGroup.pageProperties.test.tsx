@@ -259,8 +259,8 @@ describe("opening text with later property groups", () => {
 describe("page properties in Linked References (GH #486)", () => {
   it("keeps the rendered properties row when its source page is re-admitted unchanged (GH #886)", async () => {
     const source = sourcePage();
-    vi.spyOn(backend(), "getPageByPath").mockResolvedValue(source);
-    const { root, dispose } = mount(() => <LiveRefGroup page="Source" kind="page" path={source.id} blocks={[propertyRow()]} surface="ref" eager />);
+    vi.spyOn(backend(), "getPage").mockResolvedValue(source);
+    const { root, dispose } = mount(() => <LiveRefGroup page="Source" kind="page" format={source.format} blocks={[propertyRow()]} surface="ref" eager />);
     try {
       await vi.waitFor(() => expect(pageByName("Source")).toBeDefined());
       const row = await vi.waitFor(() => {

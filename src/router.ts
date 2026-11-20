@@ -239,21 +239,16 @@ export function sameRoute(a: Route, b: Route): boolean {
 /** Reuse compares destinations, while history/session equality stays exact.
  * Name routes and file routes can reach the same canonical file (GH #711).
  * Ask the shared inventory; never equate a same-name stray with its owner. */
-/** The one answer to "which file does this view name", for tab routes and
- *  (through the router bridge) sidebar items: its own exact path; else the
- *  inventory owner of its name; undefined while the inventory cannot say. A
- *  loaded same-name file is not an answer (two files claiming one name are a
- *  separate question, card on the queue). */
-export function viewOwnerPath(name: string, pageKind: PageKind, path: string | undefined): string | undefined {
-  return path || ownerPath(resolvedTarget(name, pageKind));
-}
-
-export function sameNavigationRoute(a: Route, b: Route): boolean {
+function sameNavigationRoute(a: Route, b: Route): boolean {
   if (sameRoute(a, b)) return true;
   if (a.kind !== "page" || b.kind !== "page" || a.pageKind !== b.pageKind
     || a.block !== b.block || a.blockPos !== b.blockPos) return false;
-  const path = viewOwnerPath(a.name, a.pageKind, a.path);
-  return path !== undefined && path === viewOwnerPath(b.name, b.pageKind, b.path);
+  const physicalPath = (r: typeof a): string | undefined => {
+    if (r.path) return r.path;
+    return ownerPath(resolvedTarget(r.name, r.pageKind));
+  };
+  const path = physicalPath(a);
+  return path !== undefined && path === physicalPath(b);
 }
 
 const CLOSED_CAP = 10;
@@ -1489,4 +1484,4 @@ export function restoreSession(): Promise<void> {
   return mainRouterInstance().restoreSession();
 }
 
-installRouterBridge({ route, focusBlock, scheduleSessionSave, openPageTarget, viewOwnerPath });
+installRouterBridge({ route, focusBlock, scheduleSessionSave, openPageTarget });

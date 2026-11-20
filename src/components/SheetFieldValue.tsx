@@ -15,7 +15,7 @@ export function FieldValueView(props: {
   fieldType?: FieldType;
   value: FieldValue | null;
   formulaValue?: FormulaValue | null;
-  source: Pick<FormulaEvalRow, "page" | "kind" | "path">;
+  source: Pick<FormulaEvalRow, "page" | "kind" | "path" | "format">;
   onControlClick?: (e: MouseEvent) => void;
 }): JSX.Element {
   const view = createMemo(() => cellView(props.field, props.fieldType, props.value, props.formulaValue));
@@ -77,7 +77,7 @@ export function FieldValueView(props: {
       </Match>
       <Match when={is("plain")}>{(v) => <>{v().text}</>}</Match>
       <Match when={is("inline")}>
-        {(v) => <InlineText text={v().text} format={sourceFormatForPage(props.source.page, props.source.kind, props.source.path) ?? null} />}
+        {(v) => <InlineText text={v().text} format={sourceFormatForPage(props.source.page, props.source.kind, props.source.path, props.source.format) ?? null} />}
       </Match>
     </Switch>
   );

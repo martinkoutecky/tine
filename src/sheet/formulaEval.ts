@@ -13,7 +13,7 @@ import {
 } from "./formula/value";
 import { isPlainDecimalNumber, isoDatePrefix } from "./typed";
 import { fieldValueFromFacets, readField, type FieldId, type FieldValue } from "./fields";
-import type { BlockDto, PageKind } from "../types";
+import type { BlockDto, Format, PageKind } from "../types";
 
 import { appNow, currentDayKey } from "../journal";
 import { resolveResultRow } from "../components/queryResultIdentity";
@@ -22,6 +22,7 @@ export interface FormulaEvalRow {
   page: string;
   kind?: PageKind;
   path?: string;
+  format?: Format;
   dto?: BlockDto;
   /** Evaluate from `dto` only, never the live document store: the static export
    *  computes a page it may not have loaded, and must not read a different one. */

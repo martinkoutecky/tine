@@ -234,6 +234,7 @@ fn the_read_verbs_answer_over_the_socket() {
     let refs = conn.call("refs", json!({ "target": "a" })).unwrap();
     assert_eq!(refs["groups"][0]["page"], "b");
     assert!(refs["groups"][0].get("path").is_none());
+    assert!(refs["groups"][0].get("format").is_none());
     let block_refs = conn
         .call("refs", json!({ "target": UUID, "block": true }))
         .unwrap();
@@ -255,6 +256,7 @@ fn the_read_verbs_answer_over_the_socket() {
         .iter()
         .map(|group| {
             assert!(group.get("path").is_none());
+            assert!(group.get("format").is_none());
             &group["page"]
         })
         .collect();

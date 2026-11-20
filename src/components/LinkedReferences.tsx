@@ -5,7 +5,7 @@ import { For, Show, createResource, createSignal, createMemo, createEffect, merg
 import { backend } from "../backend";
 import { classifyReferenceLoadError, referenceLoadErrorMessage, type ReferenceLoadError } from "../referenceLoadError";
 import { graphOwner, latestOwner, readOwned } from "../owned";
-import { openPageTarget, openPageTargetInNewTab } from "../router";
+import { openPage, openPageInNewTab } from "../router";
 import { openRouteInOtherPane } from "../panes";
 import { internalLinkAuxClick, internalLinkDest, internalLinkMouseDown } from "../linkGesture";
 import { openPageInSidebar, openPageContextMenu, searchRemoveAccents } from "../ui";
@@ -18,7 +18,7 @@ import { matcherMatches, parseSearchQuery, searchSubstringSpans } from "../edito
 import { searchFold } from "../editor/searchFold";
 import { ReferenceExportChooser } from "./ReferenceExportChooser";
 import { pageIdentityKey } from "../pageIdentity";
-import { mergeReferenceGroups, referenceGroupKey } from "../referenceGroups";
+import { mergeReferenceGroups } from "../referenceGroups";
 import { referenceSearchRequest, sectionOverride, setSectionOverride } from "../referenceSectionState";
 import { FIND_REFERENCES_ATTR, FIND_REFERENCES_EMPTY_ATTR, FIND_REFERENCES_PAGE_ATTR } from "../inpageFind";
 import { readOr } from "../resourceRead";
@@ -389,7 +389,8 @@ export function ReferenceSection(input: { name: string; unlinked?: boolean; jour
     });
   });
 
-  const shownByKey = createMemo(() => new Map(shown().map((group) => [referenceGroupKey(group), group] as const)));
+  const groupKey = (group: RefGroup) => pageIdentityKey(group.page);
+  const shownByKey = createMemo(() => new Map(shown().map((group) => [groupKey(group), group] as const)));
   const setAllGroups = (value: boolean) => setAll(shown(), value);
 
   const cycle = (name: string) => {
@@ -559,10 +560,9 @@ export function ReferenceSection(input: { name: string; unlinked?: boolean; jour
               </Show>
             </div>
           </Show>
-          <For each={shown().map(referenceGroupKey)}>
+          <For each={shown().map(groupKey)}>
             {(key) => {
               const group = () => shownByKey().get(key)!;
-              const target = () => ({ name: group().page, pageKind: group().kind, path: group().path });
               let pageButton: HTMLButtonElement | undefined;
               const longPress = createLongPress(() => pageButton);
               onCleanup(longPress.dispose);
@@ -589,13 +589,13 @@ export function ReferenceSection(input: { name: string; unlinked?: boolean; jour
                         return;
                       }
                       const dest = internalLinkDest(e);
-                      if (dest === "sidebar") openPageInSidebar(target());
-                      else if (dest === "background") openPageTargetInNewTab(target());
-                      else if (dest === "pane") openRouteInOtherPane({ kind: "page", ...target() });
-                      else openPageTarget(target());
+                      if (dest === "sidebar") openPageInSidebar(group().page, group().kind);
+                      else if (dest === "background") openPageInNewTab(group().page, group().kind);
+                      else if (dest === "pane") openRouteInOtherPane({ kind: "page", name: group().page, pageKind: group().kind });
+                      else openPage(group().page, group().kind);
                     }}
                     onMouseDown={internalLinkMouseDown}
-                    onAuxClick={(e) => internalLinkAuxClick(e, () => openPageTargetInNewTab(target()))}
+                    onAuxClick={(e) => internalLinkAuxClick(e, () => openPageInNewTab(group().page, group().kind))}
                     onPointerDown={longPress.onPointerDown}
                     onPointerMove={longPress.onPointerMove}
                     onPointerUp={longPress.onPointerUp}
@@ -603,7 +603,7 @@ export function ReferenceSection(input: { name: string; unlinked?: boolean; jour
                     onContextMenu={(e) => {
                       if (!shouldOpenTextContextMenu(e)) return;
                       e.preventDefault();
-                      openPageContextMenu(e.clientX, e.clientY, target());
+                      openPageContextMenu(e.clientX, e.clientY, group().page, group().kind);
                     }}
                   >
                     {group().page}
@@ -621,6 +621,7 @@ export function ReferenceSection(input: { name: string; unlinked?: boolean; jour
                       blocks={group().blocks}
                       evidence={group().evidence}
                       path={group().path}
+                      format={group().format}
                       surface="ref"
                       showBreadcrumb
                       excerpt={props.unlinked}

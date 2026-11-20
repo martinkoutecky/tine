@@ -450,7 +450,7 @@ fn close_query_result(
         QueryRows::Page { pages } => pages.retain(|page| paths.contains(page.path.as_str())),
         QueryRows::Block { groups } => {
             groups.retain_mut(|group| {
-                group.path = None;
+                group.format = None;
                 names.contains(&(group.kind, page_key(&group.page)))
             });
         }
@@ -705,7 +705,7 @@ pub(crate) fn snapshot_at(
             .iter()
             .filter(|g| selected.contains(&(g.kind, page_key(&g.page))))
             .map(|group| tine_core::model::RefGroup {
-                path: None,
+                format: None,
                 ..group.clone()
             })
             .collect();

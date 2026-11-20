@@ -504,12 +504,11 @@ function QueryMacroContent(props: Parameters<typeof QueryMacro>[0]): JSX.Element
     const search = displayed()?.search;
     if (search) return search.hits;
     return groups().flatMap((group) => {
-      const format = sourceFormatForPage(group.page, group.kind, group.path);
+      const format = sourceFormatForPage(group.page, group.kind, group.path, group.format);
       return group.blocks.map((block) => ({
         entity: "block" as const,
         page: group.page,
         kind: group.kind,
-        path: group.path,
         block,
         display_text: format ? visibleBody(block.raw, format).join(" ") : block.raw,
         evidence: [],
@@ -907,7 +906,7 @@ function QueryMacroContent(props: Parameters<typeof QueryMacro>[0]): JSX.Element
   const sortState = (): TableSort | null => sortOverride() ?? hostSortState();
   const rows = createMemo<Row[]>(() =>
     !legacyTable() || collapsed() ? [] : groups().flatMap((g) => {
-      const format = sourceFormatForPage(g.page, g.kind, g.path);
+      const format = sourceFormatForPage(g.page, g.kind, g.path, g.format) ?? null;
       return g.blocks.map((b) => {
         const props: Record<string, string> = {};
         const byKey: Record<string, string> = {};
@@ -915,7 +914,7 @@ function QueryMacroContent(props: Parameters<typeof QueryMacro>[0]): JSX.Element
           props[k] = val;
           byKey[columnKey(k)] ??= val;
         }
-        return { page: g.page, kind: g.kind, path: g.path, text: format ? visibleBody(b.raw, format).join(" ") : b.raw, props, byKey };
+        return { page: g.page, kind: g.kind, path: g.path, format, text: format ? visibleBody(b.raw, format).join(" ") : b.raw, props, byKey };
       });
     })
   );

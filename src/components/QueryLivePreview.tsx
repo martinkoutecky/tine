@@ -63,7 +63,7 @@ interface PreviewAnswer {
 
 type PreviewBlock = PreviewAnswer["blocks"][number];
 const previewBlocks = (groups: RefGroup[]): PreviewBlock[] => groups.flatMap((group) => {
-  const format = sourceFormatForPage(group.page, group.kind, group.path);
+  const format = sourceFormatForPage(group.page, group.kind, group.path, group.format);
   return group.blocks.map((block) => ({
     page: group.page,
     breadcrumb: block.breadcrumb ?? [],

@@ -122,7 +122,7 @@ describe("GH #735: block-reference popup and live content", () => {
   it("a block-reference popup renders code and folds like the page popup", async () => {
     vi.spyOn(backend(), "previewBlock").mockResolvedValue({
       truncated: 0,
-      group: { page: "Probe", kind: "page", blocks: [
+      group: { page: "Probe", kind: "page", format: "md", blocks: [
         blk("r1", "Root\n```js\nconst x = 1;\n```", { collapsed: true, children: [blk("r2", "tucked away")] }),
       ] },
     } as never);
@@ -139,7 +139,7 @@ describe("GH #735: block-reference popup and live content", () => {
       expect(popup()!.textContent).not.toContain("tucked away");
       vi.mocked(backend().previewBlock).mockResolvedValue({
         truncated: 0,
-        group: { page: "Probe", kind: "page", blocks: [
+        group: { page: "Probe", kind: "page", format: "md", blocks: [
           blk("r1", "Root", { children: [blk("r2", "tucked away")] }),
         ] },
       });

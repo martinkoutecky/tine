@@ -99,7 +99,7 @@ impl<'a> RenderGraph<'a> {
             group: RefGroup {
                 page: page.name.clone(),
                 kind: page.kind,
-                path: None,
+                format: Some(Format::from_path(page.id.as_str().as_ref())),
                 blocks,
                 evidence: Vec::new(),
             },

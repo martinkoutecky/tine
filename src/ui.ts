@@ -27,7 +27,6 @@ import { DEFAULT_TITLE_FORMAT, setJournalTitleFormat } from "./journal";
 import { pageIdentityKey } from "./pageIdentity";
 import { clearDrawerOpener, mobileDrawerMode, captureDrawerOpener, restoreDrawerFocus, type DrawerSide } from "./mobileDrawers";
 import { navigationTarget } from "./pageIndex";
-import { sameSidebarOwner } from "./viewOwner";
 import { forgetDeletedFavorite } from "./favorites";
 import { changeGraphSetting } from "./graphPreferences";
 
@@ -1131,7 +1130,7 @@ export function openPageInSidebar(
       const sameOwnerName = item.kind === "page"
         ? item.name === name && item.pageKind === pageKind
         : item.page === name && item.pageKind === pageKind;
-      return !sameOwnerName || sameSidebarOwner(item, name, pageKind, path);
+      return !sameOwnerName || item.path === path;
     });
     const promoted = replaced[existing];
     setRightSidebar([promoted, ...compatible.filter((item) => item !== promoted)]);
@@ -1142,7 +1141,7 @@ export function openPageInSidebar(
     const sameOwnerName = item.kind === "page"
       ? item.name === name && item.pageKind === pageKind
       : item.page === name && item.pageKind === pageKind;
-    return !sameOwnerName || sameSidebarOwner(item, name, pageKind, path);
+    return !sameOwnerName || item.path === path;
   });
   setRightSidebar([{ kind: "page", name, pageKind, path }, ...compatible]);
   focusOpenedSidebarItem();
@@ -1164,7 +1163,7 @@ export function openBlockInSidebar(ref: {
       const sameOwnerName = item.kind === "page"
         ? item.name === ref.page && item.pageKind === ref.pageKind
         : item.page === ref.page && item.pageKind === ref.pageKind;
-      return !sameOwnerName || sameSidebarOwner(item, ref.page, ref.pageKind, ref.path);
+      return !sameOwnerName || item.path === ref.path;
     });
     const promoted = updated[existing];
     setRightSidebar([promoted, ...compatible.filter((item) => item !== promoted)]);
@@ -1178,7 +1177,9 @@ export function openBlockInSidebar(ref: {
     const sameOwnerName = item.kind === "page"
       ? item.name === ref.page && item.pageKind === ref.pageKind
       : item.page === ref.page && item.pageKind === ref.pageKind;
-    return !sameOwnerName || sameSidebarOwner(item, ref.page, ref.pageKind, ref.path);
+    if (!sameOwnerName) return true;
+    const itemPath = item.path;
+    return itemPath === ref.path;
   });
   setRightSidebar([{ kind: "block", ...ref }, ...compatible]);
   focusOpenedSidebarItem();

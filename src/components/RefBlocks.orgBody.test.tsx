@@ -13,6 +13,7 @@ import { refreshPageIndex, resetPageIndex } from "../pageIndex";
 import { pageIdentityKey } from "../ui";
 import "../graph";
 import { renamePageOnDisk } from "../document";
+import { EmbedMacro } from "./EmbedMacro";
 
 afterEach(() => {
   closeExportModal(); vi.restoreAllMocks(); localStorage.clear();
@@ -23,14 +24,14 @@ afterEach(() => {
 
 it.each(["ref", "query"] as const)("renders both source formats on first display of cold %s rows", async (surface) => {
   const sources = [
-    { page: "Org source", file: "Org source.ORG", raw: "/Org emphasis/", label: "Org emphasis" },
-    { page: "Markdown source", file: "Markdown source.md", raw: "_Markdown emphasis_", label: "Markdown emphasis" },
-  ];
+    { page: "Org source", file: "Org source.ORG", format: "org", raw: "/Org emphasis/", label: "Org emphasis" },
+    { page: "Markdown source", file: "Markdown source.md", format: "md", raw: "_Markdown emphasis_", label: "Markdown emphasis" },
+  ] as const;
   setGraphMeta({ root: "/synthetic", preferred_format: "md" } as NonNullable<Parameters<typeof setGraphMeta>[0]>);
-  vi.spyOn(backend(), "getPageByPath").mockImplementation(() => new Promise(() => {}));
+  vi.spyOn(backend(), "getPage").mockImplementation(() => new Promise(() => {}));
   vi.spyOn(backend(), "pageInventory").mockImplementation(() => new Promise(() => {}));
   const host = document.createElement("div");
-  const dispose = render(() => <>{sources.map(({ page, file, raw }) => <LiveRefGroup page={page} kind="page" path={`pages/${file}`} surface={surface}
+  const dispose = render(() => <>{sources.map(({ page, format, raw }) => <LiveRefGroup page={page} kind="page" format={format} surface={surface}
     eager blocks={[{ id: page, raw, children: [], collapsed: false }]} />)}</>, host);
   try {
     expect([...host.querySelectorAll("em")].map(el => el.textContent)).toEqual(sources.map(source => source.label));
@@ -41,7 +42,7 @@ it.each(["ref", "query"] as const)("renders both source formats on first display
     await refreshPageIndex();
     expect([...host.querySelectorAll("em")].map(el => el.textContent)).toEqual(sources.map(source => source.label));
     expect(sources.map(({ page }) => pageByName(page))).toEqual([undefined, undefined]);
-    expect(backend().getPageByPath).toHaveBeenCalledTimes(sources.length);
+    expect(backend().getPage).toHaveBeenCalledTimes(sources.length);
   } finally { dispose(); }
 });
 
@@ -52,7 +53,6 @@ it.each(["ref", "query"] as const)("keeps %s bodies and breadcrumbs mounted acro
   ];
   setGraphMeta({ root: "/synthetic", preferred_format: "md" } as NonNullable<Parameters<typeof setGraphMeta>[0]>);
   const byName = vi.spyOn(backend(), "getPage").mockResolvedValue(null);
-  const byPath = vi.spyOn(backend(), "getPageByPath").mockResolvedValue(null);
   const inventory = vi.spyOn(backend(), "pageInventory").mockResolvedValue({ rev: "1", entries: sources.map(({ page, kind, path }) => ({
     name: page, key: pageIdentityKey(page), is_journal: kind === "journal", day: null,
     target: { kind: "existing", id: path, others: [] },
@@ -61,8 +61,8 @@ it.each(["ref", "query"] as const)("keeps %s bodies and breadcrumbs mounted acro
   vi.spyOn(backend(), "renamePage").mockResolvedValue({ outcome: "renamed",
     renamed: [{ from: "Other", to: "Renamed", path: null }], touched: [] });
   const host = document.createElement("div");
-  const dispose = render(() => <>{sources.flatMap(({ page, kind, path }) => [path, undefined].map((owner, i) =>
-    <LiveRefGroup page={page} kind={kind} path={owner} surface={surface} eager showBreadcrumb
+  const dispose = render(() => <>{sources.flatMap(({ page, kind }) => (["org", undefined] as const).map((format, i) =>
+    <LiveRefGroup page={page} kind={kind} format={format} surface={surface} eager showBreadcrumb
       blocks={[{ id: `${page}-${i}`, raw: "/Body/", breadcrumb: ["/Parent/"], children: [], collapsed: false }]} />
   ))}</>, host);
   try {
@@ -73,10 +73,15 @@ it.each(["ref", "query"] as const)("keeps %s bodies and breadcrumbs mounted acro
     const mutations: MutationRecord[] = [];
     const observer = new MutationObserver(records => mutations.push(...records));
     observer.observe(host, { childList: true, subtree: true });
-    inventory.mockResolvedValue({ rev: "2", entries: [] });
+    let finishRefresh!: (value: Awaited<ReturnType<ReturnType<typeof backend>["pageInventory"]>>) => void;
+    inventory.mockReturnValue(new Promise(resolve => { finishRefresh = resolve; }));
     const renamed = await renamePageOnDisk("Other", "Renamed");
     expect(renamed).toBe("renamed");
-    await refreshPageIndex();
+    const refreshing = refreshPageIndex();
+    expect(bodies.map(body => body.querySelector(".block-content")?.textContent?.trim())).toEqual(["Body", "/Body/", "Body", "/Body/"]);
+    expect(crumbs.map(crumb => crumb.textContent)).toEqual(["Parent", "/Parent/", "Parent", "/Parent/"]);
+    finishRefresh({ rev: "2", entries: [] });
+    await refreshing;
     const mounts = [...mutations, ...observer.takeRecords()].flatMap(record => [...record.addedNodes]);
     observer.disconnect();
     expect(mounts.filter(node => node instanceof Element &&
@@ -85,7 +90,24 @@ it.each(["ref", "query"] as const)("keeps %s bodies and breadcrumbs mounted acro
     expect([...host.querySelectorAll(".ref-crumb-label")]).toEqual(crumbs);
     expect(bodies.map(body => body.querySelector(".block-content")?.textContent?.trim())).toEqual(["Body", "/Body/", "Body", "/Body/"]);
     expect(crumbs.map(crumb => crumb.textContent)).toEqual(["Parent", "/Parent/", "Parent", "/Parent/"]);
-    expect(byName.mock.calls.length + byPath.mock.calls.length).toBe(4);
+    expect(byName).toHaveBeenCalledTimes(4);
+  } finally { dispose(); }
+});
+
+it.each([
+  ["org", "/Cold Org embed/", "Cold Org embed"],
+  ["md", "_Cold Markdown embed_", "Cold Markdown embed"],
+] as const)("renders a cold %s block embed using its source format", async (format, raw, label) => {
+  const id = format === "org" ? "33333333-3333-4333-8333-333333333333" : "44444444-4444-4444-8444-444444444444";
+  vi.spyOn(backend(), "resolveBlocks").mockImplementation(async ids => ids.map(() => ({
+    page: "Cold embed source", kind: "page", format, blocks: [{ id, raw, children: [], collapsed: false }],
+  })));
+  vi.spyOn(backend(), "getPage").mockImplementation(() => new Promise(() => {}));
+  const host = document.createElement("div");
+  const dispose = render(() => <EmbedMacro body={`((${id}))`} />, host);
+  try {
+    await vi.waitFor(() => expect(host.querySelector("em")?.textContent).toBe(label));
+    expect(pageByName("Cold embed source")).toBeUndefined();
   } finally { dispose(); }
 });
 

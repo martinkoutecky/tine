@@ -1,8 +1,7 @@
 import { t } from "../i18n";
 import { DialogActions } from "./DialogActions";
-import { For, Show, createEffect, createSignal, onCleanup, type JSX } from "solid-js";
+import { For, Show, createEffect, createMemo, createSignal, onCleanup, type JSX } from "solid-js";
 import { sourceFormatForPage } from "../document";
-import { referenceGroupKey } from "../referenceGroups";
 import { visibleBody } from "../render/block";
 import { EmojiText } from "../render/emoji";
 import { openReferenceResultsCopy } from "./queryResultsCopy";
@@ -28,7 +27,7 @@ export function ReferenceExportChooser(props: {
     });
     onCleanup(unregister);
   });
-  const entryKey = (group: RefGroup, block: BlockDto) => `${group.kind}\0${referenceGroupKey(group)}\0${block.id}`;
+  const entryKey = (group: RefGroup, block: BlockDto) => `${group.kind}\0${group.page}\0${block.id}`;
   const allKeys = () => groups.flatMap((group) => group.blocks.map((block) => entryKey(group, block)));
   const [selected, setSelected] = createSignal(new Set(allKeys()));
   const [opening, setOpening] = createSignal(false);
@@ -64,7 +63,7 @@ export function ReferenceExportChooser(props: {
         </div>
         <div class="ref-export-list" role="group" aria-label={t("reference-export-chooser-entries", { subject: String(props.subject) })}>
           <For each={groups}>{(group) => {
-            const format = () => sourceFormatForPage(group.page, group.kind, group.path);
+            const format = createMemo(() => sourceFormatForPage(group.page, group.kind, group.path, group.format));
             const title = (block: BlockDto) => {
               const sourceFormat = format();
               return sourceFormat ? visibleBody(block.raw, sourceFormat)[0] ?? "" : block.raw;

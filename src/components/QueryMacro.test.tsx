@@ -195,12 +195,17 @@ describe("QueryMacro sheet integration", () => {
     ["legacy table", "query (task TODO) {:table-view? true}", "", ".query-table tbody"],
     ["sheet table", "query (task TODO)", "tine.view:: table", ".sheet-title-cell"],
     ["sheet board", "query (task TODO)", "tine.view:: board", ".sheet-board-card-title"],
-  ])("renders exact Org sources in the %s without the inventory", async (_view, body, config, selector) => {
+  ])("renders a cold source's format in the %s without the inventory", async (_view, body, config, selector) => {
     loadQueryDoc(`{{${body}}}\n${config}`.trimEnd());
+    const org = { format: "org" } as const;
+    const markdown = { format: "md" } as const;
     vi.mocked(backend().queryRun).mockResolvedValue(blockRunResult([{
-      page: "Cold source", kind: "page", path: "pages/Cold source.ORG",
+      page: "Cold source", kind: "page", ...org,
       blocks: [{ id: "cold-org", raw: "/Org title/\n:PROPERTIES:\n:CUSTOM: value\n:END:",
         children: [], collapsed: false }],
+    }, {
+      page: "Cold Markdown source", kind: "page", ...markdown,
+      blocks: [{ id: "cold-md", raw: "_Markdown title_", children: [], collapsed: false }],
     }, {
       page: "Unknown source", kind: "page",
       blocks: [{ id: "pathless", raw: "_Literal title_", children: [], collapsed: false }],
@@ -208,7 +213,7 @@ describe("QueryMacro sheet integration", () => {
     const { root, dispose } = mount(() => <QueryMacro body={body} blockId="query" />);
     try {
       await vi.waitFor(() => expect(root.querySelector(selector)?.textContent).toContain("Org title"));
-      expect([...root.querySelectorAll(`${selector} em`)].map(el => el.textContent)).toEqual(["Org title"]);
+      expect([...root.querySelectorAll(`${selector} em`)].map(el => el.textContent).sort()).toEqual(["Markdown title", "Org title"]);
       const titles = [...root.querySelectorAll(selector)].map(title => title.textContent).join(" ");
       expect(titles).toContain("_Literal title_");
       expect(titles).not.toContain(":PROPERTIES:");

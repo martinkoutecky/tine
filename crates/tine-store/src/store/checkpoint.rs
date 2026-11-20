@@ -159,8 +159,7 @@ const MAGIC: &[u8; 8] = b"TINECKPT";
 // SCHEDULED and DEADLINE in a line-leading run, including when the first
 // timestamp crosses a newline. Rebuild older projections from the files.
 // 41 (Org result rows): cached reference and query results carry their
-// source file's path, so a row's format follows its own file before the page
-// loads. The body schema changes; older caches rebuild.
+// source file's format before the page loads. Older caches rebuild.
 pub(crate) const FORMAT: u32 = 41;
 /// The lsdoc release tine-core parses with (`crates/tine-core/Cargo.toml`;
 /// `checkpoint_tests::the_parser_tag_matches_the_lsdoc_pin` keeps them equal).

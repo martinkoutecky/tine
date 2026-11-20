@@ -87,7 +87,7 @@ export function rowRaw(row: FormulaEvalRow): string {
 }
 
 /** A table row's title cell text; an empty title over children reads as an em dash. */
-export function tableRowTitle(row: FormulaEvalRow, format = sourceFormatForPage(row.page, row.kind, row.path)): string {
+export function tableRowTitle(row: FormulaEvalRow, format = sourceFormatForPage(row.page, row.kind, row.path, row.format) ?? null): string {
   const raw = rowRaw(row);
   const title = format ? visibleBody(raw, format).join(" ") : raw;
   return title.trim() === "" && (liveFormulaRowNode(row, "mount")?.children.length ?? row.dto?.children.length ?? 0) > 0 ? "—" : title;

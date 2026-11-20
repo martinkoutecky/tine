@@ -102,7 +102,7 @@ describe("query results group matches by parent (GH #619 item 1)", () => {
   it("renders a parent's markup in the trail, not the raw source", async () => {
     const rawParent = "**Queue** for [[Work]]";
     const before = mount(() => <QueryGroups groups={() => new Map([["Tasks", {
-      page: "Tasks", kind: "page", path: "pages/Tasks.md", blocks: [leaf("q1", "TODO One", [rawParent])],
+      page: "Tasks", kind: "page", format: "md", blocks: [leaf("q1", "TODO One", [rawParent])],
     } as RefGroup]])} />);
     try {
       await expect.poll(() => before.root.querySelector(".ref-breadcrumb strong")?.textContent).toBe("Queue");

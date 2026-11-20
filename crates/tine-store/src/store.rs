@@ -2750,7 +2750,7 @@ mod bridge_matching_blocks_tests {
 
     fn group(blocks: Vec<BlockDto>) -> RefGroup {
         RefGroup {
-            path: None,
+            format: None,
             page: "Budget".into(),
             kind: PageKind::Page,
             blocks,

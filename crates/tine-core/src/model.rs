@@ -465,6 +465,13 @@ impl PageEntry {
     pub fn rel_path_str(&self) -> &str {
         self.rel_path.as_ref().map_or("", PageId::as_str)
     }
+
+    /// Format of the physical source, if this entry has a file.
+    pub fn source_format(&self) -> Option<Format> {
+        self.rel_path
+            .as_ref()
+            .map(|id| Format::from_path(id.as_str().as_ref()))
+    }
 }
 
 /// The opening claimant order (CM SPEC §2.2; D-20261110-CM CM-ORDER: "file
@@ -604,9 +611,9 @@ pub struct RefGroup {
     pub page: String,
     /// Source page kind.
     pub kind: PageKind,
-    /// Exact graph-root-relative file that owns these blocks, when available.
+    /// Source file format, when available.
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub path: Option<PageId>,
+    pub format: Option<Format>,
     /// Matching blocks or projected subtrees.
     pub blocks: Vec<BlockDto>,
     /// Result-only source evidence keyed by block id. Empty for ordinary query
@@ -1032,7 +1039,6 @@ pub fn ref_groups_estimated_bytes(groups: &[RefGroup]) -> usize {
         .iter()
         .map(|group| {
             group.page.len()
-                + group.path.as_ref().map_or(0, |path| path.as_str().len())
                 + group
                     .blocks
                     .iter()
@@ -1055,7 +1061,7 @@ pub fn ref_groups_estimated_bytes(groups: &[RefGroup]) -> usize {
                                 .sum::<usize>()
                     })
                     .sum::<usize>()
-                + std::mem::size_of::<RefGroup>()
+                + std::mem::size_of::<RefGroup>() // includes the inline source format
         })
         .sum()
 }

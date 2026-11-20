@@ -2,15 +2,15 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import { render } from "solid-js/web";
 import { createSignal } from "solid-js";
 import { backend } from "../backend";
-import type { BacklinkFilterContext, BlockDto, RefGroup } from "../types";
+import type { BacklinkFilterContext, BlockDto, Format, RefGroup } from "../types";
 import { LinkedReferences } from "./LinkedReferences";
 import { resetReferenceSectionState } from "../referenceSectionState";
 import { setGraphMeta } from "../graphSession";
 import * as searchPolicy from "../editor/searchFold";
 
 vi.mock("./LiveRefGroup", () => ({
-  LiveRefGroup: (props: { blocks: BlockDto[]; showBreadcrumb?: boolean }) => (
-    <div class="test-ref-group" data-show-breadcrumb={props.showBreadcrumb ? "true" : "false"}>
+  LiveRefGroup: (props: { blocks: BlockDto[]; format?: Format; showBreadcrumb?: boolean }) => (
+    <div class="test-ref-group" data-format={props.format} data-show-breadcrumb={props.showBreadcrumb ? "true" : "false"}>
       {props.blocks.map((block) => block.id).join(",")}
     </div>
   ),
@@ -75,18 +75,20 @@ describe("Linked References filters", () => {
       expect(root.querySelector('[aria-label="Copy / export linked references"]')).not.toBeNull();
     } finally { dispose(); }
   });
-  it("keeps groups from same-name files separate", async () => {
+  it("merges same-name groups under one heading and keeps the first source format", async () => {
     vi.spyOn(backend(), "getBacklinks").mockResolvedValue([
-      { page: "Source", kind: "page", path: "pages/a/Source.md", blocks: [block("md", "[[Target]]")] },
-      { page: "Source", kind: "page", path: "pages/b/Source.ORG", blocks: [block("org", "[[Target]]")] },
+      { page: "Source", kind: "page", format: "md", blocks: [block("md", "[[Target]]")] },
+      { page: "Source", kind: "page", format: "org", blocks: [block("org", "[[Target]]")] },
     ]);
     const root = document.createElement("div");
     document.body.append(root);
     const dispose = render(() => <LinkedReferences name="Target" />, root);
     try {
-      await vi.waitFor(() => expect([...root.querySelectorAll(".test-ref-group")].map(group => group.textContent)).toEqual(["md", "org"]));
+      await vi.waitFor(() => expect(root.querySelector(".test-ref-group")?.textContent).toBe("md,org"));
+      expect(root.querySelectorAll(".test-ref-group")).toHaveLength(1);
+      expect(root.querySelector(".test-ref-group")?.getAttribute("data-format")).toBe("md");
       root.querySelector<HTMLButtonElement>(".reference-group-disclosure")!.click();
-      expect([...root.querySelectorAll(".test-ref-group")].map(group => group.textContent)).toEqual(["org"]);
+      expect(root.querySelectorAll(".test-ref-group")).toHaveLength(0);
     } finally { dispose(); }
   });
   it("keeps an expanded large section open after its component remounts", async () => {

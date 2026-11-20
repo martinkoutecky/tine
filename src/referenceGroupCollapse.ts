@@ -1,7 +1,7 @@
 import { batch, type Accessor } from "solid-js";
 import { ChangeKeyRegistry } from "./changeKeyRegistry";
 import { collapsedGroupsFor, setCollapsedGroupsFor, type ReferenceSection } from "./referenceSectionState";
-import { referenceGroupKey } from "./referenceGroups";
+import { pageIdentityKey } from "./pageIdentity";
 import type { RefGroup } from "./types";
 
 /** Local panel snapshot with keyed notifications. Whole replacements and
@@ -39,7 +39,7 @@ export function createKeyedGroupCollapse<G>(keyOf: (group: G) => string,
 
 /** Session choices remain separate snapshots for each mounted panel. */
 export function createReferenceGroupCollapse(section: ReferenceSection, page: Accessor<string>) {
-  return createKeyedGroupCollapse<RefGroup>(referenceGroupKey,
+  return createKeyedGroupCollapse<RefGroup>(group => pageIdentityKey(group.page),
     () => collapsedGroupsFor(section, page()),
     value => setCollapsedGroupsFor(section, page(), value));
 }

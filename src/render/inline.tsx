@@ -1412,6 +1412,7 @@ function BlockRefView(props: { id: string; label?: string; spanAttrs?: SpanDomAt
           blocks={() => capped().blocks}
           page={preview()!.group.page}
           path={preview()!.group.path}
+          format={preview()!.group.format}
           pageKind={preview()!.group.kind}
           blockId={props.id}
           truncatedCount={previewTruncated}

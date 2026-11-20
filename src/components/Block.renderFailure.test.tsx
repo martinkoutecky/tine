@@ -79,7 +79,7 @@ it("isolates a query table title throw and leaves the other result live", () => 
     pages: [{ name: "Sheet", title: "Sheet", kind: "page", roots: ["query"], preBlock: null, format: "md", readOnly: false, guide: false }], feed: ["Sheet"], loaded: true });
   const root = document.createElement("div"); document.body.append(root);
   const dispose = render(() => <FailureBoundary region="This page"><SheetTable ownerId="query" rowSource="query" groups={[{
-    page: "Isolation", kind: "page", path: "pages/Isolation.md", blocks: [
+    page: "Isolation", kind: "page", format: "md", blocks: [
       { id: "bad", raw: "broken render", collapsed: false, children: [] },
       { id: "good", raw: "healthy result", collapsed: false, children: [] },
     ],

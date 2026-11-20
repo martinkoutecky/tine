@@ -10,8 +10,7 @@ use tine_core::date::{JournalDate, JournalFormat};
 use tine_core::doc::{property_key_norm, DocBlock, Document};
 use tine_core::model::{
     BacklinkFilterContext, BacklinkFilterEntry, BacklinkFilterTarget, BlockDto, BlockPreview,
-    Format, PageEntry, PageId, PageKind, RefGroup, ReferenceBlockEvidence, ReferenceKind,
-    TemplateDto,
+    Format, PageEntry, PageKind, RefGroup, ReferenceBlockEvidence, ReferenceKind, TemplateDto,
 };
 use tine_core::projection::block_to_shallow_dto;
 use tine_core::projection::{block_to_bounded_dto, subtree_node_count};
@@ -62,12 +61,10 @@ impl ConstructionBudget {
         }
     }
 
-    fn admit_estimated(&mut self, page: &str, path: Option<&PageId>, payload_bytes: usize) -> bool {
+    fn admit_estimated(&mut self, page: &str, payload_bytes: usize) -> bool {
         self.total = self.total.saturating_add(1);
-        let bytes = payload_bytes
-            .saturating_add(page.len())
-            .saturating_add(path.map_or(0, |id| id.as_str().len()))
-            .saturating_add(256);
+        // Fixed overhead includes the inline source format.
+        let bytes = payload_bytes.saturating_add(page.len()).saturating_add(256);
         if self.exceeded
             || self.rows >= self.max_rows
             || self.bytes.saturating_add(bytes) > self.max_bytes
@@ -314,12 +311,10 @@ fn collect_bounded(
                 continue;
             }
             let mut matched: Vec<BlockDto> = Vec::new();
-            let mut group_path = entry.rel_path.as_ref();
             if let Some(pre) = doc.pre_block.as_deref() {
                 for property_ref in keep_page_properties(entry, pre) {
                     if budget.admit_estimated(
                         &entry.name,
-                        group_path.take(),
                         tine_core::model::block_dto_estimated_bytes(&property_ref),
                     ) {
                         matched.push(property_ref);
@@ -336,11 +331,9 @@ fn collect_bounded(
                         budget.deny_match();
                         return None;
                     }
-                    if !budget.admit_estimated(
-                        &entry.name,
-                        group_path.take(),
-                        shallow_dto_estimated_bytes(block, ancestors),
-                    ) {
+                    if !budget
+                        .admit_estimated(&entry.name, shallow_dto_estimated_bytes(block, ancestors))
+                    {
                         return None;
                     }
                     Some(reference_result_dto(block, ancestors))
@@ -353,7 +346,7 @@ fn collect_bounded(
                     RefGroup {
                         page: entry.name.clone(),
                         kind: entry.kind,
-                        path: entry.rel_path.clone(),
+                        format: entry.source_format(),
                         blocks: matched,
                         evidence: Vec::new(),
                     },
@@ -978,6 +971,7 @@ fn collect_reference_occurrences_bounded(
     let groups = {
         let pages = candidate_pages.pages.as_slice();
         let mut groups: Vec<(Option<i64>, RefGroup)> = Vec::new();
+        let mut by_name = std::collections::HashMap::<String, usize>::new();
         let mut sources = (0..pages.len()).collect::<Vec<_>>();
         sources.sort_by(|&a, &b| pages[a].0.path.cmp(&pages[b].0.path));
         for page in sources {
@@ -987,7 +981,6 @@ fn collect_reference_occurrences_bounded(
             }
             let mut blocks = Vec::new();
             let mut evidence = Vec::new();
-            let mut group_path = entry.rel_path.as_ref();
             // Both pre-blocks (header, then the preamble's prose) share
             // signature slot 0.
             for (pre_ordinal, mut block) in doc
@@ -1020,7 +1013,7 @@ fn collect_reference_occurrences_bounded(
                     let dto = pre_block_dto(&block);
                     let estimated = tine_core::model::block_dto_estimated_bytes(&dto)
                         .saturating_add(reference_evidence_estimated_bytes(&hit));
-                    if budget.admit_estimated(&entry.name, group_path.take(), estimated) {
+                    if budget.admit_estimated(&entry.name, estimated) {
                         blocks.push(dto);
                         evidence.push(hit);
                     }
@@ -1060,7 +1053,7 @@ fn collect_reference_occurrences_bounded(
                     };
                     let estimated = shallow_dto_estimated_bytes(block, ancestors)
                         .saturating_add(reference_evidence_estimated_bytes(&hit));
-                    if !budget.admit_estimated(&entry.name, group_path.take(), estimated) {
+                    if !budget.admit_estimated(&entry.name, estimated) {
                         construction_closed.set(true);
                         return None;
                     }
@@ -1074,16 +1067,29 @@ fn collect_reference_occurrences_bounded(
                 evidence.push(hit);
             }
             if !blocks.is_empty() {
-                groups.push((
-                    entry.date_key,
-                    RefGroup {
-                        page: entry.name.clone(),
-                        kind: entry.kind,
-                        path: entry.rel_path.clone(),
-                        blocks,
-                        evidence,
-                    },
-                ));
+                let key = refs::normalize(&entry.name);
+                if let Some(&index) = by_name.get(&key) {
+                    let (date_key, group) = &mut groups[index];
+                    *date_key = match (*date_key, entry.date_key) {
+                        (Some(a), Some(b)) => Some(a.max(b)),
+                        (current @ Some(_), None) => current,
+                        (None, other) => other,
+                    };
+                    group.blocks.extend(blocks);
+                    group.evidence.extend(evidence);
+                } else {
+                    by_name.insert(key, groups.len());
+                    groups.push((
+                        entry.date_key,
+                        RefGroup {
+                            page: entry.name.clone(),
+                            kind: entry.kind,
+                            format: entry.source_format(),
+                            blocks,
+                            evidence,
+                        },
+                    ));
+                }
             }
         }
         groups.sort_by(|a, b| {
@@ -2069,7 +2075,6 @@ pub(crate) fn resolve_blocks_bounded(
             output_budget
                 .admit_estimated(
                     &group.page,
-                    group.path.as_ref(),
                     tine_core::model::block_dto_estimated_bytes(block),
                 )
                 .then(|| group.clone())
@@ -2086,6 +2091,7 @@ pub(crate) fn resolve_blocks_bounded(
 struct SelectedExportRoot {
     page: String,
     kind: PageKind,
+    format: Option<Format>,
     id: String,
 }
 
@@ -2181,6 +2187,7 @@ pub(crate) fn export_query_subtrees(
                 roots.push(SelectedExportRoot {
                     page: group.page.clone(),
                     kind: group.kind,
+                    format: group.format,
                     id: block.id.clone(),
                 });
                 remaining_roots -= 1;
@@ -2298,7 +2305,7 @@ pub(crate) fn export_query_subtrees(
                         groups.push(RefGroup {
                             page: root.page,
                             kind: root.kind,
-                            path: None,
+                            format: root.format,
                             blocks: vec![dto],
                             evidence: Vec::new(),
                         });
@@ -2355,7 +2362,7 @@ pub(crate) fn preview_block_with_budget(
         group: RefGroup {
             page: entry.name.clone(),
             kind: entry.kind,
-            path: None,
+            format: entry.source_format(),
             blocks,
             evidence: Vec::new(),
         },
@@ -2442,17 +2449,13 @@ fn resolve_ids_in_page<'a>(
                 budget.deny_match();
                 return;
             }
-            if budget.admit_estimated(
-                &entry.name,
-                entry.rel_path.as_ref(),
-                shallow_dto_estimated_bytes(b, &[]),
-            ) {
+            if budget.admit_estimated(&entry.name, shallow_dto_estimated_bytes(b, &[])) {
                 resolved.insert(
                     id,
                     RefGroup {
                         page: entry.name.clone(),
                         kind: entry.kind,
-                        path: entry.rel_path.clone(),
+                        format: entry.source_format(),
                         blocks: vec![result_dto(b)],
                         evidence: Vec::new(),
                     },
@@ -4645,12 +4648,12 @@ mod tests {
         fs::create_dir_all(dir.join("pages/a")).unwrap();
         fs::create_dir_all(dir.join("pages/b")).unwrap();
         fs::write(dir.join("pages/a/Note.md"), "- first [[Target]]\n").unwrap();
-        fs::write(dir.join("pages/b/Note.md"), "- second [[Target]]\n").unwrap();
+        fs::write(dir.join("pages/b/Note.org"), "* second [[Target]]\n").unwrap();
         let graph = test_snapshot(&dir);
         let groups = backlinks(&graph, "Target");
         assert_eq!(groups.len(), 1);
         assert_eq!(groups[0].page, "Note");
-        assert_eq!(groups[0].path.as_ref().unwrap().as_str(), "pages/a/Note.md");
+        assert_eq!(groups[0].format, Some(Format::Md));
         assert_eq!(groups[0].blocks.len(), 1);
         assert_eq!(groups[0].evidence.len(), 1);
         assert_eq!(groups[0].blocks[0].raw, "first [[Target]]");
@@ -4658,14 +4661,19 @@ mod tests {
     }
 
     #[test]
-    fn reference_and_query_groups_carry_their_source_file() {
+    fn reference_and_query_groups_carry_only_the_source_format() {
         use std::fs;
-        let dir = crate::test_support::fresh_dir("tine-ref-path-");
+        let dir = crate::test_support::fresh_dir("tine-ref-format-");
         fs::create_dir_all(dir.join("pages")).unwrap();
         fs::write(dir.join("pages/Target.md"), "- target\n").unwrap();
         fs::write(
             dir.join("pages/Source.ORG"),
             "* /linked/ [[Target]]\n* plainly Target\n",
+        )
+        .unwrap();
+        fs::write(
+            dir.join("pages/Other.md"),
+            "- _linked_ [[Target]]\n- plainly Target\n",
         )
         .unwrap();
         let graph = test_snapshot(&dir);
@@ -4675,9 +4683,12 @@ mod tests {
             run_query(&graph, "[[Target]]"),
             search(&graph, "plainly", 10),
         ] {
-            let source = groups.iter().find(|group| group.page == "Source").unwrap();
-            let wire = serde_json::to_value(source).unwrap();
-            assert_eq!(wire["path"], "pages/Source.ORG");
+            for (page, format) in [("Source", "org"), ("Other", "md")] {
+                let source = groups.iter().find(|group| group.page == page).unwrap();
+                let wire = serde_json::to_value(source).unwrap();
+                assert_eq!(wire["format"], format);
+                assert!(wire.get("path").is_none());
+            }
         }
         let _ = fs::remove_dir_all(&dir);
     }

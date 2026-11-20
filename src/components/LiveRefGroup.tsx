@@ -4,7 +4,7 @@ import { ownSelectionSurface } from "../document";
 import { createGraphResource } from "../graphResource";
 import { backend } from "../backend";
 import { graphOwner, latestOwner } from "../owned";
-import { admitRead, beginPageHeaderEdit, blockProperty, blockRef, resolveBlockRef, collapseEpochOf, ensurePageLoaded, formatForBlock, formatForPage, pageByName, pinPageNearViewport, setBlockProperty, setCollapsed, setCollapsedBlocks, sourceFormatForPage, node as docNode } from "../document";
+import { admitRead, beginPageHeaderEdit, blockProperty, blockRef, resolveBlockRef, collapseEpochOf, ensurePageLoaded, formatForBlock, pageByName, pinPageNearViewport, setBlockProperty, setCollapsed, setCollapsedBlocks, sourceFormatForPage, node as docNode } from "../document";
 import { loadSourcePage } from "../sourcePage";
 import { blockDtoExternalId } from "../blockIdentity";
 import { Block, BulletOpenContext, CollapseSurfaceContext, EmbedNavExitContext, OutlineScopeContext, SurfaceContext, type CollapseSurfaceApi } from "./Block";
@@ -13,7 +13,7 @@ import { detectMacro } from "./Rendered";
 import { inPageFindOpen } from "../inpageFind";
 import { isBlockEmbedMacro } from "./blockParts";
 import { observeNear, trackNear, unobserveNear } from "../lazyObserve";
-import type { BlockDto, PageKind, ReferenceBlockEvidence } from "../types";
+import type { BlockDto, Format, PageKind, ReferenceBlockEvidence } from "../types";
 import { graphEpoch, graphMeta } from "../graphSession";
 import { OccurrenceControls, ReferenceExcerptBlocks, occurrenceSelection } from "./ReferenceEvidence";
 import { editingId, startEditing } from "../editorController";
@@ -82,6 +82,7 @@ interface LiveRefGroupProps {
   page: string;
   kind: PageKind;
   path?: string;
+  format?: Format;
   blocks: BlockDto[];
   embedId?: string;
   /** A page transclusion renders the loaded page's current roots, rather than
@@ -305,9 +306,7 @@ function MountedRefGroup(props: LiveRefGroupProps & { occurrence: RefOccurrence;
   // Page lookup observes the working-set index. Stop another page loading from
   // invalidating this group's breadcrumbs and rows when its source is unchanged.
   const sourcePage = createMemo(() => pageByName(props.page));
-  const sourceFormat = createMemo(() => props.surface === "ref" || props.surface === "query"
-    ? sourceFormatForPage(props.page, props.kind, props.path) ?? null
-    : formatForPage(props.page, props.kind, props.path));
+  const sourceFormat = createMemo(() => sourceFormatForPage(props.page, props.kind, props.path, props.format) ?? null);
   const liveNode = (id: string) => {
     const page = sourcePage();
     if (!page || page.kind !== props.kind || (props.path && page.id !== props.path)) return undefined;

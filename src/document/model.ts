@@ -474,9 +474,10 @@ export function formatForPage(name: string | undefined, kind?: PageKind, path?: 
   return sourceFormatForPage(name, kind, path) ?? graphMeta()?.preferred_format ?? "md";
 }
 
-/** Resolve a physical source's format in O(1), without reading its body.
+/** Read the supplied result format or resolve it in O(1) from a path or name.
  * A name without a loaded page or inventory owner has no source format yet. */
-export function sourceFormatForPage(name: string | undefined, kind?: PageKind, path?: string): Format | undefined {
+export function sourceFormatForPage(name: string | undefined, kind?: PageKind, path?: string, format?: Format): Format | undefined {
+  if (format) return format;
   if (path) return page_file_format(path) as Format;
   if (name) {
     const p = pageByName(name);

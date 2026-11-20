@@ -628,7 +628,9 @@ export interface MarkerConflictDiff {
 export interface RefGroup {
   page: string;
   kind: PageKind;
-  /** Exact graph-root-relative file that owns these blocks, when available. */
+  /** Format of the source file for native result groups. */
+  format?: Format;
+  /** Exact owner for path-bearing search presentations; absent for native groups. */
   path?: string;
   blocks: BlockDto[];
   evidence?: ReferenceBlockEvidence[];
