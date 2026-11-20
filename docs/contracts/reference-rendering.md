@@ -28,17 +28,20 @@ ordinary outline windows and model-based reveal/navigation scope.
 Ctrl/Cmd+A after a blank click selects the nearest outline's live roots in
 display order. Row padding and child indentation belong to that outline. A
 routed scroller's gutter belongs to its page or zoom, and a Journals day owns
-its own blank space. The shell owns a click while live rows mount. A reference
-section's whitespace between groups has no selectable roots. Text fields
-keep native select-all, as does blank space in sidebars and hover previews.
+its own blank space. A result group's shell owns a click while live rows mount.
+Journal query chrome and reference panel whitespace outside result groups use
+native select-all, as do text fields and blank space in sidebars and hover
+previews.
 
 A second Ctrl/Cmd+A leaves the selection as it is. Another gesture ends it,
 including a Shift-click, a click elsewhere, a focus change, or Escape. Copy
 serializes each selected subtree once, including folded children, and clears
-the highlight. Delete, Backspace, and successful Cut clear the selection after
-removal. Ordinary block ranges and the select-all ladder entered from an editor
-use their normal range rules. Unlinked excerpts stay outside structural
-selection. Copy / export can include excerpts and groups the view never loaded.
+the highlight. Delete, Backspace, and successful Cut clear a blank-space
+selection after removal. Ordinary block ranges, including the full outline
+selected from an editor, still select the next visible block, previous visible
+block, or source parent when one survives. Unlinked excerpts stay outside
+structural selection. Copy / export can include excerpts and groups the view
+never loaded.
 
 In-outline embeds and queries belong to Find's page scope. Find counts their
 loaded rendered content and discloses the number of hosts not searched yet,

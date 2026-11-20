@@ -3,19 +3,21 @@ import { render } from "solid-js/web";
 import { PageView } from "./Page";
 import { backend } from "../backend";
 import { initParser } from "../render/parse";
-import { resetStore } from "../document";
+import { clearSelection, node, resetStore, selectedIds } from "../document";
 import { resetTabsToJournals } from "../router";
 import { currentDayKey, journalTitle, appNow } from "../journal";
 import { setGraphMeta } from "../graphSession";
-import { agendaQuery, agendaTql, agendaDaysAhead, setAgendaDaysAhead } from "../ui";
+import { agendaQuery, agendaTql, agendaDaysAhead, requestBlockReferences, setAgendaDaysAhead, setBlockReferencesRequest } from "../ui";
 import type { GraphMeta, PageRead } from "../types";
 import { backendReadsQueries, blockRunResult } from "../tests/queryReadingsTestkit";
 import { resetSharedQueryResultsForTests } from "../queryResultCache";
+import { installKeybindings } from "../keybindings";
+import { locateSectionsPages } from "../journalSections";
+import * as cut from "../cut";
 
-// These tests exercise config fallback; the fixture has no marked sections page.
 vi.mock("../journalSections", async (importOriginal) => ({
   ...await importOriginal<typeof import("../journalSections")>(),
-  locateSectionsPages: async () => [],
+  locateSectionsPages: vi.fn(async (): Promise<string[]> => []),
 }));
 
 beforeAll(initParser);
@@ -28,6 +30,91 @@ it("the internal agenda uses the shared TQL builder for negative, zero and posit
   }
 });
 afterEach(() => { resetStore(); resetTabsToJournals(); setGraphMeta(null); resetSharedQueryResultsForTests(); vi.restoreAllMocks(); document.body.replaceChildren(); });
+
+const journalSurfaces = [
+  { surface: "agenda", shell: ".agenda-block" },
+  { surface: "configured query", shell: ".today-queries:not(.today-sections) .default-journal-query" },
+  { surface: "Journals Sections query", shell: ".today-sections .default-journal-query" },
+  { surface: "inline block references", shell: ".block-references" },
+];
+
+it.each(journalSurfaces.flatMap(surface => ["Delete", "Backspace", "Cut"].map(action => ({ ...surface, action }))))(
+  "keeps the journal body after Ctrl+A on $surface chrome and $action", async ({ surface, shell, action }) => {
+    const today = journalTitle(appNow());
+    const uuid = "1d5ea000-0000-4000-a000-000000000001";
+    const body = { id: "journal-body", raw: `Keep these notes\nid:: ${uuid}`, collapsed: false, children: [] };
+    const task = { id: "task", raw: "TODO A result from another page", collapsed: false, children: [] };
+    const source: PageRead = {
+      id: "pages/Tasks.md", name: "Tasks", title: "Tasks", kind: "page", pre_block: null, blocks: [task],
+    };
+    const sections: PageRead = {
+      ...source, id: "pages/Sections.md", name: "Sections", title: "Sections", blocks: [{ ...task, raw: "{{query (task TODO)}}" }],
+    };
+    const group = { page: source.name, kind: source.kind, path: source.id, blocks: [task] };
+    if (surface === "Journals Sections query") vi.mocked(locateSectionsPages).mockResolvedValueOnce([sections.name]);
+    setGraphMeta({
+      disable_scheduled_and_deadline_query: surface !== "agenda",
+      default_journal_queries: surface === "configured query" ? [{ title: "Tasks", body: "query (task TODO)", error: null }] : [],
+    } as GraphMeta);
+    backendReadsQueries({ "(task TODO)": { form: "(task TODO)" }, [agendaTql()]: { form: agendaTql(), kind: "tql" } });
+    vi.spyOn(backend(), "queryRun").mockResolvedValue(blockRunResult([group]));
+    vi.spyOn(backend(), "getBlockReferrers").mockResolvedValue([group]);
+    vi.spyOn(backend(), "getPage").mockImplementation(async name => [sections, source].find(page => page.name === name) ?? null);
+    vi.spyOn(backend(), "getPageByPath").mockImplementation(async path => path === source.id ? source : null);
+    vi.spyOn(backend(), "journalFeedPage").mockResolvedValue({ pages: [{
+      id: "journals/today.md", name: today, title: today, kind: "journal", pre_block: null, blocks: [body],
+    }], as_of_day: currentDayKey(), next_before_day: null, done: true });
+    const submit = vi.spyOn(backend(), "pageSubmit");
+    const write = vi.spyOn(backend(), "writeRich").mockResolvedValue(undefined);
+    const cutBlocks = vi.spyOn(cut, "cutBlocks");
+    const host = document.createElement("div");
+    host.tabIndex = -1;
+    document.body.append(host);
+    const uninstallKeys = installKeybindings();
+    const dispose = render(() => <PageView />, host);
+    const press = (key: string, ctrlKey = false) => {
+      const event = new KeyboardEvent("keydown", { key, ctrlKey, bubbles: true, cancelable: true });
+      host.dispatchEvent(event);
+      return event.defaultPrevented;
+    };
+    const click = (at: Element) => {
+      at.dispatchEvent(new MouseEvent("pointerdown", { bubbles: true, button: 0 }));
+      at.dispatchEvent(new MouseEvent("click", { bubbles: true, detail: 1 }));
+    };
+    const references = surface === "inline block references";
+    try {
+      if (references) requestBlockReferences(uuid);
+      const area = await vi.waitFor(() => {
+        const region = host.querySelector(shell);
+        expect(region?.querySelector(`.ls-block:not(.ref-block)[data-block-id="${task.id}"]`)).toBeTruthy();
+        return region!;
+      });
+      const chrome = references ? [".block-references-inner", ".block-references-header"] : [".query-header", ".query-count"];
+      const zones = [area, ...chrome.map(selector => area.querySelector(selector)!)];
+      const offset = ["Delete", "Backspace", "Cut"].indexOf(action);
+      host.focus();
+      for (const at of [...zones.slice(offset), ...zones.slice(0, offset)]) {
+        click(at);
+        const select = press("a", true);
+        const remove = action === "Cut" ? press("x", true) : press(action);
+        await cutBlocks.mock.results.at(-1)?.value;
+        expect({ select, remove, body: node(body.id)?.raw, selected: selectedIds() }).toEqual({
+          select: false, remove: false, body: body.raw, selected: [],
+        });
+      }
+      expect(write).not.toHaveBeenCalled();
+      expect(submit).not.toHaveBeenCalled();
+      click(area.querySelector(references ? ".reference-group" : ".query-group")!);
+      expect(press("a", true)).toBe(true);
+      expect(selectedIds()).toEqual([task.id]);
+    } finally {
+      clearSelection();
+      setBlockReferencesRequest(null);
+      dispose();
+      uninstallKeys();
+    }
+  },
+);
 
 it("renders independent configured queries before today's agenda and applies a live config edit", async () => {
   const today = journalTitle(appNow());
