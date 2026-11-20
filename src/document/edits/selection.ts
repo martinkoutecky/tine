@@ -101,11 +101,15 @@ const selectionTopology = createRoot(() => createMemo(() => {
   const index = new Map<string, number>();
   for (let at = 0; at < order.length; at++) index.set(order[at], at);
   const occurrences = index.size !== order.length ? new Map<string, number[]>() : undefined;
-  if (occurrences) {
+  const ordinals = occurrences && new Map<number, number>();
+  if (occurrences && ordinals) {
     for (let at = 0; at < order.length; at++) {
       const id = order[at];
       const positions = occurrences.get(id);
-      if (positions) positions.push(at);
+      if (positions) {
+        ordinals.set(at, positions.length);
+        positions.push(at);
+      }
       else if (index.get(id) !== at) occurrences.set(id, [at]);
     }
   }
@@ -137,7 +141,7 @@ const selectionTopology = createRoot(() => createMemo(() => {
     previous.push(prev);
   }
   for (const at of stack) end[at] = order.length - 1;
-  return { order, index, end, previous, generation: ++topologyGeneration, occurrences };
+  return { order, index, end, previous, generation: ++topologyGeneration, occurrences, ordinals };
 }));
 
 type SelectionTopology = ReturnType<typeof selectionTopology>;
@@ -150,7 +154,7 @@ function endpointIndex(topology: SelectionTopology, endpoint: Endpoint) {
 function endpointAt(topology: SelectionTopology, at: number): Endpoint {
   const id = topology.order[at];
   const copies = topology.occurrences?.get(id);
-  return copies ? { id, occurrence: copies.indexOf(at) } : id;
+  return copies ? { id, occurrence: topology.ordinals?.get(at) ?? 0 } : id;
 }
 
 function exactRoots(ids: string[]) {
@@ -354,6 +358,11 @@ export interface OutlineSelectionTarget {
   members?: readonly string[];
 }
 
+function selectWholeRoots(roots: string[]) {
+  selectAllHead = null;
+  batch(() => { setWholeRoots(roots); setSelectionView(null); setSelAnchor(null); setSelFocus(null); });
+}
+
 function startBlockSelection(id: string, scope: OutlineScope | null, surface: string, whole?: OutlineSelectionTarget & { roots: string[] }) {
   const owner = selectionSurfaces.get(surface);
   endEdit("select-block");
@@ -371,11 +380,12 @@ function startBlockSelection(id: string, scope: OutlineScope | null, surface: st
   widenOutline = whole?.widen;
   keyboardPath = [];
   keyboardTopology = null;
-  batch(() => {
-    setWholeRoots(whole?.roots ?? null);
-    setSelectionView(whole ? null : { id, scope });
-    setSelAnchor(whole ? null : id);
-    setSelFocus(whole ? null : id);
+  if (whole) selectWholeRoots(whole.roots);
+  else batch(() => {
+    setWholeRoots(null);
+    setSelectionView({ id, scope });
+    setSelAnchor(id);
+    setSelFocus(id);
   });
 }
 export function clearSelection() {
@@ -510,9 +520,12 @@ export function expandBlockSelection(target?: OutlineSelectionTarget) {
   const a = endpointId(anchor);
   const ai = endpointIndex(topology, anchor);
   const fi = endpointIndex(topology, focus);
-  if (order.length < 2 || ai === undefined || fi === undefined) return;
-  // Whole-outline selection is the top of the ladder; further presses no-op.
-  if (ai === 0 && end[fi] === order.length - 1) return;
+  if (ai === undefined || fi === undefined) return;
+  const state = selectionState();
+  if (state.lo === 0 && state.hi === order.length - 1) {
+    selectWholeRoots(selectionRoots(state)!);
+    return;
+  }
   let head = selectAllHead;
   if (head === null || !index.has(head)) head = a;
   const idx = head === a ? ai : index.get(head);
@@ -526,14 +539,7 @@ export function expandBlockSelection(target?: OutlineSelectionTarget) {
     if (parent !== null && index.has(parent)) {
       head = parent;
     } else {
-      const roots = selectionRoots({ topology, lo: 0, hi: order.length - 1, exact: null })!;
-      batch(() => {
-        setWholeRoots(roots);
-        setSelectionView(null);
-        setSelAnchor(null);
-        setSelFocus(null);
-      });
-      selectAllHead = null;
+      selectWholeRoots(selectionRoots({ topology, lo: 0, hi: order.length - 1, exact: null })!);
       return;
     }
   }
@@ -604,11 +610,11 @@ export function selectionIncludesPage(page: string): boolean {
 }
 
 function selectionRemovalSurvivor(): string | null {
+  if (wholeRoots()) return null;
   const roots = topSelected();
   const first = roots[0];
   const last = roots.at(-1);
   if (!first || !last) return null;
-  if (wholeRoots()) return doc.byId[first]?.parent ?? null;
   const { order, index, end } = selectionTopology();
   return order[end[index.get(last)!] + 1] ?? order[index.get(first)! - 1] ?? doc.byId[first]?.parent ?? null;
 }

@@ -1040,7 +1040,7 @@ function PageSection(props: { page: FeedPage; routed: boolean; children?: JSX.El
   // The page header shows the same answerer the properties panel lists; a first
   // root rendered as an ordinary block (being edited, or not a header) is excluded.
   const headerProperties = () => pageHeaderProperties(props.page, firstPropertiesId() ? null : props.page.roots[0] ?? null);
-  const rootsToRender = () => firstPropertiesId() ? props.page.roots.slice(1) : props.page.roots;
+  const scope = { get roots() { return firstPropertiesId() ? props.page.roots.slice(1) : props.page.roots; } };
   const preambleContent = () => props.page.format === "md" ? splitPagePreamble(props.page.preBlock).content : null;
   const editSurface = () => pane.paneId === "main" ? "main" : `pane:${pane.paneId}`;
   // Every page section (including each journal day) owns its margin;
@@ -1122,7 +1122,7 @@ function PageSection(props: { page: FeedPage; routed: boolean; children?: JSX.El
   const isTodayJournal = () => props.page.kind === "journal"
     && props.page.name === journalTitle(localDateFromDayKey(currentDayKey()));
   return (
-    <div class="page-section" data-page-name={props.page.name} ref={el => bindOutlineSelection(el, { surface: editSurface(), get page() { return props.page.name; }, read: () => ({ scope: { roots: rootsToRender() } }) }, props.routed)}>
+    <div class="page-section" data-page-name={props.page.name} ref={el => bindOutlineSelection(el, { surface: editSurface(), get page() { return props.page.name; }, read: () => ({ scope }) }, props.routed)}>
       <Show when={props.page.kind === "page"}>
         <NamespaceCrumb name={props.page.name} />
       </Show>
@@ -1321,7 +1321,7 @@ function PageSection(props: { page: FeedPage; routed: boolean; children?: JSX.El
             </div>
           )}
         </Show>
-        <SeenRows seen={seen}><SeenRemoved first={null} /><BlockList ids={rootsToRender()} /></SeenRows>
+        <SeenRows seen={seen}><SeenRemoved first={null} /><BlockList ids={scope.roots} /></SeenRows>
       </div>
       </MarginContext.Provider>
       <SeenRows seen={seen}><margin.Column /></SeenRows></CommentResolutionScope>

@@ -99,6 +99,36 @@ it("select-all reads only scope roots without membership readers and defers visi
   }
 });
 
+it("reads a constant number of occurrence positions per selection step", () => {
+  fixture(1, "flat");
+  let positionReads = 0;
+  let copies = 0;
+  const indexOf = Array.prototype.indexOf;
+  const measure = vi.spyOn(Array.prototype, "indexOf").mockImplementation(function (this: unknown[], value, from) {
+    if (this.length !== copies || this[0] !== 0 || this[copies - 1] !== copies - 1) {
+      return indexOf.call(this, value, from);
+    }
+    return indexOf.call(new Proxy(this, {
+      get(target, key, receiver) {
+        if (typeof key === "string" && /^\d+$/.test(key)) positionReads++;
+        return Reflect.get(target, key, receiver);
+      },
+    }), value, from);
+  });
+  try {
+    const counts = [100, 10_000].map(size => {
+      copies = size;
+      selectBlock("n0", { roots: Array(size).fill("n0") });
+      expect(topSelected()).toEqual(["n0"]);
+      positionReads = 0;
+      moveSelection(-1, false);
+      expect(topSelected()).toEqual(["n0"]);
+      return positionReads;
+    });
+    expect(counts).toEqual([0, 0]);
+  } finally { measure.mockRestore(); }
+});
+
 it.each([1000, 10000, 50000].flatMap(size => (["flat", "deep", "folded"] as Shape[]).map(shape => ({ size, shape }))))(
   "cold selection costs visible rows: $size $shape", async ({ size, shape }) => {
     const roots = fixture(size, shape);

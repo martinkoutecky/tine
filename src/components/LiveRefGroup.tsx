@@ -1,7 +1,7 @@
 import { For, Show, batch, createEffect, createMemo, createSignal, createUniqueId, on, onCleanup, onMount, untrack, useContext, type JSX, type Signal } from "solid-js";
 import { nearestAncestors } from "../render/blockTrail";
 import { ownSelectionSurface, type OutlineSelectionTarget, type OutlineScope } from "../document";
-import { bindOutlineSelection } from "../outlineSelectionTarget";
+import { bindLiveOutlineSelection, bindOutlineSelection } from "../outlineSelectionTarget";
 import { createGraphResource } from "../graphResource";
 import { backend } from "../backend";
 import { graphOwner, latestOwner } from "../owned";
@@ -641,8 +641,8 @@ function MountedRefGroup(props: LiveRefGroupProps & { occurrence: RefOccurrence;
       return next;
     }),
   };
-  // Only rows resolved on their own live source page enter navigation or selection.
-  const liveRoots = () => ready() ? groupedIds().filter(id => !!liveNode(id)) : [];
+  const liveRow = (id: string) => ready() && (!props.excerpt || contextRootIds().has(id)) && liveNode(id);
+  const liveRoots = () => ready() ? groupedIds().filter(liveRow) : [];
   const scope: OutlineScope = {
     get roots() { return liveRoots(); },
     collapsed: (id, stored) => props.surface === "preview" ? stored
@@ -653,7 +653,7 @@ function MountedRefGroup(props: LiveRefGroupProps & { occurrence: RefOccurrence;
   onMount(() => {
     const target = { scope, surface, widen: props.widenSelection };
     const host = props.selectionHost ?? props.geometryHost();
-    if (host) onCleanup(bindOutlineSelection(host, { surface, read: () => target }));
+    if (host) bindLiveOutlineSelection(host, { surface, read: () => target });
     if (props.registerSelection) onCleanup(props.registerSelection(target));
   });
   // GH #792: the one-level fold commands treat a query block's result rows as its children.
@@ -810,7 +810,7 @@ function MountedRefGroup(props: LiveRefGroupProps & { occurrence: RefOccurrence;
                   </div>
                 </Show>
                 <Show
-                  when={ready() && liveNode(id) && (!props.excerpt || contextRootIds().has(id))}
+                  when={liveRow(id)}
                   fallback={
                     <Show when={dtoById(id)}>
                       {(d) => props.excerpt

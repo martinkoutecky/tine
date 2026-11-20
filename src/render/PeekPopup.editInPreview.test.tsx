@@ -9,6 +9,7 @@ import { deleteSelection, ensurePageLoaded, isDirty, isSelected, selectedIds, no
 import { route, tabs } from "../router";
 import { installKeybindings } from "../keybindings";
 import { editingId, endEdit, startEditing } from "../editorController";
+import type { BlockDto } from "../types";
 
 // D-20261023-VQ: a hover preview shows the live source blocks, editable in
 // place; while its editor holds the caret the popup stays put.
@@ -43,16 +44,22 @@ const editor = () => maybeEditorIn(popup()) ?? null;
 const blk = (id: string, raw: string, children: unknown[] = [], extra: object = {}) => ({ id, raw, collapsed: false, children, ...extra });
 const defaultBlocks = [blk("e1", "Editable text", [blk("e2", "Child")])];
 
-async function openPeek(blocks: unknown[] = defaultBlocks, source: object = {}, live = true): Promise<{ card: HTMLElement; link: Element; dispose: () => void }> {
+async function openPeek(blocks: unknown[] = defaultBlocks, source: object = {}, live = true, blockPreview = false): Promise<{ card: HTMLElement; link: Element; dispose: () => void }> {
   const dto = {
     id: "pages/Probe.md", name: "Probe", title: "Probe", kind: "page", format: "md", pre_block: "", blocks, ...source,
   };
   vi.spyOn(backend(), "getPage").mockImplementation(async () => structuredClone(dto) as never);
   vi.spyOn(backend(), "getPageByPath").mockImplementation(async () => structuredClone(dto) as never);
+  if (blockPreview) {
+    const group = { page: dto.name, kind: "page" as const, path: dto.id, blocks: blocks as BlockDto[] };
+    vi.spyOn(backend(), "resolveBlocks").mockResolvedValue([group]);
+    vi.spyOn(backend(), "previewBlock").mockResolvedValue({ group, truncated: 0 });
+  }
   const host = document.createElement("div");
   document.body.appendChild(host);
-  const dispose = render(() => <div class="block-content"><AstBody raw="see [[Probe]]" /></div>, host);
-  const link = host.querySelector("a.page-ref")!;
+  const raw = blockPreview ? "see ((33333333-3333-4333-8333-333333333333))" : "see [[Probe]]";
+  const dispose = render(() => <div class="block-content"><AstBody raw={raw} /></div>, host);
+  const link = host.querySelector(blockPreview ? ".block-ref" : "a.page-ref")!;
   link.dispatchEvent(new PointerEvent("pointerenter", { bubbles: false, pointerType: "mouse", isPrimary: true }));
   link.dispatchEvent(new MouseEvent("mouseenter", { bubbles: false }));
   await advance(OPEN_MS);
@@ -73,6 +80,36 @@ async function editInPopup(card: HTMLElement, id = "e1") {
 }
 
 describe("D-20261023-VQ: editable hover preview", () => {
+  it.each([false, true])("selects and copies the outline when its preview dialog owns focus (block: %s)", async blockPreview => {
+    const keys = installKeybindings();
+    const writeRich = vi.spyOn(backend(), "writeRich").mockResolvedValue(undefined);
+    const { card, dispose } = await openPeek(defaultBlocks, {}, true, blockPreview);
+    const press = (key: string, target = card) => {
+      const event = new KeyboardEvent("keydown", { key, ctrlKey: true, bubbles: true, cancelable: true });
+      target.dispatchEvent(event);
+      return event.defaultPrevented;
+    };
+    try {
+      card.focus();
+      const row = card.querySelector('.ls-block[data-block-id="e1"] > .block-main')!;
+      row.dispatchEvent(new MouseEvent("pointerdown", { bubbles: true }));
+      expect(press("a")).toBe(true);
+      const field = document.createElement("input");
+      card.append(field);
+      field.focus();
+      expect(press("a", field)).toBe(false);
+      field.remove();
+      card.focus();
+      expect(press("c")).toBe(true);
+      expect(writeRich.mock.lastCall?.[0]).toBe("- Editable text\n\t- Child");
+      const html = new DOMParser().parseFromString(writeRich.mock.lastCall![1], "text/html");
+      expect(html.querySelector("body > ul > li > ul > li")?.textContent).toBe("Child");
+    } finally {
+      dispose();
+      keys();
+    }
+  });
+
   it("renders the live source block, and typing edits the loaded node", async () => {
     const { card, dispose } = await openPeek();
     try {

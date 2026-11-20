@@ -10,6 +10,7 @@ import { resetNearObserverForTests } from "../lazyObserve";
 import { resetReferenceSectionState } from "../referenceSectionState";
 import { initParser } from "../render/parse";
 import { mainPaneRouter, resetTabsToJournals } from "../router";
+import { openCommentThread } from "../tests/commentEntry";
 import { maybeEditorIn } from "../tests/editorDriver";
 import { backendReadsQueries, blockRunResult } from "../tests/queryReadingsTestkit";
 import type { BlockDto, PageRead, RefGroup } from "../types";
@@ -61,12 +62,24 @@ afterEach(() => {
 });
 
 async function mountTarget(sourcePages = sources, referenceGroups = groups, visibleSources = ["Alpha"], routedPage = target) {
+  const observed = new Map<Element, (() => void)[]>();
+  const showSource = (name: string) => {
+    for (const [element, reveal] of observed) {
+      if (element.closest(".reference-group")?.querySelector(".reference-page")?.textContent === name) {
+        for (const notify of reveal) notify();
+      }
+    }
+  };
   vi.stubGlobal("IntersectionObserver", class {
     constructor(private callback: IntersectionObserverCallback) {}
     observe(target: Element) {
       const group = target.closest(".reference-group");
       const isIntersecting = !group || visibleSources.includes(group.querySelector(".reference-page")?.textContent ?? "");
-      queueMicrotask(() => this.callback([{ target, isIntersecting } as IntersectionObserverEntry], this as unknown as IntersectionObserver));
+      const notify = (visible: boolean) => this.callback([{ target, isIntersecting: visible } as IntersectionObserverEntry], this as unknown as IntersectionObserver);
+      const callbacks = observed.get(target) ?? [];
+      callbacks.push(() => notify(true));
+      observed.set(target, callbacks);
+      queueMicrotask(() => notify(isIntersecting));
     }
     unobserve() {}
     disconnect() {}
@@ -83,7 +96,7 @@ async function mountTarget(sourcePages = sources, referenceGroups = groups, visi
   const liveRow = (id: string) => root.querySelector<HTMLElement>(`.ls-block:not(.ref-block)[data-block-id="${id}"] > .block-main`);
   await vi.waitFor(() => expect(readByPath).toHaveBeenCalledWith("pages/Alpha.md"));
   await vi.waitFor(() => expect(liveRow(hit.id)).not.toBeNull());
-  return { root, liveRow, readByPath, backlinks, writeText, writeRich };
+  return { root, liveRow, readByPath, backlinks, writeText, writeRich, showSource };
 }
 
 function chooseReferences(root: HTMLElement, keep: (label: string) => boolean) {
@@ -377,21 +390,25 @@ it.each(["group to group", "Linked to Unlinked", "page to embed"])("starts in th
   const embedded = page("Embedded", [block("embedded-root", "Embedded outline")]);
   const embedHost = block("embed-host", "{{embed [[Embedded]]}}");
   const withEmbed = { ...target, blocks: [...target.blocks, embedHost] };
-  vi.spyOn(backend(), "getUnlinkedRefs").mockResolvedValue([{ ...groups[2], blocks: [shallow(excludedHit)] }]);
-  const { root, liveRow, writeRich } = await mountTarget([...sources, embedded], groups, ["Alpha", "Beta", "Gamma"], withEmbed);
+  const mention = block("gamma-mention", "Plain mention of Target");
+  const gamma = { ...sources[2], blocks: [{ ...excludedHit, children: [mention] }] };
+  vi.spyOn(backend(), "getUnlinkedRefs").mockResolvedValue([{ ...groups[2], blocks: [shallow(mention)] }]);
+  const { root, liveRow, writeRich } = await mountTarget([...sources.slice(0, 2), gamma, embedded], groups, ["Alpha", "Beta", "Gamma"], withEmbed);
   const [alpha, beta] = root.querySelectorAll<HTMLElement>(".linked-references .reference-group");
   await vi.waitFor(() => expect(liveRow(coldHit.id)).not.toBeNull());
   let from = alpha, to = beta, first = coldHit.raw;
   let expected = [coldHit.id, coldHit.children[0].id, coldHit.children[0].children[0].id];
   if (journey === "Linked to Unlinked") {
     root.querySelector<HTMLElement>(".unlinked-references .references-header")!.click();
-    to = await vi.waitFor(() => {
-      const group = root.querySelector<HTMLElement>(".unlinked-references .reference-group");
-      expect(group?.textContent).toContain(excludedHit.raw);
-      return group!;
+    const crumb = await vi.waitFor(() => {
+      const crumb = root.querySelector<HTMLElement>(".unlinked-references .ref-crumb[role=button]");
+      expect(crumb).not.toBeNull();
+      return crumb!;
     });
+    to = crumb.closest<HTMLElement>(".reference-group")!;
+    crumb.click();
     first = excludedHit.raw;
-    expected = [excludedHit.id];
+    expected = [excludedHit.id, mention.id];
   } else if (journey === "page to embed") {
     from = root.querySelector<HTMLElement>(".page-blocks")!;
     to = await vi.waitFor(() => {
@@ -542,4 +559,172 @@ it("steps back through both ends of a selection whose breadcrumb repeats a hit",
     expect(press("c", { ctrlKey: true }).defaultPrevented).toBe(true);
     expectClipboard(writeRich.mock.lastCall!, [...roots]);
   }
+});
+
+it.each(["plain", "full text", "widened live breadcrumb", "direct Delete"])("leaves Unlinked Reference excerpts out of Copy and Delete (%s)", async mode => {
+  const mention = block("mention", "Mention of Target");
+  const excerpt = block("excerpt", "Another mention of Target", [block("hidden", "Undisplayed child")]);
+  const parent = block("mention-parent", "Breadcrumb parent", [mention]);
+  const unlinked = page("Unlinked", [parent, excerpt]);
+  vi.spyOn(backend(), "getUnlinkedRefs").mockResolvedValue([{
+    page: unlinked.name, kind: unlinked.kind, path: unlinked.id, blocks: [shallow(mention), shallow(excerpt)],
+  }]);
+  const { root, liveRow, writeRich } = await mountTarget([...sources, unlinked], groups, ["Alpha", "Unlinked"]);
+  root.querySelector<HTMLElement>(".unlinked-references .references-header")!.click();
+  const group = await vi.waitFor(() => {
+    const group = root.querySelector<HTMLElement>(".unlinked-references .reference-group");
+    expect(group?.querySelector(".ref-crumb[role=button]")).not.toBeNull();
+    expect(node(excerpt.id)).toBeDefined();
+    return group!;
+  });
+  if (mode === "full text") {
+    group.querySelector<HTMLElement>('[data-reference-block="excerpt"] .reference-show-full')!.click();
+  }
+  if (mode === "widened live breadcrumb") {
+    group.querySelector<HTMLElement>(".ref-crumb[role=button]")!.click();
+    expect(liveRow(parent.id)).not.toBeNull();
+  }
+  hitBlank(group);
+  press("a", { ctrlKey: true });
+  if (mode === "widened live breadcrumb") {
+    press("a", { ctrlKey: true });
+    press("c", { ctrlKey: true });
+    expectClipboard(writeRich.mock.lastCall!, [parent]);
+  } else if (mode !== "direct Delete") {
+    expect(press("c", { ctrlKey: true }).defaultPrevented).toBe(false);
+    expect(writeRich).not.toHaveBeenCalled();
+  }
+  press("Delete");
+  expect(node(excerpt.id)?.raw).toBe(excerpt.raw);
+  expect(node("hidden")?.raw).toBe("Undisplayed child");
+  expect(node(hit.id)?.raw).toBe(hit.raw);
+  expect(!!node(parent.id)).toBe(mode !== "widened live breadcrumb");
+});
+
+it("leaves the undisplayed parent and sibling intact on a second Delete", async () => {
+  const sibling = block("beta-unrelated", "Other child of the source parent");
+  const parent = block("beta-parent", "Unselected parent", [coldHit, sibling]);
+  const { root } = await mountTarget(
+    [sources[0], { ...sources[1], blocks: [parent] }, sources[2]], groups, ["Alpha", "Beta"],
+  );
+  const group = await vi.waitFor(() => {
+    const row = root.querySelector('.ls-block:not(.ref-block)[data-block-id="beta-hit"] > .block-main');
+    expect(row).not.toBeNull();
+    return row!.closest(".reference-group")!;
+  });
+  hitBlank(group);
+  press("a", { ctrlKey: true });
+  press("Delete");
+  expect(node(coldHit.id)).toBeUndefined();
+  press("Delete");
+  expect(node(parent.id)?.children).toEqual([sibling.id]);
+  expect(node(sibling.id)?.raw).toBe(sibling.raw);
+});
+
+it("uses the live reference outline after a blank hit on its cold shell", async () => {
+  const { root, liveRow, writeRich, showSource } = await mountTarget();
+  const beta = root.querySelectorAll(".linked-references .reference-group")[1];
+  hitBlank(beta);
+  expect(liveRow(coldHit.id)).toBeNull();
+  showSource("Beta");
+  await vi.waitFor(() => expect(liveRow(coldHit.id)).not.toBeNull());
+  expect(press("a", { ctrlKey: true }).defaultPrevented).toBe(true);
+  press("c", { ctrlKey: true });
+  expectClipboard(writeRich.mock.lastCall!, [coldHit]);
+});
+
+it("keeps a live-row hit when its reference outline retires into the shell", async () => {
+  const { liveRow, writeRich } = await mountTarget();
+  const row = liveRow(hit.id)!;
+  const disclosure = row.closest(".reference-group")!.querySelector(".reference-group-disclosure")!;
+  const toggle = () => disclosure.dispatchEvent(new MouseEvent("click", { bubbles: true, detail: 1 }));
+  hitBlank(row);
+  toggle();
+  expect(row.isConnected).toBe(false);
+  expect(press("a", { ctrlKey: true }).defaultPrevented).toBe(true);
+  expect(press("c", { ctrlKey: true }).defaultPrevented).toBe(false);
+  toggle();
+  await vi.waitFor(() => expect(liveRow(hit.id)).not.toBeNull());
+  expect(press("a", { ctrlKey: true }).defaultPrevented).toBe(true);
+  press("c", { ctrlKey: true });
+  expectClipboard(writeRich.mock.lastCall!, [hit, nestedHit]);
+});
+
+it("keeps a blank hit when a breadcrumb replaces the clicked live row", async () => {
+  const { liveRow, writeRich } = await mountTarget();
+  const original = liveRow(nestedHit.id)!;
+  const alpha = original.closest(".reference-group")!;
+  hitBlank(original);
+  alpha.querySelector(".ref-crumb[role=button]")!.dispatchEvent(new MouseEvent("click", { bubbles: true, detail: 1 }));
+  expect(original.isConnected).toBe(false);
+  expect(press("a", { ctrlKey: true }).defaultPrevented).toBe(true);
+  press("c", { ctrlKey: true });
+  expectClipboard(writeRich.mock.lastCall!, [hit, sources[0].blocks[1]]);
+});
+
+it.each(["keyboard", "Shift-click", "drag"])("keeps the full reference range after Ctrl+A and a fold (%s)", async gesture => {
+  const first = block("beta-first", "First Beta hit [[Target]]");
+  const last = { ...coldHit, children: [...coldHit.children, block("beta-tail", "Beta tail")] };
+  const { liveRow, writeRich } = await mountTarget(
+    [sources[0], { ...sources[1], blocks: [first, last] }, sources[2]],
+    [groups[0], { ...groups[1], blocks: [shallow(first), shallow(last)] }, groups[2]],
+    ["Alpha", "Beta"],
+  );
+  await vi.waitFor(() => expect(liveRow("beta-child")).not.toBeNull());
+  const pressRow = (id: string, shiftKey = false) =>
+    liveRow(id)!.querySelector(".block-content-wrapper")!.dispatchEvent(new MouseEvent("mousedown", {
+      bubbles: true, cancelable: true, shiftKey, clientX: 30, clientY: 30,
+    }));
+  if (gesture === "keyboard") {
+    pressRow("beta-tail");
+    document.dispatchEvent(new MouseEvent("mouseup", { bubbles: true }));
+    press("Escape", {}, document.activeElement!);
+    for (let step = 0; step < 3; step++) expect(press("ArrowUp", { shiftKey: true }).defaultPrevented).toBe(true);
+  } else if (gesture === "drag") {
+    pressRow(first.id);
+    Object.defineProperty(document, "elementFromPoint", { configurable: true, value: () => liveRow("beta-tail") });
+    try {
+      document.dispatchEvent(new MouseEvent("mousemove", { bubbles: true, clientX: 30, clientY: 90 }));
+    } finally {
+      document.dispatchEvent(new MouseEvent("mouseup", { bubbles: true }));
+      Reflect.deleteProperty(document, "elementFromPoint");
+    }
+  } else {
+    pressRow(first.id);
+    document.dispatchEvent(new MouseEvent("mouseup", { bubbles: true }));
+    pressRow("beta-tail", true);
+  }
+  expect(selectedIds()).toEqual([first.id, coldHit.id, "beta-child", "beta-grandchild", "beta-tail"]);
+  press("a", { ctrlKey: true });
+  liveRow(coldHit.id)!.querySelector<HTMLElement>(".collapse-toggle.has-children")!.click();
+  expect(liveRow("beta-child")).toBeNull();
+  press("c", { ctrlKey: true });
+  expectClipboard(writeRich.mock.lastCall!, [first, last]);
+});
+
+it("uses the blank selection scope for Shift-click in a routed comment group", async () => {
+  const comment = (id: string, text: string, children: BlockDto[] = []) => ({
+    ...block(id, `${text}\ntine.quote:: words`, children), properties: [["tine.quote", "words"]] as [string, string][],
+  });
+  const first = comment("thread-1", "First comment");
+  const second = comment("thread-2", "Second comment", [block("reply-2", "Nested reply")]);
+  const third = comment("thread-3", "Third comment");
+  const { root, writeRich } = await mountTarget(sources, groups, ["Alpha"],
+    page("Target", [block("passage", "Some words here", [first, second, third])]));
+  openCommentThread(root);
+  const group = await vi.waitFor(() => {
+    const group = document.querySelector(".comment-group");
+    expect(group?.querySelector('[data-block-id="thread-3"]')).not.toBeNull();
+    return group!;
+  });
+  hitBlank(group);
+  expect(press("a", { ctrlKey: true }).defaultPrevented).toBe(true);
+  expect(selectedIds()).toEqual([first.id, second.id, "reply-2", third.id]);
+  group.querySelector('[data-block-id="thread-2"] > .block-main .block-content-wrapper')!
+    .dispatchEvent(new MouseEvent("mousedown", { bubbles: true, cancelable: true, shiftKey: true }));
+  expect(selectedIds()).toEqual([first.id, second.id, "reply-2"]);
+  expect(press("c", { ctrlKey: true }).defaultPrevented).toBe(true);
+  expect(writeRich.mock.lastCall?.[0]).toContain("\t- Nested reply");
+  const html = new DOMParser().parseFromString(writeRich.mock.lastCall![1], "text/html");
+  expect(html.querySelector("body > ul > li:nth-child(2) > ul > li")?.textContent).toBe("Nested reply");
 });

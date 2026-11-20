@@ -8,6 +8,8 @@ it("the block-selection tips explain route departure and journal scrolling", () 
   expect(page).toContain("Click blank space in an outline and press **Ctrl+A**");
   expect(page).toContain("The page gutter works too. Click blank space in another outline to start over there.");
   expect(page).toContain("the next includes the other loaded groups in that section");
+  expect(page).toContain("the first press selects the live blocks in the group you clicked");
+  expect(page).toContain("Use **Copy / export** to include excerpts");
   expect(page).toContain("Copy keeps children nested even if you fold a selected block before copying.");
 });
 

@@ -422,6 +422,7 @@ function PageItem(props: {
     const loaded = pageByName(props.item.name);
     return props.item.path && loaded?.id !== props.item.path ? undefined : loaded;
   };
+  const scope = { get roots() { return page()?.roots ?? []; } };
   const bodyId = `rs-item-body-${createUniqueId()}`;
   return (
     <div class="rs-item" data-sidebar-surface={props.surfaceKey} data-row-index={props.row.index} classList={{ collapsed: props.collapsed, "row-drop-before": props.row.before(), "row-drop-after": props.row.after() }}>
@@ -447,7 +448,7 @@ function PageItem(props: {
       <Show when={!props.collapsed}>
         <Show when={page()} fallback={<div id={bodyId} class="rs-item-body rs-item-loading">{loadError() ?? ""}</div>}>
           <div id={bodyId} class="rs-item-body"
-            ref={el => bindOutlineSelection(el, { surface: props.surfaceKey, read: () => ({ scope: { roots: page()?.roots ?? [] } }) })}>
+            ref={el => bindOutlineSelection(el, { surface: props.surfaceKey, read: () => ({ scope }) })}>
             {/* The page's alias group, as in the main pane's header (AL2). The
                 sidebar keeps its properties block, so a click here edits nothing. */}
             <AliasGroupHeader
@@ -455,7 +456,7 @@ function PageItem(props: {
               declared={pageAliasNames(page()!)}
               inGraph={!page()!.guide}
             />
-            <CommentSurface page={page()}><BlockList ids={page()!.roots} /></CommentSurface>
+            <CommentSurface page={page()}><BlockList ids={scope.roots} /></CommentSurface>
             {/* The same producer the main pane uses: a page opened only here still
                 gets its phantom empty bullet and a trailing target (GH #483). */}
             <PageTypingTarget page={page} surface={props.surfaceKey} />
