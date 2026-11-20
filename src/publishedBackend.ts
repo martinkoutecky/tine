@@ -27,6 +27,7 @@ import { searchFold } from "./editor/searchFold";
 import { setQuickSharePrefix } from "./publishedPermalink";
 import { admitPublishedAnswers, publishedAnswerer } from "./publishedAnswers";
 import type { QuickShareListing } from "./quickShare/commands";
+import { checkBrowserHandoff } from "./linkSchemePolicy";
 
 type PublishedPage = PageDto & { path: string };
 
@@ -696,12 +697,13 @@ export function publishedBackend(load: () => Promise<PublishedSnapshot> = loadPu
       if (!url) throw new Error(`asset ${name}: not a file inside the published assets`);
       return url;
     },
-    async openExternal(url: string) {
+    async openExternal(url: string, confirmedScheme?: string) {
+      checkBrowserHandoff(url, confirmedScheme, window.document?.baseURI ?? window.location.href);
       window.open(url, "_blank", "noopener");
     },
     async openAsset(name: string) {
       const url = assetUrl(name);
-      if (url) window.open(url, "_blank", "noopener");
+      if (url) await answered.openExternal(url);
     },
     async writeText(text: string) {
       const { writeClipboardTextStrict } = await import("./clipboard");
