@@ -991,11 +991,9 @@ function ZoomedView(props: { id: string }): JSX.Element {
         {/* A zoom root is a viewing boundary: reveal its immediate subtree even
             when collapsed on the parent page, without mutating collapsed::.
             Descendants still honor their own individual collapse state. */}
-        <OutlineScopeContext.Provider value={scope}>
-        <OutlineBlankOwner.Provider value={owner}>
+        <OutlineScopeContext.Provider value={scope}><OutlineBlankOwner.Provider value={owner}>
           <CommentSurface main page={pageByName(pageName())} roots={[props.id]}><Block id={props.id} forceExpanded /></CommentSurface>
-        </OutlineBlankOwner.Provider>
-        </OutlineScopeContext.Provider>
+        </OutlineBlankOwner.Provider></OutlineScopeContext.Provider>
       </div>
       <Show when={!pageReadOnly(pageByName(pageName())) && !pageByName(pageName())?.guide}>
         <TrailingBlockTarget onActivate={focusTrailing} />
