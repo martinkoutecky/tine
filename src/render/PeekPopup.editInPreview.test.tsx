@@ -84,12 +84,25 @@ describe("D-20261023-VQ: editable hover preview", () => {
     const keys = installKeybindings();
     const { card, dispose } = await openPeek(defaultBlocks, {}, true, blockPreview);
     try {
-      card.focus();
       const row = card.querySelector<HTMLElement>('.ls-block[data-block-id="e1"] > .block-main')!;
-      row.click();
-      const event = new KeyboardEvent("keydown", { key: "a", ctrlKey: true, bubbles: true, cancelable: true });
-      card.dispatchEvent(event);
-      expect(event.defaultPrevented).toBe(false);
+      const field = card.appendChild(document.createElement("input"));
+      const clipboard = vi.spyOn(backend(), "writeRich");
+      for (const [at, focus] of [[row, card], [field, field]]) {
+        focus.focus();
+        for (const key of ["Delete", "Backspace", "x"]) {
+          at.click();
+          const select = new KeyboardEvent("keydown", { key: "a", ctrlKey: true, bubbles: true, cancelable: true });
+          focus.dispatchEvent(select);
+          const remove = new KeyboardEvent("keydown", { key, ctrlKey: key === "x", bubbles: true, cancelable: true });
+          focus.dispatchEvent(remove);
+          expect(select.defaultPrevented).toBe(false);
+          expect(remove.defaultPrevented).toBe(false);
+          expect(selectedIds()).toEqual([]);
+          expect(node("e1")?.raw).toBe("Editable text");
+          expect(node("e2")?.raw).toBe("Child");
+        }
+      }
+      expect(clipboard).not.toHaveBeenCalled();
     } finally {
       dispose();
       keys();

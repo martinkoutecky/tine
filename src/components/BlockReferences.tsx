@@ -16,7 +16,7 @@ import { ReferenceDisclosure } from "./ReferenceDisclosure";
 import { createMembershipResource, groupsContainEdit } from "../resultMembership";
 import { referenceRevision } from "../referenceKeys";
 import { FIND_REFERENCES_ATTR, FIND_REFERENCES_PAGE_ATTR } from "../inpageFind";
-import { bindOutlineSelection } from "../outlineSelectionTarget";
+import { bindOutlineSelection, createOutlineOwner, registerOutlineBlankZone } from "../outlineSelectionTarget";
 
 // Block-level "linked references": the blocks that reference THIS block (via
 // `((uuid))` / `[..](((uuid)))` / `{{embed ((uuid))}}`), grouped by page. Toggled
@@ -62,9 +62,9 @@ export function BlockReferences(props: { id: string }): JSX.Element {
         </div>
         <For each={groups()}>
           {(g) => {
-            let host!: HTMLDivElement;
-            return <div class="reference-group" ref={el => { host = el; bindOutlineSelection(el); }}>
-              <div class="reference-group-header">
+            const owner = createOutlineOwner();
+            return <div class="reference-group" ref={el => bindOutlineSelection(el, owner)}>
+              <div class="reference-group-header" ref={el => registerOutlineBlankZone(el, owner)}>
               <button type="button" class="reference-group-disclosure"
                 aria-expanded={!groupCollapsed(g)}
                 aria-label={t("editor-references-references-from", { action: groupCollapsed(g) ? "expand" : "collapse", page: g.page })}
@@ -91,10 +91,10 @@ export function BlockReferences(props: { id: string }): JSX.Element {
               </div>
               </div>
               <Show when={!groupCollapsed(g)}>
-              <div class="reference-blocks">
+              <div class="reference-blocks" ref={el => registerOutlineBlankZone(el, owner)}>
                 {/* OG shows each referrer's ancestor breadcrumb in the block-ref
                     panel (:breadcrumb-show? true) for "where does this live" context. */}
-                <LiveRefGroup selectionHost={host} heightKey={`block-refs:${props.id}`} page={g.page} kind={g.kind} path={g.path} blocks={g.blocks} surface="ref" showBreadcrumb />
+                <LiveRefGroup selectionOwner={owner} heightKey={`block-refs:${props.id}`} page={g.page} kind={g.kind} path={g.path} blocks={g.blocks} surface="ref" showBreadcrumb />
               </div>
               </Show>
             </div>;

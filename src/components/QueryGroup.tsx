@@ -11,7 +11,7 @@ import { shouldOpenTextContextMenu } from "../contextMenuPolicy";
 import { observeNear, unobserveNear } from "../lazyObserve";
 import { LiveRefGroup } from "./LiveRefGroup";
 import { requestFrame } from "../windowRealm";
-import { bindOutlineSelection } from "../outlineSelectionTarget";
+import { bindOutlineSelection, createOutlineOwner } from "../outlineSelectionTarget";
 
 interface QueryGroupProps { group: () => RefGroup | undefined; flat?: boolean; showBreadcrumb?: boolean; showPage?: boolean; /** The query block these results belong to (GH #792). */ hostBlockId?: string; bulkFold?: { n: number; collapsed: boolean; epochs: ReadonlyMap<string, number> } }
 
@@ -71,7 +71,7 @@ export function QueryGroups(props: { groups: () => Map<string, RefGroup>; flat?:
   return <>
     <For each={keys()}>{(key) => <QueryGroup group={() => props.groups().get(key)} flat={props.flat} showBreadcrumb={props.showBreadcrumb} showPage={props.showPage} hostBlockId={props.hostBlockId} bulkFold={props.bulkFold} />}</For>
     <Show when={pendingHeight() > 0}>
-      <div class="query-pending-groups" ref={el => bindOutlineSelection(el)} aria-hidden="true" style={{ "min-height": `${pendingHeight()}em` }} />
+      <div class="query-pending-groups" aria-hidden="true" style={{ "min-height": `${pendingHeight()}em` }} />
     </Show>
   </>;
 }
@@ -79,6 +79,7 @@ export function QueryGroups(props: { groups: () => Map<string, RefGroup>; flat?:
 // Keep the keyed group shell and approximate scroll height. The header and
 // live result subtree start together on first viewport approach, then persist.
 export function QueryGroup(props: QueryGroupProps): JSX.Element {
+  const owner = createOutlineOwner();
   const [near, setNear] = createSignal(false);
   let element: HTMLDivElement | undefined;
   const surface = useContext(SurfaceContext);
@@ -95,9 +96,9 @@ export function QueryGroup(props: QueryGroupProps): JSX.Element {
     onCleanup(() => unobserveNear(node));
   });
   return (
-    <div ref={el => { element = el; bindOutlineSelection(el); }} class="query-group" classList={{ "query-group-flat": props.flat, "query-group-no-page": props.showPage === false && props.showBreadcrumb === false }} data-find-source-mounted={near()}
+    <div ref={el => { element = el; bindOutlineSelection(el, owner); }} class="query-group" classList={{ "query-group-flat": props.flat, "query-group-no-page": props.showPage === false && props.showBreadcrumb === false }} data-find-source-mounted={near()}
       style={!near() ? { "min-height": reserved() ? `${reserved()}px` : `${(1 + (props.group()?.blocks.length ?? 0)) * 1.9}em` } : undefined}>
-      <Show when={near()}><MountedQueryGroup {...props} selectionHost={element!} /></Show>
+      <Show when={near()}><MountedQueryGroup {...props} selectionOwner={owner} /></Show>
     </div>
   );
 }
@@ -110,7 +111,7 @@ export function QueryGroup(props: QueryGroupProps): JSX.Element {
 // Keyed by page name (outer <For>) and block uuid (inner <For>) so a reactive
 // re-query that returns the same membership reuses the existing rows — it never
 // re-mounts a block you're editing in a result and yanks the caret out.
-function MountedQueryGroup(props: QueryGroupProps & { selectionHost: HTMLElement }): JSX.Element {
+function MountedQueryGroup(props: QueryGroupProps & { selectionOwner: ReturnType<typeof createOutlineOwner> }): JSX.Element {
   const kind = (): PageKind => props.group()?.kind ?? "page";
   const page = () => props.group()?.page ?? "";
   const target = () => ({ name: page(), pageKind: kind(), ...(props.group()?.path ? { path: props.group()!.path } : {}) });
@@ -144,7 +145,7 @@ function MountedQueryGroup(props: QueryGroupProps & { selectionHost: HTMLElement
           >
             {page()}
           </div></Show>
-          <LiveRefGroup selectionHost={props.selectionHost} page={page()} kind={kind()} path={g().path} blocks={g().blocks} surface="query" showBreadcrumb={props.showBreadcrumb !== false} eager hostBlockId={props.hostBlockId} bulkFold={props.bulkFold} />
+          <LiveRefGroup selectionOwner={props.selectionOwner} page={page()} kind={kind()} path={g().path} blocks={g().blocks} surface="query" showBreadcrumb={props.showBreadcrumb !== false} eager hostBlockId={props.hostBlockId} bulkFold={props.bulkFold} />
         </>
       )}
     </Show>

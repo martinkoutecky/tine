@@ -10,6 +10,7 @@ The format follows [Keep a Changelog](https://keepachangelog.com/); versions use
 
 ### Fixed
 - **Ctrl/Cmd+A** on blank outline space, including row padding and the page gutter, selects the live blocks in the clicked group. Repeating the shortcut keeps the same group selected. Copy preserves child indentation in plain text and HTML. Shift-click, moving focus, and Delete clear the selection (#793).
+- **Ctrl/Cmd+A** on a Journals separator, query status row or group with no live blocks uses native select-all. Delete, Backspace and Cut from those hits leave the outline intact (#793).
 - The Guide's Share pages page no longer says that **Link** is greyed out with "Coming soon" or depends on your build; link sharing is offered in every build. The Flatpak section of Platforms says the same (D-20261117-QSG).
 - Query results have even spacing when breadcrumbs are turned off, including between results from different source pages (#881).
 - Help for the `tine export` subcommands explains which graph path to pass and where static and live publications are written (#588).

@@ -51,7 +51,7 @@ it("replaces a loaded day instance when a feed refresh publishes new roots", () 
   } finally { dispose(); }
 });
 
-it("requires every surface to be away, preserves measured placeholders and reloads current content", async () => {
+it.each([false, true])("requires every surface to be away, preserves measured placeholders and reloads current content (separator: %s)", async separator => {
   const observers: FakeObserver[] = [];
   class FakeObserver {
     elements = new Set<Element>();
@@ -64,6 +64,13 @@ it("requires every surface to be away, preserves measured placeholders and reloa
     }
   }
   vi.stubGlobal("IntersectionObserver", FakeObserver);
+  const resized = new Map<Element, ResizeObserverCallback>();
+  vi.stubGlobal("ResizeObserver", class {
+    private target?: Element;
+    constructor(private readonly notify: ResizeObserverCallback) {}
+    observe(target: Element) { this.target = target; resized.set(target, this.notify); }
+    disconnect() { if (this.target) resized.delete(this.target); }
+  });
   let bodyHeight = 100;
   vi.spyOn(HTMLElement.prototype, "getBoundingClientRect").mockImplementation(function (this: HTMLElement) {
     return { height: this.classList.contains("journal-feed-day") ? 100 : bodyHeight } as DOMRect;
@@ -86,14 +93,22 @@ it("requires every surface to be away, preserves measured placeholders and reloa
     expect(reopened.querySelector<HTMLElement>('[data-feed-day="Day1"]')?.style.minHeight).toBe("100px");
     disposeReopened(); disposeReopened = undefined;
     bodyHeight = 60; // async sections have not filled their previous space yet
+    const reloaded = host.querySelector<HTMLElement>('[data-feed-day="Day1"]')!;
+    if (separator) {
+      reloaded.style.paddingTop = "14px";
+      reloaded.style.borderTop = "1px solid";
+    }
     vi.spyOn(backend(), "getPage").mockResolvedValue({ ...day(1, "fresh disk content"), id: "journals/Day1.md" });
     observers[0].emit(el => el.getAttribute("data-feed-day") === "Day1");
     await vi.waitFor(() => expect(host.querySelector('[data-feed-day="Day1"]')?.textContent).toBe("fresh disk content"));
     expect(pageByName("Day0")).toBeDefined();
     expect(host.querySelector('[data-feed-day="Day1"]')?.hasAttribute("data-feed-retired")).toBe(false);
-    const reloaded = host.querySelector<HTMLElement>('[data-feed-day="Day1"]')!;
     expect(reloaded.style.minHeight).toBe("100px");
-    reloaded.dispatchEvent(new Event("pointerdown", { bubbles: true }));
+    if (separator) {
+      await vi.waitFor(() => expect(resized.has(reloaded.firstElementChild!)).toBe(true));
+      bodyHeight = 85;
+      resized.get(reloaded.firstElementChild!)!([], {} as ResizeObserver);
+    } else reloaded.dispatchEvent(new Event("pointerdown", { bubbles: true }));
     expect(reloaded.style.minHeight).toBe("");
   } finally { disposeReopened?.(); dispose(); }
 });

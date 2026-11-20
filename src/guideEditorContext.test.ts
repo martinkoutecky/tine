@@ -11,6 +11,8 @@ it("the block-selection tips explain route departure and journal scrolling", () 
   expect(page).toContain("Use **Copy / export** to include excerpts");
   expect(page).toContain("Copy keeps folded children nested.");
   expect(page).toContain("another click, or moving keyboard focus ends this selection");
+  expect(page).toContain("Journal separators and query headers use regular text selection.");
+  expect(page).toContain("the group you clicked has no live blocks yet");
 });
 
 it("the search tour teaches pointer and keyboard activation in the focused split", () => {

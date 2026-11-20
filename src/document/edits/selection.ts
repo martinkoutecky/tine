@@ -490,9 +490,9 @@ export function expandBlockSelection(target?: OutlineSelectionTarget) {
   if (target) {
     const roots = target.scope.roots;
     const id = roots.find(id => !!doc.byId[id]);
-    if (id) startBlockSelection(id, target.scope, target.surface, selectableRows(id, [...roots]));
-    else clearSelection();
-    return;
+    if (!id) return false;
+    startBlockSelection(id, target.scope, target.surface, selectableRows(id, [...roots]));
+    return hasBlankOutlineSelection();
   }
   if (wholeSelection()) return;
   keyboardPath = [];
@@ -594,7 +594,6 @@ export function selectionIncludesPage(page: string): boolean {
 }
 
 function selectionRemovalSurvivor(): string | null {
-  if (hasBlankOutlineSelection()) return null;
   const roots = topSelected();
   const first = roots[0];
   const last = roots.at(-1);
@@ -665,16 +664,23 @@ export function outdentSelection() {
 }
 
 export function deleteSelection() {
-  const survivor = selectionRemovalSurvivor();
+  const blank = hasBlankOutlineSelection();
+  const survivor = blank ? null : selectionRemovalSurvivor();
   const surface = selectedSurfaceKey;
   const ids = topSelected().filter((id) => doc.byId[id]);
-  if (!ids.length) return;
+  if (!ids.length) {
+    if (blank) clearSelection();
+    return;
+  }
   const pages = [...new Set(ids.map((id) => doc.byId[id].page))];
   // One change for the whole selection — deleting each block separately fires a
   // reactive update per block (15 reflows for 15 bullets); one mutation
   // collapses it to a single update so the cut feels instant.
   const change = outlineChange({ verb: "delete", keys: ids }, pages);
-  if ("refused" in change) return;
+  if ("refused" in change) {
+    if (blank) clearSelection();
+    return;
+  }
   const notice = prepareReferenceChangeNotice(ids, true);
   pushUndo(notice.tag, pages);
   applyOutlineChange(change);

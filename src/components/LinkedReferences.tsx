@@ -27,7 +27,7 @@ import { createMembershipResource, groupsContainEdit } from "../resultMembership
 import { activeSurface } from "../editorController";
 import { navigationName } from "../pageIndex";
 import { readPageProperty, setPageProperty } from "../document";
-import { bindOutlineSelection } from "../outlineSelectionTarget";
+import { bindOutlineSelection, createOutlineOwner, registerOutlineBlankZone } from "../outlineSelectionTarget";
 import { parseReferenceFilters, writeReferenceFilters } from "../referenceFilters";
 import { referenceKey, referenceRevision, registerUnlinkedReader } from "../referenceKeys";
 import { createCollapsedRevision } from "../collapsedRevision";
@@ -564,13 +564,13 @@ export function ReferenceSection(input: { name: string; unlinked?: boolean; jour
           <For each={shown().map(groupKey)}>
             {(key, index) => {
               const group = () => shownByKey().get(key)!;
-              let host!: HTMLDivElement;
+              const owner = createOutlineOwner();
               let pageButton: HTMLButtonElement | undefined;
               const longPress = createLongPress(() => pageButton);
               onCleanup(longPress.dispose);
               return (
-              <div class="reference-group" ref={el => { host = el; bindOutlineSelection(el); }}>
-                <div class="reference-group-header">
+              <div class="reference-group" ref={el => bindOutlineSelection(el, owner)}>
+                <div class="reference-group-header" ref={el => registerOutlineBlankZone(el, owner)}>
                   <button
                     type="button"
                     class="reference-group-disclosure"
@@ -613,11 +613,11 @@ export function ReferenceSection(input: { name: string; unlinked?: boolean; jour
                 </div>
                 <Show when={!groupCollapsed(group())}>
                   <div
-                    class="reference-blocks"
+                    class="reference-blocks" ref={el => registerOutlineBlankZone(el, owner)}
                     data-inpage-find-surface={`linked:${props.name}:${group().kind}:${group().page}`}
                   >
                     <LiveRefGroup
-                      selectionHost={host}
+                      selectionOwner={owner}
                       heightKey={`page-refs:${props.name}`}
                       page={group().page}
                       kind={group().kind}

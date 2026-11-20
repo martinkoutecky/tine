@@ -3,7 +3,7 @@ import { render } from "solid-js/web";
 import { backend } from "../backend";
 import { clearClipboardPayload } from "../clipboard";
 import * as cut from "../cut";
-import { node, resetStore, selectedIds } from "../document";
+import { deleteBlock, hasBlankOutlineSelection, node, resetStore, selectedIds, topSelected } from "../document";
 import { endEdit } from "../editorController";
 import { setGraphMeta } from "../graphSession";
 import { installKeybindings } from "../keybindings";
@@ -18,6 +18,7 @@ import { backendReadsQueries, blockRunResult } from "../tests/queryReadingsTestk
 import type { BlockDto, PageRead, RefGroup } from "../types";
 import { closeExportModal, requestBlockReferences, setBlockReferencesRequest } from "../ui";
 import { ExportModal } from "./ExportModal";
+import { LiveRefGroup } from "./LiveRefGroup";
 import { PageView } from "./Page";
 
 const block = (id: string, raw: string, children: BlockDto[] = []): BlockDto => ({
@@ -337,7 +338,7 @@ it("copies only the clicked group after repeated select all", async () => {
   betaGroup.querySelector<HTMLButtonElement>(".reference-group-disclosure")!.click();
   expect(press("c", { ctrlKey: true }).defaultPrevented).toBe(false);
   gammaGroup.click();
-  expect(press("a", { ctrlKey: true }).defaultPrevented).toBe(true);
+  expect(press("a", { ctrlKey: true }).defaultPrevented).toBe(false);
   expect(press("c", { ctrlKey: true }).defaultPrevented).toBe(false);
   expect(readByPath).toHaveBeenCalledTimes(reads);
   expect(submit).not.toHaveBeenCalled();
@@ -471,8 +472,10 @@ it.each(["Shift-click", "click elsewhere", "Escape"])("ends blank selection on %
   expect(submit).not.toHaveBeenCalled();
 });
 
-it.each([".embed-action-source", ".qc-actions summary"].flatMap(control => [false, true].map(selected => ({ control, selected }))))(
-  "retires a blank page hit when focus moves to $control (already selected: $selected)", async ({ control, selected }) => {
+it.each([".embed-action-source", ".qc-actions summary", "inside one dialog"].flatMap(control =>
+  [false, true].flatMap(selected => ["Delete", "Backspace", "Cut"].map(action => ({ control, selected, action }))),
+))(
+  "retires a blank page hit on focus change to $control before $action (already selected: $selected)", async ({ control, selected, action }) => {
     const embedded = page("Embedded", [block("focus-embed-root", "Embed source")]);
     const routed = { ...target, blocks: [
       ...target.blocks, block("focus-embed-host", "{{embed [[Embedded]]}}"),
@@ -480,9 +483,15 @@ it.each([".embed-action-source", ".qc-actions summary"].flatMap(control => [fals
     ] };
     backendReadsQueries({ "(task TODO)": { form: "(task TODO)" } });
     vi.spyOn(backend(), "queryRun").mockResolvedValue(blockRunResult([groups[1]]));
-    const { root } = await mountTarget([...sources, embedded], groups, ["Alpha", "Beta", "Embedded"], routed);
+    const { root, writeRich } = await mountTarget([...sources, embedded], groups, ["Alpha", "Beta", "Embedded"], routed);
+    if (control === "inside one dialog") {
+      root.setAttribute("role", "dialog");
+      const first = root.appendChild(document.createElement("button"));
+      root.appendChild(document.createElement("button")).className = "next-dialog-control";
+      first.focus();
+    }
     const button = await vi.waitFor(() => {
-      const element = root.querySelector<HTMLElement>(control);
+      const element = root.querySelector<HTMLElement>(control === "inside one dialog" ? ".next-dialog-control" : control);
       expect(element).not.toBeNull();
       return element!;
     });
@@ -496,7 +505,7 @@ it.each([".embed-action-source", ".qc-actions summary"].flatMap(control => [fals
     expect(document.activeElement).toBe(button);
     const afterFocus = selectedIds();
     const select = press("a", { ctrlKey: true }, button);
-    const remove = press("Delete", {}, button);
+    const remove = pressAction(action, button);
     expect(afterFocus).toEqual([]);
     expect(select.defaultPrevented).toBe(false);
     expect(remove.defaultPrevented).toBe(false);
@@ -505,6 +514,7 @@ it.each([".embed-action-source", ".qc-actions summary"].flatMap(control => [fals
       expect(node(block.id)?.raw).toBe(block.raw);
     }
     expect(submit).not.toHaveBeenCalled();
+    expect(writeRich).not.toHaveBeenCalled();
   },
 );
 
@@ -516,11 +526,163 @@ const blankSurfaces = [
   ["query results", ".query-group", coldHit.id],
   ["block references", ".block-references-inner", coldHit.id],
 ] as const;
+const removalKeys = ["Delete", "Backspace", "Cut"];
+const flatten = (blocks: BlockDto[]): BlockDto[] => blocks.flatMap(block => [block, ...flatten(block.children)]);
 
-it.each(blankSurfaces.flatMap(([surface, outline, id]) => [
-  { surface, outline, id, zone: ".block-main" },
-  { surface, outline, id, zone: ".block-children-container > .block-children" },
-]))("row padding and child indentation restart selection in $surface ($zone)", async ({ surface, outline, id, zone }) => {
+function pressAction(action: string, target?: Element) {
+  if (action === "Copy" || action === "Cut") return press(action === "Copy" ? "c" : "x", { ctrlKey: true }, target);
+  return press(action, {}, target);
+}
+
+it.each(["missing embed", "self embed", "folded embed", "collapsed reference", "cold reference", "reference excerpt"].flatMap(
+  zone => removalKeys.map(action => ({ zone, action })),
+))("leaves Ctrl+A and $action native on a $zone", async ({ zone, action }) => {
+  const embedded = page("Embedded", [block("embedded-root", "Embedded source")]);
+  const mention = block("unlinked-mention", "Plain mention of Target");
+  const unlinked = page("Unlinked", [mention]);
+  const routed = { ...target, blocks: [
+    ...target.blocks, block("missing-embed", "{{embed [[Missing]]}}"), block("self-embed", "{{embed [[Target]]}}"),
+    { ...block("folded-embed", "{{embed [[Embedded]]}}"), collapsed: true },
+  ] };
+  vi.spyOn(backend(), "getUnlinkedRefs").mockResolvedValue([{ page: unlinked.name, path: unlinked.id, kind: unlinked.kind, blocks: [mention] }]);
+  const { root, readByPath, writeRich } = await mountTarget([...sources, embedded, unlinked], groups, ["Alpha", "Unlinked"], routed);
+  if (zone === "collapsed reference") root.querySelector<HTMLButtonElement>(".reference-group-disclosure")!.click();
+  if (zone === "reference excerpt") root.querySelector<HTMLButtonElement>(".unlinked-references .references-header")!.click();
+  const targets: Record<string, string> = {
+    "missing embed": '[data-block-id="missing-embed"] .embed-block',
+    "self embed": '[data-block-id="self-embed"] .embed-block',
+    "folded embed": '[data-block-id="folded-embed"] .embed-block',
+    "collapsed reference": ".linked-references .reference-group .reference-group-header",
+    "cold reference": ".linked-references .reference-group:last-of-type",
+    "reference excerpt": '.unlinked-references [data-reference-block="unlinked-mention"]',
+  };
+  const at = await vi.waitFor(() => {
+    const el = root.querySelector(targets[zone]);
+    expect(el).toBeTruthy();
+    if (zone === "reference excerpt") expect(node(mention.id)?.raw).toBe(mention.raw);
+    return el!;
+  });
+  const from = flatten([...routed.blocks, ...sources[0].blocks, ...(zone === "reference excerpt" ? [mention] : [])]);
+  const reads = readByPath.mock.calls.length;
+  const cuts = vi.spyOn(cut, "cutBlocks");
+  hitBlank(at);
+  const select = press("a", { ctrlKey: true }).defaultPrevented;
+  const roots = topSelected();
+  const remove = pressAction(action).defaultPrevented;
+  await cuts.mock.results.at(-1)?.value;
+  expect({ select, roots, remove, source: from.map(block => node(block.id)?.raw) }).toEqual({
+    select: false, roots: [], remove: false, source: from.map(block => block.raw),
+  });
+  expect(readByPath).toHaveBeenCalledTimes(reads);
+  expect(writeRich).not.toHaveBeenCalled();
+});
+
+it.each(["Linked", "Unlinked"].flatMap(section => ["gap", "Shift-click", "Shift+Arrow"].flatMap(gesture =>
+  removalKeys.map(action => ({ section, gesture, action })),
+)))("keeps $section groups separate after $gesture and $action", async ({ section, gesture, action }) => {
+  const unlinked = section === "Unlinked";
+  const first = unlinked ? block("alpha-context", "First context", [block("alpha-mention", "A mention of Target")]) : hit;
+  const second = unlinked ? block("beta-context", "Second context", [block("beta-mention", "Another mention of Target")]) : coldHit;
+  const pages = [{ ...sources[0], blocks: [first] }, { ...sources[1], blocks: [second] }];
+  const hits = pages.map(({ name, kind, id, blocks }) => ({ page: name, kind, path: id, blocks: (unlinked ? blocks[0].children : blocks).map(shallow) }));
+  if (unlinked) vi.spyOn(backend(), "getUnlinkedRefs").mockResolvedValue(hits);
+  // The mount fixture uses the first Linked hit as its ready signal.
+  const { root, writeRich } = await mountTarget(unlinked
+    ? [{ ...pages[0], blocks: [hit, first] }, ...pages.slice(1)] : pages,
+    unlinked ? [groups[0]] : hits, ["Alpha", "Beta"]);
+  const panel = root.querySelector<HTMLElement>(unlinked ? ".unlinked-references" : ".linked-references")!;
+  if (unlinked) panel.querySelector<HTMLButtonElement>(".references-header")!.click();
+  const cards = await vi.waitFor(() => {
+    const cards = [...panel.querySelectorAll<HTMLElement>(".reference-group")];
+    expect(cards).toHaveLength(2);
+    for (const card of cards) expect(card.querySelector(unlinked ? ".ref-crumb[role=button]" : ".ls-block:not(.ref-block)")).toBeTruthy();
+    return cards;
+  });
+  if (unlinked) for (const card of cards) card.querySelector<HTMLElement>(".ref-crumb[role=button]")!.click();
+  const chrome = cards[1].querySelector(".reference-group-header")!;
+  hitBlank(chrome);
+  for (let i = 0; i < 2; i++) {
+    expect(press("a", { ctrlKey: true }).defaultPrevented).toBe(true);
+    expect(topSelected()).toEqual([second.id]);
+  }
+  expect(pressAction("Copy").defaultPrevented).toBe(true);
+  expectClipboard(writeRich.mock.lastCall!, [second]);
+  expect(topSelected()).toEqual([]);
+  writeRich.mockClear();
+  hitBlank(chrome);
+  expect(press("a", { ctrlKey: true }).defaultPrevented).toBe(true);
+  if (gesture === "gap") hitBlank(panel);
+  else if (gesture === "Shift+Arrow") press("ArrowUp", { shiftKey: true });
+  else {
+    for (const type of ["pointerdown", "mousedown", "click"]) {
+      cards[0].querySelector(".block-content-wrapper")!.dispatchEvent(new MouseEvent(type, { bubbles: true, cancelable: true, shiftKey: true, detail: 1 }));
+    }
+  }
+  expect(topSelected()).toEqual([]);
+  expect(press("a", { ctrlKey: true }).defaultPrevented).toBe(false);
+  expect(pressAction(action).defaultPrevented).toBe(false);
+  expect(topSelected()).toEqual([]);
+  for (const block of flatten([first, second, ...target.blocks])) expect(node(block.id)?.raw).toBe(block.raw);
+  expect(writeRich).not.toHaveBeenCalled();
+});
+
+it.each(removalKeys)("retires a blank selection when %s cannot remove its read-only roots", async action => {
+  const routed = { ...target, read_only: true };
+  const { root, writeRich } = await mountTarget(sources, groups, ["Alpha"], routed);
+  hitBlank(root.querySelector(".page-blocks")!);
+  expect(press("a", { ctrlKey: true }).defaultPrevented).toBe(true);
+  expect(topSelected()).toEqual([routed.blocks[0].id]);
+  expect(pressAction(action).defaultPrevented).toBe(true);
+  await vi.waitFor(() => expect(topSelected()).toEqual([]));
+  expect(pressAction("Delete").defaultPrevented).toBe(false);
+  expect(node(routed.blocks[0].id)?.raw).toBe(routed.blocks[0].raw);
+  if (action === "Cut") expectClipboard(writeRich.mock.lastCall!, routed.blocks);
+  else expect(writeRich).not.toHaveBeenCalled();
+});
+
+it.each(["Delete", "Backspace"])("retires a blank selection on %s after its roots disappear", async action => {
+  const { liveRow } = await mountTarget(sources, groups, ["Alpha", "Beta"]);
+  const card = await vi.waitFor(() => {
+    const row = liveRow(coldHit.id);
+    expect(row).toBeTruthy();
+    return row!.closest(".reference-group")!;
+  });
+  hitBlank(card);
+  expect(press("a", { ctrlKey: true }).defaultPrevented).toBe(true);
+  expect(topSelected()).toEqual([coldHit.id]);
+  deleteBlock(coldHit.id);
+  expect(node(coldHit.id)).toBeUndefined();
+  expect(hasBlankOutlineSelection()).toBe(true);
+  expect(pressAction(action).defaultPrevented).toBe(true);
+  expect(hasBlankOutlineSelection()).toBe(false);
+  expect(pressAction("Delete").defaultPrevented).toBe(false);
+  for (const row of [hit, sources[1].blocks[1], target.blocks[0]]) expect(node(row.id)?.raw).toBe(row.raw);
+});
+
+it.each(["Copy", ...removalKeys])("selects the standalone live group from its body before %s", async action => {
+  const { root, liveRow, writeRich } = await mountTarget();
+  const portal = root.appendChild(document.createElement("div"));
+  disposers.push(render(() => <LiveRefGroup {...groups[1]} surface="ref" eager />, portal));
+  const body = await vi.waitFor(() => {
+    expect(liveRow(coldHit.id)).toBeTruthy();
+    return portal.querySelector(".page-blocks")!;
+  });
+  hitBlank(body);
+  expect(press("a", { ctrlKey: true }).defaultPrevented).toBe(true);
+  expect(topSelected()).toEqual([coldHit.id]);
+  expect(pressAction(action).defaultPrevented).toBe(true);
+  await vi.waitFor(() => expect(topSelected()).toEqual([]));
+  if (action === "Copy" || action === "Cut") expectClipboard(writeRich.mock.lastCall!, [coldHit]);
+  else expect(writeRich).not.toHaveBeenCalled();
+  for (const block of flatten([coldHit])) expect(node(block.id)?.raw).toBe(action === "Copy" ? block.raw : undefined);
+  for (const block of [hit, sources[1].blocks[1], target.blocks[0]]) expect(node(block.id)?.raw).toBe(block.raw);
+});
+
+it.each(blankSurfaces.flatMap(([surface, outline, id]) =>
+  [".block-main", ".block-children-container > .block-children"].flatMap(zone =>
+    ["Copy", ...removalKeys].map(action => ({ surface, outline, id, zone, action })),
+  ),
+))("row padding and child indentation restart selection in $surface ($zone, $action)", async ({ surface, outline, id, zone, action }) => {
   const targetId = "1d5ea000-0000-4000-a000-000000000001";
   const routed = page("Target", [
     block("target-root", `Target body\nid:: ${targetId}`, [block("target-child", "Body child")]),
@@ -536,7 +698,7 @@ it.each(blankSurfaces.flatMap(([surface, outline, id]) => [
   vi.spyOn(backend(), "getBlockReferrers").mockResolvedValue([groups[1]]);
   backendReadsQueries({ "(task TODO)": { form: "(task TODO)" } });
   vi.spyOn(backend(), "queryRun").mockResolvedValue(blockRunResult([groups[1]]));
-  const { root } = await mountTarget([...sources, embedded, unlinked], groups, ["Alpha", "Beta", "Embedded", "Unlinked"], routed);
+  const { root, writeRich } = await mountTarget([...sources, embedded, unlinked], groups, ["Alpha", "Beta", "Embedded", "Unlinked"], routed);
   if (surface === "Unlinked References") {
     root.querySelector<HTMLElement>(".unlinked-references .references-header")!.click();
     const crumb = await vi.waitFor(() => {
@@ -549,9 +711,8 @@ it.each(blankSurfaces.flatMap(([surface, outline, id]) => [
   if (surface === "block references") requestBlockReferences(targetId);
   const alpha = root.querySelector<HTMLElement>(".linked-references .reference-group")!;
   const row = `${outline} [data-block-id="${id}"]`;
-  const expected = id === "target-root" ? ["target-root", "target-child", "embed-host", "query-host"]
-    : id === "embedded-root" ? ["embedded-root", "embedded-child"]
-    : id === "unlinked-root" ? ["unlinked-root", "unlinked-child"] : ["beta-hit", "beta-child", "beta-grandchild"];
+  const expected = id === "target-root" ? routed.blocks : id === "embedded-root" ? embedded.blocks
+    : id === "unlinked-root" ? unlinked.blocks : [coldHit];
   const pointerTarget = await vi.waitFor(() => {
     const hit = root.querySelector(`${row} > ${zone}`);
     expect(hit).not.toBeNull();
@@ -561,18 +722,21 @@ it.each(blankSurfaces.flatMap(([surface, outline, id]) => [
   press("a", { ctrlKey: true });
   expect(selectedIds()).toContain("alpha-hit");
   hitBlank(pointerTarget);
-  if (surface !== "Linked References" || zone !== ".block-main") {
-    expect(selectedIds()).toEqual([]);
-    expect(press("a", { ctrlKey: true }).defaultPrevented).toBe(true);
-    expect(selectedIds()).toEqual(expected);
-  } else {
-    press("a", { ctrlKey: true });
-    expect(press("Delete").defaultPrevented).toBe(true);
-    expect(node("alpha-hit")?.raw).toBe(hit.raw);
-    expect(node("alpha-child")?.raw).toBe("Alpha child");
-    expect(node("beta-hit")).toBeUndefined();
-    expect(node("beta-child")).toBeUndefined();
+  expect(selectedIds()).toEqual([]);
+  expect(press("a", { ctrlKey: true }).defaultPrevented).toBe(true);
+  expect(topSelected()).toEqual(expected.map(block => block.id));
+  const selected = flatten(expected);
+  expect(selectedIds()).toEqual(selected.map(block => block.id));
+  const source = flatten([...routed.blocks, ...embedded.blocks, ...unlinked.blocks, ...sources.flatMap(page => page.blocks)])
+    .filter(block => node(block.id));
+  expect(pressAction(action).defaultPrevented).toBe(true);
+  await vi.waitFor(() => expect(selectedIds()).toEqual([]));
+  for (const block of source) {
+    expect(node(block.id)?.raw, block.id).toBe(action !== "Copy" && selected.includes(block) ? undefined : block.raw);
   }
+  if (action === "Copy" || action === "Cut") {
+    expectClipboard(writeRich.mock.lastCall!, expected.map(block => block.id === "target-root" ? { ...block, raw: "Target body" } : block));
+  } else expect(writeRich).not.toHaveBeenCalled();
 });
 
 function expectClipboard([plain, html]: [string, string], roots: BlockDto[]) {
@@ -590,7 +754,7 @@ function expectClipboard([plain, html]: [string, string], roots: BlockDto[]) {
   expect(tree(copied.querySelector("body > ul"))).toEqual(expected(roots));
 }
 
-it("copies the last folded root's subtree from the clicked group", async () => {
+it.each(["Copy", ...removalKeys])("keeps the last folded root's subtree in blank selection before %s", async action => {
   const { liveRow, writeRich } = await mountTarget(sources, groups, ["Alpha", "Beta"]);
   const beta = await vi.waitFor(() => {
     const row = liveRow(coldHit.id);
@@ -602,8 +766,41 @@ it("copies the last folded root's subtree from the clicked group", async () => {
   expect(liveRow("beta-child")).toBeNull();
   beta.click();
   press("a", { ctrlKey: true });
-  expect(press("c", { ctrlKey: true }).defaultPrevented).toBe(true);
-  expectClipboard(writeRich.mock.lastCall!, [coldHit]);
+  expect(topSelected()).toEqual([coldHit.id]);
+  expect(pressAction(action).defaultPrevented).toBe(true);
+  await vi.waitFor(() => expect(topSelected()).toEqual([]));
+  if (action === "Copy" || action === "Cut") expectClipboard(writeRich.mock.lastCall!, [coldHit]);
+  else expect(writeRich).not.toHaveBeenCalled();
+  for (const row of flatten([coldHit])) expect(node(row.id)?.raw).toBe(action === "Copy" ? row.raw : undefined);
+  for (const row of [hit, sources[1].blocks[1], target.blocks[0]]) expect(node(row.id)?.raw).toBe(row.raw);
+});
+
+it("extends from the first occurrence through intervening roots in a routed reference range", async () => {
+  const q = block("alpha-q", "Intervening Q [[Target]]");
+  const r = block("alpha-r", "Intervening R [[Target]]");
+  const { root, writeRich } = await mountTarget(
+    [{ ...sources[0], blocks: [hit, q, r] }, ...sources.slice(1)],
+    [{ ...groups[0], blocks: [hit, q, r, hit.children[0]].map(shallow) }, ...groups.slice(1)],
+  );
+  const card = root.querySelector<HTMLElement>(".linked-references .reference-group")!;
+  card.querySelector<HTMLElement>(".ref-crumb[role=button]")!.click();
+  const rows = [...card.querySelectorAll<HTMLElement>(".live-ref-group .page-blocks > .ls-block")];
+  expect(rows.map(row => row.dataset.blockId)).toEqual([hit.id, q.id, r.id, hit.id]);
+  const editor = await openBlockEditor(card, q.id);
+  press("Escape", {}, editor.element);
+  expect(topSelected()).toEqual([q.id]);
+  for (let i = 0; i < 2; i++) expect(press("a", { ctrlKey: true }).defaultPrevented).toBe(true);
+  expect(topSelected()).toEqual([hit.id, q.id, r.id]);
+  for (let i = 0; i < 2; i++) {
+    expect(press("ArrowUp", { shiftKey: true }).defaultPrevented).toBe(true);
+    expect(topSelected()).toEqual([hit.id, q.id, r.id]);
+  }
+  expect(press("ArrowUp", { shiftKey: true }).defaultPrevented).toBe(true);
+  expect(topSelected()).toEqual([hit.id, q.id]);
+  expect(press("ArrowDown", { shiftKey: true }).defaultPrevented).toBe(true);
+  expect(topSelected()).toEqual([hit.id, q.id, r.id]);
+  expect(pressAction("Copy").defaultPrevented).toBe(true);
+  expectClipboard(writeRich.mock.lastCall!, [hit, q, r]);
 });
 
 it.each(["plain", "full text", "live breadcrumb", "direct Delete"])("leaves Unlinked Reference excerpts out of Copy and Delete (%s)", async mode => {
@@ -727,7 +924,10 @@ it.each([
   expect(editor.keydown({ key: "a", ctrlKey: true }).defaultPrevented).toBe(true);
   expect(selectedIds()).toEqual([leaf.id]);
   for (let step = 0; step < 2; step++) expect(press("a", { ctrlKey: true }).defaultPrevented).toBe(true);
+  expect(topSelected()).toEqual([tree.id]);
   expect(selectedIds()).toEqual([tree.id, leaf.id]);
+  expect(pressAction("Copy").defaultPrevented).toBe(true);
+  expectClipboard(writeRich.mock.lastCall!, [{ ...tree, raw: "Scoped tree" }]);
   expect((action === "Cut" ? press("x", { ctrlKey: true }) : press(action)).defaultPrevented).toBe(true);
   await vi.waitFor(() => expect(node(tree.id)).toBeUndefined());
   if (action === "Cut") expectClipboard(writeRich.mock.lastCall!, [tree]);
@@ -827,6 +1027,7 @@ it("copies the clicked comment group on a routed page", async () => {
   });
   hitBlank(group);
   expect(press("a", { ctrlKey: true }).defaultPrevented).toBe(true);
+  expect(topSelected()).toEqual([first.id, second.id, third.id]);
   expect(selectedIds()).toEqual([first.id, second.id, "reply-2", third.id]);
   expect(press("c", { ctrlKey: true }).defaultPrevented).toBe(true);
   expect(writeRich.mock.lastCall?.[0]).toContain("\t- Nested reply");

@@ -103,10 +103,20 @@ it("ends a routed page blank selection when keyboard focus moves to the sidebar"
     control.dispatchEvent(remove);
     expect(afterFocus).toEqual([]);
     expect(remove.defaultPrevented).toBe(false);
-    expect(selectAllFrom(sidebarRow, control)).toBe(false);
-    expect(selectedIds()).toEqual([]);
-    expect(docNode("body")?.raw).toBe("Body block");
-    expect(docNode("sidebar")?.raw).toBe("Sidebar block");
+    const field = sidebarRow.closest(".right-sidebar")!.appendChild(document.createElement("input"));
+    const clipboard = vi.spyOn(backend(), "writeRich");
+    for (const [at, focus] of [[sidebarRow, control], [field, field]]) {
+      for (const key of ["Delete", "Backspace", "x"]) {
+        expect(selectAllFrom(at, focus)).toBe(false);
+        const event = new KeyboardEvent("keydown", { key, ctrlKey: key === "x", bubbles: true, cancelable: true });
+        focus.dispatchEvent(event);
+        expect(event.defaultPrevented).toBe(false);
+        expect(selectedIds()).toEqual([]);
+        expect(docNode("body")?.raw).toBe("Body block");
+        expect(docNode("sidebar")?.raw).toBe("Sidebar block");
+      }
+    }
+    expect(clipboard).not.toHaveBeenCalled();
     expect(submit).not.toHaveBeenCalled();
 
     scroller.focus();

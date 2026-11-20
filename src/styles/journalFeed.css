@@ -1,4 +1,4 @@
-.journal-feed-day + .journal-feed-day > .page-section {
+.journal-feed-day + .journal-feed-day {
   margin-top: 6px;
   border-top: 1px solid var(--border-color);
   padding-top: 14px;

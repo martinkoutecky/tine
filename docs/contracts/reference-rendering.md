@@ -25,19 +25,23 @@ panel's own search, which covers every group (the panel root carries
 chunks, retaining their geometry with the occurrence. Large root lists use the
 ordinary outline windows and model-based reveal/navigation scope.
 
-Ctrl/Cmd+A after a blank click selects the nearest outline's live roots in
-display order. Row padding and child indentation belong to that outline. A
-routed scroller's gutter belongs to its page or zoom, and a Journals day owns
-its own blank space. A result group's shell owns a click while live rows mount.
-Journal query chrome and reference panel whitespace outside result groups use
-native select-all, as do text fields and blank space in sidebars and hover
-previews.
+Ctrl/Cmd+A after a blank click selects the clicked outline's live roots in
+display order. Each renderer registers its shell and its own blank layout.
+The hit must follow that outline's registrations from the target to the shell.
+Row padding, child indentation and the empty part of a reference card header
+belong to their outline. The routed page or zoom also owns the scroller gutter
+and inner padding. A result group's shell can remember a click while live rows
+mount. Ctrl/Cmd+A uses its roots at the keypress without forcing a load.
+Native select-all remains available when there are no live roots and on journal
+separators, result chrome, errors, shared spacers, text fields, sidebars and
+hover previews. An open comment thread owns its outline in the popup.
 
 A second Ctrl/Cmd+A leaves the selection as it is. Another gesture ends it,
 including a Shift-click, a click elsewhere, a focus change, or Escape. Copy
 serializes each selected subtree once, including folded children, and clears
-the highlight. Delete, Backspace, and successful Cut clear a blank-space
-selection after removal. Ordinary block ranges, including the full outline
+the highlight. Delete and Backspace clear the blank-space selection even if
+removal is refused or empty. Cut clears the blank-space selection after the
+clipboard write if the same selection is still active. Ordinary block ranges, including the full outline
 selected from an editor, still select the next visible block, previous visible
 block, or source parent when one survives. Unlinked excerpts stay outside
 structural selection. Copy / export can include excerpts and groups the view

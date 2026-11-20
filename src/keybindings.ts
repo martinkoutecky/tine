@@ -1007,10 +1007,12 @@ function writeSelectionToClipboard(cut: boolean, blank = false): void {
   const text = selectionMarkdown();
   if (cut) {
     const roots = blank ? topSelected() : undefined;
+    const ownsBlankSelection = () => blank && roots === topSelected();
     void cutBlocks(ids, text, () =>
-      (!roots || roots === topSelected()) && JSON.stringify(selectedIds()) === JSON.stringify(ids) ? selectionMarkdown() : "",
+      (!blank || ownsBlankSelection()) && JSON.stringify(selectedIds()) === JSON.stringify(ids) ? selectionMarkdown() : "",
       () => deleteSelection())
-      .catch(() => pushToast(msg("commands-couldn-t-cut-selection-clipboard-write-failed"), "error"));
+      .catch(() => pushToast(msg("commands-couldn-t-cut-selection-clipboard-write-failed"), "error"))
+      .finally(() => { if (ownsBlankSelection()) clearSelection(); });
   } else {
     void copyBlockOutline("copy", text, buildClipboardPayload(ids))
       .catch(() => pushToast(msg("commands-couldn-t-copy-selection-clipboard-write-failed"), "error"));
@@ -1251,10 +1253,10 @@ export function installKeybindings(overrides: Record<string, ShortcutBinding> = 
         }
       }
       if (!editing && (blank || owner)) {
-        if (owner?.outline) expandBlockSelection(owner.outline);
-        else if (owner) clearSelection();
-        selectionOf(e)?.removeAllRanges();
-        e.preventDefault();
+        if (blank || (owner?.outline && expandBlockSelection(owner.outline))) {
+          selectionOf(e)?.removeAllRanges();
+          e.preventDefault();
+        }
         resetSeq();
         return;
       }

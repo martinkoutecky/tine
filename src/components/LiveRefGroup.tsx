@@ -1,7 +1,7 @@
 import { For, Show, batch, createEffect, createMemo, createSignal, createUniqueId, on, onCleanup, onMount, untrack, useContext, type JSX, type Signal } from "solid-js";
 import { nearestAncestors } from "../render/blockTrail";
 import { ownSelectionSurface, type OutlineScope } from "../document";
-import { bindLiveOutlineSelection, bindOutlineSelection } from "../outlineSelectionTarget";
+import { bindLiveOutlineSelection, bindOutlineSelection, createOutlineOwner, OutlineBlankOwner, registerOutlineBlankZone } from "../outlineSelectionTarget";
 import { createGraphResource } from "../graphResource";
 import { backend } from "../backend";
 import { graphOwner, latestOwner } from "../owned";
@@ -78,7 +78,7 @@ function keepUnchanged<T extends object>(previous: Map<string, T> | undefined, e
 // the real block and saves to its page. Keyed by uuid so a reactive refresh
 // reuses existing rows and never yanks the caret out of a block being edited.
 interface LiveRefGroupProps {
-  selectionHost?: HTMLElement;
+  selectionOwner?: ReturnType<typeof createOutlineOwner>;
   /** Owner-provided identity for reference groups; never derived from a row. */
   heightKey?: string;
   page: string;
@@ -132,6 +132,7 @@ interface RefOccurrence {
 }
 
 export function LiveRefGroup(props: LiveRefGroupProps): JSX.Element {
+  const owner = props.surface === "preview" ? undefined : props.selectionOwner ?? createOutlineOwner();
   const [near, setNear] = createSignal(untrack(() => props.eager === true));
   const [sourceMounted, setSourceMounted] = createSignal(false);
   const [inWindow, setInWindow] = createSignal(untrack(() => props.eager === true));
@@ -216,14 +217,21 @@ export function LiveRefGroup(props: LiveRefGroupProps): JSX.Element {
   const estimate = () => Math.max(1, props.blocks.reduce((lines, block) => lines + (block.page_property ? block.raw.split("\n").length : 1), 0)) * 1.9;
 
   return (
-    <div ref={host => { el = host; if (!props.selectionHost && props.surface !== "preview") bindOutlineSelection(host); }} class="live-ref-group" data-find-source-mounted={sourceMounted()}
+    <div ref={host => {
+      el = host;
+      if (!owner) return;
+      if (props.selectionOwner) registerOutlineBlankZone(host, owner);
+      else bindOutlineSelection(host, owner);
+    }} class="live-ref-group" data-find-source-mounted={sourceMounted()}
       style={!near() ? { "min-height": reserved() ? `${reserved()}px` : `${estimate()}em` } : undefined}>
       <ReservedGroupGeometryContext.Provider value={occurrence.geometry}>
+      <OutlineBlankOwner.Provider value={owner}>
       <Show when={near()}><MountedRefGroup {...props} occurrence={occurrence} geometryHost={() => el}
         onSourceMounted={setSourceMounted}
         readCurrent={() => alive && (!windowed() || !hasViewport() || wanted())} priority={priority}
         sourcePinned={() => windowed() && (pinned() || forced())}
         schedule={windowed() && hasViewport()} /></Show>
+      </OutlineBlankOwner.Provider>
       </ReservedGroupGeometryContext.Provider>
     </div>
   );
@@ -648,10 +656,8 @@ function MountedRefGroup(props: LiveRefGroupProps & { occurrence: RefOccurrence;
     navOnly: true,
     splitAsChild: props.surface === "query" || props.surface === "ref" ? id => resultRootIds().has(id) : undefined,
   };
-  onMount(() => {
-    const host = props.selectionHost ?? props.geometryHost();
-    if (host) bindLiveOutlineSelection(host, { scope, surface });
-  });
+  const owner = useContext(OutlineBlankOwner);
+  if (owner) bindLiveOutlineSelection(owner, { scope, surface });
   // GH #792: the one-level fold commands treat a query block's result rows as its children.
   if (props.surface === "query") onCleanup(registerQueryResultFold({
     hostId: () => props.hostBlockId,
