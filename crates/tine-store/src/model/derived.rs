@@ -757,6 +757,7 @@ impl Graph {
     /// indexed bytes gets the row those bytes give. Declines when a cache
     /// mutation, a publication or a hold raced the build, handing the build
     /// back unchanged, or (without `replace`) when a cache exists.
+    /// Returns the installed generation and held epoch.
     /// `discovery`, a full listing's name failures, replaces the known ones
     /// when given.
     pub(super) fn install_built(
@@ -766,7 +767,7 @@ impl Graph {
         replace: bool,
         observed: Option<&HashMap<PathBuf, crate::watch::Stamp>>,
         mut discovery: Option<Vec<(crate::FileId, crate::IoError)>>,
-    ) -> Result<(), super::launch_patch::Declined> {
+    ) -> Result<(u64, u64), super::launch_patch::Declined> {
         use super::launch_patch::Declined;
         // Identities are decided at the build's epoch (checked again under
         // the lock), so a disk row a hold now owns is left out. The pages
@@ -910,24 +911,16 @@ impl Graph {
         *self.derived.disk_revs.write().unwrap() = revs;
         *self.derived.vcs_anchored.write().unwrap() = anchored;
         self.forget_cold_moves();
-        if replace {
+        let generation = if replace {
             // A replaced cache is new content under the old generation: the
             // generation-keyed page list, name index and block index must
             // rebuild against it. Bumped after the content, as everywhere.
-            self.cache_gen.fetch_add(1, Ordering::Release);
-        }
+            self.cache_gen.fetch_add(1, Ordering::Release) + 1
+        } else {
+            expected_gen
+        };
         drop(guard);
-        Ok(())
-    }
-
-    /// The launch build's listing, installed at generation `gen` (R2): the
-    /// page list memo and the first publication's name inventory.
-    pub(super) fn install_launch_listing(&self, gen: u64, named: Vec<PageEntry>) {
-        let named = self.certify(named, None);
-        let deduped = dedup_journal_days(named.0.clone());
-        *self.derived.page_list_cache.write().unwrap() =
-            Some((gen, Arc::new(EntryList::from(deduped.as_slice()))));
-        *self.derived.launch_listing.write().unwrap() = Some((gen, named));
+        Ok((generation, held_epoch))
     }
 
     /// Why a checkpoint's rows would not install now (the checks

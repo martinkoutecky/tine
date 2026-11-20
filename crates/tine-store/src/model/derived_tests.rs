@@ -174,6 +174,49 @@ fn snapshot_names_a_held_page_from_owner_bytes() {
     store.close();
 }
 
+#[test]
+fn rebuild_keeps_the_name_of_a_page_released_during_the_listing() {
+    let (_temp, store) = graph(&[("pages/Old.md", b"title:: Recovered\n- text\n")]);
+    let id = PageId::from("pages/Old.md");
+    store.watch.stop_background_for_test();
+    store.hold_page(&id).unwrap();
+    let passes = || {
+        store.diagnostics()["launch"]["loadPassesTotal"]
+            .as_u64()
+            .unwrap()
+    };
+    let before = passes();
+
+    let pause: Pause = Arc::new((Mutex::new((false, false)), Condvar::new()));
+    *store.graph.certify_pause.lock().unwrap() = Some(Arc::clone(&pause));
+    let rebuild = {
+        let store = Arc::clone(&store);
+        std::thread::spawn(move || {
+            store.refresh(Depth::Rebuild).unwrap();
+            store.whole_graph().unwrap().resolve("Recovered", false)
+        })
+    };
+    // The disk listing skipped the held page. Release it before the
+    // rebuild collects the owners' entries.
+    wait_paused(&pause);
+    *store.graph.certify_pause.lock().unwrap() = None;
+    {
+        let _writer = store.writer.lock().unwrap();
+        store.watch.release_hold(id.as_str());
+    }
+    pause.0.lock().unwrap().1 = true;
+    pause.1.notify_all();
+
+    let resolved = rebuild.join().unwrap();
+    let after = passes();
+    store.close();
+    assert!(
+        matches!(&resolved, Resolved::Existing { id: found, .. } if found == &id),
+        "released page missing after rebuild: {resolved:?}"
+    );
+    assert_eq!(after, before + 1, "a raced listing adds no parse pass");
+}
+
 /// H1 #2: a held page's file that cannot be named records no installed
 /// discovery error: the owner's bytes name it.
 #[test]

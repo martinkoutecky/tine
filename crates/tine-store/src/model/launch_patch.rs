@@ -36,9 +36,8 @@ pub(super) struct LaunchPass {
     pub(super) withheld: HashSet<PathBuf>,
 }
 
-/// An installed pass's named listing and file observations.
+/// An installed pass's file observations.
 pub(super) struct Installed {
-    pub(super) named: Vec<PageEntry>,
     pub(super) stamps: HashMap<PathBuf, crate::watch::Stamp>,
     pub(super) racy: HashSet<PathBuf>,
 }
@@ -59,12 +58,12 @@ impl Graph {
                 let discovery = Some(std::mem::take(&mut pass.discovery));
                 let built = std::mem::take(&mut pass.built);
                 match self.install_built(built, at, replace, Some(&pass.stamps), discovery) {
-                    Ok(()) => {
+                    Ok(stamp) => {
+                        self.install_launch_listing(stamp, pass.named);
                         return Some(Installed {
-                            named: pass.named,
                             stamps: pass.stamps,
                             racy: pass.racy,
-                        })
+                        });
                     }
                     // A hold, release or save landed while the install ran
                     // unlocked (a page host releasing an own create's hold):

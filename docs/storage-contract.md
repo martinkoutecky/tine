@@ -831,13 +831,16 @@ changes no memo: its owner's bytes name it, not the file ((G)). A lookup that
 lists, or a read that adds, outside the writer changes a memo only at the
 generation and held epoch it began at (a release or an open's hold moves the
 held map and no generation); the writer's own listings need no such check,
-since every hold and release takes the writer. The first lookup of an absent
-name of each kind after launch still lists once, because the launch index does
-not vouch for files that arrived after it. Proof:
+since every hold and release takes the writer. A launch or rebuild pass reuses
+its listing only if the installed cache's generation and held epoch still match
+after certification. Otherwise publication walks the names under the writer.
+The first lookup of an absent name of each kind after launch still lists once,
+because the launch index does not vouch for files that arrived after it. Proof:
 `crates/tine-store/tests/og_perf_publish.rs`,
 `crates/tine-store/src/model/derived_tests.rs`
 (`a_journal_only_the_capture_names_joins_the_day_index`,
 `a_name_walk_during_a_release_keeps_the_released_page`,
+`rebuild_keeps_the_name_of_a_page_released_during_the_listing`,
 `a_path_read_of_a_held_file_does_not_join_the_claimant_memo`),
 `crates/tine-store/src/store/panic_isolation_tests.rs`
 (`an_own_create_a_capture_missed_is_named_after_refresh`).
