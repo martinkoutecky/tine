@@ -1,6 +1,6 @@
 import { maybeEditorIn, type EditorDriver } from "../tests/editorDriver";
 import { openCommentThread } from "../tests/commentEntry";
-import { OPENING_CONTROL_CASES, OPENING_DRAWER_CASES, pointerClick, shownLines } from "../tests/openingClickCases";
+import { OPENING_CONTROL_CASES, OPENING_DRAWER_CASES, OPENING_SHAPE_SURFACE_CASES, expectOpeningShape, pointerClick, shownLines } from "../tests/openingClickCases";
 import { resetNearObserverForTests } from "../lazyObserve";
 import { afterEach, beforeAll, describe, expect, it, vi } from "vitest";
 import { Show, type JSX } from "solid-js";
@@ -2719,6 +2719,33 @@ describe("Markdown preamble content", () => {
         expect(promoted).not.toBe(bodyId);
         expect(doc.byId[promoted].raw).toBe(opening);
         expect(editingId()).toBe(promoted);
+      } finally {
+        dispose();
+      }
+    });
+  }
+
+  // Review 0e6bd6530 F1: groups and pieces from one untitled parse, on the page row.
+  for (const c of OPENING_SHAPE_SURFACE_CASES) {
+    it(`shows the groups of the ${c[1]} opening text ${JSON.stringify(c[0])} on the page`, async () => {
+      const bodyId = "77777777-7777-4777-8777-777777777779";
+      const dto = {
+        name: "Shapes", kind: "page" as const, title: "Shapes", pre_block: c[0], format: c[1],
+        blocks: [{ id: bodyId, raw: "Head", collapsed: false, children: [] }],
+      };
+      setDoc({
+        byId: { [bodyId]: node(bodyId, "Head", dto.name) },
+        pages: [{ ...page(dto.name, "page", [bodyId], dto.pre_block), format: c[1] }],
+        feed: [], loaded: true,
+      });
+      vi.spyOn(backend(), "getPage").mockResolvedValue(unpinned(dto));
+      mainPaneRouter.openPage(dto.name, "page", { inPlace: true });
+      const { root, dispose } = mount(() => <PageView />);
+      try {
+        await tick(); await tick();
+        const row = root.querySelector(".preamble-block .block-content");
+        expect(row).not.toBeNull();
+        expectOpeningShape(row!, c, expect);
       } finally {
         dispose();
       }

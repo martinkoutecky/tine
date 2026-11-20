@@ -143,19 +143,22 @@ pub fn preamble_content_range_in(raw: &str, is_org: bool, regions: &BlockRegions
 
 /// Where a page's opening text (the prose [`preamble_content_range`] finds)
 /// has property groups: every top-level `key:: value` group or `#+key:
-/// value` line of the text read as a block body (the parse the window renders
-/// it with), as whole source lines in source order, so a task word or
-/// priority on a group's line is the group's (D-20261119-PG: groups after the
-/// header are opening text, shown exactly as written). The window shows these
-/// ranges as source and the rest as block text. Empty for parser-refused
-/// text, which renders wholly as a block. O(bytes).
+/// value` line of the text read as untitled body text
+/// ([`parse_untitled_block`](crate::lsdoc_block_parse::parse_untitled_block),
+/// the parse the window renders it with: no block header, so a task word or
+/// priority is text), as whole source lines in source order
+/// (D-20261119-PG: groups after the header are opening text, shown exactly as
+/// written). The window shows these ranges as source and the rest as body
+/// text. Empty for parser-refused text, which renders wholly as body text.
+/// O(bytes).
 pub fn opening_groups(text: &str, is_org: bool) -> Vec<Range> {
+    use crate::lsdoc_block_parse::parse_untitled_block;
     #[cfg(not(target_arch = "wasm32"))]
-    let Ok(blocks) = std::panic::catch_unwind(|| crate::render::parse_block(text, is_org)) else {
+    let Ok(blocks) = std::panic::catch_unwind(|| parse_untitled_block(text, is_org)) else {
         return Vec::new();
     };
     #[cfg(target_arch = "wasm32")]
-    let blocks = crate::render::parse_block(text, is_org);
+    let blocks = parse_untitled_block(text, is_org);
     top_property_nodes(text, &blocks, false)
         .map(|(r, _)| r)
         .collect()
@@ -191,6 +194,7 @@ pub(crate) fn top_property_nodes<'a>(
 #[cfg(test)]
 mod tests {
     use super::{opening_groups, page_header, preamble_content_range};
+    use crate::block_regions::Range;
     use serde::Deserialize;
 
     fn text(raw: &str) -> Option<&str> {
@@ -221,13 +225,112 @@ mod tests {
         );
         assert_eq!(groups("> q\n#+k: v", false), Vec::<String>::new());
         assert_eq!(groups("plain prose", false), Vec::<String>::new());
-        assert_eq!(groups("TODO k:: v", false), ["TODO k:: v"]);
+        // Untitled: a task word or priority is text, so its line is prose.
+        assert_eq!(groups("TODO k:: v", false), Vec::<String>::new());
         assert_eq!(
             groups("TODO [#A] k:: v\nprose", false),
-            ["TODO [#A] k:: v\n"]
+            Vec::<String>::new()
         );
         assert_eq!(groups("TODO [#A] Prose [[T]]", false), Vec::<String>::new());
     }
+
+    /// Review 0e6bd6530 F1: one untitled parse answers which lines are groups,
+    /// and each piece between them, parsed alone as the window renders it,
+    /// has the same top-level nodes it has in that parse (no directive hidden
+    /// in a quote one parse never makes). A task word, a priority or both
+    /// before `key::` lines, fences, quotes, notes, `#+` directives, query
+    /// containers and drawers; LF, CRLF, tab and blank-led; both formats.
+    #[test]
+    fn opening_groups_and_pieces_share_one_untitled_parse() {
+        use crate::lsdoc_block_parse::parse_untitled_block;
+        use lsdoc::ast::Block;
+        fn kinds(blocks: &[Block]) -> Vec<String> {
+            blocks
+                .iter()
+                .filter(|b| match b {
+                    Block::Properties { .. } | Block::Directive { .. } => false,
+                    Block::Bullet { inline, .. } | Block::Paragraph { inline, .. } => {
+                        !inline.iter().all(|i| format!("{i:?}").contains("Break")
+                            || matches!(i, lsdoc::ast::Inline::Plain { text, .. } if text.trim().is_empty()))
+                    }
+                    _ => true,
+                })
+                .map(|b| format!("{b:?}").split([' ', '{', '(']).next().unwrap().to_owned())
+                .collect()
+        }
+        for (shape, md, org) in OPENING_SHAPES {
+            for prefix in ["TODO ", "[#A] ", "TODO [#A] ", "TODO\t"] {
+                for (variant, is_org) in ["lf", "crlf", "blank"]
+                    .iter()
+                    .flat_map(|v| [(*v, false), (*v, true)])
+                {
+                    let base = shape.replace("{P}", prefix);
+                    let text = match variant {
+                        "crlf" => base.replace('\n', "\r\n"),
+                        "blank" => format!("\n{base}"),
+                        _ => base,
+                    };
+                    let want = if is_org { org } else { md };
+                    let ranges = opening_groups(&text, is_org);
+                    let got: Vec<String> = ranges
+                        .iter()
+                        .map(|r| text[r.0..r.1].trim_end().replace("\r\n", "\n"))
+                        .collect();
+                    assert_eq!(got, *want, "{text:?} org={is_org}");
+                    let mut pieces = Vec::new();
+                    let mut at = 0;
+                    for r in ranges.iter().chain([&Range(text.len(), text.len())]) {
+                        let piece = text[at..r.0].trim_matches(['\n', '\r']);
+                        if !piece.trim().is_empty() {
+                            pieces.extend(kinds(&parse_untitled_block(piece, is_org)));
+                        }
+                        at = r.1;
+                    }
+                    assert_eq!(
+                        pieces,
+                        kinds(&parse_untitled_block(&text, is_org)),
+                        "{text:?} org={is_org}"
+                    );
+                }
+            }
+        }
+    }
+
+    /// The review's opening shapes, `{P}` the task word and/or priority, with
+    /// the groups the parser finds (Markdown, Org), line ends as `\n`.
+    const OPENING_SHAPES: &[(&str, &[&str], &[&str])] = &[
+        ("{P}x\nk:: v", &["k:: v"], &[]),
+        ("{P}k:: **v**", &[], &[]),
+        ("{P}#+k: v", &[], &[]),
+        ("{P}> quote\n#+k: v", &["#+k: v"], &["#+k: v"]),
+        ("{P}> quote\nk:: v", &["k:: v"], &[]),
+        ("{P}\n```\nc\n```\n#+k: v", &["#+k: v"], &["#+k: v"]),
+        ("{P}\n~~~\nc\n~~~\nk:: v", &["k:: v"], &[]),
+        (
+            "{P}\n#+BEGIN_SRC\nc\n#+END_SRC\n#+k: v",
+            &["#+k: v"],
+            &["#+k: v"],
+        ),
+        ("{P}\n#+BEGIN_NOTE\nn\n#+END_NOTE\nk:: v", &["k:: v"], &[]),
+        (
+            "{P}\n#+BEGIN_QUOTE\nq\n#+END_QUOTE\n#+k: v",
+            &["#+k: v"],
+            &["#+k: v"],
+        ),
+        (
+            "{P}\n#+BEGIN_QUERY\n(task TODO)\n#+END_QUERY\n#+k: v",
+            &["#+k: v"],
+            &["#+k: v"],
+        ),
+        ("{P}\n{{query (task TODO)}}\nk:: v", &["k:: v"], &[]),
+        ("{P}\n:LOGBOOK:\nCLOCK: x\n:END:\nk:: v", &["k:: v"], &[]),
+        ("{P}\n:custom:\nv\n:END:\n#+k: v", &["#+k: v"], &["#+k: v"]),
+        (
+            "{P}\n:PROPERTIES:\n:a: 1\n:END:\nk:: v",
+            &[":PROPERTIES:\n:a: 1\n:END:\nk:: v"],
+            &[":PROPERTIES:\n:a: 1\n:END:"],
+        ),
+    ];
 
     #[test]
     fn the_prose_after_the_page_header_without_edge_newlines() {

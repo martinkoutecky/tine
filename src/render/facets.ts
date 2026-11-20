@@ -283,38 +283,58 @@ const isPlanningTimestamp = (i: Inline): i is Extract<Inline, { k: "timestamp" }
  *  body). `hasTrailingBody` is about the text after the LAST timestamp of such a run: it is ordinary body content.
  *  Deliberate OG divergence: a parser-recognized mid-text `Discuss SCHEDULED: <…>` remains content in Tine. */
 function planningLinesOf(inlines: readonly Inline[], source: PlanningSource): Map<number, PlanningSourceLine> {
-  const found = new Map<number, PlanningSourceLine & { end: number; lineEnd: number }>();
-  let last: { lineStart: number; end: number } | null = null;
+  // One pass in source order. A line's bounds are found once, by its first timestamp; each later one inspects only
+  // the gap since the previous accepted one, and the trailing body is judged once, when the line closes. So a line
+  // costs its length, however many timestamps it holds (review 0e6bd6530 F2).
+  const out = new Map<number, PlanningSourceLine>();
+  let line: { start: number; end: number; runEnd: number; alive: boolean; members: number[] } | null = null;
+  const blank = (bytes: Uint8Array, from: number, to: number) => {
+    planningScanStats.decoded += to - from;
+    return UTF8_DECODER.decode(bytes.subarray(from, to)).trim() === "";
+  };
+  const close = (bytes: Uint8Array) => {
+    if (!line || line.members.length === 0) return;
+    const hasTrailingBody = !blank(bytes, line.runEnd, line.end);
+    for (const index of line.members) out.get(index)!.hasTrailingBody = hasTrailingBody;
+  };
+  let prepared: { bytes: Uint8Array; leadBytes: number } | null = null;
   for (let index = 0; index < inlines.length; index++) {
     const i = inlines[index];
     if (!isPlanningTimestamp(i)) continue;
     const span = i.span;
     if (!span || span[0] < 2 || span[1] < span[0]) continue;
-    const { bytes, leadBytes } = preparedOf(source);
+    prepared ??= preparedOf(source);
+    const { bytes, leadBytes } = prepared;
     const start = span[0] - 2 + leadBytes;
     const end = span[1] - 2 + leadBytes;
     if (start < 0 || end < start || end > bytes.length) continue;
-    let lineStart = start;
-    while (lineStart > 0 && bytes[lineStart - 1] !== 0x0a) lineStart--;
-    let lineEnd = end;
-    while (lineEnd < bytes.length && bytes[lineEnd] !== 0x0a) lineEnd++;
-    const before = UTF8_DECODER.decode(bytes.slice(lineStart, start));
-    const afterEarlier = last !== null && last.lineStart === lineStart && UTF8_DECODER.decode(bytes.slice(last.end, start)).trim() === "";
-    if (before.trim() !== "" && !afterEarlier) continue;
-    found.set(index, { text: UTF8_DECODER.decode(bytes.slice(start, end)), hasTrailingBody: false, lineStart, end, lineEnd });
-    last = { lineStart, end };
+    let accept: boolean;
+    if (line && start >= line.start && start < line.end) {
+      // Same line: only the gap since the previous accepted timestamp.
+      accept = line.alive && start >= line.runEnd && blank(bytes, line.runEnd, start);
+    } else {
+      close(bytes);
+      let lineStart = start;
+      while (lineStart > 0 && bytes[lineStart - 1] !== 0x0a) lineStart--;
+      let lineEnd = end;
+      while (lineEnd < bytes.length && bytes[lineEnd] !== 0x0a) lineEnd++;
+      planningScanStats.scanned += lineEnd - lineStart;
+      line = { start: lineStart, end: lineEnd, runEnd: lineStart, alive: true, members: [] };
+      accept = blank(bytes, lineStart, start);
+    }
+    if (!accept) { line.alive = false; continue; }
+    planningScanStats.decoded += end - start;
+    out.set(index, { text: UTF8_DECODER.decode(bytes.subarray(start, end)), hasTrailingBody: false, lineStart: line.start });
+    line.runEnd = end;
+    line.members.push(index);
   }
-  // Trailing body is judged once per run, after its last timestamp.
-  const lastOfLine = new Map<number, number>();
-  for (const f of found.values()) lastOfLine.set(f.lineStart, Math.max(lastOfLine.get(f.lineStart) ?? 0, f.end));
-  const out = new Map<number, PlanningSourceLine>();
-  for (const [index, f] of found) {
-    const runEnd = lastOfLine.get(f.lineStart)!;
-    const { bytes } = preparedOf(source);
-    out.set(index, { text: f.text, lineStart: f.lineStart, hasTrailingBody: UTF8_DECODER.decode(bytes.slice(runEnd, f.lineEnd)).trim() !== "" });
-  }
+  if (prepared) close(prepared.bytes);
   return out;
 }
+
+/** Bytes `planningLinesOf` has walked to find line bounds (`scanned`) and handed to the decoder (`decoded`):
+ *  plain counters for the cost tests (PC-3), never read by the app. */
+export const planningScanStats = { scanned: 0, decoded: 0 };
 
 function angleText(line: string): string | null {
   const lt = line.indexOf("<");

@@ -4,8 +4,9 @@ import type { JSX } from "solid-js";
 import { AstBody } from "../render/body";
 import { initParser } from "../render/parse";
 import { openingSegments } from "../editor/properties";
+import { planningScanStats } from "../render/facets";
 import { OpeningText } from "./OpeningText";
-import { OPENING_DRAWER_CASES, shownLines } from "../tests/openingClickCases";
+import { OPENING_DRAWER_CASES, OPENING_SHAPE_CASES, expectOpeningShape, shownLines } from "../tests/openingClickCases";
 
 beforeAll(async () => { await initParser(); });
 afterEach(() => { document.body.replaceChildren(); });
@@ -56,15 +57,18 @@ it.each([
   ["prose\n#+k: [[X]]\nmore", "md", ["#+k: [[X]]"]],
   ["prose\n#+k: v", "org", ["#+k: v"]],
   ["prose\n\nkey:: été 日本\n\nmore", "md", ["key:: été 日本"]],
-  ["TODO k:: v", "md", ["TODO k:: v"]],
-  ["[#A] k:: v", "md", ["[#A] k:: v"]],
-  ["TODO [#A] k:: v\r\nprose", "md", ["TODO [#A] k:: v"]],
-  ["TODO #+k: v", "md", ["TODO #+k: v"]],
 ] as const)("shows the group of %j (%s) as its source", (text, format, groups) => {
   expect(pieces(text, format).filter((p) => p.group).map((p) => p.shown)).toEqual(groups);
   const fromParser = openingSegments(text, format).filter((s) => s.group).map((s) => s.text);
   expect(fromParser.map((g) => g.replace(/\r?\n$/, "").replace(/\r\n/g, "\n"))).toEqual(groups);
   expect(fromParser.every((g) => text.includes(g))).toBe(true);
+});
+
+// Review 0e6bd6530 F1: the groups come from the same untitled parse the
+// pieces render with, over every review shape, prefix, line end and format.
+it.each(OPENING_SHAPE_CASES)("shows the groups of %j (%s) and its task line as text", (...c) => {
+  const host = mount(() => <OpeningText raw={c[0]} format={c[1]} />);
+  expectOpeningShape(host, c, expect);
 });
 
 // Everything else is block text: it renders exactly as the same text does
@@ -178,6 +182,35 @@ it.each([
   };
   const small = encoded(32), large = encoded(64);
   expect(large).toBeLessThan(small * 1.25 + 1);
+});
+
+// Review 0e6bd6530 F2 (PC-3): a line of many planning timestamps costs its
+// length: its bounds are found once, each timestamp inspects only the gap
+// since the previous one, and the trailing body is judged once. Counts the
+// bytes walked for line bounds and every byte handed to the decoder (a copy),
+// doubling the timestamps on one line.
+it.each(["md", "org"] as const)("scans a %s line of 128, 256 and 512 planning timestamps linearly", (format) => {
+  const cost = (n: number) => {
+    const run = Array.from({ length: n }, (_, i) => (i % 2 ? "DEADLINE: <2026-11-20 Fri>" : "SCHEDULED: <2026-11-19 Thu>")).join(" \t");
+    const text = `prose\n${run} trailing prose\n${run}`;
+    const proto = TextDecoder.prototype;
+    const decode = proto.decode;
+    let decoded = 0;
+    proto.decode = function (input?: AllowSharedBufferSource, options?: TextDecodeOptions) {
+      decoded += input ? input.byteLength : 0;
+      return decode.call(this, input, options);
+    };
+    const before = planningScanStats.scanned;
+    try { mount(() => <OpeningText raw={text} format={format} />); } finally { proto.decode = decode; }
+    document.body.replaceChildren();
+    return { scanned: planningScanStats.scanned - before, decoded, bytes: text.length };
+  };
+  const [a, b, c] = [cost(128), cost(256), cost(512)];
+  expect(a.decoded).toBeGreaterThan(a.bytes);
+  for (const [small, large] of [[a, b], [b, c]]) {
+    expect(large.scanned).toBeLessThanOrEqual(2.2 * small.scanned + 64);
+    expect(large.decoded).toBeLessThanOrEqual(2.2 * small.decoded + 64);
+  }
 });
 
 // Review 28d081755 F2 (PC-3): splitting a piece from its blank edge lines is

@@ -52,3 +52,58 @@ export function shownLines(el: Element): string[] {
     return out.flatMap((line) => line.split("\n"));
   });
 }
+
+/** The review's opening shapes (review 0e6bd6530 F1), `{P}` a task word and/or
+ *  priority, with the groups the untitled parse finds (Markdown, Org; line ends
+ *  as `\n`). Pinned beside the parser's own table
+ *  (`page_preamble::opening_groups_and_pieces_share_one_untitled_parse`). */
+const OPENING_SHAPES: readonly (readonly [shape: string, md: readonly string[], org: readonly string[]])[] = [
+  ["{P}x\nk:: v", ["k:: v"], []],
+  ["{P}k:: **v**", [], []],
+  ["{P}#+k: v", [], []],
+  ["{P}> quote\n#+k: v", ["#+k: v"], ["#+k: v"]],
+  ["{P}> quote\nk:: v", ["k:: v"], []],
+  ["{P}\n```\nc\n```\n#+k: v", ["#+k: v"], ["#+k: v"]],
+  ["{P}\n~~~\nc\n~~~\nk:: v", ["k:: v"], []],
+  ["{P}\n#+BEGIN_SRC\nc\n#+END_SRC\n#+k: v", ["#+k: v"], ["#+k: v"]],
+  ["{P}\n#+BEGIN_NOTE\nn\n#+END_NOTE\nk:: v", ["k:: v"], []],
+  ["{P}\n#+BEGIN_QUOTE\nq\n#+END_QUOTE\n#+k: v", ["#+k: v"], ["#+k: v"]],
+  ["{P}\n#+BEGIN_QUERY\n(task TODO)\n#+END_QUERY\n#+k: v", ["#+k: v"], ["#+k: v"]],
+  ["{P}\n{{query (task TODO)}}\nk:: v", ["k:: v"], []],
+  ["{P}\n:LOGBOOK:\nCLOCK: x\n:END:\nk:: v", ["k:: v"], []],
+  ["{P}\n:custom:\nv\n:END:\n#+k: v", ["#+k: v"], ["#+k: v"]],
+  ["{P}\n:PROPERTIES:\n:a: 1\n:END:\nk:: v", [":PROPERTIES:\n:a: 1\n:END:\nk:: v"], [":PROPERTIES:\n:a: 1\n:END:"]],
+];
+const OPENING_PREFIXES = ["TODO ", "[#A] ", "TODO [#A] ", "TODO\t"] as const;
+const OPENING_VARIANTS = ["lf", "crlf", "blank"] as const;
+
+export type OpeningShapeCase = readonly [text: string, format: "md" | "org", groups: readonly string[], prefix: string];
+
+function shapeCase(shape: string, prefix: string, variant: string, format: "md" | "org", groups: readonly string[]): OpeningShapeCase {
+  const base = shape.replace("{P}", prefix);
+  const text = variant === "crlf" ? base.replace(/\n/g, "\r\n") : variant === "blank" ? `\n${base}` : base;
+  return [text, format, groups, prefix];
+}
+
+/** Every shape × task word/priority × LF, CRLF, blank-led × format. */
+export const OPENING_SHAPE_CASES: readonly OpeningShapeCase[] = OPENING_SHAPES.flatMap(([shape, md, org]) =>
+  OPENING_PREFIXES.flatMap((prefix) => OPENING_VARIANTS.flatMap((variant) =>
+    (["md", "org"] as const).map((format) => shapeCase(shape, prefix, variant, format, format === "md" ? md : org)))));
+
+/** Every shape × format once, the prefix and line-end variant rotating: the
+ *  rows the page, Linked References and query List surfaces run. A last
+ *  prose line keeps an Org page's final `#+` line opening text: at a
+ *  pre-block's end it is the page header (`preamble_content_range`). */
+export const OPENING_SHAPE_SURFACE_CASES: readonly OpeningShapeCase[] = OPENING_SHAPES.flatMap(([shape, md, org], i) =>
+  (["md", "org"] as const).map((format, j) => shapeCase(`${shape}\nend`, OPENING_PREFIXES[(i + j) % OPENING_PREFIXES.length],
+    OPENING_VARIANTS[(i + 2 * j) % OPENING_VARIANTS.length], format, format === "md" ? md : org)));
+
+/** What the parser-and-render table asserts of one rendered opening row: the
+ *  groups shown as written, the task word or priority shown as text with no
+ *  task chrome, and `**v**` on a task line read as prose. */
+export function expectOpeningShape(row: Element, [text, , groups, prefix]: OpeningShapeCase, expect: (v: unknown) => { toEqual(v: unknown): void; toBe(v: unknown): void; toContain(v: string): void }): void {
+  expect([...row.querySelectorAll(".opening-group")].map((g) => g.textContent)).toEqual(groups);
+  expect(row.querySelector(".block-marker, .block-priority, input[type=checkbox]")).toBe(null);
+  expect(row.textContent ?? "").toContain(prefix.trim());
+  if (text.includes("k:: **v**")) expect(row.querySelector(".opening-text strong")?.textContent).toBe("v");
+}

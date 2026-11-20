@@ -14,7 +14,7 @@ import { bindTestHost, submittedPages } from "../document/host/wiring.test.suppo
 import { answerOpensFromDocument } from "../document/host/documentHost.test.support";
 import { adoptResults, advanceResultsEpoch, captureResultsTicket, installResultsPendingGate, resultsSettled } from "../queryResultsEpoch";
 import { createSignal } from "solid-js";
-import { OPENING_CONTROL_CASES, OPENING_DRAWER_CASES, pointerClick, shownLines } from "../tests/openingClickCases";
+import { OPENING_CONTROL_CASES, OPENING_DRAWER_CASES, OPENING_SHAPE_SURFACE_CASES, expectOpeningShape, pointerClick, shownLines } from "../tests/openingClickCases";
 
 // GH #486: a page whose page-level properties link here is listed under Linked
 // References as its properties row. OG lists the referencing page's
@@ -152,6 +152,25 @@ describe("opening text controls on result rows", () => {
   });
 });
 
+// Review 0e6bd6530 F1 on result rows (Linked References and query List).
+it.each(OPENING_SHAPE_SURFACE_CASES.flatMap((c) => (["ref", "query"] as const).map((surface) => [c, surface] as const)))(
+  "shows the groups of opening text %j on %s", async (c, surface) => {
+    const [text, format] = c;
+    vi.spyOn(backend(), "getPage").mockResolvedValue({ ...sourcePage(format), pre_block: text + "\n" });
+    const hit: BlockDto = { id: "page-preamble:Page:source", raw: text, collapsed: false, page_preamble: true, children: [] };
+    adoptResults(hit, captureResultsTicket());
+    const { root, dispose } = mount(() => <LiveRefGroup page="Source" kind="page" blocks={[hit]} surface={surface} eager />);
+    try {
+      await vi.waitFor(() => expect(pageByName("Source")).toBeDefined());
+      const row = await vi.waitFor(() => {
+        const el = root.querySelector('[data-block-id="page-preamble:Page:source"] .block-content');
+        expect(el?.querySelector(".opening-text, .opening-group")).not.toBeNull();
+        return el!;
+      });
+      expectOpeningShape(row, c, expect);
+    } finally { dispose(); }
+  });
+
 // Review e852e1b58 F2 on result rows (Linked References and query List): a
 // task word or priority line, a drawer and the next line show as two lines.
 it.each(OPENING_DRAWER_CASES.flatMap(([text, format, lines]) =>
@@ -162,6 +181,9 @@ it.each(OPENING_DRAWER_CASES.flatMap(([text, format, lines]) =>
     adoptResults(hit, captureResultsTicket());
     const { root, dispose } = mount(() => <LiveRefGroup page="Source" kind="page" blocks={[hit]} surface={surface} eager />);
     try {
+      await vi.waitFor(() => expect(pageByName("Source")).toBeDefined());
+      // The row's format is its page's: wait for the page, as a reader sees it.
+      await vi.waitFor(() => expect(pageByName("Source")).toBeDefined());
       const row = await vi.waitFor(() => {
         const el = root.querySelector('[data-block-id="page-preamble:Page:source"] .block-content');
         expect(el?.querySelector(".opening-text")).not.toBeNull();
