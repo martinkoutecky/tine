@@ -82,7 +82,7 @@ async function heap() {
   return process.memoryUsage().heapUsed;
 }
 
-it("select-all reads only scope roots without membership readers and defers visible rows", () => {
+it("blank select-all and its retirement need only scope roots without membership readers", () => {
   fixture(1000, "deep");
   const roots = [...doc.pages[0].roots];
   cost.visited.clear();
@@ -92,7 +92,8 @@ it("select-all reads only scope roots without membership readers and defers visi
     expect(topSelected()).toEqual(roots);
     expect(new Set(cost.visited)).toEqual(new Set(roots));
     moveSelection(-1, true);
-    expect(cost.visited.has("n1")).toBe(true);
+    expect(topSelected()).toEqual([]);
+    expect(new Set(cost.visited)).toEqual(new Set(roots));
   } finally {
     cost.counting = false;
     cost.visited.clear();

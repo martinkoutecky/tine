@@ -50,7 +50,6 @@ carryTodayPage
 carryUnfinished
 childIds
 clearSelection
-clearSelectionOutsideOutline  # why: retire a selection when a blank click names another outline (GH #793); batch-fix-793-selall2
 collapseEpochOf  # why: query bulk-fold requests reject stale source collapse generations (GH #792); batch21c
 collapsibleDescendantIds
 commentMessageIds  # why: dated margin replies are messages with outline bodies (MC5/MC6, #891); batch-mc-messages-1111
@@ -94,6 +93,7 @@ formatForBlock
 formatForPage
 formatOfFile  # why: the day move holds a new destination in its file's format, so the format check sees an Org page as Org (merge review d326456c6 finding 3); batch-cm-helpers-day-move
 graphRewriteFrozen  # why: hide query crossing Undo while graph rewrites freeze edits; batch14q4a-followup
+hasBlankOutlineSelection  # why: retire only the selection from blank-space Ctrl/Cmd+A (GH #793); batch-fix-793-narrow
 hasMessageDate  # why: dated margin replies are messages with outline bodies (MC5/MC6, #891); batch-mc-messages-1111
 hasSelection
 indentBlock

@@ -940,7 +940,7 @@ function ZoomedView(props: { id: string }): JSX.Element {
   };
 
   return (
-    <div class="page zoomed-page" ref={el => bindOutlineSelection(el, { surface: editSurface(), read: () => ({ scope }) }, true)}>
+    <div class="page zoomed-page" ref={el => bindOutlineSelection(el, { surface: editSurface(), scope }, true)}>
       <div class="zoom-breadcrumb">
         <a
           class="crumb crumb-page"
@@ -1127,7 +1127,7 @@ function PageSection(props: { page: FeedPage; routed: boolean; children?: JSX.El
   const isTodayJournal = () => props.page.kind === "journal"
     && props.page.name === journalTitle(localDateFromDayKey(currentDayKey()));
   return (
-    <div class="page-section" data-page-name={props.page.name} ref={el => bindOutlineSelection(el, { surface: editSurface(), get page() { return props.page.name; }, read: () => ({ scope }) }, props.routed)}>
+    <div class="page-section" data-page-name={props.page.name} ref={el => bindOutlineSelection(el, { surface: editSurface(), get page() { return props.page.name; }, scope }, props.routed)}>
       <Show when={props.page.kind === "page"}>
         <NamespaceCrumb name={props.page.name} />
       </Show>

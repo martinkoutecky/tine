@@ -80,30 +80,16 @@ async function editInPopup(card: HTMLElement, id = "e1") {
 }
 
 describe("D-20261023-VQ: editable hover preview", () => {
-  it.each([false, true])("selects and copies the outline when its preview dialog owns focus (block: %s)", async blockPreview => {
+  it.each([false, true])("leaves blank-space Ctrl+A to the browser in a preview (block: %s)", async blockPreview => {
     const keys = installKeybindings();
-    const writeRich = vi.spyOn(backend(), "writeRich").mockResolvedValue(undefined);
     const { card, dispose } = await openPeek(defaultBlocks, {}, true, blockPreview);
-    const press = (key: string, target = card) => {
-      const event = new KeyboardEvent("keydown", { key, ctrlKey: true, bubbles: true, cancelable: true });
-      target.dispatchEvent(event);
-      return event.defaultPrevented;
-    };
     try {
       card.focus();
-      const row = card.querySelector('.ls-block[data-block-id="e1"] > .block-main')!;
-      row.dispatchEvent(new MouseEvent("pointerdown", { bubbles: true }));
-      expect(press("a")).toBe(true);
-      const field = document.createElement("input");
-      card.append(field);
-      field.focus();
-      expect(press("a", field)).toBe(false);
-      field.remove();
-      card.focus();
-      expect(press("c")).toBe(true);
-      expect(writeRich.mock.lastCall?.[0]).toBe("- Editable text\n\t- Child");
-      const html = new DOMParser().parseFromString(writeRich.mock.lastCall![1], "text/html");
-      expect(html.querySelector("body > ul > li > ul > li")?.textContent).toBe("Child");
+      const row = card.querySelector<HTMLElement>('.ls-block[data-block-id="e1"] > .block-main')!;
+      row.click();
+      const event = new KeyboardEvent("keydown", { key: "a", ctrlKey: true, bubbles: true, cancelable: true });
+      card.dispatchEvent(event);
+      expect(event.defaultPrevented).toBe(false);
     } finally {
       dispose();
       keys();

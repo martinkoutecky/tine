@@ -54,8 +54,11 @@ import { backend } from "../backend";
 import { editingId, endEdit, startEditing } from "../editorController";
 import { isDirty, pageByName, redo, resetStore, setRaw, undo, undoTopTag } from "../document";
 import { loadSingle } from "../document/workingSet";
+import { bindTestHost } from "../document/host/wiring.test.support";
+import { openAsLoaded } from "./hostConflict.test.support";
 import { doc } from "../document/model";
 import { initParser } from "../render/parse";
+import type { Format } from "../render/ast";
 import { setToasts, toasts } from "../toasts";
 import { bumpGraphEpoch, setGraphMeta } from "../graphSession";
 import type { GraphMeta } from "../types";
@@ -86,8 +89,8 @@ describe.each<EditorKind>(["textarea", "cm6"])("%s editor: the Enter family comm
   });
 
   /** The page `Third`: `first`, then `target` holding `raw`, edited with the caret at `caret`. */
-  function mount(raw: string, caret = raw.length): EditorDriver {
-    loadSingle({ name: "Third", title: "Third", kind: "page", pre_block: null, format: "md",
+  function mount(raw: string, caret = raw.length, format: Format = "md"): EditorDriver {
+    loadSingle({ name: "Third", title: "Third", kind: "page", pre_block: null, format,
       blocks: [{ id: "first", raw: "first", collapsed: false, children: [] },
         { id: "target", raw, collapsed: false, children: [] }] });
     startEditing("target", caret);
@@ -103,6 +106,15 @@ describe.each<EditorKind>(["textarea", "cm6"])("%s editor: the Enter family comm
     try { return run(); } finally { window.removeEventListener("error", onError); }
   };
   const enter = (editor: EditorDriver) => quietly(() => editor.keydown({ key: "Enter", code: "Enter", bubbles: true, cancelable: true }));
+  async function acceptSuggestion(editor: EditorDriver, label: string) {
+    const row = await vi.waitFor(() => {
+      const labels = [...document.querySelectorAll(".autocomplete .ac-label")].map(item => item.textContent);
+      expect(labels).toContain(label);
+      return labels.indexOf(label);
+    });
+    for (let i = 0; i < row; i++) editor.keydown({ key: "ArrowDown", code: "ArrowDown", bubbles: true, cancelable: true });
+    enter(editor);
+  }
   const roots = () => pageByName("Third")!.roots;
   const texts = () => roots().map((id) => doc.byId[id].raw);
   const errors = () => toasts().filter((t) => t.kind === "error");
@@ -171,16 +183,266 @@ describe.each<EditorKind>(["textarea", "cm6"])("%s editor: the Enter family comm
     });
   });
 
+  it("keeps later property values when accepting a page suggestion (#853)", async () => {
+    const prefix = "project:: [[pr";
+    setGraphMeta(META); bumpGraphEpoch();
+    vi.spyOn(backend(), "quickSwitch").mockImplementation(async query => query === "pro"
+      ? [{ name: "Programming", kind: "page", date_key: null, path: "pages/Programming.md" }]
+      : []);
+    const editor = mount(`${prefix}, Other, [[Existing]]`, prefix.length);
+    editor.type("o");
+    await vi.waitFor(() => expect([...document.querySelectorAll(".autocomplete .ac-label")]
+      .map(row => row.textContent)).toContain("Programming"));
+    enter(editor);
+    expect(editor.value()).toMatch(/^project:: \[\[Programming\]\] ?, Other, \[\[Existing\]\]$/);
+  });
+
+  it.each(["; ((Keep ]] intact))", "\t{{embed [[Existing]]}}"])(
+    "finishes an unfinished page reference before %j (FORK-853b)", async following => {
+      const prefix = "project:: [[pr";
+      setGraphMeta(META); bumpGraphEpoch();
+      vi.spyOn(backend(), "quickSwitch").mockResolvedValue([
+        { name: "Programming", kind: "page", date_key: null, path: "pages/Programming.md" },
+      ]);
+      const editor = mount(prefix + following, prefix.length);
+      editor.type("o");
+      await acceptSuggestion(editor, "Programming");
+      const completed = "project:: [[Programming]]";
+      expect(editor.value()).toBe(completed + " " + following);
+      expect(editor.selection()).toEqual([completed.length + 1, completed.length + 1]);
+      expect(roots()).toEqual(["first", "target"]);
+    },
+  );
+
+  it("keeps the literal closer and following text when accepting a property suggestion (#853)", async () => {
+    const prefix = "project:: `[[pro";
+    const following = " text]]";
+    const propertyValue = "`[[project`";
+    setGraphMeta(META); bumpGraphEpoch();
+    vi.spyOn(backend(), "queryFacets").mockResolvedValue([["project", [propertyValue]]]);
+    vi.spyOn(backend(), "quickSwitch").mockResolvedValue([
+      { name: "Result", kind: "page", date_key: null, path: "pages/Result.md" },
+    ]);
+    const editor = mount(prefix + following, prefix.length);
+    editor.input(prefix + "`" + following, prefix.length + 1, { inputType: "insertFromPaste", data: null });
+    expect(editor.value()).toBe(prefix + "`" + following);
+    const shown = await vi.waitFor(() => {
+      const choice = [...document.querySelectorAll(".autocomplete .ac-label")]
+        .find(row => row.textContent === propertyValue || row.textContent === "Result");
+      expect(choice).toBeDefined();
+      return choice!.textContent!;
+    });
+    await acceptSuggestion(editor, shown);
+    expect(editor.value()).toBe(`project:: ${propertyValue}${following}`);
+  });
+
+  it.each([
+    ["[[", " [x] title", true],
+    ["[[", " #[[child]] title", false],
+    ["[[", " [ title", true],
+    ["[[", " \\]] title", true],
+    ["[[", " [[child]] title", false],
+    ["#[[", " [x] title", true],
+    ["#[[", "ramming #x", false],
+  ] as const)(
+    "picks in a %s reference containing %s (PICK-853c)", async (opener, suffix, plain) => {
+      const prefix = `project:: ${opener}pr`;
+      const following = ", [[Existing]]";
+      setGraphMeta(META); bumpGraphEpoch();
+      vi.spyOn(backend(), "quickSwitch").mockResolvedValue([
+        { name: "Programming", kind: "page", date_key: null, path: "pages/Programming.md" },
+      ]);
+      const editor = mount(`${prefix}${suffix}]]${following}`, prefix.length);
+      editor.type("o");
+      await acceptSuggestion(editor, "Programming");
+      const completed = `project:: ${opener}Programming]]`;
+      const remaining = plain ? following : `${suffix}]]${following}`;
+      const spacing = remaining.startsWith(" ") ? "" : " ";
+      expect(editor.value()).toBe(completed + spacing + remaining);
+    },
+  );
+
+  it.each((["md", "org"] as const).flatMap(format => ["[[", "#[["].map(opener => [format, opener] as const)))(
+    "picks the enclosing %s %s page and preserves the inner reference's suffix (PICK-853c)", async (format, opener) => {
+      const before = `project:: ${opener}Math ((no`;
+      const after = "ation)) tail]], [[Existing]]";
+      setGraphMeta(META); bumpGraphEpoch();
+      vi.spyOn(backend(), "quickSwitch").mockImplementation(async query => query === "Math ((not"
+        ? [{ name: "Mathematics", kind: "page", date_key: null, path: "pages/Mathematics.md" }]
+        : []);
+      const editor = mount(before + after, before.length, format);
+      editor.type("t");
+      await acceptSuggestion(editor, "Mathematics");
+      expect(editor.value()).toBe(`project:: ${opener}Mathematics]] ${after}`);
+      expect(roots()).toEqual(["first", "target"]);
+    },
+  );
+
+  it.each(["relative/", "relative/a<z/"])("offers property values inside a Markdown destination starting with %s (PICK-853c)", async destination => {
+    const before = `project:: [keep](${destination}[[pr`;
+    const after = "]]/abc)";
+    const propertyValue = `[keep](${destination}[[project]]/abc)`;
+    setGraphMeta(META); bumpGraphEpoch();
+    vi.spyOn(backend(), "queryFacets").mockResolvedValue([["project", [propertyValue]]]);
+    const pages = vi.spyOn(backend(), "quickSwitch").mockResolvedValue([
+      { name: "Programming", kind: "page", date_key: null, path: "pages/Programming.md" },
+    ]);
+    const editor = mount(before + after, before.length);
+    editor.type("o");
+    await vi.waitFor(() => expect(document.querySelector(".autocomplete .ac-label")?.textContent).toBe(propertyValue));
+    expect(pages).not.toHaveBeenCalled();
+    expect(editor.value()).toBe(before + "o" + after);
+  });
+
+  it.each([["md", " x^{Keep]] intact}"], ["org", " /Keep ]] a\\/ b/"]] as const)(
+    "keeps the %s construct %s that extends past the closer (F1)", async (format, suffix) => {
+      const before = "project:: [[pr";
+      setGraphMeta(META); bumpGraphEpoch();
+      vi.spyOn(backend(), "quickSwitch").mockImplementation(async query => query === "pro"
+        ? [{ name: "Programming", kind: "page", date_key: null, path: "pages/Programming.md" }]
+        : []);
+      const editor = mount(before + suffix, before.length, format);
+      editor.type("o");
+      await acceptSuggestion(editor, "Programming");
+      expect(editor.value()).toBe(`project:: [[Programming]]${suffix}`);
+    },
+  );
+
+  it.each(["md", "org"] as const)("keeps page search closed on the %s opening line of multiline math (PICK-853c)", format => {
+    const before = "$$ text [[pr";
+    const after = "\nmore\n$$";
+    setGraphMeta(META); bumpGraphEpoch();
+    const pages = vi.spyOn(backend(), "quickSwitch").mockResolvedValue([]);
+    const editor = mount(before + after, before.length, format);
+    editor.type("o");
+    expect(editor.value()).toBe(before + "o" + after);
+    expect(pages).not.toHaveBeenCalled();
+    expect(document.querySelector(".autocomplete")).toBeNull();
+  });
+
+  it.each([
+    ["[[", "[[Existing]]", "Programming", "[[Programming]]"],
+    ["#[[", "#[[Existing]]", "Programming", "#[[Programming]]"],
+    ["#", "[[Existing]]", "#Programming notes", "#[[Programming notes]]"],
+    ["#", "#[[Existing]]", "#Programming notes", "#[[Programming notes]]"],
+  ])("preserves later property values after %s completion before %s (#853)", async (opener, following, label, inserted) => {
+    const prefix = `project:: ${opener}pr`;
+    const name = label.startsWith("#") ? label.slice(1) : label;
+    setGraphMeta(META); bumpGraphEpoch();
+    vi.spyOn(backend(), "quickSwitch").mockResolvedValue([{ name, kind: "page", date_key: null, path: `pages/${name}.md` }]);
+    const editor = mount(`${prefix}, ${following}`, prefix.length);
+    editor.type("o");
+    await acceptSuggestion(editor, label);
+    expect(editor.value().replace("]] ,", "]],")).toBe(`project:: ${inserted}, ${following}`);
+  });
+
+  it.each([
+    ...[", ((existing))", ", [[Keep )) intact]]", ", #[[Keep )) intact]]", " https://x.test/(keep)) tail", " #keep))suffix"]
+      .map(following => ({ before: "((pr", after: following, typed: "o", query: "pro", following, leading: "" })),
+    { before: "((Alpha [[b", after: "ta)), rest", typed: "e", query: "Alpha [[be", following: ", rest", leading: "" },
+    { before: "((a\\[[b", after: "a\\]] b)), rest", typed: "e", query: "a\\[[be", following: "a\\]] b)), rest", leading: "`[[` " },
+  ])(
+    "picks the block reference in $before|$after (#853)", async ({ before, after, typed, query, following, leading }) => {
+      const property = `project:: ${leading}`;
+      const prefix = property + before;
+      const id = "11111111-1111-4111-8111-111111111111";
+      setGraphMeta(META); bumpGraphEpoch();
+      openAsLoaded(await bindTestHost());
+      const target = { id, raw: `first\nid:: ${id}`, collapsed: false, children: [] };
+      vi.spyOn(backend(), "getPage").mockResolvedValue({
+        id: "pages/Source.md", name: "Source", kind: "page", title: "Source", pre_block: null, blocks: [target],
+      });
+      const search = vi.spyOn(backend(), "search").mockResolvedValue([{
+        page: "Source", kind: "page", evidence: [], blocks: [{ ...target, properties: [["id", id]] }],
+      }]);
+      const editor = mount(prefix + after, prefix.length);
+      editor.type(typed);
+      await acceptSuggestion(editor, "first");
+      expect(search).toHaveBeenCalledWith(query, 20, "block-picker");
+      const spacing = following.startsWith(" ") ? "" : " ";
+      await vi.waitFor(() => expect(editor.value()).toBe(`${property}((${id}))${spacing}${following}`));
+    },
+  );
+
+  describe.each(["md", "org"] as const)("a pending %s block pick", format => {
+    it.each([
+      [" keep this", 5],
+      [" keep this", -1],
+      [" #keep))", 6],
+    ])("uses the picked range before %j after moving the caret by %i", async (suffix, movement) => {
+      const runtimeId = "11111111-1111-4111-8111-111111111111";
+      const target = { id: runtimeId, raw: "first", collapsed: false, children: [] };
+      const path = `pages/Source.${format}`;
+      setGraphMeta(META); bumpGraphEpoch();
+      openAsLoaded(await bindTestHost());
+      vi.spyOn(backend(), "getPage").mockResolvedValue({
+        id: path, name: "Source", kind: "page", title: "Source", pre_block: null, format, blocks: [target],
+      });
+      vi.spyOn(backend(), "search").mockResolvedValue([{ page: "Source", kind: "page", evidence: [], blocks: [target] }]);
+      const pageWait = backend().pageWait.bind(backend());
+      let publish: (() => void) | undefined;
+      let stampedId: string | undefined;
+      vi.spyOn(backend(), "pageWait").mockImplementation((...args) => {
+        const witness = args[1].find(need => need.key === path)?.witness;
+        if (!witness) return pageWait(...args);
+        stampedId = witness;
+        return new Promise(resolve => { publish = () => resolve(pageWait(...args)); });
+      });
+
+      const prefix = "project:: ((ab";
+      const editor = mount(prefix + suffix, prefix.length, format);
+      editor.type("c");
+      await acceptSuggestion(editor, "first");
+      await vi.waitFor(() => expect(publish).toBeTypeOf("function"));
+      const caret = prefix.length + 1;
+      expect(editor.value()).toBe(prefix + "c" + suffix);
+      editor.selectByUser(caret + movement);
+      expect(editor.selection()).toEqual([caret + movement, caret + movement]);
+      expect(stampedId).not.toBe(runtimeId);
+      publish!();
+
+      const picked = `project:: ((${stampedId}))`;
+      await vi.waitFor(() => expect(editor.value()).toBe(picked + suffix));
+      expect(doc.byId.target.raw).toBe(picked + suffix);
+      expect(errors()).toHaveLength(0);
+    });
+  });
+
   describe("template slash-completion (HONP4)", () => {
     const DAILY = [{ id: "tpl", raw: "from template", collapsed: false, children: [{ id: "tpl-child", raw: "template child", collapsed: false, children: [] }] }];
-    async function openTemplate(raw: string, blocks = DAILY): Promise<EditorDriver> {
-      vi.spyOn(backend(), "listTemplates").mockResolvedValue([{ name: "Daily", page: "Templates", kind: "page", blocks }]);
+    async function openTemplate(raw: string, blocks = DAILY, name = "Daily"): Promise<EditorDriver> {
+      vi.spyOn(backend(), "listTemplates").mockResolvedValue([{ name, page: "Templates", kind: "page", blocks }]);
       setGraphMeta(META); bumpGraphEpoch();
       const editor = mount(raw);
-      editor.reportInput({ bubbles: true, inputType: "insertText", data: "y" });
-      await vi.waitFor(() => expect(document.body.querySelector(".autocomplete .ac-label")?.textContent).toBe("Template: Daily"));
+      editor.reportInput({ bubbles: true, inputType: "insertText", data: raw.at(-1) });
+      await vi.waitFor(() => expect(document.body.querySelector(".autocomplete .ac-label")?.textContent).toBe(`Template: ${name}`));
       return editor;
     }
+
+    it.each(["typing", "paste"])("finds an existing page by %s in the inserted meeting template's empty project property (#853)", async method => {
+      const raw = "###\nevent:: #meeting\nproject::";
+      const editor = await openTemplate("/meeting", [{ id: "tpl", raw, collapsed: false, children: [] }], "meeting");
+      vi.spyOn(backend(), "quickSwitch").mockImplementation(async query => query === "pro"
+        ? [{ name: "Programming", kind: "page", date_key: null, path: "pages/Programming.md" }]
+        : []);
+      vi.spyOn(backend(), "queryFacets").mockResolvedValue([["project", []]]);
+      enter(editor);
+      const inserted = roots()[1];
+      const shown = await vi.waitFor(() => editorIn(root, inserted));
+      expect(shown.value()).toBe(raw);
+      expect(shown.selection()).toEqual([raw.length, raw.length]);
+      shown.type(" ");
+      if (method === "typing") {
+        for (const ch of "[[pro") shown.type(ch);
+      } else {
+        const paste = shown.paste({ text: "[[pro" });
+        if (!paste.defaultPrevented) shown.input(`${raw} [[pro`, raw.length + 6, { inputType: "insertFromPaste" });
+      }
+      await vi.waitFor(() => expect([...document.querySelectorAll(".autocomplete .ac-label")]
+        .map(row => row.textContent)).toContain("Programming"));
+      enter(shown);
+      expect(shown.value()).toMatch(/^###\nevent:: #meeting\nproject:: \[\[Programming\]\] ?$/);
+    });
 
     it.each([["after text", "intro /Daily", "intro "], ["in an empty block", "/Daily", null]] as const)(
       "%s: a failed insert keeps the trigger, in the editor and in the block", async (_, raw, _head) => {

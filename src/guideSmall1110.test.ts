@@ -8,7 +8,7 @@ it("the Guide explains one history step for each repeated mouse press (GH #948)"
 });
 
 it("the Guide explains link completion inside a complete link (GH #888)", () => {
-  expect(template("pages-links-references-search")).toContain("the list searches the whole link text, not only the part before the caret, so the linked page comes first");
+  expect(template("pages-links-references-search")).toContain("Inside a closed page link with plain text after the caret, such as `[[Sat, 07.11.2026]]`, the list searches the whole title");
 });
 
 it("the Guide says no completion menu opens inside a fenced code block (CM6-D9)", () => {

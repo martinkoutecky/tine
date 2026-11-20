@@ -25,24 +25,20 @@ panel's own search, which covers every group (the panel root carries
 chunks, retaining their geometry with the occurrence. Large root lists use the
 ordinary outline windows and model-based reveal/navigation scope.
 
-From blank space, including row padding and child indentation, Ctrl/Cmd+A
-starts in the nearest outline that owned the pointer press. The same shell
-keeps ownership while its live outline mounts or retires. In a Linked or
-Unlinked References group it first selects that group's live blocks.
-Unlinked excerpts stay outside the structural selection.
-The next press selects the section's currently loaded groups in display order.
-Expanded breadcrumb context can repeat a hit on screen. Keyboard extension
-steps from the selected occurrence. Whole-outline selection captures source
-roots in display order, including when Ctrl/Cmd+A completes a range that
-already covers the outline. Copy and Delete include each selected subtree once,
-including children hidden by a later fold. Whole-outline deletion clears selection.
-A plain blank click in another outline retires the current selection, as does
-closing or removing a group that participates in the selection. Blank space in a
-routed page's scroller uses the page or zoom outline when no closer outline
-owns it. Shift-click extends within the same outline. In the Journals feed,
-each day's outline owns its own blank space. A focused drawer or live preview
-accepts its outline's blank hit. Text fields keep their text selection shortcut.
-Copy / export can include groups whose source was never loaded by the view.
+Ctrl/Cmd+A after a blank click selects the nearest outline's live roots in
+display order. Row padding and child indentation belong to that outline. A
+routed scroller's gutter belongs to its page or zoom, and a Journals day owns
+its own blank space. The shell owns a click while live rows mount. A reference
+section's whitespace between groups has no selectable roots. Text fields
+keep native select-all, as does blank space in sidebars and hover previews.
+
+A second Ctrl/Cmd+A leaves the selection as it is. Another gesture ends it,
+including a Shift-click, a click elsewhere, a focus change, or Escape. Copy
+serializes each selected subtree once, including folded children, and clears
+the highlight. Delete, Backspace, and successful Cut clear the selection after
+removal. Ordinary block ranges and the select-all ladder entered from an editor
+use their normal range rules. Unlinked excerpts stay outside structural
+selection. Copy / export can include excerpts and groups the view never loaded.
 
 In-outline embeds and queries belong to Find's page scope. Find counts their
 loaded rendered content and discloses the number of hosts not searched yet,

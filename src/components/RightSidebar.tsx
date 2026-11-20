@@ -27,7 +27,6 @@ import { PageIcon } from "./PageIcon";
 import { backend } from "../backend";
 import { admitRead, emptyPage, ensurePageLoaded, pageByName, pageAliasNames, pageLoadRefusalMessage, resolveBlockRef, settleBlockRef, whenPageReplaceable, formatForBlock, blockRef, blockPositionRef, node as docNode } from "../document";
 import { Block, OutlineScopeContext, SurfaceContext } from "./Block";
-import { bindOutlineSelection } from "../outlineSelectionTarget";
 import { TaggedPages } from "./TaggedPages";
 import { AliasGroupHeader } from "./AliasGroup";
 import { LinkedReferences } from "./LinkedReferences";
@@ -422,7 +421,6 @@ function PageItem(props: {
     const loaded = pageByName(props.item.name);
     return props.item.path && loaded?.id !== props.item.path ? undefined : loaded;
   };
-  const scope = { get roots() { return page()?.roots ?? []; } };
   const bodyId = `rs-item-body-${createUniqueId()}`;
   return (
     <div class="rs-item" data-sidebar-surface={props.surfaceKey} data-row-index={props.row.index} classList={{ collapsed: props.collapsed, "row-drop-before": props.row.before(), "row-drop-after": props.row.after() }}>
@@ -447,8 +445,7 @@ function PageItem(props: {
       </div>
       <Show when={!props.collapsed}>
         <Show when={page()} fallback={<div id={bodyId} class="rs-item-body rs-item-loading">{loadError() ?? ""}</div>}>
-          <div id={bodyId} class="rs-item-body"
-            ref={el => bindOutlineSelection(el, { surface: props.surfaceKey, read: () => ({ scope }) })}>
+          <div id={bodyId} class="rs-item-body">
             {/* The page's alias group, as in the main pane's header (AL2). The
                 sidebar keeps its properties block, so a click here edits nothing. */}
             <AliasGroupHeader
@@ -456,7 +453,7 @@ function PageItem(props: {
               declared={pageAliasNames(page()!)}
               inGraph={!page()!.guide}
             />
-            <CommentSurface page={page()}><BlockList ids={scope.roots} /></CommentSurface>
+            <CommentSurface page={page()}><BlockList ids={page()!.roots} /></CommentSurface>
             {/* The same producer the main pane uses: a page opened only here still
                 gets its phantom empty bullet and a trailing target (GH #483). */}
             <PageTypingTarget page={page} surface={props.surfaceKey} />
@@ -583,19 +580,17 @@ function BlockItem(props: {
             </Show>
           }
         >
-          {(n) => {
-            const scope = { get roots() { return [n().id]; }, get forceExpandedRoot() { return n().id; } };
-            return <div id={bodyId} class="rs-item-body"
-              ref={el => bindOutlineSelection(el, { surface: props.surfaceKey, read: () => ({ scope }) })}>
+          {(n) => (
+            <div id={bodyId} class="rs-item-body">
               {/* GH #358: a block parked here is the root of this view, like a
                   zoom root: its children render regardless of the source
                   outline's collapsed flag (collapsed:: is not mutated), while
                   descendants keep their own collapse state. */}
-              <OutlineScopeContext.Provider value={scope}>
+              <OutlineScopeContext.Provider value={{ roots: [n().id], forceExpandedRoot: n().id }}>
                 <CommentSurface page={pageByName(n().page)} roots={[n().id]}><Block id={n().id} forceExpanded /></CommentSurface>
               </OutlineScopeContext.Provider>
-            </div>;
-          }}
+            </div>
+          )}
         </Show>
       </Show>
     </div>

@@ -763,7 +763,7 @@ function Capture() {
               }
             }}
           />
-          <div class="page-blocks" ref={el => bindOutlineSelection(el, { surface: "main", read: () => ({ scope: selectionScope }) })}>
+          <div class="page-blocks" ref={el => bindOutlineSelection(el, { surface: "main", scope: selectionScope })}>
             <For each={roots()}>{(rid) => <Block id={rid} />}</For>
           </div>
           <Show when={!bindingAlternatives(submitBinding()).length}>

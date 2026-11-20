@@ -5,12 +5,12 @@ it("the block-selection tips explain route departure and journal scrolling", () 
   const page = readFileSync("crates/tine-guide/src/templates/tips.md", "utf8");
   expect(page).toContain("Leaving a page clears its block selection");
   expect(page).toContain("Scrolling between days in the Journals feed keeps the selection");
-  expect(page).toContain("Click blank space in an outline and press **Ctrl+A**");
-  expect(page).toContain("The page gutter works too. Click blank space in another outline to start over there.");
-  expect(page).toContain("the next includes the other loaded groups in that section");
-  expect(page).toContain("the first press selects the live blocks in the group you clicked");
+  expect(page).toContain("Click blank space in the main outline and press **Ctrl+A**");
+  expect(page).toContain("The page gutter works too.");
+  expect(page).toContain("each press selects only the live blocks in the clicked group");
   expect(page).toContain("Use **Copy / export** to include excerpts");
-  expect(page).toContain("Copy keeps children nested even if you fold a selected block before copying.");
+  expect(page).toContain("Copy keeps folded children nested.");
+  expect(page).toContain("another click, or moving keyboard focus ends this selection");
 });
 
 it("the search tour teaches pointer and keyboard activation in the focused split", () => {

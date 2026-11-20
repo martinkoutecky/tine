@@ -52,7 +52,7 @@ import {
   route,
 } from "./router";
 import { journalTitle, parseJournalTitle, appNow } from "./journal";
-import { undo, redo, hasSelection, moveSelection, cycleSelectionTasks, expandBlockSelection, moveSelectionItems, indentSelection, outdentSelection, deleteSelection, selectionMarkdown, selectionScope, clearSelection, clearSelectionOutsideOutline, selectedIds, singleSelectedId, topSelected, blockIsGridView, pageVisibleOrder, selectBlock, visibleOrder, toggleUndoRedoMode, buildClipboardPayload, node as docNode, loadedPage } from "./document";
+import { undo, redo, hasBlankOutlineSelection, hasSelection, moveSelection, cycleSelectionTasks, expandBlockSelection, moveSelectionItems, indentSelection, outdentSelection, deleteSelection, selectionMarkdown, selectionScope, clearSelection, selectedIds, singleSelectedId, topSelected, blockIsGridView, pageVisibleOrder, selectBlock, visibleOrder, toggleUndoRedoMode, buildClipboardPayload, node as docNode, loadedPage } from "./document";
 import { editingId, startEditing } from "./editorController";
 import { copyBlockOutline } from "./clipboard";
 import { cutBlocks } from "./cut";
@@ -1002,6 +1002,22 @@ function focusedGridSurface(gridId: string): string | null {
   return surfaces.size === 1 ? [...surfaces][0] : null;
 }
 
+function writeSelectionToClipboard(cut: boolean, blank = false): void {
+  const ids = selectedIds();
+  const text = selectionMarkdown();
+  if (cut) {
+    const roots = blank ? topSelected() : undefined;
+    void cutBlocks(ids, text, () =>
+      (!roots || roots === topSelected()) && JSON.stringify(selectedIds()) === JSON.stringify(ids) ? selectionMarkdown() : "",
+      () => deleteSelection())
+      .catch(() => pushToast(msg("commands-couldn-t-cut-selection-clipboard-write-failed"), "error"));
+  } else {
+    void copyBlockOutline("copy", text, buildClipboardPayload(ids))
+      .catch(() => pushToast(msg("commands-couldn-t-copy-selection-clipboard-write-failed"), "error"));
+    if (blank) clearSelection();
+  }
+}
+
 // Keyboard handling while in block-selection mode (no editor focused).
 function handleSelectionKey(e: KeyboardEvent): boolean {
   if (matchesCommand(e, "editor/edit-selected-block")) return editSelectedBlock();
@@ -1028,22 +1044,9 @@ function handleSelectionKey(e: KeyboardEvent): boolean {
   if (arrow === "ArrowUp") return moveSelection(-1, e.shiftKey), true;
   if (e.key === "Backspace" || e.key === "Delete") return deleteSelection(), true;
   const mod = isMac ? e.metaKey : e.ctrlKey;
-  if (mod && shortcutKey(e) === "c") {
-    const ids = selectedIds();
-    const text = selectionMarkdown();
-    void copyBlockOutline("copy", text, buildClipboardPayload(ids))
-      .catch(() => pushToast(msg("commands-couldn-t-copy-selection-clipboard-write-failed"), "error"));
-    return true;
-  }
-  if (mod && shortcutKey(e) === "x") {
-    const ids = selectedIds();
-    const text = selectionMarkdown();
-    void cutBlocks(ids, text, () =>
-      JSON.stringify(selectedIds()) === JSON.stringify(ids) ? selectionMarkdown() : "",
-      () => deleteSelection())
-      .catch(() => pushToast(msg("commands-couldn-t-cut-selection-clipboard-write-failed"), "error"));
-    return true;
-  }
+  if (mod && shortcutKey(e) === "c") return writeSelectionToClipboard(false), true;
+  if (mod && shortcutKey(e) === "x") return writeSelectionToClipboard(true), true;
+  if (mod && !e.shiftKey && !e.altKey && shortcutKey(e) === "a") return expandBlockSelection(), true;
   if (e.key === "Enter") {
     const ids = topSelected();
     const last = ids[ids.length - 1];
@@ -1116,14 +1119,22 @@ export function installKeybindings(overrides: Record<string, ShortcutBinding> = 
     if (isTauri() && isWebviewReloadChord(e)) e.preventDefault();
     // Ignore bare modifier presses (incl. Super/Windows).
     if (isModifierKey(e)) return;
+    const chord = eventToChord(e);
+    const editing = isEditableTarget(e.target);
+    const modKey = chord.mod && !chord.shift && !chord.alt && !chord.ctrl && !chord.meta ? chord.key : "";
+    const doc = documentOf(e);
+    const hit = modKey === "a" ? outlineHits.get(doc) : undefined;
+    outlineHits.delete(doc);
+    const blank = hasBlankOutlineSelection();
+    const blankClipboard = modKey === "c" || modKey === "x";
+    const blankDelete = (e.key === "Delete" || e.key === "Backspace")
+      && !e.shiftKey && !e.altKey && !e.ctrlKey && !e.metaKey;
+    if (blank && (editing || suspended || !(modKey === "a" || blankClipboard || blankDelete))) clearSelection();
     // Native buttons own activation even when a block selection is still present (GH #879).
     if ((e.key === "Enter" || e.key === " ") && !e.ctrlKey && !e.metaKey && !e.altKey
         && (e.target as HTMLElement | null)?.tagName === "BUTTON") {
       resetSeq(); return;
     }
-
-    const chord = eventToChord(e);
-    const editing = isEditableTarget(e.target);
 
     // Escape, in priority order, so focus mode peels off one layer at a time
     // (Logseq-like): overlays first; then if editing a block's text let the
@@ -1137,6 +1148,9 @@ export function installKeybindings(overrides: Record<string, ShortcutBinding> = 
       if (dismissMobileDrawer("escape")) {
         restoreDrawerFocus("escape");
         e.preventDefault(); e.stopImmediatePropagation(); resetSeq(); return;
+      }
+      if (blank) {
+        e.preventDefault(); resetSeq(); return;
       }
       // Settings shortcut recording suspends only the ordinary shortcut/editor/
       // pane ladder. Escape's transient/drawer prefix above remains available,
@@ -1219,35 +1233,39 @@ export function installKeybindings(overrides: Record<string, ShortcutBinding> = 
       }
     }
 
-    if (chord.mod && !chord.shift && !chord.alt && chord.key === "a") {
-      const doc = documentOf(e);
+    if (modKey === "a") {
       const target = e.target;
-      const focused = isElementNode(target) && target !== doc.body && target !== doc.documentElement ? target : undefined;
-      const field = focused?.closest(selectAllFields);
-      const focusedDialog = focused?.closest(selectAllDialogs);
-      const storedHit = outlineHits.get(doc);
-      const hit = !paneSel() && storedHit?.current(focusedDialog ?? focused) ? storedHit : undefined;
-      const top = topTransientLayer()?.root?.();
-      if ((field?.isConnected && !isOutlineBlockEditorTarget(target))
-          || (focusedDialog && !hit?.ownedBy(focusedDialog))
-          || (top?.matches(selectAllDialogs) && !hit?.ownedBy(top))) {
+      const field = isElementNode(target) && target.closest(selectAllFields);
+      const owner = !editing && !editingId() ? hit?.() : undefined;
+      if (field && !isOutlineBlockEditorTarget(target)) {
+        if (blank) clearSelection();
         resetSeq();
         return;
       }
-      if (!editing) {
-        const outline = hit?.boundary;
-        if (hasSelection() || (!editingId() && outline !== undefined)) {
-          if (hasSelection()) expandBlockSelection();
-          else if (outline) {
-            const target = outline.read();
-            if (target) expandBlockSelection({ ...target, surface: outline.surface });
-          }
-          selectionOf(e)?.removeAllRanges();
-          e.preventDefault();
+      if (owner) {
+        const dialog = isElementNode(target) && target.closest(selectAllDialogs);
+        const top = topTransientLayer()?.root?.();
+        if ((dialog && !dialog.contains(owner.host)) || (top?.matches(selectAllDialogs) && !top.contains(owner.host))) {
           resetSeq();
           return;
         }
       }
+      if (!editing && (blank || owner)) {
+        if (owner?.outline) expandBlockSelection(owner.outline);
+        else if (owner) clearSelection();
+        selectionOf(e)?.removeAllRanges();
+        e.preventDefault();
+        resetSeq();
+        return;
+      }
+    }
+
+    if (blank && !editing && (blankClipboard || blankDelete)) {
+      if (blankClipboard) writeSelectionToClipboard(modKey === "x", true);
+      else deleteSelection();
+      e.preventDefault();
+      resetSeq();
+      return;
     }
 
     // Block-selection mode keys (no editor focused).
@@ -1358,19 +1376,24 @@ export function installKeybindings(overrides: Record<string, ShortcutBinding> = 
   // in a workspace window reaches the same handler, and its window's listeners
   // go away with it.
   const uninstallWindows = onEachWindow((win, id) => {
-    const rememberOutlineHit = (e: MouseEvent) => {
-      // Keyboard and programmatic activation have no pointer-down.
-      if (e.type === "click" && e.detail !== 0) return;
-      const at = e.target;
-      if (e.button !== 0 || !isElementNode(at)) return;
-      const hit = e.shiftKey || e.ctrlKey || e.metaKey || e.altKey || paneSel() ? undefined : outlineSelectionAt(at);
-      if (hit) {
-        outlineHits.set(win.document, hit);
-        clearSelectionOutsideOutline(hit.boundary?.surface, hit.page);
-      } else outlineHits.delete(win.document);
+    const retireBlankSelection = () => {
+      outlineHits.delete(win.document);
+      if (hasBlankOutlineSelection()) clearSelection();
     };
-    win.addEventListener("pointerdown", rememberOutlineHit, true);
+    const rememberOutlineHit = (e: MouseEvent) => {
+      retireBlankSelection();
+      const at = e.target;
+      if (e.button !== 0 || !isElementNode(at) || e.shiftKey || e.ctrlKey || e.metaKey || e.altKey || paneSel()) return;
+      // Click follows native focus routing. The hit is used by the next key only.
+      const hit = outlineSelectionAt(at);
+      if (hit) outlineHits.set(win.document, hit);
+    };
+    win.addEventListener("pointerdown", retireBlankSelection, true);
+    win.addEventListener("focusin", retireBlankSelection, true);
+    win.addEventListener("focusout", retireBlankSelection, true);
+    win.addEventListener("wheel", retireBlankSelection, { capture: true, passive: true });
     win.addEventListener("click", rememberOutlineHit, true);
+    win.addEventListener("blur", retireBlankSelection);
     win.addEventListener("keydown", handler, true);
     win.addEventListener("paste", pasteHandler, true);
     win.addEventListener("keydown", superTracker, true);
@@ -1383,9 +1406,13 @@ export function installKeybindings(overrides: Record<string, ShortcutBinding> = 
     const disposeMouse = installMouseHistory(win, win.document, navigateMouseHistory, historySource);
     if (id === MAIN_WINDOW_ID) mainMouse = disposeMouse;
     return () => {
-      win.removeEventListener("pointerdown", rememberOutlineHit, true);
+      win.removeEventListener("pointerdown", retireBlankSelection, true);
+      win.removeEventListener("focusin", retireBlankSelection, true);
+      win.removeEventListener("focusout", retireBlankSelection, true);
+      win.removeEventListener("wheel", retireBlankSelection, true);
       win.removeEventListener("click", rememberOutlineHit, true);
-      outlineHits.delete(win.document);
+      win.removeEventListener("blur", retireBlankSelection);
+      retireBlankSelection();
       win.removeEventListener("keydown", handler, true);
       win.removeEventListener("paste", pasteHandler, true);
       win.removeEventListener("keydown", superTracker, true);
