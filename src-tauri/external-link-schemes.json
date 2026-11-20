@@ -1,6 +1,6 @@
 {
-  "web": ["http", "https"],
-  "mail": "mailto",
+  "webPrefixes": ["http://", "https://"],
+  "mailPrefix": "mailto:",
   "localFile": "file",
   "deepLink": "tine",
   "refused": ["javascript", "vbscript", "data", "blob", "about"]

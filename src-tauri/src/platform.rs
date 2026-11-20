@@ -1041,16 +1041,19 @@ pub(crate) fn external_open_plan(
             .ok_or_else(|| "that file link does not name a local file".to_string())?;
         return Ok(ExternalOpen::LocalPath(path));
     }
-    let scheme = raw_scheme.to_ascii_lowercase();
-    let web = WEB_SCHEMES.contains(&scheme.as_str());
-    if web && !destination.starts_with("//") {
-        return Err("unsupported web URL".into());
-    }
-    if web || scheme == MAIL_SCHEME {
+    if DIRECT_OPEN_PREFIXES
+        .iter()
+        .any(|&prefix| url.starts_with(prefix))
+    {
         return Ok(ExternalOpen::Url);
     }
+    let scheme = raw_scheme.to_ascii_lowercase();
+    if WEB_SCHEMES.contains(&scheme.as_str()) && !destination.starts_with("//") {
+        return Err("unsupported web URL".into());
+    }
     if NEVER_OPENED_SCHEMES.contains(&scheme.as_str())
-        || scheme == TINE_SCHEME || scheme == FILE_SCHEME
+        || scheme == TINE_SCHEME
+        || scheme == FILE_SCHEME
     {
         return Err(format!("{scheme}: links are never opened"));
     }
@@ -1068,7 +1071,10 @@ pub(crate) async fn open_external(
     url: String,
     confirmed_scheme: Option<String>,
 ) -> Result<(), String> {
-    if url.strip_prefix(TINE_SCHEME).is_some_and(|rest| rest.starts_with(':')) {
+    if url
+        .strip_prefix(TINE_SCHEME)
+        .is_some_and(|rest| rest.starts_with(':'))
+    {
         crate::deep_links::receive_url(&app, url);
         return Ok(());
     }
@@ -1758,10 +1764,23 @@ mod file_url_tests {
         ] {
             assert!(external_open_plan(url, Some(consent)).is_err(), "{url}");
         }
-        assert_eq!(
-            external_open_plan("HTTPS://example.org", None),
-            Ok(ExternalOpen::Url)
-        );
+    }
+
+    #[test]
+    fn web_and_mail_prefix_variants_need_matching_consent() {
+        for (url, consent) in [
+            ("HtTp://example.org", "HTTP"),
+            ("HTTPS://example.org", "Https"),
+            ("Mailto:a@b.c", "MAILTO"),
+        ] {
+            assert!(external_open_plan(url, None).is_err(), "{url}");
+            assert!(external_open_plan(url, Some("zotero")).is_err(), "{url}");
+            assert_eq!(
+                external_open_plan(url, Some(consent)),
+                Ok(ExternalOpen::CustomScheme),
+                "{url}"
+            );
+        }
     }
 
     #[test]

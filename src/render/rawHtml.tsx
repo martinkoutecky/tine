@@ -16,9 +16,10 @@ import { ShareMedia, shareHtml } from "../quickShare/ShareMedia";
 const EMBED_REFERRER_HOSTS =
   /(?:^|\.)(?:youtube\.com|youtube-nocookie\.com|youtu\.be|vimeo\.com|loom\.com|bilibili\.com)$/i;
 function embedReferrerPolicy(src: string): "strict-origin-when-cross-origin" | "no-referrer" {
-  // Extract the host with a regex rather than `new URL()` — the referrer decision
-  // must not depend on a global others can shim, and a malformed src stays private.
-  const host = /^https?:\/\/([^/?#]+)/i.exec(src)?.[1]?.replace(/^[^@]*@/, "").replace(/:.*$/, "") ?? "";
+  // The presentation supplies a checked HTTP(S) source. Read its authority
+  // without relying on a global URL parser for the referrer decision.
+  const authority = src.slice(src.indexOf("//") + 2).split(/[/?#]/, 1)[0];
+  const host = authority.replace(/^[^@]*@/, "").replace(/:.*$/, "");
   return EMBED_REFERRER_HOSTS.test(host) ? "strict-origin-when-cross-origin" : "no-referrer";
 }
 

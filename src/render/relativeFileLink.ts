@@ -1,3 +1,5 @@
+import { anchorDecision, isSchemeLess, type AnchorDecision } from "../linkSchemePolicy";
+
 // GH #457: OG 0.10.9 block.cljs relative-assets-path->absolute-path joins
 // paths to the graph root, not the page directory. config.cljs
 // get-local-asset-absolute-path strips leading dots/slashes; Tine deliberately
@@ -9,10 +11,14 @@ export type FileLinkTarget =
 
 /** Classify authored paths without touching the filesystem. Schemes and
  * page-like destinations stay with their existing renderer. O(dest bytes). */
-export function fileLinkTarget(dest: string): FileLinkTarget | null {
+export function fileLinkTarget(dest: string, decision?: AnchorDecision): FileLinkTarget | null {
   let path = dest.trim();
-  if (/^file:(?![/\\])/i.test(path)) path = path.slice("file:".length);
-  else if (/^[a-z][a-z0-9+.-]+:/i.test(path)) return null;
+  // Keep the resolver's trim behavior when the authored prefix changed.
+  const route = dest[0] === path[0] && decision !== undefined ? decision : anchorDecision(path);
+  if (route === "file") {
+    path = path.slice("file:".length);
+    if (/^[/\\]/.test(path)) return null;
+  } else if (!isSchemeLess(route)) return null;
   if (!path || /^[#*]/.test(path)) return null;
   path = path.replace(/\\/g, "/");
   try { path = decodeURIComponent(path); } catch { /* A stray % is a filename character. */ }

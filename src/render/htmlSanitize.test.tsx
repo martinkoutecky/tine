@@ -57,6 +57,19 @@ describe("sanitizeRawHtml — shared allowlist contract", () => {
     expect(sources[1]?.getAttribute("type")).toBe("video/webm");
   });
 
+  it("uses the preview scheme policy for media sources and posters", () => {
+    const root = document.createElement("div");
+    root.innerHTML = sanitizeRawHtml(`
+      <img src="tel:+12025550120">
+      <video poster="mailto:preview@example.test">
+        <source src="https://example.test/preview.mp4" type="video/mp4">
+      </video>
+    `);
+    expect(root.querySelector("img")?.getAttribute("src")).toBeNull();
+    expect(root.querySelector("video")?.getAttribute("poster")).toBeNull();
+    expect(root.querySelector("source")?.getAttribute("src")).toBe("https://example.test/preview.mp4");
+  });
+
   it("keeps executable media and external-request primitives dead", () => {
     const clean = sanitizeRawHtml(`
       <script>steal()</script>

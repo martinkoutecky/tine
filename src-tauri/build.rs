@@ -173,20 +173,29 @@ fn generate_external_link_schemes(schemes: &serde_json::Value) {
             .map(|value| value.as_str().expect(name))
             .collect::<Vec<_>>()
     };
+    let web_prefixes = scheme_list("webPrefixes");
+    let web_schemes = web_prefixes
+        .iter()
+        .copied()
+        .map(|prefix| prefix.split_once(':').expect("web prefix").0)
+        .collect::<Vec<_>>();
+    let mut direct_open_prefixes = web_prefixes;
+    direct_open_prefixes.push(scheme("mailPrefix"));
     let generated = format!(
         "const WEB_SCHEMES: &[&str] = &{:?};\n\
-         const MAIL_SCHEME: &str = {:?};\n\
+         const DIRECT_OPEN_PREFIXES: &[&str] = &{:?};\n\
          const FILE_SCHEME: &str = {:?};\n\
          const TINE_SCHEME: &str = {:?};\n\
          const NEVER_OPENED_SCHEMES: &[&str] = &{:?};\n",
-        scheme_list("web"),
-        scheme("mail"),
+        web_schemes,
+        direct_open_prefixes,
         scheme("localFile"),
         scheme("deepLink"),
         scheme_list("refused"),
     );
     let out = std::path::PathBuf::from(std::env::var_os("OUT_DIR").expect("build output"));
-    std::fs::write(out.join("external_link_schemes.rs"), generated).expect("generated link schemes");
+    std::fs::write(out.join("external_link_schemes.rs"), generated)
+        .expect("generated link schemes");
 }
 
 /// Diagnostics accepts registered names, never arbitrary IPC text. Derive

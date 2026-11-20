@@ -30,6 +30,20 @@ it("checks desktop external links before IPC and preserves native routes", async
   expect(invoke).toHaveBeenLastCalledWith("open_external", { url, confirmedScheme: "ZOTERO" });
 });
 
+it.each([
+  ["HtTp://example.org", "HTTP"],
+  ["HTTPS://example.org", "Https"],
+  ["Mailto:a@b.c", "MAILTO"],
+])("requires matching consent before native IPC for %s", async (url, consent) => {
+  vi.stubGlobal("window", { __TAURI_INTERNALS__: {} });
+  const api = (await import("./backend")).backend();
+  await expect(api.openExternal(url)).rejects.toThrow("confirmation");
+  await expect(api.openExternal(url, "zotero")).rejects.toThrow("confirmation");
+  expect(invoke).not.toHaveBeenCalled();
+  await api.openExternal(url, consent);
+  expect(invoke).toHaveBeenCalledExactlyOnceWith("open_external", { url, confirmedScheme: consent });
+});
+
 const reader = () => publishedBackend(async (): Promise<PublishedSnapshot> => {
   throw new Error("opening an external link does not load the graph");
 });
