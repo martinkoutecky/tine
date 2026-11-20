@@ -254,6 +254,7 @@ it.each(["zoom", "Journals day"].flatMap(surface =>
     expect(selectAllFrom(from, host.querySelector<HTMLElement>(".main-content")!)).toBe(true);
     expect(selectedIds()).toContain(journal ? "day-0" : "other-root");
     to.dispatchEvent(new MouseEvent("pointerdown", { bubbles: true, button: 0 }));
+    to.dispatchEvent(new MouseEvent("pointerup", { bubbles: true, button: 0 }));
     to.dispatchEvent(new MouseEvent("click", { bubbles: true, detail: 1 }));
     expect(selectedIds()).toEqual([]);
     const event = new KeyboardEvent("keydown", { key: "a", ctrlKey: true, bubbles: true, cancelable: true });

@@ -27,7 +27,7 @@ import { carryDay } from "../carry";
 import { sharesPageName } from "../conflictQueue";
 import { journalTitle, appNow } from "../journal";
 import { BLOCK_COLOR_NAMES, BLOCK_COLOR_SWATCH } from "../blockColors";
-import { blockSubtreeMarkdown, deleteBlock, deleteSelection, selectionMarkdown, withUndoUnit, setBlockProperty, toggleBlockProperty, toggleOwnNumberedList, blockProperty, setSelectionHeading, blockWritable, setCollapsedTrees, flushPage, deletePage, restoreTodayJournalInFeed, reportPageLoadRefusal, selectedIds, blockPageReadOnly, pageByName, buildClipboardPayload, insertOutlineBefore, blockExternalId, node as docNode } from "../document";
+import { blockSubtreeMarkdown, deleteBlock, deleteSelection, selectionClaim, selectionMarkdown, withUndoUnit, setBlockProperty, toggleBlockProperty, toggleOwnNumberedList, blockProperty, setSelectionHeading, blockWritable, setCollapsedTrees, flushPage, deletePage, restoreTodayJournalInFeed, reportPageLoadRefusal, selectedIds, blockPageReadOnly, pageByName, buildClipboardPayload, insertOutlineBefore, blockExternalId, node as docNode } from "../document";
 import { renameOrMergePage, renameOutcomeMessage } from "../graph";
 import { openDurableBlock, removeAuthor, removeAuthorTarget } from "../blockRefActions";
 import { editOccurrence, removeOccurrence, replaceOccurrenceWithEmbed, replaceOccurrenceWithTargetText, type OwnedOccurrence } from "../refOccurrence";
@@ -1170,8 +1170,8 @@ function blockActions(id: string, x: number, y: number, commentSelection: Return
   const commentRoot = threadRootOf(id);
   const commentParent = commentRoot ? docNode(commentRoot)!.parent! : id;
   const ids = multi ? selected : [id];
+  const owns = selectionClaim(); // the selection this menu opened on
   const authorActions = removeAuthorTarget(ids) !== null ? [{ label: msg("comment-remove-author"), run: () => removeAuthor(ids) }] : [];
-  const sameSelection = () => JSON.stringify(selectedIds()) === JSON.stringify(ids);
   const text = () => multi ? selectionMarkdown() : blockSubtreeMarkdown(id, 0, true, copyStripCollapsed());
   const copy = () => reportCopy(copyBlockOutline("copy", text(), buildClipboardPayload(ids)), msg("context-menu-ui-copied", { count: ids.length }));
   const writable = ids.every(blockWritable);
@@ -1242,7 +1242,7 @@ function blockActions(id: string, x: number, y: number, commentSelection: Return
     {
       label: msg("context-menu-ui-cut", { count: ids.length }),
       run: () => {
-        void cutBlocks(ids, text(), () => !multi || sameSelection() ? text() : "", () => multi ? deleteSelection() : deleteBlock(id))
+        void cutBlocks(ids, text(), () => !multi || owns() ? text() : "", () => multi ? deleteSelection() : deleteBlock(id))
           .catch(() => pushToast(msg("context-menu-ui-couldn-t-cut-clipboard-write-failed", { count: ids.length }), "error"));
       },
     },
@@ -1260,6 +1260,6 @@ function blockActions(id: string, x: number, y: number, commentSelection: Return
           },
         ]
       : []),
-    { label: msg("context-menu-ui-delete", { count: ids.length }), run: () => { if (multi ? sameSelection() : blockWritable(id)) multi ? deleteSelection() : deleteBlock(id); }, danger: true },
+    { label: msg("context-menu-ui-delete", { count: ids.length }), run: () => { if (multi ? owns() : blockWritable(id)) multi ? deleteSelection() : deleteBlock(id); }, danger: true },
   ];
 }

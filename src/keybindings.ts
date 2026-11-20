@@ -53,7 +53,7 @@ import {
   route,
 } from "./router";
 import { journalTitle, parseJournalTitle, appNow } from "./journal";
-import { undo, redo, blankOutlineSelection, hasSelection, moveSelection, cycleSelectionTasks, expandBlockSelection, moveSelectionItems, indentSelection, outdentSelection, deleteSelection, selectionMarkdown, selectionScope, clearSelection, selectedIds, singleSelectedId, topSelected, blockIsGridView, pageVisibleOrder, selectBlock, visibleOrder, toggleUndoRedoMode, buildClipboardPayload, node as docNode, loadedPage } from "./document";
+import { undo, redo, blankOutlineSelection, selectionClaim, hasSelection, moveSelection, cycleSelectionTasks, expandBlockSelection, moveSelectionItems, indentSelection, outdentSelection, deleteSelection, selectionMarkdown, selectionScope, clearSelection, selectedIds, singleSelectedId, topSelected, blockIsGridView, pageVisibleOrder, selectBlock, visibleOrder, toggleUndoRedoMode, buildClipboardPayload, node as docNode, loadedPage } from "./document";
 import { editingId, startEditing } from "./editorController";
 import { copyBlockOutline } from "./clipboard";
 import { cutBlocks } from "./cut";
@@ -1005,16 +1005,14 @@ function focusedGridSurface(gridId: string): string | null {
 
 function writeSelectionToClipboard(cut: boolean, blank: object | null = null): void {
   const ids = selectedIds();
+  // Nothing left to copy (its roots disappeared): an empty Cut must not remove a later selection.
+  if (!ids.length) return void (blank && clearSelection());
   const text = selectionMarkdown();
   if (cut) {
-    // The Cut owns the selection it started from: the same gesture (none for an
-    // ordinary selection) and the same blocks.
-    const sameGesture = () => blankOutlineSelection() === blank;
-    void cutBlocks(ids, text, () =>
-      sameGesture() && JSON.stringify(selectedIds()) === JSON.stringify(ids) ? selectionMarkdown() : "",
-      () => deleteSelection())
+    const owns = selectionClaim();
+    void cutBlocks(ids, text, () => owns() ? selectionMarkdown() : "", () => deleteSelection())
       .catch(() => pushToast(msg("commands-couldn-t-cut-selection-clipboard-write-failed"), "error"))
-      .finally(() => { if (blank && sameGesture()) clearSelection(); });
+      .finally(() => { if (blank && owns()) clearSelection(); });
   } else {
     void copyBlockOutline("copy", text, buildClipboardPayload(ids))
       .catch(() => pushToast(msg("commands-couldn-t-copy-selection-clipboard-write-failed"), "error"));
@@ -1387,10 +1385,17 @@ export function installKeybindings(overrides: Record<string, ShortcutBinding> = 
     };
     // A click is a blank hit only if its primary press started on the clicked element
     // and never moved beyond the drag threshold or was cancelled (GH #793).
-    let press: { id: number; at: EventTarget | null; x: number; y: number; moved: boolean } | undefined;
+    let press: { id: number; at: EventTarget | null; up?: EventTarget | null; x: number; y: number; moved: boolean } | undefined;
+    const modified = (e: MouseEvent) => e.button !== 0 || e.shiftKey || e.ctrlKey || e.metaKey || e.altKey;
     const pressed = (e: PointerEvent) => {
       retireBlankSelection();
-      press = { id: e.pointerId, at: e.target, x: e.clientX, y: e.clientY, moved: e.button !== 0 };
+      press = { id: e.pointerId, at: e.target, x: e.clientX, y: e.clientY, moved: modified(e) };
+    };
+    const released = (e: PointerEvent) => {
+      if (!press || e.pointerId !== press.id) return;
+      moving(e);
+      press.up = e.target;
+      if (modified(e)) press.moved = true;
     };
     const moving = (e: PointerEvent) => {
       if (press && !press.moved && e.pointerId === press.id) {
@@ -1402,7 +1407,7 @@ export function installKeybindings(overrides: Record<string, ShortcutBinding> = 
       retireBlankSelection();
       const at = e.target, p = press;
       press = undefined;
-      if (p && (p.moved || p.at !== at)) return;
+      if (p && (p.moved || p.at !== at || p.up !== at)) return;
       if (e.button !== 0 || !isElementNode(at) || e.shiftKey || e.ctrlKey || e.metaKey || e.altKey || paneSel()) return;
       // Click follows native focus routing. The hit is used by the next key only.
       const hit = outlineSelectionAt(at);
@@ -1410,6 +1415,7 @@ export function installKeybindings(overrides: Record<string, ShortcutBinding> = 
     };
     win.addEventListener("pointerdown", pressed, true);
     win.addEventListener("pointermove", moving, { capture: true, passive: true });
+    win.addEventListener("pointerup", released, true);
     win.addEventListener("pointercancel", unpress, true);
     win.addEventListener("dragstart", unpress, true);
     win.addEventListener("focusin", retireBlankSelection, true);
@@ -1431,6 +1437,7 @@ export function installKeybindings(overrides: Record<string, ShortcutBinding> = 
     return () => {
       win.removeEventListener("pointerdown", pressed, true);
       win.removeEventListener("pointermove", moving, true);
+      win.removeEventListener("pointerup", released, true);
       win.removeEventListener("pointercancel", unpress, true);
       win.removeEventListener("dragstart", unpress, true);
       win.removeEventListener("focusin", retireBlankSelection, true);
