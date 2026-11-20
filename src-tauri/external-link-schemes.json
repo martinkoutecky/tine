@@ -1,0 +1,1 @@
+{ "refused": ["javascript", "vbscript", "data", "blob", "about"] }

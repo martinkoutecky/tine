@@ -156,6 +156,35 @@ it("restores a resource update after its enclosing reactive batch flushes", asyn
   expect(host.getBoundingClientRect().bottom).toBe(-100);
 });
 
+it("does not hit-test or force a second layout when source reads complete below the viewport", async () => {
+  const root = document.createElement("div");
+  const reader = document.createElement("div");
+  root.append(reader);
+  document.body.append(root);
+  const viewport = vi.spyOn(root, "getBoundingClientRect").mockReturnValue({ top: 0, bottom: 800, left: 0, width: 900 } as DOMRect);
+  const anchor = vi.spyOn(reader, "getBoundingClientRect").mockReturnValue({ top: 100 } as DOMRect);
+  const hit = vi.fn(() => reader);
+  Object.defineProperty(document, "elementFromPoint", { configurable: true, value: hit });
+  const hosts = Array.from({ length: 28 }, () => {
+    const host = document.createElement("div");
+    root.append(host);
+    return { host, rect: vi.spyOn(host, "getBoundingClientRect").mockReturnValue({ top: 900, bottom: 930 } as DOMRect) };
+  });
+  const publish = vi.fn();
+  try {
+    for (const { host } of hosts) {
+      preserveAboveViewport(host, publish, root, true);
+      await Promise.resolve();
+    }
+    expect(publish).toHaveBeenCalledTimes(hosts.length);
+    expect(root.scrollTop).toBe(0);
+    expect(viewport).toHaveBeenCalledTimes(hosts.length);
+    for (const { rect } of hosts) expect(rect).toHaveBeenCalledOnce();
+    expect(hit).not.toHaveBeenCalled();
+    expect(anchor).not.toHaveBeenCalled();
+  } finally { Reflect.deleteProperty(document, "elementFromPoint"); }
+});
+
 it("coalesces 50 deferred resource updates into one snapshot and one scroll write per root", async () => {
   const root = document.createElement("div"), reader = document.createElement("div");
   reader.className = "block-main";

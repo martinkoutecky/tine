@@ -27,6 +27,7 @@ The format follows [Keep a Changelog](https://keepachangelog.com/); versions use
 - On Windows, a graph on a file system without file IDs (a WSL share such as `\\wsl.localhost`, a FAT32 or exFAT drive, a Samba share) can be saved again; since 0.9.0 every save failed with "The request is not supported (os error 50)" (reported by redstreet in #973; REG-973-WINDOWS-NO-FILE-ID).
 - **Ctrl/Cmd+A** on blank outline space, including row padding and the page gutter, selects the live blocks in the clicked group. Repeating the shortcut keeps the same group selected. Copy preserves child indentation in plain text and HTML. Shift-click, moving focus, and Delete clear the selection (#793).
 - **Ctrl/Cmd+A** on a Journals separator, query status row or group with no live blocks uses native select-all. Delete, Backspace and Cut from those hits leave the outline intact (#793).
+- Scrolling through an expanded query with nested results stutters less as new source pages load (#1001).
 - The Guide's Share pages page no longer says that **Link** is greyed out with "Coming soon" or depends on your build; link sharing is offered in every build. The Flatpak section of Platforms says the same (D-20261117-QSG).
 - Query results have even spacing when breadcrumbs are turned off, including between results from different source pages (#881).
 - Help for the `tine export` subcommands explains which graph path to pass and where static and live publications are written (#588).
@@ -80,6 +81,7 @@ The format follows [Keep a Changelog](https://keepachangelog.com/); versions use
 
 ### Security
 
+- Published and rendered links check URL schemes before opening. Refused schemes are inert, and links to registered apps require consent for the exact scheme (#984).
 - DOMPurify is updated to 3.4.18 and seroval to 1.6.12, which close published
   advisories. Tine used none of the affected DOMPurify modes, so no known
   exploit applied (reported by Dieterbe in #982).

@@ -1014,10 +1014,9 @@ pub(crate) enum ExternalOpen {
     CustomScheme,
 }
 
-/// Schemes no outbound link ever opens, confirmed or not: they run code or
-/// carry inline content in whatever receives them (I-22). `file:` and `tine:`
-/// have their own routes and are not custom schemes either.
-const NEVER_OPENED_SCHEMES: &[&str] = &["javascript", "vbscript", "data", "blob", "about"];
+// NEVER_OPENED_SCHEMES (external-link-schemes.json, shared with the TS policy):
+// they run code or carry inline content in whatever receives them (I-22).
+include!(concat!(env!("OUT_DIR"), "/external_link_schemes.rs"));
 
 /// The RFC 3986 scheme of `url`, lowercased, or `None` when it has none. A
 /// single letter is a Windows drive (`C:\notes`), not a scheme.

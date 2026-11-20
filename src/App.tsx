@@ -79,6 +79,7 @@ import { openPublishedPermalink, publishedPermalinkForWorkspace, replacePublishe
 import { maybeShowDefenderHint } from "./defenderHint";
 import { maybeShowGitIgnoreNotice } from "./gitIgnoreNotice";
 import { bindingOwner, graphOwner, latestOwner, ownedWhen, readOwned, readOwnedResource, writeOwned, type Owned, type Owner } from "./owned";
+import { anchorDecision } from "./linkSchemePolicy";
 import { parserFailed } from "./render/parse";
 import { warnIfSoftwareRendering } from "./gpu";
 import { initSmoothScroll } from "./smoothScroll";
@@ -581,14 +582,14 @@ export async function installMobileExternalLinkHandler(owner: Owner = ownedWhen(
     const target = e.target;
     const el = isElementNode(target) ? target : isNodeValue(target) ? target.parentElement : null;
     const a = el?.closest?.("a[href]") as HTMLAnchorElement | null;
-    const href = a?.getAttribute("href")?.trim() ?? "";
-    const scheme = a ? /^([a-z][a-z0-9+.-]*):/i.exec(href)?.[1]?.toLowerCase() : undefined;
-    if (!a || !scheme) return; // graph-internal relative/hash navigation
+    if (!a) return;
+    const decision = anchorDecision(a.getAttribute("href") ?? "");
+    if (decision === "relative") return; // graph-internal relative/hash navigation
     // I-22 (master b61bb9d25303): an anchor in shared or imported content with
     // any other explicit scheme (intent:, javascript:, tel:, …) must not
     // navigate the WebView; its own handler (e.g. a file: asset link) still runs.
     e.preventDefault();
-    if (scheme !== "http" && scheme !== "https" && scheme !== "mailto") return;
+    if (decision !== "web" && decision !== "mail") return;
     e.stopPropagation();
     void backend().openExternal(a.href);
   };
