@@ -281,3 +281,33 @@ describe("reference bullet modified clicks (GH #456)", () => {
     }
   });
 });
+
+// UI-ORG-RESULT-ROW-FORMAT, review 62c50db18 F2: a result row knows its source
+// file. Opening it in a new tab or the other pane keeps that exact file, so a
+// loaded same-name alternate file is not opened in its place.
+describe("reference bullet routes keep the result's source file", () => {
+  it.each([
+    { label: "block row", over: {} },
+    { label: "opening-text row", over: { page_preamble: true } },
+  ])("$label: Ctrl/Cmd+click and middle-click carry the path", ({ over }) => {
+    resetPaneLayoutToSingle(booksSnapshot());
+    const root = document.createElement("div");
+    document.body.append(root);
+    const dispose = render(() => RefBlocks({
+      page: "Books",
+      path: "pages/dup/Books.md",
+      blocks: [dto({ id: "runtime", raw: "Read this", properties: [["ID", "authored-ref"]], ...over })],
+    }), root);
+    try {
+      const bullet = root.querySelector<HTMLElement>(".bullet-container")!;
+      const newRoutes = () => paneRouter("main").tabs().map((t) => t.history[t.pos]).slice(1);
+      bullet.dispatchEvent(new MouseEvent("click", { bubbles: true, cancelable: true, button: 0, ctrlKey: true }));
+      bullet.dispatchEvent(new MouseEvent("auxclick", { bubbles: true, cancelable: true, button: 1 }));
+      const routes = newRoutes();
+      expect(routes.length).toBe(2);
+      for (const r of routes) expect(r).toMatchObject({ kind: "page", name: "Books", path: "pages/dup/Books.md" });
+    } finally {
+      dispose();
+    }
+  });
+});

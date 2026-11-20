@@ -26,7 +26,7 @@ import { exitPaneSelect } from "./paneSelect";
 import { DEFAULT_TITLE_FORMAT, setJournalTitleFormat } from "./journal";
 import { pageIdentityKey } from "./pageIdentity";
 import { clearDrawerOpener, mobileDrawerMode, captureDrawerOpener, restoreDrawerFocus, type DrawerSide } from "./mobileDrawers";
-import { navigationTarget } from "./pageIndex";
+import { navigationTarget, ownerPath, resolvedTarget } from "./pageIndex";
 import { forgetDeletedFavorite } from "./favorites";
 import { changeGraphSetting } from "./graphPreferences";
 
@@ -1101,6 +1101,19 @@ export function restoreHistorySidebarContext(context: HistorySidebarContext) {
   setRightSidebarOpen(context.open);
 }
 
+/** The file a sidebar item shows: its own path, else the file the store
+ *  resolves its name to. The one comparison for "same owner" in both sidebar
+ *  open handlers, so a pathful result never evicts the name-only view of the
+ *  same file, and a different same-name file still replaces it. */
+function sidebarOwnerPath(name: string, pageKind: PageKind, path: string | undefined): string | undefined {
+  return path ?? ownerPath(resolvedTarget(name, pageKind));
+}
+function sameSidebarOwner(item: SidebarItem, name: string, pageKind: PageKind, path: string | undefined): boolean {
+  const itemName = item.kind === "page" ? item.name : item.page;
+  if (itemName !== name || item.pageKind !== pageKind) return false;
+  return sidebarOwnerPath(itemName, item.pageKind, item.path) === sidebarOwnerPath(name, pageKind, path);
+}
+
 export function openPageInSidebar(target: PageTarget): void;
 export function openPageInSidebar(name: string, pageKind?: PageKind, path?: string): void;
 export function openPageInSidebar(
@@ -1130,7 +1143,7 @@ export function openPageInSidebar(
       const sameOwnerName = item.kind === "page"
         ? item.name === name && item.pageKind === pageKind
         : item.page === name && item.pageKind === pageKind;
-      return !sameOwnerName || item.path === path;
+      return !sameOwnerName || sameSidebarOwner(item, name, pageKind, path);
     });
     const promoted = replaced[existing];
     setRightSidebar([promoted, ...compatible.filter((item) => item !== promoted)]);
@@ -1141,7 +1154,7 @@ export function openPageInSidebar(
     const sameOwnerName = item.kind === "page"
       ? item.name === name && item.pageKind === pageKind
       : item.page === name && item.pageKind === pageKind;
-    return !sameOwnerName || item.path === path;
+    return !sameOwnerName || sameSidebarOwner(item, name, pageKind, path);
   });
   setRightSidebar([{ kind: "page", name, pageKind, path }, ...compatible]);
   focusOpenedSidebarItem();
@@ -1163,7 +1176,7 @@ export function openBlockInSidebar(ref: {
       const sameOwnerName = item.kind === "page"
         ? item.name === ref.page && item.pageKind === ref.pageKind
         : item.page === ref.page && item.pageKind === ref.pageKind;
-      return !sameOwnerName || item.path === ref.path;
+      return !sameOwnerName || sameSidebarOwner(item, ref.page, ref.pageKind, ref.path);
     });
     const promoted = updated[existing];
     setRightSidebar([promoted, ...compatible.filter((item) => item !== promoted)]);
@@ -1177,9 +1190,7 @@ export function openBlockInSidebar(ref: {
     const sameOwnerName = item.kind === "page"
       ? item.name === ref.page && item.pageKind === ref.pageKind
       : item.page === ref.page && item.pageKind === ref.pageKind;
-    if (!sameOwnerName) return true;
-    const itemPath = item.path;
-    return itemPath === ref.path;
+    return !sameOwnerName || sameSidebarOwner(item, ref.page, ref.pageKind, ref.path);
   });
   setRightSidebar([{ kind: "block", ...ref }, ...compatible]);
   focusOpenedSidebarItem();

@@ -207,9 +207,10 @@ function RefBlock(props: {
   // every gesture that would open the block opens its page.
   const openRefRoute = (open: (route: Route) => unknown): void => {
     const t = refTarget();
+    const path = t.path ? { path: t.path } : {};
     open(props.block.page_preamble
-      ? { kind: "page", name: t.page, pageKind: t.pageKind }
-      : { kind: "page", name: t.page, pageKind: t.pageKind, block: t.uuid });
+      ? { kind: "page", name: t.page, pageKind: t.pageKind, ...path }
+      : { kind: "page", name: t.page, pageKind: t.pageKind, block: t.uuid, ...path });
   };
   const openPreamblePage = (): void => {
     const t = refTarget();
