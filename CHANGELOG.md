@@ -24,6 +24,7 @@ The format follows [Keep a Changelog](https://keepachangelog.com/); versions use
 - Adding to a page or a journal day while Tine is still loading the graph at launch no longer writes a second file for it beside your file; the add is refused as for any page that already has a file (REG-HELD-UNINDEXED-TWIN).
 - When you type in a page while an agent writes to it through the CLI, a resulting conflict review now compares against your last save that reached the disk, instead of falling back to a two-way review when an older save was proven only by the disk (#964; REG-GH964-LIVE-CONFLICT-BASE).
 - On Windows, a graph on a file system without file IDs (a WSL share such as `\\wsl.localhost`, a FAT32 or exFAT drive, a Samba share) can be saved again; since 0.9.0 every save failed with "The request is not supported (os error 50)" (reported by redstreet in #973; REG-973-WINDOWS-NO-FILE-ID).
+- The Guide's Share pages page no longer says that **Link** is greyed out with "Coming soon" or depends on your build; link sharing is offered in every build. The Flatpak section of Platforms says the same (D-20261117-QSG).
 - Query results have even spacing when breadcrumbs are turned off, including between results from different source pages (#881).
 - Help for the `tine export` subcommands explains which graph path to pass and where static and live publications are written (#588).
 - **Level ≤** in Copy / export now limits how many levels of each selected reference are copied, including from source groups you haven’t scrolled to (#793, reported by vinyatu).
