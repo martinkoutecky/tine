@@ -1170,7 +1170,7 @@ function blockActions(id: string, x: number, y: number, commentSelection: Return
   const commentRoot = threadRootOf(id);
   const commentParent = commentRoot ? docNode(commentRoot)!.parent! : id;
   const ids = multi ? selected : [id];
-  const owns = selectionClaim(); // the selection this menu opened on
+  const owns = multi ? selectionClaim() : () => true; // the selection this menu opened on
   const authorActions = removeAuthorTarget(ids) !== null ? [{ label: msg("comment-remove-author"), run: () => removeAuthor(ids) }] : [];
   const text = () => multi ? selectionMarkdown() : blockSubtreeMarkdown(id, 0, true, copyStripCollapsed());
   const copy = () => reportCopy(copyBlockOutline("copy", text(), buildClipboardPayload(ids)), msg("context-menu-ui-copied", { count: ids.length }));

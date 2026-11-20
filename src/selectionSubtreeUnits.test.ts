@@ -20,7 +20,7 @@ vi.mock("./document/tree", async original => {
 import { initParser } from "./render/parse";
 import { loadSingle } from "./document/workingSet";
 import { clearSelection, deleteSelection, expandBlockSelection, extendSelectionTo, isSelected, moveSelection, resetStore, selectBlock, selectedIds, selectionMarkdown, singleSelectedId, topSelected, undo, type OutlineScope } from "./document";
-import { doc } from "./document/model";
+import { doc, setDoc } from "./document/model";
 import type { BlockDto } from "./types";
 import { ChangeKeyRegistry } from "./changeKeyRegistry";
 
@@ -223,4 +223,17 @@ it("Ctrl+A on a backward page range restarts the ladder at its anchor, as on Bet
   extendSelectionTo("A");
   expandBlockSelection();
   expect(topSelected()).toEqual(["E"]);
+});
+
+it("Ctrl+A again at a scoped top after a refresh keeps the whole outline through a fold (GH #793)", () => {
+  load();
+  const [roots, setRoots] = createSignal<readonly string[]>(["A", "B", "D"]);
+  const scope: OutlineScope = { get roots() { return roots(); } };
+  selectBlock("A", scope);
+  extendSelectionTo("D1", scope);
+  expandBlockSelection();
+  setRoots(["A", "E", "D"]);
+  expandBlockSelection();
+  setDoc("byId", "D", "collapsed", true);
+  expect(topSelected()).toEqual(["A", "E", "D"]);
 });
