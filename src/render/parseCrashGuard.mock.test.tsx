@@ -6,6 +6,7 @@ const wasmMock = vi.hoisted(() => {
     if (raw === "TRAP") throw new Error("mock wasm trap");
     return JSON.stringify({
       blocks: [{ kind: "paragraph", inline: [{ k: "plain", text: raw }] }],
+      render_planning: [],
       regions: { header: { marker: null, priority: null, heading: null }, literals: [],
         property_regions: [], properties: [], planning: [], drawers: [], id: null, quarantined: false },
     });

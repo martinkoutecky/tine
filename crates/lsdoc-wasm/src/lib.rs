@@ -442,14 +442,15 @@ pub fn parse_block_bundle_json(raw: &str, is_org: bool, untitled: bool) -> Strin
     } else {
         lsdoc_block_parse::parse_block(raw, is_org)
     };
-    let regions = block_regions::from_blocks(raw, is_org, &blocks);
+    let (regions, render_planning) = block_regions::from_blocks_with_planning(raw, is_org, &blocks);
     if !is_org {
         block_regions::strip_swallowed_rows(raw, &mut blocks);
     }
     format!(
-        "{{\"blocks\":{},\"regions\":{},\"sole_macro\":{}}}",
+        "{{\"blocks\":{},\"regions\":{},\"render_planning\":{},\"sole_macro\":{}}}",
         lsdoc::blocks_to_json(&blocks).unwrap(),
         serde_json::to_string(&regions).unwrap(),
+        serde_json::to_string(&render_planning).unwrap(),
         serde_json::to_string(&standalone_macro::sole_macro(&blocks)).unwrap()
     )
 }

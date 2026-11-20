@@ -62,6 +62,7 @@ fn scan(root: &Path, dir: &Path, out: &mut BTreeMap<String, usize>) {
                 || file.ends_with("_tests.rs")
                 || file.contains("testSetup")
                 || file == "crates/tine-outline/src/block_regions.rs"
+                || file == "crates/tine-outline/src/block_regions/scan.rs"
             {
                 continue;
             }

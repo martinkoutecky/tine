@@ -172,6 +172,10 @@ fn planning_dates_off_lsdoc_timestamp_code_robust() {
         "code-embedded planning is not badged"
     );
     assert_eq!(DocBlock::new("plain block").scheduled(), None);
+    assert_eq!(
+        DocBlock::new("Review\nscheduled: <2026-06-28 Sun>").scheduled(),
+        None
+    );
 }
 
 #[test]
@@ -198,7 +202,7 @@ fn scheduled_and_deadline_sharing_one_line_are_both_planning() {
         assert_eq!(b.deadline(), Some("2026-11-02 Mon .+2d"), "{raw}");
         let body = format!(
             "{:?}",
-            strip_planning_lines(crate::render::parse_block(raw, false), raw)
+            strip_planning_lines(crate::render::parse_block(raw, false), raw, false)
         );
         assert!(
             !body.contains("2026-1"),
@@ -212,7 +216,7 @@ fn scheduled_and_deadline_sharing_one_line_are_both_planning() {
     assert_eq!(DocBlock::new(tail).deadline(), Some("2026-11-02 Mon"));
     let body = format!(
         "{:?}",
-        strip_planning_lines(crate::render::parse_block(tail, false), tail)
+        strip_planning_lines(crate::render::parse_block(tail, false), tail, false)
     );
     assert!(
         body.contains("and a tail") && !body.contains("2026-1"),
@@ -243,7 +247,7 @@ fn line_leading_planning_timestamp_keeps_trailing_body_text() {
         }
         let body = format!(
             "{:?}",
-            strip_planning_lines(crate::render::parse_block(&raw, false), &raw)
+            strip_planning_lines(crate::render::parse_block(&raw, false), &raw, false)
         );
         assert!(body.contains("x"), "title remains body content: {body}");
         assert!(body.contains("tail"), "suffix remains body content: {body}");

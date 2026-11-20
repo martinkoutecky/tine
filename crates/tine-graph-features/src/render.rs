@@ -892,7 +892,7 @@ fn body_blocks_with_queries(
         // every native consumer of the body (HTML, print, search text) drops them too.
         tine_core::block_regions::strip_swallowed_rows(raw, &mut parsed);
     }
-    let mut blocks: Vec<_> = tine_core::doc::strip_planning_lines(parsed, raw)
+    let mut blocks: Vec<_> = tine_core::doc::strip_planning_lines(parsed, raw, org)
         .into_iter()
         .filter(|b| !matches!(b, Block::Properties { .. }))
         .collect();

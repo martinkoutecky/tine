@@ -11,7 +11,7 @@
 // parses. A miss happens only for a raw the backend hasn't seen yet (the block being
 // edited); that one derives from a single wasm lsdoc parse. Robust to every mutation:
 // any raw → lookup → hit (backend-known) or one parse (novel).
-import { blockRegions, parseBlock } from "./parse";
+import { blockRegions, parseBlock, renderPlanningOf } from "./parse";
 import { propertyKeyNorm } from "./block";
 import { DONE_MARKERS } from "../markers";
 import type { Block, Format, Inline } from "./ast";
@@ -163,7 +163,13 @@ function deriveFacets(raw: string, format: Format): Facets {
   }
   const headingProperty = headingPropertyState(properties);
   if (headingLevel == null) headingLevel = headingProperty.level;
-  const { scheduled, deadline } = planningDates(blocks, raw);
+  let scheduled: string | null = null;
+  let deadline: string | null = null;
+  for (const p of renderPlanningOf(blocks)) {
+    if (!p.top_level) continue;
+    if (p.kind === "Scheduled") scheduled ??= p.value;
+    else deadline ??= p.value;
+  }
   return {
     marker,
     done: marker != null && DONE_MARKERS.has(marker),
@@ -254,167 +260,38 @@ function tagsOf(blocks: readonly Block[]): string[] {
   return out;
 }
 
-const UTF8_ENCODER = new TextEncoder();
-const UTF8_DECODER = new TextDecoder();
-
-type PlanningSourceLine = { text: string; hasTrailingBody: boolean; lineStart: number };
-
-/** One body's source for planning-line checks: its UTF-8 bytes and the byte
- *  length of its leading whitespace, prepared on the first planning timestamp
- *  and shared by every inline flow of one render, so a body costs one encode
- *  however many flows it has (review e852e1b58 F1). */
-export type PlanningSource = { readonly raw: string; prepared?: { bytes: Uint8Array; leadBytes: number } };
-export const planningSource = (raw: string): PlanningSource => ({ raw });
-function preparedOf(source: PlanningSource): { bytes: Uint8Array; leadBytes: number } {
-  const { raw } = source;
-  return (source.prepared ??= {
-    bytes: UTF8_ENCODER.encode(raw),
-    leadBytes: UTF8_ENCODER.encode(raw.slice(0, raw.length - raw.trimStart().length)).length,
-  });
-}
-
-const isPlanningTimestamp = (i: Inline): i is Extract<Inline, { k: "timestamp" }> =>
-  i.k === "timestamp" && (i.ts === "Scheduled" || i.ts === "Deadline");
-
-/** The line-leading planning timestamps of ONE inline flow, by index in `inlines`. lsdoc's span (from the re-bulleted
- *  parser input `"- " + raw.trimStart()`) is mapped back to the original raw bytes. A timestamp is line-leading when
- *  only horizontal whitespace, or an EARLIER line-leading planning timestamp of the same line, precedes it, so
- *  `SCHEDULED: <a> DEADLINE: <b>` on one line is two planning timestamps (OG shows both as chips and nothing in the
- *  body). `hasTrailingBody` is about the text after the LAST timestamp of such a run: it is ordinary body content.
- *  Deliberate OG divergence: a parser-recognized mid-text `Discuss SCHEDULED: <…>` remains content in Tine. */
-function planningLinesOf(inlines: readonly Inline[], source: PlanningSource): Map<number, PlanningSourceLine> {
-  // One pass in source order. A line's bounds are found once, by its first timestamp; each later one inspects only
-  // the gap since the previous accepted one, and the trailing body is judged once, when the line closes. So a line
-  // costs its length, however many timestamps it holds (review 0e6bd6530 F2).
-  const out = new Map<number, PlanningSourceLine>();
-  let line: { start: number; end: number; runEnd: number; alive: boolean; members: number[] } | null = null;
-  const blank = (bytes: Uint8Array, from: number, to: number) => {
-    planningScanStats.decoded += to - from;
-    return UTF8_DECODER.decode(bytes.subarray(from, to)).trim() === "";
-  };
-  const close = (bytes: Uint8Array) => {
-    if (!line || line.members.length === 0) return;
-    const hasTrailingBody = !blank(bytes, line.runEnd, line.end);
-    for (const index of line.members) out.get(index)!.hasTrailingBody = hasTrailingBody;
-  };
-  let prepared: { bytes: Uint8Array; leadBytes: number } | null = null;
-  for (let index = 0; index < inlines.length; index++) {
-    const i = inlines[index];
-    if (!isPlanningTimestamp(i)) continue;
-    const span = i.span;
-    if (!span || span[0] < 2 || span[1] < span[0]) continue;
-    prepared ??= preparedOf(source);
-    const { bytes, leadBytes } = prepared;
-    const start = span[0] - 2 + leadBytes;
-    const end = span[1] - 2 + leadBytes;
-    if (start < 0 || end < start || end > bytes.length) continue;
-    let accept: boolean;
-    if (line && start >= line.start && start < line.end) {
-      // Same line: only the gap since the previous accepted timestamp.
-      accept = line.alive && start >= line.runEnd && blank(bytes, line.runEnd, start);
-    } else {
-      close(bytes);
-      let lineStart = start;
-      while (lineStart > 0 && bytes[lineStart - 1] !== 0x0a) lineStart--;
-      let lineEnd = end;
-      while (lineEnd < bytes.length && bytes[lineEnd] !== 0x0a) lineEnd++;
-      planningScanStats.scanned += lineEnd - lineStart;
-      line = { start: lineStart, end: lineEnd, runEnd: lineStart, alive: true, members: [] };
-      accept = blank(bytes, lineStart, start);
-    }
-    if (!accept) { line.alive = false; continue; }
-    planningScanStats.decoded += end - start;
-    out.set(index, { text: UTF8_DECODER.decode(bytes.subarray(start, end)), hasTrailingBody: false, lineStart: line.start });
-    line.runEnd = end;
-    line.members.push(index);
-  }
-  if (prepared) close(prepared.bytes);
-  return out;
-}
-
-/** Bytes `planningLinesOf` has walked to find line bounds (`scanned`) and handed to the decoder (`decoded`):
- *  plain counters for the cost tests (PC-3), never read by the app. */
-export const planningScanStats = { scanned: 0, decoded: 0 };
-
-function angleText(line: string): string | null {
-  const lt = line.indexOf("<");
-  const gt = lt < 0 ? -1 : line.indexOf(">", lt + 1);
-  return lt >= 0 && gt > lt ? line.slice(lt + 1, gt) : null;
-}
-
-export type PlanningChip = { ts: "Scheduled" | "Deadline"; value: string | null; hasTrailingBody: boolean };
-
-/** The parser-confirmed standalone SCHEDULED/DEADLINE timestamps of one inline flow, in the exact terms the view's
- *  date chip uses (`planningDates`): lsdoc's Timestamp, line-leading as `planningLinesOf` defines. `value` is the
- *  text between the angle brackets. The CM6 editor renders the same chip from this, so view and edit cannot
- *  disagree on what a planning line is. */
-export function planningChipsOf(inlines: readonly Inline[], source: PlanningSource): Map<Inline, PlanningChip> {
-  const out = new Map<Inline, PlanningChip>();
-  for (const [index, line] of planningLinesOf(inlines, source)) {
-    const i = inlines[index];
-    if (isPlanningTimestamp(i)) out.set(i, { ts: i.ts as "Scheduled" | "Deadline", value: angleText(line.text), hasTrailingBody: line.hasTrailingBody });
-  }
-  return out;
-}
-
 const isBreak = (i: Inline | undefined) => i?.k === "break" || i?.k === "hardbreak";
 
-/** Remove genuine line-leading planning timestamps from the body AST while
- *  preserving any following text in the SAME paragraph. lsdoc represents both
- *  same-line and next-line body text in the planning timestamp's inline flow, so
- *  filtering the whole AST block either leaks the timestamp or deletes body text. */
+/** Hide the bundle's planning tokens while retaining body text in the same inline flow. */
 export function stripPlanningLines(blocks: Block[], raw: string): Block[] {
-  // Normal blocks must retain the pre-fix one-filter hot path: scrolling a large
-  // page mounts thousands of bodies, and allocating a second AST array for every
-  // block measurably regresses that path. This is only a cheap candidate gate;
-  // lsdoc Timestamp + source-span boundaries still decide semantics below.
-  if (!raw.includes("SCHEDULED:") && !raw.includes("DEADLINE:")) return blocks;
-  const source = planningSource(raw);
+  const planning = renderPlanningOf(blocks);
+  // Preserve the existing body filter for blocks with uppercase keywords.
+  if (planning.length === 0 || (!raw.includes("SCHEDULED:") && !raw.includes("DEADLINE:"))) return blocks;
+  const byStart = new Map(planning.filter((p) => p.top_level).map((p) => [p.span_start, p]));
+  if (byStart.size === 0) return blocks;
   return blocks.map((b) => {
     if (b.kind !== "paragraph" && b.kind !== "bullet" && b.kind !== "heading") return b;
-    const planning = planningLinesOf(b.inline, source);
-    if (planning.size === 0) return b;
-
-    const remove = new Set(planning.keys());
-    let previous: [number, PlanningSourceLine] | null = null;
-    for (const [index, line] of planning) {
-      // The blanks between two timestamps of one line go with them.
-      if (previous && previous[1].lineStart === line.lineStart) {
-        for (let k = previous[0] + 1; k < index; k++) {
+    const remove = new Set<number>();
+    let previous: { index: number; lineStart: number } | undefined;
+    for (const [index, inline] of b.inline.entries()) {
+      if (inline.k !== "timestamp" || !inline.span) continue;
+      const line = byStart.get(inline.span[0]);
+      if (!line) continue;
+      remove.add(index);
+      // Blanks between timestamps on the same source line go with them.
+      if (previous?.lineStart === line.line_start) {
+        for (let k = previous.index + 1; k < index; k++) {
           const between = b.inline[k];
           if (between.k === "plain" && between.text.trim() === "") remove.add(k);
         }
       }
-      previous = [index, line];
-      if (line.hasTrailingBody) continue;
-      const next = b.inline[index + 1];
-      const prev = b.inline[index - 1];
-      if (isBreak(next)) remove.add(index + 1);
-      else if (isBreak(prev)) remove.add(index - 1);
+      previous = { index, lineStart: line.line_start };
+      if (line.has_trailing_body) continue;
+      if (isBreak(b.inline[index + 1])) remove.add(index + 1);
+      else if (isBreak(b.inline[index - 1])) remove.add(index - 1);
     }
-    return { ...b, inline: b.inline.filter((_, index) => !remove.has(index)) };
+    return remove.size ? { ...b, inline: b.inline.filter((_, index) => !remove.has(index)) } : b;
   });
-}
-
-/** SCHEDULED/DEADLINE display text for date chrome. The Timestamp comes from lsdoc;
- *  its parser-provided byte span proves the token starts a source line (or follows another
- *  planning timestamp of that line), so mid-text and inline-code lookalikes remain
- *  ordinary body content. */
-function planningDates(blocks: Block[], raw: string): { scheduled: string | null; deadline: string | null } {
-  let scheduled: string | null = null;
-  let deadline: string | null = null;
-  const source = planningSource(raw);
-  for (const b of blocks) {
-    if (b.kind !== "paragraph" && b.kind !== "bullet" && b.kind !== "heading") continue;
-    for (const [index, line] of planningLinesOf(b.inline, source)) {
-      const i = b.inline[index];
-      if (!isPlanningTimestamp(i)) continue;
-      const value = angleText(line.text);
-      if (i.ts === "Scheduled" && scheduled === null) scheduled = value;
-      if (i.ts === "Deadline" && deadline === null) deadline = value;
-    }
-  }
-  return { scheduled, deadline };
 }
 
 export { EMPTY as EMPTY_FACETS };
