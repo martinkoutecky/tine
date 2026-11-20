@@ -10,10 +10,12 @@ The format follows [Keep a Changelog](https://keepachangelog.com/); versions use
 
 ### Fixed
 - **Ctrl/Cmd+A** on blank outline space, including row padding and the page gutter, selects live blocks. Click another outline to start a fresh selection there. In Linked References, press it again to include the other loaded groups. Shift-click adjusts the selection within its outline, Copy keeps folded trees nested, and deleting the whole outline clears the selection (#793).
+- The Guide's Share pages page no longer says that **Link** is greyed out with "Coming soon" or depends on your build; link sharing is offered in every build. The Flatpak section of Platforms says the same (D-20261117-QSG).
 - Query results have even spacing when breadcrumbs are turned off, including between results from different source pages (#881).
 - Help for the `tine export` subcommands explains which graph path to pass and where static and live publications are written (#588).
 - **Level ≤** in Copy / export now limits how many levels of each selected reference are copied, including from source groups you haven’t scrolled to (#793, reported by vinyatu).
 - Reference export gives checked descendants below the depth limit their own branch and freezes the selection while reading source pages (#793).
+- Typing `[[` in a property value finds existing pages immediately, including in a newly inserted template. Block references and tags also open their search menus in property values. Picking a match keeps later values and markup after the caret. Ordinary property suggestions resume after you leave a closed reference and stay available for literal markers in code, math, URLs, link destinations or escaped text (#853).
 - The first Linked References panel you open reads only the pages that reference it again, as before 0.10: on a 10,000-page graph it took about half a second instead of a few milliseconds (REG-PERF-FIRST-LINKED-REFS-OPEN).
 - The first edit after All pages has shown its reference counts, made in Tine or in another editor, no longer pays for a scan of the whole graph: on a 10,000-page graph it took about 200 ms instead of 40 ms (REG-PERF-OUTSIDE-EDIT-REFRESH-COUNTS).
 
