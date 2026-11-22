@@ -238,13 +238,11 @@ impl Identity {
 
 // Android shared-storage FUSE inode stability has not been device-verified.
 // Use the approved vanish-only fallback rather than rejecting valid saves.
-// wasm32 (the browser build) binds no root: it has no file system, so every
-// check there fails as a vanished root.
-#[cfg(any(target_os = "android", target_arch = "wasm32"))]
+#[cfg(target_os = "android")]
 #[derive(PartialEq, Eq)]
 struct Identity;
 
-#[cfg(any(target_os = "android", target_arch = "wasm32"))]
+#[cfg(target_os = "android")]
 fn identity(path: &Path) -> io::Result<Identity> {
     if fs::metadata(path)?.is_dir() {
         Ok(Identity)
@@ -253,12 +251,12 @@ fn identity(path: &Path) -> io::Result<Identity> {
     }
 }
 
-#[cfg(any(target_os = "android", target_arch = "wasm32"))]
+#[cfg(target_os = "android")]
 fn current(path: &Path) -> io::Result<Identity> {
     identity(path)
 }
 
-#[cfg(any(target_os = "android", target_arch = "wasm32"))]
+#[cfg(target_os = "android")]
 impl Identity {
     fn matches(&self, actual: &Self) -> bool {
         self == actual
@@ -416,6 +414,29 @@ impl Identity {
     }
 }
 
+// The browser build (wasm32) has no file system and never opens a store, so
+// it binds no root: every binding attempt there is unsupported.
+#[cfg(target_arch = "wasm32")]
+#[derive(PartialEq, Eq)]
+struct Identity;
+
+#[cfg(target_arch = "wasm32")]
+fn identity(_path: &Path) -> io::Result<Identity> {
+    Err(io::ErrorKind::Unsupported.into())
+}
+
+#[cfg(target_arch = "wasm32")]
+fn current(path: &Path) -> io::Result<Identity> {
+    identity(path)
+}
+
+#[cfg(target_arch = "wasm32")]
+impl Identity {
+    fn matches(&self, actual: &Self) -> bool {
+        self == actual
+    }
+}
+
 #[cfg(not(any(
     target_os = "linux",
     target_os = "macos",
@@ -430,7 +451,7 @@ compile_error!("graph root identity needs an explicit platform implementation");
 mod tests {
     use super::*;
 
-    #[cfg(any(target_os = "android", target_arch = "wasm32"))]
+    #[cfg(target_os = "android")]
     #[test]
     fn l9_android_fallback_checks_presence_without_comparing_fuse_inodes() {
         let dir = tempfile::tempdir().unwrap();
