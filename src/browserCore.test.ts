@@ -16,6 +16,30 @@ it("the browser core's page inventory is the desktop app's", () => {
   expect(wire.unreadable).toEqual(fixture.unreadable);
 });
 
+it("the browser inventory keeps a fileless namespace parent and excludes relative paths and URLs", () => {
+  const graph = open([
+    ["pages/Team%2FChild.md", "- child\n"],
+    ["pages/Dot.md", "title:: .\n- [[./rel/x]] [[../up/y]] [[https://a.b/c]]\n"],
+    ["pages/Relative.md", "title:: ./rel/x\n- relative page\n"],
+    ["pages/URL.md", "title:: https://a.b/c\n- URL page\n"],
+  ]);
+  try {
+    const { entries } = JSON.parse(graph.page_inventory_json());
+    expect(entries).toEqual(expect.arrayContaining([
+      expect.objectContaining({
+        name: "Team", namespace_parent: true, target: { kind: "absent", id: "pages/Team.md" },
+      }),
+      ...["./rel/x", "../up/y", "https://a.b/c"].map(name =>
+        expect.objectContaining({ name, not_namespace: true })),
+    ]));
+    for (const name of ["./rel", "../up", "https://a.b", "..", "https:"]) {
+      expect(entries).not.toContainEqual(expect.objectContaining({ name, namespace_parent: true }));
+    }
+  } finally {
+    graph.free();
+  }
+});
+
 it("the browser core's read wires match the pinned desktop answers", () => {
   const fixture = JSON.parse(readFileSync("tests/fixtures/browser-core-reads.json", "utf8")) as {
     files: [string, string][];
