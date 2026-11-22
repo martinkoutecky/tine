@@ -204,7 +204,6 @@ fn apply_mobile_drawer_e2e_window_policy(
     if let Some(main) = windows.iter_mut().find(|window| window.label == "main") {
         main.width = 390.0;
         main.height = 844.0;
-        main.min_width = Some(390.0);
         true
     } else {
         false
@@ -1372,7 +1371,7 @@ mod mobile_drawer_policy_tests {
             .unwrap();
         assert_eq!(
             (main.width, main.height, main.min_width),
-            (390.0, 844.0, Some(390.0))
+            (390.0, 844.0, None)
         );
         assert_eq!(
             windows.iter().find(|window| window.label == "capture"),

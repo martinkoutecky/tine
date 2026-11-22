@@ -8,6 +8,10 @@ The format follows [Keep a Changelog](https://keepachangelog.com/); versions use
 
 ## [Unreleased]
 
+### Fixed
+
+- The main window and additional graph windows can now be resized down to 390 pt wide on desktop (#1005).
+
 ## [0.9.1] - 2026-11-19
 
 ### Fixed

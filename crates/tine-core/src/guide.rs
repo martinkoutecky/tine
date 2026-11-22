@@ -1959,6 +1959,7 @@ mod og_20d_guide_tests {
             "**t w**",
             "**Standard page width**",
             "**Wide page width**",
+            "resize any graph window down to 390 pt wide",
             "fill the window",
             "**Retry**",
         ] {
