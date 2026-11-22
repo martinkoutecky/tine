@@ -2,7 +2,8 @@
 
 **Status: SHIPPED (2026-06-29).** Implemented as planned with these concrete
 choices: vendor a prebuilt `.wasm` (zero CI change); a `crates/lsdoc-wasm`
-wrapper crate that git-deps `lsdoc` directly (excluded from the workspace);
+wrapper crate that git-deps `lsdoc` directly (a workspace member since the
+browser core's slice 3, built on `tine-core`);
 base64-inline the bytes + async `WebAssembly.instantiate` (no `fetch`, no Vite
 wasm plugins); the wasm returns a JSON string that JS `JSON.parse`s (identical to
 the old IPC `serde_json` encoding). Regenerate with `npm run build:wasm`.

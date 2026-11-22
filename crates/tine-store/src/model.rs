@@ -260,18 +260,6 @@ fn read_parse_reader(input: &mut (impl Read + ?Sized), len: u64) -> io::Result<V
     Ok(bytes)
 }
 
-impl Graph {
-    /// [`read_parse_bytes_in`] this graph's [`FileSource`].
-    pub(crate) fn read_parse_bytes_sourced(&self, path: &Path) -> io::Result<(Vec<u8>, u64)> {
-        read_parse_bytes_in(&self.source, path)
-    }
-
-    /// [`read_parse_input_in`] this graph's [`FileSource`].
-    pub(crate) fn read_parse_input(&self, path: &Path) -> io::Result<String> {
-        read_parse_input_in(&self.source, path)
-    }
-}
-
 pub(crate) fn validate_parse_bytes_for_path(bytes: &[u8], path: &Path) -> io::Result<()> {
     validate_parse_bytes_format(bytes, Format::from_path(path) == Format::Org)
 }
@@ -2822,33 +2810,6 @@ impl Graph {
         let mut graph = Self::empty_with_config(root, source, config, journal_format);
         graph.config_read_problem = problem;
         graph
-    }
-
-    /// A graph of `files` held in memory under the config among them
-    /// (`WholeGraph::from_files`), read as a disk open reads its own.
-    pub(crate) fn in_memory_with_config(files: Vec<file_source::MemoryFile>) -> Graph {
-        let root = PathBuf::from(file_source::MEMORY_ROOT);
-        let files = file_source::Files::new(&root, files);
-        Self::open_from(root, FileSource::Memory(Arc::new(files)))
-    }
-
-    /// A graph of `files` (graph-relative path, document, modification time)
-    /// held in memory under `config`: the load, the naming and every page
-    /// read take them from there ([`FileSource::Memory`]). Such a graph is
-    /// only read (`WholeGraph::subgraph`); nothing writes it.
-    pub(crate) fn in_memory(
-        files: Vec<file_source::MemoryFile>,
-        config: Config,
-        journal_format: JournalFormat,
-    ) -> Graph {
-        let root = PathBuf::from(file_source::MEMORY_ROOT);
-        let files = file_source::Files::new(&root, files);
-        Self::empty_with_config(
-            root,
-            FileSource::Memory(Arc::new(files)),
-            config,
-            journal_format,
-        )
     }
 
     fn empty_with_config(

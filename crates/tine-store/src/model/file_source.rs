@@ -6,12 +6,15 @@
 //! disk-only, and a memory graph is never opened by a `Store`, so it never
 //! reaches them. The two sources answer the same calls with the same
 //! errors, so every loader step above them is the one the disk load runs.
+use super::Graph;
 use std::collections::HashMap;
 use std::fs;
 use std::io;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::time::SystemTime;
+use tine_core::config::Config;
+use tine_core::date::JournalFormat;
 
 /// The root of every memory graph: an absolute path no read leaves (a read
 /// that bypassed the source would find nothing there).
@@ -243,5 +246,46 @@ impl FileSource {
             FileSource::Disk => fs::metadata(path).and_then(|meta| meta.modified()).ok(),
             FileSource::Memory(files) => files.files.get(path)?.1,
         }
+    }
+}
+
+impl Graph {
+    /// A graph of `files` held in memory under the config among them
+    /// (`WholeGraph::from_files`), read as a disk open reads its own.
+    pub(crate) fn in_memory_with_config(files: Vec<MemoryFile>) -> Graph {
+        let root = PathBuf::from(MEMORY_ROOT);
+        let files = Files::new(&root, files);
+        Self::open_from(root, FileSource::Memory(Arc::new(files)))
+    }
+
+    /// A graph of `files` (graph-relative path, document, modification time)
+    /// held in memory under `config`: the load, the naming and every page
+    /// read take them from there ([`FileSource::Memory`]). Such a graph is
+    /// only read (`WholeGraph::subgraph`); nothing writes it.
+    pub(crate) fn in_memory(
+        files: Vec<MemoryFile>,
+        config: Config,
+        journal_format: JournalFormat,
+    ) -> Graph {
+        let root = PathBuf::from(MEMORY_ROOT);
+        let files = Files::new(&root, files);
+        Self::empty_with_config(
+            root,
+            FileSource::Memory(Arc::new(files)),
+            config,
+            journal_format,
+        )
+    }
+}
+
+impl Graph {
+    /// [`read_parse_bytes_in`] this graph's [`FileSource`].
+    pub(crate) fn read_parse_bytes_sourced(&self, path: &Path) -> io::Result<(Vec<u8>, u64)> {
+        super::read_parse_bytes_in(&self.source, path)
+    }
+
+    /// [`read_parse_input_in`] this graph's [`FileSource`].
+    pub(crate) fn read_parse_input(&self, path: &Path) -> io::Result<String> {
+        super::read_parse_input_in(&self.source, path)
     }
 }

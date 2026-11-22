@@ -1,9 +1,8 @@
-//! The message the lsdoc-wasm panic hook keeps and logs (crates/lsdoc-wasm/src/lib.rs
-//! includes this file by path). I-5: a formatted panic message can embed page text (str
-//! slicing panics quote the string), and the message reaches the diagnostics log, so only
-//! the location, which names the site, and a fixed literal message are kept. Lives here so
-//! `cargo test --workspace` exercises it: the wasm crate is excluded from the workspace, and
-//! lsdoc v0.5.8 left no reachable formatted panic to drive through the wasm door.
+//! The message the lsdoc-wasm panic hook keeps and logs. I-5: a formatted panic message can
+//! embed page text (str slicing panics quote the string), and the message reaches the
+//! diagnostics log, so only the location, which names the site, and a fixed literal message
+//! are kept. Tested here: lsdoc v0.5.8 left no reachable formatted panic to drive through the
+//! wasm door.
 
 /// `place` is `file:line` ("" when unknown); `payload` is the panic payload.
 pub fn panic_report(place: &str, payload: &(dyn std::any::Any + Send)) -> String {

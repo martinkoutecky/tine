@@ -2,11 +2,11 @@
 //! (browser core slice 2, D-20261122-WEX): `std::time::Instant::now` and
 //! `SystemTime::now` panic on `wasm32-unknown-unknown`, so one std clock read
 //! left in code the browser runs is an outage there that no native test sees.
-//! Walks each crate's module tree from `lib.rs`, skipping test-only and
-//! native-only (`not(target_arch = "wasm32")`) items, and names each std
-//! clock path or `use` left. Not covered: calls inside macro tokens, renamed
-//! `std::time` or `SystemTime` imports, modules chosen by `cfg_attr(path)`,
-//! and items whose cfg mixes test or native-only with wasm32 (skipped).
+//! Walks each crate's module tree from `lib.rs` (every file a `#[path]` or
+//! `cfg_attr(..., path)` may choose), skipping only items whose cfg is false
+//! in the browser build, and names each std clock path, `use` or rename left,
+//! macro arguments included. Not covered: a crate-root rename (`use std as
+//! s`) and clock reads in dependencies.
 use quote::ToTokens;
 use std::path::{Path, PathBuf};
 use syn::visit::{self, Visit};
@@ -20,26 +20,74 @@ const CRATES: [&str; 6] = [
     "tine-graph-features",
 ];
 
-/// Off the browser build: test-only code, test fault hooks, native-only code.
+/// A cfg predicate's value in the browser build (wasm32, not test, no test
+/// features): `None` when it depends on what this guard does not know
+/// (another feature, `debug_assertions`), which keeps the item in the walk.
+fn browser_cfg(meta: &syn::Meta) -> Option<bool> {
+    let all = |list: &syn::MetaList, any: bool| -> Option<bool> {
+        let items = list
+            .parse_args_with(
+                syn::punctuated::Punctuated::<syn::Meta, syn::Token![,]>::parse_terminated,
+            )
+            .ok()?;
+        let values: Vec<_> = items.iter().map(browser_cfg).collect();
+        if values.contains(&Some(any)) {
+            Some(any)
+        } else if values.iter().all(|value| *value == Some(!any)) {
+            Some(!any)
+        } else {
+            None
+        }
+    };
+    match meta {
+        syn::Meta::Path(path) if path.is_ident("test") => Some(false),
+        syn::Meta::Path(path) if path.is_ident("unix") || path.is_ident("windows") => Some(false),
+        syn::Meta::Path(_) => None,
+        syn::Meta::List(list) if list.path.is_ident("any") => all(list, true),
+        syn::Meta::List(list) if list.path.is_ident("all") => all(list, false),
+        syn::Meta::List(list) if list.path.is_ident("not") => {
+            browser_cfg(&list.parse_args::<syn::Meta>().ok()?).map(|value| !value)
+        }
+        syn::Meta::List(_) => None,
+        syn::Meta::NameValue(pair) => {
+            let syn::Expr::Lit(syn::ExprLit {
+                lit: syn::Lit::Str(value),
+                ..
+            }) = &pair.value
+            else {
+                return None;
+            };
+            let value = value.value();
+            let key = pair.path.get_ident()?.to_string();
+            match key.as_str() {
+                "target_arch" => Some(value == "wasm32"),
+                "target_os" => Some(value == "unknown"),
+                "target_family" => Some(value == "wasm"),
+                "feature" if matches!(value.as_str(), "test-faults" | "test-counters") => {
+                    Some(false)
+                }
+                _ => None,
+            }
+        }
+    }
+}
+
+/// Off the browser build: an item with a `cfg` that is false there.
 fn skipped(attrs: &[syn::Attribute]) -> bool {
     attrs.iter().any(|attr| {
-        if !attr.path().is_ident("cfg") {
-            return false;
-        }
-        let text = attr.meta.to_token_stream().to_string().replace(' ', "");
-        let test = text == "cfg(test)"
-            || text.starts_with("cfg(any(test")
-            || text.starts_with("cfg(all(test")
-            || text.contains("feature=\"test-faults\"") && !text.contains("not(feature")
-            || text.contains("feature=\"test-counters\"");
-        test || text.contains("not(target_arch=\"wasm32\")") && !text.starts_with("cfg(not(not")
+        attr.path().is_ident("cfg")
+            && attr
+                .parse_args::<syn::Meta>()
+                .ok()
+                .and_then(|meta| browser_cfg(&meta))
+                == Some(false)
     })
 }
 
 struct Uses<'a> {
     file: &'a Path,
     found: Vec<String>,
-    mods: Vec<(String, Option<String>)>,
+    mods: Vec<(String, Vec<String>)>,
 }
 
 impl Uses<'_> {
@@ -73,22 +121,38 @@ impl<'ast> Visit<'ast> for Uses<'_> {
         }
         if let syn::Item::Mod(module) = item {
             if module.content.is_none() {
-                let path = module.attrs.iter().find_map(|attr| {
-                    let syn::Meta::NameValue(value) = &attr.meta else {
-                        return None;
-                    };
-                    if !value.path.is_ident("path") {
-                        return None;
+                // Every file the module may be: `#[path]`, and each
+                // `cfg_attr(..., path = ...)` whatever its condition.
+                let path_of = |meta: &syn::Meta| match meta {
+                    syn::Meta::NameValue(syn::MetaNameValue {
+                        path,
+                        value:
+                            syn::Expr::Lit(syn::ExprLit {
+                                lit: syn::Lit::Str(text),
+                                ..
+                            }),
+                        ..
+                    }) if path.is_ident("path") => Some(text.value()),
+                    _ => None,
+                };
+                let mut paths = Vec::new();
+                for attr in &module.attrs {
+                    if attr.path().is_ident("cfg_attr") {
+                        let metas = attr.parse_args_with(
+                            syn::punctuated::Punctuated::<syn::Meta, syn::Token![,]>::parse_terminated,
+                        );
+                        paths.extend(
+                            metas
+                                .into_iter()
+                                .flatten()
+                                .skip(1)
+                                .filter_map(|m| path_of(&m)),
+                        );
+                    } else {
+                        paths.extend(path_of(&attr.meta));
                     }
-                    let syn::Expr::Lit(lit) = &value.value else {
-                        return None;
-                    };
-                    let syn::Lit::Str(text) = &lit.lit else {
-                        return None;
-                    };
-                    Some(text.value())
-                });
-                self.mods.push((module.ident.to_string(), path));
+                }
+                self.mods.push((module.ident.to_string(), paths));
             }
         }
         visit::visit_item(self, item);
@@ -154,6 +218,55 @@ impl<'ast> Visit<'ast> for Uses<'_> {
                 self.flag(&format!("use {name}"));
             }
         }
+        // A renamed `std::time` or item of it hides later reads from the path
+        // check (`use std::time as t; t::SystemTime::now()`).
+        fn renames(tree: &syn::UseTree, prefix: &mut Vec<String>, out: &mut Vec<String>) {
+            match tree {
+                syn::UseTree::Path(path) => {
+                    prefix.push(path.ident.to_string());
+                    renames(&path.tree, prefix, out);
+                    prefix.pop();
+                }
+                syn::UseTree::Rename(name) => {
+                    let full = [prefix.join("::"), name.ident.to_string()].join("::");
+                    if full == "std::time" || full.starts_with("std::time::") {
+                        out.push(format!("use {full} as {}", name.rename));
+                    }
+                }
+                syn::UseTree::Group(group) => {
+                    for item in &group.items {
+                        renames(item, prefix, out);
+                    }
+                }
+                syn::UseTree::Name(_) | syn::UseTree::Glob(_) => {}
+            }
+        }
+        let mut renamed = Vec::new();
+        renames(tree, &mut Vec::new(), &mut renamed);
+        for rename in renamed {
+            self.flag(&rename);
+        }
+    }
+    /// Macro arguments are tokens, not syntax: their identifiers in order
+    /// carry the same two paths (`std time Instant`, `SystemTime now`).
+    fn visit_macro(&mut self, mac: &'ast syn::Macro) {
+        fn idents(tokens: proc_macro2::TokenStream, out: &mut Vec<String>) {
+            for token in tokens {
+                match token {
+                    proc_macro2::TokenTree::Ident(ident) => out.push(ident.to_string()),
+                    proc_macro2::TokenTree::Group(group) => idents(group.stream(), out),
+                    _ => {}
+                }
+            }
+        }
+        let mut names = Vec::new();
+        idents(mac.tokens.clone(), &mut names);
+        if names.windows(3).any(|w| w == ["std", "time", "Instant"])
+            || names.windows(2).any(|w| w == ["SystemTime", "now"])
+        {
+            self.flag(&format!("{}!(...)", segments(&mac.path).join("::")));
+        }
+        visit::visit_macro(self, mac);
     }
     fn visit_path(&mut self, path: &'ast syn::Path) {
         let names = segments(path);
@@ -166,54 +279,70 @@ impl<'ast> Visit<'ast> for Uses<'_> {
     }
 }
 
-/// The file of module `name` declared in `file` (`#[path]` relative to the
-/// declaring file's directory, as rustc resolves it for a non-mod.rs file
-/// declaring an out-of-line module with an explicit path).
-fn module_file(file: &Path, name: &str, path: Option<&str>) -> Option<PathBuf> {
+/// The files module `name` declared in `file` may be: each `path`, relative
+/// to the declaring file's directory as rustc resolves it for a non-mod.rs
+/// file declaring an out-of-line module with an explicit path, and the
+/// default file when one exists (a `cfg_attr` path leaves it in use elsewhere).
+fn module_files(file: &Path, name: &str, paths: &[String]) -> Vec<PathBuf> {
     let dir = file.parent().unwrap();
-    if let Some(path) = path {
-        return Some(dir.join(path));
-    }
+    let mut out: Vec<_> = paths.iter().map(|path| dir.join(path)).collect();
     let stem = file.file_stem().unwrap().to_str().unwrap();
     let base = if matches!(stem, "lib" | "mod" | "main") {
         dir.to_path_buf()
     } else {
         dir.join(stem)
     };
-    [
-        base.join(format!("{name}.rs")),
-        base.join(name).join("mod.rs"),
-    ]
-    .into_iter()
-    .find(|candidate| candidate.exists())
+    out.extend(
+        [
+            base.join(format!("{name}.rs")),
+            base.join(name).join("mod.rs"),
+        ]
+        .into_iter()
+        .find(|candidate| candidate.exists()),
+    );
+    out
+}
+
+/// The std clock reads in the module tree from `lib`, as `file: what`, and
+/// how many files the walk read.
+fn scan(lib: PathBuf, shown_from: &Path) -> (Vec<String>, usize) {
+    let mut found = Vec::new();
+    let mut files = 0;
+    let mut pending = vec![lib];
+    let mut seen = std::collections::BTreeSet::new();
+    while let Some(file) = pending.pop() {
+        if !seen.insert(file.clone()) {
+            continue;
+        }
+        files += 1;
+        let text = std::fs::read_to_string(&file).unwrap();
+        let syntax = syn::parse_file(&text).unwrap();
+        let shown = file.strip_prefix(shown_from).unwrap_or(&file).to_path_buf();
+        let mut uses = Uses {
+            file: &shown,
+            found: Vec::new(),
+            mods: Vec::new(),
+        };
+        uses.visit_file(&syntax);
+        if !shown.ends_with("tine-core/src/clock.rs") {
+            found.extend(uses.found);
+        }
+        for (module, paths) in uses.mods {
+            pending.extend(module_files(&file, &module, &paths));
+        }
+    }
+    (found, files)
 }
 
 #[test]
 fn the_browser_crates_read_time_only_through_the_clock() {
     let _guard = crate::integration_lock();
     let crates = Path::new(env!("CARGO_MANIFEST_DIR")).join("..");
-    let mut found = Vec::new();
-    let mut files = 0;
+    let (mut found, mut files) = (Vec::new(), 0);
     for name in CRATES {
-        let mut pending = vec![crates.join(name).join("src/lib.rs")];
-        while let Some(file) = pending.pop() {
-            files += 1;
-            let text = std::fs::read_to_string(&file).unwrap();
-            let syntax = syn::parse_file(&text).unwrap();
-            let shown = file.strip_prefix(&crates).unwrap_or(&file).to_path_buf();
-            let mut uses = Uses {
-                file: &shown,
-                found: Vec::new(),
-                mods: Vec::new(),
-            };
-            uses.visit_file(&syntax);
-            if !shown.ends_with("tine-core/src/clock.rs") {
-                found.extend(uses.found);
-            }
-            for (module, path) in uses.mods {
-                pending.extend(module_file(&file, &module, path.as_deref()));
-            }
-        }
+        let (more, read) = scan(crates.join(name).join("src/lib.rs"), &crates);
+        found.extend(more);
+        files += read;
     }
     assert!(
         files > 100,
@@ -223,5 +352,45 @@ fn the_browser_crates_read_time_only_through_the_clock() {
         found.is_empty(),
         "std clock reads in code the browser build runs; use tine_core::clock::{{Instant, system_now}}:\n{}",
         found.join("\n")
+    );
+}
+
+/// Each case the guard must name, planted in a module tree of its own: a read
+/// in macro arguments, a renamed `std::time`, a module chosen by `cfg_attr`,
+/// and an item whose cfg mixes test with wasm32. Native-only and test-only
+/// code stays out.
+#[test]
+fn the_clock_guard_names_each_planted_read() {
+    let temp = tempfile::tempdir().unwrap();
+    let write = |name: &str, text: &str| std::fs::write(temp.path().join(name), text).unwrap();
+    write(
+        "lib.rs",
+        r#"
+fn in_macro() { let _ = format!("{:?}", std::time::SystemTime::now()); }
+use std::time as renamed;
+#[cfg_attr(target_arch = "wasm32", path = "browser.rs")]
+mod chosen;
+#[cfg(any(test, target_arch = "wasm32"))]
+fn mixed() { let _ = std::time::Instant::now(); }
+#[cfg(not(target_arch = "wasm32"))]
+fn native() { let _ = std::time::Instant::now(); }
+#[cfg(all(test, target_arch = "wasm32"))]
+fn test_only() { let _ = std::time::SystemTime::now(); }
+"#,
+    );
+    write(
+        "browser.rs",
+        "pub fn f() { let _ = std::time::SystemTime::now(); }\n",
+    );
+    let (found, files) = scan(temp.path().join("lib.rs"), temp.path());
+    assert_eq!(files, 2);
+    assert_eq!(
+        found,
+        [
+            "lib.rs: format!(...)",
+            "lib.rs: use std::time as renamed",
+            "lib.rs: std::time::Instant::now",
+            "browser.rs: std::time::SystemTime::now",
+        ]
     );
 }
