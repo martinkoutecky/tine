@@ -71,7 +71,7 @@ fn delete_after_external_removal_accepts_the_displayed_path_without_writes() {
             fs::read(root.path().join("pages/Kept.md")).unwrap(),
             b"- kept\n"
         );
-        assert!(pages::get_page(&reopened, name, kind).unwrap().is_none());
+        assert!(reopened.page_named(name, kind).unwrap().is_none());
     }
 }
 

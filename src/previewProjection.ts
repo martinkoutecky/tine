@@ -1,12 +1,10 @@
 import type { BlockDto } from "./types";
 
-/** Browser DTO preview policy: at least one node, no native estimated-byte cap.
+/** Demo mock DTO preview policy: at least one node.
  * O(subtree nodes) to count omissions; copies only the admitted preorder prefix.
- * Published snapshots select owned metadata; in-memory mock DTOs can retain
- * their existing borrowed metadata policy without extra cloning.
- * Native parsed documents use tine_core::projection with a byte budget as well.
+ * The returned DTOs share the mock's metadata.
  */
-export function previewDtoSubtree(root: BlockDto, maxNodes: number, metadata: "owned" | "borrowed"): { blocks: BlockDto[]; truncated: number } {
+export function previewDtoSubtree(root: BlockDto, maxNodes: number): { blocks: BlockDto[]; truncated: number } {
   let emitted = 0;
   let truncated = 0;
   const count = (block: BlockDto): number => 1 + block.children.reduce((n, b) => n + count(b), 0);
@@ -18,10 +16,7 @@ export function previewDtoSubtree(root: BlockDto, maxNodes: number, metadata: "o
         continue;
       }
       emitted++;
-      const shallow: BlockDto = { ...block, children: [] };
-      const dto = metadata === "owned" ? structuredClone(shallow) : shallow;
-      dto.children = copy(block.children);
-      out.push(dto);
+      out.push({ ...block, children: copy(block.children) });
     }
     return out;
   };

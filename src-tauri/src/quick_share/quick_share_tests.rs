@@ -233,6 +233,7 @@ impl Fixture {
             pages: 1,
             expires: Instant::now() + PREPARED_TTL,
             update: None,
+            replacement_account: None,
         });
         id
     }
@@ -1456,6 +1457,7 @@ fn secrets_print_redacted() {
         title: "t".into(),
         pages: 1,
         key: "KEY-MATERIAL".into(),
+        viewer_generation: 1,
     };
     assert!(!format!("{row:?}").contains("KEY-MATERIAL"));
     // A panic message built from these types carries no secret either.

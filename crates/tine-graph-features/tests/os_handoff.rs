@@ -9,7 +9,6 @@ fn page_target(store: &Store, path: &str) -> Result<std::path::PathBuf, String> 
             pages::PageReadError::Store(StoreError::InvalidTarget(_)) => "invalid page path".into(),
             pages::PageReadError::Store(error) => format!("{error:?}"),
             pages::PageReadError::Load(error) => format!("{error:?}"),
-            pages::PageReadError::EmptyAlias => "alias has no owner".into(),
         }
     })
 }

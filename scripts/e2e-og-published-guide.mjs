@@ -1,4 +1,4 @@
-// Browser smoke for the generated live Guide: reviewed permalink, baked query,
+// Browser smoke for the generated live Guide: reviewed permalink, live query,
 // read-only controls, and static fallback. Run after `npm run docs:build` (writes target/guide/demo).
 import assert from "node:assert/strict";
 import fs from "node:fs/promises";
@@ -8,8 +8,9 @@ import { fileURLToPath } from "node:url";
 import { chromium } from "playwright";
 
 const queryFixture = Boolean(process.env.TINE_PUBLISHED_ROOT);
-const root = path.resolve(process.env.TINE_PUBLISHED_ROOT ??
-  path.dirname(fileURLToPath(import.meta.url)), ...(queryFixture ? [] : ["../target/guide/demo"]));
+const exportRoot = process.env.TINE_PUBLISHED_ROOT ?? process.env.TINE_GUIDE_PUBLISHED_ROOT;
+const root = path.resolve(exportRoot ??
+  path.dirname(fileURLToPath(import.meta.url)), ...(exportRoot ? [] : ["../target/guide/demo"]));
 const mime = { ".html": "text/html", ".js": "text/javascript", ".css": "text/css",
   ".json": "application/json", ".wasm": "application/wasm", ".svg": "image/svg+xml" };
 const server = http.createServer(async (request, response) => {
@@ -37,14 +38,18 @@ try {
   // sticks, in its sticky-ancestor label (StickyAncestor.tsx, GH #643).
   await page.getByText(queryFixture ? "Selected tasks" : "A query in action").filter({ visible: true }).first().waitFor();
   assert.equal(new URL(page.url()).pathname, "/app/");
-  assert.match(await page.locator("body").innerText(), queryFixture ? /Ship the M0 vertical slice/ : /Every open task in this graph/);
+  if (queryFixture) {
+    await page.locator(".query-results-region").getByText("Ship the M0 vertical slice", { exact: false }).first().waitFor();
+  } else {
+    assert.match(await page.locator("body").innerText(), /Every open task in this graph/);
+  }
   assert.equal(await page.locator(".new-page-btn:visible").count(), 0);
   assert.equal(await page.getByTitle("Settings (t s)").count(), 0);
   assert.deepEqual(errors, []);
   await page.goto(`${origin}/index.html?static=1`);
   await page.getByText(queryFixture ? "Jun 14th, 2026" : "Welcome to Tine").first().waitFor();
   assert.equal(new URL(page.url()).pathname, "/index.html");
-  console.log(`PASS: ${queryFixture ? "query" : "Guide"} permalink, baked query, read-only controls, static fallback`);
+  console.log(`PASS: ${queryFixture ? "query" : "Guide"} permalink, live query, read-only controls, static fallback`);
 } finally {
   await browser?.close();
   server.close();

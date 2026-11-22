@@ -1,4 +1,4 @@
-// Mount actual Rust-generated live and generation-1 quick-share snapshots in
+// Mount actual Rust-generated live and generation-2 quick-share snapshots in
 // the shipped viewer. All HTTP is local or intercepted; nothing reaches a gist.
 import fs from "node:fs";
 import path from "node:path";
@@ -19,11 +19,12 @@ const mime = { ".js": "text/javascript", ".css": "text/css", ".wasm": "applicati
 const server = http.createServer((request, response) => {
   const url = new URL(request.url, "http://localhost");
   if (url.pathname === "/snapshot.json") { response.setHeader("Content-Type", "application/json"); response.end(url.searchParams.has("omitted") ? omitted : live); return; }
-  if (url.pathname.endsWith(".html") || url.pathname === "/") {
+  if (url.pathname.endsWith(".html") || url.pathname === "/" || url.pathname === `/s/2/fixture/${gist}`) {
     const mode = url.searchParams.get("mode");
-    const snapshot = mode === "share" ? "quick-share:1" : mode === "omitted" ? "snapshot.json?omitted" : "snapshot.json";
+    const snapshot = mode === "share" ? "quick-share:2" : mode === "omitted" ? "snapshot.json?omitted" : "snapshot.json";
     response.setHeader("Content-Type", "text/html");
-    response.end(original.replace("<head>", `<head><meta name="tine-published" content="${snapshot}">`)); return;
+    response.end(original.replace("<head>", `<head><meta name="tine-published" content="${snapshot}">`)
+      .replaceAll("./assets/", "/assets/")); return;
   }
   const file = path.resolve(dist, `.${decodeURIComponent(url.pathname)}`);
   if (!file.startsWith(`${dist}${path.sep}`) || !fs.existsSync(file) || !fs.statSync(file).isFile()) { response.writeHead(404); response.end(); return; }
@@ -45,8 +46,9 @@ try {
       if (mode === "share" && url.hostname === "gist.githubusercontent.com") return route.fulfill({ status: 200, contentType: "text/plain", headers: { "access-control-allow-origin": "*" }, body: envelope });
       return route.abort();
     });
-    const hash = mode === "share" ? `#fixture/${gist}/${key}/page/Markdown` : "#/page/Markdown";
-    await page.goto(`${origin}/index.html?mode=${mode}${hash}`);
+    const locator = mode === "share" ? `/s/2/fixture/${gist}` : "/index.html";
+    const hash = mode === "share" ? `#${key}/page/Markdown` : "#/page/Markdown";
+    await page.goto(`${origin}${locator}?mode=${mode}${hash}`);
     await page.getByText("Body passage", { exact: true }).first().waitFor();
     assert.match(await page.locator(".page-blocks").innerText(), /Body passage/);
     assert.equal(await page.locator("textarea.block-editor, .cm-editor").count(), 0);

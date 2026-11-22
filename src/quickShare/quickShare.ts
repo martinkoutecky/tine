@@ -1,6 +1,6 @@
-/** Quick share generation 1, viewer side (`docs/contracts/quick-share.md`).
+/** Quick share generation 2, viewer side (`docs/contracts/quick-share.md`).
  *
- *  A share link is `https://tine.page/s/1/#<login>/<gist_id>/<key>[/<rest>]`.
+ *  A share link is `https://tine.page/s/2/<login>/<gist_id>#<key>[/<rest>]`.
  *  This module parses the fragment, fetches the gist's `tine-share.bin`,
  *  decrypts it with WebCrypto (HKDF-SHA256 → AES-256-GCM, header as AAD),
  *  gunzips it under a running cap and admits the share document, whose
@@ -8,14 +8,12 @@
  *  Every limit comes from `quick-share-limits.json`, which the Rust writer
  *  also checks. The fragment never leaves the browser: it is not put into a
  *  request, a log or an error message. */
-import { pageIdentityKey } from "../pageIdentity";
 import limits from "../../docs/contracts/quick-share-limits.json";
 import blockedGists from "./blocked-gists.json";
 import type { PublishedSnapshot } from "../publishedBackend";
 import { readBounded, validateSnapshot } from "../publishedBackend";
-import { admitPublishedAnswers } from "../publishedAnswers";
 
-export const QUICK_SHARE_GENERATION = 1;
+export const QUICK_SHARE_GENERATION = 2;
 const MAGIC = [0x54, 0x53, 0x48, 0x31]; // "TSH1"
 const ENVELOPE_VERSION = 1;
 const HEADER_LEN = 21;
@@ -75,20 +73,20 @@ export interface ShareLink {
   login: string;
   gist: string;
   key: Uint8Array<ArrayBuffer>;
-  /** `<login>/<gist>/<key>` exactly as given; navigation never changes it. */
+  /** The fragment key exactly as given; navigation never changes it. */
   prefix: string;
-  /** Everything after the prefix: "", "/page/<name>" or "/block/<uuid>". */
-  rest: string;
 }
 
-/** Parse a share fragment (with or without the leading `#`). */
-export function parseShareFragment(hash: string): ShareLink | null {
-  const body = hash.startsWith("#") ? hash.slice(1) : hash;
-  const [login = "", gist = "", keyText = "", ...rest] = body.split("/");
-  if (!LOGIN.test(login) || !GIST.test(gist)) return null;
-  const key = b64uDecode(keyText);
+/** Parse the public locator and the fragment key independently. */
+export function parseShareLink(pathname: string, hash: string): ShareLink | null {
+  const [root, section, version, login, gist, ...extra] = pathname.split("/");
+  if (root !== "" || section !== "s" || version !== String(QUICK_SHARE_GENERATION)
+    || !LOGIN.test(login ?? "") || !GIST.test(gist ?? "") || extra.length) return null;
+  const prefix = hash.slice(1).split("/", 1)[0];
+  if (!hash.startsWith("#") || prefix.length !== 43) return null;
+  const key = b64uDecode(prefix);
   if (!key || key.length !== 32) return null;
-  return { login, gist, key, prefix: `${login}/${gist}/${keyText}`, rest: rest.length ? `/${rest.join("/")}` : "" };
+  return { login, gist, key, prefix };
 }
 
 /** Whether this browser has what a share needs. */
@@ -142,120 +140,36 @@ export async function gunzipBounded(bytes: Uint8Array<ArrayBuffer>, max: number)
   }
 }
 
-export interface ShareDocument {
-  title: string;
-  createdAt: string;
-  snapshot: PublishedSnapshot;
-}
-
-const isString = (v: unknown): v is string => typeof v === "string";
-const isObject = (v: unknown): v is Record<string, unknown> => !!v && typeof v === "object" && !Array.isArray(v);
-const isKind = (v: unknown) => v === "page" || v === "journal";
-const isPair = (v: unknown) => Array.isArray(v) && v.length === 2 && isString(v[0]) && isString(v[1]);
-const isNullableString = (v: unknown) => v === null || v === undefined || isString(v);
-
-/** The fields the reader dereferences, typed as generation 1 writes them. */
-function blockShape(block: unknown, count: { blocks: number }): boolean {
-  if (!isObject(block) || !isString(block.id) || !isString(block.raw) || !Array.isArray(block.children)) return false;
-  if (block.collapsed !== undefined && typeof block.collapsed !== "boolean") return false;
-  count.blocks += 1;
-  return block.children.every((child) => blockShape(child, count));
-}
-
-function refGroupShape(group: unknown): boolean {
-  const scratch = { blocks: 0 };
-  return isObject(group) && isString(group.page) && isKind(group.kind) && Array.isArray(group.blocks)
-    && group.blocks.every((b) => blockShape(b, scratch));
-}
-
-function admitShape(snapshot: Record<string, unknown>): number {
-  const count = { blocks: 0 };
-  const ok = isString(snapshot.name) && isString(snapshot.home) && isString(snapshot.exported_at)
-    && Array.isArray(snapshot.pages) && snapshot.pages.every((page) =>
-      isObject(page) && isString(page.name) && isKind(page.kind) && isString(page.path)
-      && isNullableString(page.title) && isNullableString(page.pre_block)
-      && (page.format === undefined || page.format === "md" || page.format === "org")
-      && Array.isArray(page.blocks) && page.blocks.every((b) => blockShape(b, count)))
-    && Array.isArray(snapshot.entries) && snapshot.entries.every((e) =>
-      isObject(e) && isString(e.name) && isKind(e.kind) && isString(e.path)
-      && (e.date_key === null || e.date_key === undefined || typeof e.date_key === "number"))
-    && isObject(snapshot.backlinks) && Object.values(snapshot.backlinks).every((groups) => Array.isArray(groups) && groups.every(refGroupShape))
-    && isObject(snapshot.block_ref_counts) && Object.values(snapshot.block_ref_counts).every((n) => typeof n === "number")
-    && Array.isArray(snapshot.aliases) && snapshot.aliases.every(isPair)
-    && isObject(snapshot.icons) && Object.values(snapshot.icons).every(isString)
-    && Array.isArray(snapshot.queries) && snapshot.queries.every((q) =>
-      isObject(q) && isString(q.host) && isString(q.argument) && isString(q.dialect)
-      && Array.isArray(q.properties) && q.properties.every(isPair)
-      && isObject(q.parsed) && isObject(q.context) && isObject(q.executed_context) && isObject(q.view) && isObject(q.result)
-      && (q.execution === undefined || q.execution === null || (isObject(q.execution) && isString(q.execution.argument) && isObject(q.execution.parsed))));
-  if (!ok) fail("invalid", "This share is damaged.");
-  // `answers`: a recognized v1 is admitted field by field, damaged refuses;
-  // absent or another `v` reads as before it existed (publishedAnswers.ts).
+/** Admit the gunzipped source document before opening the memory graph. */
+export function decodeShareDocument(bytes: Uint8Array): PublishedSnapshot {
+  let doc: { quick_share?: unknown; snapshot?: unknown } | null;
   try {
-    admitPublishedAnswers(snapshot);
-  } catch {
-    fail("invalid", "This share is damaged.");
-  }
-  return count.blocks;
-}
-
-/** Caps over the whole document, strings included (the title too). */
-function admitCaps(doc: unknown, snapshot: PublishedSnapshot, blocks: number): void {
-  const v = limits.viewer;
-  if (snapshot.pages.length > v.pages || snapshot.queries.length > v.queries || blocks > v.blocks) {
-    fail("too-large", "This share is larger than a viewer reads.");
-  }
-  const encoder = new TextEncoder();
-  const pending: unknown[] = [doc];
-  while (pending.length) {
-    const node = pending.pop();
-    if (typeof node === "string") {
-      // UTF-16 length bounds UTF-8 bytes from below; 3× bounds it from above.
-      if (node.length * 3 > v.string_bytes && encoder.encode(node).length > v.string_bytes) {
-        fail("too-large", "This share holds a block larger than a viewer reads.");
-      }
-    } else if (node && typeof node === "object") {
-      for (const [key, child] of Object.entries(node)) {
-        if (key.length * 3 > v.string_bytes && encoder.encode(key).length > v.string_bytes) {
-          fail("too-large", "This share holds a block larger than a viewer reads.");
-        }
-        pending.push(child);
-      }
-    }
-  }
-  // The home list never shadows a shared page (the writer refuses that name). The key is the writer's own
-  // refs::page_key (WASM twin), so a name the writer accepted is never refused here.
-  const home = snapshot.pages.find((page) => page.path === "");
-  if (home) {
-    const wanted = pageIdentityKey(home.name);
-    const others = [...snapshot.pages.filter((page) => page !== home).map((page) => page.name), ...snapshot.aliases.map(([alias]) => alias)];
-    if (others.some((name) => pageIdentityKey(name) === wanted)) fail("invalid", "This share is damaged.");
-  }
-}
-
-/** Admit a gunzipped share document. */
-export function decodeShareDocument(bytes: Uint8Array): ShareDocument {
-  let value: unknown;
-  try {
-    value = JSON.parse(new TextDecoder("utf-8", { fatal: true }).decode(bytes));
+    doc = JSON.parse(new TextDecoder("utf-8", { fatal: true }).decode(bytes));
   } catch {
     return fail("invalid", "This share is damaged.");
   }
-  const doc = value as { quick_share?: unknown; created_at?: unknown; title?: unknown; snapshot?: unknown };
-  if (!doc || typeof doc !== "object") fail("invalid", "This share is damaged.");
-  if (typeof doc.quick_share === "number" && doc.quick_share > QUICK_SHARE_GENERATION) fail("newer-viewer", "This share needs a newer viewer.");
-  if (doc.quick_share !== QUICK_SHARE_GENERATION || typeof doc.created_at !== "string" || typeof doc.title !== "string") {
-    fail("invalid", "This share is damaged.");
+  const generation = doc?.quick_share;
+  if (typeof generation === "number" && generation > QUICK_SHARE_GENERATION) {
+    fail("newer-viewer", "This share needs a newer viewer.");
   }
-  const snapshot = doc.snapshot as PublishedSnapshot;
+  if (generation !== QUICK_SHARE_GENERATION) fail("invalid", "This share is damaged.");
+
+  let snapshot: PublishedSnapshot;
   try {
-    validateSnapshot(snapshot);
+    snapshot = validateSnapshot(doc?.snapshot);
   } catch {
-    fail("invalid", "This share is damaged.");
+    return fail("invalid", "This share is damaged.");
   }
-  const blocks = admitShape(snapshot as unknown as Record<string, unknown>);
-  admitCaps(doc, snapshot, blocks);
-  return { title: doc.title as string, createdAt: doc.created_at as string, snapshot };
+  const v = limits.viewer;
+  if (snapshot.files.length > v.pages + 1) fail("too-large", "This share is larger than a viewer reads.");
+  const encoder = new TextEncoder();
+  const tooLong = (text: string) => text.length > v.string_bytes ||
+    (text.length * 3 > v.string_bytes && encoder.encode(text).length > v.string_bytes);
+  if (tooLong(snapshot.name) || tooLong(snapshot.exported_at)
+    || snapshot.files.some(file => tooLong(file.path) || tooLong(file.text))) {
+    fail("too-large", "This share holds a source file larger than a viewer reads.");
+  }
+  return snapshot;
 }
 
 type Fetch = (url: string, init?: RequestInit) => Promise<Response>;
@@ -294,12 +208,13 @@ async function envelopeText(link: ShareLink, fetchImpl: Fetch): Promise<string> 
   return read(again);
 }
 
-export interface LoadedShare extends ShareDocument {
+interface LoadedShare {
+  snapshot: PublishedSnapshot;
   link: ShareLink;
 }
 
 /** Load the share a fragment names: at most three requests, one at a time. */
-export async function loadQuickShare(hash: string, fetchImpl: Fetch = (url, init) => fetch(url, init)): Promise<LoadedShare> {
+export async function loadQuickShare(pathname: string, hash: string, fetchImpl: Fetch = (url, init) => fetch(url, init)): Promise<LoadedShare> {
   if (!quickShareSupported()) fail("unsupported-browser", "This browser cannot open Tine shares; use a current Firefox, Chrome, Edge or Safari.");
   // Presence of subtle alone does not guarantee its HKDF/AES implementation.
   // Probe algorithms before contacting GitHub, using public all-zero bytes.
@@ -309,10 +224,10 @@ export async function loadQuickShare(hash: string, fetchImpl: Fetch = (url, init
   } catch {
     fail("unsupported-browser", "This browser cannot open Tine shares; use a current Firefox, Chrome, Edge or Safari.");
   }
-  const link = parseShareFragment(hash) ?? fail("bad-link", "This share link is incomplete; copy the whole link.");
+  const link = parseShareLink(pathname, hash) ?? fail("bad-link", "This share link is incomplete; copy the whole link.");
   if ((blockedGists as string[]).includes(link.gist)) fail("blocked", "This share is unavailable on tine.page.");
   const text = await envelopeText(link, fetchImpl);
   const payload = await openEnvelope(text, link.key);
-  const document = decodeShareDocument(await gunzipBounded(payload, limits.viewer.document_bytes));
-  return { ...document, link };
+  const snapshot = decodeShareDocument(await gunzipBounded(payload, limits.viewer.document_bytes));
+  return { snapshot, link };
 }

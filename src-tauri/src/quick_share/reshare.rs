@@ -1,5 +1,4 @@
-//! Re-share keeps all review state in memory. No key, revision or membership
-//! is added to the graph or to the version-1 device record format.
+//! Re-share keeps the reviewed revision and membership in memory.
 use super::*;
 use std::collections::BTreeMap;
 use tine_core::refs::page_key;
@@ -17,14 +16,39 @@ pub(crate) struct Membership {
     pub current_snapshot_at: String,
 }
 
-pub(super) fn snapshot_pages(document: &serde_json::Value) -> BTreeMap<String, String> {
-    document["snapshot"]["pages"]
-        .as_array()
-        .into_iter()
-        .flatten()
+pub(super) struct CurrentShare {
+    pub title: String,
+    pub created_at: String,
+    pub pages: BTreeMap<String, String>,
+}
+
+fn legacy_summary(bytes: &[u8]) -> Result<(String, String, Vec<String>), QsError> {
+    let doc = share::validate_legacy_document(bytes).map_err(|_| QsError::Unavailable)?;
+    let title = doc["title"].as_str().ok_or(QsError::Unavailable)?;
+    let date = doc["created_at"].as_str().ok_or(QsError::Unavailable)?;
+    let snapshot = &doc["snapshot"];
+    let pages = snapshot["pages"].as_array().ok_or(QsError::Unavailable)?;
+    if doc["quick_share"] != 1
+        || snapshot["schema"] != 1
+        || !pages
+            .iter()
+            .all(|page| page["name"].is_string() && page["path"].is_string())
+    {
+        return Err(QsError::Unavailable);
+    }
+    let names = pages
+        .iter()
         .filter(|p| p["path"].as_str().is_some_and(|path| !path.is_empty()))
         .filter_map(|p| p["name"].as_str())
-        .map(|name| (page_key(name), name.to_owned()))
+        .map(str::to_owned)
+        .collect();
+    Ok((title.to_owned(), date.to_owned(), names))
+}
+
+fn names_by_key(names: impl IntoIterator<Item = String>) -> BTreeMap<String, String> {
+    names
+        .into_iter()
+        .map(|name| (page_key(&name), name))
         .collect()
 }
 
@@ -34,10 +58,7 @@ pub(super) fn membership_diff<'a>(
     old: &BTreeMap<String, String>,
     new: impl IntoIterator<Item = &'a str>,
 ) -> (Vec<String>, Vec<String>) {
-    let new: BTreeMap<_, _> = new
-        .into_iter()
-        .map(|name| (page_key(name), name.to_owned()))
-        .collect();
+    let new = names_by_key(new.into_iter().map(str::to_owned));
     let added = new
         .iter()
         .filter(|(key, _)| !old.contains_key(*key))
@@ -69,7 +90,7 @@ impl Service {
         &self,
         account: &Account,
         row: &ShareRow,
-    ) -> Result<(String, serde_json::Value), QsError> {
+    ) -> Result<(String, CurrentShare), QsError> {
         let gist_id = row.gist_id.as_deref().ok_or(QsError::NotFound)?;
         let gist = self.github.gist(&account.token, gist_id).await?;
         if gist.id != gist_id || !is_tine_share(&gist) || gist.owner_id != Some(account.account_id)
@@ -105,26 +126,24 @@ impl Service {
         }
         let bytes = share::gunzip_bounded(&payload, share::MAX_DOCUMENT_BYTES)
             .map_err(|_| QsError::Unavailable)?;
-        share::validate_legacy_document(&bytes).map_err(|_| QsError::Unavailable)?;
-        let document: serde_json::Value =
-            serde_json::from_slice(&bytes).map_err(|_| QsError::Unavailable)?;
-        if document["quick_share"] != 1
-            || document["snapshot"]["schema"] != 1
-            || !document["title"].is_string()
-            || !document["created_at"]
-                .as_str()
-                .is_some_and(|date| chrono::DateTime::parse_from_rfc3339(date).is_ok())
-            || !document["snapshot"]["pages"]
-                .as_array()
-                .is_some_and(|pages| {
-                    pages
-                        .iter()
-                        .all(|page| page["name"].is_string() && page["path"].is_string())
-                })
-        {
+        let (title, created_at, names) = match row.viewer_generation {
+            1 => legacy_summary(&bytes)?,
+            share::GENERATION => {
+                share::read_share_summary(&bytes).map_err(|_| QsError::Unavailable)?
+            }
+            _ => return Err(QsError::Unavailable),
+        };
+        if parse_time(&created_at).is_none() {
             return Err(QsError::Unavailable);
         }
-        Ok((revision, document))
+        Ok((
+            revision,
+            CurrentShare {
+                title,
+                created_at,
+                pages: names_by_key(names),
+            },
+        ))
     }
 
     pub(super) async fn review_update(
@@ -137,11 +156,10 @@ impl Service {
             let _guard = lock.lock().await;
             let (account, row) = self.owned_row(share_id)?;
             let (revision, document) = self.read_update_snapshot(&account, &row).await?;
-            let old = snapshot_pages(&document);
             let new = result.preview.pages.iter().map(|p| p.name.as_str());
-            let (added, removed) = membership_diff(&old, new);
+            let (added, removed) = membership_diff(&document.pages, new);
             result.membership = Some(Membership {
-                current_snapshot_at: document["created_at"].as_str().unwrap_or("").to_owned(),
+                current_snapshot_at: document.created_at,
                 added,
                 removed,
             });
@@ -150,7 +168,13 @@ impl Service {
                 .iter_mut()
                 .find(|p| p.id == result.prepare_id && p.expires > Instant::now())
                 .ok_or(QsError::PreviewExpired)?;
-            if document["quick_share"] != prepared.generation {
+            if row.viewer_generation == 1 && prepared.generation == share::GENERATION {
+                // The frozen viewer needs its original gist. This preview keeps
+                // its fresh id and uses the ordinary pending/create protocol.
+                prepared.replacement_account = Some(account.account_id);
+                return Ok(());
+            }
+            if row.viewer_generation != prepared.generation {
                 return Err(QsError::Disabled);
             }
             prepared.share_id = share::b64u_decode(&row.share_id)
@@ -171,15 +195,15 @@ impl Service {
     pub(super) fn refresh_update_record(
         &self,
         row: &ShareRow,
-        document: &serde_json::Value,
+        document: &CurrentShare,
     ) -> Result<(), QsError> {
         self.records
             .update_shares(|rows| {
                 if let Some(current) = rows.iter_mut().find(|r| {
                     r.share_id == row.share_id && r.key == row.key && r.gist_id == row.gist_id
                 }) {
-                    current.title = document["title"].as_str().unwrap_or(&row.title).to_owned();
-                    current.pages = snapshot_pages(document).len();
+                    current.title.clone_from(&document.title);
+                    current.pages = document.pages.len();
                 }
             })
             .map_err(records_error)
@@ -233,7 +257,7 @@ impl Service {
             share_id: row.share_id.clone(),
             gist_id: gist_id.to_owned(),
             login: row.login.clone(),
-            copied: copy(&generation_one_link(&row.login, gist_id, &key)),
+            copied: copy(&record_link(&row, gist_id, &key)?),
         })
     }
 }

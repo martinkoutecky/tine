@@ -171,7 +171,7 @@ fn store::Store::path_for_os_handoff
 struct store::Day
 struct store::FileRev
 
-## Reads (ceiling: 20)
+## Reads (ceiling: 21)
 # Audit L8-03: the orphan-asset inventory moved from WholeGraph::referenced_assets
 # (parsed pages only, cannot read set-aside duplicate-day files or fail on an
 # unreadable one) to the store, which can; the WholeGraph question left the surface.
@@ -196,6 +196,9 @@ fn store::Store::may_carry_vcs_markers
 fn store::Store::open_read
 fn store::Store::page
 fn store::Store::page_named
+# Browser core slice 4a reads a physical document held by this view.
+# Store::page cannot take a view parameter: it validates and reads live files.
+fn store::WholeGraph::page
 # A-V4b: a write parses the exact bytes its revision guards; `page` reads the
 # file itself, and for a page a host holds answers the host's bytes (A-V4).
 fn store::Store::page_of
@@ -412,7 +415,7 @@ field restore::RestoreFailed.phase
 field restore::RestoreFailed.cause
 field restore::RestoreFailed.done
 
-## WholeGraph: Names (ceiling: 35)
+## WholeGraph: Names (ceiling: 39)
 # CLI export extends corpus's selection parameter to indexed block-ID candidate
 # pages. A page name cannot identify those pages; CorpusScope types that existing
 # parameter. No Store operation or WholeGraph question is added.
@@ -421,6 +424,18 @@ enum store::CorpusScope
 # question: one named file via the existing page-position map, no new operation.
 enum store::InventoryScope
 enum store::Resolved
+# Browser core slice 4a shares owner selection between named reads and consumers
+# already holding a resolution. The full resolve answer includes alternatives
+# and a proposed path; neither is the owner of the currently opened page.
+fn store::WholeGraph::page_owner
+fn store::Resolved::page_owner
+# A feed reference or live listing item needs a point lookup by exact day.
+# A bounded inventory window cannot distinguish the queried day from an older one
+# without visiting another day.
+fn store::WholeGraph::journal_file_id
+# A feed already has an exact day. Passing its spelling through
+# proposed_file would parse the same day again under configurable formats.
+fn store::WholeGraph::proposed_journal_file
 field store::InventoryEntry.name
 field store::InventoryEntry.target
 field store::InventoryEntry.is_journal

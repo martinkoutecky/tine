@@ -368,7 +368,7 @@ export async function loadGraphPath(
   void loadGlobalCss();
   void primeQuickShareGate();
   if (!switching) void pruneSidebarBlocks();
-  maybeShowGuideAnnouncement();
+  if (!isPublishedExport()) maybeShowGuideAnnouncement();
   // On a genuine graph SWITCH, close ALL the old graph's tabs (their histories
   // point at pages that don't exist in the new graph) and land on a single fresh
   // Journals tab. On the initial startup load of the same graph, `restoreSession()`

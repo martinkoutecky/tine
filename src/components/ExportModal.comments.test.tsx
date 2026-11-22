@@ -7,7 +7,7 @@ import { resetStore } from "../document";
 import { closeExportModal, openExportNodesModal } from "../ui";
 import { clearTransientLayersForTest } from "../transientLayers";
 import type { BlockDto, RefGroup } from "../types";
-import { publishedBackend, type PublishedSnapshot } from "../publishedBackend";
+import { testPublishedBackend } from "../publishedBackend.methods.test.support";
 import { ReferenceExportChooser } from "./ReferenceExportChooser";
 
 beforeAll(initParser);
@@ -88,20 +88,15 @@ async function expectLabelledThenOmitted(open: () => void, markers: string[], ke
 // Iif8k: the published reader answers embed previews from its snapshot; a
 // comment root or unquoted reply must keep its thread membership there.
 it.each([false, true])("a published reader embed of a comment (reply=%s) is labelled and omitted on request", async (reply) => {
-  const block = (id: string, raw: string, children: BlockDto[] = []): BlockDto => ({ id, raw, collapsed: false, children });
-  const snapshot: PublishedSnapshot = {
-    schema: 1, name: "Reader", exported_at: "", home: "Source",
-    pages: [{ path: "pages/Source.md", name: "Source", title: "Source", kind: "page", pre_block: null, read_only: true, blocks: [
-      block("body", `Body\nid:: ${BODY_ID}`, [
-        block("root", `COMMENTMARKER\nid:: ${ROOT_ID}\ntine.quote:: Body`, [block("reply", `REPLYMARKER\nid:: ${REPLY_ID}`)]),
-      ]),
-    ] }],
-    entries: [{ name: "Source", kind: "page", date_key: null, path: "pages/Source.md" }],
-    backlinks: {}, block_ref_counts: {}, aliases: [], icons: {}, queries: [],
-  };
-  const reader = publishedBackend(async () => snapshot);
+  const reader = testPublishedBackend({ "pages/Source.md": [
+    `- Body\n  id:: ${BODY_ID}`,
+    `  - COMMENTMARKER\n    id:: ${ROOT_ID}\n    tine.quote:: Body`,
+    `    - REPLYMARKER\n      id:: ${REPLY_ID}`,
+  ].join("\n") });
   vi.spyOn(backend(), "previewBlock").mockImplementation((uuid, max) => reader.previewBlock(uuid, max));
-  const embed = `{{embed ((${reply ? REPLY_ID : ROOT_ID}))}}`;
+  const target = reply ? REPLY_ID : ROOT_ID;
+  expect((await reader.previewBlock(target, 10))?.group.blocks[0].comment).toBe(true);
+  const embed = `{{embed ((${target}))}}`;
   await expectLabelledThenOmitted(
     () => openExportNodesModal([{ raw: "Reader host", children: [{ raw: embed, children: [] }] }], 2),
     [reply ? "REPLYMARKER" : "COMMENTMARKER"], "Reader host");

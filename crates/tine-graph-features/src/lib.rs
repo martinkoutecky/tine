@@ -25,6 +25,7 @@ pub mod journals;
 pub mod live_conflict;
 mod macro_budget;
 mod output_comments;
+pub mod page_read_wire;
 pub mod pages;
 mod parsed_text;
 pub mod pdf;

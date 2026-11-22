@@ -9,16 +9,16 @@ it("I-12: native preview/count clients use tine_core::projection; imitate query.
   }
 });
 
-it("I-12: published previews use previewProjection.ts before cloning", () => {
+it("I-12: published previews forward to the core's bounded projection", () => {
   const source = readFileSync("src/publishedBackend.ts", "utf8");
-  const preview = source.slice(source.indexOf("    async previewBlock("), source.indexOf("    // ---- search ----"));
-  expect(preview).toContain('previewDtoSubtree(found.block, maxNodes, "owned")');
-  expect(preview).not.toMatch(/structuredClone|const copy|const count/);
+  expect(source).toContain("graph.preview_block_json(uuid, maxNodes)");
+  const core = readFileSync("crates/lsdoc-wasm/src/browser_graph.rs", "utf8");
+  expect(core).toContain("read::preview_block(&self.view, uuid, max_nodes)");
 });
 
-it("I-12: the demo mock previews through previewProjection.ts; imitate publishedBackend.ts", () => {
+it("I-12: the demo mock previews through previewProjection.ts", () => {
   const source = readFileSync("src/mock.ts", "utf8");
   const preview = source.slice(source.indexOf("    async previewBlock("), source.indexOf("    async readAsset("));
-  expect(preview).toContain('previewDtoSubtree(group.blocks[0], maxNodes, "borrowed")');
+  expect(preview).toContain("previewDtoSubtree(group.blocks[0], maxNodes)");
   expect(preview).not.toMatch(/const copy|const count/);
 });

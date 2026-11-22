@@ -1,19 +1,13 @@
 import type { PaneRouter, Route } from "./router";
-import type { PublishedSnapshot } from "./publishedBackend";
-import type { BlockDto, PageDto } from "./types";
-import { publishedAnswerer } from "./publishedAnswers";
-import { blockRegions } from "./render/parse";
+import type { Backend } from "./backend";
+import type { linkTarget } from "./pageIndex";
+import { ownerPath } from "./inventoryRows";
 
 export type PublishedPermalinkTarget =
   | { kind: "page"; page: string }
   | { kind: "block"; block: string };
 
-export interface ResolvedPublishedPermalink {
-  page: PublishedSnapshot["pages"][number];
-  block?: string;
-}
-
-/** In a quick share viewer, `<login>/<gist>/<key>`: the part of the fragment
+/** In a quick share viewer, the key is the part of the fragment
  *  the reader never changes. Permalinks are written and read after it. */
 let sharePrefix: string | null = null;
 
@@ -64,61 +58,35 @@ export function parsePublishedPermalinkHash(hash: string): PublishedPermalinkTar
     : { kind: "block", block: decoded };
 }
 
-function findBlock(blocks: PageDto["blocks"], wanted: string, format: "md" | "org"): BlockDto | null {
-  for (const block of blocks) {
-    if ((blockRegions(block.raw, format).id?.value.trim() ?? block.id) === wanted) return block;
-    const child = findBlock(block.children, wanted, format);
-    if (child) return child;
-  }
-  return null;
-}
-
-/** Resolve a link only within the baked snapshot. A page name opens what
- *  `[[name]]` opens there (aliases stay valid), while block UUIDs are graph-wide so moving a block does not break its link
- *  after the next export. Canonical page identity and parser-owned block IDs
- *  match publishedBackend. O(snapshot content bytes) for a block, O(page/alias
- *  name bytes) for a page. Returns null for an absent target; block lookup
- *  requires the initialized parser and throws when it is not ready. */
-export function resolvePublishedPermalink(
-  snapshot: PublishedSnapshot,
-  target: PublishedPermalinkTarget,
-): ResolvedPublishedPermalink | null {
-  if (target.kind === "block") {
-    for (const page of snapshot.pages) {
-      if (findBlock(page.blocks, target.block, page.format ?? "md")) return { page, block: target.block };
-    }
-    return null;
-  }
-
-  // What `[[<name>]]` opens (`publishedAnswers.ts`; the legacy upgrade for
-  // an old snapshot).
-  const page = publishedAnswerer(snapshot).permalinkPage(target.page);
-  return page ? { page } : null;
-}
-
 export type OpenPublishedPermalinkResult =
   | { status: "ignored" | "invalid" | "missing" }
   | { status: "opened"; target: PublishedPermalinkTarget; route: Route };
 
-/** Apply a public fragment to one pane after the snapshot is ready. */
-export function openPublishedPermalink(
-  snapshot: PublishedSnapshot,
+/** Apply a public fragment after graph open. Page links use the core's
+ *  inventory routing, and block links use its indexed UUID resolution. */
+export async function openPublishedPermalink(
   hash: string,
   router: PaneRouter,
-): OpenPublishedPermalinkResult {
+  reads: Pick<Backend, "resolvePage" | "resolveBlock">,
+  pageLink: typeof linkTarget,
+  current: () => boolean,
+): Promise<OpenPublishedPermalinkResult> {
   hash = permalinkPart(hash);
   if (!hash) return { status: "ignored" };
   const target = parsePublishedPermalinkHash(hash);
   if (!target) return { status: "invalid" };
-  const resolved = resolvePublishedPermalink(snapshot, target);
-  if (!resolved) return { status: "missing" };
-  const pageTarget = {
-    name: resolved.page.name,
-    pageKind: resolved.page.kind,
-    ...(resolved.page.path ? { path: resolved.page.path } : {}),
-  };
-  if (resolved.block) router.openPageAtBlock({ ...pageTarget, block: resolved.block });
-  else router.openPageTarget(pageTarget);
+  if (target.kind === "block") {
+    const group = await reads.resolveBlock(target.block);
+    if (!current()) return { status: "ignored" };
+    if (!group) return { status: "missing" };
+    router.openPageAtBlock({ name: group.page, pageKind: group.kind, path: group.path, block: target.block });
+  } else {
+    const link = pageLink(target.page);
+    const path = ownerPath(await reads.resolvePage(link.name, link.kind));
+    if (!current()) return { status: "ignored" };
+    if (!path) return { status: "missing" };
+    router.openPageTarget({ name: link.name, pageKind: link.kind, path });
+  }
   return { status: "opened", target, route: router.route() };
 }
 

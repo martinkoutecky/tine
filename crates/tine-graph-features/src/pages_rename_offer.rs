@@ -486,7 +486,7 @@ fn day_move(
             }
             Some(dialog_page(graph, &id))
         }
-        tine_store::Resolved::Alias { owners } => match owners.first() {
+        ref alias @ tine_store::Resolved::Alias { ref owners } => match alias.page_owner() {
             // MOA: the day's own alias becomes a page; the day keeps the line.
             Some(first) if *first == day_id => {
                 if owners.len() > 1 {

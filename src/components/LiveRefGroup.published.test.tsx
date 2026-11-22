@@ -1,17 +1,15 @@
 import { afterEach, beforeAll, expect, it, vi } from "vitest";
 import { render } from "solid-js/web";
 import { backend } from "../backend";
-import { publishedBackend, type PublishedSnapshot } from "../publishedBackend";
+import { testPublishedBackend } from "../publishedBackend.methods.test.support";
 import { blockWritable, isDirty, node, resetStore } from "../document";
 import { editingId, endEdit } from "../editorController";
 import { bumpGraphEpoch } from "../graphSession";
 import { adoptResults, captureResultsTicket } from "../queryResultsEpoch";
 import { initParser } from "../render/parse";
-import type { BlockDto } from "../types";
 import { LiveRefGroup } from "./LiveRefGroup";
 
 const UUID = "58900000-0000-4000-8000-0000000000e1";
-const block = (id: string, raw: string, children: BlockDto[] = []): BlockDto => ({ id, raw, collapsed: false, children });
 
 beforeAll(() => initParser());
 afterEach(() => {
@@ -23,17 +21,11 @@ afterEach(() => {
 });
 
 async function fixture(collapsed = false) {
-  const source = block(UUID, `Published parent\nid:: ${UUID}${collapsed ? "\ncollapsed:: true" : ""}`,
-    [block("child", "Published child", [block("grandchild", "Published grandchild")])]);
-  source.collapsed = collapsed;
-  const snapshot: PublishedSnapshot = {
-    schema: 1, name: "Publication", exported_at: "2026-10-31T00:00:00Z", home: "B",
-    pages: [{ name: "A", title: "A", kind: "page", path: "pages/A.md", pre_block: null,
-      read_only: true, blocks: [source] }],
-    entries: [], backlinks: {}, block_ref_counts: {}, aliases: [], icons: {}, queries: [],
-  };
-  const api = publishedBackend(async () => snapshot);
+  const api = testPublishedBackend({
+    "pages/A.md": `- Published parent\n  id:: ${UUID}${collapsed ? "\n  collapsed:: true" : ""}\n  - Published child\n    - Published grandchild\n`,
+  });
   vi.spyOn(backend(), "getPageByPath").mockImplementation(api.getPageByPath);
+  vi.spyOn(backend(), "getPage").mockImplementation(api.getPage);
   const group = (await api.resolveBlock(UUID))!;
   // Membership stays shallow; the source page is the authority for descendants.
   expect(group.blocks[0].children).toEqual([]);
@@ -62,10 +54,11 @@ it.each(["embed", "ref", "preview", "query"] as const)("hydrates a published %s 
 
 it("expands a published embedded source fold without changing the snapshot or document", async () => {
   const { group } = await fixture(true);
+  const id = group.blocks[0].id;
   const root = document.createElement("div"); document.body.append(root);
   const dispose = render(() => <LiveRefGroup {...group} surface="embed" embedId={UUID} eager />, root);
   try {
-    await vi.waitFor(() => expect(node(UUID)).toBeDefined());
+    await vi.waitFor(() => expect(node(id)).toBeDefined());
     expect(root.textContent).not.toContain("Published child");
     const toggle = await vi.waitFor(() => {
       const element = root.querySelector<HTMLElement>(".collapse-toggle");
@@ -75,8 +68,8 @@ it("expands a published embedded source fold without changing the snapshot or do
     toggle.click();
     expect(root.textContent).toContain("Published child");
     expect(root.textContent).toContain("Published grandchild");
-    expect(node(UUID).collapsed).toBe(true);
-    expect(node(UUID).raw).toContain("collapsed:: true");
+    expect(node(id).collapsed).toBe(true);
+    expect(node(id).raw).toContain("collapsed:: true");
     expect(isDirty("A")).toBe(false);
     toggle.click();
     expect(root.textContent).not.toContain("Published child");

@@ -199,7 +199,7 @@ pub(super) fn identify_old_blocks(
 /// Build a page DTO from a cached document. `read_only` is left false here (the
 /// on-disk bytes aren't known at this point); `load_page` sets it from the file
 /// it reads.
-pub(super) fn page_dto(entry: &PageEntry, doc: &Document) -> PageDto {
+pub(crate) fn page_dto(entry: &PageEntry, doc: &Document) -> PageDto {
     PageDto {
         name: entry.name.clone(),
         kind: entry.kind,

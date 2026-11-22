@@ -3,7 +3,6 @@ import { batch, createEffect, createMemo, createRoot, createSignal, getListener,
 import { ChangeKeyRegistry } from "./changeKeyRegistry";
 import { InventoryOrder } from "./inventoryOrder";
 import { backend } from "./backend";
-import { isPublishedExport } from "./publishedBackend";
 import { graphOwner, latestOwner, readOwned } from "./owned";
 import { graphEpoch, pageInventoryRev } from "./graphSession";
 import { pageIdentityKey } from "./ui";
@@ -332,7 +331,7 @@ function ensureInstalled() {
       if (current.refsCurrent) return current.refs!;
       const rows: PageEntry[] = [];
       for (const entry of orderedEntries(current)) {
-        if (entry.target.kind !== "absent" || (entry.link && (isPublishedExport() || !entry.is_journal || entry.link.kind !== "journal")) || hidden_from_all_pages(entry.name)) continue;
+        if (entry.target.kind !== "absent" || (entry.link && (!entry.is_journal || entry.link.kind !== "journal")) || hidden_from_all_pages(entry.name)) continue;
         rows.push({ name: entry.name, kind: entry.is_journal ? "journal" : "page", date_key: entry.day, path: "" });
       }
       current.refsCurrent = true;
@@ -368,8 +367,7 @@ export function resolvedTarget(name: string, kind: PageKind = "page"): ResolvedP
   return (kind === "journal" ? current?.journals : current?.pages)?.get(key)?.target;
 }
 
-// The pure row readers live in `inventoryRows.ts`, shared with the published
-// site's answers; this module applies them to the one held inventory.
+// The pure row readers in `inventoryRows.ts` apply to the held inventory.
 export { ownerPath, type LinkDestination } from "./inventoryRows";
 
 /** What `[[name]]` opens: `linkTargetIn` over the held inventory (the store's
@@ -378,7 +376,7 @@ export { ownerPath, type LinkDestination } from "./inventoryRows";
  *  kind). O(1), no IPC. */
 export function linkTarget(name: string): LinkDestination {
   ensureInstalled();
-  return linkTargetIn(nameAnswer(pageIdentityKey(name)), name, !isPublishedExport(), nameAnswer);
+  return linkTargetIn(nameAnswer(pageIdentityKey(name)), name, nameAnswer);
 }
 
 /** The inventory's typed namespace identity, or its immediate parent.
@@ -388,7 +386,7 @@ export function namespaceTarget(name: string, parent = false, kind?: PageKind): 
   const key = pageIdentityKey(name);
   const answer = nameAnswer(key);
   const entry = kind ? (kind === "journal" ? answer?.journals : answer?.pages)?.get(key)
-    : answer?.pages.get(key) ?? answer?.journals.get(key) ?? (!isPublishedExport() ? journalRowIn(answer, name, nameAnswer) : undefined);
+    : answer?.pages.get(key) ?? answer?.journals.get(key) ?? journalRowIn(answer, name, nameAnswer);
   if (kind && (!entry || entry.namespace_excluded)) return null;
   if (!parent) return { name: entry?.name ?? name, kind: entry?.is_journal ? "journal" : "page" };
   if (entry?.parent) return entry.parent;
@@ -402,33 +400,26 @@ export function namespaceTarget(name: string, parent = false, kind?: PageKind): 
 export function entityOpening(name: string, kind: PageKind): LinkDestination {
   const answer = nameAnswer(pageIdentityKey(name));
   const entry = (kind === "journal" ? answer?.journals : answer?.pages)?.get(pageIdentityKey(name));
-  return !isPublishedExport() && kind === "journal" && entry?.target.kind === "absent" && entry.link
+  return kind === "journal" && entry?.target.kind === "absent" && entry.link
     ? entry.link : { name, kind };
 }
 
 /** A named ordinary-page route (not a link): an alias opens what the store
  *  says its link opens (the owner, of the owner's kind: a journal's alias
- *  opens the journal). Frozen published v1 rows retain their stored redirects; any
- *  other name stays an ordinary page of that name. A route carrying the
- *  file's path never comes here (the router keeps an exact owner). */
+ *  opens the journal). A route carrying the file's path skips this lookup. */
 export function navigationTarget(name: string): LinkDestination {
   ensureInstalled();
   if (!inventoryAvailable()) return { name, kind: "page" };
   const key = pageIdentityKey(name);
   const answer = nameAnswer(key);
-  if (!isPublishedExport()) {
-    const entry = answer?.pages.get(key) ?? answer?.journals.get(key);
-    if (entry?.target.kind === "existing") {
-      const id = ownerPath(entry.target);
-      return { name: (id === undefined ? undefined : answer?.nameById.get(id)) ?? entry.name,
-        kind: entry.is_journal ? "journal" : "page" };
-    }
-    if (entry?.target.kind === "alias" && !entry.link) return { name: navigationName(name), kind: "page" };
-    return linkTargetIn(answer, name, true, nameAnswer);
+  const entry = answer?.pages.get(key) ?? answer?.journals.get(key);
+  if (entry?.target.kind === "existing") {
+    const id = ownerPath(entry.target);
+    return { name: (id === undefined ? undefined : answer?.nameById.get(id)) ?? entry.name,
+      kind: entry.is_journal ? "journal" : "page" };
   }
-  const entry = answer?.pages.get(key);
-  if ((entry?.target.kind === "alias" || (isPublishedExport() && entry?.empty_alias)) && entry.link) return entry.link;
-  return { name: navigationName(name), kind: "page" };
+  if (entry?.target.kind === "alias" && !entry.link) return { name: navigationName(name), kind: "page" };
+  return linkTargetIn(answer, name, nameAnswer);
 }
 
 /** The page name navigation opens for `name`: the file's own name for
@@ -439,8 +430,8 @@ export function navigationName(name: string): string {
   if (!inventoryAvailable()) return name;
   const key = pageIdentityKey(name);
   const answer = nameAnswer(key);
-  const entry = answer?.pages.get(key) ?? (!isPublishedExport() ? answer?.journals.get(key) : undefined);
-  if (!entry && !isPublishedExport()) return linkTargetIn(answer, name, true, nameAnswer).name;
+  const entry = answer?.pages.get(key) ?? answer?.journals.get(key);
+  if (!entry) return linkTargetIn(answer, name, nameAnswer).name;
   const target = entry?.target;
   if (!target || target.kind === "absent") return name;
   if (target.kind === "alias" && entry?.link) return entry.link.name;

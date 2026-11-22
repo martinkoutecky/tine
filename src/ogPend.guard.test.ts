@@ -18,17 +18,10 @@ it(rule + " for asset paths and MIME", () => {
 });
 
 it(rule + " for permalink identity", () => {
-  // A permalink's page is the published answerer's (CM step 2, Q13), which keys
-  // names with pageIdentityKey, in the answers reader and the legacy reader.
   const code = source("src/publishedPermalink.ts");
-  expect(code, rule).toContain("publishedAnswerer(snapshot).permalinkPage");
-  expect(code, rule).toContain("blockRegions");
-  expect(code, rule).not.toMatch(/identityFold|raw\.includes/);
-  for (const path of ["src/publishedAnswers.ts", "src/publishedLegacy.ts"]) {
-    const answerer = source(path);
-    expect(answerer, `${rule}; ${path}`).toContain("pageIdentityKey");
-    expect(answerer, `${rule}; ${path}`).not.toMatch(/identityFold|raw\.includes|toLowerCase\(\)/);
-  }
+  expect(code, rule).toContain("pageLink(target.page)");
+  expect(code, rule).toContain("reads.resolveBlock(target.block)");
+  expect(code, rule).not.toMatch(/blockRegions|identityFold|raw\.includes|toLowerCase\(\)/);
 });
 
 it("I-4/I-12: export uses the parser-owned visible body; exemplar: render/parse.ts::editBlock", () => {

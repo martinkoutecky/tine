@@ -126,7 +126,8 @@ fn main() {
         "QF2 Small"
     };
     let first = timed(|| {
-        tine_graph_features::pages::get_page(&store, first_name, PageKind::Page)
+        store
+            .page_named(first_name, PageKind::Page)
             .unwrap()
             .unwrap()
             .doc
@@ -155,21 +156,11 @@ fn main() {
         out["checkpointWrite"] = json!(format!("{:?}", store.write_checkpoint_now()));
     }
     if mode == "actions" {
-        // First open after readiness, then identical repeat, through get_page's door.
+        // First open after readiness, then identical repeat, through the command's store door.
         for name in ["QF2 Small", "QF2 Sixty"] {
             out[name] = json!([
-                timed(
-                    || tine_graph_features::pages::get_page(&store, name, PageKind::Page)
-                        .unwrap()
-                        .unwrap()
-                        .doc
-                ),
-                timed(
-                    || tine_graph_features::pages::get_page(&store, name, PageKind::Page)
-                        .unwrap()
-                        .unwrap()
-                        .doc
-                ),
+                timed(|| store.page_named(name, PageKind::Page).unwrap().unwrap().doc),
+                timed(|| store.page_named(name, PageKind::Page).unwrap().unwrap().doc),
             ]);
             out[format!("{name}ById")] = timed(|| {
                 store
@@ -193,7 +184,8 @@ fn main() {
         });
         std::thread::sleep(Duration::from_millis(2));
         out["pageDuringFocus"] = timed(|| {
-            tine_graph_features::pages::get_page(&store, "QF2 Sixty", PageKind::Page)
+            store
+                .page_named("QF2 Sixty", PageKind::Page)
                 .unwrap()
                 .unwrap()
                 .doc
@@ -207,9 +199,7 @@ fn main() {
             let begin = Instant::now();
             for i in 0..600 {
                 let name = ["QF2 Small", "QF2 Sixty", "QF2 Big"][i % 3];
-                let _ = tine_graph_features::pages::get_page(&store, name, PageKind::Page)
-                    .unwrap()
-                    .unwrap();
+                let _ = store.page_named(name, PageKind::Page).unwrap().unwrap();
                 if i % 6 == 0 {
                     search(&store, ["the", "qf2rareprobe"][i / 6 % 2]);
                 }

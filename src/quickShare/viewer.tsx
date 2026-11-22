@@ -1,4 +1,5 @@
 import { t, type MessageId } from "../i18n";
+import { BrowserCoreLoadError } from "../browserCore";
 import { QuickShareError, type QuickShareReason } from "./quickShare";
 
 const errors: Record<QuickShareReason, MessageId> = {
@@ -26,6 +27,6 @@ export function QuickShareFailure(props: { error: unknown }) {
   const reason = props.error instanceof QuickShareError ? props.error.reason : "invalid";
   return <main class="quick-share-failure" role="alert">
     <h1>{t("quick-share-viewer-title")}</h1>
-    <p>{t(errors[reason])}</p>
+    <p>{t(props.error instanceof BrowserCoreLoadError ? "quick-share-viewer-core-unavailable" : errors[reason])}</p>
   </main>;
 }

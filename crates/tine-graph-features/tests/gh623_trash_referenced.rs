@@ -7,10 +7,7 @@ use crate::test_host_writer::HostWriter;
 use std::fs;
 use std::sync::Arc;
 use tine_core::model::PageKind;
-use tine_graph_features::{
-    assets::{self, TrashOutcome},
-    pages,
-};
+use tine_graph_features::assets::{self, TrashOutcome};
 use tine_store::{EditKind, SaveBase, Store};
 
 fn fixture(files: &[(&str, &str)]) -> (tempfile::TempDir, Arc<Store>) {
@@ -27,9 +24,7 @@ fn fixture(files: &[(&str, &str)]) -> (tempfile::TempDir, Arc<Store>) {
 }
 
 fn drop_reference(store: &Arc<Store>, name: &str) {
-    let read = pages::get_page(store, name, PageKind::Page)
-        .unwrap()
-        .unwrap();
+    let read = store.page_named(name, PageKind::Page).unwrap().unwrap();
     let mut doc = read.doc.clone();
     for block in &mut doc.blocks {
         block.raw = block

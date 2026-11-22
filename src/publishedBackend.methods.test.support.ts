@@ -1,6 +1,19 @@
 // Test support for publishedBackend.guard.og.test.ts: the method classes §5 pins.
 // They live outside production because only the guard reads them.
-import { OPTIONAL_METHODS } from "./publishedBackend";
+import { onTestFinished } from "vitest";
+import { loadBrowserCore } from "./browserCore";
+import { OPTIONAL_METHODS, publishedBackend } from "./publishedBackend";
+
+/** Exercise the publication adapter with the vendored core and synthetic files. */
+export function testPublishedBackend(files: Record<string, string>, name = "Publication") {
+  const encoder = new TextEncoder();
+  const opened = loadBrowserCore().then(core => ({
+    graph: new core.BrowserGraph(Object.keys(files), Object.values(files).map(text => encoder.encode(text))),
+    name,
+  }));
+  onTestFinished(async () => (await opened).graph.free());
+  return publishedBackend(() => opened);
+}
 
 /** The method classes §5 pins. `publishedBackend.guard.test.ts` requires every
  *  `Backend` method to be in exactly one. */
@@ -13,14 +26,10 @@ export const PUBLISHED_ANSWERED_METHODS = [
   "loadGraph",
   "inspectGraphAccess",
   "startupGraphPath",
-  "listPages",
   "getPage",
   "getPageByPath",
   "journalFeedPage",
   "journalContentDays",
-  "existingPageNames",
-  "referencedPageNames",
-  "pageAliases",
   "pageIcons",
   "getBacklinks",
   "getBacklinkFilterContext",

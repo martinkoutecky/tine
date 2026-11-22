@@ -1,10 +1,7 @@
 //! The wire form of the store's name answers: the `page_inventory` answer and
 //! its rows, one name's resolution and one page's alias group. The live app's
-//! commands (`src-tauri/src/commands/discovery.rs`), the browser core
-//! (`crates/lsdoc-wasm`) and the published snapshot's
-//! `answers` table (`published_answers.rs`, `docs/contracts/quick-share.md`)
-//! serialize through these same types, so a published site reads exactly the
-//! rows the app reads (I-12: one serializer per answer).
+//! commands (`src-tauri/src/commands/discovery.rs`) and the browser core
+//! (`crates/lsdoc-wasm`) serialize through these types.
 use serde::Serialize;
 use tine_core::model::PageEntry;
 use tine_core::query_plan::ObjectiveMatchClass;

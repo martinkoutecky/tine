@@ -54,7 +54,7 @@ export async function checkViewer(target, { generation = 1, envelope, link, expe
   const base = remote ? target : hosted.url;
   const fixtureDir = path.join(root, `tests/fixtures/quick-share/g${generation}`);
   let manifest, browser, activePage;
-  let activeCase = "startup", activePrefix = "", activeKey = "";
+  let activeCase = "startup", activePrefix = "", activeKey = "", pageErrors = [];
   try {
   if (remote) {
     const response = await fetch(new URL("viewer.json", base), { cache: "no-store", redirect: "error", signal: AbortSignal.timeout(15_000) });
@@ -76,18 +76,29 @@ export async function checkViewer(target, { generation = 1, envelope, link, expe
       cases.push({ ...fixture, name: `${fixture.name}-writer`, doc, envelope: await sealDocument(doc, fixture.link) });
     }
   }
-  if (!envelope && generation === 1) {
+  if (!envelope) {
     const fixture = cases.find((entry) => entry.name === "pages");
     const doc = structuredClone(fixture.doc);
-    doc.assets = { "assets/local.png": { file: "a0000000000000000.bin" } }; // reserved extension is ignored by g1
-    doc.snapshot.pages.find((entry) => entry.name === "Project").blocks.push({ id: "media-policy-test", raw: 'Remote media sentinel\n![remote](https://remote.example/pixel.png) ![local](../assets/local.png)\n{{youtube dQw4w9WgXcQ}}\n<iframe src="https://remote.example/frame"></iframe>', children: [] });
-    doc.snapshot.pages.find((entry) => entry.name === "Project").blocks.push({ id: "math-policy-test", raw: "$$x^2$$", children: [] });
+    const media = 'Remote media sentinel\n![remote](https://remote.example/pixel.png) ![local](../assets/local.png)\n{{youtube dQw4w9WgXcQ}}\n<iframe src="https://remote.example/frame"></iframe>';
+    if (generation === 2) {
+      const project = doc.snapshot.files.find(entry => entry.path === "pages/Project.md");
+      project.text = project.text.replace("- TODO first task",
+        `- ${media.replaceAll("\n", "\n  ")}\n- $$x^2$$\n- TODO first task`);
+    } else {
+      doc.assets = { "assets/local.png": { file: "a0000000000000000.bin" } };
+      doc.snapshot.pages.find(entry => entry.name === "Project").blocks.push(
+        { id: "media-policy-test", raw: media, children: [] },
+        { id: "math-policy-test", raw: "$$x^2$$", children: [] },
+      );
+    }
     cases.push({ ...fixture, name: "media-policy", doc, expectedText: "Remote media sentinel", envelope: await sealDocument(doc, fixture.link) });
   }
     for (const fixture of cases) {
       const context = await browser.newContext();
       const page = await context.newPage();
       activePage = page; activeCase = fixture.name;
+      pageErrors = [];
+      page.on("pageerror", error => pageErrors.push(error.message));
       const original = new URL(fixture.link);
       const locator = generation === 2 ? original.pathname.slice(`/s/${generation}/`.length) : "";
       const prefix = original.hash.split("/").slice(0, generation === 2 ? 1 : 3).join("/");
@@ -113,8 +124,8 @@ export async function checkViewer(target, { generation = 1, envelope, link, expe
         if (url.startsWith("https://gist.githubusercontent.com/")) return route.fulfill({ status: 200, contentType: "text/plain", body: fixture.envelope, headers: { "access-control-allow-origin": "*" } });
         if (url.startsWith(base)) {
           if (!remote) return route.continue();
-          const route = decodeURIComponent(url.slice(base.length).split("?")[0]);
-          const name = !route || route === locator ? "index.html" : route;
+          const relative = decodeURIComponent(url.slice(base.length).split("?")[0]);
+          const name = !relative || relative === locator ? "index.html" : relative;
           const response = await fetch(url, { redirect: "error", cache: "no-store", signal: AbortSignal.timeout(15_000) });
           const bytes = Buffer.from(await response.arrayBuffer());
           assert.equal(response.ok, true, `deployed file unavailable: ${name}`);
@@ -151,6 +162,10 @@ export async function checkViewer(target, { generation = 1, envelope, link, expe
           assert.equal(await page.getByText("private reply sentinel", { exact: true }).count(), 0);
         }
         if (name === "reduced-config") await page.getByText("Hello reader", { exact: true }).first().waitFor();
+        if (name === "page-queries") {
+          await page.goto(`${address}/page/Dashboard`, { waitUntil: "domcontentloaded" });
+          await page.locator(".query-results-region").getByText("Notes ü", { exact: true }).first().waitFor();
+        }
       }
       // Follow an actual reader page link, then reload and copy the address.
       const shared = (name) => !fixture.doc || entries?.some((entry) => entry.name === name);
@@ -174,6 +189,7 @@ export async function checkViewer(target, { generation = 1, envelope, link, expe
       assert.equal(secretRequests, 0, "fragment entered a request");
       assert.equal(unexpectedRequests, 0, "viewer requested an unexpected host");
       assert.deepEqual(await page.evaluate(() => window.__shareInitialCspViolations), [], "the shipped CSP blocked a reader resource");
+      assert.deepEqual(pageErrors, [], "the viewer raised an unhandled error");
       // Deliberately exercise CSP behind renderer suppression. A missed image,
       // iframe or media path must fail closed, without reaching its origin.
       await page.evaluate(async () => {
@@ -190,7 +206,7 @@ export async function checkViewer(target, { generation = 1, envelope, link, expe
       await context.close();
       console.log(`Viewer compatibility OK: ${fixture.name}`);
     }
-    if (!remote && !envelope && generation === 1) {
+    if (!remote && !envelope) {
       // Test the actual production renderer with the stricter alternative.
       // KaTeX inserts style attributes and the reader inserts presentation CSS;
       // removing unsafe-inline must produce a style-src violation.
@@ -200,13 +216,15 @@ export async function checkViewer(target, { generation = 1, envelope, link, expe
       activePage = page; activeCase = "style-policy-probe";
       await page.addInitScript(() => { window.__styleProbe = []; document.addEventListener("securitypolicyviolation", (event) => window.__styleProbe.push(event.effectiveDirective)); });
       await context.route("https://gist.githubusercontent.com/**", (route) => route.fulfill({ status: 200, contentType: "text/plain", body: fixture.envelope, headers: { "access-control-allow-origin": "*" } }));
-      await context.route(base, (route) => route.fulfill({ status: 200, contentType: "text/html", body: fs.readFileSync(path.join(target, "index.html"), "utf8").replace("style-src 'self' 'unsafe-inline'", "style-src 'self'") }));
-      activePrefix = new URL(fixture.link).hash.split("/").slice(0, 3).join("/"); activeKey = activePrefix.split("/")[2];
-      await page.goto(`${base}${activePrefix}/page/Project`);
+      const link = new URL(fixture.link);
+      const address = generation === 2 ? `${base}${link.pathname.slice("/s/2/".length)}` : base;
+      await context.route(address, (route) => route.fulfill({ status: 200, contentType: "text/html", body: fs.readFileSync(path.join(target, "index.html"), "utf8").replace("style-src 'self' 'unsafe-inline'", "style-src 'self'") }));
+      activePrefix = link.hash; activeKey = activePrefix.slice(1).split("/").at(-1);
+      await page.goto(`${address}${activePrefix}/page/Project`);
       await page.locator(".katex").first().waitFor();
       const styles = await page.evaluate(() => window.__styleProbe);
       assert.ok(styles.some((directive) => directive.startsWith("style-src")), "the stricter style policy unexpectedly needs no inline styles; revisit shipped CSP");
-      console.log(`CSP bundle probe: unsafe-inline needed (${[...new Set(styles)].join(", ")}); generation 1 needs no workers`);
+      console.log(`CSP bundle probe: unsafe-inline needed (${[...new Set(styles)].join(", ")}); generation ${generation} needs no workers`);
       await context.close();
     }
     // A feature refusal must be visible before any gist is requested.
@@ -218,7 +236,7 @@ export async function checkViewer(target, { generation = 1, envelope, link, expe
     return fixtureFingerprint(root, generation);
   } catch (error) {
     const out = path.join(root, "artifacts/quick-share-viewer"); fs.mkdirSync(out, { recursive: true });
-    let observed = String(error);
+    let observed = [String(error), ...pageErrors].join("\n");
     if (activePrefix) observed = observed.replaceAll(activePrefix, "<share>");
     if (activeKey) observed = observed.replaceAll(activeKey, "<key>");
     fs.writeFileSync(path.join(out, "check-failure.json"), JSON.stringify({ built_from: manifest?.built_from, journey: activeCase, expected: "the viewer renders a compatible share under CSP without leaking its fragment", observed, classification: "ambiguous: viewer or browser/deployment infrastructure" }, null, 2) + "\n");

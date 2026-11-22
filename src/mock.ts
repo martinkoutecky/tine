@@ -1357,7 +1357,7 @@ export function mockBackend(extraPages: PageDto[] = conflictDemoBodies().map((bl
         }
       }
       if (!group) return null;
-      const { blocks, truncated } = previewDtoSubtree(group.blocks[0], maxNodes, "borrowed");
+      const { blocks, truncated } = previewDtoSubtree(group.blocks[0], maxNodes);
       return { group: { ...group, blocks }, truncated };
     },
     async readAsset(name: string, maxBytes: number): Promise<Uint8Array> {

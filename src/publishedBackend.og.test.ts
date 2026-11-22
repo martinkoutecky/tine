@@ -1,213 +1,111 @@
-import { afterEach, beforeAll, describe, expect, it, vi } from "vitest";
-import {
-  __resetPublishedSnapshotForTest, loadPublishedSnapshot, publishedBackend, readBounded, validateSnapshot,
-  type PublishedSnapshot,
-} from "./publishedBackend";
-import { initParser } from "./render/parse";
-import { openPublishedPermalink, parsePublishedPermalinkHash, publishedPermalinkHash } from "./publishedPermalink";
-import type { ParsedQuery, QueryResult } from "./editor/queryIr";
+import { afterEach, expect, it, onTestFinished, vi } from "vitest";
+import { readBounded, validateSnapshot } from "./publishedBackend";
+import { testPublishedBackend } from "./publishedBackend.methods.test.support";
+import { parsePublishedPermalinkHash, publishedPermalinkHash } from "./publishedPermalink";
 
-const parsed = {
-  query: { anchor: "block", source: { kind: "og", original: "(task TODO)" }, filter: { kind: "true" } },
-  view: {},
-} as unknown as ParsedQuery;
-const result = {
-  anchor: "block", groups: [{ page: "Public", kind: "page", blocks: [{ id: "one", raw: "TODO one", collapsed: false, children: [] }] }],
-  diagnostics: [], report: { supported: true, ran: [], ignored: [] }, total: 1, matched_total: 1, exceeded: false,
-} as QueryResult;
-
-const snapshot: PublishedSnapshot = {
-  schema: 1, name: "Example", exported_at: "", home: "Public",
-  pages: [{ path: "pages/Public.md", name: "Public", title: "Public", kind: "page", pre_block: null,
-    blocks: [{ id: "one", raw: "TODO one", collapsed: false, children: [] }], read_only: true }],
-  entries: [{ name: "Public", kind: "page", date_key: null, path: "pages/Public.md" }],
-  backlinks: {}, block_ref_counts: {}, aliases: [["Alias", "Public"]], icons: {},
-  queries: [{ host: "Public", argument: "(task TODO)", dialect: "macro_query", properties: [], parsed,
-    context: { current_page: "Public" }, executed_context: { current_page: "Public" }, view: {}, result }],
+const files = {
+  "pages/Public.md": "alias:: Alias\n\n- TODO one\n",
+  "logseq/config.edn": '{:default-home {:page "Public"}}',
 };
+const uuid = "11111111-1111-4111-8111-111111111111";
 
-describe("read-only published snapshot", () => {
-  it("answers page and baked query reads from the closed snapshot", async () => {
-    validateSnapshot(snapshot);
-    const api = publishedBackend(async () => snapshot);
-    expect(api.graphBindingGeneration()).toBe(1);
-    const inventory = await api.pageInventory();
-    expect(BigInt(inventory.rev)).toBe(0n);
-    // The exported entries, then the snapshot's alias pairs as alias rows (HFh-eo).
-    expect(inventory.entries.map((entry) => entry.name)).toEqual(["Public", "Alias"]);
-    expect((await api.getPage("Alias", "page"))?.id).toBe("pages/Public.md");
-    expect(await api.parseQuery("(task TODO)", "macro_query")).toEqual(parsed);
-    expect(await api.queryRun(parsed.query, {}, { current_page: "Public" })).toEqual(result);
-    await expect(api.parseQuery("(task DONE)", "macro_query")).rejects.toMatchObject({ reasonCode: "published_export_static" });
-  });
+afterEach(() => vi.unstubAllGlobals());
 
-  it("refuses a write while keeping public permalink identity stable", async () => {
-    const api = publishedBackend(async () => snapshot);
-    const dto = { name: "Public", kind: "page" as const, title: "Public", pre_block: null, blocks: [] };
-    await expect(api.pageSubmit(1, 1, "pages/Public.md", dto, 1, null, ["replace-page"])).rejects.toThrow("read-only published export");
-    await expect(api.pageMove(1, 2, ["pages/Public.md", dto, 1], ["pages/Other.md", dto, 1], ["move-blocks"])).rejects.toThrow("read-only published export");
-    await expect(api.pageDelete(1, "Public", "page")).rejects.toThrow("read-only published export");
-    const page = publishedPermalinkHash({ kind: "page", page: "Public" });
-    const block = publishedPermalinkHash({ kind: "block", block: "one" });
-    expect(parsePublishedPermalinkHash(page)).toEqual({ kind: "page", page: "Public" });
-    expect(parsePublishedPermalinkHash(block)).toEqual({ kind: "block", block: "one" });
-    expect(openPublishedPermalink).toBeTypeOf("function");
-  });
-});
-
-
-describe("published semantic answers and admission (OG-B-FRONT)", () => {
-  it("resolves NFC and boundary slash page identities", async () => {
-    const s = structuredClone(snapshot); s.pages[0].name = "Cafe\u0301";
-    const api = publishedBackend(async () => s);
-    expect((await api.getPage("/Café/", "page"))?.name).toBe("Cafe\u0301");
-  });
-  it("maps folded evidence back to authored UTF-16 text", async () => {
-    const s = structuredClone(snapshot); s.pages[0].blocks[0].raw = "a\u0301b";
-    const hits = await publishedBackend(async () => s).runGraphSearch("b", 0, 10, "quick-switch");
-    expect(hits.hits[0].evidence?.[0].spans).toEqual([{start: 2, end: 3}]);
-  });
-  it("block picker search lists whole words in any order before in-order fragments (OG's two legs)", async () => {
-    const s = structuredClone(snapshot);
-    s.pages[0].blocks = [
-      {id: "frag", raw: "qzfoo qzbarx tail", collapsed: false, children: []},
-      {id: "words", raw: "xx qzbar yy qzfoo", collapsed: false, children: []},
-    ];
-    const api = publishedBackend(async () => s);
-    const ids = async (q: string, limit = 20) => (await api.search(q, limit)).flatMap((g) => g.blocks).map((b) => b.id);
-    expect(await ids("qzbar qzfoo")).toEqual(["words"]);
-    expect(await ids("qzfoo qzbar")).toEqual(["words", "frag"]);
-    expect(await ids("qzfoo qzbar", 1)).toEqual(["words"]);
-  });
-  it("resolves the authored ID instead of a fenced example", async () => {
-    const s = structuredClone(snapshot);
-    s.pages[0].blocks = [
-      {id: "example", raw: "```\nid:: wanted\n```", collapsed: false, children: []},
-      {id: "runtime", raw: "Real\nid:: wanted", collapsed: false, children: []},
-    ];
-    const api = publishedBackend(async () => s);
-    expect((await api.resolveBlock("wanted"))?.blocks[0].id).toBe("runtime");
-    expect((await api.previewBlock("wanted", 10))?.group.blocks[0].id).toBe("runtime");
-  });
-  it("refuses hostile served depth but accepts a broad ordinary export", () => {
-    const s = structuredClone(snapshot); let child = s.pages[0].blocks[0];
-    for (let i = 0; i < 2000; i++) {
-      const next = {id: String(i), raw: "x", collapsed: false, children: []};
-      child.children.push(next); child = next;
-    }
-    expect(() => validateSnapshot(s)).toThrow(/depth/);
-    const broad = structuredClone(snapshot);
-    broad.pages[0].blocks = Array.from({length: 20000}, (_, i) => ({id: String(i), raw: "x", collapsed: false, children: []}));
-    expect(() => validateSnapshot(broad)).not.toThrow();
-  });
-});
-
-
-it("accepts the native maximum block depth and previews it with a node budget", async () => {
-  const s = structuredClone(snapshot); let child = s.pages[0].blocks[0];
-  for (let i = 1; i < 128; i++) {
-    const next = {id: String(i), raw: "x", collapsed: false, children: []};
-    child.children.push(next); child = next;
+it("opens one captured graph and runs unrecorded queries over the shared pages", async () => {
+  const snapshot = { schema: 2, name: "Example", exported_at: "", files: Object.entries(files).map(([path, text]) => ({ path, text })) };
+  const fetch = vi.fn(async () => Response.json(snapshot));
+  vi.stubGlobal("fetch", fetch);
+  vi.resetModules();
+  const { loadPublishedGraph, publishedBackend } = await import("./publishedBackend");
+  const opened = await loadPublishedGraph("snapshot.json");
+  onTestFinished(() => opened.graph.free());
+  expect(await loadPublishedGraph("snapshot.json")).toBe(opened);
+  expect(fetch).toHaveBeenCalledTimes(1);
+  const api = publishedBackend();
+  expect(api.graphBindingGeneration()).toBe(1);
+  expect(await api.loadGraph("")).toMatchObject({ kind: "loaded", meta: { root: "Example", default_home: "Public" } });
+  expect((await api.pageInventory()).entries.map((entry) => entry.name)).toEqual(["Alias", "Public", "TODO"]);
+  expect(await api.getPage("Alias", "page")).toMatchObject({ id: "pages/Public.md", read_only: true });
+  for (const [task, total] of [["TODO", 1], ["DONE", 0]] as const) {
+    const parsed = await api.parseQuery(`(task ${task})`, "macro_query");
+    expect(await api.queryRun(parsed.query, parsed.view)).toMatchObject({ total });
   }
-  expect(() => validateSnapshot(s)).not.toThrow();
-  const preview = await publishedBackend(async () => s).previewBlock("one", 1);
-  expect(preview?.group.blocks[0].children).toEqual([]);
-  expect(preview?.truncated).toBe(127);
 });
 
-
-it("matches baked query contexts by canonical page identity", async () => {
-  const s = structuredClone(snapshot); s.queries[0].context.current_page = "Cafe\u0301";
-  const api = publishedBackend(async () => s);
-  expect(await api.queryRun(parsed.query, {}, {current_page: "/Café/"})).toEqual(result);
+it("refuses writes and keeps the public fragment grammar", async () => {
+  const api = testPublishedBackend(files);
+  const dto = { name: "Public", kind: "page" as const, title: "Public", pre_block: null, blocks: [] };
+  await expect(api.pageSubmit(1, 1, "pages/Public.md", dto, 1, null, ["replace-page"])).rejects.toThrow("read-only published export");
+  await expect(api.pageMove(1, 2, ["pages/Public.md", dto, 1], ["pages/Other.md", dto, 1], ["move-blocks"])).rejects.toThrow("read-only published export");
+  await expect(api.pageDelete(1, "Public", "page")).rejects.toThrow("read-only published export");
+  for (const target of [{ kind: "page", page: "Notes ü" }, { kind: "block", block: uuid }] as const) {
+    expect(parsePublishedPermalinkHash(publishedPermalinkHash(target))).toEqual(target);
+  }
 });
 
-
-it("bounds preview cloning before allocation and owns emitted metadata (OG-DUPF03)", async () => {
-  const s = structuredClone(snapshot);
-  const root = s.pages[0].blocks[0];
-  root.tags = ["tag"]; root.properties = [["key", "value"]]; root.breadcrumb = ["ancestor"];
-  root.children = Array.from({length: 20000}, (_, i) => ({id: `child-${i}`, raw: "x".repeat(1024), collapsed: false, children: []}));
-  const clone = vi.spyOn(globalThis, "structuredClone");
-  try {
-    const start = performance.now();
-    const preview = await publishedBackend(async () => s).previewBlock("one", 1);
-    console.log(`OG-DUPF03 broad preview: ${(performance.now() - start).toFixed(2)} ms`);
-    expect(preview?.truncated).toBe(20000);
-    const copied = preview!.group.blocks[0];
-    expect(copied.children).toEqual([]);
-    const clonedDescendants = clone.mock.calls.reduce((n, [value]) => n + (value as {children?: unknown[]}).children!.length, 0);
-    expect(clonedDescendants, "preview allocation must be bounded before cloning").toBe(0);
-    copied.tags![0] = "changed"; copied.properties![0][1] = "changed"; copied.breadcrumb![0] = "changed";
-    expect(root.tags).toEqual(["tag"]); expect(root.properties).toEqual([["key", "value"]]); expect(root.breadcrumb).toEqual(["ancestor"]);
-  } finally { clone.mockRestore(); }
+it("requires source text in a generation-2 document", () => {
+  const snapshot = { schema: 2, name: "Example", exported_at: "" };
+  expect(() => validateSnapshot({ ...snapshot, schema: 1, pages: [] })).toThrow(/schema/);
+  expect(() => validateSnapshot({ ...snapshot, files: [{ path: "pages/X.md", text: [] }] })).toThrow(/Invalid/);
 });
 
+it("bounds the preview and returns detached metadata for an authored ID", async () => {
+  const text = `- Root #tag\n  id:: ${uuid}\n  key:: value\n` + "  - child\n".repeat(20000);
+  const api = testPublishedBackend({ "pages/Preview.md": text });
+  const preview = await api.previewBlock(uuid, 1);
+  expect(preview?.truncated).toBe(20000);
+  const root = preview!.group.blocks[0];
+  expect(root.children).toEqual([]);
+  root.tags![0] = "changed";
+  const next = await api.previewBlock(uuid, 1);
+  expect(next?.group.blocks[0].tags).toEqual(["tag"]);
+});
 
-describe("published reads are parser-decided, visible on failure and bounded (OG-R)", () => {
-  beforeAll(initParser);
-  afterEach(() => {
-    vi.unstubAllGlobals();
-    __resetPublishedSnapshotForTest();
-  });
-  const bytesOf = (n: number) => new Uint8Array(n).fill(7);
-  const TEST_ASSET_MAX_BYTES = 10;
-  const TOO_SMALL_MAX_BYTES = TEST_ASSET_MAX_BYTES - 1;
-  const respond = (body: Uint8Array, init: ResponseInit = {}) => new Response(body as unknown as BodyInit, init);
+it("lists real block referrers with shallow rows and breadcrumbs", async () => {
+  const api = testPublishedBackend({ "pages/References.md": [
+    `- Source\n  id:: ${uuid}`,
+    `- Parent ((${uuid}))\n  - Child ((${uuid}))`,
+    `- Inline code \`((${uuid}))\` only`,
+    "- \`\`\`\n  " + `((${uuid}))` + "\n  \`\`\`",
+  ].join("\n") });
+  const groups = await api.getBlockReferrers(uuid);
+  const blocks = groups.flatMap((group) => group.blocks);
+  expect(blocks.map(block => block.raw)).toEqual([`Parent ((${uuid}))`, `Child ((${uuid}))`]);
+  expect(blocks.every(block => !block.children.length)).toBe(true);
+  expect(blocks[1].breadcrumb).toEqual([`Parent ((${uuid}))`]);
+});
 
-  it("lists only real ((uuid)) references as referrers, never a code lookalike", async () => {
-    const id = "11111111-1111-4111-8111-111111111111";
-    const s = structuredClone(snapshot);
-    s.pages[0].blocks = [
-      { id: "real", raw: `see ((${id})) here`, collapsed: false, children: [] },
-      { id: "code", raw: `inline \`((${id}))\` only`, collapsed: false, children: [] },
-      { id: "fence", raw: `\`\`\`\n((${id}))\n\`\`\``, collapsed: false, children: [] },
-      { id: "other", raw: "no reference", collapsed: false, children: [] },
-    ];
-    const groups = await publishedBackend(async () => s).getBlockReferrers(id);
-    expect(groups.flatMap((group) => group.blocks.map((block) => block.id))).toEqual(["real"]);
-  });
+const bytesOf = (n: number) => new Uint8Array(n).fill(7);
+const TEST_ASSET_MAX_BYTES = 10;
+const TOO_SMALL_MAX_BYTES = TEST_ASSET_MAX_BYTES - 1;
+const respond = (body: Uint8Array, init: ResponseInit = {}) => new Response(body as unknown as BodyInit, init);
 
-  // L3-10: rows carry the matched block, like the native shallow DTO; a matching chain costs N, not N^2/2.
-  it("returns matched blocks without copying their subtrees", async () => {
-    const id = "11111111-1111-4111-8111-111111111111";
-    const s = structuredClone(snapshot);
-    const leaf = { id: "leaf", raw: `((${id}))`, collapsed: false, children: [] };
-    s.pages[0].blocks = [{ id: "top", raw: `((${id}))`, collapsed: false, children: [leaf] }];
-    const clone = vi.spyOn(globalThis, "structuredClone");
-    const groups = await publishedBackend(async () => s).getBlockReferrers(id);
-    const cloned = clone.mock.calls.filter(([value]) => (value as { children?: unknown[] })?.children?.length);
-    clone.mockRestore();
-    expect(groups[0].blocks.map((block) => [block.id, block.children])).toEqual([["top", []], ["leaf", []]]);
-    expect(groups[0].blocks[1].breadcrumb).toEqual([`((${id}))`]);
-    expect(cloned).toEqual([]);
-  });
+it("rejects a missing or refused asset instead of answering empty bytes", async () => {
+  vi.stubGlobal("fetch", vi.fn(async () => new Response("nope", { status: 404 })));
+  const api = testPublishedBackend(files);
+  await expect(api.readAsset("gone.png", TEST_ASSET_MAX_BYTES)).rejects.toThrow(/gone\.png.*404/);
+  await expect(api.readAsset("../escape.png", TEST_ASSET_MAX_BYTES)).rejects.toThrow(/outside|not a file/);
+  await expect(api.streamAsset("/etc/passwd")).rejects.toThrow(/not a file/);
+});
 
-  it("rejects a missing or refused asset instead of answering empty bytes", async () => {
-    vi.stubGlobal("fetch", vi.fn(async () => new Response("nope", { status: 404 })));
-    const api = publishedBackend(async () => snapshot);
-    await expect(api.readAsset("gone.png", TEST_ASSET_MAX_BYTES)).rejects.toThrow(/gone\.png.*404/);
-    await expect(api.readAsset("../escape.png", TEST_ASSET_MAX_BYTES)).rejects.toThrow(/outside|not a file/);
-    await expect(api.streamAsset("/etc/passwd")).rejects.toThrow(/not a file/);
+it("honours the caller's byte cap on an asset, by declared length and by streamed length", async () => {
+  const api = testPublishedBackend(files);
+  vi.stubGlobal("fetch", vi.fn(async () => respond(bytesOf(10), { headers: { "content-length": "10" } })));
+  expect((await api.readAsset("ok.bin", TEST_ASSET_MAX_BYTES)).byteLength).toBe(10);
+  await expect(api.readAsset("big.bin", TOO_SMALL_MAX_BYTES)).rejects.toThrow(/larger than 9/);
+  // No declared length: the running total refuses and cancels the stream.
+  const stream = new ReadableStream<Uint8Array>({
+    start(controller) {
+      for (let i = 0; i < 5; i++) controller.enqueue(bytesOf(4));
+      controller.close();
+    },
   });
+  await expect(readBounded(new Response(stream), 9, "asset s")).rejects.toThrow(/larger than 9/);
+});
 
-  it("honours the caller's byte cap on an asset, by declared length and by streamed length", async () => {
-    const api = publishedBackend(async () => snapshot);
-    vi.stubGlobal("fetch", vi.fn(async () => respond(bytesOf(10), { headers: { "content-length": "10" } })));
-    expect((await api.readAsset("ok.bin", TEST_ASSET_MAX_BYTES)).byteLength).toBe(10);
-    await expect(api.readAsset("big.bin", TOO_SMALL_MAX_BYTES)).rejects.toThrow(/larger than 9/);
-    // No declared length: the running total refuses and cancels the stream.
-    const stream = new ReadableStream<Uint8Array>({
-      start(controller) {
-        for (let i = 0; i < 5; i++) controller.enqueue(bytesOf(4));
-        controller.close();
-      },
-    });
-    await expect(readBounded(new Response(stream), 9, "asset s")).rejects.toThrow(/larger than 9/);
-  });
-
-  it("refuses an oversized snapshot document before parsing it", async () => {
-    vi.stubGlobal("fetch", vi.fn(async () => respond(new TextEncoder().encode("{}"), { headers: { "content-length": String(1 << 30) } })));
-    await expect(loadPublishedSnapshot("snapshot.json")).rejects.toThrow(/larger than/);
-  });
+it("refuses an oversized snapshot document before parsing it", async () => {
+  vi.resetModules();
+  const { loadPublishedGraph } = await import("./publishedBackend");
+  vi.stubGlobal("fetch", vi.fn(async () => respond(new TextEncoder().encode("{}"), { headers: { "content-length": String(1 << 30) } })));
+  await expect(loadPublishedGraph("snapshot.json")).rejects.toThrow(/larger than/);
 });

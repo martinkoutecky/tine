@@ -1,4 +1,4 @@
-import { msg } from "./i18n";
+import { msg, t } from "./i18n";
 import { render } from "solid-js/web";
 import { App } from "./App";
 import "./session";
@@ -11,7 +11,7 @@ import { startCommunityExtensions } from "./plugins/startup";
 import { backend, isTauri } from "./backend";
 import { startUiLanguage } from "./i18n/preference";
 import { installBackendClock } from "./journal";
-import { isPublishedExport, isQuickShareViewer, loadPublishedSnapshot } from "./publishedBackend";
+import { isPublishedExport, isQuickShareViewer, loadPublishedGraph } from "./publishedBackend";
 import { QuickShareFailure, QuickShareBanner } from "./quickShare/viewer";
 import { getCurrentWindow } from "@tauri-apps/api/window";
 import { installWorkspaceWindows, installWorkspaceWindowShell } from "./workspaceWindows";
@@ -112,19 +112,17 @@ const mount = () => {
     console.error("failed to reveal the main window")
   );
 };
-const publishedSnapshotReady = isPublishedExport()
-  ? loadPublishedSnapshot().then(() => undefined, (error) => {
-      if (isQuickShareViewer()) {
-        // Await language selection before rendering the refusal. No raw error is logged.
-        void startUiLanguage().then(() => {
-          const root = document.getElementById("root")!;
-          root.replaceChildren();
-          render(() => <><QuickShareBanner /><QuickShareFailure error={error} /></>, root);
-        });
-        throw error;
-      }
-      console.error("published snapshot unavailable");
-      document.getElementById("root")!.textContent = "Couldn't load snapshot.json — serve this folder over HTTP";
+function PublishedGraphFailure(props: { error: unknown }) {
+  return <p role="alert">{t("published-graph-unavailable", { error: String(props.error) })}</p>;
+}
+
+const publishedGraphReady = isPublishedExport()
+  ? loadPublishedGraph().catch(async (error: unknown) => {
+      await startUiLanguage();
+      const root = document.getElementById("root")!;
+      root.replaceChildren();
+      if (isQuickShareViewer()) render(() => <><QuickShareBanner /><QuickShareFailure error={error} /></>, root);
+      else render(() => <PublishedGraphFailure error={error} />, root);
       throw error;
     })
   : Promise.resolve();
@@ -138,6 +136,6 @@ void Promise.all([
   parserSettled,
   isPublishedExport() ? Promise.resolve() : parserSettled.then(() => Promise.race([restoreSession(), new Promise((r) => setTimeout(r, 1500))])),
   communityExtensionsReady,
-  publishedSnapshotReady,
+  publishedGraphReady,
   startUiLanguage(),
 ]).then(mount, () => { if (!isPublishedExport()) mount(); else console.error("published app startup failed"); });

@@ -37,10 +37,10 @@ jobs:
           node --test scripts/quick-share-viewer.test.mjs
       - uses: actions/upload-artifact@v4
         with:
-          name: quick-share-viewer-g1
+          name: quick-share-viewer-g2
           path: |
-            artifacts/quick-share-viewer/quick-share-viewer-g1.zip
-            artifacts/quick-share-viewer/quick-share-viewer-g1.zip.sha256
+            artifacts/quick-share-viewer/quick-share-viewer-g2.zip
+            artifacts/quick-share-viewer/quick-share-viewer-g2.zip.sha256
           if-no-files-found: error
           retention-days: 90
           compression-level: 0

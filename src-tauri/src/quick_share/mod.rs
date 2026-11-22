@@ -199,6 +199,7 @@ struct Prepared {
     pages: usize,
     expires: Instant,
     update: Option<reshare::UpdateReview>,
+    replacement_account: Option<u64>,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -337,6 +338,14 @@ fn generation_one_link(login: &str, gist_id: &str, key: &[u8; 32]) -> String {
         "https://tine.page/s/1/#{login}/{gist_id}/{}",
         share::b64u(key)
     )
+}
+
+fn record_link(row: &ShareRow, gist_id: &str, key: &[u8; 32]) -> Result<String, QsError> {
+    match row.viewer_generation {
+        1 => Ok(generation_one_link(&row.login, gist_id, key)),
+        share::GENERATION => Ok(share::link(&row.login, gist_id, key)),
+        _ => Err(QsError::Unavailable),
+    }
 }
 
 fn viewer_pinned(generation: u32) -> bool {
@@ -671,6 +680,7 @@ impl Service {
             pages: prepared.preview.pages.len(),
             expires: now + PREPARED_TTL,
             update: None,
+            replacement_account: None,
         });
         Ok(PrepareResult {
             prepare_id: id,
@@ -713,13 +723,19 @@ impl Service {
         let prepared = self
             .take_prepared(prepare_id)
             .ok_or(QsError::PreviewExpired)?;
-        if prepared.update.is_some() {
-            return self.update_share(prepared, copy).await;
-        }
         if !viewer_ready(prepared.generation) {
             return Err(QsError::Disabled);
         }
+        if prepared.update.is_some() {
+            return self.update_share(prepared, copy).await;
+        }
         let account = self.connected()?;
+        if prepared
+            .replacement_account
+            .is_some_and(|id| id != account.account_id)
+        {
+            return Err(QsError::ShareChanged);
+        }
         let sealed = share::seal_fresh_as(&prepared.payload, prepared.share_id).map_err(|_| {
             QsError::Refused {
                 message: "the system random source failed".into(),
@@ -736,6 +752,7 @@ impl Service {
             title: prepared.title.clone(),
             pages: prepared.pages,
             key: share::b64u(&sealed.key),
+            viewer_generation: prepared.generation,
         };
         // The pending row (with key and share id) is on disk before the
         // request: a crash or an unknown outcome can still be recovered.
@@ -761,11 +778,7 @@ impl Service {
                     .map_err(|_| QsError::MaybeUploaded {
                         share_id: share_id.clone(),
                     })?;
-                let url = if prepared.generation == 1 {
-                    generation_one_link(&account.login, &gist_id, &sealed.key)
-                } else {
-                    share::link(&account.login, &gist_id, &sealed.key)
-                };
+                let url = record_link(&row, &gist_id, &sealed.key)?;
                 let copied = copy(&url);
                 Ok(Created {
                     share_id,
@@ -862,9 +875,9 @@ impl Service {
             let (_, document) = self.read_update_snapshot(&account, &row).await?;
             self.refresh_update_record(&row, &document)?;
             return Ok(CheckOutcome::Current {
-                title: document["title"].as_str().unwrap_or(&row.title).to_owned(),
-                created_at: document["created_at"].as_str().unwrap_or("").to_owned(),
-                pages: reshare::snapshot_pages(&document).into_values().collect(),
+                title: document.title,
+                created_at: document.created_at,
+                pages: document.pages.into_values().collect(),
             });
         }
         let key =
@@ -1030,7 +1043,7 @@ impl Service {
         let (Some(gist_id), Some(key)) = (row.gist_id.as_deref(), decode_key(&row)) else {
             return Err(QsError::NotFound);
         };
-        Ok(copy(&generation_one_link(&row.login, gist_id, &key)))
+        Ok(copy(&record_link(&row, gist_id, &key)?))
     }
 }
 

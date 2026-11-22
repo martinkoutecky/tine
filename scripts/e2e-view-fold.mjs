@@ -1,7 +1,7 @@
-// Built G1 viewer and live export: routed read-only folds, navigation, reload,
+// Built generation-2 viewer and live export: routed read-only folds, navigation, reload,
 // and zero mutation requests. Uses disposable, synthetic snapshots only.
-// Build `npx vite build --mode quick-share` first. For the static check, run
-// TINE_VIEW_FOLD_STATIC_DIR=$PWD/artifacts/view-fold/static cargo test -p
+// Build `node scripts/build-quick-share-viewer.mjs` first. For the static check, run
+// TINE_VIEW_FOLD_STATIC_DIR=$PWD/target/artifacts/view-fold/static cargo test -p
 // tine-graph-features --lib static_child_folds_keep_authored_state_and_all_content.
 import assert from "node:assert/strict";
 import fs from "node:fs";
@@ -11,23 +11,25 @@ import { gzipSync } from "node:zlib";
 import { chromium } from "playwright";
 import { serveViewer } from "./check-quick-share-viewer.mjs";
 
-const out = path.resolve("artifacts/view-fold"); fs.mkdirSync(out, { recursive: true });
+const out = path.resolve("target/artifacts/view-fold"); fs.mkdirSync(out, { recursive: true });
 for (const dir of ["home", "data", "config", "cache", "state"]) fs.mkdirSync(path.join(out, dir), { recursive: true });
-const fixture = "tests/fixtures/quick-share/g1/pages";
+const fixture = "tests/fixtures/quick-share/g2/pages";
 const doc = JSON.parse(fs.readFileSync(`${fixture}/document.json`, "utf8"));
 const link = fs.readFileSync(`${fixture}/link.txt`, "utf8").trim();
-const prefix = new URL(link).hash.split("/").slice(0, 3).join("/");
-doc.snapshot.pages.find(p => p.name === "Project").blocks.unshift({
-  id: "fold-parent", raw: "A collapsed bullet\ncollapsed:: true", collapsed: true,
-  children: [{ id: "fold-child", raw: "Previously hidden child", collapsed: false, children: [] }],
-});
+const { pathname, hash: prefix } = new URL(link);
+const locator = pathname.slice("/s/2/".length);
+const parentId = "6512a000-0000-4000-8000-000000000003";
+const project = doc.snapshot.files.find(file => file.path === "pages/Project.md");
+project.text = project.text.replace("- TODO first task",
+  `- A collapsed bullet\n  id:: ${parentId}\n  collapsed:: true\n  - Previously hidden child\n- TODO first task`);
 const header = Buffer.concat([Buffer.from("TSH1"), Buffer.from([1]), Buffer.alloc(16, 7)]);
 const nonce = webcrypto.getRandomValues(new Uint8Array(12));
-const baseKey = await webcrypto.subtle.importKey("raw", Buffer.from(prefix.split("/")[2], "base64url"), "HKDF", false, ["deriveKey"]);
+const baseKey = await webcrypto.subtle.importKey("raw", Buffer.from(prefix.slice(1), "base64url"), "HKDF", false, ["deriveKey"]);
 const key = await webcrypto.subtle.deriveKey({ name: "HKDF", hash: "SHA-256", salt: header.subarray(5), info: Buffer.from("tine-share/1/enc") }, baseKey, { name: "AES-GCM", length: 256 }, false, ["encrypt"]);
 const cipher = await webcrypto.subtle.encrypt({ name: "AES-GCM", iv: nonce, additionalData: header }, key, gzipSync(JSON.stringify(doc)));
 const envelope = Buffer.concat([header, nonce, Buffer.from(cipher)]).toString("base64url");
-const hosted = await serveViewer(path.resolve("artifacts/quick-share-viewer/build"));
+const viewer = path.resolve("artifacts/quick-share-viewer/build");
+const hosted = await serveViewer(viewer, 2);
 const browser = await chromium.launch({ args: ["--no-sandbox"], env: { ...process.env,
   HOME: path.join(out, "home"), XDG_DATA_HOME: path.join(out, "data"),
   XDG_CONFIG_HOME: path.join(out, "config"), XDG_CACHE_HOME: path.join(out, "cache"), XDG_STATE_HOME: path.join(out, "state") } });
@@ -45,14 +47,16 @@ try {
     // Same production entry, with the published export's actual meta/backend.
     if (mode === "published") {
       await context.route("**/quick-share.html", route => route.fulfill({ contentType: "text/html", body:
-        fs.readFileSync("artifacts/quick-share-viewer/build/quick-share.html", "utf8").replace('content="quick-share:1"', 'content="snapshot.json"')
+        fs.readFileSync(path.join(viewer, "index.html"), "utf8").replace('content="quick-share:2"', 'content="snapshot.json"')
           .replace("connect-src https://gist.githubusercontent.com https://api.github.com", "connect-src 'self'") }));
       await context.route("**/snapshot.json", route => route.fulfill({ json: doc.snapshot }));
     }
     const hash = mode === "quick-share" ? prefix : "#";
-    const url = `${hosted.url}quick-share.html${hash}/page/Project`;
+    const url = `${hosted.url}${mode === "quick-share" ? locator : "quick-share.html"}${hash}/page/Project`;
     await page.goto(url);
-    const parent = page.locator('[data-block-id="fold-parent"]').first();
+    const parent = page.locator(".ls-block").filter({
+      has: page.getByText("A collapsed bullet", { exact: true }),
+    }).first();
     const child = page.getByText("Previously hidden child", { exact: true });
     await parent.waitFor();
     assert.equal(await child.count(), 0);
@@ -108,7 +112,7 @@ try {
   await staticContext.close();
   proof.result = "passed";
 } catch (error) {
-  proof.result = "failed"; proof.observed = String(error).split("\n")[0];
+  proof.result = "failed"; proof.observed = String(error);
   proof.expected = "fold arrow reveals the child without mutations"; proof.classification = "product or harness; inspect screenshot";
   await page?.screenshot({ path: path.join(out, "failure.png") }).catch(() => {});
   throw error;

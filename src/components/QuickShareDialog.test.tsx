@@ -85,16 +85,19 @@ it("prepares the reviewed request and shows what goes out before anything is upl
   expect(api.create, "nothing is uploaded without the click").not.toHaveBeenCalled();
 });
 
-async function openExisting(keyHere = true) {
+async function openExisting(keyHere = true, generation = 2) {
   const gist = "1234567890abcdef1234567890abcdef";
   loadSingle({name: "Project", title: "Project", kind: "page", pre_block: "", blocks: [
     {id: "definition", raw: `{{tine-query @page}}\n  tine.share:: octo/${gist}`, properties: [["tine.share", `octo/${gist}`]], children: [], collapsed: false},
   ]});
   api.list.mockResolvedValue(listing({shares: keyHere ? [{shareId: "local", state: "live", login: "octo", gistId: gist,
     createdAt: "2026-10-26T00:00:00Z", title: "Project", pages: 1, accountMatches: true}] : []}));
-  if (keyHere) api.prepare.mockImplementation(async () => ({...preparedOf(), shareId: "local", membership: {
-    added: ["New"], removed: ["Old"], currentSnapshotAt: "2026-10-25T12:00:00Z",
-  }}));
+  if (keyHere) api.prepare.mockImplementation(async () => {
+    const next = preparedOf();
+    return { ...next, shareId: generation === 1 ? next.shareId : "local", membership: {
+      added: ["New"], removed: ["Old"], currentSnapshotAt: "2026-10-25T12:00:00Z",
+    } };
+  });
   const root = document.createElement("div"); document.body.append(root);
   openQuickShare({...REQUEST, hostBlockId: "definition"}, {hostBlockId: "definition", macro: "{{tine-query @page}}"});
   dispose = render(() => <QuickShareDialog request={quickShareRequest} />, root);
@@ -124,6 +127,20 @@ it("without the device key, share-again explains and offers a separate new link"
   expect(api.create).not.toHaveBeenCalled();
 });
 
+it("re-sharing a generation-1 link records the new share through the pending marker", async () => {
+  const mark = vi.spyOn(definitions, "markSharePending").mockResolvedValue("Exports");
+  const finish = vi.spyOn(definitions, "finishSharePending").mockResolvedValue(["Exports"]);
+  const root = await openExisting(true, 1);
+  const preview = await api.prepare.mock.results[0].value;
+  expect(text(root)).toContain("Re-sharing creates a new link.");
+  expect(api.create).not.toHaveBeenCalled();
+  button(root, "quick-share-create")!.click();
+  await vi.waitFor(() => expect(finish).toHaveBeenCalledWith(preview.shareId, "octo/g1", expect.any(Function), ["Exports"]));
+  expect(mark).toHaveBeenCalledWith(expect.objectContaining({ hostBlockId: "definition" }), preview.shareId, expect.any(Function));
+  expect(mark.mock.invocationCallOrder[0]).toBeLessThan(api.create.mock.invocationCallOrder[0]);
+  expect(text(root)).toContain("Link copied.");
+});
+
 it.each(["maybeUpdated", "shareChanged"])("an update refused with %s needs a new review and never retries automatically", async kind => {
   api.create.mockRejectedValueOnce({kind});
   const root = await openExisting();
@@ -145,7 +162,7 @@ it("creates exactly once from the prepared payload and says the link was copied,
   expect(api.create).toHaveBeenCalledTimes(1);
   expect(api.create).toHaveBeenCalledWith("p1");
   expect(text(root)).toContain("Link copied.");
-  expect(text(root), "a masked link: login and gist, never the key").toContain("https://tine.page/s/1/#octo/g1/…");
+  expect(text(root), "a masked link: login and gist, never the key").toContain("https://tine.page/s/2/octo/g1#…");
   expect(button(root, "quick-share-create"), "a share is made once; Create is gone").toBeNull();
   button(root, "quick-share-copy")!.click();
   await settle();

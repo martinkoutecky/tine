@@ -1,5 +1,5 @@
 import { afterEach, expect, it, vi } from "vitest";
-import { publishedBackend, type PublishedSnapshot } from "./publishedBackend";
+import { publishedBackend } from "./publishedBackend";
 import { mockBackend } from "./mock";
 
 afterEach(() => {
@@ -7,7 +7,7 @@ afterEach(() => {
   vi.resetModules();
 });
 
-const reader = () => publishedBackend(async (): Promise<PublishedSnapshot> => {
+const reader = () => publishedBackend(async () => {
   throw new Error("opening an external link does not load the graph");
 });
 

@@ -123,6 +123,7 @@ function Dialog(props: { request: QueryPublicationRequest }): JSX.Element {
   const [updateId, setUpdateId] = createSignal<string | undefined>();
   const [missingKey, setMissingKey] = createSignal(false);
   const [updateUnknown, setUpdateUnknown] = createSignal(false);
+  const [newLink, setNewLink] = createSignal(false);
   // The prepared payload that Create uploads; cleared the moment Create consumes it. `shareId` is the record id
   // that upload will use, which the query block carries as `tine.share:: pending/<shareId>` from the start.
   const [prepared, setPrepared] = createSignal<{ prepareId: string; shareId: string } | null>(null);
@@ -184,6 +185,7 @@ function Dialog(props: { request: QueryPublicationRequest }): JSX.Element {
       if (answer.kind === "stale") return;
       setPreview(answer.value.preview);
       setMembership(answer.value.membership);
+      setNewLink(!!updateId() && answer.value.shareId !== updateId());
       setPrepared({ prepareId: answer.value.prepareId, shareId: answer.value.shareId });
     } catch (failure) {
       if (owner()) setError(quickShareErrorText(failure));
@@ -229,8 +231,9 @@ function Dialog(props: { request: QueryPublicationRequest }): JSX.Element {
     const definitionHost = definition?.hostBlockId ?? props.request.hostBlockId;
     const commentsIncluded = preview()?.includeComments ?? includeComments() ?? true;
     const { prepareId: id, shareId } = current;
+    const updatesExisting = updateId() === shareId;
     markedOn = null;
-    if (definition && !updateId()) {
+    if (definition && !updatesExisting) {
       // The marker is saved before anything is uploaded (D-20261018-QS3): without it a share confirmed later could
       // not find its block. If it cannot be saved, nothing is uploaded and the preview stays for another try.
       try {
@@ -256,17 +259,17 @@ function Dialog(props: { request: QueryPublicationRequest }): JSX.Element {
     try {
       const answer = await writeOwned(owner, backend().quickShareCreate(id));
       if (answer.kind === "stale") return;
-      if (updateId() && definitionHost && (commentsChanged || definition?.commentsChanged)) await saveExportComments(definitionHost, commentsIncluded, owner);
+      if (updatesExisting && definitionHost && (commentsChanged || definition?.commentsChanged)) await saveExportComments(definitionHost, commentsIncluded, owner);
       if (alive) {
         setCreated(answer.value);
         setCopied(answer.value.copied);
         if (!answer.value.copied) setError(t("quick-share-copy-failed"));
       }
-      if (!updateId()) await finish(shareId, shareValue(answer.value.login, answer.value.gistId), owner, markedOn);
+      if (!updatesExisting) await finish(shareId, shareValue(answer.value.login, answer.value.gistId), owner, markedOn);
     } catch (failure) {
       const kind = kindOf(failure);
       // An unknown outcome keeps the marker (a later Check finishes it); any other failure made no gist.
-      if (!updateId() && kind !== "maybeUploaded") await finish(shareId, null, owner, markedOn);
+      if (!updatesExisting && kind !== "maybeUploaded") await finish(shareId, null, owner, markedOn);
       if (!alive) { pushToast(msg("quick-share-toast-failed", { error: quickShareErrorText(failure) }), "error"); return; }
       if (kind === "maybeUploaded") setPending((failure as { shareId: string }).shareId);
       if (kind === "maybeUpdated") setUpdateUnknown(true);
@@ -348,7 +351,7 @@ function Dialog(props: { request: QueryPublicationRequest }): JSX.Element {
 
             <Show when={busy() === "prepare"}><div class="query-export-note">{t("quick-share-preparing")}</div></Show>
             <Show when={missingKey()}><p class="settings-hint quick-share-missing-key">{t("quick-share-missing-key")}</p></Show>
-            <Show when={updateId()}><p class="quick-share-revisions">{t("quick-share-revisions")}</p></Show>
+            <Show when={updateId() && preview()}><p class="quick-share-revisions">{t(newLink() ? "quick-share-new-link" : "quick-share-revisions")}</p></Show>
             <Show when={membership()}>{diff => <div class="quick-share-membership">
               <Show when={diff().currentSnapshotAt}><p>{t("quick-share-current-snapshot", { date: diff().currentSnapshotAt! })}</p></Show>
               <p>{t("quick-share-membership", { added: diff().added.length, removed: diff().removed.length })}</p>
@@ -382,7 +385,7 @@ function Dialog(props: { request: QueryPublicationRequest }): JSX.Element {
             </div>}</Show>
 
             <Show when={created()}>{(share) => <div class="quick-share-created" role="status">
-              <p>{updateId() ? t("quick-share-reshared") : copied() ? t("quick-share-copied") : t("quick-share-created")}</p>
+              <p>{updateId() && !newLink() ? t("quick-share-reshared") : copied() ? t("quick-share-copied") : t("quick-share-created")}</p>
               <p class="settings-hint quick-share-link">{t("quick-share-link-masked", { login: share().login, gist: share().gistId })}</p>
               <p class="settings-hint">{t("quick-share-key-on-device")}</p>
             </div>}</Show>

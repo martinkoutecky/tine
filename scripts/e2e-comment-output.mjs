@@ -96,7 +96,12 @@ try {
   await shot("03-folder-review"); await browser.$(".query-export-modal .export-btn-primary").click();
   const snapshotFile = path.join(graph, "published-queries/comment-output/app/snapshot.json");
   await waitForFileText(snapshotFile, text => text.includes("Body passage remains"), { timeoutMs: 30000 });
-  assert.doesNotMatch(fs.readFileSync(snapshotFile, "utf8"), /COMMENTMARKER|REPLYMARKER/);
+  const snapshot = JSON.parse(fs.readFileSync(snapshotFile, "utf8"));
+  assert.equal(snapshot.schema, 2);
+  const sources = snapshot.files.map(({ text }) => text).join("\n");
+  assert.match(sources, /Body passage remains/);
+  assert.match(sources, /Another body block remains/);
+  assert.doesNotMatch(sources, /COMMENTMARKER|REPLYMARKER/);
   await waitForFileText(path.join(graph, "pages/Exports.md"), text => text.includes("tine.comments:: false"), { timeoutMs: 20000 });
   assert.equal(fs.readFileSync(pageFile, "utf8"), source);
   await browser.$(".query-export-modal").waitForExist({ reverse: true });

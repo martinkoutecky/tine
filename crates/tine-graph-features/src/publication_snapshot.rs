@@ -52,10 +52,11 @@ pub(crate) struct Snapshot<'a> {
     files: Vec<SourceFile<'a>>,
 }
 
-#[derive(Serialize)]
-struct ShareDocument<'a> {
-    quick_share: u32,
-    snapshot: Snapshot<'a>,
+#[derive(Serialize, Deserialize)]
+pub(crate) struct ShareDocument<'a> {
+    pub(crate) quick_share: u32,
+    #[serde(borrow)]
+    pub(crate) snapshot: Snapshot<'a>,
 }
 
 #[derive(Default)]
@@ -303,6 +304,28 @@ pub(crate) fn snapshot(
 
 impl Snapshot<'_> {
     pub(crate) fn query_membership(&self) -> io::Result<Vec<String>> {
+        self.membership(false)
+    }
+
+    pub(crate) fn share_summary(&self) -> io::Result<(String, String, Vec<String>)> {
+        use crate::quick_share::{MAX_STRING_BYTES, VIEWER_MAX_PAGES};
+        if self.files.len() > VIEWER_MAX_PAGES + 1
+            || self.name.len() > MAX_STRING_BYTES
+            || self.exported_at.len() > MAX_STRING_BYTES
+            || self.files.iter().any(|file| {
+                file.text.len() > MAX_STRING_BYTES || file.path.len() > MAX_STRING_BYTES
+            })
+        {
+            return Err(refusal("share sources exceed the viewer limits"));
+        }
+        Ok((
+            self.name.to_string(),
+            self.exported_at.to_string(),
+            self.membership(true)?,
+        ))
+    }
+
+    fn membership(&self, include_single_home: bool) -> io::Result<Vec<String>> {
         if self.schema != 2 {
             return Err(refusal("unknown publication snapshot schema"));
         }
@@ -326,10 +349,13 @@ impl Snapshot<'_> {
         {
             return Err(refusal("invalid publication membership"));
         }
+        let include_home = include_single_home && pages.len() == 1;
         pages.sort_unstable_by(|a, b| a.id.as_str().cmp(b.id.as_str()));
         Ok(pages
             .into_iter()
-            .filter_map(|page| (Some(page.name.as_str()) != home).then_some(page.name))
+            .filter_map(|page| {
+                (include_home || Some(page.name.as_str()) != home).then_some(page.name)
+            })
             .collect())
     }
 }

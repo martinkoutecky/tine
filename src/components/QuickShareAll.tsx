@@ -4,7 +4,7 @@ import { t, msg } from "../i18n";
 import { bindingOwner, readOwned, readOwnedResource, writeOwned } from "../owned";
 import { graphScopedSignal, refuseStaleWrite } from "../binding";
 import { EXPORT_PROPERTY, SHARE_PROPERTY } from "../exportsPage";
-import { pendingRecordId, shareGistId } from "../quickShare/definitions";
+import { finishSharePending, markSharePending, pendingRecordId, shareGistId, shareValue } from "../quickShare/definitions";
 import { QUICK_SHARE_OFF, quickShareErrorText, type QuickSharePrepared } from "../quickShare/commands";
 import type { PageKind, QueryPublicationRequest, QueryPublicationPlan } from "../types";
 import { exportSheets } from "../sheet/exportSheets";
@@ -32,7 +32,7 @@ export function QuickShareAll(): JSX.Element {
   </>;
 }
 
-interface Entry { title: string; definition?: { id: string; raw: string; page: string; kind: PageKind }; prepared?: QuickSharePrepared; folder?: { request: QueryPublicationRequest; plan: QueryPublicationPlan }; note?: string; outcome?: string }
+interface Entry { title: string; definition?: { id: string; raw: string; page: string; kind: PageKind }; prepared?: QuickSharePrepared; newShareMacro?: string; folder?: { request: QueryPublicationRequest; plan: QueryPublicationPlan }; note?: string; outcome?: string }
 
 /** Preparation only reads. Confirm consumes the same one-use native previews as single Re-share, in order. */
 function BatchDialog(props: { close: () => void; target: object }): JSX.Element {
@@ -101,13 +101,15 @@ function BatchDialog(props: { close: () => void; target: object }): JSX.Element 
         try {
           const macros = queryMacroExtents(block.raw);
           if (macros.length !== 1) throw new Error(t("quick-share-all-query"));
-          const source = queryWorkspaceDsl(block.raw.slice(macros[0].start, macros[0].end));
+          const macro = block.raw.slice(macros[0].start, macros[0].end);
+          const source = queryWorkspaceDsl(macro);
           const answer = await readOwnedResource(owner, backend().quickSharePrepare({ argument: source.argument,
             dialect: source.dialect, properties: block.properties ?? [], currentPage: group.page, hostBlockId: block.id,
             name: row.title || group.page, includeComments: includeComments(), includeQueryText: false }, row.shareId), preview => discard(preview.prepareId));
           if (answer.kind === "stale") return;
           pending.add(answer.value.prepareId);
-          add({ title: answer.value.preview.title, definition: { id: block.id, raw: block.raw, page: group.page, kind: group.kind }, prepared: answer.value });
+          add({ title: answer.value.preview.title, definition: { id: block.id, raw: block.raw, page: group.page, kind: group.kind },
+            prepared: answer.value, newShareMacro: answer.value.shareId !== row.shareId ? macro : undefined });
         } catch (failure) {
           if (owner()) add({ title, note: quickShareErrorText(failure) });
         }
@@ -154,14 +156,39 @@ function BatchDialog(props: { close: () => void; target: object }): JSX.Element 
       const preview = entry.prepared;
       if (!preview || !pending.delete(preview.prepareId)) continue;
       let outcome: string;
+      let markedOn: string | undefined;
+      let attempted = false;
+      let created = false;
       try {
+        if (entry.newShareMacro) {
+          markedOn = await markSharePending({ hostBlockId: null, macro: entry.newShareMacro, includeComments: preview.preview.includeComments }, preview.shareId, persistOwner);
+          if (!owner()) {
+            await finishSharePending(preview.shareId, null, persistOwner, [markedOn]);
+            void discard(preview.prepareId);
+            break;
+          }
+        }
+        attempted = true;
         const answer = await writeOwned(persistOwner, backend().quickShareCreate(preview.prepareId));
         if (answer.kind === "stale") break;
-        rememberChoice(entry);
+        created = true;
+        if (markedOn) {
+          const { login, gistId, copied } = answer.value;
+          await finishSharePending(preview.shareId, shareValue(login, gistId), persistOwner, [markedOn]);
+          outcome = t(copied ? "quick-share-copied" : "quick-share-created");
+        } else {
+          rememberChoice(entry);
+          outcome = t("quick-share-reshared");
+        }
         if (!owner()) break;
-        outcome = t("quick-share-reshared");
       } catch (failure) {
         outcome = quickShareErrorText(failure);
+        if (!attempted) void discard(preview.prepareId);
+        const uploadUnknown = typeof failure === "object" && failure !== null && "kind" in failure && failure.kind === "maybeUploaded";
+        if (markedOn && !created && !uploadUnknown) {
+          try { await finishSharePending(preview.shareId, null, persistOwner, [markedOn]); }
+          catch (error) { pushToast(msg("quick-share-pending-unmark-failed", { error: String(error) }), "error"); }
+        }
         if (!owner()) { pushToast(msg("quick-share-toast-failed", { error: outcome }), "error"); break; }
       }
       setEntries(rows => rows.map(row => row === entry ? { ...row, outcome } : row));
@@ -207,7 +234,8 @@ function BatchDialog(props: { close: () => void; target: object }): JSX.Element 
           <button type="button" class="icon-btn quick-share-all-close" aria-label={t("share-dialog-close")} onClick={props.close}>✕</button></div>
         <div class="settings-pane-body" aria-live="polite">
           <p>{t("quick-share-all-review")}</p>
-          <Show when={entries().some(entry => entry.prepared)}><p>{t("quick-share-revisions")}</p></Show>
+          <Show when={entries().some(entry => entry.prepared && !entry.newShareMacro)}><p>{t("quick-share-revisions")}</p></Show>
+          <Show when={entries().some(entry => entry.newShareMacro)}><p>{t("quick-share-new-link")}</p></Show>
           <Show when={busy()}><p role="status">{busy() === "prepare" ? t("exports-all-preparing") : t("exports-all-updating")}</p></Show>
           <Show when={error()}><p role="alert">{error()}</p></Show>
           <For each={entries()}>{entry => <section class="quick-share-all-entry">

@@ -74,30 +74,16 @@ function twemojiAssets(): Plugin {
   };
 }
 
-function browserCoreAssets(): Plugin {
-  const loader = fileURLToPath(new URL("./src/browserCore.ts", import.meta.url));
+function browserCoreAssets(entries: string[]): Plugin {
   const coreDir = normalizePath(fileURLToPath(new URL("./src/render/wasm-core/", import.meta.url)));
-  let loaderRef: string;
   return {
     name: "browser-core-assets",
     apply: "build",
-    buildStart() {
-      // Keep the loader in the exportable app bundle before it has a caller.
-      // Loaded after the app entries, so Rollup does not split their shared
-      // parser and preload code into an extra startup asset.
-      loaderRef = this.emitFile({
-        type: "chunk",
-        id: loader,
-        name: "browser-core-loader",
-        preserveSignature: "strict",
-        implicitlyLoadedAfterOneOf: ["index.html", "capture.html"].map((page) => fileURLToPath(new URL(`./${page}`, import.meta.url))),
-      });
-    },
     generateBundle(_, bundle) {
       const chunks = Object.values(bundle).filter((file) => file.type === "chunk");
       const coreChunks = chunks.filter((chunk) => chunk.moduleIds.some((id) => id.startsWith(coreDir)));
       const coreFiles = new Set(coreChunks.map((chunk) => chunk.fileName));
-      for (const entryName of ["main", "capture"]) {
+      for (const entryName of entries) {
         const entry = chunks.find((chunk) => chunk.isEntry && chunk.name === entryName);
         if (!entry) this.error(`Missing ${entryName} entry`);
         const visited = new Set([entry.fileName]);
@@ -107,14 +93,12 @@ function browserCoreAssets(): Plugin {
           if (chunk?.type === "chunk") for (const dependency of chunk.imports) visited.add(dependency);
         }
       }
-      const loaderFile = this.getFileName(loaderRef);
-      const loaderChunk = bundle[loaderFile];
       const [core] = coreChunks;
-      if (coreChunks.length !== 1 || loaderChunk?.type !== "chunk" ||
+      if (coreChunks.length !== 1 ||
           !["lsdoc_wasm.js", "lsdoc_wasm_bytes.ts"].every((name) => core.moduleIds.includes(coreDir + name)) ||
-          !loaderChunk.dynamicImports.includes(core.fileName) ||
-          ![loaderFile, core.fileName].every((file) => file.startsWith("assets/") && !file.includes(".."))) {
-        this.error("Expected one lazy browser core chunk and its loader under assets/ for graph export");
+          !core.fileName.startsWith("assets/") ||
+          !chunks.some((chunk) => chunk.dynamicImports.includes(core.fileName))) {
+        this.error("Expected one lazy browser core chunk under assets/");
       }
     },
   };
@@ -126,10 +110,11 @@ const viewer = mode === "quick-share";
 const outDir = viewer ? "artifacts/quick-share-viewer/build" : "dist";
 return {
   publicDir: viewer ? false : "public",
-  base: "./",
+  base: viewer ? "/s/2/" : "./",
   // Published readers use native emoji (editableEmoji.ts); the viewer needs
   // neither the desktop SVG bundle nor its root-relative development server.
-  plugins: [solid(), ...(!viewer ? [twemojiAssets(), pdfjsAssets(), browserCoreAssets()] : [])],
+  plugins: [solid(), browserCoreAssets(viewer ? ["viewer"] : ["main", "capture"]),
+    ...(!viewer ? [twemojiAssets(), pdfjsAssets()] : [])],
   // Upstream's legacy build supplies recent JS API polyfills to existing
   // WebKitGTK/Android WebViews. Main and worker use the same shared policy.
   resolve: { alias: [{ find: /^pdfjs-dist$/, replacement: fileURLToPath(new URL("./node_modules/pdfjs-dist/legacy/build/pdf.mjs", import.meta.url)) }] },
@@ -161,7 +146,7 @@ return {
     cssTarget: "safari15.4",
     outDir,
     emptyOutDir: true,
-    // Keep even small KaTeX fonts as hashed files: g1's font-src is self-only.
+    // Keep even small KaTeX fonts as hashed files: the viewer's font-src is self-only.
     assetsInlineLimit: viewer ? 0 : 4096,
     rollupOptions: {
       // Two HTML entries: the main app and the standalone quick-capture window.

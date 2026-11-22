@@ -43,6 +43,10 @@ setting in `config.edn`. Correct the source or configuration and review again.
 excluded comments and reduced configuration. The deployed `/s/2/` viewer
 must render the writer fixtures before generation-2 links can be created or a
 release can ship. Each generation has its own viewer pin and retained assets.
+The generation-2 build produces `quick-share-viewer-g2.zip`. Its manifest
+uses 2 for the link, document and snapshot schema and 1 for the envelope.
+The viewer takes the gist locator from the URL path and keeps the key and
+page or block permalink in the fragment.
 
 ## Generation 1
 
@@ -55,9 +59,8 @@ fixtures in `tests/fixtures/quick-share/g1/` must open, unchanged, in every
 viewer build that serves `/s/1/`. An incompatible change to the link, the
 envelope or the document starts generation 2 at `/s/2/`; `/s/1/` stays.
 
-Code: writer `crates/tine-graph-features/src/quick_share.rs`, viewer
-`src/quickShare/quickShare.ts`. Limits: `quick-share-limits.json` (one file,
-read by the viewer and checked against the writer's constants by a unit test).
+The pinned generation-1 viewer is listed in `website/s/generations.json`.
+The envelope and limits in `quick-share-limits.json` also apply to generation 2.
 Design and rationale: the private design `DESIGN.md` (rev 3) of the quick-share
 campaign.
 
@@ -355,10 +358,10 @@ Sharing tab.
 
 ### Hosted reader builds and retention
 
-`npm run build:quick-share-viewer` builds and checks the production reader,
-then writes `artifacts/quick-share-viewer/quick-share-viewer-g1.zip` and its
-SHA-256 sidecar. `viewer.json` carries `generation`, `link`, `envelope`,
-`document`, `snapshot_schema` (all 1), `built_from`, `fixture_sha256`, and a
+`npm run build:quick-share-viewer` builds and checks the current generation's
+reader, then writes its zip and SHA-256 sidecar. `viewer.json` carries
+`generation`, `link`, `envelope`, `document`, `snapshot_schema`,
+`built_from`, `fixture_sha256`, and a
 `files` map of relative names to SHA-256. The map covers every file except
 `viewer.json` itself; the pinned zip digest authenticates that manifest too.
 JavaScript, CSS and fonts have content-hashed names. The reader starts no
@@ -409,9 +412,15 @@ App data (`app_data_dir`), never in a graph (ADR 0076; Rule 8 approval Martin
 its key (below, "In the graph").
 
 - `quick-share-account.json`: `{"v":1,"login","account_id","token","scopes","connected_at"}`.
-- `quick-shares.json`: `{"v":1,"shares":[{"share_id","state","account_id","login","gist_id"?,"created_at","title","pages","key"}]}`.
+- `quick-shares.json`: `{"v":1,"shares":[{"share_id","state","account_id","login","gist_id"?,"created_at","title","pages","key","viewer_generation"?}]}`.
   `share_id` and `key` are canonical base64url; `pages` is the number of shared
-  pages; `state` is `pending` or `live`.
+  pages; `state` is `pending` or `live`. A missing `viewer_generation` means 1.
+  Copy Link uses the recorded generation offline.
+
+  Unit cost: the generation adds 22 serialized bytes to a new row for both a
+  one-block page and a 60-block page. Each create still uses one private
+  record file and the same pending and completion writes. Ordinary page edits
+  write zero record bytes, touch zero record files and transport zero bytes.
 - Both are written by `atomic_write_private`: a temporary created owner-only
   (mode 0600 at creation on Linux, Android, macOS, iOS; on Windows the per-user
   app-data ACL), fsync, rename, directory sync. Every read-modify-write of the
@@ -450,7 +459,12 @@ create costs ≈ 2 × file size), 1 file; one gist create of the envelope (≈ 1
 `P`) plus the fixed README. Connect: one 149 B file. Transport per graph edit:
 none (shares are made on request).
 
-### Re-share in place
+### Re-share
+
+Re-sharing a generation-1 share creates a generation-2 gist and link
+(A-20261122-RS1). The generation-1 gist, link, record and graph definition
+keep their original identities. The new share uses the usual pending marker
+and create recovery. Generation-2 shares update in place.
 
 The page marked `tine.exports:: true` offers **Update all** beside its title,
 including after renaming and in other panes. It finds definitions with the
@@ -467,8 +481,8 @@ fingerprint-checked publisher on confirmation (see `export-definitions.md`).
 All preparations finish before confirmation is available. One combined preview
 shows every title, and for quick shares membership counts and collapsible changed page names. Confirm
 consumes each successful preview once through `quickShareCreate`, sequentially,
-with the same native locking, revision re-read, PATCH and unknown-outcome rules
-as single Re-share. A failure does not stop later shares, and every outcome is
+with the same native create or update rules as single Re-share. A failure does
+not stop later shares, and every outcome is
 shown; there is no automatic retry. Closing or switching graphs discards unused
 previews and prevents further uploads; an upload already started may finish.
 No unchanged-content optimization is used: unchanged membership can still carry
@@ -492,7 +506,8 @@ the key is absent.
 the ordinary prepare path. With `shareId`, native code reads the owned Tine
 gist's current history revision and its revision-pinned raw envelope, decrypts
 with the local K, checks the authenticated share id, and reads the snapshot's
-real pages (nonempty path; the synthetic home is excluded). Comparing page
+real pages (the core reads the source files in generation 2; the synthetic
+home is excluded). Comparing page
 identity keys against the new selection gives **+N new / −M gone**, including
 names in a collapsible list. The previous membership cannot come from the
 record's page count. This uses no record or in-graph format change.
@@ -529,11 +544,13 @@ without a new record state. GitHub keeps earlier revisions, so Re-share does
 not remove previously shared text; only Delete removes the hosted gist.
 Readers may see raw-content cache delay (about five minutes).
 
-Cost per Re-share: preview one authenticated gist GET plus one bounded raw
+Cost per in-place Re-share: preview one authenticated gist GET plus one bounded raw
 read/decrypt; confirm one gist GET and one complete-envelope PATCH, followed
 by at most one private atomic record rewrite (only if metadata changed).
 Zero graph saves, and no work on ordinary edits. Check uses one gist GET/raw
 read and at most one record rewrite. Membership and locks are memory-only.
+Re-share from generation 1 uses the same preview, then one gist POST and the
+ordinary new-share record and graph writes.
 
 ### In the graph (D-20261017-QS3, D-20261018-Q1, D-20261018-QS3)
 

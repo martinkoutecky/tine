@@ -1734,6 +1734,7 @@ export interface MessageArgs {
   "property-type-no-observed-values": {};
   "property-type-observed": {};
   "property-type-remove-declaration": {};
+  "published-graph-unavailable": { "error": string | number };
   "query-anchor-label": { "anchor": string | number };
   "query-anchor-switch": { "anchor": string | number; "count": string | number; "hasNames": number; "names": string | number; "total": string | number };
   "query-anchor-unchanged": { "detail": string | number };
@@ -2249,6 +2250,7 @@ export interface MessageArgs {
   "quick-share-membership": { "added": string | number; "removed": string | number };
   "quick-share-membership-pages": {};
   "quick-share-missing-key": {};
+  "quick-share-new-link": {};
   "quick-share-not-included": {};
   "quick-share-pending-failed": { "error": string | number };
   "quick-share-pending-unmark-failed": { "error": string | number };
@@ -2304,6 +2306,7 @@ export interface MessageArgs {
   "quick-share-viewer-asset": { "name": string | number };
   "quick-share-viewer-bad-link": {};
   "quick-share-viewer-blocked": {};
+  "quick-share-viewer-core-unavailable": {};
   "quick-share-viewer-invalid": {};
   "quick-share-viewer-newer-viewer": {};
   "quick-share-viewer-not-a-share": {};

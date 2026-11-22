@@ -75,8 +75,20 @@ pub(crate) struct ShareRow {
     /// Number of shared pages.
     pub pages: usize,
     pub key: String,
+    #[serde(
+        default = "first_viewer_generation",
+        skip_serializing_if = "is_first_viewer_generation"
+    )]
+    pub viewer_generation: u32,
 }
 
+fn first_viewer_generation() -> u32 {
+    1
+}
+
+fn is_first_viewer_generation(generation: &u32) -> bool {
+    *generation == first_viewer_generation()
+}
 impl std::fmt::Debug for ShareRow {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("ShareRow")

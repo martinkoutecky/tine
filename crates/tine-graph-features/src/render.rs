@@ -2342,8 +2342,8 @@ pub(crate) fn publish_graph(
         }
     }
     for entry in &graph.whole.inventory(tine_store::InventoryScope::All).0 {
-        if let tine_store::Resolved::Alias { owners } = &entry.target {
-            if let Some(slug) = owners.first().and_then(|owner| exported_ids.get(owner)) {
+        if let alias @ tine_store::Resolved::Alias { .. } = &entry.target {
+            if let Some(slug) = alias.page_owner().and_then(|owner| exported_ids.get(owner)) {
                 slugs
                     .entry(tine_core::refs::page_key(&entry.name))
                     .or_insert_with(|| slug.clone());

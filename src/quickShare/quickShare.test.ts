@@ -1,5 +1,5 @@
-/** Quick share generation 1, viewer side: the frozen fixtures the Rust writer
- *  made (`tests/fixtures/quick-share/g1/`, `crates/tine-graph-features/tests/quick_share.rs`)
+/** Quick share generation 2, viewer side: the frozen fixtures the Rust writer
+ *  made (`tests/fixtures/quick-share/g2/`, `crates/tine-graph-features/tests/quick_share.rs`)
  *  open to their frozen documents, forever; damaged, foreign, newer and
  *  oversized shares are refused readably; navigation keeps the share prefix. */
 import { readFileSync, readdirSync } from "node:fs";
@@ -13,14 +13,14 @@ import {
   gunzipBounded,
   loadQuickShare,
   openEnvelope,
-  parseShareFragment,
+  parseShareLink,
   QuickShareError,
 } from "./quickShare";
 import limits from "../../docs/contracts/quick-share-limits.json";
-import { openPublishedPermalink, replacePublishedPermalink, setQuickSharePrefix } from "../publishedPermalink";
-import type { PublishedSnapshot } from "../publishedBackend";
+import { replacePublishedPermalink, setQuickSharePrefix } from "../publishedPermalink";
 
-const FIXTURES = new URL("../../tests/fixtures/quick-share/g1/", import.meta.url);
+const FIXTURES = new URL("../../tests/fixtures/quick-share/g2/", import.meta.url);
+const locator = (caseName: string) => new URL(readFileSync(new URL(`${caseName}/link.txt`, FIXTURES), "utf8").trim());
 const KEY = new TextEncoder().encode("tine-quick-share-fixture-key-32b");
 const SHARE_ID = new TextEncoder().encode("fixture-share-id");
 const NONCE = new TextEncoder().encode("fixture-nonc");
@@ -63,15 +63,15 @@ function gistFetch(files: Record<string, string | number>) {
 
 afterEach(() => setQuickSharePrefix(null));
 
-describe("quick share generation 1", () => {
+describe("quick share generation 2", () => {
   it("refuses a blocked gist before any request", async () => {
-    const hash = readFileSync(new URL("pages/link.txt", FIXTURES), "utf8").trim().split("#")[1];
-    const link = parseShareFragment(hash)!;
+    const { pathname, hash } = locator("pages");
+    const link = parseShareLink(pathname, hash)!;
     const blocked = blockedGists as string[];
     const fetchImpl = vi.fn();
     blocked.push(link.gist);
     try {
-      expect(await reason(loadQuickShare(hash, fetchImpl))).toBe("blocked");
+      expect(await reason(loadQuickShare(pathname, hash, fetchImpl))).toBe("blocked");
       expect(fetchImpl).not.toHaveBeenCalled();
     } finally { blocked.pop(); }
   });
@@ -80,7 +80,7 @@ describe("quick share generation 1", () => {
     const derive = vi.spyOn(crypto.subtle, "deriveKey").mockRejectedValueOnce(new Error("algorithm unavailable"));
     const fetchImpl = vi.fn();
     try {
-      expect(await reason(loadQuickShare("#incomplete", fetchImpl))).toBe("unsupported-browser");
+      expect(await reason(loadQuickShare("/s/2/", "#incomplete", fetchImpl))).toBe("unsupported-browser");
       expect(fetchImpl).not.toHaveBeenCalled();
     } finally { derive.mockRestore(); }
   });
@@ -95,65 +95,42 @@ describe("quick share generation 1", () => {
     expect(cases.length).toBeGreaterThanOrEqual(2);
     for (const name of cases) {
       const dir = new URL(`${name}/`, FIXTURES);
-      const link = readFileSync(new URL("link.txt", dir), "utf8").trim();
       const bin = readFileSync(new URL("tine-share.bin", dir), "utf8");
       const frozen = JSON.parse(readFileSync(new URL("document.json", dir), "utf8"));
-      const hash = new URL(link).hash;
-      const parsed = parseShareFragment(hash)!;
+      const { pathname, hash } = locator(name);
+      const parsed = parseShareLink(pathname, hash)!;
       const { urls, fetchImpl } = gistFetch({
         [`https://gist.githubusercontent.com/${parsed.login}/${parsed.gist}/raw/tine-share.bin`]: bin,
       });
-      const share = await loadQuickShare(hash, fetchImpl);
+      const share = await loadQuickShare(pathname, hash, fetchImpl);
       expect(urls).toHaveLength(1);
       expect(share.snapshot).toEqual(frozen.snapshot);
-      expect(share.title).toBe(frozen.title);
-      expect(share.createdAt).toBe(frozen.created_at);
       expect(urls.join(" ")).not.toContain(b64uEncode(parsed.key));
     }
   });
 
-  /** REG-QS-PAGE-PROPERTY-QUERY. A `{{query}}` in page properties is rendered
-   *  with no host block (no properties, no block id), so the reader asks
-   *  `parseQuery(text, "macro_query", [])` and then `queryRun` with the page it
-   *  is on or with none. The share written with the baked record answers both;
-   *  a share frozen before the writer baked it still shows the static notice. */
-  it("answers a query written in page properties from the baked record", async () => {
-    const { publishedBackend } = await import("../publishedBackend");
-    const snapshot = (name: string): PublishedSnapshot =>
-      JSON.parse(readFileSync(new URL(`${name}/document.json`, FIXTURES), "utf8")).snapshot;
-    const argument = "(page-property type note)";
-    const api = publishedBackend(async () => snapshot("page-queries"));
-    const parsed = await api.parseQuery(argument, "macro_query", []);
-    for (const context of [{ current_page: "Dashboard" }, undefined]) {
-      const result = await api.queryRun(parsed.query, parsed.view, context);
-      expect(JSON.stringify(result)).toContain("Notes ü");
-    }
-    const old = publishedBackend(async () => snapshot("pages"));
-    await expect(old.parseQuery(argument, "macro_query", [])).rejects.toMatchObject({ reasonCode: "published_export_static" });
-  });
-
   it("finds a share whose login changed through the API, and only on GitHub's raw host", async () => {
-    const dir = new URL("one-page/", FIXTURES);
-    const hash = new URL(readFileSync(new URL("link.txt", dir), "utf8").trim()).hash;
+    const dir = new URL("reduced-config/", FIXTURES);
+    const { pathname, hash } = locator("reduced-config");
     const bin = readFileSync(new URL("tine-share.bin", dir), "utf8");
-    const { gist } = parseShareFragment(hash)!;
+    const { gist } = parseShareLink(pathname, hash)!;
     const moved = `https://gist.githubusercontent.com/renamed/${gist}/raw/abc/tine-share.bin`;
     const ok = gistFetch({
       [`https://api.github.com/gists/${gist}`]: JSON.stringify({ files: { "tine-share.bin": { raw_url: moved } } }),
       [moved]: `${bin}\n`,
     });
-    expect((await loadQuickShare(hash, ok.fetchImpl)).snapshot.home).toBe("Project");
+    expect((await loadQuickShare(pathname, hash, ok.fetchImpl)).snapshot.name).toBe("Configured");
     expect(ok.urls).toHaveLength(3);
     const evil = gistFetch({
       [`https://api.github.com/gists/${gist}`]: JSON.stringify({ files: { "tine-share.bin": { raw_url: "https://example.com/x" } } }),
     });
-    expect(await reason(loadQuickShare(hash, evil.fetchImpl))).toBe("not-a-share");
+    expect(await reason(loadQuickShare(pathname, hash, evil.fetchImpl))).toBe("not-a-share");
     expect(evil.urls).toHaveLength(2);
-    expect(await reason(loadQuickShare(hash, gistFetch({}).fetchImpl))).toBe("not-found");
-    expect(await reason(loadQuickShare(hash, gistFetch({ [`https://gist.githubusercontent.com/tine-fixture/${gist}/raw/tine-share.bin`]: 503 }).fetchImpl))).toBe("unreachable");
+    expect(await reason(loadQuickShare(pathname, hash, gistFetch({}).fetchImpl))).toBe("not-found");
+    expect(await reason(loadQuickShare(pathname, hash, gistFetch({ [`https://gist.githubusercontent.com/tine-fixture/${gist}/raw/tine-share.bin`]: 503 }).fetchImpl))).toBe("unreachable");
     // Review g1 R3: no request follows a redirect off GitHub's hosts.
     const inits: RequestInit[] = [];
-    await loadQuickShare(hash, async (url, init) => {
+    await loadQuickShare(pathname, hash, async (url, init) => {
       inits.push(init ?? {});
       return gistFetch({ [`https://gist.githubusercontent.com/tine-fixture/${gist}/raw/tine-share.bin`]: bin }).fetchImpl(url);
     });
@@ -194,118 +171,59 @@ describe("quick share generation 1", () => {
     expect(await reason(gunzipBounded(payload, limits.viewer.document_bytes))).toBe("too-large");
   });
 
-  it("admits only generation-1 documents within the caps", () => {
+  it("admits bounded generation-2 source documents", () => {
     const frozen = readFileSync(new URL("pages/document.json", FIXTURES));
-    expect(decodeShareDocument(frozen).snapshot.schema).toBe(1);
+    expect(decodeShareDocument(frozen).schema).toBe(2);
     const doc = JSON.parse(frozen.toString());
-    const bytes = (value: unknown) => new TextEncoder().encode(JSON.stringify(value));
     const refusal = (value: unknown) => {
       try {
-        decodeShareDocument(bytes(value));
+        decodeShareDocument(new TextEncoder().encode(JSON.stringify(value)));
       } catch (error) {
         return (error as QuickShareError).reason;
       }
       return "admitted";
     };
-    expect(refusal({ ...doc, quick_share: 2 })).toBe("newer-viewer");
-    expect(refusal({ ...doc, title: 7 })).toBe("invalid");
-    expect(refusal({ ...doc, snapshot: { ...doc.snapshot, schema: 2 } })).toBe("invalid");
-    expect(refusal({ ...doc, snapshot: { ...doc.snapshot, queries: Array(limits.viewer.queries + 1).fill(doc.snapshot.queries[0]) } })).toBe("too-large");
-    const huge = structuredClone(doc);
-    huge.snapshot.pages[1].blocks[0].raw = "x".repeat(limits.viewer.string_bytes + 1);
-    expect(refusal(huge)).toBe("too-large");
+    expect(refusal({ ...doc, quick_share: 3 })).toBe("newer-viewer");
+    expect(refusal({ ...doc, quick_share: 1 })).toBe("invalid");
+    expect(refusal({ ...doc, snapshot: { ...doc.snapshot, schema: 1 } })).toBe("invalid");
+    const changed = (files: unknown) => ({ ...doc, snapshot: { ...doc.snapshot, files } });
+    expect(refusal(changed([null]))).toBe("invalid");
+    expect(refusal(changed([{ path: "pages/plain.md", text: 42 }]))).toBe("invalid");
+    expect(refusal(changed(Array(limits.viewer.pages + 2).fill(doc.snapshot.files[0])))).toBe("too-large");
+    expect(refusal(changed([{ path: "pages/large.md", text: "é".repeat(limits.viewer.string_bytes / 2 + 1) }]))).toBe("too-large");
     expect(() => decodeShareDocument(new TextEncoder().encode("{"))).toThrow(QuickShareError);
-    // Review g1 R1: nested field types are admitted only as generation 1 writes them.
-    const broken = (edit: (d: typeof doc) => void) => {
-      const copy = structuredClone(doc);
-      edit(copy);
-      return refusal(copy);
-    };
-    expect(broken((d) => { d.snapshot.queries = [null]; })).toBe("invalid");
-    expect(broken((d) => { d.snapshot.pages[1].blocks[0].raw = 42; })).toBe("invalid");
-    expect(broken((d) => { d.snapshot.name = 42; })).toBe("invalid");
-    expect(broken((d) => { delete d.snapshot.exported_at; })).toBe("invalid");
-    expect(broken((d) => { d.snapshot.aliases = [["a"]]; })).toBe("invalid");
-    expect(broken((d) => { d.snapshot.backlinks = { Project: [{ page: 1 }] }; })).toBe("invalid");
-    expect(broken((d) => { d.title = "t".repeat(limits.viewer.string_bytes + 1); })).toBe("too-large");
-    // Review g1 R2: a home list named like a shared page or alias is refused.
-    expect(broken((d) => { d.snapshot.pages[0].name = "project"; })).toBe("invalid");
-    expect(broken((d) => { d.snapshot.pages[0].name = "PROJ"; })).toBe("invalid");
-    // Review g1 r2 B1: the key is the writer's page_key. A BOM is not Rust whitespace, so the writer accepts
-    // "Project\uFEFF" and the viewer must too; one boundary slash per side folds, as in the writer.
-    expect(broken((d) => { d.snapshot.pages[0].name = "Project\uFEFF"; })).toBe("admitted");
-    expect(broken((d) => { d.snapshot.pages[0].name = "/Project/"; })).toBe("invalid");
   });
 
-  it("admits a recognized answers v1 field by field and reads any other v as before (CM Q13)", () => {
-    const frozen = readFileSync(new URL("answers/document.json", FIXTURES));
-    expect(decodeShareDocument(frozen).snapshot.answers).toMatchObject({ v: 1 });
-    const doc = JSON.parse(frozen.toString());
-    const refusal = (edit: (d: typeof doc) => void) => {
-      const copy = structuredClone(doc);
-      edit(copy);
-      try {
-        decodeShareDocument(new TextEncoder().encode(JSON.stringify(copy)));
-      } catch (error) {
-        return (error as QuickShareError).reason;
-      }
-      return "admitted";
-    };
-    // Absent, or a version this viewer does not read: the legacy reading.
-    expect(refusal((d) => { delete d.snapshot.answers; })).toBe("admitted");
-    expect(refusal((d) => { d.snapshot.answers = { v: 2, inventory: "a later shape" }; })).toBe("admitted");
-    // Unknown keys inside a v1 are ignored, as everywhere in a snapshot.
-    expect(refusal((d) => { d.snapshot.answers.later = [1]; })).toBe("admitted");
-    // Damaged recognized data is refused, never downgraded to legacy.
-    expect(refusal((d) => { d.snapshot.answers = "v1"; })).toBe("invalid");
-    expect(refusal((d) => { d.snapshot.answers.inventory = {}; })).toBe("invalid");
-    expect(refusal((d) => { d.snapshot.answers.inventory[0].name = 7; })).toBe("invalid");
-    expect(refusal((d) => { d.snapshot.answers.inventory[1].target = { kind: "existing", id: "pages/Outside.md", others: [] }; })).toBe("invalid");
-    expect(refusal((d) => { d.snapshot.answers.inventory[1].target = { kind: "alias", owners: [] }; })).toBe("invalid");
-    expect(refusal((d) => { d.snapshot.answers.inventory[1].link = { name: "x", kind: "block" }; })).toBe("invalid");
-    expect(refusal((d) => { d.snapshot.answers.resolve = [{ name: "x", kind: "page" }]; })).toBe("invalid");
-    expect(refusal((d) => { d.snapshot.answers.alias_groups = [{ name: "x", aliases: [1], pages: [] }]; })).toBe("invalid");
-    expect(refusal((d) => { d.snapshot.answers.journals.content_days = ["20261017"]; })).toBe("invalid");
-    expect(refusal((d) => { delete d.snapshot.answers.journals.title_format; })).toBe("invalid");
-  });
-
-  it("parses only well-formed share fragments", () => {
+  it("parses the public locator and key independently", () => {
     const key = b64uEncode(KEY);
-    expect(parseShareFragment(`#me/0123456789abcdef0123/${key}`)?.rest).toBe("");
-    expect(parseShareFragment(`#me/0123456789abcdef0123/${key}/page/A%20b`)?.rest).toBe("/page/A%20b");
-    expect(parseShareFragment(`#me/0123456789ABCDEF0123/${key}`)).toBeNull();
-    expect(parseShareFragment(`#me/0123456789abcdef0123/${key.slice(1)}`)).toBeNull();
-    expect(parseShareFragment(`#bad_login/0123456789abcdef0123/${key}`)).toBeNull();
-    expect(parseShareFragment("#/page/Project")).toBeNull();
+    const path = "/s/2/me/0123456789abcdef0123";
+    expect(parseShareLink(path, `#${key}`)).toMatchObject({ login: "me", prefix: key });
+    expect(parseShareLink(path, `#${key}/page/A%20b`)?.prefix).toBe(key);
+    expect(parseShareLink("/s/2/me/0123456789ABCDEF0123", `#${key}`)).toBeNull();
+    expect(parseShareLink("/s/2/bad_login/0123456789abcdef0123", `#${key}`)).toBeNull();
+    expect(parseShareLink("/s/1/", `#me/0123456789abcdef0123/${key}`)).toBeNull();
+    expect(parseShareLink(path, `#${key.slice(1)}`)).toBeNull();
+    expect(parseShareLink(path, "#/page/Project")).toBeNull();
   });
 
   it("keeps the share prefix through navigation, refresh and copied links", () => {
-    const prefix = `me/0123456789abcdef0123/${b64uEncode(KEY)}`;
+    const prefix = b64uEncode(KEY);
+    const url = "https://tine.page/s/2/me/0123456789abcdef0123";
     setQuickSharePrefix(prefix);
-    const snapshot = JSON.parse(readFileSync(new URL("pages/document.json", FIXTURES), "utf8")).snapshot as PublishedSnapshot;
-    const opened: unknown[] = [];
-    const router = {
-      openPageTarget: (target: unknown) => opened.push(target),
-      openPageAtBlock: (target: unknown) => opened.push(target),
-      route: () => ({ kind: "page", name: "Notes ü" }),
-    } as unknown as Parameters<typeof openPublishedPermalink>[2];
-    expect(openPublishedPermalink(snapshot, `#${prefix}`, router).status).toBe("ignored");
-    expect(openPublishedPermalink(snapshot, `#${prefix}/page/${encodeURIComponent("Notes ü")}`, router).status).toBe("opened");
-    expect(opened).toEqual([{ name: "Notes ü", pageKind: "page", path: "pages/Notes ü.md" }]);
     const history: string[] = [];
     const browser = {
-      location: { href: `https://tine.page/s/1/#${prefix}`, hash: `#${prefix}` },
+      location: { href: `${url}#${prefix}`, hash: `#${prefix}` },
       history: { state: null, replaceState: (_: unknown, __: string, url: string) => history.push(url) },
     } as unknown as Pick<Window, "location" | "history">;
     replacePublishedPermalink({ kind: "page", page: "Notes ü" }, browser);
     replacePublishedPermalink({ kind: "block", block: "6512a000-0000-4000-8000-000000000002" }, browser);
     expect(history).toEqual([
-      `https://tine.page/s/1/#${prefix}/page/Notes%20%C3%BC`,
-      `https://tine.page/s/1/#${prefix}/block/6512a000-0000-4000-8000-000000000002`,
+      `${url}#${prefix}/page/Notes%20%C3%BC`,
+      `${url}#${prefix}/block/6512a000-0000-4000-8000-000000000002`,
     ]);
     // No page shown: the address returns to the bare share link, never to "".
     (browser.location as { hash: string }).hash = `#${prefix}/page/X`;
     replacePublishedPermalink(null, browser);
-    expect(history[2]).toBe(`https://tine.page/s/1/#${prefix}`);
+    expect(history[2]).toBe(`${url}#${prefix}`);
   });
 });

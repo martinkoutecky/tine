@@ -1,81 +1,27 @@
-/** The snapshot backend of a published query export (Stage 2).
- *
- *  An export's `app/` is this very frontend opened over `app/snapshot.json`:
- *  every answer the app needs was computed natively at export time by the one
- *  engine over the selected pages and nothing else. This module answers the
- *  `Backend` interface from that file. Its two query methods, `parseQuery` and
- *  `queryRun`, are lookups keyed exactly as `Macro.tsx` asks; a query the export
- *  was not made with is refused with a typed reason, never re-run in the
- *  browser. Everything that would write, sync, install or reach the OS is
- *  refused with `PublishedExportReadOnlyError`.
- *
- *  Spec: tine-agents/specs/notes/2026-09-14-publish-query-stage2.md §5.
- *  Classification of every method is pinned by `publishedBackend.guard.test.ts`.
+/** Shared read-only backend for folder exports and generation-2 quick shares.
+ * Graph reads use the native wire adapters over one memory graph. The browser
+ * owns publication identity, session state, assets and handoff policy.
  */
 import type { Backend, LoadGraphResult } from "./backend";
 import type { ConfirmOptions } from "./backendInterface";
-import type { ExecutionContext, ParsedQuery, Query, QueryResult, QueryTextDialect, ViewSettings } from "./editor/queryIr";
-import type { BacklinkFilterContext, BacklinkFilterTarget, BlockDto, BlockPreview, MatchEvidence, PageDto, PageEntry, PageRead, QueryExecution, QueryHit, QueryPageScope, RefGroup } from "./types";
-import { previewDtoSubtree } from "./previewProjection";
-import { pageIdentityKey } from "./pageIdentity";
-import { blockRegions, initParser } from "./render/parse";
-import { blockRefsInText } from "./render/pageRefs";
-import { isCommentBlock } from "./comments";
-import { searchSubstringSpans } from "./editor/searchQuery";
-import { blockPickerLeg, mergeBlockPickerLegs } from "./editor/blockPickerMatch";
-import { searchFold } from "./editor/searchFold";
+import { loadBrowserCore } from "./browserCore";
 import { setQuickSharePrefix } from "./publishedPermalink";
-import { admitPublishedAnswers, publishedAnswerer } from "./publishedAnswers";
 import type { QuickShareListing } from "./quickShare/commands";
 import { checkBrowserHandoff } from "./linkSchemePolicy";
-
-type PublishedPage = PageDto & { path: string };
+import type { BrowserGraph } from "./render/wasm-core/lsdoc_wasm";
+import type { PageRead, PageReadSource, RefGroup } from "./types";
 
 /** `<meta name="tine-published" content="snapshot.json">` in the exported shell. */
 export const PUBLISHED_META_NAME = "tine-published";
-export const PUBLISHED_SNAPSHOT_SCHEMA = 1;
-/** The meta content of a quick share viewer (`/s/1/`): the snapshot is the
- *  share named by the page's fragment (`quickShare/quickShare.ts`). */
-export const QUICK_SHARE_SNAPSHOT = "quick-share:1";
-/** The reason code every refused query carries (typed-errors contract). */
-export const PUBLISHED_QUERY_REASON = "published_export_static";
-export const PUBLISHED_QUERY_MESSAGE = "This export answers only the queries it was made with.";
+export const PUBLISHED_SNAPSHOT_SCHEMA = 2;
+export const QUICK_SHARE_SNAPSHOT = "quick-share:2";
 export const PUBLISHED_READ_ONLY_MESSAGE = "This is a read-only published export.";
 
-export interface PublishedQueryExecution {
-  argument: string;
-  parsed: ParsedQuery;
-}
-
-/** One recorded query execution (`publish/app_export.rs::QuerySnapshot`). */
-export interface PublishedQuery {
-  host: string;
-  argument: string;
-  dialect: QueryTextDialect;
-  properties: [string, string][];
-  parsed: ParsedQuery;
-  execution?: PublishedQueryExecution | null;
-  context: ExecutionContext;
-  executed_context: ExecutionContext;
-  view: ViewSettings;
-  result: QueryResult;
-}
-
 export interface PublishedSnapshot {
-  schema: number;
+  schema: 2;
   name: string;
   exported_at: string;
-  home: string;
-  pages: PublishedPage[];
-  entries: PageEntry[];
-  backlinks: Record<string, RefGroup[]>;
-  block_ref_counts: Record<string, number>;
-  aliases: [string, string][];
-  icons: Record<string, string>;
-  queries: PublishedQuery[];
-  /** The Rust name answers (`publishedAnswers.ts`); absent in snapshots
-   *  written before them, which the legacy upgrade answers. */
-  answers?: unknown;
+  files: { path: string; text: string }[];
 }
 
 /** The snapshot's relative URL when this document is a published export, else null. */
@@ -95,7 +41,7 @@ export function isQuickShareViewer(): boolean {
   return publishedSnapshotUrl() === QUICK_SHARE_SNAPSHOT;
 }
 
-let snapshotPromise: Promise<PublishedSnapshot> | null = null;
+let publication: ReturnType<typeof openPublishedGraph> | undefined;
 
 /** Largest snapshot document a viewer will read (I-22). Far above any real export;
  *  a larger body is a wrong or hostile file and refuses visibly. */
@@ -140,126 +86,52 @@ export async function readBounded(response: Response, max: number, label: string
   return out;
 }
 
-/** The one shared, memoized fetch of the snapshot. `main.tsx` awaits it before
- *  mounting; every backend method awaits it too, so the backend can be
- *  installed before any snapshot bytes exist. */
-export function loadPublishedSnapshot(url = publishedSnapshotUrl() ?? "snapshot.json"): Promise<PublishedSnapshot> {
-  if (!snapshotPromise) {
-    snapshotPromise = (async () => {
-      if (url === QUICK_SHARE_SNAPSHOT) {
-        // A quick share viewer: the snapshot comes from the link's gist,
-        // decrypted in the browser; navigation keeps the share prefix.
-        // Admission keys page names with the WASM page identity, so the parser must be up first.
-        await initParser();
-        const { loadQuickShare } = await import("./quickShare/quickShare");
-        const share = await loadQuickShare(globalThis.location?.hash ?? "");
-        setQuickSharePrefix(share.link.prefix);
-        return share.snapshot;
-      }
-      const response = await fetch(url, { cache: "no-store" });
-      if (!response.ok) throw new Error(`snapshot ${url}: HTTP ${response.status}`);
-      // I-22: bound the served bytes before they become a string and an object graph.
-      const bytes = await readBounded(response, PUBLISHED_SNAPSHOT_MAX_BYTES, `snapshot ${url}`);
-      const snapshot = JSON.parse(new TextDecoder().decode(bytes)) as PublishedSnapshot;
-      validateSnapshot(snapshot);
-      return snapshot;
-    })();
+function record(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
+/** Admit the flat source snapshot. The core checks graph paths and reads the files. */
+export function validateSnapshot(value: unknown): PublishedSnapshot {
+  if (!record(value) || value.schema !== PUBLISHED_SNAPSHOT_SCHEMA) {
+    throw new Error(`Expected snapshot schema ${PUBLISHED_SNAPSHOT_SCHEMA}`);
   }
-  return snapshotPromise;
-}
-
-/** Test-only: forget the memoized fetch. */
-export function __resetPublishedSnapshotForTest(): void {
-  snapshotPromise = null;
-}
-
-/** Refuse snapshots without the expected schema and required read-only data. */
-export function validateSnapshot(snapshot: PublishedSnapshot): void {
-  assertSnapshotDepth(snapshot);
-  if (snapshot.schema !== PUBLISHED_SNAPSHOT_SCHEMA) {
-    throw new Error(`snapshot schema ${String(snapshot.schema)} is not ${PUBLISHED_SNAPSHOT_SCHEMA}`);
+  if (typeof value.name !== "string" || typeof value.exported_at !== "string" || !Array.isArray(value.files)
+    || !value.files.every((file) => record(file) && typeof file.path === "string" && typeof file.text === "string")) {
+    throw new Error("Invalid publication snapshot");
   }
-  for (const key of ["name", "home", "pages", "entries", "backlinks", "block_ref_counts", "aliases", "icons", "queries"] as const) {
-    if (!(key in snapshot)) throw new Error(`snapshot lacks ${key}`);
+  return { schema: value.schema, name: value.name, exported_at: value.exported_at, files: value.files };
+}
+
+async function fetchPublishedSnapshot(url: string): Promise<PublishedSnapshot> {
+  if (url === QUICK_SHARE_SNAPSHOT) {
+    const { loadQuickShare } = await import("./quickShare/quickShare");
+    const share = await loadQuickShare(globalThis.location.pathname, globalThis.location.hash);
+    setQuickSharePrefix(share.link.prefix);
+    return share.snapshot;
   }
-  // A recognized `answers` is admitted field by field; damaged is refused,
-  // never read as a legacy snapshot (`DamagedAnswersError`).
-  admitPublishedAnswers(snapshot);
+  const response = await fetch(url, { cache: "no-store" });
+  if (!response.ok) throw new Error(`snapshot ${url}: HTTP ${response.status}`);
+  const bytes = await readBounded(response, PUBLISHED_SNAPSHOT_MAX_BYTES, `snapshot ${url}`);
+  return validateSnapshot(JSON.parse(new TextDecoder("utf-8", { fatal: true }).decode(bytes)));
 }
 
-/** Admission bound for served JSON and query keys. Iterative O(JSON nodes),
- * including query/result trees and backlinks, before any recursive reader or
- * clone. Excessive depth and cycles refuse with a visible snapshot error. */
-function assertSnapshotDepth(value: unknown): void {
-  const pending = [{ value, depth: 0 }];
-  while (pending.length) {
-    const { value: node, depth } = pending.pop()!;
-    if (!node || typeof node !== "object") continue;
-    if (depth > 512) throw new Error("snapshot depth exceeds 512");
-    for (const child of Object.values(node)) pending.push({ value: child, depth: depth + 1 });
+async function openPublishedGraph(url: string) {
+  const [{ name, files }, core] = await Promise.all([fetchPublishedSnapshot(url), loadBrowserCore()]);
+  const paths: string[] = [];
+  const contents: Uint8Array[] = [];
+  const encoder = new TextEncoder();
+  for (const file of files) {
+    paths.push(file.path);
+    contents.push(encoder.encode(file.text));
   }
+  return { name, graph: new core.BrowserGraph(paths, contents) };
 }
 
-// ---- key parity with the engine -------------------------------------------
-
-/** JSON with object keys sorted at every depth: two IR values are the same
- *  query exactly when their stable text is. */
-export function stableJson(value: unknown): string {
-  assertSnapshotDepth(value);
-  return JSON.stringify(sortKeys(value));
-}
-
-function sortKeys(value: unknown): unknown {
-  if (Array.isArray(value)) return value.map(sortKeys);
-  if (value && typeof value === "object") {
-    const out: Record<string, unknown> = {};
-    for (const key of Object.keys(value as Record<string, unknown>).sort()) {
-      const inner = (value as Record<string, unknown>)[key];
-      if (inner !== undefined) out[key] = sortKeys(inner);
-    }
-    return out;
-  }
-  return value;
-}
-
-/** The key two `ViewSettings` are compared under. The engine serializes its
- *  dense struct (`sort: []`, `columns: []`, `aggregates: []` are always
- *  written) while the frontend's `queryDisplaySettings` omits every field it
- *  has nothing to say about; both mean the same display, so an absent field
- *  and an empty list are the same key. */
-export function viewKey(view: ViewSettings): string {
-  const out: Record<string, unknown> = {};
-  for (const [key, value] of Object.entries(view)) {
-    if (value === undefined || value === null) continue;
-    if (Array.isArray(value) && value.length === 0) continue;
-    out[key] = value;
-  }
-  return stableJson(out);
-}
-
-/** The host block's `tine.*` and `query-table` properties as `parseQuery` receives them, compared
- *  the way the engine reads them: keys case-insensitively, values trimmed. */
-function propertiesEqual(a: [string, string][], b: [string, string][]): boolean {
-  if (a.length !== b.length) return false;
-  const norm = (pairs: [string, string][]) =>
-    pairs.map(([key, value]) => `${key.trim().toLowerCase()}\0${value.trim()}`).sort();
-  const left = norm(a);
-  const right = norm(b);
-  return left.every((entry, index) => entry === right[index]);
-}
-
-function literalNeedle(query: string): { empty: boolean; folded: string } {
-  const raw = query.trim();
-  return { empty: raw === "", folded: raw === "" ? "" : searchFold(raw) };
-}
-
-function includesFolded(text: string, needle: string): boolean {
-  return searchFold(text).includes(needle);
-}
-
-function firstMappedSpan(text: string, needle: string): { start: number; end: number } | null {
-  if (!needle) return null;
-  return searchSubstringSpans(text, needle, 1)[0] ?? null;
+/** Open one memory graph per publication. Startup and backend readers share it.
+ * The source JSON and transfer buffers are released once the graph opens.
+ */
+export function loadPublishedGraph(url = publishedSnapshotUrl() ?? "snapshot.json") {
+  return (publication ??= openPublishedGraph(url));
 }
 
 // ---- the backend --------------------------------------------------------------
@@ -290,8 +162,8 @@ export const OPTIONAL_METHODS = new Set([
   "registerQuerySubscription",
 ]);
 
-/** Build the snapshot backend. `load` is awaited lazily by every method. */
-export function publishedBackend(load: () => Promise<PublishedSnapshot> = loadPublishedSnapshot): Backend {
+/** Build the browser publication backend. Its graph is opened once for all reads. */
+export function publishedBackend(load = loadPublishedGraph): Backend {
   const appBools = new Map<string, boolean>();
   const appStrings = new Map<string, string>();
   let session: string | null = null;
@@ -309,108 +181,10 @@ export function publishedBackend(load: () => Promise<PublishedSnapshot> = loadPu
   let activationSeq = 0;
   const unsubscribed = async () => () => {};
 
-  // Every name question is a lookup in the snapshot's answers
-  // (`publishedAnswers.ts`): Rust's tables, or the declared legacy upgrade.
-  const answersOf = async () => publishedAnswerer(await load());
-  const walk = (blocks: BlockDto[], visit: (block: BlockDto, ancestors: string[]) => void, ancestors: string[] = []) => {
-    for (const block of blocks) {
-      visit(block, ancestors);
-      walk(block.children, visit, [...ancestors, block.raw.split("\n")[0] ?? ""]);
-    }
-  };
-  // A result row carries its own block, like the native shallow DTO
-  // (`block_to_shallow_dto`): its descendants are read from the source page.
-  const shallowCopy = (block: BlockDto): BlockDto => structuredClone({ ...block, children: [] });
-  const collect = (snapshot: PublishedSnapshot, keep: (block: BlockDto, page: PublishedPage) => boolean, limit = Infinity): RefGroup[] => {
-    const groups: RefGroup[] = [];
-    let budget = limit;
-    for (const page of snapshot.pages) {
-      if (budget <= 0) break;
-      const matched: BlockDto[] = [];
-      walk(page.blocks, (block, ancestors) => {
-        if (budget > 0 && keep(block, page)) {
-          matched.push({ ...shallowCopy(block), breadcrumb: ancestors });
-          budget--;
-        }
-      });
-      if (matched.length) groups.push({ page: page.name, kind: page.kind, path: page.path, blocks: matched });
-    }
-    return groups;
-  };
-  /** Returns the block's root-first source path as well, so a detached
-   * preview can carry thread membership like native preview hydration. */
-  const findBlock = (snapshot: PublishedSnapshot, uuid: string): { page: PublishedPage; block: BlockDto; path: BlockDto[] } | null => {
-    for (const page of snapshot.pages) {
-      const path: BlockDto[] = [];
-      const search = (blocks: BlockDto[]): BlockDto | null => {
-        for (const block of blocks) {
-          if ((blockRegions(block.raw, page.format ?? "md").id?.value.trim() ?? block.id) === uuid) return block;
-          path.push(block);
-          const found = search(block.children);
-          if (found) return found;
-          path.pop();
-        }
-        return null;
-      };
-      const found = search(page.blocks);
-      if (found) return { page, block: found, path };
-    }
-    return null;
-  };
-  /** The comment discriminator (`isCommentBlock`, Rust `comment_quote` via
-   * wasm) on the found path only: O(depth) property reads. */
-  const inCommentThread = (found: { page: PublishedPage; block: BlockDto; path: BlockDto[] }): boolean => {
-    const format = found.page.format ?? "md";
-    const quoted = (block: BlockDto) => isCommentBlock(
-      blockRegions(block.raw, format).properties.filter(p => p.primary).map(p => [p.key, p.value] as const), true);
-    return found.path.length > 0 && (quoted(found.block) || found.path.slice(1).some(quoted));
-  };
-  const staticQueryRefusal = async () => Object.assign(new Error(PUBLISHED_QUERY_MESSAGE), { reasonCode: PUBLISHED_QUERY_REASON });
-  const readOnlyRefusal = async () => new Error(PUBLISHED_READ_ONLY_MESSAGE);
-  const resolveBlock = async (uuid: string): Promise<RefGroup | null> => {
-    const snapshot = await load();
-    const found = findBlock(snapshot, uuid);
-    if (!found) return null;
-    return {
-      page: found.page.name,
-      kind: found.page.kind,
-      path: found.page.path,
-      blocks: [shallowCopy(found.block)],
-    };
-  };
-  const quickSwitch = async (query: string, limit: number): Promise<PageEntry[]> => {
-    const snapshot = await load();
-    const wanted = literalNeedle(query);
-    if (!wanted.empty && !wanted.folded) return [];
-    return snapshot.entries
-      .filter((entry) => wanted.empty || includesFolded(entry.name.trim(), wanted.folded))
-      .slice(0, limit)
-      .map((entry) => structuredClone(entry));
-  };
-  const backlinkGroups = (snapshot: PublishedSnapshot, name: string): RefGroup[] => {
-    name = publishedAnswerer(snapshot).backlinksName(name);
-    const exact = snapshot.backlinks[name];
-    if (exact) return exact;
-    const wanted = pageIdentityKey(name);
-    const key = Object.keys(snapshot.backlinks).find((candidate) => pageIdentityKey(candidate) === wanted);
-    return key ? snapshot.backlinks[key] : [];
-  };
-  const backlinkRoot = (groups: RefGroup[], target: BacklinkFilterTarget): { group: RefGroup; block: BlockDto } | null => {
-    for (const group of groups) {
-      if (group.kind !== target.kind || pageIdentityKey(group.page) !== pageIdentityKey(target.page)) continue;
-      let found: BlockDto | null = null;
-      walk(group.blocks, (block) => {
-        if (!found && block.id === target.block_id) found = block;
-      });
-      if (found) return { group, block: found };
-    }
-    return null;
-  };
-  const backlinkText = (root: BlockDto): string => {
-    const lines: string[] = [];
-    walk([root], (block) => lines.push(block.raw));
-    return lines.join("\n");
-  };
+  async function read<T>(answer: (graph: BrowserGraph) => string): Promise<T> {
+    return JSON.parse(answer((await load()).graph));
+  }
+
   /** `../assets/<name>` — or null when the authored name would leave the
    *  export's own `assets/` folder. The rule is the static exporter's
    *  (`AssetSink::asset_relative` in `publish.rs`), applied to the name after
@@ -433,253 +207,64 @@ export function publishedBackend(load: () => Promise<PublishedSnapshot> = loadPu
   const answered = {
     // ---- graph identity ----
     async loadGraph(): Promise<LoadGraphResult> {
-      const snapshot = await load();
-      const formats = publishedAnswerer(snapshot).journalFormats();
+      const { name, graph } = await load();
       return {
         kind: "loaded",
         binding_generation: 1,
-        meta: {
-          root: snapshot.name,
-          journals_dir: "journals",
-          pages_dir: "pages",
-          preferred_workflow: "todo",
-          shortcuts: {},
-          start_of_week: 6,
-          block_hidden_properties: [], linked_references_collapsed_threshold: 100, ref_default_open_blocks_level: 2,
-          default_journal_template: null,
-          default_home: snapshot.home,
-          favorites: [],
-          journal_page_title_format: formats.title_format,
-          journal_file_name_format: formats.file_name_format,
-          preferred_format: "md",
-          macros: {},
-          enable_timetracking: true,
-          show_brackets: true,
-          enable_tooltip: true, file_name_format: "legacy", enable_search_remove_accents: true, quick_capture_template_text: null, quick_capture_template_media: null, quick_capture_default_page: null, quick_capture_insert_today: false, quick_capture_redirect_page: false,
-          doc_mode_enter_for_new_block: false,
-          logical_outdenting: false,
-          logbook_with_second_support: true,
-          logbook_enabled_in_timestamped_blocks: true,
-          logbook_enabled_in_all_blocks: false,
-          guide_announced: true, mobile_gestures_disabled_in_block_with_tags: [],
-        },
+        meta: { ...JSON.parse(graph.graph_meta_json()), root: name, display_root: name },
+        config_problem: JSON.parse(graph.config_problem_json()),
       };
     },
-    async inspectGraphAccess(path: string) {
-      const snapshot = await load();
-      return { graph_root: path || snapshot.name, external_assets_path: null, approved: true };
+    async inspectGraphAccess(path) {
+      return { graph_root: path || (await load()).name, external_assets_path: null, approved: true };
     },
     async startupGraphPath() {
       return (await load()).name;
     },
-    // ---- pages ----
-    async pageInventory() {
-      return { rev: "0", entries: structuredClone((await answersOf()).inventory()), unreadable: [] };
-    },
-    // A published export carries no file times: the Updated column shows dashes.
-    async pageModified() {
-      return { rev: "0", modified: [] };
-    },
-    async pageBacklinkCounts(): Promise<import("./types").PageBacklinkCounts> { return [[], [], "0"]; },
-    async resolvePage(name: string, kind: "journal" | "page") {
-      return structuredClone((await answersOf()).resolve(name, kind));
-    },
-    async pageAliasGroup(name: string) {
-      return (await answersOf()).aliasGroup(name);
-    },
-    async getPage(name: string, kind: "journal" | "page") {
-      const page = (await answersOf()).page(name, kind);
-      if (!page) return null;
-      return { ...structuredClone(page), id: page.path } satisfies PageRead;
-    },
-    async getPageByPath(path: string) {
-      const snapshot = await load();
-      const page = snapshot.pages.find((candidate) => candidate.path === path);
-      return page ? { ...structuredClone(page), id: page.path } satisfies PageRead : null;
-    },
-    async journalFeedPage(limit: number, beforeDay: number | null) {
-      const snapshot = await load();
-      const now = new Date();
-      const as_of_day = now.getFullYear() * 10_000 + (now.getMonth() + 1) * 100 + now.getDate();
-      const candidates = snapshot.entries
-        .filter((entry) => entry.kind === "journal" && entry.date_key !== null)
-        .filter((entry) => beforeDay === null || (entry.date_key as number) < beforeDay)
-        .sort((a, b) => (b.date_key as number) - (a.date_key as number));
-      const rows = candidates.slice(0, limit);
-      const pages = rows
-        .map((entry) => publishedAnswerer(snapshot).feedPage(entry))
-        .filter((page): page is PublishedPage => page !== null)
-        .map((page) => ({ ...structuredClone(page), id: page.path } satisfies PageRead));
-      const done = rows.length === candidates.length;
-      return {
-        pages,
-        next_before_day: done || !rows.length ? null : (rows[rows.length - 1].date_key as number),
-        done,
-        as_of_day,
-      };
-    },
-    async journalContentDays() {
-      return (await answersOf()).journalContentDays();
-    },
-    async pageIcons(names: string[]) {
-      const snapshot = await load();
-      const out: Record<string, string> = {};
-      for (const name of names) {
-        const icon = snapshot.icons[name];
-        if (icon !== undefined) out[name] = icon;
-      }
-      return out;
-    },
-    // ---- references ----
-    async getBacklinks(name: string) {
-      const snapshot = await load();
-      return structuredClone(backlinkGroups(snapshot, name));
-    },
-    async getBacklinkFilterContext(name: string, targets: BacklinkFilterTarget[]): Promise<BacklinkFilterContext> {
-      const snapshot = await load();
-      const groups = backlinkGroups(snapshot, name);
-      const roots: { group: RefGroup; block: BlockDto; text: string }[] = [];
-      const requested = new Set<string>();
-      for (const target of targets) {
-        const key = `${target.kind}\0${pageIdentityKey(target.page)}\0${target.block_id}`;
-        if (requested.has(key)) continue;
-        requested.add(key);
-        const root = backlinkRoot(groups, target);
-        if (root) roots.push({ ...root, text: backlinkText(root.block) });
-      }
-      return {
-        entries: roots.map((root) => ({
-          page: root.group.page,
-          kind: root.group.kind,
-          block_id: root.block.id,
-          text: root.text,
-          facets: [...(root.block.tags ?? []), ...(root.block.marker ? [root.block.marker] : [])],
-        })),
-        truncated: roots.length < requested.size,
-      };
-    },
-    async getUnlinkedRefs() {
-      await load();
-      return [];
-    },
-    async getBlockRefCounts() {
-      return { ...(await load()).block_ref_counts };
-    },
-    async getBlockReferrers(uuid: string) {
-      const snapshot = await load();
-      // Admission by substring, decision by the parser: a `((uuid))` inside code is not a reference.
-      return collect(snapshot, (block, page) =>
-        block.raw.includes(uuid) && blockRefsInText(block.raw, page.format ?? "md").some((v) => v.trim() === uuid));
-    },
-    resolveBlock,
-    async resolveBlocks(uuids: string[]): Promise<(RefGroup | null)[]> {
-      return Promise.all(uuids.map((uuid) => resolveBlock(uuid)));
-    },
-    async previewBlock(uuid: string, maxNodes: number): Promise<BlockPreview | null> {
-      const snapshot = await load();
-      const found = findBlock(snapshot, uuid);
-      if (!found) return null;
-      const { blocks, truncated } = previewDtoSubtree(found.block, maxNodes, "owned");
-      if (inCommentThread(found)) blocks[0].comment = true;
-      return {
-        group: { page: found.page.name, kind: found.page.kind, path: found.page.path, blocks },
-        truncated,
-      };
-    },
-    // ---- search ----
-    async search(query: string, limit: number) {
-      const snapshot = await load();
-      const wanted = literalNeedle(query);
-      if (wanted.empty || !wanted.folded) return [];
-      // OG's `((` search: whole words in any order, then literal pieces in order.
-      const legOf = (block: BlockDto) => blockPickerLeg(searchFold(block.raw), wanted.folded);
-      return mergeBlockPickerLegs(
-        collect(snapshot, (block) => legOf(block) === "words", limit),
-        collect(snapshot, (block) => legOf(block) === "fragments", limit),
-        limit,
+    pageInventory: () => read(graph => graph.page_inventory_json()),
+    pageModified: () => read(graph => graph.page_modified_json()),
+    pageBacklinkCounts: () => read(graph => graph.page_backlink_counts_json()),
+    resolvePage: (name, kind) => read(graph => graph.resolve_page_json(name, kind === "journal")),
+    pageAliasGroup: name => read(graph => graph.page_alias_group_json(name)),
+    getPage: (name, kind) => read(graph => graph.get_page_json(name, kind === "journal")),
+    async getPageByPath(path, source) {
+      const answer = await read<{ page: PageRead | null; source: PageReadSource | null }>(
+        graph => graph.get_page_by_path_json(path),
       );
+      source?.(answer.source);
+      return answer.page;
     },
-    quickSwitch,
-    async captureQuickSwitch(query: string, limit: number, _transliteration = false): Promise<PageEntry[]> {
-      return quickSwitch(query, limit);
+    journalFeedPage: (limit, before, waitForReferences = false, through = null) =>
+      read(graph => graph.journal_feed_page_json(limit, before === null ? undefined : BigInt(before),
+        waitForReferences, through === null ? undefined : BigInt(through))),
+    journalContentDays: () => read(graph => graph.journal_content_days_json()),
+    pageIcons: names => read(graph => graph.page_icons_json(JSON.stringify(names))),
+    getBacklinks: name => read(graph => graph.get_backlinks_json(name)),
+    getBacklinkFilterContext: (name, targets) =>
+      read(graph => graph.get_backlink_filter_context_json(name, JSON.stringify(targets))),
+    getUnlinkedRefs: name => read(graph => graph.get_unlinked_refs_json(name)),
+    getBlockRefCounts: () => read(graph => graph.get_block_ref_counts_json()),
+    getBlockReferrers: uuid => read(graph => graph.get_block_referrers_json(uuid)),
+    async resolveBlock(uuid) {
+      const [group] = await read<(RefGroup | null)[]>(graph => graph.resolve_blocks_json(JSON.stringify([uuid])));
+      return group;
     },
-    async queryFacets() {
-      await load();
-      return [];
-    },
-    // ---- queries: the two seams (§3.2) ----
-    async parseQuery(text: string, dialect: QueryTextDialect, blockProperties: [string, string][] = []): Promise<ParsedQuery> {
-      const snapshot = await load();
-      for (const record of snapshot.queries) {
-        if (record.dialect !== dialect || !propertiesEqual(record.properties, blockProperties)) continue;
-        if (record.argument === text) return structuredClone(record.parsed);
-        if (record.execution && record.execution.argument === text) return structuredClone(record.execution.parsed);
-      }
-      throw await staticQueryRefusal();
-    },
-    /** The record whose query IR, page context and view all match wins; two
-     *  identical queries on one page that differ only in `tine.sample::` are
-     *  two records with two views. Then the same query in the same context
-     *  under another view (a later view change is refused anyway, so the baked
-     *  answer is the one the export shows). A run asked with no page at all
-     *  (a query rendered inside a sheet cell, which carries no host page) falls
-     *  back to the one record of that query. */
-    async queryRun(query: Query, view: ViewSettings, context?: ExecutionContext): Promise<QueryResult> {
-      const snapshot = await load();
-      const wanted = stableJson(query);
-      const wantedView = viewKey(view);
-      const page = context?.current_page == null ? undefined : pageIdentityKey(context.current_page);
-      const candidates = snapshot.queries.filter((record) =>
-        stableJson(record.parsed.query) === wanted || (record.execution && stableJson(record.execution.parsed.query) === wanted));
-      const inContext = candidates.filter((record) =>
-        (record.context.current_page == null ? undefined : pageIdentityKey(record.context.current_page)) === page);
-      const hit = inContext.find((record) => viewKey(record.view) === wantedView)
-        ?? inContext[0]
-        ?? (page === undefined ? candidates[0] : undefined);
-      if (hit) return structuredClone(hit.result);
-      throw await staticQueryRefusal();
-    },
-    /** The explicitly routed Ctrl-K consumer gets a plain substring match over page names,
-     *  aliases and block text from the snapshot — navigation, not a query. A
-     *  query-language search (any other consumer) is refused: the export holds
-     *  answers, not an index. */
-    async runGraphSearch(source: string, pageLimit: number, blockLimit: number, lane?: string, _explain?: boolean, scope?: QueryPageScope, _pageMatchScope?: import("./editor/queryIr").FriendlyPageMatchScope, _views?: { page: ViewSettings; block: ViewSettings }, _transliteration = false): Promise<QueryExecution> {
-      const snapshot = await load();
-      if (lane !== "quick-switch" && lane !== "quick-switch:current-page") throw await staticQueryRefusal();
-      const wanted = literalNeedle(source);
-      const hits: QueryHit[] = [];
-      const empty = { hits, diagnostics: [], explanation: { branches: [] }, has_more: { pages: false, blocks: false }, cancelled: false };
-      if (wanted.empty || !wanted.folded) return empty;
-      const evidence = (field: "page_name" | "visible_content", text: string): MatchEvidence[] => {
-        const span = firstMappedSpan(text, wanted.folded);
-        return span === null ? [] : [{ clause_id: 0, field, mode: "contains", spans: [span] }];
-      };
-      const pageHits: QueryHit[] = [];
-      if (!scope) {
-        for (const entry of snapshot.entries) {
-          const alias = snapshot.aliases.find(([from, to]) =>
-            pageIdentityKey(to) === pageIdentityKey(entry.name) && includesFolded(from.trim(), wanted.folded)
-          )?.[0];
-          const name = searchFold(entry.name.trim());
-          if (!name.includes(wanted.folded) && !alias) continue;
-          const match_class = name === wanted.folded ? "exact" : name.startsWith(wanted.folded) ? "prefix" : "substring";
-          const score = match_class === "exact" ? 3 : match_class === "prefix" ? 2 : 1;
-          pageHits.push({ entity: "page", page: structuredClone(entry), display_text: entry.name, evidence: evidence("page_name", entry.name), score, match_class, ...(alias ? { matched_alias: alias } : {}) });
-        }
-        pageHits.sort((a, b) => (b.score ?? 0) - (a.score ?? 0));
-      }
-      const blockHits: QueryHit[] = [];
-      for (const page of snapshot.pages) {
-        if (scope && (scope.path ? page.path !== scope.path : pageIdentityKey(page.name) !== pageIdentityKey(scope.name))) continue;
-        walk(page.blocks, (block) => {
-          const text = block.raw.split("\n")[0] ?? "";
-          if (!includesFolded(block.raw, wanted.folded)) return;
-          blockHits.push({ entity: "block", page: page.name, kind: page.kind, path: page.path, block: shallowCopy(block), display_text: text, evidence: evidence("visible_content", text), score: 1, match_class: "substring" });
-        });
-      }
-      hits.push(...pageHits.slice(0, pageLimit), ...blockHits.slice(0, blockLimit));
-      return { ...empty, has_more: { pages: pageHits.length > pageLimit, blocks: blockHits.length > blockLimit } };
-    },
+    resolveBlocks: uuids => read(graph => graph.resolve_blocks_json(JSON.stringify(uuids))),
+    previewBlock: (uuid, maxNodes) => read(graph => graph.preview_block_json(uuid, maxNodes)),
+    search: (query, limit) => read(graph => graph.search_json(query, limit)),
+    quickSwitch: (query, limit, _editor, transliteration = false) =>
+      read(graph => graph.capture_quick_switch_json(query, limit, transliteration)),
+    captureQuickSwitch: (query, limit, transliteration = false) =>
+      read(graph => graph.capture_quick_switch_json(query, limit, transliteration)),
+    queryFacets: scope => read(graph => graph.query_facets_json(JSON.stringify(scope))),
+    parseQuery: (text, dialect, properties) =>
+      read(graph => graph.parse_query_json(text, dialect, JSON.stringify(properties))),
+    queryRun: (query, view, context) =>
+      read(graph => graph.query_run_json(JSON.stringify(query), JSON.stringify(view), JSON.stringify(context))),
+    runGraphSearch: (source, pageLimit, blockLimit, _lane, explain, scope, pageMatchScope, views, transliteration) =>
+      read(graph => graph.run_graph_search_json(source, pageLimit, blockLimit, JSON.stringify({
+        explain, scope, pageMatchScope, pageView: views?.page, blockView: views?.block, transliteration,
+      }))),
     // ---- assets and the browser ----
     // A refused or missing asset rejects (I-9): an empty byte array reads as a valid empty
     // file and blanks a PDF or image with no cause. The live backend rejects the same way.
@@ -716,7 +301,7 @@ export function publishedBackend(load: () => Promise<PublishedSnapshot> = loadPu
     async confirm(message: string, _options: ConfirmOptions) {
       return window.confirm(message);
     },
-  };
+  } satisfies Partial<Backend>;
 
   const constant = {
     graphBindingGeneration: () => 1,
@@ -971,7 +556,7 @@ export function publishedBackend(load: () => Promise<PublishedSnapshot> = loadPu
       if (OPTIONAL_METHODS.has(property)) return undefined;
       if (property === "then") return undefined;
       return async () => {
-        throw await readOnlyRefusal();
+        throw new Error(PUBLISHED_READ_ONLY_MESSAGE);
       };
     },
     has(target, property) {

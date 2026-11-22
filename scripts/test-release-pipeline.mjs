@@ -113,8 +113,8 @@ assert.match(releaseWorkflow,
 
 assert.equal(layout.allAssets.length, 30, "release layout includes the generation-1 viewer");
 assert.equal(layout.platformAssets.length, 29, "release assets include the viewer alongside platform bundles");
-assert.deepEqual(layout.lanes["quick-share-viewer-g1"], {
-  assets: ["quick-share-viewer-g1.zip"], platforms: {}, sourceAssets: { "quick-share-viewer-g1.zip": "quick-share-viewer-g1.zip" },
+assert.deepEqual(layout.lanes["quick-share-viewer-g2"], {
+  assets: ["quick-share-viewer-g2.zip"], platforms: {}, sourceAssets: { "quick-share-viewer-g2.zip": "quick-share-viewer-g2.zip" },
 });
 assert.equal(
   Object.keys(layout.updaterPlatforms).length,

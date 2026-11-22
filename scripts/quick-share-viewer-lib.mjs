@@ -3,7 +3,7 @@ import path from "node:path";
 import { createHash } from "node:crypto";
 import { execFileSync } from "node:child_process";
 
-export const VIEWER_ZIP = "quick-share-viewer-g1.zip";
+export const VIEWER_ZIP = "quick-share-viewer-g2.zip";
 export const sha256 = (bytes) => createHash("sha256").update(bytes).digest("hex");
 export function fixtureFingerprint(root, generation = 1) {
   const fixtures = path.join(root, `tests/fixtures/quick-share/g${generation}`);

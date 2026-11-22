@@ -2125,34 +2125,24 @@ impl Store {
         let journal = kind == PageKind::Journal;
         let mut looked = false;
         let mut day = None;
-        let (view, resolved) = loop {
+        let id = loop {
             let view = match self.whole_graph() {
                 Ok(view) => view,
                 Err(LoadError::Failed { .. }) => return self.page_named_from_files(name, kind),
                 Err(LoadError::Closed) => return Err(StoreError::Closed),
             };
-            let resolved = view.resolve(name, journal);
-            if journal && !looked && matches!(resolved, Resolved::Absent { .. }) {
+            if let Some(id) = view.page_owner(name, kind) {
+                break id;
+            }
+            if journal && !looked {
                 looked = true;
                 day = self.reconcile_unindexed_day(name, &view)?;
                 if day.is_some() {
                     continue;
                 }
             }
-            break (view, resolved);
+            return day.map_or(Ok(None), |day| self.unindexed_day_read(day, &view));
         };
-        // `resolve` builds an alias only with at least one owner.
-        let id = match resolved {
-            Resolved::Existing { id, .. } => id,
-            Resolved::Alias { owners } => match owners.into_iter().next() {
-                Some(id) => id,
-                None => return Ok(None),
-            },
-            Resolved::Absent { .. } => {
-                return day.map_or(Ok(None), |day| self.unindexed_day_read(day, &view))
-            }
-        };
-        drop(view);
         match self.page(&id) {
             Ok(read) => Ok(Some(read)),
             Err(StoreError::NotFound(_)) => Ok(None),

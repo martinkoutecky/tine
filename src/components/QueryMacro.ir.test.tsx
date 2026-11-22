@@ -39,7 +39,7 @@ import { applyChangeSummary } from "../changeSummary";
 import { noteQueryInput, QUERY_QUIET_MS } from "../querySubscription";
 import { resetQueryTextOpenForTests } from "../navSettings";
 import { startEditing } from "../editorController";
-import { publishedBackend, type PublishedSnapshot } from "../publishedBackend";
+import { testPublishedBackend } from "../publishedBackend.methods.test.support";
 import { queryExportRequest, setQueryExportRequest } from "../ui";
 
 // These component fixtures do not bind a page host. Their source edits update
@@ -174,7 +174,7 @@ it("a query in a published export renders its rows without a change subscription
   bumpGraphEpoch();
   load("{{query (task TODO)}}");
   const host = backend(); const original = host.registerQuerySubscription;
-  const published = publishedBackend(async () => { throw new Error("snapshot unused"); });
+  const published = testPublishedBackend({});
   host.registerQuerySubscription = published.registerQuerySubscription;
   vi.spyOn(host, "parseQuery").mockResolvedValue({ query: { anchor: "block", filter: { kind: "true" },
     source: { kind: "og", original: "(task TODO)", og_options: "" } }, view: {} });
@@ -219,20 +219,9 @@ it.each(["", "query-table:: true", "query-table:: true\ntine.view:: list", "tine
     load(raw, { readOnly: true });
     const pairs = property.split("\n").filter(Boolean).map(line => line.split(":: ") as [string, string]);
     const view = pairs.find(([key]) => key === "tine.view")?.[1] as ViewSettings["view"] | undefined;
-    const answer = groups();
-    answer[0].blocks[0].properties = [["owner", "Zoe"]];
-    answer[0].blocks.push({ id: "alpha", raw: "TODO Another row", collapsed: false, children: [], properties: [["owner", "Ada"]] });
-    setDoc("byId", "alpha", node("alpha", "TODO Another row\nowner:: Ada"));
-    const parsed: ParsedQuery = { query: { anchor: "block", filter: { kind: "true" },
-      source: { kind: "og", original: "(task TODO)", og_options: "" } }, view: view ? { view } : {}, legacy_table: property.includes("query-table:: true") };
-    const snapshot: PublishedSnapshot = {
-      schema: 1, name: "Views", exported_at: "", home: "Sheet", pages: [], entries: [],
-      backlinks: {}, block_ref_counts: {}, aliases: [], icons: {},
-      queries: [{ host: "Sheet", argument: "(task TODO)", dialect: "macro_query", properties: pairs,
-        parsed, context: { current_page: "Sheet" }, executed_context: { current_page: "Sheet" },
-        view: parsed.view, result: blockRunResult(answer) }],
-    };
-    const api = publishedBackend(async () => snapshot);
+    const api = testPublishedBackend({
+      "pages/Sheet.md": "- TODO A tracked row\n  owner:: Zoe\n- TODO Another row\n  owner:: Ada\n",
+    });
     vi.spyOn(backend(), "parseQuery").mockImplementation(api.parseQuery);
     vi.spyOn(backend(), "queryRun").mockImplementation(api.queryRun);
     const meta = document.createElement("meta"); meta.name = "tine-published"; meta.content = "snapshot.json"; document.head.append(meta);
@@ -241,7 +230,6 @@ it.each(["", "query-table:: true", "query-table:: true\ntine.view:: list", "tine
       await vi.waitFor(() => expect(root.querySelector(".query-count")?.textContent).toBe("2"));
       await vi.waitFor(() => expect(root.textContent).toContain("A tracked row"));
       expect(root.textContent).toContain("Another row");
-      expect(root.textContent).not.toContain("This export answers only");
       expect(root.querySelector(".qc-actions, .qc-edit")).toBeNull();
       expect(root.querySelector(".query-table") !== null).toBe(legacy);
       if (view === "table") expect(root.querySelector(".sheet-table")).not.toBeNull();

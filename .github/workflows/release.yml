@@ -862,12 +862,12 @@ jobs:
         run: |
           export VIEWER_BUILT_FROM="v$(node -p 'require("./package.json").version')"
           node scripts/build-quick-share-viewer.mjs
-          cp artifacts/quick-share-viewer/quick-share-viewer-g1.zip .
-          node scripts/stage-release-lane.mjs quick-share-viewer-g1 release-candidate "${{ github.sha }}"
+          cp artifacts/quick-share-viewer/quick-share-viewer-g2.zip .
+          node scripts/stage-release-lane.mjs quick-share-viewer-g2 release-candidate "${{ github.sha }}"
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
-          name: release-quick-share-viewer-g1
-          path: release-candidate/quick-share-viewer-g1
+          name: release-quick-share-viewer-g2
+          path: release-candidate/quick-share-viewer-g2
           if-no-files-found: error
           retention-days: 3
           compression-level: 0

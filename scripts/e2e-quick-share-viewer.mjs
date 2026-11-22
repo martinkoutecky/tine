@@ -111,9 +111,9 @@ gtk.gtk_clipboard_wait_for_text.argtypes=[ctypes.c_void_p]; gtk.gtk_clipboard_wa
 p=gtk.gtk_clipboard_wait_for_text(gtk.gtk_clipboard_get(gdk.gdk_atom_intern_static_string(b'CLIPBOARD')))
 if not p: raise RuntimeError('share clipboard is empty')
 print(ctypes.string_at(p).decode())`], { encoding: "utf8" }).trim();
-  if (link !== `https://tine.page/s/1/#${row.login}/${row.gist_id}/${row.key}`) throw new Error("clipboard does not hold the created share link");
+  if (row.viewer_generation !== 2 || link !== `https://tine.page/s/2/${row.login}/${row.gist_id}#${row.key}`) throw new Error("clipboard does not hold the created share link");
   mark("the built viewer renders the uploaded copy and follows its page link");
-  await checkViewer(process.env.QUICK_SHARE_VIEWER_DIR || path.join(root, "artifacts/quick-share-viewer/build"), { envelope, link, expectedText: "Native share sentinel" });
+  await checkViewer(process.env.QUICK_SHARE_VIEWER_DIR || path.join(root, "artifacts/quick-share-viewer/build"), { generation: 2, envelope, link, expectedText: "Native share sentinel" });
   await browser.execute(() => document.querySelector('.quick-share-dialog .settings-pane-head button').click());
   mark("edits the shared page then reviews Re-share from the Exports overview");
   const firstEnvelope = envelope;
@@ -137,7 +137,7 @@ print(ctypes.string_at(p).decode())`], { encoding: "utf8" }).trim();
   const project = fs.readFileSync(path.join(graph, "pages/Project.md"), "utf8");
   if (project.split("tine.share::").length !== 2 || fs.readFileSync(path.join(graph, "pages/Exports.md"), "utf8").includes("tine.share::")) throw new Error("Re-share duplicated a graph definition");
   mark("the same link in the built viewer shows the edit after one PATCH");
-  await checkViewer(process.env.QUICK_SHARE_VIEWER_DIR || path.join(root, "artifacts/quick-share-viewer/build"), { envelope, link, expectedText: "Native re-share edited sentinel" });
+  await checkViewer(process.env.QUICK_SHARE_VIEWER_DIR || path.join(root, "artifacts/quick-share-viewer/build"), { generation: 2, envelope, link, expectedText: "Native re-share edited sentinel" });
   await browser.execute(() => document.querySelector('.quick-share-dialog .settings-pane-head button').click());
   mark("Exports overview offers Delete; declining keeps the hosted share");
   await browser.$(".query-results-region .quick-share-export-delete").waitForExist({ timeout: 20_000 });
@@ -185,8 +185,9 @@ print(ctypes.string_at(p).decode())`], { encoding: "utf8" }).trim();
   mark("both original links in the built viewer show the batch edit");
   for (const shared of batchBefore) {
     await checkViewer(process.env.QUICK_SHARE_VIEWER_DIR || path.join(root, "artifacts/quick-share-viewer/build"), {
+      generation: 2,
       envelope: hosted.get(shared.gist_id).envelope,
-      link: `https://tine.page/s/1/#${shared.login}/${shared.gist_id}/${shared.key}`,
+      link: `https://tine.page/s/2/${shared.login}/${shared.gist_id}#${shared.key}`,
       expectedText: "Native batch re-share sentinel",
     });
   }

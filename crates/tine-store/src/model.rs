@@ -35,7 +35,7 @@ mod md_fidelity_corpus_tests;
 pub(crate) mod namespace_parents;
 mod page_icons;
 mod page_identity;
-mod page_parse;
+pub(crate) mod page_parse;
 mod parse_depth;
 pub(crate) use file_source::FileSource;
 mod path_membership;

@@ -3,7 +3,7 @@ use super::*;
 use crate::model::derived::Named;
 use std::collections::HashSet;
 
-fn name_claimants<'a>(
+pub(super) fn name_claimants<'a>(
     index: &'a SharedMap<(bool, String), Vec<PageEntry>>,
     name: &str,
     kind: PageKind,

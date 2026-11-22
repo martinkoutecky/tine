@@ -5,6 +5,8 @@ import { renderBlocks } from "../render/body";
 import { renderRawHtml, renderSanitizedHtml } from "../render/rawHtml";
 import { QuickShareFailure, QuickShareBanner } from "./viewer";
 import { QuickShareError } from "./quickShare";
+import { BrowserCoreLoadError } from "../browserCore";
+import { QUICK_SHARE_SNAPSHOT } from "../publishedBackend";
 
 let dispose: (() => void) | undefined;
 afterEach(() => { dispose?.(); document.body.replaceChildren(); document.querySelector('meta[name="tine-published"]')?.remove(); });
@@ -14,7 +16,7 @@ function mount(node: () => import("solid-js").JSX.Element) {
   dispose = render(node, root); return root;
 }
 function shareMode() {
-  const meta = document.createElement("meta"); meta.name = "tine-published"; meta.content = "quick-share:1"; document.head.append(meta);
+  const meta = document.createElement("meta"); meta.name = "tine-published"; meta.content = QUICK_SHARE_SNAPSHOT; document.head.append(meta);
 }
 it.each(["bad-link", "unsupported-browser", "not-found", "unreachable", "too-large", "not-a-share", "newer-viewer", "unauthentic", "invalid", "blocked"] as const)("explains %s without reflecting exception details", (reason) => {
   const root = mount(() => <QuickShareFailure error={new QuickShareError(reason, "SECRET-FRAGMENT")} />);
@@ -26,6 +28,11 @@ it("marks the reader as user content and offers a secret-free abuse contact", ()
   const root = mount(() => <QuickShareBanner />);
   expect(root.textContent).toContain("User content");
   expect(root.querySelector("a")?.getAttribute("href")).toBe("mailto:support@tine.page");
+});
+it("reports core startup failure without reflecting its transport error", () => {
+  const root = mount(() => <QuickShareFailure error={new BrowserCoreLoadError("SECRET-FRAGMENT")} />);
+  expect(root.querySelector('[role="alert"]')?.textContent).toContain("could not start the graph engine");
+  expect(root.textContent).not.toContain("SECRET-FRAGMENT");
 });
 it("turns Markdown, raw HTML and macro media into placeholders and links before mounting resources", () => {
   shareMode();

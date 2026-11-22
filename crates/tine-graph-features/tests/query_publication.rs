@@ -686,7 +686,7 @@ fn build_real_query_site_for_browser_smoke() {
         folder: None,
         replace: false,
         asset_budget_bytes: None,
-        include_query_text: false,
+        include_query_text: true,
         include_comments: None,
     };
     let plan = plan_query(&store, &request).unwrap();

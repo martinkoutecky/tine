@@ -47,7 +47,7 @@ import { installKeybindings } from "./keybindings";
 import { installFileDrop } from "./filedrop";
 import { installBlockSelectionDrag } from "./blockDrag";
 import { applyCustomCssChange, applyGraphConfigChange, loadGraphPath, persistedGraphPath } from "./graph";
-import { installPageIndex } from "./pageIndex";
+import { installPageIndex, linkTarget } from "./pageIndex";
 import { t, msg } from "./i18n";
 import { scheduleAutomaticUpdateCheck, setUpdateExitGuard } from "./update";
 import { flushCssEditor } from "./cssEditor";
@@ -74,11 +74,12 @@ import { subscribeCurrentPage } from "./currentPage";
 import { installQuickCaptureReceiver } from "./quickCaptureReceiver";
 export { installQuickCaptureReceiver } from "./quickCaptureReceiver";
 import { backend, isTauri } from "./backend";
-import { isPublishedExport, loadPublishedSnapshot } from "./publishedBackend";
+import { isPublishedExport } from "./publishedBackend";
 import { openPublishedPermalink, publishedPermalinkForWorkspace, replacePublishedPermalink } from "./publishedPermalink";
 import { maybeShowDefenderHint } from "./defenderHint";
 import { maybeShowGitIgnoreNotice } from "./gitIgnoreNotice";
 import { bindingOwner, graphOwner, latestOwner, ownedWhen, readOwned, readOwnedResource, writeOwned, type Owned, type Owner } from "./owned";
+import { focusedSurfaceOwner } from "./focusedSurface";
 import { anchorDecision } from "./linkSchemePolicy";
 import { parserFailed } from "./render/parse";
 import { warnIfSoftwareRendering } from "./gpu";
@@ -751,7 +752,9 @@ export function App(): JSX.Element {
     } finally {
       if (isPublishedExport() && window.location.hash) {
         try {
-          openPublishedPermalink(await loadPublishedSnapshot(), window.location.hash, paneRouter(focusedPaneId()));
+          const hash = window.location.hash;
+          const current = focusedSurfaceOwner(() => alive && hash === window.location.hash);
+          await openPublishedPermalink(hash, paneRouter(focusedPaneId()), backend(), linkTarget, current);
         } catch { console.error("published permalink unavailable"); }
       }
       // The load above retires `owner` (opening a graph moves the binding), so the
@@ -776,11 +779,17 @@ export function App(): JSX.Element {
   });
   onMount(() => {
     if (!isPublishedExport()) return;
-    const onHash = () => { void loadPublishedSnapshot().then((snapshot) => {
-      openPublishedPermalink(snapshot, window.location.hash, paneRouter(focusedPaneId()));
-    }); };
+    let request = 0;
+    const onHash = () => {
+      if (!firstLoadDone()) return;
+      const id = ++request;
+      const hash = window.location.hash;
+      const current = focusedSurfaceOwner(() => id === request && hash === window.location.hash);
+      void openPublishedPermalink(hash, paneRouter(focusedPaneId()), backend(), linkTarget, current)
+        .catch(() => console.error("published permalink unavailable"));
+    };
     window.addEventListener("hashchange", onHash);
-    onCleanup(() => window.removeEventListener("hashchange", onHash));
+    onCleanup(() => { request++; window.removeEventListener("hashchange", onHash); });
   });
 
   // Warn (loudly) if the webview is painting on the CPU — Tine's whole pitch is

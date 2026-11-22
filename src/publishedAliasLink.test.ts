@@ -1,47 +1,28 @@
-// CM step 2 (Q8): the published site has no inventory `link` field (quick
-// share generation 1 is frozen; docs/storage-contract.md). A rendered
-// `[[alias]]` of an ordinary page must still open the owner there, through the
-// same frontend path the app uses: `linkTarget` (PageRef), then the router's
-// `navigationTarget` for an ordinary-page route, then the backend `getPage`.
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import type { PublishedSnapshot } from "./publishedBackend";
 
-const snapshot: PublishedSnapshot = {
-  schema: 1, name: "Example", exported_at: "", home: "Public",
-  pages: [
-    { path: "pages/Public.md", name: "Public", title: "Public", kind: "page", pre_block: null,
-      blocks: [{ id: "one", raw: "Owner body", collapsed: false, children: [] }], read_only: true },
-    { path: "journals/2026_10_26.md", name: "Oct 26th, 2026", title: "Oct 26th, 2026", kind: "journal", pre_block: null,
-      blocks: [{ id: "two", raw: "Launch journal body", collapsed: false, children: [] }], read_only: true },
-  ],
-  entries: [
-    { name: "Public", kind: "page", date_key: null, path: "pages/Public.md" },
-    { name: "Oct 26th, 2026", kind: "journal", date_key: 20261026, path: "journals/2026_10_26.md" },
-  ],
-  backlinks: { "Oct 26th, 2026": [{ page: "Public", kind: "page", blocks: [{ id: "three", raw: "see [[launch day]]", collapsed: false, children: [] }] }] },
-  block_ref_counts: {}, aliases: [["Alias", "Public"], ["launch day", "Oct 26th, 2026"]], icons: {},
-  queries: [],
+
+const files = {
+  "pages/Public.md": "alias:: Alias\n\n- Owner body\n- see [[launch day]]\n",
+  "journals/2026_10_26.md": "alias:: launch day\n\n- Launch journal body\n",
 };
 
 const holder = vi.hoisted(() => ({ api: null as unknown }));
 vi.mock("./backend", () => ({ backend: () => holder.api }));
 
-async function load(published = false) {
+async function load() {
   await (await import("./render/parse")).initParser();
-  const module = await import("./publishedBackend");
-  // A real published site has its snapshot URL set; the index then reads rows as a viewer does.
-  if (published) vi.spyOn(module, "isPublishedExport").mockReturnValue(true);
-  const { publishedBackend } = module;
-  holder.api = publishedBackend(async () => snapshot);
+  const { testPublishedBackend } = await import("./publishedBackend.methods.test.support");
+  const api = testPublishedBackend(files);
+  holder.api = api;
   const index = await import("./pageIndex");
-  return { api: holder.api as ReturnType<typeof publishedBackend>, ...index };
+  return { api, ...index };
 }
 
 beforeEach(() => {
   vi.resetModules();
 });
 
-describe("published site: alias links without the inventory link field", () => {
+describe("published site: alias links use the core inventory", () => {
   it("opens the owner of an ordinary page's alias, as on develop before CM step 2", async () => {
     const { api, installPageIndex, allPageNames, linkTarget, navigationTarget } = await load();
     installPageIndex();
@@ -56,12 +37,8 @@ describe("published site: alias links without the inventory link field", () => {
     expect(page?.blocks[0]?.raw).toBe("Owner body");
   });
 
-  // HFh-eo: a snapshot written before `answers` existed (an old quick share, an
-  // old published site) carries only the one-owner `aliases` pairs. A link to a
-  // journal's alias must open that journal, as the app and a new publication do
-  // (publishedAnswers D4), not a blank page.
   it("opens the journal of a journal's alias on a published site", async () => {
-    const { api, installPageIndex, allPageNames, linkTarget, navigationTarget } = await load(true);
+    const { api, installPageIndex, allPageNames, linkTarget, navigationTarget } = await load();
     installPageIndex();
     await vi.waitFor(() => expect(allPageNames()).toContain("Public"));
     const link = linkTarget("launch day");

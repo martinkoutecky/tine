@@ -36,6 +36,10 @@ it("the browser core's read wires match the pinned desktop answers", () => {
     resolve_page: () => graph.resolve_page_json("Org Notes", false),
     resolve_namespace: () => graph.resolve_page_json("Team/Child", false),
     page_alias_group: () => graph.page_alias_group_json("Shortcut"),
+    get_page: () => graph.get_page_json("Shortcut", false),
+    get_page_by_path: () => graph.get_page_by_path_json("pages/Notes.org"),
+    journal_feed_page: () => graph.journal_feed_page_json(1, null, true, null),
+    journal_feed_page_before: () => graph.journal_feed_page_json(1, 20260627n, true, null),
     journal_content_days: () => graph.journal_content_days_json(),
     page_icons: () => graph.page_icons_json('["Shortcut","Missing"]'),
     get_backlinks: () => graph.get_backlinks_json("Target"),
@@ -68,6 +72,16 @@ it("the browser core's read wires match the pinned desktop answers", () => {
       if (name === "page_backlink_counts") {
         // The wire enumerates page slots. All Pages consumes the counts by key.
         expect.soft(orderedCounts(answer), name).toEqual(orderedCounts(expected));
+      } else if (name === "get_page") {
+        expect.soft(answer, name).toBe(JSON.stringify(viewPage(JSON.parse(expected))));
+      } else if (name === "get_page_by_path") {
+        const { page } = JSON.parse(expected);
+        expect.soft(answer, name).toBe(JSON.stringify({ page: viewPage(page), source: null }));
+      } else if (name === "journal_feed_page" || name === "journal_feed_page_before") {
+        const now = new Date();
+        const as_of_day = now.getFullYear() * 10000 + (now.getMonth() + 1) * 100 + now.getDate();
+        const feed = JSON.parse(expected);
+        expect.soft(answer, name).toBe(JSON.stringify({ ...feed, pages: feed.pages.map(viewPage), as_of_day }));
       } else {
         expect.soft(answer, name).toBe(expected);
       }
@@ -88,6 +102,53 @@ it("the browser core's read wires match the pinned desktop answers", () => {
     expect(graph.query_run_json(query, view, "null")).toBe(fixture.expected.query_run);
     const search = graph.run_graph_search_json("alpha", 5, 5, '{"explain":true,"transliteration":null}');
     expect(search).toBe(fixture.expected.run_graph_search);
+  } finally {
+    graph.free();
+  }
+});
+
+// A captured physical body carries no save base and cannot be edited.
+function viewPage<T extends object>(doc: T) {
+  return { ...doc, rev: null, read_only: true };
+}
+
+it("the browser core opens the alias owner and can read a different claimant by exact path", () => {
+  const graph = open([
+    ["pages/A.md", "title:: Same\nalias:: Shortcut\n- owner\n"],
+    ["pages/B.md", "title:: Same\nalias:: Shortcut\n- other claimant\n"],
+  ]);
+  try {
+    expect(JSON.parse(graph.get_page_json("Shortcut", false))).toMatchObject({ id: "pages/A.md" });
+    expect(JSON.parse(graph.get_page_json("Missing", false))).toBeNull();
+    expect(JSON.parse(graph.get_page_by_path_json("pages/B.md"))).toMatchObject({
+      page: { id: "pages/B.md", blocks: [{ raw: "other claimant" }] },
+      source: null,
+    });
+    expect(JSON.parse(graph.get_page_by_path_json("pages/b.md"))).toEqual({ page: null, source: null });
+  } finally {
+    graph.free();
+  }
+});
+
+it("the browser journal feed extends through a referenced day and includes upcoming references on open", () => {
+  const graph = open([
+    ["logseq/config.edn", '{:journal/file-name-format "yyyy_dd_MM"}'],
+    ["pages/Plan.md", "- [[2000-01-02]] [[2099-01-02]]\n"],
+    ["journals/2000_03_01.md", "- recent\n"],
+  ]);
+  try {
+    const files = JSON.parse(graph.journal_feed_page_json(1, null, false, null));
+    expect(files.pages.map(({ id }: { id: string }) => id)).toEqual(["journals/2000_03_01.md"]);
+    expect(files.references_pending).toBe(false);
+    const first = JSON.parse(graph.journal_feed_page_json(1, null, true, 20000102n));
+    expect(first.pages.map(({ id }: { id: string }) => id)).toEqual([
+      "journals/2000_03_01.md",
+      "journals/2000_02_01.md",
+    ]);
+    expect(first.upcoming).toMatchObject([{ id: "journals/2099_02_01.md", blocks: [] }]);
+    const cursor = JSON.parse(graph.journal_feed_page_json(1, 20000103n, true, null));
+    expect(cursor.pages).toMatchObject([{ id: "journals/2000_02_01.md", blocks: [] }]);
+    expect(cursor.upcoming).toEqual([]);
   } finally {
     graph.free();
   }

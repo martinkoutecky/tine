@@ -240,7 +240,7 @@ pub fn gunzip_bounded(payload: &[u8], max: usize) -> io::Result<Vec<u8>> {
 
 /// Admission bounds for generation-1 documents read by native Check and
 /// re-share review (`quick-share-limits.json` `viewer`).
-pub fn validate_legacy_document(document: &[u8]) -> io::Result<()> {
+pub fn validate_legacy_document(document: &[u8]) -> io::Result<serde_json::Value> {
     if document.len() > MAX_DOCUMENT_BYTES {
         return Err(refusal("the shared pages exceed the 32 MiB share limit"));
     }
@@ -318,7 +318,21 @@ pub fn validate_legacy_document(document: &[u8]) -> io::Result<()> {
     if total > MAX_BLOCKS {
         return Err(refusal("the shared pages hold too many blocks"));
     }
-    Ok(())
+    Ok(value)
+}
+
+/// Read the current share title, timestamp and member names from its source graph.
+/// Opens one bounded memory graph and resolves the authored page identities there.
+pub fn read_share_summary(document: &[u8]) -> io::Result<(String, String, Vec<String>)> {
+    if document.len() > MAX_DOCUMENT_BYTES {
+        return Err(refusal("the shared pages exceed the 32 MiB share limit"));
+    }
+    let document: publication_snapshot::ShareDocument<'_> =
+        serde_json::from_slice(document).map_err(io::Error::other)?;
+    if document.quick_share != GENERATION {
+        return Err(refusal("unknown quick-share generation"));
+    }
+    document.snapshot.share_summary()
 }
 
 /// Whether `json` holds at most `max` containers inside one another, counted
@@ -351,7 +365,7 @@ fn json_nesting_within(json: &[u8], max: usize) -> bool {
     true
 }
 
-const VIEWER_MAX_PAGES: usize = 201;
+pub(crate) const VIEWER_MAX_PAGES: usize = 201;
 pub(crate) const MAX_QUERIES: usize = 256;
 const VIEWER_MAX_DEPTH: usize = 512;
 pub(crate) const MAX_STRING_BYTES: usize = 1024 * 1024;

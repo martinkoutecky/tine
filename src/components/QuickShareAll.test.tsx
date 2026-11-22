@@ -5,6 +5,7 @@ import { QuickShareAll } from "./QuickShareAll";
 import { invalidateBinding } from "../binding";
 import * as documentLayer from "../document";
 import * as commentChoices from "../exportComments";
+import * as definitions from "../quickShare/definitions";
 import type { QuickSharePrepared } from "../quickShare/commands";
 vi.mock("../sheet/exportSheets", () => ({ exportSheets: vi.fn(async () => []) }));
 
@@ -65,6 +66,22 @@ it("closing the preview discards every unconsumed payload", async () => {
   root.querySelector<HTMLButtonElement>(".quick-share-all-close")!.click();
   await vi.waitFor(() => expect(discard).toHaveBeenCalledTimes(2));
   expect(upload).not.toHaveBeenCalled();
+});
+
+it("a batch records a new pending definition before uploading a generation-1 re-share", async () => {
+  const { root, prepare, upload } = mount();
+  prepare.mockResolvedValueOnce({ ...prepared("first"), shareId: "new-record" });
+  const mark = vi.spyOn(definitions, "markSharePending").mockResolvedValue("Exports");
+  const finish = vi.spyOn(definitions, "finishSharePending").mockResolvedValue(["Exports"]);
+  upload.mockResolvedValue({ shareId: "new-record", gistId: "new-gist", login: "octo", copied: true });
+  root.querySelector("button")!.click();
+  await vi.waitFor(() => expect(root.querySelector<HTMLButtonElement>(".quick-share-all-confirm")?.disabled).toBe(false));
+  expect(root.textContent).toContain("Re-sharing creates a new link.");
+  expect(upload).not.toHaveBeenCalled();
+  root.querySelector<HTMLButtonElement>(".quick-share-all-confirm")!.click();
+  await vi.waitFor(() => expect(finish).toHaveBeenCalledWith("new-record", "octo/new-gist", expect.any(Function), ["Exports"]));
+  expect(mark).toHaveBeenCalledWith(expect.objectContaining({ macro: "{{tine-query @page}}" }), "new-record", expect.any(Function));
+  expect(mark.mock.invocationCallOrder[0]).toBeLessThan(upload.mock.invocationCallOrder[0]);
 });
 it("shows mixed saved choices and reviews fresh payloads for either explicit comments choice", async () => {
   const { root, prepare, discard, upload } = mount();
