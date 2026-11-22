@@ -22,7 +22,7 @@ fn files_under(root: &Path) -> Vec<(String, Vec<u8>)> {
                     .unwrap()
                     .to_str()
                     .unwrap()
-                    .replace('\\', "/");
+                    .replace(std::path::MAIN_SEPARATOR, "/");
                 out.push((rel, std::fs::read(&path).unwrap()));
             }
         }
@@ -206,7 +206,12 @@ fn config_problems_answer_alike_from_files() {
         store.close();
         let (view, _) = WholeGraph::from_files(files_under(temp.path())).unwrap();
         let memory = view.config().problem.as_ref().map(|error| error.kind);
-        assert_eq!(memory, disk, "{case}");
+        // Windows opens a directory as PermissionDenied: the problem is there,
+        // its kind is the platform's.
+        if cfg!(unix) {
+            assert_eq!(memory, disk, "{case}");
+        }
+        assert_eq!(memory.is_some(), disk.is_some(), "{case}");
         assert_eq!(disk.is_some(), case != "absent", "{case}: {disk:?}");
     }
 }
@@ -221,9 +226,15 @@ fn from_files_refuses_paths_no_directory_holds() {
         vec![file("pages/../a.md")],
         vec![file("./pages/a.md")],
         vec![file("")],
-        vec![file("pages\\a.md")],
+        vec![file(&format!("pages/{}.md", "a".repeat(253)))],
         vec![file("pages/a.md"), file("pages/a.md/b.md")],
         vec![file("pages/a/b.md"), file("pages/a")],
+        vec![file("pages/a\0.md")],
+        vec![file("pages/a.md"), file("pages/a.md")],
+        vec![file("pages/a.md"), file("pages//a.md")],
+        vec![file("pages/a.md"), file("pages/./a.md")],
+        vec![file("pages/a.md"), file("pages/a.md/")],
+        vec![file("pages/a.md"), file("pages/a.md/.")],
     ];
     for files in sets {
         let kind = WholeGraph::from_files(files.clone())
@@ -312,7 +323,7 @@ fn a_flat_directory_builds_in_linear_time() {
         .map(|n| {
             (
                 format!("pages/p{n}.md"),
-                crate::model::file_source::Content::Bytes(Arc::from(&b"- x\n"[..])),
+                crate::model::file_source::Content::Bytes(Arc::new(b"- x\n".to_vec())),
                 None,
             )
         })
@@ -322,4 +333,145 @@ fn a_flat_directory_builds_in_linear_time() {
     let elapsed = began.elapsed();
     assert!(elapsed < std::time::Duration::from_secs(1), "{elapsed:?}");
     drop(built);
+}
+
+/// Every layout shape opens or is refused alike (round 2 of the 11/22 review:
+/// a directory below a file, NUL in a setting, `assets` a file). The disk
+/// column is pinned, so neither side can drift alone.
+const LONG_NAME_CONFIG: &str = concat!(
+    "{:pages-directory \"",
+    "zzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzz",
+    "zzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzz",
+    "zzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzz",
+    "zzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzz",
+    "\"}"
+);
+
+/// On the reference volume a backslash is an ordinary name character: a
+/// graph holding one opens from memory as from the disk (model check #3).
+#[cfg(unix)]
+#[test]
+fn backslash_names_open_alike() {
+    let temp = tempfile::tempdir().unwrap();
+    let root = temp.path();
+    std::fs::create_dir_all(root.join("pages")).unwrap();
+    std::fs::create_dir_all(root.join("assets")).unwrap();
+    std::fs::write(root.join("pages/a.md"), "- a\n").unwrap();
+    std::fs::write(root.join("assets/a\\b.bin"), "x").unwrap();
+    open_disk(root).unwrap().0.close();
+    WholeGraph::from_files(files_under(root)).unwrap();
+}
+
+/// A key's directories are made by one walk of its names: a first key
+/// 100,000 directories deep builds in linear time (model check #2; the
+/// flat map of full prefixes hashed every prefix, quadratic).
+#[test]
+fn a_deep_first_key_builds_in_linear_time() {
+    let deep = format!("assets/{}x.bin", "a/".repeat(100_000));
+    let started = std::time::Instant::now();
+    let root = Path::new(crate::model::file_source::MEMORY_ROOT);
+    let content = crate::model::file_source::Content::Bytes(Arc::new(b"x".to_vec()));
+    crate::model::file_source::Files::new(root, [(deep, content, None)]).unwrap();
+    assert!(
+        started.elapsed() < std::time::Duration::from_secs(5),
+        "{:?}",
+        started.elapsed()
+    );
+}
+
+/// A parse read of a memory file is a view of the held bytes, not a copy
+/// (MEMORY-SOURCE-MODEL Q3; 12607 #3).
+#[test]
+fn a_memory_parse_read_does_not_copy() {
+    use crate::model::file_source::{Content, FileSource, Files, MEMORY_ROOT};
+    let bytes = Arc::new(b"- a\n".to_vec());
+    let root = Path::new(MEMORY_ROOT);
+    let files = [(
+        "pages/a.md".to_owned(),
+        Content::Bytes(Arc::clone(&bytes)),
+        None,
+    )];
+    let source = FileSource::Memory(Arc::new(Files::new(root, files).unwrap()));
+    let text = crate::model::read_parse_input_in(&source, &root.join("pages/a.md")).unwrap();
+    assert_eq!(text.as_ptr(), bytes.as_ptr());
+    assert_eq!(&*text, "- a\n");
+}
+
+#[test]
+fn layouts_open_or_refuse_alike() {
+    let cases: &[(&str, &str, &[&str], bool)] = &[
+        ("pages is a file", "", &["pages"], true),
+        ("journals is a file", "", &["journals"], true),
+        ("publish is a file", "", &["publish"], true),
+        (
+            "pages under a file",
+            "{:pages-directory \"x/pages\"}",
+            &["x"],
+            false,
+        ),
+        (
+            "journals under a file",
+            "{:journals-directory \"x/j\"}",
+            &["x"],
+            false,
+        ),
+        ("assets is a file", "", &["assets"], false),
+        (
+            "NUL in a setting",
+            "{:pages-directory \"pa\\u0000ges\"}",
+            &[],
+            false,
+        ),
+        ("trailing slash", "{:pages-directory \"pages/\"}", &[], true),
+        ("a file as pages", "{:pages-directory \"x\"}", &["x"], true),
+        (
+            "a file spelled x/",
+            "{:pages-directory \"x/\"}",
+            &["x"],
+            false,
+        ),
+        (
+            "a file spelled x/.",
+            "{:pages-directory \"x/.\"}",
+            &["x"],
+            false,
+        ),
+        (
+            "a file spelled x//./",
+            "{:pages-directory \"x//./\"}",
+            &["x"],
+            false,
+        ),
+        ("a dot name", "{:pages-directory \".private\"}", &[], true),
+        ("a 256-byte name", LONG_NAME_CONFIG, &[], false),
+        ("double slash", "{:pages-directory \"a//pages\"}", &[], true),
+        (
+            "dot component",
+            "{:pages-directory \"a/./pages\"}",
+            &[],
+            true,
+        ),
+    ];
+    for (case, config, as_files, opens) in cases {
+        let temp = tempfile::tempdir().unwrap();
+        let root = temp.path();
+        std::fs::create_dir_all(root.join("journals")).unwrap();
+        std::fs::create_dir_all(root.join("pages")).unwrap();
+        std::fs::write(root.join("pages/a.md"), "- a\n").unwrap();
+        for rel in *as_files {
+            let path = root.join(rel);
+            if path.is_dir() {
+                std::fs::remove_dir_all(&path).unwrap();
+            }
+            std::fs::write(path, "x").unwrap();
+        }
+        if !config.is_empty() {
+            std::fs::create_dir_all(root.join("logseq")).unwrap();
+            std::fs::write(root.join("logseq/config.edn"), config).unwrap();
+        }
+        let disk = open_disk(root).map(|(store, _)| store.close()).is_ok();
+        let memory = WholeGraph::from_files(files_under(root)).is_ok();
+        assert_eq!(disk, *opens, "{case}: the disk");
+        assert_eq!(memory, disk, "{case}: memory against the disk");
+    }
 }

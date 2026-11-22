@@ -59,7 +59,7 @@ impl WholeGraph {
     /// `config().problem`, as on disk.
     pub fn from_files(files: Vec<(String, Vec<u8>)>) -> io::Result<(WholeGraph, String)> {
         let files = (files.into_iter())
-            .map(|(rel, bytes)| (rel, Content::Bytes(bytes.into()), None))
+            .map(|(rel, bytes)| (rel, Content::Bytes(Arc::new(bytes)), None))
             .collect();
         let graph = Graph::in_memory_with_config(files)?;
         Ok((Self::in_memory(&graph), graph.root.display().to_string()))

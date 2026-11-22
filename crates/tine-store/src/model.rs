@@ -37,7 +37,7 @@ mod page_icons;
 mod page_identity;
 mod page_parse;
 mod parse_depth;
-pub(crate) use file_source::FileSource;
+pub(crate) use file_source::{FileSource, ParseText};
 mod path_membership;
 pub(crate) mod referenced_names;
 mod template_names;
@@ -176,15 +176,21 @@ pub(crate) fn missing_config_problem(
         .into()
     })
 }
-pub(crate) fn read_parse_input(path: &Path) -> io::Result<String> {
+pub(crate) fn read_parse_input(path: &Path) -> io::Result<ParseText> {
     read_parse_input_in(&FileSource::Disk, path)
 }
 
-/// [`read_parse_input`] from `source`.
-pub(crate) fn read_parse_input_in(source: &FileSource, path: &Path) -> io::Result<String> {
+/// [`read_parse_input`] from `source`: a disk read's buffer, or a memory
+/// file's text without a copy.
+pub(crate) fn read_parse_input_in(source: &FileSource, path: &Path) -> io::Result<ParseText> {
+    if let Some(text) = source.memory_parse_text(path) {
+        return text;
+    }
     let (bytes, _) = read_parse_bytes_in(source, path)?;
     validate_parse_bytes_for_path(&bytes, path)?;
-    String::from_utf8(bytes).map_err(|_| not_utf8())
+    String::from_utf8(bytes)
+        .map(ParseText::owned)
+        .map_err(|_| not_utf8())
 }
 
 /// The bytes of `path` in `source`, and its length when it was opened.
@@ -264,10 +270,15 @@ fn read_parse_reader(input: &mut (impl Read + ?Sized), len: u64) -> io::Result<V
 }
 
 pub(crate) fn validate_parse_bytes_for_path(bytes: &[u8], path: &Path) -> io::Result<()> {
+    validate_parse_text(bytes, path).map(|_| ())
+}
+
+/// The parse-input checks of `bytes` as the file at `path`, and its text.
+pub(crate) fn validate_parse_text<'a>(bytes: &'a [u8], path: &Path) -> io::Result<&'a str> {
     validate_parse_bytes_format(bytes, Format::from_path(path) == Format::Org)
 }
 
-fn validate_parse_bytes_format(bytes: &[u8], org: bool) -> io::Result<()> {
+fn validate_parse_bytes_format(bytes: &[u8], org: bool) -> io::Result<&str> {
     #[cfg(feature = "test-faults")]
     crate::cost_counters::parse_input_check();
     if bytes.len() as u64 > PARSE_INPUT_MAX_BYTES {
@@ -291,7 +302,7 @@ fn validate_parse_bytes_format(bytes: &[u8], org: bool) -> io::Result<()> {
             "Org headline nesting exceeds 128 levels",
         ));
     }
-    Ok(())
+    Ok(text)
 }
 
 pub(crate) fn dto_depth_within_limit(page: &PageDto) -> bool {
@@ -2562,21 +2573,18 @@ fn validate_managed_dir(root: &Path, raw: &str, label: &str) -> io::Result<()> {
     Ok(())
 }
 
-/// The spelling half of [`validate_managed_dir`]: a nonempty plain relative
-/// path. A memory graph checks only this (it has no symlinks to escape by).
-pub(crate) fn managed_dir_spelling(raw: &str, label: &str) -> io::Result<()> {
-    if raw.is_empty() || raw.contains('\\') {
-        return Err(io::Error::new(
-            io::ErrorKind::InvalidInput,
-            format!("invalid {label} directory: {raw:?}"),
-        ));
-    }
-    let rel = Path::new(raw);
-    if rel.is_absolute()
-        || rel
-            .components()
-            .any(|c| !matches!(c, std::path::Component::Normal(_)))
-    {
+/// Whether `raw` is a plain graph-relative path: nonempty, no backslash or NUL,
+/// and only normal components (`a//b` and `a/./b` name `a/b`). The one spelling
+/// rule for configured directories and a memory graph's file paths.
+pub(crate) fn plain_relative(raw: &str) -> bool {
+    !raw.is_empty()
+        && !raw.contains(['\\', '\0'])
+        && (Path::new(raw).components()).all(|c| matches!(c, std::path::Component::Normal(_)))
+}
+
+/// The spelling half of [`validate_managed_dir`] ([`plain_relative`]).
+fn managed_dir_spelling(raw: &str, label: &str) -> io::Result<()> {
+    if !plain_relative(raw) {
         return Err(io::Error::new(
             io::ErrorKind::InvalidInput,
             format!("{label} directory must be a safe relative path: {raw:?}"),
@@ -2643,6 +2651,46 @@ impl From<io::Error> for CheckedOpenError {
 }
 
 impl Graph {
+    /// The layout every open refuses, read through the graph's source (one
+    /// answer for the disk and memory opens): a configured directory not
+    /// spelled as a plain relative path, or that the source resolves as under
+    /// a file or as a name too long, and an `assets` that is a file. The disk
+    /// open then checks where links lead ([`validate_managed_dir`]); a memory
+    /// graph has none. One `lstat` per directory.
+    pub(crate) fn check_layout(&self) -> io::Result<()> {
+        let dirs = [
+            (self.config.journals_dir.as_str(), "journals"),
+            (self.config.pages_dir.as_str(), "pages"),
+            ("logseq", "logseq"),
+            ("publish", "publish"),
+        ];
+        let is_file =
+            |path: &Path| matches!(self.source.lstat(path), Ok(file_source::EntryKind::File));
+        for (raw, label) in dirs {
+            managed_dir_spelling(raw, label)?;
+            // One resolution of the spelling as given (MEMORY-SOURCE-MODEL Q2).
+            let why = match self.source.lstat(&self.root.join(raw)) {
+                Err(e) if e.kind() == io::ErrorKind::NotADirectory => {
+                    "is not a directory or is under a file"
+                }
+                Err(e) if e.kind() == io::ErrorKind::InvalidFilename => "has a name too long",
+                _ => continue,
+            };
+            return Err(io::Error::new(
+                io::ErrorKind::InvalidInput,
+                format!("{label} directory {why}: {raw:?}"),
+            ));
+        }
+        let assets = self.root.join("assets");
+        if is_file(&assets) {
+            return Err(io::Error::new(
+                io::ErrorKind::InvalidInput,
+                format!("assets path is not a directory: {}", assets.display()),
+            ));
+        }
+        Ok(())
+    }
+
     pub(crate) fn validate_config_layout(&self, config: &Config) -> io::Result<()> {
         validate_managed_dir(&self.root, &config.journals_dir, "journals")?;
         validate_managed_dir(&self.root, &config.pages_dir, "pages")
@@ -2738,6 +2786,7 @@ impl Graph {
         approved_assets: Option<&Path>,
     ) -> Result<Graph, CheckedOpenError> {
         let mut graph = Self::open_inner(root);
+        graph.check_layout()?;
         validate_managed_dir(&graph.root, &graph.config.journals_dir, "journals")?;
         validate_managed_dir(&graph.root, &graph.config.pages_dir, "pages")?;
         validate_managed_dir(&graph.root, "logseq", "logseq")?;
@@ -3231,7 +3280,7 @@ impl Graph {
             // the stale entry and report NotFound; callers treat the page as
             // absent (the feed skips it, get_page returns None).
             self.forget_file_internal(&entry.path);
-            return Err(read.unwrap_err());
+            return read.map(|_| unreachable!("the read failed"));
         }
         // A failed read must not fall through to a stale cached DTO.
         let content = read?;

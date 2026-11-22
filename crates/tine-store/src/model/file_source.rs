@@ -30,87 +30,215 @@ pub(crate) enum FileSource {
 /// One memory file's content: its bytes, or a page document serialized when
 /// it is opened (so a build graph never holds every page's text at once).
 pub(crate) enum Content {
-    Bytes(Arc<[u8]>),
+    Bytes(Arc<Vec<u8>>),
     Document(Arc<tine_core::doc::Document>),
+}
+
+/// A reader's view of shared bytes (no copy).
+struct SharedBytes(Arc<Vec<u8>>);
+
+impl AsRef<[u8]> for SharedBytes {
+    fn as_ref(&self) -> &[u8] {
+        &self.0
+    }
 }
 
 /// One memory file: its content and the modification time it carries (the
 /// source file's, for an export), which recency queries read.
 pub(crate) type MemoryFile = (String, Content, Option<SystemTime>);
 
-/// A memory graph's files by absolute path, and each directory's children
-/// (a file or a directory), so a listing walks them as it walks the disk.
+/// The longest file name the reference volume holds (POSIX `NAME_MAX`).
+const NAME_MAX: usize = 255;
+
+/// A memory graph's tree (MEMORY-SOURCE-MODEL Q1): node 0 is the root
+/// directory; a path is resolved by one walk of its components.
 pub(crate) struct Files {
-    files: HashMap<PathBuf, (Content, Option<SystemTime>)>,
-    children: HashMap<PathBuf, Vec<(PathBuf, bool)>>,
+    root: PathBuf,
+    nodes: Vec<Node>,
+}
+
+enum Node {
+    File(Content, Option<SystemTime>),
+    /// Children by name, and in the order they were given (the listing's).
+    Dir(HashMap<Box<str>, usize>, Vec<(Box<str>, usize)>),
+}
+
+/// A memory file name: one the reference volume (case-sensitive POSIX)
+/// holds, and that no platform separator splits.
+fn canonical_name(name: &str) -> bool {
+    !name.is_empty()
+        && name.len() <= NAME_MAX
+        && name != "."
+        && name != ".."
+        && !name.contains('\0')
+        && !name.chars().any(std::path::is_separator)
+}
+
+/// Whether `path` is spelled as a directory: ending in `/` or `/.`.
+fn names_a_directory(path: &Path) -> bool {
+    (path.as_os_str().to_str()).is_some_and(|raw| raw.ends_with('/') || raw.ends_with("/."))
 }
 
 impl Files {
-    /// `files` are graph-relative paths, contents and times, under `root`.
-    /// A repeated path keeps its last content. Refuses a path that is not
-    /// relative and plain (`InvalidInput`: no directory holds it), and one
-    /// that is both a file and a directory (no directory holds both).
-    /// O(files × depth).
+    /// `files` are graph-relative keys, contents and times, under `root`.
+    /// A key is canonical names joined by single `/` ([`canonical_name`]);
+    /// any other spelling, a key given twice and a key that is also another
+    /// key's directory are refused (`InvalidInput`). O(total key bytes).
     pub(crate) fn new(
         root: &Path,
         files: impl IntoIterator<Item = MemoryFile>,
     ) -> io::Result<Files> {
         let mut out = Files {
-            files: HashMap::new(),
-            children: HashMap::from([(root.to_path_buf(), Vec::new())]),
+            root: root.to_path_buf(),
+            nodes: vec![Node::Dir(HashMap::new(), Vec::new())],
         };
         let invalid = |rel: &str, why: &str| {
             io::Error::new(io::ErrorKind::InvalidInput, format!("{why}: {rel:?}"))
         };
         for (rel, content, modified) in files {
-            let plain = !rel.is_empty()
-                && !rel.contains('\\')
-                && (Path::new(&rel).components())
-                    .all(|c| matches!(c, std::path::Component::Normal(_)));
-            if !plain {
-                return Err(invalid(&rel, "not a graph-relative file path"));
-            }
-            let path = root.join(&rel);
-            if out.children.contains_key(&path)
-                || (path.ancestors().skip(1)).any(|dir| out.files.contains_key(dir))
-            {
-                return Err(invalid(&rel, "a path is both a file and a directory"));
-            }
-            if out
-                .files
-                .insert(path.clone(), (content, modified))
-                .is_some()
-            {
-                continue;
-            }
-            // Each file, and each directory when first seen, joins its
-            // parent's children once.
-            let mut child = (path.clone(), false);
-            for dir in path.ancestors().skip(1) {
-                let known = out.children.contains_key(dir);
-                out.children
-                    .entry(dir.to_path_buf())
-                    .or_default()
-                    .push(child);
-                if known {
-                    break;
+            let mut file = Some(Node::File(content, modified));
+            let mut names = rel.split('/').peekable();
+            let mut at = 0;
+            while let Some(name) = names.next() {
+                if !canonical_name(name) {
+                    return Err(invalid(&rel, "not a graph-relative file path"));
                 }
-                child = (dir.to_path_buf(), true);
+                let last = names.peek().is_none();
+                at = match (out.child(at, name), last) {
+                    (None, false) => out.add(at, name, Node::Dir(HashMap::new(), Vec::new())),
+                    (None, true) => out.add(at, name, file.take().expect("one file per key")),
+                    (Some(i), false) if out.is_dir(i) => i,
+                    (Some(i), true) if !out.is_dir(i) => {
+                        return Err(invalid(&rel, "a path is given twice"))
+                    }
+                    (Some(_), _) => {
+                        return Err(invalid(&rel, "a path is both a file and a directory"))
+                    }
+                };
             }
         }
         Ok(out)
     }
 
-    /// The error a disk read of `path` gives when no file is there: through a
-    /// file ancestor it is not a directory, else not found.
-    fn absent(&self, path: &Path) -> io::Error {
-        if (path.ancestors().skip(1)).any(|dir| self.files.contains_key(dir)) {
-            return io::Error::new(
-                io::ErrorKind::NotADirectory,
-                format!("{} is under a file", path.display()),
-            );
+    fn is_dir(&self, at: usize) -> bool {
+        matches!(self.nodes[at], Node::Dir(..))
+    }
+
+    fn child(&self, at: usize, name: &str) -> Option<usize> {
+        match &self.nodes[at] {
+            Node::Dir(by_name, _) => by_name.get(name).copied(),
+            Node::File(..) => None,
         }
-        not_found(path)
+    }
+
+    fn add(&mut self, at: usize, name: &str, node: Node) -> usize {
+        let id = self.nodes.len();
+        self.nodes.push(node);
+        let Node::Dir(by_name, order) = &mut self.nodes[at] else {
+            unreachable!("a child is added to a directory")
+        };
+        by_name.insert(name.into(), id);
+        order.push((name.into(), id));
+        id
+    }
+
+    /// The node `path` names, by one walk from the root, with the errors the
+    /// reference gives: a path through a file is not a directory; a name
+    /// longer than [`NAME_MAX`] is an invalid file name; else not found.
+    /// O(path bytes).
+    fn node(&self, path: &Path) -> io::Result<&Node> {
+        let rel = path.strip_prefix(&self.root).map_err(|_| not_found(path))?;
+        let mut at = &self.nodes[0];
+        for part in rel.components() {
+            let Node::Dir(by_name, _) = at else {
+                return Err(io::Error::new(
+                    io::ErrorKind::NotADirectory,
+                    format!("{} is under a file", path.display()),
+                ));
+            };
+            let std::path::Component::Normal(name) = part else {
+                return Err(not_found(path));
+            };
+            let name = name.to_str().ok_or_else(|| not_found(path))?;
+            if name.len() > NAME_MAX {
+                return Err(io::Error::new(
+                    io::ErrorKind::InvalidFilename,
+                    format!("a name in {} is too long", path.display()),
+                ));
+            }
+            at = &self.nodes[*by_name.get(name).ok_or_else(|| not_found(path))?];
+        }
+        Ok(at)
+    }
+
+    /// The file at `path`: a directory there is not one.
+    fn file(&self, path: &Path) -> io::Result<(&Content, Option<SystemTime>)> {
+        match self.node(path)? {
+            Node::File(content, modified) => Ok((content, *modified)),
+            Node::Dir(..) => Err(io::Error::new(
+                io::ErrorKind::IsADirectory,
+                format!("{} is a directory", path.display()),
+            )),
+        }
+    }
+
+    /// A parse read of the file at `path` ([`super::read_parse_input_in`]):
+    /// held bytes are checked where they are and answered as a view of
+    /// them; a document's serialization is the text (MEMORY-SOURCE-MODEL Q3:
+    /// no copy of the file's bytes).
+    fn parse_text(&self, path: &Path) -> io::Result<ParseText> {
+        let (content, _) = self.file(path)?;
+        #[cfg(feature = "test-faults")]
+        crate::cost_counters::full_read();
+        match content {
+            Content::Bytes(bytes) => {
+                super::validate_parse_text(bytes, path)?;
+                Ok(ParseText(Text::Held(Arc::clone(bytes))))
+            }
+            Content::Document(document) => {
+                let text = serialized(document, path);
+                super::validate_parse_text(text.as_bytes(), path)?;
+                Ok(ParseText(Text::Owned(text)))
+            }
+        }
+    }
+}
+
+/// A page document as its file's text.
+fn serialized(document: &tine_core::doc::Document, path: &Path) -> String {
+    match tine_core::model::Format::from_path(path) {
+        tine_core::model::Format::Org => tine_core::org::serialize_org(document),
+        _ => tine_core::doc::serialize(document),
+    }
+}
+
+/// A parse read's text: a read buffer, or a view of a memory file's held
+/// bytes (no copy).
+pub(crate) struct ParseText(Text);
+
+enum Text {
+    Owned(String),
+    /// Bytes [`super::validate_parse_text`] admitted as UTF-8.
+    Held(Arc<Vec<u8>>),
+}
+
+impl ParseText {
+    pub(crate) fn owned(text: String) -> ParseText {
+        ParseText(Text::Owned(text))
+    }
+}
+
+impl std::ops::Deref for ParseText {
+    type Target = str;
+
+    fn deref(&self) -> &str {
+        match &self.0 {
+            Text::Owned(text) => text,
+            // SAFETY: `Held` is made only by `Files::parse_text`, after
+            // `validate_parse_text` checked these bytes as UTF-8, and held
+            // bytes are never written (`Files` hands out shared clones only).
+            Text::Held(bytes) => unsafe { std::str::from_utf8_unchecked(bytes) },
+        }
     }
 }
 
@@ -166,26 +294,23 @@ impl FileSource {
                     disk: Some(entry),
                 })
             }))),
-            FileSource::Memory(files) => {
-                let children = files.children.get(&dir).ok_or_else(|| {
-                    if files.files.contains_key(&dir) {
-                        io::Error::new(io::ErrorKind::NotADirectory, "not a directory")
-                    } else {
-                        files.absent(&dir)
-                    }
-                })?;
-                Ok(Box::new(children.iter().map(|(path, dir)| {
+            FileSource::Memory(files) => match files.node(&dir)? {
+                Node::Dir(_, order) => Ok(Box::new(order.iter().map(move |(name, id)| {
                     Ok(DirItem {
-                        path: path.clone(),
-                        kind: if *dir {
+                        path: dir.join(&**name),
+                        kind: if files.is_dir(*id) {
                             EntryKind::Dir
                         } else {
                             EntryKind::File
                         },
                         disk: None,
                     })
-                })))
-            }
+                }))),
+                Node::File(..) => Err(io::Error::new(
+                    io::ErrorKind::NotADirectory,
+                    format!("{} is not a directory", dir.display()),
+                )),
+            },
         }
     }
 
@@ -198,8 +323,8 @@ impl FileSource {
                 crate::watch::stamp_from_metadata(&metadata)
             }
             FileSource::Memory(files) => {
-                let (_, modified) = files.files.get(&item.path)?;
-                Some(crate::watch::Stamp::in_memory(*modified))
+                let (_, modified) = files.file(&item.path).ok()?;
+                Some(crate::watch::Stamp::in_memory(modified))
             }
         }
     }
@@ -213,38 +338,24 @@ impl FileSource {
                     reader: Box::new(file),
                 })
             }
-            FileSource::Memory(files) => {
-                if files.children.contains_key(path) {
-                    return Err(io::Error::new(
-                        io::ErrorKind::IsADirectory,
-                        format!("{} is a directory", path.display()),
-                    ));
-                }
-                let (content, _) = files.files.get(path).ok_or_else(|| files.absent(path))?;
-                Ok(match content {
-                    Content::Bytes(bytes) => Opened {
+            FileSource::Memory(files) => Ok(match files.file(path)?.0 {
+                Content::Bytes(bytes) => Opened {
+                    len: bytes.len() as u64,
+                    reader: Box::new(io::Cursor::new(SharedBytes(Arc::clone(bytes)))),
+                },
+                Content::Document(document) => {
+                    let bytes = serialized(document, path).into_bytes();
+                    Opened {
                         len: bytes.len() as u64,
-                        reader: Box::new(io::Cursor::new(Arc::clone(bytes))),
-                    },
-                    Content::Document(document) => {
-                        let bytes = match tine_core::model::Format::from_path(path) {
-                            tine_core::model::Format::Org => {
-                                tine_core::org::serialize_org(document)
-                            }
-                            _ => tine_core::doc::serialize(document),
-                        }
-                        .into_bytes();
-                        Opened {
-                            len: bytes.len() as u64,
-                            reader: Box::new(io::Cursor::new(bytes)),
-                        }
+                        reader: Box::new(io::Cursor::new(bytes)),
                     }
-                })
-            }
+                }
+            }),
         }
     }
 
-    /// What `path` is, without following a symlink.
+    /// What `path` is, without following a symlink (`symlink_metadata`: a
+    /// spelling ending in `/` or `/.` must name a directory).
     pub(crate) fn lstat(&self, path: &Path) -> io::Result<EntryKind> {
         match self {
             FileSource::Disk => {
@@ -257,13 +368,18 @@ impl FileSource {
                     EntryKind::Other
                 })
             }
-            FileSource::Memory(files) if files.files.contains_key(path) => Ok(EntryKind::File),
-            FileSource::Memory(files) if files.children.contains_key(path) => Ok(EntryKind::Dir),
-            FileSource::Memory(files) => Err(files.absent(path)),
+            FileSource::Memory(files) => match files.node(path)? {
+                Node::Dir(..) => Ok(EntryKind::Dir),
+                // A spelling ending in `/` or `/.` names a directory.
+                Node::File(..) if names_a_directory(path) => Err(io::Error::new(
+                    io::ErrorKind::NotADirectory,
+                    format!("{} is not a directory", path.display()),
+                )),
+                Node::File(..) => Ok(EntryKind::File),
+            },
         }
     }
 
-    /// A file's modification time (a memory file's carried one).
     /// Whether `path` is a regular file of the graph at `root`: not a
     /// symlink, and on disk inside the root once its ancestors resolve.
     pub(crate) fn graph_file(&self, root: &Path, path: &Path) -> io::Result<bool> {
@@ -272,9 +388,7 @@ impl FileSource {
                 let metadata = fs::symlink_metadata(path)?;
                 Ok(metadata.is_file() && super::path_stays_within_root(root, path))
             }
-            FileSource::Memory(files) if files.files.contains_key(path) => Ok(true),
-            FileSource::Memory(files) if files.children.contains_key(path) => Ok(false),
-            FileSource::Memory(files) => Err(files.absent(path)),
+            FileSource::Memory(files) => Ok(matches!(files.node(path)?, Node::File(..))),
         }
     }
 
@@ -289,25 +403,33 @@ impl FileSource {
         }
     }
 
+    /// A parse read of `path` from memory, if this is a memory source.
+    pub(crate) fn memory_parse_text(&self, path: &Path) -> Option<io::Result<ParseText>> {
+        match self {
+            FileSource::Disk => None,
+            FileSource::Memory(files) => Some(files.parse_text(path)),
+        }
+    }
+
+    /// A file's modification time (a memory file's carried one).
     pub(crate) fn modified(&self, path: &Path) -> Option<SystemTime> {
         match self {
             FileSource::Disk => fs::metadata(path).and_then(|meta| meta.modified()).ok(),
-            FileSource::Memory(files) => files.files.get(path)?.1,
+            FileSource::Memory(files) => files.file(path).ok()?.1,
         }
     }
 }
 
 impl Graph {
     /// A graph of `files` held in memory under the config among them
-    /// (`WholeGraph::from_files`), read as a disk open reads its own and
-    /// refused for the configured directories' spelling as a disk open is
-    /// (a memory graph has no symlinks for the disk's containment check).
+    /// (`WholeGraph::from_files`), read and refused as a disk open reads and
+    /// refuses its own ([`Graph::check_layout`]; a memory graph has no links
+    /// for the disk's containment check).
     pub(crate) fn in_memory_with_config(files: Vec<MemoryFile>) -> io::Result<Graph> {
         let root = PathBuf::from(MEMORY_ROOT);
         let files = Files::new(&root, files)?;
         let graph = Self::open_from(root, FileSource::Memory(Arc::new(files)));
-        super::managed_dir_spelling(&graph.config.journals_dir, "journals")?;
-        super::managed_dir_spelling(&graph.config.pages_dir, "pages")?;
+        graph.check_layout()?;
         Ok(graph)
     }
 
@@ -338,7 +460,7 @@ impl Graph {
     }
 
     /// [`read_parse_input_in`] this graph's [`FileSource`].
-    pub(crate) fn read_parse_input(&self, path: &Path) -> io::Result<String> {
+    pub(crate) fn read_parse_input(&self, path: &Path) -> io::Result<ParseText> {
         super::read_parse_input_in(&self.source, path)
     }
 }

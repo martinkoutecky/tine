@@ -130,7 +130,7 @@ impl Graph {
             let path = e.path.clone();
             let phase = tine_core::clock::Instant::now();
             let read = self.read_parse_input(&e.path);
-            let read_len = read.as_ref().ok().map(String::len);
+            let read_len = read.as_ref().ok().map(|text| text.len());
             clock.read(phase.elapsed(), read_len);
             let mut name_failure = None;
             let mut name_only = None;

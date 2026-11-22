@@ -210,7 +210,9 @@ function __tineFail(name, e, args) {
       __tineReset();
       return new Error('lsdoc-wasm trap in ' + name + ': ' + (panic || e.message) + state, { cause: e });
 }
-// A class handle's methods: guarded, and refused once its instance is replaced.
+// A class handle's methods: guarded, and refused unless the handle is live (one
+// answer: not freed, and made by the current instance). Freeing a handle that is
+// not live only unregisters it; a second free is a no-op.
 function __tineHandleMethods(Handle, Raw, name) {
   for (const method of Object.getOwnPropertyNames(Raw.prototype)) {
     if (method === 'constructor' || method === '__destroy_into_raw') continue;
@@ -218,9 +220,10 @@ function __tineHandleMethods(Handle, Raw, name) {
     if (typeof raw !== 'function') throw new Error('lsdoc-wasm: ' + name + '.' + method + ' is not a method');
     const guarded = __tineGuard(name + '.' + method, raw);
     Handle.prototype[method] = function (...args) {
-      if (this.__tineGeneration !== __tineGeneration) {
+      if (this.__wbg_ptr === 0 || this.__tineGeneration !== __tineGeneration) {
         if (method === 'free') return void this.__destroy_into_raw();
-        throw new Error('lsdoc-wasm: ' + name + '.' + method + ' on a handle from a replaced instance; open it again');
+        const why = this.__wbg_ptr === 0 ? 'a freed handle' : 'a handle from a replaced instance';
+        throw new Error('lsdoc-wasm: ' + name + '.' + method + ' on ' + why + '; open it again');
       }
       return guarded.apply(this, args);
     };
