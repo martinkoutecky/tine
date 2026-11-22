@@ -11,10 +11,19 @@ const TOKEN = /^[A-Za-z][A-Za-z0-9-]*$/;
 // Hiccup's frozen EDN subset keeps the authored spelling (including exponent,
 // leading-dot and trailing-dot forms); sheet/formula decimal cells are stricter.
 const HICCUP_NUMBER = /^[-+]?(?:\d+(?:\.\d*)?|\.\d+)(?:[eE][-+]?\d+)?$/;
-// EDN symbol components start with a non-digit. A sign or dot before a digit
-// belongs to numeric syntax. The unqualified literals have their own EDN types.
-const SYMBOL_PART = String.raw`(?![+.-]\d)[\p{L}.*+!_?$%&=<>-][\p{L}\p{M}\d.*+!_?$%&=<>:#-]*`;
-const HICCUP_SYMBOL = new RegExp(`^(?!(?:nil|true|false)$|.*:(?:/|$))(?:/|(?:${SYMBOL_PART}/)?(${SYMBOL_PART}))$`, "u");
+// cljs.tools.reader.edn/read-token treats apostrophes, colons and hashes as constituents.
+const EDN_TOKEN_END = /[\s,\[\]{}()";^\\]/;
+
+function symbolName(atom: string): string | undefined {
+  // EDN dispatch takes numbers, keywords, tags and the three literal values.
+  if (!atom || /^(?:[#:]|[+-]?\d|(?:nil|true|false)$)|[@`~]|:$/.test(atom)) return;
+  // tools.reader.impl.commons/parse-symbol splits at the first slash.
+  const slash = atom.indexOf("/");
+  if (slash < 0 || atom === "/") return atom;
+  if (slash === 0 || atom[slash - 1] === ":") return;
+  const name = atom.slice(slash + 1);
+  if (name && !/^\d/.test(name) && (name === "/" || !name.includes("/"))) return name;
+}
 
 class HiccupParseError extends Error {}
 
@@ -91,13 +100,13 @@ class Reader {
     }
     if (ch === "[") return this.parseElement(parentDepth + 1);
     if (ch === "(") return this.parseSeq(parentDepth + 1);
-    const atom = this.peekAtom();
-    const symbol = HICCUP_SYMBOL.exec(atom);
-    if (symbol || HICCUP_NUMBER.test(atom)) {
+    const atom = this.peekAtom(EDN_TOKEN_END);
+    const text = HICCUP_NUMBER.test(atom) ? atom : symbolName(atom);
+    if (text !== undefined) {
       this.bumpNode();
       this.index += atom.length;
       // Hiccups 0.3.0 render-html calls as-str, which uses name for symbols.
-      return escapeHtml(symbol?.[1] ?? atom);
+      return escapeHtml(text);
     }
 
     // Consume one complete reader form before rejecting it. This makes malformed
@@ -302,9 +311,9 @@ class Reader {
     return token;
   }
 
-  private peekAtom(): string {
+  private peekAtom(endPattern = /[\s,\[\]{}()"']/): string {
     let end = this.index;
-    while (end < this.source.length && !/[\s,\[\]{}()"']/.test(this.source[end])) end++;
+    while (end < this.source.length && !endPattern.test(this.source[end])) end++;
     return this.source.slice(this.index, end);
   }
 

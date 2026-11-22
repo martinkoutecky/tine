@@ -45,6 +45,9 @@ describe("hiccupToHtml", () => {
     '[:span +1invalid]',
     '[:span label/]',
     '[:span invalid:]',
+    '[:span word;comment]',
+    '[:span word^]',
+    '[:span word\\]',
     '[:span #{"set"}]',
     '[:span #thing "tagged"]',
     '[:sp@n "bad tag"]',
@@ -81,5 +84,11 @@ describe("hiccupToHtml", () => {
 
   it("rejects source larger than 64 KiB before parsing", () => {
     expect(hiccupToHtml(`[:span "${"x".repeat(64 * 1024)}"]`)).toBeNull();
+  });
+
+  it("applies the byte limit to multibyte symbol children", () => {
+    const suns = "☀".repeat((64 * 1024 - "[:span x']".length) / 3);
+    expect(hiccupToHtml(`[:span ${suns}x']`)).toBe(`<span>${suns}x&#39;</span>`);
+    expect(hiccupToHtml(`[:span ${suns}xx']`)).toBeNull();
   });
 });
