@@ -2223,16 +2223,22 @@ impl WholeGraph {
         }
     }
 
-    /// The whole-graph view of `files` (graph-relative path and bytes; a
-    /// `logseq/config.edn` among them is the graph's config), built in
-    /// memory by the store's own load and first publication, so it answers
-    /// as a store opened over the same files would, with no filesystem: an
-    /// export's build graph, and the browser. Its graph metadata names the
-    /// root `/tine-memory-graph`. Cost: one parse of every page and the
-    /// initial index capture, as a store open has.
-    pub fn from_pages(files: Vec<(String, Vec<u8>)>) -> (WholeGraph, tine_core::model::GraphMeta) {
+    /// The whole-graph view of `files` (graph-relative path, bytes and
+    /// modification time; a `logseq/config.edn` among them is the graph's
+    /// config), built in memory by the store's own launch pass and first
+    /// publication, so it answers as a store opened over the same files would,
+    /// with no filesystem: an export's build graph, and the browser. Its graph
+    /// metadata names the root `/tine-memory-graph`. Refuses (`InvalidInput`)
+    /// a config whose pages or journals directory a store open refuses. Cost:
+    /// one read and parse of every page and the initial index capture, as a
+    /// store open has.
+    pub fn from_pages(
+        files: Vec<(String, Vec<u8>, Option<std::time::SystemTime>)>,
+    ) -> std::io::Result<(WholeGraph, tine_core::model::GraphMeta)> {
         let graph = Graph::in_memory(files);
+        graph.validate_config_layout(&graph.config)?;
         graph.install_live_config();
+        graph.warm_cache_cancellable(|| false);
         let problem = graph.config_read_problem.clone();
         let config = ConfigState::of(&graph, Arc::new(graph.config.clone()), problem);
         let meta = tine_core::model::GraphMeta::from_config(
@@ -2251,7 +2257,7 @@ impl WholeGraph {
             &HashMap::new(),
             &Default::default(),
         );
-        (WholeGraph::of(Arc::new(snapshot)), meta)
+        Ok((WholeGraph::of(Arc::new(snapshot)), meta))
     }
 }
 
