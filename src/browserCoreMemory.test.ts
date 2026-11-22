@@ -1,13 +1,12 @@
 import { expect, it } from "vitest";
-import { initParser } from "./render/parse";
-import { BrowserGraph, initSync } from "./render/wasm/lsdoc_wasm";
+import { loadBrowserCore } from "./browserCore";
 
 // A memory graph holds each name once and a small node per file: a flat
 // directory of 180,000 tiny assets opens in less linear memory than the
 // path-keyed maps it replaced (48.1 MiB of growth at 12607c208, 38.3 after;
 // review 0d6586f8c #1). Its own file, so the instance starts fresh.
 it("a flat asset directory opens within its memory budget", async () => {
-  await initParser();
+  const { BrowserGraph, initSync } = await loadBrowserCore();
   // Initialised already: initSync answers the live instance, ignoring its input.
   const memory = () =>
     initSync({ module: new Uint8Array(0) }).memory.buffer.byteLength / 1048576;

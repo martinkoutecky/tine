@@ -1,9 +1,9 @@
-# WASM wrapper around `lsdoc` for in-browser block parsing in Tine's frontend.
+# WASM wrapper for Tine's parser and optional browser graph core.
 #
 # It ships only as `wasm32-unknown-unknown`, built by `npm run build:wasm` with the
 # workspace's `wasm-release` profile (../../Cargo.toml).
 #
-# To regenerate the vendored artifacts under ../../src/render/wasm/, run:
+# To regenerate both vendored modules, run:
 #   npm run build:wasm
 [package]
 name = "lsdoc-wasm"
@@ -15,6 +15,9 @@ publish = false
 [lib]
 crate-type = ["cdylib"]
 
+[features]
+core = ["dep:tine-store", "dep:tine-graph-features"]
+
 [dependencies]
 unicode-normalization = "0.1"
 tine-search = { path = "../tine-search" }
@@ -23,8 +26,8 @@ tine-search = { path = "../tine-search" }
 tine-core = { path = "../tine-core" }
 # The browser core: the store's whole-graph view of files held in memory, and
 # the answers' wire forms the desktop app sends (one serializer per answer).
-tine-store = { path = "../tine-store" }
-tine-graph-features = { path = "../tine-graph-features" }
+tine-store = { path = "../tine-store", optional = true }
+tine-graph-features = { path = "../tine-graph-features", optional = true }
 # The outline kernel crate (lsdoc + serde only): block regions, logbook, the
 # property-line grammar, the page-filename codec and the one-block parse boundary.
 tine-outline = { path = "../tine-outline" }

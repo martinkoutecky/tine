@@ -1,45 +1,21 @@
 #!/usr/bin/env node
-// Stale-vendored-wasm SHIPPING guard (audit finding C5).
-//
-// `build:wasm` only checks the pins when you regenerate; nothing stopped a build
-// that bumped the lsdoc tag in Cargo but forgot to rerun `build:wasm` from shipping
-// the OLD parser. This runs as part of `npm run build` (which CI invokes), and FAILS
-// the build unless all three agree:
-//   - crates/tine-core/Cargo.toml   lsdoc tag (the source of truth)
-//   - crates/lsdoc-wasm/Cargo.toml  lsdoc tag
-//   - src/render/wasm/lsdoc_wasm_bytes.ts  LSDOC_TAG (what the vendored bytes were built from)
+// Shipping guard for stale or oversized vendored Wasm.
 
 import { readFileSync } from "node:fs";
-import { join, dirname } from "node:path";
-import { fileURLToPath } from "node:url";
+import { join } from "node:path";
+import { readLsdocTag, root, wasmArtifacts } from "./wasm-artifacts.mjs";
 
-const root = join(dirname(fileURLToPath(import.meta.url)), "..");
-
-function cargoTag(rel) {
-  const m = readFileSync(join(root, rel), "utf8").match(/lsdoc\s*=\s*\{[^}]*\btag\s*=\s*"([^"]+)"/);
-  if (!m) throw new Error(`could not find lsdoc tag in ${rel}`);
-  return m[1];
+const expected = readLsdocTag();
+for (const { dir, maxBytes } of wasmArtifacts) {
+  const rel = `${dir}/lsdoc_wasm_bytes.ts`;
+  const source = readFileSync(join(root, rel), "utf8");
+  const tag = source.match(/^export const LSDOC_TAG = "([^"]+)";$/m)?.[1];
+  if (tag !== expected) {
+    throw new Error(`${rel}: expected lsdoc ${expected}, found ${tag ?? "no tag"}; run npm run build:wasm`);
+  }
+  const base64 = source.match(/^export const WASM_B64 = "([A-Za-z0-9+/]+={0,2})";$/m)?.[1];
+  if (!base64 || base64.length % 4 !== 0) throw new Error(`${rel}: missing or invalid Wasm base64`);
+  const bytes = Buffer.byteLength(base64, "base64");
+  if (bytes > maxBytes) throw new Error(`${rel}: ${bytes} Wasm bytes exceed the ${maxBytes}-byte ceiling`);
+  console.log(`wasm pin OK: ${dir}, lsdoc ${tag}, ${bytes}/${maxBytes} raw bytes`);
 }
-function vendoredTag() {
-  const m = readFileSync(join(root, "src/render/wasm/lsdoc_wasm_bytes.ts"), "utf8").match(
-    /LSDOC_TAG\s*=\s*"([^"]+)"/,
-  );
-  if (!m) throw new Error("could not find LSDOC_TAG in src/render/wasm/lsdoc_wasm_bytes.ts");
-  return m[1];
-}
-
-const core = cargoTag("crates/tine-core/Cargo.toml");
-const wrap = cargoTag("crates/lsdoc-wasm/Cargo.toml");
-const vendored = vendoredTag();
-
-if (core !== wrap || core !== vendored) {
-  console.error(
-    `\n  Stale vendored wasm parser (build aborted):\n` +
-      `    crates/tine-core/Cargo.toml   -> ${core}\n` +
-      `    crates/lsdoc-wasm/Cargo.toml  -> ${wrap}\n` +
-      `    src/render/wasm (vendored)    -> ${vendored}\n` +
-      `  Align the Cargo pins and run \`npm run build:wasm\` to regenerate.\n`,
-  );
-  process.exit(1);
-}
-console.log(`wasm pin OK: lsdoc ${core} (Cargo ×2 == vendored bytes)`);

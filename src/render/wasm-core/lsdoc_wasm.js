@@ -1,0 +1,2510 @@
+/* @ts-self-types="./lsdoc_wasm.d.ts" */
+
+class __tine_raw_BrowserGraph {
+    __destroy_into_raw() {
+        const ptr = this.__wbg_ptr;
+        this.__wbg_ptr = 0;
+        BrowserGraphFinalization.unregister(this);
+        return ptr;
+    }
+    free() {
+        const ptr = this.__destroy_into_raw();
+        wasm.__wbg_browsergraph_free(ptr, 0);
+    }
+    /**
+     * @param {string} query
+     * @param {number} limit
+     * @param {boolean} transliteration
+     * @returns {string}
+     */
+    capture_quick_switch_json(query, limit, transliteration) {
+        let deferred3_0;
+        let deferred3_1;
+        try {
+            const ptr0 = passStringToWasm0(query, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+            const len0 = WASM_VECTOR_LEN;
+            const ret = wasm.browsergraph_capture_quick_switch_json(this.__wbg_ptr, ptr0, len0, limit, transliteration);
+            var ptr2 = ret[0];
+            var len2 = ret[1];
+            if (ret[3]) {
+                ptr2 = 0; len2 = 0;
+                throw takeFromExternrefTable0(ret[2]);
+            }
+            deferred3_0 = ptr2;
+            deferred3_1 = len2;
+            return getStringFromWasm0(ptr2, len2);
+        } finally {
+            wasm.__wbindgen_free(deferred3_0, deferred3_1, 1);
+        }
+    }
+    /**
+     * The config read problem of the desktop `load_graph` answer, or null.
+     * @returns {string}
+     */
+    config_problem_json() {
+        let deferred2_0;
+        let deferred2_1;
+        try {
+            const ret = wasm.browsergraph_config_problem_json(this.__wbg_ptr);
+            var ptr1 = ret[0];
+            var len1 = ret[1];
+            if (ret[3]) {
+                ptr1 = 0; len1 = 0;
+                throw takeFromExternrefTable0(ret[2]);
+            }
+            deferred2_0 = ptr1;
+            deferred2_1 = len1;
+            return getStringFromWasm0(ptr1, len1);
+        } finally {
+            wasm.__wbindgen_free(deferred2_0, deferred2_1, 1);
+        }
+    }
+    /**
+     * @param {string} name
+     * @param {string} targets_json
+     * @returns {string}
+     */
+    get_backlink_filter_context_json(name, targets_json) {
+        let deferred4_0;
+        let deferred4_1;
+        try {
+            const ptr0 = passStringToWasm0(name, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+            const len0 = WASM_VECTOR_LEN;
+            const ptr1 = passStringToWasm0(targets_json, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+            const len1 = WASM_VECTOR_LEN;
+            const ret = wasm.browsergraph_get_backlink_filter_context_json(this.__wbg_ptr, ptr0, len0, ptr1, len1);
+            var ptr3 = ret[0];
+            var len3 = ret[1];
+            if (ret[3]) {
+                ptr3 = 0; len3 = 0;
+                throw takeFromExternrefTable0(ret[2]);
+            }
+            deferred4_0 = ptr3;
+            deferred4_1 = len3;
+            return getStringFromWasm0(ptr3, len3);
+        } finally {
+            wasm.__wbindgen_free(deferred4_0, deferred4_1, 1);
+        }
+    }
+    /**
+     * @param {string} name
+     * @returns {string}
+     */
+    get_backlinks_json(name) {
+        let deferred3_0;
+        let deferred3_1;
+        try {
+            const ptr0 = passStringToWasm0(name, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+            const len0 = WASM_VECTOR_LEN;
+            const ret = wasm.browsergraph_get_backlinks_json(this.__wbg_ptr, ptr0, len0);
+            var ptr2 = ret[0];
+            var len2 = ret[1];
+            if (ret[3]) {
+                ptr2 = 0; len2 = 0;
+                throw takeFromExternrefTable0(ret[2]);
+            }
+            deferred3_0 = ptr2;
+            deferred3_1 = len2;
+            return getStringFromWasm0(ptr2, len2);
+        } finally {
+            wasm.__wbindgen_free(deferred3_0, deferred3_1, 1);
+        }
+    }
+    /**
+     * @returns {string}
+     */
+    get_block_ref_counts_json() {
+        let deferred2_0;
+        let deferred2_1;
+        try {
+            const ret = wasm.browsergraph_get_block_ref_counts_json(this.__wbg_ptr);
+            var ptr1 = ret[0];
+            var len1 = ret[1];
+            if (ret[3]) {
+                ptr1 = 0; len1 = 0;
+                throw takeFromExternrefTable0(ret[2]);
+            }
+            deferred2_0 = ptr1;
+            deferred2_1 = len1;
+            return getStringFromWasm0(ptr1, len1);
+        } finally {
+            wasm.__wbindgen_free(deferred2_0, deferred2_1, 1);
+        }
+    }
+    /**
+     * @param {string} uuid
+     * @returns {string}
+     */
+    get_block_referrers_json(uuid) {
+        let deferred3_0;
+        let deferred3_1;
+        try {
+            const ptr0 = passStringToWasm0(uuid, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+            const len0 = WASM_VECTOR_LEN;
+            const ret = wasm.browsergraph_get_block_referrers_json(this.__wbg_ptr, ptr0, len0);
+            var ptr2 = ret[0];
+            var len2 = ret[1];
+            if (ret[3]) {
+                ptr2 = 0; len2 = 0;
+                throw takeFromExternrefTable0(ret[2]);
+            }
+            deferred3_0 = ptr2;
+            deferred3_1 = len2;
+            return getStringFromWasm0(ptr2, len2);
+        } finally {
+            wasm.__wbindgen_free(deferred3_0, deferred3_1, 1);
+        }
+    }
+    /**
+     * @param {string} name
+     * @returns {string}
+     */
+    get_unlinked_refs_json(name) {
+        let deferred3_0;
+        let deferred3_1;
+        try {
+            const ptr0 = passStringToWasm0(name, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+            const len0 = WASM_VECTOR_LEN;
+            const ret = wasm.browsergraph_get_unlinked_refs_json(this.__wbg_ptr, ptr0, len0);
+            var ptr2 = ret[0];
+            var len2 = ret[1];
+            if (ret[3]) {
+                ptr2 = 0; len2 = 0;
+                throw takeFromExternrefTable0(ret[2]);
+            }
+            deferred3_0 = ptr2;
+            deferred3_1 = len2;
+            return getStringFromWasm0(ptr2, len2);
+        } finally {
+            wasm.__wbindgen_free(deferred3_0, deferred3_1, 1);
+        }
+    }
+    /**
+     * The effective metadata of the desktop `load_graph` answer.
+     * @returns {string}
+     */
+    graph_meta_json() {
+        let deferred2_0;
+        let deferred2_1;
+        try {
+            const ret = wasm.browsergraph_graph_meta_json(this.__wbg_ptr);
+            var ptr1 = ret[0];
+            var len1 = ret[1];
+            if (ret[3]) {
+                ptr1 = 0; len1 = 0;
+                throw takeFromExternrefTable0(ret[2]);
+            }
+            deferred2_0 = ptr1;
+            deferred2_1 = len1;
+            return getStringFromWasm0(ptr1, len1);
+        } finally {
+            wasm.__wbindgen_free(deferred2_0, deferred2_1, 1);
+        }
+    }
+    /**
+     * @returns {string}
+     */
+    journal_content_days_json() {
+        let deferred2_0;
+        let deferred2_1;
+        try {
+            const ret = wasm.browsergraph_journal_content_days_json(this.__wbg_ptr);
+            var ptr1 = ret[0];
+            var len1 = ret[1];
+            if (ret[3]) {
+                ptr1 = 0; len1 = 0;
+                throw takeFromExternrefTable0(ret[2]);
+            }
+            deferred2_0 = ptr1;
+            deferred2_1 = len1;
+            return getStringFromWasm0(ptr1, len1);
+        } finally {
+            wasm.__wbindgen_free(deferred2_0, deferred2_1, 1);
+        }
+    }
+    /**
+     * `files[i]` holds the bytes of the graph-relative `paths[i]`,
+     * `logseq/config.edn` among them. Throws (a string) what the desktop open
+     * refuses, and for arrays of different lengths; a config read problem is
+     * `config_problem_json`. Cost: one read and parse of each file and the
+     * initial index capture, as a desktop open has.
+     * @param {string[]} paths
+     * @param {Uint8Array[]} files
+     */
+    constructor(paths, files) {
+        const ptr0 = passArrayJsValueToWasm0(paths, wasm.__wbindgen_malloc);
+        const len0 = WASM_VECTOR_LEN;
+        const ptr1 = passArrayJsValueToWasm0(files, wasm.__wbindgen_malloc);
+        const len1 = WASM_VECTOR_LEN;
+        const ret = wasm.browsergraph_new(ptr0, len0, ptr1, len1);
+        if (ret[2]) {
+            throw takeFromExternrefTable0(ret[1]);
+        }
+        this.__wbg_ptr = ret[0];
+        BrowserGraphFinalization.register(this, { ptr: this.__wbg_ptr, generation: __tineGeneration }, this);
+        return this;
+    }
+    /**
+     * @param {string} name
+     * @returns {string}
+     */
+    page_alias_group_json(name) {
+        let deferred3_0;
+        let deferred3_1;
+        try {
+            const ptr0 = passStringToWasm0(name, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+            const len0 = WASM_VECTOR_LEN;
+            const ret = wasm.browsergraph_page_alias_group_json(this.__wbg_ptr, ptr0, len0);
+            var ptr2 = ret[0];
+            var len2 = ret[1];
+            if (ret[3]) {
+                ptr2 = 0; len2 = 0;
+                throw takeFromExternrefTable0(ret[2]);
+            }
+            deferred3_0 = ptr2;
+            deferred3_1 = len2;
+            return getStringFromWasm0(ptr2, len2);
+        } finally {
+            wasm.__wbindgen_free(deferred3_0, deferred3_1, 1);
+        }
+    }
+    /**
+     * @returns {string}
+     */
+    page_backlink_counts_json() {
+        let deferred2_0;
+        let deferred2_1;
+        try {
+            const ret = wasm.browsergraph_page_backlink_counts_json(this.__wbg_ptr);
+            var ptr1 = ret[0];
+            var len1 = ret[1];
+            if (ret[3]) {
+                ptr1 = 0; len1 = 0;
+                throw takeFromExternrefTable0(ret[2]);
+            }
+            deferred2_0 = ptr1;
+            deferred2_1 = len1;
+            return getStringFromWasm0(ptr1, len1);
+        } finally {
+            wasm.__wbindgen_free(deferred2_0, deferred2_1, 1);
+        }
+    }
+    /**
+     * @param {string} names_json
+     * @returns {string}
+     */
+    page_icons_json(names_json) {
+        let deferred3_0;
+        let deferred3_1;
+        try {
+            const ptr0 = passStringToWasm0(names_json, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+            const len0 = WASM_VECTOR_LEN;
+            const ret = wasm.browsergraph_page_icons_json(this.__wbg_ptr, ptr0, len0);
+            var ptr2 = ret[0];
+            var len2 = ret[1];
+            if (ret[3]) {
+                ptr2 = 0; len2 = 0;
+                throw takeFromExternrefTable0(ret[2]);
+            }
+            deferred3_0 = ptr2;
+            deferred3_1 = len2;
+            return getStringFromWasm0(ptr2, len2);
+        } finally {
+            wasm.__wbindgen_free(deferred3_0, deferred3_1, 1);
+        }
+    }
+    /**
+     * @returns {string}
+     */
+    page_inventory_json() {
+        let deferred2_0;
+        let deferred2_1;
+        try {
+            const ret = wasm.browsergraph_page_inventory_json(this.__wbg_ptr);
+            var ptr1 = ret[0];
+            var len1 = ret[1];
+            if (ret[3]) {
+                ptr1 = 0; len1 = 0;
+                throw takeFromExternrefTable0(ret[2]);
+            }
+            deferred2_0 = ptr1;
+            deferred2_1 = len1;
+            return getStringFromWasm0(ptr1, len1);
+        } finally {
+            wasm.__wbindgen_free(deferred2_0, deferred2_1, 1);
+        }
+    }
+    /**
+     * @returns {string}
+     */
+    page_modified_json() {
+        let deferred2_0;
+        let deferred2_1;
+        try {
+            const ret = wasm.browsergraph_page_modified_json(this.__wbg_ptr);
+            var ptr1 = ret[0];
+            var len1 = ret[1];
+            if (ret[3]) {
+                ptr1 = 0; len1 = 0;
+                throw takeFromExternrefTable0(ret[2]);
+            }
+            deferred2_0 = ptr1;
+            deferred2_1 = len1;
+            return getStringFromWasm0(ptr1, len1);
+        } finally {
+            wasm.__wbindgen_free(deferred2_0, deferred2_1, 1);
+        }
+    }
+    /**
+     * `dialect` uses the desktop wire names. Properties are a JSON array of pairs.
+     * @param {string} text
+     * @param {string} dialect
+     * @param {string | null} [block_properties_json]
+     * @returns {string}
+     */
+    parse_query_json(text, dialect, block_properties_json) {
+        let deferred5_0;
+        let deferred5_1;
+        try {
+            const ptr0 = passStringToWasm0(text, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+            const len0 = WASM_VECTOR_LEN;
+            const ptr1 = passStringToWasm0(dialect, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+            const len1 = WASM_VECTOR_LEN;
+            var ptr2 = isLikeNone(block_properties_json) ? 0 : passStringToWasm0(block_properties_json, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+            var len2 = WASM_VECTOR_LEN;
+            const ret = wasm.browsergraph_parse_query_json(this.__wbg_ptr, ptr0, len0, ptr1, len1, ptr2, len2);
+            var ptr4 = ret[0];
+            var len4 = ret[1];
+            if (ret[3]) {
+                ptr4 = 0; len4 = 0;
+                throw takeFromExternrefTable0(ret[2]);
+            }
+            deferred5_0 = ptr4;
+            deferred5_1 = len4;
+            return getStringFromWasm0(ptr4, len4);
+        } finally {
+            wasm.__wbindgen_free(deferred5_0, deferred5_1, 1);
+        }
+    }
+    /**
+     * @param {string} uuid
+     * @param {number} max_nodes
+     * @returns {string}
+     */
+    preview_block_json(uuid, max_nodes) {
+        let deferred3_0;
+        let deferred3_1;
+        try {
+            const ptr0 = passStringToWasm0(uuid, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+            const len0 = WASM_VECTOR_LEN;
+            const ret = wasm.browsergraph_preview_block_json(this.__wbg_ptr, ptr0, len0, max_nodes);
+            var ptr2 = ret[0];
+            var len2 = ret[1];
+            if (ret[3]) {
+                ptr2 = 0; len2 = 0;
+                throw takeFromExternrefTable0(ret[2]);
+            }
+            deferred3_0 = ptr2;
+            deferred3_1 = len2;
+            return getStringFromWasm0(ptr2, len2);
+        } finally {
+            wasm.__wbindgen_free(deferred3_0, deferred3_1, 1);
+        }
+    }
+    /**
+     * `scope_json` is `{"keys":true}` or `{"key":"property name"}`.
+     * @param {string} scope_json
+     * @returns {string}
+     */
+    query_facets_json(scope_json) {
+        let deferred3_0;
+        let deferred3_1;
+        try {
+            const ptr0 = passStringToWasm0(scope_json, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+            const len0 = WASM_VECTOR_LEN;
+            const ret = wasm.browsergraph_query_facets_json(this.__wbg_ptr, ptr0, len0);
+            var ptr2 = ret[0];
+            var len2 = ret[1];
+            if (ret[3]) {
+                ptr2 = 0; len2 = 0;
+                throw takeFromExternrefTable0(ret[2]);
+            }
+            deferred3_0 = ptr2;
+            deferred3_1 = len2;
+            return getStringFromWasm0(ptr2, len2);
+        } finally {
+            wasm.__wbindgen_free(deferred3_0, deferred3_1, 1);
+        }
+    }
+    /**
+     * Query, view and optional execution context use the desktop JSON shapes.
+     * @param {string} query_json
+     * @param {string} view_json
+     * @param {string | null} [context_json]
+     * @returns {string}
+     */
+    query_run_json(query_json, view_json, context_json) {
+        let deferred5_0;
+        let deferred5_1;
+        try {
+            const ptr0 = passStringToWasm0(query_json, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+            const len0 = WASM_VECTOR_LEN;
+            const ptr1 = passStringToWasm0(view_json, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+            const len1 = WASM_VECTOR_LEN;
+            var ptr2 = isLikeNone(context_json) ? 0 : passStringToWasm0(context_json, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+            var len2 = WASM_VECTOR_LEN;
+            const ret = wasm.browsergraph_query_run_json(this.__wbg_ptr, ptr0, len0, ptr1, len1, ptr2, len2);
+            var ptr4 = ret[0];
+            var len4 = ret[1];
+            if (ret[3]) {
+                ptr4 = 0; len4 = 0;
+                throw takeFromExternrefTable0(ret[2]);
+            }
+            deferred5_0 = ptr4;
+            deferred5_1 = len4;
+            return getStringFromWasm0(ptr4, len4);
+        } finally {
+            wasm.__wbindgen_free(deferred5_0, deferred5_1, 1);
+        }
+    }
+    /**
+     * @param {string} uuids_json
+     * @returns {string}
+     */
+    resolve_blocks_json(uuids_json) {
+        let deferred3_0;
+        let deferred3_1;
+        try {
+            const ptr0 = passStringToWasm0(uuids_json, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+            const len0 = WASM_VECTOR_LEN;
+            const ret = wasm.browsergraph_resolve_blocks_json(this.__wbg_ptr, ptr0, len0);
+            var ptr2 = ret[0];
+            var len2 = ret[1];
+            if (ret[3]) {
+                ptr2 = 0; len2 = 0;
+                throw takeFromExternrefTable0(ret[2]);
+            }
+            deferred3_0 = ptr2;
+            deferred3_1 = len2;
+            return getStringFromWasm0(ptr2, len2);
+        } finally {
+            wasm.__wbindgen_free(deferred3_0, deferred3_1, 1);
+        }
+    }
+    /**
+     * @param {string} name
+     * @param {boolean} journal
+     * @returns {string}
+     */
+    resolve_page_json(name, journal) {
+        let deferred3_0;
+        let deferred3_1;
+        try {
+            const ptr0 = passStringToWasm0(name, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+            const len0 = WASM_VECTOR_LEN;
+            const ret = wasm.browsergraph_resolve_page_json(this.__wbg_ptr, ptr0, len0, journal);
+            var ptr2 = ret[0];
+            var len2 = ret[1];
+            if (ret[3]) {
+                ptr2 = 0; len2 = 0;
+                throw takeFromExternrefTable0(ret[2]);
+            }
+            deferred3_0 = ptr2;
+            deferred3_1 = len2;
+            return getStringFromWasm0(ptr2, len2);
+        } finally {
+            wasm.__wbindgen_free(deferred3_0, deferred3_1, 1);
+        }
+    }
+    /**
+     * Options are the desktop search fields `explain`, `scope`,
+     * `pageMatchScope`, `pageView`, `blockView`, and `transliteration`.
+     * @param {string} source
+     * @param {number} page_limit
+     * @param {number} block_limit
+     * @param {string | null} [options_json]
+     * @returns {string}
+     */
+    run_graph_search_json(source, page_limit, block_limit, options_json) {
+        let deferred4_0;
+        let deferred4_1;
+        try {
+            const ptr0 = passStringToWasm0(source, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+            const len0 = WASM_VECTOR_LEN;
+            var ptr1 = isLikeNone(options_json) ? 0 : passStringToWasm0(options_json, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+            var len1 = WASM_VECTOR_LEN;
+            const ret = wasm.browsergraph_run_graph_search_json(this.__wbg_ptr, ptr0, len0, page_limit, block_limit, ptr1, len1);
+            var ptr3 = ret[0];
+            var len3 = ret[1];
+            if (ret[3]) {
+                ptr3 = 0; len3 = 0;
+                throw takeFromExternrefTable0(ret[2]);
+            }
+            deferred4_0 = ptr3;
+            deferred4_1 = len3;
+            return getStringFromWasm0(ptr3, len3);
+        } finally {
+            wasm.__wbindgen_free(deferred4_0, deferred4_1, 1);
+        }
+    }
+    /**
+     * Literal block search. Synchronous browser calls share no search lane.
+     * @param {string} query
+     * @param {number} limit
+     * @returns {string}
+     */
+    search_json(query, limit) {
+        let deferred3_0;
+        let deferred3_1;
+        try {
+            const ptr0 = passStringToWasm0(query, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+            const len0 = WASM_VECTOR_LEN;
+            const ret = wasm.browsergraph_search_json(this.__wbg_ptr, ptr0, len0, limit);
+            var ptr2 = ret[0];
+            var len2 = ret[1];
+            if (ret[3]) {
+                ptr2 = 0; len2 = 0;
+                throw takeFromExternrefTable0(ret[2]);
+            }
+            deferred3_0 = ptr2;
+            deferred3_1 = len2;
+            return getStringFromWasm0(ptr2, len2);
+        } finally {
+            wasm.__wbindgen_free(deferred3_0, deferred3_1, 1);
+        }
+    }
+}
+
+/**
+ * The kind of a link target nothing claims: `JournalFormat::absent_link_is_journal`.
+ * @param {string} name
+ * @param {string} file_format
+ * @param {string} title_format
+ * @returns {boolean}
+ */
+function __tine_raw_absent_link_is_journal(name, file_format, title_format) {
+    const ptr0 = passStringToWasm0(name, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+    const len0 = WASM_VECTOR_LEN;
+    const ptr1 = passStringToWasm0(file_format, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+    const len1 = WASM_VECTOR_LEN;
+    const ptr2 = passStringToWasm0(title_format, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+    const len2 = WASM_VECTOR_LEN;
+    const ret = wasm.absent_link_is_journal(ptr0, len0, ptr1, len1, ptr2, len2);
+    return ret !== 0;
+}
+
+/**
+ * Assets-relative link target; O(URL bytes), no parse or filesystem I/O.
+ * @param {string} url
+ * @returns {string | undefined}
+ */
+function __tine_raw_asset_rel_path(url) {
+    const ptr0 = passStringToWasm0(url, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+    const len0 = WASM_VECTOR_LEN;
+    const ret = wasm.asset_rel_path(ptr0, len0);
+    let v2;
+    if (ret[0] !== 0) {
+        v2 = getStringFromWasm0(ret[0], ret[1]).slice();
+        wasm.__wbindgen_free(ret[0], ret[1] * 1, 1);
+    }
+    return v2;
+}
+
+/**
+ * Parser-boundary negative-only prefilter; true still needs drawer ownership.
+ * @param {string} raw
+ * @returns {boolean}
+ */
+function __tine_raw_block_may_have_logbook(raw) {
+    const ptr0 = passStringToWasm0(raw, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+    const len0 = WASM_VECTOR_LEN;
+    const ret = wasm.block_may_have_logbook(ptr0, len0);
+    return ret !== 0;
+}
+
+/**
+ * Every page name one block's source references, in source order (may
+ * repeat): the reference evidence's own walk (`reference_evidence/walk.rs`)
+ * over the same block parse, under the default parse config. O(block bytes)
+ * plus one inline parse per property value or macro argument; no I/O.
+ * @param {string} raw
+ * @param {boolean} is_org
+ * @returns {string[]}
+ */
+function __tine_raw_block_reference_names(raw, is_org) {
+    const ptr0 = passStringToWasm0(raw, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+    const len0 = WASM_VECTOR_LEN;
+    const ret = wasm.block_reference_names(ptr0, len0, is_org);
+    var v2 = getArrayJsValueFromWasm0(ret[0], ret[1]).slice();
+    wasm.__wbindgen_free(ret[0], ret[1] * 4, 4);
+    return v2;
+}
+
+/**
+ * Native group-field grammar: O(value bytes), no I/O; invalid tokens return null.
+ * @param {string} value
+ * @returns {string | undefined}
+ */
+function __tine_raw_canonical_group_field(value) {
+    const ptr0 = passStringToWasm0(value, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+    const len0 = WASM_VECTOR_LEN;
+    const ret = wasm.canonical_group_field(ptr0, len0);
+    let v2;
+    if (ret[0] !== 0) {
+        v2 = getStringFromWasm0(ret[0], ret[1]).slice();
+        wasm.__wbindgen_free(ret[0], ret[1] * 1, 1);
+    }
+    return v2;
+}
+
+/**
+ * The same own-property discriminator that editor_text uses to hide comment metadata.
+ * @param {string} properties
+ * @returns {string | undefined}
+ */
+function __tine_raw_comment_quote(properties) {
+    const ptr0 = passStringToWasm0(properties, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+    const len0 = WASM_VECTOR_LEN;
+    const ret = wasm.comment_quote(ptr0, len0);
+    if (ret[3]) {
+        throw takeFromExternrefTable0(ret[2]);
+    }
+    let v2;
+    if (ret[0] !== 0) {
+        v2 = getStringFromWasm0(ret[0], ret[1]).slice();
+        wasm.__wbindgen_free(ret[0], ret[1] * 1, 1);
+    }
+    return v2;
+}
+
+/**
+ * Decode a Logseq page stem in legacy or triple-lowbar (legacy = false) format.
+ * O(stem bytes), no I/O; malformed percent escapes are preserved.
+ * @param {string} stem
+ * @param {boolean} legacy
+ * @returns {string}
+ */
+function __tine_raw_decode_page_name(stem, legacy) {
+    let deferred2_0;
+    let deferred2_1;
+    try {
+        const ptr0 = passStringToWasm0(stem, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+        const len0 = WASM_VECTOR_LEN;
+        const ret = wasm.decode_page_name(ptr0, len0, legacy);
+        deferred2_0 = ret[0];
+        deferred2_1 = ret[1];
+        return getStringFromWasm0(ret[0], ret[1]);
+    } finally {
+        wasm.__wbindgen_free(deferred2_0, deferred2_1, 1);
+    }
+}
+
+/**
+ * @param {string} raw
+ * @param {boolean} is_org
+ * @param {any} regions
+ * @param {any} request
+ * @returns {string}
+ */
+function __tine_raw_edit_block_regions_json(raw, is_org, regions, request) {
+    let deferred3_0;
+    let deferred3_1;
+    try {
+        const ptr0 = passStringToWasm0(raw, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+        const len0 = WASM_VECTOR_LEN;
+        const ret = wasm.edit_block_regions_json(ptr0, len0, is_org, regions, request);
+        var ptr2 = ret[0];
+        var len2 = ret[1];
+        if (ret[3]) {
+            ptr2 = 0; len2 = 0;
+            throw takeFromExternrefTable0(ret[2]);
+        }
+        deferred3_0 = ptr2;
+        deferred3_1 = len2;
+        return getStringFromWasm0(ptr2, len2);
+    } finally {
+        wasm.__wbindgen_free(deferred3_0, deferred3_1, 1);
+    }
+}
+
+/**
+ * The editor (UTF-16) offset of raw UTF-16 offset `raw_utf16`.
+ * @param {string} raw
+ * @param {boolean} is_org
+ * @param {any} regions
+ * @param {string} policy
+ * @param {number} raw_utf16
+ * @returns {number}
+ */
+function __tine_raw_editor_offset_of_raw(raw, is_org, regions, policy, raw_utf16) {
+    const ptr0 = passStringToWasm0(raw, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+    const len0 = WASM_VECTOR_LEN;
+    const ptr1 = passStringToWasm0(policy, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+    const len1 = WASM_VECTOR_LEN;
+    const ret = wasm.editor_offset_of_raw(ptr0, len0, is_org, regions, ptr1, len1, raw_utf16);
+    if (ret[2]) {
+        throw takeFromExternrefTable0(ret[1]);
+    }
+    return ret[0] >>> 0;
+}
+
+/**
+ * Editor text plus hidden lines back to raw (`editor_text::join_with`), with
+ * optional exact source for metadata-preserving text-only edits.
+ * @param {string} visible
+ * @param {string} hidden
+ * @param {boolean} is_org
+ * @param {any} visible_regions
+ * @param {string | null} [source]
+ * @param {string | null} [policy]
+ * @returns {string}
+ */
+function __tine_raw_editor_text_join(visible, hidden, is_org, visible_regions, source, policy) {
+    let deferred6_0;
+    let deferred6_1;
+    try {
+        const ptr0 = passStringToWasm0(visible, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+        const len0 = WASM_VECTOR_LEN;
+        const ptr1 = passStringToWasm0(hidden, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+        const len1 = WASM_VECTOR_LEN;
+        var ptr2 = isLikeNone(source) ? 0 : passStringToWasm0(source, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+        var len2 = WASM_VECTOR_LEN;
+        var ptr3 = isLikeNone(policy) ? 0 : passStringToWasm0(policy, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+        var len3 = WASM_VECTOR_LEN;
+        const ret = wasm.editor_text_join(ptr0, len0, ptr1, len1, is_org, visible_regions, ptr2, len2, ptr3, len3);
+        var ptr5 = ret[0];
+        var len5 = ret[1];
+        if (ret[3]) {
+            ptr5 = 0; len5 = 0;
+            throw takeFromExternrefTable0(ret[2]);
+        }
+        deferred6_0 = ptr5;
+        deferred6_1 = len5;
+        return getStringFromWasm0(ptr5, len5);
+    } finally {
+        wasm.__wbindgen_free(deferred6_0, deferred6_1, 1);
+    }
+}
+
+/**
+ * The editor's view of one block (outline kernel `editor_text`, twin 13):
+ * `{visible, hidden}` from the window's cached regions for exactly `raw`.
+ * `policy` is a kernel `HidePolicy` as JSON. O(block bytes), no parse.
+ * @param {string} raw
+ * @param {boolean} is_org
+ * @param {any} regions
+ * @param {string} policy
+ * @returns {string}
+ */
+function __tine_raw_editor_text_json(raw, is_org, regions, policy) {
+    let deferred4_0;
+    let deferred4_1;
+    try {
+        const ptr0 = passStringToWasm0(raw, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+        const len0 = WASM_VECTOR_LEN;
+        const ptr1 = passStringToWasm0(policy, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+        const len1 = WASM_VECTOR_LEN;
+        const ret = wasm.editor_text_json(ptr0, len0, is_org, regions, ptr1, len1);
+        var ptr3 = ret[0];
+        var len3 = ret[1];
+        if (ret[3]) {
+            ptr3 = 0; len3 = 0;
+            throw takeFromExternrefTable0(ret[2]);
+        }
+        deferred4_0 = ptr3;
+        deferred4_1 = len3;
+        return getStringFromWasm0(ptr3, len3);
+    } finally {
+        wasm.__wbindgen_free(deferred4_0, deferred4_1, 1);
+    }
+}
+
+/**
+ * Encode a Windows-safe Logseq page stem; legacy selects percent-encoded
+ * namespaces, false selects triple-lowbar. O(title bytes), no I/O or failure.
+ * @param {string} name
+ * @param {boolean} legacy
+ * @returns {string}
+ */
+function __tine_raw_encode_page_name(name, legacy) {
+    let deferred2_0;
+    let deferred2_1;
+    try {
+        const ptr0 = passStringToWasm0(name, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+        const len0 = WASM_VECTOR_LEN;
+        const ret = wasm.encode_page_name(ptr0, len0, legacy);
+        deferred2_0 = ret[0];
+        deferred2_1 = ret[1];
+        return getStringFromWasm0(ret[0], ret[1]);
+    } finally {
+        wasm.__wbindgen_free(deferred2_0, deferred2_1, 1);
+    }
+}
+
+/**
+ * Native date formatter over explicit civil parts; same bounded format cache.
+ * @param {number} year
+ * @param {number} month
+ * @param {number} day
+ * @param {string} pattern
+ * @returns {string}
+ */
+function __tine_raw_format_journal_date(year, month, day, pattern) {
+    let deferred2_0;
+    let deferred2_1;
+    try {
+        const ptr0 = passStringToWasm0(pattern, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+        const len0 = WASM_VECTOR_LEN;
+        const ret = wasm.format_journal_date(year, month, day, ptr0, len0);
+        deferred2_0 = ret[0];
+        deferred2_1 = ret[1];
+        return getStringFromWasm0(ret[0], ret[1]);
+    } finally {
+        wasm.__wbindgen_free(deferred2_0, deferred2_1, 1);
+    }
+}
+
+/**
+ * Accepted marker/priority of one block with their byte spans (`block_regions::header_tokens`).
+ * O(block bytes); no regions walk.
+ * @param {string} raw
+ * @param {boolean} is_org
+ * @returns {string}
+ */
+function __tine_raw_header_tokens_json(raw, is_org) {
+    let deferred2_0;
+    let deferred2_1;
+    try {
+        const ptr0 = passStringToWasm0(raw, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+        const len0 = WASM_VECTOR_LEN;
+        const ret = wasm.header_tokens_json(ptr0, len0, is_org);
+        deferred2_0 = ret[0];
+        deferred2_1 = ret[1];
+        return getStringFromWasm0(ret[0], ret[1]);
+    } finally {
+        wasm.__wbindgen_free(deferred2_0, deferred2_1, 1);
+    }
+}
+
+/**
+ * Whether All pages leaves this name out (a UUID, a drawing, an OG built-in
+ * page; I-12: the one answerer, `tine_core::reference_evidence::hidden_from_all_pages`, shared
+ * with tine-core).
+ * @param {string} name
+ * @returns {boolean}
+ */
+function __tine_raw_hidden_from_all_pages(name) {
+    const ptr0 = passStringToWasm0(name, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+    const len0 = WASM_VECTOR_LEN;
+    const ret = wasm.hidden_from_all_pages(ptr0, len0);
+    return ret !== 0;
+}
+
+/**
+ * Whether hide `policy` hides property `key` (`HidePolicy::hides`).
+ * @param {string} policy
+ * @param {string} key
+ * @param {string} properties
+ * @returns {boolean}
+ */
+function __tine_raw_hide_policy_hides(policy, key, properties) {
+    const ptr0 = passStringToWasm0(policy, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+    const len0 = WASM_VECTOR_LEN;
+    const ptr1 = passStringToWasm0(key, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+    const len1 = WASM_VECTOR_LEN;
+    const ptr2 = passStringToWasm0(properties, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+    const len2 = WASM_VECTOR_LEN;
+    const ret = wasm.hide_policy_hides(ptr0, len0, ptr1, len1, ptr2, len2);
+    if (ret[2]) {
+        throw takeFromExternrefTable0(ret[1]);
+    }
+    return ret[0] !== 0;
+}
+
+function __tine_raw_install_panic_hook() {
+    wasm.install_panic_hook();
+}
+
+/**
+ * OG's built-in reference-valued keys (`alias`, `aliases`, `tags`), any case:
+ * `tine_core::query::atom::is_editable_linkable_built_in` (census Q7). The
+ * frontend's fallback when the graph's `linkable_property_keys` is absent.
+ * @param {string} key
+ * @returns {boolean}
+ */
+function __tine_raw_is_editable_linkable_built_in(key) {
+    const ptr0 = passStringToWasm0(key, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+    const len0 = WASM_VECTOR_LEN;
+    const ret = wasm.is_editable_linkable_built_in(ptr0, len0);
+    return ret !== 0;
+}
+
+/**
+ * OG built-ins excluded from default query-table property columns.
+ * @param {string} key
+ * @returns {boolean}
+ */
+function __tine_raw_is_og_built_in_property(key) {
+    const ptr0 = passStringToWasm0(key, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+    const len0 = WASM_VECTOR_LEN;
+    const ret = wasm.is_og_built_in_property(ptr0, len0);
+    return ret !== 0;
+}
+
+/**
+ * Whether a parser-tokenized macro name is a query; O(name bytes), no I/O.
+ * @param {string} name
+ * @returns {boolean}
+ */
+function __tine_raw_is_query_macro_name(name) {
+    const ptr0 = passStringToWasm0(name, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+    const len0 = WASM_VECTOR_LEN;
+    const ret = wasm.is_query_macro_name(ptr0, len0);
+    return ret !== 0;
+}
+
+/**
+ * Whether a block property key is hidden from rendered chips (I-12: the one
+ * answerer the static export also asks). O(key bytes + hidden keys), no I/O.
+ * @param {string} key
+ * @param {string[]} user_hidden
+ * @param {boolean} pre_block
+ * @returns {boolean}
+ */
+function __tine_raw_is_render_hidden_prop(key, user_hidden, pre_block) {
+    const ptr0 = passStringToWasm0(key, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+    const len0 = WASM_VECTOR_LEN;
+    const ptr1 = passArrayJsValueToWasm0(user_hidden, wasm.__wbindgen_malloc);
+    const len1 = WASM_VECTOR_LEN;
+    const ret = wasm.is_render_hidden_prop(ptr0, len0, ptr1, len1, pre_block);
+    return ret !== 0;
+}
+
+/**
+ * Is `name` a journal date, and which day: `tine_core::date::JournalFormat::parse`
+ * (the one list, D-20261102-JDL). `{"y","m","d"}` or null. O(name) warm.
+ * @param {string} name
+ * @param {string} file_format
+ * @param {string} title_format
+ * @returns {string}
+ */
+function __tine_raw_journal_day_json(name, file_format, title_format) {
+    let deferred4_0;
+    let deferred4_1;
+    try {
+        const ptr0 = passStringToWasm0(name, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+        const len0 = WASM_VECTOR_LEN;
+        const ptr1 = passStringToWasm0(file_format, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+        const len1 = WASM_VECTOR_LEN;
+        const ptr2 = passStringToWasm0(title_format, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+        const len2 = WASM_VECTOR_LEN;
+        const ret = wasm.journal_day_json(ptr0, len0, ptr1, len1, ptr2, len2);
+        deferred4_0 = ret[0];
+        deferred4_1 = ret[1];
+        return getStringFromWasm0(ret[0], ret[1]);
+    } finally {
+        wasm.__wbindgen_free(deferred4_0, deferred4_1, 1);
+    }
+}
+
+/**
+ * The message of the most recent panic in this instance ("" if none). A trapped
+ * instance still answers small calls; the glue reads this before reinstantiating.
+ * @returns {string}
+ */
+function __tine_raw_last_panic() {
+    let deferred1_0;
+    let deferred1_1;
+    try {
+        const ret = wasm.last_panic();
+        deferred1_0 = ret[0];
+        deferred1_1 = ret[1];
+        return getStringFromWasm0(ret[0], ret[1]);
+    } finally {
+        wasm.__wbindgen_free(deferred1_0, deferred1_1, 1);
+    }
+}
+
+/**
+ * OG property tokens, shared with native property atomization. O(value bytes).
+ * @param {string} value
+ * @param {boolean} is_org
+ * @returns {string[]}
+ */
+function __tine_raw_linkable_property_names(value, is_org) {
+    const ptr0 = passStringToWasm0(value, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+    const len0 = WASM_VECTOR_LEN;
+    const ret = wasm.linkable_property_names(ptr0, len0, is_org);
+    var v2 = getArrayJsValueFromWasm0(ret[0], ret[1]).slice();
+    wasm.__wbindgen_free(ret[0], ret[1] * 4, 4);
+    return v2;
+}
+
+/**
+ * @param {string} raw
+ * @param {boolean} is_org
+ * @param {string} old_raw
+ * @param {boolean} enabled
+ * @param {boolean} with_seconds
+ * @returns {string}
+ */
+function __tine_raw_logbook_apply_marker_transition(raw, is_org, old_raw, enabled, with_seconds) {
+    let deferred3_0;
+    let deferred3_1;
+    try {
+        const ptr0 = passStringToWasm0(raw, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+        const len0 = WASM_VECTOR_LEN;
+        const ptr1 = passStringToWasm0(old_raw, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+        const len1 = WASM_VECTOR_LEN;
+        const ret = wasm.logbook_apply_marker_transition(ptr0, len0, is_org, ptr1, len1, enabled, with_seconds);
+        deferred3_0 = ret[0];
+        deferred3_1 = ret[1];
+        return getStringFromWasm0(ret[0], ret[1]);
+    } finally {
+        wasm.__wbindgen_free(deferred3_0, deferred3_1, 1);
+    }
+}
+
+/**
+ * @param {string} raw
+ * @param {boolean} is_org
+ * @param {boolean} with_seconds
+ * @returns {string}
+ */
+function __tine_raw_logbook_clock_in(raw, is_org, with_seconds) {
+    let deferred2_0;
+    let deferred2_1;
+    try {
+        const ptr0 = passStringToWasm0(raw, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+        const len0 = WASM_VECTOR_LEN;
+        const ret = wasm.logbook_clock_in(ptr0, len0, is_org, with_seconds);
+        deferred2_0 = ret[0];
+        deferred2_1 = ret[1];
+        return getStringFromWasm0(ret[0], ret[1]);
+    } finally {
+        wasm.__wbindgen_free(deferred2_0, deferred2_1, 1);
+    }
+}
+
+/**
+ * @param {string} raw
+ * @param {boolean} is_org
+ * @param {boolean} with_seconds
+ * @returns {string}
+ */
+function __tine_raw_logbook_clock_out(raw, is_org, with_seconds) {
+    let deferred2_0;
+    let deferred2_1;
+    try {
+        const ptr0 = passStringToWasm0(raw, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+        const len0 = WASM_VECTOR_LEN;
+        const ret = wasm.logbook_clock_out(ptr0, len0, is_org, with_seconds);
+        deferred2_0 = ret[0];
+        deferred2_1 = ret[1];
+        return getStringFromWasm0(ret[0], ret[1]);
+    } finally {
+        wasm.__wbindgen_free(deferred2_0, deferred2_1, 1);
+    }
+}
+
+/**
+ * @param {string} raw
+ * @param {boolean} is_org
+ * @returns {string}
+ */
+function __tine_raw_logbook_info_json(raw, is_org) {
+    let deferred2_0;
+    let deferred2_1;
+    try {
+        const ptr0 = passStringToWasm0(raw, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+        const len0 = WASM_VECTOR_LEN;
+        const ret = wasm.logbook_info_json(ptr0, len0, is_org);
+        deferred2_0 = ret[0];
+        deferred2_1 = ret[1];
+        return getStringFromWasm0(ret[0], ret[1]);
+    } finally {
+        wasm.__wbindgen_free(deferred2_0, deferred2_1, 1);
+    }
+}
+
+/**
+ * @returns {string}
+ */
+function __tine_raw_lsdoc_tag() {
+    let deferred1_0;
+    let deferred1_1;
+    try {
+        const ret = wasm.lsdoc_tag();
+        deferred1_0 = ret[0];
+        deferred1_1 = ret[1];
+        return getStringFromWasm0(ret[0], ret[1]);
+    } finally {
+        wasm.__wbindgen_free(deferred1_0, deferred1_1, 1);
+    }
+}
+
+/**
+ * MIME from the final case-insensitive path extension; O(path bytes), no I/O.
+ * Unknown extensions return application/octet-stream. Shared with native media.
+ * @param {string} path
+ * @returns {string}
+ */
+function __tine_raw_mime_from_path(path) {
+    let deferred2_0;
+    let deferred2_1;
+    try {
+        const ptr0 = passStringToWasm0(path, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+        const len0 = WASM_VECTOR_LEN;
+        const ret = wasm.mime_from_path(ptr0, len0);
+        deferred2_0 = ret[0];
+        deferred2_1 = ret[1];
+        return getStringFromWasm0(ret[0], ret[1]);
+    } finally {
+        wasm.__wbindgen_free(deferred2_0, deferred2_1, 1);
+    }
+}
+
+/**
+ * Names inside an accepted NestedLink node; O(node bytes).
+ * @param {string} content
+ * @returns {string[]}
+ */
+function __tine_raw_nested_reference_names(content) {
+    const ptr0 = passStringToWasm0(content, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+    const len0 = WASM_VECTOR_LEN;
+    const ret = wasm.nested_reference_names(ptr0, len0);
+    var v2 = getArrayJsValueFromWasm0(ret[0], ret[1]).slice();
+    wasm.__wbindgen_free(ret[0], ret[1] * 4, 4);
+    return v2;
+}
+
+/**
+ * Ordered-list label without surface punctuation; O(label bytes), no parse/I/O.
+ * @param {number} index
+ * @param {number} depth
+ * @returns {string}
+ */
+function __tine_raw_ordered_list_glyph(index, depth) {
+    let deferred1_0;
+    let deferred1_1;
+    try {
+        const ret = wasm.ordered_list_glyph(index, depth);
+        deferred1_0 = ret[0];
+        deferred1_1 = ret[1];
+        return getStringFromWasm0(ret[0], ret[1]);
+    } finally {
+        wasm.__wbindgen_free(deferred1_0, deferred1_1, 1);
+    }
+}
+
+/**
+ * Run one outline-kernel verb (`outline::apply`). `request` is
+ * `{pages, verb, keys}`; the answer is `{"ok": Change, "editor_offset"}` (the
+ * focus caret in the editor's UTF-16 units) or `{"refused": Reason}`. O(blocks
+ * of the pages passed) to read them, plus the verb's own work.
+ * @param {string} request
+ * @returns {string}
+ */
+function __tine_raw_outline_apply_json(request) {
+    let deferred3_0;
+    let deferred3_1;
+    try {
+        const ptr0 = passStringToWasm0(request, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+        const len0 = WASM_VECTOR_LEN;
+        const ret = wasm.outline_apply_json(ptr0, len0);
+        var ptr2 = ret[0];
+        var len2 = ret[1];
+        if (ret[3]) {
+            ptr2 = 0; len2 = 0;
+            throw takeFromExternrefTable0(ret[2]);
+        }
+        deferred3_0 = ptr2;
+        deferred3_1 = len2;
+        return getStringFromWasm0(ptr2, len2);
+    } finally {
+        wasm.__wbindgen_free(deferred3_0, deferred3_1, 1);
+    }
+}
+
+/**
+ * The kernel's outline depth cap (twin 4).
+ * @returns {number}
+ */
+function __tine_raw_outline_max_depth() {
+    const ret = wasm.outline_max_depth();
+    return ret >>> 0;
+}
+
+/**
+ * The blocks an outline verb reads (`Verb::reads`), as `[{key, subtree}]`, so
+ * the window can send only those (DESIGN §5.3, §8).
+ * @param {string} verb
+ * @returns {string}
+ */
+function __tine_raw_outline_reads_json(verb) {
+    let deferred3_0;
+    let deferred3_1;
+    try {
+        const ptr0 = passStringToWasm0(verb, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+        const len0 = WASM_VECTOR_LEN;
+        const ret = wasm.outline_reads_json(ptr0, len0);
+        var ptr2 = ret[0];
+        var len2 = ret[1];
+        if (ret[3]) {
+            ptr2 = 0; len2 = 0;
+            throw takeFromExternrefTable0(ret[2]);
+        }
+        deferred3_0 = ptr2;
+        deferred3_1 = len2;
+        return getStringFromWasm0(ptr2, len2);
+    } finally {
+        wasm.__wbindgen_free(deferred3_0, deferred3_1, 1);
+    }
+}
+
+/**
+ * The alias spellings a page declares (census Q7): the store's own answer,
+ * `tine_core::page_header::page_alias_spellings` (the pre-block, else a
+ * properties-only first root; keys `alias`/`aliases`; quoted values skipped;
+ * one spelling per page identity). The page header's alias list shows this.
+ * O(header bytes).
+ * @param {string | null | undefined} pre_block
+ * @param {string | null | undefined} first_root
+ * @param {boolean} is_org
+ * @returns {string[]}
+ */
+function __tine_raw_page_alias_spellings(pre_block, first_root, is_org) {
+    var ptr0 = isLikeNone(pre_block) ? 0 : passStringToWasm0(pre_block, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+    var len0 = WASM_VECTOR_LEN;
+    var ptr1 = isLikeNone(first_root) ? 0 : passStringToWasm0(first_root, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+    var len1 = WASM_VECTOR_LEN;
+    const ret = wasm.page_alias_spellings(ptr0, len0, ptr1, len1, is_org);
+    var v3 = getArrayJsValueFromWasm0(ret[0], ret[1]).slice();
+    wasm.__wbindgen_free(ret[0], ret[1] * 4, 4);
+    return v3;
+}
+
+/**
+ * The native file-format answer, including mixed-case Org extensions.
+ * @param {string} path
+ * @returns {string}
+ */
+function __tine_raw_page_file_format(path) {
+    let deferred2_0;
+    let deferred2_1;
+    try {
+        const ptr0 = passStringToWasm0(path, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+        const len0 = WASM_VECTOR_LEN;
+        const ret = wasm.page_file_format(ptr0, len0);
+        deferred2_0 = ret[0];
+        deferred2_1 = ret[1];
+        return getStringFromWasm0(ret[0], ret[1]);
+    } finally {
+        wasm.__wbindgen_free(deferred2_0, deferred2_1, 1);
+    }
+}
+
+/**
+ * Markdown page header (the parser's page properties, whether they are the
+ * whole text and its first stray line; see `block_regions::page_header`).
+ * O(preamble bytes); no I/O.
+ * @param {string} raw
+ * @returns {string}
+ */
+function __tine_raw_page_header_json(raw) {
+    let deferred2_0;
+    let deferred2_1;
+    try {
+        const ptr0 = passStringToWasm0(raw, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+        const len0 = WASM_VECTOR_LEN;
+        const ret = wasm.page_header_json(ptr0, len0);
+        deferred2_0 = ret[0];
+        deferred2_1 = ret[1];
+        return getStringFromWasm0(ret[0], ret[1]);
+    } finally {
+        wasm.__wbindgen_free(deferred2_0, deferred2_1, 1);
+    }
+}
+
+/**
+ * Native page-name key: O(name bytes), no I/O; Rust trim/lowercase/slashes/NFC.
+ * @param {string} name
+ * @returns {string}
+ */
+function __tine_raw_page_identity_key(name) {
+    let deferred2_0;
+    let deferred2_1;
+    try {
+        const ptr0 = passStringToWasm0(name, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+        const len0 = WASM_VECTOR_LEN;
+        const ret = wasm.page_identity_key(ptr0, len0);
+        deferred2_0 = ret[0];
+        deferred2_1 = ret[1];
+        return getStringFromWasm0(ret[0], ret[1]);
+    } finally {
+        wasm.__wbindgen_free(deferred2_0, deferred2_1, 1);
+    }
+}
+
+/**
+ * Opening text's property nodes as UTF-8 byte ranges `[[start, end], ...]`
+ * in source order (I-12: the one answerer, `page_preamble::opening_groups`).
+ * @param {string} text
+ * @param {boolean} is_org
+ * @returns {string}
+ */
+function __tine_raw_page_opening_groups_json(text, is_org) {
+    let deferred2_0;
+    let deferred2_1;
+    try {
+        const ptr0 = passStringToWasm0(text, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+        const len0 = WASM_VECTOR_LEN;
+        const ret = wasm.page_opening_groups_json(ptr0, len0, is_org);
+        deferred2_0 = ret[0];
+        deferred2_1 = ret[1];
+        return getStringFromWasm0(ret[0], ret[1]);
+    } finally {
+        wasm.__wbindgen_free(deferred2_0, deferred2_1, 1);
+    }
+}
+
+/**
+ * The same page-property edit used by the native owner and the page form.
+ * @param {string} parts_json
+ * @param {boolean} is_org
+ * @param {string} key
+ * @param {string | null} [value]
+ * @returns {string}
+ */
+function __tine_raw_page_parts_with_property(parts_json, is_org, key, value) {
+    let deferred5_0;
+    let deferred5_1;
+    try {
+        const ptr0 = passStringToWasm0(parts_json, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+        const len0 = WASM_VECTOR_LEN;
+        const ptr1 = passStringToWasm0(key, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+        const len1 = WASM_VECTOR_LEN;
+        var ptr2 = isLikeNone(value) ? 0 : passStringToWasm0(value, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+        var len2 = WASM_VECTOR_LEN;
+        const ret = wasm.page_parts_with_property(ptr0, len0, is_org, ptr1, len1, ptr2, len2);
+        var ptr4 = ret[0];
+        var len4 = ret[1];
+        if (ret[3]) {
+            ptr4 = 0; len4 = 0;
+            throw takeFromExternrefTable0(ret[2]);
+        }
+        deferred5_0 = ptr4;
+        deferred5_1 = len4;
+        return getStringFromWasm0(ptr4, len4);
+    } finally {
+        wasm.__wbindgen_free(deferred5_0, deferred5_1, 1);
+    }
+}
+
+/**
+ * The prose of a page preamble after its page header, as UTF-8 byte
+ * offsets `[start, end]`, or `null` (I-12: the one answerer,
+ * `page_properties::preamble_content_range`, which the store's reference answer
+ * reads too).
+ * @param {string} raw
+ * @param {boolean} is_org
+ * @returns {string}
+ */
+function __tine_raw_page_preamble_content_json(raw, is_org) {
+    let deferred2_0;
+    let deferred2_1;
+    try {
+        const ptr0 = passStringToWasm0(raw, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+        const len0 = WASM_VECTOR_LEN;
+        const ret = wasm.page_preamble_content_json(ptr0, len0, is_org);
+        deferred2_0 = ret[0];
+        deferred2_1 = ret[1];
+        return getStringFromWasm0(ret[0], ret[1]);
+    } finally {
+        wasm.__wbindgen_free(deferred2_0, deferred2_1, 1);
+    }
+}
+
+/**
+ * Whole-preamble property ownership, with parser-owned literals excluded.
+ * O(preamble bytes); no block wrapper or I/O.
+ * @param {string} raw
+ * @param {boolean} is_org
+ * @returns {string}
+ */
+function __tine_raw_page_regions_json(raw, is_org) {
+    let deferred2_0;
+    let deferred2_1;
+    try {
+        const ptr0 = passStringToWasm0(raw, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+        const len0 = WASM_VECTOR_LEN;
+        const ret = wasm.page_regions_json(ptr0, len0, is_org);
+        deferred2_0 = ret[0];
+        deferred2_1 = ret[1];
+        return getStringFromWasm0(ret[0], ret[1]);
+    } finally {
+        wasm.__wbindgen_free(deferred2_0, deferred2_1, 1);
+    }
+}
+
+/**
+ * @param {string} raw
+ * @param {boolean} is_org
+ * @param {boolean} untitled
+ * @returns {string}
+ */
+function __tine_raw_parse_block_bundle_json(raw, is_org, untitled) {
+    let deferred2_0;
+    let deferred2_1;
+    try {
+        const ptr0 = passStringToWasm0(raw, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+        const len0 = WASM_VECTOR_LEN;
+        const ret = wasm.parse_block_bundle_json(ptr0, len0, is_org, untitled);
+        deferred2_0 = ret[0];
+        deferred2_1 = ret[1];
+        return getStringFromWasm0(ret[0], ret[1]);
+    } finally {
+        wasm.__wbindgen_free(deferred2_0, deferred2_1, 1);
+    }
+}
+
+/**
+ * Parse one de-bulleted block body into lsdoc's render AST, serialized to JSON.
+ *
+ * Mirrors `tine_core::render::parse_block` exactly. Both bridges compile the same
+ * shared boundary helper: OG-compatible re-bullet parsing plus Tine's deliberate
+ * correction for line-leading Markdown inline code containing `::`.
+ * @param {string} raw
+ * @param {boolean} is_org
+ * @returns {string}
+ */
+function __tine_raw_parse_block_json(raw, is_org) {
+    let deferred2_0;
+    let deferred2_1;
+    try {
+        const ptr0 = passStringToWasm0(raw, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+        const len0 = WASM_VECTOR_LEN;
+        const ret = wasm.parse_block_json(ptr0, len0, is_org);
+        deferred2_0 = ret[0];
+        deferred2_1 = ret[1];
+        return getStringFromWasm0(ret[0], ret[1]);
+    } finally {
+        wasm.__wbindgen_free(deferred2_0, deferred2_1, 1);
+    }
+}
+
+/**
+ * Parse a WHOLE FILE (raw graph file text, NOT re-bulleted) into lsdoc's observable
+ * projection `{blocks, refs}`, serialized to JSON — the same thing the `lsdoc-parse`
+ * CLI emits. Unlike `parse_block_json` (one de-bulleted block), this is document-level,
+ * for the "Help improve Tine" diff panel, which compares whole files against mldoc
+ * exactly as `lsdoc/tools/graph-check.mjs` does. Not on the render path.
+ * @param {string} text
+ * @param {boolean} is_org
+ * @returns {string}
+ */
+function __tine_raw_parse_document_json(text, is_org) {
+    let deferred2_0;
+    let deferred2_1;
+    try {
+        const ptr0 = passStringToWasm0(text, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+        const len0 = WASM_VECTOR_LEN;
+        const ret = wasm.parse_document_json(ptr0, len0, is_org);
+        deferred2_0 = ret[0];
+        deferred2_1 = ret[1];
+        return getStringFromWasm0(ret[0], ret[1]);
+    } finally {
+        wasm.__wbindgen_free(deferred2_0, deferred2_1, 1);
+    }
+}
+
+/**
+ * Inline-only parsing for property values: bounded by the same shared native
+ * tree admission. O(value bytes); null refuses excessive depth, no I/O.
+ * @param {string} raw
+ * @param {boolean} is_org
+ * @returns {string}
+ */
+function __tine_raw_parse_inline_json(raw, is_org) {
+    let deferred2_0;
+    let deferred2_1;
+    try {
+        const ptr0 = passStringToWasm0(raw, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+        const len0 = WASM_VECTOR_LEN;
+        const ret = wasm.parse_inline_json(ptr0, len0, is_org);
+        deferred2_0 = ret[0];
+        deferred2_1 = ret[1];
+        return getStringFromWasm0(ret[0], ret[1]);
+    } finally {
+        wasm.__wbindgen_free(deferred2_0, deferred2_1, 1);
+    }
+}
+
+/**
+ * Native calendar format grammar, cached (16 patterns). O(title + pattern) on
+ * cold compile, O(title) warm; null means invalid. No clock, graph or I/O.
+ * @param {string} text
+ * @param {string} pattern
+ * @returns {string}
+ */
+function __tine_raw_parse_journal_format_json(text, pattern) {
+    let deferred3_0;
+    let deferred3_1;
+    try {
+        const ptr0 = passStringToWasm0(text, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+        const len0 = WASM_VECTOR_LEN;
+        const ptr1 = passStringToWasm0(pattern, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+        const len1 = WASM_VECTOR_LEN;
+        const ret = wasm.parse_journal_format_json(ptr0, len0, ptr1, len1);
+        deferred3_0 = ret[0];
+        deferred3_1 = ret[1];
+        return getStringFromWasm0(ret[0], ret[1]);
+    } finally {
+        wasm.__wbindgen_free(deferred3_0, deferred3_1, 1);
+    }
+}
+
+/**
+ * PDF reader/writer asset identity. O(path bytes), no parse or filesystem I/O.
+ * @param {string} path
+ * @returns {string}
+ */
+function __tine_raw_pdf_asset_file(path) {
+    let deferred2_0;
+    let deferred2_1;
+    try {
+        const ptr0 = passStringToWasm0(path, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+        const len0 = WASM_VECTOR_LEN;
+        const ret = wasm.pdf_asset_file(ptr0, len0);
+        deferred2_0 = ret[0];
+        deferred2_1 = ret[1];
+        return getStringFromWasm0(ret[0], ret[1]);
+    } finally {
+        wasm.__wbindgen_free(deferred2_0, deferred2_1, 1);
+    }
+}
+
+/**
+ * PDF identity with the existing preview/native suffix policy. O(filename bytes).
+ * @param {string} filename
+ * @param {boolean} preview
+ * @returns {string}
+ */
+function __tine_raw_pdf_asset_key(filename, preview) {
+    let deferred2_0;
+    let deferred2_1;
+    try {
+        const ptr0 = passStringToWasm0(filename, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+        const len0 = WASM_VECTOR_LEN;
+        const ret = wasm.pdf_asset_key(ptr0, len0, preview);
+        deferred2_0 = ret[0];
+        deferred2_1 = ret[1];
+        return getStringFromWasm0(ret[0], ret[1]);
+    } finally {
+        wasm.__wbindgen_free(deferred2_0, deferred2_1, 1);
+    }
+}
+
+/**
+ * Accepted single Markdown property line, using the native borrowed grammar.
+ * O(line bytes), no parse or I/O; malformed input serializes as null.
+ * @param {string} line
+ * @returns {string}
+ */
+function __tine_raw_property_line_json(line) {
+    let deferred2_0;
+    let deferred2_1;
+    try {
+        const ptr0 = passStringToWasm0(line, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+        const len0 = WASM_VECTOR_LEN;
+        const ret = wasm.property_line_json(ptr0, len0);
+        deferred2_0 = ret[0];
+        deferred2_1 = ret[1];
+        return getStringFromWasm0(ret[0], ret[1]);
+    } finally {
+        wasm.__wbindgen_free(deferred2_0, deferred2_1, 1);
+    }
+}
+
+/**
+ * Query EDN reads/splices from the same byte-span reader as native macro_text.
+ * O(source bytes), at most 1 MiB / 128 levels; null refuses unreadable EDN.
+ * Title edits preserve all unrelated bytes. No I/O or graph state.
+ * @param {string} source
+ * @param {string} operation
+ * @param {string} value
+ * @returns {string}
+ */
+function __tine_raw_query_edn_json(source, operation, value) {
+    let deferred4_0;
+    let deferred4_1;
+    try {
+        const ptr0 = passStringToWasm0(source, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+        const len0 = WASM_VECTOR_LEN;
+        const ptr1 = passStringToWasm0(operation, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+        const len1 = WASM_VECTOR_LEN;
+        const ptr2 = passStringToWasm0(value, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+        const len2 = WASM_VECTOR_LEN;
+        const ret = wasm.query_edn_json(ptr0, len0, ptr1, len1, ptr2, len2);
+        deferred4_0 = ret[0];
+        deferred4_1 = ret[1];
+        return getStringFromWasm0(ret[0], ret[1]);
+    } finally {
+        wasm.__wbindgen_free(deferred4_0, deferred4_1, 1);
+    }
+}
+
+/**
+ * Query raw extents from the native reader. O(raw bytes), no parser or I/O;
+ * JSON offsets are UTF-8 bytes. Unterminated candidates are omitted.
+ * @param {string} raw
+ * @returns {string}
+ */
+function __tine_raw_query_macro_extents_json(raw) {
+    let deferred2_0;
+    let deferred2_1;
+    try {
+        const ptr0 = passStringToWasm0(raw, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+        const len0 = WASM_VECTOR_LEN;
+        const ret = wasm.query_macro_extents_json(ptr0, len0);
+        deferred2_0 = ret[0];
+        deferred2_1 = ret[1];
+        return getStringFromWasm0(ret[0], ret[1]);
+    } finally {
+        wasm.__wbindgen_free(deferred2_0, deferred2_1, 1);
+    }
+}
+
+/**
+ * The raw reader's literal grammar for a macro name; O(name bytes), no I/O.
+ * @param {string} name
+ * @returns {boolean}
+ */
+function __tine_raw_query_macro_is_tql(name) {
+    const ptr0 = passStringToWasm0(name, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+    const len0 = WASM_VECTOR_LEN;
+    const ret = wasm.query_macro_is_tql(ptr0, len0);
+    return ret !== 0;
+}
+
+/**
+ * The raw UTF-8 byte offset (the kernel verbs' unit) of editor offset `editor_utf16`.
+ * @param {string} raw
+ * @param {boolean} is_org
+ * @param {any} regions
+ * @param {string} policy
+ * @param {number} editor_utf16
+ * @returns {number}
+ */
+function __tine_raw_raw_byte_of_editor(raw, is_org, regions, policy, editor_utf16) {
+    const ptr0 = passStringToWasm0(raw, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+    const len0 = WASM_VECTOR_LEN;
+    const ptr1 = passStringToWasm0(policy, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+    const len1 = WASM_VECTOR_LEN;
+    const ret = wasm.raw_byte_of_editor(ptr0, len0, is_org, regions, ptr1, len1, editor_utf16);
+    if (ret[2]) {
+        throw takeFromExternrefTable0(ret[1]);
+    }
+    return ret[0] >>> 0;
+}
+
+/**
+ * Shared native target classification on an accepted AST link. O(target).
+ * `legacy_file_names`: the graph's `:file/name-format` is legacy (GraphMeta
+ * `file_name_format`); only read with `filename_candidates`, where omitting it
+ * means legacy, the graph default (`Config::default`).
+ * @param {string} kind
+ * @param {string} value
+ * @param {string} label
+ * @param {boolean} org
+ * @param {boolean} filename_candidates
+ * @param {boolean | null} [legacy_file_names]
+ * @returns {string | undefined}
+ */
+function __tine_raw_reference_target_name(kind, value, label, org, filename_candidates, legacy_file_names) {
+    const ptr0 = passStringToWasm0(kind, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+    const len0 = WASM_VECTOR_LEN;
+    const ptr1 = passStringToWasm0(value, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+    const len1 = WASM_VECTOR_LEN;
+    const ptr2 = passStringToWasm0(label, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+    const len2 = WASM_VECTOR_LEN;
+    const ret = wasm.reference_target_name(ptr0, len0, ptr1, len1, ptr2, len2, org, filename_candidates, isLikeNone(legacy_file_names) ? 0xFFFFFF : legacy_file_names ? 1 : 0);
+    let v4;
+    if (ret[0] !== 0) {
+        v4 = getStringFromWasm0(ret[0], ret[1]).slice();
+        wasm.__wbindgen_free(ret[0], ret[1] * 1, 1);
+    }
+    return v4;
+}
+
+/**
+ * The lsdoc git tag this wasm was built against (set by `build:wasm` via the
+ * `LSDOC_TAG` env, read from tine-core's Cargo.toml — the single source of truth).
+ * Surfaced to the frontend for diagnostics; the hard stale-wasm guard lives in the
+ * build:wasm script (it refuses to build if this crate's pin ≠ tine-core's pin).
+ * See docs/wasm-parse-plan.md §7D.
+ * What removing blocks does to block references (`tine_outline::removal_refs`):
+ * `blocks` is a JSON array of `[raw, isOrg]`. Returns `{targets, removed_with}`.
+ * @param {string} blocks
+ * @param {boolean} with_content
+ * @returns {string}
+ */
+function __tine_raw_removal_refs_json(blocks, with_content) {
+    let deferred3_0;
+    let deferred3_1;
+    try {
+        const ptr0 = passStringToWasm0(blocks, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+        const len0 = WASM_VECTOR_LEN;
+        const ret = wasm.removal_refs_json(ptr0, len0, with_content);
+        var ptr2 = ret[0];
+        var len2 = ret[1];
+        if (ret[3]) {
+            ptr2 = 0; len2 = 0;
+            throw takeFromExternrefTable0(ret[2]);
+        }
+        deferred3_0 = ptr2;
+        deferred3_1 = len2;
+        return getStringFromWasm0(ptr2, len2);
+    } finally {
+        wasm.__wbindgen_free(deferred3_0, deferred3_1, 1);
+    }
+}
+
+/**
+ * Render one de-bulleted block body to lsdoc's CANONICAL HTML skeleton (M3 render
+ * contract — `lsdoc::render_html`): structural tags + classes + `data-*` hooks, no
+ * ref/asset/math/macro resolution. Re-bullets EXACTLY like `parse_block_json` so the
+ * rendered AST is identical, then renders it.
+ *
+ * NOT on the app's render path — the frontend renders the AST reactively (interactive
+ * DOM, resolved refs/assets), never lsdoc's HTML string. This exists ONLY so the
+ * anti-drift gate (`src/render/skeleton-drift.test.tsx`) can compare lsdoc's canonical
+ * skeleton against the frontend's reactive skeleton, from the SAME wasm the app ships —
+ * catching drift between the two renderers (Option C2: both conform to one skeleton).
+ * @param {string} raw
+ * @param {boolean} is_org
+ * @returns {string}
+ */
+function __tine_raw_render_block_html(raw, is_org) {
+    let deferred2_0;
+    let deferred2_1;
+    try {
+        const ptr0 = passStringToWasm0(raw, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+        const len0 = WASM_VECTOR_LEN;
+        const ret = wasm.render_block_html(ptr0, len0, is_org);
+        deferred2_0 = ret[0];
+        deferred2_1 = ret[1];
+        return getStringFromWasm0(ret[0], ret[1]);
+    } finally {
+        wasm.__wbindgen_free(deferred2_0, deferred2_1, 1);
+    }
+}
+
+/**
+ * Shared comparison form; O(text bytes), no graph access.
+ * @param {string} text
+ * @param {boolean} remove_accents
+ * @returns {string}
+ */
+function __tine_raw_search_fold(text, remove_accents) {
+    let deferred2_0;
+    let deferred2_1;
+    try {
+        const ptr0 = passStringToWasm0(text, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+        const len0 = WASM_VECTOR_LEN;
+        const ret = wasm.search_fold(ptr0, len0, remove_accents);
+        deferred2_0 = ret[0];
+        deferred2_1 = ret[1];
+        return getStringFromWasm0(ret[0], ret[1]);
+    } finally {
+        wasm.__wbindgen_free(deferred2_0, deferred2_1, 1);
+    }
+}
+
+/**
+ * Membership against a policy-matched pre-folded body; O(text × terms).
+ * @param {string} query
+ * @param {boolean} remove_accents
+ * @param {string} lower
+ * @param {string} original
+ * @returns {boolean}
+ */
+function __tine_raw_search_matches(query, remove_accents, lower, original) {
+    const ptr0 = passStringToWasm0(query, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+    const len0 = WASM_VECTOR_LEN;
+    const ptr1 = passStringToWasm0(lower, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+    const len1 = WASM_VECTOR_LEN;
+    const ptr2 = passStringToWasm0(original, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+    const len2 = WASM_VECTOR_LEN;
+    const ret = wasm.search_matches(ptr0, len0, remove_accents, ptr1, len1, ptr2, len2);
+    return ret !== 0;
+}
+
+/**
+ * Parse metadata for UI builders. Same grammar, errors and folds as native.
+ * @param {string} query
+ * @param {boolean} remove_accents
+ * @returns {string}
+ */
+function __tine_raw_search_query_json(query, remove_accents) {
+    let deferred2_0;
+    let deferred2_1;
+    try {
+        const ptr0 = passStringToWasm0(query, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+        const len0 = WASM_VECTOR_LEN;
+        const ret = wasm.search_query_json(ptr0, len0, remove_accents);
+        deferred2_0 = ret[0];
+        deferred2_1 = ret[1];
+        return getStringFromWasm0(ret[0], ret[1]);
+    } finally {
+        wasm.__wbindgen_free(deferred2_0, deferred2_1, 1);
+    }
+}
+
+/**
+ * UTF-16 search evidence, capped by limit. First mode retains zero-width hits
+ * and considers all positive terms; multi-range mode uses the satisfied group.
+ * @param {string} query
+ * @param {boolean} remove_accents
+ * @param {string} text
+ * @param {number} limit
+ * @param {boolean} first
+ * @returns {string}
+ */
+function __tine_raw_search_spans_json(query, remove_accents, text, limit, first) {
+    let deferred3_0;
+    let deferred3_1;
+    try {
+        const ptr0 = passStringToWasm0(query, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+        const len0 = WASM_VECTOR_LEN;
+        const ptr1 = passStringToWasm0(text, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+        const len1 = WASM_VECTOR_LEN;
+        const ret = wasm.search_spans_json(ptr0, len0, remove_accents, ptr1, len1, limit, first);
+        deferred3_0 = ret[0];
+        deferred3_1 = ret[1];
+        return getStringFromWasm0(ret[0], ret[1]);
+    } finally {
+        wasm.__wbindgen_free(deferred3_0, deferred3_1, 1);
+    }
+}
+
+/**
+ * Bounded original UTF-16 evidence, O(text × needle scalars).
+ * @param {string} text
+ * @param {string} needle
+ * @param {number} limit
+ * @param {boolean} remove_accents
+ * @returns {string}
+ */
+function __tine_raw_search_substring_spans_json(text, needle, limit, remove_accents) {
+    let deferred3_0;
+    let deferred3_1;
+    try {
+        const ptr0 = passStringToWasm0(text, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+        const len0 = WASM_VECTOR_LEN;
+        const ptr1 = passStringToWasm0(needle, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+        const len1 = WASM_VECTOR_LEN;
+        const ret = wasm.search_substring_spans_json(ptr0, len0, ptr1, len1, limit, remove_accents);
+        deferred3_0 = ret[0];
+        deferred3_1 = ret[1];
+        return getStringFromWasm0(ret[0], ret[1]);
+    } finally {
+        wasm.__wbindgen_free(deferred3_0, deferred3_1, 1);
+    }
+}
+
+/**
+ * Split already-parsed linkable property values with the native separator.
+ * O(value bytes), without parsing or I/O. Empty members retain their position.
+ * @param {string} value
+ * @returns {string[]}
+ */
+function __tine_raw_split_linkable_property(value) {
+    const ptr0 = passStringToWasm0(value, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+    const len0 = WASM_VECTOR_LEN;
+    const ret = wasm.split_linkable_property(ptr0, len0);
+    var v2 = getArrayJsValueFromWasm0(ret[0], ret[1]).slice();
+    wasm.__wbindgen_free(ret[0], ret[1] * 4, 4);
+    return v2;
+}
+
+/**
+ * The checkbox a task marker draws: true checked, false empty, undefined none.
+ * @param {string} marker
+ * @returns {boolean | undefined}
+ */
+function __tine_raw_task_checkbox_state(marker) {
+    const ptr0 = passStringToWasm0(marker, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+    const len0 = WASM_VECTOR_LEN;
+    const ret = wasm.task_checkbox_state(ptr0, len0);
+    return ret === 0xFFFFFF ? undefined : ret !== 0;
+}
+
+/**
+ * Tine's legacy property-key spellings, `[[legacy, canonical], …]` as JSON:
+ * the ONE alias table (`tine_outline::tine_keys`, D-20261102-PNS), so the
+ * window reads the stable `tine/…` markers exactly as the backend does.
+ * @returns {string}
+ */
+function __tine_raw_tine_key_aliases() {
+    let deferred1_0;
+    let deferred1_1;
+    try {
+        const ret = wasm.tine_key_aliases();
+        deferred1_0 = ret[0];
+        deferred1_1 = ret[1];
+        return getStringFromWasm0(ret[0], ret[1]);
+    } finally {
+        wasm.__wbindgen_free(deferred1_0, deferred1_1, 1);
+    }
+}
+function __wbg_get_imports() {
+    const import0 = {
+        __proto__: null,
+        __wbg___wbindgen_boolean_get_edaed31a367ce1bd: function(arg0) {
+            const v = arg0;
+            const ret = typeof(v) === 'boolean' ? v : undefined;
+            return isLikeNone(ret) ? 0xFFFFFF : ret ? 1 : 0;
+        },
+        __wbg___wbindgen_is_null_6d937fbfb6478470: function(arg0) {
+            const ret = arg0 === null;
+            return ret;
+        },
+        __wbg___wbindgen_is_undefined_721f8decd50c87a3: function(arg0) {
+            const ret = arg0 === undefined;
+            return ret;
+        },
+        __wbg___wbindgen_number_get_1cc01dd708740256: function(arg0, arg1) {
+            const obj = arg1;
+            const ret = typeof(obj) === 'number' ? obj : undefined;
+            getDataViewMemory0().setFloat64(arg0 + 8 * 1, isLikeNone(ret) ? 0 : ret, true);
+            getDataViewMemory0().setInt32(arg0 + 4 * 0, !isLikeNone(ret), true);
+        },
+        __wbg___wbindgen_string_get_71bb4348194e31f0: function(arg0, arg1) {
+            const obj = arg1;
+            const ret = typeof(obj) === 'string' ? obj : undefined;
+            var ptr1 = isLikeNone(ret) ? 0 : passStringToWasm0(ret, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+            var len1 = WASM_VECTOR_LEN;
+            getDataViewMemory0().setInt32(arg0 + 4 * 1, len1, true);
+            getDataViewMemory0().setInt32(arg0 + 4 * 0, ptr1, true);
+        },
+        __wbg___wbindgen_throw_ea4887a5f8f9a9db: function(arg0, arg1) {
+            throw new Error(getStringFromWasm0(arg0, arg1));
+        },
+        __wbg_error_93e15b0debaf64cc: function(arg0, arg1) {
+            console.error(getStringFromWasm0(arg0, arg1));
+        },
+        __wbg_from_50138b2ca136f50c: function(arg0) {
+            const ret = Array.from(arg0);
+            return ret;
+        },
+        __wbg_getDate_795f99292eeb17f7: function(arg0) {
+            const ret = arg0.getDate();
+            return ret;
+        },
+        __wbg_getDay_093e6d9a69f591a6: function(arg0) {
+            const ret = arg0.getDay();
+            return ret;
+        },
+        __wbg_getFullYear_466c1afffb9c36de: function(arg0) {
+            const ret = arg0.getFullYear();
+            return ret;
+        },
+        __wbg_getHours_0235f4d9164c7ccf: function(arg0) {
+            const ret = arg0.getHours();
+            return ret;
+        },
+        __wbg_getMinutes_1a0d1599d12a8527: function(arg0) {
+            const ret = arg0.getMinutes();
+            return ret;
+        },
+        __wbg_getMonth_66646d569c4d60f1: function(arg0) {
+            const ret = arg0.getMonth();
+            return ret;
+        },
+        __wbg_getSeconds_1ba1e4708a2a825f: function(arg0) {
+            const ret = arg0.getSeconds();
+            return ret;
+        },
+        __wbg_getTime_7a770f8a2ec8d634: function(arg0) {
+            const ret = arg0.getTime();
+            return ret;
+        },
+        __wbg_getTimezoneOffset_d6fba5332f80c3da: function(arg0) {
+            const ret = arg0.getTimezoneOffset();
+            return ret;
+        },
+        __wbg_get_197a3fe98f169e38: function(arg0, arg1) {
+            const ret = arg0[arg1 >>> 0];
+            return ret;
+        },
+        __wbg_get_dddb90ff5d27a080: function() { return handleError(function (arg0, arg1) {
+            const ret = Reflect.get(arg0, arg1);
+            return ret;
+        }, arguments); },
+        __wbg_get_unchecked_54a4374c38e08460: function(arg0, arg1) {
+            const ret = arg0[arg1 >>> 0];
+            return ret;
+        },
+        __wbg_length_589238bdcf171f0e: function(arg0) {
+            const ret = arg0.length;
+            return ret;
+        },
+        __wbg_length_c6054974c0a6cdb9: function(arg0) {
+            const ret = arg0.length;
+            return ret;
+        },
+        __wbg_new_0_1b32bedde98fef4b: function() {
+            const ret = new Date();
+            return ret;
+        },
+        __wbg_new_47ab770c8bd3b6bb: function(arg0) {
+            const ret = new Date(arg0);
+            return ret;
+        },
+        __wbg_now_d2e0afbad4edbe82: function() {
+            const ret = Date.now();
+            return ret;
+        },
+        __wbg_now_e7c6795a7f81e10f: function(arg0) {
+            const ret = arg0.now();
+            return ret;
+        },
+        __wbg_performance_3fcf6e32a7e1ed0a: function(arg0) {
+            const ret = arg0.performance;
+            return ret;
+        },
+        __wbg_prototypesetcall_d721637c7ca66eb8: function(arg0, arg1, arg2) {
+            Uint8Array.prototype.set.call(getArrayU8FromWasm0(arg0, arg1), arg2);
+        },
+        __wbg_static_accessor_GLOBAL_THIS_2fee5048bcca5938: function() {
+            const ret = typeof globalThis === 'undefined' ? null : globalThis;
+            return isLikeNone(ret) ? 0 : addToExternrefTable0(ret);
+        },
+        __wbg_static_accessor_GLOBAL_ce44e66a4935da8c: function() {
+            const ret = typeof global === 'undefined' ? null : global;
+            return isLikeNone(ret) ? 0 : addToExternrefTable0(ret);
+        },
+        __wbg_static_accessor_SELF_44f6e0cb5e67cdad: function() {
+            const ret = typeof self === 'undefined' ? null : self;
+            return isLikeNone(ret) ? 0 : addToExternrefTable0(ret);
+        },
+        __wbg_static_accessor_WINDOW_168f178805d978fe: function() {
+            const ret = typeof window === 'undefined' ? null : window;
+            return isLikeNone(ret) ? 0 : addToExternrefTable0(ret);
+        },
+        __wbindgen_cast_0000000000000001: function(arg0) {
+            // Cast intrinsic for `F64 -> Externref`.
+            const ret = arg0;
+            return ret;
+        },
+        __wbindgen_cast_0000000000000002: function(arg0, arg1) {
+            // Cast intrinsic for `Ref(String) -> Externref`.
+            const ret = getStringFromWasm0(arg0, arg1);
+            return ret;
+        },
+        __wbindgen_init_externref_table: function() {
+            const table = wasm.__wbindgen_externrefs;
+            const offset = table.grow(4);
+            table.set(0, undefined);
+            table.set(offset + 0, undefined);
+            table.set(offset + 1, null);
+            table.set(offset + 2, true);
+            table.set(offset + 3, false);
+        },
+    };
+    return {
+        __proto__: null,
+        "./lsdoc_wasm_bg.js": import0,
+    };
+}
+
+const BrowserGraphFinalization = (typeof FinalizationRegistry === 'undefined')
+    ? { register: () => {}, unregister: () => {} }
+    : new FinalizationRegistry((held) => { if (held.generation === __tineGeneration) wasm.__wbg_browsergraph_free(held.ptr, 1); });
+
+function addToExternrefTable0(obj) {
+    const idx = wasm.__externref_table_alloc();
+    wasm.__wbindgen_externrefs.set(idx, obj);
+    return idx;
+}
+
+function getArrayJsValueFromWasm0(ptr, len) {
+    ptr = ptr >>> 0;
+    const mem = getDataViewMemory0();
+    const result = [];
+    for (let i = ptr; i < ptr + 4 * len; i += 4) {
+        result.push(wasm.__wbindgen_externrefs.get(mem.getUint32(i, true)));
+    }
+    wasm.__externref_drop_slice(ptr, len);
+    return result;
+}
+
+function getArrayU8FromWasm0(ptr, len) {
+    ptr = ptr >>> 0;
+    return getUint8ArrayMemory0().subarray(ptr / 1, ptr / 1 + len);
+}
+
+let cachedDataViewMemory0 = null;
+function getDataViewMemory0() {
+    if (cachedDataViewMemory0 === null || cachedDataViewMemory0.buffer.detached === true || (cachedDataViewMemory0.buffer.detached === undefined && cachedDataViewMemory0.buffer !== wasm.memory.buffer)) {
+        cachedDataViewMemory0 = new DataView(wasm.memory.buffer);
+    }
+    return cachedDataViewMemory0;
+}
+
+function getStringFromWasm0(ptr, len) {
+    return decodeText(ptr >>> 0, len);
+}
+
+let cachedUint8ArrayMemory0 = null;
+function getUint8ArrayMemory0() {
+    if (cachedUint8ArrayMemory0 === null || cachedUint8ArrayMemory0.byteLength === 0) {
+        cachedUint8ArrayMemory0 = new Uint8Array(wasm.memory.buffer);
+    }
+    return cachedUint8ArrayMemory0;
+}
+
+function handleError(f, args) {
+    try {
+        return f.apply(this, args);
+    } catch (e) {
+        const idx = addToExternrefTable0(e);
+        wasm.__wbindgen_exn_store(idx);
+    }
+}
+
+function isLikeNone(x) {
+    return x === undefined || x === null;
+}
+
+function passArrayJsValueToWasm0(array, malloc) {
+    const ptr = malloc(array.length * 4, 4) >>> 0;
+    for (let i = 0; i < array.length; i++) {
+        const add = addToExternrefTable0(array[i]);
+        getDataViewMemory0().setUint32(ptr + 4 * i, add, true);
+    }
+    WASM_VECTOR_LEN = array.length;
+    return ptr;
+}
+
+function passStringToWasm0(arg, malloc, realloc) {
+    if (realloc === undefined) {
+        const buf = cachedTextEncoder.encode(arg);
+        const ptr = malloc(buf.length, 1) >>> 0;
+        getUint8ArrayMemory0().subarray(ptr, ptr + buf.length).set(buf);
+        WASM_VECTOR_LEN = buf.length;
+        return ptr;
+    }
+
+    let len = arg.length;
+    let ptr = malloc(len, 1) >>> 0;
+
+    const mem = getUint8ArrayMemory0();
+
+    let offset = 0;
+
+    for (; offset < len; offset++) {
+        const code = arg.charCodeAt(offset);
+        if (code > 0x7F) break;
+        mem[ptr + offset] = code;
+    }
+    if (offset !== len) {
+        if (offset !== 0) {
+            arg = arg.slice(offset);
+        }
+        ptr = realloc(ptr, len, len = offset + arg.length * 3, 1) >>> 0;
+        const view = getUint8ArrayMemory0().subarray(ptr + offset, ptr + len);
+        const ret = cachedTextEncoder.encodeInto(arg, view);
+
+        offset += ret.written;
+        ptr = realloc(ptr, len, offset, 1) >>> 0;
+    }
+
+    WASM_VECTOR_LEN = offset;
+    return ptr;
+}
+
+function takeFromExternrefTable0(idx) {
+    const value = wasm.__wbindgen_externrefs.get(idx);
+    wasm.__externref_table_dealloc(idx);
+    return value;
+}
+
+let cachedTextDecoder = new TextDecoder('utf-8', { ignoreBOM: true, fatal: true });
+cachedTextDecoder.decode();
+const MAX_SAFARI_DECODE_BYTES = 2146435072;
+let numBytesDecoded = 0;
+function decodeText(ptr, len) {
+    numBytesDecoded += len;
+    if (numBytesDecoded >= MAX_SAFARI_DECODE_BYTES) {
+        cachedTextDecoder = new TextDecoder('utf-8', { ignoreBOM: true, fatal: true });
+        cachedTextDecoder.decode();
+        numBytesDecoded = len;
+    }
+    return cachedTextDecoder.decode(getUint8ArrayMemory0().subarray(ptr, ptr + len));
+}
+
+const cachedTextEncoder = new TextEncoder();
+
+if (!('encodeInto' in cachedTextEncoder)) {
+    cachedTextEncoder.encodeInto = function (arg, view) {
+        const buf = cachedTextEncoder.encode(arg);
+        view.set(buf);
+        return {
+            read: arg.length,
+            written: buf.length
+        };
+    };
+}
+
+let WASM_VECTOR_LEN = 0;
+
+let wasmModule, wasmInstance, wasm;
+function __wbg_finalize_init(instance, module) {
+    wasmInstance = instance;
+    wasm = instance.exports;
+    wasmModule = module;
+    cachedDataViewMemory0 = null;
+    cachedUint8ArrayMemory0 = null;
+    wasm.__wbindgen_start();
+    return wasm;
+}
+
+async function __wbg_load(module, imports) {
+    if (typeof Response === 'function' && module instanceof Response) {
+        if (typeof WebAssembly.instantiateStreaming === 'function') {
+            try {
+                return await WebAssembly.instantiateStreaming(module, imports);
+            } catch (e) {
+                const validResponse = module.ok && expectedResponseType(module.type);
+
+                if (validResponse && module.headers.get('Content-Type') !== 'application/wasm') {
+                    console.warn("`WebAssembly.instantiateStreaming` failed because your server does not serve Wasm with `application/wasm` MIME type. Falling back to `WebAssembly.instantiate` which is slower. Original error:\n", e);
+
+                } else { throw e; }
+            }
+        }
+
+        const bytes = await module.arrayBuffer();
+        return await WebAssembly.instantiate(bytes, imports);
+    } else {
+        const instance = await WebAssembly.instantiate(module, imports);
+
+        if (instance instanceof WebAssembly.Instance) {
+            return { instance, module };
+        } else {
+            return instance;
+        }
+    }
+
+    function expectedResponseType(type) {
+        switch (type) {
+            case 'basic': case 'cors': case 'default': return true;
+        }
+        return false;
+    }
+}
+
+function initSync(module) {
+    if (wasm !== undefined) return wasm;
+
+
+    if (module !== undefined) {
+        if (Object.getPrototypeOf(module) === Object.prototype) {
+            ({module} = module)
+        } else {
+            console.warn('using deprecated parameters for `initSync()`; pass a single object instead')
+        }
+    }
+
+    const imports = __wbg_get_imports();
+    if (!(module instanceof WebAssembly.Module)) {
+        module = new WebAssembly.Module(module);
+    }
+    const instance = new WebAssembly.Instance(module, imports);
+    return __wbg_finalize_init(instance, module);
+}
+
+async function __wbg_init(module_or_path) {
+    if (wasm !== undefined) return wasm;
+
+
+    if (module_or_path !== undefined) {
+        if (Object.getPrototypeOf(module_or_path) === Object.prototype) {
+            ({module_or_path} = module_or_path)
+        } else {
+            console.warn('using deprecated parameters for the initialization function; pass a single object instead')
+        }
+    }
+
+    if (module_or_path === undefined) {
+        throw new Error('lsdoc-wasm: init() must be called with explicit bytes; default fetch path is disabled.');
+    }
+    const imports = __wbg_get_imports();
+
+    if (typeof module_or_path === 'string' || (typeof Request === 'function' && module_or_path instanceof Request) || (typeof URL === 'function' && module_or_path instanceof URL)) {
+        module_or_path = fetch(module_or_path);
+    }
+
+    const { instance, module } = await __wbg_load(await module_or_path, imports);
+
+    return __wbg_finalize_init(instance, module);
+}
+
+export { initSync, __wbg_init as default };
+
+// Tine crash-recovery: rebuild a FRESH wasm instance from the retained compiled module,
+// bypassing the init()/initSync() `wasm !== undefined` early-return. Used by
+// src/render/parse.ts to recover from a parser trap (poisoned instance). Same-module
+// scope gives it access to wasmModule / __wbg_get_imports / __wbg_finalize_init.
+// Every fresh instance starts a new generation: a class handle (pointer into one instance's
+// memory) belongs to the generation it was made in, and is refused afterwards.
+let __tineGeneration = 0;
+export function __tineReinstantiate() {
+  if (wasmModule === undefined) throw new Error('lsdoc-wasm: reinit before init');
+  const instance = new WebAssembly.Instance(wasmModule, __wbg_get_imports());
+  __tineGeneration++;
+  return __wbg_finalize_init(instance, wasmModule);
+}
+
+let __tineCalls = 0; // calls on the current instance
+let __tineResets = 0; // fresh instances this session (traps and unwound exceptions)
+function __tineReset() {
+  __tineReinstantiate();
+  __tineCalls = 0;
+  __tineResets++;
+}
+// The shape of a trapping call, for its error message: types and lengths only (I-5: no page text).
+function __tineArgShape(args) {
+  return args.map((a) => (typeof a === 'string' ? 'string:' + a.length : a === null ? 'null' : typeof a)).join(', ');
+}
+function __tineGuard(name, raw) { // Tine trap isolation: one guarded export per wasm-bindgen export.
+  return function (...args) {
+    __tineCalls++;
+    try {
+      return raw.apply(this, args);
+    } catch (e) {
+      throw __tineFail(name, e, args);
+    }
+  };
+}
+// The error a call that threw `e` surfaces, after starting a fresh instance when it needs one.
+function __tineFail(name, e, args) {
+      // A Rust `Err` is a string the glue throws after the call returned: the instance is intact.
+      if (typeof e === 'string') return e;
+      const trapped =
+        (typeof WebAssembly !== 'undefined' && e instanceof WebAssembly.RuntimeError) ||
+        (e instanceof RangeError && /call stack/i.test(String(e.message)));
+      if (!trapped) {
+        // Any other exception may have been thrown from inside the call (an import that threw), which
+        // skips the Rust epilogues: the shadow stack and externref slots it unwound stay leaked, and
+        // enough of them make a later, ordinary call trap. Start fresh; the caller keeps its error.
+        __tineReset();
+        return e;
+      }
+      let panic = '';
+      try { panic = __tine_raw_last_panic(); } catch (_) { /* the instance is too far gone to answer */ }
+      const state = ' [instance: ' + (__tineCalls - 1) + ' calls, ' + __tineResets + ' resets, ' +
+        (wasm.memory.buffer.byteLength >>> 16) + ' pages; args ' + __tineArgShape(args) + ']';
+      __tineReset();
+      return new Error('lsdoc-wasm trap in ' + name + ': ' + (panic || e.message) + state, { cause: e });
+}
+// A class handle's methods: guarded, and refused unless the handle is live (one
+// answer: not freed, and made by the current instance). Freeing a handle that is
+// not live only unregisters it; a second free is a no-op.
+function __tineHandleMethods(Handle, Raw, name) {
+  for (const method of Object.getOwnPropertyNames(Raw.prototype)) {
+    if (method === 'constructor' || method === '__destroy_into_raw') continue;
+    const raw = Object.getOwnPropertyDescriptor(Raw.prototype, method).value;
+    if (typeof raw !== 'function') throw new Error('lsdoc-wasm: ' + name + '.' + method + ' is not a method');
+    const guarded = __tineGuard(name + '.' + method, raw);
+    Handle.prototype[method] = function (...args) {
+      if (this.__wbg_ptr === 0 || this.__tineGeneration !== __tineGeneration) {
+        if (method === 'free') return void this.__destroy_into_raw();
+        const why = this.__wbg_ptr === 0 ? 'a freed handle' : 'a handle from a replaced instance';
+        throw new Error('lsdoc-wasm: ' + name + '.' + method + ' on ' + why + '; open it again');
+      }
+      return guarded.apply(this, args);
+    };
+  }
+  if (Symbol.dispose) Handle.prototype[Symbol.dispose] = Handle.prototype.free;
+}
+export const absent_link_is_journal = __tineGuard("absent_link_is_journal", __tine_raw_absent_link_is_journal);
+export const asset_rel_path = __tineGuard("asset_rel_path", __tine_raw_asset_rel_path);
+export const block_may_have_logbook = __tineGuard("block_may_have_logbook", __tine_raw_block_may_have_logbook);
+export const block_reference_names = __tineGuard("block_reference_names", __tine_raw_block_reference_names);
+export const canonical_group_field = __tineGuard("canonical_group_field", __tine_raw_canonical_group_field);
+export const comment_quote = __tineGuard("comment_quote", __tine_raw_comment_quote);
+export const decode_page_name = __tineGuard("decode_page_name", __tine_raw_decode_page_name);
+export const edit_block_regions_json = __tineGuard("edit_block_regions_json", __tine_raw_edit_block_regions_json);
+export const editor_offset_of_raw = __tineGuard("editor_offset_of_raw", __tine_raw_editor_offset_of_raw);
+export const editor_text_join = __tineGuard("editor_text_join", __tine_raw_editor_text_join);
+export const editor_text_json = __tineGuard("editor_text_json", __tine_raw_editor_text_json);
+export const encode_page_name = __tineGuard("encode_page_name", __tine_raw_encode_page_name);
+export const format_journal_date = __tineGuard("format_journal_date", __tine_raw_format_journal_date);
+export const header_tokens_json = __tineGuard("header_tokens_json", __tine_raw_header_tokens_json);
+export const hidden_from_all_pages = __tineGuard("hidden_from_all_pages", __tine_raw_hidden_from_all_pages);
+export const hide_policy_hides = __tineGuard("hide_policy_hides", __tine_raw_hide_policy_hides);
+export const install_panic_hook = __tineGuard("install_panic_hook", __tine_raw_install_panic_hook);
+export const is_editable_linkable_built_in = __tineGuard("is_editable_linkable_built_in", __tine_raw_is_editable_linkable_built_in);
+export const is_og_built_in_property = __tineGuard("is_og_built_in_property", __tine_raw_is_og_built_in_property);
+export const is_query_macro_name = __tineGuard("is_query_macro_name", __tine_raw_is_query_macro_name);
+export const is_render_hidden_prop = __tineGuard("is_render_hidden_prop", __tine_raw_is_render_hidden_prop);
+export const journal_day_json = __tineGuard("journal_day_json", __tine_raw_journal_day_json);
+export const last_panic = __tineGuard("last_panic", __tine_raw_last_panic);
+export const linkable_property_names = __tineGuard("linkable_property_names", __tine_raw_linkable_property_names);
+export const logbook_apply_marker_transition = __tineGuard("logbook_apply_marker_transition", __tine_raw_logbook_apply_marker_transition);
+export const logbook_clock_in = __tineGuard("logbook_clock_in", __tine_raw_logbook_clock_in);
+export const logbook_clock_out = __tineGuard("logbook_clock_out", __tine_raw_logbook_clock_out);
+export const logbook_info_json = __tineGuard("logbook_info_json", __tine_raw_logbook_info_json);
+export const lsdoc_tag = __tineGuard("lsdoc_tag", __tine_raw_lsdoc_tag);
+export const mime_from_path = __tineGuard("mime_from_path", __tine_raw_mime_from_path);
+export const nested_reference_names = __tineGuard("nested_reference_names", __tine_raw_nested_reference_names);
+export const ordered_list_glyph = __tineGuard("ordered_list_glyph", __tine_raw_ordered_list_glyph);
+export const outline_apply_json = __tineGuard("outline_apply_json", __tine_raw_outline_apply_json);
+export const outline_max_depth = __tineGuard("outline_max_depth", __tine_raw_outline_max_depth);
+export const outline_reads_json = __tineGuard("outline_reads_json", __tine_raw_outline_reads_json);
+export const page_alias_spellings = __tineGuard("page_alias_spellings", __tine_raw_page_alias_spellings);
+export const page_file_format = __tineGuard("page_file_format", __tine_raw_page_file_format);
+export const page_header_json = __tineGuard("page_header_json", __tine_raw_page_header_json);
+export const page_identity_key = __tineGuard("page_identity_key", __tine_raw_page_identity_key);
+export const page_opening_groups_json = __tineGuard("page_opening_groups_json", __tine_raw_page_opening_groups_json);
+export const page_parts_with_property = __tineGuard("page_parts_with_property", __tine_raw_page_parts_with_property);
+export const page_preamble_content_json = __tineGuard("page_preamble_content_json", __tine_raw_page_preamble_content_json);
+export const page_regions_json = __tineGuard("page_regions_json", __tine_raw_page_regions_json);
+export const parse_block_bundle_json = __tineGuard("parse_block_bundle_json", __tine_raw_parse_block_bundle_json);
+export const parse_block_json = __tineGuard("parse_block_json", __tine_raw_parse_block_json);
+export const parse_document_json = __tineGuard("parse_document_json", __tine_raw_parse_document_json);
+export const parse_inline_json = __tineGuard("parse_inline_json", __tine_raw_parse_inline_json);
+export const parse_journal_format_json = __tineGuard("parse_journal_format_json", __tine_raw_parse_journal_format_json);
+export const pdf_asset_file = __tineGuard("pdf_asset_file", __tine_raw_pdf_asset_file);
+export const pdf_asset_key = __tineGuard("pdf_asset_key", __tine_raw_pdf_asset_key);
+export const property_line_json = __tineGuard("property_line_json", __tine_raw_property_line_json);
+export const query_edn_json = __tineGuard("query_edn_json", __tine_raw_query_edn_json);
+export const query_macro_extents_json = __tineGuard("query_macro_extents_json", __tine_raw_query_macro_extents_json);
+export const query_macro_is_tql = __tineGuard("query_macro_is_tql", __tine_raw_query_macro_is_tql);
+export const raw_byte_of_editor = __tineGuard("raw_byte_of_editor", __tine_raw_raw_byte_of_editor);
+export const reference_target_name = __tineGuard("reference_target_name", __tine_raw_reference_target_name);
+export const removal_refs_json = __tineGuard("removal_refs_json", __tine_raw_removal_refs_json);
+export const render_block_html = __tineGuard("render_block_html", __tine_raw_render_block_html);
+export const search_fold = __tineGuard("search_fold", __tine_raw_search_fold);
+export const search_matches = __tineGuard("search_matches", __tine_raw_search_matches);
+export const search_query_json = __tineGuard("search_query_json", __tine_raw_search_query_json);
+export const search_spans_json = __tineGuard("search_spans_json", __tine_raw_search_spans_json);
+export const search_substring_spans_json = __tineGuard("search_substring_spans_json", __tine_raw_search_substring_spans_json);
+export const split_linkable_property = __tineGuard("split_linkable_property", __tine_raw_split_linkable_property);
+export const task_checkbox_state = __tineGuard("task_checkbox_state", __tine_raw_task_checkbox_state);
+export const tine_key_aliases = __tineGuard("tine_key_aliases", __tine_raw_tine_key_aliases);
+export class BrowserGraph extends __tine_raw_BrowserGraph {
+  constructor(...args) {
+    __tineCalls++;
+    try {
+      super(...args);
+    } catch (e) {
+      throw __tineFail("BrowserGraph", e, args);
+    }
+    this.__tineGeneration = __tineGeneration;
+  }
+}
+__tineHandleMethods(BrowserGraph, __tine_raw_BrowserGraph, "BrowserGraph");

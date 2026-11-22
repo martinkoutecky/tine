@@ -1105,5 +1105,7 @@ pub fn pdf_asset_key(filename: &str, preview: bool) -> String {
         },
     )
 }
+#[cfg(feature = "core")]
 mod browser_graph;
+#[cfg(feature = "core")]
 pub use browser_graph::BrowserGraph;

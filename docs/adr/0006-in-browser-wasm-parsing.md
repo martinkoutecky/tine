@@ -19,10 +19,19 @@ We will compile `lsdoc` to **WebAssembly** (a small `crates/lsdoc-wasm` wrapper,
 `cdylib`) and parse **synchronously in the browser**, giving one parser everywhere:
 Rust `lsdoc` for the backend index, `lsdoc`-WASM for the frontend render. Specifics:
 **vendor a prebuilt, base64-inlined `.wasm`** committed under `src/render/wasm/` and
-instantiate it from bytes (no `fetch`, no CI wasm build); the WASM returns a **JSON
+instantiate it from those bytes. The WASM returns a **JSON
 string** the frontend `JSON.parse`s, matching the existing IPC encoding exactly. The
 pinned `lsdoc` tag is **stamped into the bytes module and asserted at boot** against
 `tine-core`'s pin.
+
+The default `lsdoc-wasm` build supplies this eager parser. The same crate's
+`core` feature adds the in-memory graph API for browser consumers
+(D-20261122-PK2). `npm run build:wasm` vendors both variants. The main Vite build
+ships the core as a lazy asset alongside the app, so the export bundle carries
+it without a second frontend build. `loadBrowserCore()` decodes and initializes
+the core once per JS realm, shares the promise across callers, and rejects on
+load, compilation, initialization, or lsdoc tag failure. Loading the module
+takes linear work in the Wasm size and does not open a graph.
 
 ## Consequences
 

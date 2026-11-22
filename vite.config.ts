@@ -1,4 +1,4 @@
-import { defineConfig, type Plugin } from "vite";
+import { defineConfig, normalizePath, type Plugin, type UserConfig } from "vite";
 import solid from "vite-plugin-solid";
 import { fileURLToPath } from "node:url";
 import { execSync } from "node:child_process";
@@ -74,8 +74,46 @@ function twemojiAssets(): Plugin {
   };
 }
 
+function browserCoreAssets(): Plugin {
+  const loader = fileURLToPath(new URL("./src/browserCore.ts", import.meta.url));
+  const coreDir = normalizePath(fileURLToPath(new URL("./src/render/wasm-core/", import.meta.url)));
+  let loaderRef: string;
+  return {
+    name: "browser-core-assets",
+    apply: "build",
+    buildStart() {
+      // Keep the loader in the exportable app bundle before it has a caller.
+      loaderRef = this.emitFile({ type: "chunk", id: loader, name: "browser-core-loader", preserveSignature: "strict" });
+    },
+    generateBundle(_, bundle) {
+      const chunks = Object.values(bundle).filter((file) => file.type === "chunk");
+      const coreChunks = chunks.filter((chunk) => chunk.moduleIds.some((id) => id.startsWith(coreDir)));
+      const coreFiles = new Set(coreChunks.map((chunk) => chunk.fileName));
+      for (const entryName of ["main", "capture"]) {
+        const entry = chunks.find((chunk) => chunk.isEntry && chunk.name === entryName);
+        if (!entry) this.error(`Missing ${entryName} entry`);
+        const visited = new Set([entry.fileName]);
+        for (const file of visited) {
+          if (coreFiles.has(file)) this.error(`${entryName} statically imports the browser core (${file})`);
+          const chunk = bundle[file];
+          if (chunk?.type === "chunk") for (const dependency of chunk.imports) visited.add(dependency);
+        }
+      }
+      const loaderFile = this.getFileName(loaderRef);
+      const loaderChunk = bundle[loaderFile];
+      const [core] = coreChunks;
+      if (coreChunks.length !== 1 || loaderChunk?.type !== "chunk" ||
+          !["lsdoc_wasm.js", "lsdoc_wasm_bytes.ts"].every((name) => core.moduleIds.includes(coreDir + name)) ||
+          !loaderChunk.dynamicImports.includes(core.fileName) ||
+          ![loaderFile, core.fileName].every((file) => file.startsWith("assets/") && !file.includes(".."))) {
+        this.error("Expected one lazy browser core chunk and its loader under assets/ for graph export");
+      }
+    },
+  };
+}
+
 // Tauri expects a fixed port and serves the built assets from dist/.
-export default defineConfig(({ mode }) => {
+export default defineConfig(({ mode }): UserConfig => {
 const viewer = mode === "quick-share";
 const outDir = viewer ? "artifacts/quick-share-viewer/build" : "dist";
 return {
@@ -83,7 +121,7 @@ return {
   base: "./",
   // Published readers use native emoji (editableEmoji.ts); the viewer needs
   // neither the desktop SVG bundle nor its root-relative development server.
-  plugins: [solid(), ...(!viewer ? [twemojiAssets(), pdfjsAssets()] : [])],
+  plugins: [solid(), ...(!viewer ? [twemojiAssets(), pdfjsAssets(), browserCoreAssets()] : [])],
   // Upstream's legacy build supplies recent JS API polyfills to existing
   // WebKitGTK/Android WebViews. Main and worker use the same shared policy.
   resolve: { alias: [{ find: /^pdfjs-dist$/, replacement: fileURLToPath(new URL("./node_modules/pdfjs-dist/legacy/build/pdf.mjs", import.meta.url)) }] },

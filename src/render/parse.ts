@@ -27,7 +27,8 @@ const [ready, setReady] = createSignal(false);
 const [failed, setFailed] = createSignal(false);
 let initPromise: Promise<void> | null = null;
 
-function base64ToBytes(b64: string): Uint8Array {
+/** Decode a vendored module's inlined base64 bytes (the parser and the browser core). */
+export function base64ToBytes(b64: string): Uint8Array {
   const bin = atob(b64);
   const bytes = new Uint8Array(bin.length);
   for (let i = 0; i < bin.length; i++) bytes[i] = bin.charCodeAt(i);

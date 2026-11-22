@@ -1,0 +1,562 @@
+/* tslint:disable */
+/* eslint-disable */
+
+export class BrowserGraph {
+    free(): void;
+    [Symbol.dispose](): void;
+    capture_quick_switch_json(query: string, limit: number, transliteration: boolean): string;
+    /**
+     * The config read problem of the desktop `load_graph` answer, or null.
+     */
+    config_problem_json(): string;
+    get_backlink_filter_context_json(name: string, targets_json: string): string;
+    get_backlinks_json(name: string): string;
+    get_block_ref_counts_json(): string;
+    get_block_referrers_json(uuid: string): string;
+    get_unlinked_refs_json(name: string): string;
+    /**
+     * The effective metadata of the desktop `load_graph` answer.
+     */
+    graph_meta_json(): string;
+    journal_content_days_json(): string;
+    /**
+     * `files[i]` holds the bytes of the graph-relative `paths[i]`,
+     * `logseq/config.edn` among them. Throws (a string) what the desktop open
+     * refuses, and for arrays of different lengths; a config read problem is
+     * `config_problem_json`. Cost: one read and parse of each file and the
+     * initial index capture, as a desktop open has.
+     */
+    constructor(paths: string[], files: Uint8Array[]);
+    page_alias_group_json(name: string): string;
+    page_backlink_counts_json(): string;
+    page_icons_json(names_json: string): string;
+    page_inventory_json(): string;
+    page_modified_json(): string;
+    /**
+     * `dialect` uses the desktop wire names. Properties are a JSON array of pairs.
+     */
+    parse_query_json(text: string, dialect: string, block_properties_json?: string | null): string;
+    preview_block_json(uuid: string, max_nodes: number): string;
+    /**
+     * `scope_json` is `{"keys":true}` or `{"key":"property name"}`.
+     */
+    query_facets_json(scope_json: string): string;
+    /**
+     * Query, view and optional execution context use the desktop JSON shapes.
+     */
+    query_run_json(query_json: string, view_json: string, context_json?: string | null): string;
+    resolve_blocks_json(uuids_json: string): string;
+    resolve_page_json(name: string, journal: boolean): string;
+    /**
+     * Options are the desktop search fields `explain`, `scope`,
+     * `pageMatchScope`, `pageView`, `blockView`, and `transliteration`.
+     */
+    run_graph_search_json(source: string, page_limit: number, block_limit: number, options_json?: string | null): string;
+    /**
+     * Literal block search. Synchronous browser calls share no search lane.
+     */
+    search_json(query: string, limit: number): string;
+}
+
+/**
+ * The kind of a link target nothing claims: `JournalFormat::absent_link_is_journal`.
+ */
+export function absent_link_is_journal(name: string, file_format: string, title_format: string): boolean;
+
+/**
+ * Assets-relative link target; O(URL bytes), no parse or filesystem I/O.
+ */
+export function asset_rel_path(url: string): string | undefined;
+
+/**
+ * Parser-boundary negative-only prefilter; true still needs drawer ownership.
+ */
+export function block_may_have_logbook(raw: string): boolean;
+
+/**
+ * Every page name one block's source references, in source order (may
+ * repeat): the reference evidence's own walk (`reference_evidence/walk.rs`)
+ * over the same block parse, under the default parse config. O(block bytes)
+ * plus one inline parse per property value or macro argument; no I/O.
+ */
+export function block_reference_names(raw: string, is_org: boolean): string[];
+
+/**
+ * Native group-field grammar: O(value bytes), no I/O; invalid tokens return null.
+ */
+export function canonical_group_field(value: string): string | undefined;
+
+/**
+ * The same own-property discriminator that editor_text uses to hide comment metadata.
+ */
+export function comment_quote(properties: string): string | undefined;
+
+/**
+ * Decode a Logseq page stem in legacy or triple-lowbar (legacy = false) format.
+ * O(stem bytes), no I/O; malformed percent escapes are preserved.
+ */
+export function decode_page_name(stem: string, legacy: boolean): string;
+
+export function edit_block_regions_json(raw: string, is_org: boolean, regions: any, request: any): string;
+
+/**
+ * The editor (UTF-16) offset of raw UTF-16 offset `raw_utf16`.
+ */
+export function editor_offset_of_raw(raw: string, is_org: boolean, regions: any, policy: string, raw_utf16: number): number;
+
+/**
+ * Editor text plus hidden lines back to raw (`editor_text::join_with`), with
+ * optional exact source for metadata-preserving text-only edits.
+ */
+export function editor_text_join(visible: string, hidden: string, is_org: boolean, visible_regions: any, source?: string | null, policy?: string | null): string;
+
+/**
+ * The editor's view of one block (outline kernel `editor_text`, twin 13):
+ * `{visible, hidden}` from the window's cached regions for exactly `raw`.
+ * `policy` is a kernel `HidePolicy` as JSON. O(block bytes), no parse.
+ */
+export function editor_text_json(raw: string, is_org: boolean, regions: any, policy: string): string;
+
+/**
+ * Encode a Windows-safe Logseq page stem; legacy selects percent-encoded
+ * namespaces, false selects triple-lowbar. O(title bytes), no I/O or failure.
+ */
+export function encode_page_name(name: string, legacy: boolean): string;
+
+/**
+ * Native date formatter over explicit civil parts; same bounded format cache.
+ */
+export function format_journal_date(year: number, month: number, day: number, pattern: string): string;
+
+/**
+ * Accepted marker/priority of one block with their byte spans (`block_regions::header_tokens`).
+ * O(block bytes); no regions walk.
+ */
+export function header_tokens_json(raw: string, is_org: boolean): string;
+
+/**
+ * Whether All pages leaves this name out (a UUID, a drawing, an OG built-in
+ * page; I-12: the one answerer, `tine_core::reference_evidence::hidden_from_all_pages`, shared
+ * with tine-core).
+ */
+export function hidden_from_all_pages(name: string): boolean;
+
+/**
+ * Whether hide `policy` hides property `key` (`HidePolicy::hides`).
+ */
+export function hide_policy_hides(policy: string, key: string, properties: string): boolean;
+
+export function install_panic_hook(): void;
+
+/**
+ * OG's built-in reference-valued keys (`alias`, `aliases`, `tags`), any case:
+ * `tine_core::query::atom::is_editable_linkable_built_in` (census Q7). The
+ * frontend's fallback when the graph's `linkable_property_keys` is absent.
+ */
+export function is_editable_linkable_built_in(key: string): boolean;
+
+/**
+ * OG built-ins excluded from default query-table property columns.
+ */
+export function is_og_built_in_property(key: string): boolean;
+
+/**
+ * Whether a parser-tokenized macro name is a query; O(name bytes), no I/O.
+ */
+export function is_query_macro_name(name: string): boolean;
+
+/**
+ * Whether a block property key is hidden from rendered chips (I-12: the one
+ * answerer the static export also asks). O(key bytes + hidden keys), no I/O.
+ */
+export function is_render_hidden_prop(key: string, user_hidden: string[], pre_block: boolean): boolean;
+
+/**
+ * Is `name` a journal date, and which day: `tine_core::date::JournalFormat::parse`
+ * (the one list, D-20261102-JDL). `{"y","m","d"}` or null. O(name) warm.
+ */
+export function journal_day_json(name: string, file_format: string, title_format: string): string;
+
+/**
+ * The message of the most recent panic in this instance ("" if none). A trapped
+ * instance still answers small calls; the glue reads this before reinstantiating.
+ */
+export function last_panic(): string;
+
+/**
+ * OG property tokens, shared with native property atomization. O(value bytes).
+ */
+export function linkable_property_names(value: string, is_org: boolean): string[];
+
+export function logbook_apply_marker_transition(raw: string, is_org: boolean, old_raw: string, enabled: boolean, with_seconds: boolean): string;
+
+export function logbook_clock_in(raw: string, is_org: boolean, with_seconds: boolean): string;
+
+export function logbook_clock_out(raw: string, is_org: boolean, with_seconds: boolean): string;
+
+export function logbook_info_json(raw: string, is_org: boolean): string;
+
+export function lsdoc_tag(): string;
+
+/**
+ * MIME from the final case-insensitive path extension; O(path bytes), no I/O.
+ * Unknown extensions return application/octet-stream. Shared with native media.
+ */
+export function mime_from_path(path: string): string;
+
+/**
+ * Names inside an accepted NestedLink node; O(node bytes).
+ */
+export function nested_reference_names(content: string): string[];
+
+/**
+ * Ordered-list label without surface punctuation; O(label bytes), no parse/I/O.
+ */
+export function ordered_list_glyph(index: number, depth: number): string;
+
+/**
+ * Run one outline-kernel verb (`outline::apply`). `request` is
+ * `{pages, verb, keys}`; the answer is `{"ok": Change, "editor_offset"}` (the
+ * focus caret in the editor's UTF-16 units) or `{"refused": Reason}`. O(blocks
+ * of the pages passed) to read them, plus the verb's own work.
+ */
+export function outline_apply_json(request: string): string;
+
+/**
+ * The kernel's outline depth cap (twin 4).
+ */
+export function outline_max_depth(): number;
+
+/**
+ * The blocks an outline verb reads (`Verb::reads`), as `[{key, subtree}]`, so
+ * the window can send only those (DESIGN §5.3, §8).
+ */
+export function outline_reads_json(verb: string): string;
+
+/**
+ * The alias spellings a page declares (census Q7): the store's own answer,
+ * `tine_core::page_header::page_alias_spellings` (the pre-block, else a
+ * properties-only first root; keys `alias`/`aliases`; quoted values skipped;
+ * one spelling per page identity). The page header's alias list shows this.
+ * O(header bytes).
+ */
+export function page_alias_spellings(pre_block: string | null | undefined, first_root: string | null | undefined, is_org: boolean): string[];
+
+/**
+ * The native file-format answer, including mixed-case Org extensions.
+ */
+export function page_file_format(path: string): string;
+
+/**
+ * Markdown page header (the parser's page properties, whether they are the
+ * whole text and its first stray line; see `block_regions::page_header`).
+ * O(preamble bytes); no I/O.
+ */
+export function page_header_json(raw: string): string;
+
+/**
+ * Native page-name key: O(name bytes), no I/O; Rust trim/lowercase/slashes/NFC.
+ */
+export function page_identity_key(name: string): string;
+
+/**
+ * Opening text's property nodes as UTF-8 byte ranges `[[start, end], ...]`
+ * in source order (I-12: the one answerer, `page_preamble::opening_groups`).
+ */
+export function page_opening_groups_json(text: string, is_org: boolean): string;
+
+/**
+ * The same page-property edit used by the native owner and the page form.
+ */
+export function page_parts_with_property(parts_json: string, is_org: boolean, key: string, value?: string | null): string;
+
+/**
+ * The prose of a page preamble after its page header, as UTF-8 byte
+ * offsets `[start, end]`, or `null` (I-12: the one answerer,
+ * `page_properties::preamble_content_range`, which the store's reference answer
+ * reads too).
+ */
+export function page_preamble_content_json(raw: string, is_org: boolean): string;
+
+/**
+ * Whole-preamble property ownership, with parser-owned literals excluded.
+ * O(preamble bytes); no block wrapper or I/O.
+ */
+export function page_regions_json(raw: string, is_org: boolean): string;
+
+export function parse_block_bundle_json(raw: string, is_org: boolean, untitled: boolean): string;
+
+/**
+ * Parse one de-bulleted block body into lsdoc's render AST, serialized to JSON.
+ *
+ * Mirrors `tine_core::render::parse_block` exactly. Both bridges compile the same
+ * shared boundary helper: OG-compatible re-bullet parsing plus Tine's deliberate
+ * correction for line-leading Markdown inline code containing `::`.
+ */
+export function parse_block_json(raw: string, is_org: boolean): string;
+
+/**
+ * Parse a WHOLE FILE (raw graph file text, NOT re-bulleted) into lsdoc's observable
+ * projection `{blocks, refs}`, serialized to JSON — the same thing the `lsdoc-parse`
+ * CLI emits. Unlike `parse_block_json` (one de-bulleted block), this is document-level,
+ * for the "Help improve Tine" diff panel, which compares whole files against mldoc
+ * exactly as `lsdoc/tools/graph-check.mjs` does. Not on the render path.
+ */
+export function parse_document_json(text: string, is_org: boolean): string;
+
+/**
+ * Inline-only parsing for property values: bounded by the same shared native
+ * tree admission. O(value bytes); null refuses excessive depth, no I/O.
+ */
+export function parse_inline_json(raw: string, is_org: boolean): string;
+
+/**
+ * Native calendar format grammar, cached (16 patterns). O(title + pattern) on
+ * cold compile, O(title) warm; null means invalid. No clock, graph or I/O.
+ */
+export function parse_journal_format_json(text: string, pattern: string): string;
+
+/**
+ * PDF reader/writer asset identity. O(path bytes), no parse or filesystem I/O.
+ */
+export function pdf_asset_file(path: string): string;
+
+/**
+ * PDF identity with the existing preview/native suffix policy. O(filename bytes).
+ */
+export function pdf_asset_key(filename: string, preview: boolean): string;
+
+/**
+ * Accepted single Markdown property line, using the native borrowed grammar.
+ * O(line bytes), no parse or I/O; malformed input serializes as null.
+ */
+export function property_line_json(line: string): string;
+
+/**
+ * Query EDN reads/splices from the same byte-span reader as native macro_text.
+ * O(source bytes), at most 1 MiB / 128 levels; null refuses unreadable EDN.
+ * Title edits preserve all unrelated bytes. No I/O or graph state.
+ */
+export function query_edn_json(source: string, operation: string, value: string): string;
+
+/**
+ * Query raw extents from the native reader. O(raw bytes), no parser or I/O;
+ * JSON offsets are UTF-8 bytes. Unterminated candidates are omitted.
+ */
+export function query_macro_extents_json(raw: string): string;
+
+/**
+ * The raw reader's literal grammar for a macro name; O(name bytes), no I/O.
+ */
+export function query_macro_is_tql(name: string): boolean;
+
+/**
+ * The raw UTF-8 byte offset (the kernel verbs' unit) of editor offset `editor_utf16`.
+ */
+export function raw_byte_of_editor(raw: string, is_org: boolean, regions: any, policy: string, editor_utf16: number): number;
+
+/**
+ * Shared native target classification on an accepted AST link. O(target).
+ * `legacy_file_names`: the graph's `:file/name-format` is legacy (GraphMeta
+ * `file_name_format`); only read with `filename_candidates`, where omitting it
+ * means legacy, the graph default (`Config::default`).
+ */
+export function reference_target_name(kind: string, value: string, label: string, org: boolean, filename_candidates: boolean, legacy_file_names?: boolean | null): string | undefined;
+
+/**
+ * The lsdoc git tag this wasm was built against (set by `build:wasm` via the
+ * `LSDOC_TAG` env, read from tine-core's Cargo.toml — the single source of truth).
+ * Surfaced to the frontend for diagnostics; the hard stale-wasm guard lives in the
+ * build:wasm script (it refuses to build if this crate's pin ≠ tine-core's pin).
+ * See docs/wasm-parse-plan.md §7D.
+ * What removing blocks does to block references (`tine_outline::removal_refs`):
+ * `blocks` is a JSON array of `[raw, isOrg]`. Returns `{targets, removed_with}`.
+ */
+export function removal_refs_json(blocks: string, with_content: boolean): string;
+
+/**
+ * Render one de-bulleted block body to lsdoc's CANONICAL HTML skeleton (M3 render
+ * contract — `lsdoc::render_html`): structural tags + classes + `data-*` hooks, no
+ * ref/asset/math/macro resolution. Re-bullets EXACTLY like `parse_block_json` so the
+ * rendered AST is identical, then renders it.
+ *
+ * NOT on the app's render path — the frontend renders the AST reactively (interactive
+ * DOM, resolved refs/assets), never lsdoc's HTML string. This exists ONLY so the
+ * anti-drift gate (`src/render/skeleton-drift.test.tsx`) can compare lsdoc's canonical
+ * skeleton against the frontend's reactive skeleton, from the SAME wasm the app ships —
+ * catching drift between the two renderers (Option C2: both conform to one skeleton).
+ */
+export function render_block_html(raw: string, is_org: boolean): string;
+
+export function __tineReinstantiate(): void;
+
+/**
+ * Shared comparison form; O(text bytes), no graph access.
+ */
+export function search_fold(text: string, remove_accents: boolean): string;
+
+/**
+ * Membership against a policy-matched pre-folded body; O(text × terms).
+ */
+export function search_matches(query: string, remove_accents: boolean, lower: string, original: string): boolean;
+
+/**
+ * Parse metadata for UI builders. Same grammar, errors and folds as native.
+ */
+export function search_query_json(query: string, remove_accents: boolean): string;
+
+/**
+ * UTF-16 search evidence, capped by limit. First mode retains zero-width hits
+ * and considers all positive terms; multi-range mode uses the satisfied group.
+ */
+export function search_spans_json(query: string, remove_accents: boolean, text: string, limit: number, first: boolean): string;
+
+/**
+ * Bounded original UTF-16 evidence, O(text × needle scalars).
+ */
+export function search_substring_spans_json(text: string, needle: string, limit: number, remove_accents: boolean): string;
+
+/**
+ * Split already-parsed linkable property values with the native separator.
+ * O(value bytes), without parsing or I/O. Empty members retain their position.
+ */
+export function split_linkable_property(value: string): string[];
+
+/**
+ * The checkbox a task marker draws: true checked, false empty, undefined none.
+ */
+export function task_checkbox_state(marker: string): boolean | undefined;
+
+/**
+ * Tine's legacy property-key spellings, `[[legacy, canonical], …]` as JSON:
+ * the ONE alias table (`tine_outline::tine_keys`, D-20261102-PNS), so the
+ * window reads the stable `tine/…` markers exactly as the backend does.
+ */
+export function tine_key_aliases(): string;
+
+export type InitInput = RequestInfo | URL | Response | BufferSource | WebAssembly.Module;
+
+export interface InitOutput {
+    readonly memory: WebAssembly.Memory;
+    readonly __wbg_browsergraph_free: (a: number, b: number) => void;
+    readonly absent_link_is_journal: (a: number, b: number, c: number, d: number, e: number, f: number) => number;
+    readonly asset_rel_path: (a: number, b: number) => [number, number];
+    readonly block_may_have_logbook: (a: number, b: number) => number;
+    readonly block_reference_names: (a: number, b: number, c: number) => [number, number];
+    readonly browsergraph_capture_quick_switch_json: (a: number, b: number, c: number, d: number, e: number) => [number, number, number, number];
+    readonly browsergraph_config_problem_json: (a: number) => [number, number, number, number];
+    readonly browsergraph_get_backlink_filter_context_json: (a: number, b: number, c: number, d: number, e: number) => [number, number, number, number];
+    readonly browsergraph_get_backlinks_json: (a: number, b: number, c: number) => [number, number, number, number];
+    readonly browsergraph_get_block_ref_counts_json: (a: number) => [number, number, number, number];
+    readonly browsergraph_get_block_referrers_json: (a: number, b: number, c: number) => [number, number, number, number];
+    readonly browsergraph_get_unlinked_refs_json: (a: number, b: number, c: number) => [number, number, number, number];
+    readonly browsergraph_graph_meta_json: (a: number) => [number, number, number, number];
+    readonly browsergraph_journal_content_days_json: (a: number) => [number, number, number, number];
+    readonly browsergraph_new: (a: number, b: number, c: number, d: number) => [number, number, number];
+    readonly browsergraph_page_alias_group_json: (a: number, b: number, c: number) => [number, number, number, number];
+    readonly browsergraph_page_backlink_counts_json: (a: number) => [number, number, number, number];
+    readonly browsergraph_page_icons_json: (a: number, b: number, c: number) => [number, number, number, number];
+    readonly browsergraph_page_inventory_json: (a: number) => [number, number, number, number];
+    readonly browsergraph_page_modified_json: (a: number) => [number, number, number, number];
+    readonly browsergraph_parse_query_json: (a: number, b: number, c: number, d: number, e: number, f: number, g: number) => [number, number, number, number];
+    readonly browsergraph_preview_block_json: (a: number, b: number, c: number, d: number) => [number, number, number, number];
+    readonly browsergraph_query_facets_json: (a: number, b: number, c: number) => [number, number, number, number];
+    readonly browsergraph_query_run_json: (a: number, b: number, c: number, d: number, e: number, f: number, g: number) => [number, number, number, number];
+    readonly browsergraph_resolve_blocks_json: (a: number, b: number, c: number) => [number, number, number, number];
+    readonly browsergraph_resolve_page_json: (a: number, b: number, c: number, d: number) => [number, number, number, number];
+    readonly browsergraph_run_graph_search_json: (a: number, b: number, c: number, d: number, e: number, f: number, g: number) => [number, number, number, number];
+    readonly browsergraph_search_json: (a: number, b: number, c: number, d: number) => [number, number, number, number];
+    readonly canonical_group_field: (a: number, b: number) => [number, number];
+    readonly comment_quote: (a: number, b: number) => [number, number, number, number];
+    readonly decode_page_name: (a: number, b: number, c: number) => [number, number];
+    readonly edit_block_regions_json: (a: number, b: number, c: number, d: any, e: any) => [number, number, number, number];
+    readonly editor_offset_of_raw: (a: number, b: number, c: number, d: any, e: number, f: number, g: number) => [number, number, number];
+    readonly editor_text_join: (a: number, b: number, c: number, d: number, e: number, f: any, g: number, h: number, i: number, j: number) => [number, number, number, number];
+    readonly editor_text_json: (a: number, b: number, c: number, d: any, e: number, f: number) => [number, number, number, number];
+    readonly encode_page_name: (a: number, b: number, c: number) => [number, number];
+    readonly format_journal_date: (a: number, b: number, c: number, d: number, e: number) => [number, number];
+    readonly header_tokens_json: (a: number, b: number, c: number) => [number, number];
+    readonly hidden_from_all_pages: (a: number, b: number) => number;
+    readonly hide_policy_hides: (a: number, b: number, c: number, d: number, e: number, f: number) => [number, number, number];
+    readonly install_panic_hook: () => void;
+    readonly is_editable_linkable_built_in: (a: number, b: number) => number;
+    readonly is_og_built_in_property: (a: number, b: number) => number;
+    readonly is_query_macro_name: (a: number, b: number) => number;
+    readonly is_render_hidden_prop: (a: number, b: number, c: number, d: number, e: number) => number;
+    readonly journal_day_json: (a: number, b: number, c: number, d: number, e: number, f: number) => [number, number];
+    readonly last_panic: () => [number, number];
+    readonly linkable_property_names: (a: number, b: number, c: number) => [number, number];
+    readonly logbook_apply_marker_transition: (a: number, b: number, c: number, d: number, e: number, f: number, g: number) => [number, number];
+    readonly logbook_clock_in: (a: number, b: number, c: number, d: number) => [number, number];
+    readonly logbook_clock_out: (a: number, b: number, c: number, d: number) => [number, number];
+    readonly logbook_info_json: (a: number, b: number, c: number) => [number, number];
+    readonly lsdoc_tag: () => [number, number];
+    readonly mime_from_path: (a: number, b: number) => [number, number];
+    readonly nested_reference_names: (a: number, b: number) => [number, number];
+    readonly ordered_list_glyph: (a: number, b: number) => [number, number];
+    readonly outline_apply_json: (a: number, b: number) => [number, number, number, number];
+    readonly outline_max_depth: () => number;
+    readonly outline_reads_json: (a: number, b: number) => [number, number, number, number];
+    readonly page_alias_spellings: (a: number, b: number, c: number, d: number, e: number) => [number, number];
+    readonly page_file_format: (a: number, b: number) => [number, number];
+    readonly page_header_json: (a: number, b: number) => [number, number];
+    readonly page_identity_key: (a: number, b: number) => [number, number];
+    readonly page_opening_groups_json: (a: number, b: number, c: number) => [number, number];
+    readonly page_parts_with_property: (a: number, b: number, c: number, d: number, e: number, f: number, g: number) => [number, number, number, number];
+    readonly page_preamble_content_json: (a: number, b: number, c: number) => [number, number];
+    readonly page_regions_json: (a: number, b: number, c: number) => [number, number];
+    readonly parse_block_bundle_json: (a: number, b: number, c: number, d: number) => [number, number];
+    readonly parse_block_json: (a: number, b: number, c: number) => [number, number];
+    readonly parse_document_json: (a: number, b: number, c: number) => [number, number];
+    readonly parse_inline_json: (a: number, b: number, c: number) => [number, number];
+    readonly parse_journal_format_json: (a: number, b: number, c: number, d: number) => [number, number];
+    readonly pdf_asset_file: (a: number, b: number) => [number, number];
+    readonly pdf_asset_key: (a: number, b: number, c: number) => [number, number];
+    readonly property_line_json: (a: number, b: number) => [number, number];
+    readonly query_edn_json: (a: number, b: number, c: number, d: number, e: number, f: number) => [number, number];
+    readonly query_macro_extents_json: (a: number, b: number) => [number, number];
+    readonly query_macro_is_tql: (a: number, b: number) => number;
+    readonly raw_byte_of_editor: (a: number, b: number, c: number, d: any, e: number, f: number, g: number) => [number, number, number];
+    readonly reference_target_name: (a: number, b: number, c: number, d: number, e: number, f: number, g: number, h: number, i: number) => [number, number];
+    readonly removal_refs_json: (a: number, b: number, c: number) => [number, number, number, number];
+    readonly render_block_html: (a: number, b: number, c: number) => [number, number];
+    readonly search_fold: (a: number, b: number, c: number) => [number, number];
+    readonly search_matches: (a: number, b: number, c: number, d: number, e: number, f: number, g: number) => number;
+    readonly search_query_json: (a: number, b: number, c: number) => [number, number];
+    readonly search_spans_json: (a: number, b: number, c: number, d: number, e: number, f: number, g: number) => [number, number];
+    readonly search_substring_spans_json: (a: number, b: number, c: number, d: number, e: number, f: number) => [number, number];
+    readonly split_linkable_property: (a: number, b: number) => [number, number];
+    readonly task_checkbox_state: (a: number, b: number) => number;
+    readonly tine_key_aliases: () => [number, number];
+    readonly __wbindgen_malloc: (a: number, b: number) => number;
+    readonly __wbindgen_realloc: (a: number, b: number, c: number, d: number) => number;
+    readonly __wbindgen_exn_store: (a: number) => void;
+    readonly __externref_table_alloc: () => number;
+    readonly __wbindgen_externrefs: WebAssembly.Table;
+    readonly __wbindgen_free: (a: number, b: number, c: number) => void;
+    readonly __externref_drop_slice: (a: number, b: number) => void;
+    readonly __externref_table_dealloc: (a: number) => void;
+    readonly __wbindgen_start: () => void;
+}
+
+export type SyncInitInput = BufferSource | WebAssembly.Module;
+
+/**
+ * Instantiates the given `module`, which can either be bytes or
+ * a precompiled `WebAssembly.Module`.
+ *
+ * @param {{ module: SyncInitInput }} module - Passing `SyncInitInput` directly is deprecated.
+ *
+ * @returns {InitOutput}
+ */
+export function initSync(module: { module: SyncInitInput } | SyncInitInput): InitOutput;
+
+/**
+ * If `module_or_path` is {RequestInfo} or {URL}, makes a request and
+ * for everything else, calls `WebAssembly.instantiate` directly.
+ *
+ * @param {{ module_or_path: InitInput | Promise<InitInput> }} module_or_path - Passing `InitInput` directly is deprecated.
+ *
+ * @returns {Promise<InitOutput>}
+ */
+export default function __wbg_init (module_or_path?: { module_or_path: InitInput | Promise<InitInput> } | InitInput | Promise<InitInput>): Promise<InitOutput>;

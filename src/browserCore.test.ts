@@ -1,12 +1,13 @@
 import { readFileSync } from "node:fs";
-import { expect, it } from "vitest";
-import { initParser } from "./render/parse";
-import { BrowserGraph, __tineReinstantiate } from "./render/wasm/lsdoc_wasm";
+import { beforeAll, expect, it } from "vitest";
+import { loadBrowserCore } from "./browserCore";
+
+let core: Awaited<ReturnType<typeof loadBrowserCore>>;
+beforeAll(async () => { core = await loadBrowserCore(); });
 
 // The browser core (D-20261122-WEX) answers as the desktop app's store: the
 // same graph gives the rows src-tauri's discovery test pins from this fixture.
-it("the browser core's page inventory is the desktop app's", async () => {
-  await initParser();
+it("the browser core's page inventory is the desktop app's", () => {
   const fixture = JSON.parse(readFileSync("tests/fixtures/browser-core-inventory.json", "utf8"));
   const graph = open(fixture.files);
   const wire = JSON.parse(graph.page_inventory_json());
@@ -15,8 +16,7 @@ it("the browser core's page inventory is the desktop app's", async () => {
   expect(wire.unreadable).toEqual(fixture.unreadable);
 });
 
-it("the browser core's read wires match the pinned desktop answers", async () => {
-  await initParser();
+it("the browser core's read wires match the pinned desktop answers", () => {
   const fixture = JSON.parse(readFileSync("tests/fixtures/browser-core-reads.json", "utf8")) as {
     files: [string, string][];
     expected: Record<string, string>;
@@ -95,19 +95,18 @@ it("the browser core's read wires match the pinned desktop answers", async () =>
 
 const encode = (text: string) => new TextEncoder().encode(text);
 const open = (files: [string, string][]) =>
-  new BrowserGraph(
+  new core.BrowserGraph(
     files.map(([path]) => path),
     files.map(([, text]) => encode(text)),
   );
-const names = (graph: BrowserGraph) =>
+const names = (graph: InstanceType<typeof core.BrowserGraph>) =>
   JSON.parse(graph.page_inventory_json()).entries.map((row: { name: string }) => row.name);
 
 // A handle points into the instance that made it: after a fresh instance (a
 // trap's recovery) it is refused, and freeing it leaves the new instance alone.
-it("a handle from a replaced instance is refused", async () => {
-  await initParser();
+it("a handle from a replaced instance is refused", () => {
   const old = open([["pages/old.md", "- old\n"]]);
-  __tineReinstantiate();
+  core.__tineReinstantiate();
   const fresh = open([["pages/fresh.md", "- fresh\n"]]);
   expect(() => old.page_inventory_json()).toThrow(/replaced instance/);
   old.free();
@@ -124,8 +123,8 @@ it("a handle from a replaced instance is refused", async () => {
 });
 
 // The constructor refuses what the desktop open refuses, and mismatched arrays.
-it("the browser core refuses what the desktop open refuses", async () => {
-  await initParser();
+it("the browser core refuses what the desktop open refuses", () => {
+  const { BrowserGraph } = core;
   expect(() => new BrowserGraph(["pages/a.md"], [])).toThrow(/1 paths, 0 files/);
   expect(() => open([["/abs.md", "- x\n"]])).toThrow(/graph-relative/);
   expect(() => open([["logseq/config.edn", '{:pages-directory "../out"}']])).toThrow(/pages directory/);
