@@ -824,7 +824,10 @@ pub(crate) fn open_graph_window_blocking(
         )
         .title(format!("Tine — {name}"))
         .inner_size(1200.0, 820.0)
-        .min_inner_size(640.0, 480.0)
+        .min_inner_size(
+            crate::workspace_windows::GRAPH_WINDOW_MIN_SIZE.0,
+            crate::workspace_windows::GRAPH_WINDOW_MIN_SIZE.1,
+        )
         .initialization_script(format!(
             "window.__GRAPH_PATH__ = {};",
             serde_json::to_string(&meta.root).unwrap_or_else(|_| "\"\"".to_string())
