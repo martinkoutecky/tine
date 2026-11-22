@@ -10,6 +10,9 @@ import { matchOpenjpegImports } from "./lib/pdfjs-openjpeg-abi.mjs";
 const root = fileURLToPath(new URL("../", import.meta.url));
 export const openjpegBuildDir = path.join(root, "target/pdfjs-openjpeg");
 const vendor = path.join(root, "vendor/pdfjs-openjpeg");
+const noFs = fileURLToPath(new URL("./lib/pdfjs-openjpeg-nofs.c", import.meta.url));
+const minimumPackagerVersion = "3.1.69";
+const packagerHelp = `Set TINE_PDFJS_EMCC to use a packager toolchain (Emscripten ${minimumPackagerVersion} or newer).`;
 const sha = bytes => crypto.createHash("sha256").update(bytes).digest("hex");
 const read = file => fs.readFileSync(file, "utf8");
 
@@ -43,21 +46,33 @@ export function buildOpenjpeg({ outDir = openjpegBuildDir, force = false } = {})
   }
   // A packager's toolchain cannot be fingerprinted, so its decoder is never reused, and its receipt never
   // carries the pinned key (a later default build must not ship it).
-  if (compiler) hash.update("packager");
+  if (compiler) hash.update("packager").update(fs.readFileSync(noFs));
   const inputHash = hash.digest("hex"), output = path.join(outDir, "openjpeg.wasm");
   const receipt = path.join(outDir, "BUILD_OPENJPEG.json");
   if (!force && !compiler && fs.existsSync(receipt) && fs.existsSync(output)) {
     const previous = JSON.parse(read(receipt));
     if (previous.inputHash === inputHash && previous.sha256 === sha(fs.readFileSync(output))) return outDir;
   }
-  if (!compiler && !sdk) throw new Error("Building the PDF decoder requires Emscripten 4.0.20 via EMSDK or TINE_PDFJS_EMSDK. Packagers can set TINE_PDFJS_EMCC to use their own compiler. See 'PDF decoder SDK' in README.md.");
+  if (!compiler && !sdk) throw new Error(`Building the PDF decoder requires Emscripten 4.0.20 via EMSDK or TINE_PDFJS_EMSDK. ${packagerHelp} See 'PDF decoder SDK' in README.md.`);
   fs.mkdirSync(path.join(outDir, "obj"), { recursive: true });
   if (!compiler) fs.writeFileSync(config, `LLVM_ROOT = ${JSON.stringify(path.join(sdk, "bin"))}\nBINARYEN_ROOT = ${JSON.stringify(sdk)}\nNODE_JS = [${JSON.stringify(process.execPath)}]\n`);
   const version = tool("emcc", ["--version"], true).split("\n")[0];
-  if (!/\b4\.0\.20\b/.test(version)) {
-    if (!compiler) throw new Error(`Expected Emscripten 4.0.20, got ${version}. Set TINE_PDFJS_EMCC to opt into a packager toolchain.`);
+  const release = /\b\d+\.\d+\.\d+\b/.exec(version)?.[0];
+  const [major, minor, patch] = release?.split(".").map(Number) ?? [];
+  const [minMajor, minMinor, minPatch] = minimumPackagerVersion.split(".").map(Number);
+  if (compiler && (!release || major < minMajor || (major === minMajor &&
+    (minor < minMinor || (minor === minMinor && patch < minPatch))))) {
+    throw new Error(`TINE_PDFJS_EMCC requires Emscripten ${minimumPackagerVersion} or newer, got ${version}.`);
+  }
+  if (release !== "4.0.20") {
+    if (!compiler) throw new Error(`Expected Emscripten 4.0.20, got ${version}. ${packagerHelp}`);
     console.warn(`Building the PDF decoder with TINE_PDFJS_EMCC and ${version} (pinned release version: 4.0.20).`);
   }
+  const legacyExports = Boolean(compiler && major === 3);
+  // Bulk memory replaces the JS memcpy import. BigInt matches the worker's i64 fd_seek.
+  const legacyLink = legacyExports ? ["-mbulk-memory", "-sWASM_BIGINT=1", "-sMINIMAL_RUNTIME=1",
+    noFs, "-Wl,--wrap=__wasi_fd_close"] : [];
+  const runtimeMethods = legacyExports ? ["writeArrayToMemory", "wasmTable"] : ["writeArrayToMemory"];
   // Fixed wasm32 target configuration, equivalent to upstream's CMake probes.
   fs.writeFileSync(path.join(outDir, "opj_config.h"), "#define OPJ_VERSION_MAJOR 2\n#define OPJ_VERSION_MINOR 5\n#define OPJ_VERSION_BUILD 4\n");
   fs.writeFileSync(path.join(outDir, "opj_config_private.h"), '#define OPJ_PACKAGE_VERSION "2.5.4"\n#define OPJ_HAVE_FSEEKO 1\n#define OPJ_HAVE_MALLOC_H\n#define OPJ_HAVE_MEMALIGN\n#define OPJ_HAVE_POSIX_MEMALIGN\n#ifndef _POSIX_C_SOURCE\n#define _POSIX_C_SOURCE 200112L\n#endif\n');
@@ -77,9 +92,9 @@ export function buildOpenjpeg({ outDir = openjpegBuildDir, force = false } = {})
     "-sEXPORT_NAME=OpenJPEG", "-sWASM_ASYNC_COMPILATION=1", "-sEXPORT_ES6=1", "-sSINGLE_FILE=0",
     "-sENVIRONMENT=web", "-sERROR_ON_UNDEFINED_SYMBOLS=1", "-sNO_FILESYSTEM=1", "-sNO_EXIT_RUNTIME=1",
     "-sMALLOC=emmalloc", '-sEXPORTED_FUNCTIONS=["_jp2_decode","_malloc","_free"]',
-    '-sEXPORTED_RUNTIME_METHODS=["writeArrayToMemory"]', "-sASSERTIONS=0", "-flto", ...flags,
-    "--js-library", path.join(vendor, "bridge/myjs.js")]);
-  const wasm = matchOpenjpegImports(fs.readFileSync(output), read(path.join(outDir, "openjpeg.js")), worker.toString());
+    `-sEXPORTED_RUNTIME_METHODS=${JSON.stringify(runtimeMethods)}`, "-sASSERTIONS=0", "-flto", ...flags,
+    "--js-library", path.join(vendor, "bridge/myjs.js"), ...legacyLink]);
+  const wasm = matchOpenjpegImports(fs.readFileSync(output), read(path.join(outDir, "openjpeg.js")), worker.toString(), { legacyExports });
   fs.writeFileSync(output, wasm);
   fs.writeFileSync(path.join(outDir, "LICENSE_OPENJPEG"), read(path.join(vendor, "LICENSE_OPENJPEG")) + "\n" + read(path.join(vendor, "LICENSE_BRIDGE")));
   fs.writeFileSync(receipt, JSON.stringify({ source: provenance.upstream, compiler: version, inputHash,
