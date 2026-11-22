@@ -30,8 +30,17 @@ pub(crate) enum FileSource {
 /// One memory file's content: its bytes, or a page document serialized when
 /// it is opened (so a build graph never holds every page's text at once).
 pub(crate) enum Content {
-    Bytes(Arc<[u8]>),
+    Bytes(Arc<Vec<u8>>),
     Document(Arc<tine_core::doc::Document>),
+}
+
+/// A reader's view of shared bytes (no copy).
+struct SharedBytes(Arc<Vec<u8>>);
+
+impl AsRef<[u8]> for SharedBytes {
+    fn as_ref(&self) -> &[u8] {
+        &self.0
+    }
 }
 
 /// One memory file: its content and the modification time it carries (the
@@ -47,9 +56,9 @@ pub(crate) struct Files {
 
 impl Files {
     /// `files` are graph-relative paths, contents and times, under `root`.
-    /// A repeated path keeps its last content. Refuses a path that is not
-    /// relative and plain (`InvalidInput`: no directory holds it), and one
-    /// that is both a file and a directory (no directory holds both).
+    /// Refuses (`InvalidInput`) a path that is not plain and relative
+    /// ([`super::plain_relative`]), one given twice (`a//b` repeats `a/b`), and
+    /// one that is both a file and a directory: no directory holds them.
     /// O(files × depth).
     pub(crate) fn new(
         root: &Path,
@@ -63,11 +72,7 @@ impl Files {
             io::Error::new(io::ErrorKind::InvalidInput, format!("{why}: {rel:?}"))
         };
         for (rel, content, modified) in files {
-            let plain = !rel.is_empty()
-                && !rel.contains('\\')
-                && (Path::new(&rel).components())
-                    .all(|c| matches!(c, std::path::Component::Normal(_)));
-            if !plain {
+            if !super::plain_relative(&rel) {
                 return Err(invalid(&rel, "not a graph-relative file path"));
             }
             let path = root.join(&rel);
@@ -81,7 +86,7 @@ impl Files {
                 .insert(path.clone(), (content, modified))
                 .is_some()
             {
-                continue;
+                return Err(invalid(&rel, "a path is given twice"));
             }
             // Each file, and each directory when first seen, joins its
             // parent's children once.
@@ -224,7 +229,7 @@ impl FileSource {
                 Ok(match content {
                     Content::Bytes(bytes) => Opened {
                         len: bytes.len() as u64,
-                        reader: Box::new(io::Cursor::new(Arc::clone(bytes))),
+                        reader: Box::new(io::Cursor::new(SharedBytes(Arc::clone(bytes)))),
                     },
                     Content::Document(document) => {
                         let bytes = match tine_core::model::Format::from_path(path) {
@@ -299,15 +304,14 @@ impl FileSource {
 
 impl Graph {
     /// A graph of `files` held in memory under the config among them
-    /// (`WholeGraph::from_files`), read as a disk open reads its own and
-    /// refused for the configured directories' spelling as a disk open is
-    /// (a memory graph has no symlinks for the disk's containment check).
+    /// (`WholeGraph::from_files`), read and refused as a disk open reads and
+    /// refuses its own ([`Graph::check_layout`]; a memory graph has no links
+    /// for the disk's containment check).
     pub(crate) fn in_memory_with_config(files: Vec<MemoryFile>) -> io::Result<Graph> {
         let root = PathBuf::from(MEMORY_ROOT);
         let files = Files::new(&root, files)?;
         let graph = Self::open_from(root, FileSource::Memory(Arc::new(files)));
-        super::managed_dir_spelling(&graph.config.journals_dir, "journals")?;
-        super::managed_dir_spelling(&graph.config.pages_dir, "pages")?;
+        graph.check_layout()?;
         Ok(graph)
     }
 

@@ -54,7 +54,7 @@ impl WholeGraph {
         files: Vec<(String, Vec<u8>)>,
     ) -> io::Result<(WholeGraph, tine_core::model::GraphMeta)> {
         let files = (files.into_iter())
-            .map(|(rel, bytes)| (rel, Content::Bytes(bytes.into()), None))
+            .map(|(rel, bytes)| (rel, Content::Bytes(Arc::new(bytes)), None))
             .collect();
         Ok(Self::in_memory(Graph::in_memory_with_config(files)?))
     }

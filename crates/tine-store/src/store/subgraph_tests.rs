@@ -203,7 +203,12 @@ fn config_problems_answer_alike_from_files() {
         store.close();
         let (view, _) = WholeGraph::from_files(files_under(temp.path())).unwrap();
         let memory = view.config().problem.as_ref().map(|error| error.kind);
-        assert_eq!(memory, disk, "{case}");
+        // Windows opens a directory as PermissionDenied: the problem is there,
+        // its kind is the platform's.
+        if cfg!(unix) {
+            assert_eq!(memory, disk, "{case}");
+        }
+        assert_eq!(memory.is_some(), disk.is_some(), "{case}");
         assert_eq!(disk.is_some(), case != "absent", "{case}: {disk:?}");
     }
 }
@@ -221,6 +226,12 @@ fn from_files_refuses_paths_no_directory_holds() {
         vec![file("pages\\a.md")],
         vec![file("pages/a.md"), file("pages/a.md/b.md")],
         vec![file("pages/a/b.md"), file("pages/a")],
+        vec![file("pages/a\0.md")],
+        vec![file("pages/a.md"), file("pages/a.md")],
+        vec![file("pages/a.md"), file("pages//a.md")],
+        vec![file("pages/a.md"), file("pages/./a.md")],
+        vec![file("pages/a.md"), file("pages/a.md/")],
+        vec![file("pages/a.md"), file("pages/a.md/.")],
     ];
     for files in sets {
         let kind = WholeGraph::from_files(files.clone())
@@ -309,7 +320,7 @@ fn a_flat_directory_builds_in_linear_time() {
         .map(|n| {
             (
                 format!("pages/p{n}.md"),
-                crate::model::file_source::Content::Bytes(Arc::from(&b"- x\n"[..])),
+                crate::model::file_source::Content::Bytes(Arc::new(b"- x\n".to_vec())),
                 None,
             )
         })
@@ -319,4 +330,65 @@ fn a_flat_directory_builds_in_linear_time() {
     let elapsed = began.elapsed();
     assert!(elapsed < std::time::Duration::from_secs(1), "{elapsed:?}");
     drop(built);
+}
+
+/// Every layout shape opens or is refused alike (round 2 of the 11/22 review:
+/// a directory below a file, NUL in a setting, `assets` a file). The disk
+/// column is pinned, so neither side can drift alone.
+#[test]
+fn layouts_open_or_refuse_alike() {
+    let cases: &[(&str, &str, &[&str], bool)] = &[
+        ("pages is a file", "", &["pages"], true),
+        ("journals is a file", "", &["journals"], true),
+        ("publish is a file", "", &["publish"], true),
+        (
+            "pages under a file",
+            "{:pages-directory \"x/pages\"}",
+            &["x"],
+            false,
+        ),
+        (
+            "journals under a file",
+            "{:journals-directory \"x/j\"}",
+            &["x"],
+            false,
+        ),
+        ("assets is a file", "", &["assets"], false),
+        (
+            "NUL in a setting",
+            "{:pages-directory \"pa\\u0000ges\"}",
+            &[],
+            false,
+        ),
+        ("trailing slash", "{:pages-directory \"pages/\"}", &[], true),
+        ("double slash", "{:pages-directory \"a//pages\"}", &[], true),
+        (
+            "dot component",
+            "{:pages-directory \"a/./pages\"}",
+            &[],
+            true,
+        ),
+    ];
+    for (case, config, as_files, opens) in cases {
+        let temp = tempfile::tempdir().unwrap();
+        let root = temp.path();
+        std::fs::create_dir_all(root.join("journals")).unwrap();
+        std::fs::create_dir_all(root.join("pages")).unwrap();
+        std::fs::write(root.join("pages/a.md"), "- a\n").unwrap();
+        for rel in *as_files {
+            let path = root.join(rel);
+            if path.is_dir() {
+                std::fs::remove_dir_all(&path).unwrap();
+            }
+            std::fs::write(path, "x").unwrap();
+        }
+        if !config.is_empty() {
+            std::fs::create_dir_all(root.join("logseq")).unwrap();
+            std::fs::write(root.join("logseq/config.edn"), config).unwrap();
+        }
+        let disk = open_disk(root).map(|(store, _)| store.close()).is_ok();
+        let memory = WholeGraph::from_files(files_under(root)).is_ok();
+        assert_eq!(disk, *opens, "{case}: the disk");
+        assert_eq!(memory, disk, "{case}: memory against the disk");
+    }
 }

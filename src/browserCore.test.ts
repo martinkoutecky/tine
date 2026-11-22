@@ -38,6 +38,14 @@ it("a handle from a replaced instance is refused", async () => {
   expect(() => old.page_inventory_json()).toThrow(/replaced instance/);
   old.free();
   expect(names(fresh)).toEqual(["fresh"]);
+  // A freed handle is refused too, and freeing it again is a no-op.
+  const freed = open([["pages/freed.md", "- freed\n"]]);
+  freed.free();
+  expect(() => freed.page_inventory_json()).toThrow(/freed handle/);
+  expect(() => freed.config_problem_json()).toThrow(/freed handle/);
+  freed.free();
+  freed[Symbol.dispose]();
+  expect(names(fresh)).toEqual(["fresh"]);
   fresh.free();
 });
 
@@ -47,9 +55,14 @@ it("the browser core refuses what the desktop open refuses", async () => {
   expect(() => new BrowserGraph(["pages/a.md"], [])).toThrow(/1 paths, 0 files/);
   expect(() => open([["/abs.md", "- x\n"]])).toThrow(/graph-relative/);
   expect(() => open([["logseq/config.edn", '{:pages-directory "../out"}']])).toThrow(/pages directory/);
-  const graph = open([["logseq/config.edn", "\u00ff"], ["pages/a.md", "- a\n"]]);
-  expect(JSON.parse(graph.config_problem_json())).toBeNull();
-  graph.free();
+  const fine = open([["pages/a.md", "- a\n"]]);
+  expect(JSON.parse(fine.config_problem_json())).toBeNull();
+  fine.free();
+  const unreadable = new BrowserGraph(["logseq/config.edn", "pages/a.md"], [new Uint8Array([0xff]), encode("- a\n")]);
+  expect(JSON.parse(unreadable.config_problem_json())).toMatchObject({ kind: "config-read" });
+  unreadable.free();
+  expect(() => open([["pages/a.md", "- a\n"], ["pages//a.md", "- b\n"]])).toThrow(/given twice/);
+  expect(() => open([["pages/a.md", "x"], ["x/pages/b.md", "x"], ["logseq/config.edn", '{:pages-directory "pages/a.md/p"}']])).toThrow(/under a file/);
   const icloud = open([["logseq/.config.edn.icloud", "x"], ["pages/a.md", "- a\n"]]);
   expect(JSON.parse(icloud.config_problem_json())).toMatchObject({ kind: "config-read" });
   icloud.free();

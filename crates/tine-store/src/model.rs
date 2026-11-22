@@ -2562,21 +2562,18 @@ fn validate_managed_dir(root: &Path, raw: &str, label: &str) -> io::Result<()> {
     Ok(())
 }
 
-/// The spelling half of [`validate_managed_dir`]: a nonempty plain relative
-/// path. A memory graph checks only this (it has no symlinks to escape by).
-pub(crate) fn managed_dir_spelling(raw: &str, label: &str) -> io::Result<()> {
-    if raw.is_empty() || raw.contains('\\') {
-        return Err(io::Error::new(
-            io::ErrorKind::InvalidInput,
-            format!("invalid {label} directory: {raw:?}"),
-        ));
-    }
-    let rel = Path::new(raw);
-    if rel.is_absolute()
-        || rel
-            .components()
-            .any(|c| !matches!(c, std::path::Component::Normal(_)))
-    {
+/// Whether `raw` is a plain graph-relative path: nonempty, no backslash or NUL,
+/// and only normal components (`a//b` and `a/./b` name `a/b`). The one spelling
+/// rule for configured directories and a memory graph's file paths.
+pub(crate) fn plain_relative(raw: &str) -> bool {
+    !raw.is_empty()
+        && !raw.contains(['\\', '\0'])
+        && (Path::new(raw).components()).all(|c| matches!(c, std::path::Component::Normal(_)))
+}
+
+/// The spelling half of [`validate_managed_dir`] ([`plain_relative`]).
+fn managed_dir_spelling(raw: &str, label: &str) -> io::Result<()> {
+    if !plain_relative(raw) {
         return Err(io::Error::new(
             io::ErrorKind::InvalidInput,
             format!("{label} directory must be a safe relative path: {raw:?}"),
@@ -2643,6 +2640,41 @@ impl From<io::Error> for CheckedOpenError {
 }
 
 impl Graph {
+    /// The layout every open refuses, read through the graph's source (one
+    /// answer for the disk and memory opens): a configured directory not
+    /// spelled as a plain relative path or below a file, and an `assets` that
+    /// is a file. The disk open then checks where links lead
+    /// ([`validate_managed_dir`]); a memory graph has none. O(directory depth).
+    pub(crate) fn check_layout(&self) -> io::Result<()> {
+        let dirs = [
+            (self.config.journals_dir.as_str(), "journals"),
+            (self.config.pages_dir.as_str(), "pages"),
+            ("logseq", "logseq"),
+            ("publish", "publish"),
+        ];
+        let is_file =
+            |path: &Path| matches!(self.source.lstat(path), Ok(file_source::EntryKind::File));
+        for (raw, label) in dirs {
+            managed_dir_spelling(raw, label)?;
+            let dir = self.root.join(raw);
+            let mut above = dir.ancestors().skip(1).take_while(|a| *a != self.root);
+            if above.any(is_file) {
+                return Err(io::Error::new(
+                    io::ErrorKind::InvalidInput,
+                    format!("{label} directory is under a file: {raw:?}"),
+                ));
+            }
+        }
+        let assets = self.root.join("assets");
+        if is_file(&assets) {
+            return Err(io::Error::new(
+                io::ErrorKind::InvalidInput,
+                format!("assets path is not a directory: {}", assets.display()),
+            ));
+        }
+        Ok(())
+    }
+
     pub(crate) fn validate_config_layout(&self, config: &Config) -> io::Result<()> {
         validate_managed_dir(&self.root, &config.journals_dir, "journals")?;
         validate_managed_dir(&self.root, &config.pages_dir, "pages")
@@ -2738,6 +2770,7 @@ impl Graph {
         approved_assets: Option<&Path>,
     ) -> Result<Graph, CheckedOpenError> {
         let mut graph = Self::open_inner(root);
+        graph.check_layout()?;
         validate_managed_dir(&graph.root, &graph.config.journals_dir, "journals")?;
         validate_managed_dir(&graph.root, &graph.config.pages_dir, "pages")?;
         validate_managed_dir(&graph.root, "logseq", "logseq")?;
