@@ -11,6 +11,8 @@ The format follows [Keep a Changelog](https://keepachangelog.com/); versions use
 ### Fixed
 
 - The main window and additional graph windows can now be resized down to 390 pt wide on desktop (#1005).
+- Configured Hiccup macros render bare-word arguments like `{{r education}}`, just like their quoted equivalents (#1018).
+- Enter at the end of an expanded block embed adds a visible first child and moves the caret there, even when the source is folded (#1023).
 - Distribution packagers can build the PDF decoder with Debian trixie's Emscripten 3.1.69 using `TINE_PDFJS_EMCC` (#1027).
 
 ## [0.9.1] - 2026-11-19

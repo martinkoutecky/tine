@@ -626,6 +626,77 @@ describe("renderBlocks", () => {
 });
 
 describe("user macro helpers", () => {
+  describe.each([
+    { position: "inline", prefix: "" },
+    { position: "block", prefix: "Intro\n" },
+  ])("configured macro Hiccup in $position position (#1018)", ({ prefix }) => {
+    it.each([
+      ["education", "education"],
+      ['"education"', "education"],
+      ["42", "42"],
+      ["+.5e+2", "+.5e+2"],
+      ["O'Brien", "O'Brien"],
+      ["'education", "'education"],
+      ["education'", "education'"],
+      ["rock'n'roll", "rock'n'roll"],
+      ["label/O'Brien", "O'Brien"],
+      ["label/'education", "'education"],
+      ["O’Brien", "O’Brien"],
+      ["education|training", "education|training"],
+      ["education☀", "education☀"],
+      ["👍", "👍"],
+      [".5edition", ".5edition"],
+      ["/", "/"],
+      ["label//", "/"],
+      ["label/+1", "+1"],
+      ["label/-1", "-1"],
+      ["label/.1", ".1"],
+      ["label/#hash", "#hash"],
+      ["label/:child", ":child"],
+    ])("renders %s as colored bold text", (argument, expectedText) => {
+      setGraphMeta({ macros: { r: `${prefix}[:b {:style "color: #E91E63"} $1]` } } as never);
+      const root = document.createElement("div");
+      const dispose = render(() => <AstBody raw={`{{r ${argument}}}`} />, root);
+      try {
+        const bold = root.querySelector("b");
+        expect(bold?.textContent, root.textContent ?? "").toBe(expectedText);
+        expect(bold?.style.color).toBe("rgb(233, 30, 99)");
+      } finally {
+        dispose();
+      }
+    });
+
+    it.each([
+      "1invalid",
+      "+1invalid",
+      "-1invalid",
+      "/label",
+      "label/",
+      "label/1name",
+      "label/name/extra",
+      "label///",
+      "label:/name",
+      "label/name:",
+      "label:",
+      "::label",
+      "@label",
+      "label@name",
+      "label`name",
+      "label~name",
+      "1'education",
+    ])("shows literal Hiccup for invalid EDN %s", (argument) => {
+      setGraphMeta({ macros: { r: `${prefix}[:b {:style "color: #E91E63"} $1]` } } as never);
+      const root = document.createElement("div");
+      const dispose = render(() => <AstBody raw={`{{r ${argument}}}`} />, root);
+      try {
+        expect(root.querySelector("b")).toBeNull();
+        expect(root.textContent).toContain(`[:b {:style "color: #E91E63"} ${argument}]`);
+      } finally {
+        dispose();
+      }
+    });
+  });
+
   it("renders configured Hiccup as rich output through the main AstBody path", () => {
     setGraphMeta({ macros: { rich: '[:span {:class "lane-rich"} "Rich macro"]' } } as never);
     const h = html(() => <AstBody raw="{{rich}}" />);
@@ -665,14 +736,14 @@ describe("user macro helpers", () => {
         {renderInlines([
           { k: "macro", name: "rich", args: [] },
           { k: "plain", text: " / " },
-          { k: "hiccup", v: '[:span.direct-inline "Direct inline"]' },
+          { k: "hiccup", v: '[:span.direct-inline inline]' },
         ])}
-        <AstBody raw={'Intro\n[:div.direct-block "Direct block"]'} />
+        <AstBody raw={"Intro\n[:div.direct-block block]"} />
       </div>
     ));
     expect(h).toContain('class="macro-rich"');
-    expect(h).toContain('class="direct-inline"');
-    expect(h).toContain('class="direct-block"');
+    expect(h).toContain('<span class="direct-inline">inline</span>');
+    expect(h).toContain('<div class="direct-block">block</div>');
     expect(h).not.toContain("[:span.direct-inline");
     expect(h).not.toContain("[:div.direct-block");
   });
@@ -727,7 +798,7 @@ describe("user macro helpers", () => {
   it.each([
     '[:span',
     '(fn [] "x")',
-    '[:span symbol]',
+    '[:span nil]',
     '[:span #{"set"}]',
     '[:span #thing "tagged"]',
     '[:sp@n "bad"]',
