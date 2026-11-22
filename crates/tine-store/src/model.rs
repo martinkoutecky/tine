@@ -164,12 +164,9 @@ impl std::error::Error for ParserPanicked {}
 /// opens read-only (`ConfigState::problem`) instead of writing under the
 /// default :legacy file names. A plainly absent config.edn is no problem
 /// (Logseq's defaults). Cost: one metadata call.
-pub(crate) fn missing_config_problem(
-    source: &FileSource,
-    config_path: &Path,
-) -> Option<crate::IoError> {
+pub(crate) fn missing_config_problem(config_path: &Path) -> Option<crate::IoError> {
     let placeholder = config_path.with_file_name(".config.edn.icloud");
-    source.lstat(&placeholder).is_ok().then(|| {
+    placeholder.symlink_metadata().is_ok().then(|| {
         io::Error::other(
             "config.edn is in iCloud but not downloaded yet; open the graph again once it is",
         )
@@ -534,7 +531,7 @@ pub(crate) fn parse_doc_with_opts(path: &Path, source: &str) -> (Document, doc::
 pub(crate) struct Graph {
     pub(crate) root: PathBuf,
     /// Where the read path gets the graph's files (disk, or memory for
-    /// `WholeGraph::from_pages`).
+    /// `WholeGraph::subgraph`).
     pub(crate) source: FileSource,
     pub(crate) root_binding: Arc<crate::root_binding::RootBinding>,
     /// The canonical filesystem capability used for every asset operation. For
@@ -2555,20 +2552,6 @@ impl FindEntryIndex {
 /// ancestor outside the graph would turn ordinary save/delete/restore operations
 /// into writes against unrelated files.
 fn validate_managed_dir(root: &Path, raw: &str, label: &str) -> io::Result<()> {
-    managed_dir_lexical(raw, label)?;
-    let candidate = root.join(raw);
-    if !path_stays_within_root(root, &candidate) || path_uses_managed_alias(root, &candidate) {
-        return Err(io::Error::new(
-            io::ErrorKind::InvalidInput,
-            format!("{label} directory escapes graph root: {raw:?}"),
-        ));
-    }
-    Ok(())
-}
-
-/// The spelling rule of [`validate_managed_dir`]: a non-empty relative path
-/// of plain components, no backslash.
-fn managed_dir_lexical(raw: &str, label: &str) -> io::Result<()> {
     if raw.is_empty() || raw.contains('\\') {
         return Err(io::Error::new(
             io::ErrorKind::InvalidInput,
@@ -2584,6 +2567,13 @@ fn managed_dir_lexical(raw: &str, label: &str) -> io::Result<()> {
         return Err(io::Error::new(
             io::ErrorKind::InvalidInput,
             format!("{label} directory must be a safe relative path: {raw:?}"),
+        ));
+    }
+    let candidate = root.join(rel);
+    if !path_stays_within_root(root, &candidate) || path_uses_managed_alias(root, &candidate) {
+        return Err(io::Error::new(
+            io::ErrorKind::InvalidInput,
+            format!("{label} directory escapes graph root: {raw:?}"),
         ));
     }
     Ok(())
@@ -2647,20 +2637,9 @@ impl From<io::Error> for CheckedOpenError {
 }
 
 impl Graph {
-    /// Whether `config`'s pages and journals directories are safe graph
-    /// directories. A memory graph has no disk to escape to: only the
-    /// lexical rule applies there.
     pub(crate) fn validate_config_layout(&self, config: &Config) -> io::Result<()> {
-        for (raw, label) in [
-            (&config.journals_dir, "journals"),
-            (&config.pages_dir, "pages"),
-        ] {
-            match self.source {
-                FileSource::Disk => validate_managed_dir(&self.root, raw, label)?,
-                FileSource::Memory(_) => managed_dir_lexical(raw, label)?,
-            }
-        }
-        Ok(())
+        validate_managed_dir(&self.root, &config.journals_dir, "journals")?;
+        validate_managed_dir(&self.root, &config.pages_dir, "pages")
     }
 
     #[cfg(test)]
@@ -2817,34 +2796,38 @@ impl Graph {
     }
 
     pub(crate) fn open_inner(root: impl AsRef<Path>) -> Graph {
-        Self::open_from(root.as_ref().to_path_buf(), FileSource::Disk)
-    }
-
-    /// A graph over `files` (graph-relative path and bytes; a
-    /// `logseq/config.edn` among them is its config) held in memory: the
-    /// load, the naming and every page read take them from there
-    /// ([`FileSource::Memory`]). Such a graph is only read
-    /// (`WholeGraph::from_pages`); nothing writes it.
-    pub(crate) fn in_memory(files: Vec<file_source::MemoryFile>) -> Graph {
-        let root = PathBuf::from(file_source::MEMORY_ROOT);
-        let files = file_source::Files::new(&root, files);
-        Self::open_from(root, FileSource::Memory(Arc::new(files)))
-    }
-
-    fn open_from(root: PathBuf, source: FileSource) -> Graph {
-        let config_path = root.join("logseq/config.edn");
-        let (config, problem) = match read_parse_input_in(&source, &config_path) {
+        let root = root.as_ref().to_path_buf();
+        let (config, problem) = match read_parse_input(&root.join("logseq/config.edn")) {
             Ok(text) => (Config::parse(&text), None),
             Err(error) if error.kind() == io::ErrorKind::NotFound => (
                 Config::default(),
-                missing_config_problem(&source, &config_path),
+                missing_config_problem(&root.join("logseq/config.edn")),
             ),
             Err(error) => (Config::default(), Some(error.into())),
         };
         let journal_format = config.journal_format();
-        let mut graph = Self::empty_with_config(root, source, config, journal_format);
+        let mut graph = Self::empty_with_config(root, FileSource::Disk, config, journal_format);
         graph.config_read_problem = problem;
         graph
+    }
+
+    /// A graph of `files` (graph-relative path, bytes, modification time)
+    /// held in memory under `config`: the load, the naming and every page
+    /// read take them from there ([`FileSource::Memory`]). Such a graph is
+    /// only read (`WholeGraph::subgraph`); nothing writes it.
+    pub(crate) fn in_memory(
+        files: Vec<file_source::MemoryFile>,
+        config: Config,
+        journal_format: JournalFormat,
+    ) -> Graph {
+        let root = PathBuf::from(file_source::MEMORY_ROOT);
+        let files = file_source::Files::new(&root, files);
+        Self::empty_with_config(
+            root,
+            FileSource::Memory(Arc::new(files)),
+            config,
+            journal_format,
+        )
     }
 
     fn empty_with_config(
@@ -3900,13 +3883,10 @@ impl Graph {
         // (which could expose an arbitrary file outside the graph), and recheck
         // canonical containment immediately before the read to close rename /
         // symlink-swap races between directory scanning and reconciliation.
-        let md = match fs::symlink_metadata(path) {
-            Ok(md) => md,
+        match self.source.graph_file(&self.root, path) {
+            Ok(true) => {}
+            Ok(false) => return SyncFileResult::Excluded,
             Err(error) => return SyncFileResult::ReadFailed(error),
-        };
-        if md.file_type().is_symlink() || !md.is_file() || !path_stays_within_root(&self.root, path)
-        {
-            return SyncFileResult::Excluded;
         }
         #[cfg(test)]
         if self

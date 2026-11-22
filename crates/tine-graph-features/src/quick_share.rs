@@ -390,7 +390,7 @@ pub fn prepare(
     // The private build graph: the selected documents as they were reviewed,
     // plus the graph's parse configuration (journal formats, property rules).
     let (title, snapshot) = crate::build_graph::with_build_graph(
-        store,
+        &graph,
         &selected.pages,
         "the shared pages did not read back as the same pages; nothing was shared",
         |private_graph, meta, mut corpus| {

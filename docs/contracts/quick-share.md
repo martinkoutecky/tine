@@ -222,7 +222,8 @@ of that name, never an unexported page. A query export's home-query record
 names its execution page (`executed_context.current_page`) only when that page
 is exported, by its exported name; an unexported host is omitted. Hidden
 folders (`:hidden`) are never selectable. The private graph is built in
-memory by the store's own load (`WholeGraph::from_pages`); nothing is written.
+memory by the store's own load, under the selecting view's config and page
+times (`WholeGraph::subgraph`); nothing is read from or written to disk.
 A page that reads back differently from the reviewed selection, or that is
 private in the bytes actually copied, refuses the share.
 
