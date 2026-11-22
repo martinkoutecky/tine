@@ -100,15 +100,18 @@ fn assert_same_answers(root: &Path, build: Build) -> Vec<String> {
     .unwrap();
     let disk = store.whole_graph().unwrap();
     let disk_root = Store::canonical_root(root).unwrap().display().to_string();
-    let (memory, meta) = match build {
-        Build::Subgraph => disk.subgraph(documents(files_under(root))).unwrap(),
+    let (memory, memory_root) = match build {
+        Build::Subgraph => {
+            let (view, meta) = disk.subgraph(documents(files_under(root))).unwrap();
+            (view, meta.root)
+        }
         Build::Files => WholeGraph::from_files(files_under(root)).unwrap(),
     };
-    assert_eq!(meta.root, crate::model::file_source::MEMORY_ROOT);
+    assert_eq!(memory_root, crate::model::file_source::MEMORY_ROOT);
     let times = build == Build::Subgraph;
     let (disk, memory) = (
         answers(&disk, &disk_root, times),
-        answers(&memory, crate::model::file_source::MEMORY_ROOT, times),
+        answers(&memory, &memory_root, times),
     );
     store.close();
     assert!(disk.len() > 4, "the fixture has pages");

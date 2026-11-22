@@ -292,12 +292,9 @@ impl GraphSlot {
 }
 
 pub(crate) fn graph_meta(slot: &GraphSlot) -> tine_core::model::GraphMeta {
-    let config = slot.store.config();
-    let format = config.journal_format();
-    tine_core::model::GraphMeta::from_config(
+    tine_graph_features::graph_read_wire::graph_meta_wire(
         slot.root_key.display().to_string(),
-        &config.config,
-        &format,
+        &slot.store.config(),
     )
 }
 

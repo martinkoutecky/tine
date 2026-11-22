@@ -17,6 +17,7 @@ pub mod config;
 pub mod config_problem;
 pub mod conflicts;
 pub mod custom_css;
+pub mod graph_read_wire;
 pub mod graph_verification;
 pub mod guide;
 pub mod inventory_wire;
@@ -36,6 +37,8 @@ pub mod publish;
 pub mod publish_query;
 #[cfg(not(target_arch = "wasm32"))]
 mod published_answers;
+pub mod query_error_wire;
+pub mod query_wire;
 #[cfg(not(target_arch = "wasm32"))]
 pub mod quick_share;
 mod render;

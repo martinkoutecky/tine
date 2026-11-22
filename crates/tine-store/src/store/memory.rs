@@ -33,45 +33,46 @@ impl WholeGraph {
                 (rel, Content::Document(document), time)
             })
             .collect();
-        Ok(Self::in_memory(Graph::in_memory(
+        let graph = Graph::in_memory(
             files,
             tine_core::config::Config::clone(&self.config.config),
             JournalFormat::clone(&self.journal_format),
-        )?))
+        )?;
+        let view = Self::in_memory(&graph);
+        let meta = tine_core::model::GraphMeta::from_config(
+            graph.root.display().to_string(),
+            &view.config.config,
+            &graph.journal_format,
+        );
+        Ok((view, meta))
     }
 
     /// The whole-graph view of a graph's text files (graph-relative path and
     /// bytes, `logseq/config.edn` among them), held in memory: what
     /// `Store::open` of a directory holding exactly these files answers, with
-    /// no page times. The browser's graph (a published export's pages). Its
-    /// graph metadata names the root `/tine-memory-graph`. Cost: one read and
+    /// no page times. The browser's graph (a published export's pages). The
+    /// returned root spelling is `/tine-memory-graph`. Cost: one read and
     /// parse of each file and the initial index capture, as a store open has.
     /// Refuses what `Store::open` refuses for the configured directories'
     /// spelling, and (`InvalidInput`) a path that is not graph-relative or is
     /// both a file and a directory; a config read problem is the view's
     /// `config().problem`, as on disk.
-    pub fn from_files(
-        files: Vec<(String, Vec<u8>)>,
-    ) -> io::Result<(WholeGraph, tine_core::model::GraphMeta)> {
+    pub fn from_files(files: Vec<(String, Vec<u8>)>) -> io::Result<(WholeGraph, String)> {
         let files = (files.into_iter())
             .map(|(rel, bytes)| (rel, Content::Bytes(bytes.into()), None))
             .collect();
-        Ok(Self::in_memory(Graph::in_memory_with_config(files)?))
+        let graph = Graph::in_memory_with_config(files)?;
+        Ok((Self::in_memory(&graph), graph.root.display().to_string()))
     }
 
     /// A memory graph's view: the store's launch pass and first publication.
-    fn in_memory(graph: Graph) -> (WholeGraph, tine_core::model::GraphMeta) {
+    fn in_memory(graph: &Graph) -> WholeGraph {
         graph.install_live_config();
         graph.warm_cache_cancellable(|| false);
         let problem = graph.config_read_problem.clone();
-        let config = ConfigState::of(&graph, Arc::new(graph.config.clone()), problem);
-        let meta = tine_core::model::GraphMeta::from_config(
-            graph.root.display().to_string(),
-            &config.config,
-            &graph.journal_format,
-        );
+        let config = ConfigState::of(graph, Arc::new(graph.config.clone()), problem);
         let snapshot = Snapshot::capture(
-            &graph,
+            graph,
             &RwLock::new(config),
             None,
             &Default::default(),
@@ -81,6 +82,6 @@ impl WholeGraph {
             &HashMap::new(),
             &Default::default(),
         );
-        (WholeGraph::of(Arc::new(snapshot)), meta)
+        WholeGraph::of(Arc::new(snapshot))
     }
 }

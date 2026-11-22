@@ -25,7 +25,9 @@
 //!   `:journal/file-name-format` (the two configuration values a snapshot
 //!   carries on purpose: the viewer's date parser needs them) and the days
 //!   whose journal has content (`WholeGraph::journal_content_days`).
-use crate::inventory_wire::{alias_group_wire, entry_wire, PageInventoryEntryWire, ResolvedWire};
+use crate::inventory_wire::{
+    alias_group_wire, entry_wire, resolve_name, PageInventoryEntryWire, ResolvedWire,
+};
 use serde_json::{json, Value};
 use std::collections::HashSet;
 use std::io;
@@ -110,7 +112,7 @@ pub(crate) fn answers(
             {
                 continue;
             }
-            let target = ResolvedWire::from(graph.resolve(&row.name, is_journal));
+            let target = resolve_name(graph, &row.name, is_journal);
             // Every non-absent wrong-kind answer, also a day asked as a page
             // (CM-DATE): the frozen v1 reader reads only the asked kind's
             // row and this table (`docs/contracts/quick-share.md`).

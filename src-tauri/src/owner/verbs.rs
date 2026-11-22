@@ -147,20 +147,30 @@ pub(crate) fn answer_verb(slot: &GraphSlot, request: &Request) -> Result<Value, 
                 pages,
                 blocks,
             } = parse(args)?;
-            let execution = tine_graph_features::search::run_graph_search(
-                &slot.store,
+            let view = slot.store.whole_graph_reconciled().map_err(|error| {
+                read_failed(Diag::ReadFailed, format!("graph load failed: {error:?}"))
+            })?;
+            let execution = tine_graph_features::search::run_graph_search_sequenced(
+                &view,
                 &slot.block_search_lanes,
                 text,
                 pages.unwrap_or(20).min(500),
                 blocks.unwrap_or(50).min(5000),
+                None,
                 None,
                 false,
                 None,
                 None,
                 None,
                 None,
+                false,
             )
-            .map_err(|e| read_failed(Diag::ReadFailed, crate::commands::feature_search_error(e)))?;
+            .map_err(|e| {
+                read_failed(
+                    Diag::ReadFailed,
+                    tine_graph_features::query_error_wire::query_error(e),
+                )
+            })?;
             Ok(ok("search", to_value(&execution)?))
         }
         "query" => {
@@ -173,7 +183,7 @@ pub(crate) fn answer_verb(slot: &GraphSlot, request: &Request) -> Result<Value, 
             } else {
                 QueryTextDialect::MacroQuery
             };
-            let parsed = crate::query_ir::parse(&graph, &text, dialect, &[])
+            let parsed = tine_graph_features::query_wire::parse(&graph, &text, dialect, &[])
                 .map_err(|e| ErrorBody::new("bad-args", e, false))?;
             // An advanced (datalog) form carries a provisional parse-time
             // diagnostic that execution-time resolution replaces by its own
@@ -193,7 +203,7 @@ pub(crate) fn answer_verb(slot: &GraphSlot, request: &Request) -> Result<Value, 
                 return Err(body);
             }
             let run = slot.begin_query_run();
-            let result = crate::query_ir::run(
+            let result = tine_graph_features::query_wire::run(
                 &graph,
                 &parsed.query,
                 &parsed.view,

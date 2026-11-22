@@ -328,9 +328,9 @@ fn the_config_key_is_exactly_what_the_build_reads() {
     );
 }
 
-/// The `GraphMeta::from_config` exemption: in shipped code tine-store builds
-/// `GraphMeta` only to return it from `Store::open` (`Graph::meta` is
-/// test-only), and reads no `GraphMeta` back.
+/// The `GraphMeta::from_config` exemption: tine-store builds `GraphMeta`
+/// to return it from `Store::open` and `WholeGraph::subgraph`, and reads
+/// no `GraphMeta` back.
 #[test]
 fn graph_meta_stays_out_of_the_generation() {
     struct Users {
@@ -382,9 +382,7 @@ fn graph_meta_stays_out_of_the_generation() {
     }
     assert_eq!(
         users.users,
-        // The memory views (`subgraph`, `from_files`, their shared
-        // `in_memory`) build the caller's GraphMeta as `open` does.
-        BTreeSet::from(["open", "subgraph", "from_files", "in_memory"].map(str::to_owned)),
+        BTreeSet::from(["open", "subgraph"].map(str::to_owned)),
         "{RULE}: a new GraphMeta use in tine-store may carry display settings into the generation"
     );
     assert_eq!(users.meta_calls, 0, "{RULE}: tine-store reads no GraphMeta");

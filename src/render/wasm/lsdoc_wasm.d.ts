@@ -1,19 +1,24 @@
 /* tslint:disable */
 /* eslint-disable */
 
-/**
- * The browser core (D-20261122-WEX): the store's whole-graph view of a
- * graph's text files held in memory, answering through the same wire forms
- * as the desktop app's commands.
- */
 export class BrowserGraph {
     free(): void;
     [Symbol.dispose](): void;
+    capture_quick_switch_json(query: string, limit: number, transliteration: boolean): string;
     /**
-     * The `config_problem` of the desktop `load_graph` answer: `null`, or the
-     * problem the graph's `config.edn` was read with.
+     * The config read problem of the desktop `load_graph` answer, or null.
      */
     config_problem_json(): string;
+    get_backlink_filter_context_json(name: string, targets_json: string): string;
+    get_backlinks_json(name: string): string;
+    get_block_ref_counts_json(): string;
+    get_block_referrers_json(uuid: string): string;
+    get_unlinked_refs_json(name: string): string;
+    /**
+     * The effective metadata of the desktop `load_graph` answer.
+     */
+    graph_meta_json(): string;
+    journal_content_days_json(): string;
     /**
      * `files[i]` holds the bytes of the graph-relative `paths[i]`,
      * `logseq/config.edn` among them. Throws (a string) what the desktop open
@@ -22,10 +27,35 @@ export class BrowserGraph {
      * initial index capture, as a desktop open has.
      */
     constructor(paths: string[], files: Uint8Array[]);
-    /**
-     * The `page_inventory` command's answer.
-     */
+    page_alias_group_json(name: string): string;
+    page_backlink_counts_json(): string;
+    page_icons_json(names_json: string): string;
     page_inventory_json(): string;
+    page_modified_json(): string;
+    /**
+     * `dialect` uses the desktop wire names. Properties are a JSON array of pairs.
+     */
+    parse_query_json(text: string, dialect: string, block_properties_json?: string | null): string;
+    preview_block_json(uuid: string, max_nodes: number): string;
+    /**
+     * `scope_json` is `{"keys":true}` or `{"key":"property name"}`.
+     */
+    query_facets_json(scope_json: string): string;
+    /**
+     * Query, view and optional execution context use the desktop JSON shapes.
+     */
+    query_run_json(query_json: string, view_json: string, context_json?: string | null): string;
+    resolve_blocks_json(uuids_json: string): string;
+    resolve_page_json(name: string, journal: boolean): string;
+    /**
+     * Options are the desktop search fields `explain`, `scope`,
+     * `pageMatchScope`, `pageView`, `blockView`, and `transliteration`.
+     */
+    run_graph_search_json(source: string, page_limit: number, block_limit: number, options_json?: string | null): string;
+    /**
+     * Literal block search. Synchronous browser calls share no search lane.
+     */
+    search_json(query: string, limit: number): string;
 }
 
 /**
@@ -413,9 +443,29 @@ export interface InitOutput {
     readonly asset_rel_path: (a: number, b: number) => [number, number];
     readonly block_may_have_logbook: (a: number, b: number) => number;
     readonly block_reference_names: (a: number, b: number, c: number) => [number, number];
-    readonly browsergraph_config_problem_json: (a: number) => [number, number];
+    readonly browsergraph_capture_quick_switch_json: (a: number, b: number, c: number, d: number, e: number) => [number, number, number, number];
+    readonly browsergraph_config_problem_json: (a: number) => [number, number, number, number];
+    readonly browsergraph_get_backlink_filter_context_json: (a: number, b: number, c: number, d: number, e: number) => [number, number, number, number];
+    readonly browsergraph_get_backlinks_json: (a: number, b: number, c: number) => [number, number, number, number];
+    readonly browsergraph_get_block_ref_counts_json: (a: number) => [number, number, number, number];
+    readonly browsergraph_get_block_referrers_json: (a: number, b: number, c: number) => [number, number, number, number];
+    readonly browsergraph_get_unlinked_refs_json: (a: number, b: number, c: number) => [number, number, number, number];
+    readonly browsergraph_graph_meta_json: (a: number) => [number, number, number, number];
+    readonly browsergraph_journal_content_days_json: (a: number) => [number, number, number, number];
     readonly browsergraph_new: (a: number, b: number, c: number, d: number) => [number, number, number];
-    readonly browsergraph_page_inventory_json: (a: number) => [number, number];
+    readonly browsergraph_page_alias_group_json: (a: number, b: number, c: number) => [number, number, number, number];
+    readonly browsergraph_page_backlink_counts_json: (a: number) => [number, number, number, number];
+    readonly browsergraph_page_icons_json: (a: number, b: number, c: number) => [number, number, number, number];
+    readonly browsergraph_page_inventory_json: (a: number) => [number, number, number, number];
+    readonly browsergraph_page_modified_json: (a: number) => [number, number, number, number];
+    readonly browsergraph_parse_query_json: (a: number, b: number, c: number, d: number, e: number, f: number, g: number) => [number, number, number, number];
+    readonly browsergraph_preview_block_json: (a: number, b: number, c: number, d: number) => [number, number, number, number];
+    readonly browsergraph_query_facets_json: (a: number, b: number, c: number) => [number, number, number, number];
+    readonly browsergraph_query_run_json: (a: number, b: number, c: number, d: number, e: number, f: number, g: number) => [number, number, number, number];
+    readonly browsergraph_resolve_blocks_json: (a: number, b: number, c: number) => [number, number, number, number];
+    readonly browsergraph_resolve_page_json: (a: number, b: number, c: number, d: number) => [number, number, number, number];
+    readonly browsergraph_run_graph_search_json: (a: number, b: number, c: number, d: number, e: number, f: number, g: number) => [number, number, number, number];
+    readonly browsergraph_search_json: (a: number, b: number, c: number, d: number) => [number, number, number, number];
     readonly canonical_group_field: (a: number, b: number) => [number, number];
     readonly comment_quote: (a: number, b: number) => [number, number, number, number];
     readonly decode_page_name: (a: number, b: number, c: number) => [number, number];

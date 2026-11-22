@@ -1105,47 +1105,5 @@ pub fn pdf_asset_key(filename: &str, preview: bool) -> String {
         },
     )
 }
-
-/// The browser core (D-20261122-WEX): the store's whole-graph view of a
-/// graph's text files held in memory, answering through the same wire forms
-/// as the desktop app's commands.
-#[wasm_bindgen]
-pub struct BrowserGraph(tine_store::WholeGraph);
-
-#[wasm_bindgen]
-impl BrowserGraph {
-    /// `files[i]` holds the bytes of the graph-relative `paths[i]`,
-    /// `logseq/config.edn` among them. Throws (a string) what the desktop open
-    /// refuses, and for arrays of different lengths; a config read problem is
-    /// `config_problem_json`. Cost: one read and parse of each file and the
-    /// initial index capture, as a desktop open has.
-    #[wasm_bindgen(constructor)]
-    pub fn new(
-        paths: Vec<String>,
-        files: Vec<js_sys::Uint8Array>,
-    ) -> Result<BrowserGraph, JsValue> {
-        if paths.len() != files.len() {
-            let lengths = format!("{} paths, {} files", paths.len(), files.len());
-            return Err(JsValue::from_str(&format!("BrowserGraph: {lengths}")));
-        }
-        let files = (paths.into_iter().zip(files))
-            .map(|(path, bytes)| (path, bytes.to_vec()))
-            .collect();
-        let (view, _) = tine_store::WholeGraph::from_files(files)
-            .map_err(|error| JsValue::from_str(&format!("BrowserGraph: {error}")))?;
-        Ok(BrowserGraph(view))
-    }
-
-    /// The `config_problem` of the desktop `load_graph` answer: `null`, or the
-    /// problem the graph's `config.edn` was read with.
-    pub fn config_problem_json(&self) -> String {
-        let problem = tine_graph_features::config_problem::config_problem(self.0.config());
-        serde_json::to_string(&problem).unwrap_or_default()
-    }
-
-    /// The `page_inventory` command's answer.
-    pub fn page_inventory_json(&self) -> String {
-        let wire = tine_graph_features::inventory_wire::page_inventory_wire(&self.0);
-        serde_json::to_string(&wire).unwrap_or_default()
-    }
-}
+mod browser_graph;
+pub use browser_graph::BrowserGraph;

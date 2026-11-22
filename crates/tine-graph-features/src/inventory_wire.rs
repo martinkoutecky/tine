@@ -6,6 +6,8 @@
 //! serialize through these same types, so a published site reads exactly the
 //! rows the app reads (I-12: one serializer per answer).
 use serde::Serialize;
+use tine_core::model::PageEntry;
+use tine_core::query_plan::ObjectiveMatchClass;
 use tine_store::{InventoryEntry, InventoryScope, PageId, Resolved, WholeGraph};
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize)]
@@ -36,6 +38,11 @@ impl From<&Resolved> for ResolvedWire {
             Resolved::Absent { id: absent } => Self::Absent { id: id(absent) },
         }
     }
+}
+
+/// Resolve one name in the view, including its proposed path on absence.
+pub fn resolve_name(view: &WholeGraph, name: &str, journal: bool) -> ResolvedWire {
+    view.resolve(name, journal).into()
 }
 
 #[derive(Clone, Debug, Serialize)]
@@ -146,4 +153,52 @@ pub fn page_inventory_wire(view: &WholeGraph) -> PageInventoryWire {
             .map(|(id, reason)| format!("{}: {reason}", id.as_str()))
             .collect(),
     }
+}
+
+/// The captured times used by All Pages. Graphs without mtimes return no rows.
+#[derive(Serialize)]
+pub struct PageModifiedWire {
+    pub rev: String,
+    pub modified: Vec<(String, i64)>,
+}
+
+/// O(P) in captured page times, with no stat or file read.
+pub fn page_modified_wire(view: &WholeGraph) -> PageModifiedWire {
+    PageModifiedWire {
+        rev: view.rev().into(),
+        modified: view.page_modified(),
+    }
+}
+
+/// Owner files by path, reference-only pages by name, and publication revision.
+pub type PageBacklinkCounts = (Vec<(String, usize)>, Vec<(String, usize)>, String);
+
+/// Copy the graph-wide count snapshot for the initial All Pages view.
+pub fn page_backlink_counts_wire(view: &WholeGraph) -> PageBacklinkCounts {
+    let (files, references) = view.page_backlink_counts();
+    (files, references, view.rev().into())
+}
+
+/// A page completion with its match class.
+#[derive(Debug, Serialize)]
+pub struct CompletionPageEntry {
+    #[serde(flatten)]
+    pub page: PageEntry,
+    match_class: ObjectiveMatchClass,
+}
+
+pub fn completion_entries(hits: Vec<(PageEntry, ObjectiveMatchClass)>) -> Vec<CompletionPageEntry> {
+    hits.into_iter()
+        .map(|(page, match_class)| CompletionPageEntry { page, match_class })
+        .collect()
+}
+
+/// Quick Capture's bounded page completion, capped at eight candidates.
+pub fn capture_quick_switch(
+    view: &WholeGraph,
+    query: &str,
+    limit: usize,
+    transliteration: bool,
+) -> Vec<CompletionPageEntry> {
+    completion_entries(view.complete_page_names(query, limit.min(8), None, transliteration, None))
 }

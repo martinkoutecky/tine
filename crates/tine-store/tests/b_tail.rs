@@ -79,7 +79,11 @@ fn ir_refusal_uses_the_complete_count_or_total_and_preserves_small_answers() {
 #[test]
 fn result_limits_have_one_answerer() {
     let _integration_guard = crate::integration_lock();
-    let wire = include_str!("../../../src-tauri/src/commands/query_ir.rs");
+    let wire = [
+        include_str!("../../../crates/tine-graph-features/src/query_wire.rs"),
+        include_str!("../../../src-tauri/src/commands/query_ir.rs"),
+    ]
+    .concat();
     assert!(wire.contains("QueryResult::try_from(answer)") && !wire.contains("result-too-large: {"), "I-12: the store's TryFrom<IrAnswer> owns the IR refusal message; the wire only forwards it");
     for name in ["RESULT_BRIDGE_MAX_ROWS", "RESULT_BRIDGE_MAX_BYTES"] {
         assert!(!wire.contains(&format!("const {name}")), "I-12: store.rs owns result bridge limits and refusals; query_ir.rs must not declare a twin limit");

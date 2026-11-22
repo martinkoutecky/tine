@@ -11,7 +11,9 @@ use tine_core::model::{PageKind, RefGroup};
 use tine_core::query::ir::FriendlyPageMatchScope;
 use tine_core::query::ir::ViewSettings;
 use tine_core::query_plan::{QueryExecution, QueryExplanation, QueryHasMore, QueryHit};
-use tine_store::{Cancel, LoadError, PageId, QueryError, Resolved, SearchRequest, Store};
+#[cfg(test)]
+use tine_store::Store;
+use tine_store::{Cancel, PageId, QueryError, Resolved, SearchRequest, WholeGraph};
 
 /// Per-transport-lane cancellation flags, hidden behind search operations.
 /// A lane entry also keeps the issue order of its request, when the caller
@@ -123,60 +125,22 @@ impl Drop for SearchLease<'_> {
     }
 }
 
-/// A search can fail while waiting for a snapshot or evaluating a query.
-pub enum SearchError {
-    Load(LoadError),
-    Query(QueryError),
-}
-
 /// Optional page scope; an exact path takes priority over name resolution.
+#[derive(serde::Deserialize)]
 pub struct Scope {
     pub name: String,
+    #[serde(rename = "pageKind")]
     pub kind: PageKind,
     pub path: Option<String>,
 }
 
 /// Run a graph search under one snapshot, replacing an earlier request on its
-/// lane. Cancellation returns an empty execution marked `cancelled`.
-/// Page membership defaults to names/aliases; content and both also inspect
-/// blocks. Each section's sort precedes its own limit and sample. Cost
-/// O(graph text + output), plus O(matches log matches) for authored sorts;
-/// load/query errors are returned.
-pub fn run_graph_search(
-    store: &Store,
-    lanes: &SearchLanes,
-    source: String,
-    page_limit: usize,
-    block_limit: usize,
-    lane: Option<&str>,
-    explain: bool,
-    scope: Option<Scope>,
-    page_match_scope: Option<FriendlyPageMatchScope>,
-    page_view: Option<ViewSettings>,
-    block_view: Option<ViewSettings>,
-) -> Result<QueryExecution, SearchError> {
-    run_graph_search_with_transliteration(
-        store,
-        lanes,
-        source,
-        page_limit,
-        block_limit,
-        lane,
-        explain,
-        scope,
-        page_match_scope,
-        page_view,
-        block_view,
-        false,
-    )
-}
-
-/// Friendly search whose lane request carries the caller's own issue order.
-/// IPC handlers reach this function in scheduler order, not call order; a
-/// request older than the one already on its lane is refused as cancelled
-/// instead of cancelling the newer one. `lane_seq` is ignored without a lane.
+/// lane. An older issue sequence cannot cancel a newer request. Cancellation
+/// returns an empty execution marked `cancelled`. Pages and blocks have
+/// separate limits. Cost O(graph text + output), plus O(matches log matches)
+/// for authored sorts. The desktop supplies a reconciled snapshot.
 pub fn run_graph_search_sequenced(
-    store: &Store,
+    view: &WholeGraph,
     lanes: &SearchLanes,
     source: String,
     page_limit: usize,
@@ -189,9 +153,9 @@ pub fn run_graph_search_sequenced(
     page_view: Option<ViewSettings>,
     block_view: Option<ViewSettings>,
     transliteration: bool,
-) -> Result<QueryExecution, SearchError> {
+) -> Result<QueryExecution, QueryError> {
     run_graph_search_after_scope(
-        store,
+        view,
         lanes,
         source,
         page_limit,
@@ -209,42 +173,8 @@ pub fn run_graph_search_sequenced(
     )
 }
 
-/// Friendly search with request-local page-name expansion; saved query evaluation is unchanged.
-pub fn run_graph_search_with_transliteration(
-    store: &Store,
-    lanes: &SearchLanes,
-    source: String,
-    page_limit: usize,
-    block_limit: usize,
-    lane: Option<&str>,
-    explain: bool,
-    scope: Option<Scope>,
-    page_match_scope: Option<FriendlyPageMatchScope>,
-    page_view: Option<ViewSettings>,
-    block_view: Option<ViewSettings>,
-    transliteration: bool,
-) -> Result<QueryExecution, SearchError> {
-    run_graph_search_after_scope(
-        store,
-        lanes,
-        source,
-        page_limit,
-        block_limit,
-        lane,
-        None,
-        explain,
-        scope,
-        page_match_scope,
-        page_view,
-        block_view,
-        transliteration,
-        #[cfg(test)]
-        || {},
-    )
-}
-
 fn run_graph_search_after_scope(
-    store: &Store,
+    view: &WholeGraph,
     lanes: &SearchLanes,
     source: String,
     page_limit: usize,
@@ -258,10 +188,7 @@ fn run_graph_search_after_scope(
     block_view: Option<ViewSettings>,
     transliteration: bool,
     #[cfg(test)] after_scope: impl FnOnce(),
-) -> Result<QueryExecution, SearchError> {
-    // A search answer is final on screen: never one from the launch
-    // checkpoint, which lacks pages made while Tine was closed.
-    let view = store.whole_graph_reconciled().map_err(SearchError::Load)?;
+) -> Result<QueryExecution, QueryError> {
     let lease = lanes.begin_sequenced(lane, lane_seq);
     let within = scope.map(|scope| match scope.path {
         Some(path) => PageId::from(path),
@@ -294,38 +221,24 @@ fn run_graph_search_after_scope(
             has_more: QueryHasMore::default(),
             cancelled: true,
         },
-        Err(error) => return Err(SearchError::Query(error)),
+        Err(error) => return Err(error),
     };
-    enforce_execution_budget(&execution).map_err(SearchError::Query)?;
+    enforce_execution_budget(&execution)?;
     Ok(execution)
 }
 
-/// Literal block search in one lane. Cost O(all blocks + output).
-pub fn find_blocks(
-    store: &Store,
-    lanes: &SearchLanes,
-    query: &str,
-    limit: usize,
-    lane: Option<&str>,
-) -> Result<Vec<RefGroup>, SearchError> {
-    find_blocks_sequenced(store, lanes, query, limit, lane, None)
-}
-
-/// `find_blocks` whose lane request carries the caller's issue order (see
-/// `run_graph_search_sequenced`). An overtaken older request fails as
-/// `QueryError::Cancelled`. Cost O(all blocks + output).
+/// Literal block search, O(all blocks + output). The supplied issue order
+/// prevents a late older request from cancelling a newer one in its lane.
 pub fn find_blocks_sequenced(
-    store: &Store,
+    view: &WholeGraph,
     lanes: &SearchLanes,
     query: &str,
     limit: usize,
     lane: Option<&str>,
     lane_seq: Option<u64>,
-) -> Result<Vec<RefGroup>, SearchError> {
-    let view = store.whole_graph().map_err(SearchError::Load)?;
+) -> Result<Vec<RefGroup>, QueryError> {
     let lease = lanes.begin_sequenced(lane, lane_seq);
     view.find_blocks(query, limit, &Cancel(Arc::clone(&lease.flag)))
-        .map_err(SearchError::Query)
 }
 
 fn enforce_execution_budget(execution: &QueryExecution) -> Result<(), QueryError> {
@@ -392,13 +305,13 @@ fn run_advanced_query_after_scope(
     store: &Store,
     query: &str,
     after_scope: impl FnOnce(),
-) -> Result<tine_core::query::AdvancedResult, SearchError> {
-    validate_source(query).map_err(SearchError::Query)?;
-    let view = store.whole_graph().map_err(SearchError::Load)?;
+) -> Result<tine_core::query::AdvancedResult, String> {
+    validate_source(query).map_err(crate::query_error_wire::query_error)?;
+    let view = store.whole_graph().map_err(|error| format!("{error:?}"))?;
     after_scope();
     match view
         .query(query, tine_store::QueryDialect::Advanced)
-        .map_err(SearchError::Query)?
+        .map_err(crate::query_error_wire::query_error)?
     {
         tine_store::QueryResult::Advanced(result) => Ok(result),
         tine_store::QueryResult::Simple(_) => unreachable!(),
@@ -451,18 +364,20 @@ mod tests {
             std::thread::sleep(std::time::Duration::from_millis(200));
             std::fs::remove_file(&pause).unwrap();
         });
-        let found = run_graph_search(
-            &store,
+        let found = run_graph_search_sequenced(
+            &store.whole_graph_reconciled().unwrap(),
             &SearchLanes::default(),
             "Freshpage".into(),
             10,
             10,
+            None,
             None,
             false,
             None,
             None,
             None,
             None,
+            false,
         )
         .unwrap_or_else(|_| panic!("search failed"));
         resume.join().unwrap();
@@ -487,7 +402,7 @@ mod tests {
             path: None,
         };
         let scoped = run_graph_search_after_scope(
-            &store,
+            &store.whole_graph_reconciled().unwrap(),
             &lanes,
             "oldtoken".into(),
             10,
@@ -597,18 +512,20 @@ mod tests {
         let lanes = SearchLanes::default();
         for i in 0..50 {
             let lane = format!("query-workspace:{i}");
-            let result = run_graph_search(
-                &store,
+            let result = run_graph_search_sequenced(
+                &store.whole_graph_reconciled().unwrap(),
                 &lanes,
                 "needle".into(),
                 10,
                 10,
                 Some(&lane),
+                None,
                 false,
                 None,
                 None,
                 None,
                 None,
+                false,
             );
             assert!(result.is_ok());
             assert_eq!(
@@ -680,9 +597,10 @@ mod tests {
         std::fs::write(root.join("pages/Keyboard Alpha.md"), "- Body\n").unwrap();
         let store = Store::open(&root, Default::default()).unwrap().0;
         let lanes = SearchLanes::default();
+        let view = store.whole_graph_reconciled().unwrap();
         let run = |text: &str, seq: u64, inner: &dyn Fn()| {
             run_graph_search_after_scope(
-                &store,
+                &view,
                 &lanes,
                 text.into(),
                 10,

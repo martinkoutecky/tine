@@ -2,37 +2,8 @@
 //! the wire form of one name's resolution. The row, resolution and alias
 //! group shapes live in `tine_graph_features::inventory_wire`, shared with the
 //! published snapshot's `answers` (one serializer per answer, I-12).
-use super::WholeGraph;
 use serde::Serialize;
-pub(crate) use tine_graph_features::inventory_wire::{
-    alias_group_wire, entry_wire, page_inventory_wire, AliasGroupWire, PageInventoryEntryWire,
-    PageInventoryWire, ResolvedWire,
-};
-
-/// Last-modified times for the All pages view: `[graph-relative path, Unix
-/// seconds]` per page file, from the times the store already holds with its
-/// page table (no stat, no file read, nothing persisted). Fetched once when the
-/// view opens, never per row.
-#[derive(Serialize)]
-pub(crate) struct PageModifiedWire {
-    /// The `GraphRev` the times were read at.
-    rev: String,
-    modified: Vec<(String, i64)>,
-}
-
-pub(super) fn page_modified_wire(view: &WholeGraph) -> PageModifiedWire {
-    PageModifiedWire {
-        rev: view.rev().into(),
-        modified: view.page_modified(),
-    }
-}
-
-// One unreadable file never blocks name answers for the rest of the graph
-// (I-22): readable claims resolve and a miss is `Absent`. The unreadable paths
-// travel on the inventory so the frontend reports them (I-2).
-pub(super) fn resolve_name(view: WholeGraph, name: &str, journal: bool) -> ResolvedWire {
-    view.resolve(name, journal).into()
-}
+use tine_graph_features::inventory_wire::{entry_wire, PageInventoryEntryWire};
 
 /// The wire form of one publication's inventory delta (cost-model audit
 /// 2026-11-02, row 1): the page keys whose alias and reference-only entries
@@ -63,6 +34,10 @@ use tine_store as store_crate;
 #[cfg(test)]
 mod inventory_adapter_tests {
     use super::*;
+    use tine_graph_features::inventory_wire::{
+        page_inventory_wire, page_modified_wire, resolve_name, PageInventoryWire, ResolvedWire,
+    };
+    use tine_store::WholeGraph;
     use tine_store::{PageId, SaveBase};
 
     fn temp_root(tag: &str) -> std::path::PathBuf {
@@ -427,11 +402,11 @@ mod inventory_adapter_tests {
         assert!(wire.unreadable[0].starts_with("pages/Bad.md: "));
         assert!(wire.unreadable[0].to_ascii_lowercase().contains("utf-8"));
         assert!(matches!(
-            resolve_name(store.whole_graph().unwrap(), "Good", false),
+            resolve_name(&store.whole_graph().unwrap(), "Good", false),
             ResolvedWire::Existing { .. }
         ));
         assert!(matches!(
-            resolve_name(store.whole_graph().unwrap(), "Unknown", false),
+            resolve_name(&store.whole_graph().unwrap(), "Unknown", false),
             ResolvedWire::Absent { .. }
         ));
         std::fs::write(root.join("pages/Bad.md"), "- repaired\n").unwrap();

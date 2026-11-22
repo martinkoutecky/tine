@@ -150,7 +150,8 @@ const OWNERS: &[(&str, &str, usize, &str, &str)] = &[
         // -1 dead-code wave: the deleted `publish_html` command (graph export
         // goes through publish_live).
         // -1 CM step 2 batch 12: rename_page moved to commands/rename.rs.
-        35,
+        // -1 D-20261122-WEX: query_facets reuses off_ui_graph_read.
+        34,
         "command future",
         "caller awaits blocking result",
     ),

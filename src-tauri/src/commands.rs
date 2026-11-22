@@ -10,18 +10,22 @@ use serde::Serialize;
 use std::sync::Arc;
 use tauri::{State, WebviewWindow};
 use tine_core::model::{
-    AssetInfo, BacklinkFilterContext, BacklinkFilterTarget, PageDto, PageEntry, PageKind, RefGroup,
+    AssetInfo, BacklinkFilterContext, BacklinkFilterTarget, PageDto, PageKind, RefGroup,
+};
+use tine_graph_features::graph_read_wire::{self, AutocompleteFacetScope};
+use tine_graph_features::inventory_wire::{
+    alias_group_wire, capture_quick_switch as capture_completion, completion_entries,
+    page_inventory_wire, page_modified_wire, resolve_name, AliasGroupWire, CompletionPageEntry,
+    PageInventoryWire, PageModifiedWire, ResolvedWire,
 };
 use tine_graph_features::journals::{self, JournalFilenameMigration};
-use tine_graph_features::{config, IncompleteTransaction as IncompleteTx};
-use tine_store::{FacetPolicy, PageId, Resolved, StoreError, WholeGraph};
+use tine_graph_features::{config, search as graph_search, IncompleteTransaction as IncompleteTx};
+use tine_store::{PageId, Resolved, StoreError, WholeGraph};
+#[cfg(test)]
+mod browser_core_fixture_tests;
 mod device_reads;
 pub(crate) mod discovery;
 mod templates;
-use discovery::{
-    alias_group_wire, page_inventory_wire, page_modified_wire, resolve_name, AliasGroupWire,
-    PageInventoryWire, PageModifiedWire, ResolvedWire,
-};
 
 pub(crate) fn feature_asset_error(error: std::io::Error, slot: &GraphSlot) -> String {
     tine_graph_features::assets::error_for_user(&slot.store, error)
@@ -205,15 +209,6 @@ pub(crate) async fn save_workspaces(
     crate::settings::save_workspaces(data, app, state).await
 }
 
-pub(crate) fn feature_search_error(error: tine_graph_features::search::SearchError) -> String {
-    match error {
-        tine_graph_features::search::SearchError::Load(error) => {
-            format!("graph load failed: {error:?}")
-        }
-        tine_graph_features::search::SearchError::Query(error) => query_error(error),
-    }
-}
-
 #[cfg(test)]
 mod result_bridge_budget_tests {
     use super::query_error;
@@ -347,7 +342,7 @@ pub(crate) async fn resolve_page(
         slot.store
             .whole_graph()
             .map_err(|e| format!("graph load failed: {e:?}"))
-            .map(|view| resolve_name(view, &name, kind == PageKind::Journal))
+            .map(|view| resolve_name(&view, &name, kind == PageKind::Journal))
     })
     .await
     .map_err(|error| error.to_string())?
@@ -445,7 +440,7 @@ pub(crate) async fn get_backlinks(
             .store
             .whole_graph()
             .map_err(|e| format!("graph load failed: {e:?}"))?;
-        view.backlinks(&name).map_err(reference_error)
+        graph_read_wire::backlinks(&view, &name).map_err(reference_error)
     })
     .await
     .map_err(|error| error.to_string())?
@@ -463,8 +458,7 @@ pub(crate) async fn get_backlink_filter_context(
             .store
             .whole_graph()
             .map_err(|e| format!("graph load failed: {e:?}"))?;
-        view.backlink_filter_context(&name, &targets)
-            .map_err(query_error)
+        graph_read_wire::backlink_filter_context(&view, &name, &targets)
     })
     .await
     .map_err(|error| error.to_string())?
@@ -501,7 +495,7 @@ pub(crate) async fn get_unlinked_refs(
             .store
             .whole_graph()
             .map_err(|e| format!("graph load failed: {e:?}"))?;
-        view.unlinked_references(&name).map_err(reference_error)
+        graph_read_wire::unlinked_refs(&view, &name).map_err(reference_error)
     })
     .await
     .map_err(|error| error.to_string())?
@@ -518,7 +512,7 @@ pub(crate) async fn block_ref_counts(
     tauri::async_runtime::spawn_blocking(move || {
         slot.store
             .whole_graph()
-            .map(|view| view.block_ref_counts())
+            .map(|view| graph_read_wire::block_ref_counts(&view))
             .map_err(|e| format!("graph load failed: {e:?}"))
     })
     .await
@@ -538,7 +532,7 @@ pub(crate) async fn block_referrers(
             .store
             .whole_graph()
             .map_err(|e| format!("graph load failed: {e:?}"))?;
-        view.block_referrers(&uuid).map_err(query_error)
+        graph_read_wire::block_referrers(&view, &uuid)
     })
     .await
     .map_err(|error| error.to_string())?
@@ -636,15 +630,6 @@ pub(crate) async fn export_query_subtrees(
     .map_err(|error| error.to_string())?
 }
 
-#[derive(serde::Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub(crate) struct QueryPageScope {
-    name: String,
-    page_kind: PageKind,
-    #[serde(default)]
-    path: Option<String>,
-}
-
 #[tauri::command]
 pub(crate) async fn run_graph_search(
     source: String,
@@ -653,7 +638,7 @@ pub(crate) async fn run_graph_search(
     lane: Option<String>,
     lane_seq: Option<u64>,
     explain: bool,
-    scope: Option<QueryPageScope>,
+    scope: Option<graph_search::Scope>,
     page_match_scope: Option<tine_core::query::ir::FriendlyPageMatchScope>,
     page_view: Option<tine_core::query::ir::ViewSettings>,
     block_view: Option<tine_core::query::ir::ViewSettings>,
@@ -661,14 +646,14 @@ pub(crate) async fn run_graph_search(
     state: GraphContext<'_>,
 ) -> Result<tine_core::query_plan::QueryExecution, String> {
     let slot = slot_for_context(&state)?;
-    let scope = scope.map(|scope| tine_graph_features::search::Scope {
-        name: scope.name,
-        kind: scope.page_kind,
-        path: scope.path,
-    });
     tauri::async_runtime::spawn_blocking(move || {
-        tine_graph_features::search::run_graph_search_sequenced(
-            &slot.store,
+        // A final on-screen answer needs pages added while Tine was closed.
+        let view = slot
+            .store
+            .whole_graph_reconciled()
+            .map_err(|error| format!("graph load failed: {error:?}"))?;
+        graph_search::run_graph_search_sequenced(
+            &view,
             &slot.block_search_lanes,
             source,
             page_limit,
@@ -682,18 +667,10 @@ pub(crate) async fn run_graph_search(
             block_view,
             transliteration.unwrap_or(false),
         )
-        .map_err(feature_search_error)
+        .map_err(query_error)
     })
     .await
     .map_err(|error| error.to_string())?
-}
-
-/// What a property-completion facet request asks for: every key (with no
-/// values), or one key's values.
-#[derive(Debug, serde::Deserialize)]
-pub(crate) struct AutocompleteFacetScope {
-    keys: Option<bool>,
-    key: Option<String>,
 }
 
 #[tauri::command]
@@ -701,26 +678,11 @@ pub(crate) async fn query_facets(
     state: GraphContext<'_>,
     scope: AutocompleteFacetScope,
 ) -> Result<Vec<(String, Vec<String>)>, String> {
-    // Property completion asks for the keys once per trigger session and
-    // then one key's values (cost-model audit 2026-11-02, row 2b), never
-    // every key's values per keystroke.
-    let policy = match scope {
-        AutocompleteFacetScope { key: Some(key), .. } => FacetPolicy::CompletionValues(key),
-        AutocompleteFacetScope {
-            keys: Some(true), ..
-        } => FacetPolicy::CompletionKeys,
-        _ => return Err("query_facets needs a `key` or `keys: true` scope".into()),
-    };
-    let slot = slot_for_context(&state)?;
-    tauri::async_runtime::spawn_blocking(move || {
-        let view = slot
-            .store
-            .whole_graph()
-            .map_err(|e| format!("graph load failed: {e:?}"))?;
-        Ok(view.property_facets(policy))
+    let policy = scope.into_policy()?;
+    off_ui_graph_read(&state, move |view| {
+        Ok(graph_read_wire::query_facets(&view, policy))
     })
     .await
-    .map_err(|error| error.to_string())?
 }
 
 #[tauri::command]
@@ -732,7 +694,7 @@ pub(crate) async fn page_icons(
     tauri::async_runtime::spawn_blocking(move || {
         slot.store
             .whole_graph()
-            .map(|view| view.page_icons(&names))
+            .map(|view| graph_read_wire::page_icons(&view, &names))
             .map_err(|e| format!("graph load failed: {e:?}"))
     })
     .await
@@ -936,15 +898,19 @@ pub(crate) async fn search(
 ) -> Result<Vec<RefGroup>, String> {
     let slot = slot_for_context(&state)?;
     tauri::async_runtime::spawn_blocking(move || {
-        tine_graph_features::search::find_blocks_sequenced(
-            &slot.store,
+        let view = slot
+            .store
+            .whole_graph()
+            .map_err(|error| format!("graph load failed: {error:?}"))?;
+        graph_search::find_blocks_sequenced(
+            &view,
             &slot.block_search_lanes,
             &query,
             limit,
             lane.as_deref(),
             lane_seq,
         )
-        .map_err(feature_search_error)
+        .map_err(query_error)
     })
     .await
     .map_err(|error| error.to_string())?
@@ -991,22 +957,6 @@ pub(crate) async fn quick_switch(
     .map_err(|error| error.to_string())?
 }
 
-/// Request-local DTO: PageEntry's persisted inventory shape is unchanged.
-#[derive(serde::Serialize)]
-pub(crate) struct CompletionPageEntry {
-    #[serde(flatten)]
-    page: PageEntry,
-    match_class: tine_core::query_plan::ObjectiveMatchClass,
-}
-
-fn completion_entries(
-    hits: Vec<(PageEntry, tine_core::query_plan::ObjectiveMatchClass)>,
-) -> Vec<CompletionPageEntry> {
-    hits.into_iter()
-        .map(|(page, match_class)| CompletionPageEntry { page, match_class })
-        .collect()
-}
-
 #[cfg(test)]
 fn capture_quick_switch_for(
     state: &AppState,
@@ -1014,17 +964,13 @@ fn capture_quick_switch_for(
     binding_generation: Option<u64>,
     query: &str,
     limit: usize,
-) -> Result<Vec<PageEntry>, String> {
+) -> Result<Vec<CompletionPageEntry>, String> {
     let slot = capture_quick_switch_slot(state, caller, binding_generation)?;
     let view = slot
         .store
         .whole_graph()
         .map_err(|e| format!("graph load failed: {e:?}"))?;
-    Ok(view
-        .complete_page_names(query, limit.min(8), None, false, None)
-        .into_iter()
-        .map(|(page, _)| page)
-        .collect())
+    Ok(capture_completion(&view, query, limit, false))
 }
 
 /// The sole graph-backed capability exposed to Quick Capture. It is deliberately
@@ -1045,13 +991,12 @@ pub(crate) async fn capture_quick_switch(
             .store
             .whole_graph()
             .map_err(|e| format!("graph load failed: {e:?}"))?;
-        Ok(completion_entries(view.complete_page_names(
+        Ok(capture_completion(
+            &view,
             &query,
-            limit.min(8),
-            None,
+            limit,
             transliteration.unwrap_or(false),
-            None,
-        )))
+        ))
     })
     .await
     .map_err(|error| error.to_string())?
@@ -1129,8 +1074,8 @@ mod capture_quick_switch_tests {
                 .unwrap();
         assert!(result
             .iter()
-            .any(|page| page.name == "Selected Capture Target"));
-        assert!(!result.iter().any(|page| page.name == "Other Target"));
+            .any(|entry| entry.page.name == "Selected Capture Target"));
+        assert!(!result.iter().any(|entry| entry.page.name == "Other Target"));
         std::fs::remove_dir_all(base).unwrap();
     }
 
@@ -1247,11 +1192,7 @@ pub(crate) use templates::{list_template_names, list_templates};
 #[tauri::command]
 pub(crate) async fn journal_content_days(state: GraphContext<'_>) -> Result<Vec<i64>, String> {
     off_ui_graph_read(&state, |view| {
-        Ok(view
-            .journal_content_days()
-            .into_iter()
-            .map(|day| day.0)
-            .collect())
+        Ok(graph_read_wire::journal_content_days(&view))
     })
     .await
 }
@@ -1262,9 +1203,7 @@ pub(crate) async fn resolve_block(
     state: GraphContext<'_>,
 ) -> Result<Option<RefGroup>, String> {
     off_ui_graph_read(&state, move |view| {
-        Ok(view
-            .blocks(&[uuid], true)
-            .map_err(query_error)?
+        Ok(graph_read_wire::resolve_blocks(&view, &[uuid])?
             .pop()
             .flatten())
     })
@@ -1277,7 +1216,7 @@ pub(crate) async fn resolve_blocks(
     state: GraphContext<'_>,
 ) -> Result<Vec<Option<RefGroup>>, String> {
     off_ui_graph_read(&state, move |view| {
-        view.blocks(&uuids, true).map_err(query_error)
+        graph_read_wire::resolve_blocks(&view, &uuids)
     })
     .await
 }
@@ -1292,7 +1231,7 @@ pub(crate) async fn preview_block(
     state: GraphContext<'_>,
 ) -> Result<Option<tine_core::BlockPreview>, String> {
     off_ui_graph_read(&state, move |view| {
-        view.preview_block(&uuid, max_nodes).map_err(query_error)
+        graph_read_wire::preview_block(&view, &uuid, max_nodes)
     })
     .await
 }
