@@ -11,7 +11,7 @@ it("I-12: native preview/count clients use tine_core::projection; imitate query.
 
 it("I-12: published previews forward to the core's bounded projection", () => {
   const source = readFileSync("src/publishedBackend.ts", "utf8");
-  expect(source).toContain("graph.preview_block_json(uuid, maxNodes)");
+  expect(source).toContain('read("preview_block_json", uuid, maxNodes)');
   const core = readFileSync("crates/lsdoc-wasm/src/browser_graph.rs", "utf8");
   expect(core).toContain("read::preview_block(&self.view, uuid, max_nodes)");
 });

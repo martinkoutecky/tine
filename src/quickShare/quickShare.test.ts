@@ -104,7 +104,7 @@ describe("quick share generation 2", () => {
       });
       const share = await loadQuickShare(pathname, hash, fetchImpl);
       expect(urls).toHaveLength(1);
-      expect(share.snapshot).toEqual(frozen.snapshot);
+      expect(decodeShareDocument(share.bytes)).toEqual(frozen.snapshot);
       expect(urls.join(" ")).not.toContain(b64uEncode(parsed.key));
     }
   });
@@ -119,7 +119,7 @@ describe("quick share generation 2", () => {
       [`https://api.github.com/gists/${gist}`]: JSON.stringify({ files: { "tine-share.bin": { raw_url: moved } } }),
       [moved]: `${bin}\n`,
     });
-    expect((await loadQuickShare(pathname, hash, ok.fetchImpl)).snapshot.name).toBe("Configured");
+    expect(decodeShareDocument((await loadQuickShare(pathname, hash, ok.fetchImpl)).bytes).name).toBe("Configured");
     expect(ok.urls).toHaveLength(3);
     const evil = gistFetch({
       [`https://api.github.com/gists/${gist}`]: JSON.stringify({ files: { "tine-share.bin": { raw_url: "https://example.com/x" } } }),

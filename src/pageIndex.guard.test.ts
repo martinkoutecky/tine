@@ -16,12 +16,14 @@ const OWNER_READER = "src/inventoryRows.ts";
 // journal seed/template, QuickSwitcher Create, query materialize and the day
 // move's check that its destination is the confirmed file (renameHelpers.ts).
 // (A working-set page's first save resolves inside the `page_open` port, STEP3
-// §3.1.) It never feeds a name map.
-const RESOLVE_FOR_SAVE = new Set([
+// §3.1.) A published permalink also resolves one explicit name while its
+// inventory loads. These calls never feed a name map.
+const DIRECT_RESOLVE = new Set([
   "src/graph.ts",
   "src/renameHelpers.ts",
   "src/components/QuickSwitcher.tsx",
   "src/components/QueryWorkspace.tsx",
+  "src/publishedPermalink.ts",
 ]);
 // Backends that implement `page_open` (which resolves a page with no file yet),
 // including the test-only page-host fakes that stand in for the native port.
@@ -90,8 +92,8 @@ export function nameAnswererViolations(file: string, source: string): string[] {
         report(node, "pageInventory() called outside pageIndex.ts");
       }
       if (method === "resolvePage") {
-        if (!RESOLVE_FOR_SAVE.has(file) && !DEFINITIONS.has(file)) {
-          report(node, "resolvePage() used as a name answerer outside the save callers");
+        if (!DIRECT_RESOLVE.has(file) && !DEFINITIONS.has(file)) {
+          report(node, "resolvePage() used outside the single-name save and permalink callers");
         } else if (insideIteration(node)) {
           report(node, "resolvePage() called per name in a loop (a name map)");
         }
@@ -125,6 +127,8 @@ describe("page index guard (Rule 3: one answerer, frontend included)", () => {
     const loop = 'for (const n of names) await backend().resolvePage(n, "page");\n' +
       'await Promise.all(names.map((n) => backend().resolvePage(n, "page")));';
     expect(nameAnswererViolations("src/document/save/engine.ts", loop)).toHaveLength(2);
+    expect(nameAnswererViolations("src/publishedPermalink.ts", loop)).toHaveLength(2);
+    expect(nameAnswererViolations("src/publishedPermalink.ts", 'await backend().resolvePage(name, "page");')).toEqual([]);
     expect(nameAnswererViolations("src/pageIndex.ts", "await backend().pageInventory();")).toEqual([]);
   });
 

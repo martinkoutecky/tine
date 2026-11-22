@@ -18,6 +18,7 @@ import init, { parse_block_bundle_json, parse_inline_json, edit_block_regions_js
 import { WASM_B64, LSDOC_TAG } from "./wasm/lsdoc_wasm_bytes";
 import type { Block, MacroInline, Inline } from "./ast";
 import { ParseRetention } from "./parseRetention";
+import { base64ToBytes } from "./wasmBytes";
 
 // `ready` is a Solid signal so components (AstBody) reactively render once the
 // parser is loaded. In the normal flow init is awaited before mount, so it's
@@ -26,14 +27,6 @@ import { ParseRetention } from "./parseRetention";
 const [ready, setReady] = createSignal(false);
 const [failed, setFailed] = createSignal(false);
 let initPromise: Promise<void> | null = null;
-
-/** Decode a vendored module's inlined base64 bytes (the parser and the browser core). */
-export function base64ToBytes(b64: string): Uint8Array {
-  const bin = atob(b64);
-  const bytes = new Uint8Array(bin.length);
-  for (let i = 0; i < bin.length; i++) bytes[i] = bin.charCodeAt(i);
-  return bytes;
-}
 
 /** Instantiate the wasm parser once (idempotent). Main awaits it before paint;
  *  Capture starts it before paint and defers structural reads until ready.

@@ -97,45 +97,57 @@ async function revealMainWindowAfterStableFrame(): Promise<void> {
   await getCurrentWindow().show();
 }
 
+const root = document.getElementById("root")!;
 const mount = () => {
-  const root = document.getElementById("root")!;
   // index.html owns the immediate, dependency-free readiness frame. Remove it
   // only when Solid is ready to synchronously install the real application.
   root.replaceChildren();
-  render(() => <App />, root);
+  const dispose = render(() => <App />, root);
+  let disposeBanner: (() => void) | undefined;
   if (isQuickShareViewer()) {
     const banner = document.createElement("div");
     document.body.prepend(banner);
-    render(() => <QuickShareBanner />, banner);
+    const dispose = render(() => <QuickShareBanner />, banner);
+    disposeBanner = () => { dispose(); banner.remove(); };
   }
   void revealMainWindowAfterStableFrame().catch((error) =>
     console.error("failed to reveal the main window")
   );
+  return () => { dispose(); disposeBanner?.(); };
 };
 function PublishedGraphFailure(props: { error: unknown }) {
   return <p role="alert">{t("published-graph-unavailable", { error: String(props.error) })}</p>;
 }
 
-const publishedGraphReady = isPublishedExport()
-  ? loadPublishedGraph().catch(async (error: unknown) => {
-      await startUiLanguage();
-      const root = document.getElementById("root")!;
-      root.replaceChildren();
-      if (isQuickShareViewer()) render(() => <><QuickShareBanner /><QuickShareFailure error={error} /></>, root);
-      else render(() => <PublishedGraphFailure error={error} />, root);
-      throw error;
-    })
-  : Promise.resolve();
+function showPublicationFailure(error: unknown) {
+  root.replaceChildren();
+  if (isQuickShareViewer()) render(() => <><QuickShareBanner /><QuickShareFailure error={error} /></>, root);
+  else render(() => <PublishedGraphFailure error={error} />, root);
+}
+
+const publishedGraphReady = isPublishedExport() ? loadPublishedGraph() : Promise.resolve(undefined);
 // Init the in-browser wasm parser before first paint so blocks render
 // synchronously (no IPC, no fallback flash). A parser-init failure is caught so
 // it can't block startup. Session restore starts only after init settles:
 // restoring parses saved query views through the synchronous WASM page-identity
 // and group-field owners (OG-DUPF05), which must not run before init.
 const parserSettled = initParser().catch(() => console.error("lsdoc-wasm init failed"));
+const languageReady = startUiLanguage().catch(() => console.error("ui language unavailable"));
 void Promise.all([
   parserSettled,
   isPublishedExport() ? Promise.resolve() : parserSettled.then(() => Promise.race([restoreSession(), new Promise((r) => setTimeout(r, 1500))])),
   communityExtensionsReady,
   publishedGraphReady,
-  startUiLanguage(),
-]).then(mount, () => { if (!isPublishedExport()) mount(); else console.error("published app startup failed"); });
+  languageReady,
+]).then(([, , , publication]) => {
+  const dispose = mount();
+  void publication?.failure.then(error => {
+    dispose();
+    showPublicationFailure(error);
+  });
+}, async (error: unknown) => {
+  if (isPublishedExport()) {
+    await languageReady;
+    showPublicationFailure(error);
+  } else mount();
+});

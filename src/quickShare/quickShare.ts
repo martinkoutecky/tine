@@ -10,8 +10,7 @@
  *  request, a log or an error message. */
 import limits from "../../docs/contracts/quick-share-limits.json";
 import blockedGists from "./blocked-gists.json";
-import type { PublishedSnapshot } from "../publishedBackend";
-import { readBounded, validateSnapshot } from "../publishedBackend";
+import { readBounded, validateSnapshot, type PublishedSnapshot } from "../publishedSnapshot";
 
 export const QUICK_SHARE_GENERATION = 2;
 const MAGIC = [0x54, 0x53, 0x48, 0x31]; // "TSH1"
@@ -128,7 +127,7 @@ export async function openEnvelope(text: string, key: Uint8Array<ArrayBuffer>): 
 
 /** Gunzip with a running count, aborting as soon as the output passes `max`
  *  (a valid encrypted gzip bomb is authorable by anyone who can share). */
-export async function gunzipBounded(bytes: Uint8Array<ArrayBuffer>, max: number): Promise<Uint8Array> {
+export async function gunzipBounded(bytes: Uint8Array<ArrayBuffer>, max: number): Promise<Uint8Array<ArrayBuffer>> {
   const stream = new Blob([bytes]).stream().pipeThrough(new DecompressionStream("gzip"));
   try {
     return await readBounded(new Response(stream), max, "share document");
@@ -208,13 +207,8 @@ async function envelopeText(link: ShareLink, fetchImpl: Fetch): Promise<string> 
   return read(again);
 }
 
-interface LoadedShare {
-  snapshot: PublishedSnapshot;
-  link: ShareLink;
-}
-
-/** Load the share a fragment names: at most three requests, one at a time. */
-export async function loadQuickShare(pathname: string, hash: string, fetchImpl: Fetch = (url, init) => fetch(url, init)): Promise<LoadedShare> {
+/** Fetch, authenticate and decompress the share. The worker admits the resulting bytes. */
+export async function loadQuickShare(pathname: string, hash: string, fetchImpl: Fetch = (url, init) => fetch(url, init)) {
   if (!quickShareSupported()) fail("unsupported-browser", "This browser cannot open Tine shares; use a current Firefox, Chrome, Edge or Safari.");
   // Presence of subtle alone does not guarantee its HKDF/AES implementation.
   // Probe algorithms before contacting GitHub, using public all-zero bytes.
@@ -228,6 +222,5 @@ export async function loadQuickShare(pathname: string, hash: string, fetchImpl: 
   if ((blockedGists as string[]).includes(link.gist)) fail("blocked", "This share is unavailable on tine.page.");
   const text = await envelopeText(link, fetchImpl);
   const payload = await openEnvelope(text, link.key);
-  const snapshot = decodeShareDocument(await gunzipBounded(payload, limits.viewer.document_bytes));
-  return { snapshot, link };
+  return { bytes: await gunzipBounded(payload, limits.viewer.document_bytes), link };
 }

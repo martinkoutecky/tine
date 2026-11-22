@@ -74,31 +74,27 @@ function twemojiAssets(): Plugin {
   };
 }
 
-function browserCoreAssets(entries: string[]): Plugin {
+function browserCoreAssets(inWorker: boolean): Plugin {
   const coreDir = normalizePath(fileURLToPath(new URL("./src/render/wasm-core/", import.meta.url)));
+  const graphWorker = normalizePath(fileURLToPath(new URL("./src/publishedGraph.worker.ts", import.meta.url)));
   return {
     name: "browser-core-assets",
     apply: "build",
     generateBundle(_, bundle) {
       const chunks = Object.values(bundle).filter((file) => file.type === "chunk");
       const coreChunks = chunks.filter((chunk) => chunk.moduleIds.some((id) => id.startsWith(coreDir)));
-      const coreFiles = new Set(coreChunks.map((chunk) => chunk.fileName));
-      for (const entryName of entries) {
-        const entry = chunks.find((chunk) => chunk.isEntry && chunk.name === entryName);
-        if (!entry) this.error(`Missing ${entryName} entry`);
-        const visited = new Set([entry.fileName]);
-        for (const file of visited) {
-          if (coreFiles.has(file)) this.error(`${entryName} statically imports the browser core (${file})`);
-          const chunk = bundle[file];
-          if (chunk?.type === "chunk") for (const dependency of chunk.imports) visited.add(dependency);
-        }
+      const owner = chunks.find(chunk => chunk.isEntry && chunk.facadeModuleId === graphWorker);
+      if (!inWorker || !owner) {
+        if (coreChunks.length) this.error("The browser core can only be imported by the publication worker");
+        return;
       }
       const [core] = coreChunks;
       if (coreChunks.length !== 1 ||
           !["lsdoc_wasm.js", "lsdoc_wasm_bytes.ts"].every((name) => core.moduleIds.includes(coreDir + name)) ||
           !core.fileName.startsWith("assets/") ||
-          !chunks.some((chunk) => chunk.dynamicImports.includes(core.fileName))) {
-        this.error("Expected one lazy browser core chunk under assets/");
+          !owner.dynamicImports.includes(core.fileName) ||
+          chunks.some(chunk => chunk.imports.includes(core.fileName))) {
+        this.error("Expected one lazy browser core chunk owned by the publication worker under assets/");
       }
     },
   };
@@ -113,8 +109,9 @@ return {
   base: viewer ? "/s/2/" : "./",
   // Published readers use native emoji (editableEmoji.ts); the viewer needs
   // neither the desktop SVG bundle nor its root-relative development server.
-  plugins: [solid(), browserCoreAssets(viewer ? ["viewer"] : ["main", "capture"]),
+  plugins: [solid(), browserCoreAssets(false),
     ...(!viewer ? [twemojiAssets(), pdfjsAssets()] : [])],
+  worker: { format: "es", plugins: () => [browserCoreAssets(true)] },
   // Upstream's legacy build supplies recent JS API polyfills to existing
   // WebKitGTK/Android WebViews. Main and worker use the same shared policy.
   resolve: { alias: [{ find: /^pdfjs-dist$/, replacement: fileURLToPath(new URL("./node_modules/pdfjs-dist/legacy/build/pdf.mjs", import.meta.url)) }] },

@@ -190,18 +190,29 @@ export async function checkViewer(target, { generation = 1, envelope, link, expe
       assert.equal(unexpectedRequests, 0, "viewer requested an unexpected host");
       assert.deepEqual(await page.evaluate(() => window.__shareInitialCspViolations), [], "the shipped CSP blocked a reader resource");
       assert.deepEqual(pageErrors, [], "the viewer raised an unhandled error");
+      if (generation === 2) {
+        const workerPolicy = await page.locator('meta[http-equiv="Content-Security-Policy"]').getAttribute("content");
+        assert.deepEqual(workerPolicy.split(";").map(entry => entry.trim()).filter(entry => entry.startsWith("worker-src ")), ["worker-src 'self'"]);
+        assert.equal(page.workers().filter(worker => worker.url().startsWith(`${base}assets/publishedGraph.worker-`)).length, 1,
+          "the viewer must open the graph in its same-origin worker");
+      }
       // Deliberately exercise CSP behind renderer suppression. A missed image,
       // iframe or media path must fail closed, without reaching its origin.
       await page.evaluate(async () => {
         window.__shareViolations = [];
-        document.addEventListener("securitypolicyviolation", (event) => window.__shareViolations.push(event.effectiveDirective));
+        document.addEventListener("securitypolicyviolation", (event) => window.__shareViolations.push({ directive: event.effectiveDirective, uri: event.blockedURI }));
         for (const tag of ["img", "video", "iframe"]) { const el = document.createElement(tag); el.src = "https://remote.example/probe"; document.body.append(el); }
         const workerUrl = URL.createObjectURL(new Blob(['postMessage("probe")'], { type: "text/javascript" }));
-        try { const worker = new Worker(workerUrl); worker.onerror = (event) => event.preventDefault(); } catch { /* CSP may refuse synchronously. */ }
-        await new Promise((resolve) => setTimeout(resolve, 200));
+        for (const url of [workerUrl, "https://remote.example/probe.js"]) {
+          try { const worker = new Worker(url, { type: "module" }); worker.onerror = (event) => event.preventDefault(); } catch { /* CSP may refuse synchronously. */ }
+        }
+        URL.revokeObjectURL(workerUrl);
       });
-      const violations = await page.evaluate(() => window.__shareViolations);
-      for (const directive of ["img-src", "media-src", "frame-src", "worker-src"]) assert.ok(violations.includes(directive), `CSP did not block ${directive}`);
+      await page.waitForFunction(() => {
+        const violations = window.__shareViolations;
+        return ["img-src", "media-src", "frame-src"].every(directive => violations.some(entry => entry.directive === directive))
+          && violations.some(entry => entry.directive === "worker-src" && entry.uri.startsWith("blob"));
+      });
       assert.equal(unexpectedRequests, 0, "CSP allowed a remote media request");
       await context.close();
       console.log(`Viewer compatibility OK: ${fixture.name}`);
@@ -224,7 +235,7 @@ export async function checkViewer(target, { generation = 1, envelope, link, expe
       await page.locator(".katex").first().waitFor();
       const styles = await page.evaluate(() => window.__styleProbe);
       assert.ok(styles.some((directive) => directive.startsWith("style-src")), "the stricter style policy unexpectedly needs no inline styles; revisit shipped CSP");
-      console.log(`CSP bundle probe: unsafe-inline needed (${[...new Set(styles)].join(", ")}); generation ${generation} needs no workers`);
+      console.log(`CSP bundle probe: unsafe-inline needed (${[...new Set(styles)].join(", ")}); generation ${generation} worker policy verified`);
       await context.close();
     }
     // A feature refusal must be visible before any gist is requested.

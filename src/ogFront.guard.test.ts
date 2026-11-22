@@ -9,9 +9,9 @@ it("I-12: namespace identity calls pageIdentityKey (exemplar src/pageIdentity.ts
 
 it("I-12: published name, block and evidence answers come from the browser core", () => {
   const source = readFileSync("src/publishedBackend.ts", "utf8");
-  expect(source).toContain("graph.resolve_page_json(");
-  expect(source).toContain("graph.resolve_blocks_json(");
-  expect(source).toContain("graph.run_graph_search_json(");
+  expect(source).toContain('read("resolve_page_json",');
+  expect(source).toContain('read("resolve_blocks_json",');
+  expect(source).toContain('read("run_graph_search_json",');
   expect(source).not.toMatch(/blockRegions\(|raw\.includes\(|searchSubstringSpans\(|pageIdentityKey\(/);
 });
 

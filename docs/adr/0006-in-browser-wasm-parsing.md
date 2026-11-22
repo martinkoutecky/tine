@@ -27,8 +27,8 @@ pinned `lsdoc` tag is **stamped into the bytes module and asserted at boot** aga
 The default `lsdoc-wasm` build supplies this eager parser. The same crate's
 `core` feature adds the in-memory graph API for browser consumers
 (D-20261122-PK2). `npm run build:wasm` vendors both variants. The main Vite build
-ships the core as a lazy asset alongside the app, so the export bundle carries
-it without a second frontend build. `loadBrowserCore()` decodes and initializes
+ships the core as a lazy asset of the publication worker, so the export bundle
+carries it without a second frontend build. `loadBrowserCore()` decodes and initializes
 the core once per JS realm, shares the promise across callers, and rejects on
 load, compilation, initialization, or lsdoc tag failure. Loading the module
 takes linear work in the Wasm size and does not open a graph.

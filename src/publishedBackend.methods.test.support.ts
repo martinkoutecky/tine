@@ -2,6 +2,7 @@
 // They live outside production because only the guard reads them.
 import { onTestFinished } from "vitest";
 import { loadBrowserCore } from "./browserCore";
+import type { GraphRead } from "./publishedGraphRpc";
 import { OPTIONAL_METHODS, publishedBackend } from "./publishedBackend";
 
 /** Exercise the publication adapter with the vendored core and synthetic files. */
@@ -12,7 +13,11 @@ export function testPublishedBackend(files: Record<string, string>, name = "Publ
     name,
   }));
   onTestFinished(async () => (await opened).graph.free());
-  return publishedBackend(() => opened);
+  const read: GraphRead = async (method, ...args) => {
+    const { graph } = await opened;
+    return Reflect.apply(graph[method], graph, args);
+  };
+  return publishedBackend(async () => ({ name, read }));
 }
 
 /** The method classes §5 pins. `publishedBackend.guard.test.ts` requires every

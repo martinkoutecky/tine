@@ -1,7 +1,8 @@
-import { afterEach, expect, it, onTestFinished, vi } from "vitest";
-import { readBounded, validateSnapshot } from "./publishedBackend";
+import { afterEach, expect, it, vi } from "vitest";
+import { readBounded, validateSnapshot } from "./publishedSnapshot";
 import { testPublishedBackend } from "./publishedBackend.methods.test.support";
 import { parsePublishedPermalinkHash, publishedPermalinkHash } from "./publishedPermalink";
+import type { GraphReply, GraphRequest } from "./publishedGraphRpc";
 
 const files = {
   "pages/Public.md": "alias:: Alias\n\n- TODO one\n",
@@ -11,17 +12,59 @@ const uuid = "11111111-1111-4111-8111-111111111111";
 
 afterEach(() => vi.unstubAllGlobals());
 
-it("opens one captured graph and runs unrecorded queries over the shared pages", async () => {
-  const snapshot = { schema: 2, name: "Example", exported_at: "", files: Object.entries(files).map(([path, text]) => ({ path, text })) };
+it("transfers one snapshot, pairs overlapping reads with their answers and drains them on worker failure", async () => {
+  const received: GraphRequest[] = [];
+  const detached: number[] = [];
+  class TestWorker {
+    static instance: TestWorker;
+    onmessage?: (event: { data: GraphReply }) => void;
+    onerror?: (event: { message: string; preventDefault(): void }) => void;
+    terminate = vi.fn();
+    constructor() { TestWorker.instance = this; }
+    postMessage(request: GraphRequest, transfer: Transferable[]) {
+      received.push(structuredClone(request, { transfer }));
+      if (request.method === "open") {
+        detached.push(request.args[0].byteLength);
+        this.reply({ id: request.id, json: JSON.stringify("Example") });
+      }
+    }
+    reply(data: GraphReply) { this.onmessage?.({ data }); }
+    crash() { this.onerror?.({ message: "Worker failed", preventDefault() {} }); }
+  }
+  vi.stubGlobal("Worker", TestWorker);
+  const snapshot = { schema: 2, name: "Example", exported_at: "", files: [] };
   const fetch = vi.fn(async () => Response.json(snapshot));
   vi.stubGlobal("fetch", fetch);
   vi.resetModules();
-  const { loadPublishedGraph, publishedBackend } = await import("./publishedBackend");
-  const opened = await loadPublishedGraph("snapshot.json");
-  onTestFinished(() => opened.graph.free());
-  expect(await loadPublishedGraph("snapshot.json")).toBe(opened);
-  expect(fetch).toHaveBeenCalledTimes(1);
-  const api = publishedBackend();
+  const { loadPublishedGraph } = await import("./publishedBackend");
+  const [opened, same] = await Promise.all([loadPublishedGraph(), loadPublishedGraph()]);
+  const worker = TestWorker.instance;
+  try {
+    expect(opened).toBe(same);
+    expect(fetch).toHaveBeenCalledTimes(1);
+    expect(detached).toEqual([0]);
+    expect(received[0]).toMatchObject({ method: "open" });
+    const first = opened.read("page_inventory_json");
+    const second = opened.read("journal_feed_page_json", 1, 2n, false);
+    expect(received.slice(1).map(({ method }) => method)).toEqual(["page_inventory_json", "journal_feed_page_json"]);
+    worker.reply({ id: received[2].id, json: "2" });
+    worker.reply({ id: received[1].id, json: "1" });
+    expect(await Promise.all([first, second])).toEqual(["1", "2"]);
+
+    const pending = opened.read("get_page_json", "Example", false);
+    worker.crash();
+    const failure = await opened.failure;
+    await expect(pending).rejects.toBe(failure);
+    await expect(opened.read("get_page_json", "Example", false)).rejects.toBe(failure);
+    expect(worker.terminate).toHaveBeenCalledTimes(1);
+    expect(received).toHaveLength(4);
+  } finally {
+    worker.crash();
+  }
+});
+
+it("runs unrecorded queries over the shared pages", async () => {
+  const api = testPublishedBackend(files, "Example");
   expect(api.graphBindingGeneration()).toBe(1);
   expect(await api.loadGraph("")).toMatchObject({ kind: "loaded", meta: { root: "Example", default_home: "Public" } });
   expect((await api.pageInventory()).entries.map((entry) => entry.name)).toEqual(["Alias", "Public", "TODO"]);

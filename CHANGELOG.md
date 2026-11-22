@@ -18,6 +18,7 @@ The format follows [Keep a Changelog](https://keepachangelog.com/); versions use
 ### Changed
 - Folder publications and the new quick-share format carry selected page sources and reduced reading settings for the browser core. Existing generation-1 links keep their pinned viewer (D-20261122-G1F, D-20261122-G2S).
 - Folder publications and generation-2 quick shares run queries in the reader, using the viewing day for relative dates. Re-sharing a generation-1 link creates a new link and preserves the original share (D-20261122-G2S, A-20261122-RS1).
+- Folder publications and generation-2 quick shares open their graph and run graph reads in a worker so the browser stays responsive. The reader shows an error if the graph engine fails (browser core slice 4b, D-20261121-ANS).
 - Exports and quick shares build their private copy of the exported pages in memory instead of writing it to a temporary folder in the app cache and reading it back, so an export writes nothing but its output (browser core slice 1, D-20261122-WEX). Queries sorted by recency in an export use each page's file time, as in the app. An export made while `config.edn` has a change Tine has not loaded yet names and sorts its pages as the app shows them, instead of by the unloaded settings. A static or live export that runs while Tine reloads `config.edn` hides the same properties, and opens on the same default home page, as the pages it selected, instead of mixing the old and the new settings; building an export no longer holds a second copy of every exported page's text.
 
 ### Fixed

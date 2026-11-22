@@ -4,25 +4,20 @@
  */
 import type { Backend, LoadGraphResult } from "./backend";
 import type { ConfirmOptions } from "./backendInterface";
-import { loadBrowserCore } from "./browserCore";
+import type { ConfigProblem } from "./backendTypes";
+import type { GraphCall, GraphRead } from "./publishedGraphRpc";
+import { openPublishedGraphWorker } from "./publishedGraphWorker";
 import { setQuickSharePrefix } from "./publishedPermalink";
+import { readBounded } from "./publishedSnapshot";
 import type { QuickShareListing } from "./quickShare/commands";
+import { loadQuickShare } from "./quickShare/quickShare";
 import { checkBrowserHandoff } from "./linkSchemePolicy";
-import type { BrowserGraph } from "./render/wasm-core/lsdoc_wasm";
-import type { PageRead, PageReadSource, RefGroup } from "./types";
+import type { GraphMeta, PageRead, PageReadSource, RefGroup } from "./types";
 
 /** `<meta name="tine-published" content="snapshot.json">` in the exported shell. */
 export const PUBLISHED_META_NAME = "tine-published";
-export const PUBLISHED_SNAPSHOT_SCHEMA = 2;
 export const QUICK_SHARE_SNAPSHOT = "quick-share:2";
 export const PUBLISHED_READ_ONLY_MESSAGE = "This is a read-only published export.";
-
-export interface PublishedSnapshot {
-  schema: 2;
-  name: string;
-  exported_at: string;
-  files: { path: string; text: string }[];
-}
 
 /** The snapshot's relative URL when this document is a published export, else null. */
 export function publishedSnapshotUrl(doc: Document | undefined = globalThis.document): string | null {
@@ -45,86 +40,18 @@ let publication: ReturnType<typeof openPublishedGraph> | undefined;
 
 /** Largest snapshot document a viewer will read (I-22). Far above any real export;
  *  a larger body is a wrong or hostile file and refuses visibly. */
-export const PUBLISHED_SNAPSHOT_MAX_BYTES = 512 * 1024 * 1024;
+const PUBLISHED_SNAPSHOT_MAX_BYTES = 512 * 1024 * 1024;
 
-/** Read a response body of at most `max` bytes: a declared length over the cap refuses
- *  before any byte is read, and a body that outgrows it (no or wrong length) is cancelled
- *  as soon as the running total passes the cap. O(max) memory at worst. */
-export async function readBounded(response: Response, max: number, label: string): Promise<Uint8Array> {
-  const tooLarge = () => new Error(`${label}: larger than ${max} bytes`);
-  const declared = Number(response.headers?.get("content-length") ?? "");
-  if (Number.isFinite(declared) && declared > max) throw tooLarge();
-  const reader = response.body?.getReader();
-  if (!reader) {
-    const whole = new Uint8Array(await response.arrayBuffer());
-    if (whole.byteLength > max) throw tooLarge();
-    return whole;
-  }
-  const chunks: Uint8Array[] = [];
-  let total = 0;
-  for (;;) {
-    const { done, value } = await reader.read();
-    if (done) break;
-    total += value.byteLength;
-    if (total > max) {
-      // The oversize refusal is the answer; a failed cancel is attached, not dropped.
-      try {
-        await reader.cancel();
-      } catch (cancelError) {
-        throw new Error(tooLarge().message, { cause: cancelError });
-      }
-      throw tooLarge();
-    }
-    chunks.push(value);
-  }
-  const out = new Uint8Array(total);
-  let at = 0;
-  for (const chunk of chunks) {
-    out.set(chunk, at);
-    at += chunk.byteLength;
-  }
-  return out;
-}
-
-function record(value: unknown): value is Record<string, unknown> {
-  return typeof value === "object" && value !== null && !Array.isArray(value);
-}
-
-/** Admit the flat source snapshot. The core checks graph paths and reads the files. */
-export function validateSnapshot(value: unknown): PublishedSnapshot {
-  if (!record(value) || value.schema !== PUBLISHED_SNAPSHOT_SCHEMA) {
-    throw new Error(`Expected snapshot schema ${PUBLISHED_SNAPSHOT_SCHEMA}`);
-  }
-  if (typeof value.name !== "string" || typeof value.exported_at !== "string" || !Array.isArray(value.files)
-    || !value.files.every((file) => record(file) && typeof file.path === "string" && typeof file.text === "string")) {
-    throw new Error("Invalid publication snapshot");
-  }
-  return { schema: value.schema, name: value.name, exported_at: value.exported_at, files: value.files };
-}
-
-async function fetchPublishedSnapshot(url: string): Promise<PublishedSnapshot> {
+async function openPublishedGraph(url: string) {
   if (url === QUICK_SHARE_SNAPSHOT) {
-    const { loadQuickShare } = await import("./quickShare/quickShare");
     const share = await loadQuickShare(globalThis.location.pathname, globalThis.location.hash);
     setQuickSharePrefix(share.link.prefix);
-    return share.snapshot;
+    return openPublishedGraphWorker(share.bytes, true);
   }
   const response = await fetch(url, { cache: "no-store" });
   if (!response.ok) throw new Error(`snapshot ${url}: HTTP ${response.status}`);
   const bytes = await readBounded(response, PUBLISHED_SNAPSHOT_MAX_BYTES, `snapshot ${url}`);
-  return validateSnapshot(JSON.parse(new TextDecoder("utf-8", { fatal: true }).decode(bytes)));
-}
-
-async function openPublishedGraph(url: string) {
-  const [{ name, files }, core] = await Promise.all([fetchPublishedSnapshot(url), loadBrowserCore()]);
-  const paths: string[] = [];
-  const contents: Uint8Array[] = [];
-  const encoder = new TextEncoder();
-  for (const file of files) {
-    paths.push(file.path);
-    contents.push(encoder.encode(file.text));
-  }
-  return { name, graph: new core.BrowserGraph(paths, contents) };
+  return openPublishedGraphWorker(bytes, false);
 }
 
 /** Open one memory graph per publication. Startup and backend readers share it.
@@ -163,7 +90,7 @@ export const OPTIONAL_METHODS = new Set([
 ]);
 
 /** Build the browser publication backend. Its graph is opened once for all reads. */
-export function publishedBackend(load = loadPublishedGraph): Backend {
+export function publishedBackend(load: () => Promise<{ name: string; read: GraphRead }> = loadPublishedGraph): Backend {
   const appBools = new Map<string, boolean>();
   const appStrings = new Map<string, string>();
   let session: string | null = null;
@@ -181,8 +108,8 @@ export function publishedBackend(load = loadPublishedGraph): Backend {
   let activationSeq = 0;
   const unsubscribed = async () => () => {};
 
-  async function read<T>(answer: (graph: BrowserGraph) => string): Promise<T> {
-    return JSON.parse(answer((await load()).graph));
+  async function read<T>(...call: GraphCall): Promise<T> {
+    return JSON.parse(await (await load()).read(...call));
   }
 
   /** `../assets/<name>` — or null when the authored name would leave the
@@ -207,12 +134,16 @@ export function publishedBackend(load = loadPublishedGraph): Backend {
   const answered = {
     // ---- graph identity ----
     async loadGraph(): Promise<LoadGraphResult> {
-      const { name, graph } = await load();
+      const { name } = await load();
+      const [meta, config_problem] = await Promise.all([
+        read<GraphMeta>("graph_meta_json"),
+        read<ConfigProblem | null>("config_problem_json"),
+      ]);
       return {
         kind: "loaded",
         binding_generation: 1,
-        meta: { ...JSON.parse(graph.graph_meta_json()), root: name, display_root: name },
-        config_problem: JSON.parse(graph.config_problem_json()),
+        meta: { ...meta, root: name, display_root: name },
+        config_problem,
       };
     },
     async inspectGraphAccess(path) {
@@ -221,50 +152,48 @@ export function publishedBackend(load = loadPublishedGraph): Backend {
     async startupGraphPath() {
       return (await load()).name;
     },
-    pageInventory: () => read(graph => graph.page_inventory_json()),
-    pageModified: () => read(graph => graph.page_modified_json()),
-    pageBacklinkCounts: () => read(graph => graph.page_backlink_counts_json()),
-    resolvePage: (name, kind) => read(graph => graph.resolve_page_json(name, kind === "journal")),
-    pageAliasGroup: name => read(graph => graph.page_alias_group_json(name)),
-    getPage: (name, kind) => read(graph => graph.get_page_json(name, kind === "journal")),
+    pageInventory: () => read("page_inventory_json"),
+    pageModified: () => read("page_modified_json"),
+    pageBacklinkCounts: () => read("page_backlink_counts_json"),
+    resolvePage: (name, kind) => read("resolve_page_json", name, kind === "journal"),
+    pageAliasGroup: name => read("page_alias_group_json", name),
+    getPage: (name, kind) => read("get_page_json", name, kind === "journal"),
     async getPageByPath(path, source) {
-      const answer = await read<{ page: PageRead | null; source: PageReadSource | null }>(
-        graph => graph.get_page_by_path_json(path),
-      );
+      const answer = await read<{ page: PageRead | null; source: PageReadSource | null }>("get_page_by_path_json", path);
       source?.(answer.source);
       return answer.page;
     },
     journalFeedPage: (limit, before, waitForReferences = false, through = null) =>
-      read(graph => graph.journal_feed_page_json(limit, before === null ? undefined : BigInt(before),
-        waitForReferences, through === null ? undefined : BigInt(through))),
-    journalContentDays: () => read(graph => graph.journal_content_days_json()),
-    pageIcons: names => read(graph => graph.page_icons_json(JSON.stringify(names))),
-    getBacklinks: name => read(graph => graph.get_backlinks_json(name)),
+      read("journal_feed_page_json", limit, before === null ? undefined : BigInt(before),
+        waitForReferences, through === null ? undefined : BigInt(through)),
+    journalContentDays: () => read("journal_content_days_json"),
+    pageIcons: names => read("page_icons_json", JSON.stringify(names)),
+    getBacklinks: name => read("get_backlinks_json", name),
     getBacklinkFilterContext: (name, targets) =>
-      read(graph => graph.get_backlink_filter_context_json(name, JSON.stringify(targets))),
-    getUnlinkedRefs: name => read(graph => graph.get_unlinked_refs_json(name)),
-    getBlockRefCounts: () => read(graph => graph.get_block_ref_counts_json()),
-    getBlockReferrers: uuid => read(graph => graph.get_block_referrers_json(uuid)),
+      read("get_backlink_filter_context_json", name, JSON.stringify(targets)),
+    getUnlinkedRefs: name => read("get_unlinked_refs_json", name),
+    getBlockRefCounts: () => read("get_block_ref_counts_json"),
+    getBlockReferrers: uuid => read("get_block_referrers_json", uuid),
     async resolveBlock(uuid) {
-      const [group] = await read<(RefGroup | null)[]>(graph => graph.resolve_blocks_json(JSON.stringify([uuid])));
+      const [group] = await read<(RefGroup | null)[]>("resolve_blocks_json", JSON.stringify([uuid]));
       return group;
     },
-    resolveBlocks: uuids => read(graph => graph.resolve_blocks_json(JSON.stringify(uuids))),
-    previewBlock: (uuid, maxNodes) => read(graph => graph.preview_block_json(uuid, maxNodes)),
-    search: (query, limit) => read(graph => graph.search_json(query, limit)),
+    resolveBlocks: uuids => read("resolve_blocks_json", JSON.stringify(uuids)),
+    previewBlock: (uuid, maxNodes) => read("preview_block_json", uuid, maxNodes),
+    search: (query, limit) => read("search_json", query, limit),
     quickSwitch: (query, limit, _editor, transliteration = false) =>
-      read(graph => graph.capture_quick_switch_json(query, limit, transliteration)),
+      read("capture_quick_switch_json", query, limit, transliteration),
     captureQuickSwitch: (query, limit, transliteration = false) =>
-      read(graph => graph.capture_quick_switch_json(query, limit, transliteration)),
-    queryFacets: scope => read(graph => graph.query_facets_json(JSON.stringify(scope))),
+      read("capture_quick_switch_json", query, limit, transliteration),
+    queryFacets: scope => read("query_facets_json", JSON.stringify(scope)),
     parseQuery: (text, dialect, properties) =>
-      read(graph => graph.parse_query_json(text, dialect, JSON.stringify(properties))),
+      read("parse_query_json", text, dialect, JSON.stringify(properties)),
     queryRun: (query, view, context) =>
-      read(graph => graph.query_run_json(JSON.stringify(query), JSON.stringify(view), JSON.stringify(context))),
+      read("query_run_json", JSON.stringify(query), JSON.stringify(view), JSON.stringify(context)),
     runGraphSearch: (source, pageLimit, blockLimit, _lane, explain, scope, pageMatchScope, views, transliteration) =>
-      read(graph => graph.run_graph_search_json(source, pageLimit, blockLimit, JSON.stringify({
+      read("run_graph_search_json", source, pageLimit, blockLimit, JSON.stringify({
         explain, scope, pageMatchScope, pageView: views?.page, blockView: views?.block, transliteration,
-      }))),
+      })),
     // ---- assets and the browser ----
     // A refused or missing asset rejects (I-9): an empty byte array reads as a valid empty
     // file and blanks a PDF or image with no cause. The live backend rejects the same way.

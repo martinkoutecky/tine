@@ -32,8 +32,12 @@ This is the same snapshot used for folder exports, documented in
 The writer admits 200 selected pages plus a generated home, 200,000 blocks,
 256 query calls, 1 MiB per source string, 32 MiB of document JSON, 6 MiB gzip
 and 8 MiB envelope text. The core admits the file and block structure. The viewer bounds the
-envelope and fetch responses before decoding, authenticates before gunzipping,
-and validates the source document before constructing the browser graph.
+envelope and fetch responses before decoding and authenticates before gunzipping.
+It transfers the gunzipped bytes to a same-origin module worker, which validates
+the source document and owns the graph. Each graph read takes one request and
+response carrying the core's existing JSON wire answer. A worker load, graph
+open or worker failure displays a reader error. Reloading opens a new session.
+The viewer's CSP admits workers only from its own origin.
 
 A source whose page identity or reading settings change on reopening refuses
 publication. This covers defective serialization and an incomplete reading

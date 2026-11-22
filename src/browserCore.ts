@@ -1,11 +1,11 @@
-import { base64ToBytes } from "./render/parse";
+import { base64ToBytes } from "./render/wasmBytes";
 
 let core: ReturnType<typeof initializeBrowserCore> | undefined;
 
 /** The browser could not initialize the graph engine. */
 export class BrowserCoreLoadError extends Error {
   constructor(cause: unknown) {
-    super("Could not initialize the browser graph engine", { cause });
+    super(`Browser graph engine unavailable: ${String(cause)}`, { cause });
   }
 }
 

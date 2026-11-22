@@ -35,6 +35,10 @@ Folder publications with the bundled browser app write the generation-2
 snapshot `S` to `app/snapshot.json` (`quick-share.md`, Generation 2). The
 folder's static HTML is rendered from the private build graph. Its app reads
 the snapshot's graph-relative page sources and reduced `logseq/config.edn`.
+It transfers the snapshot bytes to the same module worker used by the share
+viewer. The worker decodes and opens the graph and answers its reads. The
+app shell allows workers only from its own origin and displays a reader
+error if its graph cannot open or its worker fails.
 
 Folder definitions offer **Re-export**, opening the existing review dialog with
 the recorded leaf under `<graph>/published-queries/` and Replace selected.

@@ -505,7 +505,8 @@ fn app_files(
     let mut app_index = html.to_owned();
     app_index.insert_str(
         at,
-        "<meta name=\"tine-published\" content=\"snapshot.json\">",
+        "<meta http-equiv=\"Content-Security-Policy\" content=\"worker-src 'self'\">\
+         <meta name=\"tine-published\" content=\"snapshot.json\">",
     );
     let title = name
         .replace('&', "&amp;")
