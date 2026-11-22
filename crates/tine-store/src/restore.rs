@@ -300,7 +300,7 @@ impl Store {
         }
         let recovery_id = format!(
             "{}-pre-restore-extras-{}-{}",
-            tine_core::date::utc_backup_stamp(),
+            tine_core::clock::utc_backup_stamp(),
             std::process::id(),
             RECOVERY_SEQ.fetch_add(1, Ordering::Relaxed)
         );

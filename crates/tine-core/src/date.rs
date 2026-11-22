@@ -84,21 +84,9 @@ impl JournalDate {
         }
     }
 
-    /// Today's date in the device's local civil calendar.  Journal membership,
-    /// relative queries, and their date-keyed caches must all agree on this
-    /// boundary; UTC epoch days split those user-facing meanings near midnight.
-    pub fn today() -> JournalDate {
-        use chrono::{Datelike, Local};
-        let now = Local::now();
-        JournalDate {
-            year: now.year(),
-            month: now.month(),
-            day: now.day(),
-        }
-    }
-
     /// The device's current UTC offset (minutes east of UTC) and the instant it
-    /// was sampled, read through the same time-zone source as [`Self::today`].
+    /// was sampled, read through the same time-zone source as `JournalDate::today`
+    /// (`crate::clock`).
     /// The frontend corrects its own wall clock by this (GH #607): a WebView's
     /// bundled ICU can carry older zone rules than the OS, and the two sides then
     /// disagree about the calendar day near midnight.
@@ -121,27 +109,6 @@ impl JournalDate {
     pub fn file_stem(&self) -> String {
         format!("{:04}_{:02}_{:02}", self.year, self.month, self.day)
     }
-}
-
-/// UTC backup directory stamp in `YYYY-MM-DD_HH-MM-SS` form.
-pub fn utc_backup_stamp() -> String {
-    use std::time::UNIX_EPOCH;
-    let secs = crate::clock::system_now()
-        .duration_since(UNIX_EPOCH)
-        .map(|d| d.as_secs() as i64)
-        .unwrap_or(0);
-    let days = secs.div_euclid(86_400);
-    let rem = secs.rem_euclid(86_400);
-    let date = JournalDate::from_days(days);
-    format!(
-        "{:04}-{:02}-{:02}_{:02}-{:02}-{:02}",
-        date.year,
-        date.month,
-        date.day,
-        rem / 3600,
-        (rem % 3600) / 60,
-        rem % 60
-    )
 }
 
 fn is_leap(y: i32) -> bool {

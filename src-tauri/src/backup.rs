@@ -1046,7 +1046,7 @@ fn publish_locked(
         }
         None => {
             let Some(name) =
-                naming::allocate(&tine_core::date::utc_backup_stamp(), suffix, &scan.names)
+                naming::allocate(&tine_core::clock::utc_backup_stamp(), suffix, &scan.names)
             else {
                 return BackupOutcome::failed(n, "naming", ErrorKind::Other);
             };
