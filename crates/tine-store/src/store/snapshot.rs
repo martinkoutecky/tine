@@ -3,7 +3,7 @@ use super::*;
 use crate::model::derived::Named;
 use std::collections::HashSet;
 
-pub(super) fn name_claimants<'a>(
+fn name_claimants<'a>(
     index: &'a SharedMap<(bool, String), Vec<PageEntry>>,
     name: &str,
     kind: PageKind,
@@ -73,6 +73,20 @@ impl Store {
 }
 
 impl WholeGraph {
+    /// The captured diagnostic for one exact graph-relative path. O(log U)
+    /// comparisons for U unreadable entries, with no allocation or disk read.
+    pub fn unreadable_file_reason(&self, path: &str) -> Option<&str> {
+        let index = self
+            .unreadable
+            .binary_search_by(|(file, _)| {
+                #[cfg(feature = "test-faults")]
+                crate::cost_counters::unreadable_path_probe();
+                file.as_str().cmp(path)
+            })
+            .ok()?;
+        Some(&self.unreadable[index].1)
+    }
+
     pub(super) fn name_claimants(&self, name: &str, kind: PageKind) -> Vec<PageEntry> {
         name_claimants(&self.claimants, name, kind).to_vec()
     }

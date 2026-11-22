@@ -129,6 +129,7 @@ thread_local! {
     static WATCHER_READ_CAUSE: std::cell::Cell<WatcherReadCause> = const { std::cell::Cell::new(WatcherReadCause::Other) };
     static WATCHER_READ_CYCLE: std::cell::Cell<Option<usize>> = const { std::cell::Cell::new(None) };
     static JOURNAL_WORK: std::cell::Cell<(usize, usize, usize)> = const { std::cell::Cell::new((0, 0, 0)) };
+    static UNREADABLE_PATH_PROBES: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
     /// Set on the watcher thread, whose re-reads of just-written files are
     /// counted apart from the operation that wrote them (contract §5.4, K5).
     static WATCHER: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
@@ -169,6 +170,14 @@ pub(crate) fn journal_reference_visit() {
         let (days, sorts, refs) = work.get();
         work.set((days, sorts, refs + 1));
     });
+}
+
+/// Calling thread's path comparisons in captured single-file diagnostic lookups.
+pub fn unreadable_path_probes() -> usize {
+    UNREADABLE_PATH_PROBES.with(std::cell::Cell::get)
+}
+pub(crate) fn unreadable_path_probe() {
+    UNREADABLE_PATH_PROBES.with(|work| work.set(work.get() + 1));
 }
 
 /// Run `observe`, the page host's processing of an observation the watcher

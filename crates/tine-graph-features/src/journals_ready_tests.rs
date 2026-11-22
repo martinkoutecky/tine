@@ -1,54 +1,33 @@
 use super::*;
 
 #[test]
-fn journal_feed_keeps_both_days_with_the_same_title() {
-    let root = tempfile::tempdir().unwrap();
-    for dir in ["journals", "pages", "logseq"] {
-        std::fs::create_dir(root.path().join(dir)).unwrap();
-    }
-    std::fs::write(
-        root.path().join("logseq/config.edn"),
-        "{:journal/page-title-format \"yyyy\"}\n",
+fn captured_feed_looks_up_only_the_missing_owners_diagnostic() {
+    use tine_store::cost_counters::unreadable_path_probes;
+
+    let files = [
+        ("journals/2000_01_02.md".into(), vec![0xff]),
+        ("pages/Plan.md".into(), b"- [[2000-01-01]]\n".to_vec()),
+    ];
+    let (graph, _) = WholeGraph::from_files(
+        files
+            .into_iter()
+            .chain((0..511).map(|i| (format!("pages/Bad-{i:03}.md"), vec![0xff])))
+            .collect(),
     )
     .unwrap();
-    for date in ["2000-01-01", "2000-01-02"] {
-        std::fs::write(
-            root.path().join(format!("pages/{date}.md")),
-            format!("- body of {date}\n"),
-        )
-        .unwrap();
-    }
-    let store = Store::open(root.path(), Default::default()).unwrap().0;
-    store.stop_watcher_for_tests();
-    store.whole_graph_reconciled().unwrap();
-    for before in [None, Some(20000103)] {
-        let page = feed_page_through(&store, 10, before, None, true).unwrap();
-        let ids: Vec<_> = page.pages.iter().map(|read| read.id.as_str()).collect();
-        assert_eq!(ids, ["pages/2000-01-02.md", "pages/2000-01-01.md"]);
-        assert!(page.done);
-    }
-    store.close();
-}
-
-#[test]
-fn first_page_supplements_the_index_with_unobserved_journal_files() {
-    let root = tempfile::tempdir().unwrap();
-    std::fs::create_dir(root.path().join("journals")).unwrap();
-    std::fs::write(root.path().join("journals/2000_01_01.md"), "- indexed\n").unwrap();
-    let store = Store::open(root.path(), Default::default()).unwrap().0;
-    store.stop_watcher_for_tests();
-    store.whole_graph_reconciled().unwrap();
-    std::fs::write(root.path().join("journals/2000_01_02.md"), "- delivered\n").unwrap();
-    let listed = journal_listings();
-    let page = feed_page_through(&store, 2, None, None, true).unwrap();
-    assert_eq!(journal_listings() - listed, 1);
-    let bodies: Vec<_> = page
-        .pages
-        .iter()
-        .map(|read| read.doc.blocks[0].raw.as_str())
-        .collect();
-    assert_eq!(bodies, ["delivered", "indexed"]);
-    store.close();
+    assert_eq!(graph.unreadable_files().len(), 512);
+    let probes = unreadable_path_probes();
+    let page = feed_page_from_view(&graph, 1, Some(20000103), None, true).unwrap();
+    let probes = unreadable_path_probes() - probes;
+    assert_eq!(page.unreadable.len(), 1);
+    assert!(page.unreadable[0].starts_with("journals/2000_01_02.md: "));
+    assert_eq!(page.pages.len(), 1);
+    assert_eq!(page.pages[0].doc.title, "Jan 1st, 2000");
+    assert!(page.pages[0].doc.blocks.is_empty());
+    assert!(
+        (1..=11).contains(&probes),
+        "{probes} captured diagnostic comparisons"
+    );
 }
 
 /// Hl2_0 review hold: the feed carried the graph's config restriction in the

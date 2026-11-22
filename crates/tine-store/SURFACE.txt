@@ -429,12 +429,12 @@ enum store::Resolved
 # and a proposed path; neither is the owner of the currently opened page.
 fn store::WholeGraph::page_owner
 fn store::Resolved::page_owner
-# A feed reference or live listing item needs a point lookup by exact day.
+# The captured journal loader needs a point lookup by exact day.
 # A bounded inventory window cannot distinguish the queried day from an older one
 # without visiting another day.
 fn store::WholeGraph::journal_file_id
-# A feed already has an exact day. Passing its spelling through
-# proposed_file would parse the same day again under configurable formats.
+# A fileless reference needs a proposed identity from the typed day, which
+# a name-based proposal cannot retain under a lossy filename or title format.
 fn store::WholeGraph::proposed_journal_file
 field store::InventoryEntry.name
 field store::InventoryEntry.target
@@ -498,6 +498,9 @@ fn store::NameOwners::opens
 fn store::WholeGraph::proposed_file
 fn store::WholeGraph::rev
 fn store::WholeGraph::unreadable_files
+# A single missing body needs one exact-path diagnostic lookup, bounded by
+# binary search over the existing path-sorted list.
+fn store::WholeGraph::unreadable_file_reason
 # GH #335 (All pages "Updated" column): `inventory` answers per NAME (aliases,
 # reference-only names, one entry per spelling) and is re-read on every page-index
 # refresh; a last-modified time is per FILE and wanted once, when the view opens.

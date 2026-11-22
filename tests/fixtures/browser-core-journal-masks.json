@@ -1,0 +1,9 @@
+[
+  {"name":"both slashes","files":[["pages/A.md","title:: /Jan 1st, 2000/\n- ordinary\n"]]},
+  {"name":"leading slash","files":[["pages/A.md","title:: /Jan 1st, 2000\n- ordinary\n"]]},
+  {"name":"trailing slash","files":[["pages/A.md","title:: Jan 1st, 2000/\n- ordinary\n"]]},
+  {"name":"Org title","files":[["pages/A.org","#+TITLE: /Jan 1st, 2000/\n* ordinary\n"]]},
+  {"name":"case-folded literal","files":[["logseq/config.edn","{:journal/page-title-format \"yyyy-MM-dd Café\"}"],["pages/A.md","title:: 2000-01-01 CAFÉ\n- ordinary\n"]]},
+  {"name":"decomposed literal","files":[["logseq/config.edn","{:journal/page-title-format \"yyyy-MM-dd Café\"}"],["pages/A.md","title:: 2000-01-01 Cafe\u0301\n- ordinary\n"]]},
+  {"name":"undated journal","files":[["logseq/config.edn","{:journal/page-title-format \"yyyy\"}"],["journals/2000.md","- undated\n"]],"referenced_cursor_rows":["pages/Z.md","journals/1999_12_31.md"]}
+]

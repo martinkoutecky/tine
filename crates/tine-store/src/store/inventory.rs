@@ -249,7 +249,7 @@ pub enum InventoryScope<'a> {
     File(&'a PageId),
     /// This journal file's row in the view's day index, as `JournalFiles`
     /// lists it, also when the file failed to read: empty unless the file is
-    /// a journal and its day's opening claimant.
+    /// a journal and its name's opening claimant.
     JournalFile(&'a PageId),
     /// Every name: file-claimed names, aliases and reference-only names.
     All,
@@ -372,12 +372,15 @@ impl WholeGraph {
     /// [`InventoryScope::JournalFilesBefore`] lists at most `limit` file-claimed
     /// days below an exclusive cursor, in descending order, from the existing
     /// day index (duplicate-day strays are `others`, as in `All`). The day
-    /// tree seek costs O(log J); selected slots and same-day alternatives
-    /// cost O(log P + C) per candidate, C same-title journal claimants.
-    /// No new index or disk access.
+    /// tree seek costs O(log J); selected slots and claimant buckets use their
+    /// existing tree lookups and claimant spelling deduplication
+    /// (O(log P + C²) per candidate, C same-name claimants).
+    /// Masked days must be examined and skipped. No new index or disk access.
     ///
-    /// [`InventoryScope::JournalFile`] takes the day from the filename stem,
-    /// then checks its indexed file: O(log J + log P + C), no parse or disk I/O.
+    /// [`InventoryScope::JournalFile`] names the file by its filename stem, as
+    /// the file list does (so a file that failed to read keeps its day), then
+    /// resolves that name as `JournalFiles` does: O(log P + C²) for C name
+    /// claimants, no parse and no disk access.
     ///
     /// [`InventoryScope::File`] uses the existing page-position map and
     /// resolves its name in this view: O(log P + C) for C name claimants,
@@ -414,21 +417,33 @@ impl WholeGraph {
             InventoryScope::JournalFilesBefore { before, limit } => Arc::new(Inventory(
                 self.list
                     .journal_days_before(before.0)
-                    .filter_map(|page| self.journal_file_entry(page))
+                    .filter_map(|page| {
+                        self.claimed_entries(page, tine_core::refs::page_key(&page.name))
+                            .into_iter()
+                            .next()
+                            // A lossy title can make several source days open
+                            // one winner day. Emit it at its own indexed day.
+                            .filter(|entry| entry.day == page.date_key.map(Day))
+                    })
+                    .filter(|entry| entry.is_journal)
                     .take(limit)
                     .collect(),
             )),
-            InventoryScope::JournalFile(id) => Arc::new(Inventory(
-                std::path::Path::new(id.as_str())
+            InventoryScope::JournalFile(id) => {
+                let stem = std::path::Path::new(id.as_str())
                     .file_stem()
-                    .and_then(|stem| stem.to_str())
-                    .and_then(|stem| self.journal_format.parse(stem))
-                    .and_then(|date| self.list.get_day(date.ordinal_key()))
-                    .filter(|page| page.rel_path.as_ref() == Some(id))
-                    .and_then(|page| self.journal_file_entry(page))
-                    .into_iter()
-                    .collect(),
-            )),
+                    .and_then(|stem| stem.to_str());
+                let entry = stem.and_then(|stem| {
+                    let (name, _) = crate::model::journal_stem_name(&self.journal_format, stem);
+                    let claimants = self.all_name_claimants(&name);
+                    let winner = claimants.first()?;
+                    (winner.kind == PageKind::Journal && winner.rel_path.as_ref() == Some(id))
+                        .then(|| self.claimed_entries(winner, tine_core::refs::page_key(&name)))?
+                        .into_iter()
+                        .next()
+                });
+                Arc::new(Inventory(entry.into_iter().collect()))
+            }
             InventoryScope::File(id) => Arc::new(Inventory(
                 self.graph
                     .physical_pages
@@ -516,7 +531,11 @@ impl WholeGraph {
                 let mut entries: Vec<_> = self
                     .list
                     .journal_days()
-                    .filter_map(|page| self.journal_file_entry(page))
+                    .filter_map(|page| {
+                        self.claimed_entries(page, tine_core::refs::page_key(&page.name))
+                            .into_iter()
+                            .next()
+                    })
                     .collect();
                 sort_inventory(&mut entries);
                 Arc::new(Inventory(entries))
@@ -524,33 +543,10 @@ impl WholeGraph {
         }
     }
 
-    /// The opening file for this exact day, from the existing day index.
-    /// O(log J + log P), no parsed document or disk read.
+    /// The indexed owner for one exact journal day. O(log J + log P), with
+    /// no document or disk read. Feed eligibility is an inventory question.
     pub fn journal_file_id(&self, day: Day) -> Option<&PageId> {
         self.list.get_day(day.0)?.rel_path.as_ref()
-    }
-
-    fn journal_file_entry(&self, page: &PageEntry) -> Option<InventoryEntry> {
-        let day = page.date_key?;
-        let id = page.rel_path.clone()?;
-        let others =
-            super::snapshot::name_claimants(&self.claimants, &page.name, PageKind::Journal)
-                .iter()
-                .filter(|entry| entry.date_key == Some(day))
-                .filter_map(|entry| entry.rel_path.as_ref())
-                .filter(|other| **other != id)
-                .cloned()
-                .collect();
-        Some(InventoryEntry {
-            name: page.name.clone(),
-            target: Resolved::Existing { id, others },
-            is_journal: true,
-            day: Some(Day(day)),
-            link: None,
-            namespace_parent: false,
-            parent: None,
-            empty_alias: false,
-        })
     }
 
     /// What a `[[name]]` link opens in this view ([`link_target_in`]): the one
