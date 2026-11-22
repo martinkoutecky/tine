@@ -170,13 +170,15 @@ export function insertOutlineChildren(parentId: string, nodes: OutlineNode[]): s
  *  (built-in properties hidden). The kernel's `split` owns the rule
  *  (outline::split): hidden props stay with the original block, a split at the
  *  head inserts an empty block before it, and GH #361's line boundary becomes the
- *  block separator. Returns false when the outline cap refuses a child. */
+ *  block separator. `occurrenceCollapsed` carries the active embed's fold.
+ *  Returns false when the outline cap refuses a child. */
 export function splitBlock(
   id: string,
   offset: number,
   forceChild: boolean = false,
   keepStartInScope: boolean = false,
   editingSurface: string | null = null,
+  occurrenceCollapsed?: boolean,
 ) {
   const node = doc.byId[id];
   if (!node || !blockWritable(id)) return;
@@ -185,7 +187,7 @@ export function splitBlock(
     key: id,
     raw_offset: visibleOffsetToRawByte(node.raw, offset, BUILTIN_HIDE, formatForBlock(id)),
     force_child: forceChild,
-    children_visible: node.children.length > 0 && !node.collapsed,
+    children_visible: node.children.length > 0 && !(occurrenceCollapsed ?? node.collapsed),
     keep_start_in_scope: keepStartInScope,
   }, [node.page]);
   if ("refused" in change) {

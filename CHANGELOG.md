@@ -8,6 +8,10 @@ The format follows [Keep a Changelog](https://keepachangelog.com/); versions use
 
 ## [Unreleased]
 
+### Fixed
+
+- Enter at the end of an expanded block embed adds a visible first child and moves the caret there, even when the source is folded (#1023).
+
 ## [0.9.1] - 2026-11-19
 
 ### Fixed

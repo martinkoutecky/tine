@@ -484,7 +484,7 @@ export function Block(props: { id: string; hideRefCount?: boolean; forceExpanded
               </QuoteHighlightProvider>
             }
           >
-            <div class="authored-editor"><Show when={showsAuthor() && !bulletless()}><AuthorChip author={author()} menuOf={props.id} /></Show><Editor id={props.id} propertySession={propertySession} /></div>
+            <div class="authored-editor"><Show when={showsAuthor() && !bulletless()}><AuthorChip author={author()} menuOf={props.id} /></Show><Editor id={props.id} propertySession={propertySession} collapsed={collapsed} /></div>
           </Show>
         </div>
         <MarginMarker parentId={props.id} comments={marginComments()} />
@@ -591,7 +591,7 @@ async function getTemplates(): Promise<import("../types").TemplateDto[]> {
 // Block editor for `props.id`. Inside quick capture, CaptureCtx repurposes
 // Enter/Escape when autocomplete is closed to commit or dismiss the capture.
 
-export function Editor(props: { id: string; propertySession?: ReturnType<typeof propertyEditorSession> }): JSX.Element {
+export function Editor(props: { id: string; propertySession?: ReturnType<typeof propertyEditorSession>; collapsed?: () => boolean }): JSX.Element {
   const propertySession = props.propertySession ?? propertyEditorSession();
   propertySession.begin();
   // Non-null only inside the quick-capture window (see CaptureCtx).
@@ -2736,10 +2736,10 @@ export function Editor(props: { id: string; propertySession?: ReturnType<typeof 
       e.key === "Enter" && !e.ctrlKey && !e.metaKey &&
       (!e.shiftKey || (docModeEnterForNewLine && !e.altKey))
     ) {
-      // A folded embed's displayed root is the host's keyboard boundary. Use
-      // occurrence collapse, not source collapse; source editors and descendants
-      // retain their ordinary structural Enter behavior (GH #642).
-      const foldedEmbedHost = position().id !== props.id && collapseSurface?.collapsed(props.id, node().collapsed)
+      // The edited embed's fold governs both the host boundary (GH #642)
+      // and whether the split goes into the source's children (GH #1023).
+      const embedCollapsed = editSurface() ? props.collapsed?.() : undefined;
+      const foldedEmbedHost = position().id !== props.id && embedCollapsed
         ? position().id : null;
       if (foldedEmbedHost && start === end && end === raw.length) {
         e.preventDefault();
@@ -2835,7 +2835,7 @@ export function Editor(props: { id: string; propertySession?: ReturnType<typeof 
         if (newId) startEditing(newId, 0, null, editSurface());
       } else {
         const zoomRoot = outlineScope?.forceExpandedRoot === props.id;
-        splitBlock(props.id, start, zoomRoot, zoomRoot, editSurface());
+        splitBlock(props.id, start, zoomRoot, zoomRoot, editSurface(), embedCollapsed);
       }
     } else if (e.key === "Backspace" && end === start) {
       // Auto-pair Backspace: caret between an empty pair (`(|)`) deletes both
