@@ -86,6 +86,18 @@ impl RootBinding {
         }
     }
 
+    /// A graph held in memory: no root on disk is probed, and a check
+    /// refuses (nothing writes such a graph).
+    pub(crate) fn unbound(path: &Path) -> Self {
+        Self {
+            path: path.into(),
+            identity: Err(io::Error::new(
+                io::ErrorKind::Unsupported,
+                "a graph held in memory has no root on disk",
+            )),
+        }
+    }
+
     pub(crate) fn check(&self) -> io::Result<()> {
         #[cfg(test)]
         CHECKS.with(|count| count.set(count.get() + 1));

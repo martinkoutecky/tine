@@ -10,6 +10,7 @@ use std::fs;
 use std::io;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
+use std::time::SystemTime;
 
 /// The root of every memory graph: an absolute path no read leaves (a read
 /// that bypassed the source would find nothing there).
@@ -22,35 +23,48 @@ pub(crate) enum FileSource {
     Memory(Arc<Files>),
 }
 
+/// One memory file: its bytes and the modification time it carries (the
+/// source file's, for an export), which recency queries read.
+pub(crate) type MemoryFile = (String, Vec<u8>, Option<SystemTime>);
+
 /// A memory graph's files by absolute path, and each directory's children
 /// (a file or a directory), so a listing walks them as it walks the disk.
 pub(crate) struct Files {
-    files: BTreeMap<PathBuf, Arc<[u8]>>,
+    files: BTreeMap<PathBuf, (Arc<[u8]>, Option<SystemTime>)>,
     children: BTreeMap<PathBuf, Vec<(PathBuf, bool)>>,
 }
 
 impl Files {
-    /// `files` are graph-relative paths and their bytes, under `root`.
-    pub(crate) fn new(root: &Path, files: impl IntoIterator<Item = (String, Vec<u8>)>) -> Files {
+    /// `files` are graph-relative paths, bytes and times, under `root`. A
+    /// repeated path keeps its last bytes. O(files × depth).
+    pub(crate) fn new(root: &Path, files: impl IntoIterator<Item = MemoryFile>) -> Files {
         let mut out = Files {
             files: BTreeMap::new(),
             children: BTreeMap::from([(root.to_path_buf(), Vec::new())]),
         };
-        for (rel, bytes) in files {
+        for (rel, bytes, modified) in files {
             let path = root.join(rel);
+            if out
+                .files
+                .insert(path.clone(), (bytes.into(), modified))
+                .is_some()
+            {
+                continue;
+            }
+            // Each file, and each directory when first seen, joins its
+            // parent's children once.
             let mut child = (path.clone(), false);
             for dir in path.ancestors().skip(1) {
                 let known = out.children.contains_key(dir);
-                let siblings = out.children.entry(dir.to_path_buf()).or_default();
-                if !siblings.contains(&child) {
-                    siblings.push(child);
-                }
-                if known || dir == root {
+                out.children
+                    .entry(dir.to_path_buf())
+                    .or_default()
+                    .push(child);
+                if known {
                     break;
                 }
                 child = (dir.to_path_buf(), true);
             }
-            out.files.insert(path, bytes.into());
         }
         out
     }
@@ -84,53 +98,63 @@ fn not_found(path: &Path) -> io::Error {
 }
 
 impl FileSource {
-    /// The entries of `dir`; an entry whose kind cannot be read is an error
-    /// for that entry's path (a whole-directory failure is the outer error).
-    pub(crate) fn read_dir(
-        &self,
+    /// The entries of `dir`, read as the caller iterates; an entry whose kind
+    /// cannot be read is an error for that entry's path (a whole-directory
+    /// failure is the outer error).
+    pub(crate) fn read_dir<'a>(
+        &'a self,
         dir: &Path,
-    ) -> io::Result<Vec<Result<DirItem, (PathBuf, io::Error)>>> {
+    ) -> io::Result<Box<dyn Iterator<Item = Result<DirItem, (PathBuf, io::Error)>> + 'a>> {
+        let dir = dir.to_path_buf();
         match self {
-            FileSource::Disk => Ok(fs::read_dir(dir)?
-                .map(|entry| {
-                    let entry = entry.map_err(|error| (dir.to_path_buf(), error))?;
-                    let path = entry.path();
-                    let kind = match entry.file_type() {
-                        Ok(kind) if kind.is_file() => EntryKind::File,
-                        Ok(kind) if kind.is_dir() => EntryKind::Dir,
-                        Ok(_) => EntryKind::Other,
-                        Err(error) => return Err((path, error)),
-                    };
-                    Ok(DirItem {
-                        path,
-                        kind,
-                        disk: Some(entry),
-                    })
+            FileSource::Disk => Ok(Box::new(fs::read_dir(&dir)?.map(move |entry| {
+                let entry = entry.map_err(|error| (dir.to_path_buf(), error))?;
+                let path = entry.path();
+                let kind = match entry.file_type() {
+                    Ok(kind) if kind.is_file() => EntryKind::File,
+                    Ok(kind) if kind.is_dir() => EntryKind::Dir,
+                    Ok(_) => EntryKind::Other,
+                    Err(error) => return Err((path, error)),
+                };
+                Ok(DirItem {
+                    path,
+                    kind,
+                    disk: Some(entry),
                 })
-                .collect()),
+            }))),
             FileSource::Memory(files) => {
-                Ok((files.children.get(dir).ok_or_else(|| not_found(dir))?)
-                    .iter()
-                    .map(|(path, dir)| {
-                        Ok(DirItem {
-                            path: path.clone(),
-                            kind: if *dir {
-                                EntryKind::Dir
-                            } else {
-                                EntryKind::File
-                            },
-                            disk: None,
-                        })
+                let children = files.children.get(&dir).ok_or_else(|| not_found(&dir))?;
+                Ok(Box::new(children.iter().map(|(path, dir)| {
+                    Ok(DirItem {
+                        path: path.clone(),
+                        kind: if *dir {
+                            EntryKind::Dir
+                        } else {
+                            EntryKind::File
+                        },
+                        disk: None,
                     })
-                    .collect())
+                })))
             }
         }
     }
 
-    /// A listed entry's stamp; a memory file has none (it never changes).
+    /// A listed entry's stamp: a disk entry's metadata, or a memory file's
+    /// carried time and length.
     pub(crate) fn stamp(&self, item: &DirItem) -> Option<crate::watch::Stamp> {
-        let metadata = item.disk.as_ref()?.metadata().ok()?;
-        crate::watch::stamp_from_metadata(&metadata)
+        match self {
+            FileSource::Disk => {
+                let metadata = item.disk.as_ref()?.metadata().ok()?;
+                crate::watch::stamp_from_metadata(&metadata)
+            }
+            FileSource::Memory(files) => {
+                let (bytes, modified) = files.files.get(&item.path)?;
+                Some(crate::watch::Stamp::in_memory(
+                    *modified,
+                    bytes.len() as u64,
+                ))
+            }
+        }
     }
 
     pub(crate) fn open(&self, path: &Path) -> io::Result<Opened> {
@@ -143,7 +167,7 @@ impl FileSource {
                 })
             }
             FileSource::Memory(files) => {
-                let bytes = files.files.get(path).ok_or_else(|| not_found(path))?;
+                let (bytes, _) = files.files.get(path).ok_or_else(|| not_found(path))?;
                 Ok(Opened {
                     len: bytes.len() as u64,
                     reader: Box::new(io::Cursor::new(Arc::clone(bytes))),
@@ -171,11 +195,11 @@ impl FileSource {
         }
     }
 
-    /// A file's modification time; a memory file has none.
-    pub(crate) fn modified(&self, path: &Path) -> Option<std::time::SystemTime> {
+    /// A file's modification time (a memory file's carried one).
+    pub(crate) fn modified(&self, path: &Path) -> Option<SystemTime> {
         match self {
             FileSource::Disk => fs::metadata(path).and_then(|meta| meta.modified()).ok(),
-            FileSource::Memory(_) => None,
+            FileSource::Memory(files) => files.files.get(path)?.1,
         }
     }
 }

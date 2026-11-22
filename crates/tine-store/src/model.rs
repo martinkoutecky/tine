@@ -2563,6 +2563,20 @@ impl FindEntryIndex {
 /// ancestor outside the graph would turn ordinary save/delete/restore operations
 /// into writes against unrelated files.
 fn validate_managed_dir(root: &Path, raw: &str, label: &str) -> io::Result<()> {
+    managed_dir_lexical(raw, label)?;
+    let candidate = root.join(raw);
+    if !path_stays_within_root(root, &candidate) || path_uses_managed_alias(root, &candidate) {
+        return Err(io::Error::new(
+            io::ErrorKind::InvalidInput,
+            format!("{label} directory escapes graph root: {raw:?}"),
+        ));
+    }
+    Ok(())
+}
+
+/// The spelling rule of [`validate_managed_dir`]: a non-empty relative path
+/// of plain components, no backslash.
+fn managed_dir_lexical(raw: &str, label: &str) -> io::Result<()> {
     if raw.is_empty() || raw.contains('\\') {
         return Err(io::Error::new(
             io::ErrorKind::InvalidInput,
@@ -2578,13 +2592,6 @@ fn validate_managed_dir(root: &Path, raw: &str, label: &str) -> io::Result<()> {
         return Err(io::Error::new(
             io::ErrorKind::InvalidInput,
             format!("{label} directory must be a safe relative path: {raw:?}"),
-        ));
-    }
-    let candidate = root.join(rel);
-    if !path_stays_within_root(root, &candidate) || path_uses_managed_alias(root, &candidate) {
-        return Err(io::Error::new(
-            io::ErrorKind::InvalidInput,
-            format!("{label} directory escapes graph root: {raw:?}"),
         ));
     }
     Ok(())
@@ -2648,9 +2655,20 @@ impl From<io::Error> for CheckedOpenError {
 }
 
 impl Graph {
+    /// Whether `config`'s pages and journals directories are safe graph
+    /// directories. A memory graph has no disk to escape to: only the
+    /// lexical rule applies there.
     pub(crate) fn validate_config_layout(&self, config: &Config) -> io::Result<()> {
-        validate_managed_dir(&self.root, &config.journals_dir, "journals")?;
-        validate_managed_dir(&self.root, &config.pages_dir, "pages")
+        for (raw, label) in [
+            (&config.journals_dir, "journals"),
+            (&config.pages_dir, "pages"),
+        ] {
+            match self.source {
+                FileSource::Disk => validate_managed_dir(&self.root, raw, label)?,
+                FileSource::Memory(_) => managed_dir_lexical(raw, label)?,
+            }
+        }
+        Ok(())
     }
 
     #[cfg(test)]
@@ -2815,7 +2833,7 @@ impl Graph {
     /// load, the naming and every page read take them from there
     /// ([`FileSource::Memory`]). Such a graph is only read
     /// (`WholeGraph::from_pages`); nothing writes it.
-    pub(crate) fn in_memory(files: Vec<(String, Vec<u8>)>) -> Graph {
+    pub(crate) fn in_memory(files: Vec<file_source::MemoryFile>) -> Graph {
         let root = PathBuf::from(file_source::MEMORY_ROOT);
         let files = file_source::Files::new(&root, files);
         Self::open_from(root, FileSource::Memory(Arc::new(files)))
@@ -2832,19 +2850,26 @@ impl Graph {
             Err(error) => (Config::default(), Some(error.into())),
         };
         let journal_format = config.journal_format();
-        let mut graph = Self::empty_with_config(root, config, journal_format);
-        graph.source = source;
+        let mut graph = Self::empty_with_config(root, source, config, journal_format);
         graph.config_read_problem = problem;
         graph
     }
 
-    fn empty_with_config(root: PathBuf, config: Config, journal_format: JournalFormat) -> Graph {
+    fn empty_with_config(
+        root: PathBuf,
+        source: FileSource,
+        config: Config,
+        journal_format: JournalFormat,
+    ) -> Graph {
         Graph {
             storage_diag: crate::storage_diag::for_graph(&root),
-            root_binding: Arc::new(crate::root_binding::RootBinding::new(&root)),
+            root_binding: Arc::new(match source {
+                FileSource::Disk => crate::root_binding::RootBinding::new(&root),
+                FileSource::Memory(_) => crate::root_binding::RootBinding::unbound(&root),
+            }),
             assets_root: root.join("assets"),
             root,
-            source: FileSource::Disk,
+            source,
             config,
             config_read_problem: None,
             journal_format: Arc::new(journal_format),

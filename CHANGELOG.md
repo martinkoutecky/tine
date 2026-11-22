@@ -16,7 +16,7 @@ The format follows [Keep a Changelog](https://keepachangelog.com/); versions use
 - A journal day's title tooltip now says "Double-click to rename", as a page's does, since renaming a day (moving its notes to a page) has no menu row (D-20261119-DRM).
 
 ### Changed
-- Exports and quick shares build their private copy of the exported pages in memory instead of writing it to a temporary folder in the app cache and reading it back, so an export writes nothing but its output (browser core slice 1).
+- Exports and quick shares build their private copy of the exported pages in memory instead of writing it to a temporary folder in the app cache and reading it back, so an export writes nothing but its output (browser core slice 1, D-20261122-WEX). Queries sorted by recency in an export use each page's file time, as in the app.
 
 ### Fixed
 - Linked References and query results, including tables and boards, use their source file’s formatting while the source page loads. Rows and breadcrumbs stay visible during an unrelated page rename (UI-ORG-RESULT-ROW-FORMAT).
