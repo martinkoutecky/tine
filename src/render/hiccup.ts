@@ -1,4 +1,4 @@
-// Bounded, data-only Hiccup transcription for configured macro expansions.
+// Bounded, data-only Hiccup transcription for direct and macro-expanded forms.
 // OG safe-reads Hiccup, serializes it, then sanitizes the HTML at
 // upstream Logseq src/main/frontend/components/block.cljs:1554-1562.
 // This module deliberately implements only the frozen supported subset; it never
@@ -11,6 +11,10 @@ const TOKEN = /^[A-Za-z][A-Za-z0-9-]*$/;
 // Hiccup's frozen EDN subset keeps the authored spelling (including exponent,
 // leading-dot and trailing-dot forms); sheet/formula decimal cells are stricter.
 const HICCUP_NUMBER = /^[-+]?(?:\d+(?:\.\d*)?|\.\d+)(?:[eE][-+]?\d+)?$/;
+// EDN symbol components start with a non-digit. A sign or dot before a digit
+// belongs to numeric syntax. The unqualified literals have their own EDN types.
+const SYMBOL_PART = String.raw`(?![+.-]\d)[\p{L}.*+!_?$%&=<>-][\p{L}\p{M}\d.*+!_?$%&=<>:#-]*`;
+const HICCUP_SYMBOL = new RegExp(`^(?!(?:nil|true|false)$|.*:(?:/|$))(?:/|(?:${SYMBOL_PART}/)?(${SYMBOL_PART}))$`, "u");
 
 class HiccupParseError extends Error {}
 
@@ -87,9 +91,13 @@ class Reader {
     }
     if (ch === "[") return this.parseElement(parentDepth + 1);
     if (ch === "(") return this.parseSeq(parentDepth + 1);
-    if (this.startsNumber()) {
+    const atom = this.peekAtom();
+    const symbol = HICCUP_SYMBOL.exec(atom);
+    if (symbol || HICCUP_NUMBER.test(atom)) {
       this.bumpNode();
-      return escapeHtml(this.readNumber());
+      this.index += atom.length;
+      // Hiccups 0.3.0 render-html calls as-str, which uses name for symbols.
+      return escapeHtml(symbol?.[1] ?? atom);
     }
 
     // Consume one complete reader form before rejecting it. This makes malformed

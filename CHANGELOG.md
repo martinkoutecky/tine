@@ -8,6 +8,10 @@ The format follows [Keep a Changelog](https://keepachangelog.com/); versions use
 
 ## [Unreleased]
 
+### Fixed
+
+- Configured Hiccup macros render bare-word arguments like `{{r education}}`, just like their quoted equivalents (#1018).
+
 ## [0.9.1] - 2026-11-19
 
 ### Fixed

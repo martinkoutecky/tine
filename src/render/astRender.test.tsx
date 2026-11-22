@@ -626,6 +626,28 @@ describe("renderBlocks", () => {
 });
 
 describe("user macro helpers", () => {
+  describe.each([
+    { position: "inline", prefix: "" },
+    { position: "block", prefix: "Intro\n" },
+  ])("configured macro Hiccup in $position position (#1018)", ({ prefix }) => {
+    it.each([
+      ["education", "education"],
+      ['"education"', "education"],
+      ["42", "42"],
+    ])("renders %s as colored bold text", (argument, expectedText) => {
+      setGraphMeta({ macros: { r: `${prefix}[:b {:style "color: #E91E63"} $1]` } } as never);
+      const root = document.createElement("div");
+      const dispose = render(() => <AstBody raw={`{{r ${argument}}}`} />, root);
+      try {
+        const bold = root.querySelector("b");
+        expect(bold?.textContent, root.textContent ?? "").toBe(expectedText);
+        expect(bold?.style.color).toBe("rgb(233, 30, 99)");
+      } finally {
+        dispose();
+      }
+    });
+  });
+
   it("renders configured Hiccup as rich output through the main AstBody path", () => {
     setGraphMeta({ macros: { rich: '[:span {:class "lane-rich"} "Rich macro"]' } } as never);
     const h = html(() => <AstBody raw="{{rich}}" />);
@@ -665,14 +687,14 @@ describe("user macro helpers", () => {
         {renderInlines([
           { k: "macro", name: "rich", args: [] },
           { k: "plain", text: " / " },
-          { k: "hiccup", v: '[:span.direct-inline "Direct inline"]' },
+          { k: "hiccup", v: '[:span.direct-inline inline]' },
         ])}
-        <AstBody raw={'Intro\n[:div.direct-block "Direct block"]'} />
+        <AstBody raw={"Intro\n[:div.direct-block block]"} />
       </div>
     ));
     expect(h).toContain('class="macro-rich"');
-    expect(h).toContain('class="direct-inline"');
-    expect(h).toContain('class="direct-block"');
+    expect(h).toContain('<span class="direct-inline">inline</span>');
+    expect(h).toContain('<div class="direct-block">block</div>');
     expect(h).not.toContain("[:span.direct-inline");
     expect(h).not.toContain("[:div.direct-block");
   });
@@ -727,7 +749,7 @@ describe("user macro helpers", () => {
   it.each([
     '[:span',
     '(fn [] "x")',
-    '[:span symbol]',
+    '[:span nil]',
     '[:span #{"set"}]',
     '[:span #thing "tagged"]',
     '[:sp@n "bad"]',

@@ -7,8 +7,8 @@ function nested(depth: number): string {
   return source;
 }
 
-function withNodeCount(nodes: number): string {
-  return `[:span ${Array.from({ length: nodes - 1 }, () => '"x"').join(" ")}]`;
+function withNodeCount(nodes: number, child: string): string {
+  return `[:span ${Array.from({ length: nodes - 1 }, () => child).join(" ")}]`;
 }
 
 describe("hiccupToHtml", () => {
@@ -26,14 +26,25 @@ describe("hiccupToHtml", () => {
   });
 
   it("drops only unsupported attribute values", () => {
-    expect(hiccupToHtml('[:span {:title [:b "no"] :width 3 :open true} "x"]'))
+    expect(hiccupToHtml('[:span {:title [:b "no"] :width 3 :open true :id symbol} "x"]'))
       .toBe('<span width="3">x</span>');
+  });
+
+  it("renders bare symbol children as escaped names", () => {
+    expect(hiccupToHtml('[:span (label/éducation " " research&development<today>)]'))
+      .toBe("<span>éducation research&amp;development&lt;today&gt;</span>");
   });
 
   it.each([
     '[:span',
     '(fn [] "x")',
-    '[:span symbol]',
+    '[:span nil]',
+    '[:span true]',
+    '[:span false]',
+    '[:span :keyword]',
+    '[:span +1invalid]',
+    '[:span label/]',
+    '[:span invalid:]',
     '[:span #{"set"}]',
     '[:span #thing "tagged"]',
     '[:sp@n "bad tag"]',
@@ -50,9 +61,9 @@ describe("hiccupToHtml", () => {
     expect(hiccupToHtml(nested(65))).toBeNull();
   });
 
-  it("enforces node count while parsing: 2048 is accepted and 2049 falls back", () => {
-    expect(hiccupToHtml(withNodeCount(2048))).not.toBeNull();
-    expect(hiccupToHtml(withNodeCount(2049))).toBeNull();
+  it.each(['"x"', 'x'])("enforces the 2048-node limit with %s children", (child) => {
+    expect(hiccupToHtml(withNodeCount(2048, child))).not.toBeNull();
+    expect(hiccupToHtml(withNodeCount(2049, child))).toBeNull();
   });
 
   it("counts supported attribute entries while parsing: 2047 attrs (2048 nodes) accepted, 2048 attrs falls back", () => {
