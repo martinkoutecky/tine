@@ -259,7 +259,7 @@ it("shares decoded titles, discards and input refusals with native export", () =
   expect(inspect(`{#_ :ignored :title "Line\\nTwo\\t\\u03bb" :query ${query} :inputs [:current-page]}`)).toEqual({
     kind: "supported", query: `${query} :inputs [:current-page]`, title: "Line\nTwo\tλ",
   });
-  expect(inspect(`{:query ${query} :inputs nope}`)).toEqual({ kind: "unsupported", reason: "expected :inputs to be a vector" });
+  expect(inspect(`{:query ${query} :inputs nope}`)).toEqual({ kind: "unsupported", reason: "expected :inputs to be a vector or list" });
   expect(inspect(`{#_ [:title "hidden"] :query ${query}}`)).toEqual({ kind: "supported", query });
 });
 

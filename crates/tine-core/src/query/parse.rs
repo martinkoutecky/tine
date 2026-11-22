@@ -109,6 +109,8 @@ pub(crate) fn advanced_form(form: &str) -> bool {
     let mut i = 0usize;
     while i < bytes.len() {
         match bytes[i] {
+            // An EDN character may be a quote. It cannot open a string.
+            b'\\' => i += 2,
             b'"' => {
                 // An OG double-quoted string, backslash-escaped.
                 i += 1;

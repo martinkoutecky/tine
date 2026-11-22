@@ -79,10 +79,10 @@ pub(super) fn page_property_result(groups: &[String], find: &str) -> bool {
 /// Scalar page names become page rows in Tine's own display, never block rows.
 pub(super) fn lower_named_page_query(
     src: &str,
+    find: &str,
     groups: &[String],
     inputs: &std::collections::HashMap<String, AdvancedInput>,
 ) -> Option<Query> {
-    let find = advanced_find_var(src)?;
     let triples = groups
         .iter()
         .map(|g| {
@@ -92,16 +92,11 @@ pub(super) fn lower_named_page_query(
         .collect::<Option<Vec<_>>>()?;
     let projection = triples
         .iter()
-        .position(|t| t[1] == ":block/name" && t[2] == find && !inputs.contains_key(&find));
+        .position(|t| t[1] == ":block/name" && t[2] == find && !inputs.contains_key(find));
     // The name projection proves the result entity is a page. A tag triple
     // alone can also bind a tagged Org block in OG. An unfiltered name query
     // includes reference-only page entities which @page does not enumerate.
     let projection = projection?;
-    let find_items = edn_items(edn_body(query_vector(src)?, '[', ']')?);
-    let find_at = find_items.iter().position(|s| *s == ":find")?;
-    if find_items[find_at + 1].starts_with('(') {
-        return None;
-    }
     let page = triples[projection][0];
     let mut used = std::collections::HashSet::new();
     used.insert(projection);

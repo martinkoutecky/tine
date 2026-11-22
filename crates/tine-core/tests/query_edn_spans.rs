@@ -111,9 +111,22 @@ fn begin_query_inspector_preserves_live_payload_semantics() {
             keeps_block_children: false,
         }
     );
+    assert_eq!(
+        query_edn::inspect_begin_query(&format!(
+            "{{:query {query} :inputs ; note\n (:current-page)}}"
+        )),
+        Supported {
+            query: format!("{query} :inputs (:current-page)"),
+            title: None,
+            keeps_block_children: false,
+        }
+    );
     for (entry, reason) in [
-        (":inputs nope", "expected :inputs to be a vector"),
-        (":inputs [] :inputs []", "expected :inputs to be a vector"),
+        (":inputs nope", "expected :inputs to be a vector or list"),
+        (
+            ":inputs [] :inputs []",
+            "expected :inputs to be a vector or list",
+        ),
         (":title 1", "expected :title to be a string"),
         (
             ":title \"one\" :title \"two\"",

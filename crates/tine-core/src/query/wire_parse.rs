@@ -10,6 +10,7 @@ use super::ir::{
 };
 use super::registry::Registry;
 use super::QueryInput;
+use crate::query_edn::{self, js_whitespace, InputItem};
 use std::sync::LazyLock;
 
 /// The wire dialect a `query_parse` caller names.
@@ -70,28 +71,24 @@ pub struct ParsedQuery {
     pub og_hint: Option<OgQueryHint>,
 }
 
-// The desktop matcher's ECMAScript \s: Unicode White_Space with BOM in place of NEL.
-const JS_WHITESPACE: &str = r"[\s\u{FEFF}--\u{0085}]";
+impl ParsedQuery {
+    /// Whether the authored query carries either kind of current-page input.
+    pub fn uses_current_page(&self) -> bool {
+        self.current_page_input || !self.current_page_tokens.is_empty()
+    }
+}
 
 /// The Logseq textual current-page variable's occurrences, in byte order.
 fn current_page_tokens(text: &str) -> impl Iterator<Item = std::ops::Range<usize>> + '_ {
     static TOKEN: LazyLock<regex::Regex> = LazyLock::new(|| {
-        regex::Regex::new(&format!(
-            r"(?i)<%{JS_WHITESPACE}*current page{JS_WHITESPACE}*%>"
-        ))
-        .unwrap()
+        // template.cljs:28. JS dot excludes all four line terminators, but the
+        // first character of the capture is only constrained by [^%].
+        regex::Regex::new(r"<%([^%][^\n\r\u{2028}\u{2029}]*?)%>").unwrap()
     });
-    TOKEN.find_iter(text).map(|found| found.range())
-}
-
-fn focuses_current_page(source: &str) -> bool {
-    static DIRECT: LazyLock<regex::Regex> =
-        LazyLock::new(|| regex::Regex::new(&format!(r"\A(?:{JS_WHITESPACE}|,)*\z")).unwrap());
-    // The desktop focused-pane dependency requires the vector immediately
-    // after :inputs (whitespace and commas allowed). The engine still reads
-    // an effective vector across EDN comments and discards, with owner context.
-    super::advanced_patterns::input_values(source)
-        .is_some_and(|(gap, values)| DIRECT.is_match(gap) && values.contains(&":current-page"))
+    TOKEN.captures_iter(text).filter_map(|capture| {
+        (capture[1].trim_matches(js_whitespace).to_lowercase() == "current page")
+            .then(|| capture.get(0).unwrap().range())
+    })
 }
 
 /// Bind the textual current-page variable for execution. Callers check the
@@ -334,7 +331,7 @@ pub fn parse_query_pair(
         })
         .collect();
     let current_page_input = matches!(&query.source, Source::Advanced { original, .. }
-        if focuses_current_page(original));
+        if query_edn::advanced(original).is_some_and(|declaration| declaration.inputs.contains(&InputItem::CurrentPage)));
     ParsedQuery {
         og_hint,
         query,
@@ -389,41 +386,132 @@ mod tests {
     use crate::query::ir::Anchor;
 
     #[test]
-    fn current_page_metadata_preserves_desktop_binding() {
-        let vector = "[:find (pull ?b [*]) :in $ ?p :where [?b :block/page ?p]]";
-        let cases = [
-            ("space", " ", true),
-            ("comma", ", ", true),
-            ("LF comment", " ; comment\n ", false),
-            ("CRLF comment", " ; comment\r\n ", false),
-            ("CR comment", " ; comment\r ", false),
-            ("scalar discard", " #_ :ignored ", false),
-            ("vector discard", " #_ [:ignored] ", false),
+    fn current_page_uses_effective_edn_inputs() {
+        use crate::query::ir::{ExecutionContext, Quant, Rel};
+        let vector =
+            "[:find (pull ?b [*]) :in $ ?p :where [?page :block/name ?p] [?b :block/page ?page]]";
+        let mut cases = vec![
+            (" :inputs [:current-page]".into(), Some("focused")),
+            (" :inputs, [:current-page]".into(), Some("focused")),
+            (
+                " :inputs ; comment\n [:current-page]".into(),
+                Some("focused"),
+            ),
+            (
+                " :inputs ; comment\r\n [:current-page]".into(),
+                Some("focused"),
+            ),
+            (" :inputs ; comment\r [:current-page]".into(), None),
+            (" ; comment\r :inputs [:current-page]".into(), None),
+            (
+                " :inputs #_ :ignored [:current-page]".into(),
+                Some("focused"),
+            ),
+            (
+                " :inputs #_ [:ignored] [:current-page]".into(),
+                Some("focused"),
+            ),
+            (
+                " :inputs [#_ :ignored :current-page]".into(),
+                Some("focused"),
+            ),
+            (
+                " :inputs [#_ [:ignored] :current-page]".into(),
+                Some("focused"),
+            ),
+            (
+                r#" :inputs [#_ :current-page "literal"]"#.into(),
+                Some("literal"),
+            ),
+            (
+                r#" :inputs [#_ [:current-page] "literal"]"#.into(),
+                Some("literal"),
+            ),
+            (" :inputs [[:current-page]]".into(), None),
+            (" :inputs\u{feff}[:current-page]".into(), Some("focused")),
+            (" :inputs\u{0085}[:current-page]".into(), None),
+            (" :inputs (:current-page)".into(), Some("focused")),
+            (
+                " :inputs [:current-page] :note #unknown :value".into(),
+                None,
+            ),
+            (" :inputs [:current-page] #_ #unknown :value".into(), None),
         ];
+        for decoy in [
+            "{:inputs [VALUE]}",
+            "[:inputs [VALUE]]",
+            "(:inputs [VALUE])",
+            "#{:inputs [VALUE]}",
+            "#queue [:inputs [VALUE]]",
+            r#"\""#,
+            r"\;",
+        ] {
+            for discard in [":note", "#_"] {
+                cases.push((
+                    format!(
+                        " {discard} {} :inputs [:current-page]",
+                        decoy.replace("VALUE", ":ignored")
+                    ),
+                    Some("focused"),
+                ));
+                cases.push((
+                    format!(
+                        " {discard} {} :inputs ; gap\n [\"literal\"]",
+                        decoy.replace("VALUE", ":current-page")
+                    ),
+                    Some("literal"),
+                ));
+            }
+        }
         let mut differences = Vec::new();
-        for (label, gap, focused) in cases {
+        for (options, expected) in cases {
             for source in [
-                format!("{vector} :inputs{gap}[:current-page]"),
-                format!("{{:query {vector} :inputs{gap}[:current-page]}}"),
+                format!("{vector}{options}"),
+                format!("{{:query {vector}{options}}}"),
             ] {
                 let parsed =
                     parse_query_pair(&source, QueryTextDialect::MacroQuery, &[], Registry::none());
-                assert!(matches!(parsed.query.source, Source::Advanced { .. }));
-                if parsed.current_page_input != focused {
-                    differences.push(format!(
-                        "{label}: {source:?} → {}",
-                        parsed.current_page_input
-                    ));
+                let page = if parsed.current_page_input {
+                    "Focused"
+                } else {
+                    "Owner"
+                };
+                let resolved = super::super::resolve_for_execution(
+                    &parsed.query,
+                    &ExecutionContext::on_page(page),
+                    crate::date::JournalDate::today(),
+                );
+                let filter = expected.map(|page| {
+                    Filter::rel(
+                        Rel::Page,
+                        Quant::Any,
+                        Filter::attr(Attr::Name, CmpOp::Eq, Value::text(page)),
+                    )
+                });
+                let actual = resolved.is_executable().then(|| &resolved.query().filter);
+                if actual != filter.as_ref()
+                    || parsed.current_page_input != (expected == Some("focused"))
+                {
+                    differences.push(format!("{source:?}: context = {page}, filter = {actual:?}"));
                 }
             }
         }
+        assert!(differences.is_empty(), "{differences:#?}");
+    }
 
-        for (label, space, focused) in [
-            ("ASCII", " ", true),
-            ("BOM", "\u{feff}", true),
-            ("NEL", "\u{0085}", false),
+    #[test]
+    fn current_page_uses_logseq_template_matches() {
+        let mut differences = Vec::new();
+        for (token, focused) in [
+            ("<% CuRrEnT PaGe %>", true),
+            ("<%\u{feff}CuRrEnT PaGe\u{feff}%>", true),
+            ("<%\u{0085}CuRrEnT PaGe\u{0085}%>", false),
+            ("<%\ncurrent page %>", true),
+            ("<% current page\n%>", false),
+            ("<%x <% current page %>", false),
+            ("<%\r\ncurrent page %>", false),
+            ("<% current page\u{2029}%>", false),
         ] {
-            let token = format!("<%{space}CuRrEnT PaGe{space}%>");
             let source = format!("(and [[🪴]] {token})");
             let parsed =
                 parse_query_pair(&source, QueryTextDialect::MacroQuery, &[], Registry::none());
@@ -440,10 +528,7 @@ mod tests {
             if parsed.current_page_tokens != expected_span
                 || bind_current_page(&source, "Focused") != expected_arg
             {
-                differences.push(format!(
-                    "{label}: {source:?} → {:?}",
-                    parsed.current_page_tokens
-                ));
+                differences.push(format!("{source:?} → {:?}", parsed.current_page_tokens));
             }
         }
         assert!(differences.is_empty(), "{differences:#?}");

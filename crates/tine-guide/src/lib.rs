@@ -1828,6 +1828,7 @@ mod query_guide_tests {
             "tine.sample:: 10",
             "the whole query is refused",
             ":inputs [:current-page]",
+            "The remaining inputs bind in order. Both `[:current-page]` and `(:current-page)` work.",
             "then today's journal. It is not the page the query block sits on",
             "Tine didn't understand part of this query, so it returned no results",
             "more than 20,000 rows",

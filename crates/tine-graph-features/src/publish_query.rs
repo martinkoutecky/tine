@@ -125,18 +125,22 @@ fn parse_and_run(
     {
         return Err(refusal("query exceeds the export parser limit"));
     }
-    let execution = request.textual_current_page.as_deref().map_or_else(
-        || std::borrow::Cow::Borrowed(argument.as_str()),
-        |page| bind_current_page(argument, page),
-    );
-    let substituted = matches!(execution, std::borrow::Cow::Owned(_));
-    if substituted && crate::query_wire::validate_query_source(&execution).is_err() {
-        return Err(refusal("query exceeds the export parser limit"));
-    }
     let registry = ir_registry(graph)?;
-    let parsed = parse_query_pair(&execution, request.dialect, &request.properties, &registry);
-    let uses_current_page =
-        substituted || parsed.current_page_input || !parsed.current_page_tokens.is_empty();
+    let parse =
+        |source: &str| parse_query_pair(source, request.dialect, &request.properties, &registry);
+    let mut parsed = parse(argument);
+    let uses_current_page = parsed.uses_current_page();
+    if let Some(page) = request
+        .textual_current_page
+        .as_deref()
+        .filter(|_| !parsed.current_page_tokens.is_empty())
+    {
+        let execution = bind_current_page(argument, page);
+        if crate::query_wire::validate_query_source(&execution).is_err() {
+            return Err(refusal("query exceeds the export parser limit"));
+        }
+        parsed = parse(&execution);
+    }
     let anchor = parsed.query.anchor;
     let view = anchored_view(&parsed, anchor);
     let result = match graph

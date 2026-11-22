@@ -544,6 +544,33 @@ fn the_query_home_keeps_its_authored_argument_and_presentation() {
 }
 
 #[test]
+fn export_review_reports_the_dependency_of_the_effective_inputs() {
+    let _integration_guard = crate::integration_lock();
+    let dir = tempfile::tempdir().unwrap();
+    let store = graph(
+        dir.path(),
+        &[
+            ("pages/Focused.md", "- focused\n"),
+            ("pages/Literal.md", "- first literal\n- second literal\n"),
+        ],
+    );
+    let mut request = closure_request("Review", Some("Focused"));
+    request.dialect = QueryTextDialect::MacroQuery;
+    let vector =
+        "[:find (pull ?b [*]) :in $ ?p :where [?page :block/name ?p] [?b :block/page ?page]]";
+    for (inputs, count, depends) in [
+        ("; comment\n (#_ :ignored :current-page)", 1, true),
+        (r#"[#_ :current-page "literal"]"#, 2, false),
+    ] {
+        request.argument = format!("{{:query {vector} :inputs {inputs}}}");
+        let plan = plan_query(&store, &request).unwrap();
+        assert_eq!(plan.row_count, count);
+        assert_eq!(plan.uses_current_page, depends);
+    }
+    store.close();
+}
+
+#[test]
 fn multiline_journal_name_uses_ordinary_home_collision_rules() {
     let _integration_guard = crate::integration_lock();
     for newline in ["\n", "\r\n", "\r"] {

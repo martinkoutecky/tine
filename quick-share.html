@@ -2,18 +2,21 @@
 <html lang="en" class="tine-quick-share">
 <head>
   <meta charset="utf-8">
-  <meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'self' 'wasm-unsafe-eval'; style-src 'self' 'unsafe-inline'; connect-src https://gist.githubusercontent.com https://api.github.com; img-src 'self' data: blob:; font-src 'self'; worker-src 'self'; media-src 'none'; frame-src 'none'; object-src 'none'; base-uri 'none'; form-action 'none'">
+  <meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'self' 'wasm-unsafe-eval' 'sha256-viewer-route'; style-src 'self' 'unsafe-inline'; connect-src https://gist.githubusercontent.com https://api.github.com; img-src 'self' data: blob:; font-src 'self'; worker-src 'self'; media-src 'none'; frame-src 'none'; object-src 'none'; base-uri 'none'; form-action 'none'">
   <meta name="referrer" content="no-referrer">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <meta name="tine-published" content="quick-share:2">
   <title>Tine share</title>
+  <script type="module" src="/src/main.tsx"></script>
 </head>
 <body>
-  <div id="root"><h1>Page not found</h1><a href="/">Tine home</a></div>
-  <script type="module">
-    if (location.pathname.startsWith(import.meta.env.BASE_URL)) {
-      document.getElementById("root").replaceChildren();
-      void import("/src/main.tsx");
+  <div id="root"></div>
+  <template id="missing-page"><h1>Page not found</h1><a href="/">Tine home</a></template>
+  <script id="viewer-route">
+    if (location.pathname.startsWith("%BASE_URL%")) {
+      document.head.append(document.getElementById("viewer-assets").content);
+    } else {
+      document.getElementById("root").append(document.getElementById("missing-page").content);
     }
   </script>
 </body>

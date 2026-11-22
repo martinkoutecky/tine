@@ -116,6 +116,13 @@ the home. When the query uses the current page, the review explains that it
 will mean the export's home. Queries authored in a selected page travel with
 that page's source.
 
+For an advanced query, the core reads the effective EDN `:inputs` vector or
+list after comments and discards. Direct `:current-page` items bind in their
+effective positions and mark the authored query as page-dependent for review.
+Tine also accepts a bare DataScript vector followed by option pairs. Textual
+`<% current page %>` markers use Logseq's template matching rule. Tine also
+recognizes them in authored advanced queries, including inside input strings.
+
 ## The "this page" selector
 
 A definition that shares one page selects it with the TQL page row

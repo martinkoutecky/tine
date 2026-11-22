@@ -6,7 +6,7 @@
 //! other byte (comments, whitespace, nested forms, discards) stays authored.
 //! Malformed, ambiguous duplicate-key, oversized or excessive-depth EDN refuses
 //! with `None`; callers retain the original source and surface a typed refusal.
-//! Cost O(source bytes), bounded to 1 MiB / 128 levels. No I/O or graph state.
+//! Cost O(source bytes), bounded to 1 MiB and a fixed depth. No I/O or graph state.
 //! `inspect_begin_query` supplies the live/export BEGIN_QUERY payload decision.
 //! Scalar decoding and string writing use `edn`, the existing EDN value owner.
 
@@ -38,19 +38,40 @@ pub enum Kind {
 struct Reader<'a> {
     source: &'a str,
     at: usize,
-    page_refs: bool,
+    dialect: Dialect,
 }
+
+#[derive(Clone, Copy, PartialEq)]
+enum Dialect {
+    Spans,
+    Query,
+    Macro,
+}
+
+// tools.reader uses ECMAScript \s plus comma. Templates share the whitespace
+// set without comma, as in JS trim.
+pub(crate) fn js_whitespace(c: char) -> bool {
+    c == '\u{feff}' || (c != '\u{0085}' && c.is_whitespace())
+}
+
 impl Reader<'_> {
     fn byte(&self) -> Option<u8> {
         self.source.as_bytes().get(self.at).copied()
+    }
+    fn whitespace(&self, c: char) -> bool {
+        match self.dialect {
+            Dialect::Spans => c.is_ascii_whitespace(),
+            Dialect::Query | Dialect::Macro => js_whitespace(c),
+        }
     }
     fn trivia(&mut self, depth: usize) -> Option<()> {
         loop {
             match self.byte() {
                 Some(b',') => self.at += 1,
-                Some(c) if c.is_ascii_whitespace() => self.at += 1,
                 Some(b';') => {
-                    while !matches!(self.byte(), None | Some(b'\n' | b'\r')) {
+                    while !matches!(self.byte(), None | Some(b'\n'))
+                        && !(self.dialect == Dialect::Spans && self.byte() == Some(b'\r'))
+                    {
                         self.at += 1;
                     }
                 }
@@ -58,19 +79,24 @@ impl Reader<'_> {
                     self.at += 2;
                     self.form(depth + 1)?;
                 }
-                _ => return Some(()),
+                _ => match self.source[self.at..].chars().next() {
+                    Some(c) if self.whitespace(c) => self.at += c.len_utf8(),
+                    _ => return Some(()),
+                },
             }
         }
     }
     fn form(&mut self, depth: usize) -> Option<Form> {
-        if depth >= MAX_DEPTH {
+        // An advanced query's existing parenthesis limit excludes its enclosing
+        // map/vector and clause data, so keep room for those wrappers here.
+        if depth >= MAX_DEPTH + if self.dialect == Dialect::Query { 4 } else { 0 } {
             return None;
         }
         self.trivia(depth)?;
         let start = self.at;
         let mut children = Vec::new();
         let kind = match self.byte()? {
-            b'[' if self.page_refs && self.source[start..].starts_with("[[") => {
+            b'[' if self.dialect == Dialect::Macro && self.source[start..].starts_with("[[") => {
                 let end = self.source[start + 2..].find("]]")?;
                 self.at = start + 2 + end + 2;
                 Kind::Atom
@@ -139,7 +165,19 @@ impl Reader<'_> {
                 if self.at == start + 1 {
                     return None;
                 }
-                children.push(self.form(depth + 1)?);
+                let tag = &self.source[start..self.at];
+                let value = self.form(depth + 1)?;
+                if self.dialect == Dialect::Query
+                    && !matches!(
+                        (tag, value.kind),
+                        ("#uuid" | "#inst", Kind::String)
+                            | ("#queue" | "#js", Kind::Vector)
+                            | ("#js", Kind::Map)
+                    )
+                {
+                    return None;
+                }
+                children.push(value);
                 Kind::Tagged
             }
             b')' | b']' | b'}' => return None,
@@ -164,16 +202,13 @@ impl Reader<'_> {
             self.at += 1;
             self.at += self.source.get(self.at..)?.chars().next()?.len_utf8();
         }
-        while let Some(c) = self.byte() {
-            if c.is_ascii_whitespace()
-                || matches!(
-                    c,
-                    b',' | b';' | b'(' | b')' | b'[' | b']' | b'{' | b'}' | b'"'
-                )
+        while let Some(c) = self.source[self.at..].chars().next() {
+            if self.whitespace(c)
+                || matches!(c, ',' | ';' | '(' | ')' | '[' | ']' | '{' | '}' | '"')
             {
                 break;
             }
-            self.at += 1;
+            self.at += c.len_utf8();
         }
         (self.at > start).then_some(())
     }
@@ -208,7 +243,7 @@ pub(crate) fn read_with_limit(source: &str, max_bytes: usize) -> Option<Form> {
     let mut reader = Reader {
         source,
         at: 0,
-        page_refs: false,
+        dialect: Dialect::Spans,
     };
     let form = reader.form(0)?;
     reader.trivia(0)?;
@@ -308,14 +343,14 @@ pub fn edit_title(source: &str, title: &str) -> Option<String> {
 /// vector, then any trailing `:inputs [..]`-style option pairs). Trivia and
 /// `#_` discards are skipped. Malformed, oversized or too-deep EDN yields
 /// `None`. O(source bytes).
-fn top_level_forms(source: &str) -> Option<Vec<Form>> {
+fn top_level_forms(source: &str, dialect: Dialect) -> Option<Vec<Form>> {
     if source.len() > MAX_BYTES {
         return None;
     }
     let mut reader = Reader {
         source,
         at: 0,
-        page_refs: false,
+        dialect,
     };
     let mut forms = Vec::new();
     loop {
@@ -330,34 +365,67 @@ fn top_level_forms(source: &str) -> Option<Vec<Form>> {
 /// One direct option value in an advanced map or vector-plus-options stream.
 /// Duplicate declarations refuse rather than choosing one arbitrarily.
 pub(crate) fn option_value<'a>(source: &'a str, key: &str) -> Option<&'a str> {
-    option_gap_and_value(source, key).map(|(_, value)| value)
+    let forms = top_level_forms(source, Dialect::Query)?;
+    let value = option_form(source, option_pairs(&forms), key)?;
+    Some(&source[value.span.clone()])
 }
 
-/// The authored trivia after an option key and its effective EDN value.
-pub(crate) fn option_gap_and_value<'a>(source: &'a str, key: &str) -> Option<(&'a str, &'a str)> {
-    let forms = top_level_forms(source)?;
-    let mut found = None;
-    for (i, form) in forms.iter().enumerate() {
-        let pairs = if form.kind == Kind::Map {
-            form.children.chunks_exact(2).collect::<Vec<_>>()
-        } else if form.kind == Kind::Atom && &source[form.span.clone()] == key {
-            vec![forms.get(i..i + 2)?]
-        } else {
-            Vec::new()
-        };
-        for pair in pairs {
-            if &source[pair[0].span.clone()] == key {
-                if found.is_some() {
-                    return None;
-                }
-                found = Some((
-                    &source[pair[0].span.end..pair[1].span.start],
-                    &source[pair[1].span.clone()],
-                ));
-            }
-        }
+fn option_pairs(forms: &[Form]) -> &[Form] {
+    match forms {
+        [form] if form.kind == Kind::Map => &form.children,
+        [form, options @ ..] if form.kind == Kind::Vector => options,
+        _ => &[],
     }
-    found
+}
+
+fn option_form<'a>(source: &str, options: &'a [Form], key: &str) -> Option<&'a Form> {
+    let mut values = options
+        .chunks_exact(2)
+        .filter(|pair| source[pair[0].span.clone()] == *key);
+    let first = &values.next()?[1];
+    values.next().is_none().then_some(first)
+}
+
+#[derive(PartialEq)]
+pub(crate) enum InputItem<'a> {
+    CurrentPage,
+    Other(&'a str),
+}
+
+pub(crate) struct Advanced<'a> {
+    pub vector: Vec<&'a str>,
+    pub inputs: Vec<InputItem<'a>>,
+}
+
+/// Effective vector and positional inputs from one bounded EDN read.
+/// The map is Logseq syntax. The bare vector plus options is Tine syntax.
+pub(crate) fn advanced(source: &str) -> Option<Advanced<'_>> {
+    let forms = top_level_forms(source, Dialect::Query)?;
+    let options = option_pairs(&forms);
+    let vector = match forms.first()? {
+        form if form.kind == Kind::Vector => form,
+        _ => option_form(source, options, ":query")?,
+    };
+    if vector.kind != Kind::Vector || options.len() % 2 != 0 {
+        return None;
+    }
+    let input_items = option_form(source, options, ":inputs")
+        .filter(|form| matches!(form.kind, Kind::List | Kind::Vector))
+        .map_or(&[][..], |form| &form.children);
+    Some(Advanced {
+        vector: vector
+            .children
+            .iter()
+            .map(|item| &source[item.span.clone()])
+            .collect(),
+        inputs: input_items
+            .iter()
+            .map(|item| match &source[item.span.clone()] {
+                ":current-page" => InputItem::CurrentPage,
+                other => InputItem::Other(other),
+            })
+            .collect(),
+    })
 }
 
 /// Whether OG's top-level-result rule applies to an advanced query's block rows:
@@ -381,58 +449,21 @@ pub fn removes_block_children(source: &str) -> bool {
 /// not a declaration (I-12: the EDN owner decides, not a substring). Unreadable
 /// EDN declares nothing. O(source bytes).
 pub fn declares_option(source: &str, key: &str) -> bool {
-    let Some(forms) = top_level_forms(source) else {
+    let Some(forms) = top_level_forms(source, Dialect::Query) else {
         return false;
     };
-    forms.iter().any(|form| match form.kind {
-        Kind::Atom => &source[form.span.clone()] == key,
-        Kind::Map => form
-            .children
-            .chunks_exact(2)
-            .any(|pair| &source[pair[0].span.clone()] == key),
-        _ => false,
-    })
+    option_pairs(&forms)
+        .chunks(2)
+        .any(|pair| source[pair[0].span.clone()] == *key)
 }
 
 /// An EDN query stream's final map, only when another form precedes it.
 /// Logseq page references in the query form remain opaque authored atoms.
 pub fn split_trailing_map(source: &str) -> (String, String) {
     let unchanged = || (source.trim().into(), String::new());
-    if source.len() > MAX_BYTES {
+    let Some(forms) = top_level_forms(source, Dialect::Macro) else {
         return unchanged();
-    }
-    let mut reader = Reader {
-        source,
-        at: 0,
-        page_refs: true,
     };
-    let mut forms = Vec::new();
-    loop {
-        if reader.trivia(0).is_none() {
-            return unchanged();
-        }
-        if reader.at == source.len() {
-            break;
-        }
-        // Page refs are a query DSL extension, not EDN option-map syntax.
-        if source[reader.at..].starts_with("[[") {
-            let start = reader.at;
-            let Some(end) = source[start + 2..].find("]]") else {
-                return unchanged();
-            };
-            reader.at = start + 2 + end + 2;
-            forms.push(Form {
-                span: start..reader.at,
-                kind: Kind::Atom,
-                children: Vec::new(),
-            });
-        } else {
-            let Some(form) = reader.form(0) else {
-                return unchanged();
-            };
-            forms.push(form);
-        }
-    }
     if let Some(last) = forms.last().filter(|last| {
         forms.len() > 1 && last.kind == Kind::Map && last.span.end == source.trim_end().len()
     }) {
@@ -469,12 +500,18 @@ pub enum BeginQueryMatch {
 
 pub fn inspect_begin_query(payload: &str) -> BeginQueryMatch {
     use BeginQueryMatch::{Supported, Unsupported};
-    let source = payload.trim();
-    let Some(form) = read(source).filter(|form| form.kind == Kind::Map) else {
+    let source = payload.trim_matches(js_whitespace);
+    let forms = top_level_forms(source, Dialect::Query).unwrap_or_default();
+    let [form] = forms.as_slice() else {
         return Unsupported {
             reason: "malformed EDN query map",
         };
     };
+    if form.kind != Kind::Map {
+        return Unsupported {
+            reason: "malformed EDN query map",
+        };
+    }
     let mut title = None;
     let mut query = None;
     let mut inputs = None;
@@ -492,9 +529,9 @@ pub fn inspect_begin_query(payload: &str) -> BeginQueryMatch {
                 query = Some(value);
             }
             ":inputs" => {
-                if inputs.is_some() || pair[1].kind != Kind::Vector {
+                if inputs.is_some() || !matches!(pair[1].kind, Kind::Vector | Kind::List) {
                     return Unsupported {
-                        reason: "expected :inputs to be a vector",
+                        reason: "expected :inputs to be a vector or list",
                     };
                 }
                 inputs = Some(value);

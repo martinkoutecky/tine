@@ -64,7 +64,9 @@ uses 2 for the link, document and snapshot schema and 1 for the envelope.
 The viewer takes the gist locator from the URL path and keeps the key and
 page or block permalink in the fragment. GitHub Pages serves the pinned
 generation-2 entry as its custom 404 document at missing locator paths.
-The entry starts the viewer only under `/s/2/`, at the original address.
+The entry discovers the app script and stylesheet from the document under
+`/s/2/`, at the original address. Outside that prefix it shows the missing-page
+message without starting the viewer.
 Generation 1 continues to load from the static `/s/1/` directory index.
 
 ## Generation 1

@@ -89,14 +89,6 @@ pub(super) fn scan_groups(s: &str) -> Vec<String> {
     out
 }
 
-/// The clause groups in the `:where` section.
-pub(super) fn where_groups(src: &str) -> Vec<String> {
-    match src.find(":where") {
-        Some(idx) => scan_groups(&src[idx + ":where".len()..]),
-        None => Vec::new(),
-    }
-}
-
 /// Top-level items of an EDN body, in order: strings, balanced collections
 /// (`[..]`, `(..)`, `{..}`, `#{..}`) and bare tokens. Comments are skipped.
 fn edn_items(body: &str) -> Vec<&str> {
@@ -175,15 +167,15 @@ fn edn_body(item: &str, open: char, close: char) -> Option<&str> {
     item.trim().strip_prefix(open)?.strip_suffix(close)
 }
 
-/// The variable the query returns: `:find (pull ?b [*])` or `:find ?b`.
-pub(super) fn advanced_find_var(src: &str) -> Option<String> {
-    let items = edn_items(edn_body(query_vector(src)?, '[', ']')?);
+/// The find variable and whether the query returns its entity.
+fn advanced_find<'a>(items: &[&'a str]) -> Option<(&'a str, bool)> {
     let at = items.iter().position(|s| *s == ":find")?;
     let first = *items.get(at + 1)?;
     if !matches!(items.get(at + 2).copied(), Some(":in" | ":where")) {
         return None;
     }
-    let var = match edn_body(first, '(', ')') {
+    let pull = edn_body(first, '(', ')');
+    let var = match pull {
         Some(call) => {
             let items = edn_items(call);
             if items.first() != Some(&"pull") || items.len() != 3 || items[2] != "[*]" {
@@ -193,12 +185,7 @@ pub(super) fn advanced_find_var(src: &str) -> Option<String> {
         }
         None => first,
     };
-    var.starts_with('?').then(|| var.to_string())
-}
-
-fn query_vector(src: &str) -> Option<&str> {
-    crate::query_edn::option_value(src, ":query")
-        .or_else(|| edn_items(src).into_iter().find(|s| s.starts_with('[')))
+    var.starts_with('?').then_some((var, pull.is_some()))
 }
 
 /// Top-level `where` clauses with single-branch wrappers opened: an `(and ..)`
@@ -653,44 +640,50 @@ pub(super) fn advanced_pred_inner(
     if !query_nesting_within_limit(query_src) {
         return (None, Vec::new(), vec!["query-nesting-too-deep".to_string()]);
     }
-    let inputs = resolve_inputs(query_src, current_page, today);
     let mut ran = Vec::new();
     let mut ignored = Vec::new();
-    let Some(vector) = query_vector(query_src) else {
+    let Some(declaration) = crate::query_edn::advanced(query_src) else {
         return (None, ran, vec!["query-vector".into()]);
     };
-    if advanced_find_var(query_src).is_none() {
+    let Some((find, pulls_entity)) = advanced_find(&declaration.vector) else {
         return (None, ran, vec!["find projection".into()]);
+    };
+    let input_bindings = declaration
+        .vector
+        .iter()
+        .skip_while(|s| **s != ":in")
+        .skip(1)
+        .take_while(|s| !s.starts_with(':'))
+        .copied()
+        .filter(|s| *s != "$")
+        .collect::<Vec<_>>();
+    if input_bindings.iter().any(|s| !s.starts_with('?')) {
+        return (
+            None,
+            ran,
+            vec!["input binding (rules or collection)".into()],
+        );
     }
-    let vector_items = edn_items(edn_body(vector, '[', ']').unwrap_or(""));
-    let input_values = crate::query_edn::option_value(query_src, ":inputs")
-        .and_then(|s| edn_body(s, '[', ']'))
-        .map(edn_items)
-        .unwrap_or_default();
-    if input_values.len() != declared_input_vars(query_src).len() {
+    if declaration.inputs.len() != input_bindings.len() {
         return (None, ran, vec!["input count".into()]);
     }
-    if let Some(at) = vector_items.iter().position(|s| *s == ":in") {
-        if vector_items[at + 1..]
+    let inputs = resolve_inputs(&input_bindings, declaration.inputs, current_page, today);
+    let groups = flatten_single_branch_groups(
+        declaration
+            .vector
             .iter()
-            .take_while(|s| !s.starts_with(':'))
-            .any(|s| *s != "$" && !s.starts_with('?'))
-        {
-            return (
-                None,
-                ran,
-                vec!["input binding (rules or collection)".into()],
-            );
-        }
-    }
-    let groups = flatten_single_branch_groups(where_groups(vector));
-    let find = advanced_find_var(query_src).unwrap();
-    let anchor = if joins::page_property_result(&groups, &find) {
+            .skip_while(|s| **s != ":where")
+            .skip(1)
+            .filter(|s| s.starts_with(['(', '[']))
+            .map(|s| s.to_string())
+            .collect(),
+    );
+    let anchor = if joins::page_property_result(&groups, find) {
         Anchor::Page
     } else {
         Anchor::Block
     };
-    if !joins::rules_target_result(&groups, &find, anchor) {
+    if !joins::rules_target_result(&groups, find, anchor) {
         return (None, ran, vec!["rule result binding".into()]);
     }
     // Authored rules may replace even familiar rule names. Never execute or
@@ -704,12 +697,14 @@ pub(super) fn advanced_pred_inner(
     {
         ignored.push("result-transform".into());
     }
-    if let Some(query) = lower_named_page_query(query_src, &groups, &inputs) {
-        return if ignored.is_empty() {
-            (Some(query), vec!["named-pages".into()], ignored)
-        } else {
-            (None, Vec::new(), ignored)
-        };
+    if !pulls_entity {
+        if let Some(query) = lower_named_page_query(query_src, find, &groups, &inputs) {
+            return if ignored.is_empty() {
+                (Some(query), vec!["named-pages".into()], ignored)
+            } else {
+                (None, Vec::new(), ignored)
+            };
+        }
     }
     // Existing attribute/property-map lowerers describe blocks and their page.
     // Page-entity queries only lower their supported rules; unrelated patterns
@@ -720,7 +715,7 @@ pub(super) fn advanced_pred_inner(
         &[]
     };
     let (lowered_current_pages, current_page_patterns) =
-        lower_current_page_patterns(block_groups, &inputs, Some(&find));
+        lower_current_page_patterns(block_groups, &inputs, Some(find));
     // Property-map/get patterns stay unsupported: neither a page hop nor OG's
     // entity-level truthiness follows from a property-map binding (L7s1-02).
     let consumed_patterns = current_page_patterns;
@@ -729,21 +724,13 @@ pub(super) fn advanced_pred_inner(
         .copied()
         .chain(lowered_current_pages.keys().copied())
         .collect::<std::collections::HashSet<_>>();
-    let (mut lowered_attributes, mut attribute_patterns) = lower_attribute_patterns(
-        block_groups,
-        &taken,
-        advanced_find_var(query_src).as_deref(),
-        &inputs,
-    );
+    let (mut lowered_attributes, mut attribute_patterns) =
+        lower_attribute_patterns(block_groups, &taken, Some(find), &inputs);
     // Docs example 14: both alternatives bind the SAME date variable. Move
     // its predicates into each branch before OR, retaining existential
     // semantics when a block has both dates (one outside, one inside).
-    let (date_or, date_or_patterns) = lower_date_disjunctions(
-        block_groups,
-        &taken,
-        advanced_find_var(query_src).as_deref(),
-        &inputs,
-    );
+    let (date_or, date_or_patterns) =
+        lower_date_disjunctions(block_groups, &taken, Some(find), &inputs);
     lowered_attributes.extend(date_or);
     attribute_patterns.extend(date_or_patterns);
     let preds: Vec<Filter> = groups
@@ -775,8 +762,8 @@ pub(super) fn advanced_pred_inner(
     // (`:current-block`, `:parent-block`, a `:current-page` with no current
     // page, ...) leaves every clause that reads it unevaluable.
     let where_text = groups.join("\n");
-    for variable in declared_input_vars(query_src) {
-        if !inputs.contains_key(&variable) && advanced_var_uses(&where_text, &variable) > 0 {
+    for variable in input_bindings {
+        if !inputs.contains_key(variable) && advanced_var_uses(&where_text, variable) > 0 {
             ignored.push(format!("input {variable}"));
         }
     }
@@ -1084,42 +1071,24 @@ pub(super) enum AdvancedInput {
     Page(String),
 }
 
-/// The `?var`s an `:in` clause declares, in order.
-fn declared_input_vars(src: &str) -> Vec<String> {
-    let Some(body) = query_vector(src).and_then(|s| edn_body(s, '[', ']')) else {
-        return Vec::new();
-    };
-    let items = edn_items(body);
-    let Some(at) = items.iter().position(|s| *s == ":in") else {
-        return Vec::new();
-    };
-    items[at + 1..]
-        .iter()
-        .take_while(|s| !s.starts_with(':'))
-        .filter(|s| s.starts_with('?'))
-        .map(|s| s.to_string())
-        .collect()
-}
-
 /// Build a typed positional input map by zipping `:in $ ?a ?b …` with
 /// `:inputs [ … ]`. Dates stay numeric; Logseq's typed `:current-page` keyword
 /// receives the caller's focused page. Unknown keywords remain unbound.
 fn resolve_inputs(
-    src: &str,
+    vars: &[&str],
+    vals: Vec<crate::query_edn::InputItem<'_>>,
     current_page: Option<&str>,
     today: &LoweringDay,
 ) -> std::collections::HashMap<String, AdvancedInput> {
     let mut map = std::collections::HashMap::new();
-    let vars = declared_input_vars(src);
-    let vals = input_values(src)
-        .map(|(_, values)| values)
-        .unwrap_or_default();
-    for (v, val) in vars.iter().zip(vals.iter()) {
-        if *val == ":current-page" {
+    for (&v, val) in vars.iter().zip(vals) {
+        let crate::query_edn::InputItem::Other(val) = val else {
             if let Some(page) = current_page.map(str::trim).filter(|page| !page.is_empty()) {
-                map.insert(v.clone(), AdvancedInput::Page(page.to_lowercase()));
+                map.insert(v.to_string(), AdvancedInput::Page(page.to_lowercase()));
             }
-        } else if let Some(text) = edn_string(val) {
+            continue;
+        };
+        if let Some(text) = edn_string(val) {
             // Declared different question (I-12, census Q1): OG lowercases a
             // `[[page]]` input into a `:block/name` literal; the literal still
             // names its page through `page_key` where it is compared, and
@@ -1128,10 +1097,10 @@ fn resolve_inputs(
                 Some(page) => page.to_lowercase(),
                 None => text,
             };
-            map.insert(v.clone(), AdvancedInput::Page(text));
+            map.insert(v.to_string(), AdvancedInput::Page(text));
         } else if let Ok(number) = val.parse::<i64>() {
             // Numeric inputs are DataScript numbers already, NOT epoch days.
-            map.insert(v.clone(), AdvancedInput::Date(number));
+            map.insert(v.to_string(), AdvancedInput::Date(number));
         } else if let Some(keyword) = val.strip_prefix(':') {
             let legacy = keyword
                 .strip_suffix("d-after")
@@ -1149,20 +1118,15 @@ fn resolve_inputs(
                     && matches!(DateToken::parse(keyword), Some(DateToken::Relative { .. })));
             if admitted {
                 if let Some(ord) = today.resolve(&token) {
-                    map.insert(v.clone(), AdvancedInput::Date(ord));
+                    map.insert(v.to_string(), AdvancedInput::Date(ord));
                 }
             }
         } else if let Some(ord) = today.resolve(val) {
             // Preserve Tine's previously supported bare date-stem extension.
-            map.insert(v.clone(), AdvancedInput::Date(ord));
+            map.insert(v.to_string(), AdvancedInput::Date(ord));
         }
     }
     map
-}
-
-pub(super) fn input_values(src: &str) -> Option<(&str, Vec<&str>)> {
-    let (gap, value) = crate::query_edn::option_gap_and_value(src, ":inputs")?;
-    Some((gap, edn_items(edn_body(value, '[', ']')?)))
 }
 
 /// A `(between …)` range whose bounds the advanced dialect already resolved to

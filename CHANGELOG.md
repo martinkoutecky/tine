@@ -26,7 +26,8 @@ The format follows [Keep a Changelog](https://keepachangelog.com/); versions use
 
 ### Fixed
 - Generation-2 share links open at their published address. Folder exports and shares follow the latest page or block link if it changes during startup (REG-QS-PAGES-LOCATOR, UI-PUBLISHED-STARTUP-PERMALINK).
-- Desktop queries preserve their current-page results with EDN comments, discarded forms and whitespace in the textual variable (REG-QUERY-CURRENT-PAGE-METADATA).
+- A saved query with a comment between `:inputs` and its list now uses the current page, as in Logseq. List inputs, discarded forms, nested examples and character literals follow Logseq’s input positions. Current-page templates follow Logseq’s whitespace and delimiter rules, and advanced queries refuse unknown EDN tags (REG-QUERY-CURRENT-PAGE-METADATA, A-20261122-CP5).
+- Quick shares start loading the app and its styles together. A valid link no longer shows “Page not found” while the viewer loads (REG-QS-COLD-OPEN).
 - Linked References and query results, including tables and boards, use their source file’s formatting while the source page loads. Rows and breadcrumbs stay visible during an unrelated page rename (UI-ORG-RESULT-ROW-FORMAT).
 - Shared scheduling and deadline lines show both date chips after reopening a graph, and print and publication skip building unused regions when hiding planning dates (REG-CM-PLANNING-CHECKPOINT, REG-CM-PLANNING-EXPORT-COST).
 - Markdown and Org blocks with many planning timestamps on one line open faster, with the date chips and any trailing text still visible (REG-CM-PLANNING-LINE-COST).

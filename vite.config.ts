@@ -2,6 +2,7 @@ import { defineConfig, normalizePath, type Plugin, type UserConfig } from "vite"
 import solid from "vite-plugin-solid";
 import { fileURLToPath } from "node:url";
 import { execSync } from "node:child_process";
+import { createHash } from "node:crypto";
 import fs from "node:fs";
 import fsp from "node:fs/promises";
 import path from "node:path";
@@ -100,6 +101,22 @@ function browserCoreAssets(inWorker: boolean): Plugin {
   };
 }
 
+// Pages serves the viewer entry as its site-wide 404. Keep Vite's app assets
+// inert until the document's own route check, without a bootstrap request.
+function quickShareRoute(): Plugin {
+  return {
+    name: "quick-share-route",
+    apply: "build",
+    transformIndexHtml: { order: "post", handler(html) {
+      const assets = /^  (?:<script type="module"[^>]*><\/script>|<link rel="(?:stylesheet|modulepreload)"[^>]*>)\n/gm;
+      const tags = Array.from(html.matchAll(assets), match => match[0]).join("");
+      const script = html.match(/<script id="viewer-route">([\s\S]*?)<\/script>/)![1].replace(/\r\n?/g, "\n");
+      return html.replace(assets, "").replace("</head>", `<template id="viewer-assets">\n${tags}</template>\n</head>`)
+        .replace("sha256-viewer-route", `sha256-${createHash("sha256").update(script).digest("base64")}`);
+    } },
+  };
+}
+
 // Tauri expects a fixed port and serves the built assets from dist/.
 export default defineConfig(({ mode }): UserConfig => {
 const viewer = mode === "quick-share";
@@ -110,7 +127,7 @@ return {
   // Published readers use native emoji (editableEmoji.ts); the viewer needs
   // neither the desktop SVG bundle nor its root-relative development server.
   plugins: [solid(), browserCoreAssets(false),
-    ...(!viewer ? [twemojiAssets(), pdfjsAssets()] : [])],
+    ...(viewer ? [quickShareRoute()] : [twemojiAssets(), pdfjsAssets()])],
   worker: { format: "es", plugins: () => [browserCoreAssets(true)] },
   // Upstream's legacy build supplies recent JS API polyfills to existing
   // WebKitGTK/Android WebViews. Main and worker use the same shared policy.

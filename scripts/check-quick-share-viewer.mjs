@@ -262,10 +262,15 @@ export async function checkViewer(target, { generation = 1, envelope, link, expe
     if (!remote && generation === 2 && !envelope) {
       const page = await browser.newPage();
       activePage = page; activeCase = "pages-fallback-scope";
+      const viewerRequests = [];
+      page.on("request", request => {
+        if (request.url().startsWith(base)) viewerRequests.push(request.resourceType());
+      });
       const response = await page.goto(new URL("/missing-page", base).href);
       assert.equal(response.status(), 404);
       await page.getByRole("heading", { name: "Page not found" }).waitFor();
       assert.equal(page.workers().length, 0);
+      assert.deepEqual(viewerRequests, []);
       await page.close();
     }
     // A feature refusal must be visible before any gist is requested.
