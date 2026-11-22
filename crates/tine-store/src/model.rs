@@ -2819,7 +2819,7 @@ impl Graph {
         graph
     }
 
-    /// A graph of `files` (graph-relative path, bytes, modification time)
+    /// A graph of `files` (graph-relative path, document, modification time)
     /// held in memory under `config`: the load, the naming and every page
     /// read take them from there ([`FileSource::Memory`]). Such a graph is
     /// only read (`WholeGraph::subgraph`); nothing writes it.

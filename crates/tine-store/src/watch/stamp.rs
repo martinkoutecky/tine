@@ -13,12 +13,13 @@ use super::{FileRev, Stamp};
 pub(crate) const RACY_WINDOW: Duration = Duration::from_secs(2);
 
 impl Stamp {
-    /// A memory file's stamp (`FileSource::Memory`): its carried time and
-    /// length, no identity. Nothing watches a memory graph.
-    pub(crate) fn in_memory(modified: Option<SystemTime>, len: u64) -> Stamp {
+    /// A memory file's stamp (`FileSource::Memory`): its carried time, no
+    /// length or identity (a document's bytes exist only while it is read).
+    /// Only the watcher compares lengths, and nothing watches a memory graph.
+    pub(crate) fn in_memory(modified: Option<SystemTime>) -> Stamp {
         Stamp {
             modified,
-            len,
+            len: 0,
             identity: 0,
             changed: 0,
             rev: None,
