@@ -4,9 +4,13 @@ import { fileURLToPath } from "node:url";
 
 export const root = resolve(fileURLToPath(new URL("..", import.meta.url)));
 
+// Fixed size ceilings, about 0.5% above the committed modules (1,551,997 and
+// 4,631,781 bytes on 2026-11-22): wasm-opt's output differs by a few hundred
+// bytes between hosts (CI, F-Droid), and every build path applies the same
+// ceiling. Growth past one is a decision, not an automatic raise.
 export const wasmArtifacts = [
-  { dir: "src/render/wasm", feature: null, maxBytes: 1_551_997 },
-  { dir: "src/render/wasm-core", feature: "core", maxBytes: 4_631_781 },
+  { dir: "src/render/wasm", feature: null, maxBytes: 1_560_000 },
+  { dir: "src/render/wasm-core", feature: "core", maxBytes: 4_655_000 },
 ];
 
 export function readLsdocTag() {
