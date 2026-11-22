@@ -73,20 +73,27 @@ fn browser_core_command_wires() {
         page_read_wire::get_page_by_path(source(), PageId::from("pages/Notes.org".to_owned()))
             .unwrap()
     );
+    let today = tine_core::date::JournalDate::today().ordinal_key();
     for (name, before) in [
         ("journal_feed_page", None),
         ("journal_feed_page_before", Some(20260627)),
     ] {
-        let mut feed = page_read_wire::journal_feed_page(source(), 1, before, None, true).unwrap();
-        assert_eq!(
-            feed.as_of_day,
-            tine_core::date::JournalDate::today().ordinal_key()
-        );
         let wire = fixture["expected"][name].as_str().unwrap();
-        feed.as_of_day = serde_json::from_str::<Value>(wire).unwrap()["as_of_day"]
+        let recorded_day = serde_json::from_str::<Value>(wire).unwrap()["as_of_day"]
             .as_i64()
             .unwrap();
-        record(name, serde_json::to_string(&feed).unwrap());
+        let feed_wire = |before| {
+            let mut feed =
+                page_read_wire::journal_feed_page(source(), 1, before, None, true).unwrap();
+            assert_eq!(feed.as_of_day, today);
+            feed.as_of_day = recorded_day;
+            serde_json::to_string(&feed).unwrap()
+        };
+        if before.is_none() {
+            // The browser's first page uses the desktop cursor at its latest bound.
+            assert_eq!(feed_wire(Some(today + 1)), wire);
+        }
+        record(name, feed_wire(before));
     }
     record!(
         "journal_content_days",

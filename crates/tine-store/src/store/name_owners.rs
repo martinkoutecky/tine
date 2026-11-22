@@ -146,7 +146,7 @@ impl WholeGraph {
 
     /// The proposed file for an exact day, before considering any claimant.
     /// O(path bytes), with no index or disk read.
-    pub(super) fn proposed_journal_file(&self, day: Day) -> PageId {
+    pub fn proposed_journal_file(&self, day: Day) -> PageId {
         self.journal_path_for_stem(
             self.journal_format
                 .file_stem(JournalDate::from_ordinal(day.0)),

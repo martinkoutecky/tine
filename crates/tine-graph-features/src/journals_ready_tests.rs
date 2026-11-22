@@ -1,47 +1,6 @@
 use super::*;
 
 #[test]
-fn an_undated_name_winner_masks_the_day_on_open_and_scroll() {
-    #[derive(Deserialize)]
-    struct Case {
-        name: String,
-        files: Vec<(String, String)>,
-    }
-    let cases: Vec<Case> = serde_json::from_str(include_str!(
-        "../../../tests/fixtures/browser-core-journal-masks.json"
-    ))
-    .unwrap();
-    for Case { name, files } in cases {
-        let root = tempfile::tempdir().unwrap();
-        for (path, body) in files.into_iter().chain([
-            ("pages/Z.md".into(), "title:: 2000_01_01\n- masked\n".into()),
-            ("journals/1999_12_31.md".into(), "- visible\n".into()),
-            ("pages/Plan.md".into(), "- [[2000-01-01]]\n".into()),
-        ]) {
-            let path = root.path().join(path);
-            std::fs::create_dir_all(path.parent().unwrap()).unwrap();
-            std::fs::write(path, body).unwrap();
-        }
-        let store = Store::open(root.path(), Default::default()).unwrap().0;
-        store.stop_watcher_for_tests();
-        store.whole_graph_reconciled().unwrap();
-        for before in [None, Some(20000102)] {
-            for references in [false, true] {
-                let page = feed_page_through(&store, 1, before, None, references).unwrap();
-                let ids: Vec<_> = page.pages.iter().map(|read| read.id.as_str()).collect();
-                assert_eq!(
-                    ids,
-                    ["journals/1999_12_31.md"],
-                    "{name}, {before:?}, {references}"
-                );
-                assert!(page.done, "{name}, {before:?}, {references}");
-            }
-        }
-        store.close();
-    }
-}
-
-#[test]
 fn captured_feed_looks_up_only_the_missing_owners_diagnostic() {
     use tine_store::cost_counters::unreadable_path_probes;
 
@@ -69,57 +28,6 @@ fn captured_feed_looks_up_only_the_missing_owners_diagnostic() {
         (1..=11).contains(&probes),
         "{probes} captured diagnostic comparisons"
     );
-}
-
-#[test]
-fn journal_feed_keeps_both_days_with_the_same_title() {
-    let root = tempfile::tempdir().unwrap();
-    for dir in ["journals", "pages", "logseq"] {
-        std::fs::create_dir(root.path().join(dir)).unwrap();
-    }
-    std::fs::write(
-        root.path().join("logseq/config.edn"),
-        "{:journal/page-title-format \"yyyy\"}\n",
-    )
-    .unwrap();
-    for date in ["2000-01-01", "2000-01-02"] {
-        std::fs::write(
-            root.path().join(format!("pages/{date}.md")),
-            format!("- body of {date}\n"),
-        )
-        .unwrap();
-    }
-    let store = Store::open(root.path(), Default::default()).unwrap().0;
-    store.stop_watcher_for_tests();
-    store.whole_graph_reconciled().unwrap();
-    for before in [None, Some(20000103)] {
-        let page = feed_page_through(&store, 10, before, None, true).unwrap();
-        let ids: Vec<_> = page.pages.iter().map(|read| read.id.as_str()).collect();
-        assert_eq!(ids, ["pages/2000-01-02.md", "pages/2000-01-01.md"]);
-        assert!(page.done);
-    }
-    store.close();
-}
-
-#[test]
-fn first_page_supplements_the_index_with_unobserved_journal_files() {
-    let root = tempfile::tempdir().unwrap();
-    std::fs::create_dir(root.path().join("journals")).unwrap();
-    std::fs::write(root.path().join("journals/2000_01_01.md"), "- indexed\n").unwrap();
-    let store = Store::open(root.path(), Default::default()).unwrap().0;
-    store.stop_watcher_for_tests();
-    store.whole_graph_reconciled().unwrap();
-    std::fs::write(root.path().join("journals/2000_01_02.md"), "- delivered\n").unwrap();
-    let listed = journal_listings();
-    let page = feed_page_through(&store, 2, None, None, true).unwrap();
-    assert_eq!(journal_listings() - listed, 1);
-    let bodies: Vec<_> = page
-        .pages
-        .iter()
-        .map(|read| read.doc.blocks[0].raw.as_str())
-        .collect();
-    assert_eq!(bodies, ["delivered", "indexed"]);
-    store.close();
 }
 
 /// Hl2_0 review hold: the feed carried the graph's config restriction in the

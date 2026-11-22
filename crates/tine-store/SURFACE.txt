@@ -135,7 +135,7 @@ field store::WatchBatch.reconcile_started
 # private transaction module).
 fn transaction::Store::read_is_current
 
-## Identity (ceiling: 14)
+## Identity (ceiling: 13)
 # CM step 2 (CM-DAYFILE, D-20261111-CMR14): a date-named pages file is its day,
 # so the feed before the first view must list days the journals directory
 # listing cannot see. `journal_id` answers one given day and a parameter cannot
@@ -159,9 +159,6 @@ fn store::FileRev::from_bytes
 fn store::Store::as_page
 fn store::Store::file_id
 fn store::Store::journal_id
-# A live feed candidate applies the view's name mask to the startup index and
-# unobserved listing days. Other journal_id consumers still get a file or proposal.
-fn store::Store::live_journal_feed_id
 # Windows nightly 2026-11-19 (K folded_occupant): as_page types a path with no
 # disk read, so it cannot say that `pages/B.md` reaches the listed `pages/b.md`
 # on a case-folding volume; no parameter of it can without a disk read. The
@@ -430,13 +427,13 @@ enum store::Resolved
 # and a proposed path; neither is the owner of the currently opened page.
 fn store::WholeGraph::page_owner
 fn store::Resolved::page_owner
-# A feed reference or live listing item needs a point lookup by exact day.
+# The captured journal loader needs a point lookup by exact day.
 # A bounded inventory window cannot distinguish the queried day from an older one
 # without visiting another day.
 fn store::WholeGraph::journal_file_id
-# The feed needs referenced days and their exact-day paths in day order. The
-# name inventory's resolved targets and title order are unused in this reader.
-fn store::WholeGraph::referenced_journal_feed_ids
+# A fileless reference needs a proposed identity from the typed day, which
+# a name-based proposal cannot retain under a lossy filename or title format.
+fn store::WholeGraph::proposed_journal_file
 field store::InventoryEntry.name
 field store::InventoryEntry.target
 field store::InventoryEntry.is_journal

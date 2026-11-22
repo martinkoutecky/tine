@@ -1,14 +1,15 @@
-//! Journal feed, duplicate-day reconciliation, and filename migration.
-//! Feed reads use indexed and live sources. Writes are guarded transactions.
+//! Journal feed, duplicate-day reconciliation, and filename migration. All
+//! reads use the store's area inventory; writes are guarded transactions.
 
 use serde::{Deserialize, Serialize};
-use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
+use std::collections::{BTreeMap, BTreeSet, HashSet};
 use std::io;
 
 use tine_core::date::{JournalDate, JournalFormat};
 use tine_core::model::{JournalConflict, JournalFile};
 use tine_store::{
-    Area, Day, FileEntry, FileId, Input, PageHost, PageId, Store, StoreError, WholeGraph, Why,
+    Area, Day, FileEntry, FileId, Input, InventoryScope, PageHost, PageId, Store, StoreError,
+    WholeGraph, Why,
 };
 
 use crate::{store_error, tx_error};
@@ -25,9 +26,8 @@ pub struct FeedPage<T> {
     pub as_of_day: i64,
     /// File-backed days are usable; referenced-only days await the graph.
     pub references_pending: bool,
-    /// `path: reason` for every journal this request skipped because it could
-    /// not be listed or read (one bad file never blocks the feed, I-22; the
-    /// caller reports these, I-2). Empty in the common case.
+    /// `path: reason` for each journal this request skipped because it could
+    /// not be listed or read.
     #[serde(skip_serializing_if = "Vec::is_empty")]
     pub unreadable: Vec<String>,
 }
@@ -41,18 +41,16 @@ enum Loaded<T> {
     Unreadable(String),
 }
 
-#[cfg(test)]
 fn collect_feed_page<T, F>(
     entries: Vec<(Day, PageId)>,
     limit: usize,
     before_day: Option<i64>,
     as_of_day: i64,
-    load: F,
+    mut load: F,
 ) -> Result<FeedPage<T>, io::Error>
 where
     F: FnMut(&PageId) -> Result<Loaded<T>, io::Error>,
 {
-    let mut load = load;
     collect_feed_iter(
         entries.into_iter(),
         limit,
@@ -115,20 +113,16 @@ fn collect_feed_iter<T>(
     })
 }
 
-/// The shared wire for one physical or virtual journal feed row.
+/// One feed identity and body; `doc.rev` is absent for a virtual journal day.
 pub use crate::page_read_wire::PageWire as FeedRead;
 
-#[cfg(test)]
 fn feed_read(read: tine_store::PageRead) -> FeedRead {
     read.into()
 }
 
-#[cfg(test)]
 fn virtual_day(store: &Store, day: Day) -> FeedRead {
     let config = store.config();
-    let title = config
-        .journal_format()
-        .title(JournalDate::from_ordinal(day.0));
+    let title = format(store).title(JournalDate::from_ordinal(day.0));
     virtual_read(store.journal_id(day, true), title, config.preferred_format)
 }
 
@@ -149,10 +143,16 @@ fn virtual_read(id: PageId, title: String, format: tine_core::model::Format) -> 
     }
 }
 
-fn load_feed_read(store: &Store, id: &PageId) -> io::Result<Loaded<FeedRead>> {
+fn load_feed_read(
+    store: &Store,
+    id: &PageId,
+    referenced: impl FnOnce() -> Option<Day>,
+) -> io::Result<Loaded<FeedRead>> {
     Ok(match store.page(id) {
-        Ok(read) => Loaded::Page(read.into()),
-        Err(StoreError::NotFound(_)) => Loaded::Gone,
+        Ok(read) => Loaded::Page(feed_read(read)),
+        Err(StoreError::NotFound(_)) => {
+            referenced().map_or(Loaded::Gone, |day| Loaded::Page(virtual_day(store, day)))
+        }
         Err(StoreError::Closed) => return Err(store_error(StoreError::Closed)),
         Err(error) => Loaded::Unreadable(store_error(error).to_string()),
     })
@@ -161,8 +161,12 @@ fn load_feed_read(store: &Store, id: &PageId) -> io::Result<Loaded<FeedRead>> {
 /// Page file-backed journal days immediately, always leaving graph-wide
 /// additions pending for a separate completion request, even on a Ready graph.
 /// Unreadable files are skipped and named; store/index failures fail the read.
-/// Cost O((J + D) log(J + D) + examined page bytes), where J is the live
-/// journal listing and D is the published/startup day index.
+/// First-page cost O((J + D) log(J + D) + R + returned page bytes), plus indexed
+/// alias lookups for date-shaped names on completion. Loaded scroll steps seek
+/// the day index and visit bounded windows; reference-name enumeration remains
+/// O(R log D). J is journal files plus the days files outside the journals
+/// directory hold (`Store::journal_days`), R reference names, D referenced dates.
+/// No reference-content scan or graph file write.
 /// Before a name index exists, active selection also discovers ordinary
 /// preambles once per invalidation (O(P)); it does not wait for graph parsing.
 #[cfg(any(test, feature = "test-faults"))]
@@ -174,96 +178,223 @@ pub fn feed_page(
     feed_page_through(store, limit, before_day, None, false)
 }
 
-/// Page by exclusive day cursor, extending through an already displayed day.
-/// With references, seek the view's day index in bounded windows and enumerate
-/// referenced dates. The first page also lists live journal files that have not
-/// reached the view. Without references, use the live listing and startup day
-/// index without waiting for a view. Read each examined body once.
+/// As `feed_page`, extending the window through an already displayed day.
+/// Late referenced days can be inserted without dropping the visible suffix.
+/// `include_references` waits via the ordinary whole-graph read; false never
+/// waits for that parse, using the available name indexes for active selection.
+/// Only returned journal bodies are read in either mode.
 pub fn feed_page_through(
     store: &Store,
     limit: usize,
-    before: Option<i64>,
-    through: Option<i64>,
+    before_day: Option<i64>,
+    through_day: Option<i64>,
     include_references: bool,
 ) -> Result<FeedPage<FeedRead>, io::Error> {
-    let as_of = JournalDate::today().ordinal_key();
-    let before_as_of = before.unwrap_or(i64::MAX).min(as_of.saturating_add(1));
-    let load = |id: &PageId| load_feed_read(store, id);
-    if !include_references {
-        let (entries, unreadable) = feed_days_through(store, Day(as_of))?;
-        let entries = entries.into_iter().filter(|(day, _)| day.0 < before_as_of);
-        let mut page = collect_feed_through(entries, limit, through, as_of, |_, id| load(id))?;
-        page.references_pending = true;
-        if before.is_none() {
-            page.unreadable.splice(0..0, unreadable);
-        }
-        return Ok(page);
-    }
-
-    let graph = store
-        .whole_graph()
-        .map_err(|error| io::Error::other(format!("graph load failed: {error:?}")))?;
-    let (files, unreadable) = if before.is_none() {
-        listing(store)?
+    let as_of_day = JournalDate::today().ordinal_key();
+    let graph = if include_references {
+        Some(
+            store
+                .whole_graph()
+                .map_err(|error| io::Error::other(format!("graph load failed: {error:?}")))?,
+        )
     } else {
-        Default::default()
+        None
     };
-    let supplement: Vec<_> = files
-        .into_iter()
-        .filter(|entry| entry.page.is_some())
-        .filter_map(|entry| entry.day)
-        .filter(|day| day.0 < before_as_of && graph.journal_file_id(*day).is_none())
-        .collect::<BTreeSet<_>>()
-        .into_iter()
-        .filter_map(|day| store.live_journal_feed_id(day).map(|id| (day, id)))
+    if let (Some(graph), Some(before)) = (&graph, before_day) {
+        return indexed_feed_page(store, graph, limit, before, through_day, as_of_day);
+    }
+    // First-page and file-only requests retain listing failures and discover
+    // files that no watcher publication has named yet.
+    let (entries, listing_unreadable) = feed_days_through(store, Day(as_of_day))?;
+    let referenced: std::collections::BTreeSet<_> = graph
+        .as_ref()
+        .map(|graph| {
+            graph
+                .inventory(tine_store::InventoryScope::ReferencedJournals)
+                .0
+                .iter()
+                .filter_map(|entry| entry.day)
+                .collect()
+        })
+        .unwrap_or_default();
+    let mut days: BTreeMap<_, _> = entries.into_iter().collect();
+    for day in referenced.iter().filter(|day| day.0 <= as_of_day) {
+        if let Some(id) = active_journal_id(store, *day) {
+            days.entry(*day).or_insert(id);
+        }
+    }
+    let by_id: BTreeMap<_, _> = days.iter().map(|(day, id)| (id.clone(), *day)).collect();
+    let entries: Vec<_> = days.into_iter().rev().collect();
+    let limit = through_day.map_or(limit, |through| {
+        limit.max(
+            entries
+                .iter()
+                .filter(|(day, _)| {
+                    day.0 >= through && before_day.is_none_or(|before| day.0 < before)
+                })
+                .count(),
+        )
+    });
+    let mut page = collect_feed_page(entries, limit, before_day, as_of_day, |id| {
+        load_feed_read(store, id, || {
+            let day = by_id[id];
+            referenced.contains(&day).then_some(day)
+        })
+    })?;
+    page.references_pending = graph.is_none();
+    // The listing's own unreadable entries are reported with the first page
+    // only, so a paged feed names each one once per load.
+    if before_day.is_none() {
+        page.unreadable.splice(0..0, listing_unreadable);
+        // Upcoming shows references, not journal bodies: proposed identities
+        // suffice and avoid reading every future journal file on feed open.
+        page.upcoming = referenced
+            .into_iter()
+            .filter(|day| day.0 > as_of_day)
+            .filter(|day| active_journal_id(store, *day).is_some())
+            .map(|day| virtual_day(store, day))
+            .collect();
+    }
+    Ok(page)
+}
+
+/// Merge bounded file windows with the existing reference answer. No resident
+/// state: both answers belong to this captured view. Missing/unreadable bodies
+/// consume candidates, so the iterator continues until the page really fills.
+fn indexed_feed_page(
+    store: &Store,
+    graph: &WholeGraph,
+    limit: usize,
+    before: i64,
+    through: Option<i64>,
+    as_of: i64,
+) -> io::Result<FeedPage<FeedRead>> {
+    let referenced = indexed_reference_days(graph);
+    let references =
+        indexed_reference_entries(&referenced, as_of, |day| active_journal_id(store, day));
+    let by_id: BTreeMap<_, _> = references
+        .iter()
+        .map(|(day, id)| (id.clone(), *day))
         .collect();
-    let referenced = graph.referenced_journal_feed_ids();
-    let virtual_day = virtual_view_days(&graph);
-    // Live reads may miss a body that was present at publication. Preserve the
-    // desktop's path-based fallback across the entire past/current union.
-    let by_id = std::cell::OnceCell::new();
-    let load = |day: Day, id: &PageId| {
-        let loaded = load(id)?;
-        if matches!(loaded, Loaded::Gone) && !referenced.is_empty() {
-            let by_id = by_id.get_or_init(|| {
-                let mut days = HashMap::new();
-                let past = referenced.iter().take_while(|(day, _)| day.0 <= as_of);
-                for (day, id) in past.chain(&supplement) {
-                    let latest = days.entry(id.as_str()).or_insert(*day);
-                    *latest = (*latest).max(*day);
-                }
-                days
-            });
+    let entries = indexed_feed_entries(graph, limit, before, as_of, references);
+    collect_indexed_feed(entries, limit, through, as_of, |_, id| {
+        load_feed_read(store, id, || {
+            if referenced.is_empty() {
+                return None;
+            }
+            // Preserve the full union's id-to-greatest-day answer even when
+            // a short-year format maps different centuries to the same path.
+            // Only a missing body needs this lookup. It reads the file list,
+            // not parsed pages: a file that failed to read keeps its day.
             let physical_day = graph
-                .inventory(tine_store::InventoryScope::JournalFile(id))
+                .inventory(InventoryScope::JournalFile(id))
                 .0
                 .first()
                 .and_then(|entry| entry.day)
                 .filter(|day| day.0 <= as_of);
-            let day = day.max(
-                physical_day
-                    .max(by_id.get(id.as_str()).copied())
-                    .unwrap_or(day),
-            );
-            if let Ok(index) = referenced.binary_search_by_key(&day, |(day, _)| *day) {
-                return Ok(Loaded::Page(virtual_day(day, referenced[index].1.clone())));
-            }
+            let day = physical_day.max(by_id.get(id).copied())?;
+            referenced.contains(&day).then_some(day)
+        })
+    })
+}
+
+fn indexed_reference_days(graph: &WholeGraph) -> BTreeSet<Day> {
+    graph
+        .inventory(InventoryScope::ReferencedJournals)
+        .0
+        .iter()
+        .filter_map(|entry| entry.day)
+        .collect()
+}
+
+fn indexed_reference_entries(
+    days: &BTreeSet<Day>,
+    as_of: i64,
+    mut id: impl FnMut(Day) -> Option<PageId>,
+) -> BTreeMap<Day, PageId> {
+    days.range(..=Day(as_of))
+        .filter_map(|&day| id(day).map(|id| (day, id)))
+        .collect()
+}
+
+/// The cursor's ordered file and reference candidates. Reference IDs use
+/// the caller's source, with file candidates taking precedence on a tie.
+fn indexed_feed_entries(
+    graph: &WholeGraph,
+    limit: usize,
+    before: i64,
+    as_of: i64,
+    references: BTreeMap<Day, PageId>,
+) -> impl Iterator<Item = (Day, PageId)> + '_ {
+    let mut references = references
+        .into_iter()
+        .rev()
+        .filter(move |(day, _)| day.0 < before)
+        .peekable();
+    let mut cursor = before.min(as_of.saturating_add(1));
+    let batch = limit.saturating_add(1).max(1);
+    let mut buffer = Vec::new().into_iter();
+    let mut exhausted = false;
+    let mut files = std::iter::from_fn(move || loop {
+        if let Some(entry) = buffer.next() {
+            return Some(entry);
         }
-        Ok(loaded)
-    };
-    let mut page = indexed_feed_page(
-        &graph,
-        limit,
-        before,
-        through,
-        as_of,
-        &referenced,
-        &supplement,
-        &virtual_day,
-        load,
-    )?;
-    page.unreadable.splice(0..0, unreadable);
-    Ok(page)
+        if exhausted {
+            return None;
+        }
+        let inventory = graph.inventory(InventoryScope::JournalFilesBefore {
+            before: Day(cursor),
+            limit: batch,
+        });
+        exhausted = inventory.0.len() < batch;
+        let entries: Vec<_> = inventory
+            .0
+            .iter()
+            .filter_map(|entry| {
+                let tine_store::Resolved::Existing { id, .. } = &entry.target else {
+                    return None;
+                };
+                Some((entry.day?, id.clone()))
+            })
+            .collect();
+        if let Some((day, _)) = entries.last() {
+            cursor = day.0;
+        }
+        buffer = entries.into_iter();
+    })
+    .peekable();
+    std::iter::from_fn(move || match (files.peek(), references.peek()) {
+        (Some((file_day, _)), Some((ref_day, _))) if file_day >= ref_day => {
+            if file_day == ref_day {
+                references.next();
+            }
+            files.next()
+        }
+        (_, Some(_)) => references.next(),
+        (Some(_), None) => files.next(),
+        (None, None) => None,
+    })
+}
+
+fn collect_indexed_feed<T>(
+    entries: impl Iterator<Item = (Day, PageId)>,
+    limit: usize,
+    through: Option<i64>,
+    as_of: i64,
+    load: impl FnMut(Day, &PageId) -> io::Result<Loaded<T>>,
+) -> io::Result<FeedPage<T>> {
+    let mut entries = entries.peekable();
+    // Preserve extension semantics: the old path raised the requested count
+    // by the number of candidates through the displayed suffix, even when
+    // some of those candidates subsequently fail to load.
+    let mut prefix = Vec::new();
+    if let Some(through) = through {
+        while entries.peek().is_some_and(|(day, _)| day.0 >= through) {
+            prefix.push(entries.next().unwrap());
+        }
+    }
+    let limit = limit.max(prefix.len());
+    collect_feed_iter(prefix.into_iter().chain(entries), limit, None, as_of, load)
 }
 
 pub(crate) fn feed_page_from_view(
@@ -273,13 +404,37 @@ pub(crate) fn feed_page_from_view(
     through: Option<i64>,
     include_references: bool,
 ) -> io::Result<FeedPage<FeedRead>> {
+    let as_of = JournalDate::today().ordinal_key();
     let referenced = if include_references {
-        graph.referenced_journal_feed_ids()
+        indexed_reference_days(graph)
     } else {
-        Vec::new()
+        BTreeSet::new()
     };
-    let virtual_day = virtual_view_days(graph);
-    let load = |day: Day, id: &PageId| {
+    // The captured day index supplies the active ID and the indexed ID from
+    // one publication. The live cursor can see these sources at different times.
+    let reference_id = |day| {
+        graph
+            .journal_file_id(day)
+            .cloned()
+            .unwrap_or_else(|| graph.proposed_journal_file(day))
+    };
+    let references = indexed_reference_entries(&referenced, as_of, |day| Some(reference_id(day)));
+    let entries = indexed_feed_entries(
+        graph,
+        limit,
+        before.unwrap_or(as_of.saturating_add(1)),
+        as_of,
+        references,
+    );
+    let config = graph.config();
+    let format = std::cell::OnceCell::new();
+    let virtual_day = |day: Day, id| {
+        let title = format
+            .get_or_init(|| config.journal_format())
+            .title(JournalDate::from_ordinal(day.0));
+        virtual_read(id, title, config.preferred_format)
+    };
+    let mut page = collect_indexed_feed(entries, limit, through, as_of, |day, id| {
         if let Some(owner) = graph.journal_file_id(day) {
             if let Some(page) = FeedRead::from_view(graph, owner.clone()) {
                 return Ok(Loaded::Page(page));
@@ -288,139 +443,19 @@ pub(crate) fn feed_page_from_view(
                 return Ok(Loaded::Unreadable(reason.to_owned()));
             }
         }
-        Ok(
-            if referenced
-                .binary_search_by_key(&day, |(day, _)| *day)
-                .is_ok()
-            {
-                Loaded::Page(virtual_day(day, id.clone()))
-            } else {
-                Loaded::Gone
-            },
-        )
-    };
-    indexed_feed_page(
-        graph,
-        limit,
-        before,
-        through,
-        JournalDate::today().ordinal_key(),
-        &referenced,
-        &[],
-        &virtual_day,
-        load,
-    )
-}
-
-fn virtual_view_days(graph: &WholeGraph) -> impl Fn(Day, PageId) -> FeedRead + '_ {
-    let config = graph.config();
-    let format = std::cell::OnceCell::new();
-    move |day, id| {
-        virtual_read(
-            id,
-            format
-                .get_or_init(|| config.journal_format())
-                .title(JournalDate::from_ordinal(day.0)),
-            config.preferred_format,
-        )
-    }
-}
-
-/// The published file and reference selector shared by native and memory
-/// views. The desktop can supplement the first page with unobserved days.
-fn indexed_feed_page(
-    graph: &WholeGraph,
-    limit: usize,
-    before: Option<i64>,
-    through: Option<i64>,
-    as_of: i64,
-    referenced: &[(Day, PageId)],
-    supplement: &[(Day, PageId)],
-    virtual_day: impl Fn(Day, PageId) -> FeedRead,
-    load: impl FnMut(Day, &PageId) -> io::Result<Loaded<FeedRead>>,
-) -> io::Result<FeedPage<FeedRead>> {
-    let cursor = before.unwrap_or(i64::MAX).min(as_of.saturating_add(1));
-    let files = indexed_file_days(graph, cursor, limit);
-    let previous = referenced.partition_point(|(day, _)| day.0 < cursor);
-    let upcoming = referenced.partition_point(|(day, _)| day.0 <= as_of);
-    let references = referenced[..previous].iter().rev().cloned();
-    let additional = merge_days(supplement.iter().rev().cloned(), references);
-    let entries = merge_days(files, additional);
-    let mut page = collect_feed_through(entries, limit, through, as_of, load)?;
+        Ok(if referenced.contains(&day) {
+            Loaded::Page(virtual_day(day, id.clone()))
+        } else {
+            Loaded::Gone
+        })
+    })?;
     if before.is_none() {
-        page.upcoming = referenced[upcoming..]
-            .iter()
-            .map(|(day, id)| virtual_day(*day, id.clone()))
+        page.upcoming = referenced
+            .range(Day(as_of.saturating_add(1))..)
+            .map(|&day| virtual_day(day, reference_id(day)))
             .collect();
     }
     Ok(page)
-}
-
-fn indexed_file_days(
-    graph: &WholeGraph,
-    mut cursor: i64,
-    limit: usize,
-) -> impl Iterator<Item = (Day, PageId)> + '_ {
-    let batch = limit.saturating_add(1);
-    let mut window = None::<std::sync::Arc<tine_store::Inventory>>;
-    let mut index = 0;
-    let mut exhausted = false;
-    std::iter::from_fn(move || loop {
-        if let Some(entry) = window.as_ref().and_then(|window| window.0.get(index)) {
-            index += 1;
-            let (day, id) = (entry.day?, entry.target.page_owner()?);
-            cursor = day.0;
-            return Some((day, id.clone()));
-        }
-        if exhausted {
-            return None;
-        }
-        let files = graph.inventory(tine_store::InventoryScope::JournalFilesBefore {
-            before: Day(cursor),
-            limit: batch,
-        });
-        exhausted = files.0.len() < batch;
-        window = Some(files);
-        index = 0;
-    })
-}
-
-fn merge_days(
-    first: impl Iterator<Item = (Day, PageId)>,
-    second: impl Iterator<Item = (Day, PageId)>,
-) -> impl Iterator<Item = (Day, PageId)> {
-    let mut first = first.peekable();
-    let mut second = second.peekable();
-    std::iter::from_fn(move || match (first.peek(), second.peek()) {
-        (Some((first_day, _)), Some((second_day, _))) if first_day >= second_day => {
-            if first_day == second_day {
-                second.next();
-            }
-            first.next()
-        }
-        (_, Some(_)) => second.next(),
-        (Some(_), None) => first.next(),
-        (None, None) => None,
-    })
-}
-
-fn collect_feed_through<T>(
-    entries: impl Iterator<Item = (Day, PageId)>,
-    limit: usize,
-    through: Option<i64>,
-    as_of: i64,
-    load: impl FnMut(Day, &PageId) -> io::Result<Loaded<T>>,
-) -> io::Result<FeedPage<T>> {
-    let mut entries = entries.peekable();
-    // The extension counts candidates, including those that fail to load.
-    let mut prefix = Vec::new();
-    if let Some(through) = through {
-        while entries.peek().is_some_and(|(day, _)| day.0 >= through) {
-            prefix.push(entries.next().unwrap());
-        }
-    }
-    let limit = limit.max(prefix.len());
-    collect_feed_iter(prefix.into_iter().chain(entries), limit, None, as_of, load)
 }
 
 #[cfg(test)]
@@ -716,9 +751,17 @@ fn feed_days_through(store: &Store, cutoff: Day) -> io::Result<(Vec<(Day, PageId
     let days = days
         .into_keys()
         .rev()
-        .filter_map(|day| store.live_journal_feed_id(day).map(|id| (day, id)))
+        .filter_map(|day| active_journal_id(store, day).map(|id| (day, id)))
         .collect();
     Ok((days, unreadable))
+}
+
+/// A physical journal (or its proposed path) belongs in the feed only when
+/// it is also the opening file. An ordinary owner masks the entire journal
+/// day, including reference-only insertion; it is not an empty virtual day.
+fn active_journal_id(store: &Store, day: Day) -> Option<PageId> {
+    let active = store.journal_id(day, true);
+    (active == store.journal_id(day, false)).then_some(active)
 }
 
 fn migration_target(entry: &FileEntry, fmt: &JournalFormat) -> Option<String> {

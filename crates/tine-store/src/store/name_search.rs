@@ -3,8 +3,7 @@ use super::*;
 
 impl WholeGraph {
     /// Referenced journal days from the published explicit-reference/alias
-    /// index, including days without a journal file, in ascending day order.
-    /// Ordinary date-named pages
+    /// index, including days without a journal file. Ordinary date-named pages
     /// and their aliases retain ordinary page identity. No document or disk
     /// scan; O(R log D + date-name alias lookups), R indexed reference names,
     /// D distinct referenced dates. Publications update the existing index.

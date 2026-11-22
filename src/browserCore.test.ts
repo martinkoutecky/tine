@@ -154,12 +154,30 @@ it("the browser journal feed extends through a referenced day and includes upcom
   }
 });
 
+it("the browser opens on the desktop cursor's day when two journal titles match", () => {
+  const graph = open([
+    ["logseq/config.edn", '{:journal/page-title-format "yyyy"}'],
+    ["pages/2000-01-01.md", "- Jan 1\n"],
+    ["pages/2000-01-02.md", "- Jan 2\n"],
+  ]);
+  try {
+    const first = graph.journal_feed_page_json(10, null, true, null);
+    expect(first).toBe(graph.journal_feed_page_json(10, 20000103n, true, null));
+    expect(JSON.parse(first).pages).toMatchObject([
+      { id: "pages/2000-01-01.md", blocks: [{ raw: "Jan 1" }] },
+    ]);
+  } finally {
+    graph.free();
+  }
+});
+
 const journalMasks = JSON.parse(readFileSync("tests/fixtures/browser-core-journal-masks.json", "utf8")) as {
   name: string;
   files: [string, string][];
+  referenced_cursor_rows?: string[];
 }[];
 
-it.each(journalMasks)("the browser feed masks a day claimed by an undated file ($name)", ({ files }) => {
+it.each(journalMasks)("the browser feed follows the cursor's claimant rules ($name)", ({ files, referenced_cursor_rows }) => {
   const graph = open([
     ...files,
     ["pages/Z.md", "title:: 2000_01_01\n- masked\n"],
@@ -169,8 +187,9 @@ it.each(journalMasks)("the browser feed masks a day claimed by an undated file (
   try {
     for (const before of [null, 20000102n]) {
       for (const references of [false, true]) {
-        const feed = JSON.parse(graph.journal_feed_page_json(1, before, references, null));
-        expect(feed.pages).toMatchObject([{ id: "journals/1999_12_31.md" }]);
+        const feed = JSON.parse(graph.journal_feed_page_json(10, before, references, null));
+        const expected = (references && referenced_cursor_rows) || ["journals/1999_12_31.md"];
+        expect(feed.pages.map(({ id }: { id: string }) => id)).toEqual(expected);
         expect(feed.done).toBe(true);
       }
     }
