@@ -1623,6 +1623,10 @@ describe("QueryMacro through query_parse + query_run", () => {
   it("binds :current-page to OG's current page — the focused route, else today — not the rendering page", async () => {
     const source = "{{query {:query [:find (pull ?b [*]) :in $ ?current-page :where [?p :block/name ?current-page] [?b :block/refs ?p]] :inputs [:current-page]}}}";
     loadQueryDoc(source);
+    vi.mocked(backend().parseQuery).mockImplementation(async (text, dialect, properties) => ({
+      ...readQuery(text, dialect, properties),
+      current_page_input: true,
+    }));
     const run = vi.spyOn(backend(), "queryRun").mockResolvedValue(emptyRun());
     openJournals();
     const { dispose } = mount(() => <Block id="query" />);

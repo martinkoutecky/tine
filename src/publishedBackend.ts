@@ -109,7 +109,7 @@ export function publishedBackend(load: () => Promise<{ name: string; read: Graph
   const unsubscribed = async () => () => {};
 
   async function read<T>(...call: GraphCall): Promise<T> {
-    return JSON.parse(await (await load()).read(...call));
+    return JSON.parse(await (await load()).read(call));
   }
 
   /** `../assets/<name>` — or null when the authored name would leave the
@@ -186,8 +186,8 @@ export function publishedBackend(load: () => Promise<{ name: string; read: Graph
     captureQuickSwitch: (query, limit, transliteration = false) =>
       read("capture_quick_switch_json", query, limit, transliteration),
     queryFacets: scope => read("query_facets_json", JSON.stringify(scope)),
-    parseQuery: (text, dialect, properties) =>
-      read("parse_query_json", text, dialect, JSON.stringify(properties)),
+    parseQuery: async (text, dialect, properties, location) =>
+      JSON.parse(await (await load()).read(["parse_query_json", text, dialect, JSON.stringify(properties)], location)),
     queryRun: (query, view, context) =>
       read("query_run_json", JSON.stringify(query), JSON.stringify(view), JSON.stringify(context)),
     runGraphSearch: (source, pageLimit, blockLimit, _lane, explain, scope, pageMatchScope, views, transliteration) =>

@@ -63,18 +63,18 @@ it("transfers one snapshot, pairs overlapping reads with their answers and drain
     expect(fetch).toHaveBeenCalledTimes(1);
     expect(detached).toEqual([0]);
     expect(received[0]).toMatchObject({ method: "open" });
-    const first = opened.read("page_inventory_json");
-    const second = opened.read("journal_feed_page_json", 1, 2n, false);
+    const first = opened.read(["page_inventory_json"]);
+    const second = opened.read(["journal_feed_page_json", 1, 2n, false]);
     expect(received.slice(1).map(({ method }) => method)).toEqual(["page_inventory_json", "journal_feed_page_json"]);
     worker.reply({ id: received[2].id, json: "2" });
     worker.reply({ id: received[1].id, json: "1" });
     expect(await Promise.all([first, second])).toEqual(["1", "2"]);
 
-    const pending = opened.read("get_page_json", "Example", false);
+    const pending = opened.read(["get_page_json", "Example", false]);
     worker.crash();
     const failure = await opened.failure;
     await expect(pending).rejects.toBe(failure);
-    await expect(opened.read("get_page_json", "Example", false)).rejects.toBe(failure);
+    await expect(opened.read(["get_page_json", "Example", false])).rejects.toBe(failure);
     expect(worker.terminate).toHaveBeenCalledTimes(1);
     expect(received).toHaveLength(4);
   } finally {
@@ -94,20 +94,20 @@ it("runs unrecorded queries over the shared pages", async () => {
   }
 });
 
-it("binds the generated query's reviewed page even when the browser focuses another page", async () => {
+it("uses ordinary current-page context and candidates on an export home", async () => {
   const api = testPublishedBackend({
     "pages/Public.md": "- referred to [[Focus]]\n",
-    "pages/Export.md": "- [[Public]]\n- [[Other]]\n",
+    "pages/Export.md": "- [[Export]]\n",
     "logseq/config.edn": '{:default-home {:page "Export"}}',
-  }, "Example", { query_home: { current_page: "Focus" } });
+  }, "Example");
   const { query, view } = await api.parseQuery(
     '{:query [:find (pull ?b [*]) :in $ ?p :where [?page :block/name ?p] [?b :block/refs ?page]] :inputs [:current-page]}',
     "macro_query",
   );
-  const reviewed = await api.queryRun(query, view, { source_page: "Export", current_page: "Other" });
-  expect(reviewed).toMatchObject({ total: 1, groups: [{ page: "Public", blocks: [{ raw: "referred to [[Focus]]" }] }] });
-  const ordinary = await api.queryRun(query, view, { source_page: "Public", current_page: "Other" });
-  expect(ordinary).toMatchObject({ total: 1, groups: [{ page: "Export", blocks: [{ raw: "[[Other]]" }] }] });
+  const ordinary = await api.queryRun(query, view, { current_page: "Export" });
+  expect(ordinary).toMatchObject({ total: 1, groups: [{ page: "Export", blocks: [{ raw: "[[Export]]" }] }] });
+  const pages = await api.parseQuery("@page and name != 'Unused'", "macro_tql");
+  expect(await api.queryRun(pages.query, pages.view)).toMatchObject({ pages: expect.arrayContaining([{ path: "pages/Export.md", name: "Export", kind: "page", properties: [] }]) });
 });
 
 it("refuses writes and keeps the public fragment grammar", async () => {
@@ -125,6 +125,34 @@ it("requires source text in a generation-2 document", () => {
   const snapshot = { schema: 2, name: "Example", exported_at: "" };
   expect(() => validateSnapshot({ ...snapshot, schema: 1, pages: [] })).toThrow(/schema/);
   expect(() => validateSnapshot({ ...snapshot, files: [{ path: "pages/X.md", text: [] }] })).toThrow(/Invalid/);
+});
+
+it("admits up to 256 distinct live query locations per opened share", async () => {
+  await (await import("./browserCore")).loadBrowserCore();
+  const worker = { onmessage: undefined as ((event: { data: GraphRequest }) => Promise<void>) | undefined,
+    postMessage: vi.fn<(reply: GraphReply) => void>(), crypto: globalThis.crypto, performance: globalThis.performance };
+  vi.stubGlobal("self", worker);
+  await import("./publishedGraph.worker");
+  let id = 0;
+  const request = async (message: Omit<GraphRequest, "id"> & { queryLocation?: string }) => {
+    await worker.onmessage!({ data: { ...message, id: ++id } as GraphRequest });
+    return worker.postMessage.mock.lastCall![0];
+  };
+  const open = () => request({ method: "open", args: [new TextEncoder().encode(JSON.stringify({
+    quick_share: 2, snapshot: { schema: 2, name: "Example", exported_at: "",
+      files: Object.entries(files).map(([path, text]) => ({ path, text })) },
+  })).buffer, true, undefined] });
+  const parse = (queryLocation: string) => request({
+    method: "parse_query_json", args: ["(task TODO)", "macro_query"], queryLocation,
+  });
+  expect(await open()).toMatchObject({ json: '"Example"' });
+  for (let i = 0; i < 256; i++) expect(await parse(`source/${i}`)).toHaveProperty("json");
+  expect(await parse("opening/begin")).toHaveProperty("queryLimit", true);
+  expect(await parse("macro/0/inner/0")).toHaveProperty("queryLimit", true);
+  expect(await parse("source/0")).toHaveProperty("json");
+  expect(await request({ method: "page_inventory_json", args: [] })).toHaveProperty("json");
+  expect(await open()).toHaveProperty("json", '"Example"');
+  expect(await parse("opening/begin")).toHaveProperty("json");
 });
 
 it("bounds the preview and returns detached metadata for an authored ID", async () => {

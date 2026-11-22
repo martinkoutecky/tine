@@ -85,6 +85,7 @@ import { PdfAssetLink, pdfFilenameFromDest } from "./PdfAssetLink";
 import { RelativeFileLink } from "./RelativeFileLinkView";
 import { galleryFor } from "../imageGallery";
 import { queryMacroRenderRun } from "./queryMacroRender";
+import { QueryLocationContext, queryBlockLocation } from "./queryLocation";
 import { windowOf } from "../windowRealm";
 import { createGraphResource } from "../graphResource";
 
@@ -100,7 +101,7 @@ import { createGraphResource } from "../graphResource";
 // The query arm prefers the RAW source slice (`rawMacro`): mldoc splits macro
 // arguments on commas and stops before the first `}`, so the AST body loses an
 // options map's closing brace and a literal comma.
-function renderMacroBody(raw: string, blockId?: string, userArgs?: string[], rawMacro?: MacroExtent, span?: Span): JSX.Element {
+function renderMacroBody(raw: string, blockId?: string, userArgs?: string[], rawMacro?: MacroExtent, span?: Span, sourceOffset?: number): JSX.Element {
   const body = raw.trimStart();
   // A preview must not mount a live query editor through an inline macro.
   if (useContext(PeekContext) && (rawMacro || isQueryMacroName(body.split(" ", 1)[0]))) return <code>{`{{${raw}}}`}</code>;
@@ -110,7 +111,7 @@ function renderMacroBody(raw: string, blockId?: string, userArgs?: string[], raw
   if (!um) return unknown;
   const name = um[1];
   switch (builtin_macro(name)) {
-    case "query": return <QueryMacro body={body} blockId={blockId} />;
+    case "query": return <QueryMacro body={body} blockId={blockId} sourceOffset={sourceOffset} />;
     case "embed": return <EmbedMacro body={body} blockId={blockId} span={span} />;
     case "youtube-timestamp": return <YoutubeTimestamp body={body} />;
     case "video": return <VideoMacro body={body} />;
@@ -132,7 +133,7 @@ function renderMacroBody(raw: string, blockId?: string, userArgs?: string[], raw
   });
   return (
     <Show when={template() !== undefined ? { text: template()! } : undefined} keyed fallback={unknown}>
-      {(macro) => <UserMacroView name={name} template={macro.text} args={args} blockId={blockId} />}
+      {(macro) => <UserMacroView name={name} template={macro.text} args={args} blockId={blockId} sourceOffset={sourceOffset} />}
     </Show>
   );
 }
@@ -228,7 +229,8 @@ function renderInline(s: Inline, blockId?: string, spanMode = true, macroExpansi
     case "tag":
       return <PageRef name={astText(s.children)} blockId={blockId} tag spanAttrs={spanMode ? coarseSpanAttrs(s.span) : undefined} />;
     case "macro":
-      return renderMacroBody(macroBody(s), blockId, s.args, rawQueryMacro(s, blockId), hostSpan(s, spanMode, macroExpansion));
+      return renderMacroBody(macroBody(s), blockId, s.args, macroExpansion ? undefined : rawQueryMacro(s, blockId),
+        hostSpan(s, spanMode, macroExpansion), s.span?.[0]);
     case "latex":
       return <MathView tex={s.body} display={s.mode === "Displayed"} spanAttrs={spanMode ? coarseSpanAttrs(s.span) : undefined} />;
     case "timestamp":
@@ -1215,7 +1217,8 @@ function expansionHeadingLevel(expanded: string, fmt?: Format): number | null {
 // `{{name a, b}}` where `name` is a user-defined `:macros` key: fill `$1..$N` with
 // the args. Single-paragraph expansions stay inline; block-level expansions render
 // through the block renderer, matching OG's macro parse/render split.
-function UserMacroView(props: { name: string; template: string; args: string[]; blockId?: string }): JSX.Element {
+function UserMacroView(props: { name: string; template: string; args: string[]; blockId?: string; sourceOffset?: number }): JSX.Element {
+  const host = useContext(QueryLocationContext) ?? (props.blockId ? queryBlockLocation(props.blockId) : "inline");
   return userMacroGate.expand(
     templateExpansionSize(props.template, props.args),
     () => <span class="macro">{`{{${props.name}}}`}</span>,
@@ -1227,14 +1230,15 @@ function UserMacroView(props: { name: string; template: string; args: string[]; 
     () => {
       const fmt = formatForBlock(props.blockId);
       const expanded = expandTemplate(props.template, props.args);
-      if (parserReady() && expansionIsBlockLevel(expanded, fmt)) {
-        return (
-          <div class="macro-blocks" data-foreign-source="macro">
-            <AstBody raw={expanded} blockId={props.blockId} format={fmt} headingLevel={expansionHeadingLevel(expanded, fmt)} macroExpansion />
-          </div>
-        );
-      }
-      return <InlineText text={expanded} blockId={props.blockId} format={fmt} macroExpansion />;
+      return (
+        <QueryLocationContext.Provider value={`${host}/macro/${props.sourceOffset ?? props.name}`}>
+          {parserReady() && expansionIsBlockLevel(expanded, fmt)
+            ? <div class="macro-blocks" data-foreign-source="macro">
+                <AstBody raw={expanded} blockId={props.blockId} format={fmt} headingLevel={expansionHeadingLevel(expanded, fmt)} macroExpansion />
+              </div>
+            : <InlineText text={expanded} blockId={props.blockId} format={fmt} macroExpansion />}
+        </QueryLocationContext.Provider>
+      );
     },
   );
 }

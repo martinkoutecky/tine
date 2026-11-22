@@ -2,9 +2,8 @@
 //! that produces it (SPEC §7.1, §4.1).
 //!
 //! It lives in tine-core rather than in the Tauri command layer because the
-//! query publisher (`publish/app_export.rs`) bakes the exact answer the
-//! frontend's `parseQuery` would receive; two implementations would drift
-//! apart in precisely the merge order §4.1 fixes.
+//! query publisher and the frontend's `parseQuery` share the merge order
+//! §4.1 fixes.
 
 use super::ir::{
     Attr, CmpOp, Filter, Leaf, Query, ScopedDisplaySettings, Source, Value, ViewSettings,
@@ -53,6 +52,12 @@ impl QueryTextDialect {
 pub struct ParsedQuery {
     pub query: Query,
     pub view: ViewSettings,
+    /// UTF-16 spans of the textual current-page variable in the authored argument.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub current_page_tokens: Vec<(usize, usize)>,
+    /// Whether an advanced query declares the typed current-page input.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub current_page_input: bool,
     /// OG's read-only table request: options, query-table, or a trailing table.
     /// Explicit Tine presentation properties override this in the renderer.
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
@@ -62,6 +67,33 @@ pub struct ParsedQuery {
     /// The D-18 on-query cue for a Logseq form that adds no condition.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub og_hint: Option<OgQueryHint>,
+}
+
+/// The Logseq textual current-page variable's occurrences, in byte order.
+fn current_page_tokens(text: &str) -> impl Iterator<Item = std::ops::Range<usize>> + '_ {
+    static TOKEN: std::sync::LazyLock<regex::Regex> =
+        std::sync::LazyLock::new(|| regex::Regex::new(r"(?i)<%\s*current page\s*%>").unwrap());
+    TOKEN.find_iter(text).map(|found| found.range())
+}
+
+/// Bind the textual current-page variable for execution. Callers check the
+/// resulting source against their parser limits before parsing it.
+pub fn bind_current_page<'a>(text: &'a str, page: &str) -> std::borrow::Cow<'a, str> {
+    let mut tokens = current_page_tokens(text).peekable();
+    if tokens.peek().is_none() {
+        return text.into();
+    }
+    let mut bound = String::new();
+    let mut end = 0;
+    for span in tokens {
+        bound.push_str(&text[end..span.start]);
+        bound.push_str("[[");
+        bound.push_str(page);
+        bound.push_str("]]");
+        end = span.end;
+    }
+    bound.push_str(&text[end..]);
+    bound.into()
 }
 
 /// **The on-query cue for Logseq's "no condition" forms (D-18, GH #422).**
@@ -273,12 +305,26 @@ pub fn parse_query_pair(
             if original.trim_end().ends_with("table"));
     let scoped = super::view::read_scoped_display_settings(block_properties);
     let og_hint = og_query_hint(&query);
+    let mut end = 0;
+    let mut utf16 = 0;
+    let current_page_tokens = current_page_tokens(text)
+        .map(|span| {
+            let start = utf16 + text[end..span.start].encode_utf16().count();
+            utf16 = start + text[span.clone()].encode_utf16().count();
+            end = span.end;
+            (start, utf16)
+        })
+        .collect();
+    let current_page_input = matches!(&query.source, Source::Advanced { original, .. }
+        if super::advanced_patterns::input_values(original).contains(&":current-page"));
     ParsedQuery {
         og_hint,
         query,
         legacy_table,
         view: super::view::merge_block_property_view(&parsed_view, block_properties),
         scoped,
+        current_page_tokens,
+        current_page_input,
     }
 }
 

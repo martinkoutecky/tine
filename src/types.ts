@@ -70,6 +70,7 @@ export interface QueryPublicationRequest {
   dialect: import("./editor/queryIr").QueryTextDialect;
   properties: [string, string][];
   currentPage?: string | null;
+  textualCurrentPage?: string;
   hostBlockId?: string | null;
   folder?: string | null;
   replace?: boolean;
@@ -81,6 +82,7 @@ export interface QueryPublicationRequest {
 
 export interface QueryPublicationPlan {
   includeComments?: boolean;
+  usesCurrentPage?: boolean;
   anchor: "block" | "page";
   rowCount: number;
   pages: { name: string; path: string; journal: boolean }[];

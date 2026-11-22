@@ -4,7 +4,7 @@
 
 use serde::{Deserialize, Serialize};
 use tine_core::model::PageKind;
-use tine_core::query::ir::{FriendlyPageMatchScope, ViewSettings};
+use tine_core::query::ir::{ExecutionContext, FriendlyPageMatchScope, ViewSettings};
 use tine_core::query::wire_parse::QueryTextDialect;
 use tine_graph_features::page_read_wire::{self, PageSource};
 use tine_graph_features::{graph_read_wire as read, inventory_wire as inventory};
@@ -16,7 +16,6 @@ use wasm_bindgen::prelude::*;
 pub struct BrowserGraph {
     view: WholeGraph,
     root: String,
-    query_home: Option<(PageId, query_wire::PublicationQuery)>,
 }
 
 #[wasm_bindgen]
@@ -34,24 +33,23 @@ impl BrowserGraph {
     ) -> Result<BrowserGraph, JsValue> {
         let options: OpenOptions = optional_input(options_json.as_deref())?;
         let files = read_sources(paths, files)?;
-        if let Some(share) = options.share {
-            tine_graph_features::share_admission::admit(
+        if let Some(share) = &options.share {
+            tine_graph_features::share_admission::check_sizes(
                 &share.name,
                 &share.exported_at,
-                files.iter().map(|(path, bytes)| (path, bytes)),
+                files.iter().map(|(path, bytes)| (path.len(), bytes.len())),
             )
             .map_err(|error| js_error(format!("share-too-large: {error}")))?;
         }
-        let mut graph = open(files)?;
-        if let Some(reviewed) = options.query_home {
-            let path = graph
-                .view
-                .config()
-                .default_home
-                .as_deref()
-                .and_then(|name| graph.view.page_owner(name, PageKind::Page))
-                .ok_or_else(|| js_error("Missing publication query home"))?;
-            graph.query_home = Some((path, reviewed));
+        let graph = open(files)?;
+        if options.share.is_some() {
+            if !graph.view.unreadable_files().is_empty() {
+                return Err(js_error(
+                    "share-too-large: a shared source could not be read as an outline",
+                ));
+            }
+            tine_graph_features::share_admission::check_blocks(&graph.view.corpus(None, false))
+                .map_err(|error| js_error(format!("share-too-large: {error}")))?;
         }
         Ok(graph)
     }
@@ -229,22 +227,8 @@ impl BrowserGraph {
     ) -> Result<String, JsValue> {
         let query = input(query_json)?;
         let view = input(view_json)?;
-        let context: QueryContext = optional_input(context_json.as_deref())?;
-        let result = match &self.query_home {
-            Some((path, reviewed))
-                if context.source_page.is_some()
-                    && context.source_page == self.view.config().default_home =>
-            {
-                query_wire::run_publication(&self.view, &query, &view, path.as_str(), reviewed)
-            }
-            _ => query_wire::run_wire(
-                &self.view,
-                &query,
-                &view,
-                &context.execution,
-                &Cancel::default(),
-            ),
-        };
+        let context: ExecutionContext = optional_input(context_json.as_deref())?;
+        let result = query_wire::run_wire(&self.view, &query, &view, &context, &Cancel::default());
         wire(result.map_err(js_error)?)
     }
 
@@ -281,20 +265,12 @@ impl BrowserGraph {
 #[derive(Default, Deserialize)]
 struct OpenOptions {
     share: Option<ShareMeta>,
-    query_home: Option<query_wire::PublicationQuery>,
 }
 
 #[derive(Deserialize)]
 struct ShareMeta {
     name: String,
     exported_at: String,
-}
-
-#[derive(Default, Deserialize)]
-struct QueryContext {
-    #[serde(flatten)]
-    execution: tine_core::query::ir::ExecutionContext,
-    source_page: Option<String>,
 }
 
 fn read_sources(
@@ -318,11 +294,7 @@ fn read_sources(
 fn open(files: Vec<(String, Vec<u8>)>) -> Result<BrowserGraph, JsValue> {
     let (view, root) = WholeGraph::from_files(files)
         .map_err(|error| js_error(format!("BrowserGraph: {error}")))?;
-    Ok(BrowserGraph {
-        view,
-        root,
-        query_home: None,
-    })
+    Ok(BrowserGraph { view, root })
 }
 
 #[derive(Default, Deserialize)]

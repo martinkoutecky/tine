@@ -193,15 +193,24 @@ describe("quick share generation 2", () => {
     expect(() => decodeShareDocument(new TextEncoder().encode("{"))).toThrow(QuickShareError);
   });
 
-  it("enforces byte limits and parser counts at the browser share open", async () => {
+  it("checks the JSON depth before discarding unknown fields", () => {
+    const doc = JSON.parse(readFileSync(new URL("pages/document.json", FIXTURES), "utf8"));
+    const nested = (depth: number) => {
+      let value: unknown = 'literal [[[{\\\"';
+      for (let i = 0; i < depth; i++) value = [value];
+      return new TextEncoder().encode(JSON.stringify({ ...doc, extra: value }));
+    };
+    expect(decodeShareDocument(nested(limits.viewer.depth - 1)).schema).toBe(2);
+    expect(() => decodeShareDocument(nested(limits.viewer.depth))).toThrow(/nested too deeply/);
+  });
+
+  it("enforces byte limits and counts opened blocks at share open", async () => {
     const { BrowserGraph } = await loadBrowserCore();
     const encoder = new TextEncoder();
     for (const [reason, texts] of [
       ["too many files", Array<string>(limits.viewer.pages + 2).fill("- small")],
       ["1 MiB", ["é".repeat(limits.viewer.string_bytes / 2 + 1)]],
       ["too many blocks", ["- x\n".repeat(limits.viewer.blocks + 1)]],
-      ["too many queries", ["- {{query (task TODO)}}\n".repeat(limits.viewer.queries + 1)]],
-      ["too many queries", ["- #+BEGIN_QUERY\n  {:query (task TODO)}\n  #+END_QUERY\n".repeat(limits.viewer.queries + 1)]],
     ] as const) {
       const files = texts.map((text, i) => ({ path: `pages/Public-${i}.md`, text }));
       const snapshot = decodeShareDocument(encoder.encode(JSON.stringify({
@@ -212,6 +221,20 @@ describe("quick share generation 2", () => {
         snapshot.files.map(file => encoder.encode(file.text)),
         JSON.stringify({ share: { name: snapshot.name, exported_at: snapshot.exported_at } }),
       )).toThrow(new RegExp(`share-too-large:.*${reason}`));
+    }
+    const graph = new BrowserGraph(
+      ["pages/Queries.md", "pages/Containers.md"],
+      [
+        "- {{query (task TODO)}}\n".repeat(limits.viewer.queries + 1),
+        "- #+BEGIN_QUERY\n  {:query (task TODO)}\n  #+END_QUERY\n".repeat(limits.viewer.queries + 1),
+      ].map(text => encoder.encode(text)),
+      JSON.stringify({ share: { name: "Example", exported_at: "" } }),
+    );
+    try {
+      expect(JSON.parse(graph.page_inventory_json()).entries.map((entry: { name: string }) => entry.name))
+        .toEqual(expect.arrayContaining(["Queries", "Containers"]));
+    } finally {
+      graph.free();
     }
   });
 

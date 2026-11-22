@@ -270,6 +270,7 @@ fn closure_request(name: &str, host: Option<&str>) -> QueryExportRequest {
         dialect: QueryTextDialect::MacroTql,
         properties: vec![],
         current_page: host.map(str::to_owned),
+        textual_current_page: host.map(str::to_owned),
         name: name.into(),
         host_block_id: None,
         folder: None,
@@ -430,6 +431,7 @@ fn clash_request(name: &str) -> QueryExportRequest {
         dialect: QueryTextDialect::MacroTql,
         properties: vec![],
         current_page: None,
+        textual_current_page: None,
         name: name.into(),
         host_block_id: None,
         folder: None,
@@ -466,7 +468,10 @@ fn a_generated_home_never_shadows_an_answered_name() {
         assert_eq!(target.name, expected);
         let root = tempfile::tempdir().unwrap();
         let refused = share_document(root.path(), CLASH, &clash_request(name)).unwrap_err();
-        assert!(refused.contains("already called"), "{name}: {refused}");
+        assert!(
+            refused.contains("give the share another name"),
+            "{name}: {refused}"
+        );
     }
     let root = tempfile::tempdir().unwrap();
     let doc = share_document(root.path(), CLASH, &clash_request("Nowhere")).unwrap();
@@ -485,20 +490,32 @@ fn a_generated_home_never_shadows_an_answered_name() {
 }
 
 #[test]
-fn the_query_home_keeps_its_reviewed_execution_argument_and_presentation() {
+fn the_query_home_keeps_its_authored_argument_and_presentation() {
     let _integration_guard = crate::integration_lock();
     let files = [
-        ("pages/Shop.md", "- TODO Buy apples [[Shop]]\n"),
+        (
+            "pages/Shop.md",
+            "- TODO Buy apples\n- TODO Exclude [[Shopping list]]\n",
+        ),
         ("pages/PRIVATE-HOST.md", "- private context\n"),
     ];
     let mut request = closure_request("Shopping list", Some("PRIVATE-HOST"));
-    // The dialog sends the substituted argument as the reviewed argument.
-    request.argument = "(and (task TODO) [[Shop]])".into();
+    request.argument = "(and (task TODO) (not <% current page %>))".into();
     request.dialect = QueryTextDialect::MacroQuery;
     request.properties = vec![("tine.breadcrumbs".into(), "false".into())];
     let dir = tempfile::tempdir().unwrap();
+    let store = graph(dir.path(), &files);
+    let plan = plan_query(&store, &request).unwrap();
+    assert_eq!(plan.row_count, 2);
+    assert_eq!(
+        serde_json::to_value(&plan).unwrap()["usesCurrentPage"],
+        true
+    );
+    store.close();
+    let dir = tempfile::tempdir().unwrap();
     let (snapshot, _) = query_export(dir.path(), &files, &request);
     assert!(!snapshot.to_string().contains("PRIVATE-HOST"));
+    assert!(snapshot.get("query_home").is_none());
     let core = snapshot_graph(&snapshot);
     let corpus = core.corpus(None, true);
     let home = corpus
@@ -507,14 +524,43 @@ fn the_query_home_keeps_its_reviewed_execution_argument_and_presentation() {
         .find(|page| page.name == "Shopping list")
         .unwrap();
     let query = &home.document.roots[0];
-    assert!(query.raw().contains("{{query (and (task TODO) [[Shop]])}}"));
+    assert_eq!(home.document.roots.len(), 1);
+    assert!(query
+        .raw()
+        .contains("{{query (and (task TODO) (not <% current page %>))}}"));
     assert_eq!(query.property("tine.breadcrumbs").as_deref(), Some("false"));
     let result = run_query(
         &core,
-        &parsed_query(&core, &request.argument, &query.properties()),
+        &parsed_query(
+            &core,
+            "(and (task TODO) (not [[Shopping list]]))",
+            &query.properties(),
+        ),
         Some(&home.name),
     );
-    assert!(serde_json::to_string(&result.rows)
-        .unwrap()
-        .contains("Buy apples"));
+    let live = serde_json::to_string(&result.rows).unwrap();
+    assert_eq!(result.total, 1);
+    assert!(live.contains("Buy apples") && !live.contains("Exclude"));
+}
+
+#[test]
+fn multiline_journal_name_uses_ordinary_home_collision_rules() {
+    let _integration_guard = crate::integration_lock();
+    for newline in ["\n", "\r\n", "\r"] {
+        let name = format!("Nov{newline}22nd, 2026");
+        let request = clash_request(&name);
+        let root = tempfile::tempdir().unwrap();
+        let (snapshot, _) = query_export(root.path(), CLASH, &request);
+        assert_eq!(snapshot["name"], name.as_str());
+        let graph = snapshot_graph(&snapshot);
+        assert_eq!(
+            graph.config().default_home.as_deref(),
+            Some("Nov 22nd, 2026 (export)")
+        );
+        let home = graph.corpus(Some("Nov 22nd, 2026 (export)"), true);
+        assert_eq!(home.pages[0].kind, tine_core::model::PageKind::Page);
+        let root = tempfile::tempdir().unwrap();
+        let refused = share_document(root.path(), CLASH, &request).unwrap_err();
+        assert!(refused.contains("journal date"), "{refused}");
+    }
 }

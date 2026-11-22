@@ -13,7 +13,7 @@ export function testPublishedBackend(files: Record<string, string>, name = "Publ
     name,
   }));
   onTestFinished(async () => (await opened).graph.free());
-  const read: GraphRead = async (method, ...args) => {
+  const read: GraphRead = async ([method, ...args]) => {
     const { graph } = await opened;
     return Reflect.apply(graph[method], graph, args);
   };

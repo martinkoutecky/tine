@@ -27,6 +27,7 @@ import { DEFAULT_JOURNAL_SECTIONS_PAGE, locateSectionsPages, sectionItems, seedS
 import type { Format } from "../types";
 import { soleBlockMacro } from "../render/parse";
 import { createGraphResource } from "../graphResource";
+import { QueryLocationContext, queryBlockLocation } from "../render/queryLocation";
 
 const classify = (raw: string, format: Format): SectionItem["kind"] | null => {
   const macro = soleBlockMacro(raw, format);
@@ -45,7 +46,7 @@ function reuseUnchanged(previous: Sections | undefined, next: Sections): Section
   if (!previous || !next) return next;
   const pool = [...previous.items];
   const items = next.items.map(item => {
-    const at = pool.findIndex(old => old.kind === item.kind && old.raw === item.raw && old.format === item.format);
+    const at = pool.findIndex(old => old.id === item.id && old.kind === item.kind && old.raw === item.raw && old.format === item.format);
     return at < 0 ? item : pool.splice(at, 1)[0];
   });
   const same = previous.page === next.page && items.length === previous.items.length
@@ -143,11 +144,11 @@ export function TodaySections(props: { today: string; upcoming?: JSX.Element }):
               </div>
             </Show>
             <For each={found().items}>
-              {(item) => <div class="default-journal-query">
+              {(item) => <div class="default-journal-query"><QueryLocationContext.Provider value={queryBlockLocation(item.id)}>
                 <Switch>
                   <Match when={item.kind === "upcoming"}>{props.upcoming}</Match>
                   <Match when={item.kind === "query" && detectMacro(item.raw, item.format)}>
-                    {(macro) => <QueryMacro body={macro().inner} currentPage={props.today} hideWhenEmpty
+                    {(macro) => <QueryMacro body={macro().inner} currentPage={props.today} hideWhenEmpty sourceOffset={macro().sourceExtent?.start}
                       // View edits happen on the sections page; result blocks remain live.
                       hostRaw={{ raw: item.raw, format: item.format }} />}
                   </Match>
@@ -155,7 +156,7 @@ export function TodaySections(props: { today: string; upcoming?: JSX.Element }):
                     {(match) => <BeginQuery match={match()} currentPage={props.today} hideWhenEmpty />}
                   </Match>
                 </Switch>
-              </div>}
+              </QueryLocationContext.Provider></div>}
             </For>
           </div>
         )}

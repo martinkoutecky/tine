@@ -4,7 +4,6 @@ export interface PublishedSnapshot {
   name: string;
   exported_at: string;
   files: { path: string; text: string }[];
-  query_home?: unknown;
 }
 
 /** Read at most `max` bytes, checking the declared length and cancelling an oversize stream. */
@@ -56,8 +55,5 @@ export function validateSnapshot(value: unknown): PublishedSnapshot {
     || !value.files.every((file) => record(file) && typeof file.path === "string" && typeof file.text === "string")) {
     throw new Error("Invalid publication snapshot");
   }
-  return {
-    schema, name: value.name, exported_at: value.exported_at, files: value.files,
-    ...("query_home" in value ? { query_home: value.query_home } : {}),
-  };
+  return { schema, name: value.name, exported_at: value.exported_at, files: value.files };
 }

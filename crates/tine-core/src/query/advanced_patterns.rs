@@ -1111,10 +1111,7 @@ fn resolve_inputs(
 ) -> std::collections::HashMap<String, AdvancedInput> {
     let mut map = std::collections::HashMap::new();
     let vars = declared_input_vars(src);
-    let vals = crate::query_edn::option_value(src, ":inputs")
-        .and_then(|s| edn_body(s, '[', ']'))
-        .map(edn_items)
-        .unwrap_or_default();
+    let vals = input_values(src);
     for (v, val) in vars.iter().zip(vals.iter()) {
         if *val == ":current-page" {
             if let Some(page) = current_page.map(str::trim).filter(|page| !page.is_empty()) {
@@ -1159,6 +1156,13 @@ fn resolve_inputs(
         }
     }
     map
+}
+
+pub(super) fn input_values(src: &str) -> Vec<&str> {
+    crate::query_edn::option_value(src, ":inputs")
+        .and_then(|s| edn_body(s, '[', ']'))
+        .map(edn_items)
+        .unwrap_or_default()
 }
 
 /// A `(between …)` range whose bounds the advanced dialect already resolved to

@@ -141,9 +141,29 @@ export async function gunzipBounded(bytes: Uint8Array<ArrayBuffer>, max: number)
 
 /** Decode the gunzipped document. The graph core admits its source limits. */
 export function decodeShareDocument(bytes: Uint8Array): PublishedSnapshot {
+  let text: string;
+  try {
+    text = new TextDecoder("utf-8", { fatal: true }).decode(bytes);
+  } catch {
+    return fail("invalid", "This share is damaged.");
+  }
+  let depth = 0;
+  let quoted = false;
+  for (let i = 0; i < text.length; i++) {
+    const code = text.charCodeAt(i);
+    if (code === 34) quoted = !quoted;
+    else if (quoted && code === 92) i++;
+    else if (!quoted) {
+      if (code === 123 || code === 91) {
+        if (++depth > limits.viewer.depth) return fail("too-large", "This share is nested too deeply.");
+      } else if (code === 125 || code === 93) {
+        depth--;
+      }
+    }
+  }
   let doc: { quick_share?: unknown; snapshot?: unknown } | null;
   try {
-    doc = JSON.parse(new TextDecoder("utf-8", { fatal: true }).decode(bytes));
+    doc = JSON.parse(text);
   } catch {
     return fail("invalid", "This share is damaged.");
   }

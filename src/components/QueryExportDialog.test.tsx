@@ -113,6 +113,7 @@ it("names left-out pages, notes the host page, and sends the query text only whe
   const root = await dialog(false, {
     leftOut: [{ name: "Diary", path: "pages/Diary.md", reason: "private" }, { name: "Exports", path: "pages/Exports.md", reason: "exportsPage" }],
     selectsHostPage: true,
+    usesCurrentPage: true,
   });
   const text = root.textContent ?? "";
   expect(text).toContain("2 selected pages are not included");
@@ -123,6 +124,18 @@ it("names left-out pages, notes the host page, and sends the query text only whe
   expect(include.checked, "off by default").toBe(false);
   exportButton(root).click(); for (let i = 0; i < 4; i++) await tick();
   expect(api.mock.calls[0][0]).toMatchObject({ includeQueryText: false });
-  include.click(); exportButton(root).click(); for (let i = 0; i < 4; i++) await tick();
+  const planner = vi.mocked(backend().publishQueryPlan);
+  const prior = await planner.mock.results[0].value;
+  let finish!: (plan: typeof prior) => void;
+  planner.mockImplementationOnce(() => new Promise(resolve => { finish = resolve; }));
+  include.click();
+  await vi.waitFor(() => expect(planner).toHaveBeenLastCalledWith(expect.objectContaining({ includeQueryText: true })));
+  expect(exportButton(root).disabled).toBe(true);
+  expect(root.textContent).toContain("where “this page” means that home");
+  finish({ ...prior, fingerprint: "with-query" });
+  await vi.waitFor(() => expect(exportButton(root).disabled).toBe(false));
+  exportButton(root).click();
+  await vi.waitFor(() => expect(api).toHaveBeenCalledTimes(2));
   expect(api.mock.calls[1][0]).toMatchObject({ includeQueryText: true });
+  expect(api.mock.calls[1][1]).toBe("with-query");
 });

@@ -1299,7 +1299,7 @@ function PageSection(props: { page: FeedPage; routed: boolean; children?: JSX.El
               <div class="prop-row">
                 <span class="prop-key"><Show when={!props.page.guide} fallback={key}><PropertyKey name={key} /></Show></span>{props.page.guide ? " " : ": "}
                 <span class="prop-value">
-                  <PagePropertyValue propertyKey={key} value={value} format={props.page.format} />
+                  <PagePropertyValue propertyKey={key} value={value} format={props.page.format} page={props.page} />
                 </span>
               </div>
             )}

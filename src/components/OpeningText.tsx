@@ -2,6 +2,7 @@ import { For, Match, Switch, createMemo, type JSX } from "solid-js";
 import type { Format } from "../render/ast";
 import { AstBody } from "../render/body";
 import { openingSegments } from "../editor/properties";
+import { QueryLocationContext } from "../render/queryLocation";
 
 type Piece = { kind: "group" | "text" | "blank"; text: string };
 
@@ -42,8 +43,8 @@ function contentLines(text: string): { start: number; end: number } {
 
 /** One text piece, read as untitled body text (`parseBlock`): a task word
  *  or priority on its first line is text like any other, so nothing is lifted. */
-function textPiece(text: string, format: Format): JSX.Element {
-  return <AstBody raw={text} format={format} untitled />;
+function textPiece(text: string, format: Format, location: string | undefined): JSX.Element {
+  return <QueryLocationContext.Provider value={location}><AstBody raw={text} format={format} untitled /></QueryLocationContext.Provider>;
 }
 
 /** A page's opening text (D-20261119-PG): each property group after the
@@ -51,14 +52,15 @@ function textPiece(text: string, format: Format): JSX.Element {
  *  between renders as body text does (queries, macros and all), with no
  *  block header: a task word or priority is ordinary text. One parser answer
  *  per text, then one parse per piece. */
-export function OpeningText(props: { raw: string; format: Format }): JSX.Element {
+export function OpeningText(props: { raw: string; format: Format; pageKey?: string }): JSX.Element {
   const pieces = createMemo(() => piecesOf(props.raw, props.format));
   return (
     <For each={pieces()}>
-      {(p) => (
+      {(p, index) => (
         <Switch>
           <Match when={p.kind === "group"}><div class="source-text opening-group" style={{ "white-space": "pre-wrap" }}>{p.text}</div></Match>
-          <Match when={p.kind === "text"}><div class="opening-text">{textPiece(p.text, props.format)}</div></Match>
+          <Match when={p.kind === "text"}><div class="opening-text">{textPiece(p.text, props.format,
+            props.pageKey === undefined ? undefined : `${props.pageKey}/opening/${index()}`)}</div></Match>
           <Match when={p.kind === "blank"}><div class="opening-blank"><br /></div></Match>
         </Switch>
       )}

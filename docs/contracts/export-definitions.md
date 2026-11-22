@@ -106,16 +106,15 @@ source produces the same `QueryExportRequest` consumed by dialog publication.
 Inline text uses the `{{query …}}` dialect and has no host context; page
 selection preserves the chosen block's context and export properties.
 
-A query export's home lists the exported pages. With `includeQueryText`
-("Include the query text", off by default), its first block holds the query
-macro with its reviewed execution argument and presentation properties. The
-browser core binds the reviewed page context and runs the query over the
-selected source owners before applying result limits. The generated listing
-does not supply query rows. Folder snapshots with this block carry a
-`query_home` execution input containing any reviewed page name already
-present in the selected graph and the original query block ID when that block
-travels with the export. The choice is outside the reviewed
-fingerprint. Queries authored in an exported page travel with its source.
+A query export's home lists the exported pages when **Include the query text**
+is off (the default). With it on, the home holds the authored query and its
+presentation properties. The choice is part of the reviewed fingerprint.
+The review shows the shared pages and the query's row count on the source
+graph. In the export the query runs live on the ordinary home page. Relative
+dates use the viewing day, samples are drawn afresh, and a page query can list
+the home. When the query uses the current page, the review explains that it
+will mean the export's home. Queries authored in a selected page travel with
+that page's source.
 
 ## The "this page" selector
 

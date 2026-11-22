@@ -196,7 +196,7 @@ crossing-notice-warning =
        *[other] This query now uses Tine features Logseq can't read. Logseq will show the block as plain text.
     }
 crossing-notice-changed-block = The block now reads: <code>{ $text }</code>
-query-export-dialog-summary = { $results } results on { $pages } complete pages
+query-export-dialog-summary = The query found { $results } results in this graph. The export shares { $pages } complete pages.
 query-export-dialog-existing = An export named <code>{ $folder }</code> already exists.
 query-export-dialog-separate = Create a separate export as <code>{ $folder }</code>
 query-export-dialog-path = Destination: <code>{ $path }</code>. This exports these pages as a static site and read-only app. It is not uploaded. Unsaved edits are not included.
@@ -870,3 +870,6 @@ query-export-dialog-left-out-private = marked public:: false
 query-export-dialog-left-out-exports-page = the exports page is never exported
 query-export-dialog-selects-host-page = This includes the page the query is written on.
 query-export-dialog-include-query-text = Include the query text (readers see the query, not only the pages)
+query-export-dialog-live-query = The query runs live on the export’s home page.
+query-export-dialog-live-current-page = The query runs live on the export’s home page, where “this page” means that home.
+macro-query-published-limit = This share can run queries at up to 256 locations. This query has reached the limit.

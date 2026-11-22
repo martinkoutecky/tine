@@ -221,7 +221,7 @@ crossing-notice-warning = { $has_feature ->
 
 crossing-notice-changed-block = 块内容现为：<code>{ $text }</code>
 
-query-export-dialog-summary = { $results } 项结果，来自 { $pages } 个完整页面
+query-export-dialog-summary = 查询在此图谱中找到 { $results } 项结果。导出将共享 { $pages } 个完整页面。
 
 query-export-dialog-existing = 名为 <code>{ $folder }</code> 的导出已存在。
 
@@ -897,3 +897,6 @@ query-export-dialog-left-out-private = 已标记 public:: false
 query-export-dialog-left-out-exports-page = 导出页面永远不会被导出
 query-export-dialog-selects-host-page = 其中包含查询所在的页面。
 query-export-dialog-include-query-text = 包含查询文本（读者能看到查询本身，而不仅是页面）
+query-export-dialog-live-query = 查询将在导出的首页实时运行。
+query-export-dialog-live-current-page = 查询将在导出的首页实时运行，其中「当前页面」指该首页。
+macro-query-published-limit = 此分享最多可在 256 个位置运行查询。此查询已达到上限。

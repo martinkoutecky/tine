@@ -36,6 +36,7 @@ fn request(argument: &str, dialect: QueryTextDialect) -> QueryExportRequest {
         dialect,
         properties: vec![],
         current_page: None,
+        textual_current_page: None,
         name: "Share".into(),
         host_block_id: None,
         folder: None,

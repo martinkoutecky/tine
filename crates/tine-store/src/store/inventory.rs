@@ -564,10 +564,13 @@ impl WholeGraph {
         )
     }
 
-    /// Whether a new ordinary page would shadow a file, an alias, or a
-    /// referenced journal day. Uses the same named and linked destinations
+    /// Whether a generated ordinary page would claim a journal day or shadow
+    /// a file or alias. Uses the same named and linked destinations
     /// as navigation. Indexed lookups, with no corpus scan or I/O.
     pub fn publication_home_name_taken(&self, name: &str) -> bool {
+        if self.journal_format.parse(name).is_some() {
+            return true;
+        }
         let target = link_target_in(
             &self.claimants,
             &self.graph,
@@ -580,12 +583,6 @@ impl WholeGraph {
                 self.resolve(&target.name, target.is_journal),
                 Resolved::Absent { .. }
             )
-            || (target.is_journal
-                && self
-                    .graph
-                    .referenced_name_table()
-                    .get(&tine_core::refs::page_key(name))
-                    .is_some())
     }
 
     fn full_inventory(&self) -> Arc<Inventory> {

@@ -31,10 +31,7 @@ export async function locateSectionsPages(): Promise<string[]> {
   return result.kind === "current" && result.value.anchor === "page" ? result.value.pages.map((page) => page.name) : [];
 }
 
-export type SectionItem =
-  | { kind: "upcoming"; raw: string; format: Format }
-  | { kind: "query"; raw: string; format: Format }
-  | { kind: "begin-query"; raw: string; format: Format };
+export type SectionItem = { kind: "upcoming" | "query" | "begin-query"; id: string; raw: string; format: Format };
 
 /** Query and Upcoming blocks of the page in outline order, any depth. Other text is the
  *  user's notes for themselves and stays on the page. `classify` is the block
@@ -46,7 +43,7 @@ export function sectionItems(blocks: readonly BlockDto[], format: Format,
   const visit = (nodes: readonly BlockDto[]) => {
     for (const block of nodes) {
       const kind = classify(block.raw, format);
-      if (kind) out.push({ kind, raw: block.raw, format });
+      if (kind) out.push({ kind, id: block.id, raw: block.raw, format });
       visit(block.children);
     }
   };

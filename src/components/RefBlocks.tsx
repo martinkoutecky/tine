@@ -11,6 +11,7 @@ import { effectiveHeadingLevel, facetsFromDto, renderedProperties } from "../ren
 import { taskCheckboxState } from "../markers";
 import { OpeningText } from "./OpeningText";
 import { AstBody } from "../render/body";
+import { QueryLocationContext, queryBlockLocation, queryPageLocation } from "../render/queryLocation";
 import { BlockRenderBoundary } from "./BlockRenderBoundary";
 import { blockWritable, formatForPage, node as docNode, resolveBlockRef, setCollapsed } from "../document";
 import { loadSourcePage } from "../sourcePage";
@@ -135,8 +136,11 @@ function RefBlock(props: {
   const annotation = () => annotationInfo(facets().properties);
   // Chosen once per row: a row's preamble flag is its DTO's.
   const body = (format: Format) => props.block.page_preamble
-    ? <OpeningText raw={props.block.raw} format={format} />
-    : <AstBody raw={props.block.raw} format={format} headingLevel={headingLevel()} />;
+    ? <OpeningText raw={props.block.raw} format={format}
+        pageKey={queryPageLocation(props.pageKind, props.page)} />
+    : <QueryLocationContext.Provider value={queryBlockLocation(props.block.id)}>
+        <AstBody raw={props.block.raw} format={format} headingLevel={headingLevel()} />
+      </QueryLocationContext.Provider>;
   // Only an exact whole-block candidate needs query confirmation here.
   const beginQuery = createMemo(() =>
     props.sourceFormat && !props.readOnly && /^\s*#\+BEGIN_QUERY\b/i.test(props.block.raw)
@@ -156,7 +160,8 @@ function RefBlock(props: {
       <Show when={i() > 0}><br /></Show>
       <span class="page-property-reference-row">
         <span class="prop-key"><PropertyKey name={key} /></span>{": "}
-        <span class="prop-value"><PagePropertyValue propertyKey={key} value={value} format={format} /></span>
+        <span class="prop-value"><PagePropertyValue propertyKey={key} value={value} format={format}
+          page={{ kind: props.pageKind, name: props.page }} /></span>
       </span>
     </>}
   </For>;
@@ -329,7 +334,7 @@ function RefBlock(props: {
                           line={visibleBody(props.block.raw, format()).join("\n")} format={format()} />
                       </Show>
                     }>
-                      {(match) => <BeginQuery match={match()} currentPage={props.page} />}
+                      {(match) => <BeginQuery match={match()} currentPage={props.page} findHost={props.block.id} />}
                     </Show>
                   }
                 >

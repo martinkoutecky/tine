@@ -5,7 +5,7 @@ use tine_core::query::wire_parse::QueryTextDialect;
 
 /// The same raw argument, dialect and host properties passed to `query_parse`.
 /// A name chooses a portable query leaf in the graph; a current
-/// page binds advanced inputs and the exported query's home run.
+/// page binds current-page inputs when reviewing the source graph.
 #[derive(Clone, Debug, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct QueryExportRequest {
@@ -15,6 +15,9 @@ pub struct QueryExportRequest {
     pub properties: Vec<(String, String)>,
     #[serde(default)]
     pub current_page: Option<String>,
+    /// Focused route page for textual variables during source review.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub textual_current_page: Option<String>,
     pub name: String,
     #[serde(default)]
     pub host_block_id: Option<String>,
@@ -28,8 +31,8 @@ pub struct QueryExportRequest {
     #[serde(default)]
     pub asset_budget_bytes: Option<u64>,
     /// "Include the query text" (PK3, off by default): only then does the
-    /// published home carry the query macro, its parsed form and its answer;
-    /// otherwise the home lists the exported pages and nothing of the query.
+    /// published home carry the authored query macro; otherwise the home lists
+    /// the exported pages.
     #[serde(default)]
     pub include_query_text: bool,
     #[serde(default)]
@@ -59,6 +62,7 @@ pub struct ExportPage {
 #[serde(rename_all = "camelCase")]
 pub struct QueryExportPlan {
     pub include_comments: bool,
+    pub uses_current_page: bool,
     pub anchor: String,
     pub row_count: usize,
     pub pages: Vec<ExportPage>,

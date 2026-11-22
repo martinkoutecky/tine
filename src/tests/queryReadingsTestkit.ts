@@ -39,6 +39,8 @@ export interface QueryReading {
   /** OG's table? answer (`wire_parse.rs`: options, `query-table::` or a
    *  trailing `table`), which the engine computes and a stub must declare. */
   legacy_table?: boolean;
+  current_page_tokens?: ParsedQuery["current_page_tokens"];
+  current_page_input?: ParsedQuery["current_page_input"];
   /** The view settings the engine lifted out of the text and the block's
    *  `tine.*` properties. */
   view?: ViewSettings;
@@ -87,6 +89,8 @@ function readingToIr(reading: QueryReading): ParsedQuery {
     query,
     view: reading.view ?? {},
     ...(reading.legacy_table !== undefined ? { legacy_table: reading.legacy_table } : {}),
+    ...(reading.current_page_tokens ? { current_page_tokens: reading.current_page_tokens } : {}),
+    ...(reading.current_page_input ? { current_page_input: true } : {}),
     // `Object.hasOwn`, never `??`: a present-but-empty scoped draft is `{}`,
     // and `{} ?? x` is `{}` while `undefined ?? x` is `x` — the two readings a
     // truthiness copy cannot tell apart.

@@ -160,7 +160,7 @@ it("a resume no focus or visibility event announces is caught by the next backen
 it("an advanced query whose :current-page falls back to today's journal follows the new day", async () => {
   // OG `current-page-fn`: no routed page and no home page binds today's journal.
   const argument = "{:query [:find (pull ?b [*]) :in $ ?p :where [?b :block/page ?p]] :inputs [:current-page]}";
-  backendReadsQueries({ [argument]: { form: argument, kind: "advanced" } });
+  backendReadsQueries({ [argument]: { form: argument, kind: "advanced", current_page_input: true } });
   const run = vi.spyOn(backend(), "queryRun").mockResolvedValue(blockRunResult([]));
   const today = () => journalTitle(localDateFromDayKey(currentDayKey()));
   const { dispose } = mount(() => <QueryMacro body={`query ${argument}`} />);

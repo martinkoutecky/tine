@@ -13,10 +13,14 @@ import { openPage, route } from "../router";
 import { resetPaneLayoutToSingle } from "../panes";
 import type { QueryExecution, RefGroup } from "../types";
 import { queryMacroExtent } from "../editor/queryMacro";
-import { backendReadsQueries, blockRunResult } from "../tests/queryReadingsTestkit";
+import { backendReadsQueries, blockRunResult, type QueryReading } from "../tests/queryReadingsTestkit";
 import type { Query, QueryResult } from "../editor/queryIr";
 import { setGraphMeta } from "../graphSession";
 import { journalTitle } from "../journal";
+import { closeQueryExport, queryExportRequest } from "../ui";
+import { OpeningText } from "./OpeningText";
+import { AstBody } from "../render/body";
+import { PublishedQueryLimitError } from "../publishedGraphRpc";
 
 // GH #301 (approved): a query whose text explicitly carries `<% current page %>`
 // binds that marker to the FOCUSED pane's route page and re-runs when that page
@@ -35,6 +39,7 @@ afterEach(() => {
   vi.restoreAllMocks();
   resetSharedQueryResultsForTests();
   resetStore();
+  closeQueryExport();
   setGraphMeta(null);
   resetPaneLayoutToSingle({ tabs: [{ history: [{ kind: "journals" }], pos: 0, pinned: false }], activeIndex: 0 });
   localStorage.clear();
@@ -66,13 +71,19 @@ const FOCUS_PAGES = ["Focus A", "Focus B", "Later Page"];
 function loadQueryDoc(queryRaw: string, kind?: "advanced") {
   // Whether a `{{query …}}` holds datalog is the ENGINE's reading of the text,
   // not a regex over it (§7.1), so a test that wants the advanced path says so.
-  if (kind) {
-    const argument = queryMacroExtent(queryRaw)?.argument ?? "";
-    const readings: Record<string, { form: string; kind: "advanced" }> = {
-      [argument]: { form: argument, kind },
+  const argument = queryMacroExtent(queryRaw)?.argument ?? "";
+  const token = "<% current page %>";
+  const at = argument.indexOf(token);
+  if (kind || at >= 0) {
+    const readings: Record<string, QueryReading> = {
+      [argument]: {
+        form: argument, kind,
+        current_page_tokens: at < 0 ? undefined : [[at, at + token.length]],
+        current_page_input: argument.includes(":inputs [:current-page]"),
+      },
     };
-    for (const name of FOCUS_PAGES) {
-      const substituted = argument.replace(/<%\s*current page\s*%>/gi, () => `[[${name}]]`);
+    for (const name of at >= 0 ? FOCUS_PAGES : []) {
+      const substituted = argument.replace(token, `[[${name}]]`);
       readings[substituted] = { form: substituted, kind };
     }
     backendReadsQueries(readings);
@@ -188,6 +199,25 @@ describe("query `<% current page %>` dispatch to the focused pane (GH #301)", ()
       openPage("Focus B", "page");
       await settle();
       expect(runQuery).toHaveBeenCalledTimes(1);
+    } finally {
+      dispose();
+    }
+  });
+
+  it("reviews a focused-page query without sending its bound text to the export", async () => {
+    const argument = "(and (task TODO) (not <% current page %>))";
+    loadQueryDoc(`{{query ${argument}}}`);
+    const run = vi.spyOn(backend(), "queryRun").mockResolvedValue(blockRunResult(groupsFor("todo")));
+    openPage("Focus A", "page");
+    const { root, dispose } = mount(() => <Block id="query" />);
+    try {
+      await vi.waitFor(() => expect(root.textContent).toContain("TODO Body"));
+      expect(ranText(run.mock.calls.at(-1))).toContain("[[Focus A]]");
+      root.querySelector<HTMLElement>(".qc-actions summary")!.click();
+      await vi.waitFor(() => expect(document.querySelector(".qc-menu")).not.toBeNull());
+      [...document.querySelectorAll<HTMLButtonElement>(".qc-menu button")]
+        .find(button => button.textContent === "Export…")!.click();
+      expect(queryExportRequest()).toMatchObject({ argument, textualCurrentPage: "Focus A", currentPage: "Sheet" });
     } finally {
       dispose();
     }
@@ -406,6 +436,31 @@ describe("query `<% current page %>` dispatch to the focused pane (GH #301)", ()
       dispose();
     }
   });
+});
+
+it("reports a share's query limit at opening and expanded macro locations", async () => {
+  const parse = vi.spyOn(backend(), "parseQuery").mockRejectedValue(new PublishedQueryLimitError());
+  const run = vi.spyOn(backend(), "queryRun");
+  const meta = document.createElement("meta");
+  meta.name = "tine-published";
+  meta.content = "quick-share:2";
+  document.head.append(meta);
+  const raw = "#+BEGIN_QUERY\n{:query (task TODO)}\n#+END_QUERY";
+  setGraphMeta({ root: "Share", macros: {
+    outer: "{{inner}}", inner: "{{query (task TODO)}}", container: raw,
+  } } as unknown as Parameters<typeof setGraphMeta>[0]);
+  const { root, dispose } = mount(() => <>
+    <OpeningText raw={raw} format="md" pageKey="opening" />
+    <AstBody blockId="expansions" raw="{{outer}} {{outer}} {{container}}" format="md" />
+  </>);
+  try {
+    await vi.waitFor(() => expect(root.querySelectorAll(".query-unsupported[role=alert]")).toHaveLength(4));
+    expect(root.textContent).toContain("This share can run queries at up to 256 locations");
+    expect(new Set(parse.mock.calls.map(call => call[3])).size).toBe(4);
+    expect(run).not.toHaveBeenCalled();
+  } finally {
+    dispose();
+  }
 });
 
 // master's "a query block over a failed index (GH #594)" is X-class: og has no

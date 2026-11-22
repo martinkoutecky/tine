@@ -128,7 +128,7 @@ crossing-notice-warning =
        *[other] این پرس‌وجو اکنون از قابلیت‌هایی از Tine استفاده می‌کند که Logseq نمی‌خواند. Logseq بلوک را متن ساده نشان می‌دهد.
     }
 crossing-notice-changed-block = اکنون متن بلوک این است: <code>{ $text }</code>
-query-export-dialog-summary = { $results } نتیجه در { $pages } صفحهٔ کامل
+query-export-dialog-summary = پرس‌وجو در این گراف { $results } نتیجه پیدا کرد. خروجی { $pages } صفحهٔ کامل را به اشتراک می‌گذارد.
 query-export-dialog-existing = خروجی‌ای به نام <code>{ $folder }</code> از قبل هست.
 query-export-dialog-separate = ساختن خروجی جداگانه با نام <code>{ $folder }</code>
 query-export-dialog-path = مقصد: <code>{ $path }</code>. این صفحه‌ها به‌صورت سایت ایستا و برنامهٔ فقط‌خواندنی خروجی گرفته می‌شوند. بارگذاری نمی‌شود. ویرایش‌های ذخیره‌نشده شامل نمی‌شوند.
@@ -582,3 +582,6 @@ query-export-dialog-left-out-private = با public:: false علامت خورده
 query-export-dialog-left-out-exports-page = صفحهٔ خروجی‌ها هرگز خروجی گرفته نمی‌شود
 query-export-dialog-selects-host-page = این شامل صفحه‌ای است که پرس‌وجو در آن نوشته شده.
 query-export-dialog-include-query-text = شامل کردن متن پرس‌وجو (خوانندگان پرس‌وجو را هم می‌بینند، نه فقط صفحه‌ها)
+query-export-dialog-live-query = پرس‌وجو به‌صورت زنده در صفحهٔ آغاز خروجی اجرا می‌شود.
+query-export-dialog-live-current-page = پرس‌وجو به‌صورت زنده در صفحهٔ آغاز خروجی اجرا می‌شود و «این صفحه» به همان صفحه اشاره دارد.
+macro-query-published-limit = این اشتراک می‌تواند پرس‌وجوها را در حداکثر ۲۵۶ جایگاه اجرا کند. این پرس‌وجو به حد مجاز رسیده است.

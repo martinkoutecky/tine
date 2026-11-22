@@ -41,6 +41,14 @@ fn comment_output_choice_is_in_the_onboarding_guide() {
 }
 
 #[test]
+fn folder_query_home_is_explained_in_the_onboarding_guide() {
+    let guide = include_str!("../src/templates/share-pages.md");
+    assert!(guide.contains("query's result count in your graph"));
+    assert!(guide.contains("runs live on the export's home page"));
+    assert!(guide.contains("“this page” means that home"));
+}
+
+#[test]
 fn gh852_recognised_result_sorts_are_in_the_onboarding_guide() {
     let model = include_str!("../src/templates/query-model.md");
     assert!(model.contains(FIRST));

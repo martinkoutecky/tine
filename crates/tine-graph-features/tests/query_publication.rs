@@ -53,6 +53,7 @@ fn query_publish_inventory_work_tracks_only_selected_pages() {
             dialect: QueryTextDialect::MacroQuery,
             properties: vec![],
             current_page: None,
+            textual_current_page: None,
             name: "Selection".into(),
             host_block_id: None,
             folder: None,
@@ -237,6 +238,7 @@ fn generated_query_home_preserves_legacy_table_columns_and_sort() {
             ("query-sort-desc".into(), "false".into()),
         ],
         current_page: Some("Public".into()),
+        textual_current_page: None,
         name: "Legacy".into(),
         host_block_id: None,
         folder: None,
@@ -279,6 +281,7 @@ fn folder_membership_review_is_read_only_and_ignores_unavailable_snapshots() {
         dialect: QueryTextDialect::MacroQuery,
         properties: vec![],
         current_page: None,
+        textual_current_page: None,
         name: "Review".into(),
         host_block_id: None,
         folder: Some("saved".into()),
@@ -355,6 +358,7 @@ fn query_publication_reviews_owner_pages_and_rejects_a_stale_plan() {
         dialect: QueryTextDialect::MacroQuery,
         properties: vec![],
         current_page: Some("Public".into()),
+        textual_current_page: None,
         name: "My TODOs".into(),
         host_block_id: None,
         folder: None,
@@ -429,9 +433,15 @@ fn query_publication_reviews_owner_pages_and_rejects_a_stale_plan() {
         ..request.clone()
     };
     let plan = plan_query(&store, &with_text).unwrap();
-    assert_eq!(
+    assert_ne!(
         plan.fingerprint, fresh.fingerprint,
-        "the disclosure choice is not a re-review"
+        "changing the query-text choice requires a new review"
+    );
+    assert!(
+        publish_query(&store, &with_text, &fresh.fingerprint, &bundle())
+            .unwrap_err()
+            .to_string()
+            .contains("review it again")
     );
     publish_query(&store, &with_text, &plan.fingerprint, &bundle()).unwrap();
     let snapshot: serde_json::Value = serde_json::from_slice(
@@ -446,6 +456,7 @@ fn query_publication_reviews_owner_pages_and_rejects_a_stale_plan() {
         .find(|page| Some(&page.name) == core.config().default_home.as_ref())
         .unwrap();
     assert_eq!(home.document.roots[0].raw(), "{{query (task TODO)}}");
+    assert_eq!(home.document.roots.len(), 1);
     let result = run_query(
         &core,
         &parsed_query(&core, "(task TODO)", &[]),
@@ -519,6 +530,7 @@ fn query_export_nested_queries_do_not_disclose_outside_match_counts() {
         dialect: QueryTextDialect::MacroQuery,
         properties: vec![],
         current_page: None,
+        textual_current_page: None,
         name: "Nested queries".into(),
         host_block_id: None,
         folder: None,
@@ -587,6 +599,7 @@ fn selected_static_page_keeps_outside_references_inert() {
         dialect: QueryTextDialect::MacroQuery,
         properties: vec![],
         current_page: None,
+        textual_current_page: None,
         name: "Selected".into(),
         host_block_id: None,
         folder: None,
@@ -631,6 +644,7 @@ fn live_export_artifact_cost_is_bounded_per_selected_block() {
             dialect: QueryTextDialect::MacroQuery,
             properties: vec![],
             current_page: None,
+            textual_current_page: None,
             name: format!("Query {name}"),
             host_block_id: None,
             folder: None,
@@ -681,6 +695,7 @@ fn build_real_query_site_for_browser_smoke() {
         dialect: QueryTextDialect::MacroQuery,
         properties: vec![],
         current_page: graph_path.is_none().then(|| "Public".into()),
+        textual_current_page: None,
         name: "Selected tasks".into(),
         host_block_id: None,
         folder: None,
@@ -786,6 +801,7 @@ fn query_export_uses_the_graph_leaf_and_reports_missing_assets() {
         dialect: QueryTextDialect::MacroQuery,
         properties: vec![],
         current_page: None,
+        textual_current_page: None,
         name: "Portable".into(),
         host_block_id: None,
         folder: None,
@@ -832,6 +848,7 @@ fn query_export_default_budget_accepts_assets_above_the_old_ceiling() {
         dialect: QueryTextDialect::MacroQuery,
         properties: vec![],
         current_page: None,
+        textual_current_page: None,
         name: "Video".into(),
         host_block_id: None,
         folder: None,
@@ -872,6 +889,7 @@ fn query_leaf_assets_survive_a_move_and_budget_refusal_leaves_old_output() {
         dialect: QueryTextDialect::MacroQuery,
         properties: vec![],
         current_page: None,
+        textual_current_page: None,
         name: "Assets".into(),
         host_block_id: None,
         folder: None,
@@ -970,6 +988,7 @@ fn query_export_leaves_out_private_pages_and_the_exports_page() {
         dialect: QueryTextDialect::MacroQuery,
         properties: vec![],
         current_page: Some("Public".into()),
+        textual_current_page: None,
         name: "All TODOs".into(),
         host_block_id: None,
         folder: None,
@@ -1008,7 +1027,7 @@ fn query_export_leaves_out_private_pages_and_the_exports_page() {
         assert!(!text.contains(leaked), "{leaked} was published");
     }
 
-    // Ticked, the published answer is closed to the exported pages too.
+    // Ticked, the export still shares only the selected public source.
     let ticked = QueryExportRequest {
         include_query_text: true,
         include_comments: None,
@@ -1016,7 +1035,7 @@ fn query_export_leaves_out_private_pages_and_the_exports_page() {
         ..request.clone()
     };
     let plan = plan_query(&store, &ticked).unwrap();
-    assert_eq!(plan.row_count, 1, "left-out rows are not counted");
+    assert_eq!(plan.row_count, 4, "the review counts source graph results");
     publish_query(&store, &ticked, &plan.fingerprint, &bundle()).unwrap();
     let text =
         fs::read_to_string(graph.join("published-queries/all-todos/app/snapshot.json")).unwrap();
@@ -1051,6 +1070,7 @@ fn query_export_refuses_when_every_selected_page_is_left_out() {
         dialect: QueryTextDialect::MacroQuery,
         properties: vec![],
         current_page: None,
+        textual_current_page: None,
         name: "Done".into(),
         host_block_id: None,
         folder: None,

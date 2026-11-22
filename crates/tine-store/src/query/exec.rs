@@ -488,15 +488,7 @@ impl Plan {
                 Filter::True | Filter::False | Filter::Raw { .. } => {}
             }
         }
-        let table = if candidates.excluded.is_some() {
-            Arc::new(LinkGraph::build_scoped(
-                graph,
-                candidates.excluded,
-                cancelled,
-            )?)
-        } else {
-            graph.link_graph(cancelled)?
-        };
+        let table = graph.link_graph(cancelled)?;
         let mut answers = LinkAnswers::new(Arc::clone(&table));
         let mut leaves = Vec::new();
         post_order(&self.filter, &mut leaves);
@@ -815,18 +807,6 @@ pub(crate) fn execute_cancellable(
     bounds: Bounds,
     cancelled: &dyn Fn() -> bool,
 ) -> Result<Option<QueryResult>, StatisticsResourceLimit> {
-    execute_scoped(graph, plan, query, view, bounds, None, cancelled)
-}
-
-fn execute_scoped(
-    graph: &ReadSnapshot,
-    plan: &Plan,
-    query: &Query,
-    view: &ViewSettings,
-    bounds: Bounds,
-    publication: Option<(&str, Option<&str>)>,
-    cancelled: &dyn Fn() -> bool,
-) -> Result<Option<QueryResult>, StatisticsResourceLimit> {
     let mut result = QueryResult {
         rows: match plan.anchor {
             Anchor::Block => QueryRows::Block { groups: Vec::new() },
@@ -875,10 +855,8 @@ fn execute_scoped(
     let sample = view.sample.map(|n| n as usize);
     let mut fold = StatisticsFold::new(view, bounds.max_bytes)?;
     let mut stopped = false;
-    let host = publication.and_then(|(_, host)| host);
     graph.with_pages(|pages| -> Result<(), StatisticsResourceLimit> {
-        let candidates =
-            candidates::Candidates::new(graph, pages, plan, publication.map(|(home, _)| home));
+        let candidates = candidates::Candidates::new(graph, pages, plan);
         let config = candidates.config();
         let atoms = EvalCache::default();
         atoms.spell_ref_classes(graph, &plan.filter);
@@ -905,9 +883,6 @@ fn execute_scoped(
                         &facts,
                         &mut hits,
                     );
-                    if let Some(host) = host {
-                        hits.retain(|hit| hit.block(&facts).uuid != host);
-                    }
                     if !hits.is_empty() {
                         groups.push((entry, facts, hits));
                     }
@@ -1140,7 +1115,7 @@ fn execute_scoped(
 /// `None` once `cancelled` stops its link work.
 fn count(graph: &ReadSnapshot, plan: &Plan, cancelled: &dyn Fn() -> bool) -> Option<usize> {
     graph.with_pages(|pages| {
-        let candidates = candidates::Candidates::new(graph, pages, plan, None);
+        let candidates = candidates::Candidates::new(graph, pages, plan);
         let config = candidates.config();
         let atoms = EvalCache::default();
         atoms.spell_ref_classes(graph, &plan.filter);
@@ -1235,7 +1210,6 @@ fn query_ir_on_day_cancellable(
     let tagged_pages;
     let default_view = ViewSettings::default();
     let no_context = tine_core::query::ir::ExecutionContext::none();
-    let mut publication = None;
     let (query, view, context) = match request {
         crate::IrRequest::TagTableAvailable { name } => {
             if cancelled() {
@@ -1264,34 +1238,19 @@ fn query_ir_on_day_cancellable(
             view,
             context,
         } => (query, view, context),
-        crate::IrRequest::RunPublication {
-            query,
-            view,
-            context,
-            home,
-            host_block_id,
-        } => {
-            publication = Some((home, host_block_id));
-            (query, view, context)
-        }
     };
     let resolved = tine_core::query::resolve_for_execution(query, context, today);
-    let mut key = format!(
+    let key = format!(
         "R\0{}\0{}",
         serde_json::to_string(&(resolved.query(), resolved.report())).unwrap_or_default(),
         serde_json::to_string(view).unwrap_or_default(),
     );
-    if let Some(scope) = publication {
-        key.push('\0');
-        key.push_str(&serde_json::to_string(&scope).unwrap_or_default());
-    }
     let Some(answer) = graph.query_answer_cancellable(key, today, cancelled, || {
         let bounds = tine_core::query::ir::Bounds {
             max_rows: crate::store::RESULT_BRIDGE_MAX_ROWS,
             max_bytes: crate::store::RESULT_BRIDGE_MAX_BYTES,
         };
-        let (result, plan) =
-            run_resolved_cancellable(graph, &resolved, view, bounds, publication, cancelled);
+        let (result, plan) = run_resolved_cancellable(graph, &resolved, view, bounds, cancelled);
         let result = match result {
             Ok(None) => return None,
             Ok(Some(result)) => Ok(Arc::new(result)),
@@ -1324,7 +1283,6 @@ fn run_resolved_cancellable(
     resolved: &ResolvedQuery,
     view: &ViewSettings,
     bounds: Bounds,
-    publication: Option<(&str, Option<&str>)>,
     cancelled: &dyn Fn() -> bool,
 ) -> (
     Result<Option<QueryResult>, StatisticsResourceLimit>,
@@ -1332,21 +1290,14 @@ fn run_resolved_cancellable(
 ) {
     let view = statistics_execution_view(resolved.query(), view);
     let plan = Arc::new(plan(graph, resolved.query(), resolved.today(), false));
-    let result = execute_scoped(
-        graph,
-        &plan,
-        resolved.query(),
-        &view,
-        bounds,
-        publication,
-        cancelled,
-    )
-    .map(|result| {
-        result.map(|mut result| {
-            result.report = resolved.report().clone();
-            result
-        })
-    });
+    let result = execute_cancellable(graph, &plan, resolved.query(), &view, bounds, cancelled).map(
+        |result| {
+            result.map(|mut result| {
+                result.report = resolved.report().clone();
+                result
+            })
+        },
+    );
     (result, plan)
 }
 

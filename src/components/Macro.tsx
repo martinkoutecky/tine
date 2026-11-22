@@ -10,7 +10,7 @@ import { reservedGroupHeight } from "../reservedGroupHeight";
 import { preserveAboveViewport } from "../scrollContainer";
 import { SurfaceContext } from "./Block";
 import { backend } from "../backend";
-import { isPublishedExport } from "../publishedBackend";
+import { isPublishedExport, isQuickShareViewer } from "../publishedBackend";
 import { openPageTarget, openPageTargetInNewTab, openInNewTab } from "../router";
 import { openPageInSidebar, openQueryExport, switcherOpen } from "../ui";
 import { openShareDialog } from "../shareState";
@@ -60,7 +60,9 @@ import { QueryOgHint, QueryPageRows, QueryResultsRegion, QueryStatisticsSummary,
 import type { Format, QueryHit, QueryPublicationRequest, RefGroup } from "../types";
 import { sharedQueryResult } from "../queryResultCache";
 import { bothFamilies } from "../queryTwin";
-import { declaresCurrentPageInput, queryCurrentPage } from "../queryCurrentPage";
+import { queryCurrentPage } from "../queryCurrentPage";
+import { QueryLocationContext, queryBlockLocation } from "../render/queryLocation";
+import { PublishedQueryLimitError } from "../publishedGraphRpc";
 import { savedDslToFriendlySearch } from "../editor/searchQuery";
 import { displayPropertyPatch, isLegacyBareColumnList, mergeQueryAggregateValue } from "../editor/queryViewProperties";
 import { formulasOf } from "../sheet/formulaFields";
@@ -108,7 +110,6 @@ function saveCollapsed(key: string, v: boolean) {
 
 const errorText = (error: unknown): string => (error instanceof Error ? error.message : String(error));
 const sameJson = <T,>(a: T, b: T) => JSON.stringify(a) === JSON.stringify(b);
-const CURRENT_PAGE_RE = /<%\s*current page\s*%>/i;
 const BLOCK_CHANGED = msg("macro-block-changed");
 
 // Device-local dismissal keyed by graph (D-11): one read per graph binding,
@@ -152,6 +153,7 @@ interface ReadingRequest {
   argument: string;
   name: string;
   properties: [string, string][];
+  location?: string;
 }
 interface Reading {
   request: ReadingRequest;
@@ -164,7 +166,9 @@ function createQueryReading(request: () => ReadingRequest | undefined) {
   const [resource] = createGraphResource(request, async (req): Promise<Reading | undefined> => {
     const landed = await readOwned(
       latestOwner(owners, "parse", graphOwner()),
-      backend().parseQuery(req.argument, macroTextDialect(req.name), req.properties),
+      req.location === undefined
+        ? backend().parseQuery(req.argument, macroTextDialect(req.name), req.properties)
+        : backend().parseQuery(req.argument, macroTextDialect(req.name), req.properties, req.location),
     );
     return landed.kind === "current" ? { request: req, reading: landed.value } : undefined;
   });
@@ -185,6 +189,8 @@ export function QueryMacro(props: {
   /** The parsed node's exact raw extent. Every write must still target these bytes. */
   sourceExtent?: MacroExtent;
   sourceRaw?: string;
+  /** Parser offset when this query is rendered without a raw macro extent. */
+  sourceOffset?: number;
   title?: string;
   /** Owner page context for read-only surfaces such as BEGIN_QUERY. */
   currentPage?: string;
@@ -216,6 +222,15 @@ export function QueryMacro(props: {
 function QueryMacroContent(props: Parameters<typeof QueryMacro>[0]): JSX.Element {
   const linkDepth = useContext(LinkDepthContext);
   if (linkDepth > MAX_DEPTH_OF_LINKS) return <LinkDepthWarning />;
+  const sourceLocation = useContext(QueryLocationContext);
+  const location = () => {
+    if (!isQuickShareViewer()) return undefined;
+    const host = props.blockId ?? props.findHost;
+    const offset = props.sourceExtent?.start ?? props.sourceOffset ?? "begin";
+    if (sourceLocation !== undefined) return `${sourceLocation}/${offset}`;
+    return host ? `${queryBlockLocation(host)}/${offset}`
+      : JSON.stringify(["detached", props.currentPage, props.title, props.body]);
+  };
 
   // The macro name this query was AUTHORED under (§7.9): `query` or `tine-query`.
   const macroBody = createMemo(() => queryMacroExtent(`{{${props.body.trim()}}}`));
@@ -249,7 +264,7 @@ function QueryMacroContent(props: Parameters<typeof QueryMacro>[0]): JSX.Element
     }),
     [], { equals: sameJson });
   const parseRequest = createMemo<ReadingRequest | undefined>(
-    () => sourceError() ? undefined : ({ argument: arg(), name: macroName(), properties: hostProperties() }),
+    () => sourceError() ? undefined : ({ argument: arg(), name: macroName(), properties: hostProperties(), location: location() }),
     undefined,
     { equals: sameJson },
   );
@@ -287,12 +302,27 @@ function QueryMacroContent(props: Parameters<typeof QueryMacro>[0]): JSX.Element
 
   // GH #301: `<% current page %>` binds the FOCUSED pane's route page and re-runs
   // on navigation. Substitution is execution-only: the builder keeps the dyvar.
-  const executionArg = createMemo<string | null>(() => {
-    if (!CURRENT_PAGE_RE.test(arg())) return null;
+  const currentPageTokens = () => {
+    const current = reading();
+    return current && parsed.latest?.request.argument === arg() ? current.current_page_tokens : undefined;
+  };
+  const focusedTextPage = () => {
     const route = focusedRouter().route();
-    const pageName = route.kind === "page" ? route.name : undefined;
+    return route.kind === "page" ? route.name : undefined;
+  };
+  const executionArg = createMemo<string | null>(() => {
+    const tokens = currentPageTokens();
+    if (!tokens?.length) return null;
+    const pageName = focusedTextPage();
     if (!pageName) return null; // no focused page: leave verbatim, like templates
-    return arg().replace(new RegExp(CURRENT_PAGE_RE.source, "gi"), () => `[[${pageName}]]`);
+    const authored = arg();
+    let previous = 0;
+    const pieces = tokens.map(([start, end]) => {
+      const piece = authored.slice(previous, start) + `[[${pageName}]]`;
+      previous = end;
+      return piece;
+    });
+    return pieces.join("") + authored.slice(previous);
   });
   const executionRequest = createMemo<ReadingRequest | undefined>(() => {
     const argument = executionArg();
@@ -313,10 +343,9 @@ function QueryMacroContent(props: Parameters<typeof QueryMacro>[0]): JSX.Element
   // other query runs bound to the page the query block is on.
   const executionContext = (): ExecutionContext | undefined => {
     const source = props.currentPage ?? (props.blockId ? docNode(props.blockId)?.page : undefined);
-    const page = isAdvanced() && declaresCurrentPageInput(form())
+    const page = reading()?.current_page_input
       ? queryCurrentPage()
       : source;
-    if (isPublishedExport() && source) return { current_page: page, source_page: source };
     return page ? { current_page: page } : undefined;
   };
   // What exporting or sharing this block starts from: its query text, host properties and page.
@@ -326,8 +355,11 @@ function QueryMacroContent(props: Parameters<typeof QueryMacro>[0]): JSX.Element
     const legacyDisplay = hostAllProperties()
       .filter(([key]) => key === "query-properties" || key === "query-sort-by" || key === "query-sort-desc"
         || key.toLowerCase() === "tine.breadcrumbs");
-    return { argument: executionArg() ?? arg(), dialect: macroTextDialect(macroName()),
-      properties: [...hostProperties(), ...legacyDisplay], currentPage: executionContext()?.current_page, hostBlockId: props.blockId, name: titleText() };
+    return { argument: arg(), dialect: macroTextDialect(macroName()),
+      properties: [...hostProperties(), ...legacyDisplay],
+      currentPage: executionContext()?.current_page,
+      textualCurrentPage: currentPageTokens()?.length ? focusedTextPage() : undefined,
+      hostBlockId: props.blockId, name: titleText() };
   };
   const friendlySearch = createMemo(() => {
     const s = runnable()?.query.source;
@@ -1179,7 +1211,8 @@ function QueryMacroContent(props: Parameters<typeof QueryMacro>[0]): JSX.Element
             <Show when={loadError()}>
               {(error) => (
                 <div class="query-unsupported" role="alert">
-                  {t("macro-query-load-failed", { detail: errorText(error()) })}
+                  {error() instanceof PublishedQueryLimitError ? t("macro-query-published-limit")
+                    : t("macro-query-load-failed", { detail: errorText(error()) })}
                 </div>
               )}
             </Show>

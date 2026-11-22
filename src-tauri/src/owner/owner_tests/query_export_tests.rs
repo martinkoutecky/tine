@@ -128,6 +128,7 @@ fn query_export_source_bytes_match_dialog() {
         dialect: tine_core::query::wire_parse::QueryTextDialect::MacroQuery,
         properties: vec![],
         current_page: Some("Query".into()),
+        textual_current_page: None,
         host_block_id: Some(host_id),
         name: "Review".into(),
         folder: None,

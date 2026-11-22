@@ -274,7 +274,7 @@ export interface Backend {
    *  Syntax errors resolve as raw nodes with diagnostics. Cost: waits for graph
    *  load; first registry use is O(pages + blocks), then O(text). Rejects an
    *  over-64-KiB UTF-8 source, excessive nesting, or a missing/stale/failed graph. */
-  parseQuery(text: string, dialect: QueryTextDialect, blockProperties?: [string, string][]): Promise<ParsedQuery>;
+  parseQuery(text: string, dialect: QueryTextDialect, blockProperties?: [string, string][], location?: string): Promise<ParsedQuery>;
   /** Print a macro argument (`og`, `tql_macro`, `advanced_macro`) or TQL pane text.
    *  Pure. `preserveForm` keeps authored text/options, but refuses builder or
    *  wrong-dialect sources. OG prints one sort and sample; other view fields

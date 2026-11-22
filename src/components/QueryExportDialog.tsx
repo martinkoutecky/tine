@@ -37,7 +37,7 @@ function Dialog(props: { request: QueryPublicationRequest }): JSX.Element {
   const [overBudget, setOverBudget] = createSignal(false);
   let mounted = true;
   onCleanup(() => { mounted = false; });
-  const [plan] = createResource(() => ({ name: plannedName(), includeComments: includeComments() }), async (value) => {
+  const [plan] = createResource(() => ({ name: plannedName(), includeComments: includeComments(), includeQueryText: includeQueryText() }), async (value) => {
     if (!value.name.trim()) throw new Error("Give the export a name.");
     await initQueryExportBudget();
     return backend().publishQueryPlan({ ...props.request, ...value });
@@ -126,6 +126,10 @@ function Dialog(props: { request: QueryPublicationRequest }): JSX.Element {
             </Show>
             <label class="query-export-ack query-export-include-query"><input type="checkbox" checked={includeQueryText()}
               onChange={(event) => setIncludeQueryText(event.currentTarget.checked)} />{t("query-export-dialog-include-query-text")}</label>
+            <Show when={includeQueryText()}>
+              <div class="query-export-note">{t(selection().usesCurrentPage
+                ? "query-export-dialog-live-current-page" : "query-export-dialog-live-query")}</div>
+            </Show>
             <label class="query-export-ack"><input type="checkbox" checked={includeComments() ?? reviewed()?.includeComments ?? true} disabled={busy()}
               onChange={event => { commentsChanged = true; setIncludeComments(event.currentTarget.checked); }} />{t("export-include-comments")}</label>
             <Show when={selection().exists}>

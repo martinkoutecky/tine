@@ -13,6 +13,7 @@ icon:: 🔗
 	- Under **Where to share**, choose **Folder** or **Link**.
 - ## Share into a folder
 	- **Folder** exports a static site and read-only app into `published-queries/<folder>/` in your graph, the same export as a query's **Export…**. You name the folder on the next step.
+	- The folder review shows the query's result count in your graph and the pages the export will share. With **Include the query text** on, the query runs live on the export's home page. Relative dates use the day the reader opens it, and “this page” means that home.
 	- After a successful export Tine saves the selection as a definition so you can repeat it. From **This page** or a query you built in the dialog, it adds a query block with `tine.export:: <folder>` to the **Exports** page, which Tine creates on first use (marked `tine.exports:: true` and `public:: false`, with a block listing every definition; if you already have a page called Exports it uses Exports 2). From a query block you did not change, it adds `tine.export:: <folder>` to that block. Open **Share…** on a definition again and it shows the same selection. Nothing is exported again until you choose Export.
 	- **Re-export** on a folder definition opens its review with **Replace** selected, using the same folder under `published-queries/`. Confirming keeps the previous export in recovery. There is no Delete action for folder exports.
 - ## Share pages with a link

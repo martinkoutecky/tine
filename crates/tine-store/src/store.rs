@@ -2553,21 +2553,6 @@ pub enum IrRequest<'a> {
         /// The page it renders on, if any.
         context: &'a tine_core::query::ir::ExecutionContext,
     },
-    /// Evaluate the generated query on a publication's home. Only selected
-    /// physical owners can yield rows. The displayed home and the original
-    /// query block are excluded before sampling, statistics and limits.
-    RunPublication {
-        /// The parsed query.
-        query: &'a tine_core::query::ir::Query,
-        /// Its view settings.
-        view: &'a tine_core::query::ir::ViewSettings,
-        /// Its reviewed execution context.
-        context: &'a tine_core::query::ir::ExecutionContext,
-        /// The generated home's graph-relative file identity.
-        home: &'a str,
-        /// The original query's block when the source still holds it.
-        host_block_id: Option<&'a str>,
-    },
     /// Explain an empty answer (`query_explain_empty`).
     ExplainEmpty {
         /// The parsed query.

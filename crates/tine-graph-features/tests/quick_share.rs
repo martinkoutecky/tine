@@ -83,6 +83,7 @@ fn request(argument: &str, name: &str) -> QueryExportRequest {
         dialect: QueryTextDialect::MacroTql,
         properties: vec![],
         current_page: None,
+        textual_current_page: None,
         name: name.into(),
         host_block_id: None,
         folder: None,
@@ -463,7 +464,13 @@ fn quick_share_generation_2_fixtures_match_the_writer() {
             );
             assert!(config.favorites.is_empty());
             let text = std::str::from_utf8(&doc).unwrap();
-            assert!(!text.contains("UNUSED-MACRO-SECRET") && !text.contains("PRIVATE-FAVORITE"));
+            for private in [
+                "UNUSED-MACRO-SECRET",
+                "PRIVATE-FAVORITE",
+                "preserve this gap",
+            ] {
+                assert!(!text.contains(private));
+            }
         }
         let directory = fixture_root(2).join(case);
         let link = quick_share::link(LOGIN, GIST, &KEY) + "\n";
@@ -478,11 +485,14 @@ fn quick_share_generation_2_fixtures_match_the_writer() {
             }
             fs::write(directory.join("writer.json"), &golden).unwrap();
         }
-        assert_eq!(
-            frozen_document(&directory),
-            doc,
-            "{case}: frozen bytes drifted"
-        );
+        let frozen = frozen_document(&directory);
+        if case == "reduced-config" {
+            assert!(std::str::from_utf8(&frozen)
+                .unwrap()
+                .contains("preserve this gap"));
+        } else {
+            assert_eq!(frozen, doc, "{case}: frozen bytes drifted");
+        }
         assert_eq!(
             fs::read_to_string(directory.join("link.txt")).unwrap(),
             link

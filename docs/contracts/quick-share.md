@@ -19,23 +19,31 @@ reading configuration determine every answer. An unshared page has no
 influence. Queries run in the viewer, so relative dates use the viewing day.
 Assets, stored answers and baked query results are outside the document.
 
-`logseq/config.edn` carries the authored spans for page and journal
+`logseq/config.edn` carries the authored key and value spans, separated by one
+space, for page and journal
 directories, journal title and filename formats (including `:date-formatter`),
 preferred format, filename format, hidden block properties, comma-separated
 properties, property pages, ignored reference keywords and start of week.
-The macro map carries definitions reached by custom calls parsed in shared
-Markdown and Org, including their bounded expansions. Built-in dispatch takes
-precedence over names in the macro map.
+The macro map carries effective definitions named by parser-recognized calls
+in shared sources and transitively in those definitions. Definition values are
+read in both Markdown and Org. Arguments that a definition places in a macro
+call position contribute their names and calls to the same closure. Built-in
+dispatch claims its names before config lookups. Rendering limits do not
+truncate this name closure. The writer copies each effective macro key and value
+span with one space between them, omitting the intervening EDN comments.
 The field classification test covers every `Config` field. `:default-home`
 names the shared page or the ordinary generated page listing the shared pages.
 This is the same snapshot used for folder exports, documented in
 `export-definitions.md`.
 
-The writer admits 200 selected pages plus a generated home, 200,000 blocks,
-256 query calls, 1 MiB per source string, 32 MiB of document JSON, 6 MiB gzip
-and 8 MiB envelope text. The writer and browser core apply the same source
-admission before opening the shared graph. The query count includes parsed query
-macros and recognized `BEGIN_QUERY` containers. The viewer bounds the
+The writer admits 200 selected pages plus a generated home, 1 MiB per source
+string, 32 MiB of document JSON, 6 MiB gzip and 8 MiB envelope text. The writer
+and browser core check file and string limits before opening the sources and
+count at most 200,000 blocks from the opened graph. Graph loading checks
+source outline depth. The viewer checks document JSON depth (512) before
+decoding JSON. Its query worker admits the first 256 distinct live query
+locations per opened share through the ordinary query entry. A later location
+shows a limit notice in place of results. The viewer bounds the
 envelope and fetch responses before decoding and authenticates before gunzipping.
 It transfers the gunzipped bytes to a same-origin module worker, which validates
 the source document and owns the graph. Each graph read takes one request and

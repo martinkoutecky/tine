@@ -2,7 +2,7 @@
 //! admitted blocks once, dropping a root's entire thread; page roots stay body
 //! blocks. No I/O or live-document mutations. The predicate is the editor's
 //! Rust discriminator, also used by the window through wasm.
-use tine_core::{block_id::BlockId, doc::DocBlock, model::BlockDto, CorpusPage};
+use tine_core::{doc::DocBlock, model::BlockDto, CorpusPage};
 
 #[cfg(test)]
 thread_local! { static VISITS: std::cell::Cell<usize> = const { std::cell::Cell::new(0) }; }
@@ -19,44 +19,6 @@ pub(crate) fn is_comment_properties(properties: &[(String, String)], has_parent:
             properties.iter().map(|(k, v)| (k.as_str(), v.as_str())),
         )
         .is_some()
-}
-
-/// Close the selecting query's displayed rows to the projected body too.
-pub(crate) fn close_result(result: &mut tine_core::query::ir::QueryResult, pages: &[CorpusPage]) {
-    use tine_core::query::ir::QueryRows;
-    let QueryRows::Block { groups } = &mut result.rows else {
-        return;
-    };
-    let mut ids = std::collections::HashSet::new();
-    let wanted: std::collections::HashSet<_> = groups
-        .iter()
-        .flat_map(|group| group.blocks.iter().map(|block| block.id.as_str()))
-        .collect();
-    fn collect(
-        blocks: &[DocBlock],
-        wanted: &std::collections::HashSet<&str>,
-        ids: &mut std::collections::HashSet<BlockId>,
-    ) {
-        for block in blocks {
-            if wanted.contains(&*block.uuid.text()) {
-                ids.insert(block.uuid.clone());
-            }
-            collect(&block.children, wanted, ids);
-        }
-    }
-    for page in pages {
-        collect(&page.document.roots, &wanted, &mut ids);
-    }
-    drop(wanted);
-    for group in groups.iter_mut() {
-        group.blocks.retain(|block| {
-            block.page_property || block.page_preamble || ids.contains(&block.id.as_str().into())
-        });
-    }
-    groups.retain(|group| !group.blocks.is_empty());
-    result.total = groups.iter().map(|group| group.blocks.len()).sum();
-    result.matched_total = Some(result.total);
-    result.statistics = None;
 }
 
 /// An explicit request overrides the definition property.

@@ -45,6 +45,7 @@ fn request(name: &str) -> QueryExportRequest {
         dialect: QueryTextDialect::MacroQuery,
         properties: Vec::new(),
         current_page: None,
+        textual_current_page: None,
         name: name.into(),
         host_block_id: None,
         folder: Some("probe".into()),

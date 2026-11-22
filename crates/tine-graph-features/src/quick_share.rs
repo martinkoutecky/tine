@@ -12,9 +12,7 @@
 use crate::publication_snapshot::{self, HomePage};
 use crate::publish_query::{resolve_plan, ExportPage, LeftOutPage, QueryExportRequest};
 use crate::render;
-use crate::share_admission::{
-    MAX_BLOCKS, MAX_PAGES as VIEWER_MAX_PAGES, MAX_QUERIES, MAX_STRING_BYTES,
-};
+use crate::share_admission::{MAX_BLOCKS, MAX_PAGES as VIEWER_MAX_PAGES, MAX_STRING_BYTES};
 use base64::Engine as _;
 use flate2::{read::GzDecoder, write::GzEncoder, Compression};
 use ring::aead::{Aad, LessSafeKey, Nonce, UnboundKey, AES_256_GCM};
@@ -266,7 +264,7 @@ pub fn validate_legacy_document(document: &[u8]) -> io::Result<serde_json::Value
     if count("pages") > VIEWER_MAX_PAGES {
         return Err(refusal("too many pages to share"));
     }
-    if count("queries") > MAX_QUERIES {
+    if count("queries") > LEGACY_MAX_QUERIES {
         return Err(refusal("the shared pages hold too many queries"));
     }
     // A share of several pages adds a home page named after the share; it must
@@ -369,6 +367,7 @@ fn json_nesting_within(json: &[u8], max: usize) -> bool {
 }
 
 const VIEWER_MAX_DEPTH: usize = 512;
+const LEGACY_MAX_QUERIES: usize = 256;
 
 /// Prepare a share of the pages `request` selects, stamped `created_at`
 /// (RFC 3339 UTC). The
@@ -423,12 +422,11 @@ pub fn prepare(
                 // several shared pages): its links would open the list.
                 // Threat: malformed input, a share name colliding with a
                 // shared name. Recovery: the user names the share otherwise.
-                let home = HomePage::new(private_graph, &title);
-                if home.taken(private_graph, &corpus.pages) {
-                    return Err(refusal(format!(
-                        "a shared page or alias is already called \"{title}\"; give the share another name"
-                    )));
-                }
+                let home = HomePage::new(private_graph, &corpus.pages, &title).map_err(|_| {
+                    refusal(format!(
+                        "the home name \"{title}\" is taken by a shared page, alias, or journal date; give the share another name"
+                    ))
+                })?;
                 (title, Some(home))
             };
             let home_name = home
@@ -520,7 +518,7 @@ mod tests {
         assert_eq!(w["payload_bytes"], MAX_PAYLOAD_BYTES);
         assert_eq!(w["envelope_bytes"], MAX_ENVELOPE_BYTES);
         assert_eq!(v["pages"], VIEWER_MAX_PAGES);
-        assert_eq!(v["queries"], MAX_QUERIES);
+        assert_eq!(v["queries"], LEGACY_MAX_QUERIES);
         assert_eq!(v["depth"], VIEWER_MAX_DEPTH);
         assert_eq!(v["string_bytes"], MAX_STRING_BYTES);
         assert_eq!(v["blocks"], MAX_BLOCKS);

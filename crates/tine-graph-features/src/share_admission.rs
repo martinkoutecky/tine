@@ -1,20 +1,17 @@
-//! Generation-2 admission for the writer and the browser before graph open.
-use crate::publication_source::visit_document_calls;
-use crate::render::{is_query_body, parsed_body, whole_begin_query_payload};
-use std::{cell::Cell, io, path::Path};
-use tine_core::model::Format;
+//! Generation-2 limits at the source and opened graph boundaries.
+use std::io;
+use tine_core::Corpus;
 
-pub(crate) const MAX_QUERIES: usize = 256;
 pub(crate) const MAX_BLOCKS: usize = 200_000;
 pub(crate) const MAX_STRING_BYTES: usize = 1024 * 1024;
 pub(crate) const MAX_PAGES: usize = 201;
-const MAX_BLOCK_DEPTH: usize = 253;
 
 fn limit(message: &'static str) -> io::Error {
     io::Error::new(io::ErrorKind::InvalidInput, message)
 }
 
-pub(crate) fn check_sizes(
+/// Check the number of files and UTF-8 string lengths before graph open.
+pub fn check_sizes(
     name: &str,
     exported_at: &str,
     mut files: impl ExactSizeIterator<Item = (usize, usize)>,
@@ -30,75 +27,57 @@ pub(crate) fn check_sizes(
     Ok(())
 }
 
-/// Check shared source string sizes and count parser-recognized outline
-/// blocks and query calls, stopping at the first excess. Cost is bounded by
-/// the document byte limit at the envelope boundary. No graph or I/O.
-pub fn admit(
-    name: &str,
-    exported_at: &str,
-    files: impl ExactSizeIterator<Item = (impl AsRef<str>, impl AsRef<[u8]>)> + Clone,
-) -> io::Result<()> {
-    check_sizes(
-        name,
-        exported_at,
-        files
-            .clone()
-            .map(|(path, text)| (path.as_ref().len(), text.as_ref().len())),
-    )?;
-    let mut blocks = 0;
-    let queries = Cell::new(0);
-    let count_query = || {
-        queries.set(queries.get() + 1);
-        if queries.get() > MAX_QUERIES {
-            Err(limit("the shared pages hold too many queries"))
-        } else {
-            Ok(())
+/// Admit the outlines that graph loading checked and parsed. Visits at most
+/// one block past the limit, with no source reads or reparsing.
+pub fn check_blocks(corpus: &Corpus) -> io::Result<()> {
+    let mut remaining = MAX_BLOCKS;
+    let mut levels = Vec::new();
+    for page in &corpus.pages {
+        levels.push(page.document.roots.iter());
+        while let Some(level) = levels.last_mut() {
+            let Some(block) = level.next() else {
+                levels.pop();
+                continue;
+            };
+            if remaining == 0 {
+                return Err(limit("the shared pages hold too many blocks"));
+            }
+            remaining -= 1;
+            if !block.children.is_empty() {
+                levels.push(block.children.iter());
+            }
         }
-    };
-    for (path, bytes) in files {
-        let (path, bytes) = (path.as_ref(), bytes.as_ref());
-        if path == "logseq/config.edn" {
-            continue;
-        }
-        let text = std::str::from_utf8(bytes).map_err(io::Error::other)?;
-        let org = Format::from_path(Path::new(path)) == Format::Org;
-        if !tine_store::model::parse_input_depth_within_limit(text)
-            || (org
-                && !tine_core::org::headline_levels_within_limit(
-                    text,
-                    tine_core::outline_kernel::OUTLINE_MAX_DEPTH,
-                ))
-        {
-            return Err(limit("the shared pages nest too deeply to share"));
-        }
-        let document = if org {
-            tine_core::org::parse_org(text)
-        } else {
-            tine_core::doc::parse(text)
-        };
-        visit_document_calls(
-            &document,
-            |depth, raw, org| {
-                blocks += 1;
-                if blocks > MAX_BLOCKS {
-                    return Err(limit("the shared pages hold too many blocks"));
-                }
-                if depth > MAX_BLOCK_DEPTH {
-                    return Err(limit("the shared pages nest too deeply to share"));
-                }
-                if whole_begin_query_payload(raw).is_some() && is_query_body(&parsed_body(raw, org))
-                {
-                    count_query()?;
-                }
-                Ok(())
-            },
-            |name, _, _| {
-                if tine_core::query::is_query_macro_name(name) {
-                    count_query()?;
-                }
-                Ok(())
-            },
-        )?;
     }
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use tine_store::{cost_counters, WholeGraph};
+
+    #[test]
+    fn accepted_share_parses_each_source_once() {
+        let files = vec![
+            ("pages/Public.md".to_owned(), b"- text\n".repeat(10_000)),
+            ("pages/Other.org".to_owned(), b"* text\n".repeat(10_000)),
+        ];
+        cost_counters::reset();
+        let started = std::time::Instant::now();
+        check_sizes(
+            "Share",
+            "",
+            files.iter().map(|(path, text)| (path.len(), text.len())),
+        )
+        .unwrap();
+        let (graph, _) = WholeGraph::from_files(files).unwrap();
+        check_blocks(&graph.corpus(None, false)).unwrap();
+        let count = cost_counters::snapshot();
+        eprintln!(
+            "share_open sources=2 blocks=20000 outline_parses={} elapsed={:?}",
+            count.parses,
+            started.elapsed()
+        );
+        assert_eq!((count.parses, count.full_reads, count.corpus), (2, 2, 1));
+    }
 }

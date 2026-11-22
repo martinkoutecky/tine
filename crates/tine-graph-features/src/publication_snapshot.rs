@@ -6,12 +6,14 @@ use crate::publish_query::refusal;
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 use std::borrow::Cow;
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
+use std::fmt::Write as _;
 use std::io;
 use std::path::Path;
 use std::sync::Arc;
-use tine_core::config::{macro_definition_spans, top_level_entry, Config};
+use tine_core::config::{macro_definition_spans, top_level_entry_spans, Config};
 use tine_core::edn::{self, Edn};
+use tine_core::model::PageKind;
 use tine_core::{Corpus, CorpusPage};
 use tine_store::WholeGraph;
 
@@ -50,8 +52,6 @@ pub(crate) struct Snapshot<'a> {
     exported_at: Cow<'a, str>,
     #[serde(borrow)]
     files: Vec<SourceFile<'a>>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub(crate) query_home: Option<crate::query_wire::PublicationQuery>,
 }
 
 #[derive(Serialize, Deserialize)]
@@ -84,7 +84,7 @@ pub(crate) struct HomePage {
 }
 
 impl HomePage {
-    pub fn new(graph: &WholeGraph, name: &str) -> Self {
+    pub fn new(graph: &WholeGraph, pages: &[CorpusPage], name: &str) -> Result<Self, String> {
         let config = graph.config();
         let name = tine_core::doc::normalize_line_endings(name).replace('\n', " ");
         let stem = tine_core::model::encode_page_name(&name, config.file_name_format);
@@ -103,15 +103,13 @@ impl HomePage {
             })
             .collect::<Vec<_>>()
             .join("/");
-        Self {
-            name,
-            path: format!("{dir}/{stem}.md"),
+        let path = format!("{dir}/{stem}.md");
+        if graph.publication_home_name_taken(&name)
+            || pages.iter().any(|page| page.id.as_str() == path)
+        {
+            return Err(name);
         }
-    }
-
-    pub fn taken(&self, graph: &WholeGraph, pages: &[CorpusPage]) -> bool {
-        graph.publication_home_name_taken(&self.name)
-            || pages.iter().any(|page| page.id.as_str() == self.path)
+        Ok(Self { name, path })
     }
 
     pub fn source(&self, pages: &[CorpusPage], query: Option<&str>) -> MemoryFile {
@@ -120,9 +118,10 @@ impl HomePage {
             text.push_str("- ");
             text.push_str(query);
             text.push('\n');
-        }
-        for page in pages {
-            text.push_str(&format!("- [[{}]]\n", page.name));
+        } else {
+            for page in pages {
+                text.push_str(&format!("- [[{}]]\n", page.name));
+            }
         }
         (self.path.clone(), Arc::new(text.into_bytes()))
     }
@@ -130,19 +129,17 @@ impl HomePage {
 
 fn reduced_config(source: &str, home: &str, names: &HashSet<String>) -> String {
     let mut out = String::from("{\n");
-    for entry in READING_KEYS
+    for (key, value) in READING_KEYS
         .iter()
-        .filter_map(|key| top_level_entry(source, key))
+        .filter_map(|key| top_level_entry_spans(source, key))
     {
-        out.push_str(entry);
-        out.push('\n');
+        writeln!(out, "{key} {value}").unwrap();
     }
     let macros = macro_definition_spans(source, names);
     if !macros.is_empty() {
         out.push_str(":macros {\n");
-        for entry in macros {
-            out.push_str(entry);
-            out.push('\n');
+        for (key, value) in macros {
+            writeln!(out, "{key} {value}").unwrap();
         }
         out.push_str("}\n");
     }
@@ -157,101 +154,57 @@ fn reduced_config(source: &str, home: &str, names: &HashSet<String>) -> String {
 }
 
 fn page_macros(corpus: &Corpus, config: &Config) -> HashSet<String> {
-    let mut names = HashSet::new();
-    if !config.macros.is_empty() {
-        for page in &corpus.pages {
-            let _: Result<(), std::convert::Infallible> = visit_document_calls(
-                &page.document,
-                |_, _, _| Ok(()),
-                |name, args, org| {
-                    let mut budget = (1_000, 256 * 1024);
-                    follow_macro(config, &mut names, org, name, args, 0, &mut budget);
-                    Ok(())
-                },
-            );
-        }
+    if config.macros.is_empty() {
+        return HashSet::new();
     }
-    names
-}
-
-fn follow_macro(
-    config: &Config,
-    names: &mut HashSet<String>,
-    org: bool,
-    name: &str,
-    args: &[String],
-    depth: usize,
-    budget: &mut (usize, usize),
-) {
-    if !tine_core::render::builtin_macro(name).is_empty() {
-        return;
-    }
-    let Some(template) = config.macros.get(name) else {
-        return;
-    };
-    names.insert(name.to_owned());
-    if depth == 12 || budget.0 == 0 {
-        return;
-    }
-    budget.0 -= 1;
-    let Some(expanded) = expand_macro_template(template, args, budget.1) else {
-        return;
-    };
-    budget.1 -= expanded.encode_utf16().count();
-    let _: Result<(), std::convert::Infallible> =
-        visit_macro_calls(&expanded, org, false, |name, args| {
-            follow_macro(config, names, org, name, args, depth + 1, budget);
-            Ok(())
+    let mut reached: HashMap<String, HashSet<usize>> = HashMap::new();
+    let mut pending = Vec::new();
+    for page in &corpus.pages {
+        visit_document_calls(&page.document, |name, args| {
+            pending.push((name.to_owned(), args.to_vec()));
+            while let Some((name, args)) = pending.pop() {
+                let Some(template) = config.macros.get(&name) else {
+                    continue;
+                };
+                if !tine_core::render::builtin_macro(&name).is_empty() {
+                    continue;
+                }
+                let slots = reached.entry(name).or_insert_with(|| {
+                    let mut slots = HashSet::new();
+                    for org in [false, true] {
+                        visit_macro_calls(template, org, false, |name, args| {
+                            let slot = name
+                                .strip_prefix('$')
+                                .filter(|digits| digits.bytes().all(|byte| byte.is_ascii_digit()))
+                                .and_then(|digits| digits.parse::<usize>().ok())
+                                .and_then(|index| index.checked_sub(1));
+                            if let Some(slot) = slot {
+                                slots.insert(slot);
+                            } else {
+                                pending.push((name.to_owned(), args.to_vec()));
+                            }
+                        });
+                    }
+                    slots
+                });
+                for arg in slots.iter().filter_map(|slot| args.get(*slot)) {
+                    let call = format!("{{{{{arg}}}}}");
+                    for org in [false, true] {
+                        let mut visit = |name: &str, args: &[String]| {
+                            pending.push((name.to_owned(), args.to_vec()))
+                        };
+                        visit_macro_calls(&call, org, false, &mut visit);
+                        visit_macro_calls(arg, org, false, visit);
+                    }
+                }
+            }
         });
-}
-
-fn expand_macro_template(mut template: &str, args: &[String], mut budget: usize) -> Option<String> {
-    let mut result = String::new();
-    while let Some(at) = template.find('$') {
-        let after = &template[at + 1..];
-        let digits = after.bytes().take_while(u8::is_ascii_digit).count();
-        let value = after[..digits]
-            .parse::<usize>()
-            .ok()
-            .and_then(|n| n.checked_sub(1))
-            .and_then(|i| args.get(i).map(String::as_str))
-            .unwrap_or(&template[at..at + 1 + digits]);
-        budget = budget
-            .checked_sub(template[..at].encode_utf16().count() + value.encode_utf16().count())?;
-        result.push_str(&template[..at]);
-        result.push_str(value);
-        template = &after[digits..];
     }
-    budget.checked_sub(template.encode_utf16().count())?;
-    result.push_str(template);
-    Some(result)
+    reached.into_keys().collect()
 }
 
 /// Writes exactly the files admitted by the browser's in-memory graph loader.
 pub(crate) fn snapshot(
-    selecting_view: &WholeGraph,
-    corpus: &Corpus,
-    files: Vec<MemoryFile>,
-    name: &str,
-    exported_at: &str,
-    home: &str,
-    generated: Option<MemoryFile>,
-    quick_share: bool,
-) -> io::Result<Vec<u8>> {
-    snapshot_with_query(
-        selecting_view,
-        corpus,
-        files,
-        name,
-        exported_at,
-        home,
-        generated,
-        quick_share,
-        None,
-    )
-}
-
-pub(crate) fn snapshot_with_query(
     selecting_view: &WholeGraph,
     corpus: &Corpus,
     mut files: Vec<MemoryFile>,
@@ -260,7 +213,6 @@ pub(crate) fn snapshot_with_query(
     home: &str,
     generated: Option<MemoryFile>,
     quick_share: bool,
-    query_home: Option<crate::query_wire::PublicationQuery>,
 ) -> io::Result<Vec<u8>> {
     let config = selecting_view.config();
     let names = page_macros(corpus, config);
@@ -269,10 +221,10 @@ pub(crate) fn snapshot_with_query(
     files.extend(generated);
     files.push((CONFIG_PATH.into(), Arc::new(reduced.into_bytes())));
     if quick_share {
-        crate::share_admission::admit(
+        crate::share_admission::check_sizes(
             name,
             exported_at,
-            files.iter().map(|(path, text)| (path, text.as_slice())),
+            files.iter().map(|(path, text)| (path.len(), text.len())),
         )
         .map_err(|error| refusal(error.to_string()))?;
     }
@@ -284,18 +236,14 @@ pub(crate) fn snapshot_with_query(
     }
     let actual = closed.corpus(None, true);
     let expected_pages = corpus.pages.len() + usize::from(generated_path.is_some());
-    let matches_home = generated_path.as_ref().is_none_or(|path| {
-        actual
-            .pages
-            .iter()
-            .any(|page| page.id.as_str() == path && page.name == home)
-    });
     let identities: HashSet<_> = actual
         .pages
         .iter()
         .map(|page| (page.id.as_str(), page.name.as_str(), page.kind))
         .collect();
-    if !matches_home
+    if generated_path
+        .as_ref()
+        .is_some_and(|path| !identities.contains(&(path.as_str(), home, PageKind::Page)))
         || actual.pages.len() != expected_pages
         || files.len() != expected_pages + 1
         || corpus
@@ -306,6 +254,10 @@ pub(crate) fn snapshot_with_query(
         return Err(refusal(
             "published sources did not read back as the same pages; nothing was published",
         ));
+    }
+    if quick_share {
+        crate::share_admission::check_blocks(&actual)
+            .map_err(|error| refusal(error.to_string()))?;
     }
     drop(actual);
     drop(closed);
@@ -323,7 +275,6 @@ pub(crate) fn snapshot_with_query(
         name: name.into(),
         exported_at: exported_at.into(),
         files,
-        query_home,
     };
     if !quick_share {
         return serde_json::to_vec(&snapshot).map_err(io::Error::other);
@@ -508,7 +459,7 @@ mod tests {
         let (graph, _) = WholeGraph::from_files::<Vec<u8>>(vec![]).unwrap();
         let corpus = graph.corpus(None, true);
         for display in ["One\nTwo", "One\r\nTwo", "One\rTwo"] {
-            let home = HomePage::new(&graph, display);
+            let home = HomePage::new(&graph, &[], display).unwrap();
             let bytes = snapshot(
                 &graph,
                 &corpus,
@@ -530,18 +481,14 @@ mod tests {
     }
 
     #[test]
-    fn writer_refuses_excess_source_blocks_and_both_query_forms() {
+    fn writer_checks_opened_blocks_and_admits_sources_with_live_queries() {
         let (graph, _) = WholeGraph::from_files::<Vec<u8>>(vec![]).unwrap();
-        use crate::share_admission::{MAX_BLOCKS, MAX_QUERIES};
-        for (text, reason) in [
-            ("- x\n".repeat(MAX_BLOCKS + 1), "too many blocks"),
+        for (text, too_many_blocks) in [
+            ("- x\n".repeat(crate::share_admission::MAX_BLOCKS + 1), true),
+            ("- {{query (task TODO)}}\n".repeat(257), false),
             (
-                "- {{query (task TODO)}}\n".repeat(MAX_QUERIES + 1),
-                "too many queries",
-            ),
-            (
-                "- #+BEGIN_QUERY\n  {:query (task TODO)}\n  #+END_QUERY\n".repeat(MAX_QUERIES + 1),
-                "too many queries",
+                "- #+BEGIN_QUERY\n  {:query (task TODO)}\n  #+END_QUERY\n".repeat(257),
+                false,
             ),
         ] {
             let corpus = Corpus {
@@ -553,9 +500,13 @@ mod tests {
                 }],
             };
             let files = vec![("pages/Public.md".into(), Arc::new(text.into_bytes()))];
-            let error =
-                snapshot(&graph, &corpus, files, "Public", "", "Public", None, true).unwrap_err();
-            assert!(error.to_string().contains(reason), "{error}");
+            let result = snapshot(&graph, &corpus, files, "Public", "", "Public", None, true);
+            if too_many_blocks {
+                let error = result.unwrap_err();
+                assert!(error.to_string().contains("too many blocks"), "{error}");
+            } else {
+                result.unwrap();
+            }
         }
     }
 
@@ -579,7 +530,6 @@ mod tests {
             name: "Membership".into(),
             exported_at: "".into(),
             files,
-            query_home: None,
         })
         .unwrap();
         for _ in 0..3 {
@@ -621,6 +571,47 @@ mod tests {
     }
 
     #[test]
+    fn macro_closure_uses_names_and_argument_positions_beyond_render_limits() {
+        let mut source =
+            String::from("{:preferred-format ; private reading gap\n :markdown :macros {");
+        for n in 1..=13 {
+            let next = if n == 13 {
+                "leaf".to_owned()
+            } else {
+                format!("m{}", n + 1)
+            };
+            source.push_str(&format!(r#" "m{n}" "{{{{{next}}}}}""#));
+        }
+        source.push_str(
+            r#" "leaf" ; private macro gap
+          "visible" "choose" "{{$1 x}}" "inner" "{{deep}}" "deep" "also visible"
+          "dual" "={{md-only}}= and {{common}}" "md-only" "Markdown" "common" "shared"
+          "ignored" "private unused" "query" "private built-in"}}"#,
+        );
+        let config = Config::parse(&source);
+        let (graph, _) = WholeGraph::from_files(vec![
+            (
+                "pages/Source.md".into(),
+                b"- {{m1}} {{choose inner}} {{query (task TODO)}}".to_vec(),
+            ),
+            (
+                "pages/Other.org".into(),
+                b"* {{choose inner}} {{dual}}".to_vec(),
+            ),
+        ])
+        .unwrap();
+        let names = page_macros(&graph.corpus(None, true), &config);
+        let reduced = reduced_config(&source, "Source", &names);
+        assert!(!reduced.contains("private"), "{reduced}");
+        let macros = Config::parse(&reduced).macros;
+        for name in [
+            "m13", "leaf", "choose", "inner", "deep", "md-only", "common",
+        ] {
+            assert!(macros.contains_key(name), "{name}: {reduced}");
+        }
+    }
+
+    #[test]
     fn reduced_config_preserves_every_carried_value_and_classifies_every_field() {
         let used = HashSet::from(["greeting".to_owned(), "ns/other".to_owned()]);
         for source in [
@@ -655,8 +646,8 @@ mod tests {
             assert_eq!(carried(&actual), carried(&expected));
             for key in READING_KEYS {
                 assert_eq!(
-                    top_level_entry(&reduced, key),
-                    top_level_entry(source, key),
+                    top_level_entry_spans(&reduced, key),
+                    top_level_entry_spans(source, key),
                     "{key}"
                 );
             }
@@ -670,7 +661,7 @@ mod tests {
             WholeGraph::from_files(vec![("pages/Reviewed.md".into(), b"- body\n".to_vec())])
                 .unwrap();
         let corpus = selecting.corpus(None, true);
-        let home = HomePage::new(&selecting, "Home");
+        let home = HomePage::new(&selecting, &corpus.pages, "Home").unwrap();
         let reviewed = ("pages/Reviewed.md".into(), Arc::new(b"- body\n".to_vec()));
         let injected = (
             "pages/Other.md".into(),

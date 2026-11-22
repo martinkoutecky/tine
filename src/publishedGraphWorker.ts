@@ -1,5 +1,5 @@
 import { BrowserCoreLoadError } from "./browserCore";
-import type { GraphRead, GraphReply, GraphRequest } from "./publishedGraphRpc";
+import { PublishedQueryLimitError, type GraphRead, type GraphReply, type GraphRequest } from "./publishedGraphRpc";
 import { QuickShareError } from "./quickShare/quickShare";
 import { documentOf, listen, mainWindow } from "./windowRealm";
 
@@ -58,16 +58,17 @@ export async function openPublishedGraphWorker(bytes: Uint8Array<ArrayBuffer>, i
     if (!request) return;
     pending.delete(data.id);
     if ("json" in data) request.resolve(data.json);
-    else request.reject(data.shareReason ? new QuickShareError(data.shareReason, data.error) : new Error(data.error));
+    else request.reject(data.queryLimit ? new PublishedQueryLimitError(data.error)
+      : data.shareReason ? new QuickShareError(data.shareReason, data.error) : new Error(data.error));
   };
 
-  function request(method: GraphRequest["method"], args: GraphRequest["args"], transfer: Transferable[] = []) {
+  function request(method: GraphRequest["method"], args: GraphRequest["args"], transfer: Transferable[] = [], queryLocation?: string) {
     if (stopped) return Promise.reject(stopped);
     const id = ++nextId;
     return new Promise<string>((resolve, reject) => {
       pending.set(id, { resolve, reject });
       try {
-        worker.postMessage({ id, method, args }, transfer);
+        worker.postMessage({ id, method, args, queryLocation }, transfer);
       } catch (error) {
         fail(error);
       }
@@ -112,7 +113,7 @@ export async function openPublishedGraphWorker(bytes: Uint8Array<ArrayBuffer>, i
       void locks.request(lock, { signal: lifetime.signal }, () => fail("Worker closed"))
         .catch(error => { if (!lifetime.signal.aborted) fail(error); });
     }
-    const read: GraphRead = (method, ...args) => request(method, args);
+    const read: GraphRead = ([method, ...args], queryLocation) => request(method, args, [], queryLocation);
     return { name, read, failure };
   } catch (error) {
     stop(error instanceof Error ? error : new Error(String(error)));

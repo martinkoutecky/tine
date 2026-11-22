@@ -63,6 +63,7 @@ pub fn query_request_inline(argument: String, name: &str, replace: bool) -> Quer
         dialect: QueryTextDialect::MacroQuery,
         properties: vec![],
         current_page: None,
+        textual_current_page: None,
         name: name.into(),
         host_block_id: None,
         folder: None,

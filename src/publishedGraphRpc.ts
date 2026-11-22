@@ -5,15 +5,17 @@ export type GraphMethod = Extract<keyof BrowserGraph, `${string}_json`>;
 export type GraphCall = {
   [Method in GraphMethod]: [Method, ...Parameters<BrowserGraph[Method]>];
 }[GraphMethod];
-export type GraphRead = (...call: GraphCall) => Promise<string>;
+export type GraphRead = (call: GraphCall, queryLocation?: string) => Promise<string>;
 
 export type GraphRequest = { id: number } & (
   | { method: "open"; args: [ArrayBuffer, boolean, string | undefined] }
   | { method: "ping"; args: [] }
-  | { method: GraphMethod; args: Parameters<BrowserGraph[GraphMethod]>[number][] }
+  | { method: GraphMethod; args: Parameters<BrowserGraph[GraphMethod]>[number][]; queryLocation?: string }
 );
 
 export type GraphReply = { id: number } & (
   | { json: string }
-  | { error: string; fatal?: true; shareReason?: QuickShareReason }
+  | { error: string; fatal?: true; shareReason?: QuickShareReason; queryLimit?: true }
 );
+
+export class PublishedQueryLimitError extends Error {}

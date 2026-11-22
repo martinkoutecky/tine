@@ -23,7 +23,9 @@ use std::io;
 use std::path::Path;
 use tine_core::model::PageKind;
 use tine_core::query::ir::{ExecutionContext, QueryResult, QueryRows};
-use tine_core::query::wire_parse::{anchored_view, parse_query_pair, QueryTextDialect};
+use tine_core::query::wire_parse::{
+    anchored_view, bind_current_page, parse_query_pair, QueryTextDialect,
+};
 use tine_core::refs::page_key;
 use tine_store::{IrAnswer, IrRequest, Store, WholeGraph};
 
@@ -115,18 +117,26 @@ fn ir_registry(
 
 fn parse_and_run(
     graph: &WholeGraph,
-    argument: &str,
-    dialect: QueryTextDialect,
-    properties: &[(String, String)],
-    context: &ExecutionContext,
-) -> io::Result<QueryResult> {
+    request: &QueryExportRequest,
+) -> io::Result<(QueryResult, bool)> {
+    let argument = &request.argument;
     if !tine_core::query::query_source_within_limit(argument)
         || !tine_core::query::query_nesting_within_limit(argument)
     {
         return Err(refusal("query exceeds the export parser limit"));
     }
+    let execution = request.textual_current_page.as_deref().map_or_else(
+        || std::borrow::Cow::Borrowed(argument.as_str()),
+        |page| bind_current_page(argument, page),
+    );
+    let substituted = matches!(execution, std::borrow::Cow::Owned(_));
+    if substituted && crate::query_wire::validate_query_source(&execution).is_err() {
+        return Err(refusal("query exceeds the export parser limit"));
+    }
     let registry = ir_registry(graph)?;
-    let parsed = parse_query_pair(argument, dialect, properties, &registry);
+    let parsed = parse_query_pair(&execution, request.dialect, &request.properties, &registry);
+    let uses_current_page =
+        substituted || parsed.current_page_input || !parsed.current_page_tokens.is_empty();
     let anchor = parsed.query.anchor;
     let view = anchored_view(&parsed, anchor);
     let result = match graph
@@ -134,7 +144,9 @@ fn parse_and_run(
             IrRequest::Run {
                 query: &parsed.query,
                 view: &view,
-                context,
+                context: &ExecutionContext {
+                    current_page: request.current_page.clone(),
+                },
             },
             &tine_store::Cancel::default(),
         )
@@ -150,7 +162,7 @@ fn parse_and_run(
     if !result.report.supported || result.diagnostics.iter().any(|d| !d.disabled) {
         return Err(refusal("this query is not fully supported for export"));
     }
-    Ok(result)
+    Ok((result, uses_current_page))
 }
 
 pub(crate) struct Planned {
@@ -180,7 +192,9 @@ fn resolve_plan_review(
         || request
             .current_page
             .as_ref()
-            .is_some_and(|page| page.len() > 512)
+            .into_iter()
+            .chain(request.textual_current_page.as_ref())
+            .any(|page| page.len() > 512)
         || request
             .host_block_id
             .as_ref()
@@ -188,23 +202,13 @@ fn resolve_plan_review(
     {
         return Err(refusal("query export metadata exceeds its limit"));
     }
-    let context = ExecutionContext {
-        current_page: request.current_page.clone(),
-    };
-    let mut result = parse_and_run(
-        graph,
-        &request.argument,
-        request.dialect,
-        &request.properties,
-        &context,
-    )?;
+    let (mut result, uses_current_page) = parse_and_run(graph, request)?;
     if let (Some(host), QueryRows::Block { groups }) = (&request.host_block_id, &mut result.rows) {
         for group in groups.iter_mut() {
             group.blocks.retain(|block| &block.id != host);
         }
         groups.retain(|group| !group.blocks.is_empty());
         result.total = groups.iter().map(|group| group.blocks.len()).sum();
-        result.matched_total = Some(result.total);
     }
     let corpus = graph.corpus(None, true);
     // Owner files by (kind, page_key), built once rather than per group. Page
@@ -268,9 +272,6 @@ fn resolve_plan_review(
     let include_comments =
         crate::output_comments::included(request.include_comments, &request.properties);
     crate::output_comments::project(&mut chosen, include_comments);
-    if !include_comments {
-        crate::output_comments::close_result(&mut result, &chosen);
-    }
     if chosen.is_empty() && !left_out.is_empty() {
         return Err(refusal(
             "every page this query selects is private or the exports page",
@@ -282,17 +283,6 @@ fn resolve_plan_review(
             .any(|page| page_key(&page.name) == page_key(host))
     });
     let selected = tine_core::Corpus { pages: chosen };
-    // The answer is closed to the exported pages too, so neither a ticked
-    // "Include the query text" home nor the row count carries a left-out row.
-    if !left_out.is_empty() {
-        let paths: HashSet<&str> = selected.pages.iter().map(|p| p.id.as_str()).collect();
-        let names: HashSet<_> = selected
-            .pages
-            .iter()
-            .map(|p| (p.kind, page_key(&p.name)))
-            .collect();
-        result = close_query_result(result, &paths, &names);
-    }
     let pages: Vec<ExportPage> = selected
         .pages
         .iter()
@@ -309,10 +299,10 @@ fn resolve_plan_review(
     reviewed.folder = None;
     reviewed.replace = false;
     reviewed.asset_budget_bytes = None;
-    reviewed.include_query_text = false;
     reviewed.include_comments = Some(include_comments);
     hasher.update(serde_json::to_vec(&reviewed).map_err(io::Error::other)?);
-    hasher.update(serde_json::to_vec(&result.rows).map_err(io::Error::other)?);
+    hasher
+        .update(serde_json::to_vec(&(result.total, anchor, &left_out)).map_err(io::Error::other)?);
     for page in &selected.pages {
         hasher.update(page.id.as_str().as_bytes());
         hasher.update(serde_json::to_vec(page.document.as_ref()).map_err(io::Error::other)?);
@@ -327,6 +317,7 @@ fn resolve_plan_review(
     Ok(Planned {
         plan: QueryExportPlan {
             include_comments,
+            uses_current_page,
             anchor: anchor.into(),
             row_count: result.total,
             pages,
@@ -437,29 +428,6 @@ fn collect_static(
     Ok(files)
 }
 
-fn close_query_result(
-    mut result: QueryResult,
-    paths: &HashSet<&str>,
-    names: &HashSet<(PageKind, String)>,
-) -> QueryResult {
-    match &mut result.rows {
-        QueryRows::Page { pages } => pages.retain(|page| paths.contains(page.path.as_str())),
-        QueryRows::Block { groups } => {
-            groups.retain_mut(|group| {
-                group.format = None;
-                names.contains(&(group.kind, page_key(&group.page)))
-            });
-        }
-    }
-    result.total = match &result.rows {
-        QueryRows::Page { pages } => pages.len(),
-        QueryRows::Block { groups } => groups.iter().map(|group| group.blocks.len()).sum(),
-    };
-    result.matched_total = Some(result.total);
-    result.statistics = None;
-    result
-}
-
 fn query_publication_property(key: &str) -> bool {
     key.starts_with("tine.")
         || matches!(
@@ -473,7 +441,6 @@ fn home_query(request: &QueryExportRequest) -> String {
         QueryTextDialect::MacroTql | QueryTextDialect::Tql => "tine-query",
         _ => "query",
     };
-    // The dialog supplies the same substituted execution argument it ran.
     let argument = request.argument.trim().replace('\n', "\n  ");
     let mut raw = format!("{{{{{macro_name} {argument}}}}}");
     for (key, value) in &request.properties {
@@ -485,37 +452,6 @@ fn home_query(request: &QueryExportRequest) -> String {
         }
     }
     raw
-}
-
-fn reviewed_query_home(
-    build: &WholeGraph,
-    request: &QueryExportRequest,
-) -> crate::query_wire::PublicationQuery {
-    let current_page = request
-        .current_page
-        .as_ref()
-        .filter(|page| {
-            build.page_owner(page, PageKind::Page).is_some()
-                || build
-                    .inventory(tine_store::InventoryScope::All)
-                    .0
-                    .iter()
-                    .any(|entry| page_key(&entry.name) == page_key(page))
-        })
-        .cloned();
-    let host_block_id = request
-        .host_block_id
-        .as_ref()
-        .filter(|id| {
-            build
-                .blocks(std::slice::from_ref(id), true)
-                .is_ok_and(|groups| groups.iter().any(Option::is_some))
-        })
-        .cloned();
-    crate::query_wire::PublicationQuery {
-        current_page,
-        host_block_id,
-    }
 }
 
 fn app_files(
@@ -764,15 +700,20 @@ fn publish_at(
                     .unwrap_or(QUERY_EXPORT_DEFAULT_ASSET_BUDGET_BYTES),
                 &mut warnings,
             )?;
-            let mut home = HomePage::new(build, request.name.trim());
-            if home.taken(build, &corpus.pages) {
-                home = HomePage::new(build, &format!("{} (export)", home.name));
-            }
-            while home.taken(build, &corpus.pages) {
-                home = HomePage::new(build, &format!("{} 2", home.name));
-            }
+            let home = match HomePage::new(build, &corpus.pages, request.name.trim()) {
+                Ok(home) => home,
+                Err(name) => {
+                    let mut candidate = format!("{name} (export)");
+                    loop {
+                        match HomePage::new(build, &corpus.pages, &candidate) {
+                            Ok(home) => break home,
+                            Err(name) => candidate = format!("{name} 2"),
+                        }
+                    }
+                }
+            };
             let query = request.include_query_text.then(|| home_query(request));
-            let snap = publication_snapshot::snapshot_with_query(
+            let snap = publication_snapshot::snapshot(
                 &graph,
                 &corpus,
                 sources,
@@ -781,7 +722,6 @@ fn publish_at(
                 &home.name,
                 Some(home.source(&corpus.pages, query.as_deref())),
                 false,
-                query.as_ref().map(|_| reviewed_query_home(build, request)),
             )?;
             Ok((files, snap))
         },
@@ -1036,143 +976,6 @@ pub fn publish_static(
 mod snapshot_consistency_tests {
     use super::*;
 
-    #[test]
-    fn generated_home_replays_reviewed_query_rows() {
-        let temp = tempfile::tempdir().unwrap();
-        std::fs::create_dir_all(temp.path().join("pages")).unwrap();
-        let host = "11111111-1111-4111-8111-111111111111";
-        let pages = [
-            ("Focus", "- focus body".to_owned()),
-            ("TODO", "- marker page".to_owned()),
-            ("Public", format!("- TODO referring to [[Focus]] and [[Public]]\n- TODO reviewed host\n  id:: {host}")),
-        ];
-        for (name, text) in pages {
-            std::fs::write(temp.path().join(format!("pages/{name}.md")), text).unwrap();
-        }
-        let store = Store::open(temp.path(), Default::default()).unwrap().0;
-        let graph = store.whole_graph().unwrap();
-        let current = "{:query [:find (pull ?b [*]) :in $ ?p :where [?page :block/name ?p] [?b :block/refs ?page]] :inputs [:current-page]}";
-        let on_page = current.replace(":block/refs", ":block/page");
-        let results = |result: QueryResult| match result.rows {
-            QueryRows::Page { pages } => pages
-                .into_iter()
-                .map(|page| (page.name, page.path))
-                .collect::<Vec<_>>(),
-            QueryRows::Block { groups } => groups
-                .into_iter()
-                .flat_map(|group| {
-                    group
-                        .blocks
-                        .into_iter()
-                        .map(move |block| (group.page.clone(), block.raw))
-                })
-                .collect(),
-        };
-        for (argument, dialect, focus, host_block_id) in [
-            (
-                "@page and name != 'Unused'",
-                QueryTextDialect::MacroTql,
-                None,
-                None,
-            ),
-            ("[[Public]]", QueryTextDialect::MacroQuery, None, None),
-            (current, QueryTextDialect::MacroQuery, Some("Focus"), None),
-            (&on_page, QueryTextDialect::MacroQuery, Some("Focus"), None),
-            (
-                "(task TODO)",
-                QueryTextDialect::MacroQuery,
-                Some("Public"),
-                Some(host),
-            ),
-        ] {
-            let request = QueryExportRequest {
-                argument: argument.into(),
-                dialect,
-                current_page: focus.map(str::to_owned),
-                host_block_id: host_block_id.map(str::to_owned),
-                properties: vec![],
-                name: "Export".into(),
-                folder: None,
-                replace: false,
-                asset_budget_bytes: None,
-                include_query_text: true,
-                include_comments: None,
-            };
-            let planned = resolve_plan(&store, &graph, &request)
-                .unwrap_or_else(|err| panic!("{argument}: {err}"));
-            let mut desktop = parse_and_run(
-                &graph,
-                argument,
-                dialect,
-                &[],
-                &ExecutionContext {
-                    current_page: request.current_page.clone(),
-                },
-            )
-            .unwrap();
-            if let (Some(host), QueryRows::Block { groups }) = (host_block_id, &mut desktop.rows) {
-                for group in groups {
-                    group.blocks.retain(|block| block.id != host);
-                }
-            }
-            let expected = results(desktop);
-            assert_eq!(expected.len(), planned.plan.row_count, "{argument}");
-            assert!(!expected.is_empty(), "{argument}");
-            let bytes = crate::build_graph::with_build_graph_text(
-                &graph,
-                &planned.selected.pages,
-                BUILD_GRAPH_REFUSED,
-                |build, corpus, sources| {
-                    let home = HomePage::new(build, &request.name);
-                    publication_snapshot::snapshot_with_query(
-                        &graph,
-                        &corpus,
-                        sources,
-                        &request.name,
-                        "",
-                        &home.name,
-                        Some(home.source(&corpus.pages, Some(&home_query(&request)))),
-                        false,
-                        Some(reviewed_query_home(build, &request)),
-                    )
-                },
-            )
-            .unwrap();
-            let snapshot: serde_json::Value = serde_json::from_slice(&bytes).unwrap();
-            let files: Vec<_> = snapshot["files"]
-                .as_array()
-                .unwrap()
-                .iter()
-                .map(|file| {
-                    (
-                        file["path"].as_str().unwrap().to_owned(),
-                        file["text"].as_str().unwrap().as_bytes().to_vec(),
-                    )
-                })
-                .collect();
-            let (reader, _) = WholeGraph::from_files(files).unwrap();
-            let home = reader.page_owner("Export", PageKind::Page).unwrap();
-            let corpus = reader.corpus(None, true);
-            let page = corpus.pages.iter().find(|page| page.id == home).unwrap();
-            let raw = page.document.roots[0].raw();
-            let (argument_source, dialect, _) = render::query_for_export(raw, false, true).unwrap();
-            let parsed = crate::query_wire::parse(&reader, &argument_source, dialect, &[]).unwrap();
-            let reviewed = serde_json::from_value(snapshot["query_home"].clone()).unwrap();
-            let view = anchored_view(&parsed, parsed.query.anchor);
-            let live = crate::query_wire::run_publication(
-                &reader,
-                &parsed.query,
-                &view,
-                home.as_str(),
-                &reviewed,
-            )
-            .unwrap();
-            let live = serde_json::from_value(serde_json::to_value(live).unwrap()).unwrap();
-            assert_eq!(results(live), expected, "{argument}");
-        }
-        store.close();
-    }
-
     // The asset-reference scanner over-collects (orphan detection must not miss a
     // reference), so prose after `assets/` becomes a candidate name. A candidate
     // longer than a file name may be must be skipped like a missing asset, not
@@ -1217,6 +1020,7 @@ mod snapshot_consistency_tests {
             dialect: QueryTextDialect::MacroQuery,
             properties: vec![],
             current_page: None,
+            textual_current_page: None,
             name: "Export".into(),
             host_block_id: None,
             folder: None,

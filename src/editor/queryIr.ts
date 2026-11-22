@@ -163,6 +163,8 @@ export interface ScopedDisplaySettings {
 
 /** `query_parse`'s answer. */
 export interface ParsedQuery extends ScopedDisplaySettings {
+  current_page_tokens?: [number, number][];
+  current_page_input?: boolean;
   /** Rust reads Logseq options, query-table and the trailing table marker. */
   legacy_table?: boolean;
   query: Query;
@@ -251,8 +253,6 @@ export type QueryResult = {
 /** The runtime inputs an execution binds against (§4.4, §7.1, R5). */
 export interface ExecutionContext {
   current_page?: string;
-  /** The authored source page of a published query, independent of pane focus. */
-  source_page?: string;
 }
 
 /** One row of `query_explain_empty` (Q14, N19): a top-level conjunct, the anchor

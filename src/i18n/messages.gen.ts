@@ -1381,6 +1381,7 @@ export interface MessageArgs {
   "macro-prose-query": {};
   "macro-query-diagnostics": { "detail": string | number };
   "macro-query-load-failed": { "detail": string | number };
+  "macro-query-published-limit": {};
   "macro-query-read-only": {};
   "macro-query-rewrite": {};
   "macro-query-unchanged": { "detail": string | number };
@@ -1804,6 +1805,8 @@ export interface MessageArgs {
   "query-export-dialog-left-out": { "count": number };
   "query-export-dialog-left-out-exports-page": {};
   "query-export-dialog-left-out-private": {};
+  "query-export-dialog-live-current-page": {};
+  "query-export-dialog-live-query": {};
   "query-export-dialog-name": {};
   "query-export-dialog-path": { "path": string | number };
   "query-export-dialog-replace-it-the-previous-export-is-kept-in": {};
