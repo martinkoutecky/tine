@@ -14,6 +14,7 @@ pub mod assets;
 #[cfg(not(target_arch = "wasm32"))]
 mod build_graph;
 pub mod config;
+pub mod config_problem;
 pub mod conflicts;
 pub mod custom_css;
 pub mod graph_verification;

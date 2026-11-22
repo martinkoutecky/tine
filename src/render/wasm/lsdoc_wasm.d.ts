@@ -10,9 +10,16 @@ export class BrowserGraph {
     free(): void;
     [Symbol.dispose](): void;
     /**
+     * The `config_problem` of the desktop `load_graph` answer: `null`, or the
+     * problem the graph's `config.edn` was read with.
+     */
+    config_problem_json(): string;
+    /**
      * `files[i]` holds the bytes of the graph-relative `paths[i]`,
-     * `logseq/config.edn` among them. Cost: one read and parse of each file
-     * and the initial index capture, as a desktop open has.
+     * `logseq/config.edn` among them. Throws (a string) what the desktop open
+     * refuses, and for arrays of different lengths; a config read problem is
+     * `config_problem_json`. Cost: one read and parse of each file and the
+     * initial index capture, as a desktop open has.
      */
     constructor(paths: string[], files: Uint8Array[]);
     /**
@@ -406,7 +413,8 @@ export interface InitOutput {
     readonly asset_rel_path: (a: number, b: number) => [number, number];
     readonly block_may_have_logbook: (a: number, b: number) => number;
     readonly block_reference_names: (a: number, b: number, c: number) => [number, number];
-    readonly browsergraph_new: (a: number, b: number, c: number, d: number) => number;
+    readonly browsergraph_config_problem_json: (a: number) => [number, number];
+    readonly browsergraph_new: (a: number, b: number, c: number, d: number) => [number, number, number];
     readonly browsergraph_page_inventory_json: (a: number) => [number, number];
     readonly canonical_group_field: (a: number, b: number) => [number, number];
     readonly comment_quote: (a: number, b: number) => [number, number, number, number];

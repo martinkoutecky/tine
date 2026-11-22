@@ -785,7 +785,7 @@ impl Core {
                 }
                 (
                     tine_core::config::Config::default(),
-                    crate::model::missing_config_problem(path),
+                    crate::model::missing_config_problem(&crate::model::FileSource::Disk, path),
                 )
             }
             Err(error) => (tine_core::config::Config::default(), Some(error.into())),

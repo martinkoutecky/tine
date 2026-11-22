@@ -551,7 +551,7 @@ pub(crate) fn outermost_member(reference: &SlottedPageRef) -> bool {
 /// no header. O(header bytes): one document parse; only with an alias page
 /// property, one block parse of the text before its prose, one
 /// inline parse and, for a linkable value, one document parse per property.
-pub fn header_alias_members(raw: &str, is_org: bool) -> Vec<String> {
+pub(crate) fn header_alias_members(raw: &str, is_org: bool) -> Vec<String> {
     let page = tine_outline::block_regions::parse_document(raw, is_org);
     let mut aliases = (page.page_properties())
         .filter(|p| crate::page_header::is_alias_key(&p.key))

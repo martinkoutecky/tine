@@ -25,12 +25,13 @@ pub use signature::{BlockSignature, ReferenceFilter};
 pub(crate) use walk::project_into;
 #[cfg(test)]
 use walk::property_key_eligible;
-pub use walk::{
-    header_alias_members, project_with_config, reference_rule, ProjectedPageRef,
-    ReferenceSourceProjection, RewriteTarget, SlottedPageRef,
-};
 pub(crate) use walk::{
-    linkable_property_references_in, markdown_directives, property_references_in,
+    header_alias_members, linkable_property_references_in, markdown_directives,
+    property_references_in,
+};
+pub use walk::{
+    project_with_config, reference_rule, ProjectedPageRef, ReferenceSourceProjection,
+    RewriteTarget, SlottedPageRef,
 };
 
 /// One block's optional rename/check evidence, released with the file operation.

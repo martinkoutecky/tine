@@ -15,7 +15,6 @@ tine-outline = { path = "../tine-outline" }
 serde_json = { workspace = true }
 uuid = { workspace = true }
 sha2 = "0.10"
-regex = "1"
 memchr = "2"
 pinyin = { version = "0.11", default-features = false, features = ["plain"] }
 libc = "0.2"
@@ -27,11 +26,17 @@ notify = "6"
 postcard = { version = "1", default-features = false, features = ["use-std"] }
 
 # Off the browser build (wasm32), which only reads a graph built in memory
-# (`WholeGraph::from_pages`): directory capabilities and the checkpoint's
+# (`WholeGraph::from_files`): directory capabilities and the checkpoint's
 # compression (a C library) serve the disk store.
 [target.'cfg(not(target_arch = "wasm32"))'.dependencies]
 cap-std = "4.0.2"
 zstd = { version = "0.13", default-features = false }
+regex = "1"
+
+# regex without its default `perf` engines in the browser build, as tine-core
+# and tine-search build it.
+[target.'cfg(target_arch = "wasm32")'.dependencies]
+regex = { version = "1", default-features = false, features = ["std", "unicode"] }
 
 [target.'cfg(windows)'.dependencies]
 windows-sys = { version = "0.61.2", features = ["Win32_Foundation", "Win32_Security", "Win32_Storage_FileSystem"] }

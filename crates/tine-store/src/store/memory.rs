@@ -6,6 +6,7 @@ use super::{ConfigState, GraphRev, Snapshot, WholeGraph};
 use crate::model::file_source::Content;
 use crate::model::Graph;
 use std::collections::HashMap;
+use std::io;
 use std::sync::{Arc, RwLock};
 use tine_core::date::JournalFormat;
 
@@ -18,11 +19,12 @@ impl WholeGraph {
     /// names the root `/tine-memory-graph`. Cost: one serialization and parse
     /// of each page, one page's bytes held at a time, and the initial index
     /// capture, as a store open has, plus one lookup per page in this view's
-    /// page times.
+    /// page times. Refuses (`InvalidInput`) a path that is not graph-relative
+    /// or is both a file and a directory.
     pub fn subgraph(
         &self,
         pages: Vec<(String, Arc<tine_core::doc::Document>)>,
-    ) -> (WholeGraph, tine_core::model::GraphMeta) {
+    ) -> io::Result<(WholeGraph, tine_core::model::GraphMeta)> {
         let times = self.graph.observed_page_mtimes();
         let files = pages
             .into_iter()
@@ -31,11 +33,11 @@ impl WholeGraph {
                 (rel, Content::Document(document), time)
             })
             .collect();
-        Self::in_memory(Graph::in_memory(
+        Ok(Self::in_memory(Graph::in_memory(
             files,
             tine_core::config::Config::clone(&self.config.config),
             JournalFormat::clone(&self.journal_format),
-        ))
+        )?))
     }
 
     /// The whole-graph view of a graph's text files (graph-relative path and
@@ -44,11 +46,17 @@ impl WholeGraph {
     /// no page times. The browser's graph (a published export's pages). Its
     /// graph metadata names the root `/tine-memory-graph`. Cost: one read and
     /// parse of each file and the initial index capture, as a store open has.
-    pub fn from_files(files: Vec<(String, Vec<u8>)>) -> (WholeGraph, tine_core::model::GraphMeta) {
+    /// Refuses what `Store::open` refuses for the configured directories'
+    /// spelling, and (`InvalidInput`) a path that is not graph-relative or is
+    /// both a file and a directory; a config read problem is the view's
+    /// `config().problem`, as on disk.
+    pub fn from_files(
+        files: Vec<(String, Vec<u8>)>,
+    ) -> io::Result<(WholeGraph, tine_core::model::GraphMeta)> {
         let files = (files.into_iter())
             .map(|(rel, bytes)| (rel, Content::Bytes(bytes.into()), None))
             .collect();
-        Self::in_memory(Graph::in_memory_with_config(files))
+        Ok(Self::in_memory(Graph::in_memory_with_config(files)?))
     }
 
     /// A memory graph's view: the store's launch pass and first publication.

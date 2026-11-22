@@ -164,9 +164,12 @@ impl std::error::Error for ParserPanicked {}
 /// opens read-only (`ConfigState::problem`) instead of writing under the
 /// default :legacy file names. A plainly absent config.edn is no problem
 /// (Logseq's defaults). Cost: one metadata call.
-pub(crate) fn missing_config_problem(config_path: &Path) -> Option<crate::IoError> {
+pub(crate) fn missing_config_problem(
+    source: &FileSource,
+    config_path: &Path,
+) -> Option<crate::IoError> {
     let placeholder = config_path.with_file_name(".config.edn.icloud");
-    placeholder.symlink_metadata().is_ok().then(|| {
+    source.lstat(&placeholder).is_ok().then(|| {
         io::Error::other(
             "config.edn is in iCloud but not downloaded yet; open the graph again once it is",
         )
@@ -2548,6 +2551,20 @@ impl FindEntryIndex {
 /// ancestor outside the graph would turn ordinary save/delete/restore operations
 /// into writes against unrelated files.
 fn validate_managed_dir(root: &Path, raw: &str, label: &str) -> io::Result<()> {
+    managed_dir_spelling(raw, label)?;
+    let candidate = root.join(raw);
+    if !path_stays_within_root(root, &candidate) || path_uses_managed_alias(root, &candidate) {
+        return Err(io::Error::new(
+            io::ErrorKind::InvalidInput,
+            format!("{label} directory escapes graph root: {raw:?}"),
+        ));
+    }
+    Ok(())
+}
+
+/// The spelling half of [`validate_managed_dir`]: a nonempty plain relative
+/// path. A memory graph checks only this (it has no symlinks to escape by).
+pub(crate) fn managed_dir_spelling(raw: &str, label: &str) -> io::Result<()> {
     if raw.is_empty() || raw.contains('\\') {
         return Err(io::Error::new(
             io::ErrorKind::InvalidInput,
@@ -2563,13 +2580,6 @@ fn validate_managed_dir(root: &Path, raw: &str, label: &str) -> io::Result<()> {
         return Err(io::Error::new(
             io::ErrorKind::InvalidInput,
             format!("{label} directory must be a safe relative path: {raw:?}"),
-        ));
-    }
-    let candidate = root.join(rel);
-    if !path_stays_within_root(root, &candidate) || path_uses_managed_alias(root, &candidate) {
-        return Err(io::Error::new(
-            io::ErrorKind::InvalidInput,
-            format!("{label} directory escapes graph root: {raw:?}"),
         ));
     }
     Ok(())
@@ -2802,7 +2812,7 @@ impl Graph {
         let (config, problem) = match read_parse_input_in(&source, &path) {
             Ok(text) => (Config::parse(&text), None),
             Err(error) if error.kind() == io::ErrorKind::NotFound => {
-                (Config::default(), missing_config_problem(&path))
+                (Config::default(), missing_config_problem(&source, &path))
             }
             Err(error) => (Config::default(), Some(error.into())),
         };

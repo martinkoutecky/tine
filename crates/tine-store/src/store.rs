@@ -2878,11 +2878,11 @@ impl WholeGraph {
         &self.unreadable
     }
 
-    /// The effective config this view was built under: what renders and
-    /// exports of the view read, so they agree with its pages (a later config
-    /// reload makes a new view). Cost O(1).
-    pub fn config(&self) -> &tine_core::config::Config {
-        &self.config.config
+    /// The effective config this view was built under, and the problem it was
+    /// read with: what renders and exports of the view read, so they agree
+    /// with its pages (a later config reload makes a new view). Cost O(1).
+    pub fn config(&self) -> &ConfigState {
+        &self.config
     }
 
     /// Last-modified time, in Unix seconds, of each page file this view holds,

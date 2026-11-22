@@ -38,7 +38,7 @@ pub(crate) fn with_build_graph<T>(
     let files = (pages.iter())
         .map(|page| (page.id.as_str().to_owned(), Arc::clone(&page.document)))
         .collect();
-    let (graph, meta) = view.subgraph(files);
+    let (graph, meta) = view.subgraph(files)?;
     let mut corpus = graph.corpus(None, true);
     let wanted: BTreeSet<_> = pages.iter().map(|p| p.id.as_str()).collect();
     let got: BTreeSet<_> = corpus.pages.iter().map(|p| p.id.as_str()).collect();

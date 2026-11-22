@@ -872,17 +872,10 @@ pub(crate) fn open_graph_window_blocking(
     Ok(result)
 }
 
-#[derive(serde::Serialize)]
-pub(crate) struct ConfigProblem {
-    kind: &'static str,
-    message: String,
-}
+pub(crate) use tine_graph_features::config_problem::ConfigProblem;
 /// Serialize the store's current config read problem; O(1), no disk access.
 pub(crate) fn config_problem(store: &Store) -> Option<ConfigProblem> {
-    store.config().problem.map(|error| ConfigProblem {
-        kind: "config-read",
-        message: error.to_string(),
-    })
+    tine_graph_features::config_problem::config_problem(&store.config())
 }
 
 #[derive(serde::Serialize)]

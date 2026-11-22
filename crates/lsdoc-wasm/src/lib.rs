@@ -1115,14 +1115,32 @@ pub struct BrowserGraph(tine_store::WholeGraph);
 #[wasm_bindgen]
 impl BrowserGraph {
     /// `files[i]` holds the bytes of the graph-relative `paths[i]`,
-    /// `logseq/config.edn` among them. Cost: one read and parse of each file
-    /// and the initial index capture, as a desktop open has.
+    /// `logseq/config.edn` among them. Throws (a string) what the desktop open
+    /// refuses, and for arrays of different lengths; a config read problem is
+    /// `config_problem_json`. Cost: one read and parse of each file and the
+    /// initial index capture, as a desktop open has.
     #[wasm_bindgen(constructor)]
-    pub fn new(paths: Vec<String>, files: Vec<js_sys::Uint8Array>) -> BrowserGraph {
+    pub fn new(
+        paths: Vec<String>,
+        files: Vec<js_sys::Uint8Array>,
+    ) -> Result<BrowserGraph, JsValue> {
+        if paths.len() != files.len() {
+            let lengths = format!("{} paths, {} files", paths.len(), files.len());
+            return Err(JsValue::from_str(&format!("BrowserGraph: {lengths}")));
+        }
         let files = (paths.into_iter().zip(files))
             .map(|(path, bytes)| (path, bytes.to_vec()))
             .collect();
-        BrowserGraph(tine_store::WholeGraph::from_files(files).0)
+        let (view, _) = tine_store::WholeGraph::from_files(files)
+            .map_err(|error| JsValue::from_str(&format!("BrowserGraph: {error}")))?;
+        Ok(BrowserGraph(view))
+    }
+
+    /// The `config_problem` of the desktop `load_graph` answer: `null`, or the
+    /// problem the graph's `config.edn` was read with.
+    pub fn config_problem_json(&self) -> String {
+        let problem = tine_graph_features::config_problem::config_problem(self.0.config());
+        serde_json::to_string(&problem).unwrap_or_default()
     }
 
     /// The `page_inventory` command's answer.

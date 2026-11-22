@@ -101,8 +101,8 @@ fn assert_same_answers(root: &Path, build: Build) -> Vec<String> {
     let disk = store.whole_graph().unwrap();
     let disk_root = Store::canonical_root(root).unwrap().display().to_string();
     let (memory, meta) = match build {
-        Build::Subgraph => disk.subgraph(documents(files_under(root))),
-        Build::Files => WholeGraph::from_files(files_under(root)),
+        Build::Subgraph => disk.subgraph(documents(files_under(root))).unwrap(),
+        Build::Files => WholeGraph::from_files(files_under(root)).unwrap(),
     };
     assert_eq!(meta.root, crate::model::file_source::MEMORY_ROOT);
     let times = build == Build::Subgraph;
@@ -151,6 +151,83 @@ fn unreadable_files_answer_alike_from_files() {
     let answers = assert_same_answers(root, Build::Files);
     check_naming(&answers);
     assert!(answers[0].contains("Broken"), "{}", answers[0]);
+}
+
+fn open_disk(root: &Path) -> Result<(Store, crate::ConfigState), crate::OpenError> {
+    let options = OpenOptions {
+        approved_external_assets: None,
+        watch: WatchMode::Poll,
+        launch_checkpoint: None,
+    };
+    Store::open(root, options).map(|(store, _, state)| (store, state))
+}
+
+/// `from_files` refuses the configured directories `Store::open` refuses
+/// (blocker 2 of the 11/22 review: it took them and listed nothing).
+#[test]
+fn from_files_refuses_the_layouts_store_open_refuses() {
+    for dir in ["../outside", "/abs", "a\\b", "./"] {
+        let temp = tempfile::tempdir().unwrap();
+        naming_fixture(temp.path());
+        let config = format!("{{:pages-directory \"{}\"}}\n", dir.replace('\\', "\\\\"));
+        std::fs::write(temp.path().join("logseq/config.edn"), config).unwrap();
+        assert!(open_disk(temp.path()).is_err(), "the disk refuses {dir:?}");
+        let memory = WholeGraph::from_files(files_under(temp.path()));
+        let kind = memory.err().map(|error| error.kind());
+        assert_eq!(kind, Some(std::io::ErrorKind::InvalidInput), "{dir:?}");
+    }
+}
+
+/// A missing, misplaced or not-yet-downloaded config reads as the disk reads
+/// it (blocker 3: the memory source probed the host for the iCloud placeholder
+/// and called a directory at `config.edn` missing).
+#[test]
+fn config_problems_answer_alike_from_files() {
+    let cases: [(&str, &[(&str, &str)]); 4] = [
+        ("absent", &[]),
+        ("a directory", &[("logseq/config.edn/inner", "x")]),
+        ("under a file", &[("logseq", "x")]),
+        ("in iCloud", &[("logseq/.config.edn.icloud", "x")]),
+    ];
+    for (case, extra) in cases {
+        let temp = tempfile::tempdir().unwrap();
+        std::fs::create_dir_all(temp.path().join("pages")).unwrap();
+        std::fs::write(temp.path().join("pages/a.md"), "- a\n").unwrap();
+        for (rel, text) in extra {
+            let path = temp.path().join(rel);
+            std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+            std::fs::write(path, text).unwrap();
+        }
+        let (store, state) = open_disk(temp.path()).unwrap();
+        let disk = state.problem.as_ref().map(|error| error.kind);
+        store.close();
+        let (view, _) = WholeGraph::from_files(files_under(temp.path())).unwrap();
+        let memory = view.config().problem.as_ref().map(|error| error.kind);
+        assert_eq!(memory, disk, "{case}");
+        assert_eq!(disk.is_some(), case != "absent", "{case}: {disk:?}");
+    }
+}
+
+/// Paths no directory can hold are refused, not truncated or merged
+/// (blocker 4).
+#[test]
+fn from_files_refuses_paths_no_directory_holds() {
+    let file = |rel: &str| (rel.to_owned(), b"- x\n".to_vec());
+    let sets = [
+        vec![file("/abs.md")],
+        vec![file("pages/../a.md")],
+        vec![file("./pages/a.md")],
+        vec![file("")],
+        vec![file("pages\\a.md")],
+        vec![file("pages/a.md"), file("pages/a.md/b.md")],
+        vec![file("pages/a/b.md"), file("pages/a")],
+    ];
+    for files in sets {
+        let kind = WholeGraph::from_files(files.clone())
+            .err()
+            .map(|e| e.kind());
+        assert_eq!(kind, Some(std::io::ErrorKind::InvalidInput), "{files:?}");
+    }
 }
 
 fn naming_fixture(root: &Path) {

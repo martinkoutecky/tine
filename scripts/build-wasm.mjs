@@ -120,9 +120,13 @@ glue = glue.replace(
 // bypassing the init()/initSync() \`wasm !== undefined\` early-return. Used by
 // src/render/parse.ts to recover from a parser trap (poisoned instance). Same-module
 // scope gives it access to wasmModule / __wbg_get_imports / __wbg_finalize_init.
+// Every fresh instance starts a new generation: a class handle (pointer into one instance's
+// memory) belongs to the generation it was made in, and is refused afterwards.
+let __tineGeneration = 0;
 export function __tineReinstantiate() {
   if (wasmModule === undefined) throw new Error('lsdoc-wasm: reinit before init');
   const instance = new WebAssembly.Instance(wasmModule, __wbg_get_imports());
+  __tineGeneration++;
   return __wbg_finalize_init(instance, wasmModule);
 }
 `,
@@ -142,6 +146,26 @@ if (!exported.includes("last_panic")) {
   throw new Error("build-wasm: last_panic export missing from glue — crates/lsdoc-wasm lost its panic hook.");
 }
 for (const name of exported) glue = glue.replace(new RegExp(`^export function ${name}\\(`, "m"), `function __tine_raw_${name}(`);
+// Exported classes (the browser core's BrowserGraph) hold a pointer into the instance that made
+// them. After a fresh instance that pointer names nothing, or another live object: so a handle
+// carries its generation, its finalizer frees only within that generation, and the wrapper below
+// refuses a stale handle's methods (its free only unregisters). Construction and methods get the
+// same trap guard as functions.
+const classes = [...glue.matchAll(/^export class (\w+) \{/gm)].map((m) => m[1]);
+for (const name of classes) {
+  const lower = name.toLowerCase();
+  const registry = `new FinalizationRegistry(ptr => wasm.__wbg_${lower}_free(ptr, 1))`;
+  const dispose = `if (Symbol.dispose) ${name}.prototype[Symbol.dispose] = ${name}.prototype.free;\n`;
+  const register = new RegExp(`${name}Finalization\\.register\\((\\w+), \\1\\.__wbg_ptr, \\1\\);`, "g");
+  if (!glue.includes(registry) || !glue.includes(dispose) || !register.test(glue) || glue.includes(`${name}.__wrap`)) {
+    throw new Error(`build-wasm: wasm-bindgen's class glue for ${name} changed; re-check the Tine handle generations.`);
+  }
+  glue = glue
+    .replace(registry, `new FinalizationRegistry((held) => { if (held.generation === __tineGeneration) wasm.__wbg_${lower}_free(held.ptr, 1); })`)
+    .replace(register, `${name}Finalization.register($1, { ptr: $1.__wbg_ptr, generation: __tineGeneration }, $1);`)
+    .replace(dispose, "")
+    .replace(new RegExp(`^export class ${name} \\{`, "m"), `class __tine_raw_${name} {`);
+}
 glue +=
   `
 let __tineCalls = 0; // calls on the current instance
@@ -161,8 +185,14 @@ function __tineGuard(name, raw) { // Tine trap isolation: one guarded export per
     try {
       return raw.apply(this, args);
     } catch (e) {
+      throw __tineFail(name, e, args);
+    }
+  };
+}
+// The error a call that threw \`e\` surfaces, after starting a fresh instance when it needs one.
+function __tineFail(name, e, args) {
       // A Rust \`Err\` is a string the glue throws after the call returned: the instance is intact.
-      if (typeof e === 'string') throw e;
+      if (typeof e === 'string') return e;
       const trapped =
         (typeof WebAssembly !== 'undefined' && e instanceof WebAssembly.RuntimeError) ||
         (e instanceof RangeError && /call stack/i.test(String(e.message)));
@@ -171,19 +201,51 @@ function __tineGuard(name, raw) { // Tine trap isolation: one guarded export per
         // skips the Rust epilogues: the shadow stack and externref slots it unwound stay leaked, and
         // enough of them make a later, ordinary call trap. Start fresh; the caller keeps its error.
         __tineReset();
-        throw e;
+        return e;
       }
       let panic = '';
       try { panic = __tine_raw_last_panic(); } catch (_) { /* the instance is too far gone to answer */ }
       const state = ' [instance: ' + (__tineCalls - 1) + ' calls, ' + __tineResets + ' resets, ' +
         (wasm.memory.buffer.byteLength >>> 16) + ' pages; args ' + __tineArgShape(args) + ']';
       __tineReset();
-      throw new Error('lsdoc-wasm trap in ' + name + ': ' + (panic || e.message) + state, { cause: e });
-    }
-  };
+      return new Error('lsdoc-wasm trap in ' + name + ': ' + (panic || e.message) + state, { cause: e });
+}
+// A class handle's methods: guarded, and refused once its instance is replaced.
+function __tineHandleMethods(Handle, Raw, name) {
+  for (const method of Object.getOwnPropertyNames(Raw.prototype)) {
+    if (method === 'constructor' || method === '__destroy_into_raw') continue;
+    const raw = Object.getOwnPropertyDescriptor(Raw.prototype, method).value;
+    if (typeof raw !== 'function') throw new Error('lsdoc-wasm: ' + name + '.' + method + ' is not a method');
+    const guarded = __tineGuard(name + '.' + method, raw);
+    Handle.prototype[method] = function (...args) {
+      if (this.__tineGeneration !== __tineGeneration) {
+        if (method === 'free') return void this.__destroy_into_raw();
+        throw new Error('lsdoc-wasm: ' + name + '.' + method + ' on a handle from a replaced instance; open it again');
+      }
+      return guarded.apply(this, args);
+    };
+  }
+  if (Symbol.dispose) Handle.prototype[Symbol.dispose] = Handle.prototype.free;
 }
 ` +
-  exported.map((n) => `export const ${n} = __tineGuard(${JSON.stringify(n)}, __tine_raw_${n});\n`).join("");
+  exported.map((n) => `export const ${n} = __tineGuard(${JSON.stringify(n)}, __tine_raw_${n});\n`).join("") +
+  classes
+    .map(
+      (n) => `export class ${n} extends __tine_raw_${n} {
+  constructor(...args) {
+    __tineCalls++;
+    try {
+      super(...args);
+    } catch (e) {
+      throw __tineFail(${JSON.stringify(n)}, e, args);
+    }
+    this.__tineGeneration = __tineGeneration;
+  }
+}
+__tineHandleMethods(${n}, __tine_raw_${n}, ${JSON.stringify(n)});
+`,
+    )
+    .join("");
 writeFileSync(join(outDir, "lsdoc_wasm.js"), glue);
 
 let dts = readFileSync(join(tmp, "lsdoc_wasm.d.ts"), "utf8");

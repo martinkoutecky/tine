@@ -47,14 +47,35 @@ pub(crate) struct Files {
 
 impl Files {
     /// `files` are graph-relative paths, contents and times, under `root`.
-    /// A repeated path keeps its last content. O(files × depth).
-    pub(crate) fn new(root: &Path, files: impl IntoIterator<Item = MemoryFile>) -> Files {
+    /// A repeated path keeps its last content. Refuses a path that is not
+    /// relative and plain (`InvalidInput`: no directory holds it), and one
+    /// that is both a file and a directory (no directory holds both).
+    /// O(files × depth).
+    pub(crate) fn new(
+        root: &Path,
+        files: impl IntoIterator<Item = MemoryFile>,
+    ) -> io::Result<Files> {
         let mut out = Files {
             files: HashMap::new(),
             children: HashMap::from([(root.to_path_buf(), Vec::new())]),
         };
+        let invalid = |rel: &str, why: &str| {
+            io::Error::new(io::ErrorKind::InvalidInput, format!("{why}: {rel:?}"))
+        };
         for (rel, content, modified) in files {
-            let path = root.join(rel);
+            let plain = !rel.is_empty()
+                && !rel.contains('\\')
+                && (Path::new(&rel).components())
+                    .all(|c| matches!(c, std::path::Component::Normal(_)));
+            if !plain {
+                return Err(invalid(&rel, "not a graph-relative file path"));
+            }
+            let path = root.join(&rel);
+            if out.children.contains_key(&path)
+                || (path.ancestors().skip(1)).any(|dir| out.files.contains_key(dir))
+            {
+                return Err(invalid(&rel, "a path is both a file and a directory"));
+            }
             if out
                 .files
                 .insert(path.clone(), (content, modified))
@@ -77,7 +98,19 @@ impl Files {
                 child = (dir.to_path_buf(), true);
             }
         }
-        out
+        Ok(out)
+    }
+
+    /// The error a disk read of `path` gives when no file is there: through a
+    /// file ancestor it is not a directory, else not found.
+    fn absent(&self, path: &Path) -> io::Error {
+        if (path.ancestors().skip(1)).any(|dir| self.files.contains_key(dir)) {
+            return io::Error::new(
+                io::ErrorKind::NotADirectory,
+                format!("{} is under a file", path.display()),
+            );
+        }
+        not_found(path)
     }
 }
 
@@ -134,7 +167,13 @@ impl FileSource {
                 })
             }))),
             FileSource::Memory(files) => {
-                let children = files.children.get(&dir).ok_or_else(|| not_found(&dir))?;
+                let children = files.children.get(&dir).ok_or_else(|| {
+                    if files.files.contains_key(&dir) {
+                        io::Error::new(io::ErrorKind::NotADirectory, "not a directory")
+                    } else {
+                        files.absent(&dir)
+                    }
+                })?;
                 Ok(Box::new(children.iter().map(|(path, dir)| {
                     Ok(DirItem {
                         path: path.clone(),
@@ -175,23 +214,31 @@ impl FileSource {
                 })
             }
             FileSource::Memory(files) => {
-                let (content, _) = files.files.get(path).ok_or_else(|| not_found(path))?;
-                let bytes: Arc<[u8]> = match content {
-                    Content::Bytes(bytes) => Arc::clone(bytes),
+                if files.children.contains_key(path) {
+                    return Err(io::Error::new(
+                        io::ErrorKind::IsADirectory,
+                        format!("{} is a directory", path.display()),
+                    ));
+                }
+                let (content, _) = files.files.get(path).ok_or_else(|| files.absent(path))?;
+                Ok(match content {
+                    Content::Bytes(bytes) => Opened {
+                        len: bytes.len() as u64,
+                        reader: Box::new(io::Cursor::new(Arc::clone(bytes))),
+                    },
                     Content::Document(document) => {
-                        match tine_core::model::Format::from_path(path) {
+                        let bytes = match tine_core::model::Format::from_path(path) {
                             tine_core::model::Format::Org => {
                                 tine_core::org::serialize_org(document)
                             }
                             _ => tine_core::doc::serialize(document),
                         }
-                        .into_bytes()
-                        .into()
+                        .into_bytes();
+                        Opened {
+                            len: bytes.len() as u64,
+                            reader: Box::new(io::Cursor::new(bytes)),
+                        }
                     }
-                };
-                Ok(Opened {
-                    len: bytes.len() as u64,
-                    reader: Box::new(io::Cursor::new(bytes)),
                 })
             }
         }
@@ -212,7 +259,7 @@ impl FileSource {
             }
             FileSource::Memory(files) if files.files.contains_key(path) => Ok(EntryKind::File),
             FileSource::Memory(files) if files.children.contains_key(path) => Ok(EntryKind::Dir),
-            FileSource::Memory(_) => Err(not_found(path)),
+            FileSource::Memory(files) => Err(files.absent(path)),
         }
     }
 
@@ -226,7 +273,8 @@ impl FileSource {
                 Ok(metadata.is_file() && super::path_stays_within_root(root, path))
             }
             FileSource::Memory(files) if files.files.contains_key(path) => Ok(true),
-            FileSource::Memory(_) => Err(not_found(path)),
+            FileSource::Memory(files) if files.children.contains_key(path) => Ok(false),
+            FileSource::Memory(files) => Err(files.absent(path)),
         }
     }
 
@@ -251,11 +299,16 @@ impl FileSource {
 
 impl Graph {
     /// A graph of `files` held in memory under the config among them
-    /// (`WholeGraph::from_files`), read as a disk open reads its own.
-    pub(crate) fn in_memory_with_config(files: Vec<MemoryFile>) -> Graph {
+    /// (`WholeGraph::from_files`), read as a disk open reads its own and
+    /// refused for the configured directories' spelling as a disk open is
+    /// (a memory graph has no symlinks for the disk's containment check).
+    pub(crate) fn in_memory_with_config(files: Vec<MemoryFile>) -> io::Result<Graph> {
         let root = PathBuf::from(MEMORY_ROOT);
-        let files = Files::new(&root, files);
-        Self::open_from(root, FileSource::Memory(Arc::new(files)))
+        let files = Files::new(&root, files)?;
+        let graph = Self::open_from(root, FileSource::Memory(Arc::new(files)));
+        super::managed_dir_spelling(&graph.config.journals_dir, "journals")?;
+        super::managed_dir_spelling(&graph.config.pages_dir, "pages")?;
+        Ok(graph)
     }
 
     /// A graph of `files` (graph-relative path, document, modification time)
@@ -266,15 +319,15 @@ impl Graph {
         files: Vec<MemoryFile>,
         config: Config,
         journal_format: JournalFormat,
-    ) -> Graph {
+    ) -> io::Result<Graph> {
         let root = PathBuf::from(MEMORY_ROOT);
-        let files = Files::new(&root, files);
-        Self::empty_with_config(
+        let files = Files::new(&root, files)?;
+        Ok(Self::empty_with_config(
             root,
             FileSource::Memory(Arc::new(files)),
             config,
             journal_format,
-        )
+        ))
     }
 }
 

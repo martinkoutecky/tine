@@ -11,7 +11,8 @@ use quote::ToTokens;
 use std::path::{Path, PathBuf};
 use syn::visit::{self, Visit};
 
-const CRATES: [&str; 6] = [
+const CRATES: [&str; 7] = [
+    "lsdoc-wasm",
     "tine-core",
     "tine-outline",
     "tine-search",
@@ -135,22 +136,27 @@ impl<'ast> Visit<'ast> for Uses<'_> {
                     }) if path.is_ident("path") => Some(text.value()),
                     _ => None,
                 };
+                // A `cfg_attr`'s attributes after its condition, nested ones too.
+                fn attr_paths(
+                    meta: &syn::Meta,
+                    path_of: &dyn Fn(&syn::Meta) -> Option<String>,
+                    out: &mut Vec<String>,
+                ) {
+                    match meta {
+                        syn::Meta::List(list) if list.path.is_ident("cfg_attr") => {
+                            let metas = list.parse_args_with(
+                                syn::punctuated::Punctuated::<syn::Meta, syn::Token![,]>::parse_terminated,
+                            );
+                            for inner in metas.into_iter().flatten().skip(1) {
+                                attr_paths(&inner, path_of, out);
+                            }
+                        }
+                        _ => out.extend(path_of(meta)),
+                    }
+                }
                 let mut paths = Vec::new();
                 for attr in &module.attrs {
-                    if attr.path().is_ident("cfg_attr") {
-                        let metas = attr.parse_args_with(
-                            syn::punctuated::Punctuated::<syn::Meta, syn::Token![,]>::parse_terminated,
-                        );
-                        paths.extend(
-                            metas
-                                .into_iter()
-                                .flatten()
-                                .skip(1)
-                                .filter_map(|m| path_of(&m)),
-                        );
-                    } else {
-                        paths.extend(path_of(&attr.meta));
-                    }
+                    attr_paths(&attr.meta, &path_of, &mut paths);
                 }
                 self.mods.push((module.ident.to_string(), paths));
             }
@@ -214,7 +220,8 @@ impl<'ast> Visit<'ast> for Uses<'_> {
         let mut names = Vec::new();
         walk(tree, &mut Vec::new(), &mut names);
         for name in names {
-            if name == "std::time::Instant" || name == "std::time::*" {
+            let module = name == "std::time" || name == "std::time::self";
+            if module || name == "std::time::Instant" || name == "std::time::*" {
                 self.flag(&format!("use {name}"));
             }
         }
@@ -368,8 +375,12 @@ fn the_clock_guard_names_each_planted_read() {
         r#"
 fn in_macro() { let _ = format!("{:?}", std::time::SystemTime::now()); }
 use std::time as renamed;
+use std::time::{self as also_renamed};
+use std::time;
 #[cfg_attr(target_arch = "wasm32", path = "browser.rs")]
 mod chosen;
+#[cfg_attr(unix, cfg_attr(target_arch = "wasm32", path = "nested.rs"))]
+mod nested;
 #[cfg(any(test, target_arch = "wasm32"))]
 fn mixed() { let _ = std::time::Instant::now(); }
 #[cfg(not(target_arch = "wasm32"))]
@@ -382,15 +393,26 @@ fn test_only() { let _ = std::time::SystemTime::now(); }
         "browser.rs",
         "pub fn f() { let _ = std::time::SystemTime::now(); }\n",
     );
-    let (found, files) = scan(temp.path().join("lib.rs"), temp.path());
-    assert_eq!(files, 2);
+    write(
+        "nested.rs",
+        "pub fn g() { let _ = std::time::SystemTime::now(); }\n",
+    );
+    let (mut found, files) = scan(temp.path().join("lib.rs"), temp.path());
+    found.sort();
+    assert_eq!(files, 3);
     assert_eq!(
         found,
         [
-            "lib.rs: format!(...)",
-            "lib.rs: use std::time as renamed",
-            "lib.rs: std::time::Instant::now",
             "browser.rs: std::time::SystemTime::now",
+            "lib.rs: format!(...)",
+            "lib.rs: std::time::Instant::now",
+            // `use std::time;` and `use std::time as renamed;` both name the module.
+            "lib.rs: use std::time",
+            "lib.rs: use std::time",
+            "lib.rs: use std::time as renamed",
+            "lib.rs: use std::time::self",
+            "lib.rs: use std::time::self as also_renamed",
+            "nested.rs: std::time::SystemTime::now",
         ]
     );
 }

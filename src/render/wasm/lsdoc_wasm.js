@@ -5,7 +5,7 @@
  * graph's text files held in memory, answering through the same wire forms
  * as the desktop app's commands.
  */
-export class BrowserGraph {
+class __tine_raw_BrowserGraph {
     __destroy_into_raw() {
         const ptr = this.__wbg_ptr;
         this.__wbg_ptr = 0;
@@ -17,9 +17,28 @@ export class BrowserGraph {
         wasm.__wbg_browsergraph_free(ptr, 0);
     }
     /**
+     * The `config_problem` of the desktop `load_graph` answer: `null`, or the
+     * problem the graph's `config.edn` was read with.
+     * @returns {string}
+     */
+    config_problem_json() {
+        let deferred1_0;
+        let deferred1_1;
+        try {
+            const ret = wasm.browsergraph_config_problem_json(this.__wbg_ptr);
+            deferred1_0 = ret[0];
+            deferred1_1 = ret[1];
+            return getStringFromWasm0(ret[0], ret[1]);
+        } finally {
+            wasm.__wbindgen_free(deferred1_0, deferred1_1, 1);
+        }
+    }
+    /**
      * `files[i]` holds the bytes of the graph-relative `paths[i]`,
-     * `logseq/config.edn` among them. Cost: one read and parse of each file
-     * and the initial index capture, as a desktop open has.
+     * `logseq/config.edn` among them. Throws (a string) what the desktop open
+     * refuses, and for arrays of different lengths; a config read problem is
+     * `config_problem_json`. Cost: one read and parse of each file and the
+     * initial index capture, as a desktop open has.
      * @param {string[]} paths
      * @param {Uint8Array[]} files
      */
@@ -29,8 +48,11 @@ export class BrowserGraph {
         const ptr1 = passArrayJsValueToWasm0(files, wasm.__wbindgen_malloc);
         const len1 = WASM_VECTOR_LEN;
         const ret = wasm.browsergraph_new(ptr0, len0, ptr1, len1);
-        this.__wbg_ptr = ret;
-        BrowserGraphFinalization.register(this, this.__wbg_ptr, this);
+        if (ret[2]) {
+            throw takeFromExternrefTable0(ret[1]);
+        }
+        this.__wbg_ptr = ret[0];
+        BrowserGraphFinalization.register(this, { ptr: this.__wbg_ptr, generation: __tineGeneration }, this);
         return this;
     }
     /**
@@ -50,7 +72,6 @@ export class BrowserGraph {
         }
     }
 }
-if (Symbol.dispose) BrowserGraph.prototype[Symbol.dispose] = BrowserGraph.prototype.free;
 
 /**
  * The kind of a link target nothing claims: `JournalFormat::absent_link_is_journal`.
@@ -1598,7 +1619,7 @@ function __wbg_get_imports() {
 
 const BrowserGraphFinalization = (typeof FinalizationRegistry === 'undefined')
     ? { register: () => {}, unregister: () => {} }
-    : new FinalizationRegistry(ptr => wasm.__wbg_browsergraph_free(ptr, 1));
+    : new FinalizationRegistry((held) => { if (held.generation === __tineGeneration) wasm.__wbg_browsergraph_free(held.ptr, 1); });
 
 function addToExternrefTable0(obj) {
     const idx = wasm.__externref_table_alloc();
@@ -1835,9 +1856,13 @@ export { initSync, __wbg_init as default };
 // bypassing the init()/initSync() `wasm !== undefined` early-return. Used by
 // src/render/parse.ts to recover from a parser trap (poisoned instance). Same-module
 // scope gives it access to wasmModule / __wbg_get_imports / __wbg_finalize_init.
+// Every fresh instance starts a new generation: a class handle (pointer into one instance's
+// memory) belongs to the generation it was made in, and is refused afterwards.
+let __tineGeneration = 0;
 export function __tineReinstantiate() {
   if (wasmModule === undefined) throw new Error('lsdoc-wasm: reinit before init');
   const instance = new WebAssembly.Instance(wasmModule, __wbg_get_imports());
+  __tineGeneration++;
   return __wbg_finalize_init(instance, wasmModule);
 }
 
@@ -1858,8 +1883,14 @@ function __tineGuard(name, raw) { // Tine trap isolation: one guarded export per
     try {
       return raw.apply(this, args);
     } catch (e) {
+      throw __tineFail(name, e, args);
+    }
+  };
+}
+// The error a call that threw `e` surfaces, after starting a fresh instance when it needs one.
+function __tineFail(name, e, args) {
       // A Rust `Err` is a string the glue throws after the call returned: the instance is intact.
-      if (typeof e === 'string') throw e;
+      if (typeof e === 'string') return e;
       const trapped =
         (typeof WebAssembly !== 'undefined' && e instanceof WebAssembly.RuntimeError) ||
         (e instanceof RangeError && /call stack/i.test(String(e.message)));
@@ -1868,16 +1899,31 @@ function __tineGuard(name, raw) { // Tine trap isolation: one guarded export per
         // skips the Rust epilogues: the shadow stack and externref slots it unwound stay leaked, and
         // enough of them make a later, ordinary call trap. Start fresh; the caller keeps its error.
         __tineReset();
-        throw e;
+        return e;
       }
       let panic = '';
       try { panic = __tine_raw_last_panic(); } catch (_) { /* the instance is too far gone to answer */ }
       const state = ' [instance: ' + (__tineCalls - 1) + ' calls, ' + __tineResets + ' resets, ' +
         (wasm.memory.buffer.byteLength >>> 16) + ' pages; args ' + __tineArgShape(args) + ']';
       __tineReset();
-      throw new Error('lsdoc-wasm trap in ' + name + ': ' + (panic || e.message) + state, { cause: e });
-    }
-  };
+      return new Error('lsdoc-wasm trap in ' + name + ': ' + (panic || e.message) + state, { cause: e });
+}
+// A class handle's methods: guarded, and refused once its instance is replaced.
+function __tineHandleMethods(Handle, Raw, name) {
+  for (const method of Object.getOwnPropertyNames(Raw.prototype)) {
+    if (method === 'constructor' || method === '__destroy_into_raw') continue;
+    const raw = Object.getOwnPropertyDescriptor(Raw.prototype, method).value;
+    if (typeof raw !== 'function') throw new Error('lsdoc-wasm: ' + name + '.' + method + ' is not a method');
+    const guarded = __tineGuard(name + '.' + method, raw);
+    Handle.prototype[method] = function (...args) {
+      if (this.__tineGeneration !== __tineGeneration) {
+        if (method === 'free') return void this.__destroy_into_raw();
+        throw new Error('lsdoc-wasm: ' + name + '.' + method + ' on a handle from a replaced instance; open it again');
+      }
+      return guarded.apply(this, args);
+    };
+  }
+  if (Symbol.dispose) Handle.prototype[Symbol.dispose] = Handle.prototype.free;
 }
 export const absent_link_is_journal = __tineGuard("absent_link_is_journal", __tine_raw_absent_link_is_journal);
 export const asset_rel_path = __tineGuard("asset_rel_path", __tine_raw_asset_rel_path);
@@ -1945,3 +1991,15 @@ export const search_substring_spans_json = __tineGuard("search_substring_spans_j
 export const split_linkable_property = __tineGuard("split_linkable_property", __tine_raw_split_linkable_property);
 export const task_checkbox_state = __tineGuard("task_checkbox_state", __tine_raw_task_checkbox_state);
 export const tine_key_aliases = __tineGuard("tine_key_aliases", __tine_raw_tine_key_aliases);
+export class BrowserGraph extends __tine_raw_BrowserGraph {
+  constructor(...args) {
+    __tineCalls++;
+    try {
+      super(...args);
+    } catch (e) {
+      throw __tineFail("BrowserGraph", e, args);
+    }
+    this.__tineGeneration = __tineGeneration;
+  }
+}
+__tineHandleMethods(BrowserGraph, __tine_raw_BrowserGraph, "BrowserGraph");
