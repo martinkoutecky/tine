@@ -1,10 +1,11 @@
-//! `WholeGraph::from_pages` answers as a store opened over the same files.
+//! `WholeGraph::subgraph` of every file answers as the store view it was
+//! taken from.
 use crate::{InventoryScope, OpenOptions, Store, WatchMode, WholeGraph};
 use std::path::Path;
 
-/// Every file under `root`, graph-relative, with its bytes and time (hidden
-/// and non-page files included: the listing must leave them out itself).
-fn files_under(root: &Path) -> Vec<(String, Vec<u8>, Option<std::time::SystemTime>)> {
+/// Every file under `root`, graph-relative, with its bytes (hidden and
+/// non-page files included: the listing must leave them out itself).
+fn files_under(root: &Path) -> Vec<(String, Vec<u8>)> {
     let mut out = Vec::new();
     let mut pending = vec![root.to_path_buf()];
     while let Some(dir) = pending.pop() {
@@ -19,8 +20,7 @@ fn files_under(root: &Path) -> Vec<(String, Vec<u8>, Option<std::time::SystemTim
                     .to_str()
                     .unwrap()
                     .replace('\\', "/");
-                let modified = std::fs::metadata(&path).unwrap().modified().ok();
-                out.push((rel, std::fs::read(&path).unwrap(), modified));
+                out.push((rel, std::fs::read(&path).unwrap()));
             }
         }
     }
@@ -74,7 +74,7 @@ fn assert_same_answers(root: &Path) -> Vec<String> {
     .unwrap();
     let disk = store.whole_graph().unwrap();
     let disk_root = Store::canonical_root(root).unwrap().display().to_string();
-    let (memory, meta) = WholeGraph::from_pages(files_under(root)).unwrap();
+    let (memory, meta) = disk.subgraph(files_under(root));
     assert_eq!(meta.root, crate::model::file_source::MEMORY_ROOT);
     let (disk, memory) = (
         answers(&disk, &disk_root),
@@ -150,6 +150,10 @@ fn naming_edge_cases_answer_alike() {
     std::fs::write(root.join("pages/Broken.md"), &broken).unwrap();
     broken = b"#+title: Broken Org\r\n* fine\r\n* body \xff\r\n".to_vec();
     std::fs::write(root.join("pages/BrokenOrg.org"), &broken).unwrap();
+    // An unreadable preferred journal with a same-day claimant: the claimant
+    // reconcile retries its read from the graph's own files.
+    std::fs::write(root.join("journals/2026_11_05.md"), b"- fine\n- day \xff\n").unwrap();
+    write("pages/2026-11-05.md", "- the same day as a page\n");
     let answers = assert_same_answers(root);
     // The answers exercised what the fixture is for: titles and org titles
     // name pages, aliases resolve, and the listing leaves out hidden,
@@ -166,31 +170,6 @@ fn naming_edge_cases_answer_alike() {
         "alias missing: {}",
         answers[0]
     );
-}
-
-#[test]
-fn an_unsafe_layout_is_refused_as_a_store_open_refuses_it() {
-    for config in [
-        "{:pages-directory \"../outside\"}",
-        "{:journals-directory \"/abs\"}",
-        "{:pages-directory \"\"}",
-        "{:pages-directory \"a\\\\b\"}",
-    ] {
-        let files = vec![(
-            "logseq/config.edn".to_owned(),
-            config.as_bytes().to_vec(),
-            None,
-        )];
-        let error = WholeGraph::from_pages(files).err().expect(config);
-        assert_eq!(error.kind(), std::io::ErrorKind::InvalidInput, "{config}");
-    }
-    let nested = "{:pages-directory \"notes/pages\"}";
-    let files = vec![(
-        "logseq/config.edn".to_owned(),
-        nested.as_bytes().to_vec(),
-        None,
-    )];
-    assert!(WholeGraph::from_pages(files).is_ok());
 }
 
 /// A flat directory of 20k pages lists in time linear in its size (each

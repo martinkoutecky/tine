@@ -171,9 +171,9 @@ impl Graph {
                 .and_then(|stamp| stamp.modified())
                 .is_some_and(|modified| modified >= announce_after)
                 .then(|| {
-                    fs::symlink_metadata(&path)
-                        .and_then(|meta| meta.created())
-                        .is_ok_and(|created| created >= self.opened_at)
+                    self.source
+                        .created(&path)
+                        .is_some_and(|created| created >= self.opened_at)
                 });
             (
                 path,

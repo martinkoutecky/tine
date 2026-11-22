@@ -1,6 +1,5 @@
 //! Where a graph reads its text files: the disk, or a fixed set of files held
-//! in memory ([`crate::WholeGraph::from_pages`]: an export's build graph, and
-//! the browser). Only the read path goes through it (listing, naming, page
+//! in memory ([`crate::WholeGraph::subgraph`]: an export's build graph). Only the read path goes through it (listing, naming, page
 //! reads, the parse); saves, transactions, the watcher and assets are
 //! disk-only, and a memory graph is never opened by a `Store`, so it never
 //! reaches them. The two sources answer the same calls with the same
@@ -196,6 +195,30 @@ impl FileSource {
     }
 
     /// A file's modification time (a memory file's carried one).
+    /// Whether `path` is a regular file of the graph at `root`: not a
+    /// symlink, and on disk inside the root once its ancestors resolve.
+    pub(crate) fn graph_file(&self, root: &Path, path: &Path) -> io::Result<bool> {
+        match self {
+            FileSource::Disk => {
+                let metadata = fs::symlink_metadata(path)?;
+                Ok(metadata.is_file() && super::path_stays_within_root(root, path))
+            }
+            FileSource::Memory(files) if files.files.contains_key(path) => Ok(true),
+            FileSource::Memory(_) => Err(not_found(path)),
+        }
+    }
+
+    /// When `path` was created, if the filesystem says. A memory file has
+    /// no creation after the graph was built.
+    pub(crate) fn created(&self, path: &Path) -> Option<SystemTime> {
+        match self {
+            FileSource::Disk => fs::symlink_metadata(path)
+                .and_then(|meta| meta.created())
+                .ok(),
+            FileSource::Memory(_) => None,
+        }
+    }
+
     pub(crate) fn modified(&self, path: &Path) -> Option<SystemTime> {
         match self {
             FileSource::Disk => fs::metadata(path).and_then(|meta| meta.modified()).ok(),

@@ -87,4 +87,4 @@ trace is the `tine.share:: <login>/<gist_id>` property on its export definition
 (`tine.share:: pending/<record id>` while its upload is unconfirmed),
 an ordinary page edit through the guarded save (no new format: a block property
 in Page Markdown/Org). `prepare`'s private build graph holds the selected pages
-in memory (`WholeGraph::from_pages`) and writes nothing.
+in memory (`WholeGraph::subgraph`) and writes nothing.

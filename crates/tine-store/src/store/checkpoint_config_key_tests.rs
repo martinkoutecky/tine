@@ -382,7 +382,7 @@ fn graph_meta_stays_out_of_the_generation() {
     }
     assert_eq!(
         users.users,
-        BTreeSet::from(["from_pages".to_owned(), "open".to_owned()]),
+        BTreeSet::from(["open".to_owned(), "subgraph".to_owned()]),
         "{RULE}: a new GraphMeta use in tine-store may carry display settings into the generation"
     );
     assert_eq!(users.meta_calls, 0, "{RULE}: tine-store reads no GraphMeta");

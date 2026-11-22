@@ -979,7 +979,7 @@ fn publish_at(
     // byte of it (closure, `docs/contracts/quick-share.md`). Asset bytes are
     // still read from the real store.
     let (mut files, snap) = crate::build_graph::with_build_graph(
-        store,
+        &graph,
         &planned.selected.pages,
         BUILD_GRAPH_REFUSED,
         |build, meta, corpus| {
@@ -1202,7 +1202,7 @@ fn live(
     // The static fallback and the snapshot both come from the build graph
     // (see `publish_at`).
     let (mut files, snap) = crate::build_graph::with_build_graph(
-        store,
+        &graph,
         &corpus.pages,
         BUILD_GRAPH_REFUSED,
         |build, meta, corpus| {
@@ -1251,7 +1251,7 @@ pub fn publish_static(
     // plain outline. Rendered from the private build graph (see
     // `publish_at`).
     let files = crate::build_graph::with_build_graph(
-        store,
+        &graph,
         &corpus.pages,
         BUILD_GRAPH_REFUSED,
         |build, _meta, corpus| {
@@ -1331,7 +1331,7 @@ mod snapshot_consistency_tests {
         .unwrap();
         store.refresh(tine_store::Depth::Stamps).unwrap();
         let bytes = crate::build_graph::with_build_graph(
-            &store,
+            &graph,
             &reviewed.selected.pages,
             BUILD_GRAPH_REFUSED,
             |build, meta, corpus| snapshot(build, meta, &corpus, "Export", "Public", None, 0),

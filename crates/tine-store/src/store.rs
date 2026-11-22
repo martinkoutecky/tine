@@ -402,9 +402,9 @@ mod page_metrics;
 pub(crate) use first_view::{contain_index_publication, journal_ids_from_entries};
 #[cfg(test)]
 mod fold_save_tests;
-#[cfg(test)]
-mod from_pages_tests;
 mod inventory;
+#[cfg(test)]
+mod subgraph_tests;
 pub(crate) use inventory::InventoryDelta;
 pub use inventory::{Inventory, InventoryEntry, InventoryScope, LinkTarget};
 #[cfg(any(test, feature = "test-faults"))]
@@ -2224,20 +2224,31 @@ impl WholeGraph {
         }
     }
 
-    /// The whole-graph view of `files` (graph-relative path, bytes and
-    /// modification time; a `logseq/config.edn` among them is the graph's
-    /// config), built in memory by the store's own launch pass and first
-    /// publication, so it answers as a store opened over the same files would,
-    /// with no filesystem: an export's build graph, and the browser. Its graph
-    /// metadata names the root `/tine-memory-graph`. Refuses (`InvalidInput`)
-    /// a config whose pages or journals directory a store open refuses. Cost:
-    /// one read and parse of every page and the initial index capture, as a
-    /// store open has.
-    pub fn from_pages(
-        files: Vec<(String, Vec<u8>, Option<std::time::SystemTime>)>,
-    ) -> std::io::Result<(WholeGraph, tine_core::model::GraphMeta)> {
-        let graph = Graph::in_memory(files);
-        graph.validate_config_layout(&graph.config)?;
+    /// The whole-graph view of only `pages` (graph-relative path and bytes)
+    /// under this view's effective config, journal formats and page times:
+    /// what this view would answer if the graph held just these pages. It is
+    /// built in memory by the store's own launch pass and first publication,
+    /// with no filesystem access; an export's build graph. Its graph metadata
+    /// names the root `/tine-memory-graph`. Cost: one read and parse of each
+    /// page and the initial index capture, as a store open has, plus one
+    /// lookup per page in this view's page times.
+    pub fn subgraph(
+        &self,
+        pages: Vec<(String, Vec<u8>)>,
+    ) -> (WholeGraph, tine_core::model::GraphMeta) {
+        let times = self.graph.observed_page_mtimes();
+        let files = pages
+            .into_iter()
+            .map(|(rel, bytes)| {
+                let time = times.get(&rel).copied();
+                (rel, bytes, time)
+            })
+            .collect();
+        let graph = Graph::in_memory(
+            files,
+            tine_core::config::Config::clone(&self.config.config),
+            JournalFormat::clone(&self.journal_format),
+        );
         graph.install_live_config();
         graph.warm_cache_cancellable(|| false);
         let problem = graph.config_read_problem.clone();
@@ -2258,7 +2269,7 @@ impl WholeGraph {
             &HashMap::new(),
             &Default::default(),
         );
-        Ok((WholeGraph::of(Arc::new(snapshot)), meta))
+        (WholeGraph::of(Arc::new(snapshot)), meta)
     }
 }
 
