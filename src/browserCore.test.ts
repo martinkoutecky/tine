@@ -83,6 +83,11 @@ it("the browser core's read wires match the pinned desktop answers", async () =>
     expect(() => graph.query_facets_json("{}")).toThrow(/needs a `key` or `keys: true` scope/);
     expect(() => graph.parse_query_json("(task TODO)", "unknown")).toThrow(/unknown variant/);
     expect(graph.page_icons_json('["Shortcut"]')).toBe(fixture.expected.page_icons);
+    // JSON null for an optional parameter is its default, as on the desktop.
+    expect(graph.parse_query_json("(task TODO)", "og", "null")).toBe(fixture.expected.parse_query);
+    expect(graph.query_run_json(query, view, "null")).toBe(fixture.expected.query_run);
+    const search = graph.run_graph_search_json("alpha", 5, 5, '{"explain":true,"transliteration":null}');
+    expect(search).toBe(fixture.expected.run_graph_search);
   } finally {
     graph.free();
   }

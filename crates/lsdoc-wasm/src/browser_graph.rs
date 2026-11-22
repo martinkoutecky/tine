@@ -208,7 +208,7 @@ impl BrowserGraph {
             options.page_match_scope,
             options.page_view,
             options.block_view,
-            options.transliteration,
+            options.transliteration.unwrap_or(false),
         )
         .map_err(search_error)?;
         wire(answer)
@@ -223,7 +223,7 @@ struct SearchOptions {
     page_match_scope: Option<FriendlyPageMatchScope>,
     page_view: Option<ViewSettings>,
     block_view: Option<ViewSettings>,
-    transliteration: bool,
+    transliteration: Option<bool>,
 }
 
 fn reference_error(error: tine_store::QueryError) -> JsValue {
@@ -238,10 +238,13 @@ fn input<T: serde::de::DeserializeOwned>(json: &str) -> Result<T, JsValue> {
     serde_json::from_str(json).map_err(js_error)
 }
 
+/// An optional desktop parameter: absent or JSON `null` is its default, as a
+/// Tauri `Option` parameter reads it.
 fn optional_input<T: serde::de::DeserializeOwned + Default>(
     json: Option<&str>,
 ) -> Result<T, JsValue> {
-    json.map_or_else(|| Ok(T::default()), input)
+    let given: Option<T> = json.map_or(Ok(None), input)?;
+    Ok(given.unwrap_or_default())
 }
 
 fn wire(answer: impl Serialize) -> Result<String, JsValue> {
