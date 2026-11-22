@@ -5249,6 +5249,7 @@ name = "tine-store"
 version = "0.11.0-beta.1"
 dependencies = [
  "cap-std",
+ "indexmap 2.14.0",
  "libc",
  "memchr",
  "notify",

@@ -397,6 +397,41 @@ fn a_memory_parse_read_does_not_copy() {
     assert_eq!(&*text, "- a\n");
 }
 
+/// Every source operation reads a file spelled as a directory (`x/`,
+/// `x/.`, ...) as Linux does: not a directory (0d6586f8c follow-up 2).
+#[test]
+fn a_file_spelled_as_a_directory_is_not_one_for_every_operation() {
+    use crate::model::file_source::{Content, FileSource, Files, MEMORY_ROOT};
+    let root = Path::new(MEMORY_ROOT);
+    let files = [(
+        "x".to_owned(),
+        Content::Bytes(Arc::new(b"x".to_vec())),
+        None,
+    )];
+    let source = FileSource::Memory(Arc::new(Files::new(root, files).unwrap()));
+    for spelling in ["x/", "x//", "x/.", "x/./", "x//.", "x//./"] {
+        let path = root.join(spelling);
+        let not_a_dir = |e: std::io::Error| e.kind() == std::io::ErrorKind::NotADirectory;
+        assert!(
+            source.lstat(&path).err().is_some_and(not_a_dir),
+            "lstat {spelling}"
+        );
+        assert!(
+            source.open(&path).err().is_some_and(not_a_dir),
+            "open {spelling}"
+        );
+        assert!(
+            source.graph_file(root, &path).err().is_some_and(not_a_dir),
+            "graph_file {spelling}"
+        );
+        assert!(
+            source.read_dir(&path).err().is_some_and(not_a_dir),
+            "read_dir {spelling}"
+        );
+    }
+    assert!(source.graph_file(root, &root.join("x")).unwrap());
+}
+
 #[test]
 fn layouts_open_or_refuse_alike() {
     let cases: &[(&str, &str, &[&str], bool)] = &[

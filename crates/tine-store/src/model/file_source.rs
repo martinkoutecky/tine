@@ -7,7 +7,8 @@
 //! reaches them. The two sources answer the same calls with the same
 //! errors, so every loader step above them is the one the disk load runs.
 use super::Graph;
-use std::collections::HashMap;
+use indexmap::IndexMap;
+use std::borrow::Cow;
 use std::fs;
 use std::io;
 use std::path::{Path, PathBuf};
@@ -59,8 +60,9 @@ pub(crate) struct Files {
 
 enum Node {
     File(Content, Option<SystemTime>),
-    /// Children by name, and in the order they were given (the listing's).
-    Dir(HashMap<Box<str>, usize>, Vec<(Box<str>, usize)>),
+    /// Children by name, in the order they were given (the listing's); each
+    /// name held once. Boxed, so a file's node stays small.
+    Dir(Box<IndexMap<Box<str>, usize>>),
 }
 
 /// A memory file name: one the reference volume (case-sensitive POSIX)
@@ -90,7 +92,7 @@ impl Files {
     ) -> io::Result<Files> {
         let mut out = Files {
             root: root.to_path_buf(),
-            nodes: vec![Node::Dir(HashMap::new(), Vec::new())],
+            nodes: vec![Node::Dir(Box::default())],
         };
         let invalid = |rel: &str, why: &str| {
             io::Error::new(io::ErrorKind::InvalidInput, format!("{why}: {rel:?}"))
@@ -105,7 +107,7 @@ impl Files {
                 }
                 let last = names.peek().is_none();
                 at = match (out.child(at, name), last) {
-                    (None, false) => out.add(at, name, Node::Dir(HashMap::new(), Vec::new())),
+                    (None, false) => out.add(at, name, Node::Dir(Box::default())),
                     (None, true) => out.add(at, name, file.take().expect("one file per key")),
                     (Some(i), false) if out.is_dir(i) => i,
                     (Some(i), true) if !out.is_dir(i) => {
@@ -126,7 +128,7 @@ impl Files {
 
     fn child(&self, at: usize, name: &str) -> Option<usize> {
         match &self.nodes[at] {
-            Node::Dir(by_name, _) => by_name.get(name).copied(),
+            Node::Dir(children) => children.get(name).copied(),
             Node::File(..) => None,
         }
     }
@@ -134,23 +136,23 @@ impl Files {
     fn add(&mut self, at: usize, name: &str, node: Node) -> usize {
         let id = self.nodes.len();
         self.nodes.push(node);
-        let Node::Dir(by_name, order) = &mut self.nodes[at] else {
+        let Node::Dir(children) = &mut self.nodes[at] else {
             unreachable!("a child is added to a directory")
         };
-        by_name.insert(name.into(), id);
-        order.push((name.into(), id));
+        children.insert(name.into(), id);
         id
     }
 
     /// The node `path` names, by one walk from the root, with the errors the
-    /// reference gives: a path through a file is not a directory; a name
-    /// longer than [`NAME_MAX`] is an invalid file name; else not found.
+    /// reference gives: a path through a file, or a file spelled as a
+    /// directory (ending in `/` or `/.`), is not a directory; a name longer
+    /// than [`NAME_MAX`] is an invalid file name; else not found.
     /// O(path bytes).
-    fn node(&self, path: &Path) -> io::Result<&Node> {
+    fn node(&self, path: &Path) -> io::Result<usize> {
         let rel = path.strip_prefix(&self.root).map_err(|_| not_found(path))?;
-        let mut at = &self.nodes[0];
+        let mut at = 0;
         for part in rel.components() {
-            let Node::Dir(by_name, _) = at else {
+            let Node::Dir(children) = &self.nodes[at] else {
                 return Err(io::Error::new(
                     io::ErrorKind::NotADirectory,
                     format!("{} is under a file", path.display()),
@@ -166,14 +168,24 @@ impl Files {
                     format!("a name in {} is too long", path.display()),
                 ));
             }
-            at = &self.nodes[*by_name.get(name).ok_or_else(|| not_found(path))?];
+            at = *children.get(name).ok_or_else(|| not_found(path))?;
+        }
+        if !self.is_dir(at) && names_a_directory(path) {
+            return Err(io::Error::new(
+                io::ErrorKind::NotADirectory,
+                format!("{} is not a directory", path.display()),
+            ));
         }
         Ok(at)
     }
 
     /// The file at `path`: a directory there is not one.
     fn file(&self, path: &Path) -> io::Result<(&Content, Option<SystemTime>)> {
-        match self.node(path)? {
+        self.file_at(self.node(path)?, path)
+    }
+
+    fn file_at(&self, at: usize, path: &Path) -> io::Result<(&Content, Option<SystemTime>)> {
+        match &self.nodes[at] {
             Node::File(content, modified) => Ok((content, *modified)),
             Node::Dir(..) => Err(io::Error::new(
                 io::ErrorKind::IsADirectory,
@@ -186,19 +198,16 @@ impl Files {
     /// held bytes are checked where they are and answered as a view of
     /// them; a document's serialization is the text (MEMORY-SOURCE-MODEL Q3:
     /// no copy of the file's bytes).
-    fn parse_text(&self, path: &Path) -> io::Result<ParseText> {
+    fn parse_text(&self, path: &Path) -> io::Result<Cow<'_, str>> {
         let (content, _) = self.file(path)?;
         #[cfg(feature = "test-faults")]
         crate::cost_counters::full_read();
         match content {
-            Content::Bytes(bytes) => {
-                super::validate_parse_text(bytes, path)?;
-                Ok(ParseText(Text::Held(Arc::clone(bytes))))
-            }
+            Content::Bytes(bytes) => super::validate_parse_text(bytes, path).map(Cow::Borrowed),
             Content::Document(document) => {
                 let text = serialized(document, path);
                 super::validate_parse_text(text.as_bytes(), path)?;
-                Ok(ParseText(Text::Owned(text)))
+                Ok(Cow::Owned(text))
             }
         }
     }
@@ -212,36 +221,6 @@ fn serialized(document: &tine_core::doc::Document, path: &Path) -> String {
     }
 }
 
-/// A parse read's text: a read buffer, or a view of a memory file's held
-/// bytes (no copy).
-pub(crate) struct ParseText(Text);
-
-enum Text {
-    Owned(String),
-    /// Bytes [`super::validate_parse_text`] admitted as UTF-8.
-    Held(Arc<Vec<u8>>),
-}
-
-impl ParseText {
-    pub(crate) fn owned(text: String) -> ParseText {
-        ParseText(Text::Owned(text))
-    }
-}
-
-impl std::ops::Deref for ParseText {
-    type Target = str;
-
-    fn deref(&self) -> &str {
-        match &self.0 {
-            Text::Owned(text) => text,
-            // SAFETY: `Held` is made only by `Files::parse_text`, after
-            // `validate_parse_text` checked these bytes as UTF-8, and held
-            // bytes are never written (`Files` hands out shared clones only).
-            Text::Held(bytes) => unsafe { std::str::from_utf8_unchecked(bytes) },
-        }
-    }
-}
-
 pub(crate) enum EntryKind {
     File,
     Dir,
@@ -249,11 +228,17 @@ pub(crate) enum EntryKind {
 }
 
 /// One directory entry. A disk entry keeps its `DirEntry`, whose metadata
-/// needs no file open on Windows (the launch listing's stamps).
+/// needs no file open on Windows (the launch listing's stamps); a memory
+/// entry its node.
 pub(crate) struct DirItem {
     pub(crate) path: PathBuf,
     pub(crate) kind: EntryKind,
-    disk: Option<fs::DirEntry>,
+    origin: Origin,
+}
+
+enum Origin {
+    Disk(fs::DirEntry),
+    Memory(usize),
 }
 
 /// An opened file: its reader and its length when opened.
@@ -291,11 +276,11 @@ impl FileSource {
                 Ok(DirItem {
                     path,
                     kind,
-                    disk: Some(entry),
+                    origin: Origin::Disk(entry),
                 })
             }))),
-            FileSource::Memory(files) => match files.node(&dir)? {
-                Node::Dir(_, order) => Ok(Box::new(order.iter().map(move |(name, id)| {
+            FileSource::Memory(files) => match &files.nodes[files.node(&dir)?] {
+                Node::Dir(children) => Ok(Box::new(children.iter().map(move |(name, id)| {
                     Ok(DirItem {
                         path: dir.join(&**name),
                         kind: if files.is_dir(*id) {
@@ -303,7 +288,7 @@ impl FileSource {
                         } else {
                             EntryKind::File
                         },
-                        disk: None,
+                        origin: Origin::Memory(*id),
                     })
                 }))),
                 Node::File(..) => Err(io::Error::new(
@@ -319,11 +304,16 @@ impl FileSource {
     pub(crate) fn stamp(&self, item: &DirItem) -> Option<crate::watch::Stamp> {
         match self {
             FileSource::Disk => {
-                let metadata = item.disk.as_ref()?.metadata().ok()?;
-                crate::watch::stamp_from_metadata(&metadata)
+                let Origin::Disk(entry) = &item.origin else {
+                    return None;
+                };
+                crate::watch::stamp_from_metadata(&entry.metadata().ok()?)
             }
             FileSource::Memory(files) => {
-                let (_, modified) = files.file(&item.path).ok()?;
+                let Origin::Memory(at) = item.origin else {
+                    return None;
+                };
+                let (_, modified) = files.file_at(at, &item.path).ok()?;
                 Some(crate::watch::Stamp::in_memory(modified))
             }
         }
@@ -368,15 +358,11 @@ impl FileSource {
                     EntryKind::Other
                 })
             }
-            FileSource::Memory(files) => match files.node(path)? {
-                Node::Dir(..) => Ok(EntryKind::Dir),
-                // A spelling ending in `/` or `/.` names a directory.
-                Node::File(..) if names_a_directory(path) => Err(io::Error::new(
-                    io::ErrorKind::NotADirectory,
-                    format!("{} is not a directory", path.display()),
-                )),
-                Node::File(..) => Ok(EntryKind::File),
-            },
+            FileSource::Memory(files) => Ok(if files.is_dir(files.node(path)?) {
+                EntryKind::Dir
+            } else {
+                EntryKind::File
+            }),
         }
     }
 
@@ -388,7 +374,7 @@ impl FileSource {
                 let metadata = fs::symlink_metadata(path)?;
                 Ok(metadata.is_file() && super::path_stays_within_root(root, path))
             }
-            FileSource::Memory(files) => Ok(matches!(files.node(path)?, Node::File(..))),
+            FileSource::Memory(files) => Ok(!files.is_dir(files.node(path)?)),
         }
     }
 
@@ -404,7 +390,7 @@ impl FileSource {
     }
 
     /// A parse read of `path` from memory, if this is a memory source.
-    pub(crate) fn memory_parse_text(&self, path: &Path) -> Option<io::Result<ParseText>> {
+    pub(crate) fn memory_parse_text(&self, path: &Path) -> Option<io::Result<Cow<'_, str>>> {
         match self {
             FileSource::Disk => None,
             FileSource::Memory(files) => Some(files.parse_text(path)),
@@ -460,7 +446,7 @@ impl Graph {
     }
 
     /// [`read_parse_input_in`] this graph's [`FileSource`].
-    pub(crate) fn read_parse_input(&self, path: &Path) -> io::Result<ParseText> {
+    pub(crate) fn read_parse_input(&self, path: &Path) -> io::Result<Cow<'_, str>> {
         super::read_parse_input_in(&self.source, path)
     }
 }
