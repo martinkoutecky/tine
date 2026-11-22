@@ -3,8 +3,10 @@
 //! `SystemTime::now` panic on `wasm32-unknown-unknown`, so one std clock read
 //! left in code the browser runs is an outage there that no native test sees.
 //! Walks each crate's module tree from `lib.rs`, skipping test-only and
-//! native-only (`not(target_arch = "wasm32")`) items, and names every std
-//! clock use left.
+//! native-only (`not(target_arch = "wasm32")`) items, and names each std
+//! clock path or `use` left. Not covered: calls inside macro tokens, renamed
+//! `std::time` or `SystemTime` imports, modules chosen by `cfg_attr(path)`,
+//! and items whose cfg mixes test or native-only with wasm32 (skipped).
 use quote::ToTokens;
 use std::path::{Path, PathBuf};
 use syn::visit::{self, Visit};
