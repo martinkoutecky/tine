@@ -330,6 +330,11 @@ fn top_level_forms(source: &str) -> Option<Vec<Form>> {
 /// One direct option value in an advanced map or vector-plus-options stream.
 /// Duplicate declarations refuse rather than choosing one arbitrarily.
 pub(crate) fn option_value<'a>(source: &'a str, key: &str) -> Option<&'a str> {
+    option_gap_and_value(source, key).map(|(_, value)| value)
+}
+
+/// The authored trivia after an option key and its effective EDN value.
+pub(crate) fn option_gap_and_value<'a>(source: &'a str, key: &str) -> Option<(&'a str, &'a str)> {
     let forms = top_level_forms(source)?;
     let mut found = None;
     for (i, form) in forms.iter().enumerate() {
@@ -345,7 +350,10 @@ pub(crate) fn option_value<'a>(source: &'a str, key: &str) -> Option<&'a str> {
                 if found.is_some() {
                     return None;
                 }
-                found = Some(&source[pair[1].span.clone()]);
+                found = Some((
+                    &source[pair[0].span.end..pair[1].span.start],
+                    &source[pair[1].span.clone()],
+                ));
             }
         }
     }

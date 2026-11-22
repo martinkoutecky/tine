@@ -8,5 +8,13 @@
   <meta name="tine-published" content="quick-share:2">
   <title>Tine share</title>
 </head>
-<body><div id="root"></div><script type="module" src="/src/main.tsx"></script></body>
+<body>
+  <div id="root"><h1>Page not found</h1><a href="/">Tine home</a></div>
+  <script type="module">
+    if (location.pathname.startsWith(import.meta.env.BASE_URL)) {
+      document.getElementById("root").replaceChildren();
+      void import("/src/main.tsx");
+    }
+  </script>
+</body>
 </html>

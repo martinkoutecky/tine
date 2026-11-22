@@ -750,12 +750,15 @@ export function App(): JSX.Element {
       dbg(`graph load failed: ${String(e)}`);
       if (graphPath) setStartupOpenFailure({ path: graphPath, message: String(e) });
     } finally {
-      if (isPublishedExport() && window.location.hash) {
+      // Address writeback stays off until startup has resolved a stable fragment.
+      while (alive && isPublishedExport()) {
+        const hash = window.location.hash;
+        if (!hash) break;
         try {
-          const hash = window.location.hash;
           const current = focusedSurfaceOwner(() => alive && hash === window.location.hash);
           await openPublishedPermalink(hash, paneRouter(focusedPaneId()), backend(), linkTarget, current);
         } catch { console.error("published permalink unavailable"); }
+        if (hash === window.location.hash) break;
       }
       // The load above retires `owner` (opening a graph moves the binding), so the
       // VIEW, not the graph binding, owns this completion.

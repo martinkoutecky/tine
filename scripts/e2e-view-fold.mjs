@@ -9,7 +9,7 @@ import path from "node:path";
 import { webcrypto } from "node:crypto";
 import { gzipSync } from "node:zlib";
 import { chromium } from "playwright";
-import { serveViewer } from "./check-quick-share-viewer.mjs";
+import { servePages, serveViewer } from "./check-quick-share-viewer.mjs";
 
 const out = path.resolve("target/artifacts/view-fold"); fs.mkdirSync(out, { recursive: true });
 for (const dir of ["home", "data", "config", "cache", "state"]) fs.mkdirSync(path.join(out, dir), { recursive: true });
@@ -36,24 +36,97 @@ const browser = await chromium.launch({ args: ["--no-sandbox"], env: { ...proces
 const proof = { result: "running", cases: [] };
 let page;
 let staticHost;
+async function publicationAddress(context, mode) {
+  await context.route("https://gist.githubusercontent.com/**", route => route.fulfill({ body: envelope, contentType: "text/plain", headers: { "access-control-allow-origin": "*" } }));
+  if (mode === "quick-share") return `${hosted.url}${locator}${prefix}`;
+  // Run the built application with the folder export's meta and snapshot.
+  await context.route("**/quick-share.html", route => route.fulfill({ contentType: "text/html", body:
+    fs.readFileSync(path.join(viewer, "index.html"), "utf8").replace('content="quick-share:2"', 'content="snapshot.json"')
+      .replace("connect-src https://gist.githubusercontent.com https://api.github.com", "connect-src 'self'") }));
+  await context.route("**/snapshot.json", route => route.fulfill({ json: doc.snapshot }));
+  return `${hosted.url}quick-share.html#`;
+}
+
+async function startupPermalinkChanges(mode) {
+  const firstBlock = "6512a000-0000-4000-8000-000000000001";
+  const nextBlock = "6512a000-0000-4000-8000-000000000002";
+  const cases = [];
+  for (const initial of ["page", "block"]) for (const latest of ["page", "block"]) {
+    const context = await browser.newContext();
+    const tab = await context.newPage();
+    const address = await publicationAddress(context, mode);
+    const start = initial === "page" ? "/page/Project" : `/block/${firstBlock}`;
+    const next = latest === "page" ? "/page/Notes%20%C3%BC" : `/block/${nextBlock}`;
+    const nextHash = new URL(address + next).hash;
+    const pageHash = new URL(address + "/page/Notes%20%C3%BC").hash;
+    try {
+      await context.addInitScript(({ method, argument }) => {
+        window.Worker = class extends Worker {
+          #held;
+          #seen = false;
+          constructor(...args) {
+            super(...args);
+            this.addEventListener("message", event => {
+              if (event.data.id !== this.#held) return;
+              event.stopImmediatePropagation();
+              window.releasePermalink = () => {
+                this.#held = undefined;
+                this.dispatchEvent(new MessageEvent("message", { data: event.data }));
+              };
+            });
+          }
+          postMessage(request, ...transfer) {
+            if (!this.#seen && request.method === method && request.args[0] === argument) {
+              this.#seen = true;
+              this.#held = request.id;
+            }
+            super.postMessage(request, ...transfer);
+          }
+        };
+      }, initial === "page" ? { method: "resolve_page_json", argument: "Project" }
+        : { method: "resolve_blocks_json", argument: JSON.stringify([firstBlock]) });
+      await tab.goto(address + start);
+      await tab.waitForFunction(() => typeof window.releasePermalink === "function");
+      await tab.evaluate(hash => new Promise(resolve => {
+        window.addEventListener("hashchange", () => resolve(), { once: true });
+        location.hash = hash;
+      }), nextHash);
+      await tab.evaluate(() => window.releasePermalink());
+      const landed = await tab.waitForFunction(({ hash, pageHash, latest }) => {
+        if (location.hash !== hash && location.hash !== pageHash) return "address overwritten";
+        const rows = document.querySelectorAll(latest === "block" ? ".main-content .block-flash" : ".main-content .ls-block");
+        if ([...rows].some(row => row.querySelector(":scope > .block-main")?.textContent.includes("block with an id"))) return "opened";
+      }, { hash: nextHash, pageHash, latest });
+      assert.equal(await landed.jsonValue(), "opened",
+        `startup must open the latest permalink instead of ${new URL(tab.url()).hash}`);
+      cases.push({ mode, initial, latest, result: "passed" });
+    } catch (error) {
+      cases.push({ mode, initial, latest, result: "failed", observed: String(error).replaceAll(prefix, "<share>") });
+    } finally {
+      await context.close();
+    }
+  }
+  return cases;
+}
+
 try {
+  proof.startupPermalinks = [];
+  for (const mode of ["quick-share", "published"]) {
+    proof.startupPermalinks.push(...await startupPermalinkChanges(mode));
+  }
+  const failed = proof.startupPermalinks.filter(entry => entry.result !== "passed");
+  assert.deepEqual(failed.map(({ mode, initial, latest }) => `${mode} ${initial} → ${latest}`), [],
+    "all startup permalink transitions must land");
+  console.log(`PASS: ${proof.startupPermalinks.length} deferred startup permalink transitions`);
   for (const mode of ["quick-share", "published"]) {
     const context = await browser.newContext({ viewport: { width: 1280, height: 900 } });
     page = await context.newPage();
     const mutations = [], errors = [];
     page.on("pageerror", error => errors.push(error.message));
     page.on("request", req => { if (!["GET", "HEAD"].includes(req.method())) mutations.push(req.method()); });
-    await context.route("https://gist.githubusercontent.com/**", route => route.fulfill({ body: envelope, contentType: "text/plain", headers: { "access-control-allow-origin": "*" } }));
-    // Same production entry, with the published export's actual meta/backend.
-    if (mode === "published") {
-      await context.route("**/quick-share.html", route => route.fulfill({ contentType: "text/html", body:
-        fs.readFileSync(path.join(viewer, "index.html"), "utf8").replace('content="quick-share:2"', 'content="snapshot.json"')
-          .replace("connect-src https://gist.githubusercontent.com https://api.github.com", "connect-src 'self'") }));
-      await context.route("**/snapshot.json", route => route.fulfill({ json: doc.snapshot }));
-    }
+    const address = await publicationAddress(context, mode);
     const hash = mode === "quick-share" ? prefix : "#";
-    const url = `${hosted.url}${mode === "quick-share" ? locator : "quick-share.html"}${hash}/page/Project`;
-    await page.goto(url);
+    await page.goto(`${address}/page/Project`);
     const parent = page.locator(".ls-block").filter({
       has: page.getByText("A collapsed bullet", { exact: true }),
     }).first();
@@ -78,7 +151,7 @@ try {
     proof.cases.push({ mode, expanded: true, collapsed: true, navigationRetained: true, reloadReset: true, mutations });
     await context.close();
   }
-  staticHost = await serveViewer(path.join(out, "static"));
+  staticHost = await servePages(path.join(out, "static"));
   const staticContext = await browser.newContext({ javaScriptEnabled: false, viewport: { width: 1280, height: 900 } });
   page = await staticContext.newPage();
   await page.goto(`${staticHost.url}folds.html`);
@@ -113,7 +186,9 @@ try {
   proof.result = "passed";
 } catch (error) {
   proof.result = "failed"; proof.observed = String(error);
-  proof.expected = "fold arrow reveals the child without mutations"; proof.classification = "product or harness; inspect screenshot";
+  proof.expected = proof.startupPermalinks?.some(entry => entry.result === "failed")
+    ? "startup opens the latest permalink" : "fold arrow reveals the child without mutations";
+  proof.classification = "product or harness; inspect the case evidence";
   await page?.screenshot({ path: path.join(out, "failure.png") }).catch(() => {});
   throw error;
 } finally {

@@ -4,7 +4,7 @@ import fs from "node:fs";
 import path from "node:path";
 import { chromium } from "playwright";
 import { deployViewers, fileHashes, mergeViewerBuild, unpackViewer, validatePin, validateViewer, sha256, packViewer, assertRetainedBuilds } from "./quick-share-viewer-lib.mjs";
-import { serveViewer } from "./check-quick-share-viewer.mjs";
+import { servePages } from "./check-quick-share-viewer.mjs";
 
 const artifacts = path.resolve(import.meta.dirname, "../artifacts/quick-share-viewer/tests");
 fs.mkdirSync(artifacts, { recursive: true });
@@ -16,20 +16,22 @@ function build(dir, version, chunk = `late-${version}.js`, generation = 1) {
   fs.writeFileSync(path.join(dir, "viewer.json"), JSON.stringify({ generation, link: generation, envelope: 1, document: generation, snapshot_schema: generation, built_from: version, files: fileHashes(dir) }));
 }
 test("old HTML loads a previously unloaded chunk after upgrade and rollback", async () => {
-  const dir = scratch(), old = path.join(dir, "old"), next = path.join(dir, "next"), deployed = path.join(dir, "deployed");
+  const dir = scratch(), old = path.join(dir, "old"), next = path.join(dir, "next"), website = path.join(dir, "website");
+  const deployed = path.join(website, "s/1");
   build(old, "old"); build(next, "new");
   mergeViewerBuild(old, deployed);
-  const server = await serveViewer(deployed), browser = await chromium.launch();
+  const server = await servePages(website), browser = await chromium.launch();
+  const url = new URL("s/1/", server.url).href;
   try {
-    const oldTab = await browser.newPage(); await oldTab.goto(server.url);
+    const oldTab = await browser.newPage(); await oldTab.goto(url);
     mergeViewerBuild(next, deployed);
-    const newTab = await browser.newPage(); await newTab.goto(server.url);
+    const newTab = await browser.newPage(); await newTab.goto(url);
     await oldTab.getByRole("button").click();
     await oldTab.waitForFunction(() => document.body.dataset.loaded === "old");
     mergeViewerBuild(old, deployed);
     await newTab.getByRole("button").click();
     await newTab.waitForFunction(() => document.body.dataset.loaded === "new");
-    const rolledBack = await browser.newPage(); await rolledBack.goto(server.url);
+    const rolledBack = await browser.newPage(); await rolledBack.goto(url);
     await rolledBack.getByRole("button").click();
     await rolledBack.waitForFunction(() => document.body.dataset.loaded === "old");
   } finally { await browser.close(); await server.close(); }
@@ -63,20 +65,32 @@ test("retention cannot shrink, while the same bytes may move from a trial artifa
   assert.doesNotThrow(() => assertRetainedBuilds(old, { generations: { 1: { retained: [{ tag: "v0.9.0-beta.1", sha256: "a".repeat(64) }] } } }));
 });
 
-test("generation 2 opens locator paths with the unchanged envelope version", async () => {
-  const dir = scratch();
-  build(dir, "two", "two.js", 2);
-  assert.equal(validateViewer(dir, 2).envelope, 1);
-  assert.throws(() => validateViewer(dir, 1), /generation mismatch/);
-  const hosted = await serveViewer(dir, 2);
+test("Pages serves the pinned generation 2 viewer at the locator and keeps generation 1 at its index", async () => {
+  const dir = scratch(), website = path.join(dir, "website");
+  const one = path.join(dir, "one"), two = path.join(dir, "two");
+  build(one, "one");
+  build(two, "two", "two.js", 2);
+  assert.equal(validateViewer(two, 2).envelope, 1);
+  assert.throws(() => validateViewer(two, 1), /generation mismatch/);
+  const first = { run_id: 1, sha256: "1".repeat(64) }, second = { run_id: 2, sha256: "2".repeat(64) };
+  await deployViewers({ manifest: { schema: 1, generations: {
+    1: { current: first, retained: [first] },
+    2: { current: second, retained: [second] },
+  } }, website, download: async (_, generation) => generation === 1 ? one : two });
+  const hosted = await servePages(website);
   try {
-    const response = await fetch(`${hosted.url}tine-fixture/0123456789abcdef0123#fragment`);
-    assert.equal(response.status, 200);
-    assert.equal(await response.text(), fs.readFileSync(path.join(dir, "index.html"), "utf8"));
+    const old = await fetch(`${hosted.url}s/1/#tine-fixture/0123456789abcdef0123/key`);
+    assert.equal(old.status, 200);
+    assert.equal(await old.text(), fs.readFileSync(path.join(one, "index.html"), "utf8"));
+    const response = await fetch(`${hosted.url}s/2/tine-fixture/0123456789abcdef0123#key/page/Project`);
+    assert.equal(response.status, 404);
+    assert.equal(await response.text(), fs.readFileSync(path.join(two, "index.html"), "utf8"));
   } finally { await hosted.close(); }
 });
 
 test("an unpinned generation installs no viewer", async () => {
+  const website = scratch();
   const manifest = { schema: 1, generations: { 2: { current: null, retained: [] } } };
-  await deployViewers({ manifest, website: scratch(), download: async () => assert.fail("unpinned viewer downloaded") });
+  await deployViewers({ manifest, website, download: async () => assert.fail("unpinned viewer downloaded") });
+  assert.equal(fs.existsSync(path.join(website, "404.html")), false);
 });

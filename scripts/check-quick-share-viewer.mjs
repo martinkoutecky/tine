@@ -7,7 +7,7 @@ import { webcrypto } from "node:crypto";
 import { gzipSync } from "node:zlib";
 import { chromium } from "playwright";
 import { fileURLToPath } from "node:url";
-import { sha256, validateViewer, validateViewerGeneration, fixtureFingerprint } from "./quick-share-viewer-lib.mjs";
+import { sha256, validateViewer, validateViewerGeneration, fixtureFingerprint, stageViewerBuild } from "./quick-share-viewer-lib.mjs";
 
 const root = path.resolve(import.meta.dirname, "..");
 const mime = { ".html": "text/html", ".js": "text/javascript", ".css": "text/css", ".json": "application/json", ".svg": "image/svg+xml", ".woff2": "font/woff2" };
@@ -20,23 +20,34 @@ async function sealDocument(document, link) {
   const cipher = await webcrypto.subtle.encrypt({ name: "AES-GCM", iv: nonce, additionalData: header }, key, gzipSync(JSON.stringify(document)));
   return Buffer.concat([header, Buffer.from(nonce), Buffer.from(cipher)]).toString("base64url");
 }
-export async function serveViewer(directory, generation = 1) {
-  const mount = `/s/${generation}/`;
+// Mirror Pages' static files, directory indexes and root custom 404.
+export async function servePages(website) {
   const server = http.createServer((req, res) => {
     try {
       const pathname = decodeURIComponent(new URL(req.url, "http://localhost").pathname);
-      if (!pathname.startsWith(mount)) throw new Error("outside viewer");
-      const route = pathname.slice(mount.length);
-      const relative = generation === 2 && /^[A-Za-z0-9-]+\/[a-f0-9]{20,32}$/.test(route) ? "index.html" : route;
-      const file = path.resolve(directory, relative || "index.html");
-      if (!file.startsWith(path.resolve(directory) + path.sep)) throw new Error("outside viewer");
-      const body = fs.readFileSync(file); // first: a missing file must answer 404, not crash after the 200
+      const file = path.resolve(website, `.${pathname}${pathname.endsWith("/") ? "index.html" : ""}`);
+      if (!file.startsWith(path.resolve(website) + path.sep)) throw new Error("outside site");
+      const body = fs.readFileSync(file);
       res.writeHead(200, { "content-type": mime[path.extname(file)] ?? "application/octet-stream", "cache-control": "no-store" });
       res.end(body);
-    } catch { res.writeHead(404); res.end(); }
+    } catch {
+      const fallback = path.join(website, "404.html");
+      res.writeHead(404, { "content-type": "text/html", "cache-control": "no-store" });
+      res.end(fs.existsSync(fallback) ? fs.readFileSync(fallback) : "");
+    }
   });
   await new Promise((resolve) => server.listen(0, "127.0.0.1", resolve));
-  return { url: `http://127.0.0.1:${server.address().port}${mount}`, close: () => new Promise((resolve) => server.close(resolve)) };
+  return { url: `http://127.0.0.1:${server.address().port}/`, close: () => new Promise((resolve) => server.close(resolve)) };
+}
+
+export async function serveViewer(directory, generation) {
+  const artifacts = path.join(root, "target/artifacts/quick-share-compatibility");
+  fs.mkdirSync(artifacts, { recursive: true });
+  const website = fs.mkdtempSync(path.join(artifacts, "pages-"));
+  const mount = `s/${generation}/`;
+  stageViewerBuild(directory, website, generation);
+  const hosted = await servePages(website);
+  return { ...hosted, url: hosted.url + mount };
 }
 
 const generation2Pages = {
@@ -108,6 +119,7 @@ export async function checkViewer(target, { generation = 1, envelope, link, expe
       let secretRequests = 0, unexpectedRequests = 0;
       page.on("request", (request) => { if (request.url().includes(key) || (request.postData() ?? "").includes(key) || JSON.stringify(request.headers()).includes(key)) secretRequests++; });
       await context.addInitScript((keyField) => {
+        window.__shareInitialHash = location.hash;
         window.__shareInitialCspViolations = [];
         document.addEventListener("securitypolicyviolation", (event) => window.__shareInitialCspViolations.push({ directive: event.effectiveDirective, uri: event.blockedURI }));
         const original = window.fetch;
@@ -125,16 +137,21 @@ export async function checkViewer(target, { generation = 1, envelope, link, expe
         if (url.startsWith(base)) {
           if (!remote) return route.continue();
           const relative = decodeURIComponent(url.slice(base.length).split("?")[0]);
-          const name = !relative || relative === locator ? "index.html" : relative;
+          const fallback = generation === 2 && relative === locator;
+          const name = !relative || fallback ? "index.html" : relative;
           const response = await fetch(url, { redirect: "error", cache: "no-store", signal: AbortSignal.timeout(15_000) });
           const bytes = Buffer.from(await response.arrayBuffer());
-          assert.equal(response.ok, true, `deployed file unavailable: ${name}`);
+          assert.equal(response.status, fallback ? 404 : 200, `deployed file unavailable: ${name}`);
           assert.equal(sha256(bytes), manifest.files?.[name], `deployed checksum mismatch: ${name}`);
-          return route.fulfill({ status: 200, contentType: mime[path.extname(name)] ?? "application/octet-stream", body: bytes });
+          return route.fulfill({ status: response.status, contentType: mime[path.extname(name)] ?? "application/octet-stream", body: bytes });
         }
         unexpectedRequests++; return route.abort();
       });
-      await page.goto(`${address}${fixture.expectedText ? "/page/Project" : ""}`, { waitUntil: "domcontentloaded" });
+      const permalink = fixture.expectedText ? "/page/Project" : "";
+      const response = await page.goto(address + permalink, { waitUntil: "domcontentloaded" });
+      assert.equal(response.status(), generation === 2 ? 404 : 200, "the locator must use the Pages fallback");
+      assert.equal(new URL(page.url()).pathname, original.pathname, "the Pages fallback must keep the locator");
+      assert.equal(await page.evaluate(() => window.__shareInitialHash), prefix + permalink, "the Pages fallback must keep the fragment");
       await page.locator(".page-title, .quick-share-failure").first().waitFor({ timeout: 30_000 });
       assert.equal(await page.locator(".quick-share-failure").count(), 0, "viewer refused the share");
       await assert.doesNotReject(() => page.getByLabel("User content · Shared by a Tine user").waitFor());
@@ -229,7 +246,11 @@ export async function checkViewer(target, { generation = 1, envelope, link, expe
       await context.route("https://gist.githubusercontent.com/**", (route) => route.fulfill({ status: 200, contentType: "text/plain", body: fixture.envelope, headers: { "access-control-allow-origin": "*" } }));
       const link = new URL(fixture.link);
       const address = generation === 2 ? `${base}${link.pathname.slice("/s/2/".length)}` : base;
-      await context.route(address, (route) => route.fulfill({ status: 200, contentType: "text/html", body: fs.readFileSync(path.join(target, "index.html"), "utf8").replace("style-src 'self' 'unsafe-inline'", "style-src 'self'") }));
+      await context.route(address, async (route) => {
+        const response = await route.fetch();
+        const body = (await response.text()).replace("style-src 'self' 'unsafe-inline'", "style-src 'self'");
+        await route.fulfill({ response, body });
+      });
       activePrefix = link.hash; activeKey = activePrefix.slice(1).split("/").at(-1);
       await page.goto(`${address}${activePrefix}/page/Project`);
       await page.locator(".katex").first().waitFor();
@@ -238,8 +259,18 @@ export async function checkViewer(target, { generation = 1, envelope, link, expe
       console.log(`CSP bundle probe: unsafe-inline needed (${[...new Set(styles)].join(", ")}); generation ${generation} worker policy verified`);
       await context.close();
     }
+    if (!remote && generation === 2 && !envelope) {
+      const page = await browser.newPage();
+      activePage = page; activeCase = "pages-fallback-scope";
+      const response = await page.goto(new URL("/missing-page", base).href);
+      assert.equal(response.status(), 404);
+      await page.getByRole("heading", { name: "Page not found" }).waitFor();
+      assert.equal(page.workers().length, 0);
+      await page.close();
+    }
     // A feature refusal must be visible before any gist is requested.
     const page = await browser.newPage();
+    activePage = page; activeCase = "unsupported-browser";
     await page.addInitScript(() => { window.DecompressionStream = undefined; });
     await page.goto(`${base}${generation === 2 ? "tine-fixture/0123456789abcdef0123" : ""}#invalid`);
     await page.getByRole("alert").filter({ hasText: "This browser cannot open Tine shares" }).waitFor();

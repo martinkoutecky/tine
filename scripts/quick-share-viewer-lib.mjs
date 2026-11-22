@@ -51,6 +51,13 @@ export function mergeViewerBuild(source, destination, generation = 1) {
   }
 }
 
+/** GitHub Pages serves the root 404 document at missing locator paths. */
+export function stageViewerBuild(source, website, generation) {
+  const destination = path.join(website, "s", String(generation));
+  mergeViewerBuild(source, destination, generation);
+  if (generation === 2) fs.copyFileSync(path.join(destination, "index.html"), path.join(website, "404.html"));
+}
+
 export function unpackViewer(zip, destination, expectedHash, generation = 1) {
   if (!/^[a-f0-9]{64}$/.test(expectedHash) || sha256(fs.readFileSync(zip)) !== expectedHash) throw new Error("viewer zip SHA-256 mismatch");
   // Python's stdlib avoids an npm archive dependency. Validate the complete
@@ -104,7 +111,7 @@ export async function deployViewers({ manifest, website, download }) {
     for (const pin of [...retained, entry.current]) {
       validatePin(pin);
       const directory = await download(pin, Number(generation));
-      mergeViewerBuild(directory, path.join(website, "s", generation), Number(generation));
+      stageViewerBuild(directory, website, Number(generation));
     }
   }
 }

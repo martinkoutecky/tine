@@ -10,6 +10,7 @@ use super::ir::{
 };
 use super::registry::Registry;
 use super::QueryInput;
+use std::sync::LazyLock;
 
 /// The wire dialect a `query_parse` caller names.
 ///
@@ -55,7 +56,7 @@ pub struct ParsedQuery {
     /// UTF-16 spans of the textual current-page variable in the authored argument.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub current_page_tokens: Vec<(usize, usize)>,
-    /// Whether an advanced query declares the typed current-page input.
+    /// Whether the typed current-page input takes its context from the focused pane.
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub current_page_input: bool,
     /// OG's read-only table request: options, query-table, or a trailing table.
@@ -69,11 +70,28 @@ pub struct ParsedQuery {
     pub og_hint: Option<OgQueryHint>,
 }
 
+// The desktop matcher's ECMAScript \s: Unicode White_Space with BOM in place of NEL.
+const JS_WHITESPACE: &str = r"[\s\u{FEFF}--\u{0085}]";
+
 /// The Logseq textual current-page variable's occurrences, in byte order.
 fn current_page_tokens(text: &str) -> impl Iterator<Item = std::ops::Range<usize>> + '_ {
-    static TOKEN: std::sync::LazyLock<regex::Regex> =
-        std::sync::LazyLock::new(|| regex::Regex::new(r"(?i)<%\s*current page\s*%>").unwrap());
+    static TOKEN: LazyLock<regex::Regex> = LazyLock::new(|| {
+        regex::Regex::new(&format!(
+            r"(?i)<%{JS_WHITESPACE}*current page{JS_WHITESPACE}*%>"
+        ))
+        .unwrap()
+    });
     TOKEN.find_iter(text).map(|found| found.range())
+}
+
+fn focuses_current_page(source: &str) -> bool {
+    static DIRECT: LazyLock<regex::Regex> =
+        LazyLock::new(|| regex::Regex::new(&format!(r"\A(?:{JS_WHITESPACE}|,)*\z")).unwrap());
+    // The desktop focused-pane dependency requires the vector immediately
+    // after :inputs (whitespace and commas allowed). The engine still reads
+    // an effective vector across EDN comments and discards, with owner context.
+    super::advanced_patterns::input_values(source)
+        .is_some_and(|(gap, values)| DIRECT.is_match(gap) && values.contains(&":current-page"))
 }
 
 /// Bind the textual current-page variable for execution. Callers check the
@@ -316,7 +334,7 @@ pub fn parse_query_pair(
         })
         .collect();
     let current_page_input = matches!(&query.source, Source::Advanced { original, .. }
-        if super::advanced_patterns::input_values(original).contains(&":current-page"));
+        if focuses_current_page(original));
     ParsedQuery {
         og_hint,
         query,
@@ -369,6 +387,67 @@ pub fn anchored_view(parsed: &ParsedQuery, anchor: super::ir::Anchor) -> ViewSet
 mod tests {
     use super::*;
     use crate::query::ir::Anchor;
+
+    #[test]
+    fn current_page_metadata_preserves_desktop_binding() {
+        let vector = "[:find (pull ?b [*]) :in $ ?p :where [?b :block/page ?p]]";
+        let cases = [
+            ("space", " ", true),
+            ("comma", ", ", true),
+            ("LF comment", " ; comment\n ", false),
+            ("CRLF comment", " ; comment\r\n ", false),
+            ("CR comment", " ; comment\r ", false),
+            ("scalar discard", " #_ :ignored ", false),
+            ("vector discard", " #_ [:ignored] ", false),
+        ];
+        let mut differences = Vec::new();
+        for (label, gap, focused) in cases {
+            for source in [
+                format!("{vector} :inputs{gap}[:current-page]"),
+                format!("{{:query {vector} :inputs{gap}[:current-page]}}"),
+            ] {
+                let parsed =
+                    parse_query_pair(&source, QueryTextDialect::MacroQuery, &[], Registry::none());
+                assert!(matches!(parsed.query.source, Source::Advanced { .. }));
+                if parsed.current_page_input != focused {
+                    differences.push(format!(
+                        "{label}: {source:?} → {}",
+                        parsed.current_page_input
+                    ));
+                }
+            }
+        }
+
+        for (label, space, focused) in [
+            ("ASCII", " ", true),
+            ("BOM", "\u{feff}", true),
+            ("NEL", "\u{0085}", false),
+        ] {
+            let token = format!("<%{space}CuRrEnT PaGe{space}%>");
+            let source = format!("(and [[🪴]] {token})");
+            let parsed =
+                parse_query_pair(&source, QueryTextDialect::MacroQuery, &[], Registry::none());
+            let expected_span = if focused {
+                vec![(12, 12 + token.encode_utf16().count())]
+            } else {
+                vec![]
+            };
+            let expected_arg = if focused {
+                "(and [[🪴]] [[Focused]])"
+            } else {
+                &source
+            };
+            if parsed.current_page_tokens != expected_span
+                || bind_current_page(&source, "Focused") != expected_arg
+            {
+                differences.push(format!(
+                    "{label}: {source:?} → {:?}",
+                    parsed.current_page_tokens
+                ));
+            }
+        }
+        assert!(differences.is_empty(), "{differences:#?}");
+    }
 
     /// The producer half of the published-export view key: the engine writes
     /// its `ViewSettings` DENSELY (every list field present, empty or not),
