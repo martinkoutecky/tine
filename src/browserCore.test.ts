@@ -61,7 +61,9 @@ it("the browser core refuses what the desktop open refuses", async () => {
   const unreadable = new BrowserGraph(["logseq/config.edn", "pages/a.md"], [new Uint8Array([0xff]), encode("- a\n")]);
   expect(JSON.parse(unreadable.config_problem_json())).toMatchObject({ kind: "config-read" });
   unreadable.free();
-  expect(() => open([["pages/a.md", "- a\n"], ["pages//a.md", "- b\n"]])).toThrow(/given twice/);
+  expect(() => open([["pages/a.md", "- a\n"], ["pages/a.md", "- b\n"]])).toThrow(/given twice/);
+  expect(() => open([["pages/a.md", "- a\n"], ["pages//a.md", "- b\n"]])).toThrow(/graph-relative/);
+  expect(() => open([["x", "x"], ["logseq/config.edn", '{:pages-directory "x/."}']])).toThrow(/not a directory/);
   expect(() => open([["pages/a.md", "x"], ["x/pages/b.md", "x"], ["logseq/config.edn", '{:pages-directory "pages/a.md/p"}']])).toThrow(/under a file/);
   const icloud = open([["logseq/.config.edn.icloud", "x"], ["pages/a.md", "- a\n"]]);
   expect(JSON.parse(icloud.config_problem_json())).toMatchObject({ kind: "config-read" });

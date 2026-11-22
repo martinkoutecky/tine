@@ -1545,6 +1545,20 @@ failure alike. Proof `src-tauri/src/backup/restore.rs`
 `a_restore_holds_the_host_gate_until_one_fresh_host_runs`,
 `a_retirement_waits_for_the_restore_it_raced`.
 
+## Memory graphs (browser core, export build)
+
+A memory graph (`FileSource::Memory`) is only read; nothing writes it. `WholeGraph::from_files` answers what
+`Store::open` answers on a case-sensitive POSIX directory holding exactly the given files: no links, no empty
+directories, every file readable. A key is names joined by single `/`; a name is nonempty, at most 255 bytes, not
+`.` or `..`, and holds no NUL or platform separator. Any other spelling, a key given twice, and a key that is also
+another key's directory are refused (`InvalidInput`), never normalized. The layout check is the disk's
+(`Graph::check_layout`): a configured directory whose spelling resolves under a file, or as a file when it ends in
+`/` or `/.`, or with a name over 255 bytes, is refused; so is an `assets` file. Construction and each lookup are one
+walk of the path's names (O(path bytes)); a parse read of a held file is a view of its bytes after the parse-input
+checks, never a copy. Proof: `layouts_open_or_refuse_alike`, `from_files_refuses_paths_no_directory_holds`,
+`a_deep_first_key_builds_in_linear_time`, `a_memory_parse_read_does_not_copy`, `backslash_names_open_alike`,
+`config_problems_answer_alike_from_files`.
+
 ## Graph backups (og-backup-zip, ADR 0074)
 
 Tine snapshots a graph at launch and before a rewrite the user asked for
