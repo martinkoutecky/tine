@@ -2926,8 +2926,8 @@ impl WholeGraph {
     }
 
     /// The effective config this view was built under: what renders and
-    /// exports of the view read, so they answer from the same generation as
-    /// its pages (a later config reload makes a new view). Cost O(1).
+    /// exports of the view read, so they agree with its pages (a later config
+    /// reload makes a new view). Cost O(1).
     pub fn config(&self) -> &tine_core::config::Config {
         &self.config.config
     }

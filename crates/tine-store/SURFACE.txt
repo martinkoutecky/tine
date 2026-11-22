@@ -404,7 +404,7 @@ field restore::RestoreFailed.phase
 field restore::RestoreFailed.cause
 field restore::RestoreFailed.done
 
-## WholeGraph: Names (ceiling: 33)
+## WholeGraph: Names (ceiling: 34)
 # CLI export extends corpus's selection parameter to indexed block-ID candidate
 # pages. A page name cannot identify those pages; CorpusScope types that existing
 # parameter. No Store operation or WholeGraph question is added.
@@ -479,6 +479,13 @@ fn store::WholeGraph::unreadable_files
 # cover only the canonical file of a spelling twin, and no `InventoryScope` makes
 # it per-file, so this is one read of the mtimes the view already holds.
 fn store::WholeGraph::page_modified
+# Browser core slice 1 fresh review (3d663be44 finding 2; 33 -> 34): an export
+# renders a view it holds while the watcher may publish a newer config;
+# `Store::config` answers the store's current config, so hidden properties,
+# favorites and the default home came from a second config. No existing
+# WholeGraph question returns its config, and a parameter on another question
+# cannot carry it; `config` is the view's own, read in O(1).
+fn store::WholeGraph::config
 struct store::Inventory
 struct store::InventoryEntry
 struct store::WholeGraph
