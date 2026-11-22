@@ -3,7 +3,7 @@
 
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
-import { readLsdocTag, root, wasmArtifacts } from "./wasm-artifacts.mjs";
+import { assertWithinCeiling, readLsdocTag, root, wasmArtifacts } from "./wasm-artifacts.mjs";
 
 const expected = readLsdocTag();
 for (const { dir, maxBytes } of wasmArtifacts) {
@@ -16,6 +16,6 @@ for (const { dir, maxBytes } of wasmArtifacts) {
   const base64 = source.match(/^export const WASM_B64 = "([A-Za-z0-9+/]+={0,2})";$/m)?.[1];
   if (!base64 || base64.length % 4 !== 0) throw new Error(`${rel}: missing or invalid Wasm base64`);
   const bytes = Buffer.byteLength(base64, "base64");
-  if (bytes > maxBytes) throw new Error(`${rel}: ${bytes} Wasm bytes exceed the ${maxBytes}-byte ceiling`);
+  assertWithinCeiling(rel, bytes, maxBytes);
   console.log(`wasm pin OK: ${dir}, lsdoc ${tag}, ${bytes}/${maxBytes} raw bytes`);
 }

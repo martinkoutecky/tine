@@ -13,6 +13,12 @@ export const wasmArtifacts = [
   { dir: "src/render/wasm-core", feature: "core", maxBytes: 4_655_000 },
 ];
 
+/** The one size check for a vendored module, used before regeneration writes
+ *  and by the shipping guard. */
+export function assertWithinCeiling(dir, bytes, maxBytes) {
+  if (bytes > maxBytes) throw new Error(`${dir}: ${bytes} Wasm bytes exceed the ${maxBytes}-byte ceiling`);
+}
+
 export function readLsdocTag() {
   const manifests = ["tine-core", "tine-outline", "lsdoc-wasm", "tine-graph-features"];
   const tags = manifests.map((name) => {

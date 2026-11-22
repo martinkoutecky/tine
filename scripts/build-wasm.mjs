@@ -6,7 +6,7 @@ import { execFileSync } from "node:child_process";
 import { readFileSync, writeFileSync, mkdtempSync, mkdirSync } from "node:fs";
 import { homedir, tmpdir } from "node:os";
 import { join } from "node:path";
-import { readLsdocTag, root, wasmArtifacts } from "./wasm-artifacts.mjs";
+import { assertWithinCeiling, readLsdocTag, root, wasmArtifacts } from "./wasm-artifacts.mjs";
 
 const coreTag = readLsdocTag();
 console.log(`lsdoc pin: ${coreTag}`);
@@ -30,15 +30,17 @@ const rustflags = [
   `--remap-path-prefix=${join(sysroot, "lib", "rustlib", "src", "rust")}=/rustc/${rustcCommit}`,
 ].filter(Boolean).join(" ");
 
-// Validate both builds before replacing any vendored files.
-for (const { dir, rawBytes, base64Chars, files } of wasmArtifacts.map(build)) {
+// Build and validate both modules (glue, size) before replacing any vendored file.
+const built = wasmArtifacts.map(build);
+for (const { dir, rawBytes, maxBytes } of built) assertWithinCeiling(dir, rawBytes, maxBytes);
+for (const { dir, rawBytes, base64Chars, files } of built) {
   const outDir = join(root, dir);
   mkdirSync(outDir, { recursive: true });
   for (const [name, content] of Object.entries(files)) writeFileSync(join(outDir, name), content);
   console.log(`vendored → ${dir}/ (${rawBytes} raw bytes, ${base64Chars} base64 chars)`);
 }
 
-function build({ dir, feature }) {
+function build({ dir, feature, maxBytes }) {
   const tmp = mkdtempSync(join(tmpdir(), "lsdoc-wasm-"));
   const args = ["build", "crates/lsdoc-wasm", "--target", "web", "--profile", "wasm-release",
     "--out-dir", tmp, "--out-name", "lsdoc_wasm"];
@@ -236,6 +238,7 @@ __tineHandleMethods(${n}, __tine_raw_${n}, ${JSON.stringify(n)});
   dts = dts.replace(dtsAnchor, `${dtsAnchor}\nexport function __tineReinstantiate(): void;\n`);
   return {
     dir,
+    maxBytes,
     rawBytes: wasm.length,
     base64Chars: b64.length,
     files: { "lsdoc_wasm_bytes.ts": bytesTs, "lsdoc_wasm.js": glue, "lsdoc_wasm.d.ts": dts },

@@ -22,9 +22,10 @@ const temp = null;
 const output = checkedIn;
 
 // The checked-in public demo is a reproducible artifact, independent of the
-// local build clock and the commit which happens to run this check.
+// local build clock and the commit which happens to run this check. The app
+// build includes the vendored-Wasm guard.
 const guideBuildEnv = { ...process.env, SOURCE_DATE_EPOCH: "1790640000", TINE_BUILD_COMMIT: "" };
-const frontend = spawnSync("npx", ["--no-install", "vite", "build"],
+const frontend = spawnSync("npm", ["run", "build"],
   { cwd: root, stdio: "inherit", env: guideBuildEnv });
 if (frontend.status !== 0) process.exit(frontend.status ?? 1);
 if (!check) fs.rmSync(output, { recursive: true, force: true });
