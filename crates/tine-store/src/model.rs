@@ -23,6 +23,7 @@ pub(crate) mod persistent;
 use persistent::{EntryList, Map as SharedMap, Pages};
 pub(crate) mod asset_ref_index;
 mod calendar_days;
+pub(crate) mod file_source;
 pub(crate) mod fileless_names;
 #[cfg(any(test, feature = "test-faults"))]
 pub(crate) mod index_oracle;
@@ -36,6 +37,7 @@ mod page_icons;
 mod page_identity;
 mod page_parse;
 mod parse_depth;
+pub(crate) use file_source::FileSource;
 mod path_membership;
 pub(crate) mod referenced_names;
 mod template_names;
@@ -162,9 +164,12 @@ impl std::error::Error for ParserPanicked {}
 /// opens read-only (`ConfigState::problem`) instead of writing under the
 /// default :legacy file names. A plainly absent config.edn is no problem
 /// (Logseq's defaults). Cost: one metadata call.
-pub(crate) fn missing_config_problem(config_path: &Path) -> Option<crate::IoError> {
+pub(crate) fn missing_config_problem(
+    source: &FileSource,
+    config_path: &Path,
+) -> Option<crate::IoError> {
     let placeholder = config_path.with_file_name(".config.edn.icloud");
-    placeholder.symlink_metadata().is_ok().then(|| {
+    source.lstat(&placeholder).is_ok().then(|| {
         io::Error::other(
             "config.edn is in iCloud but not downloaded yet; open the graph again once it is",
         )
@@ -172,9 +177,21 @@ pub(crate) fn missing_config_problem(config_path: &Path) -> Option<crate::IoErro
     })
 }
 pub(crate) fn read_parse_input(path: &Path) -> io::Result<String> {
-    let bytes = read_parse_bytes(path)?;
+    read_parse_input_in(&FileSource::Disk, path)
+}
+
+/// [`read_parse_input`] from `source`.
+pub(crate) fn read_parse_input_in(source: &FileSource, path: &Path) -> io::Result<String> {
+    let (bytes, _) = read_parse_bytes_in(source, path)?;
     validate_parse_bytes_for_path(&bytes, path)?;
     String::from_utf8(bytes).map_err(|_| not_utf8())
+}
+
+/// The bytes of `path` in `source`, and its length when it was opened.
+pub(crate) fn read_parse_bytes_in(source: &FileSource, path: &Path) -> io::Result<(Vec<u8>, u64)> {
+    let mut opened = source.open(path)?;
+    let bytes = read_parse_reader(&mut opened.reader, opened.len)?;
+    Ok((bytes, opened.len))
 }
 
 /// One classification boundary for automatic unreadable-file rows. A missing
@@ -210,7 +227,13 @@ pub(crate) fn read_parse_bytes_observed(path: &Path) -> io::Result<(Vec<u8>, fs:
 
 pub(crate) fn read_parse_open_file(input: &mut fs::File) -> io::Result<(Vec<u8>, fs::Metadata)> {
     let metadata = input.metadata()?;
-    let len = metadata.len();
+    let bytes = read_parse_reader(input, metadata.len())?;
+    Ok((bytes, metadata))
+}
+
+/// The bounded parse-input read of an opened file whose length was `len`
+/// when opened: the one read every page read shares, from disk or memory.
+fn read_parse_reader(input: &mut (impl Read + ?Sized), len: u64) -> io::Result<Vec<u8>> {
     if len > PARSE_INPUT_MAX_BYTES {
         return Err(io::Error::new(
             io::ErrorKind::InvalidData,
@@ -224,7 +247,7 @@ pub(crate) fn read_parse_open_file(input: &mut fs::File) -> io::Result<(Vec<u8>,
         }
     });
     let mut bytes = Vec::new();
-    Read::by_ref(input)
+    input
         .take(PARSE_INPUT_MAX_BYTES + 1)
         .read_to_end(&mut bytes)?;
     if bytes.len() as u64 > PARSE_INPUT_MAX_BYTES {
@@ -237,7 +260,19 @@ pub(crate) fn read_parse_open_file(input: &mut fs::File) -> io::Result<(Vec<u8>,
     }
     #[cfg(feature = "test-faults")]
     crate::cost_counters::full_read();
-    Ok((bytes, metadata))
+    Ok(bytes)
+}
+
+impl Graph {
+    /// [`read_parse_bytes_in`] this graph's [`FileSource`].
+    pub(crate) fn read_parse_bytes_sourced(&self, path: &Path) -> io::Result<(Vec<u8>, u64)> {
+        read_parse_bytes_in(&self.source, path)
+    }
+
+    /// [`read_parse_input_in`] this graph's [`FileSource`].
+    pub(crate) fn read_parse_input(&self, path: &Path) -> io::Result<String> {
+        read_parse_input_in(&self.source, path)
+    }
 }
 
 pub(crate) fn validate_parse_bytes_for_path(bytes: &[u8], path: &Path) -> io::Result<()> {
@@ -498,6 +533,9 @@ pub(crate) fn parse_doc_with_opts(path: &Path, source: &str) -> (Document, doc::
 }
 pub(crate) struct Graph {
     pub(crate) root: PathBuf,
+    /// Where the read path gets the graph's files (disk, or memory for
+    /// `WholeGraph::from_pages`).
+    pub(crate) source: FileSource,
     pub(crate) root_binding: Arc<crate::root_binding::RootBinding>,
     /// The canonical filesystem capability used for every asset operation. For
     /// ordinary graphs this is `<root>/assets`; when the runtime has explicitly
@@ -2761,17 +2799,33 @@ impl Graph {
     }
 
     pub(crate) fn open_inner(root: impl AsRef<Path>) -> Graph {
-        let root = root.as_ref().to_path_buf();
-        let (config, problem) = match read_parse_input(&root.join("logseq/config.edn")) {
+        Self::open_from(root.as_ref().to_path_buf(), FileSource::Disk)
+    }
+
+    /// A graph over `files` (graph-relative path and bytes; a
+    /// `logseq/config.edn` among them is its config) held in memory: the
+    /// load, the naming and every page read take them from there
+    /// ([`FileSource::Memory`]). Such a graph is only read
+    /// (`WholeGraph::from_pages`); nothing writes it.
+    pub(crate) fn in_memory(files: Vec<(String, Vec<u8>)>) -> Graph {
+        let root = PathBuf::from(file_source::MEMORY_ROOT);
+        let files = file_source::Files::new(&root, files);
+        Self::open_from(root, FileSource::Memory(Arc::new(files)))
+    }
+
+    fn open_from(root: PathBuf, source: FileSource) -> Graph {
+        let config_path = root.join("logseq/config.edn");
+        let (config, problem) = match read_parse_input_in(&source, &config_path) {
             Ok(text) => (Config::parse(&text), None),
             Err(error) if error.kind() == io::ErrorKind::NotFound => (
                 Config::default(),
-                missing_config_problem(&root.join("logseq/config.edn")),
+                missing_config_problem(&source, &config_path),
             ),
             Err(error) => (Config::default(), Some(error.into())),
         };
         let journal_format = config.journal_format();
         let mut graph = Self::empty_with_config(root, config, journal_format);
+        graph.source = source;
         graph.config_read_problem = problem;
         graph
     }
@@ -2782,6 +2836,7 @@ impl Graph {
             root_binding: Arc::new(crate::root_binding::RootBinding::new(&root)),
             assets_root: root.join("assets"),
             root,
+            source: FileSource::Disk,
             config,
             config_read_problem: None,
             journal_format: Arc::new(journal_format),
@@ -3022,7 +3077,8 @@ impl Graph {
                 let tag = stem[base_stem.len()..]
                     .trim_matches(|c: char| c == '.' || c == ' ' || c == '(' || c == ')')
                     .to_string();
-                let preview = read_parse_input(&p)
+                let preview = self
+                    .read_parse_input(&p)
                     .ok()
                     .and_then(|c| {
                         c.lines()
@@ -3155,7 +3211,7 @@ impl Graph {
         // baseline (rev) from the SAME bytes (so rev and the served content can't
         // disagree via a write landing between two reads), and — on a cache miss —
         // parse it below.
-        let read = read_parse_input(&entry.path);
+        let read = self.read_parse_input(&entry.path);
         // A held page's installed row is its owner's ((G)): a direct read
         // neither reconciles nor serves it.
         let cache_ready = self.cache_built() && self.disk_sourced(&entry.path);
@@ -3207,7 +3263,7 @@ impl Graph {
         let Some(entry) = self.entry_for_path(&abs) else {
             return Ok(None);
         };
-        let content = match read_parse_input(&abs) {
+        let content = match self.read_parse_input(&abs) {
             Ok(c) => c,
             Err(e) if e.kind() == io::ErrorKind::NotFound => return Ok(None),
             Err(e) => return Err(e),
@@ -3834,7 +3890,7 @@ impl Graph {
         {
             return SyncFileResult::ReadFailed(io::Error::other("injected watcher read failure"));
         }
-        let (bytes, metadata) = match read_parse_bytes_observed(path) {
+        let (bytes, len) = match self.read_parse_bytes_sourced(path) {
             Ok(observed) => observed,
             Err(error) => return SyncFileResult::ReadFailed(error),
         };
@@ -3843,8 +3899,8 @@ impl Graph {
         // input; reconciliation checks whether its stamp is still in flux.
         // Save staging/publication compare the bytes' revision
         // through their established conflict path instead.
-        if bytes.len() as u64 != metadata.len() {
-            let (kind, reason) = if (bytes.len() as u64) < metadata.len() {
+        if bytes.len() as u64 != len {
+            let (kind, reason) = if (bytes.len() as u64) < len {
                 (io::ErrorKind::UnexpectedEof, "file shortened during read")
             } else {
                 (io::ErrorKind::Interrupted, "file grew during read")
@@ -4367,7 +4423,10 @@ fn list_md(
         }
         let (name, date_key) = match kind {
             PageKind::Journal => journal_stem_name(fmt, stem),
-            PageKind::Page => (effective_page_name(&path, stem, name_fmt).unwrap(), None),
+            PageKind::Page => (
+                effective_page_name(&FileSource::Disk, &path, stem, name_fmt).unwrap(),
+                None,
+            ),
         };
         out.push(PageEntry {
             name,

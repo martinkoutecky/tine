@@ -401,6 +401,8 @@ mod page_metrics;
 pub(crate) use first_view::{contain_index_publication, journal_ids_from_entries};
 #[cfg(test)]
 mod fold_save_tests;
+#[cfg(test)]
+mod from_pages_tests;
 mod inventory;
 pub(crate) use inventory::InventoryDelta;
 pub use inventory::{Inventory, InventoryEntry, InventoryScope, LinkTarget};
@@ -2203,7 +2205,13 @@ impl Store {
             .ok_or_else(|| LoadError::Failed {
                 reason: "ready store has no graph snapshot".into(),
             })?;
-        Ok(WholeGraph {
+        Ok(WholeGraph::of(snapshot))
+    }
+}
+
+impl WholeGraph {
+    fn of(snapshot: Arc<Snapshot>) -> WholeGraph {
+        WholeGraph {
             graph: Arc::clone(&snapshot.graph),
             rev: snapshot.rev,
             unreadable: Arc::clone(&snapshot.unreadable),
@@ -2212,7 +2220,38 @@ impl Store {
             list: Arc::clone(&snapshot.list),
             claimants: Arc::clone(&snapshot.claimants),
             _snapshot: snapshot,
-        })
+        }
+    }
+
+    /// The whole-graph view of `files` (graph-relative path and bytes; a
+    /// `logseq/config.edn` among them is the graph's config), built in
+    /// memory by the store's own load and first publication, so it answers
+    /// as a store opened over the same files would, with no filesystem: an
+    /// export's build graph, and the browser. Its graph metadata names the
+    /// root `/tine-memory-graph`. Cost: one parse of every page and the
+    /// initial index capture, as a store open has.
+    pub fn from_pages(files: Vec<(String, Vec<u8>)>) -> (WholeGraph, tine_core::model::GraphMeta) {
+        let graph = Graph::in_memory(files);
+        graph.install_live_config();
+        let problem = graph.config_read_problem.clone();
+        let config = ConfigState::of(&graph, Arc::new(graph.config.clone()), problem);
+        let meta = tine_core::model::GraphMeta::from_config(
+            graph.root.display().to_string(),
+            &config.config,
+            &graph.journal_format,
+        );
+        let snapshot = Snapshot::capture(
+            &graph,
+            &RwLock::new(config),
+            None,
+            &Default::default(),
+            false,
+            false,
+            GraphRev(0),
+            &HashMap::new(),
+            &Default::default(),
+        );
+        (WholeGraph::of(Arc::new(snapshot)), meta)
     }
 }
 

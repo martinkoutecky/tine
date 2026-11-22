@@ -25,9 +25,7 @@ const LOGIN: &str = "tine-fixture";
 const GIST: &str = "0123456789abcdef0123";
 
 fn base() -> PathBuf {
-    let root = crate::test_support::fresh_dir("tine-quick-share-");
-    fs::create_dir_all(root.join("scratch")).unwrap();
-    root
+    crate::test_support::fresh_dir("tine-quick-share-")
 }
 
 /// The fixture corpus: the cases the contract pins (aliases, two identical
@@ -104,24 +102,8 @@ const PAGE_QUERIES: &str = "@page and name = 'Dashboard' or name = 'Notes ü'";
 
 const MANY: &str = "@page and name = 'Project' or name = 'Notes ü' or name = 'Dashboard' or name = 'Empty' or name = 'Org page' or name = 'Oct 17th, 2026' or name = 'Secret' or name = 'Hidden'";
 
-fn document(
-    store: &Store,
-    root: &Path,
-    argument: &str,
-    name: &str,
-) -> (quick_share::SharePreview, Vec<u8>) {
-    let prepared = quick_share::prepare(
-        store,
-        &request(argument, name),
-        CREATED_AT,
-        &root.join("scratch"),
-    )
-    .unwrap();
-    assert_eq!(
-        fs::read_dir(root.join("scratch")).unwrap().count(),
-        0,
-        "the private build graph is removed"
-    );
+fn document(store: &Store, argument: &str, name: &str) -> (quick_share::SharePreview, Vec<u8>) {
+    let prepared = quick_share::prepare(store, &request(argument, name), CREATED_AT).unwrap();
     let doc = gunzip_bounded(&prepared.payload, quick_share::MAX_DOCUMENT_BYTES).unwrap();
     (prepared.preview, doc)
 }
@@ -190,7 +172,7 @@ fn quick_share_is_closed_to_the_shared_pages() {
     let _integration_guard = crate::integration_lock();
     let root = base();
     let store = corpus(&root);
-    let (preview, doc) = document(&store, &root, MANY, "Fixture share");
+    let (preview, doc) = document(&store, MANY, "Fixture share");
     let names: Vec<_> = preview.pages.iter().map(|p| p.name.as_str()).collect();
     assert_eq!(names.len(), 6, "{names:?}");
     assert!(!names.contains(&"Secret"));
@@ -247,7 +229,7 @@ fn quick_share_of_one_page_is_that_page() {
     let _integration_guard = crate::integration_lock();
     let root = base();
     let store = corpus(&root);
-    let (preview, doc) = document(&store, &root, "@page and name = 'Empty'", "Ignored");
+    let (preview, doc) = document(&store, "@page and name = 'Empty'", "Ignored");
     assert_eq!(preview.title, "Empty");
     let doc: Value = serde_json::from_slice(&doc).unwrap();
     assert_eq!(doc["snapshot"]["home"], "Empty");
@@ -257,7 +239,6 @@ fn quick_share_of_one_page_is_that_page() {
             &store,
             &request("@page and name = 'Project' or name = 'Empty'", name),
             CREATED_AT,
-            &root.join("scratch"),
         );
         let message = clash.err().map(|e| e.to_string()).unwrap_or_default();
         assert!(
@@ -273,14 +254,12 @@ fn quick_share_of_one_page_is_that_page() {
             "Project\u{feff}",
         ),
         CREATED_AT,
-        &root.join("scratch"),
     );
     assert!(bom.is_ok(), "{:?}", bom.err().map(|e| e.to_string()));
     let refused = quick_share::prepare(
         &store,
         &request("@page and name = 'Secret'", "x"),
         CREATED_AT,
-        &root.join("scratch"),
     );
     assert!(refused.is_err());
 }
@@ -313,7 +292,7 @@ fn quick_share_of_the_deepest_page_the_app_opens() {
     fs::write(graph.join("pages/Deep.md"), &text).unwrap();
     let store = Store::open(&graph, Default::default()).unwrap().0;
     store.whole_graph().unwrap();
-    let (preview, doc) = document(&store, &root, "@page and name = 'Deep'", "Ignored");
+    let (preview, doc) = document(&store, "@page and name = 'Deep'", "Ignored");
     assert_eq!(preview.pages.len(), 1);
     let document: Value = {
         let mut reader = serde_json::Deserializer::from_slice(&doc);
@@ -340,7 +319,7 @@ fn quick_share_bakes_a_query_written_in_page_properties() {
     let _integration_guard = crate::integration_lock();
     let root = base();
     let store = corpus(&root);
-    let (_, doc) = document(&store, &root, PAGE_QUERIES, "Fixture share");
+    let (_, doc) = document(&store, PAGE_QUERIES, "Fixture share");
     let doc: Value = serde_json::from_slice(&doc).unwrap();
     let records: Vec<&Value> = doc["snapshot"]["queries"]
         .as_array()
@@ -371,7 +350,7 @@ fn quick_share_lists_pages_in_the_order_the_review_showed() {
     let _integration_guard = crate::integration_lock();
     let root = base();
     let store = corpus(&root);
-    let (preview, doc) = document(&store, &root, MANY, "Fixture share");
+    let (preview, doc) = document(&store, MANY, "Fixture share");
     let doc: Value = serde_json::from_slice(&doc).unwrap();
     let reviewed: Vec<&str> = preview.pages.iter().map(|p| p.path.as_str()).collect();
     assert!(reviewed.len() > 3 && reviewed.windows(2).all(|w| w[0] < w[1]));
@@ -565,7 +544,7 @@ fn quick_share_generation_1_fixtures_stay_readable() {
         // Written with the query in page properties baked (REG-QS-PAGE-PROPERTY-QUERY).
         ("page-queries", PAGE_QUERIES, "Fixture share", true),
     ] {
-        let (_, doc) = document(&store, &root, argument, name);
+        let (_, doc) = document(&store, argument, name);
         let mut fresh: Value = serde_json::from_slice(&doc).unwrap();
         let mut fresh_canonical = fresh.clone();
         normalize(&mut fresh);

@@ -129,7 +129,7 @@ impl Graph {
             clock.stat(phase.elapsed());
             let path = e.path.clone();
             let phase = std::time::Instant::now();
-            let read = read_parse_input(&e.path);
+            let read = self.read_parse_input(&e.path);
             let read_len = read.as_ref().ok().map(String::len);
             clock.read(phase.elapsed(), read_len);
             let mut name_failure = None;
@@ -466,7 +466,7 @@ impl Graph {
                 pass.named.push(entry);
                 continue;
             }
-            let read = match read_parse_input(path) {
+            let read = match self.read_parse_input(path) {
                 Ok(content) => content,
                 Err(error) if error.kind() == io::ErrorKind::NotFound => continue,
                 Err(error) => {

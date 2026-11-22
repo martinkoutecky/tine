@@ -31,7 +31,11 @@
 # Store::check_graph_root checks only that Store's graph; a parameter cannot
 # capture and retain separate Git-selected worktree/gitdir/commondir witnesses
 # before libgit2 mutations. Record that existing API and its OS path hand-offs.
-## Lifecycle (ceiling: 30)
+# Browser core slice 1 (D-20261122-WEX): WholeGraph::from_pages builds the whole-graph view of
+# given files in memory. Store::open cannot answer it with a parameter: it needs a directory and
+# starts the watcher, writer and checkpoint that a file list has no use for; the view's questions
+# are the existing WholeGraph ones. Used by exports (no temporary build graph) and the browser.
+## Lifecycle (ceiling: 31)
 struct root_binding::BoundDirectory
 fn root_binding::BoundDirectory::new
 fn root_binding::BoundDirectory::root
@@ -52,6 +56,7 @@ fn store::Store::canonical_root
 fn root_binding::Store::check_graph_root
 fn store::GraphAccessInspection::approves_external_assets
 fn store::Store::open
+fn store::WholeGraph::from_pages
 fn store::Store::set_watch_mode
 struct store::Store
 struct store::GraphAccessInspection

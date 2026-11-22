@@ -630,13 +630,10 @@ impl Service {
         &self,
         store: &tine_store::Store,
         request: &QueryExportRequest,
-        scratch: &std::path::Path,
     ) -> Result<PrepareResult, QsError> {
         let prepared =
-            share::prepare(store, request, &now_rfc3339(), scratch).map_err(|error| {
-                QsError::Refused {
-                    message: error.to_string(),
-                }
+            share::prepare(store, request, &now_rfc3339()).map_err(|error| QsError::Refused {
+                message: error.to_string(),
             })?;
         let id = random_id();
         let share_id = share::fresh_share_id().map_err(|_| QsError::Refused {
@@ -1041,18 +1038,11 @@ pub(crate) async fn quick_share_prepare(
     let slot =
         crate::state::slot_for_context(&state).map_err(|message| QsError::Refused { message })?;
     let service = service(&app)?;
-    let scratch = app
-        .path()
-        .app_cache_dir()
-        .map_err(|_| records_error("Tine has no cache folder".into()))?;
     let builder = Arc::clone(&service);
-    let prepared = tauri::async_runtime::spawn_blocking(move || {
-        std::fs::create_dir_all(&scratch)
-            .map_err(|_| records_error("Tine could not create its cache folder".into()))?;
-        builder.prepare_share(&slot.store, &request, &scratch)
-    })
-    .await
-    .map_err(|_| QsError::Unavailable)??;
+    let prepared =
+        tauri::async_runtime::spawn_blocking(move || builder.prepare_share(&slot.store, &request))
+            .await
+            .map_err(|_| QsError::Unavailable)??;
     match share_id {
         Some(id) => service.review_update(prepared, &id).await,
         None => Ok(prepared),

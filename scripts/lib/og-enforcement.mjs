@@ -135,7 +135,6 @@ export const APPROVED_WRITER_SITES = Object.freeze({
   // under app cache that is removed before the export returns (quick share DESIGN §3.1). Moved here unchanged
   // from quick_share.rs (2 of its 3 sites) so the static export answers from the same graph (CM step 2, Q13;
   // docs/contracts/quick-share.md, "Published answers").
-  "crates/tine-graph-features/src/build_graph.rs": { sites: 2, approval: "Martin 2026-10-18 D-20261018-Q1 S1 (scratch build graph removed before the export returns), moved from quick_share.rs; docs/adr/0076" },
   // Bench-only NDJSON event log: written only when TINE_BENCH_EVENTS names a
   // path, never read back by Tine, absent in normal use (docs/bench-storage-ab.md
   // on og-storage-perf-ab). Not a persisted format.

@@ -938,28 +938,8 @@ pub fn publish_query_with_sheets(
     bundle: &[(String, Vec<u8>)],
     sheets: Vec<SheetExport>,
 ) -> io::Result<ExportReceipt> {
-    publish_query_with_sheets_in(
-        store,
-        request,
-        fingerprint,
-        bundle,
-        sheets,
-        &std::env::temp_dir(),
-    )
-}
-
-/// `publish_query_with_sheets` building its private build graph
-/// (`build_graph.rs`) under `scratch` (the app passes its cache directory).
-pub fn publish_query_with_sheets_in(
-    store: &Store,
-    request: &QueryExportRequest,
-    fingerprint: &str,
-    bundle: &[(String, Vec<u8>)],
-    sheets: Vec<SheetExport>,
-    scratch: &Path,
-) -> io::Result<ExportReceipt> {
     let epoch = export_epoch()?;
-    publish_at(store, request, fingerprint, bundle, sheets, scratch, epoch)
+    publish_at(store, request, fingerprint, bundle, sheets, epoch)
 }
 
 /// `publish_query` stamped with a caller-supplied export clock
@@ -971,16 +951,7 @@ pub fn publish_query_at(
     bundle: &[(String, Vec<u8>)],
     epoch: i64,
 ) -> io::Result<ExportReceipt> {
-    let scratch = std::env::temp_dir();
-    publish_at(
-        store,
-        request,
-        fingerprint,
-        bundle,
-        Vec::new(),
-        &scratch,
-        epoch,
-    )
+    publish_at(store, request, fingerprint, bundle, Vec::new(), epoch)
 }
 
 fn publish_at(
@@ -989,7 +960,6 @@ fn publish_at(
     fingerprint: &str,
     bundle: &[(String, Vec<u8>)],
     sheets: Vec<SheetExport>,
-    scratch: &Path,
     epoch: i64,
 ) -> io::Result<ExportReceipt> {
     let graph = store
@@ -1011,7 +981,6 @@ fn publish_at(
     let (mut files, snap) = crate::build_graph::with_build_graph(
         store,
         &planned.selected.pages,
-        scratch,
         BUILD_GRAPH_REFUSED,
         |build, meta, corpus| {
             if request.include_query_text && !planned.plan.include_comments {
@@ -1128,7 +1097,6 @@ pub fn publish_live_home(
     home: Option<&str>,
     bundle: &[(String, Vec<u8>)],
 ) -> io::Result<ExportReceipt> {
-    let scratch = std::env::temp_dir();
     live(
         store,
         parent,
@@ -1138,7 +1106,6 @@ pub fn publish_live_home(
         home,
         bundle,
         Vec::new(),
-        &scratch,
     )
 }
 
@@ -1153,7 +1120,6 @@ pub fn publish_live_with_sheets(
     bundle: &[(String, Vec<u8>)],
     sheets: Vec<SheetExport>,
 ) -> io::Result<ExportReceipt> {
-    let scratch = std::env::temp_dir();
     live(
         store,
         parent,
@@ -1163,32 +1129,6 @@ pub fn publish_live_with_sheets(
         None,
         bundle,
         sheets,
-        &scratch,
-    )
-}
-
-/// `publish_live_with_sheets` building its private build graph
-/// (`build_graph.rs`) under `scratch` (the app passes its cache directory).
-pub fn publish_live_with_sheets_in(
-    store: &Store,
-    parent: &Path,
-    name: &str,
-    all_pages: bool,
-    include_comments: bool,
-    bundle: &[(String, Vec<u8>)],
-    sheets: Vec<SheetExport>,
-    scratch: &Path,
-) -> io::Result<ExportReceipt> {
-    live(
-        store,
-        parent,
-        name,
-        all_pages,
-        include_comments,
-        None,
-        bundle,
-        sheets,
-        scratch,
     )
 }
 
@@ -1223,7 +1163,6 @@ fn live(
     requested_home: Option<&str>,
     bundle: &[(String, Vec<u8>)],
     sheets: Vec<SheetExport>,
-    scratch: &Path,
 ) -> io::Result<ExportReceipt> {
     if name.trim().is_empty() || name.len() > 256 {
         return Err(refusal("live export name is invalid"));
@@ -1261,11 +1200,10 @@ fn live(
         .map(|p| p.name.clone())
         .unwrap_or_default();
     // The static fallback and the snapshot both come from the build graph
-    // (see `publish_query_with_sheets_in`).
+    // (see `publish_at`).
     let (mut files, snap) = crate::build_graph::with_build_graph(
         store,
         &corpus.pages,
-        scratch,
         BUILD_GRAPH_REFUSED,
         |build, meta, corpus| {
             let files = collect_static(
@@ -1311,11 +1249,10 @@ pub fn publish_static(
     corpus.pages.sort_by(|a, b| a.name.cmp(&b.name));
     // No frontend computes sheets for a CLI export: every sheet block stays a
     // plain outline. Rendered from the private build graph (see
-    // `publish_query_with_sheets_in`), under the system temp directory.
+    // `publish_at`).
     let files = crate::build_graph::with_build_graph(
         store,
         &corpus.pages,
-        &std::env::temp_dir(),
         BUILD_GRAPH_REFUSED,
         |build, _meta, corpus| {
             collect_static(
@@ -1396,7 +1333,6 @@ mod snapshot_consistency_tests {
         let bytes = crate::build_graph::with_build_graph(
             &store,
             &reviewed.selected.pages,
-            temp.path(),
             BUILD_GRAPH_REFUSED,
             |build, meta, corpus| snapshot(build, meta, &corpus, "Export", "Public", None, 0),
         )

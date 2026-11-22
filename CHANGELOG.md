@@ -15,6 +15,9 @@ The format follows [Keep a Changelog](https://keepachangelog.com/); versions use
 - When a rename stops because several files claim one name, a dialog lists the files and offers to keep one and merge the others into it, then tries the rename again, instead of only refusing (UI-CM-CONTESTED-MERGE).
 - A journal day's title tooltip now says "Double-click to rename", as a page's does, since renaming a day (moving its notes to a page) has no menu row (D-20261119-DRM).
 
+### Changed
+- Exports and quick shares build their private copy of the exported pages in memory instead of writing it to a temporary folder in the app cache and reading it back, so an export writes nothing but its output (browser core slice 1).
+
 ### Fixed
 - Linked References and query results, including tables and boards, use their source file’s formatting while the source page loads. Rows and breadcrumbs stay visible during an unrelated page rename (UI-ORG-RESULT-ROW-FORMAT).
 - Shared scheduling and deadline lines show both date chips after reopening a graph, and print and publication skip building unused regions when hiding planning dates (REG-CM-PLANNING-CHECKPOINT, REG-CM-PLANNING-EXPORT-COST).

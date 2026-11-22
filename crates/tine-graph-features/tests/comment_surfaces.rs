@@ -197,13 +197,12 @@ fn comments_off_keeps_header_answer(name: &str, argument: &str, marker: &str, fl
     let plan = publish_query::plan_query(&store, &request).unwrap();
     assert_eq!(plan.row_count, 1, "{name} retains its ordinary header row");
     let bundle = vec![("index.html".into(), b"<head></head>".to_vec())];
-    let receipt = publish_query::publish_query_with_sheets_in(
+    let receipt = publish_query::publish_query_with_sheets(
         &store,
         &request,
         &plan.fingerprint,
         &bundle,
         vec![],
-        scratch.path(),
     )
     .unwrap();
     let snapshot: serde_json::Value = serde_json::from_str(
@@ -322,13 +321,12 @@ fn a_query_home_with_comments_off_contains_only_the_published_body_and_its_ids()
     };
     let plan = publish_query::plan_query(&store, &request).unwrap();
     let bundle = vec![("index.html".into(), b"<head></head>".to_vec())];
-    let receipt = publish_query::publish_query_with_sheets_in(
+    let receipt = publish_query::publish_query_with_sheets(
         &store,
         &request,
         &plan.fingerprint,
         &bundle,
         vec![],
-        scratch.path(),
     )
     .unwrap();
     let snapshot =
@@ -573,7 +571,7 @@ fn comment_surface_inventory() {
     assert!(index.contains("COMMENTMARKER"));
     assert!(index.contains("REPLYMARKER"));
     let bundle = vec![("index.html".into(), b"<head></head>".to_vec())];
-    let live = publish_query::publish_live_with_sheets_in(
+    let live = publish_query::publish_live_with_sheets(
         &store,
         scratch.path(),
         "live",
@@ -581,7 +579,6 @@ fn comment_surface_inventory() {
         true,
         &bundle,
         vec![],
-        scratch.path(),
     )
     .unwrap();
     let snapshot =
@@ -602,8 +599,7 @@ fn comment_surface_inventory() {
         include_query_text: false,
         include_comments: None,
     };
-    let prepared =
-        quick_share::prepare(&store, &request, "2026-11-13T00:00:00Z", scratch.path()).unwrap();
+    let prepared = quick_share::prepare(&store, &request, "2026-11-13T00:00:00Z").unwrap();
     let included_envelope = quick_share::seal(
         &prepared.payload,
         b"tine-quick-share-fixture-key-32b",
@@ -625,8 +621,7 @@ fn comment_surface_inventory() {
     let without_plan = publish_query::plan_query(&store, &without).unwrap();
     assert_ne!(with_plan.fingerprint, without_plan.fingerprint);
     assert!(!without_plan.include_comments);
-    let prepared =
-        quick_share::prepare(&store, &without, "2026-11-13T00:00:00Z", scratch.path()).unwrap();
+    let prepared = quick_share::prepare(&store, &without, "2026-11-13T00:00:00Z").unwrap();
     let omitted = String::from_utf8(
         quick_share::gunzip_bounded(&prepared.payload, quick_share::MAX_DOCUMENT_BYTES).unwrap(),
     )
@@ -645,7 +640,7 @@ fn comment_surface_inventory() {
     );
     for live in [false, true] {
         let receipt = if live {
-            publish_query::publish_live_with_sheets_in(
+            publish_query::publish_live_with_sheets(
                 &store,
                 scratch.path(),
                 "without-live",
@@ -653,7 +648,6 @@ fn comment_surface_inventory() {
                 false,
                 &bundle,
                 vec![],
-                scratch.path(),
             )
             .unwrap()
         } else {
@@ -675,13 +669,12 @@ fn comment_surface_inventory() {
         }
     }
     let plan = publish_query::plan_query(&store, &without).unwrap();
-    let query = publish_query::publish_query_with_sheets_in(
+    let query = publish_query::publish_query_with_sheets(
         &store,
         &without,
         &plan.fingerprint,
         &bundle,
         vec![],
-        scratch.path(),
     )
     .unwrap();
     let snapshot =

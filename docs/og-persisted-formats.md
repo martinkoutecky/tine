@@ -86,7 +86,5 @@ Quick share's records (ADR 0076) cost no graph bytes. The share's in-graph
 trace is the `tine.share:: <login>/<gist_id>` property on its export definition
 (`tine.share:: pending/<record id>` while its upload is unconfirmed),
 an ordinary page edit through the guarded save (no new format: a block property
-in Page Markdown/Org). `prepare`'s private build graph is a scratch copy of the
-selected pages in a temporary directory under app cache, removed before
-`prepare` returns; it is not a persisted format, and its writer sites are
-approved as such.
+in Page Markdown/Org). `prepare`'s private build graph holds the selected pages
+in memory (`WholeGraph::from_pages`) and writes nothing.

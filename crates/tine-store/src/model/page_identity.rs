@@ -1,6 +1,7 @@
 //! Graph text discovery and effective page names. The path remains the stable
 //! file identity; the preamble title is the logical page name.
 
+use super::file_source::{DirItem, EntryKind};
 use super::*;
 use std::io::{BufRead, BufReader, Read};
 use tine_core::model::PreambleRead;
@@ -26,12 +27,12 @@ impl Graph {
     /// any page. Cost: one `lstat` plus at most one bounded read of that file.
     pub(crate) fn unreadable_page_could_own(&self, failed: &crate::FileId, key: &str) -> bool {
         let path = self.root.join(failed.as_str());
-        let metadata = match fs::symlink_metadata(&path) {
-            Ok(metadata) => metadata,
+        let kind = match self.source.lstat(&path) {
+            Ok(kind) => kind,
             Err(error) if error.kind() == io::ErrorKind::NotFound => return false,
             Err(_) => return true,
         };
-        if metadata.is_dir() {
+        if matches!(kind, EntryKind::Dir) {
             return true;
         }
         let stem = path.file_stem().and_then(|stem| stem.to_str());
@@ -42,19 +43,21 @@ impl Graph {
         if stem.is_some_and(|stem| tine_core::refs::page_key(&decode_page_name(stem, fmt)) == key) {
             return true;
         }
-        if !metadata.is_file() {
+        if !matches!(kind, EntryKind::File) {
             // A symlink is not followed and a FIFO, socket or device is never
             // graph text: only its file name could name a page.
             return false;
         }
-        match effective_page_name(&path, stem.unwrap_or(""), fmt) {
+        match effective_page_name(&self.source, &path, stem.unwrap_or(""), fmt) {
             Ok(name) => tine_core::refs::page_key(&name) == key,
             Err(error) if error.kind() == io::ErrorKind::NotFound => false,
             Err(error) if error.kind() == io::ErrorKind::InvalidData => {
                 let mut bytes = Vec::new();
-                match fs::File::open(&path)
-                    .and_then(|file| file.take(PARSE_INPUT_MAX_BYTES).read_to_end(&mut bytes))
-                {
+                match (self.source.open(&path)).and_then(|file| {
+                    file.reader
+                        .take(PARSE_INPUT_MAX_BYTES)
+                        .read_to_end(&mut bytes)
+                }) {
                     Ok(_) => {
                         tine_core::refs::page_key(&String::from_utf8_lossy(&bytes)).contains(key)
                     }
@@ -538,19 +541,21 @@ fn preamble_title(preamble: &str, format: Format) -> Option<String> {
 }
 
 pub(super) fn effective_page_name(
+    source: &FileSource,
     path: &Path,
     stem: &str,
     name_fmt: FileNameFormat,
 ) -> io::Result<String> {
-    contain_title_panic(|| read_effective_page_name(path, stem, name_fmt))
+    contain_title_panic(|| read_effective_page_name(source, path, stem, name_fmt))
 }
 
 fn read_effective_page_name(
+    source: &FileSource,
     path: &Path,
     stem: &str,
     name_fmt: FileNameFormat,
 ) -> io::Result<String> {
-    let file = match fs::File::open(path) {
+    let file = match source.open(path) {
         Ok(file) => file,
         Err(error) if error.kind() == io::ErrorKind::NotFound => {
             return Ok(decode_page_name(stem, name_fmt))
@@ -561,14 +566,14 @@ fn read_effective_page_name(
     super::GRAPH_PREAMBLE_READS.with(|reads| reads.set(reads.get() + 1));
     #[cfg(feature = "test-faults")]
     crate::cost_counters::preamble_read();
-    let len = file.metadata()?.len();
+    let len = file.len;
     if len > PARSE_INPUT_MAX_BYTES {
         return Err(io::Error::new(
             io::ErrorKind::InvalidData,
             ParseInputTooLarge { len },
         ));
     }
-    let mut reader = BufReader::new(file.take(PARSE_INPUT_MAX_BYTES + 1));
+    let mut reader = BufReader::new(file.reader.take(PARSE_INPUT_MAX_BYTES + 1));
     let mut preamble = String::new();
     let mut line = String::new();
     let format = Format::from_path(path);
@@ -617,12 +622,12 @@ impl Graph {
         let journals = self.journals_path();
         let mut possible = false;
         let mut failure = None;
-        let errors = walk_graph_page_files(&self.root, &self.root, &config, |path| {
+        let errors = walk_graph_page_files(&self.source, &self.root, &self.root, &config, |path| {
             if possible || failure.is_some() {
                 return;
             }
             let probe = if let Some(id) = block {
-                file_contains_link_id(&path, id)
+                file_contains_link_id(&self.source, &path, id)
             } else if let Some(name) = page {
                 let lookup = claim_lookup(&format, name, PageKind::Page);
                 let entry = listed_entry(
@@ -633,6 +638,7 @@ impl Graph {
                 let claimed = match entry {
                     Some(entry) if path.starts_with(&journals) => Ok(Some(entry)),
                     Some(mut entry) => effective_page_name(
+                        &self.source,
                         &path,
                         path.file_stem().unwrap().to_str().unwrap(),
                         config.file_name_format,
@@ -673,7 +679,7 @@ impl Graph {
     ) -> Option<String> {
         let name = match text {
             Some(text) => effective_page_name_from_text(path, &decode_page_name(stem, fmt), text),
-            None => effective_page_name(path, stem, fmt),
+            None => effective_page_name(&self.source, path, stem, fmt),
         };
         match name {
             Ok(name) => {
@@ -731,15 +737,16 @@ mod link_prefilter_tests {
 // drawers and exact authored spelling remain the full Store lookup's job.
 // Keep one chunk plus the UUID overlap; never allocate a whole page or parse
 // its blocks. Oversize files and read failures make the probe uncertain.
-fn file_contains_link_id(path: &Path, id: &str) -> io::Result<bool> {
+fn file_contains_link_id(source: &FileSource, path: &Path, id: &str) -> io::Result<bool> {
     use std::io::Read;
     if id.len() != 36 {
         return Ok(true);
     }
-    let mut file = fs::File::open(path)?;
-    if file.metadata()?.len() > PARSE_INPUT_MAX_BYTES {
+    let opened = source.open(path)?;
+    if opened.len > PARSE_INPUT_MAX_BYTES {
         return Err(io::Error::other("link prefilter input exceeds parse limit"));
     }
+    let mut file = opened.reader;
     let mut buffer = vec![0; 64 * 1024 + id.len() - 1];
     let mut carried = 0;
     let mut total = 0;
@@ -814,7 +821,7 @@ fn list_pages(
         return (entries, Vec::new());
     }
     let mut failures = Vec::new();
-    let walk_errors = walk_graph_page_files(root, root, &config, |path| {
+    let walk_errors = walk_graph_page_files(&graph.source, root, root, &config, |path| {
         let in_journals = path.starts_with(&journals);
         match kind {
             Some(PageKind::Page) if in_journals => return,
@@ -832,7 +839,7 @@ fn list_pages(
             let (name, date_key) = super::journal_stem_name(&format, stem);
             (name, PageKind::Journal, date_key)
         } else {
-            let name = match effective_page_name(&path, stem, name_format) {
+            let name = match effective_page_name(&graph.source, &path, stem, name_format) {
                 Ok(name) => name,
                 Err(error) => {
                     // A journal-kind listing replaces only the journals
@@ -911,16 +918,13 @@ pub(crate) fn launch_listing_walk(graph: &Graph) -> LaunchListing {
     if !graph_text_directory_scannable(root, root, &config) {
         return (entries, tracked_only, Vec::new(), stamps);
     }
-    let errors = walk_graph_text_files(root, root, &config, |path, eligible, entry| {
+    let source = &graph.source;
+    let errors = walk_graph_text_files(source, root, root, &config, |path, eligible, entry| {
         // A file whose entry cannot be statted (disk error, or a file removed
         // mid-listing by a sync delivery) gets no stamp: the baseline then
         // lacks it, so the watcher's next diff re-reads it. Unknown is never
         // recorded as unchanged.
-        let stamp = match entry.metadata() {
-            Ok(metadata) => crate::watch::stamp_from_metadata(&metadata),
-            Err(_) => None,
-        };
-        if let Some(stamp) = stamp {
+        if let Some(stamp) = source.stamp(entry) {
             stamps.insert(path.clone(), (stamp, std::time::SystemTime::now()));
         }
         if !eligible {
@@ -988,17 +992,18 @@ pub(crate) fn effective_page_name_from_text(
 /// [`walk_graph_page_files`] over every watch-relevant file, saying whether
 /// each is graph text (`graph_text_eligible`) or tracked only (a conflict copy).
 fn walk_graph_text_files(
+    source: &FileSource,
     root: &Path,
     start: &Path,
     config: &Config,
-    mut visit: impl FnMut(PathBuf, bool, &fs::DirEntry),
+    mut visit: impl FnMut(PathBuf, bool, &DirItem),
 ) -> Vec<(PathBuf, io::Error)> {
     let mut errors = Vec::new();
     let mut pending = vec![start.to_path_buf()];
     while let Some(dir) = pending.pop() {
         #[cfg(feature = "test-faults")]
         crate::cost_counters::readdir();
-        let entries = match fs::read_dir(&dir) {
+        let entries = match source.read_dir(&dir) {
             Ok(entries) => entries,
             Err(error) if error.kind() == io::ErrorKind::NotFound => continue,
             Err(error) => {
@@ -1009,24 +1014,21 @@ fn walk_graph_text_files(
         for entry in entries {
             let entry = match entry {
                 Ok(entry) => entry,
-                Err(error) => {
-                    errors.push((dir.clone(), error));
+                Err(failure) => {
+                    errors.push(failure);
                     continue;
                 }
             };
-            let path = entry.path();
-            let kind = match entry.file_type() {
-                Ok(kind) => kind,
-                Err(error) => {
-                    errors.push((path, error));
-                    continue;
+            let path = entry.path.clone();
+            match entry.kind {
+                EntryKind::File if graph_text_watch_relevant(root, &path, config) => {
+                    let eligible = graph_text_eligible(root, &path, config);
+                    visit(path, eligible, &entry);
                 }
-            };
-            if kind.is_file() && graph_text_watch_relevant(root, &path, config) {
-                let eligible = graph_text_eligible(root, &path, config);
-                visit(path, eligible, &entry);
-            } else if kind.is_dir() && graph_text_directory_scannable(root, &path, config) {
-                pending.push(path);
+                EntryKind::Dir if graph_text_directory_scannable(root, &path, config) => {
+                    pending.push(path);
+                }
+                _ => {}
             }
         }
     }
@@ -1034,12 +1036,13 @@ fn walk_graph_text_files(
 }
 
 fn walk_graph_page_files(
+    source: &FileSource,
     root: &Path,
     start: &Path,
     config: &Config,
     mut visit: impl FnMut(PathBuf),
 ) -> Vec<(PathBuf, io::Error)> {
-    walk_graph_text_files(root, start, config, |path, eligible, _| {
+    walk_graph_text_files(source, root, start, config, |path, eligible, _| {
         if eligible {
             visit(path);
         }

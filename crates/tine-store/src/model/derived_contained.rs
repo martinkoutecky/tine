@@ -198,7 +198,7 @@ impl Graph {
     /// Whether `path` still holds the bytes of revision `rev` and they index,
     /// on their own, without a panic. Touches no installed state.
     fn row_passes_alone(&self, path: &Path, rev: &str) -> bool {
-        let Ok(content) = read_parse_input(path) else {
+        let Ok(content) = self.read_parse_input(path) else {
             return false;
         };
         if content_rev(&content) != rev {

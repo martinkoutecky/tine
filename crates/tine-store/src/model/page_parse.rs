@@ -30,7 +30,7 @@ impl Graph {
     /// cache. The page is named and parsed from its file: a build leaves a
     /// held page out, and its row is its owner's (`install_built`, (G)).
     pub(super) fn parse_page_entry_isolated(&self, mut e: PageEntry) -> PageParseResult {
-        let content = match read_parse_input(&e.path) {
+        let content = match self.read_parse_input(&e.path) {
             Ok(content) => content,
             Err(error) => {
                 return PageParseFailure::unreadable(

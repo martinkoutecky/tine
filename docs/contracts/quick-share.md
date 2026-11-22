@@ -221,13 +221,10 @@ notice counts only names the exported documents link without exporting a file
 of that name, never an unexported page. A query export's home-query record
 names its execution page (`executed_context.current_page`) only when that page
 is exported, by its exported name; an unexported host is omitted. Hidden
-folders (`:hidden`) are never selectable. The private graph lives in a
-caller-given scratch directory and is removed before `prepare` (or the export)
-returns; a removal failure fails the share or export with the scratch path
-(threat: disk errors, which would otherwise leave a copy of the exported pages
-and the config behind silently). A page that reads back differently from the
-reviewed selection, or that is private in the bytes actually copied, refuses
-the share.
+folders (`:hidden`) are never selectable. The private graph is built in
+memory by the store's own load (`WholeGraph::from_pages`); nothing is written.
+A page that reads back differently from the reviewed selection, or that is
+private in the bytes actually copied, refuses the share.
 
 ## Limits (`quick-share-limits.json`)
 

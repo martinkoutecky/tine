@@ -10,8 +10,7 @@
 //! `tine-share.bin`; `open` is its inverse, used by tests and fixtures.
 //!
 //! Nothing here writes the graph or reaches the network. The private build
-//! graph is a copy of the selected pages under a caller-given scratch
-//! directory, removed when `prepare` returns.
+//! graph holds the selected pages in memory (`build_graph.rs`).
 
 use crate::publish_query::{
     resolve_plan, snapshot_at, ExportPage, LeftOutPage, QueryExportRequest,
@@ -24,7 +23,6 @@ use ring::hkdf;
 use ring::rand::{SecureRandom, SystemRandom};
 use serde::Serialize;
 use std::io::{self, Read, Write};
-use std::path::Path;
 use tine_store::Store;
 
 /// The generation this module writes: link path `/s/1/`, envelope version 1,
@@ -364,15 +362,13 @@ const VIEWER_MAX_STRING_BYTES: usize = 1024 * 1024;
 const VIEWER_MAX_BLOCKS: usize = 200_000;
 
 /// Prepare a share of the pages `request` selects, stamped `created_at`
-/// (RFC 3339 UTC). `scratch` is a directory the private build graph may be
-/// created under (app cache); it is removed before returning. The
+/// (RFC 3339 UTC). The
 /// request's `include_query_text` and destination fields are ignored: a share
 /// never carries its selecting query.
 pub fn prepare(
     store: &Store,
     request: &QueryExportRequest,
     created_at: &str,
-    scratch: &Path,
 ) -> io::Result<PreparedShare> {
     let graph = store
         .whole_graph()
@@ -396,7 +392,6 @@ pub fn prepare(
     let (title, snapshot) = crate::build_graph::with_build_graph(
         store,
         &selected.pages,
-        scratch,
         "the shared pages did not read back as the same pages; nothing was shared",
         |private_graph, meta, mut corpus| {
             // The private store lists its pages in directory order, which differs

@@ -516,16 +516,9 @@ fn share_document(
     if files.iter().any(|(rel, _)| *rel == "pages/Bridge.md") {
         assert_private_pages_matter(&store);
     }
-    let scratch = root.join("scratch");
-    fs::create_dir_all(&scratch).unwrap();
-    let prepared = quick_share::prepare(&store, request, "2026-11-04T00:00:00Z", &scratch);
+    let prepared = quick_share::prepare(&store, request, "2026-11-04T00:00:00Z");
     store.close();
     let prepared = prepared.map_err(|error| error.to_string())?;
-    assert_eq!(
-        fs::read_dir(&scratch).unwrap().count(),
-        0,
-        "the build graph is removed"
-    );
     let doc =
         quick_share::gunzip_bounded(&prepared.payload, quick_share::MAX_DOCUMENT_BYTES).unwrap();
     let mut doc: Value = serde_json::from_slice(&doc).unwrap();
@@ -750,11 +743,6 @@ fn a_synthetic_home_never_shadows_an_answered_name() {
         let root = tempfile::tempdir().unwrap();
         let refused = share_document(root.path(), CLASH, &clash_request(name)).unwrap_err();
         assert!(refused.contains("already called"), "{name}: {refused}");
-        assert_eq!(
-            fs::read_dir(root.path().join("scratch")).unwrap().count(),
-            0,
-            "{name}: the build graph is removed after a refusal"
-        );
     }
     // A reference-only name answers nothing: the home may take it.
     let root = tempfile::tempdir().unwrap();

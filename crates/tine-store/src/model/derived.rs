@@ -860,7 +860,7 @@ impl Graph {
         // The launch pass observed every file's stamp before reading it; an
         // on-demand build did not, and stats each page here, as it does an
         // owner's row (E109).
-        let stat = |path: &Path| fs::metadata(path).and_then(|meta| meta.modified()).ok();
+        let stat = |path: &Path| self.source.modified(path);
         let mut mtimes: SharedMap<String, std::time::SystemTime> = (built.pages.iter())
             .enumerate()
             .filter(|(at, _)| kept.get(*at) != Some(&false))

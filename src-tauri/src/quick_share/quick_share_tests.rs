@@ -970,8 +970,6 @@ fn preparation_capacity_preserves_reviewed_previews() {
         .unwrap()
         .0;
     store.whole_graph().unwrap();
-    let scratch = root.path().join("scratch");
-    std::fs::create_dir_all(&scratch).unwrap();
     let mock = gist_mock(gist_store(), |_| resp(201, ""));
     let f = fixture(mock.endpoints());
     let request = QueryExportRequest {
@@ -990,13 +988,13 @@ fn preparation_capacity_preserves_reviewed_previews() {
     let ids: Vec<_> = (0..MAX_PREPARED)
         .map(|_| {
             f.service
-                .prepare_share(&store, &request, &scratch)
+                .prepare_share(&store, &request)
                 .unwrap()
                 .prepare_id
         })
         .collect();
     assert!(matches!(
-        f.service.prepare_share(&store, &request, &scratch),
+        f.service.prepare_share(&store, &request),
         Err(QsError::PreviewCapacity)
     ));
     assert_eq!(
@@ -1010,9 +1008,9 @@ fn preparation_capacity_preserves_reviewed_previews() {
         ids
     );
     f.service.discard_prepared(&ids[0]);
-    assert!(f.service.prepare_share(&store, &request, &scratch).is_ok());
+    assert!(f.service.prepare_share(&store, &request).is_ok());
     f.service.prepared.lock().unwrap()[0].expires = Instant::now() - Duration::from_secs(1);
-    assert!(f.service.prepare_share(&store, &request, &scratch).is_ok());
+    assert!(f.service.prepare_share(&store, &request).is_ok());
     // The binding bound is total bytes: more than four small previews fit (Re-share
     // all), but held payloads may never exceed four writer-limit payloads.
     let held: Vec<_> = f
@@ -1027,12 +1025,12 @@ fn preparation_capacity_preserves_reviewed_previews() {
         f.service.discard_prepared(id);
     }
     for _ in 0..5 {
-        assert!(f.service.prepare_share(&store, &request, &scratch).is_ok());
+        assert!(f.service.prepare_share(&store, &request).is_ok());
     }
     let big = vec![0u8; MAX_PREPARED_BYTES - 1];
     f.service.prepared.lock().unwrap()[0].payload = big;
     assert!(matches!(
-        f.service.prepare_share(&store, &request, &scratch),
+        f.service.prepare_share(&store, &request),
         Err(QsError::PreviewCapacity)
     ));
     assert_eq!(f.service.prepared.lock().unwrap().len(), 5);
@@ -1049,8 +1047,6 @@ fn prepare_then_create_uploads_the_previewed_text_not_a_later_edit() {
         .unwrap()
         .0;
     store.whole_graph().unwrap();
-    let scratch = root.path().join("scratch");
-    std::fs::create_dir_all(&scratch).unwrap();
     let mock = gist_mock(gist_store(), |_| resp(201, ""));
     let f = fixture(mock.endpoints());
     f.connect();
@@ -1067,9 +1063,8 @@ fn prepare_then_create_uploads_the_previewed_text_not_a_later_edit() {
         include_query_text: false,
         include_comments: None,
     };
-    let prepared = f.service.prepare_share(&store, &request, &scratch).unwrap();
+    let prepared = f.service.prepare_share(&store, &request).unwrap();
     assert_eq!(prepared.preview.pages.len(), 1);
-    assert_eq!(std::fs::read_dir(&scratch).unwrap().count(), 0);
     // An edit after the preview is not in the share.
     std::fs::write(graph.join("pages/Project.md"), "- EDITED-LATER text\n").unwrap();
     let mut link = String::new();
