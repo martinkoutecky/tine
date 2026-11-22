@@ -153,12 +153,10 @@ fn measure(enforce_cost: bool) {
                 let graph = store.whole_graph().unwrap();
                 ALLOCATIONS.with(|count| count.set(Some(0)));
                 let started = Instant::now();
-                std::hint::black_box(
-                    graph.inventory(tine_store::InventoryScope::ReferencedJournals),
-                );
+                std::hint::black_box(graph.referenced_journal_feed_ids());
                 let reference_time = started.elapsed();
                 let reference_allocations = ALLOCATIONS.with(|count| count.replace(None).unwrap());
-                println!("J={journals} R={references}: median_step={:?} reference_inventory={reference_time:?} reference_allocations={reference_allocations}", timings[4]);
+                println!("J={journals} R={references}: median_step={:?} reference_days={reference_time:?} reference_allocations={reference_allocations}", timings[4]);
             }
             assert_eq!(days(&page), expected[..3]);
             if enforce_cost {
@@ -166,7 +164,10 @@ fn measure(enforce_cost: bool) {
                     work.0 <= 4,
                     "three-day step walked unrelated journal days: {work:?}"
                 );
-                assert_eq!(work.1, 1, "only the retained reference inventory may sort");
+                assert_eq!(
+                    work.1, 0,
+                    "the feed consumes the reference index in day order"
+                );
             }
             assert_eq!(work.2, references as usize);
             assert_eq!(io_after.readdir - io.readdir, 0);

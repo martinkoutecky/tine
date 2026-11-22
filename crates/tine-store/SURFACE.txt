@@ -135,7 +135,7 @@ field store::WatchBatch.reconcile_started
 # private transaction module).
 fn transaction::Store::read_is_current
 
-## Identity (ceiling: 13)
+## Identity (ceiling: 14)
 # CM step 2 (CM-DAYFILE, D-20261111-CMR14): a date-named pages file is its day,
 # so the feed before the first view must list days the journals directory
 # listing cannot see. `journal_id` answers one given day and a parameter cannot
@@ -159,6 +159,9 @@ fn store::FileRev::from_bytes
 fn store::Store::as_page
 fn store::Store::file_id
 fn store::Store::journal_id
+# A live feed candidate applies the view's name mask to the startup index and
+# unobserved listing days. Other journal_id consumers still get a file or proposal.
+fn store::Store::live_journal_feed_id
 # Windows nightly 2026-11-19 (K folded_occupant): as_page types a path with no
 # disk read, so it cannot say that `pages/B.md` reaches the listed `pages/b.md`
 # on a case-folding volume; no parameter of it can without a disk read. The
@@ -411,7 +414,7 @@ field restore::RestoreFailed.phase
 field restore::RestoreFailed.cause
 field restore::RestoreFailed.done
 
-## WholeGraph: Names (ceiling: 38)
+## WholeGraph: Names (ceiling: 39)
 # CLI export extends corpus's selection parameter to indexed block-ID candidate
 # pages. A page name cannot identify those pages; CorpusScope types that existing
 # parameter. No Store operation or WholeGraph question is added.
@@ -431,9 +434,9 @@ fn store::Resolved::page_owner
 # A bounded inventory window cannot distinguish the queried day from an older one
 # without visiting another day.
 fn store::WholeGraph::journal_file_id
-# A feed already has an exact day. Passing its spelling through
-# proposed_file would parse the same day again under configurable formats.
-fn store::WholeGraph::proposed_journal_file
+# The feed needs referenced days and their exact-day paths in day order. The
+# name inventory's resolved targets and title order are unused in this reader.
+fn store::WholeGraph::referenced_journal_feed_ids
 field store::InventoryEntry.name
 field store::InventoryEntry.target
 field store::InventoryEntry.is_journal
@@ -491,6 +494,9 @@ fn store::NameOwners::opens
 fn store::WholeGraph::proposed_file
 fn store::WholeGraph::rev
 fn store::WholeGraph::unreadable_files
+# A single missing body needs one exact-path diagnostic lookup, bounded by
+# binary search over the existing path-sorted list.
+fn store::WholeGraph::unreadable_file_reason
 # GH #335 (All pages "Updated" column): `inventory` answers per NAME (aliases,
 # reference-only names, one entry per spelling) and is re-read on every page-index
 # refresh; a last-modified time is per FILE and wanted once, when the view opens.

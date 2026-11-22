@@ -660,9 +660,13 @@ per-edit work, and never deletes or overwrites a graph file to repair a cache.
 `whole_graph_reconciled()` never serves the checkpoint: it waits for the launch
 diff, for graph-wide destructive operations and for a one-shot lookup that
 missed in the checkpoint (a cold-start `tine://` link, GH #181). The public operation
-surface is 61 operations: the methods of `Store`, `Transaction` and `PagePlan` plus every
+surface is 62 operations: the methods of `Store`, `Transaction` and `PagePlan` plus every
 public function taking either. `crates/tine-store/SURFACE.txt` budgets it per
 concept and `crates/tine-store/tests/shallow_ratchet.rs` keeps this count true.
+`Store::live_journal_feed_id` applies the indexed journal feed's name mask to
+desktop candidates before publication and to candidates from the live listing.
+An undated winner of the normalized title masks the day. After the initial
+preamble discovery, the mask and the file selection use the name and day indexes.
 `InventoryScope::File(PageId)` extends the existing inventory question with
 one file's name in the captured view (O(log P + C) for C name claimants,
 no file reads or new index).

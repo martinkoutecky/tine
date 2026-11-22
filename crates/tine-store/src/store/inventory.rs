@@ -263,6 +263,7 @@ pub enum InventoryScope<'a> {
     PublishedV1Spellings(&'a Inventory),
     /// Referenced journal dates, including dates without a file, once per day.
     /// Uses the explicit-reference index; excludes ordinary date-page identity.
+    #[cfg(any(test, feature = "test-faults"))]
     ReferencedJournals,
     /// Only the file-claimed names whose page key is this key, or lies under
     /// `key/` and is a namespace name (a page and its namespace descendants):
@@ -278,11 +279,10 @@ pub enum InventoryScope<'a> {
     FilelessUnder(&'a str),
     /// The alias names this page file declares, as `All` lists each.
     AliasesOf(&'a PageId),
-    /// Every journal day a file claims in this view, once per day: the
-    /// view's day index, not a directory listing.
+    /// Every eligible journal day a file claims in this view, once per day.
     #[cfg(any(test, feature = "test-faults"))]
     JournalFiles,
-    /// At most `limit` file-claimed days strictly before `before`, newest first.
+    /// At most `limit` eligible file-claimed days before `before`, newest first.
     /// Same identities as `JournalFiles`; bounded traversal of its existing index.
     JournalFilesBefore {
         /// Exclusive upper day boundary.
@@ -350,7 +350,7 @@ impl WholeGraph {
     /// O(P) page-key computations plus O(m log m) for m matches; no parse and
     /// no disk access.
     ///
-    /// [`InventoryScope::ReferencedJournals`] lists only days mentioned by
+    /// `ReferencedJournals` lists only days mentioned by
     /// explicit references, with accepted date spellings merged into the
     /// configured journal title. Uses published reference/alias keys, not
     /// document scans; O(R log D + indexed alias lookups), R reference names,
@@ -376,8 +376,8 @@ impl WholeGraph {
     /// [`InventoryScope::JournalFilesBefore`] lists at most `limit` file-claimed
     /// days below an exclusive cursor, in descending order, from the existing
     /// day index (duplicate-day strays are `others`, as in `All`). The day
-    /// tree seek costs O(log J); selected slots and same-day alternatives
-    /// cost O(log P + C) per candidate, C same-title journal claimants.
+    /// tree seek costs O(log J); slot and name-mask lookups cost O(log P)
+    /// per examined day, plus O(C) for same-title alternatives per result.
     /// No new index or disk access.
     ///
     /// [`InventoryScope::JournalFile`] takes the day from the filename stem,
@@ -418,6 +418,7 @@ impl WholeGraph {
             InventoryScope::JournalFilesBefore { before, limit } => Arc::new(Inventory(
                 self.list
                     .journal_days_before(before.0)
+                    .filter(|page| !self.journal_name_is_masked(&page.name))
                     .filter_map(|page| self.journal_file_entry(page))
                     .take(limit)
                     .collect(),
@@ -507,6 +508,7 @@ impl WholeGraph {
                         .collect(),
                 ))
             }
+            #[cfg(any(test, feature = "test-faults"))]
             InventoryScope::ReferencedJournals => {
                 let mut entries: Vec<_> = self
                     .referenced_journal_days()
@@ -553,6 +555,7 @@ impl WholeGraph {
                 let mut entries: Vec<_> = self
                     .list
                     .journal_days()
+                    .filter(|page| !self.journal_name_is_masked(&page.name))
                     .filter_map(|page| self.journal_file_entry(page))
                     .collect();
                 sort_inventory(&mut entries);
@@ -565,6 +568,30 @@ impl WholeGraph {
     /// O(log J + log P), no parsed document or disk read.
     pub fn journal_file_id(&self, day: Day) -> Option<&PageId> {
         self.list.get_day(day.0)?.rel_path.as_ref()
+    }
+
+    /// Referenced feed days in ascending order with each eligible day's indexed
+    /// file or proposed path. Walks the indexed reference names, then looks up
+    /// each distinct day. No document or disk read.
+    pub fn referenced_journal_feed_ids(&self) -> Vec<(Day, PageId)> {
+        self.referenced_journal_days()
+            .into_iter()
+            .filter_map(|day| {
+                let title = self.journal_format.title(JournalDate::from_ordinal(day.0));
+                if self.journal_name_is_masked(&title) {
+                    return None;
+                }
+                let id = self
+                    .journal_file_id(day)
+                    .cloned()
+                    .unwrap_or_else(|| self.proposed_journal_file(day));
+                Some((day, id))
+            })
+            .collect()
+    }
+
+    fn journal_name_is_masked(&self, name: &str) -> bool {
+        super::snapshot::journal_name_is_masked(&self.claimants, name, &self.config.config)
     }
 
     fn journal_file_entry(&self, page: &PageEntry) -> Option<InventoryEntry> {

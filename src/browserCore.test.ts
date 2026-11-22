@@ -154,6 +154,60 @@ it("the browser journal feed extends through a referenced day and includes upcom
   }
 });
 
+const journalMasks = JSON.parse(readFileSync("tests/fixtures/browser-core-journal-masks.json", "utf8")) as {
+  name: string;
+  files: [string, string][];
+}[];
+
+it.each(journalMasks)("the browser feed masks a day claimed by an undated file ($name)", ({ files }) => {
+  const graph = open([
+    ...files,
+    ["pages/Z.md", "title:: 2000_01_01\n- masked\n"],
+    ["journals/1999_12_31.md", "- visible\n"],
+    ["pages/Plan.md", "- [[2000-01-01]]\n"],
+  ]);
+  try {
+    for (const before of [null, 20000102n]) {
+      for (const references of [false, true]) {
+        const feed = JSON.parse(graph.journal_feed_page_json(1, before, references, null));
+        expect(feed.pages).toMatchObject([{ id: "journals/1999_12_31.md" }]);
+        expect(feed.done).toBe(true);
+      }
+    }
+  } finally {
+    graph.free();
+  }
+});
+
+it.each([
+  ["yy_MM_dd", "20_01_01", "md", "1920-01-01", "2020-01-01", 19200102n, true],
+  ["yy_MM_dd", "20_01_01", "org", "1920-01-01", "2020-01-01", 19200102n, true],
+  ["yy-MM-dd", "20-01-01", "md", "1920-01-01", "2020-01-01", 19200102n, true],
+  ["yy-MM-dd", "20-01-01", "org", "1920-01-01", "2020-01-01", 19200102n, true],
+  ["yyyy", "2000", "md", "2000-01-01", "2000-01-02", 20000102n, false],
+  ["MM_dd", "01_01", "org", "1920-01-01", "2020-01-01", 19200102n, false],
+] as const)("the browser feed reads exact days when %s collides (%s.%s)", (format, stem, ext, oldDay, newDay, before, dated) => {
+  const id = `journals/${stem}.${ext}`;
+  for (const physical of [false, true]) {
+    const files: [string, string][] = [
+      ["logseq/config.edn", `{:journal/file-name-format "${format}" :journal/page-title-format "yyyy-MM-dd" :preferred-format :${ext === "md" ? "markdown" : "org"}}`],
+      ["pages/Plan.md", `- [[${oldDay}]] [[${newDay}]]\n`],
+    ];
+    if (physical) files.push([id, ext === "md" ? "- physical\n" : "* physical\n"]);
+    const graph = open(files);
+    try {
+      const older = { id, title: oldDay, blocks: [] };
+      const newer = { id, title: newDay, blocks: physical && dated ? [{ raw: "physical" }] : [] };
+      const first = JSON.parse(graph.journal_feed_page_json(2, null, true, null));
+      expect.soft(first.pages).toMatchObject([newer, older]);
+      const cursor = JSON.parse(graph.journal_feed_page_json(2, before, true, null));
+      expect.soft(cursor.pages).toMatchObject([older]);
+    } finally {
+      graph.free();
+    }
+  }
+});
+
 const encode = (text: string) => new TextEncoder().encode(text);
 const open = (files: [string, string][]) =>
   new core.BrowserGraph(

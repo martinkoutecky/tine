@@ -20,6 +20,7 @@ The format follows [Keep a Changelog](https://keepachangelog.com/); versions use
 
 ### Fixed
 - Journal scrolling shows both days when a configured title format gives them the same label (REG-JOURNAL-FEED-EXACT-DAY).
+- The journal feed skips days whose titles are claimed by an undated file (REG-JOURNAL-FEED-NAME-MASK).
 - Linked References and query results, including tables and boards, use their source file’s formatting while the source page loads. Rows and breadcrumbs stay visible during an unrelated page rename (UI-ORG-RESULT-ROW-FORMAT).
 - Shared scheduling and deadline lines show both date chips after reopening a graph, and print and publication skip building unused regions when hiding planning dates (REG-CM-PLANNING-CHECKPOINT, REG-CM-PLANNING-EXPORT-COST).
 - Markdown and Org blocks with many planning timestamps on one line open faster, with the date chips and any trailing text still visible (REG-CM-PLANNING-LINE-COST).

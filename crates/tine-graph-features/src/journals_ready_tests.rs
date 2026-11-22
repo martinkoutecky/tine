@@ -1,6 +1,77 @@
 use super::*;
 
 #[test]
+fn an_undated_name_winner_masks_the_day_on_open_and_scroll() {
+    #[derive(Deserialize)]
+    struct Case {
+        name: String,
+        files: Vec<(String, String)>,
+    }
+    let cases: Vec<Case> = serde_json::from_str(include_str!(
+        "../../../tests/fixtures/browser-core-journal-masks.json"
+    ))
+    .unwrap();
+    for Case { name, files } in cases {
+        let root = tempfile::tempdir().unwrap();
+        for (path, body) in files.into_iter().chain([
+            ("pages/Z.md".into(), "title:: 2000_01_01\n- masked\n".into()),
+            ("journals/1999_12_31.md".into(), "- visible\n".into()),
+            ("pages/Plan.md".into(), "- [[2000-01-01]]\n".into()),
+        ]) {
+            let path = root.path().join(path);
+            std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+            std::fs::write(path, body).unwrap();
+        }
+        let store = Store::open(root.path(), Default::default()).unwrap().0;
+        store.stop_watcher_for_tests();
+        store.whole_graph_reconciled().unwrap();
+        for before in [None, Some(20000102)] {
+            for references in [false, true] {
+                let page = feed_page_through(&store, 1, before, None, references).unwrap();
+                let ids: Vec<_> = page.pages.iter().map(|read| read.id.as_str()).collect();
+                assert_eq!(
+                    ids,
+                    ["journals/1999_12_31.md"],
+                    "{name}, {before:?}, {references}"
+                );
+                assert!(page.done, "{name}, {before:?}, {references}");
+            }
+        }
+        store.close();
+    }
+}
+
+#[test]
+fn captured_feed_looks_up_only_the_missing_owners_diagnostic() {
+    use tine_store::cost_counters::unreadable_path_probes;
+
+    let files = [
+        ("journals/2000_01_02.md".into(), vec![0xff]),
+        ("pages/Plan.md".into(), b"- [[2000-01-01]]\n".to_vec()),
+    ];
+    let (graph, _) = WholeGraph::from_files(
+        files
+            .into_iter()
+            .chain((0..511).map(|i| (format!("pages/Bad-{i:03}.md"), vec![0xff])))
+            .collect(),
+    )
+    .unwrap();
+    assert_eq!(graph.unreadable_files().len(), 512);
+    let probes = unreadable_path_probes();
+    let page = feed_page_from_view(&graph, 1, Some(20000103), None, true).unwrap();
+    let probes = unreadable_path_probes() - probes;
+    assert_eq!(page.unreadable.len(), 1);
+    assert!(page.unreadable[0].starts_with("journals/2000_01_02.md: "));
+    assert_eq!(page.pages.len(), 1);
+    assert_eq!(page.pages[0].doc.title, "Jan 1st, 2000");
+    assert!(page.pages[0].doc.blocks.is_empty());
+    assert!(
+        (1..=11).contains(&probes),
+        "{probes} captured diagnostic comparisons"
+    );
+}
+
+#[test]
 fn journal_feed_keeps_both_days_with_the_same_title() {
     let root = tempfile::tempdir().unwrap();
     for dir in ["journals", "pages", "logseq"] {

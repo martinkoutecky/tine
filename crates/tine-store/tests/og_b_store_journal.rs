@@ -11,6 +11,8 @@ fn absent_journal_proposals_share_the_path_rule() {
             fs::write(dir.path().join("logseq/config.edn"), format!(
                 "{{:journals-directory \"diary\" :preferred-format \"{preferred}\" :journal/file-name-format \"{format}\"}}"
             )).unwrap();
+            fs::create_dir_all(dir.path().join("pages")).unwrap();
+            fs::write(dir.path().join("pages/Plan.md"), "- [[2026-09-30]]\n").unwrap();
             let store = Store::open(dir.path(), Default::default()).unwrap().0;
             let from_day = store.journal_id(Day(20260930), false);
             let view = store.whole_graph().unwrap();
@@ -18,7 +20,10 @@ fn absent_journal_proposals_share_the_path_rule() {
                 panic!("fixture day is absent")
             };
             assert_eq!(id, from_day);
-            assert_eq!(view.proposed_journal_file(Day(20260930)), from_day);
+            assert_eq!(
+                view.referenced_journal_feed_ids(),
+                [(Day(20260930), from_day)]
+            );
             assert_eq!(id.as_str(), format!("diary/{stem}.{ext}"));
             let Resolved::Absent { id } = view.resolve("not-a-day", true) else {
                 panic!("absent invalid name")

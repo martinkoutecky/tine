@@ -14,7 +14,58 @@ pub(super) fn name_claimants<'a>(
         .unwrap_or_default()
 }
 
+pub(super) fn journal_name_is_masked(
+    index: &SharedMap<(bool, String), Vec<PageEntry>>,
+    name: &str,
+    config: &tine_core::config::Config,
+) -> bool {
+    let mut key = (false, tine_core::refs::page_key(name));
+    let page = index.get(&key).and_then(|bucket| bucket.first());
+    key.0 = true;
+    let journal = index.get(&key).and_then(|bucket| bucket.first());
+    journal_claimant_masks_day(page.into_iter().chain(journal), config)
+}
+
+fn journal_claimant_masks_day<'a>(
+    heads: impl Iterator<Item = &'a PageEntry>,
+    config: &tine_core::config::Config,
+) -> bool {
+    // A winner holding another date leaves exact-day selection intact.
+    heads
+        .min_by(|a, b| crate::model::compare_page_claimants(&config.journals_dir, a, b))
+        .is_some_and(|winner| winner.date_key.is_none())
+}
+
 impl Store {
+    /// The live feed's exact-day candidate, including startup and unobserved
+    /// journal files. Reuses the published name mask when a view is available.
+    /// Before publication, ordinary preamble discovery is O(P) once per
+    /// invalidation. Warm lookups use the name and day indexes.
+    pub fn live_journal_feed_id(&self, day: Day) -> Option<PageId> {
+        let date = JournalDate::from_ordinal(day.0);
+        let masked = {
+            let snapshot = self.changes.snapshot.read().unwrap();
+            if let Some(snapshot) = snapshot.as_ref() {
+                let title = snapshot.journal_format.title(date);
+                journal_name_is_masked(&snapshot.claimants, &title, &snapshot.config.config)
+            } else {
+                drop(snapshot);
+                let title = self.graph.current_journal_format().title(date);
+                let pages = self.graph.find_claimants(&title, PageKind::Page);
+                let journals = self.graph.find_claimants(&title, PageKind::Journal);
+                journal_claimant_masks_day(
+                    pages.first().into_iter().chain(journals.first()),
+                    &self.graph.current_config(),
+                )
+            }
+        };
+        if masked {
+            return None;
+        }
+        let active = self.journal_id(day, true);
+        (active == self.journal_id(day, false)).then_some(active)
+    }
+
     /// Use the latest published identity index for a move's same-name check.
     /// Before the first publication, live discovery still supplies the index;
     /// never wait for the load worker while holding the transaction writer lock.
@@ -73,6 +124,20 @@ impl Store {
 }
 
 impl WholeGraph {
+    /// The captured diagnostic for one exact graph-relative path. O(log U)
+    /// comparisons for U unreadable entries, with no allocation or disk read.
+    pub fn unreadable_file_reason(&self, path: &str) -> Option<&str> {
+        let index = self
+            .unreadable
+            .binary_search_by(|(file, _)| {
+                #[cfg(feature = "test-faults")]
+                crate::cost_counters::unreadable_path_probe();
+                file.as_str().cmp(path)
+            })
+            .ok()?;
+        Some(&self.unreadable[index].1)
+    }
+
     pub(super) fn name_claimants(&self, name: &str, kind: PageKind) -> Vec<PageEntry> {
         name_claimants(&self.claimants, name, kind).to_vec()
     }
