@@ -37,7 +37,7 @@ mod page_icons;
 mod page_identity;
 mod page_parse;
 mod parse_depth;
-pub(crate) use file_source::{FileSource, ParseText};
+pub(crate) use file_source::FileSource;
 mod path_membership;
 pub(crate) mod referenced_names;
 mod template_names;
@@ -176,20 +176,23 @@ pub(crate) fn missing_config_problem(
         .into()
     })
 }
-pub(crate) fn read_parse_input(path: &Path) -> io::Result<ParseText> {
-    read_parse_input_in(&FileSource::Disk, path)
+pub(crate) fn read_parse_input(path: &Path) -> io::Result<String> {
+    read_parse_input_in(&FileSource::Disk, path).map(std::borrow::Cow::into_owned)
 }
 
 /// [`read_parse_input`] from `source`: a disk read's buffer, or a memory
 /// file's text without a copy.
-pub(crate) fn read_parse_input_in(source: &FileSource, path: &Path) -> io::Result<ParseText> {
+pub(crate) fn read_parse_input_in<'a>(
+    source: &'a FileSource,
+    path: &Path,
+) -> io::Result<std::borrow::Cow<'a, str>> {
     if let Some(text) = source.memory_parse_text(path) {
         return text;
     }
     let (bytes, _) = read_parse_bytes_in(source, path)?;
     validate_parse_bytes_for_path(&bytes, path)?;
     String::from_utf8(bytes)
-        .map(ParseText::owned)
+        .map(std::borrow::Cow::Owned)
         .map_err(|_| not_utf8())
 }
 
@@ -3280,7 +3283,7 @@ impl Graph {
             // the stale entry and report NotFound; callers treat the page as
             // absent (the feed skips it, get_page returns None).
             self.forget_file_internal(&entry.path);
-            return read.map(|_| unreachable!("the read failed"));
+            return Err(read.unwrap_err());
         }
         // A failed read must not fall through to a stale cached DTO.
         let content = read?;
