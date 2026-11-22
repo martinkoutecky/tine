@@ -86,6 +86,11 @@ jobs:
           npm run build:wasm
           node scripts/check-wasm-pin.mjs
 
+      # The browser core (D-20261122-WEX): the store and the graph features
+      # build for the browser. Their clock reads are pinned by clock_guard.
+      - name: Browser core builds for wasm32
+        run: cargo check --target wasm32-unknown-unknown -p tine-store -p tine-graph-features
+
       - name: Release contract fixtures
         run: |
           node --test scripts/check-privileged-action-pins.test.mjs
@@ -152,6 +157,11 @@ jobs:
         run: |
           npm run build:wasm
           node scripts/check-wasm-pin.mjs
+
+      # The browser core (D-20261122-WEX): the store and the graph features
+      # build for the browser. Their clock reads are pinned by clock_guard.
+      - name: Browser core builds for wasm32
+        run: cargo check --target wasm32-unknown-unknown -p tine-store -p tine-graph-features
 
       - name: Release pipeline contract fixtures
         run: |
