@@ -22,7 +22,7 @@ mod render_facets;
 #[path = "render_lookups.rs"]
 mod render_lookups;
 #[path = "render_query_source.rs"]
-mod render_query_source;
+pub(crate) mod render_query_source;
 #[path = "render_sheets.rs"]
 mod render_sheets;
 use render_facets::{emit_header_facets, emit_trailer_facets, Ordinal};
@@ -892,7 +892,7 @@ fn body_blocks_with_queries(
     (blocks, queries)
 }
 
-fn parsed_body(raw: &str, org: bool) -> Vec<Block> {
+pub(crate) fn parsed_body(raw: &str, org: bool) -> Vec<Block> {
     let mut parsed = tine_core::render::parse_block(raw, org);
     if !org {
         // Metadata rows a final quote swallowed (GH #721): the editor hides them, so
@@ -903,28 +903,6 @@ fn parsed_body(raw: &str, org: bool) -> Vec<Block> {
         .into_iter()
         .filter(|b| !matches!(b, Block::Properties { .. }))
         .collect()
-}
-
-pub(crate) fn visit_macro_calls(raw: &str, org: bool, property: bool, mut call: impl FnMut(&str)) {
-    if !raw.contains("{{") {
-        return;
-    }
-    let mut blocks = if property {
-        tine_core::render::parse_text_bounded(raw, org)
-            .map(|parsed| parsed.blocks)
-            .unwrap_or_default()
-    } else {
-        parsed_body(raw, org)
-    };
-    let _: Result<(), std::convert::Infallible> =
-        render_query_source::visit_inlines(&mut blocks, |inlines| {
-            for inline in inlines {
-                if let Inline::Macro { name, .. } = inline {
-                    call(name);
-                }
-            }
-            Ok(())
-        });
 }
 
 pub(crate) use render_query_source::query_for_export;
@@ -945,7 +923,7 @@ enum BeginQueryInspection {
 /// `#+BEGIN_QUERY` container. This mirrors `WHOLE_BEGIN_QUERY` in the frontend:
 /// spaces/tabs are accepted around the delimiters, all three line endings are
 /// accepted, and neither a prefix nor a suffix may share the block.
-fn whole_begin_query_payload(raw: &str) -> Option<&str> {
+pub(crate) fn whole_begin_query_payload(raw: &str) -> Option<&str> {
     const BEGIN: &str = "#+BEGIN_QUERY";
     const END: &str = "#+END_QUERY";
 
@@ -1013,15 +991,7 @@ fn whole_begin_query_payload(raw: &str) -> Option<&str> {
 /// EDN is always sliced from `raw`; rendered/flattened AST text is never rebuilt.
 fn inspect_begin_query(raw: &str, blocks: &[Block]) -> Option<BeginQueryInspection> {
     let payload = whole_begin_query_payload(raw)?;
-    let body = if matches!(
-        blocks.first(),
-        Some(Block::Bullet { .. } | Block::Heading { .. })
-    ) {
-        &blocks[1..]
-    } else {
-        blocks
-    };
-    if !matches!(body, [Block::Custom { name, .. }] if name.eq_ignore_ascii_case("query")) {
+    if !is_query_body(blocks) {
         return Some(BeginQueryInspection::Unsupported);
     }
     Some(match tine_core::query_edn::inspect_begin_query(payload) {
@@ -1038,6 +1008,14 @@ fn inspect_begin_query(raw: &str, blocks: &[Block]) -> Option<BeginQueryInspecti
             BeginQueryInspection::Unsupported
         }
     })
+}
+
+pub(crate) fn is_query_body(blocks: &[Block]) -> bool {
+    let body = match blocks {
+        [Block::Bullet { .. } | Block::Heading { .. }, rest @ ..] => rest,
+        _ => blocks,
+    };
+    matches!(body, [Block::Custom { name, .. }] if name.eq_ignore_ascii_case("query"))
 }
 
 /// The first visible block's plain text — a `((block ref))`'s shown label when it has none.

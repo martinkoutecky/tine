@@ -25,6 +25,11 @@ export function block_may_have_logbook(raw: string): boolean;
 export function block_reference_names(raw: string, is_org: boolean): string[];
 
 /**
+ * Renderer dispatch for a parser-tokenized macro name, O(name bytes).
+ */
+export function builtin_macro(name: string): string;
+
+/**
  * Native group-field grammar: O(value bytes), no I/O; invalid tokens return null.
  */
 export function canonical_group_field(value: string): string | undefined;
@@ -385,6 +390,7 @@ export interface InitOutput {
     readonly asset_rel_path: (a: number, b: number) => [number, number];
     readonly block_may_have_logbook: (a: number, b: number) => number;
     readonly block_reference_names: (a: number, b: number, c: number) => [number, number];
+    readonly builtin_macro: (a: number, b: number) => [number, number];
     readonly canonical_group_field: (a: number, b: number) => [number, number];
     readonly comment_quote: (a: number, b: number) => [number, number, number, number];
     readonly decode_page_name: (a: number, b: number, c: number) => [number, number];

@@ -85,7 +85,7 @@ pub(super) fn restore(blocks: &mut [Block], raw: &str) -> QuerySources {
     Ok(recognized)
 }
 
-pub(super) fn visit_inlines<E>(
+pub(crate) fn visit_inlines<E>(
     blocks: &mut [Block],
     mut visit: impl FnMut(&mut [Inline]) -> Result<(), E>,
 ) -> Result<(), E> {

@@ -65,6 +65,7 @@ import { SourceTaskCheckbox } from "../components/SourceTaskCheckbox";
 import { blockRef, setRaw, flushPage, formatForPage, formatForBlock, isBlockRefUuid, node as docNode, pageHeaderProperties } from "../document";
 import { PaneContext, focusedPaneId, openRouteInOtherPane } from "../panes";
 import { isQueryMacroName, queryMacroExtentAtSpan, type MacroExtent } from "../editor/queryMacro";
+import { builtin_macro } from "./wasm/lsdoc_wasm.js";
 import { QueryMacro, EmbedMacro, VideoMacro, TweetMacro, YoutubeTimestamp, ClozeMacro, ZoteroMacro } from "../components/Macro";
 import { NamespaceMacro } from "../components/Namespace";
 import { guideTargetForLink, isGuidePageName } from "../guide";
@@ -104,22 +105,24 @@ function renderMacroBody(raw: string, blockId?: string, userArgs?: string[], raw
   // A preview must not mount a live query editor through an inline macro.
   if (useContext(PeekContext) && (rawMacro || isQueryMacroName(body.split(" ", 1)[0]))) return <code>{`{{${raw}}}`}</code>;
   if (rawMacro) return <QueryMacro body={`${rawMacro.name} ${rawMacro.argument}`} blockId={blockId} sourceExtent={rawMacro} sourceRaw={blockId ? docNode(blockId)?.raw.slice(rawMacro.start, rawMacro.end) : undefined} />;
-  if (isQueryMacroName(/^\S*/.exec(body)![0].replace(/}+$/, ""))) return <QueryMacro body={body} blockId={blockId} />;
-  if (/^embed\b/i.test(body)) return <EmbedMacro body={body} blockId={blockId} span={span} />;
-  if (/^youtube-timestamp\b/i.test(body)) return <YoutubeTimestamp body={body} />;
-  if (/^(video|youtube|vimeo|bilibili)\b/i.test(body)) return <VideoMacro body={body} />;
-  if (/^(tweet|twitter)\b/i.test(body)) return <TweetMacro body={body} />;
-  if (/^img\b/i.test(body)) return renderImgMacro(body, blockId);
-  if (/^cloze\b/i.test(body)) return <ClozeMacro body={body} />;
-  if (/^zotero-(imported|linked)-file\b/i.test(body)) return <ZoteroMacro body={body} />;
-  if (/^namespace\b/i.test(body)) {
-    const root = body.replace(/^namespace\s+/i, "").trim();
-    if (root) return <NamespaceMacro root={root} />;
-  }
   const um = /^(\S+)\s*([\s\S]*)$/.exec(body);
   const unknown = <span class="macro">{`{{${raw}}}`}</span>;
   if (!um) return unknown;
   const name = um[1];
+  switch (builtin_macro(name)) {
+    case "query": return <QueryMacro body={body} blockId={blockId} />;
+    case "embed": return <EmbedMacro body={body} blockId={blockId} span={span} />;
+    case "youtube-timestamp": return <YoutubeTimestamp body={body} />;
+    case "video": return <VideoMacro body={body} />;
+    case "tweet": return <TweetMacro body={body} />;
+    case "img": return renderImgMacro(body, blockId);
+    case "cloze": return <ClozeMacro body={body} />;
+    case "zotero": return <ZoteroMacro body={body} />;
+    case "namespace": {
+      const root = body.replace(/^namespace\s+/i, "").trim();
+      return root ? <NamespaceMacro root={root} /> : unknown;
+    }
+  }
   const args = userArgs ?? (um[2].trim() ? um[2].split(",").map((a) => a.trim()) : []);
   // Tracked: a `:macros` edit in config.edn re-renders the blocks on screen
   // (a config change refreshes graphMeta, not the page data).

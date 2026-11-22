@@ -312,9 +312,11 @@ function QueryMacroContent(props: Parameters<typeof QueryMacro>[0]): JSX.Element
   // Master: a typed `:current-page` input binds the focused pane's page; every
   // other query runs bound to the page the query block is on.
   const executionContext = (): ExecutionContext | undefined => {
+    const source = props.currentPage ?? (props.blockId ? docNode(props.blockId)?.page : undefined);
     const page = isAdvanced() && declaresCurrentPageInput(form())
       ? queryCurrentPage()
-      : props.currentPage ?? (props.blockId ? docNode(props.blockId)?.page : undefined);
+      : source;
+    if (isPublishedExport() && source) return { current_page: page, source_page: source };
     return page ? { current_page: page } : undefined;
   };
   // What exporting or sharing this block starts from: its query text, host properties and page.

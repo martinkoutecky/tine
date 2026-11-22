@@ -64,6 +64,14 @@ pub struct QueryRunAnswer {
     as_of_day: Option<i64>,
 }
 
+/// Execution inputs carried only by the generated query home of a folder
+/// export. The reviewed names already appear in the selected source graph.
+#[derive(Default, serde::Deserialize, serde::Serialize)]
+pub struct PublicationQuery {
+    pub current_page: Option<String>,
+    pub host_block_id: Option<String>,
+}
+
 pub fn run(
     graph: &WholeGraph,
     query: &Query,
@@ -71,14 +79,23 @@ pub fn run(
     context: &ExecutionContext,
     cancel: &Cancel,
 ) -> Result<QueryResult, String> {
-    match graph.query_ir(
+    run_request(
+        graph,
         IrRequest::Run {
             query,
             view,
             context,
         },
         cancel,
-    ) {
+    )
+}
+
+fn run_request(
+    graph: &WholeGraph,
+    request: IrRequest<'_>,
+    cancel: &Cancel,
+) -> Result<QueryResult, String> {
+    match graph.query_ir(request, cancel) {
         Ok(Some(answer)) => QueryResult::try_from(answer),
         Ok(None) => Err(QUERY_CANCELLED.into()),
         Err(error) => Err(error.to_string()),
@@ -93,8 +110,38 @@ pub fn run_wire(
     context: &ExecutionContext,
     cancel: &Cancel,
 ) -> Result<QueryRunAnswer, String> {
-    run(graph, query, view, context, cancel).map(|result| QueryRunAnswer {
+    run(graph, query, view, context, cancel).map(run_answer)
+}
+
+/// Run the generated home query with its reviewed inputs, against selected
+/// physical owners. Bounds and serialization are shared with desktop runs.
+pub fn run_publication(
+    graph: &WholeGraph,
+    query: &Query,
+    view: &ViewSettings,
+    home: &str,
+    reviewed: &PublicationQuery,
+) -> Result<QueryRunAnswer, String> {
+    let context = ExecutionContext {
+        current_page: reviewed.current_page.clone(),
+    };
+    run_request(
+        graph,
+        IrRequest::RunPublication {
+            query,
+            view,
+            context: &context,
+            home,
+            host_block_id: reviewed.host_block_id.as_deref(),
+        },
+        &Cancel::default(),
+    )
+    .map(run_answer)
+}
+
+fn run_answer(result: QueryResult) -> QueryRunAnswer {
+    QueryRunAnswer {
         as_of_day: result.as_of_day,
         result,
-    })
+    }
 }

@@ -34,6 +34,7 @@ pub mod print;
 mod publication_options;
 #[cfg(not(target_arch = "wasm32"))]
 mod publication_snapshot;
+mod publication_source;
 #[cfg(not(target_arch = "wasm32"))]
 pub mod publish;
 #[cfg(not(target_arch = "wasm32"))]
@@ -48,6 +49,7 @@ mod retained;
 pub mod run_revert;
 pub use render::{SheetExport, SheetInput};
 pub mod search;
+pub mod share_admission;
 pub mod templates;
 
 use std::io;

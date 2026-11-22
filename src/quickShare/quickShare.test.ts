@@ -17,6 +17,7 @@ import {
   QuickShareError,
 } from "./quickShare";
 import limits from "../../docs/contracts/quick-share-limits.json";
+import { loadBrowserCore } from "../browserCore";
 import { replacePublishedPermalink, setQuickSharePrefix } from "../publishedPermalink";
 
 const FIXTURES = new URL("../../tests/fixtures/quick-share/g2/", import.meta.url);
@@ -171,7 +172,7 @@ describe("quick share generation 2", () => {
     expect(await reason(gunzipBounded(payload, limits.viewer.document_bytes))).toBe("too-large");
   });
 
-  it("admits bounded generation-2 source documents", () => {
+  it("recognizes the generation-2 document shape", () => {
     const frozen = readFileSync(new URL("pages/document.json", FIXTURES));
     expect(decodeShareDocument(frozen).schema).toBe(2);
     const doc = JSON.parse(frozen.toString());
@@ -189,9 +190,29 @@ describe("quick share generation 2", () => {
     const changed = (files: unknown) => ({ ...doc, snapshot: { ...doc.snapshot, files } });
     expect(refusal(changed([null]))).toBe("invalid");
     expect(refusal(changed([{ path: "pages/plain.md", text: 42 }]))).toBe("invalid");
-    expect(refusal(changed(Array(limits.viewer.pages + 2).fill(doc.snapshot.files[0])))).toBe("too-large");
-    expect(refusal(changed([{ path: "pages/large.md", text: "é".repeat(limits.viewer.string_bytes / 2 + 1) }]))).toBe("too-large");
     expect(() => decodeShareDocument(new TextEncoder().encode("{"))).toThrow(QuickShareError);
+  });
+
+  it("enforces byte limits and parser counts at the browser share open", async () => {
+    const { BrowserGraph } = await loadBrowserCore();
+    const encoder = new TextEncoder();
+    for (const [reason, texts] of [
+      ["too many files", Array<string>(limits.viewer.pages + 2).fill("- small")],
+      ["1 MiB", ["é".repeat(limits.viewer.string_bytes / 2 + 1)]],
+      ["too many blocks", ["- x\n".repeat(limits.viewer.blocks + 1)]],
+      ["too many queries", ["- {{query (task TODO)}}\n".repeat(limits.viewer.queries + 1)]],
+      ["too many queries", ["- #+BEGIN_QUERY\n  {:query (task TODO)}\n  #+END_QUERY\n".repeat(limits.viewer.queries + 1)]],
+    ] as const) {
+      const files = texts.map((text, i) => ({ path: `pages/Public-${i}.md`, text }));
+      const snapshot = decodeShareDocument(encoder.encode(JSON.stringify({
+        quick_share: 2, snapshot: { schema: 2, name: "Example", exported_at: "", files },
+      })));
+      expect(() => new BrowserGraph(
+        snapshot.files.map(file => file.path),
+        snapshot.files.map(file => encoder.encode(file.text)),
+        JSON.stringify({ share: { name: snapshot.name, exported_at: snapshot.exported_at } }),
+      )).toThrow(new RegExp(`share-too-large:.*${reason}`));
+    }
   });
 
   it("parses the public locator and key independently", () => {

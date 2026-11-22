@@ -139,7 +139,7 @@ export async function gunzipBounded(bytes: Uint8Array<ArrayBuffer>, max: number)
   }
 }
 
-/** Admit the gunzipped source document before opening the memory graph. */
+/** Decode the gunzipped document. The graph core admits its source limits. */
 export function decodeShareDocument(bytes: Uint8Array): PublishedSnapshot {
   let doc: { quick_share?: unknown; snapshot?: unknown } | null;
   try {
@@ -153,22 +153,11 @@ export function decodeShareDocument(bytes: Uint8Array): PublishedSnapshot {
   }
   if (generation !== QUICK_SHARE_GENERATION) fail("invalid", "This share is damaged.");
 
-  let snapshot: PublishedSnapshot;
   try {
-    snapshot = validateSnapshot(doc?.snapshot);
+    return validateSnapshot(doc?.snapshot);
   } catch {
     return fail("invalid", "This share is damaged.");
   }
-  const v = limits.viewer;
-  if (snapshot.files.length > v.pages + 1) fail("too-large", "This share is larger than a viewer reads.");
-  const encoder = new TextEncoder();
-  const tooLong = (text: string) => text.length > v.string_bytes ||
-    (text.length * 3 > v.string_bytes && encoder.encode(text).length > v.string_bytes);
-  if (tooLong(snapshot.name) || tooLong(snapshot.exported_at)
-    || snapshot.files.some(file => tooLong(file.path) || tooLong(file.text))) {
-    fail("too-large", "This share holds a source file larger than a viewer reads.");
-  }
-  return snapshot;
 }
 
 type Fetch = (url: string, init?: RequestInit) => Promise<Response>;

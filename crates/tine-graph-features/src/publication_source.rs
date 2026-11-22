@@ -1,0 +1,69 @@
+//! Parser observations used when writing or admitting source publications.
+use crate::render::parsed_body;
+use crate::render::render_query_source::visit_inlines;
+use tine_core::lsdoc::ast::Inline;
+
+pub(crate) fn visit_macro_calls<E>(
+    raw: &str,
+    org: bool,
+    property: bool,
+    mut call: impl FnMut(&str, &[String]) -> Result<(), E>,
+) -> Result<(), E> {
+    if !raw.contains("{{") {
+        return Ok(());
+    }
+    let mut blocks = if property {
+        tine_core::render::parse_text_bounded(raw, org)
+            .map(|parsed| parsed.blocks)
+            .unwrap_or_default()
+    } else {
+        parsed_body(raw, org)
+    };
+    visit_inlines(&mut blocks, |inlines| {
+        for inline in inlines {
+            if let Inline::Macro { name, args, .. } = inline {
+                call(name, args)?;
+            }
+        }
+        Ok(())
+    })
+}
+
+pub(crate) fn visit_document_calls<E>(
+    document: &tine_core::doc::Document,
+    mut block_seen: impl FnMut(usize, &str, bool) -> Result<(), E>,
+    mut call: impl FnMut(&str, &[String], bool) -> Result<(), E>,
+) -> Result<(), E> {
+    let org = document.org;
+    let mut call = |name: &str, args: &[String]| call(name, args, org);
+    if let Some(pre) = document
+        .pre_block
+        .as_deref()
+        .filter(|pre| pre.contains("{{"))
+    {
+        let regions = tine_core::block_regions::parse_document(pre, org);
+        for (_, value) in tine_core::page_header::page_property_lines_in(&regions, org) {
+            visit_macro_calls(&value, org, true, &mut call)?;
+        }
+        if let Some(opening) = tine_core::page_properties::preamble_range_in(pre, org, &regions) {
+            visit_macro_calls(&pre[opening], org, false, &mut call)?;
+        }
+    }
+    let mut pending: Vec<_> = document
+        .roots
+        .iter()
+        .rev()
+        .map(|block| (block, 1))
+        .collect();
+    while let Some((block, depth)) = pending.pop() {
+        block_seen(depth, block.raw(), org)?;
+        if block.raw().contains("{{") {
+            visit_macro_calls(block.raw(), org, false, &mut call)?;
+            for (_, value) in block.projection().properties() {
+                visit_macro_calls(value, org, true, &mut call)?;
+            }
+        }
+        pending.extend(block.children.iter().rev().map(|child| (child, depth + 1)));
+    }
+    Ok(())
+}

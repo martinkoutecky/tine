@@ -73,6 +73,42 @@ pub fn parse_inline_bounded(text: &str, format: &str) -> Option<Vec<lsdoc::ast::
     lsdoc_block_parse::parse_inline_bounded(text, format)
 }
 
+/// Dispatch for a parser-tokenized macro name. Built-ins take precedence over
+/// configuration. The empty result means the renderer can look up the name.
+/// O(name bytes).
+pub fn builtin_macro(name: &str) -> &'static str {
+    if crate::query::is_query_macro_name(name.trim_end_matches('}')) {
+        return "query";
+    }
+    for (prefix, kind) in [
+        ("embed", "embed"),
+        ("youtube-timestamp", "youtube-timestamp"),
+        ("video", "video"),
+        ("youtube", "video"),
+        ("vimeo", "video"),
+        ("bilibili", "video"),
+        ("tweet", "tweet"),
+        ("twitter", "tweet"),
+        ("img", "img"),
+        ("cloze", "cloze"),
+        ("zotero-imported-file", "zotero"),
+        ("zotero-linked-file", "zotero"),
+        ("namespace", "namespace"),
+    ] {
+        if name
+            .get(..prefix.len())
+            .is_some_and(|head| head.eq_ignore_ascii_case(prefix))
+            && !name
+                .as_bytes()
+                .get(prefix.len())
+                .is_some_and(|b| b.is_ascii_alphanumeric() || *b == b'_')
+        {
+            return kind;
+        }
+    }
+    ""
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

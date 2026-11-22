@@ -22,6 +22,29 @@ use std::fs;
 use std::io::{self, Read, Write};
 use std::path::{Path, PathBuf};
 
+/// Read a memory source's config and physical page names by path.
+/// Cost: one config read, one path listing and one preamble observation per
+/// ordinary page. Uses the store's title and journal claims. Invalid layout
+/// and unreadable page identities are refused.
+pub fn publication_page_names(
+    files: Vec<(String, Vec<u8>)>,
+) -> io::Result<(tine_core::config::Config, Vec<(String, String)>)> {
+    let graph = Graph::in_memory_with_config(
+        files
+            .into_iter()
+            .map(|(path, bytes)| {
+                (
+                    path,
+                    crate::model::file_source::Content::Bytes(std::sync::Arc::new(bytes)),
+                    None,
+                )
+            })
+            .collect(),
+    )?;
+    let names = graph.physical_page_names()?;
+    Ok((graph.config, names))
+}
+
 // `same_file::Handle` keeps its Windows handle open without FILE_SHARE_DELETE,
 // which makes MoveFileW reject the final stage rename. Keep a separately-opened
 // identity handle that does share deletion instead. We first compare it against

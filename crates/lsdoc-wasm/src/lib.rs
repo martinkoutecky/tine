@@ -968,6 +968,12 @@ pub fn is_query_macro_name(name: &str) -> bool {
     tine_core::query::is_query_macro_name(name)
 }
 
+/// Renderer dispatch for a parser-tokenized macro name, O(name bytes).
+#[wasm_bindgen]
+pub fn builtin_macro(name: &str) -> String {
+    tine_core::render::builtin_macro(name).into()
+}
+
 /// The raw reader's literal grammar for a macro name; O(name bytes), no I/O.
 #[wasm_bindgen]
 pub fn query_macro_is_tql(name: &str) -> bool {

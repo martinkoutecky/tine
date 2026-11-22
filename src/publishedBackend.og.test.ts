@@ -12,6 +12,25 @@ const uuid = "11111111-1111-4111-8111-111111111111";
 
 afterEach(() => vi.unstubAllGlobals());
 
+it.each([false, true])("reports silent worker loss while opening (Web Locks: %s)", async (webLocks) => {
+  const { openPublishedGraphWorker } = await import("./publishedGraphWorker");
+  const postMessage = vi.fn();
+  const terminate = vi.fn();
+  vi.stubGlobal("Worker", class { postMessage = postMessage; terminate = terminate; });
+  vi.stubGlobal("navigator", { locks: webLocks ? { request: vi.fn() } : undefined });
+  vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout", "performance"] });
+  try {
+    const opened = openPublishedGraphWorker(new Uint8Array(), false);
+    void opened.catch(() => {});
+    await vi.advanceTimersByTimeAsync(180_000);
+    expect(postMessage.mock.calls.map(([request]) => request.method)).toEqual(["open", "ping"]);
+    await expect(opened).rejects.toThrow(/Worker stopped responding/);
+    expect(terminate).toHaveBeenCalledTimes(1);
+  } finally {
+    vi.useRealTimers();
+  }
+});
+
 it("transfers one snapshot, pairs overlapping reads with their answers and drains them on worker failure", async () => {
   const received: GraphRequest[] = [];
   const detached: number[] = [];
@@ -73,6 +92,22 @@ it("runs unrecorded queries over the shared pages", async () => {
     const parsed = await api.parseQuery(`(task ${task})`, "macro_query");
     expect(await api.queryRun(parsed.query, parsed.view)).toMatchObject({ total });
   }
+});
+
+it("binds the generated query's reviewed page even when the browser focuses another page", async () => {
+  const api = testPublishedBackend({
+    "pages/Public.md": "- referred to [[Focus]]\n",
+    "pages/Export.md": "- [[Public]]\n- [[Other]]\n",
+    "logseq/config.edn": '{:default-home {:page "Export"}}',
+  }, "Example", { query_home: { current_page: "Focus" } });
+  const { query, view } = await api.parseQuery(
+    '{:query [:find (pull ?b [*]) :in $ ?p :where [?page :block/name ?p] [?b :block/refs ?page]] :inputs [:current-page]}',
+    "macro_query",
+  );
+  const reviewed = await api.queryRun(query, view, { source_page: "Export", current_page: "Other" });
+  expect(reviewed).toMatchObject({ total: 1, groups: [{ page: "Public", blocks: [{ raw: "referred to [[Focus]]" }] }] });
+  const ordinary = await api.queryRun(query, view, { source_page: "Public", current_page: "Other" });
+  expect(ordinary).toMatchObject({ total: 1, groups: [{ page: "Export", blocks: [{ raw: "[[Other]]" }] }] });
 });
 
 it("refuses writes and keeps the public fragment grammar", async () => {

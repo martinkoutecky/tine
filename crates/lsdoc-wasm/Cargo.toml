@@ -15,6 +15,9 @@ publish = false
 [lib]
 crate-type = ["cdylib"]
 
+[package.metadata.wasm-pack.profile.custom]
+wasm-opt = ["-Oz"]
+
 [features]
 core = ["dep:tine-store", "dep:tine-graph-features"]
 

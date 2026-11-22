@@ -6,10 +6,10 @@ import type { GraphRead } from "./publishedGraphRpc";
 import { OPTIONAL_METHODS, publishedBackend } from "./publishedBackend";
 
 /** Exercise the publication adapter with the vendored core and synthetic files. */
-export function testPublishedBackend(files: Record<string, string>, name = "Publication") {
+export function testPublishedBackend(files: Record<string, string>, name = "Publication", options?: unknown) {
   const encoder = new TextEncoder();
   const opened = loadBrowserCore().then(core => ({
-    graph: new core.BrowserGraph(Object.keys(files), Object.values(files).map(text => encoder.encode(text))),
+    graph: new core.BrowserGraph(Object.keys(files), Object.values(files).map(text => encoder.encode(text)), JSON.stringify(options)),
     name,
   }));
   onTestFinished(async () => (await opened).graph.free());

@@ -66,6 +66,26 @@ function __tine_raw_block_reference_names(raw, is_org) {
 }
 
 /**
+ * Renderer dispatch for a parser-tokenized macro name, O(name bytes).
+ * @param {string} name
+ * @returns {string}
+ */
+function __tine_raw_builtin_macro(name) {
+    let deferred2_0;
+    let deferred2_1;
+    try {
+        const ptr0 = passStringToWasm0(name, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+        const len0 = WASM_VECTOR_LEN;
+        const ret = wasm.builtin_macro(ptr0, len0);
+        deferred2_0 = ret[0];
+        deferred2_1 = ret[1];
+        return getStringFromWasm0(ret[0], ret[1]);
+    } finally {
+        wasm.__wbindgen_free(deferred2_0, deferred2_1, 1);
+    }
+}
+
+/**
  * Native group-field grammar: O(value bytes), no I/O; invalid tokens return null.
  * @param {string} value
  * @returns {string | undefined}
@@ -1798,6 +1818,7 @@ export const absent_link_is_journal = __tineGuard("absent_link_is_journal", __ti
 export const asset_rel_path = __tineGuard("asset_rel_path", __tine_raw_asset_rel_path);
 export const block_may_have_logbook = __tineGuard("block_may_have_logbook", __tine_raw_block_may_have_logbook);
 export const block_reference_names = __tineGuard("block_reference_names", __tine_raw_block_reference_names);
+export const builtin_macro = __tineGuard("builtin_macro", __tine_raw_builtin_macro);
 export const canonical_group_field = __tineGuard("canonical_group_field", __tine_raw_canonical_group_field);
 export const comment_quote = __tineGuard("comment_quote", __tine_raw_comment_quote);
 export const decode_page_name = __tineGuard("decode_page_name", __tine_raw_decode_page_name);

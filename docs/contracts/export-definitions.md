@@ -109,7 +109,12 @@ selection preserves the chosen block's context and export properties.
 A query export's home lists the exported pages. With `includeQueryText`
 ("Include the query text", off by default), its first block holds the query
 macro with its reviewed execution argument and presentation properties. The
-browser core runs it over the snapshot. The choice is outside the reviewed
+browser core binds the reviewed page context and runs the query over the
+selected source owners before applying result limits. The generated listing
+does not supply query rows. Folder snapshots with this block carry a
+`query_home` execution input containing any reviewed page name already
+present in the selected graph and the original query block ID when that block
+travels with the export. The choice is outside the reviewed
 fingerprint. Queries authored in an exported page travel with its source.
 
 ## The "this page" selector

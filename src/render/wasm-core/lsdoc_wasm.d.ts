@@ -29,7 +29,7 @@ export class BrowserGraph {
      * `config_problem_json`. Cost: one read and parse of each file and the
      * initial index capture, as a desktop open has.
      */
-    constructor(paths: string[], files: Uint8Array[]);
+    constructor(paths: string[], files: Uint8Array[], options_json?: string | null);
     page_alias_group_json(name: string): string;
     page_backlink_counts_json(): string;
     page_icons_json(names_json: string): string;
@@ -83,6 +83,11 @@ export function block_may_have_logbook(raw: string): boolean;
  * plus one inline parse per property value or macro argument; no I/O.
  */
 export function block_reference_names(raw: string, is_org: boolean): string[];
+
+/**
+ * Renderer dispatch for a parser-tokenized macro name, O(name bytes).
+ */
+export function builtin_macro(name: string): string;
 
 /**
  * Native group-field grammar: O(value bytes), no I/O; invalid tokens return null.
@@ -458,7 +463,7 @@ export interface InitOutput {
     readonly browsergraph_graph_meta_json: (a: number) => [number, number, number, number];
     readonly browsergraph_journal_content_days_json: (a: number) => [number, number, number, number];
     readonly browsergraph_journal_feed_page_json: (a: number, b: number, c: number, d: bigint, e: number, f: number, g: bigint) => [number, number, number, number];
-    readonly browsergraph_new: (a: number, b: number, c: number, d: number) => [number, number, number];
+    readonly browsergraph_new: (a: number, b: number, c: number, d: number, e: number, f: number) => [number, number, number];
     readonly browsergraph_page_alias_group_json: (a: number, b: number, c: number) => [number, number, number, number];
     readonly browsergraph_page_backlink_counts_json: (a: number) => [number, number, number, number];
     readonly browsergraph_page_icons_json: (a: number, b: number, c: number) => [number, number, number, number];
@@ -472,6 +477,7 @@ export interface InitOutput {
     readonly browsergraph_resolve_page_json: (a: number, b: number, c: number, d: number) => [number, number, number, number];
     readonly browsergraph_run_graph_search_json: (a: number, b: number, c: number, d: number, e: number, f: number, g: number) => [number, number, number, number];
     readonly browsergraph_search_json: (a: number, b: number, c: number, d: number) => [number, number, number, number];
+    readonly builtin_macro: (a: number, b: number) => [number, number];
     readonly canonical_group_field: (a: number, b: number) => [number, number];
     readonly comment_quote: (a: number, b: number) => [number, number, number, number];
     readonly decode_page_name: (a: number, b: number, c: number) => [number, number];

@@ -23,7 +23,9 @@ Assets, stored answers and baked query results are outside the document.
 directories, journal title and filename formats (including `:date-formatter`),
 preferred format, filename format, hidden block properties, comma-separated
 properties, property pages, ignored reference keywords and start of week.
-The macro map carries only definitions for calls parsed in the shared pages.
+The macro map carries definitions reached by custom calls parsed in shared
+Markdown and Org, including their bounded expansions. Built-in dispatch takes
+precedence over names in the macro map.
 The field classification test covers every `Config` field. `:default-home`
 names the shared page or the ordinary generated page listing the shared pages.
 This is the same snapshot used for folder exports, documented in
@@ -31,7 +33,9 @@ This is the same snapshot used for folder exports, documented in
 
 The writer admits 200 selected pages plus a generated home, 200,000 blocks,
 256 query calls, 1 MiB per source string, 32 MiB of document JSON, 6 MiB gzip
-and 8 MiB envelope text. The core admits the file and block structure. The viewer bounds the
+and 8 MiB envelope text. The writer and browser core apply the same source
+admission before opening the shared graph. The query count includes parsed query
+macros and recognized `BEGIN_QUERY` containers. The viewer bounds the
 envelope and fetch responses before decoding and authenticates before gunzipping.
 It transfers the gunzipped bytes to a same-origin module worker, which validates
 the source document and owns the graph. Each graph read takes one request and

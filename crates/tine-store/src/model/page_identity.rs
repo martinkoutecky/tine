@@ -7,6 +7,20 @@ use std::io::{BufRead, BufReader, Read};
 use tine_core::model::PreambleRead;
 
 impl Graph {
+    pub(crate) fn physical_page_names(&self) -> io::Result<Vec<(String, String)>> {
+        let (entries, failures) = list_graph_pages(self);
+        if !failures.is_empty() {
+            return Err(io::Error::new(
+                io::ErrorKind::InvalidData,
+                "could not read page identities",
+            ));
+        }
+        Ok(entries
+            .into_iter()
+            .map(|entry| (self.rel_path(&entry.path), entry.name))
+            .collect())
+    }
+
     /// Whether the unreadable graph-text entry `failed` (a row of
     /// [`Graph::unreadable_pages`]) could be the ordinary page whose
     /// `page_key` is `key`. Refusal `R-CREATE-UNREADABLE-OWNER`

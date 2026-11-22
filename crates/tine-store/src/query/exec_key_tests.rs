@@ -80,7 +80,7 @@ fn run(graph: &ReadSnapshot, source: &str, dialect: QueryDialect, narrow: bool) 
         max_rows: crate::store::RESULT_BRIDGE_MAX_ROWS,
         max_bytes: crate::store::RESULT_BRIDGE_MAX_BYTES,
     };
-    let (result, _) = run_resolved_cancellable(graph, &resolved, &view, bounds, &|| false);
+    let (result, _) = run_resolved_cancellable(graph, &resolved, &view, bounds, None, &|| false);
     candidates::NARROW_BY_KEYS.with(|on| on.set(true));
     let visited = candidates::CANDIDATE_PAGES.with(|count| count.get());
     let result = result.unwrap().expect("never cancelled");

@@ -153,6 +153,7 @@ thread_local! {
 
 pub(super) struct Candidates<'a> {
     pages: &'a Pages,
+    pub(super) excluded: Option<&'a str>,
     selected: Option<Vec<usize>>,
     /// Page-anchored plans only: the reference-only pages as fileless rows
     /// (no path, no properties, no blocks; D-20261102-CM4 CM-REFONLY and
@@ -265,7 +266,12 @@ impl<'a> Selector<'a> {
 }
 
 impl<'a> Candidates<'a> {
-    pub(super) fn new(graph: &ReadSnapshot, pages: &'a Pages, plan: &Plan) -> Self {
+    pub(super) fn new(
+        graph: &ReadSnapshot,
+        pages: &'a Pages,
+        plan: &Plan,
+        excluded: Option<&'a str>,
+    ) -> Self {
         let req = required(&plan.filter, plan.anchor);
         #[cfg(test)]
         let req = req.filter(|req| NARROW_BY_KEYS.with(std::cell::Cell::get) || !req.has_key());
@@ -289,27 +295,29 @@ impl<'a> Candidates<'a> {
         // conjunction) leaves none of them a candidate: skip the walk of
         // every referenced name.
         let fileless_possible = names.as_ref().is_none_or(|names| !names.is_empty());
-        let reference_only = if plan.anchor == Anchor::Page && fileless_possible {
-            let wanted: Option<std::collections::HashSet<&str>> = names
-                .as_ref()
-                .map(|names| names.iter().map(String::as_str).collect());
-            let empty = Arc::new(Document::default());
-            let rows = graph.reference_only_pages();
-            #[cfg(test)]
-            FILELESS_ROWS.with(|count| count.set(count.get() + rows.len()));
-            rows.into_iter()
-                .filter(|answer| {
-                    wanted
-                        .as_ref()
-                        .is_none_or(|wanted| wanted.contains(refs::page_key(&answer.name).as_str()))
-                })
-                .map(|answer| (answer.page_entry(), Arc::clone(&empty)))
-                .collect()
-        } else {
-            Vec::new()
-        };
+        let reference_only =
+            if plan.anchor == Anchor::Page && fileless_possible && excluded.is_none() {
+                let wanted: Option<std::collections::HashSet<&str>> = names
+                    .as_ref()
+                    .map(|names| names.iter().map(String::as_str).collect());
+                let empty = Arc::new(Document::default());
+                let rows = graph.reference_only_pages();
+                #[cfg(test)]
+                FILELESS_ROWS.with(|count| count.set(count.get() + rows.len()));
+                rows.into_iter()
+                    .filter(|answer| {
+                        wanted.as_ref().is_none_or(|wanted| {
+                            wanted.contains(refs::page_key(&answer.name).as_str())
+                        })
+                    })
+                    .map(|answer| (answer.page_entry(), Arc::clone(&empty)))
+                    .collect()
+            } else {
+                Vec::new()
+            };
         Self {
             pages,
+            excluded,
             selected,
             reference_only,
             config: index.as_ref().map_or_else(
@@ -335,7 +343,9 @@ impl<'a> Candidates<'a> {
             .selected
             .iter()
             .flat_map(|slots| slots.iter().filter_map(|&slot| self.pages.get(slot)));
-        all.chain(selected).inspect(counted)
+        all.chain(selected)
+            .filter(|(entry, _)| Some(entry.rel_path_str()) != self.excluded)
+            .inspect(counted)
     }
 
     /// The page-anchored rows without a file (empty for a block anchor).
@@ -346,7 +356,9 @@ impl<'a> Candidates<'a> {
     /// Every page of the generation, whatever the narrowing (link conditions
     /// quantify over pages the row filter never visits).
     pub(super) fn all_pages(&self) -> impl Iterator<Item = &'a (PageEntry, Arc<Document>)> + '_ {
-        self.pages.iter()
+        self.pages
+            .iter()
+            .filter(|(entry, _)| Some(entry.rel_path_str()) != self.excluded)
     }
 
     pub(super) fn facts(&self, entry: &PageEntry, doc: &Document) -> Arc<PageFacts> {

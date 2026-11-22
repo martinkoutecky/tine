@@ -304,13 +304,16 @@ class __tine_raw_BrowserGraph {
      * initial index capture, as a desktop open has.
      * @param {string[]} paths
      * @param {Uint8Array[]} files
+     * @param {string | null} [options_json]
      */
-    constructor(paths, files) {
+    constructor(paths, files, options_json) {
         const ptr0 = passArrayJsValueToWasm0(paths, wasm.__wbindgen_malloc);
         const len0 = WASM_VECTOR_LEN;
         const ptr1 = passArrayJsValueToWasm0(files, wasm.__wbindgen_malloc);
         const len1 = WASM_VECTOR_LEN;
-        const ret = wasm.browsergraph_new(ptr0, len0, ptr1, len1);
+        var ptr2 = isLikeNone(options_json) ? 0 : passStringToWasm0(options_json, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+        var len2 = WASM_VECTOR_LEN;
+        const ret = wasm.browsergraph_new(ptr0, len0, ptr1, len1, ptr2, len2);
         if (ret[2]) {
             throw takeFromExternrefTable0(ret[1]);
         }
@@ -712,6 +715,26 @@ function __tine_raw_block_reference_names(raw, is_org) {
     var v2 = getArrayJsValueFromWasm0(ret[0], ret[1]).slice();
     wasm.__wbindgen_free(ret[0], ret[1] * 4, 4);
     return v2;
+}
+
+/**
+ * Renderer dispatch for a parser-tokenized macro name, O(name bytes).
+ * @param {string} name
+ * @returns {string}
+ */
+function __tine_raw_builtin_macro(name) {
+    let deferred2_0;
+    let deferred2_1;
+    try {
+        const ptr0 = passStringToWasm0(name, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+        const len0 = WASM_VECTOR_LEN;
+        const ret = wasm.builtin_macro(ptr0, len0);
+        deferred2_0 = ret[0];
+        deferred2_1 = ret[1];
+        return getStringFromWasm0(ret[0], ret[1]);
+    } finally {
+        wasm.__wbindgen_free(deferred2_0, deferred2_1, 1);
+    }
 }
 
 /**
@@ -2508,6 +2531,7 @@ export const absent_link_is_journal = __tineGuard("absent_link_is_journal", __ti
 export const asset_rel_path = __tineGuard("asset_rel_path", __tine_raw_asset_rel_path);
 export const block_may_have_logbook = __tineGuard("block_may_have_logbook", __tine_raw_block_may_have_logbook);
 export const block_reference_names = __tineGuard("block_reference_names", __tine_raw_block_reference_names);
+export const builtin_macro = __tineGuard("builtin_macro", __tine_raw_builtin_macro);
 export const canonical_group_field = __tineGuard("canonical_group_field", __tine_raw_canonical_group_field);
 export const comment_quote = __tineGuard("comment_quote", __tine_raw_comment_quote);
 export const decode_page_name = __tineGuard("decode_page_name", __tine_raw_decode_page_name);

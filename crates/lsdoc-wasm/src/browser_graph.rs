@@ -16,6 +16,7 @@ use wasm_bindgen::prelude::*;
 pub struct BrowserGraph {
     view: WholeGraph,
     root: String,
+    query_home: Option<(PageId, query_wire::PublicationQuery)>,
 }
 
 #[wasm_bindgen]
@@ -29,17 +30,30 @@ impl BrowserGraph {
     pub fn new(
         paths: Vec<String>,
         files: Vec<js_sys::Uint8Array>,
+        options_json: Option<String>,
     ) -> Result<BrowserGraph, JsValue> {
-        if paths.len() != files.len() {
-            let lengths = format!("{} paths, {} files", paths.len(), files.len());
-            return Err(js_error(format!("BrowserGraph: {lengths}")));
+        let options: OpenOptions = optional_input(options_json.as_deref())?;
+        let files = read_sources(paths, files)?;
+        if let Some(share) = options.share {
+            tine_graph_features::share_admission::admit(
+                &share.name,
+                &share.exported_at,
+                files.iter().map(|(path, bytes)| (path, bytes)),
+            )
+            .map_err(|error| js_error(format!("share-too-large: {error}")))?;
         }
-        let files = (paths.into_iter().zip(files))
-            .map(|(path, bytes)| (path, bytes.to_vec()))
-            .collect();
-        let (view, root) = WholeGraph::from_files(files)
-            .map_err(|error| js_error(format!("BrowserGraph: {error}")))?;
-        Ok(BrowserGraph { view, root })
+        let mut graph = open(files)?;
+        if let Some(reviewed) = options.query_home {
+            let path = graph
+                .view
+                .config()
+                .default_home
+                .as_deref()
+                .and_then(|name| graph.view.page_owner(name, PageKind::Page))
+                .ok_or_else(|| js_error("Missing publication query home"))?;
+            graph.query_home = Some((path, reviewed));
+        }
+        Ok(graph)
     }
 
     /// The effective metadata of the desktop `load_graph` answer.
@@ -213,16 +227,25 @@ impl BrowserGraph {
         view_json: &str,
         context_json: Option<String>,
     ) -> Result<String, JsValue> {
-        wire(
-            query_wire::run_wire(
+        let query = input(query_json)?;
+        let view = input(view_json)?;
+        let context: QueryContext = optional_input(context_json.as_deref())?;
+        let result = match &self.query_home {
+            Some((path, reviewed))
+                if context.source_page.is_some()
+                    && context.source_page == self.view.config().default_home =>
+            {
+                query_wire::run_publication(&self.view, &query, &view, path.as_str(), reviewed)
+            }
+            _ => query_wire::run_wire(
                 &self.view,
-                &input(query_json)?,
-                &input(view_json)?,
-                &optional_input(context_json.as_deref())?,
+                &query,
+                &view,
+                &context.execution,
                 &Cancel::default(),
-            )
-            .map_err(js_error)?,
-        )
+            ),
+        };
+        wire(result.map_err(js_error)?)
     }
 
     /// Options are the desktop search fields `explain`, `scope`,
@@ -253,6 +276,53 @@ impl BrowserGraph {
         .map_err(search_error)?;
         wire(answer)
     }
+}
+
+#[derive(Default, Deserialize)]
+struct OpenOptions {
+    share: Option<ShareMeta>,
+    query_home: Option<query_wire::PublicationQuery>,
+}
+
+#[derive(Deserialize)]
+struct ShareMeta {
+    name: String,
+    exported_at: String,
+}
+
+#[derive(Default, Deserialize)]
+struct QueryContext {
+    #[serde(flatten)]
+    execution: tine_core::query::ir::ExecutionContext,
+    source_page: Option<String>,
+}
+
+fn read_sources(
+    paths: Vec<String>,
+    files: Vec<js_sys::Uint8Array>,
+) -> Result<Vec<(String, Vec<u8>)>, JsValue> {
+    if paths.len() != files.len() {
+        return Err(js_error(format!(
+            "BrowserGraph: {} paths, {} files",
+            paths.len(),
+            files.len()
+        )));
+    }
+    Ok(paths
+        .into_iter()
+        .zip(files)
+        .map(|(path, bytes)| (path, bytes.to_vec()))
+        .collect())
+}
+
+fn open(files: Vec<(String, Vec<u8>)>) -> Result<BrowserGraph, JsValue> {
+    let (view, root) = WholeGraph::from_files(files)
+        .map_err(|error| js_error(format!("BrowserGraph: {error}")))?;
+    Ok(BrowserGraph {
+        view,
+        root,
+        query_home: None,
+    })
 }
 
 #[derive(Default, Deserialize)]

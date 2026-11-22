@@ -12,6 +12,9 @@
 use crate::publication_snapshot::{self, HomePage};
 use crate::publish_query::{resolve_plan, ExportPage, LeftOutPage, QueryExportRequest};
 use crate::render;
+use crate::share_admission::{
+    MAX_BLOCKS, MAX_PAGES as VIEWER_MAX_PAGES, MAX_QUERIES, MAX_STRING_BYTES,
+};
 use base64::Engine as _;
 use flate2::{read::GzDecoder, write::GzEncoder, Compression};
 use ring::aead::{Aad, LessSafeKey, Nonce, UnboundKey, AES_256_GCM};
@@ -322,7 +325,7 @@ pub fn validate_legacy_document(document: &[u8]) -> io::Result<serde_json::Value
 }
 
 /// Read the current share title, timestamp and member names from its source graph.
-/// Opens one bounded memory graph and resolves the authored page identities there.
+/// Reads the bounded source and its physical page names through the store.
 pub fn read_share_summary(document: &[u8]) -> io::Result<(String, String, Vec<String>)> {
     if document.len() > MAX_DOCUMENT_BYTES {
         return Err(refusal("the shared pages exceed the 32 MiB share limit"));
@@ -365,12 +368,7 @@ fn json_nesting_within(json: &[u8], max: usize) -> bool {
     true
 }
 
-pub(crate) const VIEWER_MAX_PAGES: usize = 201;
-pub(crate) const MAX_QUERIES: usize = 256;
 const VIEWER_MAX_DEPTH: usize = 512;
-pub(crate) const MAX_STRING_BYTES: usize = 1024 * 1024;
-pub(crate) const MAX_BLOCKS: usize = 200_000;
-pub(crate) const MAX_BLOCK_DEPTH: usize = 253;
 
 /// Prepare a share of the pages `request` selects, stamped `created_at`
 /// (RFC 3339 UTC). The
@@ -431,10 +429,20 @@ pub fn prepare(
                         "a shared page or alias is already called \"{title}\"; give the share another name"
                     )));
                 }
-                (title, Some(home.source(&corpus.pages, None)))
+                (title, Some(home))
             };
+            let home_name = home
+                .as_ref()
+                .map_or(title.as_str(), |home| home.name.as_str());
             let snapshot = publication_snapshot::snapshot(
-                &graph, &corpus, files, &title, created_at, &title, home, true,
+                &graph,
+                &corpus,
+                files,
+                &title,
+                created_at,
+                home_name,
+                home.as_ref().map(|home| home.source(&corpus.pages, None)),
+                true,
             )?;
             Ok((title, snapshot))
         },

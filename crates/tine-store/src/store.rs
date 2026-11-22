@@ -404,6 +404,7 @@ pub(crate) use first_view::{contain_index_publication, journal_ids_from_entries}
 mod fold_save_tests;
 mod inventory;
 mod memory;
+mod query_request;
 #[cfg(test)]
 mod subgraph_tests;
 pub(crate) use inventory::InventoryDelta;
@@ -2552,6 +2553,21 @@ pub enum IrRequest<'a> {
         /// The page it renders on, if any.
         context: &'a tine_core::query::ir::ExecutionContext,
     },
+    /// Evaluate the generated query on a publication's home. Only selected
+    /// physical owners can yield rows. The displayed home and the original
+    /// query block are excluded before sampling, statistics and limits.
+    RunPublication {
+        /// The parsed query.
+        query: &'a tine_core::query::ir::Query,
+        /// Its view settings.
+        view: &'a tine_core::query::ir::ViewSettings,
+        /// Its reviewed execution context.
+        context: &'a tine_core::query::ir::ExecutionContext,
+        /// The generated home's graph-relative file identity.
+        home: &'a str,
+        /// The original query's block when the source still holds it.
+        host_block_id: Option<&'a str>,
+    },
     /// Explain an empty answer (`query_explain_empty`).
     ExplainEmpty {
         /// The parsed query.
@@ -2586,22 +2602,6 @@ pub enum IrAnswer {
     ExplainEmpty(tine_core::query::ir::ExplainEmptyResult),
     /// This generation's registry.
     Registry(Arc<tine_core::query::registry::Registry>),
-}
-
-/// Consume an IR answer into wire rows without cloning or I/O (O(1)). Refuses
-/// exceeded results with store limits; other answer variants are unexpected.
-impl TryFrom<IrAnswer> for tine_core::query::ir::QueryResult {
-    type Error = String;
-    fn try_from(answer: IrAnswer) -> Result<Self, Self::Error> {
-        let IrAnswer::Result(result) = answer else {
-            return Err("query-run: unexpected answer".into());
-        };
-        if result.exceeded {
-            let complete = result.matched_total.unwrap_or(result.total);
-            return Err(format!("result-too-large: {complete} matching rows; narrow the query or add a sample (construction limits: {RESULT_BRIDGE_MAX_ROWS} rows / {RESULT_BRIDGE_MAX_BYTES} bytes)"));
-        }
-        Ok(*result)
-    }
 }
 
 /// Test oracle: answer shape of [`WholeGraph::query`].

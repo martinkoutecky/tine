@@ -75,6 +75,14 @@ enum PendingTarget {
 impl LinkGraph {
     /// The table, or `None` once `cancelled` reports true.
     pub(crate) fn build(graph: &ReadSnapshot, cancelled: &dyn Fn() -> bool) -> Option<LinkGraph> {
+        Self::build_scoped(graph, None, cancelled)
+    }
+
+    pub(crate) fn build_scoped(
+        graph: &ReadSnapshot,
+        excluded: Option<&str>,
+        cancelled: &dyn Fn() -> bool,
+    ) -> Option<LinkGraph> {
         let config = graph.config();
         let resolver = PanelResolver::new(graph);
         let format = resolver.format();
@@ -112,7 +120,12 @@ impl LinkGraph {
         // targets is not one unbounded step.
         let mut references = 0usize;
         let finished = graph.with_pages(|pages| {
-            for (entry, _) in pages.iter() {
+            let owners = || {
+                pages
+                    .iter()
+                    .filter(|(entry, _)| Some(entry.rel_path_str()) != excluded)
+            };
+            for (entry, _) in owners() {
                 if cancelled() {
                     return false;
                 }
@@ -129,7 +142,7 @@ impl LinkGraph {
                 self_keys.push(refs::page_key(&self_page));
             }
             table.physical = node_keys.len();
-            for (entry, doc) in pages.iter() {
+            for (entry, doc) in owners() {
                 if cancelled() {
                     return false;
                 }

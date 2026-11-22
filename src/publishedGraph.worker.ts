@@ -15,16 +15,23 @@ async function answer({ id, method, args }: GraphRequest): Promise<GraphReply> {
   if (method === "open") {
     const [buffer, isShare] = args;
     const bytes = new Uint8Array(buffer);
-    const { name, files } = isShare
+    const { name, exported_at, files, query_home } = isShare
       ? decodeShareDocument(bytes)
       : validateSnapshot(JSON.parse(new TextDecoder("utf-8", { fatal: true }).decode(bytes)));
     try {
       const { BrowserGraph } = await loadBrowserCore();
       methods = new Set(Object.getOwnPropertyNames(BrowserGraph.prototype).filter(name => name.endsWith("_json")));
       const encode = new TextEncoder();
-      graph = new BrowserGraph(files.map(file => file.path), files.map(file => encode.encode(file.text)));
+      const paths = files.map(file => file.path);
+      const sources = files.map(file => encode.encode(file.text));
+      graph = new BrowserGraph(paths, sources, JSON.stringify(
+        isShare ? { share: { name, exported_at } } : { query_home },
+      ));
       return { id, json: JSON.stringify(name) };
     } catch (error) {
+      if (isShare && typeof error === "string" && error.startsWith("share-too-large:")) {
+        return { id, error, shareReason: "too-large" };
+      }
       return { id, error: String(error), fatal: true };
     }
   }

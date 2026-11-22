@@ -103,13 +103,15 @@ export async function openPublishedGraphWorker(bytes: Uint8Array<ArrayBuffer>, i
     if (ownerDocument) listen(ownerDocument, "pagehide", leave, { signal: lifetime.signal });
     const locks = globalThis.navigator?.locks;
     const lock = locks && `tine-publication-${crypto.randomUUID()}`;
+    watchWithoutLock();
     const name: string = JSON.parse(await request("open", [bytes.buffer, isShare, lock], [bytes.buffer]));
     if (locks && lock) {
       // The worker acquires this lock before confirming open. When its realm
       // exits, the browser releases the lock and wakes us even if idle.
+      clearTimeout(timer);
       void locks.request(lock, { signal: lifetime.signal }, () => fail("Worker closed"))
         .catch(error => { if (!lifetime.signal.aborted) fail(error); });
-    } else watchWithoutLock();
+    }
     const read: GraphRead = (method, ...args) => request(method, args);
     return { name, read, failure };
   } catch (error) {
