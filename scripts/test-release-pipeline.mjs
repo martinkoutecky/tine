@@ -653,7 +653,7 @@ try {
   for (const script of windowsScenarios) {
     const source = fs.readFileSync(path.join(process.cwd(), "scripts", script), "utf8");
     const at = `${script} must attach to WebView2 through e2e-capabilities.mjs`;
-    assert.match(source, /import \{[^}]*tauriCapabilities[^}]*\} from "\.\/e2e-capabilities\.mjs";/, at);
+    assert.match(source, /import \{[^}]*tauriCapabilities[^}]*\} from (["'])\.\/e2e-capabilities\.mjs\1;/, at);
     assert.match(source, /startWebdriverApplication\(\w+,/, at);
     assert.match(source, /capabilities: tauriCapabilities\(\w+,[^\n]*\.debuggerAddress/, at);
     assert.match(source, /stopWebdriverApplication\(\w+\)/, at);
