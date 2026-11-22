@@ -271,9 +271,10 @@ Distribution packagers can set `TINE_PDFJS_EMCC=emcc` to use `emcc` and `emar`
 from `PATH`, or set `TINE_PDFJS_EMCC=/path/to/emcc` to use that executable and
 its sibling `emar`. Set it in the environment of the full Tine build. This
 uses the compiler installation's configuration, including any `EM_CONFIG`
-and `EM_CACHE` supplied by the packaging environment. Other Emscripten versions
-produce a build warning and the resulting decoder must pass the pdf.js
-interface check. The tools run from the directory the build was started in.
+and `EM_CACHE` supplied by the packaging environment. The minimum packager
+version is Emscripten 3.1.69, available on Debian trixie. Versions other than
+4.0.20 produce a build warning, and every decoder must pass the pdf.js interface
+check. The tools run from the directory the build was started in.
 A decoder built this way is never reused from the build cache: `npm run build`
 compiles it once, in its Vite asset step, and a later build without the
 variable never ships it.
