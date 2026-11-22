@@ -9,6 +9,7 @@ icon:: 🗺️
   - Mouse back and forward buttons navigate page history on desktop. On macOS, **Cmd+[** and **Cmd+]** also go back and forward; dragging with a side button does not navigate.
   - A page in a namespace has a **Hierarchy** section below its outline. Click its title, or focus it and press **Enter** or **Space**, to fold or expand the paths. It starts expanded and remembers your choice for that page until you switch graphs.
   - The reading column has a width cap. Press **t w** to toggle wide mode, which drops the cap; Settings → **Appearance** → **Advanced** holds **Standard page width** and **Wide page width** if you want your own numbers.
+  - On desktop, resize any graph window down to 390 pt wide to use it beside another app.
   - If one region of the screen — the page, the sidebar, a references section, or the conflict panel — fails to draw, that region shows a small card saying so, with a **Retry** button, instead of leaving the whole window blank. Your files on disk are not touched by it.
 - ## The left sidebar: your graph's contents
   - With Tine's custom desktop window frame, drag the empty space beside the workspace switcher in the sidebar's top row to move the window. Double-click that space to maximize or restore, just as on the toolbar. The workspace switcher and its menu stay clickable. Mobile drawers and system title bars keep their usual behavior.

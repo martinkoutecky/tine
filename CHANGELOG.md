@@ -9,6 +9,9 @@ The format follows [Keep a Changelog](https://keepachangelog.com/); versions use
 ## [Unreleased]
 
 ### Fixed
+- Tine's window can be made as narrow as 390 pt (was 640), so it can share a screen with another window on any desktop (#1005).
+- Enter at the end of an expanded block embed adds a visible first child and moves the caret there, even when the source is folded (#1023).
+- Configured Hiccup macros render bare-word arguments like `{{r education}}`, just like their quoted equivalents (#1018).
 - **Ctrl/Cmd+A** on blank outline space, including row padding and the page gutter, selects the live blocks in the clicked group. Repeating the shortcut keeps the same group selected. Copy preserves child indentation in plain text and HTML. Shift-click, moving focus, and Delete clear the selection (#793).
 - **Ctrl/Cmd+A** on a Journals separator, query status row or group with no live blocks uses native select-all. Delete, Backspace and Cut from those hits leave the outline intact (#793).
 - Scrolling through an expanded query with nested results stutters less as new source pages load (#1001).

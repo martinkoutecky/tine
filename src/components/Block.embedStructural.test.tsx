@@ -240,6 +240,47 @@ async function withHostPage(body: (root: HTMLElement) => Promise<void>) {
   }
 }
 
+it("GH #1023: Enter adds the first child in an expanded embed of a folded source", async () => {
+  await withHostPage(async root => {
+    setCollapsed("target", true);
+    const target = await vi.waitFor(() => {
+      const row = root.querySelector<HTMLElement>('.embed-block [data-block-id="target"]');
+      expect(row).not.toBeNull();
+      return row!;
+    });
+    expect(target.querySelector('[data-block-id="kid-one"]')).toBeNull();
+    target.querySelector<HTMLButtonElement>(".collapse-toggle")!.click();
+    expect(target.querySelector('[data-block-id="kid-one"]')).not.toBeNull();
+    expect(doc.byId.target.collapsed).toBe(true);
+    const before = pageToDto("HostPage");
+
+    mouseDownAndUp(target.querySelector(".block-content")!);
+    const editor = await vi.waitFor(() => {
+      const element = maybeEditorIn(target);
+      expect(element).not.toBeNull();
+      return element!;
+    });
+    editor.select(editor.value().length, editor.value().length);
+    editor.keydown(new KeyboardEvent("keydown", { key: "Enter", bubbles: true, cancelable: true }));
+
+    expect(pageByName("HostPage")!.roots).toEqual(["host", "target"]);
+    const firstChild = editingId();
+    expect(firstChild).not.toBeNull();
+    expect(doc.byId.target.children).toEqual([firstChild, "kid-one", "kid-two"]);
+    expect(doc.byId.target.collapsed).toBe(true);
+    await vi.waitFor(() => {
+      expect(target.querySelector(`[data-block-id="${firstChild}"]`)?.contains(document.activeElement)).toBe(true);
+      const active = focusedEditor()!;
+      expect(active.value()).toBe("");
+      expect(active.selection()).toEqual([0, 0]);
+    });
+
+    undo();
+    expect(pageToDto("HostPage")).toEqual(before);
+    expect(target.querySelector(`[data-block-id="${firstChild}"]`)).toBeNull();
+  });
+});
+
 describe("a structural edit inside a block embed keeps the caret there (GH #477)", () => {
   it.each([false, true])("GH #766: Backspace deletes an emptied embedded child; source folded=%s", async folded => {
     await withHostPage(async root => {
