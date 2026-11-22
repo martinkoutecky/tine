@@ -84,7 +84,8 @@ jobs:
       - name: F-Droid clean-source WASM rebuild succeeds
         run: |
           npm run build:wasm
-          node scripts/check-wasm-pin.mjs
+          echo TINE_WASM_REBUILT=1 >> "$GITHUB_ENV"
+          TINE_WASM_REBUILT=1 node scripts/check-wasm-pin.mjs
 
       # The browser core (D-20261122-WEX): the store and the graph features
       # build for the browser. Their clock reads are pinned by clock_guard.
@@ -156,7 +157,8 @@ jobs:
       - name: F-Droid clean-source WASM rebuild succeeds
         run: |
           npm run build:wasm
-          node scripts/check-wasm-pin.mjs
+          echo TINE_WASM_REBUILT=1 >> "$GITHUB_ENV"
+          TINE_WASM_REBUILT=1 node scripts/check-wasm-pin.mjs
 
       # The browser core (D-20261122-WEX): the store and the graph features
       # build for the browser. Their clock reads are pinned by clock_guard.

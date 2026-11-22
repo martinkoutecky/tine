@@ -83,7 +83,15 @@ function browserCoreAssets(): Plugin {
     apply: "build",
     buildStart() {
       // Keep the loader in the exportable app bundle before it has a caller.
-      loaderRef = this.emitFile({ type: "chunk", id: loader, name: "browser-core-loader", preserveSignature: "strict" });
+      // Loaded after the app entries, so Rollup does not split their shared
+      // parser and preload code into an extra startup asset.
+      loaderRef = this.emitFile({
+        type: "chunk",
+        id: loader,
+        name: "browser-core-loader",
+        preserveSignature: "strict",
+        implicitlyLoadedAfterOneOf: ["index.html", "capture.html"].map((page) => fileURLToPath(new URL(`./${page}`, import.meta.url))),
+      });
     },
     generateBundle(_, bundle) {
       const chunks = Object.values(bundle).filter((file) => file.type === "chunk");
