@@ -398,7 +398,7 @@ fn collect_static(
     asset_budget: u64,
     warnings: &mut Vec<String>,
 ) -> io::Result<Vec<(String, Vec<u8>)>> {
-    let config = store.config();
+    let config = graph.config();
     let mut render_graph = RenderGraph::new(corpus, graph, store, Some(sheets));
     render_graph.query_export = query_export;
     let mut files = Vec::new();
@@ -1188,10 +1188,7 @@ fn live(
             Some(requested) => Some(find(requested).ok_or_else(|| {
                 refusal("the requested home page is not among the exported pages")
             })?),
-            None => store
-                .config()
-                .config
-                .default_home
+            None => (graph.config().default_home)
                 .as_deref()
                 .and_then(|configured| find(configured))
                 .or_else(|| find("Welcome to Tine"))

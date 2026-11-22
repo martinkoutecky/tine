@@ -491,3 +491,39 @@ mod tests {
         let _ = fs::remove_dir_all(&dir);
     }
 }
+
+/// A render reads the config of the view it renders, not the store's newer
+/// one: an export holding a view taken before a config reload renders that
+/// view's hidden properties (one generation per export).
+#[test]
+fn a_render_reads_the_config_of_its_view() {
+    let dir = tempfile::tempdir().unwrap();
+    for sub in ["pages", "logseq"] {
+        std::fs::create_dir_all(dir.path().join(sub)).unwrap();
+    }
+    let config = dir.path().join("logseq/config.edn");
+    std::fs::write(&config, "{:block-hidden-properties #{:mine}}\n").unwrap();
+    std::fs::write(dir.path().join("pages/Page.md"), "- x\n  mine:: y\n").unwrap();
+    let options = tine_store::OpenOptions {
+        approved_external_assets: None,
+        watch: tine_store::WatchMode::Poll,
+        launch_checkpoint: None,
+    };
+    let store = tine_store::Store::open(dir.path(), options).unwrap().0;
+    let view = store.whole_graph().unwrap();
+    let temp = dir.path().join("logseq/config.edn.tmp");
+    std::fs::write(&temp, "{}\n").unwrap();
+    std::fs::rename(&temp, &config).unwrap();
+    let began = std::time::Instant::now();
+    while !store.config().block_hidden_properties.is_empty() {
+        assert!(
+            began.elapsed() < std::time::Duration::from_secs(20),
+            "the store reloads the config"
+        );
+        std::thread::sleep(std::time::Duration::from_millis(50));
+    }
+    let corpus = view.corpus(None, true);
+    let render = RenderGraph::new(&corpus, &view, &store, None);
+    assert_eq!(render.hidden_props, ["mine"]);
+    store.close();
+}

@@ -2,10 +2,12 @@
 //! taken from.
 use crate::{InventoryScope, OpenOptions, Store, WatchMode, WholeGraph};
 use std::path::Path;
+use std::sync::Arc;
+use tine_core::doc::Document;
 
-/// Every file under `root`, graph-relative, with its bytes (hidden and
-/// non-page files included: the listing must leave them out itself).
-fn files_under(root: &Path) -> Vec<(String, Vec<u8>)> {
+/// Every file under `root`, graph-relative, with its parsed document (hidden
+/// and non-page files included: the listing must leave them out itself).
+fn files_under(root: &Path) -> Vec<(String, Arc<Document>)> {
     let mut out = Vec::new();
     let mut pending = vec![root.to_path_buf()];
     while let Some(dir) = pending.pop() {
@@ -20,7 +22,13 @@ fn files_under(root: &Path) -> Vec<(String, Vec<u8>)> {
                     .to_str()
                     .unwrap()
                     .replace('\\', "/");
-                out.push((rel, std::fs::read(&path).unwrap()));
+                let bytes = std::fs::read(&path).unwrap();
+                let text = String::from_utf8_lossy(&bytes);
+                let document = match tine_core::model::Format::from_path(&path) {
+                    tine_core::model::Format::Org => tine_core::org::parse_org(&text),
+                    _ => tine_core::doc::parse(&text),
+                };
+                out.push((rel, Arc::new(document)));
             }
         }
     }
@@ -144,15 +152,9 @@ fn naming_edge_cases_answer_alike() {
     write(".hidden/Dot.md", "- in a dot directory\n");
     write("logseq/bak/pages/Alpha.md", "- a backup\n");
     write("pages/deep/nested/Leaf.md", "- nested [[Alpha]]\n");
-    // Unreadable bodies after a settled title: the launch pass refuses the
-    // read and the file keeps its file-name claim, in memory as on disk.
-    let mut broken = b"title:: Broken Title\n\n- fine\n- body \xff\xfe\n".to_vec();
-    std::fs::write(root.join("pages/Broken.md"), &broken).unwrap();
-    broken = b"#+title: Broken Org\r\n* fine\r\n* body \xff\r\n".to_vec();
-    std::fs::write(root.join("pages/BrokenOrg.org"), &broken).unwrap();
-    // An unreadable preferred journal with a same-day claimant: the claimant
-    // reconcile retries its read from the graph's own files.
-    std::fs::write(root.join("journals/2026_11_05.md"), b"- fine\n- day \xff\n").unwrap();
+    // A same-day claimant beside the preferred journal. (An unreadable file
+    // cannot reach a memory graph: it holds parsed documents.)
+    write("journals/2026_11_05.md", "- fine\n- day\n");
     write("pages/2026-11-05.md", "- the same day as a page\n");
     let answers = assert_same_answers(root);
     // The answers exercised what the fixture is for: titles and org titles
@@ -177,7 +179,13 @@ fn naming_edge_cases_answer_alike() {
 #[test]
 fn a_flat_directory_builds_in_linear_time() {
     let files: Vec<_> = (0..20_000)
-        .map(|n| (format!("pages/p{n}.md"), b"- x\n".to_vec(), None))
+        .map(|n| {
+            (
+                format!("pages/p{n}.md"),
+                Arc::new(tine_core::doc::parse("- x\n")),
+                None,
+            )
+        })
         .collect();
     let began = std::time::Instant::now();
     let built = crate::model::file_source::Files::new(Path::new("/r"), files);

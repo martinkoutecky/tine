@@ -63,7 +63,7 @@ impl<'a> RenderGraph<'a> {
             sheets,
             query_export: false,
             lookups: Default::default(),
-            hidden_props: store.config().block_hidden_properties.clone(),
+            hidden_props: whole.config().block_hidden_properties.clone(),
         }
     }
 

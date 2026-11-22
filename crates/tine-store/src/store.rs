@@ -2223,24 +2223,25 @@ impl WholeGraph {
         }
     }
 
-    /// The whole-graph view of only `pages` (graph-relative path and bytes)
+    /// The whole-graph view of only `pages` (graph-relative path and document)
     /// under this view's effective config, journal formats and page times:
     /// what this view would answer if the graph held just these pages. It is
     /// built in memory by the store's own launch pass and first publication,
     /// with no filesystem access; an export's build graph. Its graph metadata
-    /// names the root `/tine-memory-graph`. Cost: one read and parse of each
-    /// page and the initial index capture, as a store open has, plus one
-    /// lookup per page in this view's page times.
+    /// names the root `/tine-memory-graph`. Cost: one serialization and parse
+    /// of each page, one page's bytes held at a time, and the initial index
+    /// capture, as a store open has, plus one lookup per page in this view's
+    /// page times.
     pub fn subgraph(
         &self,
-        pages: Vec<(String, Vec<u8>)>,
+        pages: Vec<(String, Arc<tine_core::doc::Document>)>,
     ) -> (WholeGraph, tine_core::model::GraphMeta) {
         let times = self.graph.observed_page_mtimes();
         let files = pages
             .into_iter()
-            .map(|(rel, bytes)| {
+            .map(|(rel, document)| {
                 let time = times.get(&rel).copied();
-                (rel, bytes, time)
+                (rel, document, time)
             })
             .collect();
         let graph = Graph::in_memory(
@@ -2922,6 +2923,13 @@ impl WholeGraph {
     /// `Removed` event is inferred from a failed listing. Cost O(1).
     pub fn unreadable_files(&self) -> &[(FileId, String)] {
         &self.unreadable
+    }
+
+    /// The effective config this view was built under: what renders and
+    /// exports of the view read, so they answer from the same generation as
+    /// its pages (a later config reload makes a new view). Cost O(1).
+    pub fn config(&self) -> &tine_core::config::Config {
+        &self.config.config
     }
 
     /// Last-modified time, in Unix seconds, of each page file this view holds,

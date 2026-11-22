@@ -1,10 +1,11 @@
-//! Where a graph reads its text files: the disk, or a fixed set of files held
-//! in memory ([`crate::WholeGraph::subgraph`]: an export's build graph). Only the read path goes through it (listing, naming, page
-//! reads, the parse); saves, transactions, the watcher and assets are
+//! Where a graph reads its text files: the disk, or a fixed set of page
+//! documents held in memory ([`crate::WholeGraph::subgraph`]: an export's
+//! build graph), each serialized only when the loader opens it. Only the read
+//! path goes through it (listing, naming, page reads, the parse); saves, transactions, the watcher and assets are
 //! disk-only, and a memory graph is never opened by a `Store`, so it never
 //! reaches them. The two sources answer the same calls with the same
 //! errors, so every loader step above them is the one the disk load runs.
-use std::collections::BTreeMap;
+use std::collections::HashMap;
 use std::fs;
 use std::io;
 use std::path::{Path, PathBuf};
@@ -22,30 +23,30 @@ pub(crate) enum FileSource {
     Memory(Arc<Files>),
 }
 
-/// One memory file: its bytes and the modification time it carries (the
+/// One memory file: its document and the modification time it carries (the
 /// source file's, for an export), which recency queries read.
-pub(crate) type MemoryFile = (String, Vec<u8>, Option<SystemTime>);
+pub(crate) type MemoryFile = (String, Arc<tine_core::doc::Document>, Option<SystemTime>);
 
 /// A memory graph's files by absolute path, and each directory's children
 /// (a file or a directory), so a listing walks them as it walks the disk.
 pub(crate) struct Files {
-    files: BTreeMap<PathBuf, (Arc<[u8]>, Option<SystemTime>)>,
-    children: BTreeMap<PathBuf, Vec<(PathBuf, bool)>>,
+    files: HashMap<PathBuf, (Arc<tine_core::doc::Document>, Option<SystemTime>)>,
+    children: HashMap<PathBuf, Vec<(PathBuf, bool)>>,
 }
 
 impl Files {
-    /// `files` are graph-relative paths, bytes and times, under `root`. A
-    /// repeated path keeps its last bytes. O(files × depth).
+    /// `files` are graph-relative paths, documents and times, under `root`.
+    /// A repeated path keeps its last document. O(files × depth).
     pub(crate) fn new(root: &Path, files: impl IntoIterator<Item = MemoryFile>) -> Files {
         let mut out = Files {
-            files: BTreeMap::new(),
-            children: BTreeMap::from([(root.to_path_buf(), Vec::new())]),
+            files: HashMap::new(),
+            children: HashMap::from([(root.to_path_buf(), Vec::new())]),
         };
-        for (rel, bytes, modified) in files {
+        for (rel, document, modified) in files {
             let path = root.join(rel);
             if out
                 .files
-                .insert(path.clone(), (bytes.into(), modified))
+                .insert(path.clone(), (document, modified))
                 .is_some()
             {
                 continue;
@@ -139,7 +140,7 @@ impl FileSource {
     }
 
     /// A listed entry's stamp: a disk entry's metadata, or a memory file's
-    /// carried time and length.
+    /// carried time.
     pub(crate) fn stamp(&self, item: &DirItem) -> Option<crate::watch::Stamp> {
         match self {
             FileSource::Disk => {
@@ -147,11 +148,8 @@ impl FileSource {
                 crate::watch::stamp_from_metadata(&metadata)
             }
             FileSource::Memory(files) => {
-                let (bytes, modified) = files.files.get(&item.path)?;
-                Some(crate::watch::Stamp::in_memory(
-                    *modified,
-                    bytes.len() as u64,
-                ))
+                let (_, modified) = files.files.get(&item.path)?;
+                Some(crate::watch::Stamp::in_memory(*modified))
             }
         }
     }
@@ -166,10 +164,15 @@ impl FileSource {
                 })
             }
             FileSource::Memory(files) => {
-                let (bytes, _) = files.files.get(path).ok_or_else(|| not_found(path))?;
+                let (document, _) = files.files.get(path).ok_or_else(|| not_found(path))?;
+                let bytes = match tine_core::model::Format::from_path(path) {
+                    tine_core::model::Format::Org => tine_core::org::serialize_org(document),
+                    _ => tine_core::doc::serialize(document),
+                }
+                .into_bytes();
                 Ok(Opened {
                     len: bytes.len() as u64,
-                    reader: Box::new(io::Cursor::new(Arc::clone(bytes))),
+                    reader: Box::new(io::Cursor::new(bytes)),
                 })
             }
         }

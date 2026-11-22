@@ -8,13 +8,14 @@
 //! is indistinguishable from absent and nothing can name, relate or reveal it.
 //!
 //! The graph is built in memory from the selecting view
-//! ([`WholeGraph::subgraph`]); nothing is read from or written to disk. Cost:
-//! one serialization of each exported document and one parse of the exported
-//! pages with the initial index capture.
+//! ([`WholeGraph::subgraph`]) over the exported documents, each serialized
+//! only while the loader reads it; nothing is read from or written to disk.
+//! Cost: one serialization and parse of each exported page with the initial
+//! index capture.
 use std::collections::{BTreeSet, HashMap};
 use std::io;
-use std::path::Path;
-use tine_core::model::{Format, GraphMeta};
+use std::sync::Arc;
+use tine_core::model::GraphMeta;
 use tine_core::{Corpus, CorpusPage};
 use tine_store::WholeGraph;
 
@@ -34,16 +35,8 @@ pub(crate) fn with_build_graph<T>(
     refused: &str,
     f: impl FnOnce(&WholeGraph, &GraphMeta, Corpus) -> io::Result<T>,
 ) -> io::Result<T> {
-    let files = pages
-        .iter()
-        .map(|page| {
-            let rel = page.id.as_str();
-            let text = match Format::from_path(Path::new(rel)) {
-                Format::Org => tine_core::org::serialize_org(&page.document),
-                _ => tine_core::doc::serialize(&page.document),
-            };
-            (rel.to_owned(), text.into_bytes())
-        })
+    let files = (pages.iter())
+        .map(|page| (page.id.as_str().to_owned(), Arc::clone(&page.document)))
         .collect();
     let (graph, meta) = view.subgraph(files);
     let mut corpus = graph.corpus(None, true);
