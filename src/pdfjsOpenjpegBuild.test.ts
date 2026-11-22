@@ -35,6 +35,13 @@ it("refuses a different compiler version in the default SDK layout", () => {
   expect(execFileSync).toHaveBeenCalledTimes(1);
 });
 
+it("refuses a packager compiler below the minimum before compiling", () => {
+  vi.stubEnv("TINE_PDFJS_EMCC", "emcc");
+  vi.mocked(execFileSync).mockReturnValue(compilerVersion.replace("5.0.6", "3.1.68"));
+  expect(() => buildOpenjpeg({ outDir })).toThrow(/TINE_PDFJS_EMCC requires Emscripten 3\.1\.69 or newer.*3\.1\.68/);
+  expect(execFileSync).toHaveBeenCalledTimes(1);
+});
+
 it.each(["emcc", path.resolve("target/packager/bin/emcc")])(
   "uses the packager's compiler and configuration with TINE_PDFJS_EMCC=%s",
   compiler => {
@@ -161,5 +168,15 @@ describe("decoder cache", () => {
     buildAndCountTools(); // Same packager, with its own valid receipt on disk.
     vi.stubEnv("TINE_PDFJS_EMCC", undefined);
     buildAndCountTools(); // A pinned build must also miss after a packager build.
+  });
+
+  it("builds with Emscripten 3.1.69 using the worker's runtime ABI", () => {
+    vi.stubEnv("TINE_PDFJS_EMCC", "emcc");
+    vi.spyOn(console, "warn").mockImplementation(() => {});
+    tools.mockReturnValueOnce(compilerVersion.replace("5.0.6", "3.1.69"));
+    buildAndCountTools();
+    expect(tools).toHaveBeenLastCalledWith("emcc", expect.arrayContaining([
+      "-mbulk-memory", "-sWASM_BIGINT=1", "-sMINIMAL_RUNTIME=1", "-Wl,--wrap=__wasi_fd_close",
+    ]), expect.anything());
   });
 });

@@ -29,9 +29,11 @@ hashes, memory settings and output digest are recorded in `BUILD_OPENJPEG.json`.
 
 The compiler may minify import names differently. The build reads the semantic
 import names from the generated glue and pdf.js's bundled OpenJPEG glue, then
-renames only the WASM import strings to match. It rejects changed exports,
-missing symbols or an unexpected WASM interface. It leaves the worker,
-decoder instructions, types, memory limits and official JS fallback unchanged.
+renames the WASM import strings to match. For Emscripten 3.1, it also uses the
+generated runtime bindings to rename WASM exports to the worker's names. The
+build rejects missing required symbols or an unexpected WASM interface. It leaves the
+worker, decoder instructions, types, memory limits and official JS fallback
+unchanged.
 The Vite plugin serves the same rebuilt WASM in development and copies it
 with its licences and provenance into the offline application bundle.
 
@@ -44,8 +46,7 @@ or host C compiler. The default build keeps its intermediate output and
 compiler cache in `target/pdfjs-openjpeg/` and reuses a decoder when its
 inputs and output match the recorded hashes.
 
-Packagers can opt in to their own Emscripten toolchain with `emcc` and `emar`
-on PATH:
+Packagers can opt in to Emscripten 3.1.69 or newer with `emcc` and `emar` on PATH:
 
 ```sh
 TINE_PDFJS_EMCC=emcc npm run build

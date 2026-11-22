@@ -1,1 +1,6 @@
-export function matchOpenjpegImports(input: Uint8Array, generatedGlue: string, bundledWorker: string): Uint8Array<ArrayBuffer>;
+export function matchOpenjpegImports(
+  input: Uint8Array,
+  generatedGlue: string,
+  bundledWorker: string,
+  options?: { legacyExports?: boolean },
+): Uint8Array<ArrayBuffer>;
