@@ -28,8 +28,6 @@ pub mod model;
 pub mod org;
 mod outline;
 pub mod page_header;
-// `crate::page_identity`, the path `page_header.rs` uses, as in `lsdoc-wasm`.
-pub(crate) use refs::page_identity;
 pub mod page_properties;
 pub mod pdf;
 pub mod projection;
@@ -65,6 +63,5 @@ pub mod standalone_macro;
 
 pub mod ordinal;
 pub mod pdf_key;
-/// Pure policy of the lsdoc-wasm panic hook, tested here (the wasm crate includes it by path).
-#[cfg(test)]
-mod wasm_panic_report;
+/// Pure policy of the browser module's panic hook (lsdoc-wasm).
+pub mod wasm_panic_report;

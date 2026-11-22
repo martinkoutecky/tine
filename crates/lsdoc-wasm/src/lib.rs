@@ -30,7 +30,7 @@ fn install_panic_hook() {
     std::panic::set_hook(Box::new(|info| {
         // I-5: keep the location and only a fixed literal message (wasm_panic_report.rs).
         let place = info.location().map(|l| format!("{}:{}", l.file(), l.line())).unwrap_or_default();
-        let message = wasm_panic_report::panic_report(&place, info.payload());
+        let message = tine_core::wasm_panic_report::panic_report(&place, info.payload());
         LAST_PANIC.with(|slot| {
             if let Ok(mut slot) = slot.try_borrow_mut() {
                 *slot = message.clone();
@@ -47,23 +47,17 @@ pub fn last_panic() -> String {
     LAST_PANIC.with(|slot| slot.try_borrow().map(|s| s.clone()).unwrap_or_default())
 }
 
-#[path = "../../tine-core/src/wasm_panic_report.rs"]
-mod wasm_panic_report;
-#[path = "../../tine-core/src/page_identity.rs"]
-mod page_identity;
-#[path = "../../tine-core/src/query/group_field.rs"]
-mod group_field;
 
 /// Native page-name key: O(name bytes), no I/O; Rust trim/lowercase/slashes/NFC.
 #[wasm_bindgen]
 pub fn page_identity_key(name: &str) -> String {
-    page_identity::page_key(name)
+    tine_core::refs::page_key(name)
 }
 
 /// Native group-field grammar: O(value bytes), no I/O; invalid tokens return null.
 #[wasm_bindgen]
 pub fn canonical_group_field(value: &str) -> Option<String> {
-    group_field::canonical_group_token(value).map(str::to_owned)
+    tine_core::query::view::canonical_group_token(value).map(str::to_owned)
 }
 
 use tine_outline::page_filename;
@@ -100,14 +94,10 @@ pub fn split_linkable_property(value: &str) -> Vec<String> {
 pub fn linkable_property_names(value: &str, is_org: bool) -> Vec<String> {
     let mut seen = std::collections::HashSet::new();
     tine_outline::property_refs::linkable_names(value, is_org)
-        .into_iter().filter(|name| seen.insert(page_identity::page_key(name))).collect()
+        .into_iter().filter(|name| seen.insert(tine_core::refs::page_key(name))).collect()
 }
 
-#[path = "../../tine-core/src/render_facets.rs"]
-mod render_facets;
 
-#[path = "../../tine-core/src/page_header.rs"]
-mod page_header;
 
 /// The same page-property edit used by the native owner and the page form.
 #[wasm_bindgen]
@@ -124,38 +114,17 @@ pub fn page_parts_with_property(parts_json: &str, is_org: bool, key: &str, value
 /// O(header bytes).
 #[wasm_bindgen]
 pub fn page_alias_spellings(pre_block: Option<String>, first_root: Option<String>, is_org: bool) -> Vec<String> {
-    page_header::page_alias_spellings(pre_block.as_deref(), first_root.as_deref(), is_org)
+    tine_core::page_header::page_alias_spellings(pre_block.as_deref(), first_root.as_deref(), is_org)
 }
 
-#[path = "../../tine-core/src/reference_evidence/og_built_in.rs"]
-mod og_built_in;
 
-// The reference evidence's walker and the config slice it reads, compiled
-// from tine-core's own files (I-12: one answer for "what does this block
-// reference"). They reach their outside names through `super::`, provided
-// here: `block_regions`, `og_built_in`, `is_query_macro_name` (above and
-// below), and these. Only part of each module is used here.
-#[allow(dead_code)]
-#[path = "../../tine-core/src/query/atom/parse_config.rs"]
-mod parse_config;
-use parse_config::{reference_parsing_suppressed, separated_by_commas, ParseConfig};
 
 /// OG's built-in reference-valued keys (`alias`, `aliases`, `tags`), any case:
 /// `tine_core::query::atom::is_editable_linkable_built_in` (census Q7). The
 /// frontend's fallback when the graph's `linkable_property_keys` is absent.
 #[wasm_bindgen]
 pub fn is_editable_linkable_built_in(key: &str) -> bool {
-    parse_config::is_editable_linkable_built_in(key)
-}
-use tine_outline::editor_text::property_key_norm;
-use tine_outline::lsdoc_block_parse::parse_inline_bounded;
-#[allow(dead_code)]
-#[path = "../../tine-core/src/reference_evidence/walk.rs"]
-mod walk;
-
-/// The name `page_header.rs` asks for the alias members, as in tine-core.
-mod reference_evidence {
-    pub(crate) use super::walk::header_alias_members;
+    tine_core::query::atom::is_editable_linkable_built_in(key)
 }
 
 /// Every page name one block's source references, in source order (may
@@ -166,7 +135,7 @@ mod reference_evidence {
 pub fn block_reference_names(raw: &str, is_org: bool) -> Vec<String> {
     let blocks = lsdoc_block_parse::parse_projection(raw, is_org).blocks;
     let regions = block_regions::from_blocks(raw, is_org, &blocks);
-    walk::project_with_config(raw, is_org, &blocks, &regions, ParseConfig::default_ref())
+    tine_core::reference_evidence::project_with_config(raw, is_org, &blocks, &regions, tine_core::query::atom::ParseConfig::default_ref())
         .explicit
         .into_iter()
         .map(|reference| reference.name)
@@ -176,15 +145,15 @@ pub fn block_reference_names(raw: &str, is_org: bool) -> Vec<String> {
 /// OG built-ins excluded from default query-table property columns.
 #[wasm_bindgen]
 pub fn is_og_built_in_property(key: &str) -> bool {
-    og_built_in::is_og_built_in_property(key)
+    tine_core::reference_evidence::is_og_built_in_property(key)
 }
 
 /// Whether All pages leaves this name out (a UUID, a drawing, an OG built-in
-/// page; I-12: the one answerer, `og_built_in::hidden_from_all_pages`, shared
+/// page; I-12: the one answerer, `tine_core::reference_evidence::hidden_from_all_pages`, shared
 /// with tine-core).
 #[wasm_bindgen]
 pub fn hidden_from_all_pages(name: &str) -> bool {
-    og_built_in::hidden_from_all_pages(name)
+    tine_core::reference_evidence::hidden_from_all_pages(name)
 }
 
 /// The prose of a page preamble after its page header, as UTF-8 byte
@@ -212,24 +181,22 @@ pub fn page_opening_groups_json(text: &str, is_org: bool) -> String {
 #[wasm_bindgen]
 pub fn is_render_hidden_prop(key: &str, user_hidden: Vec<String>, pre_block: bool) -> bool {
     if pre_block {
-        render_facets::is_render_hidden_page_prop(key, &user_hidden)
+        tine_core::render_facets::is_render_hidden_page_prop(key, &user_hidden)
     } else {
-        render_facets::is_render_hidden_prop(key, &user_hidden)
+        tine_core::render_facets::is_render_hidden_prop(key, &user_hidden)
     }
 }
 
 /// The checkbox a task marker draws: true checked, false empty, undefined none.
 #[wasm_bindgen]
 pub fn task_checkbox_state(marker: &str) -> Option<bool> {
-    render_facets::task_checkbox_state(marker)
+    tine_core::render_facets::task_checkbox_state(marker)
 }
 
 use tine_outline::block_regions;
 use tine_outline::editor_text;
 
 use tine_outline::logbook;
-#[path = "../../tine-core/src/media_mime.rs"]
-mod media_mime;
 use tine_outline::lsdoc_block_parse;
 use tine_outline::outline;
 use tine_outline::property_line;
@@ -290,7 +257,7 @@ pub fn nested_reference_names(content: &str) -> Vec<String> {
 /// Unknown extensions return application/octet-stream. Shared with native media.
 #[wasm_bindgen]
 pub fn mime_from_path(path: &str) -> String {
-    media_mime::from_path(path).to_string()
+    tine_core::media_mime::from_path(path).to_string()
 }
 
 /// Parse one de-bulleted block body into lsdoc's render AST, serialized to JSON.
@@ -451,7 +418,7 @@ pub fn parse_block_bundle_json(raw: &str, is_org: bool, untitled: bool) -> Strin
         lsdoc::blocks_to_json(&blocks).unwrap(),
         serde_json::to_string(&regions).unwrap(),
         serde_json::to_string(&render_planning).unwrap(),
-        serde_json::to_string(&standalone_macro::sole_macro(&blocks)).unwrap()
+        serde_json::to_string(&tine_core::standalone_macro::sole_macro(&blocks)).unwrap()
     )
 }
 /// The window's cached regions for exactly `raw`, as the structural editors take them.
@@ -814,10 +781,6 @@ pub fn search_spans_json(query: &str, remove_accents: bool, text: &str, limit: u
     })
 }
 
-#[path = "../../tine-core/src/edn.rs"]
-mod edn;
-#[path = "../../tine-core/src/query_edn.rs"]
-mod query_edn;
 
 /// Query EDN reads/splices from the same byte-span reader as native macro_text.
 /// O(source bytes), at most 1 MiB / 128 levels; null refuses unreadable EDN.
@@ -825,59 +788,53 @@ mod query_edn;
 #[wasm_bindgen]
 pub fn query_edn_json(source: &str, operation: &str, value: &str) -> String {
     match operation {
-        "begin_query" => serde_json::to_string(&query_edn::inspect_begin_query(source)).unwrap(),
-        "options" => serde_json::to_string(&query_edn::options(source)).unwrap(),
-        "title" => serde_json::to_string(&query_edn::edit_title(source, value)).unwrap(),
-        "read" => serde_json::to_string(&query_edn::read(source)).unwrap(),
-        "split" => serde_json::to_string(&query_edn::split_trailing_map(source)).unwrap(),
-        "quote" => serde_json::to_string(&edn::to_string(&edn::Edn::Str(source.into()))).unwrap(),
+        "begin_query" => serde_json::to_string(&tine_core::query_edn::inspect_begin_query(source)).unwrap(),
+        "options" => serde_json::to_string(&tine_core::query_edn::options(source)).unwrap(),
+        "title" => serde_json::to_string(&tine_core::query_edn::edit_title(source, value)).unwrap(),
+        "read" => serde_json::to_string(&tine_core::query_edn::read(source)).unwrap(),
+        "split" => serde_json::to_string(&tine_core::query_edn::split_trailing_map(source)).unwrap(),
+        "quote" => serde_json::to_string(&tine_core::edn::to_string(&tine_core::edn::Edn::Str(source.into()))).unwrap(),
         "unquote" => {
-            let text = match edn::parse_strict(source) { Some(edn::Edn::Str(text)) => Some(text), _ => None };
+            let text = match tine_core::edn::parse_strict(source) { Some(tine_core::edn::Edn::Str(text)) => Some(text), _ => None };
             serde_json::to_string(&text).unwrap()
         }
         _ => "null".into(),
     }
 }
 
-#[path = "../../tine-core/src/query/macro_names.rs"]
-mod macro_names;
-#[path = "../../tine-core/src/query/macro_extent.rs"]
-mod macro_extent;
 
 /// Query raw extents from the native reader. O(raw bytes), no parser or I/O;
 /// JSON offsets are UTF-8 bytes. Unterminated candidates are omitted.
 #[wasm_bindgen]
 pub fn query_macro_extents_json(raw: &str) -> String {
-    serde_json::to_string(&macro_extent::query_macro_extents(raw)).unwrap()
+    serde_json::to_string(&tine_core::query::query_macro_extents(raw)).unwrap()
 }
 
 /// Whether a parser-tokenized macro name is a query; O(name bytes), no I/O.
 #[wasm_bindgen]
 pub fn is_query_macro_name(name: &str) -> bool {
-    macro_extent::is_query_macro_name(name)
+    tine_core::query::is_query_macro_name(name)
 }
 
 /// The raw reader's literal grammar for a macro name; O(name bytes), no I/O.
 #[wasm_bindgen]
 pub fn query_macro_is_tql(name: &str) -> bool {
-    macro_extent::FormFamily::for_macro_name(name) == macro_extent::FormFamily::Tql
+    tine_core::query::FormFamily::for_macro_name(name) == tine_core::query::FormFamily::Tql
 }
 
-#[path = "../../tine-core/src/date.rs"]
-mod date;
 
 thread_local! {
-    static DATE_FORMATS: std::cell::RefCell<Vec<(String, date::Format)>> = const { std::cell::RefCell::new(Vec::new()) };
+    static DATE_FORMATS: std::cell::RefCell<Vec<(String, tine_core::date::Format)>> = const { std::cell::RefCell::new(Vec::new()) };
 }
 
-fn with_date_format<T>(pattern: &str, f: impl FnOnce(&date::Format) -> T) -> T {
+fn with_date_format<T>(pattern: &str, f: impl FnOnce(&tine_core::date::Format) -> T) -> T {
     DATE_FORMATS.with(|cache| {
         let mut cache = cache.borrow_mut();
         if let Some((_, format)) = cache.iter().find(|(key, _)| key == pattern) {
             return f(format);
         }
         if cache.len() == 16 { cache.remove(0); }
-        cache.push((pattern.to_owned(), date::Format::compile(pattern)));
+        cache.push((pattern.to_owned(), tine_core::date::Format::compile(pattern)));
         f(&cache.last().unwrap().1)
     })
 }
@@ -892,20 +849,20 @@ pub fn parse_journal_format_json(text: &str, pattern: &str) -> String {
 }
 
 thread_local! {
-    static JOURNAL_FORMAT: std::cell::RefCell<Option<(String, String, date::JournalFormat)>> = const { std::cell::RefCell::new(None) };
+    static JOURNAL_FORMAT: std::cell::RefCell<Option<(String, String, tine_core::date::JournalFormat)>> = const { std::cell::RefCell::new(None) };
 }
 
 /// The graph's journal date answerer for (file, title) format strings ("" =
 /// default), cached for the last pair: the frontend asks with one graph's
 /// formats at a time.
-fn with_journal_format<T>(file: &str, title: &str, f: impl FnOnce(&date::JournalFormat) -> T) -> T {
+fn with_journal_format<T>(file: &str, title: &str, f: impl FnOnce(&tine_core::date::JournalFormat) -> T) -> T {
     JOURNAL_FORMAT.with(|cell| {
         let mut cell = cell.borrow_mut();
         if !matches!(&*cell, Some((cf, ct, _)) if cf == file && ct == title) {
             *cell = Some((
                 file.to_owned(),
                 title.to_owned(),
-                date::JournalFormat::new(Some(file), Some(title)),
+                tine_core::date::JournalFormat::new(Some(file), Some(title)),
             ));
         }
         f(&cell.as_ref().unwrap().2)
@@ -930,11 +887,9 @@ pub fn absent_link_is_journal(name: &str, file_format: &str, title_format: &str)
 /// Native date formatter over explicit civil parts; same bounded format cache.
 #[wasm_bindgen]
 pub fn format_journal_date(year: i32, month: u32, day: u32, pattern: &str) -> String {
-    with_date_format(pattern, |format| format.format(date::JournalDate { year, month, day }))
+    with_date_format(pattern, |format| format.format(tine_core::date::JournalDate { year, month, day }))
 }
 
-#[path = "../../tine-core/src/standalone_macro.rs"]
-mod standalone_macro;
 
 /// Inline-only parsing for property values: bounded by the same shared native
 /// tree admission. O(value bytes); null refuses excessive depth, no I/O.
@@ -943,33 +898,27 @@ pub fn parse_inline_json(raw: &str, is_org: bool) -> String {
     serde_json::to_string(&lsdoc_block_parse::parse_inline_bounded(raw, if is_org { "org" } else { "md" })).unwrap()
 }
 
-#[path = "../../tine-core/src/ordinal.rs"]
-mod ordinal;
-#[path = "../../tine-core/src/pdf_key.rs"]
-mod pdf_key;
-#[path = "../../tine-core/src/asset_path.rs"]
-mod asset_path;
 
 /// Assets-relative link target; O(URL bytes), no parse or filesystem I/O.
 #[wasm_bindgen]
 pub fn asset_rel_path(url: &str) -> Option<String> {
-    asset_path::asset_rel_path(url)
+    tine_core::asset_path::asset_rel_path(url)
 }
 
 /// PDF reader/writer asset identity. O(path bytes), no parse or filesystem I/O.
 #[wasm_bindgen]
 pub fn pdf_asset_file(path: &str) -> String {
-    asset_path::pdf_asset_file(path)
+    tine_core::asset_path::pdf_asset_file(path)
 }
 
 /// Ordered-list label without surface punctuation; O(label bytes), no parse/I/O.
 #[wasm_bindgen]
 pub fn ordered_list_glyph(index: u32, depth: u32) -> String {
-    ordinal::glyph(index, depth)
+    tine_core::ordinal::glyph(index, depth)
 }
 
 /// PDF identity with the existing preview/native suffix policy. O(filename bytes).
 #[wasm_bindgen]
 pub fn pdf_asset_key(filename: &str, preview: bool) -> String {
-    pdf_key::asset_key(filename, if preview { pdf_key::PdfSuffix::Preview } else { pdf_key::PdfSuffix::Native })
+    tine_core::pdf_key::asset_key(filename, if preview { tine_core::pdf_key::PdfSuffix::Preview } else { tine_core::pdf_key::PdfSuffix::Native })
 }

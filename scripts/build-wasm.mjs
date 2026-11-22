@@ -67,7 +67,7 @@ const rustflags = [
 ].filter(Boolean).join(" ");
 execFileSync(
   "wasm-pack",
-  ["build", "crates/lsdoc-wasm", "--target", "web", "--release", "--out-dir", tmp, "--out-name", "lsdoc_wasm"],
+  ["build", "crates/lsdoc-wasm", "--target", "web", "--profile", "wasm-release", "--out-dir", tmp, "--out-name", "lsdoc_wasm"],
   { cwd: root, stdio: "inherit", env: { ...process.env, LSDOC_TAG: coreTag, RUSTFLAGS: rustflags } },
 );
 

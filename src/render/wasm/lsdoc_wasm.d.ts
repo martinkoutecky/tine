@@ -79,7 +79,7 @@ export function header_tokens_json(raw: string, is_org: boolean): string;
 
 /**
  * Whether All pages leaves this name out (a UUID, a drawing, an OG built-in
- * page; I-12: the one answerer, `og_built_in::hidden_from_all_pages`, shared
+ * page; I-12: the one answerer, `tine_core::reference_evidence::hidden_from_all_pages`, shared
  * with tine-core).
  */
 export function hidden_from_all_pages(name: string): boolean;

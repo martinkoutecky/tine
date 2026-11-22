@@ -20,7 +20,6 @@ tine-outline = { path = "../tine-outline" }
 chrono = { version = "0.4", default-features = false, features = ["clock"] }
 # The one clock (`clock`): std natively, the browser's on wasm32.
 web-time = "1"
-regex = "1"
 # OG `url?` (page names that are URLs are not namespaces): the WHATWG parse.
 url = "2"
 unicode-normalization = "0.1"
@@ -30,9 +29,14 @@ memchr = "2"
 # SQLite. The version and `visitor` feature match master (0.62).
 sqlparser = { version = "0.62", features = ["visitor"] }
 
+[target.'cfg(not(target_arch = "wasm32"))'.dependencies]
+regex = "1"
+
 # The browser build (wasm32-unknown-unknown): uuid's randomness and chrono's
-# local time come from the JS host.
+# local time come from the JS host. regex without its default `perf` engines,
+# as tine-search builds it (about 150 KB of wasm; natively they stay on).
 [target.'cfg(target_arch = "wasm32")'.dependencies]
+regex = { version = "1", default-features = false, features = ["std", "unicode"] }
 uuid = { workspace = true, features = ["js"] }
 chrono = { version = "0.4", default-features = false, features = ["clock", "wasmbind"] }
 

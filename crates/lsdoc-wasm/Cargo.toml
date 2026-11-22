@@ -1,9 +1,7 @@
 # WASM wrapper around `lsdoc` for in-browser block parsing in Tine's frontend.
 #
-# This crate is deliberately EXCLUDED from the root workspace (see ../../Cargo.toml):
-# it is compiled ONLY to `wasm32-unknown-unknown` by `npm run build:wasm`, never as
-# part of the normal host build. It git-deps `lsdoc` DIRECTLY (not `tine-core`) so it
-# does not drag in `uuid`/`getrandom`/`slotmap`, which complicate a wasm build.
+# It ships only as `wasm32-unknown-unknown`, built by `npm run build:wasm` with the
+# workspace's `wasm-release` profile (../../Cargo.toml).
 #
 # To regenerate the vendored artifacts under ../../src/render/wasm/, run:
 #   npm run build:wasm
@@ -20,6 +18,9 @@ crate-type = ["cdylib"]
 [dependencies]
 unicode-normalization = "0.1"
 tine-search = { path = "../tine-search" }
+# The core's own modules (dates, EDN, render facets, reference evidence, ...),
+# which this crate once compiled in by path.
+tine-core = { path = "../tine-core" }
 # The outline kernel crate (lsdoc + serde only): block regions, logbook, the
 # property-line grammar, the page-filename codec and the one-block parse boundary.
 tine-outline = { path = "../tine-outline" }
@@ -29,10 +30,3 @@ serde_json = { version = "1", features = ["unbounded_depth"] }
 serde = { version = "1", features = ["derive"] }
 wasm-bindgen = "0.2"
 js-sys = "0.3"
-
-# Smallest possible wasm: optimize for size, strip panics to abort.
-[profile.release]
-opt-level = "z"
-lto = true
-panic = "abort"
-codegen-units = 1

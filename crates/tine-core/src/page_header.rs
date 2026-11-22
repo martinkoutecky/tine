@@ -1,8 +1,8 @@
 //! The page header: which text holds a page's own properties, its property
 //! lines, and the aliases they declare. Pure text functions over
 //! `tine-outline`'s parser, with no `Document`, I/O or cache, so the store and
-//! the frontend's wasm build (`lsdoc-wasm` includes this file) ask the same
-//! code (I-12, census Q7). `tine-store` `query::document_alias_spellings` and
+//! the frontend's wasm build (`lsdoc-wasm`, which depends on this crate) ask
+//! the same code (I-12, census Q7). `tine-store` `query::document_alias_spellings` and
 //! the merge (`tine-graph-features` `pages/merge_payload.rs`) call these;
 //! `lsdoc-wasm` `page_alias_spellings` serves the page header's alias list.
 
@@ -126,7 +126,7 @@ pub fn header_alias_spellings(text: &str, is_org: bool) -> Vec<String> {
     let mut aliases = crate::reference_evidence::header_alias_members(text, is_org);
     aliases.sort_unstable();
     let mut seen = std::collections::HashSet::new();
-    aliases.retain(|alias| seen.insert(crate::page_identity::page_key(alias)));
+    aliases.retain(|alias| seen.insert(crate::refs::page_key(alias)));
     aliases
 }
 

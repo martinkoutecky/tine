@@ -11,11 +11,10 @@ use lsdoc::ast::Block;
 use std::ops::Range;
 use std::sync::OnceLock;
 
-mod plain_match;
-mod signature;
-// The walker also compiles into lsdoc-wasm; it reads these through `super::`.
 #[cfg(test)]
 mod name_slot_tests;
+mod plain_match;
+mod signature;
 mod walk;
 use crate::block_regions;
 use crate::doc::property_key_norm;
@@ -26,13 +25,12 @@ pub use signature::{BlockSignature, ReferenceFilter};
 pub(crate) use walk::project_into;
 #[cfg(test)]
 use walk::property_key_eligible;
-pub(crate) use walk::{
-    header_alias_members, linkable_property_references_in, markdown_directives,
-    property_references_in,
-};
 pub use walk::{
-    project_with_config, reference_rule, ProjectedPageRef, ReferenceSourceProjection,
-    RewriteTarget, SlottedPageRef,
+    header_alias_members, project_with_config, reference_rule, ProjectedPageRef,
+    ReferenceSourceProjection, RewriteTarget, SlottedPageRef,
+};
+pub(crate) use walk::{
+    linkable_property_references_in, markdown_directives, property_references_in,
 };
 
 /// One block's optional rename/check evidence, released with the file operation.
@@ -80,7 +78,6 @@ impl RenameReadings {
 
 const MAX_OCCURRENCES_PER_BLOCK: usize = 64;
 
-// This small module also compiles into lsdoc-wasm; keep one built-in answer.
 mod og_built_in;
 pub use og_built_in::{hidden_from_all_pages, is_og_built_in_page, is_og_built_in_property};
 #[cfg(test)]

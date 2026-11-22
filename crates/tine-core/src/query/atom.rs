@@ -35,7 +35,6 @@ use crate::doc::property_key_norm;
 use crate::query::ir::ObservedType;
 use unicode_normalization::UnicodeNormalization;
 
-// Also compiled into lsdoc-wasm, with the reference walker.
 mod parse_config;
 pub use parse_config::is_editable_linkable_built_in;
 pub use parse_config::ParseConfig;

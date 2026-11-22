@@ -2597,6 +2597,21 @@ dependencies = [
 ]
 
 [[package]]
+name = "lsdoc-wasm"
+version = "0.1.0"
+dependencies = [
+ "js-sys",
+ "lsdoc",
+ "serde",
+ "serde_json",
+ "tine-core",
+ "tine-outline",
+ "tine-search",
+ "unicode-normalization",
+ "wasm-bindgen",
+]
+
+[[package]]
 name = "maplit"
 version = "1.0.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"

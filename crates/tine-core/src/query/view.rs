@@ -152,6 +152,7 @@ pub enum QueryGrouping {
 
 #[path = "group_field.rs"]
 mod group_field;
+pub use group_field::canonical_group_token;
 use group_field::{group_token_serializable, GROUP_BUILTINS};
 
 /// Canonical grouping field, using the shared borrowed grammar (O(value bytes)).

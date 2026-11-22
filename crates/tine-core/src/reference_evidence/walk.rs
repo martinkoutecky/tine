@@ -2,20 +2,12 @@
 //! references, and the source span of each (moved out of
 //! `reference_evidence.rs` unchanged, conceptual model step 2 batch 6).
 //!
-//! This file also compiles into lsdoc-wasm (`crates/lsdoc-wasm/src/lib.rs`),
-//! so the window's swipe check reads the same answer. Every name from outside
-//! comes through `super::`: tine-core's `reference_evidence` and the wasm
-//! crate root both provide `block_regions`, `og_built_in`,
-//! `property_key_norm`, `is_query_macro_name`, `parse_inline_bounded`,
-//! `ParseConfig`, `separated_by_commas` and `reference_parsing_suppressed`.
+//! The window's swipe check reads the same answer through lsdoc-wasm.
 
 use lsdoc::ast::{Block, Inline, ListItem, Span, Url};
 use std::ops::Range;
 use tine_outline::property_refs;
 
-// lsdoc-wasm includes this file by path as a module-root file, so a bare
-// `mod slots;` would be looked for beside it, not in `walk/`.
-#[cfg_attr(target_arch = "wasm32", path = "walk/slots.rs")]
 mod slots;
 pub use slots::NameSlot;
 #[cfg(test)]
@@ -559,7 +551,7 @@ pub(crate) fn outermost_member(reference: &SlottedPageRef) -> bool {
 /// no header. O(header bytes): one document parse; only with an alias page
 /// property, one block parse of the text before its prose, one
 /// inline parse and, for a linkable value, one document parse per property.
-pub(crate) fn header_alias_members(raw: &str, is_org: bool) -> Vec<String> {
+pub fn header_alias_members(raw: &str, is_org: bool) -> Vec<String> {
     let page = tine_outline::block_regions::parse_document(raw, is_org);
     let mut aliases = (page.page_properties())
         .filter(|p| crate::page_header::is_alias_key(&p.key))

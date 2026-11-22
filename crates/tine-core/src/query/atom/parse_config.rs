@@ -1,8 +1,6 @@
 //! The parse-relevant config slice and the two key tests the reference
 //! walker reads (moved out of `query/atom.rs` unchanged, conceptual model
-//! step 2 batch 6). This file also compiles into lsdoc-wasm
-//! (`crates/lsdoc-wasm/src/lib.rs`); `property_key_norm` comes through
-//! `super::`, which `query::atom` and the wasm crate root both provide.
+//! step 2 batch 6).
 
 use super::property_key_norm;
 
@@ -19,7 +17,7 @@ pub struct ParseConfig {
 }
 
 impl ParseConfig {
-    pub(crate) fn default_ref() -> &'static Self {
+    pub fn default_ref() -> &'static Self {
         static DEFAULT: std::sync::OnceLock<ParseConfig> = std::sync::OnceLock::new();
         DEFAULT.get_or_init(Self::default)
     }

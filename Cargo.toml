@@ -1,10 +1,10 @@
 [workspace]
-members = ["crates/tine-search", "crates/tine-outline", "crates/tine-core", "crates/tine-store", "crates/tine-guide", "crates/tine-graph-features", "plugin-sdk/rust", "src-tauri", "src-tauri/ios-folder-picker-native", "src-tauri/ios-native-integrations"]
-# lsdoc-wasm is built ONLY by `npm run build:wasm` (wasm-pack, wasm32 target) to
-# regenerate the vendored frontend parser. Excluded so normal `cargo build`/`cargo
-# test --workspace` (host target) never touch it. See docs/wasm-parse-plan.md.
+members = ["crates/tine-search", "crates/tine-outline", "crates/tine-core", "crates/tine-store", "crates/tine-guide", "crates/tine-graph-features", "plugin-sdk/rust", "src-tauri", "src-tauri/ios-folder-picker-native", "src-tauri/ios-native-integrations", "crates/lsdoc-wasm"]
+# lsdoc-wasm ships only as wasm32, built by `npm run build:wasm` (wasm-pack, the
+# `wasm-release` profile below) to regenerate the vendored frontend parser. It is
+# a member so it resolves its dependencies (tine-core's among them) from this
+# workspace's one Cargo.lock. See docs/wasm-parse-plan.md.
 exclude = [
-    "crates/lsdoc-wasm",
     "vendor/cap-primitives-4.0.2",
 ]
 resolver = "2"
@@ -22,6 +22,13 @@ authors = ["Martin Koutecký"]
 # build-time/-speed cost). codegen-units is a stable profile key.
 [profile.release]
 codegen-units = 1
+
+# The vendored wasm module (crates/lsdoc-wasm): smallest possible, panics abort.
+[profile.wasm-release]
+inherits = "release"
+opt-level = "z"
+lto = true
+panic = "abort"
 
 [workspace.dependencies]
 serde = { version = "1", features = ["derive", "rc"] }

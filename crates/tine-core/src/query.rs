@@ -39,6 +39,7 @@ pub mod ir;
 #[cfg(test)]
 mod ir_wire_tests;
 mod macro_extent;
+pub use macro_extent::{is_query_macro_name, query_macro_extents, FormFamily};
 #[cfg(test)]
 mod macro_extents_tests;
 mod macro_names;
