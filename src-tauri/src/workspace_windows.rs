@@ -561,7 +561,10 @@ mod tests {
     fn main_window_can_resize_to_a_narrow_side_pane() {
         let mut context = tauri::generate_context!();
         let main = take_main_config(&mut context).expect("configured main window");
-        assert_eq!((main.min_width, main.min_height), (Some(390.0), Some(480.0)));
+        assert_eq!(
+            (main.min_width, main.min_height),
+            (Some(390.0), Some(480.0))
+        );
     }
 
     /// Launched only by scripts/e2e-workspace-flight-hang.mjs through a wrapper
