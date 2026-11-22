@@ -39,7 +39,8 @@ use std::io::Read;
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Condvar, Mutex, RwLock};
-use std::time::{Instant, SystemTime};
+use std::time::SystemTime;
+use tine_core::clock::Instant;
 
 use crate::model::{classify_legacy_trash_entry, trash_dir_kind, trash_root, TrashEntryKind};
 
@@ -269,9 +270,9 @@ pub struct Change {
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct WatchBatch {
     /// First notification of the drained batch; `None` for a poll cycle.
-    pub first_event_at: Option<std::time::Instant>,
+    pub first_event_at: Option<tine_core::clock::Instant>,
     /// When reconciliation of the batch began.
-    pub reconcile_started: std::time::Instant,
+    pub reconcile_started: tine_core::clock::Instant,
     /// The cycle ran without live notifications (poll mode or refused watch).
     pub poll: bool,
     /// The full stat-diff branch ran (poll, unclassifiable event, burst).
@@ -1254,7 +1255,7 @@ impl Store {
                 }
                 if matches!(completed, Ok(true)) {
                     if matches!(*worker_load.status.lock().unwrap(), LoadStatus::Loading) {
-                        let publish_began = std::time::Instant::now();
+                        let publish_began = tine_core::clock::Instant::now();
                         let published = first_view::contain_index_publication(
                             &worker_graph,
                             &worker_load,
@@ -4347,9 +4348,9 @@ mod rev5_tests {
         fs::remove_dir_all(root.join("pages")).unwrap();
         fs::create_dir_all(root.join("pages")).unwrap();
         fs::write(root.join("pages/B.md"), "- after\n").unwrap();
-        let deadline = std::time::Instant::now() + Duration::from_secs(8);
+        let deadline = tine_core::clock::Instant::now() + Duration::from_secs(8);
         let mut observed = false;
-        while std::time::Instant::now() < deadline {
+        while tine_core::clock::Instant::now() < deadline {
             if let Some(change) = changes.try_recv().unwrap() {
                 if change.origin == Origin::External
                     && change.files.iter().any(|(id, kind, _)| {
@@ -4835,9 +4836,9 @@ mod rev5_tests {
     fn wait_hook(pause: &TestPause) {
         let (state, ready) = &**pause;
         let mut state = state.lock().unwrap();
-        let deadline = std::time::Instant::now() + Duration::from_secs(10);
+        let deadline = tine_core::clock::Instant::now() + Duration::from_secs(10);
         while !state.0 {
-            let remaining = deadline.saturating_duration_since(std::time::Instant::now());
+            let remaining = deadline.saturating_duration_since(tine_core::clock::Instant::now());
             assert!(!remaining.is_zero(), "test pause hook was not reached");
             state = ready.wait_timeout(state, remaining).unwrap().0;
         }
@@ -5010,7 +5011,7 @@ mod rev5_tests {
     #[test]
     fn whole_graph_concurrent_reader_writer_watcher_loop() {
         use std::sync::atomic::AtomicUsize;
-        use std::time::Instant;
+        use tine_core::clock::Instant;
         let root = crate::test_support::fresh_dir("tine-d3-loop-");
         fs::create_dir_all(root.join("pages")).unwrap();
         fs::write(root.join("pages/Writer.md"), "- [[Target]] initial\n").unwrap();

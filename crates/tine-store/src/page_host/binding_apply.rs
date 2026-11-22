@@ -287,7 +287,7 @@ impl PageHost {
         }
         let keys: BTreeSet<PageKey> = effects.keys().cloned().collect();
         let (policy, kinds) = (op.policy, op.kinds);
-        let mut deadline = std::time::Instant::now() + OPERATION_WAIT;
+        let mut deadline = tine_core::clock::Instant::now() + OPERATION_WAIT;
         let shared = Arc::downgrade(&self.driver.shared);
         let effects = Arc::new(effects);
         let store = self.store.clone();
@@ -413,7 +413,7 @@ impl PageHost {
                         Wait::Ready(Ok(Admitted::Slot(ReplySlot::new(shared.clone(), id))))
                     }
                     (Disposition::Waiting | Disposition::Pending, _) => {
-                        let now = std::time::Instant::now();
+                        let now = tine_core::clock::Instant::now();
                         if now >= deadline {
                             return Wait::Ready(Err(ApplyRefusal::Busy));
                         }
@@ -443,7 +443,7 @@ impl PageHost {
                         // admission after it gets a whole budget again
                         // (REVIEW P2 round 2, finding 2).
                         Ok(()) => {
-                            deadline = std::time::Instant::now() + OPERATION_WAIT;
+                            deadline = tine_core::clock::Instant::now() + OPERATION_WAIT;
                             continue;
                         }
                         Err(FlushRefusal::Unsaved(pages)) => {
@@ -485,7 +485,7 @@ impl PageHost {
         let keys = self
             .register_all(pages.to_vec())
             .ok_or(ApplyRefusal::Refused)?;
-        let deadline = std::time::Instant::now() + OPERATION_WAIT;
+        let deadline = tine_core::clock::Instant::now() + OPERATION_WAIT;
         self.flush(&keys, &keys, deadline)
             .map_err(|refusal| match refusal {
                 FlushRefusal::Unsaved(pages) => {

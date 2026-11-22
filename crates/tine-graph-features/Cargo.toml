@@ -22,13 +22,16 @@ serde = { workspace = true }
 # deeper than serde's default 128 containers, after bounding it itself.
 serde_json = { workspace = true, features = ["unbounded_depth"] }
 sha2 = "0.10"
-tempfile = "3"
 # Quick share (docs/contracts/quick-share.md): HKDF + AES-256-GCM, gzip,
 # base64url. All three were already in the lockfile.
 base64 = "0.22"
 flate2 = "1"
-ring = "0.17"
 time = { version = "0.3.49", features = ["formatting"] }
+
+# Quick share's encryption (ring) is a native writer; the browser build
+# (wasm32) only reads a graph built in memory.
+[target.'cfg(not(target_arch = "wasm32"))'.dependencies]
+ring = "0.17"
 
 [dev-dependencies]
 lsdoc = { git = "https://github.com/martinkoutecky/lsdoc", tag = "v0.5.12" }

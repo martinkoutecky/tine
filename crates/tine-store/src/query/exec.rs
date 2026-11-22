@@ -1173,7 +1173,7 @@ pub(crate) fn query_ir(
 ) -> Result<Option<crate::IrAnswer>, StatisticsResourceLimit> {
     let began = (matches!(&request, crate::IrRequest::Run { .. })
         && crate::bench_events::enabled())
-    .then(std::time::Instant::now);
+    .then(tine_core::clock::Instant::now);
     let answer = query_ir_on_day_cancellable(
         graph,
         request,

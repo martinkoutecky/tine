@@ -1222,7 +1222,7 @@ const MODIFIED_KEYS: &[&str] = &["last-modified-at", "last_modified_at"];
 
 /// The wall clock in epoch milliseconds (OG `util/time-ms`).
 fn clock_now_ms() -> i64 {
-    std::time::SystemTime::now()
+    tine_core::clock::system_now()
         .duration_since(std::time::UNIX_EPOCH)
         .map(|elapsed| elapsed.as_millis() as i64)
         .unwrap_or(0)
@@ -1335,7 +1335,7 @@ mod tests {
     /// ordinary use still compiles and matches in linear time.
     #[test]
     fn regex_compilation_is_bounded_and_matching_is_linear() {
-        let started = std::time::Instant::now();
+        let started = tine_core::clock::Instant::now();
         assert!(
             compile_regex("(a{1000}){1000}").is_none(),
             "hostile program refused"

@@ -226,11 +226,13 @@ impl Identity {
 
 // Android shared-storage FUSE inode stability has not been device-verified.
 // Use the approved vanish-only fallback rather than rejecting valid saves.
-#[cfg(target_os = "android")]
+// wasm32 (the browser build) binds no root: it has no file system, so every
+// check there fails as a vanished root.
+#[cfg(any(target_os = "android", target_arch = "wasm32"))]
 #[derive(PartialEq, Eq)]
 struct Identity;
 
-#[cfg(target_os = "android")]
+#[cfg(any(target_os = "android", target_arch = "wasm32"))]
 fn identity(path: &Path) -> io::Result<Identity> {
     if fs::metadata(path)?.is_dir() {
         Ok(Identity)
@@ -239,12 +241,12 @@ fn identity(path: &Path) -> io::Result<Identity> {
     }
 }
 
-#[cfg(target_os = "android")]
+#[cfg(any(target_os = "android", target_arch = "wasm32"))]
 fn current(path: &Path) -> io::Result<Identity> {
     identity(path)
 }
 
-#[cfg(target_os = "android")]
+#[cfg(any(target_os = "android", target_arch = "wasm32"))]
 impl Identity {
     fn matches(&self, actual: &Self) -> bool {
         self == actual
@@ -407,7 +409,8 @@ impl Identity {
     target_os = "macos",
     target_os = "ios",
     target_os = "android",
-    target_os = "windows"
+    target_os = "windows",
+    target_arch = "wasm32"
 )))]
 compile_error!("graph root identity needs an explicit platform implementation");
 
@@ -415,7 +418,7 @@ compile_error!("graph root identity needs an explicit platform implementation");
 mod tests {
     use super::*;
 
-    #[cfg(target_os = "android")]
+    #[cfg(any(target_os = "android", target_arch = "wasm32"))]
     #[test]
     fn l9_android_fallback_checks_presence_without_comparing_fuse_inodes() {
         let dir = tempfile::tempdir().unwrap();

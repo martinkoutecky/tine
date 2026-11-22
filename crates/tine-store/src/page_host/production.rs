@@ -357,7 +357,7 @@ fn chain_ids(graph: &Path, dir: &Path) -> Option<Vec<ChainId>> {
     #[cfg(unix)]
     {
         use std::os::unix::fs::MetadataExt;
-        let now = std::time::SystemTime::now();
+        let now = tine_core::clock::system_now();
         chain(graph, dir)
             .skip(1)
             .map(|dir| {

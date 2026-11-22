@@ -27,7 +27,8 @@ use std::sync::atomic::{AtomicBool, AtomicU8, Ordering};
 use std::sync::mpsc::{self, RecvTimeoutError, SyncSender};
 use std::sync::{Condvar, MutexGuard};
 use std::thread::JoinHandle;
-use std::time::{Duration, Instant};
+use std::time::Duration;
+use tine_core::clock::Instant;
 
 /// Where a driver step's results go, called on the driver thread after it
 /// has released the state mutex and every path lock: host events in host
@@ -1160,11 +1161,11 @@ fn deliver<F: HostIo, C: Clock>(
 }
 
 /// Wall-clock milliseconds since the driver started.
-pub(super) struct SystemClock(std::time::Instant);
+pub(super) struct SystemClock(tine_core::clock::Instant);
 
 impl SystemClock {
     pub fn new() -> Self {
-        Self(std::time::Instant::now())
+        Self(tine_core::clock::Instant::now())
     }
 }
 

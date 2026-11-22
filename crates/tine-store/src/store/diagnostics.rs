@@ -27,7 +27,7 @@ impl Store {
         };
         let mut report = self.graph.diag.snapshot(status);
         report["storage"] = self.graph.storage_diag.snapshot();
-        let began = std::time::Instant::now();
+        let began = tine_core::clock::Instant::now();
         let shape = match self.graph.peek_pages() {
             Some(pages) => crate::model::shape_stats::shape(
                 &pages,

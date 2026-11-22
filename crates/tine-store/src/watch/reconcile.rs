@@ -132,7 +132,7 @@ impl Core {
             let revision = self.changes.rev();
             let config = self.graph.current_config();
             let began = Instant::now();
-            let observed = SystemTime::now();
+            let observed = tine_core::clock::system_now();
             let (files, errors, times) = self.collect_full(&config);
             let prepared = PreparedWalk {
                 began,
@@ -274,7 +274,7 @@ impl Core {
         // §5.4: observation time of this cycle's stamps, taken before any is.
         let observed = prepared
             .as_ref()
-            .map_or_else(SystemTime::now, |walk| walk.observed);
+            .map_or_else(tine_core::clock::system_now, |walk| walk.observed);
         if self.closed.load(Ordering::Acquire) {
             return Err(LoadError::Closed);
         }
@@ -893,7 +893,7 @@ mod tests {
                 .write(true)
                 .open(&path)
                 .unwrap()
-                .set_modified(SystemTime::now() - Duration::from_secs(3600))
+                .set_modified(tine_core::clock::system_now() - Duration::from_secs(3600))
                 .unwrap();
         }
         let store = Arc::new(
@@ -912,7 +912,7 @@ mod tests {
         let path = dir.path().join("pages/P0.md");
         let file = fs::File::options().write(true).open(&path).unwrap();
         break_file(&path);
-        file.set_modified(SystemTime::now() - Duration::from_secs(3600))
+        file.set_modified(tine_core::clock::system_now() - Duration::from_secs(3600))
             .unwrap();
         racy::HASH_ATTEMPTS.with(|count| count.set(0));
         core.reconcile(None, false, false, DiffTrigger::Test)
@@ -947,7 +947,7 @@ mod tests {
         }
         // A metadata-only touch must retry even if the bytes/revision still
         // match the previous refused observation (including denied opens).
-        file.set_modified(SystemTime::now() - Duration::from_secs(7200))
+        file.set_modified(tine_core::clock::system_now() - Duration::from_secs(7200))
             .unwrap();
         core.reconcile(None, false, true, DiffTrigger::Test)
             .unwrap();
@@ -1041,7 +1041,7 @@ mod tests {
             .write(true)
             .open(path)
             .unwrap()
-            .set_modified(SystemTime::now() - Duration::from_secs(3600))
+            .set_modified(tine_core::clock::system_now() - Duration::from_secs(3600))
             .unwrap();
     }
 
@@ -1367,7 +1367,7 @@ mod tests {
                 None,
                 Some(PreparedWalk {
                     began: Instant::now(),
-                    observed: SystemTime::now(),
+                    observed: tine_core::clock::system_now(),
                     files,
                     errors,
                     times,
@@ -1436,7 +1436,7 @@ mod tests {
             .write(true)
             .open(&path)
             .unwrap()
-            .set_modified(SystemTime::now() - Duration::from_secs(3600))
+            .set_modified(tine_core::clock::system_now() - Duration::from_secs(3600))
             .unwrap();
         let delivering = path.clone();
         crate::model::READ_PARSE_BYTES_HOOK.with(|hook| {
@@ -1506,7 +1506,7 @@ mod tests {
             .write(true)
             .open(&path)
             .unwrap()
-            .set_modified(SystemTime::now() - Duration::from_secs(3600))
+            .set_modified(tine_core::clock::system_now() - Duration::from_secs(3600))
             .unwrap();
         core.reconcile(None, false, false, DiffTrigger::Test)
             .unwrap();
@@ -1586,7 +1586,7 @@ mod tests {
             .write(true)
             .open(&path)
             .unwrap()
-            .set_modified(SystemTime::now() - Duration::from_secs(3600))
+            .set_modified(tine_core::clock::system_now() - Duration::from_secs(3600))
             .unwrap();
         core.reconcile(None, false, false, DiffTrigger::Test)
             .unwrap();
@@ -1616,7 +1616,7 @@ mod tests {
             .write(true)
             .open(&path)
             .unwrap()
-            .set_modified(SystemTime::now() - Duration::from_secs(3600))
+            .set_modified(tine_core::clock::system_now() - Duration::from_secs(3600))
             .unwrap();
         core.reconcile(None, false, false, DiffTrigger::Test)
             .unwrap();

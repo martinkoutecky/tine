@@ -1,9 +1,9 @@
 //! One platform-specific no-replace move for graph, restore, and device files.
 
-use cap_std::fs::Dir;
-use std::ffi::OsStr;
 use std::io;
 use std::path::Path;
+#[cfg(not(target_arch = "wasm32"))]
+use {cap_std::fs::Dir, std::ffi::OsStr};
 
 /// Move an absolute or caller-resolved path atomically if its destination is absent.
 pub(crate) fn move_file_noreplace(src: &Path, dest: &Path) -> io::Result<()> {
@@ -44,6 +44,7 @@ pub(crate) fn move_file_noreplace(src: &Path, dest: &Path) -> io::Result<()> {
 }
 
 /// Move a name between already-open directory handles without replacing a target.
+#[cfg(not(target_arch = "wasm32"))]
 pub(crate) fn rename_noreplace_dir(
     from_dir: &Dir,
     from: &Path,

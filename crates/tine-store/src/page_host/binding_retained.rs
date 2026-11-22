@@ -126,7 +126,7 @@ impl PageHost {
     /// waiting on any other busy page keeps waiting.
     fn bounded<R: Send + 'static>(
         &self,
-        deadline: std::time::Instant,
+        deadline: tine_core::clock::Instant,
         mut step: impl FnMut(&mut HostState) -> Step<R> + Send + 'static,
     ) -> Result<R, FlushRefusal> {
         let wait = move |state: &mut HostState| {
@@ -136,7 +136,7 @@ impl PageHost {
             match step(state) {
                 Step::Done(done) => Wait::Ready(Ok(done)),
                 Step::Wait { renaming } => {
-                    let now = std::time::Instant::now();
+                    let now = tine_core::clock::Instant::now();
                     if now >= deadline && renaming {
                         return Wait::Ready(Err(FlushRefusal::Busy));
                     }
@@ -163,7 +163,7 @@ impl PageHost {
         &self,
         slot: &ReplySlot,
         session: Option<u64>,
-        deadline: std::time::Instant,
+        deadline: tine_core::clock::Instant,
     ) -> Settled {
         let deadline = Arc::new(Mutex::new(deadline));
         let moving = deadline.clone();
@@ -188,7 +188,7 @@ impl PageHost {
                     if now != progress {
                         progress = now;
                         let mut at = moving.lock().unwrap();
-                        *at = (*at).max(std::time::Instant::now() + OPERATION_WAIT);
+                        *at = (*at).max(tine_core::clock::Instant::now() + OPERATION_WAIT);
                     }
                     // Both sets hold answered pages only. A disk sync can
                     // precede a deferred or failed index delivery, so neither
@@ -213,7 +213,7 @@ impl PageHost {
                 }
                 None => {}
             }
-            let now = std::time::Instant::now();
+            let now = tine_core::clock::Instant::now();
             let at = *moving.lock().unwrap();
             if !host.alive || host.incarnation != id.incarnation || now >= at {
                 return Wait::Ready(Settled::Uncertain);
@@ -324,7 +324,7 @@ impl PageHost {
         &self,
         pages: &BTreeSet<PageKey>,
         reserving: &BTreeSet<PageKey>,
-        deadline: std::time::Instant,
+        deadline: tine_core::clock::Instant,
     ) -> Result<(), FlushRefusal> {
         #[cfg(test)]
         crate::store::pause_at_hook(&self.driver.shared.flush_pause);

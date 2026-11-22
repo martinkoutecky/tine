@@ -87,7 +87,6 @@ impl JournalDate {
     /// Today's date in the device's local civil calendar.  Journal membership,
     /// relative queries, and their date-keyed caches must all agree on this
     /// boundary; UTC epoch days split those user-facing meanings near midnight.
-    #[cfg(not(target_arch = "wasm32"))]
     pub fn today() -> JournalDate {
         use chrono::{Datelike, Local};
         let now = Local::now();
@@ -126,8 +125,8 @@ impl JournalDate {
 
 /// UTC backup directory stamp in `YYYY-MM-DD_HH-MM-SS` form.
 pub fn utc_backup_stamp() -> String {
-    use std::time::{SystemTime, UNIX_EPOCH};
-    let secs = SystemTime::now()
+    use std::time::UNIX_EPOCH;
+    let secs = crate::clock::system_now()
         .duration_since(UNIX_EPOCH)
         .map(|d| d.as_secs() as i64)
         .unwrap_or(0);

@@ -8,7 +8,10 @@
 #[path = "../../test-support/temp_dir.rs"]
 mod test_support;
 
+// The export and share writers (build graph, static and live export, quick
+// share) are native only: the browser build (wasm32) reads what they wrote.
 pub mod assets;
+#[cfg(not(target_arch = "wasm32"))]
 mod build_graph;
 pub mod config;
 pub mod conflicts;
@@ -24,10 +27,15 @@ pub mod pages;
 mod parsed_text;
 pub mod pdf;
 pub mod print;
+#[cfg(not(target_arch = "wasm32"))]
 mod publication_options;
+#[cfg(not(target_arch = "wasm32"))]
 pub mod publish;
+#[cfg(not(target_arch = "wasm32"))]
 pub mod publish_query;
+#[cfg(not(target_arch = "wasm32"))]
 mod published_answers;
+#[cfg(not(target_arch = "wasm32"))]
 pub mod quick_share;
 mod render;
 mod render_query_cache;

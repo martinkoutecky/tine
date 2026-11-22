@@ -4,7 +4,7 @@ use crate::{HostEffect, HostExpected, HostOp, Input};
 
 fn planning_lock<T>(
     lock: &std::sync::Mutex<T>,
-    deadline: std::time::Instant,
+    deadline: tine_core::clock::Instant,
 ) -> Result<std::sync::MutexGuard<'_, T>, Why> {
     loop {
         match lock.try_lock() {
@@ -12,7 +12,7 @@ fn planning_lock<T>(
             Err(std::sync::TryLockError::Poisoned(_)) => panic!("poisoned planning lock"),
             Err(std::sync::TryLockError::WouldBlock) => {}
         }
-        if std::time::Instant::now() >= deadline {
+        if tine_core::clock::Instant::now() >= deadline {
             // One deadline mapping for every PagePlan caller, including
             // preflights that do not go through retained feature writes.
             return Err(failed(io::Error::new(
@@ -32,7 +32,7 @@ mod tests {
     fn planning_deadline_reports_retryable_busy_in_user_words() {
         let lock = std::sync::Mutex::new(());
         let _held = lock.lock().unwrap();
-        let why = planning_lock(&lock, std::time::Instant::now()).unwrap_err();
+        let why = planning_lock(&lock, tine_core::clock::Instant::now()).unwrap_err();
         let Why::Failed(error) = why else {
             panic!("a planning deadline must be retryable: {why:?}");
         };
@@ -58,7 +58,7 @@ impl PagePlan<'_> {
     pub fn plan(mut self) -> Result<HostOp, Why> {
         self.for_host = true;
         self.await_reference_publication();
-        let deadline = std::time::Instant::now() + crate::PageHost::PLANNING_WAIT;
+        let deadline = tine_core::clock::Instant::now() + crate::PageHost::PLANNING_WAIT;
         let _writer = planning_lock(&self.store.writer, deadline)?;
         let names = self.preflight_names().map_err(|(_, why)| why)?;
         let locks: Vec<_> = names

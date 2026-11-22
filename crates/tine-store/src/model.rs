@@ -871,7 +871,7 @@ impl ReadSnapshot {
         changed_paths: &[String],
     ) -> Self {
         #[cfg(feature = "test-faults")]
-        let capture_started = std::time::Instant::now();
+        let capture_started = tine_core::clock::Instant::now();
         let physical_pages = pages;
         let real_page_names = Arc::new(crate::query::RealPageNames::capture(
             old.map(|old| (old.real_page_names.as_ref(), old.physical_pages.as_ref())),
@@ -889,30 +889,38 @@ impl ReadSnapshot {
         let initial = old.is_none().then(|| {
             let explicit =
                 SnapshotExplicitIndex::capture(None, &physical_pages, &[], None, &config);
-            std::thread::scope(|scope| {
-                let signatures = scope.spawn(|| {
-                    SnapshotReferenceCandidateIndex::capture(None, &pages, &[], cache_generation)
-                });
-                let counts = scope.spawn(|| {
-                    let mut counts = SharedMap::new();
-                    for (_, doc) in pages.iter() {
-                        for (id, count) in document_block_ref_counts(doc) {
-                            let total = counts.get(&id).copied().unwrap_or(0) + count;
-                            counts.insert(id, total);
-                        }
+            let signatures =
+                || SnapshotReferenceCandidateIndex::capture(None, &pages, &[], cache_generation);
+            let counts = || {
+                let mut counts = SharedMap::new();
+                for (_, doc) in pages.iter() {
+                    for (id, count) in document_block_ref_counts(doc) {
+                        let total = counts.get(&id).copied().unwrap_or(0) + count;
+                        counts.insert(id, total);
                     }
-                    Arc::new(counts)
-                });
-                let aliases = scope.spawn(|| {
-                    SnapshotPageDerivedIndex::capture(
-                        None,
-                        &pages,
-                        &[],
-                        &crate::query::document_alias_spellings,
-                        None,
-                    )
-                });
-                let blocks = scope.spawn(|| SnapshotBlockIndex::build(&physical_pages));
+                }
+                Arc::new(counts)
+            };
+            let aliases = || {
+                SnapshotPageDerivedIndex::capture(
+                    None,
+                    &pages,
+                    &[],
+                    &crate::query::document_alias_spellings,
+                    None,
+                )
+            };
+            let blocks = || SnapshotBlockIndex::build(&physical_pages);
+            // One thread when the host has one (always on wasm32, where
+            // threads cannot start).
+            if page_cache_worker_count() == 1 {
+                return (explicit, signatures(), counts(), aliases(), blocks());
+            }
+            std::thread::scope(|scope| {
+                let signatures = scope.spawn(signatures);
+                let counts = scope.spawn(counts);
+                let aliases = scope.spawn(aliases);
+                let blocks = scope.spawn(blocks);
                 (
                     explicit,
                     signatures.join().expect("signature index worker"),
@@ -2876,7 +2884,7 @@ impl Graph {
             held: Default::default(),
             build_lock: std::sync::Mutex::new(()),
             launch_observations: std::sync::Mutex::new(None),
-            opened_at: std::time::SystemTime::now(),
+            opened_at: tine_core::clock::system_now(),
             recent_writes: std::sync::Mutex::new(std::collections::HashMap::new()),
             page_locks: std::sync::Mutex::new(std::collections::HashMap::new()),
             completion_name_keys: Default::default(),
@@ -3346,7 +3354,7 @@ impl Graph {
         use std::sync::atomic::Ordering;
         let _bl = self.build_lock.lock().unwrap();
         if !self.cache_built() {
-            let build_began = std::time::Instant::now();
+            let build_began = tine_core::clock::Instant::now();
             loop {
                 let gen0 = (self.cache_gen.load(Ordering::Acquire), self.held.epoch());
                 let built = self.load_all_pages();
@@ -4668,9 +4676,9 @@ fn legacy_name_is_asset(name: &str) -> bool {
 
 pub(crate) fn trash_stamp() -> String {
     use std::sync::atomic::{AtomicU64, Ordering};
-    use std::time::{SystemTime, UNIX_EPOCH};
+    use std::time::UNIX_EPOCH;
     static SEQ: AtomicU64 = AtomicU64::new(0);
-    let ms = SystemTime::now()
+    let ms = tine_core::clock::system_now()
         .duration_since(UNIX_EPOCH)
         .map(|d| d.as_millis())
         .unwrap_or(0);
@@ -4975,7 +4983,7 @@ mod explicit_index_diff_tests {
             index.update(path, &[], &names);
             let mut samples = Vec::new();
             for _ in 0..11 {
-                let start = std::time::Instant::now();
+                let start = tine_core::clock::Instant::now();
                 index.update(
                     path,
                     std::hint::black_box(&names),
@@ -6015,7 +6023,7 @@ mod tests {
             };
             fs::write(dir.join("pages").join(format!("Page {index:05}.md")), body).unwrap();
         }
-        let started = std::time::Instant::now();
+        let started = tine_core::clock::Instant::now();
         let store = model_store(&dir);
         let snapshot = published_snapshot(&store);
         let build_ms = started.elapsed().as_millis();
@@ -7628,7 +7636,7 @@ mod tests {
         let store = tine_store::Store::open(Path::new(&root), Default::default())
             .unwrap()
             .0;
-        let start = std::time::Instant::now();
+        let start = tine_core::clock::Instant::now();
         let orphans = tine_graph_features::assets::orphan_assets(&store).unwrap();
         eprintln!(
             "P11 cold orphan scan: {:?}; {} orphans",
@@ -8951,13 +8959,13 @@ mod tests {
     /// once the page can be written.
     #[cfg(unix)]
     fn page_update_lands(page_path: &Path) {
-        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(30);
+        let deadline = tine_core::clock::Instant::now() + std::time::Duration::from_secs(30);
         while !fs::read_to_string(page_path)
             .unwrap()
             .contains("id:: 11111111-1111-1111-1111-111111111111")
         {
             assert!(
-                std::time::Instant::now() < deadline,
+                tine_core::clock::Instant::now() < deadline,
                 "the pending annotation page update never landed"
             );
             std::thread::sleep(std::time::Duration::from_millis(20));
@@ -9871,7 +9879,7 @@ mod tests {
                 .unwrap();
             snapshot.alias_edges();
             crate::query::real_page_names(&snapshot);
-            let began = std::time::Instant::now();
+            let began = tine_core::clock::Instant::now();
             for _ in 0..100 {
                 snapshot.memos.scope_derived_invalidation(
                     &snapshot,

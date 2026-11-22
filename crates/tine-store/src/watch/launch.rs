@@ -10,7 +10,7 @@
 
 use std::collections::HashSet;
 use std::path::PathBuf;
-use std::time::Instant;
+use tine_core::clock::Instant;
 
 use super::{collect_with_errors, Core, Stamp};
 use crate::launch_diag::DiffTrigger;

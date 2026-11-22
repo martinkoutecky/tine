@@ -127,9 +127,11 @@ mod path_identity;
 mod platform_step;
 #[cfg(test)]
 mod production_index_guard_tests;
+#[cfg(not(target_arch = "wasm32"))]
 pub mod publish;
 pub mod query;
 pub mod query_plan;
+#[cfg(not(target_arch = "wasm32"))]
 pub mod restore;
 #[cfg(test)]
 mod search_edit_tests;
@@ -153,7 +155,9 @@ mod thread_local_hosts_guard;
 pub mod transaction;
 mod transliteration;
 mod watch;
+#[cfg(not(target_arch = "wasm32"))]
 pub use publish::{PublishDest, PublishFailed, PublishReceipt, SiteWriter};
+#[cfg(not(target_arch = "wasm32"))]
 pub use restore::{RestoreFailed, RestoreFile, RestoreReport};
 pub use store::change_summary::{QueryRegistration, QuerySubscription};
 #[cfg(any(test, feature = "test-faults"))]

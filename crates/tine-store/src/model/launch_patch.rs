@@ -82,7 +82,7 @@ impl Graph {
         // Phase timings for `Store::diagnostics`: local accumulators, one
         // recorder call per pass (see `launch_diag`).
         use crate::launch_diag as diag;
-        let began = std::time::Instant::now();
+        let began = tine_core::clock::Instant::now();
         let mut pass = diag::PassStats::default();
         // GH #623 / storage spec §5.1 step 1: one read per file. The listing
         // opens no file (an ordinary page's name comes from the bytes read
@@ -121,14 +121,14 @@ impl Graph {
         // above (no per-file open on Windows), taken before its read.
         let listing_stamp = |path: &Path| listing_stamps.get(path).cloned();
         let parse_one = |mut e: PageEntry| {
-            let phase = std::time::Instant::now();
+            let phase = tine_core::clock::Instant::now();
             let (stamp, observed) = match listing_stamp(&e.path) {
                 Some((stamp, observed)) => (Some(stamp), observed),
-                None => (None, std::time::SystemTime::now()),
+                None => (None, tine_core::clock::system_now()),
             };
             clock.stat(phase.elapsed());
             let path = e.path.clone();
-            let phase = std::time::Instant::now();
+            let phase = tine_core::clock::Instant::now();
             let read = self.read_parse_input(&e.path);
             let read_len = read.as_ref().ok().map(String::len);
             clock.read(phase.elapsed(), read_len);
@@ -140,7 +140,7 @@ impl Graph {
                         name_failure = Some(error);
                     }
                     clock.crlf(line_endings::convention(Some(&content)) == "\r\n");
-                    let phase = std::time::Instant::now();
+                    let phase = tine_core::clock::Instant::now();
                     let parsed =
                         isolate_page_parse(e, |entry| Some(parse_page_content(entry, &content)));
                     clock.parse(phase.elapsed());
@@ -227,7 +227,7 @@ impl Graph {
             crate::store::pause_at_hook(&self.warm_after_first_page_pause);
         }
         let still_wanted = || !cancelled() && (replace || !self.cache_built());
-        let parallel_began = std::time::Instant::now();
+        let parallel_began = tine_core::clock::Instant::now();
         let Some(parsed_chunks) =
             parse_pages_parallel(entries.collect(), &still_wanted, &parse_one)
         else {
@@ -249,7 +249,7 @@ impl Graph {
         // The watcher tracks sync conflict copies and held pages by stamp
         // without a revision (§5.1); nothing parses them here. A held
         // page's stamp is racy, so the watcher rereads the file (A-V4).
-        let phase = std::time::Instant::now();
+        let phase = tine_core::clock::Instant::now();
         for path in named
             .iter()
             .filter(|entry| withheld.contains(&entry.path))
@@ -305,7 +305,7 @@ impl Graph {
         // reads (its cache mutation would have no-op'd against the None cache, so
         // its disk write must be folded in by a rebuild — defer to the next
         // on-demand build rather than install a stale snapshot).
-        let phase = std::time::Instant::now();
+        let phase = tine_core::clock::Instant::now();
         let _bl = self.build_lock.lock().unwrap();
         let built = LaunchPass {
             built,

@@ -33,7 +33,8 @@ use super::*;
 use crate::model::{GraphState, LazyMarks, NotCaptured, PagesIn, PagesOut};
 use crate::watch::Stamp;
 use sha2::{Digest, Sha256};
-use std::time::{Duration, Instant};
+use std::time::Duration;
+use tine_core::clock::Instant;
 
 const MAGIC: &[u8; 8] = b"TINECKPT";
 /// Bump whenever anything a checkpoint holds changes meaning or shape: a
@@ -399,8 +400,16 @@ pub(crate) fn config_key(config: &tine_core::config::Config) -> [u8; 32] {
     hash.finalize().into()
 }
 
+/// The browser build (wasm32) opens no `Store`, so it neither writes nor reads
+/// a checkpoint and links no zstd (a C library).
+#[cfg(target_arch = "wasm32")]
+fn encode(_: &Path, _: [u8; 32], _: &Body<PagesOut>) -> Result<(Vec<u8>, u64), String> {
+    Err("no launch checkpoint on wasm32".to_owned())
+}
+
 /// Encode a captured body. Postcard streams into the zstd encoder, so the raw
 /// body is never held in memory; its length is counted as it passes.
+#[cfg(not(target_arch = "wasm32"))]
 fn encode(
     root: &Path,
     config_key: [u8; 32],
@@ -438,6 +447,17 @@ fn encode(
     file.extend_from_slice(&header);
     file.extend_from_slice(&payload);
     Ok((file, raw_len))
+}
+
+/// The frame's zstd payload; none on wasm32 (see the wasm32 [`encode`]).
+fn decompress(payload: &[u8], raw_len: usize) -> Option<Vec<u8>> {
+    #[cfg(not(target_arch = "wasm32"))]
+    return zstd::bulk::decompress(payload, raw_len).ok();
+    #[cfg(target_arch = "wasm32")]
+    {
+        let _ = (payload, raw_len);
+        None
+    }
 }
 
 /// Body bytes decoded between two looks at whether the launch still wants
@@ -547,8 +567,7 @@ fn decode(
     if sha256(payload) != header.payload_sha256 {
         return Err(Fallback::Checksum);
     }
-    let raw =
-        zstd::bulk::decompress(payload, header.raw_len as usize).map_err(|_| Fallback::Decode)?;
+    let raw = decompress(payload, header.raw_len as usize).ok_or(Fallback::Decode)?;
     if raw.len() as u64 != header.raw_len {
         return Err(Fallback::Length);
     }

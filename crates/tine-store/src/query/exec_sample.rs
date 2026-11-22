@@ -31,7 +31,7 @@ fn fresh_sample_seed() -> u64 {
         return seed;
     }
     static DRAWS: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
-    let nanos = std::time::SystemTime::now()
+    let nanos = tine_core::clock::system_now()
         .duration_since(std::time::UNIX_EPOCH)
         .map_or(0, |elapsed| elapsed.as_nanos() as u64);
     nanos

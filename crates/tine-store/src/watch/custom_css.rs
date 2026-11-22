@@ -30,7 +30,7 @@ impl Core {
         // last observation, and old enough not to be racy (§5.4), is the same
         // bytes, so a poll cycle or full diff never re-hashes a multi-megabyte
         // theme (base64 fonts) or an oversized file under the writer lock.
-        let observed = SystemTime::now();
+        let observed = tine_core::clock::system_now();
         let metadata = stamp_metadata(&path);
         match (previous.as_ref(), metadata.as_ref()) {
             (None, None) => return,
@@ -217,7 +217,7 @@ mod tests {
         let path = root.join("logseq/custom.css");
         let settle = |path: &std::path::Path| {
             let file = fs::File::options().write(true).open(path).unwrap();
-            file.set_modified(SystemTime::now() - Duration::from_secs(3600))
+            file.set_modified(tine_core::clock::system_now() - Duration::from_secs(3600))
                 .unwrap();
         };
 

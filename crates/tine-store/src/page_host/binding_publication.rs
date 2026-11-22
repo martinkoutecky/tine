@@ -129,7 +129,7 @@ impl PageHost {
         needs: &Needs,
         bound: std::time::Duration,
     ) -> (PageOperation, Vec<PublishedRevision>) {
-        let deadline = std::time::Instant::now() + bound;
+        let deadline = tine_core::clock::Instant::now() + bound;
         // After a witness that did not hold, the next ask waits for a step.
         let mut again = false;
         loop {
@@ -139,7 +139,7 @@ impl PageHost {
                 if state.book.session != session || !state.progress.host.alive {
                     return Wait::Ready(Barrier::Refused);
                 }
-                let now = std::time::Instant::now();
+                let now = tine_core::clock::Instant::now();
                 if !std::mem::take(&mut first) {
                     if let Some(witnesses) = published(state, &needs) {
                         let revisions = needs
@@ -182,7 +182,7 @@ impl PageHost {
                     };
                     // A second, fresh `bound` (see the doc): a liveness check
                     // the driver does not answer within it is pending.
-                    let by = Deadline::At(std::time::Instant::now() + bound);
+                    let by = Deadline::At(tine_core::clock::Instant::now() + bound);
                     return match self.driver.shared.read_by(by, live) {
                         Ok(true) => (PageOperation::Applied, revisions),
                         Ok(false) | Err(Unanswered::Ended) => (PageOperation::Refused, Vec::new()),

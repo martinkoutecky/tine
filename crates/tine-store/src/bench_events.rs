@@ -21,7 +21,7 @@ use std::path::Path;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::mpsc::{channel, Receiver, Sender};
 use std::sync::{Arc, OnceLock};
-use std::time::{SystemTime, UNIX_EPOCH};
+use std::time::UNIX_EPOCH;
 
 /// The page text a line carries at most: a lossless UTF-8 prefix.
 const TEXT_LIMIT: usize = 65536;
@@ -121,7 +121,7 @@ fn prefix(bytes: &[u8]) -> &str {
 }
 
 fn now_ms() -> f64 {
-    SystemTime::now()
+    tine_core::clock::system_now()
         .duration_since(UNIX_EPOCH)
         .map_or(0.0, |since| since.as_secs_f64() * 1000.0)
 }
@@ -241,7 +241,7 @@ pub(crate) fn emit(make: impl FnOnce() -> Ev) {
 /// Run `parse`, one page-mail DTO parse of the page at `path`; with events
 /// on, its wall time is a `mail_parse` event.
 pub(crate) fn mail_parse<T>(path: &str, parse: impl FnOnce() -> T) -> T {
-    let began = enabled().then(std::time::Instant::now);
+    let began = enabled().then(tine_core::clock::Instant::now);
     let parsed = parse();
     if let Some(began) = began {
         let parse_us = u64::try_from(began.elapsed().as_micros()).unwrap_or(u64::MAX);

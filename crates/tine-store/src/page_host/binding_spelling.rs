@@ -156,10 +156,12 @@ impl PageHost {
         let inputs = op.inputs.clone();
         let expected = op.pages.clone();
         let store = self.store.clone();
-        let deadline = std::time::Instant::now() + OPERATION_WAIT;
+        let deadline = tine_core::clock::Instant::now() + OPERATION_WAIT;
         let retain = move |state: &mut State<ProductionIo, SystemClock>| {
             let Ok(_writer) = store.writer.try_lock() else {
-                return Wait::Until(Some(std::time::Instant::now() + Duration::from_millis(10)));
+                return Wait::Until(Some(
+                    tine_core::clock::Instant::now() + Duration::from_millis(10),
+                ));
             };
             let host = &mut state.progress.host;
             if !host.alive || !host.admission_open {
@@ -180,7 +182,9 @@ impl PageHost {
                 || keys.iter().any(|key| host.busy(key))
                 || host.lacks_locks(&keys)
             {
-                return Wait::Until(Some(std::time::Instant::now() + Duration::from_millis(10)));
+                return Wait::Until(Some(
+                    tine_core::clock::Instant::now() + Duration::from_millis(10),
+                ));
             }
             let tx = store.page_plan(None);
             for (page, _, expected) in &expected {
@@ -230,12 +234,14 @@ impl PageHost {
         // edit, external editor or sync delivery is never overwritten.
         let store = self.store.clone();
         let lock = store.graph.page_lock(&store.graph.root.join(dst.as_str()));
-        let deadline = std::time::Instant::now() + OPERATION_WAIT;
+        let deadline = tine_core::clock::Instant::now() + OPERATION_WAIT;
         let moved = move |state: &mut State<ProductionIo, SystemClock>| {
             // Never stall the driver on another thread's writer. The path
             // loop releases its locks on Until and tries again later.
             let Ok(_writer) = store.writer.try_lock() else {
-                return Wait::Until(Some(std::time::Instant::now() + Duration::from_millis(10)));
+                return Wait::Until(Some(
+                    tine_core::clock::Instant::now() + Duration::from_millis(10),
+                ));
             };
             let host = &mut state.progress.host;
             if !host.alive || !host.admission_open {
@@ -261,7 +267,9 @@ impl PageHost {
                 return Wait::Ready(Err(ApplyRefusal::Unsaved(page)));
             }
             if host.busy(&key) || host.order.touches(&keys) || host.lacks_locks(&keys) {
-                return Wait::Until(Some(std::time::Instant::now() + Duration::from_millis(10)));
+                return Wait::Until(Some(
+                    tine_core::clock::Instant::now() + Duration::from_millis(10),
+                ));
             }
             // This helper performs the existing guarded no-replace / folded
             // alias rename plus directory sync. It never rewrites bytes.

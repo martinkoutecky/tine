@@ -19,13 +19,18 @@ regex = "1"
 memchr = "2"
 pinyin = { version = "0.11", default-features = false, features = ["plain"] }
 libc = "0.2"
-cap-std = "4.0.2"
 same-file = "1.0.6"
 unicode-normalization = "0.1"
 unicode-segmentation = "1"
 notify = "6"
 # Launch checkpoint (storage spec §7.6): postcard body, zstd frame.
 postcard = { version = "1", default-features = false, features = ["use-std"] }
+
+# Off the browser build (wasm32), which only reads a graph built in memory
+# (`WholeGraph::from_pages`): directory capabilities and the checkpoint's
+# compression (a C library) serve the disk store.
+[target.'cfg(not(target_arch = "wasm32"))'.dependencies]
+cap-std = "4.0.2"
 zstd = { version = "0.13", default-features = false }
 
 [target.'cfg(windows)'.dependencies]

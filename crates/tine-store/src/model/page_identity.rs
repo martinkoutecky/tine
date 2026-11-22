@@ -925,7 +925,7 @@ pub(crate) fn launch_listing_walk(graph: &Graph) -> LaunchListing {
         // lacks it, so the watcher's next diff re-reads it. Unknown is never
         // recorded as unchanged.
         if let Some(stamp) = source.stamp(entry) {
-            stamps.insert(path.clone(), (stamp, std::time::SystemTime::now()));
+            stamps.insert(path.clone(), (stamp, tine_core::clock::system_now()));
         }
         if !eligible {
             tracked_only.push(path);

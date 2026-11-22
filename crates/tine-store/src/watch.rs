@@ -7,7 +7,8 @@ use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::mpsc::{self, Receiver, Sender};
 use std::sync::{Arc, Mutex, RwLock};
-use std::time::{Duration, Instant, SystemTime};
+use std::time::{Duration, SystemTime};
+use tine_core::clock::Instant;
 
 use notify::Watcher;
 
@@ -813,7 +814,7 @@ impl Core {
             if id.as_str().starts_with("assets/") {
                 self.assets.note_own(&path);
             }
-            let observed = SystemTime::now();
+            let observed = tine_core::clock::system_now();
             let current = match observed_before.get(id) {
                 // The watcher already holds exactly this observation (the
                 // publication read a file the watcher had stamped, unchanged):
@@ -2330,7 +2331,7 @@ mod tests {
             .write(true)
             .open(&path)
             .unwrap()
-            .set_modified(SystemTime::now() - Duration::from_secs(3600))
+            .set_modified(tine_core::clock::system_now() - Duration::from_secs(3600))
             .unwrap();
         store
             .graph

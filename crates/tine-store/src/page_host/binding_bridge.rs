@@ -58,7 +58,8 @@ impl Sink for Bridge {
                 for publication in delivery.publications {
                     #[cfg(feature = "test-faults")]
                     crate::cost_counters::host_publication_probes(1);
-                    let started = crate::bench_events::enabled().then(std::time::Instant::now);
+                    let started =
+                        crate::bench_events::enabled().then(tine_core::clock::Instant::now);
                     #[cfg(test)]
                     let fault = self.fault();
                     #[cfg(not(test))]

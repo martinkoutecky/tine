@@ -50,7 +50,7 @@ impl PageHost {
         if self.try_register(&key, &spelling).is_none() {
             return PageOperation::Refused;
         }
-        let deadline = std::time::Instant::now() + retained::OPERATION_WAIT;
+        let deadline = tine_core::clock::Instant::now() + retained::OPERATION_WAIT;
         let staged = match self.stage_delete_input(session, &key, &spelling.file()) {
             Ok(staged) => staged,
             Err(outcome) => return outcome,
@@ -151,7 +151,7 @@ impl PageHost {
         if self.try_register(&key, &spelling).is_none() {
             return PageOperation::Refused;
         }
-        let deadline = std::time::Instant::now() + retained::OPERATION_WAIT;
+        let deadline = tine_core::clock::Instant::now() + retained::OPERATION_WAIT;
         let staged = match self.stage_delete_input(session, &key, &spelling.file()) {
             Ok(staged) => staged,
             Err(outcome) => return outcome,

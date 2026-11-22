@@ -72,10 +72,10 @@ impl PageHost {
         self.driver
             .shared
             .notify(|_| panic!("test fault: a host bug ends the page host driver"));
-        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(20);
+        let deadline = tine_core::clock::Instant::now() + std::time::Duration::from_secs(20);
         while !self.driver.shared.ended() {
             assert!(
-                std::time::Instant::now() < deadline,
+                tine_core::clock::Instant::now() < deadline,
                 "the driver never ended"
             );
             std::thread::sleep(std::time::Duration::from_millis(5));
@@ -143,8 +143,8 @@ impl PageHost {
     /// open). False at `timeout`.
     #[cfg(feature = "test-faults")]
     pub fn quiesce_for_tests(&self, timeout: std::time::Duration) -> bool {
-        let deadline = std::time::Instant::now() + timeout;
-        let left = || deadline.saturating_duration_since(std::time::Instant::now());
+        let deadline = tine_core::clock::Instant::now() + timeout;
+        let left = || deadline.saturating_duration_since(tine_core::clock::Instant::now());
         let mut last = None;
         loop {
             if !self.store.watcher_drained_for_tests(left()) {
@@ -341,11 +341,11 @@ impl PageHost {
     /// while I/O is down fails at once; this waits for it, 5 s at most. The
     /// error says why draft I/O is still down.
     pub fn drafts_retry(&self) -> Result<(), String> {
-        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(5);
+        let deadline = tine_core::clock::Instant::now() + std::time::Duration::from_secs(5);
         // Probes at most every 100 ms, as the caller's pause did.
-        let mut next = std::time::Instant::now();
+        let mut next = tine_core::clock::Instant::now();
         let step = move |state: &mut State<ProductionIo, SystemClock>| {
-            let now = std::time::Instant::now();
+            let now = tine_core::clock::Instant::now();
             if now < next {
                 return Wait::Until(Some(next));
             }

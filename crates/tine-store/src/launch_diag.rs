@@ -17,7 +17,8 @@ use serde_json::{json, Value};
 use std::collections::VecDeque;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Mutex;
-use std::time::{Duration, Instant, SystemTime};
+use std::time::{Duration, SystemTime};
+use tine_core::clock::Instant;
 
 /// Entries kept in each recent-event ring.
 const RECENT: usize = 16;
@@ -363,7 +364,7 @@ impl DiagRecorder {
     pub(crate) fn new() -> Self {
         Self {
             began: Instant::now(),
-            began_unix_ms: SystemTime::now()
+            began_unix_ms: tine_core::clock::system_now()
                 .duration_since(SystemTime::UNIX_EPOCH)
                 .map_or(0, |d| d.as_millis().min(u128::from(u64::MAX)) as u64),
             state: Mutex::new(State::default()),

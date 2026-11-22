@@ -59,6 +59,9 @@ fn isolated_case(name: &str) -> bool {
 #[path = "date_page_link.rs"]
 mod date_page_link;
 
+#[path = "clock_guard.rs"]
+mod clock_guard;
+
 #[path = "cm_day_files.rs"]
 mod cm_day_files;
 

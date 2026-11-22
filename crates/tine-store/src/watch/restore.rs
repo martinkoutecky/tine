@@ -2,7 +2,6 @@
 //! (`Store` restore), hashing every graph file, asset sidecar and the config.
 
 use std::fs;
-use std::time::SystemTime;
 
 use super::{collect_with_revs, stamp, Core, RestoreBaseline, WatchHandle};
 use crate::store::{journal_ids_from_entries, ChangeKind, LoadStatus, Origin};
@@ -75,7 +74,7 @@ impl WatchHandle {
                 files.push((id, kind, new.and_then(|value| value.rev.clone())));
             }
         }
-        let observed = SystemTime::now();
+        let observed = tine_core::clock::system_now();
         let baseline = collect_with_revs(&self.core.graph.root, &self.core.graph.current_config());
         // The restore's complete observation supersedes pre-restore read
         // uncertainty. Keep failures only where this observation still could

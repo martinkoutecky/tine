@@ -24,7 +24,7 @@
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 use std::io::Read;
-use std::time::{SystemTime, UNIX_EPOCH};
+use std::time::UNIX_EPOCH;
 use tine_store::{Area, Store};
 
 const TOOL: &str = "tine-graph-bytes";
@@ -236,7 +236,7 @@ pub fn verify_graph_bytes(
         tool: TOOL.into(),
         algorithm: ALGORITHM.into(),
         complete,
-        generated_at_unix_ms: SystemTime::now()
+        generated_at_unix_ms: tine_core::clock::system_now()
             .duration_since(UNIX_EPOCH)
             .unwrap_or_default()
             .as_millis(),
