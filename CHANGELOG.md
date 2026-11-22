@@ -19,6 +19,9 @@ The format follows [Keep a Changelog](https://keepachangelog.com/); versions use
 - Exports and quick shares build their private copy of the exported pages in memory instead of writing it to a temporary folder in the app cache and reading it back, so an export writes nothing but its output (browser core slice 1, D-20261122-WEX). Queries sorted by recency in an export use each page's file time, as in the app. An export made while `config.edn` has a change Tine has not loaded yet names and sorts its pages as the app shows them, instead of by the unloaded settings. A static or live export that runs while Tine reloads `config.edn` hides the same properties, and opens on the same default home page, as the pages it selected, instead of mixing the old and the new settings; building an export no longer holds a second copy of every exported page's text.
 
 ### Fixed
+- Tine's window can be made as narrow as 390 pt (was 640), so it can share a screen with another window on any desktop (#1005).
+- Enter at the end of an expanded block embed adds a visible first child and moves the caret there, even when the source is folded (#1023).
+- Configured Hiccup macros render bare-word arguments like `{{r education}}`, just like their quoted equivalents (#1018).
 - Linked References and query results, including tables and boards, use their source file’s formatting while the source page loads. Rows and breadcrumbs stay visible during an unrelated page rename (UI-ORG-RESULT-ROW-FORMAT).
 - Shared scheduling and deadline lines show both date chips after reopening a graph, and print and publication skip building unused regions when hiding planning dates (REG-CM-PLANNING-CHECKPOINT, REG-CM-PLANNING-EXPORT-COST).
 - Markdown and Org blocks with many planning timestamps on one line open faster, with the date chips and any trailing text still visible (REG-CM-PLANNING-LINE-COST).

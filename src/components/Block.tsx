@@ -28,7 +28,7 @@ import { spellcheckEnabled } from "../spellcheckSettings";
 import { restoreMovedSelection, keepCaretThroughRewrite, syncTextareaToStore } from "../editor/restoreMovedSelection";
 import { navigateJournalDown } from "../editor/journalNavigation";
 import { focusMountedEditor } from "../editor/surfaceFocus";
-import { pageByName, blockPageReadOnly, blockWritable, setRaw, makeOwnNumberedList, removeOwnNumberedList, stopOwnNumberedListOnEmptyEnter, indentBlock, outdentBlock, mergeWithPrev, mergeWithNext, setCollapsed, beginPageHeaderEdit, finishPageHeaderEdit, exitMultilineBlock, insertOutlineAfter, insertSiblingAfterSubtree, insertEditorOutline, outlineFits, pasteClipboardPayload, sanitizeOutlineIdsForPaste, deleteBlock, moveBlockFeed, moveItem, selectBlock, selectBlockSubtree, isSelected, isBlockMoving, withBlockMoving, orderedListMarker, depthOf, blockExternalId, pinPageWhileDrafting, blockHasFoldableBody, blockHasPageEmbed, blockHasQueryBody, storedFold, type OutlineScope, node as docNode } from "../document";
+import { pageByName, blockPageReadOnly, blockWritable, setRaw, makeOwnNumberedList, removeOwnNumberedList, stopOwnNumberedListOnEmptyEnter, indentBlock, outdentBlock, mergeWithPrev, mergeWithNext, setCollapsed, beginPageHeaderEdit, finishPageHeaderEdit, exitMultilineBlock, insertOutlineAfter, insertSiblingAfterSubtree, insertEditorOutline, outlineFits, pasteClipboardPayload, sanitizeOutlineIdsForPaste, deleteBlock, moveBlockFeed, moveItem, selectBlock, selectBlockSubtree, isSelected, isBlockMoving, withBlockMoving, orderedListMarker, depthOf, blockExternalId, pinPageWhileDrafting, blockHasFoldableBody, blockHasPageEmbed, blockHasQueryBody, type OutlineScope, node as docNode } from "../document";
 import { pasteAsLinkEdit } from "../blockRefActions";
 import { BlockBullet } from "./BlockBullet";
 import {
@@ -76,6 +76,7 @@ import { CollapseAllBorder, NO_THREAD_LINES, rowDecorationClasses, rowDecoration
 import { workflow, zoomInto, openContextMenu, openDatePicker, autoPairing, typographyMode, blockReferencesRequest, documentMode, docModeEnterForNewBlock } from "../ui";
 import { ResultWriteTargetContext, liveWriteTarget } from "./queryResultIdentity";
 import { toggleViewFold, viewFoldSurface } from "./block/readOnlyFold";
+import { hostFolded } from "./macroFold";
 import { pushToast } from "../toasts";
 import { copyBlockLink } from "./blockLinkCopy";
 import { editorAssets } from "../editor/editorAssets";
@@ -236,11 +237,10 @@ export function Block(props: { id: string; hideRefCount?: boolean; forceExpanded
     // above.) Matches the sidebar rule: edit where you're editing, render elsewhere.
     return !surfaceKey.startsWith("ref:") && !surfaceKey.startsWith("embed:");
   };
-  const storedFolded = () => storedFold(props.id); // `collapsed::`, else a query's authored `:collapsed? true` (GH #619 Q8)
   const embedRow = useContext(EmbedNavExitContext);
   const rowHost = () => embedRow?.rowHost(props.id) ?? null;
   bindCollapseCommandSurface(props.id, collapseSurface, outlineScope, editing, rowHost);
-  const collapsed = () => viewCollapseSurface()?.collapsed(props.id, storedFolded()) ?? storedFolded();
+  const collapsed = () => hostFolded(collapseSurface, props.id);
   const fmt = createMemo(() => pageByName(node().page)?.format ?? "md");
   const blockFacets = createMemo<Facets>(() => {
     const n = node();
@@ -289,7 +289,7 @@ export function Block(props: { id: string; hideRefCount?: boolean; forceExpanded
     id: () => props.id, neighbours: () => props.authorNeighbors,
     // A thread runs through the rows drawn: the first child shown, and a prior sibling's last row (fold state as this surface draws it).
     firstChild: () => (props.forceExpanded || !collapsed()) && sheet().view === null ? outlineChildren()[0] : undefined,
-    folded: id => viewFoldSurface(id, collapseSurface)?.collapsed(id, storedFold(id)) ?? storedFold(id),
+    folded: id => hostFolded(collapseSurface, id),
   });
   const hasCommentIdentity = createMemo(() => author() !== null || bulletless());
   // GH #893: the author mark is a faint tint behind the row's own text. Comments, replies and the
@@ -1706,10 +1706,10 @@ function EditorEngine(props: { id: string; propertySession?: ReturnType<typeof p
       e.key === "Enter" && !e.ctrlKey && !e.metaKey &&
       (!e.shiftKey || (docModeEnterForNewLine && !e.altKey))
     ) {
-      // A folded embed's displayed root is the host's keyboard boundary. Use
-      // occurrence collapse, not source collapse; source editors and descendants
-      // retain their ordinary structural Enter behavior (GH #642).
-      const foldedEmbedHost = position().id !== props.id && collapseSurface?.collapsed(props.id, node().collapsed)
+      // The edited embed's fold governs both the host boundary (GH #642)
+      // and whether the split goes into the source's children (GH #1023).
+      const embedCollapsed = editSurface() ? hostFolded(collapseSurface, props.id) : undefined;
+      const foldedEmbedHost = position().id !== props.id && embedCollapsed
         ? position().id : null;
       if (foldedEmbedHost && start === end && end === raw.length) {
         e.preventDefault();
@@ -1806,7 +1806,7 @@ function EditorEngine(props: { id: string; propertySession?: ReturnType<typeof p
         const newId = insertOutlineAfter(props.id, [{ raw: "", children: [] }]);
         if (newId) startEditing(newId, 0, null, editSurface());
       } else {
-        splitBlockInView(props.id, start, outlineScope, navigationSurface(), hideFn(), replacement, collapseSurface);
+        splitBlockInView(props.id, start, outlineScope, navigationSurface(), hideFn(), replacement, collapseSurface, embedCollapsed);
       }
     } else if (e.key === "Backspace" && end === start) {
       // Auto-pair Backspace: caret between an empty pair (`(|)`) deletes both
