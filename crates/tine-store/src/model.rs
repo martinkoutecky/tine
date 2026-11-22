@@ -2804,19 +2804,32 @@ impl Graph {
     }
 
     pub(crate) fn open_inner(root: impl AsRef<Path>) -> Graph {
-        let root = root.as_ref().to_path_buf();
-        let (config, problem) = match read_parse_input(&root.join("logseq/config.edn")) {
+        Self::open_from(root.as_ref().to_path_buf(), FileSource::Disk)
+    }
+
+    /// A graph over `source` under the config it holds at
+    /// `logseq/config.edn`: the one config read of a graph open.
+    fn open_from(root: PathBuf, source: FileSource) -> Graph {
+        let path = root.join("logseq/config.edn");
+        let (config, problem) = match read_parse_input_in(&source, &path) {
             Ok(text) => (Config::parse(&text), None),
-            Err(error) if error.kind() == io::ErrorKind::NotFound => (
-                Config::default(),
-                missing_config_problem(&root.join("logseq/config.edn")),
-            ),
+            Err(error) if error.kind() == io::ErrorKind::NotFound => {
+                (Config::default(), missing_config_problem(&path))
+            }
             Err(error) => (Config::default(), Some(error.into())),
         };
         let journal_format = config.journal_format();
-        let mut graph = Self::empty_with_config(root, FileSource::Disk, config, journal_format);
+        let mut graph = Self::empty_with_config(root, source, config, journal_format);
         graph.config_read_problem = problem;
         graph
+    }
+
+    /// A graph of `files` held in memory under the config among them
+    /// (`WholeGraph::from_files`), read as a disk open reads its own.
+    pub(crate) fn in_memory_with_config(files: Vec<file_source::MemoryFile>) -> Graph {
+        let root = PathBuf::from(file_source::MEMORY_ROOT);
+        let files = file_source::Files::new(&root, files);
+        Self::open_from(root, FileSource::Memory(Arc::new(files)))
     }
 
     /// A graph of `files` (graph-relative path, document, modification time)

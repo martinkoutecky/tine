@@ -29,7 +29,10 @@ thread_local! {
 fn install_panic_hook() {
     std::panic::set_hook(Box::new(|info| {
         // I-5: keep the location and only a fixed literal message (wasm_panic_report.rs).
-        let place = info.location().map(|l| format!("{}:{}", l.file(), l.line())).unwrap_or_default();
+        let place = info
+            .location()
+            .map(|l| format!("{}:{}", l.file(), l.line()))
+            .unwrap_or_default();
         let message = tine_core::wasm_panic_report::panic_report(&place, info.payload());
         LAST_PANIC.with(|slot| {
             if let Ok(mut slot) = slot.try_borrow_mut() {
@@ -46,7 +49,6 @@ fn install_panic_hook() {
 pub fn last_panic() -> String {
     LAST_PANIC.with(|slot| slot.try_borrow().map(|s| s.clone()).unwrap_or_default())
 }
-
 
 /// Native page-name key: O(name bytes), no I/O; Rust trim/lowercase/slashes/NFC.
 #[wasm_bindgen]
@@ -65,7 +67,9 @@ use tine_outline::page_filename;
 /// The native file-format answer, including mixed-case Org extensions.
 #[wasm_bindgen]
 pub fn page_file_format(path: &str) -> String {
-    tine_outline::page_format::Format::from_path(std::path::Path::new(path)).ext().to_string()
+    tine_outline::page_format::Format::from_path(std::path::Path::new(path))
+        .ext()
+        .to_string()
 }
 
 /// Encode a Windows-safe Logseq page stem; legacy selects percent-encoded
@@ -86,7 +90,10 @@ pub fn decode_page_name(stem: &str, legacy: bool) -> String {
 /// O(value bytes), without parsing or I/O. Empty members retain their position.
 #[wasm_bindgen]
 pub fn split_linkable_property(value: &str) -> Vec<String> {
-    value.split(block_regions::is_linkable_property_separator).map(str::to_owned).collect()
+    value
+        .split(block_regions::is_linkable_property_separator)
+        .map(str::to_owned)
+        .collect()
 }
 
 /// OG property tokens, shared with native property atomization. O(value bytes).
@@ -94,16 +101,23 @@ pub fn split_linkable_property(value: &str) -> Vec<String> {
 pub fn linkable_property_names(value: &str, is_org: bool) -> Vec<String> {
     let mut seen = std::collections::HashSet::new();
     tine_outline::property_refs::linkable_names(value, is_org)
-        .into_iter().filter(|name| seen.insert(tine_core::refs::page_key(name))).collect()
+        .into_iter()
+        .filter(|name| seen.insert(tine_core::refs::page_key(name)))
+        .collect()
 }
-
-
 
 /// The same page-property edit used by the native owner and the page form.
 #[wasm_bindgen]
-pub fn page_parts_with_property(parts_json: &str, is_org: bool, key: &str, value: Option<String>) -> Result<String, JsValue> {
-    let parts: Vec<String> = serde_json::from_str(parts_json).map_err(|e| JsValue::from_str(&e.to_string()))?;
-    let next = tine_outline::page_property_edit::set(&parts, is_org, key, value.as_deref()).map_err(|e| JsValue::from_str(&e))?;
+pub fn page_parts_with_property(
+    parts_json: &str,
+    is_org: bool,
+    key: &str,
+    value: Option<String>,
+) -> Result<String, JsValue> {
+    let parts: Vec<String> =
+        serde_json::from_str(parts_json).map_err(|e| JsValue::from_str(&e.to_string()))?;
+    let next = tine_outline::page_property_edit::set(&parts, is_org, key, value.as_deref())
+        .map_err(|e| JsValue::from_str(&e))?;
     Ok(serde_json::to_string(&next).unwrap())
 }
 
@@ -113,11 +127,17 @@ pub fn page_parts_with_property(parts_json: &str, is_org: bool, key: &str, value
 /// one spelling per page identity). The page header's alias list shows this.
 /// O(header bytes).
 #[wasm_bindgen]
-pub fn page_alias_spellings(pre_block: Option<String>, first_root: Option<String>, is_org: bool) -> Vec<String> {
-    tine_core::page_header::page_alias_spellings(pre_block.as_deref(), first_root.as_deref(), is_org)
+pub fn page_alias_spellings(
+    pre_block: Option<String>,
+    first_root: Option<String>,
+    is_org: bool,
+) -> Vec<String> {
+    tine_core::page_header::page_alias_spellings(
+        pre_block.as_deref(),
+        first_root.as_deref(),
+        is_org,
+    )
 }
-
-
 
 /// OG's built-in reference-valued keys (`alias`, `aliases`, `tags`), any case:
 /// `tine_core::query::atom::is_editable_linkable_built_in` (census Q7). The
@@ -135,11 +155,17 @@ pub fn is_editable_linkable_built_in(key: &str) -> bool {
 pub fn block_reference_names(raw: &str, is_org: bool) -> Vec<String> {
     let blocks = lsdoc_block_parse::parse_projection(raw, is_org).blocks;
     let regions = block_regions::from_blocks(raw, is_org, &blocks);
-    tine_core::reference_evidence::project_with_config(raw, is_org, &blocks, &regions, tine_core::query::atom::ParseConfig::default_ref())
-        .explicit
-        .into_iter()
-        .map(|reference| reference.name)
-        .collect()
+    tine_core::reference_evidence::project_with_config(
+        raw,
+        is_org,
+        &blocks,
+        &regions,
+        tine_core::query::atom::ParseConfig::default_ref(),
+    )
+    .explicit
+    .into_iter()
+    .map(|reference| reference.name)
+    .collect()
 }
 
 /// OG built-ins excluded from default query-table property columns.
@@ -162,7 +188,10 @@ pub fn hidden_from_all_pages(name: &str) -> bool {
 /// reads too).
 #[wasm_bindgen]
 pub fn page_preamble_content_json(raw: &str, is_org: bool) -> String {
-    serde_json::to_string(&tine_outline::page_preamble::preamble_content_range(raw, is_org).map(|r| [r.0, r.1])).unwrap()
+    serde_json::to_string(
+        &tine_outline::page_preamble::preamble_content_range(raw, is_org).map(|r| [r.0, r.1]),
+    )
+    .unwrap()
 }
 
 /// Opening text's property nodes as UTF-8 byte ranges `[[start, end], ...]`
@@ -244,7 +273,14 @@ pub fn reference_target_name(
     filename_candidates: bool,
     legacy_file_names: Option<bool>,
 ) -> Option<String> {
-    block_regions::reference_target_name(kind, value, label, org, filename_candidates, legacy_file_names.unwrap_or(true))
+    block_regions::reference_target_name(
+        kind,
+        value,
+        label,
+        org,
+        filename_candidates,
+        legacy_file_names.unwrap_or(true),
+    )
 }
 
 /// Names inside an accepted NestedLink node; O(node bytes).
@@ -392,7 +428,10 @@ fn now_parts() -> logbook::TimestampParts {
 pub fn removal_refs_json(blocks: &str, with_content: bool) -> Result<String, JsValue> {
     let blocks: Vec<(String, bool)> =
         serde_json::from_str(blocks).map_err(|e| JsValue::from_str(&e.to_string()))?;
-    let removed: Vec<(&str, bool)> = blocks.iter().map(|(raw, org)| (raw.as_str(), *org)).collect();
+    let removed: Vec<(&str, bool)> = blocks
+        .iter()
+        .map(|(raw, org)| (raw.as_str(), *org))
+        .collect();
     let refs = tine_outline::removal_refs::removal_refs(&removed, with_content);
     Ok(serde_json::to_string(&refs).unwrap())
 }
@@ -523,7 +562,8 @@ pub fn edit_block_regions_json(
     }
     let r = regions_from_js(raw, regions)?;
     if text(request, "kind") == "reattach_properties" {
-        return r.reattach_org_properties(raw, &text(request, "hidden"))
+        return r
+            .reattach_org_properties(raw, &text(request, "hidden"))
             .map_err(|e| JsValue::from_str(&e));
     }
     let edit = match text(request, "kind").as_str() {
@@ -554,7 +594,12 @@ pub fn edit_block_regions_json(
 /// `{visible, hidden}` from the window's cached regions for exactly `raw`.
 /// `policy` is a kernel `HidePolicy` as JSON. O(block bytes), no parse.
 #[wasm_bindgen]
-pub fn editor_text_json(raw: &str, is_org: bool, regions: &JsValue, policy: &str) -> Result<String, JsValue> {
+pub fn editor_text_json(
+    raw: &str,
+    is_org: bool,
+    regions: &JsValue,
+    policy: &str,
+) -> Result<String, JsValue> {
     let r = regions_from_js(raw, regions)?;
     let p = hide_policy(policy)?;
     Ok(serde_json::to_string(&editor_text::split_with(raw, is_org, &r, &p)).unwrap())
@@ -562,20 +607,47 @@ pub fn editor_text_json(raw: &str, is_org: bool, regions: &JsValue, policy: &str
 
 /// The editor (UTF-16) offset of raw UTF-16 offset `raw_utf16`.
 #[wasm_bindgen]
-pub fn editor_offset_of_raw(raw: &str, is_org: bool, regions: &JsValue, policy: &str, raw_utf16: usize) -> Result<usize, JsValue> {
+pub fn editor_offset_of_raw(
+    raw: &str,
+    is_org: bool,
+    regions: &JsValue,
+    policy: &str,
+    raw_utf16: usize,
+) -> Result<usize, JsValue> {
     let r = regions_from_js(raw, regions)?;
     let p = hide_policy(policy)?;
-    let at = editor_text::raw_to_visible_with(raw, is_org, &r, &p, editor_text::utf16_to_byte(raw, raw_utf16));
-    Ok(editor_text::byte_to_utf16(&editor_text::split_with(raw, is_org, &r, &p).visible, at))
+    let at = editor_text::raw_to_visible_with(
+        raw,
+        is_org,
+        &r,
+        &p,
+        editor_text::utf16_to_byte(raw, raw_utf16),
+    );
+    Ok(editor_text::byte_to_utf16(
+        &editor_text::split_with(raw, is_org, &r, &p).visible,
+        at,
+    ))
 }
 
 /// The raw UTF-8 byte offset (the kernel verbs' unit) of editor offset `editor_utf16`.
 #[wasm_bindgen]
-pub fn raw_byte_of_editor(raw: &str, is_org: bool, regions: &JsValue, policy: &str, editor_utf16: usize) -> Result<usize, JsValue> {
+pub fn raw_byte_of_editor(
+    raw: &str,
+    is_org: bool,
+    regions: &JsValue,
+    policy: &str,
+    editor_utf16: usize,
+) -> Result<usize, JsValue> {
     let r = regions_from_js(raw, regions)?;
     let p = hide_policy(policy)?;
     let visible = editor_text::split_with(raw, is_org, &r, &p).visible;
-    Ok(editor_text::visible_to_raw_with(raw, is_org, &r, &p, editor_text::utf16_to_byte(&visible, editor_utf16)))
+    Ok(editor_text::visible_to_raw_with(
+        raw,
+        is_org,
+        &r,
+        &p,
+        editor_text::utf16_to_byte(&visible, editor_utf16),
+    ))
 }
 
 /// Parser-boundary negative-only prefilter; true still needs drawer ownership.
@@ -587,31 +659,51 @@ pub fn block_may_have_logbook(raw: &str) -> bool {
 /// Editor text plus hidden lines back to raw (`editor_text::join_with`), with
 /// optional exact source for metadata-preserving text-only edits.
 #[wasm_bindgen]
-pub fn editor_text_join(visible: &str, hidden: &str, is_org: bool, visible_regions: &JsValue, source: Option<String>, policy: Option<String>) -> Result<String, JsValue> {
+pub fn editor_text_join(
+    visible: &str,
+    hidden: &str,
+    is_org: bool,
+    visible_regions: &JsValue,
+    source: Option<String>,
+    policy: Option<String>,
+) -> Result<String, JsValue> {
     if let Some(source) = source {
         // The policy that split `hidden` from `source` (the built-ins when absent).
-        let hide = match policy { Some(p) => hide_policy(&p)?, None => editor_text::HidePolicy::Builtin };
-        return editor_text::join_preserving(visible, hidden, is_org, &source, &hide).map_err(|e| JsValue::from_str(&e));
+        let hide = match policy {
+            Some(p) => hide_policy(&p)?,
+            None => editor_text::HidePolicy::Builtin,
+        };
+        return editor_text::join_preserving(visible, hidden, is_org, &source, &hide)
+            .map_err(|e| JsValue::from_str(&e));
     }
-    let r = if !hidden.is_empty() && (is_org || !visible_regions.is_null()) { regions_from_js(visible, visible_regions)? } else { block_regions::BlockRegions::default() };
+    let r = if !hidden.is_empty() && (is_org || !visible_regions.is_null()) {
+        regions_from_js(visible, visible_regions)?
+    } else {
+        block_regions::BlockRegions::default()
+    };
     editor_text::join_with(visible, hidden, is_org, &r).map_err(|e| JsValue::from_str(&e))
 }
 
 /// Whether hide `policy` hides property `key` (`HidePolicy::hides`).
 #[wasm_bindgen]
 pub fn hide_policy_hides(policy: &str, key: &str, properties: &str) -> Result<bool, JsValue> {
-    let properties: Vec<(String, String)> = serde_json::from_str(properties)
-        .map_err(|e| JsValue::from_str(&e.to_string()))?;
-    Ok(hide_policy(policy)?.hides_properties(key, properties.iter().map(|(k, v)| (k.as_str(), v.as_str()))))
+    let properties: Vec<(String, String)> =
+        serde_json::from_str(properties).map_err(|e| JsValue::from_str(&e.to_string()))?;
+    Ok(hide_policy(policy)?.hides_properties(
+        key,
+        properties.iter().map(|(k, v)| (k.as_str(), v.as_str())),
+    ))
 }
 
 /// The same own-property discriminator that editor_text uses to hide comment metadata.
 #[wasm_bindgen]
 pub fn comment_quote(properties: &str) -> Result<Option<String>, JsValue> {
-    let properties: Vec<(String, String)> = serde_json::from_str(properties)
-        .map_err(|e| JsValue::from_str(&e.to_string()))?;
-    Ok(editor_text::comment_quote(properties.iter().map(|(k, v)| (k.as_str(), v.as_str())))
-        .map(str::to_owned))
+    let properties: Vec<(String, String)> =
+        serde_json::from_str(properties).map_err(|e| JsValue::from_str(&e.to_string()))?;
+    Ok(
+        editor_text::comment_quote(properties.iter().map(|(k, v)| (k.as_str(), v.as_str())))
+            .map(str::to_owned),
+    )
 }
 
 /// Tine's legacy property-key spellings, `[[legacy, canonical], …]` as JSON:
@@ -648,35 +740,37 @@ pub fn outline_apply_json(request: &str) -> Result<String, JsValue> {
     }
     let req: Request = outline_request(request)?;
     let hide = req.hide.unwrap_or(editor_text::HidePolicy::Builtin);
-    Ok(match outline::apply_with_policy(&req.pages, &req.verb, &req.keys, &hide) {
-        Err(reason) => serde_json::json!({ "refused": reason }).to_string(),
-        Ok(change) => {
-            let editor_offset = change.focus.as_ref().and_then(|f| {
-                let offset = f.raw_offset?;
-                let (raw, format) = change
-                    .pages
-                    .iter()
-                    .find_map(|patch| {
-                        let u = patch.upserts.iter().find(|u| u.key == f.key)?;
-                        let page = req.pages.iter().find(|p| p.name == patch.name)?;
-                        Some((u.raw.as_str(), page.format))
-                    })
-                    .or_else(|| {
-                        req.pages
-                            .iter()
-                            .find_map(|p| p.blocks.get(&f.key).map(|b| (b.raw.as_str(), p.format)))
-                    })?;
-                let org = format.is_org();
-                let r = block_regions::parse(raw, org);
-                let at = editor_text::raw_to_visible_with(raw, org, &r, &hide, offset);
-                Some(editor_text::byte_to_utf16(
-                    &editor_text::split_with(raw, org, &r, &hide).visible,
-                    at,
-                ))
-            });
-            serde_json::json!({ "ok": change, "editor_offset": editor_offset }).to_string()
-        }
-    })
+    Ok(
+        match outline::apply_with_policy(&req.pages, &req.verb, &req.keys, &hide) {
+            Err(reason) => serde_json::json!({ "refused": reason }).to_string(),
+            Ok(change) => {
+                let editor_offset = change.focus.as_ref().and_then(|f| {
+                    let offset = f.raw_offset?;
+                    let (raw, format) = change
+                        .pages
+                        .iter()
+                        .find_map(|patch| {
+                            let u = patch.upserts.iter().find(|u| u.key == f.key)?;
+                            let page = req.pages.iter().find(|p| p.name == patch.name)?;
+                            Some((u.raw.as_str(), page.format))
+                        })
+                        .or_else(|| {
+                            req.pages.iter().find_map(|p| {
+                                p.blocks.get(&f.key).map(|b| (b.raw.as_str(), p.format))
+                            })
+                        })?;
+                    let org = format.is_org();
+                    let r = block_regions::parse(raw, org);
+                    let at = editor_text::raw_to_visible_with(raw, org, &r, &hide, offset);
+                    Some(editor_text::byte_to_utf16(
+                        &editor_text::split_with(raw, org, &r, &hide).visible,
+                        at,
+                    ))
+                });
+                serde_json::json!({ "ok": change, "editor_offset": editor_offset }).to_string()
+            }
+        },
+    )
 }
 
 /// The blocks an outline verb reads (`Verb::reads`), as `[{key, subtree}]`, so
@@ -696,16 +790,22 @@ fn outline_request<'a, T: serde::Deserialize<'a>>(input: &'a str) -> Result<T, J
     let mut escaped = false;
     for byte in input.bytes() {
         if quoted {
-            if escaped { escaped = false; }
-            else if byte == b'\\' { escaped = true; }
-            else if byte == b'"' { quoted = false; }
+            if escaped {
+                escaped = false;
+            } else if byte == b'\\' {
+                escaped = true;
+            } else if byte == b'"' {
+                quoted = false;
+            }
         } else {
             match byte {
                 b'"' => quoted = true,
                 b'{' | b'[' => {
                     depth += 1;
                     if depth > 2 * outline::OUTLINE_MAX_DEPTH + 16 {
-                        return Err(JsValue::from_str("Invalid outline request: excessive JSON nesting"));
+                        return Err(JsValue::from_str(
+                            "Invalid outline request: excessive JSON nesting",
+                        ));
                     }
                 }
                 b'}' | b']' => depth = depth.saturating_sub(1),
@@ -715,34 +815,66 @@ fn outline_request<'a, T: serde::Deserialize<'a>>(input: &'a str) -> Result<T, J
     }
     let mut decoder = serde_json::Deserializer::from_str(input);
     decoder.disable_recursion_limit();
-    let value = T::deserialize(&mut decoder).map_err(|e| JsValue::from_str(&format!("Invalid outline request: {e}")))?;
-    decoder.end().map_err(|e| JsValue::from_str(&format!("Invalid outline request: {e}")))?;
+    let value = T::deserialize(&mut decoder)
+        .map_err(|e| JsValue::from_str(&format!("Invalid outline request: {e}")))?;
+    decoder
+        .end()
+        .map_err(|e| JsValue::from_str(&format!("Invalid outline request: {e}")))?;
     Ok(value)
 }
 
 /// Shared comparison form; O(text bytes), no graph access.
 #[wasm_bindgen]
 pub fn search_fold(text: &str, remove_accents: bool) -> String {
-    if remove_accents { tine_search::canonical_fold(text) } else { tine_search::literal_fold(text) }
+    if remove_accents {
+        tine_search::canonical_fold(text)
+    } else {
+        tine_search::literal_fold(text)
+    }
 }
 
 /// Bounded original UTF-16 evidence, O(text × needle scalars).
 #[wasm_bindgen]
-pub fn search_substring_spans_json(text: &str, needle: &str, limit: usize, remove_accents: bool) -> String {
-    serde_json::to_string(&tine_search::substring_spans(text, needle, limit, remove_accents)).unwrap()
+pub fn search_substring_spans_json(
+    text: &str,
+    needle: &str,
+    limit: usize,
+    remove_accents: bool,
+) -> String {
+    serde_json::to_string(&tine_search::substring_spans(
+        text,
+        needle,
+        limit,
+        remove_accents,
+    ))
+    .unwrap()
 }
 
 /// Compile once per hot query (four retained matchers maximum). No raw handles
 /// cross into JS, so a parser re-instantiation also safely resets this cache.
-fn with_search<T>(query: &str, remove_accents: bool, f: impl FnOnce(&tine_search::Matcher) -> T) -> T {
+fn with_search<T>(
+    query: &str,
+    remove_accents: bool,
+    f: impl FnOnce(&tine_search::Matcher) -> T,
+) -> T {
     use std::cell::RefCell;
     thread_local! { static CACHE: RefCell<Vec<(String, bool, tine_search::Matcher)>> = const { RefCell::new(Vec::new()) }; }
     CACHE.with(|cache| {
         let mut cache = cache.borrow_mut();
-        let at = cache.iter().position(|(q, p, _)| q == query && *p == remove_accents);
-        let at = if let Some(at) = at { at } else {
-            if cache.len() == 4 { cache.remove(0); }
-            cache.push((query.to_owned(), remove_accents, tine_search::Matcher::parse_with_policy(query, remove_accents)));
+        let at = cache
+            .iter()
+            .position(|(q, p, _)| q == query && *p == remove_accents);
+        let at = if let Some(at) = at {
+            at
+        } else {
+            if cache.len() == 4 {
+                cache.remove(0);
+            }
+            cache.push((
+                query.to_owned(),
+                remove_accents,
+                tine_search::Matcher::parse_with_policy(query, remove_accents),
+            ));
             cache.len() - 1
         };
         f(&cache[at].2)
@@ -758,7 +890,9 @@ pub fn search_query_json(query: &str, remove_accents: bool) -> String {
             Matcher::Empty => serde_json::json!({"kind":"empty"}),
             Matcher::InvalidRegex(error) => serde_json::json!({"kind":"invalid","error":error}),
             Matcher::Regex(re) => serde_json::json!({"kind":"regex","pattern":re.as_str()}),
-            Matcher::Boolean(groups) => serde_json::json!({"kind":"boolean","groups":groups.iter().map(|group| group.iter().map(|term| serde_json::json!({"text":term.text,"negated":term.negated,"quoted":term.quoted})).collect::<Vec<_>>()).collect::<Vec<_>>()}),
+            Matcher::Boolean(groups) => {
+                serde_json::json!({"kind":"boolean","groups":groups.iter().map(|group| group.iter().map(|term| serde_json::json!({"text":term.text,"negated":term.negated,"quoted":term.quoted})).collect::<Vec<_>>()).collect::<Vec<_>>()})
+            }
         };
         value["simple"] = serde_json::json!(matcher.simple_term());
         value.to_string()
@@ -774,13 +908,22 @@ pub fn search_matches(query: &str, remove_accents: bool, lower: &str, original: 
 /// UTF-16 search evidence, capped by limit. First mode retains zero-width hits
 /// and considers all positive terms; multi-range mode uses the satisfied group.
 #[wasm_bindgen]
-pub fn search_spans_json(query: &str, remove_accents: bool, text: &str, limit: usize, first: bool) -> String {
+pub fn search_spans_json(
+    query: &str,
+    remove_accents: bool,
+    text: &str,
+    limit: usize,
+    first: bool,
+) -> String {
     with_search(query, remove_accents, |m| {
-        let spans = if first { m.first_span(text, remove_accents).into_iter().collect() } else { m.spans(text, limit, remove_accents) };
+        let spans = if first {
+            m.first_span(text, remove_accents).into_iter().collect()
+        } else {
+            m.spans(text, limit, remove_accents)
+        };
         serde_json::to_string(&spans).unwrap()
     })
 }
-
 
 /// Query EDN reads/splices from the same byte-span reader as native macro_text.
 /// O(source bytes), at most 1 MiB / 128 levels; null refuses unreadable EDN.
@@ -788,20 +931,29 @@ pub fn search_spans_json(query: &str, remove_accents: bool, text: &str, limit: u
 #[wasm_bindgen]
 pub fn query_edn_json(source: &str, operation: &str, value: &str) -> String {
     match operation {
-        "begin_query" => serde_json::to_string(&tine_core::query_edn::inspect_begin_query(source)).unwrap(),
+        "begin_query" => {
+            serde_json::to_string(&tine_core::query_edn::inspect_begin_query(source)).unwrap()
+        }
         "options" => serde_json::to_string(&tine_core::query_edn::options(source)).unwrap(),
         "title" => serde_json::to_string(&tine_core::query_edn::edit_title(source, value)).unwrap(),
         "read" => serde_json::to_string(&tine_core::query_edn::read(source)).unwrap(),
-        "split" => serde_json::to_string(&tine_core::query_edn::split_trailing_map(source)).unwrap(),
-        "quote" => serde_json::to_string(&tine_core::edn::to_string(&tine_core::edn::Edn::Str(source.into()))).unwrap(),
+        "split" => {
+            serde_json::to_string(&tine_core::query_edn::split_trailing_map(source)).unwrap()
+        }
+        "quote" => serde_json::to_string(&tine_core::edn::to_string(&tine_core::edn::Edn::Str(
+            source.into(),
+        )))
+        .unwrap(),
         "unquote" => {
-            let text = match tine_core::edn::parse_strict(source) { Some(tine_core::edn::Edn::Str(text)) => Some(text), _ => None };
+            let text = match tine_core::edn::parse_strict(source) {
+                Some(tine_core::edn::Edn::Str(text)) => Some(text),
+                _ => None,
+            };
             serde_json::to_string(&text).unwrap()
         }
         _ => "null".into(),
     }
 }
-
 
 /// Query raw extents from the native reader. O(raw bytes), no parser or I/O;
 /// JSON offsets are UTF-8 bytes. Unterminated candidates are omitted.
@@ -822,7 +974,6 @@ pub fn query_macro_is_tql(name: &str) -> bool {
     tine_core::query::FormFamily::for_macro_name(name) == tine_core::query::FormFamily::Tql
 }
 
-
 thread_local! {
     static DATE_FORMATS: std::cell::RefCell<Vec<(String, tine_core::date::Format)>> = const { std::cell::RefCell::new(Vec::new()) };
 }
@@ -833,8 +984,13 @@ fn with_date_format<T>(pattern: &str, f: impl FnOnce(&tine_core::date::Format) -
         if let Some((_, format)) = cache.iter().find(|(key, _)| key == pattern) {
             return f(format);
         }
-        if cache.len() == 16 { cache.remove(0); }
-        cache.push((pattern.to_owned(), tine_core::date::Format::compile(pattern)));
+        if cache.len() == 16 {
+            cache.remove(0);
+        }
+        cache.push((
+            pattern.to_owned(),
+            tine_core::date::Format::compile(pattern),
+        ));
         f(&cache.last().unwrap().1)
     })
 }
@@ -844,7 +1000,12 @@ fn with_date_format<T>(pattern: &str, f: impl FnOnce(&tine_core::date::Format) -
 #[wasm_bindgen]
 pub fn parse_journal_format_json(text: &str, pattern: &str) -> String {
     with_date_format(pattern, |format| {
-        serde_json::to_string(&format.parse(text).map(|d| serde_json::json!({"y":d.year,"m":d.month,"d":d.day}))).unwrap()
+        serde_json::to_string(
+            &format
+                .parse(text)
+                .map(|d| serde_json::json!({"y":d.year,"m":d.month,"d":d.day})),
+        )
+        .unwrap()
     })
 }
 
@@ -855,7 +1016,11 @@ thread_local! {
 /// The graph's journal date answerer for (file, title) format strings ("" =
 /// default), cached for the last pair: the frontend asks with one graph's
 /// formats at a time.
-fn with_journal_format<T>(file: &str, title: &str, f: impl FnOnce(&tine_core::date::JournalFormat) -> T) -> T {
+fn with_journal_format<T>(
+    file: &str,
+    title: &str,
+    f: impl FnOnce(&tine_core::date::JournalFormat) -> T,
+) -> T {
     JOURNAL_FORMAT.with(|cell| {
         let mut cell = cell.borrow_mut();
         if !matches!(&*cell, Some((cf, ct, _)) if cf == file && ct == title) {
@@ -874,30 +1039,41 @@ fn with_journal_format<T>(file: &str, title: &str, f: impl FnOnce(&tine_core::da
 #[wasm_bindgen]
 pub fn journal_day_json(name: &str, file_format: &str, title_format: &str) -> String {
     with_journal_format(file_format, title_format, |format| {
-        serde_json::to_string(&format.parse(name).map(|d| serde_json::json!({"y":d.year,"m":d.month,"d":d.day}))).unwrap()
+        serde_json::to_string(
+            &format
+                .parse(name)
+                .map(|d| serde_json::json!({"y":d.year,"m":d.month,"d":d.day})),
+        )
+        .unwrap()
     })
 }
 
 /// The kind of a link target nothing claims: `JournalFormat::absent_link_is_journal`.
 #[wasm_bindgen]
 pub fn absent_link_is_journal(name: &str, file_format: &str, title_format: &str) -> bool {
-    with_journal_format(file_format, title_format, |format| format.absent_link_is_journal(name))
+    with_journal_format(file_format, title_format, |format| {
+        format.absent_link_is_journal(name)
+    })
 }
 
 /// Native date formatter over explicit civil parts; same bounded format cache.
 #[wasm_bindgen]
 pub fn format_journal_date(year: i32, month: u32, day: u32, pattern: &str) -> String {
-    with_date_format(pattern, |format| format.format(tine_core::date::JournalDate { year, month, day }))
+    with_date_format(pattern, |format| {
+        format.format(tine_core::date::JournalDate { year, month, day })
+    })
 }
-
 
 /// Inline-only parsing for property values: bounded by the same shared native
 /// tree admission. O(value bytes); null refuses excessive depth, no I/O.
 #[wasm_bindgen]
 pub fn parse_inline_json(raw: &str, is_org: bool) -> String {
-    serde_json::to_string(&lsdoc_block_parse::parse_inline_bounded(raw, if is_org { "org" } else { "md" })).unwrap()
+    serde_json::to_string(&lsdoc_block_parse::parse_inline_bounded(
+        raw,
+        if is_org { "org" } else { "md" },
+    ))
+    .unwrap()
 }
-
 
 /// Assets-relative link target; O(URL bytes), no parse or filesystem I/O.
 #[wasm_bindgen]
@@ -920,5 +1096,38 @@ pub fn ordered_list_glyph(index: u32, depth: u32) -> String {
 /// PDF identity with the existing preview/native suffix policy. O(filename bytes).
 #[wasm_bindgen]
 pub fn pdf_asset_key(filename: &str, preview: bool) -> String {
-    tine_core::pdf_key::asset_key(filename, if preview { tine_core::pdf_key::PdfSuffix::Preview } else { tine_core::pdf_key::PdfSuffix::Native })
+    tine_core::pdf_key::asset_key(
+        filename,
+        if preview {
+            tine_core::pdf_key::PdfSuffix::Preview
+        } else {
+            tine_core::pdf_key::PdfSuffix::Native
+        },
+    )
+}
+
+/// The browser core (D-20261122-WEX): the store's whole-graph view of a
+/// graph's text files held in memory, answering through the same wire forms
+/// as the desktop app's commands.
+#[wasm_bindgen]
+pub struct BrowserGraph(tine_store::WholeGraph);
+
+#[wasm_bindgen]
+impl BrowserGraph {
+    /// `files[i]` holds the bytes of the graph-relative `paths[i]`,
+    /// `logseq/config.edn` among them. Cost: one read and parse of each file
+    /// and the initial index capture, as a desktop open has.
+    #[wasm_bindgen(constructor)]
+    pub fn new(paths: Vec<String>, files: Vec<js_sys::Uint8Array>) -> BrowserGraph {
+        let files = (paths.into_iter().zip(files))
+            .map(|(path, bytes)| (path, bytes.to_vec()))
+            .collect();
+        BrowserGraph(tine_store::WholeGraph::from_files(files).0)
+    }
+
+    /// The `page_inventory` command's answer.
+    pub fn page_inventory_json(&self) -> String {
+        let wire = tine_graph_features::inventory_wire::page_inventory_wire(&self.0);
+        serde_json::to_string(&wire).unwrap_or_default()
+    }
 }

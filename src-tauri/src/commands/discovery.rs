@@ -5,18 +5,9 @@
 use super::WholeGraph;
 use serde::Serialize;
 pub(crate) use tine_graph_features::inventory_wire::{
-    alias_group_wire, entry_wire, AliasGroupWire, PageInventoryEntryWire, ResolvedWire,
+    alias_group_wire, entry_wire, page_inventory_wire, AliasGroupWire, PageInventoryEntryWire,
+    PageInventoryWire, ResolvedWire,
 };
-
-#[derive(Serialize)]
-pub(crate) struct PageInventoryWire {
-    /// The `GraphRev` the inventory was read at. The frontend drops a response
-    /// older than one it already holds.
-    rev: String,
-    entries: Vec<PageInventoryEntryWire>,
-    /// Graph-relative paths and read reasons, as on the journal feed wire.
-    unreadable: Vec<String>,
-}
 
 /// Last-modified times for the All pages view: `[graph-relative path, Unix
 /// seconds]` per page file, from the times the store already holds with its
@@ -60,24 +51,6 @@ pub(crate) fn inventory_delta_wire(
     InventoryDeltaWire {
         keys: keys.to_vec(),
         entries: entries.0.iter().map(entry_wire).collect(),
-    }
-}
-
-pub(super) fn page_inventory_wire(view: &WholeGraph) -> PageInventoryWire {
-    let rev = view.rev();
-    PageInventoryWire {
-        rev: rev.into(),
-        entries: view
-            .inventory(tine_store::InventoryScope::All)
-            .0
-            .iter()
-            .map(entry_wire)
-            .collect(),
-        unreadable: view
-            .unreadable_files()
-            .iter()
-            .map(|(id, reason)| format!("{}: {reason}", id.as_str()))
-            .collect(),
     }
 }
 
@@ -125,45 +98,26 @@ mod inventory_adapter_tests {
     /// Org titles, with physical paths retained as ids. The frontend views
     /// over it are pinned in `src/pageIndex.test.ts`.
     #[test]
-    fn page_inventory_wire_matches_legacy_fixture() {
+    fn page_inventory_wire_matches_the_shared_fixture() {
+        let fixture: serde_json::Value = serde_json::from_str(include_str!(
+            "../../../tests/fixtures/browser-core-inventory.json"
+        ))
+        .unwrap();
+        let files: Vec<(String, String)> =
+            serde_json::from_value(fixture["files"].clone()).unwrap();
+        let files: Vec<(&str, &str)> = (files.iter())
+            .map(|(path, text)| (path.as_str(), text.as_str()))
+            .collect();
         let root = temp_root("legacy");
-        let store = open(
-            &root,
-            &[
-                (
-                    "pages/Alpha.md",
-                    "title:: Display Alpha\nalias:: Shared\n- [[Only Linked]]\n",
-                ),
-                (
-                    "pages/Beta.org",
-                    // Org page properties are `#+KEY:` directives; mldoc parses a bare
-                    // `alias::` line in Org as a paragraph (og 8e, OG graph-parser).
-                    "#+TITLE: Display Beta\n#+ALIAS: Shared\n* [[Only Linked]]\n",
-                ),
-                ("pages/nested/Alpha.org", "* nested twin\n"),
-                ("pages/Team%2FChild.md", "- [[Another Ref]]\n"),
-                ("journals/2026_06_26.md", "- canonical\n"),
-                ("journals/Jun 26th, 2026.org", "* duplicate day\n"),
-            ],
-        );
+        let store = open(&root, &files);
         let view = store.whole_graph().unwrap();
         let wire = page_inventory_wire(&view);
         assert_eq!(wire.rev, String::from(view.rev()));
-        assert_eq!(
-            rows(&wire),
-            vec![
-                r#"{"key":"alpha","name":"Alpha","is_journal":false,"day":null,"target":{"kind":"existing","id":"pages/nested/Alpha.org","others":[]}}"#,
-                r#"{"key":"another ref","name":"Another Ref","is_journal":false,"day":null,"target":{"kind":"absent","id":"pages/Another Ref.md"}}"#,
-                r#"{"key":"display alpha","name":"Display Alpha","is_journal":false,"day":null,"target":{"kind":"existing","id":"pages/Alpha.md","others":[]}}"#,
-                r#"{"key":"display beta","name":"Display Beta","is_journal":false,"day":null,"target":{"kind":"existing","id":"pages/Beta.org","others":[]}}"#,
-                r#"{"key":"jun 26th, 2026","name":"Jun 26th, 2026","is_journal":true,"day":20260626,"target":{"kind":"existing","id":"journals/2026_06_26.md","others":["journals/Jun 26th, 2026.org"]}}"#,
-                r#"{"key":"only linked","name":"Only Linked","is_journal":false,"day":null,"target":{"kind":"absent","id":"pages/Only Linked.md"}}"#,
-                r#"{"key":"shared","name":"Shared","is_journal":false,"day":null,"target":{"kind":"alias","owners":["pages/Alpha.md","pages/Beta.org"]},"link":{"name":"Display Alpha","kind":"page"},"namespace_excluded":true}"#,
-                // A namespace parent (model rule 1): no file, flagged.
-                r#"{"key":"team","name":"Team","is_journal":false,"day":null,"target":{"kind":"absent","id":"pages/Team.md"},"namespace_parent":true}"#,
-                r#"{"key":"team/child","name":"Team/Child","is_journal":false,"day":null,"target":{"kind":"existing","id":"pages/Team%2FChild.md","others":[]}}"#,
-            ]
-        );
+        let rows: Vec<serde_json::Value> = (rows(&wire).iter())
+            .map(|row| serde_json::from_str(row).unwrap())
+            .collect();
+        assert_eq!(serde_json::Value::from(rows), fixture["rows"]);
+        assert_eq!(serde_json::json!(wire.unreadable), fixture["unreadable"]);
         std::fs::remove_dir_all(root).unwrap();
     }
 

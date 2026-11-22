@@ -2605,8 +2605,10 @@ dependencies = [
  "serde",
  "serde_json",
  "tine-core",
+ "tine-graph-features",
  "tine-outline",
  "tine-search",
+ "tine-store",
  "unicode-normalization",
  "wasm-bindgen",
 ]

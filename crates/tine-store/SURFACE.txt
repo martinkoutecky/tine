@@ -36,7 +36,7 @@
 # parameter: it needs a directory and starts the watcher, writer and checkpoint that a page list
 # has no use for; the view's questions are the existing WholeGraph ones. Used by exports (no
 # temporary build graph and no re-read config).
-## Lifecycle (ceiling: 31)
+## Lifecycle (ceiling: 32)
 struct root_binding::BoundDirectory
 fn root_binding::BoundDirectory::new
 fn root_binding::BoundDirectory::root
@@ -58,6 +58,10 @@ fn root_binding::Store::check_graph_root
 fn store::GraphAccessInspection::approves_external_assets
 fn store::Store::open
 fn store::WholeGraph::subgraph
+# Browser core slice 3 (D-20261122-WEX; 31 -> 32): WholeGraph::from_files builds the view of a
+# graph's files held in memory, config.edn among them: the browser's graph, which has no live view
+# for `subgraph` to start from and no directory for `Store::open`.
+fn store::WholeGraph::from_files
 fn store::Store::set_watch_mode
 struct store::Store
 struct store::GraphAccessInspection

@@ -1,6 +1,7 @@
-//! Where a graph reads its text files: the disk, or a fixed set of page
-//! documents held in memory ([`crate::WholeGraph::subgraph`]: an export's
-//! build graph), each serialized only when the loader opens it. Only the read
+//! Where a graph reads its text files: the disk, or a fixed set of files held
+//! in memory: an export's build graph holds page documents, each serialized
+//! only when the loader opens it ([`crate::WholeGraph::subgraph`]); a browser
+//! graph holds file texts ([`crate::WholeGraph::from_files`]). Only the read
 //! path goes through it (listing, naming, page reads, the parse); saves, transactions, the watcher and assets are
 //! disk-only, and a memory graph is never opened by a `Store`, so it never
 //! reaches them. The two sources answer the same calls with the same
@@ -23,30 +24,37 @@ pub(crate) enum FileSource {
     Memory(Arc<Files>),
 }
 
-/// One memory file: its document and the modification time it carries (the
+/// One memory file's content: its bytes, or a page document serialized when
+/// it is opened (so a build graph never holds every page's text at once).
+pub(crate) enum Content {
+    Bytes(Arc<[u8]>),
+    Document(Arc<tine_core::doc::Document>),
+}
+
+/// One memory file: its content and the modification time it carries (the
 /// source file's, for an export), which recency queries read.
-pub(crate) type MemoryFile = (String, Arc<tine_core::doc::Document>, Option<SystemTime>);
+pub(crate) type MemoryFile = (String, Content, Option<SystemTime>);
 
 /// A memory graph's files by absolute path, and each directory's children
 /// (a file or a directory), so a listing walks them as it walks the disk.
 pub(crate) struct Files {
-    files: HashMap<PathBuf, (Arc<tine_core::doc::Document>, Option<SystemTime>)>,
+    files: HashMap<PathBuf, (Content, Option<SystemTime>)>,
     children: HashMap<PathBuf, Vec<(PathBuf, bool)>>,
 }
 
 impl Files {
-    /// `files` are graph-relative paths, documents and times, under `root`.
-    /// A repeated path keeps its last document. O(files × depth).
+    /// `files` are graph-relative paths, contents and times, under `root`.
+    /// A repeated path keeps its last content. O(files × depth).
     pub(crate) fn new(root: &Path, files: impl IntoIterator<Item = MemoryFile>) -> Files {
         let mut out = Files {
             files: HashMap::new(),
             children: HashMap::from([(root.to_path_buf(), Vec::new())]),
         };
-        for (rel, document, modified) in files {
+        for (rel, content, modified) in files {
             let path = root.join(rel);
             if out
                 .files
-                .insert(path.clone(), (document, modified))
+                .insert(path.clone(), (content, modified))
                 .is_some()
             {
                 continue;
@@ -164,12 +172,20 @@ impl FileSource {
                 })
             }
             FileSource::Memory(files) => {
-                let (document, _) = files.files.get(path).ok_or_else(|| not_found(path))?;
-                let bytes = match tine_core::model::Format::from_path(path) {
-                    tine_core::model::Format::Org => tine_core::org::serialize_org(document),
-                    _ => tine_core::doc::serialize(document),
-                }
-                .into_bytes();
+                let (content, _) = files.files.get(path).ok_or_else(|| not_found(path))?;
+                let bytes: Arc<[u8]> = match content {
+                    Content::Bytes(bytes) => Arc::clone(bytes),
+                    Content::Document(document) => {
+                        match tine_core::model::Format::from_path(path) {
+                            tine_core::model::Format::Org => {
+                                tine_core::org::serialize_org(document)
+                            }
+                            _ => tine_core::doc::serialize(document),
+                        }
+                        .into_bytes()
+                        .into()
+                    }
+                };
                 Ok(Opened {
                     len: bytes.len() as u64,
                     reader: Box::new(io::Cursor::new(bytes)),

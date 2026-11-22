@@ -1,6 +1,7 @@
-//! The wire form of the store's name answers: one `page_inventory` row, one
-//! name's resolution and one page's alias group. The live app's commands
-//! (`src-tauri/src/commands/discovery.rs`) and the published snapshot's
+//! The wire form of the store's name answers: the `page_inventory` answer and
+//! its rows, one name's resolution and one page's alias group. The live app's
+//! commands (`src-tauri/src/commands/discovery.rs`), the browser core
+//! (`crates/lsdoc-wasm`) and the published snapshot's
 //! `answers` table (`published_answers.rs`, `docs/contracts/quick-share.md`)
 //! serialize through these same types, so a published site reads exactly the
 //! rows the app reads (I-12: one serializer per answer).
@@ -121,4 +122,28 @@ pub fn alias_group_wire(view: &WholeGraph, name: &str) -> AliasGroupWire {
         }
     }
     AliasGroupWire { aliases, pages }
+}
+
+/// The whole name inventory as the window reads it: the rows, and the
+/// unreadable files the window reports (I-2).
+#[derive(Serialize)]
+pub struct PageInventoryWire {
+    /// The `GraphRev` the inventory was read at. The frontend drops a response
+    /// older than one it already holds.
+    pub rev: String,
+    pub entries: Vec<PageInventoryEntryWire>,
+    /// Graph-relative paths and read reasons, as on the journal feed wire.
+    pub unreadable: Vec<String>,
+}
+
+pub fn page_inventory_wire(view: &WholeGraph) -> PageInventoryWire {
+    PageInventoryWire {
+        rev: view.rev().into(),
+        entries: (view.inventory(InventoryScope::All).0.iter())
+            .map(entry_wire)
+            .collect(),
+        unreadable: (view.unreadable_files().iter())
+            .map(|(id, reason)| format!("{}: {reason}", id.as_str()))
+            .collect(),
+    }
 }

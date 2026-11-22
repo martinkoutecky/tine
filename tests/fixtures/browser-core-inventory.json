@@ -1,0 +1,138 @@
+{
+ "_doc": "One graph and the page_inventory rows it answers, checked against the desktop app's store (src-tauri commands/discovery.rs) and the browser core's wasm module (src/browserCore.test.ts): the two runtimes answer alike. Org page properties are #+KEY: directives; a namespace parent has no file and is flagged.",
+ "files": [
+  [
+   "pages/Alpha.md",
+   "title:: Display Alpha\nalias:: Shared\n- [[Only Linked]]\n"
+  ],
+  [
+   "pages/Beta.org",
+   "#+TITLE: Display Beta\n#+ALIAS: Shared\n* [[Only Linked]]\n"
+  ],
+  [
+   "pages/nested/Alpha.org",
+   "* nested twin\n"
+  ],
+  [
+   "pages/Team%2FChild.md",
+   "- [[Another Ref]]\n"
+  ],
+  [
+   "journals/2026_06_26.md",
+   "- canonical\n"
+  ],
+  [
+   "journals/Jun 26th, 2026.org",
+   "* duplicate day\n"
+  ]
+ ],
+ "rows": [
+  {
+   "key": "alpha",
+   "name": "Alpha",
+   "is_journal": false,
+   "day": null,
+   "target": {
+    "kind": "existing",
+    "id": "pages/nested/Alpha.org",
+    "others": []
+   }
+  },
+  {
+   "key": "another ref",
+   "name": "Another Ref",
+   "is_journal": false,
+   "day": null,
+   "target": {
+    "kind": "absent",
+    "id": "pages/Another Ref.md"
+   }
+  },
+  {
+   "key": "display alpha",
+   "name": "Display Alpha",
+   "is_journal": false,
+   "day": null,
+   "target": {
+    "kind": "existing",
+    "id": "pages/Alpha.md",
+    "others": []
+   }
+  },
+  {
+   "key": "display beta",
+   "name": "Display Beta",
+   "is_journal": false,
+   "day": null,
+   "target": {
+    "kind": "existing",
+    "id": "pages/Beta.org",
+    "others": []
+   }
+  },
+  {
+   "key": "jun 26th, 2026",
+   "name": "Jun 26th, 2026",
+   "is_journal": true,
+   "day": 20260626,
+   "target": {
+    "kind": "existing",
+    "id": "journals/2026_06_26.md",
+    "others": [
+     "journals/Jun 26th, 2026.org"
+    ]
+   }
+  },
+  {
+   "key": "only linked",
+   "name": "Only Linked",
+   "is_journal": false,
+   "day": null,
+   "target": {
+    "kind": "absent",
+    "id": "pages/Only Linked.md"
+   }
+  },
+  {
+   "key": "shared",
+   "name": "Shared",
+   "is_journal": false,
+   "day": null,
+   "target": {
+    "kind": "alias",
+    "owners": [
+     "pages/Alpha.md",
+     "pages/Beta.org"
+    ]
+   },
+   "link": {
+    "name": "Display Alpha",
+    "kind": "page"
+   },
+   "namespace_excluded": true
+  },
+  {
+   "key": "team",
+   "name": "Team",
+   "is_journal": false,
+   "day": null,
+   "target": {
+    "kind": "absent",
+    "id": "pages/Team.md"
+   },
+   "namespace_parent": true
+  },
+  {
+   "key": "team/child",
+   "name": "Team/Child",
+   "is_journal": false,
+   "day": null,
+   "target": {
+    "kind": "existing",
+    "id": "pages/Team%2FChild.md",
+    "others": []
+   }
+  }
+ ],
+ "unreadable": []
+}

@@ -2,6 +2,26 @@
 /* eslint-disable */
 
 /**
+ * The browser core (D-20261122-WEX): the store's whole-graph view of a
+ * graph's text files held in memory, answering through the same wire forms
+ * as the desktop app's commands.
+ */
+export class BrowserGraph {
+    free(): void;
+    [Symbol.dispose](): void;
+    /**
+     * `files[i]` holds the bytes of the graph-relative `paths[i]`,
+     * `logseq/config.edn` among them. Cost: one read and parse of each file
+     * and the initial index capture, as a desktop open has.
+     */
+    constructor(paths: string[], files: Uint8Array[]);
+    /**
+     * The `page_inventory` command's answer.
+     */
+    page_inventory_json(): string;
+}
+
+/**
  * The kind of a link target nothing claims: `JournalFormat::absent_link_is_journal`.
  */
 export function absent_link_is_journal(name: string, file_format: string, title_format: string): boolean;
@@ -381,10 +401,13 @@ export type InitInput = RequestInfo | URL | Response | BufferSource | WebAssembl
 
 export interface InitOutput {
     readonly memory: WebAssembly.Memory;
+    readonly __wbg_browsergraph_free: (a: number, b: number) => void;
     readonly absent_link_is_journal: (a: number, b: number, c: number, d: number, e: number, f: number) => number;
     readonly asset_rel_path: (a: number, b: number) => [number, number];
     readonly block_may_have_logbook: (a: number, b: number) => number;
     readonly block_reference_names: (a: number, b: number, c: number) => [number, number];
+    readonly browsergraph_new: (a: number, b: number, c: number, d: number) => number;
+    readonly browsergraph_page_inventory_json: (a: number) => [number, number];
     readonly canonical_group_field: (a: number, b: number) => [number, number];
     readonly comment_quote: (a: number, b: number) => [number, number, number, number];
     readonly decode_page_name: (a: number, b: number, c: number) => [number, number];

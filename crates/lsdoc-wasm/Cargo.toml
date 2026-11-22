@@ -21,6 +21,10 @@ tine-search = { path = "../tine-search" }
 # The core's own modules (dates, EDN, render facets, reference evidence, ...),
 # which this crate once compiled in by path.
 tine-core = { path = "../tine-core" }
+# The browser core: the store's whole-graph view of files held in memory, and
+# the answers' wire forms the desktop app sends (one serializer per answer).
+tine-store = { path = "../tine-store" }
+tine-graph-features = { path = "../tine-graph-features" }
 # The outline kernel crate (lsdoc + serde only): block regions, logbook, the
 # property-line grammar, the page-filename codec and the one-block parse boundary.
 tine-outline = { path = "../tine-outline" }

@@ -1118,8 +1118,7 @@ impl<'ast> syn::visit::Visit<'ast> for Reach {
 }
 
 /// The production crate roots that consume tine-store (rule 4): its own
-/// binaries, graph-features, and the desktop app. The wasm parser crate does
-/// not depend on tine-store.
+/// binaries, graph-features, the desktop app and the browser core.
 fn consumer_reach() -> BTreeSet<String> {
     let store = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
     let workspace = store.parent().unwrap().parent().unwrap();
@@ -1127,6 +1126,7 @@ fn consumer_reach() -> BTreeSet<String> {
         workspace.join("crates/tine-graph-features/src/lib.rs"),
         workspace.join("src-tauri/src/lib.rs"),
         workspace.join("src-tauri/src/main.rs"),
+        workspace.join("crates/lsdoc-wasm/src/lib.rs"),
     ];
     for e in std::fs::read_dir(store.join("src/bin")).unwrap() {
         roots.push(e.unwrap().path());
