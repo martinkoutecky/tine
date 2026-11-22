@@ -1,0 +1,42 @@
+{
+  "quick_share": 2,
+  "snapshot": {
+    "exported_at": "2026-10-17T00:00:00Z",
+    "files": [
+      {
+        "path": "journals/2026_10_17.md",
+        "text": "- journal note on [[Project]]\n"
+      },
+      {
+        "path": "pages/Dashboard.md",
+        "text": "description:: {{query (page-property type note)}}\n\n- tasks here: {{query (task TODO)}}\n"
+      },
+      {
+        "path": "pages/Empty.md",
+        "text": "\n"
+      },
+      {
+        "path": "pages/Notes ü.md",
+        "text": "type:: note\nrelated:: [[Project]]\n\n- block with an id\n  id:: 6512a000-0000-4000-8000-000000000002\n- refers ((6512a000-0000-4000-8000-000000000001)) and [[Proj]]\n"
+      },
+      {
+        "path": "pages/Org page.org",
+        "text": "#+title: Org page\n* TODO org task\n* see [[Project]]\n"
+      },
+      {
+        "path": "pages/Project.md",
+        "text": "alias:: Proj\nstatus:: active\n\n- TODO first task\n  id:: 6512a000-0000-4000-8000-000000000001\n- Links to [[Notes ü]] and ((6512a000-0000-4000-8000-000000000002))\n- {{query (task TODO)}} and again {{query (task TODO)}}\n- odd keys\n  a.b:: dotted\n  dup:: one\n  dup:: two\n"
+      },
+      {
+        "path": "pages/Fixture share.md",
+        "text": "title:: Fixture share\n\n- [[Oct 17th, 2026]]\n- [[Dashboard]]\n- [[Empty]]\n- [[Notes ü]]\n- [[Org page]]\n- [[Project]]\n"
+      },
+      {
+        "path": "logseq/config.edn",
+        "text": "{\n:file/name-format :triple-lowbar\n:start-of-week 1\n:default-home {:page \"Fixture share\"}\n}\n"
+      }
+    ],
+    "name": "Fixture share",
+    "schema": 2
+  }
+}

@@ -9,9 +9,9 @@
 //! error or log line carries either (`tests.rs` pins it). Tine never writes the
 //! graph for sharing: the records are app data.
 //!
-//! Gate: every GitHub command requires a build-time attestation from the
-//! deployed viewer's headless compatibility check. Debug builds and launch
-//! environment variables cannot bypass it.
+//! The release preflight checks the deployed viewer against the writer
+//! fixtures. The initial generation-2 cutover also requires a viewer pin
+//! before creating a new link.
 
 pub(crate) mod github;
 #[cfg(test)]
@@ -84,6 +84,7 @@ fn log(line: impl AsRef<str>) {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 #[serde(tag = "kind", rename_all = "camelCase")]
 pub(crate) enum QsError {
+    Disabled,
     NotConnected,
     /// 401: "Reconnect GitHub".
     Reconnect,
@@ -189,6 +190,7 @@ struct Flow {
 
 struct Prepared {
     id: String,
+    generation: u32,
     /// Chosen at prepare (D-20261018-QS3): the share dialog writes
     /// `tine.share:: pending/<share_id>` before it asks for the upload.
     share_id: [u8; 16],
@@ -320,7 +322,7 @@ pub(crate) fn is_tine_share(gist: &ListedGist) -> bool {
             .all(|f| f == README_FILE || f == SHARE_FILE || extension(f))
 }
 
-/// The share id in an envelope's authenticated header, if it is generation 1.
+/// The share id in the version-1 envelope's authenticated header.
 fn envelope_share_id(envelope: &str) -> Option<Vec<u8>> {
     let bytes = share::b64u_decode(envelope)?;
     (bytes.len() >= 21 && &bytes[..5] == b"TSH1\x01").then(|| bytes[5..21].to_vec())
@@ -328,6 +330,20 @@ fn envelope_share_id(envelope: &str) -> Option<Vec<u8>> {
 
 fn decode_key(row: &ShareRow) -> Option<[u8; 32]> {
     share::b64u_decode(&row.key)?.try_into().ok()
+}
+
+fn generation_one_link(login: &str, gist_id: &str, key: &[u8; 32]) -> String {
+    format!(
+        "https://tine.page/s/1/#{login}/{gist_id}/{}",
+        share::b64u(key)
+    )
+}
+
+fn viewer_pinned(generation: u32) -> bool {
+    let manifest: serde_json::Value =
+        serde_json::from_str(include_str!("../../../website/s/generations.json"))
+            .expect("valid viewer pins");
+    manifest["generations"][generation.to_string()]["current"]["sha256"].is_string()
 }
 
 fn parse_time(text: &str) -> Option<chrono::DateTime<chrono::FixedOffset>> {
@@ -648,6 +664,7 @@ impl Service {
         }
         all.push(Prepared {
             id: id.clone(),
+            generation: share::GENERATION,
             share_id,
             payload: prepared.payload,
             title: prepared.preview.title.clone(),
@@ -682,12 +699,25 @@ impl Service {
         prepare_id: &str,
         copy: impl FnOnce(&str) -> bool,
     ) -> Result<Created, QsError> {
+        self.create_share_with_viewer_check(prepare_id, copy, viewer_pinned)
+            .await
+    }
+
+    async fn create_share_with_viewer_check(
+        &self,
+        prepare_id: &str,
+        copy: impl FnOnce(&str) -> bool,
+        viewer_ready: impl FnOnce(u32) -> bool,
+    ) -> Result<Created, QsError> {
         // Consumed before anything else: a second call with this id fails.
         let prepared = self
             .take_prepared(prepare_id)
             .ok_or(QsError::PreviewExpired)?;
         if prepared.update.is_some() {
             return self.update_share(prepared, copy).await;
+        }
+        if !viewer_ready(prepared.generation) {
+            return Err(QsError::Disabled);
         }
         let account = self.connected()?;
         let sealed = share::seal_fresh_as(&prepared.payload, prepared.share_id).map_err(|_| {
@@ -731,7 +761,12 @@ impl Service {
                     .map_err(|_| QsError::MaybeUploaded {
                         share_id: share_id.clone(),
                     })?;
-                let copied = copy(&share::link(&account.login, &gist_id, &sealed.key));
+                let url = if prepared.generation == 1 {
+                    generation_one_link(&account.login, &gist_id, &sealed.key)
+                } else {
+                    share::link(&account.login, &gist_id, &sealed.key)
+                };
+                let copied = copy(&url);
                 Ok(Created {
                     share_id,
                     gist_id,
@@ -995,7 +1030,7 @@ impl Service {
         let (Some(gist_id), Some(key)) = (row.gist_id.as_deref(), decode_key(&row)) else {
             return Err(QsError::NotFound);
         };
-        Ok(copy(&share::link(&row.login, gist_id, &key)))
+        Ok(copy(&generation_one_link(&row.login, gist_id, &key)))
     }
 }
 
@@ -1034,6 +1069,9 @@ pub(crate) async fn quick_share_prepare(
     state: crate::state::GraphContext<'_>,
 ) -> Result<PrepareResult, QsError> {
     use tauri::Manager;
+    if !viewer_pinned(share::GENERATION) {
+        return Err(QsError::Disabled);
+    }
     let app = state.window.app_handle().clone();
     let slot =
         crate::state::slot_for_context(&state).map_err(|message| QsError::Refused { message })?;

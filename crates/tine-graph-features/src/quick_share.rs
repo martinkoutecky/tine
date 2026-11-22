@@ -1,20 +1,16 @@
-//! Quick share, generation 1, writer side (`docs/contracts/quick-share.md`).
+//! Quick share, generation 2, writer side (`docs/contracts/quick-share.md`).
 //!
 //! `prepare` turns a reviewed export query into the gzip-compressed share
 //! document `P`: the query's owner pages minus the export rules (`public::
-//! false`, the exports page), projected as a published snapshot (schema 1)
-//! from a **private build graph** that holds only those pages. Backlinks,
-//! aliases, icons, block reference counts and baked queries are answered by
-//! that graph alone, so no byte of an unshared page can reach the share
-//! (closure). `seal` encrypts `P` into the envelope text uploaded as
+//! false`, the exports page), projected as a page-source snapshot from the
+//! private build graph. `seal` encrypts `P` into the envelope text uploaded as
 //! `tine-share.bin`; `open` is its inverse, used by tests and fixtures.
 //!
 //! Nothing here writes the graph or reaches the network. The private build
 //! graph holds the selected pages in memory (`build_graph.rs`).
 
-use crate::publish_query::{
-    resolve_plan, snapshot_at, ExportPage, LeftOutPage, QueryExportRequest,
-};
+use crate::publication_snapshot::{self, HomePage};
+use crate::publish_query::{resolve_plan, ExportPage, LeftOutPage, QueryExportRequest};
 use crate::render;
 use base64::Engine as _;
 use flate2::{read::GzDecoder, write::GzEncoder, Compression};
@@ -25,9 +21,9 @@ use serde::Serialize;
 use std::io::{self, Read, Write};
 use tine_store::Store;
 
-/// The generation this module writes: link path `/s/1/`, envelope version 1,
-/// document `quick_share: 1`, snapshot schema 1.
-pub const GENERATION: u32 = 1;
+/// The generation this module writes: link path `/s/2/`, envelope version 1,
+/// document `quick_share: 2`, snapshot schema 2.
+pub const GENERATION: u32 = 2;
 // Limits mirror `docs/contracts/quick-share-limits.json`, which the viewer
 // reads; a unit test below keeps the two equal.
 /// Pages in one share (the snapshot may add one home page listing them).
@@ -89,10 +85,10 @@ pub fn b64u_decode(text: &str) -> Option<Vec<u8>> {
         .ok()
 }
 
-/// `https://tine.page/s/1/#<login>/<gist_id>/<key>`.
+/// `https://tine.page/s/2/<login>/<gist_id>#<key>`.
 pub fn link(login: &str, gist_id: &str, key: &[u8; 32]) -> String {
     format!(
-        "https://tine.page/s/{GENERATION}/#{login}/{gist_id}/{}",
+        "https://tine.page/s/{GENERATION}/{login}/{gist_id}#{}",
         b64u(key)
     )
 }
@@ -242,9 +238,9 @@ pub fn gunzip_bounded(payload: &[u8], max: usize) -> io::Result<Vec<u8>> {
     Ok(out)
 }
 
-/// The viewer's admission checks (`quick-share-limits.json` `viewer`), run on
-/// the writer side so a share the viewer would refuse is refused at prepare.
-pub fn validate_document(document: &[u8]) -> io::Result<()> {
+/// Admission bounds for generation-1 documents read by native Check and
+/// re-share review (`quick-share-limits.json` `viewer`).
+pub fn validate_legacy_document(document: &[u8]) -> io::Result<()> {
     if document.len() > MAX_DOCUMENT_BYTES {
         return Err(refusal("the shared pages exceed the 32 MiB share limit"));
     }
@@ -267,7 +263,7 @@ pub fn validate_document(document: &[u8]) -> io::Result<()> {
     if count("pages") > VIEWER_MAX_PAGES {
         return Err(refusal("too many pages to share"));
     }
-    if count("queries") > VIEWER_MAX_QUERIES {
+    if count("queries") > MAX_QUERIES {
         return Err(refusal("the shared pages hold too many queries"));
     }
     // A share of several pages adds a home page named after the share; it must
@@ -302,7 +298,7 @@ pub fn validate_document(document: &[u8]) -> io::Result<()> {
     // Bounded by `json_nesting_within` above.
     fn walk(v: &serde_json::Value) -> Result<(), &'static str> {
         match v {
-            serde_json::Value::String(s) if s.len() > VIEWER_MAX_STRING_BYTES => {
+            serde_json::Value::String(s) if s.len() > MAX_STRING_BYTES => {
                 Err("a shared block is larger than 1 MiB")
             }
             serde_json::Value::Array(items) => items.iter().try_for_each(walk),
@@ -319,7 +315,7 @@ pub fn validate_document(document: &[u8]) -> io::Result<()> {
     let total: usize = snapshot["pages"].as_array().map_or(0, |pages| {
         pages.iter().map(|p| count_blocks(&p["blocks"])).sum()
     });
-    if total > VIEWER_MAX_BLOCKS {
+    if total > MAX_BLOCKS {
         return Err(refusal("the shared pages hold too many blocks"));
     }
     Ok(())
@@ -356,10 +352,11 @@ fn json_nesting_within(json: &[u8], max: usize) -> bool {
 }
 
 const VIEWER_MAX_PAGES: usize = 201;
-const VIEWER_MAX_QUERIES: usize = 256;
+pub(crate) const MAX_QUERIES: usize = 256;
 const VIEWER_MAX_DEPTH: usize = 512;
-const VIEWER_MAX_STRING_BYTES: usize = 1024 * 1024;
-const VIEWER_MAX_BLOCKS: usize = 200_000;
+pub(crate) const MAX_STRING_BYTES: usize = 1024 * 1024;
+pub(crate) const MAX_BLOCKS: usize = 200_000;
+pub(crate) const MAX_BLOCK_DEPTH: usize = 253;
 
 /// Prepare a share of the pages `request` selects, stamped `created_at`
 /// (RFC 3339 UTC). The
@@ -389,17 +386,11 @@ pub fn prepare(
 
     // The private build graph: the selected documents as they were reviewed,
     // plus the graph's parse configuration (journal formats, property rules).
-    let (title, snapshot) = crate::build_graph::with_build_graph(
+    let (title, document) = crate::build_graph::with_build_graph_text(
         &graph,
         &selected.pages,
         "the shared pages did not read back as the same pages; nothing was shared",
-        |private_graph, meta, mut corpus| {
-            // The private store lists its pages in directory order, which differs
-            // by filesystem (hash order on ext4, name order on NTFS). The share
-            // lists them in the order the review showed: by path, as the plan.
-            corpus
-                .pages
-                .sort_by(|a, b| a.id.as_str().cmp(b.id.as_str()));
+        |private_graph, corpus, files| {
             // The export rules hold for the bytes actually shared, not only for
             // the whole-graph view the plan was made from.
             if corpus
@@ -411,9 +402,8 @@ pub fn prepare(
                     "a shared page is private or the exports page; nothing was shared",
                 ));
             }
-            let (title, home, home_query) = if corpus.pages.len() == 1 {
-                let name = corpus.pages[0].name.clone();
-                (name.clone(), name, None)
+            let (title, home) = if corpus.pages.len() == 1 {
+                (corpus.pages[0].name.clone(), None)
             } else {
                 let title = request.name.trim().to_owned();
                 // The synthetic home must not shadow a name the build graph
@@ -421,45 +411,21 @@ pub fn prepare(
                 // several shared pages): its links would open the list.
                 // Threat: malformed input, a share name colliding with a
                 // shared name. Recovery: the user names the share otherwise.
-                let inventory = private_graph.inventory(tine_store::InventoryScope::All);
-                let spellings = private_graph
-                    .inventory(tine_store::InventoryScope::PublishedV1Spellings(&inventory));
-                if crate::published_answers::home_name_taken(&inventory, &spellings, &title) {
+                let home = HomePage::new(private_graph, &title);
+                if home.taken(private_graph, &corpus.pages) {
                     return Err(refusal(format!(
                         "a shared page or alias is already called \"{title}\"; give the share another name"
                     )));
                 }
-                (
-                    title.clone(),
-                    title,
-                    Some((&request, &planned.parsed, &planned.result)),
-                )
+                (title, Some(home.source(&corpus.pages, None)))
             };
-            let snapshot = snapshot_at(
-                private_graph,
-                meta,
-                &corpus,
-                &title,
-                &home,
-                home_query,
-                created_at,
+            let snapshot = publication_snapshot::snapshot(
+                &graph, &corpus, files, &title, created_at, &title, home, true,
             )?;
             Ok((title, snapshot))
         },
     )?;
 
-    let mut document = Vec::with_capacity(snapshot.len() + 128);
-    document.extend_from_slice(
-        format!(
-            "{{\"quick_share\":{GENERATION},\"created_at\":{},\"title\":{},\"snapshot\":",
-            serde_json::to_string(created_at).map_err(io::Error::other)?,
-            serde_json::to_string(&title).map_err(io::Error::other)?,
-        )
-        .as_bytes(),
-    );
-    document.extend_from_slice(&snapshot);
-    document.push(b'}');
-    validate_document(&document)?;
     let mut gz = GzEncoder::new(Vec::new(), Compression::new(9));
     gz.write_all(&document)?;
     let payload = gz.finish()?;
@@ -502,14 +468,15 @@ mod tests {
             format!("{{\"snapshot\":{{\"pages\":[{{\"path\":\"p\",\"blocks\":{blocks}}}]}}}}")
         };
         for levels in [1, 62, 63, 100, 253] {
-            validate_document(document(levels).as_bytes())
+            validate_legacy_document(document(levels).as_bytes())
                 .unwrap_or_else(|e| panic!("{levels} levels: {e}"));
         }
-        let refused = validate_document(document(254).as_bytes()).unwrap_err();
+        let refused = validate_legacy_document(document(254).as_bytes()).unwrap_err();
         assert!(refused.to_string().contains("nest too deeply"), "{refused}");
         let arrays = |depth: usize| format!("{}{}", "[".repeat(depth), "]".repeat(depth));
-        validate_document(arrays(VIEWER_MAX_DEPTH).as_bytes()).unwrap();
-        let refused = validate_document(arrays(VIEWER_MAX_DEPTH + 1).as_bytes()).unwrap_err();
+        validate_legacy_document(arrays(VIEWER_MAX_DEPTH).as_bytes()).unwrap();
+        let refused =
+            validate_legacy_document(arrays(VIEWER_MAX_DEPTH + 1).as_bytes()).unwrap_err();
         assert!(refused.to_string().contains("nest too deeply"), "{refused}");
         // The scan counts containers, not brackets inside text.
         assert!(json_nesting_within(br#"{"a":"[[[[\"[[["}"#, 1));
@@ -525,16 +492,16 @@ mod tests {
         .unwrap();
         let w = &limits["writer"];
         let v = &limits["viewer"];
-        assert_eq!(limits["generation"], GENERATION);
+        assert_eq!(limits["generation"], 1); // Frozen envelope and ceilings.
         assert_eq!(w["pages"], MAX_PAGES);
         assert_eq!(w["document_bytes"], MAX_DOCUMENT_BYTES);
         assert_eq!(w["payload_bytes"], MAX_PAYLOAD_BYTES);
         assert_eq!(w["envelope_bytes"], MAX_ENVELOPE_BYTES);
         assert_eq!(v["pages"], VIEWER_MAX_PAGES);
-        assert_eq!(v["queries"], VIEWER_MAX_QUERIES);
+        assert_eq!(v["queries"], MAX_QUERIES);
         assert_eq!(v["depth"], VIEWER_MAX_DEPTH);
-        assert_eq!(v["string_bytes"], VIEWER_MAX_STRING_BYTES);
-        assert_eq!(v["blocks"], VIEWER_MAX_BLOCKS);
+        assert_eq!(v["string_bytes"], MAX_STRING_BYTES);
+        assert_eq!(v["blocks"], MAX_BLOCKS);
         assert_eq!(v["document_bytes"], MAX_DOCUMENT_BYTES);
         // The viewer admits whatever the writer may produce.
         assert!(v["envelope_text_bytes"].as_u64().unwrap() >= MAX_ENVELOPE_BYTES as u64);

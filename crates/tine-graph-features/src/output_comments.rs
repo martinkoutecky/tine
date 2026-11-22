@@ -59,59 +59,7 @@ pub(crate) fn close_result(result: &mut tine_core::query::ir::QueryResult, pages
     result.statistics = None;
 }
 
-/// O(source blocks + query rows), O(query rows) temporary pointers, no I/O.
-/// Omission changes sibling paths and therefore runtime ids in the private
-/// build graph. Carry the reviewed rows onto those published identities.
-pub(crate) fn remap_result_ids(
-    result: &mut tine_core::query::ir::QueryResult,
-    source: &[CorpusPage],
-    published: &[CorpusPage],
-) {
-    use tine_core::query::ir::QueryRows;
-    let QueryRows::Block { groups } = &mut result.rows else {
-        return;
-    };
-    let wanted: std::collections::HashSet<_> = groups
-        .iter()
-        .flat_map(|group| group.blocks.iter().map(|block| block.id.as_str()))
-        .collect();
-    let mut ids = std::collections::HashMap::new();
-    fn align<'a, 'b>(
-        source: &'a [DocBlock],
-        published: &'b [DocBlock],
-        wanted: &std::collections::HashSet<&str>,
-        ids: &mut std::collections::HashMap<BlockId, BlockId>,
-    ) {
-        for (source, published) in source.iter().zip(published) {
-            if wanted.contains(&*source.uuid.text()) {
-                ids.insert(source.uuid.clone(), published.uuid.clone());
-            }
-            align(&source.children, &published.children, wanted, ids);
-        }
-    }
-    // with_build_graph returns its corpus in the source pages' order.
-    for (source, published) in source.iter().zip(published) {
-        align(
-            &source.document.roots,
-            &published.document.roots,
-            &wanted,
-            &mut ids,
-        );
-    }
-    drop(wanted);
-    for group in groups {
-        for block in &mut group.blocks {
-            if let Some(id) = ids
-                .get(&BlockId::from(block.id.as_str()))
-                .filter(|id| **id != block.id)
-            {
-                block.id = id.to_string();
-            }
-        }
-    }
-}
-
-/// Absent means include; an explicit request overrides the definition property.
+/// An explicit request overrides the definition property.
 pub(crate) fn included(choice: Option<bool>, properties: &[(String, String)]) -> bool {
     choice.unwrap_or_else(|| {
         !properties.iter().any(|(k, v)| {

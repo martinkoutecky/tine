@@ -1,3 +1,5 @@
+use crate::publication_sources::{parsed_query, run_query};
+use crate::quick_share::snapshot_graph;
 use std::fs;
 use std::path::PathBuf;
 use tine_core::query::wire_parse::QueryTextDialect;
@@ -70,12 +72,8 @@ fn query_publish_inventory_work_tracks_only_selected_pages() {
             &fs::read(PathBuf::from(&receipt.path).join("app/snapshot.json")).unwrap(),
         )
         .unwrap();
-        let names: Vec<_> = snapshot["pages"]
-            .as_array()
-            .unwrap()
-            .iter()
-            .map(|page| page["name"].as_str().unwrap())
-            .collect();
+        let corpus = snapshot_graph(&snapshot).corpus(None, true);
+        let names: Vec<_> = corpus.pages.iter().map(|page| page.name.as_str()).collect();
         assert!(names.contains(&"Selected"));
         assert!(names.contains(&"Selection"));
         assert_eq!(names.len(), 2, "selected page and synthetic home only");
@@ -85,12 +83,11 @@ fn query_publish_inventory_work_tracks_only_selected_pages() {
         );
         store.close();
     }
-    // Static output, home naming and the snapshot each inventory the selected
-    // page and its reference-only TODO page. No source-only row belongs here.
+    // Static output inventories the selected page and its reference-only TODO page.
     assert_eq!(
         inventory_work,
-        [6, 6],
-        "three two-row build inventories, independent of source graph size"
+        [2, 2],
+        "one two-row build inventory, independent of source graph size"
     );
 }
 
@@ -254,18 +251,22 @@ fn generated_query_home_preserves_legacy_table_columns_and_sort() {
         &fs::read(graph.join("published-queries/legacy/app/snapshot.json")).unwrap(),
     )
     .unwrap();
-    let raw = snapshot["pages"][0]["blocks"][0]["raw"].as_str().unwrap();
+    let core = snapshot_graph(&snapshot);
+    let corpus = core.corpus(None, true);
+    let home = corpus
+        .pages
+        .iter()
+        .find(|page| page.name == "Legacy")
+        .unwrap();
+    let query = &home.document.roots[0];
+    let raw = query.raw();
     for (key, value) in &request.properties {
         assert!(
             raw.contains(&format!("{key}:: {value}")),
             "generated query must retain {key}: {raw}"
         );
     }
-    assert_eq!(
-        snapshot["queries"][0]["properties"],
-        serde_json::json!([["query-table", "true"]])
-    );
-    assert_eq!(snapshot["queries"][0]["parsed"]["legacy_table"], true);
+    assert!(parsed_query(&core, &request.argument, &query.properties()).legacy_table);
     store.close();
 }
 
@@ -298,6 +299,15 @@ fn folder_membership_review_is_read_only_and_ignores_unavailable_snapshots() {
         .previous_pages
         .is_none());
     fs::write(app.join("snapshot.json"), b"invalid").unwrap();
+    assert!(plan_query(&store, &request)
+        .unwrap()
+        .previous_pages
+        .is_none());
+    fs::write(
+        app.join("snapshot.json"),
+        br#"{"schema":2,"pages":[{"name":"Old","path":"pages/Old.md"}]}"#,
+    )
+    .unwrap();
     assert!(plan_query(&store, &request)
         .unwrap()
         .previous_pages
@@ -389,16 +399,21 @@ fn query_publication_reviews_owner_pages_and_rejects_a_stale_plan() {
         &fs::read(graph.join("published-queries/my-todos/app/snapshot.json")).unwrap(),
     )
     .unwrap();
-    assert_eq!(snapshot["pages"].as_array().unwrap().len(), 2); // synthetic home + selected owner
-                                                                // PK3 / SHARE-DIALOG §1: without "Include the query text" nothing of the
-                                                                // query is published; the home only lists the exported pages.
-    assert_eq!(snapshot["queries"].as_array().unwrap().len(), 0);
+    let core = snapshot_graph(&snapshot);
+    let corpus = core.corpus(None, true);
+    assert_eq!(corpus.pages.len(), 2);
+    let home = corpus
+        .pages
+        .iter()
+        .find(|page| Some(&page.name) == core.config().default_home.as_ref())
+        .unwrap();
     let text = String::from_utf8(
         fs::read(graph.join("published-queries/my-todos/app/snapshot.json")).unwrap(),
     )
     .unwrap();
     assert!(!text.contains("(task TODO)"), "query text leaked: {text}");
-    assert_eq!(snapshot["pages"][0]["blocks"][0]["raw"], "[[Public]]");
+    assert_eq!(home.document.roots.len(), 1);
+    assert_eq!(home.document.roots[0].raw(), "[[Public]]");
     assert!(
         !fs::read_to_string(graph.join("published-queries/my-todos/pages.html"))
             .unwrap()
@@ -406,7 +421,7 @@ fn query_publication_reviews_owner_pages_and_rejects_a_stale_plan() {
     );
     assert!(!graph.join("publish").exists());
 
-    // Ticked, the home carries the query and its answer as before.
+    // Ticked, the home carries the query the browser core can run.
     let with_text = QueryExportRequest {
         include_query_text: true,
         include_comments: None,
@@ -423,8 +438,20 @@ fn query_publication_reviews_owner_pages_and_rejects_a_stale_plan() {
         &fs::read(graph.join("published-queries/my-todos/app/snapshot.json")).unwrap(),
     )
     .unwrap();
-    assert_eq!(snapshot["queries"].as_array().unwrap().len(), 1);
-    assert_eq!(snapshot["queries"][0]["argument"], "(task TODO)");
+    let core = snapshot_graph(&snapshot);
+    let corpus = core.corpus(None, true);
+    let home = corpus
+        .pages
+        .iter()
+        .find(|page| Some(&page.name) == core.config().default_home.as_ref())
+        .unwrap();
+    assert_eq!(home.document.roots[0].raw(), "{{query (task TODO)}}");
+    let result = run_query(
+        &core,
+        &parsed_query(&core, "(task TODO)", &[]),
+        Some(&home.name),
+    );
+    assert_eq!(result.total, 1);
     store.close();
 }
 
@@ -437,7 +464,7 @@ fn live_publication_is_selection_closed_and_only_uses_a_picked_external_folder()
     let snapshot: serde_json::Value =
         serde_json::from_slice(&fs::read(output.join("public-site/app/snapshot.json")).unwrap())
             .unwrap();
-    assert_eq!(snapshot["pages"].as_array().unwrap().len(), 1);
+    assert_eq!(snapshot_graph(&snapshot).corpus(None, true).pages.len(), 1);
     assert!(!snapshot.to_string().contains("DOING hidden"));
     assert!(publish_live(&store, &output, "Public site", false, true, &bundle()).is_err());
     assert!(publish_live(&store, &graph, "inside", true, true, &bundle()).is_err());
@@ -448,7 +475,7 @@ fn live_publication_is_selection_closed_and_only_uses_a_picked_external_folder()
 }
 
 #[test]
-fn live_snapshot_bakes_queries_on_selected_pages_and_closes_their_rows() {
+fn live_snapshot_runs_queries_on_selected_pages_and_closes_their_rows() {
     let _integration_guard = crate::integration_lock();
     let (graph, output, store) = fixture();
     fs::write(
@@ -461,9 +488,16 @@ fn live_snapshot_bakes_queries_on_selected_pages_and_closes_their_rows() {
     let snapshot: serde_json::Value =
         serde_json::from_slice(&fs::read(output.join("dashboard/app/snapshot.json")).unwrap())
             .unwrap();
-    assert_eq!(snapshot["queries"].as_array().unwrap().len(), 1);
-    assert_eq!(snapshot["queries"][0]["argument"], "(task DOING)");
-    assert_eq!(snapshot["queries"][0]["result"]["total"], 0);
+    let core = snapshot_graph(&snapshot);
+    assert!(core.corpus(None, true).pages[0].document.roots[1]
+        .raw()
+        .contains("{{query (task DOING)}}"));
+    let result = run_query(
+        &core,
+        &parsed_query(&core, "(task DOING)", &[]),
+        Some("Public"),
+    );
+    assert_eq!(result.total, 0);
     assert!(!snapshot.to_string().contains("DOING hidden"));
     store.close();
 }

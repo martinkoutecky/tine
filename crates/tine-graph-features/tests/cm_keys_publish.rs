@@ -108,11 +108,11 @@ fn publish_keys_pages_like_the_reader() {
             homes.push(format!("home {home:?}: no snapshot written"));
             continue;
         };
-        let names: Vec<String> = snap["pages"]
-            .as_array()
-            .unwrap()
-            .iter()
-            .map(|p| p["name"].as_str().unwrap_or_default().to_owned())
+        let names: Vec<_> = crate::quick_share::snapshot_graph(&snap)
+            .corpus(None, true)
+            .pages
+            .into_iter()
+            .map(|page| page.name)
             .collect();
         let mut seen = std::collections::BTreeMap::<String, Vec<String>>::new();
         for name in &names {

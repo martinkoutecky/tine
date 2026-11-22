@@ -255,10 +255,6 @@ pub enum InventoryScope<'a> {
     /// each bucket. Each row targets its own file; `None` lists every bucket,
     /// and named refreshes visit only those keys. No document or disk reads.
     ConflictingFiles(Option<&'a [String]>),
-    /// Frozen published `answers` v1 lookup rows for referenced spelling keys
-    /// absent from this `All` inventory. These retain the old ordinary-row
-    /// shape; their `link` uses the shared link answer. Not a live entity list.
-    PublishedV1Spellings(&'a Inventory),
     /// Referenced journal dates, including dates without a file, once per day.
     /// Uses the explicit-reference index; excludes ordinary date-page identity.
     ReferencedJournals,
@@ -487,39 +483,6 @@ impl WholeGraph {
                     })
                     .collect(),
             )),
-            InventoryScope::PublishedV1Spellings(inventory) => {
-                let listed: HashSet<_> = inventory
-                    .0
-                    .iter()
-                    .map(|entry| tine_core::refs::page_key(&entry.name))
-                    .collect();
-                Arc::new(Inventory(
-                    self.graph
-                        .referenced_name_table()
-                        .iter()
-                        .filter(|(key, _)| !listed.contains(*key))
-                        .map(|(_, referrers)| {
-                            let name = referrers.spelling.clone();
-                            with_link(
-                                &self.claimants,
-                                &self.graph,
-                                &self.journal_format,
-                                InventoryEntry {
-                                    target: self.resolve(&name, false),
-                                    name,
-                                    is_journal: false,
-                                    day: None,
-                                    link: None,
-                                    namespace_parent: false,
-                                    parent: None,
-                                    empty_alias: false,
-                                },
-                                None,
-                            )
-                        })
-                        .collect(),
-                ))
-            }
             InventoryScope::ReferencedJournals => {
                 let mut entries: Vec<_> = self
                     .referenced_journal_days()
@@ -591,6 +554,30 @@ impl WholeGraph {
             name,
             None,
         )
+    }
+
+    /// Whether a new ordinary page would shadow a file, an alias, or a
+    /// referenced journal day. Uses the same named and linked destinations
+    /// as navigation. Indexed lookups, with no corpus scan or I/O.
+    pub fn publication_home_name_taken(&self, name: &str) -> bool {
+        let target = link_target_in(
+            &self.claimants,
+            &self.graph,
+            &self.journal_format,
+            name,
+            None,
+        );
+        !matches!(self.resolve(name, false), Resolved::Absent { .. })
+            || !matches!(
+                self.resolve(&target.name, target.is_journal),
+                Resolved::Absent { .. }
+            )
+            || (target.is_journal
+                && self
+                    .graph
+                    .referenced_name_table()
+                    .get(&tine_core::refs::page_key(name))
+                    .is_some())
     }
 
     fn full_inventory(&self) -> Arc<Inventory> {

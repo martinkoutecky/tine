@@ -1,7 +1,7 @@
 //! Where a graph reads its text files: the disk, or a fixed set of files held
-//! in memory: an export's build graph holds page documents, each serialized
-//! only when the loader opens it ([`crate::WholeGraph::subgraph`]); a browser
-//! graph holds file texts ([`crate::WholeGraph::from_files`]). Only the read
+//! in memory. A static export can hold documents and serialize each one when
+//! opened. Source snapshots retain the same serialized bytes as the build
+//! graph. A browser graph holds file text ([`crate::WholeGraph::from_files`]). Only the read
 //! path goes through it (listing, naming, page reads, the parse); saves, transactions, the watcher and assets are
 //! disk-only, and a memory graph is never opened by a `Store`, so it never
 //! reaches them. The two sources answer the same calls with the same
@@ -28,8 +28,7 @@ pub(crate) enum FileSource {
     Memory(Arc<Files>),
 }
 
-/// One memory file's content: its bytes, or a page document serialized when
-/// it is opened (so a build graph never holds every page's text at once).
+/// One memory file's content: its bytes, or a page document serialized on read.
 pub(crate) enum Content {
     Bytes(Arc<Vec<u8>>),
     Document(Arc<tine_core::doc::Document>),
@@ -214,7 +213,7 @@ impl Files {
 }
 
 /// A page document as its file's text.
-fn serialized(document: &tine_core::doc::Document, path: &Path) -> String {
+pub(crate) fn serialized(document: &tine_core::doc::Document, path: &Path) -> String {
     match tine_core::model::Format::from_path(path) {
         tine_core::model::Format::Org => tine_core::org::serialize_org(document),
         _ => tine_core::doc::serialize(document),

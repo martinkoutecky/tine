@@ -9,7 +9,7 @@ import {
   releaseSection,
   validateDisposition,
 } from "./release-readiness-lib.mjs";
-import { checkQuickShareReadiness } from "./check-quick-share-readiness.mjs";
+import { checkQuickShareReadiness, quickShareViewerUrl } from "./check-quick-share-readiness.mjs";
 
 // The release preflight runs this mode before any build: it needs no version
 // or release metadata.
@@ -33,7 +33,7 @@ for (const inventory of regressionIndex.inventories ?? []) {
 const problems = [];
 // Every build offers quick share links (D-20261117-QSG): the deployed viewer must read them.
 try { await checkQuickShareReadiness(); }
-catch (error) { problems.push(`the quick share viewer at https://tine.page/s/1/ does not render this writer's links (${error instanceof Error ? error.message : error}); deploy the viewer first`); }
+catch (error) { problems.push(`the quick share viewer at ${quickShareViewerUrl} does not render this writer's links (${error instanceof Error ? error.message : error}); deploy the viewer first`); }
 
 if (!section) problems.push(`CHANGELOG.md has no released section for ${version}`);
 if (!fs.existsSync(impactPath)) problems.push(`missing docs/releases/v${version}-impact.json`);

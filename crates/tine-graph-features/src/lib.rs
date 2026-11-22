@@ -32,11 +32,11 @@ pub mod print;
 #[cfg(not(target_arch = "wasm32"))]
 mod publication_options;
 #[cfg(not(target_arch = "wasm32"))]
+mod publication_snapshot;
+#[cfg(not(target_arch = "wasm32"))]
 pub mod publish;
 #[cfg(not(target_arch = "wasm32"))]
 pub mod publish_query;
-#[cfg(not(target_arch = "wasm32"))]
-mod published_answers;
 pub mod query_error_wire;
 pub mod query_wire;
 #[cfg(not(target_arch = "wasm32"))]

@@ -1559,6 +1559,12 @@ checks, never a copy. Proof: `layouts_open_or_refuse_alike`, `from_files_refuses
 `a_deep_first_key_builds_in_linear_time`, `a_memory_parse_read_does_not_copy`, `backslash_names_open_alike`,
 `config_problems_answer_alike_from_files`.
 
+An export's `WholeGraph::subgraph` can retain its serialized page sources.
+The private graph and the snapshot share those bytes. The captured
+`ConfigState::source` supplies the authored settings without another disk
+read. Reopening the output sources with the reduced config checks the
+reviewed page identities and generated home before a snapshot is published.
+
 ## Graph backups (og-backup-zip, ADR 0074)
 
 Tine snapshots a graph at launch and before a rewrite the user asked for

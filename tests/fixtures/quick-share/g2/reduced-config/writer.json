@@ -1,0 +1,18 @@
+{
+  "quick_share": 2,
+  "snapshot": {
+    "exported_at": "2026-10-17T00:00:00Z",
+    "files": [
+      {
+        "path": "pages/Configured.md",
+        "text": "- {{greet reader}}\n- `{{unused}}` is example code\n"
+      },
+      {
+        "path": "logseq/config.edn",
+        "text": "{\n:file/name-format :triple-lowbar\n:start-of-week 1\n:macros {\n:greet ; preserve this gap\n \"Hello $1\"\n}\n:default-home {:page \"Configured\"}\n}\n"
+      }
+    ],
+    "name": "Configured",
+    "schema": 2
+  }
+}

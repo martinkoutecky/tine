@@ -2,7 +2,7 @@
 // looking up the `answers` Rust wrote at publish time
 // (docs/contracts/quick-share.md, "Published answers"). Each case reads a
 // snapshot the static export wrote (`tests/fixtures/published-answers/`,
-// pinned by `crates/tine-graph-features/tests/published_answers.rs`) through
+// retained as frozen generation-1 fixtures) through
 // the same frontend path the app uses: `linkTarget` (PageRef), the router's
 // `navigationTarget` for an ordinary-page route, then the backend's `getPage`.
 // The D-numbers are the disagreements of the census map (cm-q13-published-map).

@@ -31,6 +31,11 @@ it when the share fails, is deleted or forgotten (`docs/contracts/quick-share.md
 
 ## Repeating exports
 
+Folder publications with the bundled browser app write the generation-2
+snapshot `S` to `app/snapshot.json` (`quick-share.md`, Generation 2). The
+folder's static HTML is rendered from the private build graph. Its app reads
+the snapshot's graph-relative page sources and reduced `logseq/config.edn`.
+
 Folder definitions offer **Re-export**, opening the existing review dialog with
 the recorded leaf under `<graph>/published-queries/` and Replace selected.
 Confirmation uses the reviewed fingerprint, sheet evaluator and guarded publisher;
@@ -39,9 +44,11 @@ the previous leaf is retained in recovery. No folder Delete action is offered.
 **Update all** on the marked Exports page prepares both destination kinds before
 one confirmation. Folder previews list whole pages and left-out reasons; block
 queries require the whole-page acknowledgement. Folder membership diffs come from
-the prior leaf's `app/snapshot.json` (excluding the synthetic home), read through
+the prior leaf's `app/snapshot.json` (excluding the generated home), read through
 a graph-confined capability with the existing 128 MiB export ceiling. Missing,
 invalid, oversized or inaccessible snapshots show the count only. No new record is stored.
+Schema 1 supplies page names and paths in `pages`. Schema 2 supplies source
+files, whose page identities are read by the core under the carried config.
 Quick shares retain their membership diff. Folder exports remain available when
 quick share is disabled or disconnected. Updates run sequentially and show each
 outcome, continuing after failures. Closing or switching graphs prevents further
@@ -95,11 +102,11 @@ source produces the same `QueryExportRequest` consumed by dialog publication.
 Inline text uses the `{{query …}}` dialect and has no host context; page
 selection preserves the chosen block's context and export properties.
 
-A query export's published home lists the exported pages and carries nothing of
-the query (no macro, no parsed query, no answer record) unless the request sets
-`includeQueryText` ("Include the query text", off by default). The choice is not
-part of the reviewed fingerprint. A query that is part of an exported page's own
-content is that page's content and ships with it.
+A query export's home lists the exported pages. With `includeQueryText`
+("Include the query text", off by default), its first block holds the query
+macro with its reviewed execution argument and presentation properties. The
+browser core runs it over the snapshot. The choice is outside the reviewed
+fingerprint. Queries authored in an exported page travel with its source.
 
 ## The "this page" selector
 

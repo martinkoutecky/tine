@@ -12,11 +12,11 @@ it("I-12/I-25: publications own name/count invalidation; exemplar store/answer_c
   expect(watcher).toMatch(/events\.is_empty\(\) && answers\.is_some\(\)/);
   expect(source("crates/tine-store/src/store/snapshot.rs")).toContain("snapshot.answer_changes(old, &changed_paths, name_set_changed)");
 });
-it("I-12: one owning-page query substitution, shared with baked queries; exemplar render_query_cache.rs", () => {
+it("I-12: static queries substitute the owning page and published homes carry the reviewed argument", () => {
   const cache = source("crates/tine-graph-features/src/render_query_cache.rs");
   expect(cache.match(/fn substitute_current_page\(/g)).toHaveLength(1);
   expect(source("crates/tine-graph-features/src/publish_query.rs")).not.toContain("fn substitute_current_page(");
-  expect(source("crates/tine-graph-features/src/publish_query.rs")).toContain("use crate::render_query_cache::substitute_current_page");
+  expect(source("crates/tine-graph-features/src/publish_query.rs")).toContain("let argument = request.argument.trim()");
   expect(cache).toMatch(/current_page:\s*current_page.map\(str::to_owned\)/);
 });
 it("I-15: the model obtains document/layout together; exemplar doc::parse_with_opts", () => {

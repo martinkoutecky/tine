@@ -1,15 +1,10 @@
-//! The private build graph every published snapshot is projected from
-//! (`docs/contracts/quick-share.md`, "What a share holds"; CM step 2, census
-//! Q13): a graph holding only the exported documents, as they were reviewed,
-//! under the selecting view's config. Every answer in a snapshot
-//! (backlinks, aliases, icons, block reference counts, baked queries and the
-//! `answers` tables) is then the live answerer's answer *over the exported
-//! pages*: an unexported page has no influence at all, so "not in this export"
-//! is indistinguishable from absent and nothing can name, relate or reveal it.
+//! The private build graph holds only the reviewed documents under the
+//! selecting view's config and page times. It supplies static HTML and the
+//! serialized source files used by the browser snapshot.
 //!
 //! The graph is built in memory from the selecting view
-//! ([`WholeGraph::subgraph`]) over the exported documents, each serialized
-//! only while the loader reads it; nothing is read from or written to disk.
+//! ([`WholeGraph::subgraph`]) over the exported documents. Snapshot writers
+//! retain the bytes the loader reads. The build does no filesystem I/O.
 //! Cost: one serialization and parse of each exported page with the initial
 //! index capture.
 use std::collections::{BTreeSet, HashMap};
@@ -18,6 +13,8 @@ use std::sync::Arc;
 use tine_core::model::GraphMeta;
 use tine_core::{Corpus, CorpusPage};
 use tine_store::WholeGraph;
+
+pub(crate) type MemoryFile = (String, Arc<Vec<u8>>);
 
 /// Build the private graph of `pages`, selected from `view` (with its config
 /// and page times), then call `f` with its whole-graph view, its graph
@@ -35,10 +32,28 @@ pub(crate) fn with_build_graph<T>(
     refused: &str,
     f: impl FnOnce(&WholeGraph, &GraphMeta, Corpus) -> io::Result<T>,
 ) -> io::Result<T> {
-    let files = (pages.iter())
+    let (graph, meta, _) = view.subgraph(documents(pages), false)?;
+    f(&graph, &meta, read_back(&graph, pages, refused)?)
+}
+
+pub(crate) fn with_build_graph_text<T>(
+    view: &WholeGraph,
+    pages: &[CorpusPage],
+    refused: &str,
+    f: impl FnOnce(&WholeGraph, Corpus, Vec<MemoryFile>) -> io::Result<T>,
+) -> io::Result<T> {
+    let (graph, _, files) = view.subgraph(documents(pages), true)?;
+    f(&graph, read_back(&graph, pages, refused)?, files)
+}
+
+fn documents(pages: &[CorpusPage]) -> Vec<(String, Arc<tine_core::doc::Document>)> {
+    pages
+        .iter()
         .map(|page| (page.id.as_str().to_owned(), Arc::clone(&page.document)))
-        .collect();
-    let (graph, meta) = view.subgraph(files)?;
+        .collect()
+}
+
+fn read_back(graph: &WholeGraph, pages: &[CorpusPage], refused: &str) -> io::Result<Corpus> {
     let mut corpus = graph.corpus(None, true);
     let wanted: BTreeSet<_> = pages.iter().map(|p| p.id.as_str()).collect();
     let got: BTreeSet<_> = corpus.pages.iter().map(|p| p.id.as_str()).collect();
@@ -51,7 +66,7 @@ pub(crate) fn with_build_graph<T>(
         .map(|(at, p)| (p.id.as_str().to_owned(), at))
         .collect();
     corpus.pages.sort_by_key(|p| order[p.id.as_str()]);
-    f(&graph, &meta, corpus)
+    Ok(corpus)
 }
 
 #[cfg(test)]

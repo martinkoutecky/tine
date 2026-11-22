@@ -1105,6 +1105,28 @@ fn read_keyword(s: &str, key: &str) -> Option<usize> {
     root_keyword(s, key, false)
 }
 
+/// The authored key and value as one span, including gaps inside the entry.
+/// Reading a complete entry before a torn suffix follows `Config::parse`.
+pub fn top_level_entry<'a>(s: &'a str, key: &str) -> Option<&'a str> {
+    let at = find_top_level_keyword(s, key).or_else(|| read_keyword(s, key))?;
+    let value = skip_blank(s, at + key.len());
+    if value == s.len() || matches!(s.as_bytes()[value], b'}' | b']' | b')') {
+        return None;
+    }
+    let end = form_end(s, value);
+    let form = &s[value..end];
+    // A torn collection or string would consume the following generated key.
+    let closed = match form.as_bytes().first()? {
+        b'{' => match_close_brace(s, value) < s.len(),
+        b'[' => match_close_bracket(s, value) < s.len(),
+        b'(' => match_close(s, value, b'(', b')') < s.len(),
+        b'#' if form.starts_with("#{") => match_close_brace(s, value + 1) < s.len(),
+        b'"' => read_string_at(s, value).is_some(),
+        _ => true,
+    };
+    closed.then_some(&s[at..end])
+}
+
 fn root_keyword(s: &str, key: &str, require_balanced: bool) -> Option<usize> {
     let open = skip_blank(s, 0);
     if s.as_bytes().get(open) != Some(&b'{') {
@@ -1245,6 +1267,30 @@ fn parse_shortcuts(edn: &str) -> HashMap<String, ShortcutBinding> {
 /// placeholders the frontend fills in). Stops cleanly on the first other key or
 /// value rather than desyncing on unexpected EDN.
 fn parse_macros(edn: &str) -> HashMap<String, String> {
+    macro_entries(edn, |value, _| value)
+}
+
+/// Effective macro definitions requested by name, in authored order, as
+/// exact key/value spans. Uses the same acceptance and precedence as `parse`.
+pub fn macro_definition_spans<'a>(
+    edn: &'a str,
+    names: &std::collections::HashSet<String>,
+) -> Vec<&'a str> {
+    if names.is_empty() {
+        return Vec::new();
+    }
+    let mut entries: Vec<_> = macro_entries(edn, |_, span| span)
+        .into_iter()
+        .filter_map(|(name, span)| names.contains(&name).then_some(span))
+        .collect();
+    entries.sort_unstable_by_key(|span| span.start);
+    entries.into_iter().map(|span| &edn[span]).collect()
+}
+
+fn macro_entries<T>(
+    edn: &str,
+    entry: impl Fn(String, std::ops::Range<usize>) -> T,
+) -> HashMap<String, T> {
     let mut map = HashMap::new();
     let Some(start) = read_keyword(edn, ":macros") else {
         return map;
@@ -1262,6 +1308,7 @@ fn parse_macros(edn: &str) -> HashMap<String, String> {
         if i >= close {
             break;
         }
+        let start = i;
         let (key, keyword) = match b[i] {
             b'"' => {
                 let Some(key) = read_string_at(edn, i) else {
@@ -1297,24 +1344,23 @@ fn parse_macros(edn: &str) -> HashMap<String, String> {
             }
             _ => break, // neither a string nor a keyword key
         };
-        let vfrom = skip_blank(edn, i);
-        if vfrom >= close || b[vfrom] != b'"' {
+        let Some((vfrom, end, true)) = next_value_span(edn, i, close) else {
             break; // value must be a string
-        }
+        };
         let Some(val) = read_string_at(edn, vfrom) else {
             break;
         };
-        i = edn_str_end(edn, vfrom);
+        i = end;
         if key.is_empty() {
             continue;
         }
         if keyword {
             if !string_keys.contains(&key) {
-                map.insert(key, val);
+                map.insert(key, entry(val, start..i));
             }
         } else {
             string_keys.insert(key.clone());
-            map.insert(key, val);
+            map.insert(key, entry(val, start..i));
         }
     }
     map

@@ -887,18 +887,44 @@ fn body_blocks_with_queries(
     raw: &str,
     org: bool,
 ) -> (Vec<Block>, render_query_source::QuerySources) {
+    let mut blocks = parsed_body(raw, org);
+    let queries = render_query_source::restore(&mut blocks, raw);
+    (blocks, queries)
+}
+
+fn parsed_body(raw: &str, org: bool) -> Vec<Block> {
     let mut parsed = tine_core::render::parse_block(raw, org);
     if !org {
         // Metadata rows a final quote swallowed (GH #721): the editor hides them, so
         // every native consumer of the body (HTML, print, search text) drops them too.
         tine_core::block_regions::strip_swallowed_rows(raw, &mut parsed);
     }
-    let mut blocks: Vec<_> = tine_core::doc::strip_planning_lines(parsed, raw)
+    tine_core::doc::strip_planning_lines(parsed, raw)
         .into_iter()
         .filter(|b| !matches!(b, Block::Properties { .. }))
-        .collect();
-    let queries = render_query_source::restore(&mut blocks, raw);
-    (blocks, queries)
+        .collect()
+}
+
+pub(crate) fn visit_macro_calls(raw: &str, org: bool, property: bool, mut call: impl FnMut(&str)) {
+    if !raw.contains("{{") {
+        return;
+    }
+    let mut blocks = if property {
+        tine_core::render::parse_text_bounded(raw, org)
+            .map(|parsed| parsed.blocks)
+            .unwrap_or_default()
+    } else {
+        parsed_body(raw, org)
+    };
+    let _: Result<(), std::convert::Infallible> =
+        render_query_source::visit_inlines(&mut blocks, |inlines| {
+            for inline in inlines {
+                if let Inline::Macro { name, .. } = inline {
+                    call(name);
+                }
+            }
+            Ok(())
+        });
 }
 
 pub(crate) use render_query_source::query_for_export;

@@ -315,8 +315,8 @@ mod query_owner_context;
 #[path = "query_publication.rs"]
 mod query_publication;
 
-#[path = "published_answers.rs"]
-mod published_answers;
+#[path = "publication_sources.rs"]
+mod publication_sources;
 
 #[path = "quick_share.rs"]
 mod quick_share;

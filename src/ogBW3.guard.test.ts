@@ -12,8 +12,10 @@ it("I-22: CSV drop uses the existing bounded regular-file reader; exemplar devic
   expect(body).toContain("read_regular_file_bounded");
   expect(body).not.toContain("std::fs::read_to_string");
 });
-it("I-20: snapshot projects held sources, never live pages; exemplar publish_query::snapshot", () => {
-  const body = source("crates/tine-graph-features/src/publish_query.rs").split("fn snapshot(")[1].split("fn app_files(")[0];
+it("I-20: snapshot projects held sources, never live pages; exemplar publication_snapshot::snapshot", () => {
+  const body = source("crates/tine-graph-features/src/publication_snapshot.rs").split("fn snapshot(")[1].split("impl Snapshot")[0];
+  expect(body).toContain("WholeGraph::from_files(files.clone())");
+  expect(body).toContain("selecting_view.config()");
   expect(body).not.toContain("store.page(");
 });
 it("I-21: sheet render latches retire with the binding; exemplar SheetBoard renderedBoardCards", () => {

@@ -105,7 +105,7 @@ impl Service {
         }
         let bytes = share::gunzip_bounded(&payload, share::MAX_DOCUMENT_BYTES)
             .map_err(|_| QsError::Unavailable)?;
-        share::validate_document(&bytes).map_err(|_| QsError::Unavailable)?;
+        share::validate_legacy_document(&bytes).map_err(|_| QsError::Unavailable)?;
         let document: serde_json::Value =
             serde_json::from_slice(&bytes).map_err(|_| QsError::Unavailable)?;
         if document["quick_share"] != 1
@@ -150,6 +150,9 @@ impl Service {
                 .iter_mut()
                 .find(|p| p.id == result.prepare_id && p.expires > Instant::now())
                 .ok_or(QsError::PreviewExpired)?;
+            if document["quick_share"] != prepared.generation {
+                return Err(QsError::Disabled);
+            }
             prepared.share_id = share::b64u_decode(&row.share_id)
                 .and_then(|id| id.try_into().ok())
                 .ok_or(QsError::NotFound)?;
@@ -230,7 +233,7 @@ impl Service {
             share_id: row.share_id.clone(),
             gist_id: gist_id.to_owned(),
             login: row.login.clone(),
-            copied: copy(&share::link(&row.login, gist_id, &key)),
+            copied: copy(&generation_one_link(&row.login, gist_id, &key)),
         })
     }
 }

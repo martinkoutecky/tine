@@ -225,6 +225,7 @@ impl Fixture {
     fn prepared(&self, payload: &[u8]) -> String {
         let id = random_id();
         self.service.prepared.lock().unwrap().push(Prepared {
+            generation: 1,
             id: id.clone(),
             share_id: share::fresh_share_id().unwrap(),
             payload: payload.to_vec(),
@@ -719,8 +720,26 @@ fn payload() -> Vec<u8> {
 }
 
 fn key_of(link: &str) -> [u8; 32] {
-    let key = link.rsplit('/').next().unwrap();
+    let key = link.rsplit(['/', '#']).next().unwrap();
     share::b64u_decode(key).unwrap().try_into().unwrap()
+}
+
+#[test]
+fn an_unpinned_writer_generation_never_uploads_or_copies_a_link() {
+    let mock = gist_mock(gist_store(), |_| {
+        panic!("unpinned viewer allowed an upload")
+    });
+    let f = fixture(mock.endpoints());
+    f.connect();
+    let id = f.prepared(&payload());
+    f.service.prepared.lock().unwrap()[0].generation = share::GENERATION;
+    let result = block_on(
+        f.service
+            .create_share(&id, |_| panic!("copied an unready link")),
+    );
+    assert_eq!(result.unwrap_err(), QsError::Disabled);
+    assert_eq!(mock.count("POST", "/gists"), 0);
+    assert!(f.rows().is_empty());
 }
 
 #[test]
@@ -1068,10 +1087,14 @@ fn prepare_then_create_uploads_the_previewed_text_not_a_later_edit() {
     // An edit after the preview is not in the share.
     std::fs::write(graph.join("pages/Project.md"), "- EDITED-LATER text\n").unwrap();
     let mut link = String::new();
-    let created = block_on(f.service.create_share(&prepared.prepare_id, |l| {
-        link = l.to_owned();
-        true
-    }))
+    let created = block_on(f.service.create_share_with_viewer_check(
+        &prepared.prepare_id,
+        |l| {
+            link = l.to_owned();
+            true
+        },
+        |generation| generation == 2,
+    ))
     .unwrap();
     let post = mock
         .requests()
@@ -1085,8 +1108,12 @@ fn prepare_then_create_uploads_the_previewed_text_not_a_later_edit() {
     let p = share::open(&envelope, &key_of(&link)).unwrap();
     let document =
         String::from_utf8(share::gunzip_bounded(&p, share::MAX_DOCUMENT_BYTES).unwrap()).unwrap();
-    assert!(document.starts_with("{\"quick_share\":1,"));
+    assert!(document.starts_with("{\"quick_share\":2,"));
     assert!(document.contains("FIRST-VERSION") && !document.contains("EDITED-LATER"));
+    assert!(link.starts_with(&format!(
+        "https://tine.page/s/2/{LOGIN}/{}#",
+        created.gist_id
+    )));
     let row = &f.rows()[0];
     assert_eq!(
         (row.title.as_str(), row.pages, row.gist_id.as_deref()),

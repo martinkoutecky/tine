@@ -141,7 +141,7 @@ fn block_request(
     request.properties = block
         .properties()
         .into_iter()
-        .filter(|(key, _)| query_parse_property(key) || display_only_property(key))
+        .filter(|(key, _)| query_publication_property(key))
         .collect();
     request.current_page = Some(page.name.clone());
     request.host_block_id = Some(block.uuid.to_string());
@@ -151,6 +151,7 @@ fn block_request(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use tine_store::Resolved;
 
     fn page_source_large_prefix(org: bool, code: bool, newline: &str) {
         let root = tempfile::tempdir().unwrap();

@@ -5,8 +5,8 @@ import { execFileSync } from "node:child_process";
 
 export const VIEWER_ZIP = "quick-share-viewer-g1.zip";
 export const sha256 = (bytes) => createHash("sha256").update(bytes).digest("hex");
-export function fixtureFingerprint(root) {
-  const fixtures = path.join(root, "tests/fixtures/quick-share/g1");
+export function fixtureFingerprint(root, generation = 1) {
+  const fixtures = path.join(root, `tests/fixtures/quick-share/g${generation}`);
   const hash = createHash("sha256");
   for (const name of filesUnder(fixtures)) hash.update(name + "\0").update(fs.readFileSync(path.join(fixtures, name)));
   return hash.digest("hex");
@@ -23,13 +23,18 @@ export function fileHashes(dir) {
 }
 export function validateViewer(dir, generation = 1) {
   const manifest = JSON.parse(fs.readFileSync(path.join(dir, "viewer.json"), "utf8"));
-  for (const field of ["generation", "link", "envelope", "document", "snapshot_schema"]) {
-    if (manifest[field] !== generation) throw new Error(`viewer ${field} mismatch`);
-  }
+  validateViewerGeneration(manifest, generation);
   if (typeof manifest.built_from !== "string" || !manifest.built_from) throw new Error("viewer built_from missing");
   const actual = fileHashes(dir);
   if (!actual["index.html"] || JSON.stringify(Object.entries(actual).sort()) !== JSON.stringify(Object.entries(manifest.files ?? {}).sort())) throw new Error("viewer file hashes mismatch");
   return manifest;
+}
+
+export function validateViewerGeneration(manifest, generation) {
+  for (const field of ["generation", "link", "envelope", "document", "snapshot_schema"]) {
+    const expected = field === "envelope" ? 1 : generation;
+    if (manifest[field] !== expected) throw new Error(`viewer ${field} mismatch`);
+  }
 }
 
 /** Only the entry document and its manifest are mutable. All other names must
@@ -46,7 +51,7 @@ export function mergeViewerBuild(source, destination, generation = 1) {
   }
 }
 
-export function unpackViewer(zip, destination, expectedHash) {
+export function unpackViewer(zip, destination, expectedHash, generation = 1) {
   if (!/^[a-f0-9]{64}$/.test(expectedHash) || sha256(fs.readFileSync(zip)) !== expectedHash) throw new Error("viewer zip SHA-256 mismatch");
   // Python's stdlib avoids an npm archive dependency. Validate the complete
   // member list before writing: traversal, duplicates, links and bombs refuse.
@@ -57,11 +62,11 @@ for i in z.infolist():
  if p.is_absolute() or '..' in p.parts or '\\\\' in i.filename or i.filename in seen or stat.S_ISLNK(i.external_attr>>16) or total>268435456: raise ValueError('unsafe viewer zip')
  seen.add(i.filename)
 z.extractall(sys.argv[2])`, zip, destination]);
-  return validateViewer(destination);
+  return validateViewer(destination, generation);
 }
 
-export function packViewer(directory, zip) {
-  validateViewer(directory);
+export function packViewer(directory, zip, generation = 1) {
+  validateViewer(directory, generation);
   execFileSync("python3", ["-c", `import zipfile,pathlib,sys
 root=pathlib.Path(sys.argv[1])
 with zipfile.ZipFile(sys.argv[2],'w',compression=zipfile.ZIP_DEFLATED,compresslevel=9) as z:

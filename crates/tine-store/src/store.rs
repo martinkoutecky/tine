@@ -751,6 +751,7 @@ impl std::fmt::Display for OpenError {
 /// refuse unknown destinations. `refresh()` retries the read after repair.
 #[derive(Clone)]
 pub struct ConfigState {
+    pub(crate) source: Option<Arc<str>>,
     /// Effective graph config, defaulted when loading config failed. A changed
     /// journal title format affects names and date claims in new views after
     /// publication; existing file bytes and reference text are not rewritten.
@@ -781,6 +782,7 @@ impl ConfigState {
         problem: Option<crate::IoError>,
     ) -> Self {
         Self {
+            source: graph.config_source.clone(),
             config,
             problem,
             assets_directory_name: graph
@@ -791,6 +793,13 @@ impl ConfigState {
                 .to_owned(),
             asset_trash_location: graph.root.join("logseq/.tine-trash/assets"),
         }
+    }
+}
+
+impl ConfigState {
+    /// The authored config that provided this view's effective settings.
+    pub fn source(&self) -> Option<&str> {
+        self.source.as_deref()
     }
 }
 
@@ -1147,7 +1156,7 @@ impl Store {
         let root = Self::canonical_root(root)?;
         #[cfg(feature = "test-faults")]
         crate::cost_counters::source_store_open(&root);
-        let graph =
+        let mut graph =
             Graph::open_checked_with_assets_inner(&root, opts.approved_external_assets.as_deref())
                 .map_err(|error| match error {
                     CheckedOpenError::ExternalAssetsUnapproved(current) => {
@@ -1164,8 +1173,9 @@ impl Store {
         let journals = graph.scan_journal_names();
         let journal_ids = journal_ids_from_entries(&graph.current_config().journals_dir, &journals);
         let problem = graph.config_read_problem.clone();
+        let mut config = ConfigState::of(&graph, Arc::new(graph.config.clone()), problem);
+        config.source = graph.config_source.take();
         let graph = Arc::new(graph);
-        let config = ConfigState::of(&graph, Arc::new(graph.config.clone()), problem);
         let meta = tine_core::model::GraphMeta::from_config(
             root.display().to_string(),
             &config.config,

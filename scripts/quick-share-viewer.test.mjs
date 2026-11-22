@@ -9,11 +9,11 @@ import { serveViewer } from "./check-quick-share-viewer.mjs";
 const artifacts = path.resolve(import.meta.dirname, "../artifacts/quick-share-viewer/tests");
 fs.mkdirSync(artifacts, { recursive: true });
 function scratch() { return fs.mkdtempSync(path.join(artifacts, "case-")); }
-function build(dir, version, chunk = `late-${version}.js`) {
+function build(dir, version, chunk = `late-${version}.js`, generation = 1) {
   fs.mkdirSync(dir, { recursive: true });
   fs.writeFileSync(path.join(dir, "index.html"), `<button onclick="import('./${chunk}').then(m=>document.body.dataset.loaded=m.version)">Load later</button>`);
   fs.writeFileSync(path.join(dir, chunk), `export const version = '${version}';`);
-  fs.writeFileSync(path.join(dir, "viewer.json"), JSON.stringify({ generation: 1, link: 1, envelope: 1, document: 1, snapshot_schema: 1, built_from: version, files: fileHashes(dir) }));
+  fs.writeFileSync(path.join(dir, "viewer.json"), JSON.stringify({ generation, link: generation, envelope: 1, document: generation, snapshot_schema: generation, built_from: version, files: fileHashes(dir) }));
 }
 test("old HTML loads a previously unloaded chunk after upgrade and rollback", async () => {
   const dir = scratch(), old = path.join(dir, "old"), next = path.join(dir, "next"), deployed = path.join(dir, "deployed");
@@ -61,4 +61,22 @@ test("retention cannot shrink, while the same bytes may move from a trial artifa
   const old = { generations: { 1: { retained: [{ run_id: 123, sha256: "a".repeat(64) }] } } };
   assert.throws(() => assertRetainedBuilds(old, { generations: {} }), /cannot remove retained/);
   assert.doesNotThrow(() => assertRetainedBuilds(old, { generations: { 1: { retained: [{ tag: "v0.9.0-beta.1", sha256: "a".repeat(64) }] } } }));
+});
+
+test("generation 2 opens locator paths with the unchanged envelope version", async () => {
+  const dir = scratch();
+  build(dir, "two", "two.js", 2);
+  assert.equal(validateViewer(dir, 2).envelope, 1);
+  assert.throws(() => validateViewer(dir, 1), /generation mismatch/);
+  const hosted = await serveViewer(dir, 2);
+  try {
+    const response = await fetch(`${hosted.url}tine-fixture/0123456789abcdef0123#fragment`);
+    assert.equal(response.status, 200);
+    assert.equal(await response.text(), fs.readFileSync(path.join(dir, "index.html"), "utf8"));
+  } finally { await hosted.close(); }
+});
+
+test("an unpinned generation installs no viewer", async () => {
+  const manifest = { schema: 1, generations: { 2: { current: null, retained: [] } } };
+  await deployViewers({ manifest, website: scratch(), download: async () => assert.fail("unpinned viewer downloaded") });
 });

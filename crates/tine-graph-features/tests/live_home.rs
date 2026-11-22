@@ -43,7 +43,11 @@ fn home(base: &std::path::Path, slug: &str) -> String {
         &fs::read(base.join("output").join(slug).join("app/snapshot.json")).unwrap(),
     )
     .unwrap();
-    snapshot["home"].as_str().unwrap().to_owned()
+    crate::quick_share::snapshot_graph(&snapshot)
+        .config()
+        .default_home
+        .clone()
+        .unwrap()
 }
 
 #[test]

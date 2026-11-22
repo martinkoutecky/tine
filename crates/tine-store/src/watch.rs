@@ -767,10 +767,14 @@ impl Core {
     }
 
     fn read_config(&self, path: &Path) -> Result<(), LoadError> {
-        let (config, problem) = match crate::model::read_parse_input(path) {
+        let (config, problem, source) = match crate::model::read_parse_input(path) {
             Ok(value) => {
                 self.config_from_file.store(true, Ordering::SeqCst);
-                (tine_core::config::Config::parse(&value), None)
+                (
+                    tine_core::config::Config::parse(&value),
+                    None,
+                    Some(Arc::from(value)),
+                )
             }
             Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
                 // A config.edn that disappears while the graph is open keeps
@@ -786,16 +790,23 @@ impl Core {
                 (
                     tine_core::config::Config::default(),
                     crate::model::missing_config_problem(&crate::model::FileSource::Disk, path),
+                    None,
                 )
             }
-            Err(error) => (tine_core::config::Config::default(), Some(error.into())),
+            Err(error) => (
+                tine_core::config::Config::default(),
+                Some(error.into()),
+                None,
+            ),
         };
         self.graph
             .reload_config(config.clone())
             .map_err(|error| LoadError::Failed {
                 reason: error.to_string(),
             })?;
-        *self.config.write().unwrap() = ConfigState::of(&self.graph, Arc::new(config), problem);
+        let mut state = ConfigState::of(&self.graph, Arc::new(config), problem);
+        state.source = source;
+        *self.config.write().unwrap() = state;
         Ok(())
     }
 

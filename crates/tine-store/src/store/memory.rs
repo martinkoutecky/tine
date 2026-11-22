@@ -3,34 +3,42 @@
 //! (`from_files`, under its own `config.edn`), both published as a store's
 //! first publication is.
 use super::{ConfigState, GraphRev, Snapshot, WholeGraph};
-use crate::model::file_source::Content;
+use crate::model::file_source::{serialized, Content};
 use crate::model::Graph;
 use std::collections::HashMap;
 use std::io;
+use std::path::Path;
 use std::sync::{Arc, RwLock};
 use tine_core::date::JournalFormat;
 
+type MemoryFile = (String, Arc<Vec<u8>>);
+
 impl WholeGraph {
-    /// The whole-graph view of only `pages` (graph-relative path and document)
-    /// under this view's effective config, journal formats and page times:
-    /// what this view would answer if the graph held just these pages. It is
-    /// built in memory by the store's own launch pass and first publication,
-    /// with no filesystem access; an export's build graph. Its graph metadata
-    /// names the root `/tine-memory-graph`. Cost: one serialization and parse
-    /// of each page, one page's bytes held at a time, and the initial index
-    /// capture, as a store open has, plus one lookup per page in this view's
-    /// page times. Refuses (`InvalidInput`) a path that is not graph-relative
-    /// or is both a file and a directory.
+    /// The whole-graph view of only `pages` under this view's effective config,
+    /// journal formats and file times. The store's launch and first publication
+    /// run in memory, with no filesystem access. Each page is serialized and
+    /// parsed once. With `retain_sources`, the caller shares the same serialized
+    /// bytes the graph reads. Otherwise only one page's text is held at a time.
+    /// Refuses invalid memory-graph paths with `InvalidInput`.
     pub fn subgraph(
         &self,
         pages: Vec<(String, Arc<tine_core::doc::Document>)>,
-    ) -> io::Result<(WholeGraph, tine_core::model::GraphMeta)> {
+        retain_sources: bool,
+    ) -> io::Result<(WholeGraph, tine_core::model::GraphMeta, Vec<MemoryFile>)> {
         let times = self.graph.observed_page_mtimes();
+        let mut sources = Vec::new();
         let files = pages
             .into_iter()
-            .map(|(rel, document)| {
-                let time = times.get(&rel).copied();
-                (rel, Content::Document(document), time)
+            .map(|(path, document)| {
+                let modified = times.get(&path).copied();
+                let content = if retain_sources {
+                    let bytes = Arc::new(serialized(&document, Path::new(&path)).into_bytes());
+                    sources.push((path.clone(), Arc::clone(&bytes)));
+                    Content::Bytes(bytes)
+                } else {
+                    Content::Document(document)
+                };
+                (path, content, modified)
             })
             .collect();
         let graph = Graph::in_memory(
@@ -44,7 +52,7 @@ impl WholeGraph {
             &view.config.config,
             &graph.journal_format,
         );
-        Ok((view, meta))
+        Ok((view, meta, sources))
     }
 
     /// The whole-graph view of a graph's text files (graph-relative path and
@@ -57,9 +65,12 @@ impl WholeGraph {
     /// spelling, and (`InvalidInput`) a path that is not graph-relative or is
     /// both a file and a directory; a config read problem is the view's
     /// `config().problem`, as on disk.
-    pub fn from_files(files: Vec<(String, Vec<u8>)>) -> io::Result<(WholeGraph, String)> {
-        let files = (files.into_iter())
-            .map(|(rel, bytes)| (rel, Content::Bytes(Arc::new(bytes)), None))
+    pub fn from_files<T: Into<Arc<Vec<u8>>>>(
+        files: Vec<(String, T)>,
+    ) -> io::Result<(WholeGraph, String)> {
+        let files = files
+            .into_iter()
+            .map(|(rel, bytes)| (rel, Content::Bytes(bytes.into()), None))
             .collect();
         let graph = Graph::in_memory_with_config(files)?;
         Ok((Self::in_memory(&graph), graph.root.display().to_string()))

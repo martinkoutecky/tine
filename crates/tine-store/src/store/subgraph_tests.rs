@@ -102,7 +102,7 @@ fn assert_same_answers(root: &Path, build: Build) -> Vec<String> {
     let disk_root = Store::canonical_root(root).unwrap().display().to_string();
     let (memory, memory_root) = match build {
         Build::Subgraph => {
-            let (view, meta) = disk.subgraph(documents(files_under(root))).unwrap();
+            let (view, meta, _) = disk.subgraph(documents(files_under(root)), false).unwrap();
             (view, meta.root)
         }
         Build::Files => WholeGraph::from_files(files_under(root)).unwrap(),

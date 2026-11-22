@@ -14,22 +14,17 @@
 //! callers show them. For query exports, an asset-budget refusal offers Settings,
 //! missing assets are visible warnings, and replacement reports retained output.
 
+use crate::publication_snapshot::{self, HomePage, Snapshot};
 use crate::render::{self, RenderGraph, SheetExport, SheetIndex};
-use crate::render_query_cache::substitute_current_page;
 use serde::Deserialize;
-use serde_json::{json, Value};
 use sha2::{Digest, Sha256};
-use std::collections::{BTreeMap, HashMap, HashSet};
+use std::collections::{HashMap, HashSet};
 use std::io;
 use std::path::Path;
-use tine_core::model::{GraphMeta, PageKind};
+use tine_core::model::PageKind;
 use tine_core::query::ir::{ExecutionContext, QueryResult, QueryRows};
-use tine_core::query::macro_text::query_macro_extents;
-use tine_core::query::wire_parse::{
-    anchored_view, parse_query_pair, ParsedQuery, QueryTextDialect,
-};
+use tine_core::query::wire_parse::{anchored_view, parse_query_pair, QueryTextDialect};
 use tine_core::refs::page_key;
-use tine_store::Resolved;
 use tine_store::{IrAnswer, IrRequest, Store, WholeGraph};
 
 const MAX_PAGES: usize = 20_000;
@@ -124,8 +119,7 @@ fn parse_and_run(
     dialect: QueryTextDialect,
     properties: &[(String, String)],
     context: &ExecutionContext,
-    require_supported: bool,
-) -> io::Result<(ParsedQuery, QueryResult)> {
+) -> io::Result<QueryResult> {
     if !tine_core::query::query_source_within_limit(argument)
         || !tine_core::query::query_nesting_within_limit(argument)
     {
@@ -150,21 +144,17 @@ fn parse_and_run(
         IrAnswer::Result(result) => *result,
         _ => return Err(io::Error::other("query run returned another answer")),
     };
-    if require_supported && (result.exceeded || result.total > MAX_PAGES * 32) {
+    if result.exceeded || result.total > MAX_PAGES * 32 {
         return Err(refusal("query export exceeds the bounded result limit"));
     }
-    if require_supported
-        && (!result.report.supported || result.diagnostics.iter().any(|d| !d.disabled))
-    {
+    if !result.report.supported || result.diagnostics.iter().any(|d| !d.disabled) {
         return Err(refusal("this query is not fully supported for export"));
     }
-    Ok((parsed, result))
+    Ok(result)
 }
 
 pub(crate) struct Planned {
     pub(crate) plan: QueryExportPlan,
-    pub(crate) parsed: ParsedQuery,
-    pub(crate) result: QueryResult,
     pub(crate) selected: tine_core::Corpus,
 }
 
@@ -201,13 +191,12 @@ fn resolve_plan_review(
     let context = ExecutionContext {
         current_page: request.current_page.clone(),
     };
-    let (parsed, mut result) = parse_and_run(
+    let mut result = parse_and_run(
         graph,
         &request.argument,
         request.dialect,
         &request.properties,
         &context,
-        true,
     )?;
     if let (Some(host), QueryRows::Block { groups }) = (&request.host_block_id, &mut result.rows) {
         for group in groups.iter_mut() {
@@ -350,8 +339,6 @@ fn resolve_plan_review(
             fingerprint,
             previous_pages: previous_membership(previous_snapshot),
         },
-        parsed,
-        result,
         selected,
     })
 }
@@ -374,19 +361,28 @@ fn previous_membership(bytes: Option<Vec<u8>>) -> Option<Vec<String>> {
         path: String,
     }
     #[derive(Deserialize)]
-    struct MembershipSnapshot {
-        pages: Vec<MembershipPage>,
+    #[serde(untagged)]
+    enum MembershipSnapshot<'a> {
+        Sources(#[serde(borrow)] Snapshot<'a>),
+        Pages {
+            schema: Option<u32>,
+            pages: Vec<MembershipPage>,
+        },
     }
-    let snapshot: MembershipSnapshot = serde_json::from_slice(&bytes?).ok()?;
-    // A query export's generated home has an empty path; it is not an owner page.
-    Some(
-        snapshot
-            .pages
-            .into_iter()
-            .filter(|page| !page.path.is_empty())
-            .map(|page| page.name)
-            .collect(),
-    )
+    match serde_json::from_slice(&bytes?).ok()? {
+        MembershipSnapshot::Sources(snapshot) => snapshot.query_membership().ok(),
+        MembershipSnapshot::Pages {
+            schema: None | Some(1),
+            pages,
+        } => Some(
+            pages
+                .into_iter()
+                .filter(|page| !page.path.is_empty())
+                .map(|page| page.name)
+                .collect(),
+        ),
+        MembershipSnapshot::Pages { .. } => None,
+    }
 }
 
 fn collect_static(
@@ -464,288 +460,31 @@ fn close_query_result(
     result
 }
 
-/// Match QueryMacro's parser request. Legacy columns and sort stay in the
-/// block text for the renderer; only query-table affects the parsed reading.
-/// Publication owns baking this exact key, rather than making the reader
-/// guess which differently configured query's answer it can reuse.
-/// Properties that are part of a query's parse key: what the renderer's
-/// `hostProperties` sends to the engine (`src/components/Macro.tsx`).
-fn query_parse_property(key: &str) -> bool {
-    (key.starts_with("tine.") || key == "query-table") && !display_only_property(key)
+fn query_publication_property(key: &str) -> bool {
+    key.starts_with("tine.")
+        || matches!(
+            key,
+            "query-table" | "query-properties" | "query-sort-by" | "query-sort-desc"
+        )
 }
 
-/// Renderer-only properties: not part of the parse key, but they travel to a
-/// generated query home so the export looks like the source block.
-/// `tine.breadcrumbs` is presentation only (GH #881).
-fn display_only_property(key: &str) -> bool {
-    matches!(
-        key,
-        "query-properties" | "query-sort-by" | "query-sort-desc" | "tine.breadcrumbs"
-    )
-}
-
-/// One record for each query macro the reader can show: those in blocks, with
-/// their host block's `tine.*` properties, and those in a page's properties
-/// (the page header, which the reader renders with no host block and so no
-/// properties).
-fn baked_queries(graph: &WholeGraph, corpus: &tine_core::Corpus) -> io::Result<Vec<Value>> {
-    let paths: HashSet<_> = corpus.pages.iter().map(|page| page.id.as_str()).collect();
-    let names: HashSet<_> = corpus
-        .pages
-        .iter()
-        .map(|page| (page.kind, page_key(&page.name)))
-        .collect();
-    let mut records = Vec::new();
-    let registry = ir_registry(graph)?;
-    for page in &corpus.pages {
-        let mut bake = |raw: &str, properties: Vec<(String, String)>| -> io::Result<()> {
-            // The raw-extent reader is quadratic with many malformed starts;
-            // bound its input before calling it (I-22).
-            if raw.len() > tine_core::query::QUERY_SOURCE_MAX_BYTES {
-                return Ok(());
-            }
-            for extent in query_macro_extents(raw) {
-                if records.len() >= 256 {
-                    return Err(refusal("too many queries in published pages"));
-                }
-                let dialect = if extent.name.eq_ignore_ascii_case("tine-query") {
-                    QueryTextDialect::MacroTql
-                } else {
-                    QueryTextDialect::MacroQuery
-                };
-                let properties: Vec<_> = properties
-                    .iter()
-                    .filter(|(key, _)| query_parse_property(key))
-                    .cloned()
-                    .collect();
-                let context = ExecutionContext {
-                    current_page: Some(page.name.clone()),
-                };
-                let parsed = parse_query_pair(&extent.argument, dialect, &properties, &registry);
-                let execution = substitute_current_page(&extent.argument, &page.name);
-                let executed = execution.as_deref().unwrap_or(&extent.argument);
-                let (run_parsed, result) =
-                    parse_and_run(graph, executed, dialect, &properties, &context, false)?;
-                let view = anchored_view(&run_parsed, run_parsed.query.anchor);
-                let result = close_query_result(result, &paths, &names);
-                let mut record = json!({ "host": page.name, "argument": extent.argument,
-                    "dialect": dialect, "properties": properties, "parsed": parsed,
-                    "context": context, "executed_context": context,
-                    "view": view, "result": result });
-                if let Some(argument) = execution {
-                    record["execution"] = json!({ "argument": argument, "parsed": run_parsed });
-                }
-                records.push(record);
-            }
-            Ok(())
-        };
-        if let Some(pre) = &page.document.pre_block {
-            let is_org = page.document.org;
-            for (_, value) in tine_core::page_properties::page_property_lines(pre, is_org) {
-                bake(&value, Vec::new())?;
-            }
-        }
-        let mut stack: Vec<_> = page.document.roots.iter().collect();
-        while let Some(block) = stack.pop() {
-            stack.extend(block.children.iter());
-            bake(block.raw(), block.properties())?;
+fn home_query(request: &QueryExportRequest) -> String {
+    let macro_name = match request.dialect {
+        QueryTextDialect::MacroTql | QueryTextDialect::Tql => "tine-query",
+        _ => "query",
+    };
+    // The dialog supplies the same substituted execution argument it ran.
+    let argument = request.argument.trim().replace('\n', "\n  ");
+    let mut raw = format!("{{{{{macro_name} {argument}}}}}");
+    for (key, value) in &request.properties {
+        if query_publication_property(key)
+            && !key.contains(['\n', '\r'])
+            && !value.contains(['\n', '\r'])
+        {
+            raw.push_str(&format!("\n  {key}:: {}", value.trim()));
         }
     }
-    Ok(records)
-}
-
-fn snapshot(
-    graph: &WholeGraph,
-    meta: &GraphMeta,
-    corpus: &tine_core::Corpus,
-    name: &str,
-    home: &str,
-    home_query: Option<(&QueryExportRequest, &ParsedQuery, &QueryResult)>,
-    epoch: i64,
-) -> io::Result<Vec<u8>> {
-    snapshot_at(
-        graph,
-        meta,
-        corpus,
-        name,
-        home,
-        home_query,
-        &export_time(epoch)?,
-    )
-}
-
-/// [`snapshot`] stamped with a given `exported_at` (quick share stamps its
-/// share document's `created_at`). `graph` is the private build graph of
-/// `corpus` (`build_graph.rs`) and `meta` its metadata: every answer below,
-/// `answers` included, is then closed by the exported pages.
-pub(crate) fn snapshot_at(
-    graph: &WholeGraph,
-    meta: &GraphMeta,
-    corpus: &tine_core::Corpus,
-    name: &str,
-    home: &str,
-    home_query: Option<(&QueryExportRequest, &ParsedQuery, &QueryResult)>,
-    exported_at: &str,
-) -> io::Result<Vec<u8>> {
-    let mut pages: Vec<Value> = Vec::new();
-    let mut entries: Vec<Value> = Vec::new();
-    let selected: HashSet<_> = corpus
-        .pages
-        .iter()
-        .map(|p| (p.kind, page_key(&p.name)))
-        .collect();
-    let inventory = graph.inventory(tine_store::InventoryScope::All);
-    // One pass over the inventory, not one per page (I-15).
-    let mut days = HashMap::new();
-    for entry in &inventory.0 {
-        if let (Resolved::Existing { id, .. }, Some(day)) = (&entry.target, entry.day) {
-            days.entry(id.as_str()).or_insert(day.0);
-        }
-    }
-    for page in &corpus.pages {
-        let blocks: Vec<_> = page
-            .document
-            .roots
-            .iter()
-            .map(tine_core::projection::block_to_dto)
-            .collect();
-        let mut value = json!({ "name": page.name, "kind": page.kind, "title": page.name,
-            "pre_block": page.document.pre_block, "blocks": blocks,
-            "format": tine_core::model::Format::from_path(Path::new(page.id.as_str())),
-            "read_only": true, "guide": false });
-        value["path"] = json!(page.id.as_str());
-        value["rev"] = Value::Null;
-        value["activation"] = Value::Null;
-        pages.push(value);
-        let day = days.get(page.id.as_str());
-        entries.push(json!({ "name": page.name, "kind": page.kind, "date_key": day, "path": page.id.as_str() }));
-    }
-    let mut queries = baked_queries(graph, corpus)?;
-    if let Some((request, parsed, result)) = home_query {
-        let macro_name = match request.dialect {
-            QueryTextDialect::MacroTql | QueryTextDialect::Tql => "tine-query",
-            _ => "query",
-        };
-        let mut raw = format!("{{{{{macro_name} {}}}}}", request.argument.trim());
-        for (key, value) in &request.properties {
-            if (query_parse_property(key) || display_only_property(key))
-                && !key.contains('\n')
-                && !value.contains('\n')
-            {
-                raw.push_str(&format!("\n  {key}:: {}", value.trim()));
-            }
-        }
-        let block_id = format!("published-query:{}", slug(home));
-        let mut query_block = json!({ "id": block_id, "raw": raw,
-            "collapsed": false, "children": [], "breadcrumb": [] });
-        if !request.properties.is_empty() {
-            query_block["properties"] = json!(request.properties);
-        }
-        // Without "Include the query text" the home is only the page list: no
-        // macro, no parsed query, no answer record (PK3, SHARE-DIALOG §1).
-        let with_query = request.include_query_text;
-        let mut home_blocks = if with_query {
-            vec![query_block]
-        } else {
-            Vec::new()
-        };
-        for (index, page) in corpus.pages.iter().enumerate() {
-            home_blocks.push(json!({ "id": format!("published-page:{index}"),
-                "raw": format!("[[{}]]", page.name), "collapsed": false,
-                "children": [], "breadcrumb": [] }));
-        }
-        pages.insert(
-            0,
-            json!({ "name": home, "kind": "page", "title": home,
-            "pre_block": null, "blocks": home_blocks, "guide": false,
-            "read_only": true, "format": "md", "path": "", "activation": null, "rev": null }),
-        );
-        entries.insert(
-            0,
-            json!({ "name": home, "kind": "page", "date_key": null, "path": "" }),
-        );
-        let context = ExecutionContext {
-            current_page: Some(home.to_owned()),
-        };
-        // The page the query ran on, named only when it is an exported page
-        // (its canonical name): an unexported host is omitted, never named
-        // (closure, `docs/contracts/quick-share.md`).
-        let executed_context = ExecutionContext {
-            current_page: request.current_page.as_deref().and_then(|host| {
-                let key = page_key(host);
-                corpus
-                    .pages
-                    .iter()
-                    .find(|page| page_key(&page.name) == key)
-                    .map(|page| page.name.clone())
-            }),
-        };
-        if with_query {
-            let view = anchored_view(parsed, parsed.query.anchor);
-            let properties: Vec<_> = request
-                .properties
-                .iter()
-                .filter(|(key, _)| query_parse_property(key))
-                .collect();
-            queries.push(
-                json!({ "host": home, "argument": request.argument, "dialect": request.dialect,
-                "properties": properties, "parsed": parsed, "context": context,
-                "executed_context": executed_context, "view": view, "result": result }),
-            );
-        }
-    }
-    // Only selected sources may cross into a published answer. The whole-graph
-    // backlink answerer supplies rows; this projection closes them by owner.
-    let mut backlinks = BTreeMap::new();
-    for page in &corpus.pages {
-        let groups = graph
-            .backlinks(&page.name)
-            .map_err(|e| io::Error::other(format!("{e:?}")))?;
-        let closed: Vec<_> = groups
-            .iter()
-            .filter(|g| selected.contains(&(g.kind, page_key(&g.page))))
-            .map(|group| tine_core::model::RefGroup {
-                format: None,
-                ..group.clone()
-            })
-            .collect();
-        if !closed.is_empty() {
-            backlinks.insert(page.name.clone(), closed);
-        }
-    }
-    let names: Vec<_> = corpus.pages.iter().map(|p| p.name.clone()).collect();
-    let icons = graph.page_icons(&names);
-    let mut owner_names = HashMap::new();
-    for page in &corpus.pages {
-        owner_names.entry(page.id.as_str()).or_insert(&page.name);
-    }
-    let aliases: Vec<_> = inventory
-        .0
-        .iter()
-        .filter_map(|entry| match &entry.target {
-            Resolved::Alias { owners } if owners.len() == 1 => owner_names
-                .get(owners[0].as_str())
-                .map(|owner| (entry.name.clone(), (*owner).clone())),
-            _ => None,
-        })
-        .collect();
-    let block_ref_counts = corpus.block_ref_counts();
-    let answers = crate::published_answers::answers(
-        graph,
-        meta,
-        corpus,
-        &inventory,
-        home_query.map(|_| home),
-    )?;
-    let snapshot = json!({ "schema": 1, "name": name, "exported_at": exported_at,
-        "home": home, "pages": pages, "entries": entries, "backlinks": backlinks,
-        "block_ref_counts": block_ref_counts, "aliases": aliases, "icons": icons, "queries": queries,
-        "answers": answers });
-    let bytes = serde_json::to_vec(&snapshot).map_err(io::Error::other)?;
-    if home_query.is_none() && bytes.len() > MAX_EXPORT_BYTES {
-        return Err(refusal("snapshot byte budget exceeded"));
-    }
-    Ok(bytes)
+    raw
 }
 
 fn app_files(
@@ -972,24 +711,16 @@ fn publish_at(
     if planned.selected.pages.is_empty() {
         return Err(refusal("query has no pages to export"));
     }
-    let mut result = planned.result;
     let mut warnings = Vec::new();
     // Every emitted file (the static HTML fallback and the snapshot) is
     // rendered from the private build graph: an unexported page can change no
     // byte of it (closure, `docs/contracts/quick-share.md`). Asset bytes are
     // still read from the real store.
-    let (mut files, snap) = crate::build_graph::with_build_graph(
+    let (mut files, snap) = crate::build_graph::with_build_graph_text(
         &graph,
         &planned.selected.pages,
         BUILD_GRAPH_REFUSED,
-        |build, meta, corpus| {
-            if request.include_query_text && !planned.plan.include_comments {
-                crate::output_comments::remap_result_ids(
-                    &mut result,
-                    &planned.selected.pages,
-                    &corpus.pages,
-                );
-            }
+        |build, corpus, sources| {
             let files = collect_static(
                 store,
                 build,
@@ -1001,30 +732,23 @@ fn publish_at(
                     .unwrap_or(QUERY_EXPORT_DEFAULT_ASSET_BUDGET_BYTES),
                 &mut warnings,
             )?;
-            // The synthetic home must not shadow a name the build graph
-            // answers (a page, journal or alias, single- or multi-owner):
-            // rename it, as before, against the complete inventory.
-            let inventory = build.inventory(tine_store::InventoryScope::All);
-            let spellings =
-                build.inventory(tine_store::InventoryScope::PublishedV1Spellings(&inventory));
-            let taken = |name: &str| {
-                crate::published_answers::home_name_taken(&inventory, &spellings, name)
-            };
-            let mut home = request.name.trim().to_owned();
-            if taken(&home) {
-                home.push_str(" (export)");
+            let mut home = HomePage::new(build, request.name.trim());
+            if home.taken(build, &corpus.pages) {
+                home = HomePage::new(build, &format!("{} (export)", home.name));
             }
-            while taken(&home) {
-                home.push_str(" 2");
+            while home.taken(build, &corpus.pages) {
+                home = HomePage::new(build, &format!("{} 2", home.name));
             }
-            let snap = snapshot(
-                build,
-                meta,
+            let query = request.include_query_text.then(|| home_query(request));
+            let snap = publication_snapshot::snapshot(
+                &graph,
                 &corpus,
+                sources,
                 &request.name,
-                &home,
-                Some((request, &planned.parsed, &result)),
-                epoch,
+                &export_time(epoch)?,
+                &home.name,
+                Some(home.source(&corpus.pages, query.as_deref())),
+                false,
             )?;
             Ok((files, snap))
         },
@@ -1198,11 +922,11 @@ fn live(
         .unwrap_or_default();
     // The static fallback and the snapshot both come from the build graph
     // (see `publish_at`).
-    let (mut files, snap) = crate::build_graph::with_build_graph(
+    let (mut files, snap) = crate::build_graph::with_build_graph_text(
         &graph,
         &corpus.pages,
         BUILD_GRAPH_REFUSED,
-        |build, meta, corpus| {
+        |build, corpus, sources| {
             let files = collect_static(
                 store,
                 build,
@@ -1214,7 +938,16 @@ fn live(
             )?;
             Ok((
                 files,
-                snapshot(build, meta, &corpus, name, &home, None, export_epoch()?)?,
+                publication_snapshot::snapshot(
+                    &graph,
+                    &corpus,
+                    sources,
+                    name,
+                    &export_time(export_epoch()?)?,
+                    &home,
+                    None,
+                    false,
+                )?,
             ))
         },
     )?;
@@ -1300,6 +1033,9 @@ mod snapshot_consistency_tests {
     fn snapshot_uses_held_reviewed_sources_after_an_external_edit() {
         let temp = tempfile::tempdir().unwrap();
         std::fs::create_dir_all(temp.path().join("pages")).unwrap();
+        std::fs::create_dir_all(temp.path().join("logseq")).unwrap();
+        let config = temp.path().join("logseq/config.edn");
+        std::fs::write(&config, "{:start-of-week 1 :favorites [\"Private\"]}").unwrap();
         std::fs::write(
             temp.path().join("pages/Public.md"),
             "public:: true\n- TODO reviewed\n",
@@ -1326,16 +1062,34 @@ mod snapshot_consistency_tests {
             "public:: true\n- TODO unreviewed\n",
         )
         .unwrap();
+        std::fs::write(config, "{:start-of-week 4}").unwrap();
         store.refresh(tine_store::Depth::Stamps).unwrap();
-        let bytes = crate::build_graph::with_build_graph(
+        let bytes = crate::build_graph::with_build_graph_text(
             &graph,
             &reviewed.selected.pages,
             BUILD_GRAPH_REFUSED,
-            |build, meta, corpus| snapshot(build, meta, &corpus, "Export", "Public", None, 0),
+            |_, corpus, sources| {
+                publication_snapshot::snapshot(
+                    &graph,
+                    &corpus,
+                    sources,
+                    "Export",
+                    &export_time(0)?,
+                    "Public",
+                    None,
+                    false,
+                )
+            },
         )
         .unwrap();
-        let value: Value = serde_json::from_slice(&bytes).unwrap();
-        assert_eq!(value["pages"][0]["blocks"][0]["raw"], "TODO reviewed", "I-20: all publication projections use the held reviewed corpus; exemplar publish_query::snapshot");
+        let value: serde_json::Value = serde_json::from_slice(&bytes).unwrap();
+        assert_eq!(
+            value["files"][0]["text"], "public:: true\n\n- TODO reviewed\n",
+            "I-20: publication uses held reviewed sources"
+        );
+        let reduced = value["files"][1]["text"].as_str().unwrap();
+        assert_eq!(tine_core::Config::parse(reduced).start_of_week, 1);
+        assert!(!reduced.contains("Private"));
         let repeated = resolve_plan(&store, &graph, &request).unwrap();
         assert_eq!(
             reviewed.plan.fingerprint, repeated.plan.fingerprint,

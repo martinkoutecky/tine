@@ -1,13 +1,9 @@
-//! Quick share generation 1, writer side (`docs/contracts/quick-share.md`):
-//! the envelope, closure of the shared slice, and the frozen fixtures the
-//! viewer decodes (`tests/fixtures/quick-share/g1/`, also read by
-//! `src/quickShare/quickShare.fixtures.test.ts`).
+//! Quick-share source closure, envelope integrity, and viewer fixtures.
 //!
 //! `TINE_QUICK_SHARE_FIXTURES=write` writes a fixture case that does not exist
 //! yet and refreshes every `writer.json`; a frozen `tine-share.bin`,
 //! `document.json` or `link.txt` is never rewritten.
 use serde_json::Value;
-use std::collections::HashMap;
 use std::fs;
 use std::path::{Path, PathBuf};
 use tine_core::query::wire_parse::QueryTextDialect;
@@ -41,7 +37,7 @@ fn corpus(root: &Path) -> Store {
     let files: &[(&str, &str)] = &[
         (
             "logseq/config.edn",
-            "{:file/name-format :triple-lowbar\n :hidden [\"hidden\"]}\n",
+            "{:file/name-format :triple-lowbar\n :hidden [\"hidden\"]\n :start-of-week 1\n :favorites [\"PRIVATE-FAVORITE\"]\n :macros {:greet ; preserve this gap\n \"Hello $1\" :unused \"UNUSED-MACRO-SECRET\"}}\n",
         ),
         (
             "pages/Project.md",
@@ -70,6 +66,8 @@ fn corpus(root: &Path) -> Store {
             "- OUTSIDE-MARKER links [[Project]]\n  outside-only-prop:: OUTSIDE-VALUE\n- TODO OUTSIDE-TASK\n",
         ),
         ("hidden/Hidden.md", "- HIDDEN-MARKER links [[Project]]\n"),
+        ("pages/Comments.md", "- public body sentinel\n  - private comment sentinel\n    tine.quote:: public body sentinel\n    - private reply sentinel\n"),
+        ("pages/Configured.md", "- {{greet reader}}\n- `{{unused}}` is example code\n"),
     ];
     for (rel, body) in files {
         fs::write(graph.join(rel), body).unwrap();
@@ -167,6 +165,25 @@ fn quick_share_envelope_round_trips_and_refuses_damage() {
     assert_eq!(open(&sealed.envelope, &sealed.key).unwrap(), payload);
 }
 
+pub(super) fn snapshot_graph(snapshot: &Value) -> tine_store::WholeGraph {
+    assert_eq!(snapshot["schema"], 2);
+    tine_store::WholeGraph::from_files(
+        snapshot["files"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|file| {
+                (
+                    file["path"].as_str().unwrap().to_owned(),
+                    file["text"].as_str().unwrap().as_bytes().to_vec(),
+                )
+            })
+            .collect(),
+    )
+    .unwrap()
+    .0
+}
+
 #[test]
 fn quick_share_is_closed_to_the_shared_pages() {
     let _integration_guard = crate::integration_lock();
@@ -178,7 +195,7 @@ fn quick_share_is_closed_to_the_shared_pages() {
     assert!(!names.contains(&"Secret"));
     assert_eq!(preview.left_out.len(), 1);
     assert_eq!(preview.left_out[0].name, "Secret");
-    let text = String::from_utf8(doc.clone()).unwrap();
+    let text = std::str::from_utf8(&doc).unwrap();
     for leak in [
         "SECRET-MARKER",
         "secret-prop",
@@ -189,39 +206,52 @@ fn quick_share_is_closed_to_the_shared_pages() {
         "HIDDEN-MARKER",
         "Outside",
         "Secret",
+        "hidden",
         "tine-quick-share-",
         root.to_str().unwrap(),
-        "select-query",
+        "name = 'Project'",
     ] {
         assert!(!text.contains(leak), "the share carries {leak:?}");
     }
     let doc: Value = serde_json::from_slice(&doc).unwrap();
-    assert_eq!(doc["quick_share"], 1);
-    assert_eq!(doc["created_at"], CREATED_AT);
-    assert_eq!(doc["title"], "Fixture share");
+    assert_eq!(doc.as_object().unwrap().len(), 2);
+    assert_eq!(doc["quick_share"], 2);
     let snapshot = &doc["snapshot"];
-    assert_eq!(snapshot["schema"], 1);
+    assert_eq!(snapshot["name"], "Fixture share");
     assert_eq!(snapshot["exported_at"], CREATED_AT);
-    assert_eq!(snapshot["home"], "Fixture share");
-    // The selecting query never ships: the home only lists the pages.
-    assert!(!text.contains("name = 'Project'"));
-    // A baked query on a shared page answers from shared pages only.
-    let tasks = snapshot["queries"]
-        .as_array()
-        .unwrap()
+    assert_eq!(snapshot.as_object().unwrap().len(), 4);
+    let graph = snapshot_graph(snapshot);
+    assert_eq!(
+        graph.config().default_home.as_deref(),
+        Some("Fixture share")
+    );
+    let corpus = graph.corpus(None, true);
+    let home = corpus
+        .pages
         .iter()
-        .find(|q| q["host"] == "Project")
+        .find(|page| page.name == "Fixture share")
         .unwrap();
-    let rows = serde_json::to_string(&tasks["result"]).unwrap();
-    assert!(rows.contains("first task") && rows.contains("org task"));
-    // Backlinks and aliases come from the slice.
-    let backlinks = serde_json::to_string(&snapshot["backlinks"]["Project"]).unwrap();
-    assert!(backlinks.contains("journal note"));
-    assert!(snapshot["aliases"]
-        .as_array()
-        .unwrap()
+    let links: Vec<_> = home
+        .document
+        .roots
         .iter()
-        .any(|a| a[0] == "proj" || a[0] == "Proj"));
+        .map(|block| block.raw())
+        .collect();
+    assert_eq!(
+        links,
+        preview
+            .pages
+            .iter()
+            .map(|page| format!("[[{}]]", page.name))
+            .collect::<Vec<_>>()
+    );
+    assert_eq!(graph.link_target("Proj").name, "Project");
+    assert!(graph.backlinks("Project").unwrap().iter().any(|group| {
+        group
+            .blocks
+            .iter()
+            .any(|block| block.raw.contains("journal note"))
+    }));
 }
 
 #[test]
@@ -232,21 +262,21 @@ fn quick_share_of_one_page_is_that_page() {
     let (preview, doc) = document(&store, "@page and name = 'Empty'", "Ignored");
     assert_eq!(preview.title, "Empty");
     let doc: Value = serde_json::from_slice(&doc).unwrap();
-    assert_eq!(doc["snapshot"]["home"], "Empty");
-    assert_eq!(doc["snapshot"]["pages"].as_array().unwrap().len(), 1);
+    let graph = snapshot_graph(&doc["snapshot"]);
+    assert_eq!(graph.config().default_home.as_deref(), Some("Empty"));
+    assert_eq!(graph.corpus(None, true).pages.len(), 1);
     for name in ["Project", "proj", "/Project/"] {
-        let clash = quick_share::prepare(
+        let result = quick_share::prepare(
             &store,
             &request("@page and name = 'Project' or name = 'Empty'", name),
             CREATED_AT,
         );
-        let message = clash.err().map(|e| e.to_string()).unwrap_or_default();
+        let message = result.err().map(|e| e.to_string()).unwrap_or_default();
         assert!(
             message.contains("give the share another name"),
             "{name}: {message}"
         );
     }
-    // Review g1 r2 B1: a BOM is not whitespace to page_key, so this name is no clash (the viewer agrees).
     let bom = quick_share::prepare(
         &store,
         &request(
@@ -256,377 +286,210 @@ fn quick_share_of_one_page_is_that_page() {
         CREATED_AT,
     );
     assert!(bom.is_ok(), "{:?}", bom.err().map(|e| e.to_string()));
-    let refused = quick_share::prepare(
+    assert!(quick_share::prepare(
         &store,
         &request("@page and name = 'Secret'", "x"),
-        CREATED_AT,
-    );
-    assert!(refused.is_err());
+        CREATED_AT
+    )
+    .is_err());
 }
 
-/// The share lists its pages in the order the review showed (by path), not in
-/// the directory order of the private build graph, which differs by
-/// filesystem: the same selection must make the same document on Linux, macOS
-/// and Windows.
-/// The deepest page the app opens (128 outline levels, two JSON containers a
-/// level) is shared like any other: `prepare` read the document back with
-/// serde's default 128-container ceiling and refused a page 62 blocks deep,
-/// where the viewer admits 512 containers (REG-QS-DEEP-PAGE).
 #[test]
 fn quick_share_of_the_deepest_page_the_app_opens() {
     let _integration_guard = crate::integration_lock();
     let root = base();
     let graph = root.join("graph");
-    for dir in ["pages", "logseq"] {
-        fs::create_dir_all(graph.join(dir)).unwrap();
-    }
-    fs::write(
-        graph.join("logseq/config.edn"),
-        "{:file/name-format :triple-lowbar}\n",
-    )
-    .unwrap();
+    fs::create_dir_all(graph.join("pages")).unwrap();
     let levels = tine_core::outline_kernel::OUTLINE_MAX_DEPTH;
     let text: String = (0..levels)
         .map(|level| format!("{}- level {level}\n", "  ".repeat(level)))
         .collect();
     fs::write(graph.join("pages/Deep.md"), &text).unwrap();
     let store = Store::open(&graph, Default::default()).unwrap().0;
-    store.whole_graph().unwrap();
     let (preview, doc) = document(&store, "@page and name = 'Deep'", "Ignored");
     assert_eq!(preview.pages.len(), 1);
-    let document: Value = {
-        let mut reader = serde_json::Deserializer::from_slice(&doc);
-        reader.disable_recursion_limit();
-        serde::Deserialize::deserialize(&mut reader).unwrap()
-    };
-    let mut deepest = 0;
-    let mut block = &document["snapshot"]["pages"][0]["blocks"][0];
-    while !block.is_null() {
-        deepest += 1;
-        block = &block["children"][0];
+    let doc: Value = serde_json::from_slice(&doc).unwrap();
+    let core = snapshot_graph(&doc["snapshot"]);
+    let corpus = core.corpus(None, true);
+    let mut depth = 0;
+    let mut roots = corpus.pages[0].document.roots.as_slice();
+    while let Some(block) = roots.first() {
+        depth += 1;
+        roots = &block.children;
     }
-    assert_eq!(deepest, levels, "the page was shared whole");
-    // Past serde's default ceiling, inside the viewer's.
-    assert!(2 * levels + 4 > 128 && 2 * levels + 5 <= 512);
+    assert_eq!(depth, levels);
 }
 
-/// A `{{query}}` written in page properties has a baked answer, so the reader
-/// shows its results, not the static-export notice (REG-QS-PAGE-PROPERTY-QUERY).
-/// The page header renders it with no host block, so the record carries no
-/// properties; it is keyed by the page it is written on.
 #[test]
-fn quick_share_bakes_a_query_written_in_page_properties() {
+fn quick_share_keeps_queries_in_page_properties_and_body() {
     let _integration_guard = crate::integration_lock();
-    let root = base();
-    let store = corpus(&root);
+    let store = corpus(&base());
     let (_, doc) = document(&store, PAGE_QUERIES, "Fixture share");
     let doc: Value = serde_json::from_slice(&doc).unwrap();
-    let records: Vec<&Value> = doc["snapshot"]["queries"]
-        .as_array()
-        .unwrap()
+    let graph = snapshot_graph(&doc["snapshot"]);
+    let corpus = graph.corpus(None, true);
+    let dashboard = corpus
+        .pages
         .iter()
-        .filter(|query| query["argument"] == PAGE_PROPERTY_QUERY)
-        .collect();
-    assert_eq!(records.len(), 1, "{records:?}");
-    let record = records[0];
-    assert_eq!(record["host"], "Dashboard");
-    assert_eq!(record["dialect"], "macro_query");
-    assert_eq!(record["properties"], serde_json::json!([]));
-    assert!(
-        record["result"].to_string().contains("Notes ü"),
-        "the baked answer lists the page the query finds: {}",
-        record["result"]
+        .find(|page| page.name == "Dashboard")
+        .unwrap();
+    assert!(dashboard
+        .document
+        .pre_block
+        .as_deref()
+        .unwrap()
+        .contains(&format!("{{{{query {PAGE_PROPERTY_QUERY}}}}}")));
+    assert!(dashboard.document.roots[0]
+        .raw()
+        .contains("{{query (task TODO)}}"));
+    let registry = graph
+        .query_ir(tine_store::IrRequest::Registry, &Default::default())
+        .unwrap()
+        .unwrap();
+    let tine_store::IrAnswer::Registry(registry) = registry else {
+        panic!("expected registry")
+    };
+    let query = tine_core::query::wire_parse::parse_query_pair(
+        PAGE_PROPERTY_QUERY,
+        QueryTextDialect::MacroQuery,
+        &[],
+        &registry,
     );
-    // The block query on the same page keeps its own record.
-    assert!(doc["snapshot"]["queries"]
-        .as_array()
+    let view = tine_core::query::wire_parse::anchored_view(&query, query.query.anchor);
+    let result = graph
+        .query_ir(
+            tine_store::IrRequest::Run {
+                query: &query.query,
+                view: &view,
+                context: &Default::default(),
+            },
+            &Default::default(),
+        )
         .unwrap()
-        .iter()
-        .any(|query| query["host"] == "Dashboard" && query["argument"] == "(task TODO)"));
+        .unwrap();
+    let tine_store::IrAnswer::Result(result) = result else {
+        panic!("expected query answer")
+    };
+    assert!(serde_json::to_string(&result.rows)
+        .unwrap()
+        .contains("Notes ü"));
 }
 
 #[test]
 fn quick_share_lists_pages_in_the_order_the_review_showed() {
     let _integration_guard = crate::integration_lock();
-    let root = base();
-    let store = corpus(&root);
+    let store = corpus(&base());
     let (preview, doc) = document(&store, MANY, "Fixture share");
     let doc: Value = serde_json::from_slice(&doc).unwrap();
     let reviewed: Vec<&str> = preview.pages.iter().map(|p| p.path.as_str()).collect();
     assert!(reviewed.len() > 3 && reviewed.windows(2).all(|w| w[0] < w[1]));
-    for key in ["pages", "entries"] {
-        let shared: Vec<&str> = doc["snapshot"][key]
-            .as_array()
-            .unwrap()
-            .iter()
-            .filter_map(|p| p["path"].as_str())
-            .filter(|path| !path.is_empty())
-            .collect();
-        assert_eq!(shared, reviewed, "{key}");
-    }
-}
-
-/// Runtime block ids are fresh per parse; a golden compares them by position.
-fn normalize(doc: &mut Value) {
-    fn collect(v: &Value, ids: &mut HashMap<String, String>) {
-        match v {
-            Value::Object(map) => {
-                if map.get("has_id") == Some(&Value::Bool(false)) {
-                    if let Some(Value::String(id)) = map.get("id") {
-                        let next = format!("runtime-{}", ids.len());
-                        ids.entry(id.clone()).or_insert(next);
-                    }
-                }
-                map.values().for_each(|c| collect(c, ids));
-            }
-            Value::Array(items) => items.iter().for_each(|c| collect(c, ids)),
-            _ => {}
-        }
-    }
-    fn replace(v: &mut Value, ids: &HashMap<String, String>) {
-        match v {
-            Value::String(s) => {
-                if let Some(to) = ids.get(s) {
-                    *s = to.clone();
-                }
-            }
-            Value::Object(map) => map.values_mut().for_each(|c| replace(c, ids)),
-            Value::Array(items) => items.iter_mut().for_each(|c| replace(c, ids)),
-            _ => {}
-        }
-    }
-    let mut ids = HashMap::new();
-    collect(doc, &mut ids);
-    replace(doc, &ids);
-}
-
-/// Put the page-ordered parts of a document in path order, so a document
-/// written before the writer listed pages by path (the frozen fixtures came
-/// out in the writing machine's directory order) compares with one written
-/// today. Only order is canonicalized: every page, entry, query and home link
-/// must still be equal, and `writer.json` (below) stays an exact byte golden.
-fn canonical_page_order(doc: &mut Value) {
-    fn path(v: &Value) -> String {
-        v["path"].as_str().unwrap_or_default().to_owned()
-    }
-    let snapshot = &mut doc["snapshot"];
-    for key in ["pages", "entries"] {
-        if let Some(items) = snapshot[key].as_array_mut() {
-            items.sort_by_key(path);
-        }
-    }
-    if let Some(queries) = snapshot["queries"].as_array_mut() {
-        queries.sort_by_key(|q| q["host"].as_str().unwrap_or_default().to_owned());
-    }
-    // The home page lists the pages in order, each link numbered by position.
-    if let Some(pages) = snapshot["pages"].as_array_mut() {
-        for page in pages.iter_mut().filter(|p| p["path"] == "") {
-            if let Some(blocks) = page["blocks"].as_array_mut() {
-                blocks.sort_by_key(|b| b["raw"].as_str().unwrap_or_default().to_owned());
-                for (index, block) in blocks.iter_mut().enumerate() {
-                    block["id"] = Value::String(format!("published-page:{index}"));
-                }
-            }
-        }
-    }
-}
-
-/// Compare a frozen document written before CM-DATE (D-20261110-CM) with a
-/// fresh one (contract, "Fixtures"): drop from `fresh` each `answers.resolve`
-/// entry the frozen document does not hold that asks a day's row of the same
-/// document as a page and answers that row's own target. A date names the
-/// day whatever kind is asked, so today's graph answers that lookup; the
-/// table and its meaning are unchanged. Any other added, missing or different
-/// entry still differs.
-fn without_cm_date_day_pages(frozen: &Value, fresh: &mut Value) {
-    let Some(answers) = fresh["snapshot"].get_mut("answers") else {
-        return;
-    };
-    let days: Vec<(Value, Value)> = (answers["inventory"].as_array().into_iter().flatten())
-        .filter(|row| !row["day"].is_null())
-        .map(|row| (row["name"].clone(), row["target"].clone()))
+    let files = doc["snapshot"]["files"].as_array().unwrap();
+    let listed: Vec<_> = files[..reviewed.len()]
+        .iter()
+        .map(|file| file["path"].as_str().unwrap())
         .collect();
-    let held = frozen["snapshot"]["answers"]["resolve"]
-        .as_array()
-        .cloned()
-        .unwrap_or_default();
-    if let Some(resolve) = answers["resolve"].as_array_mut() {
-        resolve.retain(|entry| {
-            held.contains(entry)
-                || entry["kind"] != "page"
-                || !days.contains(&(entry["name"].clone(), entry["target"].clone()))
-        });
-    }
+    assert_eq!(listed, reviewed);
 }
 
-/// The CM-DATE allowance above covers a day asked as a page with its own
-/// target, and nothing else (negative controls).
+fn fixture_root(generation: u8) -> PathBuf {
+    Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join(format!("../../tests/fixtures/quick-share/g{generation}"))
+}
+
+fn frozen_document(directory: &Path) -> Vec<u8> {
+    let opened = open(
+        fs::read_to_string(directory.join("tine-share.bin"))
+            .unwrap()
+            .trim_end(),
+        &KEY,
+    )
+    .unwrap();
+    let actual = gunzip_bounded(&opened, quick_share::MAX_DOCUMENT_BYTES).unwrap();
+    assert_eq!(actual, fs::read(directory.join("document.json")).unwrap());
+    actual
+}
+
 #[test]
-fn the_cm_date_allowance_admits_only_a_day_asked_as_a_page() {
+fn quick_share_generation_1_frozen_fixtures_stay_readable() {
     let _integration_guard = crate::integration_lock();
-    let dir =
-        Path::new(env!("CARGO_MANIFEST_DIR")).join("../../tests/fixtures/quick-share/g1/answers");
-    let read = |name: &str| -> Value {
-        serde_json::from_slice(&fs::read(dir.join(name)).unwrap()).unwrap()
-    };
-    let frozen = read("document.json");
-    let writer = read("writer.json");
-    let day = |doc: &Value| -> Value {
-        doc["snapshot"]["answers"]["inventory"]
-            .as_array()
-            .unwrap()
-            .iter()
-            .find(|row| !row["day"].is_null())
-            .cloned()
-            .unwrap()
-    };
-    let row = day(&writer);
-    let resolve = |doc: &Value| doc["snapshot"]["answers"]["resolve"].clone();
-    // The entry today's writer adds is the allowed one, and is pinned by writer.json.
-    let day_page =
-        serde_json::json!({"kind": "page", "name": row["name"], "target": row["target"]});
-    assert_eq!(resolve(&writer), serde_json::json!([day_page.clone()]));
-    let mut fresh = writer.clone();
-    without_cm_date_day_pages(&frozen, &mut fresh);
-    assert_eq!(resolve(&fresh), resolve(&frozen));
-    let other = serde_json::json!({"id": "pages/Project.md", "kind": "existing", "others": []});
-    for extra in [
-        // A name that is not a day row.
-        serde_json::json!({"kind": "page", "name": "Project", "target": other}),
-        // The day asked as a page, answered by another target.
-        serde_json::json!({"kind": "page", "name": row["name"], "target": other}),
-        // The day asked as a journal.
-        serde_json::json!({"kind": "journal", "name": row["name"], "target": row["target"]}),
-    ] {
-        let mut fresh = writer.clone();
-        fresh["snapshot"]["answers"]["resolve"]
-            .as_array_mut()
-            .unwrap()
-            .push(extra.clone());
-        without_cm_date_day_pages(&frozen, &mut fresh);
-        assert_ne!(
-            resolve(&fresh),
-            resolve(&frozen),
-            "{extra} must still differ"
+    for case in ["pages", "one-page", "answers", "page-queries"] {
+        let directory = fixture_root(1).join(case);
+        let document = frozen_document(&directory);
+        for bytes in [document, fs::read(directory.join("writer.json")).unwrap()] {
+            quick_share::validate_legacy_document(&bytes).unwrap();
+            let parsed: Value = serde_json::from_slice(&bytes).unwrap();
+            assert_eq!(parsed["quick_share"], 1, "{case}");
+            assert_eq!(parsed["snapshot"]["schema"], 1, "{case}");
+        }
+        assert_eq!(
+            fs::read_to_string(directory.join("link.txt")).unwrap(),
+            format!("https://tine.page/s/1/#{LOGIN}/{GIST}/{}\n", b64u(&KEY)),
         );
     }
-    // An entry the frozen document holds and the writer no longer writes still differs.
-    let mut held = frozen.clone();
-    held["snapshot"]["answers"]["resolve"] =
-        serde_json::json!([{"kind": "page", "name": "Project", "target": other}]);
-    let mut fresh = writer.clone();
-    without_cm_date_day_pages(&held, &mut fresh);
-    assert_ne!(resolve(&fresh), resolve(&held));
-    // A different day entry the frozen document already holds is kept, so a
-    // changed target of it still differs.
-    let mut held = frozen.clone();
-    held["snapshot"]["answers"]["resolve"] = serde_json::json!([day_page]);
-    let mut fresh = writer.clone();
-    fresh["snapshot"]["answers"]["resolve"][0]["target"] = other.clone();
-    without_cm_date_day_pages(&held, &mut fresh);
-    assert_ne!(resolve(&fresh), resolve(&held));
 }
 
 #[test]
-fn quick_share_generation_1_fixtures_stay_readable() {
+fn quick_share_generation_2_fixtures_match_the_writer() {
     let _integration_guard = crate::integration_lock();
     let write = std::env::var("TINE_QUICK_SHARE_FIXTURES").as_deref() == Ok("write");
-    let dir = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../tests/fixtures/quick-share/g1");
-    let root = base();
-    let store = corpus(&root);
-    // The last field: frozen before CM-DATE (D-20261110-CM). A case frozen
-    // later says `false` and compares its `resolve` table whole.
-    for (case, argument, name, before_cm_date) in [
-        ("pages", MANY, "Fixture share", true),
-        ("one-page", "@page and name = 'Project'", "Ignored", true),
-        // Written with `answers` v1 (CM step 2, census Q13).
-        ("answers", MANY, "Fixture share", true),
-        // Written with the query in page properties baked (REG-QS-PAGE-PROPERTY-QUERY).
-        ("page-queries", PAGE_QUERIES, "Fixture share", true),
+    let store = corpus(&base());
+    for (case, argument) in [
+        ("pages", MANY),
+        ("page-queries", PAGE_QUERIES),
+        ("comments-excluded", "@page and name = 'Comments'"),
+        ("reduced-config", "@page and name = 'Configured'"),
     ] {
-        let (_, doc) = document(&store, argument, name);
-        let mut fresh: Value = serde_json::from_slice(&doc).unwrap();
-        let mut fresh_canonical = fresh.clone();
-        normalize(&mut fresh);
-        let case_dir = dir.join(case);
-        let bin = case_dir.join("tine-share.bin");
-        if !bin.exists() {
+        let mut request = request(argument, "Fixture share");
+        request.include_comments = Some(case != "comments-excluded");
+        let prepared = quick_share::prepare(&store, &request, CREATED_AT).unwrap();
+        let doc = gunzip_bounded(&prepared.payload, quick_share::MAX_DOCUMENT_BYTES).unwrap();
+        let parsed: Value = serde_json::from_slice(&doc).unwrap();
+        let graph = snapshot_graph(&parsed["snapshot"]);
+        if case == "comments-excluded" {
+            let text = std::str::from_utf8(&doc).unwrap();
+            assert!(text.contains("public body sentinel"));
             assert!(
-                write,
-                "missing frozen fixture {case}; run with TINE_QUICK_SHARE_FIXTURES=write"
+                !text.contains("private comment sentinel")
+                    && !text.contains("private reply sentinel")
             );
-            fs::create_dir_all(&case_dir).unwrap();
-            let mut gz = flate2::write::GzEncoder::new(Vec::new(), flate2::Compression::new(9));
-            std::io::Write::write_all(&mut gz, &doc).unwrap();
-            fs::write(&bin, seal(&gz.finish().unwrap(), &KEY, &SHARE_ID, &NONCE)).unwrap();
-            fs::write(case_dir.join("document.json"), &doc).unwrap();
-            fs::write(
-                case_dir.join("link.txt"),
-                quick_share::link(LOGIN, GIST, &KEY) + "\n",
-            )
-            .unwrap();
         }
-        // The frozen bytes open to the frozen document, forever.
-        let frozen_doc = fs::read(case_dir.join("document.json")).unwrap();
-        let opened = open(fs::read_to_string(&bin).unwrap().trim_end(), &KEY).unwrap();
-        assert_eq!(
-            gunzip_bounded(&opened, 64 << 20).unwrap(),
-            frozen_doc,
-            "{case}"
-        );
-        // The writer still produces that document (runtime ids aside): an
-        // app-side DTO change that alters generation 1 fails here.
-        let golden = case_dir.join("writer.json");
-        let fresh_text = serde_json::to_string_pretty(&fresh).unwrap() + "\n";
+        if case == "reduced-config" {
+            let config = graph.config();
+            assert_eq!(config.start_of_week, 1);
+            assert_eq!(config.macros.len(), 1);
+            assert_eq!(
+                config.macros.get("greet").map(String::as_str),
+                Some("Hello $1")
+            );
+            assert!(config.favorites.is_empty());
+            let text = std::str::from_utf8(&doc).unwrap();
+            assert!(!text.contains("UNUSED-MACRO-SECRET") && !text.contains("PRIVATE-FAVORITE"));
+        }
+        let directory = fixture_root(2).join(case);
+        let link = quick_share::link(LOGIN, GIST, &KEY) + "\n";
+        let golden = serde_json::to_string_pretty(&parsed).unwrap() + "\n";
         if write {
-            fs::write(&golden, &fresh_text).unwrap();
+            fs::create_dir_all(&directory).unwrap();
+            let envelope = directory.join("tine-share.bin");
+            if !envelope.exists() {
+                fs::write(envelope, seal(&prepared.payload, &KEY, &SHARE_ID, &NONCE)).unwrap();
+                fs::write(directory.join("document.json"), &doc).unwrap();
+                fs::write(directory.join("link.txt"), &link).unwrap();
+            }
+            fs::write(directory.join("writer.json"), &golden).unwrap();
         }
-        let mut frozen: Value = serde_json::from_slice(&frozen_doc).unwrap();
-        // `answers` is additive (contract, "Published answers"): a document
-        // frozen before it existed is compared without it. The golden above
-        // pins it exactly, and a document frozen with it compares whole.
-        if frozen["snapshot"].get("answers").is_none() {
-            fresh_canonical["snapshot"]
-                .as_object_mut()
-                .unwrap()
-                .remove("answers");
-        }
-        // So is the record of a macro written in page properties (contract,
-        // "Share document"): a document frozen before the writer baked it is
-        // compared without it.
-        let page_property_record = |query: &Value| {
-            query["host"] == "Dashboard" && query["argument"] == PAGE_PROPERTY_QUERY
-        };
-        let has_page_property_record = |doc: &Value| {
-            doc["snapshot"]["queries"]
-                .as_array()
-                .unwrap()
-                .iter()
-                .any(page_property_record)
-        };
-        if !has_page_property_record(&frozen) {
-            fresh_canonical["snapshot"]["queries"]
-                .as_array_mut()
-                .unwrap()
-                .retain(|query| !page_property_record(query));
-        }
-        // And so is a day asked as a page (contract, "Fixtures"), only for a
-        // document frozen before CM-DATE.
-        if before_cm_date {
-            without_cm_date_day_pages(&frozen, &mut fresh_canonical);
-        }
-        canonical_page_order(&mut frozen);
-        canonical_page_order(&mut fresh_canonical);
-        normalize(&mut frozen);
-        normalize(&mut fresh_canonical);
         assert_eq!(
-            fs::read_to_string(&golden).unwrap(),
-            fresh_text,
-            "{case}: writer drifted"
+            frozen_document(&directory),
+            doc,
+            "{case}: frozen bytes drifted"
         );
         assert_eq!(
-            frozen, fresh_canonical,
-            "{case}: writer no longer writes the frozen document"
+            fs::read_to_string(directory.join("link.txt")).unwrap(),
+            link
+        );
+        assert_eq!(
+            fs::read_to_string(directory.join("writer.json")).unwrap(),
+            golden
         );
     }
 }

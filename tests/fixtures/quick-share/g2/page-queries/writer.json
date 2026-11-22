@@ -1,0 +1,26 @@
+{
+  "quick_share": 2,
+  "snapshot": {
+    "exported_at": "2026-10-17T00:00:00Z",
+    "files": [
+      {
+        "path": "pages/Dashboard.md",
+        "text": "description:: {{query (page-property type note)}}\n\n- tasks here: {{query (task TODO)}}\n"
+      },
+      {
+        "path": "pages/Notes ü.md",
+        "text": "type:: note\nrelated:: [[Project]]\n\n- block with an id\n  id:: 6512a000-0000-4000-8000-000000000002\n- refers ((6512a000-0000-4000-8000-000000000001)) and [[Proj]]\n"
+      },
+      {
+        "path": "pages/Fixture share.md",
+        "text": "title:: Fixture share\n\n- [[Dashboard]]\n- [[Notes ü]]\n"
+      },
+      {
+        "path": "logseq/config.edn",
+        "text": "{\n:file/name-format :triple-lowbar\n:start-of-week 1\n:default-home {:page \"Fixture share\"}\n}\n"
+      }
+    ],
+    "name": "Fixture share",
+    "schema": 2
+  }
+}

@@ -1,4 +1,6 @@
 //! H9TvA / D-20261113-CO: marked comments and whole-thread omission.
+use crate::publication_sources::{parsed_query, run_query};
+use crate::quick_share::snapshot_graph;
 use std::fs;
 use tine_core::query::ir::FriendlyPageMatchScope;
 use tine_core::query::wire_parse::QueryTextDialect;
@@ -209,22 +211,20 @@ fn comments_off_keeps_header_answer(name: &str, argument: &str, marker: &str, fl
         &fs::read_to_string(std::path::Path::new(&receipt.path).join("app/snapshot.json")).unwrap(),
     )
     .unwrap();
-    let query = snapshot["queries"]
-        .as_array()
-        .unwrap()
-        .iter()
-        .find(|q| q["host"] == name)
-        .unwrap();
-    let groups = query["result"]["groups"].as_array().unwrap();
+    let core = snapshot_graph(&snapshot);
+    let result = run_query(&core, &parsed_query(&core, argument, &[]), Some(name));
+    let tine_core::query::ir::QueryRows::Block { groups } = result.rows else {
+        panic!("expected block rows")
+    };
     assert_eq!(
         groups.len(),
         1,
         "Include the query text retains the selecting answer"
     );
-    let blocks = groups[0]["blocks"].as_array().unwrap();
+    let blocks = &groups[0].blocks;
     assert_eq!(blocks.len(), 1);
-    assert_eq!(blocks[0][flag], true);
-    assert!(blocks[0]["raw"].as_str().unwrap().contains(marker));
+    assert!(serde_json::to_value(&blocks[0]).unwrap()[flag] == true);
+    assert!(blocks[0].raw.contains(marker));
 }
 
 #[test]
@@ -333,37 +333,28 @@ fn a_query_home_with_comments_off_contains_only_the_published_body_and_its_ids()
         fs::read_to_string(std::path::Path::new(&receipt.path).join("app/snapshot.json")).unwrap();
     assert!(
         !snapshot.contains("COMMENTMARKER"),
-        "baked query children must use the same comment projection as pages"
+        "live query children must use the same comment projection as pages"
     );
     assert!(!snapshot.contains("REPLYMARKER"));
     let snapshot: serde_json::Value = serde_json::from_str(&snapshot).unwrap();
-    fn ids(blocks: &serde_json::Value, out: &mut Vec<String>) {
-        for block in blocks.as_array().unwrap() {
-            out.push(block["id"].as_str().unwrap().to_owned());
-            ids(&block["children"], out);
-        }
-    }
-    let mut published = Vec::new();
-    for page in snapshot["pages"]
-        .as_array()
-        .unwrap()
-        .iter()
-        .filter(|page| page["path"] != "")
-    {
-        ids(&page["blocks"], &mut published);
-    }
-    let query = snapshot["queries"]
-        .as_array()
-        .unwrap()
-        .iter()
-        .find(|query| query["host"] == "Body export")
-        .unwrap();
-    let mut rows = Vec::new();
-    for group in query["result"]["groups"].as_array().unwrap() {
-        ids(&group["blocks"], &mut rows);
-    }
+    let core = snapshot_graph(&snapshot);
+    let result = run_query(
+        &core,
+        &parsed_query(&core, &request.argument, &[]),
+        Some("Body export"),
+    );
+    let tine_core::query::ir::QueryRows::Block { groups } = result.rows else {
+        panic!("expected block rows")
+    };
+    let mut rows: Vec<_> = groups.iter().flat_map(|group| &group.blocks).collect();
     assert!(!rows.is_empty());
-    assert!(rows.iter().all(|id| published.contains(id)), "each baked query row resolves to the published body after omission changes sibling positions");
+    while let Some(row) = rows.pop() {
+        assert!(
+            core.preview_block(row.id.as_str(), 100).unwrap().is_some(),
+            "live query row resolves to the published body"
+        );
+        rows.extend(&row.children);
+    }
 }
 
 #[test]

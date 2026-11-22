@@ -1,4 +1,6 @@
-//! I-12: static lists, sheet inputs/layout and baked queries use their owner.
+//! I-12: static lists, sheet inputs/layout and live queries use their owner.
+use crate::publication_sources::{parsed_query, run_query};
+use crate::quick_share::snapshot_graph;
 use serde_json::{json, Value};
 use std::fs;
 use tine_graph_features::publish::sheet_export_inputs;
@@ -69,6 +71,8 @@ fn check(query: &str, sheet: bool) {
     }
     let snap: Value =
         serde_json::from_slice(&fs::read(out.join("context/app/snapshot.json")).unwrap()).unwrap();
+    let core = snapshot_graph(&snap);
+    let corpus = core.corpus(None, true);
     for owner in ["Public", "Second"] {
         let html =
             fs::read_to_string(out.join(format!("context/{}.html", owner.to_lowercase()))).unwrap();
@@ -87,15 +91,20 @@ fn check(query: &str, sheet: bool) {
                 .next()
                 .unwrap()
         };
-        let baked = snap["queries"]
-            .as_array()
-            .unwrap()
-            .iter()
-            .find(|q| q["host"] == owner)
-            .unwrap();
-        let raw = serde_json::to_string(&baked["result"]).unwrap();
+        let page = corpus.pages.iter().find(|page| page.name == owner).unwrap();
+        let block = &page.document.roots[0];
+        let source = tine_core::query::macro_text::query_macro_extents(block.raw()).remove(0);
+        let execution = source
+            .argument
+            .replace("<% current page %>", &format!("[[{owner}]]"));
+        let live = run_query(
+            &core,
+            &parsed_query(&core, &execution, &block.properties()),
+            Some(owner),
+        );
+        let raw = serde_json::to_string(&live.rows).unwrap();
         for text in ["from second", "from third"] {
-            assert_eq!(result.contains(text), raw.contains(text), "I-12: static and baked query answers agree for {owner}; exemplar render_query_cache.rs");
+            assert_eq!(result.contains(text), raw.contains(text), "I-12: static and source query answers agree for {owner}; exemplar render_query_cache.rs");
         }
         assert!(result.contains(if owner == "Public" {
             "from second"
@@ -110,25 +119,25 @@ fn check(query: &str, sheet: bool) {
 }
 
 #[test]
-fn current_page_queries_match_baked_publication_context() {
+fn current_page_queries_match_source_publication_context() {
     let _integration_guard = crate::integration_lock();
     check("{:query [:find (pull ?b [*]) :in $ ?current-page :where [?p :block/name ?current-page] [?b :block/refs ?p] [?b :block/marker \"TODO\"]] :inputs [:current-page]}", false);
 }
 
 #[test]
-fn current_page_sheets_match_baked_publication_context() {
+fn current_page_sheets_match_source_publication_context() {
     let _integration_guard = crate::integration_lock();
     check("(and (task TODO) <% current page %>)", true);
 }
 
 #[test]
-fn current_page_advanced_map_sheets_match_baked_publication_context() {
+fn current_page_advanced_map_sheets_match_source_publication_context() {
     let _integration_guard = crate::integration_lock();
     check("{:query [:find (pull ?b [*]) :in $ ?current-page :where [?p :block/name ?current-page] [?b :block/refs ?p] [?b :block/marker \"TODO\"]] :inputs [:current-page]}", true);
 }
 
 #[test]
-fn current_page_template_substitution_is_shared_by_lists_sheets_and_baked_queries() {
+fn current_page_template_substitution_agrees_in_lists_sheets_and_source_queries() {
     let _integration_guard = crate::integration_lock();
     for sheet in [false, true] {
         check("(and (task TODO) <% current page %>)", sheet);
@@ -186,39 +195,39 @@ fn published_query_keys_preserve_authored_table_and_tine_views() {
     publish_live(&store, &out, "Views", false, true, &bundle).unwrap();
     let snapshot: Value =
         serde_json::from_slice(&fs::read(out.join("views/app/snapshot.json")).unwrap()).unwrap();
-    let records = snapshot["queries"].as_array().unwrap();
-    assert_eq!(records.len(), cases.len());
-    for (argument, properties, legacy_table) in cases {
-        let expected: Vec<_> = properties
-            .lines()
-            .filter_map(|line| line.trim().split_once(":: "))
-            .collect();
-        let record = records
-            .iter()
-            .find(|record| {
-                record["argument"] == argument && record["properties"] == json!(expected)
-            })
-            .expect("bake precisely the request the macro parser receives");
-        assert_eq!(
-            record["parsed"]["legacy_table"].as_bool().unwrap_or(false),
-            legacy_table
-        );
-        assert_eq!(record["result"]["total"], 2);
-        assert!(!record["result"].to_string().contains("secret"));
-    }
-    let public = snapshot["pages"]
-        .as_array()
-        .unwrap()
+    let core = snapshot_graph(&snapshot);
+    let corpus = core.corpus(None, true);
+    let public = corpus
+        .pages
         .iter()
-        .find(|p| p["name"] == "Public")
+        .find(|page| page.name == "Public")
         .unwrap();
-    assert!(public["blocks"][1]["raw"]
-        .as_str()
-        .unwrap()
+    assert_eq!(public.document.roots.len(), cases.len());
+    for (block, (argument, properties, legacy_table)) in public.document.roots.iter().zip(cases) {
+        let source = tine_core::query::macro_text::query_macro_extents(block.raw()).remove(0);
+        assert_eq!(source.argument, argument);
+        for property in properties.lines() {
+            let (key, value) = property.trim().split_once(":: ").unwrap();
+            assert_eq!(
+                block.property(key).as_deref(),
+                Some(value),
+                "{key}: {}",
+                block.raw()
+            );
+        }
+        let parsed = parsed_query(&core, &source.argument, &block.properties());
+        assert_eq!(parsed.legacy_table, legacy_table);
+        let result = run_query(&core, &parsed, Some("Public"));
+        assert_eq!(result.total, 2);
+        assert!(!serde_json::to_string(&result.rows)
+            .unwrap()
+            .contains("secret"));
+    }
+    assert!(public.document.roots[1]
+        .raw()
         .contains("query-properties:: [:owner :block]"));
-    assert!(public["blocks"][1]["raw"]
-        .as_str()
-        .unwrap()
+    assert!(public.document.roots[1]
+        .raw()
         .contains("query-sort-desc:: false"));
     store.close();
 }

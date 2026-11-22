@@ -1,4 +1,52 @@
-# Quick share, generation 1
+# Quick share
+
+## Generation 2
+
+The share link is `https://tine.page/s/2/<login>/<gist_id>#<key>`.
+Page and block permalinks follow the key in the fragment as in generation 1.
+The gist files, envelope bytes, keys, encryption and compression follow
+generation 1. The location identifies a secret gist. The key and permalink
+stay in the fragment.
+
+The UTF-8 document is `{"quick_share":2,"snapshot":S}`, where
+`S` is `{"schema":2,"name":"…","exported_at":"…","files":[{"path":"…","text":"…"}]}`.
+`exported_at` is RFC 3339 UTC. Each path is graph-relative. Each selected page
+carries the text used by the private build graph, with excluded comment
+threads already removed. The build checks that its file set reads back as
+exactly the selected pages plus any generated home. The browser core loads
+these files and answers reads over that graph. Shared documents and their
+reading configuration determine every answer. An unshared page has no
+influence. Queries run in the viewer, so relative dates use the viewing day.
+Assets, stored answers and baked query results are outside the document.
+
+`logseq/config.edn` carries the authored spans for page and journal
+directories, journal title and filename formats (including `:date-formatter`),
+preferred format, filename format, hidden block properties, comma-separated
+properties, property pages, ignored reference keywords and start of week.
+The macro map carries only definitions for calls parsed in the shared pages.
+The field classification test covers every `Config` field. `:default-home`
+names the shared page or the ordinary generated page listing the shared pages.
+This is the same snapshot used for folder exports, documented in
+`export-definitions.md`.
+
+The writer admits 200 selected pages plus a generated home, 200,000 blocks,
+256 query calls, 1 MiB per source string, 32 MiB of document JSON, 6 MiB gzip
+and 8 MiB envelope text. The core admits the file and block structure. The viewer bounds the
+envelope and fetch responses before decoding, authenticates before gunzipping,
+and validates the source document before constructing the browser graph.
+
+A source whose page identity or reading settings change on reopening refuses
+publication. This covers defective serialization and an incomplete reading
+setting in `config.edn`. Correct the source or configuration and review again.
+
+`tests/fixtures/quick-share/g2/` covers the pages selection, page queries,
+excluded comments and reduced configuration. The deployed `/s/2/` viewer
+must render the writer fixtures before generation-2 links can be created or a
+release can ship. Each generation has its own viewer pin and retained assets.
+
+## Generation 1
+
+Generation 1 is frozen with its pinned viewer. The current writer emits generation 2.
 
 A quick share is an encrypted copy of some pages in a secret GitHub gist, read
 in a browser at `https://tine.page/s/1/`. This contract fixes what generation 1

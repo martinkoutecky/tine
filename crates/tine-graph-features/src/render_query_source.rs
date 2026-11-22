@@ -67,9 +67,28 @@ pub(super) fn restore(blocks: &mut [Block], raw: &str) -> QuerySources {
     if within_limit && extents.is_empty() {
         return Ok(Vec::new());
     }
-    let mut recognized = Vec::new();
     // parse_block prepends two bytes to raw.trim_start() in both formats.
     let lead = raw.len() - raw.trim_start().len();
+    let mut recognized = Vec::new();
+    visit_inlines(blocks, |inlines| {
+        if !within_limit
+            && inlines.iter().any(|inline| {
+                matches!(inline, Inline::Macro { name, .. }
+                    if tine_core::query::macro_text::is_query_macro_name(name))
+            })
+        {
+            return Err("query block exceeds the query source limit");
+        }
+        restore_arguments(inlines, &extents, lead, &mut recognized);
+        Ok(())
+    })?;
+    Ok(recognized)
+}
+
+pub(super) fn visit_inlines<E>(
+    blocks: &mut [Block],
+    mut visit: impl FnMut(&mut [Inline]) -> Result<(), E>,
+) -> Result<(), E> {
     enum Node<'a> {
         Block(&'a mut Block),
         Item(&'a mut ListItem),
@@ -100,15 +119,7 @@ pub(super) fn restore(blocks: &mut [Block], raw: &str) -> QuerySources {
                 todo.extend(item.items.iter_mut().map(Node::Item));
             }
             Node::Inlines(inlines) => {
-                if !within_limit
-                    && inlines.iter().any(|inline| {
-                        matches!(inline, Inline::Macro { name, .. }
-                            if tine_core::query::macro_text::is_query_macro_name(name))
-                    })
-                {
-                    return Err("query block exceeds the query source limit");
-                }
-                restore_arguments(inlines, &extents, lead, &mut recognized);
+                visit(inlines)?;
                 for inline in inlines {
                     match inline {
                         Inline::Emphasis { children, .. }
@@ -122,7 +133,7 @@ pub(super) fn restore(blocks: &mut [Block], raw: &str) -> QuerySources {
             }
         }
     }
-    Ok(recognized)
+    Ok(())
 }
 
 fn restore_arguments(

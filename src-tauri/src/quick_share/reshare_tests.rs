@@ -13,7 +13,12 @@ fn payload() -> Vec<u8> {
 
 #[test]
 fn reshare_preserves_link_and_key_uses_fresh_nonce_and_previews_membership() {
-    run_update_case(200, false);
+    run_update_case(200, false, 1);
+}
+
+#[test]
+fn reshare_refuses_to_replace_a_generation_one_gist_with_generation_two() {
+    run_update_case(200, false, share::GENERATION);
 }
 
 #[test]
@@ -33,12 +38,12 @@ fn membership_compares_page_identity_not_spelling() {
 #[test]
 fn reshare_refusals_and_unknown_outcomes_never_retry_or_replace_records() {
     for code in [401, 403, 404, 410, 429, 500, 596, 597, 598, 599, 201] {
-        run_update_case(code, false);
+        run_update_case(code, false, 1);
     }
-    run_update_case(200, true);
+    run_update_case(200, true, 1);
 }
 
-fn run_update_case(code: u16, changed: bool) {
+fn run_update_case(code: u16, changed: bool, replacement_generation: u32) {
     let original = share::seal_fresh(&payload()).unwrap();
     let envelope = original.envelope.clone();
     let gist_id = "1234567890abcdef1234567890abcdef";
@@ -102,6 +107,7 @@ fn run_update_case(code: u16, changed: bool) {
         .update_shares(|rows| rows.push(row.clone()))
         .unwrap();
     let id = f.prepared(&payload());
+    f.service.prepared.lock().unwrap()[0].generation = replacement_generation;
     let result = PrepareResult {
         prepare_id: id.clone(),
         share_id: "unused".into(),
@@ -119,7 +125,15 @@ fn run_update_case(code: u16, changed: bool) {
             envelope_bytes: 1,
         },
     };
-    let preview = block_on(f.service.review_update(result, &row.share_id)).unwrap();
+    let preview = block_on(f.service.review_update(result, &row.share_id));
+    if replacement_generation != 1 {
+        assert_eq!(preview.unwrap_err(), QsError::Disabled);
+        assert_eq!(mock.count("PATCH", "/gists/"), 0);
+        assert!(f.service.prepared.lock().unwrap().is_empty());
+        assert_eq!(f.rows(), [row]);
+        return;
+    }
+    let preview = preview.unwrap();
     assert_eq!(preview.share_id, row.share_id);
     let diff = preview.membership.unwrap();
     assert_eq!(diff.added, ["New member"]);
@@ -139,7 +153,7 @@ fn run_update_case(code: u16, changed: bool) {
         assert_eq!(mock.count("PATCH", "/gists/"), 0);
     } else if code == 200 {
         assert_eq!(result.unwrap().gist_id, gist_id);
-        assert_eq!(link, share::link(LOGIN, gist_id, &original.key));
+        assert_eq!(link, generation_one_link(LOGIN, gist_id, &original.key));
         let req = mock
             .requests()
             .into_iter()

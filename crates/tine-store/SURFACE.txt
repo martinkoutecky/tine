@@ -58,6 +58,7 @@ fn root_binding::Store::check_graph_root
 fn store::GraphAccessInspection::approves_external_assets
 fn store::Store::open
 fn store::WholeGraph::subgraph
+# Publication retains the serialized bytes through a parameter on subgraph.
 # Browser core slice 3 (D-20261122-WEX; 31 -> 32): WholeGraph::from_files builds the view of a
 # graph's files held in memory, config.edn among them: the browser's graph, which has no live view
 # for `subgraph` to start from and no directory for `Store::open`.
@@ -207,13 +208,16 @@ fn store::Store::whole_graph
 fn store::Store::whole_graph_reconciled
 struct store::PageRead
 
-## Config (ceiling: 6)
+## Config (ceiling: 7)
 field store::ConfigState.config
 field store::ConfigState.problem
 field store::ConfigState.assets_directory_name
 field store::ConfigState.asset_trash_location
 fn store::Store::config
 struct store::ConfigState
+# Browser core slice 4 (D-20261122-G2S): effective Config values cannot answer
+# the authored EDN spans. ConfigState exposes the same capture's source.
+fn store::ConfigState::source
 
 # Step 3b P2b: the old save engine's Store::save_pages and SavePagesOutcome are
 # deleted; page saves are the page host's (STEP3 §12; 7 -> 5).
@@ -408,15 +412,13 @@ field restore::RestoreFailed.phase
 field restore::RestoreFailed.cause
 field restore::RestoreFailed.done
 
-## WholeGraph: Names (ceiling: 34)
+## WholeGraph: Names (ceiling: 35)
 # CLI export extends corpus's selection parameter to indexed block-ID candidate
 # pages. A page name cannot identify those pages; CorpusScope types that existing
 # parameter. No Store operation or WholeGraph question is added.
 enum store::CorpusScope
 # CLI read handles use InventoryScope::File(PageId) on the existing inventory
 # question: one named file via the existing page-position map, no new operation.
-# Batch 19: PublishedV1Spellings(All) uses this same inventory question for
-# frozen v1 lookup rows missing from entity All; no new operation or classifier.
 enum store::InventoryScope
 enum store::Resolved
 field store::InventoryEntry.name
@@ -444,6 +446,11 @@ field store::LinkTarget.name
 field store::LinkTarget.is_journal
 # test-oracle: the conformance harnesses (tine-store, and tine-graph-features sharing them) ask the link answer for names the inventory does not list; production reads InventoryEntry.link.
 fn store::WholeGraph::link_target
+# Browser core slice 4: resolve gives a file or alias and a link also gives a
+# proposed day. A publication must distinguish a referenced virtual day from
+# a proposed destination to leave existing links intact. This predicate uses
+# both answers and an indexed reference lookup, with no second inventory.
+fn store::WholeGraph::publication_home_name_taken
 # R13-C4 retires content-dependent owner routing in navigation and rename.
 fn store::WholeGraph::complete_page_names
 # GH #623: the rename planner asks for the page files under one key through
