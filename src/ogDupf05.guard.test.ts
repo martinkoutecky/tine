@@ -11,10 +11,8 @@ it("I-12: page keys and canonical group tokens have one native owner, shared wit
   expect(group, "I-12: canonicalGroupField uses query/group_field.rs via WASM").toContain("canonical_group_field(value)");
   expect(group).not.toContain("QUERY_COLUMN_BUILTINS");
   expect(group).not.toContain('value.trim()');
-  expect(wasm).toContain('mod page_identity;');
-  expect(wasm).toContain('mod group_field;');
-  expect(wasm).toContain('page_identity::page_key(name)');
-  expect(wasm).toContain('group_field::canonical_group_token(value)');
+  expect(wasm).toContain('tine_core::refs::page_key(name)');
+  expect(wasm).toContain('tine_core::query::view::canonical_group_token(value)');
   expect(read("crates/tine-core/src/refs.rs")).toContain('pub use page_identity::page_key;');
   expect(read("crates/tine-core/src/query/view.rs")).toContain('group_field::canonical_group_token(value).map(Field::new)');
 });

@@ -17,7 +17,7 @@ describe("OG-R4A shared boundaries", () => {
     for (const file of ["src/editor/edn.ts", "src/render/beginQuery.ts"]) {
       expect(source(file), "I-12: EDN readers belong to query_edn.rs via wasm").not.toMatch(/function (strClose|pageRefEnd|balancedEnd|valueEnd|stringEnd|tokenEnd|skipTrivia)\(/);
     }
-    expect(source("crates/lsdoc-wasm/src/lib.rs")).toContain('tine-core/src/query_edn.rs');
+    expect(source("crates/lsdoc-wasm/src/lib.rs")).toContain('tine_core::query_edn::options(source)');
     expect(source("crates/tine-core/src/query/macro_text.rs")).toContain("crate::query_edn::options");
   });
 });

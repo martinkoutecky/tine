@@ -14,7 +14,7 @@ it(rule + " for asset paths and MIME", () => {
   const native = source("src-tauri/src/media_protocol.rs");
   expect(native, rule).not.toContain("fn mime(");
   expect(native, rule).toContain("media_mime::from_path");
-  expect(source("crates/lsdoc-wasm/src/lib.rs"), rule).toContain('../../tine-core/src/media_mime.rs');
+  expect(source("crates/lsdoc-wasm/src/lib.rs"), rule).toContain('tine_core::media_mime::from_path(path)');
 });
 
 it(rule + " for permalink identity", () => {

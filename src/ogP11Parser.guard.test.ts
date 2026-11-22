@@ -124,7 +124,7 @@ describe("OG-P12 parser-owned properties, references and header spans", () => {
     expect(frontend).not.toMatch(/decode_page_name|lastIndexOf|new RegExp|\.indexOf\(|\.match(?:All)?\(|\.exec\(|\.test\(/);
     // A block's page references are the evidence's own walk, in wasm too.
     expect(readFileSync("src/components/blockSwipeWiring.ts", "utf8")).toContain("block_reference_names(raw,");
-    expect(readFileSync("crates/lsdoc-wasm/src/lib.rs", "utf8")).toContain('#[path = "../../tine-core/src/reference_evidence/walk.rs"]');
+    expect(readFileSync("crates/lsdoc-wasm/src/lib.rs", "utf8")).toContain("tine_core::reference_evidence::project_with_config(");
     const native = readFileSync("crates/tine-core/src/reference_evidence/walk.rs", "utf8");
     expect(native).toContain("super::block_regions::reference_target_name(");
     expect(native).not.toMatch(/fn nested_names|fn local_asset/);
