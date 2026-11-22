@@ -74,6 +74,8 @@ pub(crate) struct Placement {
 
 const DEFAULT_SIZE: (f64, f64) = (900.0, 760.0);
 const MIN_SIZE: (f64, f64) = (360.0, 280.0);
+#[cfg(desktop)]
+pub(crate) const GRAPH_WINDOW_MIN_SIZE: (f64, f64) = (390.0, 480.0);
 const MAX_SIDE: f64 = 16_384.0;
 /// How much of a window's title strip must lie on a monitor to keep its
 /// saved position (a sliver past a screen edge is unreachable for a drag).
@@ -421,6 +423,8 @@ pub(crate) fn take_main_config(
         .windows
         .iter_mut()
         .find(|window| window.label == "main")?;
+    main.min_width = Some(GRAPH_WINDOW_MIN_SIZE.0);
+    main.min_height = Some(GRAPH_WINDOW_MIN_SIZE.1);
     let config = main.clone();
     main.create = false;
     Some(config)
@@ -551,6 +555,14 @@ pub(crate) fn page_load(webview: &tauri::Webview, payload: &tauri::webview::Page
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[cfg(desktop)]
+    #[test]
+    fn main_window_can_resize_to_a_narrow_side_pane() {
+        let mut context = tauri::generate_context!();
+        let main = take_main_config(&mut context).expect("configured main window");
+        assert_eq!((main.min_width, main.min_height), (Some(390.0), Some(480.0)));
+    }
 
     /// Launched only by scripts/e2e-workspace-flight-hang.mjs through a wrapper
     /// around this test executable. The script supplies scratch HOME/XDG.
