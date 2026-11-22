@@ -3,11 +3,13 @@
 //! cross wasm-bindgen as errors.
 
 use serde::{Deserialize, Serialize};
+use tine_core::model::PageKind;
 use tine_core::query::ir::{FriendlyPageMatchScope, ViewSettings};
 use tine_core::query::wire_parse::QueryTextDialect;
+use tine_graph_features::page_read_wire::{self, PageSource};
 use tine_graph_features::{graph_read_wire as read, inventory_wire as inventory};
 use tine_graph_features::{query_error_wire, query_wire, search};
-use tine_store::{Cancel, WholeGraph};
+use tine_store::{Cancel, PageId, WholeGraph};
 use wasm_bindgen::prelude::*;
 
 #[wasm_bindgen]
@@ -70,6 +72,44 @@ impl BrowserGraph {
 
     pub fn page_alias_group_json(&self, name: &str) -> Result<String, JsValue> {
         wire(inventory::alias_group_wire(&self.view, name))
+    }
+
+    pub fn get_page_json(&self, name: &str, journal: bool) -> Result<String, JsValue> {
+        let kind = if journal {
+            PageKind::Journal
+        } else {
+            PageKind::Page
+        };
+        wire(
+            page_read_wire::get_page(PageSource::View(&self.view), name, kind)
+                .map_err(|error| js_error(format!("{error:?}")))?,
+        )
+    }
+
+    pub fn get_page_by_path_json(&self, path: &str) -> Result<String, JsValue> {
+        wire(
+            page_read_wire::get_page_by_path(PageSource::View(&self.view), PageId::from(path))
+                .map_err(|error| js_error(format!("{error:?}")))?,
+        )
+    }
+
+    pub fn journal_feed_page_json(
+        &self,
+        limit: usize,
+        before_day: Option<i64>,
+        wait_for_references: bool,
+        through_day: Option<i64>,
+    ) -> Result<String, JsValue> {
+        wire(
+            page_read_wire::journal_feed_page(
+                PageSource::View(&self.view),
+                limit,
+                before_day,
+                through_day,
+                wait_for_references,
+            )
+            .map_err(js_error)?,
+        )
     }
 
     pub fn journal_content_days_json(&self) -> Result<String, JsValue> {

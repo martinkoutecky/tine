@@ -14,6 +14,15 @@ impl<'a> From<Option<&'a str>> for CorpusScope<'a> {
 }
 
 impl WholeGraph {
+    /// The parsed document at this exact graph-relative path, including a
+    /// physical claimant that does not open by name. One indexed lookup and
+    /// O(page bytes + blocks) for projection. A missing document returns
+    /// None. The captured read has no live save revision or file I/O.
+    pub fn page(&self, id: &PageId) -> Option<PageDto> {
+        let (_, (entry, document)) = self.graph.parsed_page(id.as_str())?;
+        Some(crate::model::page_parse::page_dto(entry, document))
+    }
+
     /// Return an owned `Corpus` of pages in this view for evaluation: every
     /// page for `None`; for `Some(name)`, the parsed pages whose Logseq
     /// identity (`refs::page_key`) is `name`'s, ordinary pages and journals

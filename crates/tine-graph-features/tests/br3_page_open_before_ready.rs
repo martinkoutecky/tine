@@ -5,14 +5,14 @@
 use std::sync::{mpsc, Arc};
 use std::time::Duration;
 use tine_core::model::PageKind;
-use tine_graph_features::pages::get_page;
-use tine_store::{OpenOptions, PageRead, Store};
+use tine_graph_features::page_read_wire::{get_page, PageSource, PageWire};
+use tine_store::{OpenOptions, Store};
 
-fn ask(store: &Arc<Store>, name: &str) -> mpsc::Receiver<Option<PageRead>> {
+fn ask(store: &Arc<Store>, name: &str) -> mpsc::Receiver<Option<PageWire>> {
     let (send, receive) = mpsc::channel();
     let (store, name) = (Arc::clone(store), name.to_owned());
     std::thread::spawn(move || {
-        let _ = send.send(get_page(&store, &name, PageKind::Page).unwrap());
+        let _ = send.send(get_page(PageSource::Live(&store), &name, PageKind::Page).unwrap());
     });
     receive
 }
@@ -84,7 +84,8 @@ fn an_unclaimed_journal_day_is_absent_before_ready_and_aliases_never_claim_it() 
         let (send, receive) = mpsc::channel();
         let (store, name) = (Arc::clone(&store), name.to_owned());
         std::thread::spawn(move || {
-            let _ = send.send(get_page(&store, &name, PageKind::Journal).unwrap());
+            let _ =
+                send.send(get_page(PageSource::Live(&store), &name, PageKind::Journal).unwrap());
         });
         receive
     };
@@ -117,9 +118,13 @@ fn an_unclaimed_journal_day_is_absent_before_ready_and_aliases_never_claim_it() 
         "journals/2026_10_18.md"
     );
     store.whole_graph().unwrap();
-    assert!(get_page(&store, "Oct 19th, 2026", PageKind::Journal)
-        .unwrap()
-        .is_none());
+    assert!(get_page(
+        PageSource::Live(&store),
+        "Oct 19th, 2026",
+        PageKind::Journal
+    )
+    .unwrap()
+    .is_none());
     let tine_store::Resolved::Absent { id: resolved } =
         store.whole_graph().unwrap().resolve("Oct 19th, 2026", true)
     else {

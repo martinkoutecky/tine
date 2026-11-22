@@ -13,12 +13,15 @@ export class BrowserGraph {
     get_backlinks_json(name: string): string;
     get_block_ref_counts_json(): string;
     get_block_referrers_json(uuid: string): string;
+    get_page_by_path_json(path: string): string;
+    get_page_json(name: string, journal: boolean): string;
     get_unlinked_refs_json(name: string): string;
     /**
      * The effective metadata of the desktop `load_graph` answer.
      */
     graph_meta_json(): string;
     journal_content_days_json(): string;
+    journal_feed_page_json(limit: number, before_day: bigint | null | undefined, wait_for_references: boolean, through_day?: bigint | null): string;
     /**
      * `files[i]` holds the bytes of the graph-relative `paths[i]`,
      * `logseq/config.edn` among them. Throws (a string) what the desktop open
@@ -449,9 +452,12 @@ export interface InitOutput {
     readonly browsergraph_get_backlinks_json: (a: number, b: number, c: number) => [number, number, number, number];
     readonly browsergraph_get_block_ref_counts_json: (a: number) => [number, number, number, number];
     readonly browsergraph_get_block_referrers_json: (a: number, b: number, c: number) => [number, number, number, number];
+    readonly browsergraph_get_page_by_path_json: (a: number, b: number, c: number) => [number, number, number, number];
+    readonly browsergraph_get_page_json: (a: number, b: number, c: number, d: number) => [number, number, number, number];
     readonly browsergraph_get_unlinked_refs_json: (a: number, b: number, c: number) => [number, number, number, number];
     readonly browsergraph_graph_meta_json: (a: number) => [number, number, number, number];
     readonly browsergraph_journal_content_days_json: (a: number) => [number, number, number, number];
+    readonly browsergraph_journal_feed_page_json: (a: number, b: number, c: number, d: bigint, e: number, f: number, g: bigint) => [number, number, number, number];
     readonly browsergraph_new: (a: number, b: number, c: number, d: number) => [number, number, number];
     readonly browsergraph_page_alias_group_json: (a: number, b: number, c: number) => [number, number, number, number];
     readonly browsergraph_page_backlink_counts_json: (a: number) => [number, number, number, number];

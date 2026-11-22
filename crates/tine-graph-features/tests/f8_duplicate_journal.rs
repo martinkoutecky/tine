@@ -583,10 +583,15 @@ fn opening_the_day_by_title_reads_the_file_the_queue_object_names() {
     store.refresh(tine_store::Depth::Stamps).unwrap();
     let queue = conflicts::conflict_inventory(&store).unwrap().queue;
     let object = day(&queue).expect("queued");
-    let read = tine_graph_features::pages::get_page(&store, &object.page_name, PageKind::Journal)
-        .ok()
-        .flatten()
-        .expect("the day opens");
+    use tine_graph_features::page_read_wire::{get_page, PageSource};
+    let read = get_page(
+        PageSource::Live(&store),
+        &object.page_name,
+        PageKind::Journal,
+    )
+    .ok()
+    .flatten()
+    .expect("the day opens");
     assert_eq!(read.id.as_str(), object.page_path);
     let _ = fs::remove_dir_all(&root);
 }

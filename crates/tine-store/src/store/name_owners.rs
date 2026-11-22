@@ -6,7 +6,26 @@
 //! answer and asks the same rule, so it cannot disagree with the resolver.
 use super::*;
 
+impl Resolved {
+    /// The opening owner of an already resolved name. O(1), no reads.
+    pub fn page_owner(&self) -> Option<&PageId> {
+        match self {
+            Self::Existing { id, .. } => Some(id),
+            Self::Alias { owners } => owners.first(),
+            Self::Absent { .. } => None,
+        }
+    }
+}
+
 impl WholeGraph {
+    /// The file a name opens in this view, if any. Cost as [Self::resolve],
+    /// with no document or disk read.
+    pub fn page_owner(&self, name: &str, kind: PageKind) -> Option<PageId> {
+        self.resolve(name, kind == PageKind::Journal)
+            .page_owner()
+            .cloned()
+    }
+
     /// The inputs [`Self::resolve`] decides `name` from (as an ordinary
     /// name), the declarers included even when a file claims it. Cost: as
     /// `resolve`, plus the alias lookup and the day's spellings.
@@ -115,14 +134,26 @@ impl WholeGraph {
         let config = &self.config.config;
         // A day with no file gets a new one in the journals directory
         // (D-20261111-CMR14 CM-DAYFILE).
-        if crate::model::claim_lookup(&self.journal_format, name, kind).kind == PageKind::Journal {
-            let stem = self
-                .journal_format
-                .parse(name)
-                .map(|date| self.journal_format.file_stem(date))
-                .unwrap_or_else(|| name.to_owned());
-            return proposed_journal_id(config, stem);
+        let lookup = crate::model::claim_lookup(&self.journal_format, name, kind);
+        if lookup.kind == PageKind::Journal {
+            return lookup.day.map_or_else(
+                || self.journal_path_for_stem(name.to_owned()),
+                |day| self.proposed_journal_file(Day(day)),
+            );
         }
         inventory::proposed_page_id(config, name)
+    }
+
+    /// The proposed file for an exact day, before considering any claimant.
+    /// O(path bytes), with no index or disk read.
+    pub fn proposed_journal_file(&self, day: Day) -> PageId {
+        self.journal_path_for_stem(
+            self.journal_format
+                .file_stem(JournalDate::from_ordinal(day.0)),
+        )
+    }
+
+    fn journal_path_for_stem(&self, stem: String) -> PageId {
+        proposed_journal_id(&self.config.config, stem)
     }
 }

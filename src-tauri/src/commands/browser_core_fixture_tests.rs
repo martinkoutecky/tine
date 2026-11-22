@@ -5,6 +5,7 @@ use serde_json::Value;
 use tine_core::query::ir::ExecutionContext;
 use tine_core::query::wire_parse::QueryTextDialect;
 use tine_graph_features::inventory_wire::page_backlink_counts_wire;
+use tine_graph_features::page_read_wire;
 use tine_graph_features::query_wire;
 use tine_graph_features::search::{self, SearchLanes};
 use tine_store::Cancel;
@@ -62,6 +63,31 @@ fn browser_core_command_wires() {
         resolve_name(&view, "Team/Child", false)
     );
     record!("page_alias_group", alias_group_wire(&view, "Shortcut"));
+    let source = || PageSource::Live(&store);
+    record!(
+        "get_page",
+        page_read_wire::get_page(source(), "Shortcut", PageKind::Page).unwrap()
+    );
+    record!(
+        "get_page_by_path",
+        page_read_wire::get_page_by_path(source(), PageId::from("pages/Notes.org".to_owned()))
+            .unwrap()
+    );
+    for (name, before) in [
+        ("journal_feed_page", None),
+        ("journal_feed_page_before", Some(20260627)),
+    ] {
+        let mut feed = page_read_wire::journal_feed_page(source(), 1, before, None, true).unwrap();
+        assert_eq!(
+            feed.as_of_day,
+            tine_core::date::JournalDate::today().ordinal_key()
+        );
+        let wire = fixture["expected"][name].as_str().unwrap();
+        feed.as_of_day = serde_json::from_str::<Value>(wire).unwrap()["as_of_day"]
+            .as_i64()
+            .unwrap();
+        record(name, serde_json::to_string(&feed).unwrap());
+    }
     record!(
         "journal_content_days",
         graph_read_wire::journal_content_days(&view)

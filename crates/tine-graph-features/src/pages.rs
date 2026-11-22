@@ -47,8 +47,8 @@ impl RenamePlan {
     }
 }
 use tine_store::{
-    Area, FileId, FileRev, Input, LoadError, PageHost, PageId, PageRead, RenameMap, Resolved,
-    Store, StoreError, TitleRebind,
+    Area, FileId, FileRev, Input, LoadError, PageHost, PageId, RenameMap, Resolved, Store,
+    StoreError, TitleRebind,
 };
 
 /// A page read or OS source selection failed at the load, identity, or file step.
@@ -56,20 +56,7 @@ use tine_store::{
 pub enum PageReadError {
     Load(LoadError),
     Store(StoreError),
-    EmptyAlias,
     Source(String),
-}
-
-/// Resolve a page name or alias and read its current file through the
-/// store's one page-by-name door, `Store::page_named` (which opens a page
-/// some file is named for before the graph is ready, GH #623). Cost
-/// O(index lookup + page bytes).
-pub fn get_page(
-    store: &Store,
-    name: &str,
-    kind: PageKind,
-) -> Result<Option<PageRead>, PageReadError> {
-    store.page_named(name, kind).map_err(PageReadError::Store)
 }
 
 /// Select a source identity and validate the existing OS hand-off path.
@@ -103,10 +90,11 @@ pub fn source_path_for_os_handoff(
             .map_err(PageReadError::Load)?
             .resolve(name, kind == PageKind::Journal)
         {
-            Resolved::Existing { id, .. } | Resolved::Absent { id } => id,
-            Resolved::Alias { owners } => {
-                owners.into_iter().next().ok_or(PageReadError::EmptyAlias)?
-            }
+            Resolved::Absent { id } => id,
+            opened => opened
+                .page_owner()
+                .expect("resolved page has an owner")
+                .clone(),
         }
     };
     store

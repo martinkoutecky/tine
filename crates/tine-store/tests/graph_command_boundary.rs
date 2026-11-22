@@ -166,8 +166,8 @@ fn second_store_call_is_detected() {
     assert!(scan(planted).contains(&"bad: more than one store/client call".into()));
     let clients = r#"#[tauri::command]
         fn bad(state: GraphContext<'_>) {
-            let _ = tine_graph_features::pages::get_page(&slot.store, "A", kind);
-            let _ = tine_graph_features::pages::get_page(&slot.store, "B", kind);
+            let _ = tine_graph_features::page_read_wire::get_page(PageSource::Live(&slot.store), "A", kind);
+            let _ = tine_graph_features::page_read_wire::get_page(PageSource::Live(&slot.store), "B", kind);
         }"#;
     assert!(scan(clients).contains(&"bad: more than one store/client call".into()));
 }

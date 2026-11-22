@@ -18,6 +18,7 @@ fn absent_journal_proposals_share_the_path_rule() {
                 panic!("fixture day is absent")
             };
             assert_eq!(id, from_day);
+            assert_eq!(view.proposed_journal_file(Day(20260930)), from_day);
             assert_eq!(id.as_str(), format!("diary/{stem}.{ext}"));
             let Resolved::Absent { id } = view.resolve("not-a-day", true) else {
                 panic!("absent invalid name")

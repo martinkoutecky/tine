@@ -8,7 +8,7 @@
 //! must not refuse the graph.
 use std::fs;
 use tine_core::model::PageKind;
-use tine_graph_features::pages;
+use tine_graph_features::page_read_wire::{get_page, PageSource};
 use tine_store::{InventoryScope, Store};
 
 fn graph(files: &[(&str, &str)]) -> (tempfile::TempDir, Store) {
@@ -44,7 +44,7 @@ fn assert_graph_serves_links(store: &Store, titled: &str) {
         ("tag", PageKind::Page, false),
     ] {
         let read = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-            pages::get_page(store, name, kind)
+            get_page(PageSource::Live(store), name, kind)
         }))
         .unwrap_or_else(|_| panic!("get_page({name:?}) panicked"));
         match read {
@@ -80,7 +80,7 @@ fn a_property_node_with_a_folded_blank_line_leaves_every_page_openable() {
         // Before Ready the file-name listing answers; it reads every
         // ordinary page's preamble too.
         let early = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-            pages::get_page(&store, "Links", PageKind::Page)
+            get_page(PageSource::Live(&store), "Links", PageKind::Page)
         }))
         .unwrap_or_else(|_| panic!("{rel}: an early get_page panicked"));
         assert!(early.is_ok(), "{rel}: {:?}", early.err());

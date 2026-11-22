@@ -10,7 +10,7 @@ use serde::Serialize;
 use std::sync::Arc;
 use tauri::{State, WebviewWindow};
 use tine_core::model::{
-    AssetInfo, BacklinkFilterContext, BacklinkFilterTarget, PageDto, PageKind, RefGroup,
+    AssetInfo, BacklinkFilterContext, BacklinkFilterTarget, PageKind, RefGroup,
 };
 use tine_graph_features::graph_read_wire::{self, AutocompleteFacetScope};
 use tine_graph_features::inventory_wire::{
@@ -38,9 +38,7 @@ fn feature_pdf_error(error: std::io::Error) -> String {
     }
 }
 
-mod page_read;
-pub(crate) use page_read::PageWire;
-use page_read::{page_dto, PagePathAnswer};
+use tine_graph_features::page_read_wire::{PagePathAnswer, PageSource, PageWire};
 fn store_error(error: StoreError) -> String {
     match error {
         StoreError::NotFound(_) => std::io::ErrorKind::NotFound.to_string(),
@@ -99,7 +97,6 @@ fn feature_page_read_error(error: tine_graph_features::pages::PageReadError) -> 
         tine_graph_features::pages::PageReadError::Load(error) => format!("{error:?}"),
         tine_graph_features::pages::PageReadError::Source(reason) => reason,
         tine_graph_features::pages::PageReadError::Store(error) => store_error(error),
-        tine_graph_features::pages::PageReadError::EmptyAlias => "alias has no owner".into(),
     }
 }
 
@@ -300,9 +297,8 @@ pub(crate) async fn get_page(
 ) -> Result<Option<PageWire>, String> {
     let slot = slot_for_context(&state)?;
     tauri::async_runtime::spawn_blocking(move || {
-        tine_graph_features::pages::get_page(&slot.store, &name, kind)
-            .map(|read| read.map(page_dto))
-            .map_err(feature_page_read_error)
+        tine_graph_features::page_read_wire::get_page(PageSource::Live(&slot.store), &name, kind)
+            .map_err(store_error)
     })
     .await
     .map_err(|error| error.to_string())?
@@ -2132,20 +2128,12 @@ pub(crate) async fn get_page_by_path(
     state: GraphContext<'_>,
 ) -> Result<PagePathAnswer, String> {
     let slot = slot_for_context(&state)?;
-    tauri::async_runtime::spawn_blocking(move || match slot.store.page(&PageId::from(path)) {
-        Ok(read) => Ok(PagePathAnswer {
-            source: Some(read.source),
-            page: Some(page_dto(read)),
-        }),
-        Err(StoreError::NotFound(source)) => Ok(PagePathAnswer {
-            source: Some(source),
-            page: None,
-        }),
-        Err(StoreError::InvalidTarget(_)) => Ok(PagePathAnswer {
-            source: None,
-            page: None,
-        }),
-        Err(error) => Err(store_error(error)),
+    tauri::async_runtime::spawn_blocking(move || {
+        tine_graph_features::page_read_wire::get_page_by_path(
+            PageSource::Live(&slot.store),
+            PageId::from(path),
+        )
+        .map_err(store_error)
     })
     .await
     .map_err(|error| error.to_string())?

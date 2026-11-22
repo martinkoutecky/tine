@@ -1,7 +1,7 @@
 use crate::test_host_writer::HostWriter;
 use std::sync::Arc;
 use tine_core::model::{BlockDto, PageDto, PageKind};
-use tine_graph_features::{assets, pages};
+use tine_graph_features::assets;
 use tine_store::{OpenOptions, PageId, Resolved, SaveBase, Store};
 
 struct Fixture(std::path::PathBuf);
@@ -68,7 +68,8 @@ fn journal_template_save_matches_master_bytes() {
     drop(writer);
     drop(store);
     let reopened = fixture.store();
-    let loaded = pages::get_page(&reopened, name, PageKind::Journal)
+    let loaded = reopened
+        .page_named(name, PageKind::Journal)
         .unwrap()
         .expect("templated journal survives reopening");
     assert_eq!(
@@ -100,11 +101,13 @@ fn page_resolution_and_force_save_preserve_the_live_revision_guard() {
     let _integration_guard = crate::integration_lock();
     let fixture = Fixture::new();
     let store = fixture.store();
-    let alias = pages::get_page(&store, "Shortcut", PageKind::Page)
+    let alias = store
+        .page_named("Shortcut", PageKind::Page)
         .unwrap()
         .unwrap();
     assert_eq!(alias.id, PageId::from("pages/Note.md"));
-    assert!(pages::get_page(&store, "Missing", PageKind::Page)
+    assert!(store
+        .page_named("Missing", PageKind::Page)
         .unwrap()
         .is_none());
 

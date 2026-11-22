@@ -193,8 +193,11 @@ fn run_graph_search_after_scope(
     let within = scope.map(|scope| match scope.path {
         Some(path) => PageId::from(path),
         None => match view.resolve(&scope.name, scope.kind == PageKind::Journal) {
-            Resolved::Existing { id, .. } | Resolved::Absent { id } => id,
-            Resolved::Alias { owners } => owners.into_iter().next().expect("alias has an owner"),
+            Resolved::Absent { id } => id,
+            opened => opened
+                .page_owner()
+                .expect("resolved page has an owner")
+                .clone(),
         },
     });
     let request = SearchRequest {
