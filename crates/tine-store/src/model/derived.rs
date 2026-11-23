@@ -326,13 +326,17 @@ impl Graph {
     /// given, is the owner's Document for them (R8): only its runtime
     /// identities are kept, and only when its content is exactly what
     /// `bytes` parse to; its content never reaches the row (REVIEW-3a4 #5,
-    /// E126). `Ok(None)` when the path is no cacheable page; `Err` when it is
+    /// E126). With none, the bytes are ones the owner did not save, and
+    /// [`kept_outline`] answers whether `row`, the page's current row
+    /// document if the caller has it, keeps its ids. Takes no cache lock.
+    /// `Ok(None)` when the path is no cacheable page; `Err` when it is
     /// one and these bytes give no row, which the caller lists unreadable.
     pub(super) fn owned_row(
         &self,
         key: &str,
         bytes: &[u8],
         saved: Option<&Document>,
+        row: Option<&Arc<Document>>,
     ) -> io::Result<Option<Row>> {
         let Some(mut entry) = self.owned_listing(key) else {
             return Ok(None);
@@ -347,6 +351,11 @@ impl Graph {
             parse_page_content(&entry, content)
         }))
         .map_err(|_| io::Error::new(io::ErrorKind::InvalidData, ParserPanicked))?;
+        if saved.is_none() {
+            if let Some(row) = kept_outline(row, &doc) {
+                return Ok(Some((entry, row, disk)));
+            }
+        }
         if let Some(saved) = saved.filter(|saved| **saved == doc) {
             carry_saved_runtime_ids(&mut doc.roots, &saved.roots);
             assign_doc_runtime_ids(&mut doc.roots, entry.rel_path_str());
@@ -398,8 +407,8 @@ impl Graph {
                 }
             }
             Source::Held(bytes) => {
-                let row =
-                    (self.held_key(&winner.path)).map(|key| self.owned_row(&key, &bytes, None));
+                let row = (self.held_key(&winner.path))
+                    .map(|key| self.owned_row(&key, &bytes, None, None));
                 let mut cache = self.derived.cache.write().unwrap();
                 match (row, cache.as_mut()) {
                     (Some(Ok(Some(row))), Some(pages)) => {
@@ -777,14 +786,16 @@ impl Graph {
                 .published()
                 .into_iter()
                 .map(|(key, bytes)| {
-                    let row = self.owned_row(&key, &bytes, None).unwrap_or_else(|error| {
-                        let rel = self.held.spellings().spelling(&key).to_string();
-                        if contained::is_parser_panic(&error) {
-                            owned_failures.push(rel.clone());
-                        }
-                        owned_unreadable.push((rel, error.to_string()));
-                        None
-                    });
+                    let row = self
+                        .owned_row(&key, &bytes, None, None)
+                        .unwrap_or_else(|error| {
+                            let rel = self.held.spellings().spelling(&key).to_string();
+                            if contained::is_parser_panic(&error) {
+                                owned_failures.push(rel.clone());
+                            }
+                            owned_unreadable.push((rel, error.to_string()));
+                            None
+                        });
                     Owned { row, key, bytes }
                 })
                 .collect();
@@ -1237,25 +1248,6 @@ impl Graph {
         // `cache_upsert`.
         self.move_generation(guard.is_none(), &[&entry.path]);
         drop(guard);
-    }
-
-    /// The reconcile found these bytes' document unchanged, but they may
-    /// still carry an anchor line the cached bytes did not (parsing
-    /// normalizes some lines). The flag may only err toward true, so raise
-    /// it, for a row whose bytes are the file's.
-    pub(super) fn raise_vcs_anchor(&self, path: &Path, content: &str) {
-        if !tine_core::concord_queue::has_vcs_anchor(content.as_bytes()) {
-            return;
-        }
-        let _cache = self.derived.cache.write().unwrap();
-        // Only for a cached row ("an entry exists IFF cached").
-        if self.derived.disk_revs.read().unwrap().contains_key(path) && self.disk_sourced(path) {
-            self.derived
-                .vcs_anchored
-                .write()
-                .unwrap()
-                .insert(path.to_path_buf());
-        }
     }
 
     /// Install `pages` as a test graph's cache and listing.

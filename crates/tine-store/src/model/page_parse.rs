@@ -63,6 +63,21 @@ pub(super) fn parse_page_content(e: &PageEntry, content: &str) -> (Document, Dis
     (doc, rev)
 }
 
+/// Whether bytes the owner did not save keep the page's runtime ids: they do
+/// when `parsed`, their parse, holds the outline of `row`, the page's row
+/// document (`Document` equality ignores ids, the equality a publication's
+/// page delta compares). Then no page change is published, so no block id
+/// may move to another block, and the row's document stays the page's
+/// (`Some`). Otherwise the blocks keep `parsed`'s positional ids. Bytes that
+/// differ only in line terminators or a final terminator keep the ids.
+/// O(page blocks).
+pub(super) fn kept_outline(
+    row: Option<&Arc<Document>>,
+    parsed: &Document,
+) -> Option<Arc<Document>> {
+    row.filter(|row| ***row == *parsed).cloned()
+}
+
 /// Validate every projection a page's readers need: block bodies and the
 /// pre-blocks' page properties and prose. Publication, DTO reads and save-base
 /// validation share this answer inside their page-level panic boundaries.

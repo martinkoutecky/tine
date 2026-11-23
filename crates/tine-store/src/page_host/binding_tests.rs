@@ -23,6 +23,8 @@ use std::time::{Duration, Instant};
 mod runtime_id_own_save_tests;
 #[path = "s36_creation_tests.rs"]
 mod s36_creation_tests;
+#[path = "same_outline_tests.rs"]
+mod same_outline_tests;
 
 struct Frozen;
 impl Clock for Frozen {

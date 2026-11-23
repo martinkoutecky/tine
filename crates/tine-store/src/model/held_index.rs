@@ -72,14 +72,16 @@ impl Graph {
     /// at `path` from. With no host, `Disk` for every page.
     /// The row for the owner's `bytes` of `key`: the disk row its hold
     /// retired when `claim` holds exactly these bytes under the same entry
-    /// (R1, GH #623), else parsed ([`Self::owned_row`]). A saved Document
-    /// always reparses, to keep its runtime ids.
+    /// (R1, GH #623), else parsed ([`Self::owned_row`], against `row`, the
+    /// page's current row document). A saved Document always reparses, to
+    /// keep its runtime ids.
     pub(super) fn claimed_row(
         &self,
         key: &str,
         bytes: &[u8],
         doc: Option<&Document>,
         claim: Option<Row>,
+        row: Option<&Arc<Document>>,
     ) -> Option<Row> {
         let rev = std::str::from_utf8(bytes).ok().map(content_rev);
         let reuse = claim.filter(|(_, _, disk)| doc.is_none() && rev.as_ref() == Some(&disk.rev));
@@ -94,7 +96,7 @@ impl Graph {
             }
         }
         // No row: the publication settles the page, which lists why.
-        self.owned_row(key, bytes, doc).ok().flatten()
+        self.owned_row(key, bytes, doc, row).ok().flatten()
     }
 
     pub(crate) fn source(&self, path: &Path) -> Source {

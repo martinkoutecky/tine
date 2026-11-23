@@ -10,6 +10,7 @@ The format follows [Keep a Changelog](https://keepachangelog.com/); versions use
 
 ### Fixed
 - After you move a block, a line typed with Shift+Enter that starts with `- ` in another block of the same page no longer makes two blocks share one identity. Linked references and query results showed the wrong block, and after the page was reloaded the next edit could write one block twice and delete the other from the file (REG-OWN-SAVE-RUNTIME-ID-COLLISION).
+- After you move blocks or add one above another, a page that another program rewrites with the same content (other line endings, a final line break added or removed, as an external editor or git's line-ending conversion does) keeps each block's identity. Linked references, query results and search showed the wrong block, and picking a block reference to an affected block added an `id::` to another block (REG-RUNTIME-ID-SAME-OUTLINE).
 - Tine's window can be made as narrow as 390 pt (was 640), so it can share a screen with another window on any desktop (#1005).
 - Enter at the end of an expanded block embed adds a visible first child and moves the caret there, even when the source is folded (#1023).
 - Configured Hiccup macros render bare-word arguments like `{{r education}}`, just like their quoted equivalents (#1018).

@@ -60,8 +60,8 @@ pub(crate) use page_identity::{
     graph_text_watch_relevant,
 };
 use page_parse::{
-    carry_saved_runtime_ids, identify_old_blocks, isolate_page_parse, page_dto, parse_page_content,
-    prime_projections,
+    carry_saved_runtime_ids, identify_old_blocks, isolate_page_parse, kept_outline, page_dto,
+    parse_page_content, prime_projections,
 };
 
 use crate::path_identity::canonical_existing_path;
@@ -4228,7 +4228,7 @@ impl Graph {
                         ),
                     }
                 }))
-                .map(|cached_norm| cached_norm == newdoc)
+                .map(|cached_norm| (cached_norm == newdoc).then(|| Arc::clone(cached)))
             })
         });
         match compared {
@@ -4244,12 +4244,19 @@ impl Graph {
                 }
             }
             Some(Some(Err(_))) => panic!("page parser panicked during cached comparison"),
-            Some(Some(Ok(true))) => {
-                // Unchanged document, but not necessarily unchanged bytes:
-                // parsing normalizes some lines (a column-0 continuation line
-                // parses like an indented one), so these bytes may carry an
-                // anchor line the cached bytes did not.
-                self.raise_vcs_anchor(path, content);
+            // The same outline in other bytes (line endings, a final line
+            // break, a column-0 continuation line): unchanged, so nothing is
+            // reported, but the row keeps its document and ids under these
+            // bytes' revision and anchor, so a later hold of the page reuses
+            // it (its claim matches the file) instead of reparsing
+            // positionally, which would move a block's id to another block.
+            Some(Some(Ok(Some(kept)))) => {
+                let anchored = tine_core::concord_queue::has_vcs_anchor(content.as_bytes());
+                let disk = DiskObs {
+                    rev: disk_rev,
+                    anchored,
+                };
+                self.cache_upsert(entry, Document::clone(&kept), disk);
                 return None; // unchanged / our own write
             }
             Some(_) => {}

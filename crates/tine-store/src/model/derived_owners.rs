@@ -106,7 +106,7 @@ impl Graph {
                         return false;
                     } else {
                         let pages = Arc::make_mut(cache);
-                        match self.owned_row(&key, &bytes, None) {
+                        match self.owned_row(&key, &bytes, None, None) {
                             Ok(Some(row)) => self.put_row(pages, row),
                             Ok(None) => {
                                 self.retire_row(Some(pages), path, true);
@@ -285,9 +285,13 @@ impl Graph {
         let mut named = None;
         let mut claim = self.held.claims.lock().unwrap().remove(key);
         if self.cache_built() && self.cached_rev(&path) != rev {
-            row = bytes
-                .as_deref()
-                .and_then(|bytes| self.claimed_row(key, bytes, doc, claim.take()));
+            // The page's current row, read before the write lock (never
+            // under it: `with_cached` takes the cache's read lock).
+            let current =
+                (self.with_cached(&path, |row| row.map(|(_, doc)| Arc::clone(doc)))).flatten();
+            row = bytes.as_deref().and_then(|bytes| {
+                self.claimed_row(key, bytes, doc, claim.take(), current.as_ref())
+            });
         }
         let mut guard = self.derived.cache.write().unwrap();
         #[cfg(test)]
@@ -309,9 +313,12 @@ impl Graph {
                 // Derived before the lock unless the installed row changed
                 // since (the writer excludes that; this keeps it exact).
                 if row.is_none() {
-                    row = bytes
-                        .as_deref()
-                        .and_then(|bytes| self.claimed_row(key, bytes, doc, claim.take()));
+                    let slot = self.cached_page_index_for_path(cache, &path);
+                    let current = slot.and_then(|slot| cache.get(slot)).map(|(_, doc)| doc);
+                    let current = current.cloned();
+                    row = bytes.as_deref().and_then(|bytes| {
+                        self.claimed_row(key, bytes, doc, claim.take(), current.as_ref())
+                    });
                 }
                 match row.take() {
                     Some(row) => {
