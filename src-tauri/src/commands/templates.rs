@@ -5,7 +5,7 @@ use super::{GraphSlot, PageKind, Resolved, ResolvedWire, StoreError, WholeGraph}
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 use tine_core::model::TemplateDto;
-use tine_graph_features::templates::{named_template_from_files, NamedTemplate};
+use tine_graph_features::templates::{named_template_from_files, view_templates, NamedTemplate};
 
 /// Names only, in discovery order. Same fallible graph load as the full listing.
 #[tauri::command]
@@ -22,7 +22,7 @@ pub(crate) async fn list_templates(
     state: super::GraphContext<'_>,
 ) -> Result<Vec<TemplateDto>, String> {
     let Some(name) = name else {
-        return super::off_ui_graph_read(&state, |view| Ok(view.templates())).await;
+        return super::off_ui_graph_read(&state, |view| Ok(view_templates(&view, None))).await;
     };
     named_template(super::slot_for_context(&state)?, name).await
 }
@@ -95,8 +95,7 @@ pub(super) async fn named_template(
         match answers.recv() {
             Ok(First::Graph(view)) => {
                 let view = view.map_err(|e| format!("graph load failed: {e:?}"))?;
-                let found = view.templates().into_iter().find(|t| t.name == name);
-                return Ok(found.into_iter().collect());
+                return Ok(view_templates(&view, Some(&name)));
             }
             Ok(First::Files(Ok(NamedTemplate::Settled(found)))) => {
                 return Ok(found.into_iter().collect())

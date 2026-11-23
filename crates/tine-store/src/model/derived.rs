@@ -274,16 +274,6 @@ pub(crate) enum Named {
     NotAPage,
 }
 
-/// Copy `saved`'s runtime identities onto `into`, a tree of equal content.
-fn keep_runtime_ids(into: &mut [DocBlock], saved: &[DocBlock]) {
-    for (block, saved) in into.iter_mut().zip(saved) {
-        if !saved.uuid.is_empty() {
-            block.uuid.clone_from(&saved.uuid);
-        }
-        keep_runtime_ids(&mut block.children, &saved.children);
-    }
-}
-
 impl Graph {
     /// The authority for `path`'s row now ((G) above), within the pass
     /// whose memo is `memo`.
@@ -391,13 +381,18 @@ impl Graph {
     /// given, is the owner's Document for them (R8): only its runtime
     /// identities are kept, and only when its content is exactly what
     /// `bytes` parse to; its content never reaches the row (REVIEW-3a4 #5,
-    /// E126). `Ok(None)` when the path is no cacheable page; `Err` when it is
-    /// one and these bytes give no row, which the caller lists unreadable.
+    /// E126). With none, the bytes are ones the owner did not save, and
+    /// [`kept_outline`] answers whether `row`, the page's current row
+    /// document if the caller has it, keeps its ids. One parse, and one id
+    /// assignment. Takes no cache lock. `Ok(None)` when the path is no
+    /// cacheable page; `Err` when it is one and these bytes give no row,
+    /// which the caller lists unreadable.
     pub(super) fn owned_row(
         &self,
         key: &str,
         bytes: &[u8],
         saved: Option<&Document>,
+        row: Option<&Arc<Document>>,
     ) -> io::Result<Option<Row>> {
         let Some(mut entry) = self.owned_listing(key) else {
             return Ok(None);
@@ -406,14 +401,24 @@ impl Graph {
         let content = std::str::from_utf8(bytes)
             .map_err(|error| io::Error::new(io::ErrorKind::InvalidData, error))?;
         let _ = self.name_from(&mut entry, content);
-        let (mut doc, disk) = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-            parse_page_content(&entry, content)
+        let (doc, disk) = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            let (mut doc, disk) = parse_page_unkeyed(&entry, content);
+            match saved {
+                None => {
+                    if let Some(row) = kept_outline(row, &doc) {
+                        return (row, disk);
+                    }
+                }
+                Some(saved) if *saved == doc => {
+                    carry_saved_runtime_ids(&mut doc.roots, &saved.roots);
+                }
+                Some(_) => {}
+            }
+            key_page(&mut doc, &entry);
+            (Arc::new(doc), disk)
         }))
         .map_err(|_| io::Error::new(io::ErrorKind::InvalidData, ParserPanicked))?;
-        if let Some(saved) = saved.filter(|saved| **saved == doc) {
-            keep_runtime_ids(&mut doc.roots, &saved.roots);
-        }
-        Ok(Some((entry, Arc::new(doc), disk)))
+        Ok(Some((entry, doc, disk)))
     }
 
     // ---- reads ----------------------------------------------------------
@@ -460,8 +465,8 @@ impl Graph {
                 }
             }
             Source::Held(bytes) => {
-                let row =
-                    (self.held_key(&winner.path)).map(|key| self.owned_row(&key, &bytes, None));
+                let row = (self.held_key(&winner.path))
+                    .map(|key| self.owned_row(&key, &bytes, None, None));
                 let mut cache = self.derived.cache.write().unwrap();
                 match (row, cache.pages.as_mut()) {
                     (Some(Ok(Some(row))), Some(pages)) => {
@@ -845,14 +850,16 @@ impl Graph {
                 .published()
                 .into_iter()
                 .map(|(key, bytes)| {
-                    let row = self.owned_row(&key, &bytes, None).unwrap_or_else(|error| {
-                        let rel = self.held.spellings().spelling(&key).to_string();
-                        if contained::is_parser_panic(&error) {
-                            owned_failures.push(rel.clone());
-                        }
-                        owned_unreadable.push((rel, error.to_string()));
-                        None
-                    });
+                    let row = self
+                        .owned_row(&key, &bytes, None, None)
+                        .unwrap_or_else(|error| {
+                            let rel = self.held.spellings().spelling(&key).to_string();
+                            if contained::is_parser_panic(&error) {
+                                owned_failures.push(rel.clone());
+                            }
+                            owned_unreadable.push((rel, error.to_string()));
+                            None
+                        });
                     Owned { row, key, bytes }
                 })
                 .collect();
@@ -1237,7 +1244,8 @@ impl Graph {
             .write()
             .unwrap()
             .insert(path.clone(), disk.rev);
-        if let Ok(mtime) = fs::metadata(&path).and_then(|meta| meta.modified()) {
+        // Through the source: a memory file carries its own time.
+        if let Some(mtime) = self.source.modified(&path) {
             Arc::make_mut(&mut self.derived.observed_mtimes.write().unwrap())
                 .insert(rel.clone(), mtime);
         }
@@ -1363,25 +1371,6 @@ impl Graph {
         // `cache_upsert`.
         self.move_generation(guard.pages.is_none(), &[&entry.path]);
         drop(guard);
-    }
-
-    /// The reconcile found these bytes' document unchanged, but they may
-    /// still carry an anchor line the cached bytes did not (parsing
-    /// normalizes some lines). The flag may only err toward true, so raise
-    /// it, for a row whose bytes are the file's.
-    pub(super) fn raise_vcs_anchor(&self, path: &Path, content: &str) {
-        if !tine_core::concord_queue::has_vcs_anchor(content.as_bytes()) {
-            return;
-        }
-        let _cache = self.derived.cache.write().unwrap();
-        // Only for a cached row ("an entry exists IFF cached").
-        if self.derived.disk_revs.read().unwrap().contains_key(path) && self.disk_sourced(path) {
-            self.derived
-                .vcs_anchored
-                .write()
-                .unwrap()
-                .insert(path.to_path_buf());
-        }
     }
 
     /// Install `pages` as a test graph's cache and listing.

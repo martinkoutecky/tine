@@ -195,7 +195,7 @@ impl Snapshot {
     /// The active pages changed by this publication, including opening
     /// siblings that no physical write touched. Physical evidence stays in
     /// Change::files for conflict refresh and mutation bookkeeping.
-    fn page_changes(
+    pub(super) fn page_changes(
         &self,
         old: Option<&Self>,
         origin: Origin,

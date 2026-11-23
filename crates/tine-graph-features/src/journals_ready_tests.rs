@@ -13,6 +13,8 @@ fn captured_feed_looks_up_only_the_missing_owners_diagnostic() {
             .into_iter()
             .chain((0..511).map(|i| (format!("pages/Bad-{i:03}.md"), vec![0xff])))
             .collect(),
+        Vec::new(),
+        false,
     )
     .unwrap();
     assert_eq!(graph.unreadable_files().len(), 512);

@@ -26,7 +26,22 @@ use std::collections::{HashMap, HashSet};
 use std::io;
 
 use tine_core::model::TemplateDto;
-use tine_store::{Area, FileId, Store, StoreError};
+use tine_store::{Area, FileId, Store, StoreError, WholeGraph};
+
+/// The view's templates (`WholeGraph::templates`), or with `name` the
+/// first so named (at most one): the `list_templates` answer once a graph
+/// view answers, on the desktop and in the browser. Up to O(B).
+pub fn view_templates(view: &WholeGraph, name: Option<&str>) -> Vec<TemplateDto> {
+    let templates = view.templates();
+    match name {
+        None => templates,
+        Some(name) => templates
+            .into_iter()
+            .find(|t| t.name == name)
+            .into_iter()
+            .collect(),
+    }
+}
 
 /// What the files say about one template name.
 #[derive(Debug)]

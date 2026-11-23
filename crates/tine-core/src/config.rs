@@ -444,6 +444,13 @@ impl Config {
         Self::parse_settings(crate::edn::config_entries(edn))
     }
 
+    /// The config of input over the reader's byte limit, for a caller whose
+    /// bounded read refused it before [`Config::parse`]: the reader's own
+    /// verdict for such input (unreadable exclusion, EDN model R4a).
+    pub fn over_read_limit() -> Config {
+        Self::parse_settings(Err(UnreadableExclusion))
+    }
+
     /// The typed config from Logseq's first-form framing for publication.
     /// Refuses a malformed form or a non-map. Empty source uses defaults.
     /// This reads the entire admitted form once, within the config size limit.
@@ -1222,28 +1229,122 @@ mod tests {
     }
 
     #[test]
-    fn unreadable_config_counts_only_effective_keys_lexed_before_failure() {
+    fn config_root_spellings_recover_the_same_entries() {
+        let mut failures = Vec::new();
+        for (prefix, key_ns) in [
+            ("", ""),
+            ("#:demo", "_/"),
+            ("^:meta ", ""),
+            ("#^:meta ", ""),
+            ("^:meta #:demo", "_/"),
+            ("#^:meta #:demo", "_/"),
+            ("^:meta #^{:note true} #:demo", "_/"),
+        ] {
+            let hidden = format!(r#":{key_ns}hidden ["pages/Secret.md"]"#);
+            let pages = format!(r#":{key_ns}pages-directory "notes""#);
+            let namespaced = if key_ns.is_empty() {
+                ""
+            } else {
+                r#":hidden [] :pages-directory "namespace-only""#
+            };
+            // `##` with a complete operand other than NaN/Inf/-Inf is damaged like any other value.
+            let symbolic = [
+                "##unknown",
+                "##nil",
+                "##true",
+                "##1",
+                "##:kw",
+                r#"##"s""#,
+                r"##\c",
+                "##[]",
+                "##()",
+                "##{}",
+                "###{}",
+            ];
+            // An invalid string escape has no extent (EDN model R4b): its witness is in
+            // `recovery_tests`, which stops at it.
+            for broken in [r#"#unknown []"#, r#"\malformed"#]
+                .into_iter()
+                .chain(symbolic)
+            {
+                let broken = format!(":bad {broken}");
+                for [first, second] in [[&broken, &hidden], [&hidden, &broken]] {
+                    for newline in ["\n", "\r\n"] {
+                        let source = format!(
+                            "{prefix}{{{newline}{namespaced}{newline}{first}{newline}{second}{newline}{pages}{newline}}}"
+                        );
+                        let cfg = Config::parse(&source);
+                        if cfg.hidden != ["pages/Secret.md"]
+                            || cfg.hidden_parse_failed_closed
+                            || cfg.pages_dir != "notes"
+                        {
+                            failures.push(format!(
+                                "{source:?} => hidden={:?}, closed={}, pages_dir={:?}",
+                                cfg.hidden, cfg.hidden_parse_failed_closed, cfg.pages_dir
+                            ));
+                        }
+                        assert!(
+                            Config::parse_for_publication(&source).is_none(),
+                            "{source:?}"
+                        );
+                    }
+                }
+            }
+            // A torn exclusion fails closed. A root torn after an admitted exclusion
+            // keeps it (R4b occurrence rule: its only `hidden` keyword is admitted).
+            for (end, closed) in [
+                (r#"["pages/Secret.md""#, true),
+                (r#"["pages/Secret.md"]"#, false),
+            ] {
+                let source = format!("{prefix}{{:{key_ns}hidden {end}");
+                let cfg = Config::parse(&source);
+                if cfg.hidden_parse_failed_closed != closed
+                    || (!closed && cfg.hidden != ["pages/Secret.md"])
+                {
+                    failures.push(format!(
+                        "{source:?} => torn config: closed={closed} expected"
+                    ));
+                }
+            }
+        }
+        assert!(
+            failures.is_empty(),
+            "Wrong config recovery in {} cases:\n{}",
+            failures.len(),
+            failures.join("\n")
+        );
+    }
+
+    #[test]
+    fn oversized_config_fails_closed() {
+        let limit = crate::edn::MAX_INPUT_BYTES;
+        let source = " ".repeat(limit + 1);
+        let cfg = Config::parse(&source[..limit]);
+        assert!(!cfg.hidden_parse_failed_closed);
+        let cfg = Config::parse(&source);
+        assert!(cfg.hidden_parse_failed_closed);
+    }
+
+    #[test]
+    fn damaged_config_closes_unless_every_exclusion_keyword_is_an_admitted_root_key() {
+        // EDN model R4b replaces R4a's "keys lexed before the failure": after any
+        // refusal, a `hidden` keyword that is a value, nested, discarded or never
+        // reached closes the graph. Text in a string or comment never counts.
         let mut failures = Vec::new();
         for (read, suffix, closed, pages_dir) in [
-            (
-                "",
-                r#"#:demo{:bad #unknown [] :_/hidden ["pages/Secret.md"]}"#,
-                false,
-                "pages",
-            ),
-            ("", r#"^ {:hidden []} {:bad ["torn""#, false, "pages"),
-            ("", r#"#:demo{:hidden ["torn""#, false, "pages"),
-            ("", r#"{:_/hidden ["torn""#, false, "pages"),
+            ("", r#"^ {:hidden []} {:bad ["torn""#, true, "pages"),
+            ("", r#"#:demo{:hidden ["torn""#, true, "pages"),
+            ("", r#"{:_/hidden ["torn""#, true, "pages"),
             ("", r#"{:hidden-other ["torn""#, false, "pages"),
-            ("", r#"{:nested {:hidden ["torn""#, false, "pages"),
-            ("", r#"{:other :hidden :bad ["torn""#, false, "pages"),
+            ("", r#"{:nested {:hidden ["torn""#, true, "pages"),
+            ("", r#"{:other :hidden :bad ["torn""#, true, "pages"),
             ("", r#"{:note ":hidden" :bad ["torn""#, false, "pages"),
-            ("", r#"#_ {:hidden ["torn""#, false, "pages"),
+            ("", r#"#_ {:hidden ["torn""#, true, "pages"),
             (
                 r#"{:pages-directory "notes"}"#,
                 r#" ] {:hidden []}"#,
-                false,
-                "notes",
+                true,
+                "pages",
             ),
             (
                 r#"{:pages-directory "notes"}"#,
@@ -1254,14 +1355,14 @@ mod tests {
             (
                 r#"{:pages-directory "notes"}"#,
                 r#" #_ {:hidden ["torn""#,
-                false,
-                "notes",
+                true,
+                "pages",
             ),
             (
                 r#"{:pages-directory "notes"}"#,
                 r#" #_ {:hidden []} #unknown []"#,
-                false,
-                "notes",
+                true,
+                "pages",
             ),
             (
                 r#"{:pages-directory "notes"}"#,
@@ -2086,3 +2187,7 @@ mod quick_capture_options_tests {
         assert!(config.quick_capture_redirect_page);
     }
 }
+
+#[cfg(test)]
+#[path = "config_recovery_tests.rs"]
+mod recovery_tests;

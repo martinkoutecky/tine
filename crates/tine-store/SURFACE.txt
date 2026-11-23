@@ -36,7 +36,7 @@
 # parameter: it needs a directory and starts the watcher, writer and checkpoint that a page list
 # has no use for; the view's questions are the existing WholeGraph ones. Used by exports (no
 # temporary build graph and no re-read config).
-## Lifecycle (ceiling: 32)
+## Lifecycle (ceiling: 34)
 struct root_binding::BoundDirectory
 fn root_binding::BoundDirectory::new
 fn root_binding::BoundDirectory::root
@@ -63,6 +63,16 @@ fn store::WholeGraph::subgraph
 # graph's files held in memory, config.edn among them: the browser's graph, which has no live view
 # for `subgraph` to start from and no directory for `Store::open`.
 fn store::WholeGraph::from_files
+# Browser core slice 5a (32 -> 34): a view built by from_files changes only by
+# replacing its files. Neither existing item answers it with a parameter:
+# from_files builds a graph and recaptures everything, and Store::open and
+# subgraph have no memory graph to edit. replace_files edits the files and
+# recaptures the changed paths incrementally, answering the desktop's Change;
+# submit_page serializes a page with the store's one page serializer (the
+# desktop page host's bytes and refusals) and replaces it. File times are a
+# parameter of from_files, not a sibling constructor.
+fn store::WholeGraph::replace_files
+fn store::WholeGraph::submit_page
 fn store::Store::set_watch_mode
 struct store::Store
 struct store::GraphAccessInspection

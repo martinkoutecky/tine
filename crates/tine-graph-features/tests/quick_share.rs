@@ -182,6 +182,18 @@ fn malformed_namespaced_hidden_stays_out_of_both_publication_selectors() {
                     ":_/hidden [\"pages/Secret.md\"]\n :other #unknown []}",
                 ),
                 (
+                    "unknown tag before exclusion",
+                    ":other #unknown []\n :_/hidden [\"pages/Secret.md\"]}",
+                ),
+                (
+                    "invalid escape before exclusion",
+                    r#":other "bad\q" :_/hidden ["pages/Secret.md"]}"#,
+                ),
+                (
+                    "malformed character before exclusion",
+                    r#":other \malformed :_/hidden ["pages/Secret.md"]}"#,
+                ),
+                (
                     "duplicate effective key",
                     ":_/hidden [\"pages/Secret.md\"]\n :_/hidden []}",
                 ),
@@ -318,6 +330,8 @@ pub(super) fn snapshot_graph(snapshot: &Value) -> tine_store::WholeGraph {
                 )
             })
             .collect(),
+        Vec::new(),
+        false,
     )
     .unwrap()
     .0

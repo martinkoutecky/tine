@@ -558,20 +558,7 @@ impl PagePlan<'_> {
     /// Every page save, whatever its base: Guide-ephemeral, page target and
     /// nesting depth.
     pub(crate) fn page_save_target(&self, file: &FileId, doc: &PageDto) -> Result<(), Why> {
-        if doc.guide {
-            return Err(Why::Refused(Refusal::InvalidTarget(
-                "Guide pages are ephemeral".into(),
-            )));
-        }
-        if !self.page(file) {
-            return Err(Why::Refused(Refusal::InvalidTarget(file.as_str().into())));
-        }
-        if !crate::model::dto_depth_within_limit(doc) {
-            return Err(Why::Refused(Refusal::InvalidTarget(
-                "page content nesting exceeds 128 levels".into(),
-            )));
-        }
-        Ok(())
+        page_save_target(doc, || self.page(file), file)
     }
 
     /// Create-only: a `CreateNew` save, and the page host's open of a path
@@ -656,22 +643,60 @@ impl PagePlan<'_> {
         old: Option<&[u8]>,
         resolving: bool,
     ) -> Result<(Vec<u8>, Document), Why> {
-        use crate::model::unchanged_save::{guarded_save, Guard};
-        let prepare = |text: Option<&str>| self.store.graph.prepare_page_bytes(doc, path, text);
-        guarded_save(old, path, resolving, prepare).map_err(|guard| match guard {
-            Guard::Content(error) => content_refusal(error),
-            Guard::Markers(why) => Why::Refused(Refusal::ReadOnly(why)),
-            Guard::Prepare(error) => {
-                if error.kind() == io::ErrorKind::PermissionDenied
-                    || error
-                        .get_ref()
-                        .is_some_and(|inner| inner.is::<crate::model::ParserPanicked>())
-                {
-                    Why::Refused(Refusal::ReadOnly(error.to_string()))
-                } else {
-                    Why::Failed(error.into())
-                }
-            }
-        })
+        serialize_page_at(&self.store.graph, path, doc, old, resolving)
     }
+}
+
+/// Whether a page save of `doc` is admitted at `file` (`is_page`: the file
+/// is a page path): a Guide page is ephemeral, and content nested beyond 128
+/// levels is refused. The one answer for the desktop's page saves and a
+/// memory graph's ([`crate::WholeGraph::submit_page`]).
+pub(crate) fn page_save_target(
+    doc: &PageDto,
+    is_page: impl FnOnce() -> bool,
+    file: &FileId,
+) -> Result<(), Why> {
+    if doc.guide {
+        return Err(Why::Refused(Refusal::InvalidTarget(
+            "Guide pages are ephemeral".into(),
+        )));
+    }
+    if !is_page() {
+        return Err(Why::Refused(Refusal::InvalidTarget(file.as_str().into())));
+    }
+    if !crate::model::dto_depth_within_limit(doc) {
+        return Err(Why::Refused(Refusal::InvalidTarget(
+            "page content nesting exceeds 128 levels".into(),
+        )));
+    }
+    Ok(())
+}
+
+/// The bytes `doc` becomes at `path` of `graph` over `old`
+/// ([`PagePlan::serialize_page_at`]): the one page serializer, for the
+/// desktop's saves and a memory graph's.
+pub(crate) fn serialize_page_at(
+    graph: &crate::model::Graph,
+    path: &Path,
+    doc: &PageDto,
+    old: Option<&[u8]>,
+    resolving: bool,
+) -> Result<(Vec<u8>, Document), Why> {
+    use crate::model::unchanged_save::{guarded_save, Guard};
+    let prepare = |text: Option<&str>| graph.prepare_page_bytes(doc, path, text);
+    guarded_save(old, path, resolving, prepare).map_err(|guard| match guard {
+        Guard::Content(error) => content_refusal(error),
+        Guard::Markers(why) => Why::Refused(Refusal::ReadOnly(why)),
+        Guard::Prepare(error) => {
+            if error.kind() == io::ErrorKind::PermissionDenied
+                || error
+                    .get_ref()
+                    .is_some_and(|inner| inner.is::<crate::model::ParserPanicked>())
+            {
+                Why::Refused(Refusal::ReadOnly(error.to_string()))
+            } else {
+                Why::Failed(error.into())
+            }
+        }
+    })
 }

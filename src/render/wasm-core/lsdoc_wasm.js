@@ -60,6 +60,31 @@ class __tine_raw_BrowserGraph {
         }
     }
     /**
+     * The desktop `export_query_subtrees` answer for its `specs` JSON.
+     * @param {string} specs_json
+     * @returns {string}
+     */
+    export_query_subtrees_json(specs_json) {
+        let deferred3_0;
+        let deferred3_1;
+        try {
+            const ptr0 = passStringToWasm0(specs_json, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+            const len0 = WASM_VECTOR_LEN;
+            const ret = wasm.browsergraph_export_query_subtrees_json(this.__wbg_ptr, ptr0, len0);
+            var ptr2 = ret[0];
+            var len2 = ret[1];
+            if (ret[3]) {
+                ptr2 = 0; len2 = 0;
+                throw takeFromExternrefTable0(ret[2]);
+            }
+            deferred3_0 = ptr2;
+            deferred3_1 = len2;
+            return getStringFromWasm0(ptr2, len2);
+        } finally {
+            wasm.__wbindgen_free(deferred3_0, deferred3_1, 1);
+        }
+    }
+    /**
      * @param {string} name
      * @param {string} targets_json
      * @returns {string}
@@ -297,11 +322,69 @@ class __tine_raw_BrowserGraph {
         }
     }
     /**
+     * The desktop `list_template_names` answer.
+     * @returns {string}
+     */
+    list_template_names_json() {
+        let deferred2_0;
+        let deferred2_1;
+        try {
+            const ret = wasm.browsergraph_list_template_names_json(this.__wbg_ptr);
+            var ptr1 = ret[0];
+            var len1 = ret[1];
+            if (ret[3]) {
+                ptr1 = 0; len1 = 0;
+                throw takeFromExternrefTable0(ret[2]);
+            }
+            deferred2_0 = ptr1;
+            deferred2_1 = len1;
+            return getStringFromWasm0(ptr1, len1);
+        } finally {
+            wasm.__wbindgen_free(deferred2_0, deferred2_1, 1);
+        }
+    }
+    /**
+     * The desktop `list_templates` answer: every template, or the first
+     * named `name`.
+     * @param {string | null} [name]
+     * @returns {string}
+     */
+    list_templates_json(name) {
+        let deferred3_0;
+        let deferred3_1;
+        try {
+            var ptr0 = isLikeNone(name) ? 0 : passStringToWasm0(name, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+            var len0 = WASM_VECTOR_LEN;
+            const ret = wasm.browsergraph_list_templates_json(this.__wbg_ptr, ptr0, len0);
+            var ptr2 = ret[0];
+            var len2 = ret[1];
+            if (ret[3]) {
+                ptr2 = 0; len2 = 0;
+                throw takeFromExternrefTable0(ret[2]);
+            }
+            deferred3_0 = ptr2;
+            deferred3_1 = len2;
+            return getStringFromWasm0(ptr2, len2);
+        } finally {
+            wasm.__wbindgen_free(deferred3_0, deferred3_1, 1);
+        }
+    }
+    /**
      * `files[i]` holds the bytes of the graph-relative `paths[i]`,
-     * `logseq/config.edn` among them. Throws (a string) what the desktop open
-     * refuses, and for arrays of different lengths; a config read problem is
-     * `config_problem_json`. Cost: one read and parse of each file and the
-     * initial index capture, as a desktop open has.
+     * `logseq/config.edn` among them. Options: `share` (a quick share's
+     * admission), `times`, a modification time in Unix seconds per path
+     * (absent: no time), which `page_modified_json` and recency answer from,
+     * and `editable` (default false). This constructor alone decides whether
+     * the graph takes edits: a share never does, whatever `editable` says.
+     * Only an editable graph keeps its files for `replace_files` and
+     * `submit_page_json`; a read-only one (a published export, a quick
+     * share) keeps its read view alone, and `replace_files` throws and
+     * `submit_page_json` refuses (`failed`) there.
+     * Throws (a string) what the desktop open refuses, for arrays of
+     * different lengths and for a time of no given path (whatever the time;
+     * a pre-epoch time is then no recency row, as on disk); a config read
+     * problem is `config_problem_json`. Cost: one read and parse of each
+     * file and the initial index capture, as a desktop open has.
      * @param {string[]} paths
      * @param {Uint8Array[]} files
      * @param {string | null} [options_json]
@@ -489,6 +572,38 @@ class __tine_raw_BrowserGraph {
         }
     }
     /**
+     * The desktop `query_explain_empty` answer; the view is accepted for
+     * its command shape and ignored, as there.
+     * @param {string} query_json
+     * @param {string} view_json
+     * @param {string | null} [context_json]
+     * @returns {string}
+     */
+    query_explain_empty_json(query_json, view_json, context_json) {
+        let deferred5_0;
+        let deferred5_1;
+        try {
+            const ptr0 = passStringToWasm0(query_json, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+            const len0 = WASM_VECTOR_LEN;
+            const ptr1 = passStringToWasm0(view_json, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+            const len1 = WASM_VECTOR_LEN;
+            var ptr2 = isLikeNone(context_json) ? 0 : passStringToWasm0(context_json, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+            var len2 = WASM_VECTOR_LEN;
+            const ret = wasm.browsergraph_query_explain_empty_json(this.__wbg_ptr, ptr0, len0, ptr1, len1, ptr2, len2);
+            var ptr4 = ret[0];
+            var len4 = ret[1];
+            if (ret[3]) {
+                ptr4 = 0; len4 = 0;
+                throw takeFromExternrefTable0(ret[2]);
+            }
+            deferred5_0 = ptr4;
+            deferred5_1 = len4;
+            return getStringFromWasm0(ptr4, len4);
+        } finally {
+            wasm.__wbindgen_free(deferred5_0, deferred5_1, 1);
+        }
+    }
+    /**
      * `scope_json` is `{"keys":true}` or `{"key":"property name"}`.
      * @param {string} scope_json
      * @returns {string}
@@ -542,6 +657,41 @@ class __tine_raw_BrowserGraph {
             return getStringFromWasm0(ptr4, len4);
         } finally {
             wasm.__wbindgen_free(deferred5_0, deferred5_1, 1);
+        }
+    }
+    /**
+     * Replace files: `files[i]` (bytes, or null to delete) at the
+     * graph-relative `paths[i]`, under the constructor's path rules, then
+     * recapture the changed pages (`WholeGraph::replace_files`). Answers
+     * `{answers, pages}`: the publication's answer signal (the `answers`
+     * the desktop's publication events carry, the new `rev` among it) and
+     * the desktop `graph-changed` payloads of the pages that moved. Throws (a
+     * string) a refused change, which leaves the graph unchanged. Cost: one
+     * parse per changed page and the incremental capture of those paths.
+     * @param {string[]} paths
+     * @param {any[]} files
+     * @returns {string}
+     */
+    replace_files(paths, files) {
+        let deferred4_0;
+        let deferred4_1;
+        try {
+            const ptr0 = passArrayJsValueToWasm0(paths, wasm.__wbindgen_malloc);
+            const len0 = WASM_VECTOR_LEN;
+            const ptr1 = passArrayJsValueToWasm0(files, wasm.__wbindgen_malloc);
+            const len1 = WASM_VECTOR_LEN;
+            const ret = wasm.browsergraph_replace_files(this.__wbg_ptr, ptr0, len0, ptr1, len1);
+            var ptr3 = ret[0];
+            var len3 = ret[1];
+            if (ret[3]) {
+                ptr3 = 0; len3 = 0;
+                throw takeFromExternrefTable0(ret[2]);
+            }
+            deferred4_0 = ptr3;
+            deferred4_1 = len3;
+            return getStringFromWasm0(ptr3, len3);
+        } finally {
+            wasm.__wbindgen_free(deferred4_0, deferred4_1, 1);
         }
     }
     /**
@@ -637,6 +787,68 @@ class __tine_raw_BrowserGraph {
             const ptr0 = passStringToWasm0(query, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
             const len0 = WASM_VECTOR_LEN;
             const ret = wasm.browsergraph_search_json(this.__wbg_ptr, ptr0, len0, limit);
+            var ptr2 = ret[0];
+            var len2 = ret[1];
+            if (ret[3]) {
+                ptr2 = 0; len2 = 0;
+                throw takeFromExternrefTable0(ret[2]);
+            }
+            deferred3_0 = ptr2;
+            deferred3_1 = len2;
+            return getStringFromWasm0(ptr2, len2);
+        } finally {
+            wasm.__wbindgen_free(deferred3_0, deferred3_1, 1);
+        }
+    }
+    /**
+     * Submit a page DTO (the desktop `PageDto` JSON) for the page file
+     * `key`, typed on `version` (a key starts at 1; each write moves it).
+     * Serializes over the file's current text with the store's one page
+     * serializer (the desktop page host's bytes), then replaces the file
+     * (`WholeGraph::submit_page`). Answers `{"written": {path, text,
+     * version, answers, pages}}` (the key's new version, and the payloads
+     * `replace_files` answers), or `{"refused": PageRefusal}` (the desktop
+     * host's refusal shape; a stale version is `not-admitted`). Writes
+     * nothing on a refusal.
+     * @param {string} key
+     * @param {string} dto_json
+     * @param {bigint} version
+     * @returns {string}
+     */
+    submit_page_json(key, dto_json, version) {
+        let deferred4_0;
+        let deferred4_1;
+        try {
+            const ptr0 = passStringToWasm0(key, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+            const len0 = WASM_VECTOR_LEN;
+            const ptr1 = passStringToWasm0(dto_json, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+            const len1 = WASM_VECTOR_LEN;
+            const ret = wasm.browsergraph_submit_page_json(this.__wbg_ptr, ptr0, len0, ptr1, len1, version);
+            var ptr3 = ret[0];
+            var len3 = ret[1];
+            if (ret[3]) {
+                ptr3 = 0; len3 = 0;
+                throw takeFromExternrefTable0(ret[2]);
+            }
+            deferred4_0 = ptr3;
+            deferred4_1 = len3;
+            return getStringFromWasm0(ptr3, len3);
+        } finally {
+            wasm.__wbindgen_free(deferred4_0, deferred4_1, 1);
+        }
+    }
+    /**
+     * The desktop `tagged_pages` answer.
+     * @param {string} name
+     * @returns {string}
+     */
+    tagged_pages_json(name) {
+        let deferred3_0;
+        let deferred3_1;
+        try {
+            const ptr0 = passStringToWasm0(name, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+            const len0 = WASM_VECTOR_LEN;
+            const ret = wasm.browsergraph_tagged_pages_json(this.__wbg_ptr, ptr0, len0);
             var ptr2 = ret[0];
             var len2 = ret[1];
             if (ret[3]) {
@@ -2141,6 +2353,16 @@ function __wbg_get_imports() {
         }, arguments); },
         __wbg_get_unchecked_54a4374c38e08460: function(arg0, arg1) {
             const ret = arg0[arg1 >>> 0];
+            return ret;
+        },
+        __wbg_instanceof_Uint8Array_f080092dc70f5d58: function(arg0) {
+            let result;
+            try {
+                result = arg0 instanceof Uint8Array;
+            } catch (_) {
+                result = false;
+            }
+            const ret = result;
             return ret;
         },
         __wbg_length_589238bdcf171f0e: function(arg0) {
