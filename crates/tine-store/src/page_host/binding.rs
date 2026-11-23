@@ -1145,8 +1145,7 @@ impl PageHost {
         let receiver_path = self.store.graph.root.join(&spelling);
         let mut moved = Vec::new();
         for_each_runtime_key(&receiver_handoff.document.roots, &mut |key| {
-            let held = self.store.block_owner_path(&key.text());
-            if held.is_some_and(|held| held != receiver_path) {
+            if self.store.held_elsewhere(key, &receiver_path) {
                 moved.push(key.clone());
             }
         });

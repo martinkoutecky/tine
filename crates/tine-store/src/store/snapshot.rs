@@ -867,13 +867,11 @@ impl Store {
         (snapshot.as_ref()).is_some_and(|snapshot| snapshot.name_by_path.contains_key(path))
     }
 
-    /// The page file the published snapshot finds block `key` on, if any
-    /// (one keyed lookup).
-    pub(crate) fn block_owner_path(&self, key: &str) -> Option<PathBuf> {
+    /// Whether a page other than `path` holds `key` as a runtime key, by the
+    /// published snapshot and the registry (`PageIds::held_elsewhere`).
+    pub(crate) fn held_elsewhere(&self, key: &tine_core::BlockId, path: &Path) -> bool {
         let snapshot = self.changes.snapshot.read().unwrap();
-        let snapshot = snapshot.as_ref()?;
-        let (_, (entry, _)) = snapshot.graph.block_owner_page(key, false)?;
-        Some(entry.path.clone())
+        (snapshot.as_ref()).is_some_and(|now| self.graph.ids.held_elsewhere(key, path, &now.graph))
     }
 
     pub(crate) fn publish_own(

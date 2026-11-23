@@ -68,6 +68,64 @@ fn r2_an_accepted_key_stays_with_the_page_that_took_it() {
     }
 }
 
+/// Blocker 1 of the cee055d33 review: page Q carries Z's runtime key K as
+/// an authored `id::`. Submitting K on B, or on Q itself, is refused (K
+/// becomes a hole), whichever of Q and Z comes first, Markdown and Org; so
+/// once Q's `id::` goes, `((K))` still reads Z's block. Fails on cee055d33
+/// when Q sorts first (intake looked at the first indexed page only), and on
+/// Q itself in either order.
+#[test]
+fn r3_an_authored_id_hides_no_runtime_holder() {
+    for (ext, authored) in [
+        ("md", "- q\n  id:: {K}\n"),
+        ("org", "* q\n  :PROPERTIES:\n  :id: {K}\n  :END:\n"),
+    ] {
+        for (q, z) in [("A", "Z"), ("Z", "A")] {
+            let at = |name: &str| format!("pages/{name}.{ext}");
+            let (q, z, b) = (at(q), at(z), at("B"));
+            let item = if ext == "md" { "- " } else { "* " };
+            let mut files = Files::new();
+            files.insert("logseq/config.edn".into(), b"{}\n".to_vec());
+            files.insert(z.clone(), format!("{item}z\n").into_bytes());
+            files.insert(b.clone(), format!("{item}b\n").into_bytes());
+            let (q_id, z_id, b_id) = (
+                PageId::from(q.as_str()),
+                PageId::from(z.as_str()),
+                PageId::from(b.as_str()),
+            );
+            // K is Z's positional key; Q is in the first build, so the
+            // index lists the two pages in name order.
+            let key = open(&files).page(&z_id).unwrap().blocks[0].id.clone();
+            files.insert(q.clone(), authored.replace("{K}", &key).into_bytes());
+            for on in [&b_id, &q_id] {
+                let mut view = open(&files);
+                let mut dto = view.page(on).unwrap();
+                dto.blocks[0].id = key.clone();
+                view.submit_page(on, &dto, true).unwrap();
+                let mut now = Vec::new();
+                ids(&view.page(on).unwrap().blocks, &mut now);
+                assert!(
+                    !now.contains(&key),
+                    "{on:?} ({q} first: {}): took Z's key",
+                    q < z
+                );
+                let mut on_z = Vec::new();
+                ids(&view.page(&z_id).unwrap().blocks, &mut on_z);
+                assert_eq!(on_z, [key.clone()], "{z}: keeps its key");
+                let plain = format!("{item}q\n").into_bytes();
+                view.replace_files(vec![(q.clone(), Some(plain))]).unwrap();
+                let preview = view.preview_block(&key, 1).unwrap().expect("K resolves");
+                assert_eq!(
+                    preview.group.blocks[0].raw.trim(),
+                    "z",
+                    "{on:?} ({q} first: {}): ((K)) reads Z's block",
+                    q < z
+                );
+            }
+        }
+    }
+}
+
 #[test]
 fn a2_a_submitted_key_names_one_block() {
     for (rel, other, text) in [

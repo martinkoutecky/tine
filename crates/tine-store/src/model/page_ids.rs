@@ -25,8 +25,8 @@ use tine_core::BlockId;
 pub(crate) enum Input<'a> {
     /// The serializer's keyed parse of exactly the published bytes (D4):
     /// installed whole, its holes filled collision-safe. Untrusted keys are
-    /// validated first: a repeated key, or one another page owns, becomes a
-    /// hole (intake, A2).
+    /// validated first: a repeated key, or one another page holds as a
+    /// runtime key ([`PageIds::held_elsewhere`]), becomes a hole (intake, A2).
     Pair(Arc<Document>, Trust<'a>),
     /// Bytes the owner did not save, parsed without keys: the prior is kept
     /// when they hold its outline, else positional keys (also with no prior:
@@ -55,9 +55,10 @@ impl SaveHandoff {
 pub(crate) enum Trust<'a> {
     /// The desktop window's submission: one node per key in its `byId`.
     Window,
-    /// An entrance whose keys are unproven: each key is checked for a repeat
-    /// and against `owned_elsewhere` (another page's runtime ownership).
-    Untrusted(&'a dyn Fn(&BlockId) -> bool),
+    /// An entrance whose keys are unproven, with the generation it submits
+    /// against: each key is checked for a repeat and for another page's
+    /// runtime ownership ([`PageIds::held_elsewhere`]).
+    Untrusted(&'a ReadSnapshot),
 }
 
 /// W and the foreign-key registry (module doc). Private to the model.
@@ -113,6 +114,8 @@ thread_local! {
     pub(crate) static VALIDATION_SETS: std::cell::Cell<u64> = const { std::cell::Cell::new(0) };
     /// Registry entries this thread's cleanups visited.
     pub(crate) static REGISTRY_VISITS: std::cell::Cell<u64> = const { std::cell::Cell::new(0) };
+    /// Runtime holders this thread's intake ownership probes visited.
+    pub(crate) static HOLDER_VISITS: std::cell::Cell<u64> = const { std::cell::Cell::new(0) };
 }
 
 #[cfg(test)]
@@ -194,7 +197,27 @@ impl PageIds {
         }
     }
 
+    /// The one ownership view (the model's `owner_of`): whether a page other
+    /// than `path` holds `key` as a runtime key. Its holders are each runtime
+    /// entry of `at`'s block index for `key` (an authored `id::` is none)
+    /// and the page a moved key is registered to, which may be hidden (a
+    /// claim, a seed). O(entries for `key`); no page is walked.
+    pub(crate) fn held_elsewhere(&self, key: &BlockId, path: &Path, at: &ReadSnapshot) -> bool {
+        let index = at.block_index.get().expect("an exact block index");
+        let shown = (index.owners(&key.text()).into_iter()).flat_map(BlockOwners::runtime_slots);
+        let shown = shown.filter_map(|slot| at.physical_pages.get(slot));
+        let registry = self.foreign.read().unwrap();
+        let moved = registry.owner.get(key).map(PathBuf::as_path);
+        let mut holders = shown.map(|(entry, _)| entry.path.as_path()).chain(moved);
+        holders.any(|holder| {
+            #[cfg(test)]
+            HOLDER_VISITS.with(|visits| visits.set(visits.get() + 1));
+            holder != path
+        })
+    }
+
     /// The page a moved `key` lives on, if one does.
+    #[cfg(test)]
     pub(crate) fn owner_of(&self, key: &BlockId) -> Option<PathBuf> {
         self.foreign.read().unwrap().owner.get(key).cloned()
     }
@@ -257,9 +280,10 @@ impl Graph {
                 doc
             }
             Input::Pair(mut doc, trust) => {
-                if let Trust::Untrusted(owned_elsewhere) = trust {
+                if let Trust::Untrusted(visible) = trust {
                     let roots = &mut Arc::make_mut(&mut doc).roots;
-                    let accepted = validate_keys(roots, owned_elsewhere, prior.map(|p| &**p));
+                    let elsewhere = |key: &BlockId| self.ids.held_elsewhere(key, path, visible);
+                    let accepted = validate_keys(roots, &elsewhere, prior.map(|p| &**p));
                     if !accepted.is_empty() {
                         self.ids.moved(accepted, path);
                     }

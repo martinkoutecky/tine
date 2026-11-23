@@ -24,7 +24,8 @@ impl PartialEq<&str> for BlockKey<'_> {
     }
 }
 
-/// Block id (runtime uuid or persisted `id::`) → the pages that hold it.
+/// Block id (runtime uuid or persisted `id::`) → the pages that hold it,
+/// each tagged runtime or authored.
 /// Exact for the pages it was captured against: a full build walks every
 /// page, and each publication swaps a changed path's previous ids for its
 /// current ones, so an id the index lacks is held by no page (I-13: a lookup
@@ -55,16 +56,21 @@ impl SnapshotBlockIndex {
             .filter(|id| !id.is_empty())
     }
 
-    pub(super) fn for_each_block_id<'a>(doc: &'a Document, mut visit: impl FnMut(BlockKey<'a>)) {
-        pub(super) fn walk<'a>(blocks: &'a [DocBlock], visit: &mut dyn FnMut(BlockKey<'a>)) {
+    /// Each id `doc` holds, with whether it is an authored `id::` (else a
+    /// block's runtime key).
+    pub(super) fn for_each_block_id<'a>(
+        doc: &'a Document,
+        mut visit: impl FnMut(BlockKey<'a>, bool),
+    ) {
+        pub(super) fn walk<'a>(blocks: &'a [DocBlock], visit: &mut dyn FnMut(BlockKey<'a>, bool)) {
             for block in blocks {
                 if let Some(id) = block.uuid.as_uuid() {
-                    visit(BlockKey::Uuid(id.as_u128()));
+                    visit(BlockKey::Uuid(id.as_u128()), false);
                 } else if let Some(id) = block.uuid.unpacked_text() {
-                    visit(BlockKey::of(id));
+                    visit(BlockKey::of(id), false);
                 }
                 if let Some(id) = SnapshotBlockIndex::authored_id(block) {
-                    visit(BlockKey::of(id));
+                    visit(BlockKey::of(id), true);
                 }
                 walk(&block.children, visit);
             }
@@ -75,7 +81,7 @@ impl SnapshotBlockIndex {
     #[cfg(test)]
     pub(super) fn block_ids(doc: &Document) -> std::collections::HashSet<String> {
         let mut ids = std::collections::HashSet::new();
-        Self::for_each_block_id(doc, |id| {
+        Self::for_each_block_id(doc, |id, _| {
             ids.insert(match id {
                 BlockKey::Uuid(id) => uuid::Uuid::from_u128(id).to_string(),
                 BlockKey::Text(id) => id.to_owned(),
@@ -145,12 +151,12 @@ impl SnapshotBlockIndex {
         }
     }
 
-    /// Apply `change` to `id`'s ascending owner slots, recording only a change.
+    /// Apply `change` to `id`'s ascending owner entries, recording only a change.
     pub(super) fn edit(&mut self, id: BlockKey<'_>, change: impl FnOnce(&mut Vec<usize>)) {
         let prior = self.owners_of(id);
-        let mut slots = prior.map_or_else(Vec::new, |owners| owners.slots().to_vec());
-        change(&mut slots);
-        let next = BlockOwners::from_slots(slots);
+        let mut entries = prior.map_or_else(Vec::new, |owners| owners.entries().to_vec());
+        change(&mut entries);
+        let next = BlockOwners::from_entries(entries);
         if next.as_ref() != prior {
             match id {
                 BlockKey::Uuid(id) => self.uuid_overlay.insert(id, next),
@@ -181,15 +187,16 @@ impl SnapshotBlockIndex {
             let mut index = previous.clone();
             for rel_path in changed_paths {
                 if let Some((slot, doc)) = slot_page(previous_pages, rel_path) {
-                    Self::for_each_block_id(&doc, |id| {
-                        index.edit(id, |slots| slots.retain(|owner| *owner != slot));
+                    Self::for_each_block_id(&doc, |id, _| {
+                        index.edit(id, |entries| entries.retain(|owner| *owner >> 1 != slot));
                     });
                 }
                 if let Some((slot, doc)) = slot_page(pages, rel_path) {
-                    Self::for_each_block_id(&doc, |id| {
-                        index.edit(id, |slots| {
-                            if let Err(at) = slots.binary_search(&slot) {
-                                slots.insert(at, slot);
+                    Self::for_each_block_id(&doc, |id, authored| {
+                        let entry = BlockOwners::entry(slot, authored);
+                        index.edit(id, |entries| {
+                            if let Err(at) = entries.binary_search(&entry) {
+                                entries.insert(at, entry);
                             }
                         });
                     });
@@ -224,32 +231,36 @@ impl SnapshotBlockIndex {
         let mut uuids = Vec::new();
         let mut strings = Vec::new();
         for (slot, (_, doc)) in pages.slots() {
-            Self::for_each_block_id(doc, |id| match id {
-                BlockKey::Uuid(id) => uuids.push((id, slot)),
-                BlockKey::Text(id) => strings.push((id, slot)),
+            Self::for_each_block_id(doc, |id, authored| {
+                let entry = BlockOwners::entry(slot, authored);
+                match id {
+                    BlockKey::Uuid(id) => uuids.push((id, entry)),
+                    BlockKey::Text(id) => strings.push((id, entry)),
+                }
             });
         }
         Self::from_rows(uuids, strings)
     }
 
+    /// Rows are (id, [`BlockOwners::entry`]).
     pub(super) fn from_rows<K: AsRef<str> + Ord + Into<String>>(
         mut uuids: Vec<(u128, usize)>,
         strings: Vec<(K, usize)>,
     ) -> Self {
         pub(super) fn merge<K: Eq>(rows: Vec<(K, usize)>) -> Vec<(K, BlockOwners)> {
             let mut entries: Vec<(K, BlockOwners)> = Vec::with_capacity(rows.len());
-            for (id, slot) in rows {
+            for (id, entry) in rows {
                 if let Some((_, owners)) = entries.last_mut().filter(|(key, _)| *key == id) {
-                    if owners.slots().last() != Some(&slot) {
+                    if owners.entries().last() != Some(&entry) {
                         match owners {
                             BlockOwners::One(first) => {
-                                *owners = BlockOwners::Many(Arc::new(vec![*first, slot]))
+                                *owners = BlockOwners::Many(Arc::new(vec![*first, entry]))
                             }
-                            BlockOwners::Many(slots) => Arc::make_mut(slots).push(slot),
+                            BlockOwners::Many(held) => Arc::make_mut(held).push(entry),
                         }
                     }
                 } else {
-                    entries.push((id, BlockOwners::One(slot)));
+                    entries.push((id, BlockOwners::One(entry)));
                 }
             }
             entries
@@ -273,7 +284,7 @@ impl SnapshotBlockIndex {
 
     #[cfg(test)]
     pub(super) fn first_owner(&self, id: &str) -> Option<usize> {
-        self.owners(id).map(|owners| owners.slots()[0])
+        self.owners(id).and_then(|owners| owners.slots().next())
     }
 
     /// Case-insensitive candidate owners from one keyed UUID probe and one
@@ -284,7 +295,7 @@ impl SnapshotBlockIndex {
         let lower = id.trim().to_ascii_lowercase();
         let mut slots: Vec<usize> = self
             .owners(&lower)
-            .map_or_else(Vec::new, |owners| owners.slots().to_vec());
+            .map_or_else(Vec::new, |owners| owners.slots().collect());
         let start = (lower.clone(), String::new());
         let strings = self
             .base
@@ -301,7 +312,7 @@ impl SnapshotBlockIndex {
             #[cfg(feature = "test-faults")]
             crate::cost_counters::query_uuid_index_key(id);
             if exact != &lower {
-                slots.extend_from_slice(owners.slots());
+                slots.extend(owners.slots());
             }
         }
         slots.sort_unstable();

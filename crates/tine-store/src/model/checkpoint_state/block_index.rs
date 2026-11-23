@@ -51,12 +51,12 @@ impl BlockIndexState {
             .map(|(_, owners)| owners)
             .chain(index.base.values())
             .any(|owners| {
-                owners.slots().is_empty()
-                    || owners.slots().windows(2).any(|pair| pair[0] >= pair[1])
-                    || owners
-                        .slots()
+                let entries = owners.entries();
+                entries.is_empty()
+                    || entries.windows(2).any(|pair| pair[0] >= pair[1])
+                    || entries
                         .iter()
-                        .any(|slot| !valid_slots.contains(slot))
+                        .any(|entry| !valid_slots.contains(&(entry >> 1)))
             })
         {
             return Err(crate::store::checkpoint::Fallback::Decode);
@@ -90,10 +90,11 @@ impl serde::Serialize for BlockIndexState {
             Self::In(index) => {
                 // Used when tests re-encode a decoded body. Keep the same wire
                 // shape, including an invalid owner so install can decline it.
+                // Every id is re-encoded as authored (no runtime tag).
                 let mut groups = std::collections::BTreeMap::<usize, Vec<String>>::new();
                 for (id, owners) in index.rows() {
                     for slot in owners.slots() {
-                        groups.entry(*slot).or_default().push(id.clone());
+                        groups.entry(slot).or_default().push(id.clone());
                     }
                 }
                 let mut seq = s.serialize_seq(Some(groups.len()))?;
@@ -119,14 +120,15 @@ impl<'de> serde::Deserialize<'de> for BlockIndexState {
             runtime_rows.extend(runtime.0.chunks_exact(16).map(|bytes| {
                 (
                     u128::from_be_bytes(bytes.try_into().expect("whole UUID")),
-                    slot,
+                    BlockOwners::entry(slot, false),
                 )
             }));
+            let entry = BlockOwners::entry(slot, true);
             for id in authored {
                 if let Some(id) = SnapshotBlockIndex::compact_uuid(&id) {
-                    runtime_rows.push((id, slot));
+                    runtime_rows.push((id, entry));
                 } else {
-                    authored_rows.push((id, slot));
+                    authored_rows.push((id, entry));
                 }
             }
         }
@@ -164,7 +166,14 @@ mod tests {
         let BlockIndexState::In(index) = postcard::from_bytes(&bytes).unwrap() else {
             unreachable!()
         };
-        assert_eq!(index.owners(id).unwrap().slots(), &[1, 2]);
+        let slots = |id| index.owners(id).unwrap().slots().collect::<Vec<_>>();
+        assert_eq!(slots(id), [1, 2]);
+        let runtime = index.owners(id).unwrap().runtime_slots();
+        assert_eq!(
+            runtime.collect::<Vec<_>>(),
+            [1, 2],
+            "runtime on both, authored on 1"
+        );
         assert_eq!(
             index.first_owner("AAAAAAAA-0000-8000-8000-000000000001"),
             Some(1)
@@ -186,14 +195,22 @@ mod tests {
         let upper = "AAAAAAAA-0000-4000-8000-000000000001";
         let simple = "aaaaaaaa000040008000000000000001";
         let urn = "urn:uuid:aaaaaaaa-0000-4000-8000-000000000001";
+        let at = |slot| BlockOwners::entry(slot, true);
         let mut index = SnapshotBlockIndex::from_rows(
-            vec![(SnapshotBlockIndex::compact_uuid(lower).unwrap(), 2)],
-            vec![(upper, 1), (simple, 3), (urn, 4), ("custom", 5)],
+            vec![(SnapshotBlockIndex::compact_uuid(lower).unwrap(), at(2))],
+            vec![
+                (upper, at(1)),
+                (simple, at(3)),
+                (urn, at(4)),
+                ("custom", at(5)),
+            ],
         );
         let held = index.clone();
-        index.edit(BlockKey::of(lower), |owners| owners.insert(0, 0));
-        assert_eq!(index.owners(lower).unwrap().slots(), &[0, 2]);
-        assert_eq!(held.owners(lower).unwrap().slots(), &[2]);
+        index.edit(BlockKey::of(lower), |owners| owners.insert(0, at(0)));
+        let slots =
+            |index: &SnapshotBlockIndex| index.owners(lower).unwrap().slots().collect::<Vec<_>>();
+        assert_eq!(slots(&index), [0, 2]);
+        assert_eq!(slots(&held), [2]);
         index.edit(BlockKey::of(lower), Vec::clear);
         index.edit(BlockKey::of("custom"), Vec::clear);
         let rows: std::collections::BTreeMap<_, _> = index.rows().collect();
@@ -201,7 +218,7 @@ mod tests {
         assert!(!rows.contains_key("custom"));
         for (id, slot) in [(upper, 1), (simple, 3), (urn, 4)] {
             assert_eq!(index.first_owner(id), Some(slot));
-            assert_eq!(rows[id].slots(), &[slot]);
+            assert_eq!(rows[id].slots().collect::<Vec<_>>(), [slot]);
         }
     }
 }

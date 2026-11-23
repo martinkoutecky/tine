@@ -1214,11 +1214,11 @@ fn offline_block_moves_deletions_and_duplicates_match_the_whole_fresh_index() {
     assert!(!actual.iter().any(|(id, _)| id == deleted));
     assert_eq!(
         actual.iter().find(|(id, _)| id == moved).unwrap().1,
-        ["pages/B.md"]
+        ["pages/B.md (id::)"]
     );
     assert_eq!(
         actual.iter().find(|(id, _)| id == duplicate).unwrap().1,
-        ["pages/A.md", "pages/New.md"]
+        ["pages/A.md (id::)", "pages/New.md (id::)"]
     );
     warm.close();
     fresh.close();

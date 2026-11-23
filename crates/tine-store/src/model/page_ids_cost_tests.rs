@@ -2,7 +2,7 @@
 //! foreign-key registry (A3), intake (A2) and the cost pins (A9, A20, T10).
 //! These use phase A's own API, so they have no baseline twin.
 
-use super::page_ids::{Input, Trust, CLASSES, REGISTRY_VISITS, VALIDATION_SETS};
+use super::page_ids::{Input, Trust, CLASSES, HOLDER_VISITS, REGISTRY_VISITS, VALIDATION_SETS};
 use super::page_ids_compat as compat;
 use super::unchanged_save::take_parses;
 use super::*;
@@ -98,8 +98,8 @@ fn a20_an_own_save_assigns_and_allocates_nothing() {
         // An untrusted submission of the same page pays one set: one hash
         // insert per block, and nothing else.
         let doc = keyed(&graph, rel, &saved, &keys(&doc_of(&graph, rel)));
-        let none = |_: &tine_core::BlockId| false;
-        let input = Input::Pair(Arc::new(doc), Trust::Untrusted(&none));
+        let visible = graph.test_read_snapshot();
+        let input = Input::Pair(Arc::new(doc), Trust::Untrusted(&visible));
         let _ = graph.page_ids(&graph.root.join(rel), rel, input, None);
         assert_eq!(validation_sets(), 1, "{blocks}: untrusted intake");
         assert_eq!(
@@ -318,13 +318,34 @@ fn a2_untrusted_intake_drops_repeated_and_foreign_keys() {
         text,
         &["k".into(), "k".into(), "theirs".into()],
     );
-    let elsewhere = |key: &tine_core::BlockId| *key == "theirs";
-    let input = Input::Pair(Arc::new(doc), Trust::Untrusted(&elsewhere));
+    let theirs = tine_core::BlockId::from("theirs");
+    graph.ids.moved([theirs], &graph.root.join("pages/b.md"));
+    let visible = graph.test_read_snapshot();
+    let input = Input::Pair(Arc::new(doc), Trust::Untrusted(&visible));
     let keys = keys(&graph.page_ids(&path, rel, input, None));
     assert_eq!(keys[0], "k", "the first holder keeps the key");
     assert!(keys[1] != "k" && keys[2] != "theirs", "{keys:?}");
     let distinct: HashSet<_> = keys.iter().collect();
     assert_eq!(distinct.len(), 3, "{keys:?}");
+}
+
+/// Blocker 1 of the cee055d33 review (cost): intake asks the one ownership
+/// view once per key and visits only that key's holders, never a page's
+/// blocks. Submitting a 60-block page's 60 keys on another page visits 60
+/// holders (the walk visited 60 x 60 blocks), and every key becomes a hole.
+#[test]
+fn r3_intake_visits_each_keys_holders_only() {
+    let (rel, text) = ("pages/a.md", page(60));
+    let (_temp, graph) = graph(&[(rel, text.clone()), ("pages/h.md", text.clone())]);
+    graph.with_pages(|_| ());
+    let theirs = keys(&doc_of(&graph, "pages/h.md"));
+    let doc = keyed(&graph, rel, &text, &theirs);
+    let visible = graph.test_read_snapshot();
+    HOLDER_VISITS.with(|visits| visits.set(0));
+    let input = Input::Pair(Arc::new(doc), Trust::Untrusted(&visible));
+    let now = keys(&graph.page_ids(&graph.root.join(rel), rel, input, None));
+    assert_eq!(HOLDER_VISITS.with(|visits| visits.get()), 60);
+    assert!(now.iter().all(|key| !theirs.contains(key)), "{now:?}");
 }
 
 /// Blocker 2 of the ee4ea5b9a review: a one-block own save of a page with

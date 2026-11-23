@@ -84,8 +84,25 @@ fn a1_an_identical_bullet_swap_reaches_the_index() {
 /// another key, so no key has two pages.
 #[test]
 fn a3_a_source_rewrite_never_reallocates_a_moved_key() {
-    let (a, b) = ("pages/A.md", "pages/B.md");
-    let live = Live::new(&[(a, "- moved\n- stays\n"), (b, "- bee\n")]);
+    a3_case("pages/A.md", "pages/B.md", "- bee\n");
+}
+
+/// Blocker 1 of the cee055d33 review, at `move_blocks`: the receiver, listed
+/// first, carries the moved key as an authored `id::`. The key is still
+/// registered to it (the source held it as a runtime key), so the source's
+/// rewrite does not hand it out again. Fails on cee055d33 (the first index
+/// entry was the receiver's authored one).
+#[test]
+fn r3_a_receivers_authored_id_does_not_hide_the_moved_keys_holder() {
+    let mut doc = crate::model::parse_doc(Path::new("pages/S.md"), "- moved\n");
+    tine_core::projection::assign_runtime_ids_reserving(&mut doc.roots, "pages/S.md", None);
+    let key = doc.roots[0].uuid.to_string();
+    let receiver = format!("- bee\n  id:: {key}\n");
+    a3_case("pages/S.md", "pages/R.md", &receiver);
+}
+
+fn a3_case(a: &str, b: &str, b_text: &str) {
+    let live = Live::new(&[(a, "- moved\n- stays\n"), (b, b_text)]);
     let (a_key, a_page) = live.open(a);
     let (b_key, b_page) = live.open(b);
     let (mut source, mut receiver) = (page_dto(&a_page), page_dto(&b_page));

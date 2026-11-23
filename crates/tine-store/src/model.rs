@@ -570,7 +570,7 @@ pub(crate) fn bytes_hold_block_id(path: &Path, bytes: &[u8], id: &str) -> bool {
         return false;
     };
     let mut found = false;
-    SnapshotBlockIndex::for_each_block_id(&parse_doc(path, content), |block| {
+    SnapshotBlockIndex::for_each_block_id(&parse_doc(path, content), |block, _| {
         found |= block == id;
     });
     found
@@ -1817,8 +1817,7 @@ impl ReadSnapshot {
             .and_then(|owners| {
                 owners
                     .slots()
-                    .iter()
-                    .find_map(|&slot| pages.get(slot).map(|page| (slot, page)))
+                    .find_map(|slot| pages.get(slot).map(|page| (slot, page)))
             });
         // Also compiled in the app's debug tests, where tine-store is a dependency.
         // A missed owner walk is as suspect as an absent row. Never recover by
@@ -1827,7 +1826,7 @@ impl ReadSnapshot {
         {
             let holds = |doc: &Document| {
                 let mut found = false;
-                SnapshotBlockIndex::for_each_block_id(doc, |id| found |= id == uuid);
+                SnapshotBlockIndex::for_each_block_id(doc, |id, _| found |= id == uuid);
                 found
             };
             if !owner.is_some_and(|(_, (_, doc))| holds(doc)) {
@@ -1841,6 +1840,7 @@ impl ReadSnapshot {
     }
 
     /// Whole live key set, independent of ids still present in documents.
+    /// An authored holder is marked `(id::)`.
     #[cfg(any(test, feature = "test-faults"))]
     pub(crate) fn block_index_image(&self) -> Vec<(String, Vec<String>)> {
         let mut rows: Vec<_> = self
@@ -1849,14 +1849,18 @@ impl ReadSnapshot {
             .unwrap()
             .rows()
             .map(|(id, owners)| {
-                let mut paths: Vec<_> = owners
-                    .slots()
-                    .iter()
-                    .map(|&slot| {
-                        self.physical_pages.get(slot).map_or_else(
+                let mut paths: Vec<_> = (owners.entries().iter())
+                    .map(|&entry| {
+                        let slot = entry >> 1;
+                        let path = self.physical_pages.get(slot).map_or_else(
                             || format!("<missing slot {slot}>"),
                             |(entry, _)| entry.rel_path_str().to_owned(),
-                        )
+                        );
+                        if entry & 1 == 1 {
+                            format!("{path} (id::)")
+                        } else {
+                            path
+                        }
                     })
                     .collect();
                 paths.sort();
@@ -1874,7 +1878,7 @@ impl ReadSnapshot {
         self.block_index
             .get()
             .and_then(|index| index.owners(uuid))
-            .map_or_else(Vec::new, |owners| owners.slots().to_vec())
+            .map_or_else(Vec::new, |owners| owners.slots().collect())
     }
 
     #[cfg(test)]
@@ -2193,9 +2197,10 @@ impl SnapshotReferenceCandidateIndex {
     }
 }
 
-/// The pages whose documents hold one block id, as ascending `Pages` slots:
-/// one (the usual case) or several (a duplicated `id::`, or a block copied to
-/// another page before its original goes).
+/// The pages whose documents hold one block id: one (the usual case) or
+/// several (a duplicated `id::`, or a block copied to another page before its
+/// original goes), as ascending entries, each a `Pages` slot tagged runtime or
+/// authored ([`Self::entry`]).
 #[derive(Clone, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 enum BlockOwners {
     One(usize),
@@ -2203,18 +2208,37 @@ enum BlockOwners {
 }
 
 impl BlockOwners {
-    fn slots(&self) -> &[usize] {
+    /// Page `slot` holds the id as a runtime key, or as an authored `id::`.
+    fn entry(slot: usize, authored: bool) -> usize {
+        slot << 1 | usize::from(authored)
+    }
+
+    fn entries(&self) -> &[usize] {
         match self {
-            Self::One(slot) => std::slice::from_ref(slot),
-            Self::Many(slots) => slots,
+            Self::One(entry) => std::slice::from_ref(entry),
+            Self::Many(entries) => entries,
         }
     }
 
-    fn from_slots(slots: Vec<usize>) -> Option<Self> {
-        match slots.as_slice() {
+    /// The pages holding the id either way, ascending, each once.
+    fn slots(&self) -> impl Iterator<Item = usize> + '_ {
+        let mut last = None;
+        (self.entries().iter().map(|entry| entry >> 1))
+            .filter(move |slot| last.replace(*slot) != Some(*slot))
+    }
+
+    /// The pages holding the id as a runtime key, ascending.
+    fn runtime_slots(&self) -> impl Iterator<Item = usize> + '_ {
+        (self.entries().iter())
+            .filter(|entry| *entry & 1 == 0)
+            .map(|entry| entry >> 1)
+    }
+
+    fn from_entries(entries: Vec<usize>) -> Option<Self> {
+        match entries.as_slice() {
             [] => None,
-            [slot] => Some(Self::One(*slot)),
-            _ => Some(Self::Many(Arc::new(slots))),
+            [entry] => Some(Self::One(*entry)),
+            _ => Some(Self::Many(Arc::new(entries))),
         }
     }
 }
@@ -6806,13 +6830,23 @@ mod tests {
             &both_pages,
             &["pages/A.md".into()],
         );
-        assert_eq!(both.owners("moved-id").unwrap().slots(), &[1, 2]);
+        assert_eq!(
+            both.owners("moved-id").unwrap().slots().collect::<Vec<_>>(),
+            [1, 2]
+        );
         let survivor = SnapshotBlockIndex::capture(
             Some((&both, &both_pages)),
             &moved_pages,
             &["pages/A.md".into()],
         );
-        assert_eq!(survivor.owners("moved-id").unwrap().slots(), &[2]);
+        assert_eq!(
+            survivor
+                .owners("moved-id")
+                .unwrap()
+                .slots()
+                .collect::<Vec<_>>(),
+            [2]
+        );
         fs::write(dir.join("pages/A.md"), "- source\n  id:: moved-id\n").unwrap();
         fs::write(dir.join("pages/B.md"), "- empty\n").unwrap();
         let store = model_store(&dir);
