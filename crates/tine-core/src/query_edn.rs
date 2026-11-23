@@ -40,14 +40,14 @@ pub fn options(source: &str) -> Option<Options> {
     let mut options = Options::default();
     for pair in form.children.chunks_exact(2) {
         let value = pair[1].leaf.as_ref();
-        match &source[pair[0].span.clone()] {
-            ":title" => {
+        match pair[0].keyword() {
+            Some("title") => {
                 if let Some(Edn::Str(title)) = value {
                     options.title = Some(title.clone());
                 }
             }
-            ":collapsed?" => options.collapsed = value == Some(&Edn::Bool(true)),
-            ":table-view?" => options.table = value == Some(&Edn::Bool(true)),
+            Some("collapsed?") => options.collapsed = value == Some(&Edn::Bool(true)),
+            Some("table-view?") => options.table = value == Some(&Edn::Bool(true)),
             _ => (),
         }
     }
@@ -66,16 +66,17 @@ pub fn edit_title(source: &str, title: &str) -> Option<String> {
     }
     let form = map(source)?;
     for pair in form.children.chunks_exact(2) {
-        if &source[pair[0].span.clone()] == ":title" {
+        if pair[0].keyword() == Some("title") {
+            let range = pair[1].authored_span();
             if title.is_empty() {
+                let key = pair[0].authored_span();
                 return Some(format!(
                     "{}{}{}",
-                    &source[..pair[0].span.start],
-                    &source[pair[0].span.end..pair[1].span.start],
-                    &source[pair[1].span.end..]
+                    &source[..key.start],
+                    &source[key.end..range.start],
+                    &source[range.end..]
                 ));
             }
-            let range = pair[1].span.clone();
             let replacement = edn::to_string(&Edn::Str(title.into()));
             return Some(format!(
                 "{}{}{}",
@@ -87,6 +88,15 @@ pub fn edit_title(source: &str, title: &str) -> Option<String> {
     }
     if title.is_empty() {
         return Some(source.into());
+    }
+    if source.as_bytes()[form.span.start] == b'#' {
+        let at = form.span.end - 1;
+        return Some(format!(
+            "{} :_/title {}{}",
+            &source[..at],
+            edn::to_string(&Edn::Str(title.into())),
+            &source[at..]
+        ));
     }
     let at = form.span.start + 1;
     let separator = if at == form.span.end - 1 { "" } else { " " };
@@ -102,9 +112,16 @@ pub fn edit_title(source: &str, title: &str) -> Option<String> {
 /// One direct option value in an advanced map or vector-plus-options stream.
 /// Duplicate declarations refuse rather than choosing one arbitrarily.
 pub(crate) fn option_value<'a>(source: &'a str, key: &str) -> Option<&'a str> {
+    read_option(source, key, |form| &source[form.span.clone()])
+}
+
+pub(crate) fn read_option<T>(
+    source: &str,
+    key: &str,
+    select: impl FnOnce(&Form) -> T,
+) -> Option<T> {
     let forms = edn::forms(source, Mode::Query)?;
-    let value = option_form(source, option_pairs(&forms), key)?;
-    Some(&source[value.span.clone()])
+    option_form(option_pairs(&forms), key.strip_prefix(':')?).map(select)
 }
 
 fn option_pairs(forms: &[Form]) -> &[Form] {
@@ -115,10 +132,10 @@ fn option_pairs(forms: &[Form]) -> &[Form] {
     }
 }
 
-fn option_form<'a>(source: &str, options: &'a [Form], key: &str) -> Option<&'a Form> {
+fn option_form<'a>(options: &'a [Form], key: &str) -> Option<&'a Form> {
     let mut values = options
         .chunks_exact(2)
-        .filter(|pair| source[pair[0].span.clone()] == *key);
+        .filter(|pair| pair[0].keyword() == Some(key));
     let first = &values.next()?[1];
     values.next().is_none().then_some(first)
 }
@@ -132,36 +149,63 @@ pub(crate) enum InputItem<'a> {
 pub(crate) struct Advanced<'a> {
     pub vector: Vec<&'a str>,
     pub inputs: Vec<InputItem<'a>>,
+    pub has_rules: bool,
+    pub has_result_transform: bool,
+    pub result_transform: Option<Form>,
 }
 
 /// Effective vector and positional inputs from one bounded EDN read.
 /// The map is Logseq syntax. The bare vector plus options is Tine syntax.
 pub(crate) fn advanced(source: &str) -> Option<Advanced<'_>> {
-    let forms = edn::forms(source, Mode::Query)?;
-    let options = option_pairs(&forms);
-    let vector = match forms.first()? {
-        form if form.kind == Kind::Vector => form,
-        _ => option_form(source, options, ":query")?,
+    let mut options = edn::forms(source, Mode::Query)?;
+    let head = options.first()?.kind;
+    let form = options.remove(0);
+    let vector = match head {
+        Kind::Vector => &form,
+        Kind::Map if options.is_empty() => {
+            options = form.children;
+            option_form(&options, "query")?
+        }
+        _ => return None,
     };
     if vector.kind != Kind::Vector || options.len() % 2 != 0 {
         return None;
     }
-    let input_items = option_form(source, options, ":inputs")
+    let input_items = option_form(&options, "inputs")
         .filter(|form| matches!(form.kind, Kind::List | Kind::Vector))
         .map_or(&[][..], |form| &form.children);
+    let vector = vector
+        .children
+        .iter()
+        .map(|item| &source[item.span.clone()])
+        .collect();
+    let inputs = input_items
+        .iter()
+        .map(|item| match item.keyword() {
+            Some("current-page") => InputItem::CurrentPage,
+            _ => InputItem::Other(&source[item.span.clone()]),
+        })
+        .collect();
+    let mut has_rules = false;
+    let mut transform = None;
+    let mut duplicate_transform = false;
+    for (index, pair) in options.chunks_exact(2).enumerate() {
+        match pair[0].keyword() {
+            Some("rules") => has_rules = true,
+            Some("result-transform") => {
+                duplicate_transform |= transform.replace(index * 2 + 1).is_some()
+            }
+            _ => (),
+        }
+    }
     Some(Advanced {
-        vector: vector
-            .children
-            .iter()
-            .map(|item| &source[item.span.clone()])
-            .collect(),
-        inputs: input_items
-            .iter()
-            .map(|item| match &source[item.span.clone()] {
-                ":current-page" => InputItem::CurrentPage,
-                other => InputItem::Other(other),
-            })
-            .collect(),
+        vector,
+        inputs,
+        has_rules,
+        has_result_transform: transform.is_some(),
+        result_transform: transform
+            .filter(|_| !duplicate_transform)
+            .map(|index| options.swap_remove(index)),
     })
 }
 
@@ -189,9 +233,10 @@ pub fn declares_option(source: &str, key: &str) -> bool {
     let Some(forms) = edn::forms(source, Mode::QuerySyntax) else {
         return false;
     };
+    let key = key.strip_prefix(':');
     option_pairs(&forms)
         .chunks(2)
-        .any(|pair| source[pair[0].span.clone()] == *key)
+        .any(|pair| key.is_some() && pair[0].keyword() == key)
 }
 
 /// An EDN query stream's final map, only when another form precedes it.
@@ -201,13 +246,18 @@ pub fn split_trailing_map(source: &str) -> (String, String) {
     let Some(forms) = edn::forms(source, Mode::Macro) else {
         return unchanged();
     };
+    if let [vector, stream @ .., key, _] = forms.as_slice() {
+        // A vector followed by option pairs can have a map as its last
+        // value. Only a standalone final map is the macro's display options.
+        if vector.kind == Kind::Vector && stream.len() % 2 == 0 && key.keyword().is_some() {
+            return unchanged();
+        }
+    }
     if let Some(last) = forms.last().filter(|last| {
         forms.len() > 1 && last.kind == Kind::Map && last.span.end == source.trim_end().len()
     }) {
-        return (
-            source[..last.span.start].trim().into(),
-            source[last.span.clone()].into(),
-        );
+        let span = last.authored_span();
+        return (source[..span.start].trim().into(), source[span].into());
     }
     unchanged()
 }
@@ -263,11 +313,11 @@ pub fn inspect_begin_query(payload: &str) -> BeginQueryMatch {
     let mut rules = None;
     for pair in form.children.chunks_exact(2) {
         let value = &source[pair[1].span.clone()];
-        match &source[pair[0].span.clone()] {
-            ":query" => {
+        match pair[0].keyword() {
+            Some("query") => {
                 query = Some(value);
             }
-            ":inputs" => {
+            Some("inputs") => {
                 if !matches!(pair[1].kind, Kind::Vector | Kind::List) {
                     return Unsupported {
                         reason: "expected :inputs to be a vector or list",
@@ -278,9 +328,9 @@ pub fn inspect_begin_query(payload: &str) -> BeginQueryMatch {
             // A Clojure function Tine never runs (ADR 0042). Carry it so the
             // advanced lowerer sees it and refuses the whole query visibly,
             // instead of running the bare vector as if the transform did not exist.
-            ":result-transform" => result_transform = Some(value),
-            ":rules" => rules = Some(value),
-            ":title" => {
+            Some("result-transform") => result_transform = Some(value),
+            Some("rules") => rules = Some(value),
+            Some("title") => {
                 if pair[1].kind != Kind::String {
                     return Unsupported {
                         reason: "expected :title to be a string",

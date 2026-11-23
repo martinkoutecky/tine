@@ -85,6 +85,8 @@ pub struct Form {
     pub kind: Kind,
     pub children: Vec<Form>,
     #[serde(skip)]
+    authored_start: usize,
+    #[serde(skip)]
     pub(crate) leaf: Option<Edn>,
 }
 
@@ -101,11 +103,23 @@ pub enum Kind {
 }
 
 impl Form {
-    fn is_symbol(&self) -> bool {
+    /// The source range of the form, including any attached metadata.
+    pub(crate) fn authored_span(&self) -> std::ops::Range<usize> {
+        self.authored_start..self.span.end
+    }
+
+    pub(crate) fn is_symbol(&self) -> bool {
         matches!(&self.leaf, Some(Edn::Symbol(raw))
             if self.kind == Kind::Atom
                 && !starts_numeric(raw)
                 && !raw.starts_with(['\\', '#', '[']))
+    }
+
+    pub(crate) fn keyword(&self) -> Option<&str> {
+        match self.leaf.as_ref()? {
+            Edn::Keyword(key) => Some(key),
+            _ => None,
+        }
     }
 
     fn tag(&self) -> Option<&str> {
@@ -190,6 +204,8 @@ pub(crate) fn read_query_map(input: &str) -> Result<Form, Option<&str>> {
 }
 
 pub(crate) fn forms(input: &str, mode: Mode) -> Option<Vec<Form>> {
+    #[cfg(test)]
+    STREAM_READS.with(|count| count.set(count.get() + 1));
     let mut reader = Reader::new(input, QUERY_BYTES, mode)?;
     let mut forms = Vec::new();
     loop {
@@ -199,6 +215,11 @@ pub(crate) fn forms(input: &str, mode: Mode) -> Option<Vec<Form>> {
         }
         forms.push(reader.form(0)?);
     }
+}
+
+#[cfg(test)]
+thread_local! {
+    pub(crate) static STREAM_READS: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
 }
 
 pub(crate) fn config_entries(input: &str) -> Option<Vec<(Form, Option<Form>)>> {
@@ -318,7 +339,7 @@ impl<'a> Reader<'a> {
                 }
                 self.i += if self.s[start] == b'^' { 1 } else { 2 };
                 let metadata = self.form(depth + 1)?;
-                let target = self.form(depth + 1)?;
+                let mut target = self.form(depth + 1)?;
                 if !(metadata.kind == Kind::Map
                     || matches!(metadata.leaf, Some(Edn::Keyword(_) | Edn::Str(_)))
                     || metadata.is_symbol())
@@ -330,8 +351,7 @@ impl<'a> Reader<'a> {
                 {
                     self.invalid()?;
                 }
-                // The returned span starts at the effective value. Authored
-                // metadata remains available in the preceding source bytes.
+                target.authored_start = start;
                 return Some(target);
             }
             b'[' if self.mode == Mode::Macro && self.s[start..].starts_with(b"[[") => {
@@ -347,7 +367,7 @@ impl<'a> Reader<'a> {
                     _ => (Kind::List, b')'),
                 };
                 self.i += 1;
-                children = self.collection(depth, close, kind)?;
+                children = self.collection(depth, close, kind, None)?;
                 kind
             }
             b'"' => {
@@ -377,8 +397,29 @@ impl<'a> Reader<'a> {
             }
             b'#' if self.s[start..].starts_with(b"#{") => {
                 self.i += 2;
-                children = self.collection(depth, b'}', Kind::Set)?;
+                children = self.collection(depth, b'}', Kind::Set, None)?;
                 Kind::Set
+            }
+            b'#' if self.s[start..].starts_with(b"#:") => {
+                self.i += 2;
+                let namespace_start = self.i;
+                self.token(false);
+                let namespace = &self.src[namespace_start..self.i];
+                if !valid_name(namespace) || (namespace.contains('/') && namespace != "/") {
+                    return None;
+                }
+                while let Some(c) = self.src[self.i..].chars().next() {
+                    if c != ',' && !js_whitespace(c) {
+                        break;
+                    }
+                    self.i += c.len_utf8();
+                }
+                if self.byte()? != b'{' {
+                    return None;
+                }
+                self.i += 1;
+                children = self.collection(depth, b'}', Kind::Map, Some(namespace))?;
+                Kind::Map
             }
             b'#' if matches!(self.mode, Mode::QuerySyntax | Mode::Macro)
                 && matches!(self.s.get(start + 1), Some(b'(' | b'\'' | b'"')) =>
@@ -421,8 +462,18 @@ impl<'a> Reader<'a> {
                 let name = tag.leaf?.as_str()?.to_owned();
                 let value = self.form(depth + 1)?;
                 let supported = match name.as_str() {
-                    "uuid" => matches!(&value.leaf, Some(Edn::Str(id)) if id.is_ascii()),
+                    "uuid" => value.kind == Kind::String,
+                    "inst" => matches!(&value.leaf, Some(Edn::Str(text)) if instant(text).is_some()),
                     "queue" => value.kind == Kind::Vector,
+                    "js" => match value.kind {
+                        Kind::Vector => true,
+                        Kind::Map => value.children.iter().step_by(2).all(|key| {
+                            matches!(&key.leaf, Some(Edn::Str(_) | Edn::Keyword(_)))
+                                || key.is_symbol()
+                                || matches!(&key.leaf, Some(Edn::Symbol(raw)) if raw.starts_with('\\'))
+                        }),
+                        _ => false,
+                    },
                     _ => false,
                 };
                 if !supported {
@@ -444,19 +495,36 @@ impl<'a> Reader<'a> {
                 }
                 let token = &self.src[token_start..self.i];
                 leaf = match token {
-                    _ if keyword && valid_name(token) && !token.contains("::") => {
+                    _ if keyword
+                        && !token.starts_with(':')
+                        && valid_name(token)
+                        && !token.contains("::") =>
+                    {
                         Some(Edn::Keyword(token.into()))
                     }
                     _ if keyword => None,
                     "nil" => Some(Edn::Nil),
                     "true" => Some(Edn::Bool(true)),
                     "false" => Some(Edn::Bool(false)),
-                    _ if numeric => number(token).or_else(|| {
-                        (self.mode == Mode::ImageMetadata
-                            || (matches!(self.mode, Mode::Query | Mode::QuerySyntax | Mode::Macro)
-                                && crate::query::date_token::DateToken::parse(token).is_some()))
-                        .then(|| Edn::Symbol(token.into()))
-                    }),
+                    _ if numeric => number(token)
+                        .map(|value| {
+                            // Keep the established write-back spelling and
+                            // typed settings behavior for suffix literals.
+                            if token.ends_with(['N', 'M']) {
+                                Edn::Symbol(token.into())
+                            } else {
+                                value
+                            }
+                        })
+                        .or_else(|| {
+                            (self.mode == Mode::ImageMetadata
+                                || (matches!(
+                                    self.mode,
+                                    Mode::Query | Mode::QuerySyntax | Mode::Macro
+                                ) && crate::query::date_token::DateToken::parse(token)
+                                    .is_some()))
+                            .then(|| Edn::Symbol(token.into()))
+                        }),
                     _ if valid_name(token) || self.mode == Mode::Macro => {
                         Some(Edn::Symbol(token.into()))
                     }
@@ -472,6 +540,7 @@ impl<'a> Reader<'a> {
             span: start..self.i,
             kind,
             children,
+            authored_start: start,
             leaf,
         })
     }
@@ -485,7 +554,13 @@ impl<'a> Reader<'a> {
         }
     }
 
-    fn collection(&mut self, depth: usize, close: u8, kind: Kind) -> Option<Vec<Form>> {
+    fn collection(
+        &mut self,
+        depth: usize,
+        close: u8,
+        kind: Kind,
+        namespace: Option<&str>,
+    ) -> Option<Vec<Form>> {
         let mut children = Vec::new();
         loop {
             self.trivia(depth + 1)?;
@@ -503,7 +578,18 @@ impl<'a> Reader<'a> {
                 if children.len() % 2 != 0 {
                     self.invalid()?;
                 }
-                if self.mode == Mode::ImageMetadata && depth == 0 {
+                if let Some(namespace) = namespace {
+                    for key in children.iter_mut().step_by(2) {
+                        let symbol = key.is_symbol();
+                        if let Some(Edn::Keyword(name)) = &mut key.leaf {
+                            qualify(name, namespace);
+                        } else if symbol {
+                            if let Some(Edn::Symbol(name)) = &mut key.leaf {
+                                qualify(name, namespace);
+                            }
+                        }
+                    }
+                } else if self.mode == Mode::ImageMetadata && depth == 0 {
                     return Some(children);
                 }
                 2
@@ -608,7 +694,7 @@ impl<'a> Reader<'a> {
 fn valid_name(token: &str) -> bool {
     if token.is_empty()
         || token.ends_with(':')
-        || token.starts_with(':')
+        || token.starts_with("::")
         || token.chars().any(invalid_constituent)
     {
         return false;
@@ -629,6 +715,14 @@ fn invalid_constituent(c: char) -> bool {
     matches!(c, '@' | '~' | '\x60')
 }
 
+fn qualify(name: &mut String, namespace: &str) {
+    match name.split_once('/') {
+        Some(("_", local)) => *name = local.into(),
+        Some((prefix, _)) if !prefix.is_empty() => (),
+        _ => *name = format!("{namespace}/{name}"),
+    }
+}
+
 fn macro_terminator(c: char, numeric: bool) -> bool {
     js_whitespace(c)
         || matches!(
@@ -647,33 +741,193 @@ fn character(token: &str) -> Option<char> {
         "backspace" => '\u{8}',
         "formfeed" => '\u{c}',
         _ if token.encode_utf16().count() == 1 => token.chars().next()?,
-        _ if token.starts_with('u') && token.len() == 5 => {
+        _ if token.starts_with('u')
+            && token.len() == 5
+            && token.as_bytes()[1..].iter().all(u8::is_ascii_hexdigit) =>
+        {
             char::from_u32(u32::from_str_radix(&token[1..], 16).ok()?)?
+        }
+        _ if token.starts_with('o')
+            && token.len() <= 4
+            && token.as_bytes()[1..]
+                .iter()
+                .all(|digit| matches!(digit, b'0'..=b'7')) =>
+        {
+            char::from(u8::from_str_radix(&token[1..], 8).ok()?)
         }
         _ => return None,
     })
 }
 
+// tools.reader tries int-pattern first, then float-pattern, then ratio-pattern.
+// ClojureScript decodes all three into JS Numbers, including N/M suffixes.
 fn number(token: &str) -> Option<Edn> {
-    let plain = token.trim_start_matches(['+', '-']);
-    if plain.starts_with('0') && plain.as_bytes().get(1).is_some_and(u8::is_ascii_digit) {
-        return None; // This spelling may denote octal.
+    let digits = |s: &str| !s.is_empty() && s.bytes().all(|b| b.is_ascii_digit());
+    let signed = token.strip_suffix('N').unwrap_or(token);
+    let plain = signed.strip_prefix(['+', '-']).unwrap_or(signed);
+    let sign = if signed.starts_with('-') { -1.0 } else { 1.0 };
+    let integer = if digits(plain) {
+        if plain.len() > 1 && plain.starts_with('0') {
+            radix_number(plain, 8, true)
+        } else {
+            plain.parse().ok()
+        }
+    } else if let Some(hex) = plain
+        .strip_prefix("0x")
+        .or_else(|| plain.strip_prefix("0X"))
+    {
+        radix_number(hex, 16, true)
+    } else if let Some((base, value)) = token
+        .strip_prefix(['+', '-'])
+        .unwrap_or(token)
+        .split_once(['r', 'R'])
+    {
+        if base.len() > 2
+            || base.starts_with('0')
+            || !digits(base)
+            || value.is_empty()
+            || !value.bytes().all(|b| b.is_ascii_alphanumeric())
+        {
+            return None;
+        }
+        let base = base.parse::<u32>().ok()?;
+        if !(2..=36).contains(&base) {
+            return None;
+        }
+        let value = if base == 16 {
+            value
+                .strip_prefix("0x")
+                .or_else(|| value.strip_prefix("0X"))
+                .unwrap_or(value)
+        } else {
+            value
+        };
+        radix_number(value, base, false)
+    } else {
+        if signed.len() != token.len() {
+            return None;
+        }
+        if let Some((numerator, denominator)) = plain.split_once('/') {
+            return (digits(numerator) && digits(denominator)).then(|| {
+                Edn::Float(
+                    sign * numerator.parse::<f64>().unwrap() / denominator.parse::<f64>().unwrap(),
+                )
+            });
+        }
+        let decimal = signed.strip_suffix('M').unwrap_or(signed);
+        return decimal.parse::<f64>().ok().map(Edn::Float);
+    }? * sign;
+    if integer.abs() < 9_007_199_254_740_992.0 {
+        Some(Edn::Int(integer as i64))
+    } else {
+        Some(Edn::Float(integer))
     }
-    let decimal = token.strip_suffix(['M', 'N']).unwrap_or(token);
-    let int = decimal.parse::<i64>().ok();
-    let float = decimal.parse::<f64>().ok().filter(|n| n.is_finite());
-    if token.ends_with('N') && int.is_none() {
+}
+
+fn radix_number(source: &str, base: u32, exact: bool) -> Option<f64> {
+    let end = source
+        .bytes()
+        .take_while(|b| char::from(*b).is_digit(base))
+        .count();
+    if end == 0 || (exact && end != source.len()) {
         return None;
     }
-    let n = float?;
-    if decimal.len() != token.len() {
-        Some(Edn::Symbol(token.into()))
-    } else {
-        Some(
-            int.filter(|_| n.abs() < 9_007_199_254_740_992.0)
-                .map_or(Edn::Float(n), Edn::Int),
-        )
+    let digits = &source[..end];
+    if base == 10 {
+        return digits.parse().ok();
     }
+    let value = |byte| char::from(byte).to_digit(base).unwrap();
+    if base.is_power_of_two() {
+        // Retain enough leading bits for f64 to round once. A nonzero
+        // discarded tail breaks an exact tie in the low bits of the prefix.
+        let mut prefix = 0u64;
+        for (index, byte) in digits.bytes().enumerate() {
+            let digit = u64::from(value(byte));
+            if let Some(next) = prefix.checked_mul(u64::from(base)) {
+                prefix = next + digit;
+            } else {
+                let tail = &digits[index..];
+                let sticky = u64::from(tail.bytes().any(|byte| byte != b'0'));
+                let shift = tail.len() as i32 * base.trailing_zeros() as i32;
+                return Some((prefix | sticky) as f64 * 2f64.powi(shift));
+            }
+        }
+        return Some(prefix as f64);
+    }
+    // V8's parseInt approximates other radices using exact u32 chunks.
+    let (mut total, mut part, mut scale) = (0.0, 0, 1);
+    for byte in digits.bytes() {
+        if scale * base > u32::MAX / 36 {
+            total = total * f64::from(scale) + f64::from(part);
+            (part, scale) = (0, 1);
+        }
+        part = part * base + value(byte);
+        scale *= base;
+    }
+    Some(total * f64::from(scale) + f64::from(part))
+}
+
+fn instant(text: &str) -> Option<i64> {
+    use chrono::Datelike as _;
+    let decimal = |digits: &[u8]| {
+        digits.iter().try_fold(0u32, |n, &byte| {
+            byte.is_ascii_digit()
+                .then(|| n * 10 + u32::from(byte - b'0'))
+        })
+    };
+    let text = text.as_bytes();
+    let (mut stamp, offset) = match text.split_last_chunk() {
+        Some((stamp, [sign, h1, h2, b':', m1, m2])) if matches!(sign, b'+' | b'-') => {
+            let minutes = decimal(&[*h1, *h2])? * 60 + decimal(&[*m1, *m2])?;
+            (
+                stamp,
+                i64::from(minutes) * if *sign == b'-' { -1 } else { 1 },
+            )
+        }
+        _ => (text.strip_suffix(b"Z").unwrap_or(text), 0),
+    };
+    let year = decimal(stamp.get(..4)?)? as i32;
+    stamp = &stamp[4..];
+    let mut fields = [1, 1, 0, 0, 0];
+    let mut precision = 0;
+    for (separator, field) in [b'-', b'-', b'T', b':', b':'].into_iter().zip(&mut fields) {
+        let Some(rest) = stamp.strip_prefix(&[separator]) else {
+            break;
+        };
+        *field = decimal(rest.get(..2)?)?;
+        stamp = &rest[2..];
+        precision += 1;
+    }
+    let [month, day, hour, minute, second] = fields;
+    let date = chrono::NaiveDate::from_ymd_opt(year, month, day)?;
+    if hour > 23 || minute > 59 || second > if minute == 59 { 60 } else { 59 } {
+        return None;
+    }
+    let millis = if stamp.is_empty() {
+        0
+    } else {
+        let fraction = stamp.strip_prefix(b".")?;
+        if precision != fields.len()
+            || fraction.is_empty()
+            || !fraction.iter().all(u8::is_ascii_digit)
+        {
+            return None;
+        }
+        fraction
+            .iter()
+            .zip([100, 10, 1])
+            .map(|(&digit, place)| u32::from(digit - b'0') * place)
+            .sum()
+    };
+    // Date.UTC interprets years 0–99 as 1900–1999 after the reader validates
+    // the authored date. It also rolls a leap second into the next minute.
+    let days = if year < 100 {
+        chrono::NaiveDate::from_ymd_opt(year + 1900, month, 1)?.num_days_from_ce() + day as i32 - 1
+    } else {
+        date.num_days_from_ce()
+    };
+    let minutes = (i64::from(days) * 24 + i64::from(hour)) * 60 + i64::from(minute) - offset;
+    Some(minutes * 60_000 + i64::from(second * 1000 + millis))
 }
 
 // Equality for duplicate checks follows CLJS: lists and vectors compare as
@@ -709,14 +963,30 @@ fn identity(form: &Form, hash: &impl BuildHasher) -> u64 {
                 .leaf
                 .as_ref()
                 .and_then(Edn::as_str)
-                .map(str::to_ascii_lowercase)
+                .map(str::to_lowercase)
                 .hash(&mut state);
+        }
+        (Kind::Tagged, _) if form.tag() == Some("inst") => {
+            (
+                "inst",
+                form.children[0]
+                    .leaf
+                    .as_ref()
+                    .and_then(Edn::as_str)
+                    .and_then(instant),
+            )
+                .hash(&mut state);
+        }
+        (Kind::Tagged, _) if form.tag() == Some("js") => {
+            // Each #js form constructs a distinct JavaScript object.
+            ("js", form.span.start).hash(&mut state);
         }
         (Kind::Tagged, _) => {
             form.tag().hash(&mut state);
             identity(&form.children[0], hash).hash(&mut state);
         }
         (_, Some(Edn::Int(n))) => return numeric_identity(*n as f64, hash),
+        (_, Some(Edn::Float(n))) if n.is_nan() => ("NaN", form.span.start).hash(&mut state),
         (_, Some(Edn::Float(n))) => return numeric_identity(*n, hash),
         (_, Some(Edn::Symbol(raw))) if raw.starts_with('\\') => {
             "string".hash(&mut state);
@@ -725,12 +995,20 @@ fn identity(form: &Form, hash: &impl BuildHasher) -> u64 {
                 c.encode_utf8(&mut buf).hash(&mut state);
             }
         }
-        (_, Some(Edn::Symbol(raw))) if starts_numeric(raw) => {
-            if let Ok(n) = raw.trim_end_matches(['N', 'M']).parse() {
-                return numeric_identity(n, hash);
+        (_, Some(Edn::Symbol(raw))) if starts_numeric(raw) && raw.ends_with(['M', 'N']) => {
+            match number(raw) {
+                Some(Edn::Int(n)) => return numeric_identity(n as f64, hash),
+                Some(Edn::Float(n)) => return numeric_identity(n, hash),
+                _ => ("symbol", raw).hash(&mut state),
             }
-            ("symbol", raw).hash(&mut state);
         }
+        (_, Some(Edn::Symbol(raw))) if raw == "##Inf" => {
+            return numeric_identity(f64::INFINITY, hash)
+        }
+        (_, Some(Edn::Symbol(raw))) if raw == "##-Inf" => {
+            return numeric_identity(f64::NEG_INFINITY, hash)
+        }
+        (_, Some(Edn::Symbol(raw))) if raw == "##NaN" => ("NaN", form.span.start).hash(&mut state),
         (_, Some(Edn::Symbol(raw))) => ("symbol", raw).hash(&mut state),
         (_, Some(Edn::Keyword(raw))) => ("keyword", raw).hash(&mut state),
         (_, Some(Edn::Str(text))) => ("string", text).hash(&mut state),
@@ -816,6 +1094,9 @@ fn write_edn(e: &Edn, out: &mut String) {
         Edn::Int(i) => {
             let _ = write!(out, "{i}");
         }
+        Edn::Float(f) if f.is_nan() => out.push_str("##NaN"),
+        Edn::Float(f) if *f == f64::INFINITY => out.push_str("##Inf"),
+        Edn::Float(f) if *f == f64::NEG_INFINITY => out.push_str("##-Inf"),
         Edn::Float(f) => {
             let _ = write!(out, "{f}");
         }
@@ -878,12 +1159,94 @@ mod tests {
             r#"#{#{1 2} #{2 1}}"#,
             r#"{{:x 1 :y 2} :a {:y 2 :x 1} :b}"#,
             r#"#{1N 1.0M}"#,
+            r#"#{0x12 18}"#,
+            r#"#{0x10000000000000801 18446744073709555712}"#,
+            r#"#{022 18.0M}"#,
+            r#"{2r10 0 4/2 1}"#,
+            r#"#{\o101 \u0041}"#,
+            r#"#{#inst "2020-02-29T00:30+01:00" #inst "2020-02-28T23:30Z"}"#,
+            r#"#{#uuid "ABC" #uuid "abc"}"#,
+            r#"#:ns{:a 1 :ns/a 2}"#,
+            r#"#{#:ns{:_/a 1 b 2} {:a 1 ns/b 2}}"#,
             r#"#{\a "\u0061"}"#,
             r#"#{#_ {:x 1 :x 2} :public}"#,
         ] {
             assert_eq!(parse_strict(source), None, "{source}");
         }
         assert_eq!(parse_strict("#{1 #_ 1 2}"), parse_strict("#{1 2}"));
+        let distinct_js = parse_strict("#{#js [1] #js [1] [1]}");
+        assert!(matches!(distinct_js, Some(Edn::Set(items)) if items.len() == 3));
+        assert!(parse_strict("#{0x10000000000000801 18446744073709551616}").is_some());
+    }
+
+    #[test]
+    fn reader_validates_restored_literals_and_decodes_their_values() {
+        for source in [
+            r"\u+000",
+            r"\u+041",
+            r"\u+FFF",
+            r"\uD800",
+            r"\u00000",
+            r"\o8",
+            r"\o400",
+            r"\o0000",
+            r"\o+01",
+            "08",
+            "0x+",
+            "2r2",
+            "2r",
+            "37r1",
+            "1.1N",
+            "1/-2",
+            r#"#inst "2025-02-29""#,
+            r#"#inst "2024-12-31T23:58:60Z""#,
+            r#"#inst "2024-01T12Z""#,
+            r#"#inst "2024-01-02T12:34.5Z""#,
+            r#"#inst "2024-01-02T12:34:56.""#,
+            "#inst :value",
+            "#js (:a)",
+            "#js {1 :a}",
+            "#uuid :bad",
+            "#:ns #{:a}",
+            "#:ns/name{:a 1}",
+            "#:ns{:a}",
+        ] {
+            assert_eq!(parse_strict(source), None, "{source}");
+        }
+        for (source, expected) in [
+            ("0x12N", 18.0),
+            ("-0X12", -18.0),
+            ("+022", 18.0),
+            ("00N", 0.0),
+            ("2R10z", 2.0),
+            ("16r0x12", 18.0),
+            ("36rN", 23.0),
+            ("+1/2", 0.5),
+            ("01M", 1.0),
+            ("08.5", 8.5),
+            ("01e2", 100.0),
+            ("2.e-1", 0.2),
+            ("1/0", f64::INFINITY),
+        ] {
+            assert_eq!(
+                number(source).and_then(|value| value.as_f64()),
+                Some(expected),
+                "{source}"
+            );
+        }
+        assert_eq!(
+            parse_strict("#:ns {:a 1 b 2 :_/c 3 :other/d 4}"),
+            parse_strict("{:ns/a 1 ns/b 2 :c 3 :other/d 4}")
+        );
+        for (left, right) in [
+            ("2024Z", "2024-01-01T00:00:00.000+00:00"),
+            ("2024-01:00", "2024-01-01T01Z"),
+            ("2024-12-31T23:59:60Z", "2025Z"),
+            ("2024-02-29T23:59:59.123456Z", "2024-02-29T23:59:59.123Z"),
+        ] {
+            let value = instant(left).expect(left);
+            assert_eq!(instant(right), Some(value));
+        }
     }
 
     #[test]

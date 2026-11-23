@@ -693,12 +693,16 @@ pub(super) fn advanced_pred_inner(
     }
     // Authored rules may replace even familiar rule names. Never execute or
     // silently substitute our built-ins for a graph's rule definitions.
-    if crate::query_edn::declares_option(query_src, ":rules") {
+    if declaration.has_rules {
         ignored.push("rules".into());
     }
     if !suggest_rows
-        && crate::query_edn::declares_option(query_src, ":result-transform")
-        && advanced_result_sort(query_src).is_none()
+        && declaration.has_result_transform
+        && declaration
+            .result_transform
+            .as_ref()
+            .and_then(|form| super::advanced_sort::result_sort_form(query_src, form))
+            .is_none()
     {
         ignored.push("result-transform".into());
     }

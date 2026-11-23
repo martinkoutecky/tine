@@ -7,7 +7,7 @@
 
 use super::ir::{Field, SortDir};
 use super::sort::SortDecor;
-use crate::edn::{self, Edn};
+use crate::edn::Edn;
 use crate::query_edn::{self, Form, Kind};
 
 #[derive(Clone, Copy, Debug)]
@@ -123,11 +123,7 @@ impl<'a> Reader<'a> {
             return None;
         };
         let name = self.text(param);
-        let symbol = param.kind == Kind::Atom
-            && matches!(edn::parse_strict(name), Some(Edn::Symbol(_)))
-            && !name.contains(['/', '\\', '#'])
-            && name != "&"
-            && !name.starts_with(|c: char| c.is_ascii_digit());
+        let symbol = param.is_symbol() && !name.contains(['/', '\\', '#']) && name != "&";
         (form.kind == Kind::List && self.atom(head, "fn") && params.kind == Kind::Vector && symbol)
             .then_some((name, body))
     }
@@ -158,14 +154,14 @@ impl<'a> Reader<'a> {
             Some(form) if form.kind == Kind::List => {
                 DefaultValue::Get(Box::new(self.get(form, row, Some(key.numeric()))?))
             }
-            Some(form) => DefaultValue::Literal(match edn::parse_strict(self.text(form))? {
+            Some(form) => DefaultValue::Literal(match form.leaf.as_ref()? {
                 Edn::Nil => SortDecor::Nil,
-                Edn::Str(value) if !key.numeric() => utf16(&value),
+                Edn::Str(value) if !key.numeric() => utf16(value),
                 // JS represents integers exactly only within this range.
                 Edn::Int(value)
                     if key.numeric() && value.unsigned_abs() <= 9_007_199_254_740_991 =>
                 {
-                    SortDecor::Num(value)
+                    SortDecor::Num(*value)
                 }
                 _ => return None,
             }),
@@ -181,10 +177,12 @@ impl<'a> Reader<'a> {
 /// `get` on that row. Unknown keys, code or comparators refuse the entire form.
 /// Cost O(source bytes), using the bounded, comment-aware EDN reader.
 pub fn advanced_result_sort(src: &str) -> Option<AdvancedResultSort> {
-    let value = query_edn::option_value(src, ":result-transform")?;
-    let form = query_edn::read(value)?;
-    let reader = Reader(value);
-    let (result, body) = reader.lambda(&form)?;
+    query_edn::read_option(src, ":result-transform", |form| result_sort_form(src, form))?
+}
+
+pub(super) fn result_sort_form(src: &str, form: &Form) -> Option<AdvancedResultSort> {
+    let reader = Reader(src);
+    let (result, body) = reader.lambda(form)?;
     // These names would capture a function used inside the transform.
     if matches!(result, "sort-by" | "juxt" | "get") {
         return None;

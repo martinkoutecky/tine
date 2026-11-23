@@ -24,8 +24,10 @@ for page and journal directories, journal title and filename formats
 (`:date-formatter` is a fallback for the title format),
 preferred format, filename format, hidden block properties, comma-separated
 properties, property pages, ignored reference keywords and start of week.
-Only the parsed keyword members of each retained set travel. Defaults may be
-omitted. Comments and ignored values carry no reading settings.
+Only the parsed keyword members of each retained set travel. The entire set
+must read, including nested and discarded forms. An invalid character literal
+omits the setting. Defaults may be omitted. Comments and ignored values carry
+no reading settings.
 The macro map carries effective definitions named by parser-recognized calls
 in shared sources and transitively in those definitions. Definition values are
 read in both Markdown and Org. Arguments that a definition places in a macro

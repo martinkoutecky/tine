@@ -286,6 +286,94 @@ fn advanced_datalog_is_unsupported() {
 }
 
 #[test]
+fn advanced_query_reads_unused_edn_literals() {
+    let clause = r#"[:find (pull ?b [*]) :where [?b :block/marker "TODO"]]"#;
+    let expected = advanced_pred(clause, None, TODAY).0.unwrap().filter;
+    let mut failures = Vec::new();
+    for option in [
+        r":note \o1",
+        r":note \o12",
+        r":note \o101",
+        r"#_ \o101",
+        ":note 0x12",
+        ":note 0X12",
+        ":note 022",
+        ":note 2r10",
+        ":note 2R10",
+        ":note 1/2",
+        ":note 01.5",
+        ":note 01e2",
+        ":note 01M",
+        ":note 0x12N",
+        r#":note #inst "2026-11-23""#,
+        r#"#_ #inst "2026-11-23T01:02:03.456+01:00""#,
+        r#":note #uuid "d9af1396-8889-4e6f-8995-023cf4bc11d2""#,
+        ":note #queue [1 2]",
+        ":note #js [1 2]",
+        r#":note #js {"x" 1 :tag 2}"#,
+        ":note #:ns{:value 1}",
+    ] {
+        let map = format!("{{:query {clause} {option}}}");
+        let stream = format!("{clause} {option}");
+        let begin = match crate::query_edn::inspect_begin_query(&map) {
+            crate::query_edn::BeginQueryMatch::Supported { query, .. } => Some(query),
+            _ => None,
+        };
+        for (kind, source) in [
+            ("map", Some(map)),
+            ("stream", Some(stream)),
+            ("BEGIN_QUERY", begin),
+        ] {
+            let filter = source.map(|source| {
+                let (query, _) =
+                    parse_query_input(&source, QueryInput::MacroQuery, TODAY, Registry::none());
+                resolve_for_execution(&query, &ExecutionContext::default(), TODAY)
+                    .query()
+                    .filter
+                    .clone()
+            });
+            if filter.as_ref() != Some(&expected) {
+                failures.push((kind, option));
+            }
+        }
+    }
+    assert!(failures.is_empty(), "TODO row refused: {failures:?}");
+}
+
+#[test]
+fn advanced_lowering_reads_one_edn_tree() {
+    let clause = r#"[:find (pull ?b [*]) :where [?b :block/marker "TODO"]]"#;
+    for (options, expected) in [
+        ("", None),
+        (
+            ":result-transform (fn [xs] (sort-by (fn [row] (get row :block/scheduled 1)) xs))",
+            None,
+        ),
+        (":rules []", Some("rules")),
+        (
+            ":result-transform (fn [rows] (take 2 rows))",
+            Some("result-transform"),
+        ),
+        (
+            ":result-transform nil :result-transform nil",
+            Some("result-transform"),
+        ),
+    ] {
+        let source = format!("{clause} {options}");
+        crate::edn::STREAM_READS.set(0);
+        let (lowered, _, ignored) = advanced_pred(&source, None, TODAY);
+        assert_eq!(lowered.is_some(), expected.is_none(), "{ignored:?}");
+        assert_eq!(ignored, expected.into_iter().collect::<Vec<_>>());
+        assert_eq!(crate::edn::STREAM_READS.get(), 1, "{source}");
+    }
+    crate::edn::STREAM_READS.set(0);
+    let (_, _, ignored) =
+        advanced_pred(&format!(r#"{clause} :result-transform #"x""#), None, TODAY);
+    assert_eq!(ignored, ["result-transform"]);
+    assert_eq!(crate::edn::STREAM_READS.get(), 2);
+}
+
+#[test]
 fn advanced_entity_property_pair_refuses_instead_of_inventing_a_page_hop() {
     let source = r#"[:find (pull ?p [*])
                          :where

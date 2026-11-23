@@ -440,6 +440,17 @@ mod tests {
             ("metadata", "#{:public ^ :Private []}", true),
             ("dispatch metadata", "#{:public #^ :Private []}", true),
             ("discarded metadata", "#{:public #_ ^ :Private []}", true),
+            ("signed Unicode character", r"#{\u+041 :Private}", false),
+            (
+                "nested signed Unicode character",
+                r"#{[\u+041] :Private}",
+                false,
+            ),
+            (
+                "discarded signed Unicode character",
+                r"#{#_ \u+041 :Private}",
+                false,
+            ),
             ("auto-resolved keyword", "#{:public ::Private}", false),
             ("trailing colon", "#{:public :Private:}", false),
             ("empty namespace", "#{:public :/Private}", false),

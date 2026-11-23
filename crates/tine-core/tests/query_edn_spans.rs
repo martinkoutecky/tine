@@ -53,6 +53,34 @@ fn direct_title_splices_preserve_authored_bytes() {
 }
 
 #[test]
+fn title_edits_consume_the_complete_metadata_form() {
+    let mut failures = Vec::new();
+    for metadata in [r"#^:tag", r#"^"tag""#, "^:tag", "^Tag", r#"#^"tag""#] {
+        let source = format!("{{:title {metadata} [] :collapsed? true}}");
+        for title in ["New", ""] {
+            let edited = query_edn::edit_title(&source, title).unwrap();
+            let expected = (!title.is_empty()).then_some(title);
+            if !query_edn::options(&edited)
+                .is_some_and(|options| options.collapsed && options.title.as_deref() == expected)
+            {
+                failures.push(edited);
+            }
+        }
+    }
+    assert!(
+        failures.is_empty(),
+        "unreadable edited options: {failures:?}"
+    );
+    let source = "#:ns{:_/collapsed? true :title \"nested\", :_/title ^Tag []}";
+    let removed = query_edn::edit_title(source, "").unwrap();
+    assert!(removed.contains(":title \"nested\""));
+    let edited = query_edn::edit_title(&removed, "New").unwrap();
+    let options = query_edn::options(&edited).unwrap();
+    assert_eq!(options.title.as_deref(), Some("New"));
+    assert!(options.collapsed);
+}
+
+#[test]
 fn malformed_ambiguous_or_deep_options_refuse() {
     for source in [
         "{:x}",
