@@ -1373,25 +1373,6 @@ impl Graph {
         drop(guard);
     }
 
-    /// The reconcile found these bytes' document unchanged, but they may
-    /// still carry an anchor line the cached bytes did not (parsing
-    /// normalizes some lines). The flag may only err toward true, so raise
-    /// it, for a row whose bytes are the file's.
-    pub(super) fn raise_vcs_anchor(&self, path: &Path, content: &str) {
-        if !tine_core::concord_queue::has_vcs_anchor(content.as_bytes()) {
-            return;
-        }
-        let _cache = self.derived.cache.write().unwrap();
-        // Only for a cached row ("an entry exists IFF cached").
-        if self.derived.disk_revs.read().unwrap().contains_key(path) && self.disk_sourced(path) {
-            self.derived
-                .vcs_anchored
-                .write()
-                .unwrap()
-                .insert(path.to_path_buf());
-        }
-    }
-
     /// Install `pages` as a test graph's cache and listing.
     #[cfg(test)]
     pub(crate) fn install_test_pages(&self, pages: Pages, entries: Vec<PageEntry>) {

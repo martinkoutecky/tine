@@ -730,6 +730,78 @@ fn an_owner_adoption_of_the_same_outline_keeps_runtime_ids() {
     }
 }
 
+/// The same adoption through a closed page (path R): the page is closed
+/// after the structural save, rewritten with the same outline while closed,
+/// and opened again. The reopening hold retires the disk row into a claim and
+/// publishes the bytes it did not save; the claim's document is the page's
+/// current row, so [`kept_outline`](crate::model::page_parse) keeps its ids.
+#[test]
+fn a_reopened_page_rewritten_with_the_same_outline_keeps_runtime_ids() {
+    use crate::store::memory_owner_tests::{edits, equivalents, pages};
+    let pairs = |blocks: &[tine_core::model::BlockDto]| {
+        fn walk(blocks: &[tine_core::model::BlockDto], out: &mut Vec<(String, String)>) {
+            for block in blocks {
+                out.push((block.raw.clone(), block.id.clone()));
+                walk(&block.children, out);
+            }
+        }
+        let mut out = Vec::new();
+        walk(blocks, &mut out);
+        out
+    };
+    for (rel, _, text) in pages().into_iter().filter(|(_, crlf, _)| !crlf) {
+        for (edit, apply) in edits() {
+            let case = format!("{rel} {edit}");
+            let live = Live::new(&[(rel, &text)]);
+            let (key, page) = live.open(rel);
+            let MailText::Page { dto } = &page.text else {
+                panic!("{case}: an open answer carries the page");
+            };
+            let mut edited = dto.clone();
+            apply(&mut edited);
+            let (id, session) = (live.id(), live.host.session());
+            let kinds = [EditKind::SaveBlock];
+            (live
+                .host
+                .submit(session, id, &key, &edited, page.version, None, &kinds))
+            .unwrap();
+            assert!(live.answer(&key, id).answer.unwrap().took, "{case}");
+            let deadline = Instant::now() + Duration::from_secs(20);
+            let saved = loop {
+                let text = fs::read_to_string(live.root.join(rel)).unwrap();
+                if text.contains("omega") {
+                    break text;
+                }
+                assert!(Instant::now() < deadline, "{case}: never saved");
+                std::thread::sleep(Duration::from_millis(20));
+            };
+            let kept = pairs(&indexed_row(&live, rel, &saved, &case));
+            let Some((variant, bytes)) = equivalents(&saved).into_iter().find(|(_, b)| *b != saved)
+            else {
+                continue;
+            };
+            let case = format!("{case}, closed, then {variant}, reopened");
+            live.close(&key);
+            let deadline = Instant::now() + Duration::from_secs(20);
+            while live.held(rel) {
+                assert!(Instant::now() < deadline, "{case}: never released");
+                std::thread::sleep(Duration::from_millis(20));
+            }
+            live.rewrite_externally(rel, &bytes);
+            live.until_indexed(rel, &bytes);
+            let _ = live.open(rel);
+            let deadline = Instant::now() + Duration::from_secs(20);
+            while !live.held(rel) {
+                assert!(Instant::now() < deadline, "{case}: never held");
+                std::thread::sleep(Duration::from_millis(20));
+            }
+            let now = pairs(&indexed_row(&live, rel, &bytes, &case));
+            assert_eq!(now, kept, "{case}: every block keeps its id");
+            live.host.stop();
+        }
+    }
+}
+
 /// Q-P2b-3 (GH #538): the save-failure notice names the failed platform
 /// step and its OS error, and a later published save clears both.
 #[cfg(unix)]

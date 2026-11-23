@@ -4132,14 +4132,12 @@ impl Graph {
                     return None;
                 }
             }
-            Some(Some(_)) => {
-                // The row keeps its outline and ids, but not necessarily
-                // its bytes: parsing normalizes some lines (a column-0
-                // continuation line parses like an indented one), so these
-                // bytes may carry an anchor line the cached bytes did not.
-                self.raise_vcs_anchor(path, content);
-                return None; // unchanged / our own write
-            }
+            // The same outline in other bytes (line endings, a final line
+            // break, a column-0 continuation line): the row keeps its ids
+            // and takes these bytes' revision and anchor, so a later hold
+            // of the page reuses it (its claim matches) instead of
+            // reparsing positionally.
+            Some(Some(kept)) => newdoc = Document::clone(&kept),
             Some(_) => {}
         }
         newdoc.roots.shrink_to_fit();
