@@ -101,6 +101,7 @@ fn presentation_is_the_plans_row_gates() {
                 &query,
                 today,
                 block_rows,
+                query.removes_block_children(),
                 false,
                 || {
                     Arc::new(tine_core::query::registry::Registry::empty(

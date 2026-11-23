@@ -108,6 +108,65 @@ fn document(store: &Store, argument: &str, name: &str) -> (quick_share::SharePre
 }
 
 #[test]
+fn both_writers_report_omitted_config_when_logseq_cannot_read_it() {
+    let _integration_guard = crate::integration_lock();
+    let root = base();
+    let graph = root.join("graph");
+    let exports = root.join("exports");
+    fs::create_dir_all(graph.join("logseq")).unwrap();
+    fs::create_dir_all(graph.join("pages")).unwrap();
+    fs::create_dir_all(&exports).unwrap();
+    let config_source =
+        r#"{:start-of-week 1 :property-pages/enabled? false :bad #unknown ["Private"]}"#;
+    fs::write(graph.join("logseq/config.edn"), config_source).unwrap();
+    fs::write(graph.join("pages/Selected.md"), "- TODO selected\n").unwrap();
+    let store = Store::open(&graph, Default::default()).unwrap().0;
+    store.whole_graph().unwrap();
+    assert_eq!(store.config().config.start_of_week, 1);
+    let (preview, bytes) = document(&store, "@page and name = 'Selected'", "Share");
+    assert!(preview.config_settings_omitted);
+    let share: Value = serde_json::from_slice(&bytes).unwrap();
+    let receipt = tine_graph_features::publish_query::publish_live(
+        &store,
+        &exports,
+        "Folder",
+        true,
+        true,
+        &[(
+            "index.html".into(),
+            b"<html><head><title>Tine</title></head></html>".to_vec(),
+        )],
+    )
+    .unwrap();
+    assert!(receipt
+        .warnings
+        .iter()
+        .any(|note| note.contains("config.edn")));
+    let folder: Value = serde_json::from_slice(
+        &fs::read(Path::new(&receipt.path).join("app/snapshot.json")).unwrap(),
+    )
+    .unwrap();
+    for snapshot in [&share["snapshot"], &folder] {
+        let config = snapshot["files"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|entry| entry["path"] == "logseq/config.edn")
+            .unwrap()["text"]
+            .as_str()
+            .unwrap();
+        assert!(!config.contains("Private"));
+        assert!(tine_core::Config::parse(config)
+            .publication_reading_values()
+            .is_empty());
+    }
+    assert_eq!(
+        fs::read_to_string(graph.join("logseq/config.edn")).unwrap(),
+        config_source
+    );
+}
+
+#[test]
 fn quick_share_envelope_round_trips_and_refuses_damage() {
     let _integration_guard = crate::integration_lock();
     let payload = b"the share document";

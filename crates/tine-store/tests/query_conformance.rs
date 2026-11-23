@@ -1187,7 +1187,7 @@ fn a_missing_runtime_input_is_strict_no_results_with_a_report() {
 #[test]
 fn a_relative_date_query_answers_for_the_execution_day_across_a_rollover() {
     let _integration_guard = crate::integration_lock();
-    let query = advanced_query("[:find (pull ?b [*]) :where (between ?b -7d today)]");
+    let query = advanced_query("[:find (pull ?b [*]) :where (between ?b :-7d :today)]");
     let context = ExecutionContext::none();
     let thursday = JournalDate {
         year: 2026,

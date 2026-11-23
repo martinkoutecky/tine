@@ -10,7 +10,7 @@ use super::ir::{
 };
 use super::registry::Registry;
 use super::QueryInput;
-use crate::query_edn::{self, js_whitespace, InputItem};
+use crate::query_edn::js_whitespace;
 use std::sync::LazyLock;
 
 /// The wire dialect a `query_parse` caller names.
@@ -302,7 +302,7 @@ pub fn parse_query_pair(
     block_properties: &[(String, String)],
     registry: &Registry,
 ) -> ParsedQuery {
-    let (query, parsed_view) = super::parse_query_input(
+    let (query, parsed_view, current_page_input) = super::parse::parse_query_input_details(
         text,
         dialect.input(),
         crate::date::JournalDate::today(),
@@ -330,8 +330,6 @@ pub fn parse_query_pair(
             (start, utf16)
         })
         .collect();
-    let current_page_input = matches!(&query.source, Source::Advanced { original, .. }
-        if query_edn::advanced(original).is_some_and(|declaration| declaration.inputs.contains(&InputItem::CurrentPage)));
     ParsedQuery {
         og_hint,
         query,
@@ -447,19 +445,20 @@ mod tests {
             r"\;",
         ] {
             for discard in [":note", "#_"] {
+                let accepted = !(discard == "#_" && decoy.starts_with("#queue"));
                 cases.push((
                     format!(
                         " {discard} {} :inputs [:current-page]",
                         decoy.replace("VALUE", ":ignored")
                     ),
-                    Some("focused"),
+                    accepted.then_some("focused"),
                 ));
                 cases.push((
                     format!(
                         " {discard} {} :inputs ; gap\n [\"literal\"]",
                         decoy.replace("VALUE", ":current-page")
                     ),
-                    Some("literal"),
+                    accepted.then_some("literal"),
                 ));
             }
         }

@@ -10074,7 +10074,7 @@ mod tests {
         let store = model_store(&dir);
         let store = std::sync::Arc::new(store);
         let original = published_snapshot(&store);
-        let query = "[:find (pull ?b [*]) :where \0 (task ?b #{\"TODO\"})]";
+        let query = "[:find (pull ?b [*]) :where (task ?b #{\"TODO\"})] :note \"\0\"";
         let first = advanced_result(&original, query);
         assert!(first.groups.is_empty());
 

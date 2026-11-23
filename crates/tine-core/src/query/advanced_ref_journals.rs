@@ -2,7 +2,7 @@
 use super::*;
 
 pub(super) fn lower_ref_journal_patterns(
-    groups: &[String],
+    groups: &[&Edn],
     taken: &std::collections::HashSet<usize>,
     block: &str,
     inputs: &std::collections::HashMap<String, AdvancedInput>,
@@ -13,40 +13,26 @@ pub(super) fn lower_ref_journal_patterns(
     let mut lowered = std::collections::HashMap::new();
     let mut consumed = std::collections::HashSet::new();
     let active: Vec<usize> = (0..groups.len()).filter(|i| !taken.contains(i)).collect();
-    let triple = |group: &str| -> Option<[String; 3]> {
-        let items = edn_items(edn_body(group, '[', ']')?);
-        ((items.len() == 2 || items.len() == 3) && items[0].starts_with('?')).then(|| {
-            [
-                items[0].to_string(),
-                items[1].to_string(),
-                items.get(2).unwrap_or(&"_").to_string(),
-            ]
-        })
-    };
     // OG query_react.cljs::resolve-query aliases ref-pages to direct refs,
     // not path-refs. Keep all page predicates inside ONE existential: different
     // references must not separately satisfy the lower and upper date bounds.
     for &index in &active {
-        let Some([subject, attribute, page]) = triple(&groups[index]) else {
+        let Some((subject, "block/ref-pages", Some(object))) = triple(groups[index]) else {
             continue;
         };
-        if subject != block
-            || attribute != ":block/ref-pages"
-            || !page.starts_with('?')
-            || page == block
-            || inputs.contains_key(&page)
-        {
+        let Some(page) = variable(object) else {
+            continue;
+        };
+        if subject != block || page == block || inputs.contains_key(page) {
             continue;
         }
-        let mut variables = vec![page.clone()];
+        let mut variables = vec![page];
         for &other in &active {
-            if let Some([subject, attribute, object]) = triple(&groups[other]) {
-                if subject == page
-                    && matches!(attribute.as_str(), ":block/journal?" | ":block/journal-day")
-                    && object.starts_with('?')
-                    && !inputs.contains_key(&object)
-                {
-                    variables.push(object);
+            if let Some((subject, attribute, Some(object))) = triple(groups[other]) {
+                if subject == page && matches!(attribute, "block/journal?" | "block/journal-day") {
+                    if let Some(var) = variable(object).filter(|var| !inputs.contains_key(*var)) {
+                        variables.push(var);
+                    }
                 }
             }
         }
@@ -76,8 +62,13 @@ pub(super) fn lower_ref_journal_patterns(
         {
             continue;
         }
-        let mut local = vec![format!("[{block} :block/page {page}]")];
-        local.extend(related.iter().map(|other| groups[*other].clone()));
+        let relation = Edn::Vec(vec![
+            Edn::Symbol(block.into()),
+            Edn::Keyword("block/page".into()),
+            Edn::Symbol(page.into()),
+        ]);
+        let mut local = vec![&relation];
+        local.extend(related.iter().map(|other| groups[*other]));
         let (filters, used) =
             lower_attribute_patterns(&local, &Default::default(), Some(block), inputs);
         if (1..local.len()).any(|other| !filters.contains_key(&other) || used.contains(&other)) {

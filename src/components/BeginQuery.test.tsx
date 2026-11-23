@@ -256,11 +256,13 @@ describe("terminated whole-block BEGIN_QUERY", () => {
 it("shares decoded titles, discards and input refusals with native export", () => {
   const query = '[:find (pull ?b [*]) :where (task ?b "TODO")]';
   const inspect = (payload: string) => inspectBeginQuery(`#+BEGIN_QUERY\n${payload}\n#+END_QUERY`, "md");
-  expect(inspect(`{#_ :ignored :title "Line\\nTwo\\t\\u03bb" :query ${query} :inputs [:current-page]}`)).toEqual({
-    kind: "supported", query: `${query} :inputs [:current-page]`, title: "Line\nTwo\tλ",
+  const payload = `{#_ :ignored :title "Line\\nTwo\\t\\u03bb" :query ${query} :inputs [:current-page]}`;
+  expect(inspect(payload)).toEqual({
+    kind: "supported", query: payload, title: "Line\nTwo\tλ",
   });
   expect(inspect(`{:query ${query} :inputs nope}`)).toEqual({ kind: "unsupported", reason: "expected :inputs to be a vector or list" });
-  expect(inspect(`{#_ [:title "hidden"] :query ${query}}`)).toEqual({ kind: "supported", query });
+  const discardedTitle = `{#_ [:title "hidden"] :query ${query}}`;
+  expect(inspect(discardedTitle)).toEqual({ kind: "supported", query: discardedTitle });
 });
 
 describe("I-12 BEGIN_QUERY container", () => {

@@ -154,7 +154,7 @@ fn bhkru_future_day_condition_walks_only_pages_that_mention_such_a_day() {
             "{source}: {:?}",
             query.diagnostics
         );
-        let plan = plan(graph, &query, today, false);
+        let plan = plan(graph, &query, today, false, query.removes_block_children());
         graph.with_pages(|pages| {
             let candidates = candidates::Candidates::new(graph, pages, &plan);
             let atoms = EvalCache::default();

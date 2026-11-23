@@ -111,6 +111,7 @@ function saveCollapsed(key: string, v: boolean) {
 const errorText = (error: unknown): string => (error instanceof Error ? error.message : String(error));
 const sameJson = <T,>(a: T, b: T) => JSON.stringify(a) === JSON.stringify(b);
 const BLOCK_CHANGED = msg("macro-block-changed");
+const TITLE_NEEDS_TEXT = msg("macro-query-title-edit-text");
 
 // Device-local dismissal keyed by graph (D-11): one read per graph binding,
 // shared by every crossing in this window (I-12/I-13).
@@ -763,9 +764,17 @@ function QueryMacroContent(props: Parameters<typeof QueryMacro>[0]): JSX.Element
     const current = reading();
     if (!blockId || !current) return;
     const rawAtStart = docNode(blockId)?.raw;
+    const title = t.trim().replace(/[\r\n{}]/g, "");
+    let nextOptions: string;
     try {
-      const title = t.trim().replace(/[\r\n{}]/g, "");
-      const nextOptions = editEdnTitle(opts(), title);
+      nextOptions = editEdnTitle(opts(), title);
+    } catch (error) {
+      setPrintError(error instanceof QueryPrintRefusedError
+        ? TITLE_NEEDS_TEXT
+        : rawText(errorText(error)));
+      return;
+    }
+    try {
       if (nextOptions === opts()) return;
       const nextQuery: Query = { ...current.query, source: { ...current.query.source, og_options: nextOptions } as Source };
       const printed = await readOwned(
@@ -1205,6 +1214,11 @@ function QueryMacroContent(props: Parameters<typeof QueryMacro>[0]): JSX.Element
               {(message) => (
                 <div class="query-unsupported query-print-refused" role="alert">
                   {t("macro-query-unchanged", { detail: renderMessage(message()) })}
+                  <Show when={message() === TITLE_NEEDS_TEXT}>
+                    <button type="button" onClick={() => { setPrintError(null); requestEdit("text"); }}>
+                      {t("query-query-sheet-edit-as-text")}
+                    </button>
+                  </Show>
                 </div>
               )}
             </Show>

@@ -4,6 +4,7 @@ macro-block-changed = The block changed while saving. Try this edit again.
 macro-query-read-only = This block is read-only. The query was not changed.
 macro-query-rewrite = A graph rewrite is in progress. The query was not changed.
 macro-query-unchanged = The query wasn't changed: { $detail }
+macro-query-title-edit-text = Edit the query text to change this title.
 macro-query-load-failed = Query couldn't be loaded: { $detail }
 macro-query-diagnostics = <lead>Tine didn't understand part of this query, so it returned no results:</lead> { $detail }
 macro-advanced-ran = Advanced query — ran: { $clauses }

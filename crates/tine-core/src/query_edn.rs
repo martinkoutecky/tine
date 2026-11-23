@@ -4,6 +4,7 @@
 //! `#_` discarded forms from collection membership. `options` reads only direct
 //! keyword entries; `edit_title` splices only the direct title value/pair. Every
 //! other byte (comments, whitespace, nested forms, discards) stays authored.
+//! A splice that would cut comments, discards or metadata is refused.
 //! Malformed, ambiguous duplicate-key, oversized or excessive-depth EDN refuses
 //! with `None`; callers retain the original source and surface a typed refusal.
 //! Cost O(source bytes), bounded to 1 MiB and a fixed depth. No I/O or graph state.
@@ -18,11 +19,11 @@ pub use crate::edn::{string_end, Form, Kind};
 
 /// Exactly one form, allowing trivia and discards before and after it.
 pub fn read(source: &str) -> Option<Form> {
-    edn::read(source, edn::QUERY_BYTES, Mode::Edn)
+    edn::read(source, edn::QUERY_BYTES, Mode::SpanCodec)
 }
 
 fn map(source: &str) -> Option<Form> {
-    read(source).filter(|form| form.kind == Kind::Map)
+    edn::read(source, edn::QUERY_BYTES, Mode::Edn).filter(|form| form.kind == Kind::Map)
 }
 
 #[derive(Default, Serialize)]
@@ -61,15 +62,18 @@ pub fn edit_title(source: &str, title: &str) -> Option<String> {
         return Some(if title.is_empty() {
             String::new()
         } else {
-            format!("{{:title {}}}", edn::to_string(&Edn::Str(title.into())))
+            format!("{{:title {}}}", edn::quote(title))
         });
     }
     let form = map(source)?;
     for pair in form.children.chunks_exact(2) {
         if pair[0].keyword() == Some("title") {
-            let range = pair[1].authored_span();
+            if pair[1].protected_trivia {
+                return None;
+            }
+            let range = pair[1].span.clone();
             if title.is_empty() {
-                let key = pair[0].authored_span();
+                let key = pair[0].span.clone();
                 return Some(format!(
                     "{}{}{}",
                     &source[..key.start],
@@ -77,7 +81,7 @@ pub fn edit_title(source: &str, title: &str) -> Option<String> {
                     &source[range.end..]
                 ));
             }
-            let replacement = edn::to_string(&Edn::Str(title.into()));
+            let replacement = edn::quote(title);
             return Some(format!(
                 "{}{}{}",
                 &source[..range.start],
@@ -94,7 +98,7 @@ pub fn edit_title(source: &str, title: &str) -> Option<String> {
         return Some(format!(
             "{} :_/title {}{}",
             &source[..at],
-            edn::to_string(&Edn::Str(title.into())),
+            edn::quote(title),
             &source[at..]
         ));
     }
@@ -103,16 +107,10 @@ pub fn edit_title(source: &str, title: &str) -> Option<String> {
     Some(format!(
         "{}:title {}{}{}",
         &source[..at],
-        edn::to_string(&Edn::Str(title.into())),
+        edn::quote(title),
         separator,
         &source[at..]
     ))
-}
-
-/// One direct option value in an advanced map or vector-plus-options stream.
-/// Duplicate declarations refuse rather than choosing one arbitrarily.
-pub(crate) fn option_value<'a>(source: &'a str, key: &str) -> Option<&'a str> {
-    read_option(source, key, |form| &source[form.span.clone()])
 }
 
 pub(crate) fn read_option<T>(
@@ -141,23 +139,27 @@ fn option_form<'a>(options: &'a [Form], key: &str) -> Option<&'a Form> {
 }
 
 #[derive(PartialEq)]
-pub(crate) enum InputItem<'a> {
+pub(crate) enum InputItem {
     CurrentPage,
-    Other(&'a str),
+    Other(Edn),
 }
 
-pub(crate) struct Advanced<'a> {
-    pub vector: Vec<&'a str>,
-    pub inputs: Vec<InputItem<'a>>,
+pub(crate) struct Advanced {
+    pub vector: Vec<Edn>,
+    pub inputs: Vec<InputItem>,
     pub has_rules: bool,
     pub has_result_transform: bool,
     pub result_transform: Option<Form>,
+    pub keeps_block_children: bool,
 }
 
 /// Effective vector and positional inputs from one bounded EDN read.
 /// The map is Logseq syntax. The bare vector plus options is Tine syntax.
-pub(crate) fn advanced(source: &str) -> Option<Advanced<'_>> {
-    let mut options = edn::forms(source, Mode::Query)?;
+pub(crate) fn advanced(source: &str) -> Option<Advanced> {
+    advanced_forms(edn::forms(source, Mode::Query)?)
+}
+
+pub(crate) fn advanced_forms(mut options: Vec<Form>) -> Option<Advanced> {
     let head = options.first()?.kind;
     let form = options.remove(0);
     let vector = match head {
@@ -174,21 +176,18 @@ pub(crate) fn advanced(source: &str) -> Option<Advanced<'_>> {
     let input_items = option_form(&options, "inputs")
         .filter(|form| matches!(form.kind, Kind::List | Kind::Vector))
         .map_or(&[][..], |form| &form.children);
-    let vector = vector
-        .children
-        .iter()
-        .map(|item| &source[item.span.clone()])
-        .collect();
+    let vector = vector.children.iter().map(Form::value).collect();
     let inputs = input_items
         .iter()
         .map(|item| match item.keyword() {
             Some("current-page") => InputItem::CurrentPage,
-            _ => InputItem::Other(&source[item.span.clone()]),
+            _ => InputItem::Other(item.value()),
         })
         .collect();
     let mut has_rules = false;
     let mut transform = None;
     let mut duplicate_transform = false;
+    let keeps_block_children = keeps_children(&options);
     for (index, pair) in options.chunks_exact(2).enumerate() {
         match pair[0].keyword() {
             Some("rules") => has_rules = true,
@@ -203,10 +202,16 @@ pub(crate) fn advanced(source: &str) -> Option<Advanced<'_>> {
         inputs,
         has_rules,
         has_result_transform: transform.is_some(),
+        keeps_block_children,
         result_transform: transform
             .filter(|_| !duplicate_transform)
             .map(|index| options.swap_remove(index)),
     })
+}
+
+fn keeps_children(options: &[Form]) -> bool {
+    option_form(options, "remove-block-children?")
+        .is_some_and(|form| matches!(form.leaf, Some(Edn::Bool(false) | Edn::Nil)))
 }
 
 /// Whether OG's top-level-result rule applies to an advanced query's block rows:
@@ -216,10 +221,12 @@ pub(crate) fn advanced(source: &str) -> Option<Advanced<'_>> {
 /// exactly the literals `false` and `nil` turn the rule off; any other value, an
 /// absent key and a duplicated key (unreadable as a map) keep it on. O(source bytes).
 pub fn removes_block_children(source: &str) -> bool {
-    !matches!(
-        option_value(source, ":remove-block-children?"),
-        Some("false" | "nil")
-    )
+    source.is_empty()
+        || edn::forms(source, Mode::Query).is_none_or(|forms| !keeps_children(option_pairs(&forms)))
+}
+
+pub(crate) fn display_keeps_children(source: &str) -> bool {
+    !source.is_empty() && map(source).is_some_and(|form| keeps_children(&form.children))
 }
 
 /// Whether an authored advanced-query source *declares* the option `key`
@@ -242,11 +249,16 @@ pub fn declares_option(source: &str, key: &str) -> bool {
 /// An EDN query stream's final map, only when another form precedes it.
 /// Logseq page references in the query form remain opaque authored atoms.
 pub fn split_trailing_map(source: &str) -> (String, String) {
-    let unchanged = || (source.trim().into(), String::new());
     let Some(forms) = edn::forms(source, Mode::Macro) else {
-        return unchanged();
+        return (source.trim().into(), String::new());
     };
-    if let [vector, stream @ .., key, _] = forms.as_slice() {
+    let (body, options) = macro_spans(source, &forms);
+    (body.into(), options.into())
+}
+
+fn macro_spans<'a>(source: &'a str, forms: &[Form]) -> (&'a str, &'a str) {
+    let unchanged = || (source.trim(), "");
+    if let [vector, stream @ .., key, _] = forms {
         // A vector followed by option pairs can have a map as its last
         // value. Only a standalone final map is the macro's display options.
         if vector.kind == Kind::Vector && stream.len() % 2 == 0 && key.keyword().is_some() {
@@ -257,9 +269,21 @@ pub fn split_trailing_map(source: &str) -> (String, String) {
         forms.len() > 1 && last.kind == Kind::Map && last.span.end == source.trim_end().len()
     }) {
         let span = last.authored_span();
-        return (source[..span.start].trim().into(), source[span].into());
+        return (source[..span.start].trim(), &source[span]);
     }
     unchanged()
+}
+
+/// Read the macro once for both its wrapper options and its declaration.
+pub(crate) fn read_query_macro(source: &str) -> (&str, &str, Option<Advanced>) {
+    let Some(mut forms) = edn::query_macro_forms(source) else {
+        return (source.trim(), "", None);
+    };
+    let (body, options) = macro_spans(source, &forms);
+    if !options.is_empty() {
+        forms.pop();
+    }
+    (body, options, advanced_forms(forms))
 }
 
 /// BEGIN_QUERY payload inspection shared by live wasm and native export.
@@ -308,14 +332,11 @@ pub fn inspect_begin_query(payload: &str) -> BeginQueryMatch {
     }
     let mut title = None;
     let mut query = None;
-    let mut inputs = None;
-    let mut result_transform = None;
-    let mut rules = None;
+    let mut execution_options = false;
     for pair in form.children.chunks_exact(2) {
-        let value = &source[pair[1].span.clone()];
         match pair[0].keyword() {
             Some("query") => {
-                query = Some(value);
+                query = Some(&pair[1]);
             }
             Some("inputs") => {
                 if !matches!(pair[1].kind, Kind::Vector | Kind::List) {
@@ -323,63 +344,50 @@ pub fn inspect_begin_query(payload: &str) -> BeginQueryMatch {
                         reason: "expected :inputs to be a vector or list",
                     };
                 }
-                inputs = Some(value);
+                execution_options = true;
             }
             // A Clojure function Tine never runs (ADR 0042). Carry it so the
             // advanced lowerer sees it and refuses the whole query visibly,
             // instead of running the bare vector as if the transform did not exist.
-            Some("result-transform") => result_transform = Some(value),
-            Some("rules") => rules = Some(value),
-            Some("title") => {
-                if pair[1].kind != Kind::String {
+            Some("result-transform" | "rules") => execution_options = true,
+            Some("title") => match pair[1].leaf.as_ref() {
+                Some(Edn::Str(text)) => title = Some(text.clone()),
+                Some(Edn::Utf16(_)) => (),
+                _ => {
                     return Unsupported {
                         reason: "expected :title to be a string",
-                    };
+                    }
                 }
-                if let Some(Edn::Str(text)) = pair[1].leaf.as_ref() {
-                    title = Some(text.clone());
-                }
-            }
+            },
             _ => (),
         }
     }
-    // Retain the live inspector's advanced-vector admission (JS word boundary).
-    let keyword = |text: &str, key: &str| {
-        text.match_indices(key).any(|(at, _)| {
-            text.as_bytes()
-                .get(at + key.len())
-                .is_none_or(|c| !c.is_ascii_alphanumeric() && *c != b'_')
-        })
-    };
     // Docs example 17 embeds the existing simple DSL in the same EDN map.
     // Route it to that parser; inputs/rules/transforms have no simple meaning.
-    if query.is_some_and(|q| q.starts_with('('))
-        && (inputs.is_some() || rules.is_some() || result_transform.is_some())
-    {
+    if query.is_some_and(|q| q.kind == Kind::List) && execution_options {
         return Unsupported {
             reason: "simple query maps with inputs, rules or result-transform are unsupported",
         };
     }
     let Some(query) = query.filter(|q| {
-        q.starts_with('(') || (q.starts_with('[') && keyword(q, ":find") && keyword(q, ":where"))
+        q.kind == Kind::List
+            || (q.kind == Kind::Vector
+                && ["find", "where"]
+                    .into_iter()
+                    .all(|key| q.children.iter().any(|item| item.keyword() == Some(key))))
     }) else {
         return Unsupported {
             reason: "expected an advanced :query vector",
         };
     };
-    let mut query = match inputs {
-        Some(inputs) => format!("{query} :inputs {inputs}"),
-        None => query.into(),
+    let query = if query.kind == Kind::Vector {
+        source
+    } else {
+        &source[query.span.clone()]
     };
-    if let Some(transform) = result_transform {
-        query = format!("{query} :result-transform {transform}");
-    }
-    if let Some(rules) = rules {
-        query = format!("{query} :rules {rules}");
-    }
     Supported {
-        query,
+        query: query.into(),
         title,
-        keeps_block_children: !removes_block_children(source),
+        keeps_block_children: keeps_children(&form.children),
     }
 }

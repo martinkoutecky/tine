@@ -1,5 +1,6 @@
 { ; :favorites ["comment"]
- :favorites ["A] B"]
+ :favorites ; odd spacing
+ ["A] B"]
  :preferred-workflow  ; comment
  :now
  :start-of-week   2

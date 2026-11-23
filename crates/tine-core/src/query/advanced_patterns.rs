@@ -1,15 +1,16 @@
-//! The advanced (datalog) query's `:where` clauses as text: the clause
-//! scanner, and (GH #542) the DataScript attribute patterns lowered from it —
+//! The advanced (datalog) query's decoded `:where` clauses and the bounded
+//! DataScript attribute patterns lowered from them (GH #542):
 //! `[?b :block/marker "TODO"]`, value variables narrowed by a predicate, the
 //! block's journal page, and `(not [..])` of one of those — and the clause
 //! heads (`task`, `between`, ...) with their typed `:inputs`, lowered by
-//! [`advanced_pred_inner`], the ONE advanced → IR lowerer (master's QA1 join-free
+//! [`lower_advanced`], the ONE advanced → IR lowerer (master's QA1 join-free
 //! subset; transcribed from master `query.rs` 5dfc84503).
 
 use super::date_token::{resolve_date_token, DateToken};
-use super::ir::{Anchor, Attr, CmpOp, Field, Filter, Quant, Query, Rel, SortDir, Source, Value};
+use super::ir::{Anchor, Attr, CmpOp, Filter, Quant, Query, Rel, Source, Value};
 use super::{og, query_nesting_within_limit, query_source_within_limit, QUERY_NESTING_MAX};
 use crate::date::JournalDate;
+use crate::edn::Edn;
 
 #[path = "advanced_joins.rs"]
 mod joins;
@@ -17,205 +18,63 @@ mod joins;
 mod ref_journals;
 use joins::{lower_current_page_patterns, lower_date_disjunctions, lower_named_page_query};
 
-/// Collect balanced `(...)`/`[...]` groups at the top level of `s` (string-aware),
-/// stopping at the first top-level *closing* bracket (so scanning after `:where`
-/// halts at the find-vector's `]` rather than swallowing `:inputs`).
-pub(super) fn scan_groups(s: &str) -> Vec<String> {
-    let b = s.as_bytes();
-    let mut i = 0;
-    let mut out = Vec::new();
-    while i < b.len() {
-        let c = b[i] as char;
-        if c == ')' || c == ']' || c == '}' {
-            break;
-        }
-        // EDN/DataScript line comment (`; …` to end of line) — skip it so example
-        // clauses written inside a `;;` hint are NOT parsed as real groups.
-        if c == ';' {
-            while i < b.len() && b[i] != b'\n' {
-                i += 1;
-            }
-            continue;
-        }
-        // A top-level string is one literal, as `query_nesting_within_limit`
-        // reads it: collecting the brackets inside it as groups handed an
-        // unguarded nest to the recursive consumers (og C3 L01, I-22).
-        if c == '"' {
-            i += 1;
-            while i < b.len() && b[i] != b'"' {
-                i += if b[i] == b'\\' { 2 } else { 1 };
-            }
-            i += 1;
-            continue;
-        }
-        if c == '(' || c == '[' {
-            let start = i;
-            let mut depth = 0;
-            let mut in_str = false;
-            while i < b.len() {
-                let ch = b[i] as char;
-                if in_str {
-                    if ch == '\\' {
-                        i += 2;
-                        continue;
-                    }
-                    if ch == '"' {
-                        in_str = false;
-                    }
-                } else if ch == ';' {
-                    // Comment inside a group body (between clauses) — skip to EOL.
-                    while i < b.len() && b[i] != b'\n' {
-                        i += 1;
-                    }
-                    continue;
-                } else if ch == '"' {
-                    in_str = true;
-                } else if ch == '(' || ch == '[' || ch == '{' {
-                    depth += 1;
-                } else if ch == ')' || ch == ']' || ch == '}' {
-                    depth -= 1;
-                    if depth == 0 {
-                        i += 1;
-                        break;
-                    }
-                }
-                i += 1;
-            }
-            out.push(s[start..i.min(s.len())].to_string());
-            continue;
-        }
-        i += 1;
+fn list(value: &Edn) -> Option<&[Edn]> {
+    match value {
+        Edn::List(items) => Some(items),
+        _ => None,
     }
-    out
 }
 
-/// Top-level items of an EDN body, in order: strings, balanced collections
-/// (`[..]`, `(..)`, `{..}`, `#{..}`) and bare tokens. Comments are skipped.
-fn edn_items(body: &str) -> Vec<&str> {
-    let b = body.as_bytes();
-    let mut out = Vec::new();
-    let mut i = 0;
-    while i < b.len() {
-        let c = b[i];
-        if c.is_ascii_whitespace() || c == b',' {
-            i += 1;
-            continue;
-        }
-        if c == b';' {
-            while i < b.len() && b[i] != b'\n' {
-                i += 1;
-            }
-            continue;
-        }
-        let start = i;
-        if c == b'"' {
-            i += 1;
-            while i < b.len() && b[i] != b'"' {
-                if b[i] == b'\\' {
-                    i += 1;
-                }
-                i += 1;
-            }
-            i += 1;
-        } else if matches!(c, b'[' | b'(' | b'{') || (c == b'#' && b.get(i + 1) == Some(&b'{')) {
-            if c == b'#' {
-                i += 1;
-            }
-            let mut depth = 0usize;
-            let mut in_str = false;
-            while i < b.len() {
-                let ch = b[i];
-                if in_str {
-                    if ch == b'\\' {
-                        i += 2;
-                        continue;
-                    }
-                    if ch == b'"' {
-                        in_str = false;
-                    }
-                } else if ch == b'"' {
-                    in_str = true;
-                } else if matches!(ch, b'[' | b'(' | b'{') {
-                    depth += 1;
-                } else if matches!(ch, b']' | b')' | b'}') {
-                    depth = depth.saturating_sub(1);
-                    if depth == 0 {
-                        i += 1;
-                        break;
-                    }
-                }
-                i += 1;
-            }
-        } else {
-            while i < b.len()
-                && !b[i].is_ascii_whitespace()
-                && !matches!(b[i], b'[' | b']' | b'(' | b')' | b'{' | b'}' | b'"' | b',')
-            {
-                i += 1;
-            }
-            if i == start {
-                i += 1; // a stray closer is its own item
-            }
-        }
-        out.push(&body[start..i.min(body.len())]);
+fn vector(value: &Edn) -> Option<&[Edn]> {
+    match value {
+        Edn::Vec(items) => Some(items),
+        _ => None,
     }
-    out
 }
 
-/// The body of a `[..]` or `(..)` item, or `None` for anything else.
-fn edn_body(item: &str, open: char, close: char) -> Option<&str> {
-    item.trim().strip_prefix(open)?.strip_suffix(close)
+fn variable(value: &Edn) -> Option<&str> {
+    value.symbol().filter(|name| name.starts_with('?'))
 }
 
-/// The find variable and whether the query returns its entity.
-fn advanced_find<'a>(items: &[&'a str]) -> Option<(&'a str, bool)> {
-    let at = items.iter().position(|s| *s == ":find")?;
-    let first = *items.get(at + 1)?;
-    if !matches!(items.get(at + 2).copied(), Some(":in" | ":where")) {
+fn advanced_find(items: &[Edn]) -> Option<(&str, bool)> {
+    let at = items
+        .iter()
+        .position(|value| value.keyword() == Some("find"))?;
+    let first = items.get(at + 1)?;
+    if !matches!(items.get(at + 2)?.keyword(), Some("in" | "where")) {
         return None;
     }
-    let pull = edn_body(first, '(', ')');
-    let var = match pull {
-        Some(call) => {
-            let items = edn_items(call);
-            if items.first() != Some(&"pull") || items.len() != 3 || items[2] != "[*]" {
-                return None;
-            }
-            *items.get(1)?
-        }
-        None => first,
-    };
-    var.starts_with('?').then_some((var, pull.is_some()))
+    if let Some([head, var, projection]) = list(first) {
+        let Some([all]) = vector(projection) else {
+            return None;
+        };
+        (head.symbol() == Some("pull") && all.symbol() == Some("*")).then_some(())?;
+        Some((variable(var)?, true))
+    } else {
+        Some((variable(first)?, false))
+    }
 }
 
-/// Top-level `where` clauses with single-branch wrappers opened: an `(and ..)`
-/// contributes its clauses, and an `(or ..)`/`(or-join [..] ..)` with exactly
-/// one branch IS that branch. Both are the same query; only the shape differs.
-pub(super) fn flatten_single_branch_groups(groups: Vec<String>) -> Vec<String> {
-    // An explicit stack, not recursion: the nesting is authored text, so the
-    // walk must not spend a native frame per level (I-22).
-    let mut out = Vec::new();
-    let mut pending: Vec<String> = groups.into_iter().rev().collect();
+/// Open conjunctions and one-branch disjunctions without spending a frame
+/// per nested wrapper.
+fn flatten_single_branch_groups(groups: &[Edn]) -> Vec<&Edn> {
+    let mut result = Vec::new();
+    let mut pending: Vec<_> = groups.iter().rev().collect();
     while let Some(group) = pending.pop() {
-        let Some(body) = edn_body(&group, '(', ')') else {
-            out.push(group);
-            continue;
-        };
-        let items = edn_items(body);
-        let branches: Option<Vec<String>> = match items.first().copied() {
-            Some("and") => Some(items[1..].iter().map(|item| item.to_string()).collect()),
-            Some("or") if items.len() == 2 => Some(vec![items[1].to_string()]),
-            Some("or-join") if items.len() == 3 && edn_body(items[1], '[', ']').is_some() => {
-                Some(vec![items[2].to_string()])
+        match list(group) {
+            Some([head, rest @ ..]) if head.symbol() == Some("and") => {
+                pending.extend(rest.iter().rev());
             }
-            _ => None,
-        };
-        match branches {
-            Some(branches) => pending.extend(branches.into_iter().rev()),
-            None => out.push(group),
+            Some([head, branch]) if head.symbol() == Some("or") => pending.push(branch),
+            Some([head, vars, branch])
+                if head.symbol() == Some("or-join") && vector(vars).is_some() =>
+            {
+                pending.push(branch);
+            }
+            _ => result.push(group),
         }
     }
-    out
+    result
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -227,12 +86,12 @@ enum AdvTarget {
 /// A DataScript attribute Tine indexes, on the result block or on its page.
 fn advanced_attribute(target: AdvTarget, attribute: &str) -> Option<(Attr, &'static str)> {
     match (target, attribute) {
-        (AdvTarget::Block, ":block/marker") => Some((Attr::Task, "marker")),
-        (AdvTarget::Block, ":block/priority") => Some((Attr::Priority, "priority")),
-        (AdvTarget::Block, ":block/scheduled") => Some((Attr::Scheduled, "scheduled")),
-        (AdvTarget::Block, ":block/deadline") => Some((Attr::Deadline, "deadline")),
-        (AdvTarget::Page, ":block/journal?") => Some((Attr::Journal, "journal-page")),
-        (AdvTarget::Page, ":block/journal-day") => Some((Attr::Day, "journal-day")),
+        (AdvTarget::Block, "block/marker") => Some((Attr::Task, "marker")),
+        (AdvTarget::Block, "block/priority") => Some((Attr::Priority, "priority")),
+        (AdvTarget::Block, "block/scheduled") => Some((Attr::Scheduled, "scheduled")),
+        (AdvTarget::Block, "block/deadline") => Some((Attr::Deadline, "deadline")),
+        (AdvTarget::Page, "block/journal?") => Some((Attr::Journal, "journal-page")),
+        (AdvTarget::Page, "block/journal-day") => Some((Attr::Day, "journal-day")),
         _ => None,
     }
 }
@@ -243,27 +102,21 @@ fn advanced_attribute(target: AdvTarget, attribute: &str) -> Option<(Attr, &'sta
 /// Logseq either, so it is not lowered to something that might.
 fn advanced_literal(
     attr: Attr,
-    token: &str,
+    operand: &Edn,
     inputs: &std::collections::HashMap<String, AdvancedInput>,
 ) -> Option<Value> {
     match attr {
-        Attr::Task | Attr::Priority => {
-            let text = token.strip_prefix('"')?.strip_suffix('"')?;
-            (!text.contains('\\')).then(|| Value::text(text))
-        }
+        Attr::Task | Attr::Priority => Some(Value::text(operand.text()?)),
         Attr::Scheduled | Attr::Deadline | Attr::Day => {
-            let number = match inputs.get(token) {
-                Some(AdvancedInput::Date(value)) => *value,
+            let number = match operand.symbol().and_then(|name| inputs.get(name)) {
+                Some(AdvancedInput::Date(value)) => *value as f64,
                 Some(AdvancedInput::Page(_)) => return None,
-                None => token.parse::<i64>().ok()?,
+                None => operand.as_f64().filter(|number| number.is_finite())?,
             };
-            Some(Value::Number {
-                number: number as f64,
-            })
+            Some(Value::Number { number })
         }
-        Attr::Journal => match token {
-            "true" => Some(Value::Bool { value: true }),
-            "false" => Some(Value::Bool { value: false }),
+        Attr::Journal => match operand {
+            Edn::Bool(value) => Some(Value::Bool { value: *value }),
             _ => None,
         },
         _ => None,
@@ -277,31 +130,42 @@ fn advanced_on_target(target: AdvTarget, filter: Filter) -> Filter {
     }
 }
 
-/// How many times `var` appears as a whole token in `text`.
-fn advanced_var_uses(text: &str, var: &str) -> usize {
-    let boundary = |c: Option<char>| c.is_none_or(|c| c.is_whitespace() || "()[]{},\"".contains(c));
-    text.match_indices(var)
-        .filter(|(at, _)| {
-            boundary(text[..*at].chars().next_back())
-                && boundary(text[at + var.len()..].chars().next())
-        })
-        .count()
+fn advanced_var_uses(value: &Edn, name: &str) -> usize {
+    match value {
+        Edn::Symbol(symbol) => usize::from(symbol == name),
+        Edn::Vec(items) | Edn::List(items) | Edn::Set(items) => {
+            items.iter().map(|item| advanced_var_uses(item, name)).sum()
+        }
+        Edn::Map(entries) => entries
+            .iter()
+            .map(|(k, v)| advanced_var_uses(k, name) + advanced_var_uses(v, name))
+            .sum(),
+        _ => 0,
+    }
 }
 
-/// GH #542: lower the DataScript attribute patterns Logseq's own examples and
-/// users' `:default-queries` are written in — `[?b :block/marker "TODO"]`, a
-/// value variable narrowed by `[(contains? #{..} ?m)]` or `[(<= ?d ?today)]`,
-/// the block's page with `:block/journal?` / `:block/journal-day`, and
-/// `(not [?b :block/scheduled ?d])`.
-///
-/// Like the two lowerers above this is not a join engine. It lowers a clause
-/// only when its meaning is a filter on the returned block alone: the subject
-/// is the `:find` variable (or its page), and a value variable is used by
-/// nothing but the one pattern that binds it and the predicates lowered with
-/// it. Every other clause is left for `parse_adv_group` to report as
-/// unsupported.
+fn groups_use(groups: &[&Edn], name: &str) -> usize {
+    groups
+        .iter()
+        .map(|group| advanced_var_uses(group, name))
+        .sum()
+}
+
+fn triple(group: &Edn) -> Option<(&str, &str, Option<&Edn>)> {
+    let items = vector(group)?;
+    match items {
+        [subject, attribute] => Some((variable(subject)?, attribute.keyword()?, None)),
+        [subject, attribute, object] => {
+            Some((variable(subject)?, attribute.keyword()?, Some(object)))
+        }
+        _ => None,
+    }
+}
+
+/// Lower an indexed attribute pattern and the unary predicates over its bound
+/// value. A variable shared with another join leaves the clauses unsupported.
 pub(super) fn lower_attribute_patterns(
-    groups: &[String],
+    groups: &[&Edn],
     taken: &std::collections::HashSet<usize>,
     find_var: Option<&str>,
     inputs: &std::collections::HashMap<String, AdvancedInput>,
@@ -314,16 +178,6 @@ pub(super) fn lower_attribute_patterns(
     let Some(block) = find_var else {
         return (lowered, consumed);
     };
-    let triple = |group: &str| -> Option<[String; 3]> {
-        let items = edn_items(edn_body(group, '[', ']')?);
-        ((items.len() == 2 || items.len() == 3) && items[0].starts_with('?')).then(|| {
-            [
-                items[0].to_string(),
-                items[1].to_string(),
-                items.get(2).unwrap_or(&"_").to_string(),
-            ]
-        })
-    };
     let active: Vec<usize> = (0..groups.len()).filter(|i| !taken.contains(i)).collect();
 
     let (ref_filters, ref_patterns) =
@@ -331,45 +185,37 @@ pub(super) fn lower_attribute_patterns(
     lowered.extend(ref_filters);
     consumed.extend(ref_patterns);
 
-    // The cookbook's built-in `missing?` is an attribute absence test.
-    for &index in &active {
-        let Some(body) = edn_body(&groups[index], '[', ']') else {
-            continue;
-        };
-        let outer = edn_items(body);
-        if outer.len() != 1 {
-            continue;
-        }
-        let Some(call) = edn_body(outer[0], '(', ')') else {
-            continue;
-        };
-        let items = edn_items(call);
-        if items.len() != 4 || items[0] != "missing?" || items[1] != "$" || items[2] != block {
-            continue;
-        }
-        if let Some((attr, _)) = advanced_attribute(AdvTarget::Block, items[3]) {
-            lowered.insert(
-                index,
-                (
-                    Filter::not(Filter::attr(attr, CmpOp::IsSet, Value::None)),
-                    "missing?",
-                ),
-            );
-        }
-    }
-
-    // The returned block's page variable(s).
     let mut pages = std::collections::HashSet::new();
     for &index in &active {
-        if let Some([subject, attribute, object]) = triple(&groups[index]) {
-            if subject == block
-                && attribute == ":block/page"
-                && object.starts_with('?')
-                && object != block
-                && !inputs.contains_key(&object)
+        if let Some([call]) = vector(groups[index]) {
+            if let Some([head, database, entity, key]) = list(call) {
+                if head.symbol() == Some("missing?")
+                    && database.symbol() == Some("$")
+                    && variable(entity) == Some(block)
+                {
+                    if let Some((attr, _)) = key
+                        .keyword()
+                        .and_then(|key| advanced_attribute(AdvTarget::Block, key))
+                    {
+                        lowered.insert(
+                            index,
+                            (
+                                Filter::not(Filter::attr(attr, CmpOp::IsSet, Value::None)),
+                                "missing?",
+                            ),
+                        );
+                    }
+                }
+            }
+        }
+        if let Some((subject, "block/page", Some(object))) = triple(groups[index]) {
+            if let Some(page) =
+                variable(object).filter(|page| *page != block && !inputs.contains_key(*page))
             {
-                pages.insert(object);
-                consumed.insert(index);
+                if subject == block {
+                    pages.insert(page);
+                    consumed.insert(index);
+                }
             }
         }
     }
@@ -383,36 +229,36 @@ pub(super) fn lower_attribute_patterns(
         }
     };
 
-    // Patterns: a literal is a filter; a variable is a binding the predicates
-    // below may narrow.
-    let mut bindings: std::collections::HashMap<String, (usize, AdvTarget, Attr, &'static str)> =
-        std::collections::HashMap::new();
+    let mut bindings = std::collections::HashMap::new();
     for &index in &active {
         if consumed.contains(&index) {
             continue;
         }
-        let Some([subject, attribute, object]) = triple(&groups[index]) else {
+        let Some((subject, key, object)) = triple(groups[index]) else {
             continue;
         };
-        let Some(target) = target_of(&subject) else {
+        let Some(target) = target_of(subject) else {
             continue;
         };
-        let Some((attr, label)) = advanced_attribute(target, &attribute) else {
+        let Some((attr, label)) = advanced_attribute(target, key) else {
             continue;
         };
-        if object == "_" {
-            if attr == Attr::Journal {
-                continue;
+        if object.is_none_or(|object| object.symbol() == Some("_")) {
+            if attr != Attr::Journal {
+                lowered.insert(
+                    index,
+                    (
+                        advanced_on_target(target, Filter::attr(attr, CmpOp::IsSet, Value::None)),
+                        label,
+                    ),
+                );
             }
-            lowered.insert(
-                index,
-                (
-                    advanced_on_target(target, Filter::attr(attr, CmpOp::IsSet, Value::None)),
-                    label,
-                ),
-            );
-        } else if inputs.contains_key(&object) {
-            if let Some(value) = advanced_literal(attr, &object, inputs) {
+        } else if let Some(object) = object {
+            if let Some(var) = variable(object).filter(|var| !inputs.contains_key(*var)) {
+                if attr != Attr::Journal {
+                    bindings.entry(var).or_insert((index, target, attr, label));
+                }
+            } else if let Some(value) = advanced_literal(attr, object, inputs) {
                 lowered.insert(
                     index,
                     (
@@ -421,85 +267,68 @@ pub(super) fn lower_attribute_patterns(
                     ),
                 );
             }
-        } else if object.starts_with('?') {
-            if attr != Attr::Journal && !bindings.contains_key(&object) {
-                bindings.insert(object, (index, target, attr, label));
-            }
-        } else if let Some(value) = advanced_literal(attr, &object, inputs) {
-            lowered.insert(
-                index,
-                (
-                    advanced_on_target(target, Filter::attr(attr, CmpOp::Eq, value)),
-                    label,
-                ),
-            );
         }
     }
 
-    // Predicates over exactly one bound variable.
-    let mut predicates: std::collections::HashMap<String, Vec<(usize, Filter)>> =
+    let negation = |group: &Edn| {
+        list(group).is_some_and(|items| items.first().and_then(Edn::symbol) == Some("not"))
+    };
+    let mut predicates: std::collections::HashMap<&str, Vec<(usize, Filter)>> =
         std::collections::HashMap::new();
     for &index in &active {
-        let negation = edn_body(&groups[index], '(', ')')
-            .map(edn_items)
-            .filter(|items| items.len() == 2 && items[0] == "not");
-        let predicate_group = negation
-            .as_ref()
-            .map_or(groups[index].as_str(), |items| items[1]);
-        let Some(call) = edn_body(predicate_group, '[', ']')
-            .map(edn_items)
-            .filter(|items| items.len() == 1)
-            .and_then(|items| edn_body(items[0], '(', ')'))
-        else {
+        let group = groups[index];
+        let negated = match list(group) {
+            Some([head, clause]) if head.symbol() == Some("not") => Some(clause),
+            _ => None,
+        };
+        let Some([call]) = vector(negated.unwrap_or(group)) else {
             continue;
         };
-        let items = edn_items(call);
-        let lowered_predicate = (|| -> Option<(String, Filter)> {
-            let (symbol, left, right) = match items.as_slice() {
-                [symbol, left, right] => (*symbol, *left, *right),
-                _ => return None,
-            };
+        let Some([head, left, right]) = list(call) else {
+            continue;
+        };
+        let binding = |value: &Edn| variable(value).is_some_and(|name| bindings.contains_key(name));
+        let lowered_predicate = (|| {
+            let symbol = head.symbol()?;
             if symbol == "contains?" {
-                let (_, _, attr, _) = bindings.get(right)?;
-                let set = left.strip_prefix('#').and_then(|s| edn_body(s, '{', '}'))?;
-                let values = edn_items(set)
-                    .into_iter()
+                let name = variable(right)?;
+                let (_, _, attr, _) = bindings.get(name)?;
+                let Edn::Set(members) = left else {
+                    return None;
+                };
+                let items = members
+                    .iter()
                     .map(|item| advanced_literal(*attr, item, inputs))
                     .collect::<Option<Vec<_>>>()?;
-                return Some((
-                    right.to_string(),
-                    Filter::attr(*attr, CmpOp::In, Value::List { items: values }),
-                ));
+                return Some((name, Filter::attr(*attr, CmpOp::In, Value::List { items })));
             }
-            let cmp = |flipped: bool| -> Option<CmpOp> {
-                Some(match (symbol, flipped) {
-                    ("=", _) => CmpOp::Eq,
-                    ("not=", _) => CmpOp::NotEq,
-                    ("<", false) | (">", true) => CmpOp::Lt,
-                    ("<=", false) | (">=", true) => CmpOp::Le,
-                    (">", false) | ("<", true) => CmpOp::Gt,
-                    (">=", false) | ("<=", true) => CmpOp::Ge,
-                    _ => return None,
-                })
-            };
-            let (var, operand, flipped) = match (bindings.get(left), bindings.get(right)) {
-                (Some(_), None) => (left, right, false),
-                (None, Some(_)) => (right, left, true),
+            let (var, operand, flipped) = match (binding(left), binding(right)) {
+                (true, false) => (variable(left)?, right, false),
+                (false, true) => (variable(right)?, left, true),
                 _ => return None,
             };
             let (_, _, attr, _) = bindings.get(var)?;
-            let op = cmp(flipped)?;
-            let ordered = matches!(attr, Attr::Scheduled | Attr::Deadline | Attr::Day);
-            if !(ordered || op == CmpOp::Eq || op == CmpOp::NotEq) {
+            let op = match (symbol, flipped) {
+                ("=", _) => CmpOp::Eq,
+                ("not=", _) => CmpOp::NotEq,
+                ("<", false) | (">", true) => CmpOp::Lt,
+                ("<=", false) | (">=", true) => CmpOp::Le,
+                (">", false) | ("<", true) => CmpOp::Gt,
+                (">=", false) | ("<=", true) => CmpOp::Ge,
+                _ => return None,
+            };
+            if !matches!(attr, Attr::Scheduled | Attr::Deadline | Attr::Day)
+                && !matches!(op, CmpOp::Eq | CmpOp::NotEq)
+            {
                 return None;
             }
             let value = advanced_literal(*attr, operand, inputs)?;
-            Some((var.to_string(), Filter::attr(*attr, op, value)))
+            Some((var, Filter::attr(*attr, op, value)))
         })();
         if let Some((var, filter)) = lowered_predicate {
             predicates.entry(var).or_default().push((
                 index,
-                if negation.is_some() {
+                if negated.is_some() {
                     Filter::not(filter)
                 } else {
                     filter
@@ -508,11 +337,9 @@ pub(super) fn lower_attribute_patterns(
         }
     }
 
-    // A binding lowers only when nothing else in the query uses its variable.
-    let everything = groups.join("\n");
     for (var, (index, target, attr, label)) in bindings {
-        let narrowing = predicates.remove(&var).unwrap_or_default();
-        if advanced_var_uses(&everything, &var) != 1 + narrowing.len() {
+        let narrowing = predicates.remove(var).unwrap_or_default();
+        if groups_use(groups, var) != 1 + narrowing.len() {
             continue;
         }
         lowered.insert(
@@ -527,56 +354,40 @@ pub(super) fn lower_attribute_patterns(
         }
     }
 
-    // `(not [?b :block/scheduled ?d])`: no such value, where `?d` is bound by
-    // no clause outside a `not` (a variable the outer query never binds is
-    // local to each `not`, as the reporter's two `(not [.. ?d])` rely on).
-    let is_not = |group: &str| {
-        edn_body(group, '(', ')')
-            .map(edn_items)
-            .is_some_and(|items| items.first() == Some(&"not"))
-    };
+    // A variable local to this negation expresses attribute absence.
     for &index in &active {
-        let Some(items) = edn_body(&groups[index], '(', ')').map(edn_items) else {
+        let Some([head, clause]) = list(groups[index]) else {
             continue;
         };
-        let [head, clause] = items.as_slice() else {
-            continue;
-        };
-        if *head != "not" {
+        if head.symbol() != Some("not") {
             continue;
         }
-        let Some([subject, attribute, object]) = triple(clause) else {
+        let Some((subject, key, object)) = triple(clause) else {
             continue;
         };
-        let Some(target) = target_of(&subject) else {
+        let Some(target) = target_of(subject) else {
             continue;
         };
-        let Some((attr, _)) = advanced_attribute(target, &attribute) else {
+        let Some((attr, _)) = advanced_attribute(target, key) else {
             continue;
         };
-        let inner = if object == "_" {
-            Filter::attr(attr, CmpOp::IsSet, Value::None)
-        } else if inputs.contains_key(&object) {
-            let Some(value) = advanced_literal(attr, &object, inputs) else {
-                continue;
-            };
-            Filter::attr(attr, CmpOp::Eq, value)
-        } else if object.starts_with('?') {
-            let outside = groups
-                .iter()
-                .enumerate()
-                .filter(|(other, group)| *other != index && !is_not(group))
-                .map(|(_, group)| advanced_var_uses(group, &object))
-                .sum::<usize>();
-            if attr == Attr::Journal || outside != 0 || advanced_var_uses(clause, &object) != 1 {
-                continue;
+        let inner = if let Some(object) = object.filter(|object| object.symbol() != Some("_")) {
+            if let Some(var) = variable(object).filter(|var| !inputs.contains_key(*var)) {
+                let used_outside = groups.iter().enumerate().any(|(other, group)| {
+                    other != index && !negation(group) && advanced_var_uses(group, var) != 0
+                });
+                if attr == Attr::Journal || used_outside || advanced_var_uses(clause, var) != 1 {
+                    continue;
+                }
+                Filter::attr(attr, CmpOp::IsSet, Value::None)
+            } else {
+                let Some(value) = advanced_literal(attr, object, inputs) else {
+                    continue;
+                };
+                Filter::attr(attr, CmpOp::Eq, value)
             }
-            Filter::attr(attr, CmpOp::IsSet, Value::None)
         } else {
-            let Some(value) = advanced_literal(attr, &object, inputs) else {
-                continue;
-            };
-            Filter::attr(attr, CmpOp::Eq, value)
+            Filter::attr(attr, CmpOp::IsSet, Value::None)
         };
         lowered.insert(
             index,
@@ -586,102 +397,112 @@ pub(super) fn lower_attribute_patterns(
     (lowered, consumed)
 }
 
-/// Tests' shorthand: [`advanced_pred_inner`] on `today`, without the row
-/// suggestion.
 #[cfg(test)]
 pub(crate) fn advanced_pred(
     query_src: &str,
     current_page: Option<&str>,
     today: JournalDate,
 ) -> (Option<Query>, Vec<String>, Vec<String>) {
-    advanced_pred_inner(query_src, current_page, &LoweringDay::new(today), false)
+    let lowered = lower_advanced(query_src, current_page, &LoweringDay::new(today));
+    (lowered.query, lowered.ran, lowered.ignored)
 }
 
-/// Display fields for an entirely recognised order-only result transform.
-/// The executor uses the same recogniser's OG value decorations (GH #852).
-/// Unknown transforms still refuse the whole query, without a partial sort.
-pub(crate) fn advanced_result_sort(src: &str) -> Option<Vec<(Field, SortDir)>> {
-    super::advanced_sort::advanced_result_sort(src).map(|sort| sort.view_sort())
+#[derive(Default)]
+pub(super) struct AdvancedLowering {
+    pub(super) query: Option<Query>,
+    pub(super) ran: Vec<String>,
+    pub(super) ignored: Vec<String>,
+    pub(super) sort: Option<super::advanced_sort::AdvancedResultSort>,
+    pub(super) keeps_block_children: bool,
+    pub(super) suggestion: Option<String>,
 }
 
-/// Suggest the translated row filter only when the sole refusal is a result
-/// transform. The suggestion explicitly discards that transform; it never runs
-/// a partial query automatically.
-pub(super) fn advanced_row_suggestion(
-    src: &str,
+pub(super) fn lower_advanced(
+    source: &str,
     current_page: Option<&str>,
-    today: JournalDate,
-) -> Option<String> {
-    if !crate::query_edn::declares_option(src, ":result-transform") {
-        return None;
+    day: &LoweringDay,
+) -> AdvancedLowering {
+    let refusal = |reason: &str| AdvancedLowering {
+        ignored: vec![reason.into()],
+        ..Default::default()
+    };
+    if !query_source_within_limit(source) {
+        return refusal("query-too-large");
     }
-    let (query, _, _) = advanced_pred_inner(src, current_page, &LoweringDay::new(today), true);
-    query.map(|q| super::print::print_tql(&q))
-}
-
-/// Lower one datalog source to the simple IR, with its clause report
-/// (`ran`, `ignored`). `None` means nothing in the supported subset matched,
-/// or a size/depth limit refused the source. `today` records whether a
-/// resolved date token read the day. Pure; O(source length).
-pub(super) fn advanced_pred_inner(
-    query_src: &str,
-    current_page: Option<&str>,
-    today: &LoweringDay,
-    suggest_rows: bool,
-) -> (Option<Query>, Vec<String>, Vec<String>) {
-    // Both limits live here, not only at the two `run_advanced_*` entry points,
-    // because `page_affects_advanced_query` reaches this function directly. It
-    // used to skip the byte ceiling entirely, which made scoped invalidation the
-    // one caller that could hand an unbounded graph-authored string to the
-    // parser — the exact thing QUERY_SOURCE_MAX_BYTES exists to prevent.
-    if !query_source_within_limit(query_src) {
-        return (None, Vec::new(), vec!["query-too-large".to_string()]);
+    if !query_nesting_within_limit(source) {
+        return refusal("query-nesting-too-deep");
     }
-    if !query_nesting_within_limit(query_src) {
-        return (None, Vec::new(), vec!["query-nesting-too-deep".to_string()]);
-    }
-    let mut ran = Vec::new();
-    let mut ignored = Vec::new();
-    let Some(declaration) = crate::query_edn::advanced(query_src) else {
-        let refused = if crate::query_edn::declares_option(query_src, ":result-transform") {
+    let Some(declaration) = crate::query_edn::advanced(source) else {
+        let reason = if crate::query_edn::declares_option(source, ":result-transform") {
             "result-transform"
         } else {
             "query-vector"
         };
-        return (None, ran, vec![refused.into()]);
+        return refusal(reason);
     };
+    let sort = declaration
+        .result_transform
+        .as_ref()
+        .and_then(super::advanced_sort::result_sort_form);
+    let unsupported_sort = declaration.has_result_transform && sort.is_none();
+    let (query, ran, ignored) =
+        lower_declaration(source, &declaration, current_page, day, unsupported_sort);
+    let suggestion = if ignored == ["result-transform"] {
+        lower_declaration(source, &declaration, current_page, day, false)
+            .0
+            .map(|query| super::print::print_tql(&query))
+    } else {
+        None
+    };
+    AdvancedLowering {
+        query,
+        ran,
+        ignored,
+        sort,
+        suggestion,
+        keeps_block_children: declaration.keeps_block_children,
+    }
+}
+
+/// Lower one already read declaration into the supported datalog subset.
+fn lower_declaration(
+    query_src: &str,
+    declaration: &crate::query_edn::Advanced,
+    current_page: Option<&str>,
+    today: &LoweringDay,
+    unsupported_sort: bool,
+) -> (Option<Query>, Vec<String>, Vec<String>) {
+    let mut ran = Vec::new();
+    let mut ignored = Vec::new();
     let Some((find, pulls_entity)) = advanced_find(&declaration.vector) else {
         return (None, ran, vec!["find projection".into()]);
     };
     let input_bindings = declaration
         .vector
         .iter()
-        .skip_while(|s| **s != ":in")
+        .skip_while(|value| value.keyword() != Some("in"))
         .skip(1)
-        .take_while(|s| !s.starts_with(':'))
-        .copied()
-        .filter(|s| *s != "$")
-        .collect::<Vec<_>>();
-    if input_bindings.iter().any(|s| !s.starts_with('?')) {
+        .take_while(|value| value.keyword().is_none())
+        .filter(|value| value.symbol() != Some("$"))
+        .map(variable)
+        .collect::<Option<Vec<_>>>();
+    let Some(input_bindings) = input_bindings else {
         return (
             None,
             ran,
             vec!["input binding (rules or collection)".into()],
         );
-    }
+    };
     if declaration.inputs.len() != input_bindings.len() {
         return (None, ran, vec!["input count".into()]);
     }
-    let inputs = resolve_inputs(&input_bindings, declaration.inputs, current_page, today);
+    let inputs = resolve_inputs(&input_bindings, &declaration.inputs, current_page, today);
+    let where_at = declaration
+        .vector
+        .iter()
+        .position(|value| value.keyword() == Some("where"));
     let groups = flatten_single_branch_groups(
-        declaration
-            .vector
-            .iter()
-            .skip_while(|s| **s != ":where")
-            .skip(1)
-            .filter(|s| s.starts_with(['(', '[']))
-            .map(|s| s.to_string())
-            .collect(),
+        where_at.map_or(&[][..], |index| &declaration.vector[index + 1..]),
     );
     let anchor = if joins::page_property_result(&groups, find) {
         Anchor::Page
@@ -696,14 +517,7 @@ pub(super) fn advanced_pred_inner(
     if declaration.has_rules {
         ignored.push("rules".into());
     }
-    if !suggest_rows
-        && declaration.has_result_transform
-        && declaration
-            .result_transform
-            .as_ref()
-            .and_then(|form| super::advanced_sort::result_sort_form(query_src, form))
-            .is_none()
-    {
+    if unsupported_sort {
         ignored.push("result-transform".into());
     }
     if !pulls_entity {
@@ -770,9 +584,8 @@ pub(super) fn advanced_pred_inner(
     // An `:in` variable the `:inputs` do not bind to a value Tine resolves
     // (`:current-block`, `:parent-block`, a `:current-page` with no current
     // page, ...) leaves every clause that reads it unevaluable.
-    let where_text = groups.join("\n");
     for variable in input_bindings {
-        if !inputs.contains_key(variable) && advanced_var_uses(&where_text, variable) > 0 {
+        if !inputs.contains_key(variable) && groups_use(&groups, variable) > 0 {
             ignored.push(format!("input {variable}"));
         }
     }
@@ -810,17 +623,19 @@ pub(super) fn advanced_pred_inner(
     (Some(query), ran, ignored)
 }
 
-/// Literal decoding shares the EDN reader used by query inputs and sidecars.
-fn edn_string(token: &str) -> Option<String> {
-    match crate::edn::parse_strict(token)? {
-        crate::edn::Edn::Str(text) => Some(text),
-        _ => None,
+fn page_operand(
+    value: &Edn,
+    inputs: &std::collections::HashMap<String, AdvancedInput>,
+) -> Option<String> {
+    match variable(value).and_then(|name| inputs.get(name)) {
+        Some(AdvancedInput::Page(name)) => Some(name.clone()),
+        _ => value.text().map(str::to_owned),
     }
 }
 
 /// Map one `:where` group to a `Pred` (or None → ignored). Recurses for and/or/not.
 fn parse_adv_group(
-    group: &str,
+    group: &Edn,
     inputs: &std::collections::HashMap<String, AdvancedInput>,
     today: &LoweringDay,
     ran: &mut Vec<String>,
@@ -832,33 +647,29 @@ fn parse_adv_group(
         ignored.push("query-nesting-too-deep".into());
         return None;
     }
-    let c = group.trim();
-    if !c.starts_with('(') {
+    let Some([head, args @ ..]) = list(group) else {
         ignored.push("pattern".into()); // `[?e :a ?v]` joins, etc. — not in the subset
         return None;
-    }
-    // A lone `(` has no body; slicing `1..0` would panic on hostile input.
-    let inner = c.get(1..c.len().saturating_sub(1)).unwrap_or("");
-    let head = inner
-        .split_whitespace()
-        .next()
-        .unwrap_or("")
-        .to_ascii_lowercase();
+    };
+    let head = head.symbol()?.to_ascii_lowercase();
     match head.as_str() {
         "and" | "or" | "not" => {
             let ignored_before = ignored.len();
-            let kids: Vec<Filter> = scan_groups(inner)
+            let mut incomplete = false;
+            let kids: Vec<Filter> = args
                 .iter()
-                .filter_map(|g| parse_adv_group(g, inputs, today, ran, ignored, anchor, depth + 1))
+                .filter_map(|group| {
+                    let filter =
+                        parse_adv_group(group, inputs, today, ran, ignored, anchor, depth + 1);
+                    incomplete |= filter.is_none();
+                    filter
+                })
                 .collect();
-            // GH #542: dropping a clause Tine does not understand only ever
-            // WIDENS a conjunction. Under `not` it narrows the answer, and an
-            // `or` missing a branch drops blocks the query returns; neither is
-            // a superset with a notice. Such a group is dropped whole instead,
-            // which widens the enclosing conjunction like any other ignored
-            // clause.
-            if head != "and" && ignored.len() > ignored_before {
-                ignored.push(head.clone());
+            // An unsupported child prevents the entire group from lowering.
+            if incomplete {
+                if head != "and" || ignored.len() == ignored_before {
+                    ignored.push(head);
+                }
                 return None;
             }
             if kids.is_empty() {
@@ -881,7 +692,7 @@ fn parse_adv_group(
             Some(Filter::attr(
                 Attr::Task,
                 CmpOp::In,
-                adv_text_list(adv_strings(inner)),
+                adv_text_list(string_operands(args.get(1..)?)?),
             ))
         }
         "priority" => {
@@ -889,16 +700,14 @@ fn parse_adv_group(
             Some(Filter::attr(
                 Attr::Priority,
                 CmpOp::In,
-                adv_text_list(adv_strings(inner)),
+                adv_text_list(string_operands(args.get(1..)?)?),
             ))
         }
         "page-ref" => {
-            let args = edn_items(inner);
-            let name = args.get(2).and_then(|arg| match inputs.get(*arg) {
-                Some(AdvancedInput::Page(name)) => Some(name.clone()),
-                _ => edn_string(arg),
-            });
-            name.filter(|_| args.len() == 3).map(|name| {
+            let [_, name] = args else {
+                return None;
+            };
+            page_operand(name, inputs).map(|name| {
                 ran.push("page-ref".into());
                 // OG matches `:block/name` literally: a literal with upper case
                 // matches no page (a different question from page identity,
@@ -912,22 +721,21 @@ fn parse_adv_group(
                 }
             })
         }
-        "property" | "page-property" => inner
-            .split_whitespace()
-            .skip(1)
-            .find(|t| t.starts_with(':'))
-            .map(|t| t.trim_start_matches(':').to_string())
-            .map(|k| {
-                let val = adv_strings(inner).into_iter().next();
-                ran.push(head.clone());
-                let leaf = og::property_leaf(og::normalize_prop_key(&k), val);
-                if head == "property" || anchor == Anchor::Page {
-                    leaf
-                } else {
-                    Filter::rel(Rel::Page, Quant::Any, leaf)
-                }
-            }),
-        "page" => adv_strings(inner).into_iter().next().map(|n| {
+        "property" | "page-property" => {
+            let (key, val) = match args {
+                [_, key] => (key.keyword()?, None),
+                [_, key, val] => (key.keyword()?, Some(val.text()?.to_owned())),
+                _ => return None,
+            };
+            ran.push(head.clone());
+            let leaf = og::property_leaf(og::normalize_prop_key(key), val);
+            Some(if head == "property" || anchor == Anchor::Page {
+                leaf
+            } else {
+                Filter::rel(Rel::Page, Quant::Any, leaf)
+            })
+        }
+        "page" => args.get(1)?.text().map(|n| {
             ran.push("page".into());
             Filter::rel(
                 Rel::Page,
@@ -935,7 +743,7 @@ fn parse_adv_group(
                 Filter::attr(Attr::Name, CmpOp::Eq, Value::text(n)),
             )
         }),
-        "namespace" => adv_strings(inner).into_iter().next().map(|n| {
+        "namespace" => args.get(1)?.text().map(|n| {
             ran.push("namespace".into());
             Filter::rel(
                 Rel::Page,
@@ -944,7 +752,7 @@ fn parse_adv_group(
             )
         }),
         "page-tags" | "tags" => {
-            let ts = adv_strings(inner);
+            let ts = string_operands(args.get(1..)?)?;
             if ts.is_empty() {
                 ignored.push(head.clone());
                 None
@@ -985,25 +793,22 @@ fn parse_adv_group(
             // bounds. An optional field keyword (journal|scheduled|deadline) may
             // appear among the earlier args — matching the simple parser. The bare
             // `(between ?b lo hi)` keeps OG's journal-day semantics.
-            let args: Vec<&str> = inner.split_whitespace().skip(1).collect();
-            if args.len() < 2 {
+            let [prefix @ .., lo, hi] = args else {
                 ignored.push("between".into());
                 return None;
-            }
-            let attr = args
+            };
+            let attr = prefix
                 .iter()
-                .take(args.len() - 2)
-                .find_map(
-                    |a| match a.trim_start_matches(':').to_ascii_lowercase().as_str() {
-                        "scheduled" => Some(Attr::Scheduled),
-                        "deadline" => Some(Attr::Deadline),
-                        "journal" => Some(Attr::Day),
-                        _ => None,
-                    },
-                )
+                .filter_map(|value| value.keyword().or_else(|| value.symbol()))
+                .find_map(|a| match a.to_ascii_lowercase().as_str() {
+                    "scheduled" => Some(Attr::Scheduled),
+                    "deadline" => Some(Attr::Deadline),
+                    "journal" => Some(Attr::Day),
+                    _ => None,
+                })
                 .unwrap_or(Attr::Day);
-            let lo = adv_bound(args[args.len() - 2], inputs, today);
-            let hi = adv_bound(args[args.len() - 1], inputs, today);
+            let lo = adv_bound(lo, inputs, today);
+            let hi = adv_bound(hi, inputs, today);
             if lo.is_none() || hi.is_none() {
                 ignored.push("between".into());
                 return None;
@@ -1035,43 +840,41 @@ fn parse_adv_group(
     }
 }
 
-/// All double-quoted string literals in a clause (markers, page names, values).
-fn adv_strings(s: &str) -> Vec<String> {
-    let b = s.as_bytes();
-    let mut out = Vec::new();
-    let mut i = 0;
-    while i < b.len() {
-        if b[i] == b'"' {
-            let Some(end) = crate::query_edn::string_end(s, i) else {
-                break;
-            };
-            if let Some(text) = edn_string(&s[i..end]) {
-                out.push(text);
+fn string_operands(items: &[Edn]) -> Option<Vec<String>> {
+    let mut values = Vec::new();
+    for item in items {
+        match item {
+            Edn::Vec(items) | Edn::List(items) | Edn::Set(items) => {
+                for member in items {
+                    values.push(member.text()?.to_owned());
+                }
             }
-            i = end;
-            continue;
+            _ => values.push(item.text()?.to_owned()),
         }
-        i += 1;
     }
-    out
+    Some(values)
 }
 
-/// Resolve a `between` bound: an input `?var` (looked up) or a literal token.
+/// Resolve an advanced date bound from decoded EDN or a bound input.
 fn adv_bound(
-    tok: &str,
+    operand: &Edn,
     inputs: &std::collections::HashMap<String, AdvancedInput>,
     today: &LoweringDay,
 ) -> Option<i64> {
-    let t = tok.trim();
-    if t.starts_with('?') {
-        return match inputs.get(t) {
+    if let Some(var) = variable(operand) {
+        return match inputs.get(var) {
             Some(AdvancedInput::Date(value)) => Some(*value),
             _ => None,
         };
     }
-    // A literal bound may be written as a bare token (`2026-06-24`) or a quoted
-    // string (`"2026-06-24"`); `split_whitespace` keeps the quotes, so strip them.
-    today.resolve(t.trim_matches('"').trim_start_matches(':'))
+    operand.exact_integer().or_else(|| {
+        today.resolve(
+            operand
+                .text()
+                .or_else(|| operand.keyword())
+                .or_else(|| operand.symbol())?,
+        )
+    })
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -1085,7 +888,7 @@ pub(super) enum AdvancedInput {
 /// receives the caller's focused page. Unknown keywords remain unbound.
 fn resolve_inputs(
     vars: &[&str],
-    vals: Vec<crate::query_edn::InputItem<'_>>,
+    vals: &[crate::query_edn::InputItem],
     current_page: Option<&str>,
     today: &LoweringDay,
 ) -> std::collections::HashMap<String, AdvancedInput> {
@@ -1097,20 +900,20 @@ fn resolve_inputs(
             }
             continue;
         };
-        if let Some(text) = edn_string(val) {
+        if let Some(text) = val.text() {
             // Declared different question (I-12, census Q1): OG lowercases a
             // `[[page]]` input into a `:block/name` literal; the literal still
             // names its page through `page_key` where it is compared, and
             // lowercase-then-page_key equals page_key (cm keys harness).
             let text = match text.strip_prefix("[[").and_then(|s| s.strip_suffix("]]")) {
                 Some(page) => page.to_lowercase(),
-                None => text,
+                None => text.to_owned(),
             };
             map.insert(v.to_string(), AdvancedInput::Page(text));
-        } else if let Ok(number) = val.parse::<i64>() {
+        } else if let Some(number) = val.exact_integer() {
             // Numeric inputs are DataScript numbers already, NOT epoch days.
             map.insert(v.to_string(), AdvancedInput::Date(number));
-        } else if let Some(keyword) = val.strip_prefix(':') {
+        } else if let Some(keyword) = val.keyword() {
             let legacy = keyword
                 .strip_suffix("d-after")
                 .map(|n| (n, '+'))
@@ -1130,7 +933,7 @@ fn resolve_inputs(
                     map.insert(v.to_string(), AdvancedInput::Date(ord));
                 }
             }
-        } else if let Some(ord) = today.resolve(val) {
+        } else if let Some(ord) = val.symbol().and_then(|text| today.resolve(text)) {
             // Preserve Tine's previously supported bare date-stem extension.
             map.insert(v.to_string(), AdvancedInput::Date(ord));
         }

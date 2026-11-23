@@ -541,7 +541,7 @@ fn gh690_referenced_journals_follow_title_format_before_safe_defaults() {
         &graph,
         r#"{:query [:find (pull ?h [*]) :in $ ?start ?next :where
         [?h :block/ref-pages ?p] [?p :block/journal? true] [?p :block/journal-day ?d]
-        [(> ?d ?start)] [(< ?d ?next)]] :inputs [2026-11-01 2026-11-20]}"#,
+        [(> ?d ?start)] [(< ?d ?next)]] :inputs [20261101 20261120]}"#,
     );
     assert!(result.supported, "{:?}", result.ignored);
     // D-20261102-JDL (Martin): the configured file-name format is a date

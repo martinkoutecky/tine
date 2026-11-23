@@ -125,6 +125,7 @@ fn run_update_case(code: u16, changed: bool, original_generation: u32) {
         share_id: share_id.clone(),
         membership: None,
         preview: SharePreview {
+            config_settings_omitted: false,
             include_comments: true,
             title: "After".into(),
             pages: vec![tine_graph_features::publish_query::ExportPage {

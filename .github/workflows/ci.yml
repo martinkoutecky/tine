@@ -91,6 +91,9 @@ jobs:
       - name: Browser core builds for wasm32
         run: cargo check --target wasm32-unknown-unknown -p tine-store -p tine-graph-features
 
+      - name: EDN reader agrees with Logseq
+        run: npm run test:edn-oracle
+
       - name: Release contract fixtures
         run: |
           node --test scripts/check-privileged-action-pins.test.mjs
@@ -162,6 +165,9 @@ jobs:
       # build for the browser. Their clock reads are pinned by clock_guard.
       - name: Browser core builds for wasm32
         run: cargo check --target wasm32-unknown-unknown -p tine-store -p tine-graph-features
+
+      - name: EDN reader agrees with Logseq
+        run: npm run test:edn-oracle
 
       - name: Release pipeline contract fixtures
         run: |

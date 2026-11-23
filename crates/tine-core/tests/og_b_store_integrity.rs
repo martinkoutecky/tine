@@ -84,11 +84,7 @@ fn config_values_come_from_the_shared_edn_reader() {
         readers.contains("crate::edn::config_entries"),
         "I-12: Config::parse consumes the EDN reader's entries"
     );
-    assert!(!readers
-        .split("fn edn_str_end")
-        .next()
-        .unwrap()
-        .contains("form_end("));
+    assert!(!readers.contains("form_end("));
 }
 
 #[test]

@@ -275,8 +275,11 @@ describe("OG-R4A title edits own only top-level option spans", () => {
   }
 });
 
-it("unreadable EDN title edits refuse visibly and never reach the printer", async () => {
-  const options = '{:x [:title "keep"] :title "\\q"}';
+it.each([
+  ['{:x [:title "keep"] :title "\\q"}', "renamed"],
+  ['{:title ^Tag [:span "old"] :collapsed? true}', "renamed"],
+  ['{:title [:span #_ :keep "old"] :collapsed? true}', ""],
+])("a refused title edit in %s offers the text editor and preserves the block", async (options, title) => {
   const argument = `(task TODO) ${options}`;
   load(`{{query ${argument}}}`);
   backendReadsQueries({ [argument]: { form: "(task TODO)", opts: options } });
@@ -288,10 +291,17 @@ it("unreadable EDN title edits refuse visibly and never reach the printer", asyn
     (root.querySelector(".query-title") as HTMLElement).click();
     await settle();
     const input = root.querySelector(".query-title-input") as HTMLInputElement;
-    input.value = "renamed";
+    input.value = title;
     input.dispatchEvent(new FocusEvent("blur"));
-    await vi.waitFor(() => expect(root.querySelector(".query-print-refused")?.textContent).toContain("Unreadable EDN options"));
+    const refusal = () => root.querySelector(".query-print-refused");
+    await vi.waitFor(() => expect(refusal()?.textContent).toContain("Edit the query text"));
+    expect(refusal()?.querySelector("button")?.textContent).toContain("Edit as text");
     expect(printed).not.toHaveBeenCalled();
     expect(doc.byId.query.raw).toBe(before);
+    if (!options.includes("\\q")) {
+      refusal()?.querySelector("button")?.click();
+      await vi.waitFor(() => expect(root.querySelector(".query-text-pane-input")).toBeTruthy());
+      expect(doc.byId.query.raw).toBe(before);
+    }
   } finally { dispose(); }
 });

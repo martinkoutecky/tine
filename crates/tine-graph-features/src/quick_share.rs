@@ -51,6 +51,7 @@ pub struct SharePreview {
     pub title: String,
     pub pages: Vec<ExportPage>,
     pub left_out: Vec<LeftOutPage>,
+    pub config_settings_omitted: bool,
     /// Bytes of `P` and of the envelope text it becomes.
     pub payload_bytes: usize,
     pub envelope_bytes: usize,
@@ -397,6 +398,7 @@ pub fn prepare(
 
     // The private build graph: the selected documents as they were reviewed,
     // plus the graph's parse configuration (journal formats, property rules).
+    let mut warnings = Vec::new();
     let (title, document) = crate::build_graph::with_build_graph_text(
         &graph,
         &selected.pages,
@@ -443,6 +445,7 @@ pub fn prepare(
                     .map(|home| home.source(&corpus.pages, None))
                     .transpose()?,
                 true,
+                &mut warnings,
             )?;
             Ok((title, snapshot))
         },
@@ -465,6 +468,7 @@ pub fn prepare(
             title,
             pages: planned.plan.pages.clone(),
             left_out: planned.plan.left_out.clone(),
+            config_settings_omitted: !warnings.is_empty(),
             payload_bytes: payload.len(),
             envelope_bytes,
         },

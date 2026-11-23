@@ -5,38 +5,36 @@ use super::*;
 
 /// A built-in rule filters the returned entity or its explicitly joined page.
 /// Other rule subjects are arbitrary joins, even with a familiar rule name.
-pub(super) fn rules_target_result(groups: &[String], find: &str, anchor: Anchor) -> bool {
+pub(super) fn rules_target_result(groups: &[&Edn], find: &str, anchor: Anchor) -> bool {
     let pages = groups
         .iter()
         .filter_map(|group| {
-            let args = edn_items(edn_body(group, '[', ']')?);
-            (args.len() == 3
-                && args[0] == find
-                && args[1] == ":block/page"
-                && args[2].starts_with('?')
-                && args[2] != find)
-                .then(|| args[2].to_string())
+            let (subject, key, object) = triple(group)?;
+            let page = variable(object?)?;
+            (subject == find && key == "block/page" && page != find).then_some(page)
         })
         .collect::<std::collections::HashSet<_>>();
-    let mut pending = groups.iter().map(String::as_str).collect::<Vec<_>>();
+    let mut pending = groups.to_vec();
     while let Some(group) = pending.pop() {
-        let Some(body) = edn_body(group, '(', ')') else {
+        let Some(args) = list(group) else {
             continue;
         };
-        let args = edn_items(body);
-        match args.first().copied() {
-            Some("and" | "or" | "not") => pending.extend(args[1..].iter().copied()),
+        let subject = args.get(1).and_then(variable);
+        match args.first().and_then(Edn::symbol) {
+            Some("and" | "or" | "not") => pending.extend(&args[1..]),
             Some("between") => {
                 if anchor == Anchor::Page
                     || args.len() < 4
-                    || !args[1..args.len() - 2].contains(&find)
+                    || !args[1..args.len() - 2]
+                        .iter()
+                        .any(|arg| variable(arg) == Some(find))
                 {
                     return false;
                 }
             }
             Some("page-property") => {
-                if !(anchor == Anchor::Page && args.get(1).copied() == Some(find))
-                    && !args.get(1).is_some_and(|var| pages.contains(*var))
+                if !(anchor == Anchor::Page && subject == Some(find))
+                    && !subject.is_some_and(|var| pages.contains(var))
                 {
                     return false;
                 }
@@ -45,7 +43,7 @@ pub(super) fn rules_target_result(groups: &[String], find: &str, anchor: Anchor)
                 "task" | "todo" | "priority" | "page-ref" | "property" | "page" | "namespace"
                 | "page-tags" | "tags" | "scheduled" | "deadline" | "journal",
             ) => {
-                if anchor == Anchor::Page || args.get(1).copied() != Some(find) {
+                if anchor == Anchor::Page || subject != Some(find) {
                     return false;
                 }
             }
@@ -58,16 +56,15 @@ pub(super) fn rules_target_result(groups: &[String], find: &str, anchor: Anchor)
 /// OG's page-property rule binds :block/name, so its subject is a page.
 /// A negated rule alone does not bind the result entity. Keep unsupported
 /// joins outside this bounded translator rather than guessing from variable names.
-pub(super) fn page_property_result(groups: &[String], find: &str) -> bool {
-    let mut pending = groups.iter().map(String::as_str).collect::<Vec<_>>();
+pub(super) fn page_property_result(groups: &[&Edn], find: &str) -> bool {
+    let mut pending = groups.to_vec();
     while let Some(group) = pending.pop() {
-        let Some(body) = edn_body(group, '(', ')') else {
+        let Some(args) = list(group) else {
             continue;
         };
-        let args = edn_items(body);
-        match args.first().copied() {
-            Some("and" | "or") => pending.extend(args[1..].iter().copied()),
-            Some("page-property") if args.get(1).copied() == Some(find) => return true,
+        match args.first().and_then(Edn::symbol) {
+            Some("and" | "or") => pending.extend(&args[1..]),
+            Some("page-property") if args.get(1).and_then(variable) == Some(find) => return true,
             _ => (),
         }
     }
@@ -80,43 +77,45 @@ pub(super) fn page_property_result(groups: &[String], find: &str) -> bool {
 pub(super) fn lower_named_page_query(
     src: &str,
     find: &str,
-    groups: &[String],
+    groups: &[&Edn],
     inputs: &std::collections::HashMap<String, AdvancedInput>,
 ) -> Option<Query> {
     let triples = groups
         .iter()
         .map(|g| {
-            let items = edn_items(edn_body(g, '[', ']')?);
-            (items.len() == 3).then_some(items)
+            let (subject, key, object) = triple(g)?;
+            Some((subject, key, object?))
         })
         .collect::<Option<Vec<_>>>()?;
-    let projection = triples
-        .iter()
-        .position(|t| t[1] == ":block/name" && t[2] == find && !inputs.contains_key(find));
+    let projection = triples.iter().position(|(_, key, object)| {
+        *key == "block/name" && variable(object) == Some(find) && !inputs.contains_key(find)
+    });
     // The name projection proves the result entity is a page. A tag triple
     // alone can also bind a tagged Org block in OG. An unfiltered name query
     // includes reference-only page entities which @page does not enumerate.
     let projection = projection?;
-    let page = triples[projection][0];
+    let page = triples[projection].0;
     let mut used = std::collections::HashSet::new();
     used.insert(projection);
     let mut filters = Vec::new();
-    for (i, t) in triples.iter().enumerate() {
-        if t[0] != page || t[1] != ":block/tags" {
+    for (i, &(subject, key, object)) in triples.iter().enumerate() {
+        if subject != page || key != "block/tags" {
             continue;
         }
-        let (identity, name) = triples.iter().enumerate().find_map(|(j, identity)| {
-            if identity[0] != t[2] || identity[1] != ":block/name" {
-                return None;
-            }
-            let name = match inputs.get(identity[2]) {
-                Some(AdvancedInput::Page(s)) => s.clone(),
-                _ => edn_string(identity[2])?,
-            };
-            Some((j, name))
-        })?;
+        let tagged = variable(object)?;
+        let (identity, name) =
+            triples
+                .iter()
+                .enumerate()
+                .find_map(|(j, &(subject, key, name))| {
+                    if subject != tagged || key != "block/name" {
+                        return None;
+                    }
+                    let name = page_operand(name, inputs)?;
+                    Some((j, name))
+                })?;
         // A name variable shared beyond this one tag join is arbitrary Datalog.
-        if advanced_var_uses(&groups.join(" "), t[2]) != 2 {
+        if groups_use(groups, tagged) != 2 {
             return None;
         }
         used.extend([i, identity]);
@@ -147,7 +146,7 @@ pub(super) fn lower_named_page_query(
 }
 
 pub(super) fn lower_date_disjunctions(
-    groups: &[String],
+    groups: &[&Edn],
     taken: &std::collections::HashSet<usize>,
     find: Option<&str>,
     inputs: &std::collections::HashMap<String, AdvancedInput>,
@@ -165,35 +164,32 @@ pub(super) fn lower_date_disjunctions(
         .enumerate()
         .filter(|(i, _)| !taken.contains(i))
     {
-        let Some(body) = edn_body(group, '(', ')') else {
+        let Some([head, first, second]) = list(group) else {
             continue;
         };
-        let items = edn_items(body);
-        if items.first() != Some(&"or") || items.len() != 3 {
+        if head.symbol() != Some("or") {
             continue;
         }
         let mut branches = Vec::new();
         let mut date_var = None;
-        for branch in &items[1..] {
-            let Some(body) = edn_body(branch, '[', ']') else {
+        for branch in [first, second] {
+            let Some((subject, key, Some(object))) = triple(branch) else {
                 break;
             };
-            let triple = edn_items(body);
-            if triple.len() != 3
-                || triple[0] != find
-                || !triple[2].starts_with('?')
-                || inputs.contains_key(triple[2])
+            let Some(var) = variable(object) else {
+                break;
+            };
+            if subject != find
+                || inputs.contains_key(var)
+                || !matches!(key, "block/scheduled" | "block/deadline")
             {
                 break;
             }
-            if !matches!(triple[1], ":block/scheduled" | ":block/deadline") {
+            if date_var.is_some_and(|v| v != var) {
                 break;
             }
-            if date_var.is_some_and(|v| v != triple[2]) {
-                break;
-            }
-            date_var = Some(triple[2]);
-            branches.push(branch.to_string());
+            date_var = Some(var);
+            branches.push(branch);
         }
         if branches.len() != 2 {
             continue;
@@ -204,13 +200,13 @@ pub(super) fn lower_date_disjunctions(
             .enumerate()
             .filter(|(i, g)| *i != index && !taken.contains(i) && advanced_var_uses(g, var) > 0)
             .collect::<Vec<_>>();
-        if advanced_var_uses(&groups.join(" "), var) != 2 + predicates.len() {
+        if groups_use(groups, var) != 2 + predicates.len() {
             continue;
         }
         let mut filters = Vec::new();
         for branch in branches {
             let local = std::iter::once(branch)
-                .chain(predicates.iter().map(|(_, g)| (*g).clone()))
+                .chain(predicates.iter().map(|(_, g)| **g))
                 .collect::<Vec<_>>();
             let (parts, used) =
                 lower_attribute_patterns(&local, &Default::default(), Some(find), inputs);
@@ -240,7 +236,7 @@ pub(super) fn lower_date_disjunctions(
 /// second rule for one question (I-12). `:block/page` lowers to `Rel::Page`
 /// and stays literal, like `(page A)`.
 pub(super) fn lower_current_page_patterns(
-    groups: &[String],
+    groups: &[&Edn],
     inputs: &std::collections::HashMap<String, AdvancedInput>,
     find: Option<&str>,
 ) -> (
@@ -251,31 +247,25 @@ pub(super) fn lower_current_page_patterns(
         .iter()
         .enumerate()
         .filter_map(|(index, group)| {
-            let inner = group.trim().strip_prefix('[')?.strip_suffix(']')?.trim();
-            let tokens = edn_items(inner);
-            (tokens.len() == 3).then_some((index, tokens))
+            let (subject, key, object) = triple(group)?;
+            Some((index, subject, key, object?))
         })
         .collect::<Vec<_>>();
 
     let mut candidates = Vec::new();
-    for (identity_index, identity) in &triples {
-        if identity[1] != ":block/name" || !identity[0].starts_with('?') {
+    for &(identity_index, subject, key, name) in &triples {
+        if key != "block/name" {
             continue;
         }
-        let page = match inputs.get(identity[2]) {
-            Some(AdvancedInput::Page(page)) => page.clone(),
-            _ => match edn_string(identity[2]) {
-                Some(page) => page,
-                None => continue,
-            },
+        let Some(page) = page_operand(name, inputs) else {
+            continue;
         };
-        for (relation_index, relation) in &triples {
-            if relation[0] == identity[0] || Some(relation[0]) != find || relation[2] != identity[0]
-            {
+        for &(relation_index, related, relation, object) in &triples {
+            if related == subject || Some(related) != find || variable(object) != Some(subject) {
                 continue;
             }
-            let lowered = match relation[1] {
-                ":block/refs" => Some((
+            let lowered = match relation {
+                "block/refs" => Some((
                     Filter::rel(
                         Rel::DirectRefs,
                         Quant::Any,
@@ -283,8 +273,8 @@ pub(super) fn lower_current_page_patterns(
                     ),
                     "current-page-ref",
                 )),
-                ":block/path-refs" => Some((Filter::page_ref(page.clone()), "page-path-ref")),
-                ":block/page" => Some((
+                "block/path-refs" => Some((Filter::page_ref(page.clone()), "page-path-ref")),
+                "block/page" => Some((
                     Filter::rel(
                         Rel::Page,
                         Quant::Any,
@@ -295,7 +285,7 @@ pub(super) fn lower_current_page_patterns(
                 _ => None,
             };
             if let Some((filter, label)) = lowered {
-                if advanced_var_uses(&groups.join(" "), identity[0]) != 2 {
+                if groups_use(groups, subject) != 2 {
                     continue;
                 }
                 let lowered = (
@@ -306,7 +296,7 @@ pub(super) fn lower_current_page_patterns(
                     },
                     label,
                 );
-                candidates.push((*identity_index, *relation_index, lowered));
+                candidates.push((identity_index, relation_index, lowered));
             }
         }
     }

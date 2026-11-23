@@ -931,6 +931,10 @@ pub fn search_spans_json(
 #[wasm_bindgen]
 pub fn query_edn_json(source: &str, operation: &str, value: &str) -> String {
     match operation {
+        #[cfg(feature = "edn-oracle")]
+        "observe-first" | "observe-stream" | "observe-strict" => {
+            tine_core::edn::observe(source, operation)
+        }
         "begin_query" => {
             serde_json::to_string(&tine_core::query_edn::inspect_begin_query(source)).unwrap()
         }
@@ -943,17 +947,8 @@ pub fn query_edn_json(source: &str, operation: &str, value: &str) -> String {
         "split" => {
             serde_json::to_string(&tine_core::query_edn::split_trailing_map(source)).unwrap()
         }
-        "quote" => serde_json::to_string(&tine_core::edn::to_string(&tine_core::edn::Edn::Str(
-            source.into(),
-        )))
-        .unwrap(),
-        "unquote" => {
-            let text = match tine_core::edn::parse_strict(source) {
-                Some(tine_core::edn::Edn::Str(text)) => Some(text),
-                _ => None,
-            };
-            serde_json::to_string(&text).unwrap()
-        }
+        "quote" => serde_json::to_string(&tine_core::edn::quote(source)).unwrap(),
+        "unquote" => serde_json::to_string(&tine_core::edn::read_string(source)).unwrap(),
         _ => "null".into(),
     }
 }

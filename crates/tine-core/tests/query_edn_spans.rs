@@ -53,31 +53,85 @@ fn direct_title_splices_preserve_authored_bytes() {
 }
 
 #[test]
-fn title_edits_consume_the_complete_metadata_form() {
-    let mut failures = Vec::new();
-    for metadata in [r"#^:tag", r#"^"tag""#, "^:tag", "^Tag", r#"#^"tag""#] {
-        let source = format!("{{:title {metadata} [] :collapsed? true}}");
-        for title in ["New", ""] {
-            let edited = query_edn::edit_title(&source, title).unwrap();
-            let expected = (!title.is_empty()).then_some(title);
-            if !query_edn::options(&edited)
-                .is_some_and(|options| options.collapsed && options.title.as_deref() == expected)
-            {
-                failures.push(edited);
+fn title_edits_refuse_to_cut_metadata_or_trivia() {
+    for value in [
+        "#^:tag []",
+        r#"^"tag" []"#,
+        "^:tag []",
+        "^Tag []",
+        r#"#^"tag" []"#,
+        "^:outer #^:inner []",
+        r#"[:span #_ :keep "old"]"#,
+        "[:span ; keep\n \"old\"]",
+        "#queue ; keep\n []",
+        "#queue #_ :keep []",
+        "[:span ^:tag []]",
+    ] {
+        for (open, key) in [("{", ":title"), ("#:ns{:title \"nested\" ", ":_/title")] {
+            let source = format!("{open}{key} {value} :_/collapsed? true}}");
+            let options = query_edn::read(&source);
+            assert!(options.is_some(), "{source}");
+            for title in ["New", ""] {
+                assert_eq!(query_edn::edit_title(&source, title), None, "{source}");
             }
         }
     }
-    assert!(
-        failures.is_empty(),
-        "unreadable edited options: {failures:?}"
+
+    let source = r#"{:title ; keep
+#_ [:note] "Old", :collapsed? true}"#;
+    let cleared = query_edn::edit_title(source, "").unwrap();
+    assert_eq!(cleared, "{ ; keep\n#_ [:note] , :collapsed? true}");
+    assert!(query_edn::options(&cleared).unwrap().collapsed);
+    let edited = query_edn::edit_title(source, "New").unwrap();
+    assert_eq!(edited, source.replace("\"Old\"", "\"New\""));
+    assert_eq!(
+        query_edn::options(&edited).unwrap().title.as_deref(),
+        Some("New")
     );
-    let source = "#:ns{:_/collapsed? true :title \"nested\", :_/title ^Tag []}";
-    let removed = query_edn::edit_title(source, "").unwrap();
-    assert!(removed.contains(":title \"nested\""));
-    let edited = query_edn::edit_title(&removed, "New").unwrap();
-    let options = query_edn::options(&edited).unwrap();
-    assert_eq!(options.title.as_deref(), Some("New"));
-    assert!(options.collapsed);
+}
+
+#[test]
+fn plain_title_edits_preserve_options_through_print_and_reopen() {
+    use tine_core::date::JournalDate;
+    use tine_core::query::{
+        ir::Source,
+        parse_query_input,
+        print::{query_print, PrintDialect},
+        registry::Registry,
+        QueryInput,
+    };
+    let options = r#"{:title #_ [:note] "Old" , :collapsed? true :x ["Other"]}"#;
+    let before = format!("(task TODO) {options}");
+    for (title, changed) in [
+        ("New", options.replace("\"Old\"", "\"New\"")),
+        (
+            "",
+            r#"{ #_ [:note]  , :collapsed? true :x ["Other"]}"#.into(),
+        ),
+    ] {
+        let parse = |source: &str| {
+            parse_query_input(
+                source,
+                QueryInput::MacroQuery,
+                JournalDate::today(),
+                Registry::none(),
+            )
+        };
+        let (mut query, view) = parse(&before);
+        let Source::Og { og_options, .. } = &mut query.source else {
+            panic!("expected an OG macro")
+        };
+        *og_options = query_edn::edit_title(options, title).unwrap();
+        let saved = query_print(&query, &view, PrintDialect::Og, true).unwrap();
+        assert_eq!(saved, format!("(task TODO) {changed}"));
+        let (reopened, _) = parse(&saved);
+        let decoded = query_edn::options(reopened.source.og_options()).unwrap();
+        assert!(decoded.collapsed);
+        assert_eq!(
+            decoded.title.as_deref(),
+            (!title.is_empty()).then_some(title)
+        );
+    }
 }
 
 #[test]
@@ -120,10 +174,11 @@ fn begin_query_inspector_preserves_live_payload_semantics() {
     use query_edn::BeginQueryMatch::{Supported, Unsupported};
     let query = "[:find (pull ?b [*]) :where (task ?b \"TODO\")]";
     let rules = "[[(task ?b ?m) [?b :block/content ?m]]]";
+    let with_rules = format!("{{:query {query} :rules {rules}}}");
     assert_eq!(
-        query_edn::inspect_begin_query(&format!("{{:query {query} :rules {rules}}}")),
+        query_edn::inspect_begin_query(&with_rules),
         Supported {
-            query: format!("{query} :rules {rules}"),
+            query: with_rules,
             title: None,
             keeps_block_children: false,
         }
@@ -134,17 +189,16 @@ fn begin_query_inspector_preserves_live_payload_semantics() {
     assert_eq!(
         query_edn::inspect_begin_query(&payload),
         Supported {
-            query: format!("{query} :inputs [:current-page]"),
+            query: payload,
             title: Some("Line\nTwo\tλ".into()),
             keeps_block_children: false,
         }
     );
+    let with_list_inputs = format!("{{:query {query} :inputs ; note\n (:current-page)}}");
     assert_eq!(
-        query_edn::inspect_begin_query(&format!(
-            "{{:query {query} :inputs ; note\n (:current-page)}}"
-        )),
+        query_edn::inspect_begin_query(&with_list_inputs),
         Supported {
-            query: format!("{query} :inputs (:current-page)"),
+            query: with_list_inputs,
             title: None,
             keeps_block_children: false,
         }
@@ -167,14 +221,20 @@ fn begin_query_inspector_preserves_live_payload_semantics() {
             Unsupported { reason }
         );
     }
+    let with_discard =
+        format!(r#"{{#_ [:title "hidden"] :nested {{:title "nested"}} :query {query}}}"#);
     assert_eq!(
-        query_edn::inspect_begin_query(&format!(
-            r#"{{#_ [:title "hidden"] :nested {{:title "nested"}} :query {query}}}"#
-        )),
+        query_edn::inspect_begin_query(&with_discard),
         Supported {
-            query: query.into(),
+            query: with_discard,
             title: None,
             keeps_block_children: false,
+        }
+    );
+    assert_eq!(
+        query_edn::inspect_begin_query(r#"{:query [":find" ":where"]}"#),
+        Unsupported {
+            reason: "expected an advanced :query vector"
         }
     );
 }

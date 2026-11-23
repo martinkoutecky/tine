@@ -11,10 +11,8 @@
 
 use std::io;
 
-use tine_core::config::{
-    balanced_map_at, edn_str_end, find_keyword_at_map_level, find_top_level_keyword,
-    match_close_brace, match_close_bracket, next_value_span, root_map_bounds, skip_blank,
-};
+use tine_core::config::{edit_entry, edit_is_complete, editable_value, read_for_edit};
+use tine_core::edn::{Form, Kind};
 
 use tine_store::{Area, Content, FileId, FileRev, Store, StoreError};
 
@@ -44,7 +42,7 @@ fn read_config(store: &Store, id: &FileId) -> io::Result<Option<(String, FileRev
 /// edit may produce one. A blank or comment-only file is not malformed.
 /// Contract: docs/contracts/config-live-reload.md, refusal table.
 fn check_root(text: &str) -> io::Result<()> {
-    if skip_blank(text, 0) < text.len() && root_map_bounds(text).is_none() {
+    if !edit_is_complete(text) {
         return Err(refuse("the top-level form is not a balanced map"));
     }
     Ok(())
@@ -59,8 +57,10 @@ fn update(store: &Store, edit: impl Fn(&str) -> io::Result<String>) -> io::Resul
         let current =
             read_config(store, &id).map_err(|error| crate::config_unreadable(error.into()))?;
         let text = current.as_ref().map_or("{}\n", |(text, _)| text);
-        check_root(text)?;
         let next = edit(text)?;
+        if next == text {
+            return Ok(Some(()));
+        }
         check_root(&next)?;
         let mut tx = store.transaction(None);
         if let Some((_, rev)) = current {
@@ -107,16 +107,21 @@ pub(crate) fn edit_favorites(
     names: &[String],
     page: Option<&str>,
 ) -> io::Result<String> {
-    check_root(source)?;
     let mut content = source.to_string();
     if let Some(page) = page {
-        set_top_level(&mut content, ":tine/favorites-page", &edn_string(page))?;
+        set_top_level(
+            &mut content,
+            "tine/favorites-page",
+            &edn_string(page),
+            false,
+        )?;
     }
     let names: Vec<String> = names.iter().map(|n| edn_string(n)).collect();
     set_top_level(
         &mut content,
-        ":favorites",
+        "favorites",
         &format!("[{}]", names.join(" ")),
+        false,
     )?;
     Ok(content)
 }
@@ -134,50 +139,29 @@ pub fn set_default_home_page(store: &Store, name: Option<&str>) -> io::Result<()
 /// picker and a page rename (OG `rename-page-aux` moves the home page with its
 /// page). Refuses a malformed root or a non-map `:default-home`.
 pub(crate) fn edit_default_home(source: &str, name: Option<&str>) -> io::Result<String> {
-    check_root(source)?;
     let mut content = source.to_owned();
     let name = name.map(str::trim).filter(|name| !name.is_empty());
-    let Some((root_open, _)) = root_map_bounds(&content) else {
-        // Blank or comment-only: nothing to clear, or a new map to create.
-        if let Some(name) = name {
-            let entry = format!(":default-home {{:page {}}}", edn_string(name));
-            insert_top_level(&mut content, &entry)?;
-        }
-        return Ok(content);
-    };
-    let home = find_top_level_keyword(&content, ":default-home")
-        .map(|start| {
-            let open = skip_blank(&content, start + ":default-home".len());
-            balanced_map_at(&content, open)
-                .ok_or_else(|| refuse(":default-home exists but is not a balanced map"))
+    let root = edit_map(source)?;
+    let home = root
+        .as_ref()
+        .and_then(|root| edit_entry(root, "default-home"))
+        .map(|(_, value)| {
+            value
+                .filter(|form| form.kind == Kind::Map)
+                .ok_or_else(|| refuse(":default-home requires a map"))
         })
         .transpose()?;
     match (home, name) {
         (None, Some(name)) => {
-            let value = edn_string(name);
-            content.insert_str(
-                root_open + 1,
-                &format!("\n :default-home {{:page {value}}}\n"),
-            );
-        }
-        (Some((open, close)), Some(name)) => {
-            let value = edn_string(name);
-            if let Some(relative) = find_keyword_at_map_level(&content[open + 1..close], ":page") {
-                let after = open + 1 + relative + ":page".len();
-                match next_value_span(&content, after, close) {
-                    Some((start, end, _)) => content.replace_range(start..end, &value),
-                    None => content.insert_str(after, &format!(" {value}")),
-                }
+            let value = format!("{{:page {}}}", edn_string(name));
+            if let Some(root) = root {
+                insert_key(&mut content, &root, "default-home", &value, true);
             } else {
-                let separator = if content[open + 1..close].trim().is_empty() {
-                    ""
-                } else {
-                    " "
-                };
-                content.insert_str(open + 1, &format!(":page {value}{separator}"));
+                set_top_level(&mut content, "default-home", &value, false)?;
             }
         }
-        (Some((open, close)), None) => remove_entry(&mut content, open, close, ":page"),
+        (Some(map), Some(name)) => set_nested(&mut content, map, "page", &edn_string(name))?,
+        (Some(map), None) => remove_entry(&mut content, map, "page")?,
         (None, None) => {}
     }
     Ok(content)
@@ -322,32 +306,69 @@ pub(crate) fn config_after_rename(
         };
     }
     if next != text {
+        if let Err(error) = check_root(&next) {
+            return ConfigAfterRename {
+                skipped: Some(error.to_string()),
+                ..Default::default()
+            };
+        }
         step.write = Some((id, rev, next.into_bytes()));
     }
     step
 }
 
-/// Remove `key` and its value from the map `{…}` at `open..close`, with the
-/// blanks and commas after it.
-fn remove_entry(content: &mut String, open: usize, close: usize, key: &str) {
-    let Some(relative) = find_keyword_at_map_level(&content[open + 1..close], key) else {
-        return;
+fn edit_map(source: &str) -> io::Result<Option<Form>> {
+    read_for_edit(source).ok_or_else(|| refuse("the top-level form is not an editable map"))
+}
+
+fn map_open(source: &str, map: &Form) -> usize {
+    map.span.start + source[map.span.clone()].find('{').unwrap()
+}
+
+fn insert_key(content: &mut String, map: &Form, key: &str, value: &str, top_level: bool) {
+    let open = map_open(content, map);
+    let key = if content.as_bytes()[map.span.start] == b'#' {
+        format!(":_/{key}")
+    } else {
+        format!(":{key}")
     };
-    let start = open + 1 + relative;
-    let after = start + key.len();
-    let end = next_value_span(content, after, close)
-        .map(|(_, end, _)| end)
-        .unwrap_or(after);
-    let tail = content[end..close]
-        .chars()
-        .take_while(|ch| ch.is_whitespace() || *ch == ',')
-        .map(char::len_utf8)
-        .sum::<usize>();
-    content.replace_range(start..end + tail, "");
+    let text = if top_level {
+        format!("\n {key} {value}\n")
+    } else {
+        let space = if content[open + 1..map.span.end - 1].trim().is_empty() {
+            ""
+        } else {
+            " "
+        };
+        format!("{key} {value}{space}")
+    };
+    content.insert_str(open + 1, &text);
+}
+
+fn remove_entry(content: &mut String, map: &Form, key: &str) -> io::Result<()> {
+    let Some((token, value)) = edit_entry(map, key) else {
+        return Ok(());
+    };
+    if let Some(value) = value {
+        let span =
+            editable_value(value).ok_or_else(|| refuse("the setting contains authored trivia"))?;
+        content.replace_range(span, "");
+    }
+    content.replace_range(token.span.clone(), "");
+    Ok(())
+}
+
+fn set_nested(content: &mut String, map: &Form, key: &str, value: &str) -> io::Result<()> {
+    if let Some((token, existing)) = edit_entry(map, key) {
+        replace_entry_value(content, token, existing, value, false)
+    } else {
+        insert_key(content, map, key, value, false);
+        Ok(())
+    }
 }
 
 fn edn_string(value: &str) -> String {
-    format!("\"{}\"", value.replace('\\', "\\\\").replace('"', "\\\""))
+    tine_core::edn::quote(value)
 }
 
 fn refuse(what: &str) -> io::Error {
@@ -357,85 +378,57 @@ fn refuse(what: &str) -> io::Error {
     )
 }
 
-/// Set `key` to `value` in config.edn text: replace the key's whole existing
-/// value (string, vector, map, set or scalar such as `nil`) or insert the key
-/// into the top-level map. Never leaves a key without its value.
-fn set_top_level(content: &mut String, key: &str, value: &str) -> io::Result<()> {
-    let Some(start) = find_top_level_keyword(content, key) else {
-        return insert_top_level(content, &format!("{key} {value}"));
-    };
-    let after = start + key.len();
-    let j = skip_blank(content, after); // comment-aware, like the readers
-    let b = content.as_bytes();
-    let missing = matches!(b.get(j), None | Some(b'}'));
-    let closed = |close: usize| (close < b.len()).then_some(close + 1);
-    let end = match b.get(j) {
-        None | Some(b'}') => None, // the key has no value: insert one
-        Some(b'"') => Some(edn_str_end(content, j)).filter(|&e| b[e - 1] == b'"' && e > j + 1),
-        Some(b'[') => closed(match_close_bracket(content, j)),
-        Some(b'{') => closed(match_close_brace(content, j)),
-        Some(b'#') if b.get(j + 1) == Some(&b'{') => closed(match_close_brace(content, j + 1)),
-        Some(b'(' | b'#' | b'^' | b'\'' | b'@' | b'`' | b'~' | b']' | b')') => {
-            return Err(refuse(&format!(
-                "{key} has a value shape Tine does not edit"
-            )));
+fn replace_entry_value(
+    content: &mut String,
+    token: &Form,
+    existing: Option<&Form>,
+    value: &str,
+    compact_gap: bool,
+) -> io::Result<()> {
+    let end = token.span.end;
+    if let Some(existing) = existing {
+        let span = editable_value(existing)
+            .ok_or_else(|| refuse("the setting contains authored trivia"))?;
+        if compact_gap && content[end..span.start].chars().all(char::is_whitespace) {
+            content.replace_range(end..span.end, &format!(" {value}"));
+        } else {
+            content.replace_range(span, value);
         }
-        Some(_) => next_value_span(content, j, content.len()).map(|(_, end, _)| end),
-    };
-    match end {
-        // Key through value, as the legacy writer (byte fixture `client`).
-        Some(end) => content.replace_range(start..end, &format!("{key} {value}")),
-        None if missing => content.insert_str(after, &format!(" {value}")),
-        None => return Err(refuse(&format!("{key} has an unterminated value"))),
+    } else {
+        content.insert_str(end, &format!(" {value}"));
     }
     Ok(())
 }
 
-/// Insert `entry` right after the top-level map's `{`: the first form after
-/// blanks and `;` comments, never a `{` inside a comment or string. A file of
-/// only blanks/comments gets a new map appended; any other first form is
-/// refused rather than guessed at.
-fn insert_top_level(content: &mut String, entry: &str) -> io::Result<()> {
-    let open = skip_blank(content, 0);
-    match content.as_bytes().get(open) {
-        Some(b'{') => content.insert_str(open + 1, &format!("\n {entry}\n")),
-        None => {
-            if !content.is_empty() && !content.ends_with('\n') {
-                content.push('\n');
-            }
-            content.push_str(&format!("{{{entry}}}\n"));
+fn set_top_level(content: &mut String, key: &str, value: &str, scalar: bool) -> io::Result<()> {
+    let key = key.trim_start_matches(':');
+    let Some(map) = edit_map(content)? else {
+        if !content.is_empty() && !content.ends_with('\n') {
+            content.push('\n');
         }
-        Some(_) => return Err(refuse("the top-level form is not a map")),
-    }
-    Ok(())
-}
-
-/// Set a top-level scalar `key` (keyword, boolean, number or string): replace
-/// only the value token, keeping the key and its spacing, or insert the key
-/// into the root map. A collection-shaped value is refused, never spliced.
-fn set_scalar(content: &mut String, key: &str, value: &str) -> io::Result<()> {
-    let Some(start) = find_top_level_keyword(content, key) else {
-        return insert_top_level(content, &format!("{key} {value}"));
+        content.push_str(&format!("{{:{key} {value}}}\n"));
+        return Ok(());
     };
-    let after = start + key.len();
-    let (_, close) = root_map_bounds(content).ok_or_else(|| refuse("no top-level map"))?;
-    let j = skip_blank(content, after);
-    if matches!(content.as_bytes().get(j), Some(b'{' | b'[' | b'(' | b'#')) {
+    let Some((token, existing)) = edit_entry(&map, key) else {
+        insert_key(content, &map, key, value, true);
+        return Ok(());
+    };
+    let supported = |kind| {
+        matches!(kind, Kind::String | Kind::Atom)
+            || !scalar && matches!(kind, Kind::Vector | Kind::Map | Kind::Set)
+    };
+    if existing.is_some_and(|form| !supported(form.kind)) {
         return Err(refuse(&format!(
-            "{key} has a value shape Tine does not edit"
+            ":{key} has a value shape Tine does not edit"
         )));
     }
-    match next_value_span(content, after, close) {
-        Some((vstart, vend, _)) if vend > vstart => content.replace_range(vstart..vend, value),
-        _ => content.insert_str(after, &format!(" {value}")),
-    }
-    Ok(())
+    replace_entry_value(content, token, existing, value, !scalar)
 }
 
 fn update_scalar(store: &Store, key: &str, value: &str) -> io::Result<()> {
     update(store, |content| {
         let mut content = content.to_string();
-        set_scalar(&mut content, key, value)?;
+        set_top_level(&mut content, key, value, true)?;
         Ok(content)
     })
 }
@@ -528,46 +521,33 @@ pub fn store_journal_page_title_format(store: &Store, fmt: &str) -> io::Result<V
 /// preserved. A non-map `:default-templates` value (`nil`) is replaced by a
 /// map on `Some` and left alone on `None`.
 pub fn set_default_journal_template(store: &Store, name: Option<&str>) -> io::Result<()> {
-    const KEY: &str = ":default-templates";
-    update(store, |content| {
-        let mut content = content.to_string();
-        let dt = find_top_level_keyword(&content, KEY).map(|start| {
-            let j = skip_blank(&content, start + KEY.len());
-            balanced_map_at(&content, j)
-        });
-        match (dt, name) {
-            (Some(Some((open, close))), Some(name)) => {
-                let v = edn_string(name);
-                if let Some(jrel) =
-                    find_keyword_at_map_level(&content[open + 1..close], ":journals")
-                {
-                    // Replace the value IMMEDIATELY after :journals, never a
-                    // later key's value.
-                    let after = open + 1 + jrel + ":journals".len();
-                    match next_value_span(&content, after, close) {
-                        Some((vstart, vend, _)) => content.replace_range(vstart..vend, &v),
-                        None => content.insert_str(after, &format!(" {v}")),
+    update(store, |source| {
+        let mut content = source.to_owned();
+        let root = edit_map(source)?;
+        let existing = root
+            .as_ref()
+            .and_then(|root| edit_entry(root, "default-templates"));
+        let map = existing.and_then(|(_, form)| form.filter(|form| form.kind == Kind::Map));
+        match (map, name) {
+            (Some(map), Some(name)) => {
+                set_nested(&mut content, map, "journals", &edn_string(name))?
+            }
+            (Some(map), None) => remove_entry(&mut content, map, "journals")?,
+            (None, Some(name)) => {
+                let value = format!("{{:journals {}}}", edn_string(name));
+                match (root.as_ref(), existing) {
+                    (_, Some((key, old))) => {
+                        replace_entry_value(&mut content, key, old, &value, true)?
                     }
-                } else {
-                    let sep = if content[open + 1..close].trim().is_empty() {
-                        ""
-                    } else {
-                        " "
-                    };
-                    content.insert_str(open + 1, &format!(":journals {v}{sep}"));
+                    (Some(root), None) => {
+                        insert_key(&mut content, root, "default-templates", &value, true)
+                    }
+                    (None, None) => {
+                        set_top_level(&mut content, "default-templates", &value, false)?
+                    }
                 }
             }
-            (_, Some(name)) => {
-                set_top_level(
-                    &mut content,
-                    KEY,
-                    &format!("{{:journals {}}}", edn_string(name)),
-                )?;
-            }
-            (Some(Some((open, close))), None) => {
-                remove_entry(&mut content, open, close, ":journals")
-            }
-            (_, None) => {}
+            (None, None) => {}
         }
         Ok(content)
     })

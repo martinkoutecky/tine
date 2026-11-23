@@ -35,6 +35,7 @@ quick-share-connect-refused = GitHub refused the connection. Try again later.
 quick-share-cancel = Cancel
 quick-share-disclosure = The full text of these pages is shared, including their properties.
 quick-share-not-included = Images and other files are not included; readers see only their file names.
+quick-share-config-omitted = This share uses default reading settings because config.edn could not be read as an EDN map.
 quick-share-size = Size: { $size }
 quick-share-size-bytes = { $bytes } bytes
 quick-share-size-kib = { $size } KB

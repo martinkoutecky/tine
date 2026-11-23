@@ -2,6 +2,7 @@ macro-block-changed = بلوک هنگام ذخیره تغییر کرد. این �
 macro-query-read-only = این بلوک فقط‌خواندنی است. پرس‌وجو تغییر نکرد.
 macro-query-rewrite = بازنویسی گراف در جریان است. پرس‌وجو تغییر نکرد.
 macro-query-unchanged = پرس‌وجو تغییر نکرد: { $detail }
+macro-query-title-edit-text = برای تغییر این عنوان، متن پرس‌وجو را ویرایش کنید.
 macro-query-load-failed = پرس‌وجو بارگذاری نشد: { $detail }
 macro-query-diagnostics = <lead>Tine بخشی از این پرس‌وجو را نفهمید، پس نتیجه‌ای برنگرداند:</lead> { $detail }
 macro-advanced-ran = پرس‌وجوی پیشرفته اجرا شد: { $clauses }

@@ -1384,6 +1384,7 @@ export interface MessageArgs {
   "macro-query-published-limit": {};
   "macro-query-read-only": {};
   "macro-query-rewrite": {};
+  "macro-query-title-edit-text": {};
   "macro-query-unchanged": { "detail": string | number };
   "macro-ref-blocks-more-nested-blocks-are-available-on-the-page": {};
   "macro-ref-blocks-page-property-reference": {};
@@ -2195,6 +2196,7 @@ export interface MessageArgs {
   "quick-share-check": {};
   "quick-share-check-found": {};
   "quick-share-check-not-yet": {};
+  "quick-share-config-omitted": {};
   "quick-share-connect-again": {};
   "quick-share-connect-button": {};
   "quick-share-connect-code": {};

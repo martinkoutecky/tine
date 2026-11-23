@@ -315,6 +315,37 @@ fn every_setter_refuses_a_config_that_is_not_a_balanced_map() {
     }
 }
 
+#[test]
+fn favorites_write_uses_the_effective_config_keys() {
+    let _integration_guard = crate::integration_lock();
+    for input in [
+        r#"{:x ^:tag [] :favorites ["Old"]}"#,
+        r#"#:graph{:_/favorites #_ [:private] ["Old"] :favorites ["Shadow"]}"#,
+        r#"^:cfg {:favorites ["Old"] :note #uuid "ABC"}"#,
+    ] {
+        let dir = scratch("effective-keys", Some(input));
+        let store = open(&dir);
+        config::set_favorites(&store, &["New".into()], None).unwrap();
+        let saved = content(&dir);
+        assert_eq!(saved, input.replace("\"Old\"", "\"New\""));
+        assert_eq!(Config::parse(&saved).favorites, ["New"]);
+    }
+    for input in [
+        r#"{:favorites ["Old"] :bad #unknown []}"#,
+        r#"{:favorites ^:tag ["Old"]}"#,
+    ] {
+        let dir = scratch("protected-keys", Some(input));
+        let store = open(&dir);
+        assert_eq!(
+            config::set_favorites(&store, &["New".into()], None)
+                .unwrap_err()
+                .kind(),
+            io::ErrorKind::InvalidData
+        );
+        assert_eq!(content(&dir), input);
+    }
+}
+
 /// A missing, empty or comment-only config.edn is not malformed: the first
 /// setting write creates a map and keeps the comments.
 #[test]

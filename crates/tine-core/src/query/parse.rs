@@ -5,7 +5,7 @@
 //! no graph, no SQL. Execution (results, statistics, explain-empty runs)
 //! consumes a [`ResolvedQuery`] and lives outside this module.
 
-use super::advanced_patterns::{advanced_pred_inner, LoweringDay};
+use super::advanced_patterns::{lower_advanced, LoweringDay};
 use super::ir::{self, Anchor, Filter, Query, Source, ViewSettings};
 use super::{
     is_advanced, macro_text, og, query_nesting_within_limit, query_source_within_limit, registry,
@@ -162,42 +162,62 @@ pub fn parse_query_input(
     today: JournalDate,
     registry: &registry::Registry,
 ) -> (Query, ViewSettings) {
-    match input {
+    let (query, view, _) = parse_query_input_details(text, input, today, registry);
+    (query, view)
+}
+
+pub(super) fn parse_query_input_details(
+    text: &str,
+    input: QueryInput,
+    today: JournalDate,
+    registry: &registry::Registry,
+) -> (Query, ViewSettings, bool) {
+    let parsed = match input {
         QueryInput::Og => parse_query_source(text, today),
-        QueryInput::Advanced => advanced_source_query(text, String::new()),
+        QueryInput::Advanced => {
+            let declaration = crate::query_edn::advanced(text);
+            return advanced_source_query(text, "", declaration.as_ref());
+        }
         QueryInput::Tql => parse_query_text_with_registry(text, QueryDialect::Tql, today, registry),
         QueryInput::MacroTql => {
             if !query_source_within_limit(text) {
-                return refuse_tql_source(text, String::new());
+                let (query, view) = refuse_tql_source(text, String::new());
+                return (query, view, false);
             }
             let (form, og_options) =
                 macro_text::split_trailing_map(text, macro_text::FormFamily::Tql);
             if !query_source_within_limit(&form) {
-                return refuse_tql_source(&form, og_options);
+                let (query, view) = refuse_tql_source(&form, og_options);
+                return (query, view, false);
             }
             tql::parse_tql_with_options(&form, og_options, registry)
         }
         QueryInput::MacroQuery => {
             if !query_source_within_limit(text) {
-                return parse_query_source(text, today);
+                let (query, view) = parse_query_source(text, today);
+                return (query, view, false);
             }
-            let (form, og_options) =
-                macro_text::split_trailing_map(text, macro_text::FormFamily::Edn);
-            // A whole advanced map is the FORM, never options: the splitter
-            // already refused to split a map with nothing before it (§4.4).
-            if advanced_form(&form) {
-                return advanced_source_query(&form, og_options);
+            let (form, og_options, declaration) = crate::query_edn::read_query_macro(text);
+            if declaration.as_ref().is_some_and(|declaration| {
+                declaration
+                    .vector
+                    .iter()
+                    .any(|form| matches!(form.keyword(), Some("find" | "where")))
+            }) || (declaration.is_none() && advanced_form(form))
+            {
+                return advanced_source_query(form, og_options, declaration.as_ref());
             }
-            let (mut query, view) = parse_query_source(&form, today);
+            let (mut query, view) = parse_query_source(form, today);
             if let Source::Og {
                 og_options: slot, ..
             } = &mut query.source
             {
-                *slot = og_options;
+                *slot = og_options.into();
             }
             (query, view)
         }
-    }
+    };
+    (parsed.0, parsed.1, false)
 }
 
 /// A datalog form, retained as [`Source::Advanced`] with its complete authored
@@ -209,14 +229,18 @@ pub fn parse_query_input(
 /// it back through the source-preserving path instead of being told the OG
 /// printer cannot express it. `original` is the whole form, `:query`/`:inputs`
 /// map and all; only a map that FOLLOWS it is options.
-fn advanced_source_query(form: &str, og_options: String) -> (Query, ViewSettings) {
+fn advanced_source_query(
+    form: &str,
+    og_options: &str,
+    declaration: Option<&crate::query_edn::Advanced>,
+) -> (Query, ViewSettings, bool) {
     use ir::{Diagnostic, DiagnosticKind};
     let mut query = Query::new(
         Anchor::Block,
         Filter::False,
         Source::Advanced {
             original: form.to_string(),
-            og_options,
+            og_options: og_options.into(),
         },
     );
     query.diagnostics.push(Diagnostic::new(
@@ -226,10 +250,18 @@ fn advanced_source_query(form: &str, og_options: String) -> (Query, ViewSettings
     // A recognised result transform runs as the view's sort (Martin
     // 2026-10-11); any other refuses the query whole at resolution.
     let view = ViewSettings {
-        sort: super::advanced_patterns::advanced_result_sort(form).unwrap_or_default(),
+        sort: declaration
+            .and_then(|declaration| declaration.result_transform.as_ref())
+            .and_then(super::advanced_sort::result_sort_form)
+            .map_or_else(Vec::new, |sort| sort.view_sort()),
         ..ViewSettings::default()
     };
-    (query, view)
+    let current_page = declaration.is_some_and(|declaration| {
+        declaration
+            .inputs
+            .contains(&crate::query_edn::InputItem::CurrentPage)
+    });
+    (query, view, current_page)
 }
 
 fn refuse_tql_source(form: &str, og_options: String) -> (Query, ViewSettings) {
@@ -353,6 +385,8 @@ pub struct ResolvedQuery {
     report: ir::QueryReport,
     today: JournalDate,
     reads_today: bool,
+    keeps_block_children: bool,
+    advanced_sort: Option<super::advanced_sort::AdvancedResultSort>,
 }
 
 impl ResolvedQuery {
@@ -382,6 +416,16 @@ impl ResolvedQuery {
         self.reads_today
     }
 
+    /// Whether a result keeps matches whose parent also matches.
+    pub fn keeps_block_children(&self) -> bool {
+        self.keeps_block_children
+    }
+
+    /// The declaration's supported order-only transform, if authored.
+    pub fn advanced_sort(&self) -> Option<&super::advanced_sort::AdvancedResultSort> {
+        self.advanced_sort.as_ref()
+    }
+
     /// Whether this execution may be evaluated: `false` when the advanced
     /// lowering refused (`report().supported == false`) **or** when the bound
     /// query carries any enabled diagnostic ([`Query::is_invalid`]): an OG/TQL
@@ -401,7 +445,7 @@ impl ResolvedQuery {
 /// an advanced placeholder to interpret on its own.
 ///
 /// For [`Source::Advanced`] it calls the ONE existing lowerer,
-/// [`advanced_pred_inner`], with the AUTHORED source (`Source::Advanced.original`,
+/// [`lower_advanced`], with the AUTHORED source (`Source::Advanced.original`,
 /// `:query`/`:inputs` and all), the caller's current page, and this execution's
 /// day, and carries its `ran`/`ignored` report through verbatim. The
 /// provisional inspection diagnostic is removed; static (size/depth)
@@ -444,6 +488,8 @@ pub fn resolve_for_execution(
             },
             today,
             reads_today,
+            keeps_block_children: !query.removes_block_children(),
+            advanced_sort: None,
         };
     };
 
@@ -462,8 +508,9 @@ pub fn resolve_for_execution(
     // The advanced lowering bakes resolved ordinals into the IR; it records
     // whether it read the day while resolving them.
     let day = LoweringDay::new(today);
-    let (lowered, ran, ignored) =
-        advanced_pred_inner(original, context.current_page.as_deref(), &day, false);
+    let lowering = lower_advanced(original, context.current_page.as_deref(), &day);
+    let lowered = lowering.query;
+    let ignored = lowering.ignored;
     let mut bound = Query {
         anchor: lowered.as_ref().map_or(query.anchor, |q| q.anchor),
         filter: lowered
@@ -477,11 +524,7 @@ pub fn resolve_for_execution(
     let supported = lowered.is_some();
     if !supported {
         let mut message = unsupported_message(&ignored);
-        if let Some(tql) = super::advanced_patterns::advanced_row_suggestion(
-            original,
-            context.current_page.as_deref(),
-            today,
-        ) {
+        if let Some(tql) = lowering.suggestion {
             message.push_str(&format!(
                 ". To query the underlying rows without :result-transform, use TQL: {tql}"
             ));
@@ -493,12 +536,15 @@ pub fn resolve_for_execution(
     ResolvedQuery {
         query: bound,
         report: ir::QueryReport {
-            ran,
+            ran: lowering.ran,
             ignored,
             supported,
         },
         today,
         reads_today: day.was_read(),
+        keeps_block_children: lowering.keeps_block_children
+            || crate::query_edn::display_keeps_children(query.source.og_options()),
+        advanced_sort: lowering.sort,
     }
 }
 

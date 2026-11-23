@@ -11,13 +11,15 @@ use std::fmt::Write as _;
 use std::io;
 use std::path::Path;
 use std::sync::Arc;
-use tine_core::config::{macro_definition_spans, Config};
+use tine_core::config::Config;
 use tine_core::edn::{self, Edn};
 use tine_core::model::PageKind;
 use tine_core::{Corpus, CorpusPage};
 use tine_store::WholeGraph;
 
 const CONFIG_PATH: &str = "logseq/config.edn";
+pub(crate) const CONFIG_OMITTED: &str =
+    "Publication uses default reading settings because config.edn could not be read as an EDN map.";
 
 #[derive(Serialize, Deserialize)]
 pub(crate) struct SourceFile<'a> {
@@ -114,15 +116,21 @@ impl HomePage {
     }
 }
 
-fn reduced_config(config: &Config, source: &str, home: &str, names: &HashSet<String>) -> String {
+fn reduced_config(config: &Config, home: &str, names: &HashSet<String>) -> String {
     let mut out = String::from("{\n");
     for (key, value) in config.publication_reading_values() {
         writeln!(out, "{key} {}", edn::to_string(&value)).unwrap();
     }
-    let macros = macro_definition_spans(source, names);
+    let mut macros: Vec<_> = names
+        .iter()
+        .filter(|name| config.macros.contains_key(*name))
+        .collect();
+    macros.sort_unstable();
     if !macros.is_empty() {
         out.push_str(":macros {\n");
-        for (key, value) in macros {
+        for name in macros {
+            let key = edn::to_string(&Edn::Str(name.clone()));
+            let value = edn::to_string(&Edn::Str(config.macros[name].clone()));
             writeln!(out, "{key} {value}").unwrap();
         }
         out.push_str("}\n");
@@ -197,10 +205,14 @@ pub(crate) fn snapshot(
     home: &str,
     generated: Option<MemoryFile>,
     quick_share: bool,
+    warnings: &mut Vec<String>,
 ) -> io::Result<Vec<u8>> {
-    let config = selecting_view.config();
-    let names = page_macros(corpus, config);
-    let reduced = reduced_config(config, config.source().unwrap_or(""), home, &names);
+    let source = selecting_view.config().source().unwrap_or("");
+    let admitted = Config::parse_for_publication(source);
+    let omitted = admitted.is_none();
+    let config = admitted.unwrap_or_default();
+    let names = page_macros(corpus, &config);
+    let reduced = reduced_config(&config, home, &names);
     files.extend(generated.iter().cloned());
     files.push((CONFIG_PATH.into(), Arc::new(reduced.into_bytes())));
     if quick_share {
@@ -237,9 +249,11 @@ pub(crate) fn snapshot(
             .iter()
             .any(|page| !identities.contains(&(page.id.as_str(), page.name.as_str(), page.kind)))
     {
-        return Err(refusal(
-            "published sources did not read back as the same pages; nothing was published",
-        ));
+        return Err(refusal(if omitted {
+            "config.edn could not be read as an EDN map and default settings change the published page identities. Fix config.edn and try again."
+        } else {
+            "published sources did not read back as the same pages; nothing was published"
+        }));
     }
     if quick_share {
         let documents = corpus.pages.iter().map(|page| page.document.as_ref());
@@ -261,6 +275,9 @@ pub(crate) fn snapshot(
         exported_at: exported_at.into(),
         files,
     };
+    if omitted {
+        warnings.push(CONFIG_OMITTED.into());
+    }
     if !quick_share {
         return serde_json::to_vec(&snapshot).map_err(io::Error::other);
     }
@@ -373,6 +390,7 @@ mod tests {
                         "Source",
                         None,
                         quick_share,
+                        &mut Vec::new(),
                     )
                 },
             )
@@ -440,6 +458,11 @@ mod tests {
             ("metadata", "#{:public ^ :Private []}", true),
             ("dispatch metadata", "#{:public #^ :Private []}", true),
             ("discarded metadata", "#{:public #_ ^ :Private []}", true),
+            ("discarded instant", r#"#{:public #_ #inst "2020"}"#, false),
+            ("discarded UUID", r#"#{:public #_ [#uuid "ABC"]}"#, false),
+            ("discarded queue", "#{:public #_ #queue []}", false),
+            ("discarded JS vector", "#{:public #_ [#js []]}", false),
+            ("discarded JS map", "#{:public #_ #js {:p :Private}}", false),
             ("signed Unicode character", r"#{\u+041 :Private}", false),
             (
                 "nested signed Unicode character",
@@ -482,6 +505,7 @@ mod tests {
                 .unwrap();
                 let corpus = graph.corpus(None, true);
                 for quick_share in [false, true] {
+                    let mut warnings = Vec::new();
                     let bytes = crate::build_graph::with_build_graph_text(
                         &graph,
                         &corpus.pages,
@@ -496,6 +520,7 @@ mod tests {
                                 "Source",
                                 None,
                                 quick_share,
+                                &mut warnings,
                             )
                         },
                     )
@@ -516,9 +541,15 @@ mod tests {
                     let expected = if keep_public {
                         format!("{{:start-of-week 1 {key} #{{:public}} :property-pages/enabled? false}}")
                     } else {
-                        "{:start-of-week 1 :property-pages/enabled? false}".into()
+                        "{}".into()
                     };
                     if config.contains("Private")
+                        || warnings
+                            != if keep_public {
+                                Vec::new()
+                            } else {
+                                vec![CONFIG_OMITTED]
+                            }
                         || Config::parse(config).publication_reading_values()
                             != Config::parse(&expected).publication_reading_values()
                     {
@@ -531,6 +562,22 @@ mod tests {
             failures.is_empty(),
             "incorrect reading values in publications: {failures:#?}"
         );
+    }
+
+    #[test]
+    fn publication_config_reads_wrapped_roots_and_the_first_form() {
+        for source in [
+            "^:private {:start-of-week 1}",
+            "#:graph{:_/start-of-week 1 :start-of-week 3}",
+            "{:start-of-week 1} #unknown []",
+        ] {
+            let config = Config::parse_for_publication(source).unwrap();
+            assert_eq!(
+                reduced_config(&config, "", &HashSet::new()),
+                "{\n:start-of-week 1\n}\n",
+                "{source}"
+            );
+        }
     }
 
     #[test]
@@ -609,6 +656,7 @@ mod tests {
                         "Home",
                         Some(home.source(&corpus.pages, None)?),
                         true,
+                        &mut Vec::new(),
                     )
                 },
             )
@@ -647,7 +695,15 @@ mod tests {
             )
             .unwrap();
         let bytes = snapshot(
-            &graph, &corpus, files, "Markdown", "", "Markdown", None, false,
+            &graph,
+            &corpus,
+            files,
+            "Markdown",
+            "",
+            "Markdown",
+            None,
+            false,
+            &mut Vec::new(),
         )
         .unwrap();
         let written: Snapshot = serde_json::from_slice(&bytes).unwrap();
@@ -678,6 +734,7 @@ mod tests {
                 &home.name,
                 Some(home.source(&[], None).unwrap()),
                 false,
+                &mut Vec::new(),
             )
             .unwrap();
             let written: Snapshot = serde_json::from_slice(&bytes).unwrap();
@@ -709,7 +766,17 @@ mod tests {
                 }],
             };
             let files = vec![("pages/Public.md".into(), Arc::new(text.into_bytes()))];
-            let result = snapshot(&graph, &corpus, files, "Public", "", "Public", None, true);
+            let result = snapshot(
+                &graph,
+                &corpus,
+                files,
+                "Public",
+                "",
+                "Public",
+                None,
+                true,
+                &mut Vec::new(),
+            );
             if too_many_blocks {
                 let error = result.unwrap_err();
                 assert!(error.to_string().contains("too many blocks"), "{error}");
@@ -810,7 +877,7 @@ mod tests {
         ])
         .unwrap();
         let names = page_macros(&graph.corpus(None, true), &config);
-        let reduced = reduced_config(&config, &source, "Source", &names);
+        let reduced = reduced_config(&config, "Source", &names);
         assert!(!reduced.contains("private"), "{reduced}");
         let macros = Config::parse(&reduced).macros;
         for name in [
@@ -839,8 +906,8 @@ mod tests {
             r#"{:date-formatter "dd.MM.yyyy" :start-of-week -1 :preferred-format "ORG" :favorites ["torn"#,
             r#"{:journal/page-title-format "yyyy-MM-dd" :date-formatter "Private Fallback"}"#,
         ] {
-            let expected = Config::parse(source);
-            let reduced = reduced_config(&expected, source, "Public Home", &used);
+            let expected = Config::parse_for_publication(source).unwrap_or_default();
+            let reduced = reduced_config(&expected, "Public Home", &used);
             let actual = Config::parse(&reduced);
             assert_eq!(actual.default_home.as_deref(), Some("Public Home"));
             assert_eq!(
@@ -911,6 +978,7 @@ mod tests {
                 &home.name,
                 Some(home.source(&corpus.pages, None).unwrap()),
                 false,
+                &mut Vec::new(),
             )
         };
         assert!(make(vec![reviewed.clone()]).is_ok());

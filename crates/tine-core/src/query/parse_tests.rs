@@ -306,12 +306,17 @@ fn advanced_query_reads_unused_edn_literals() {
         ":note 01M",
         ":note 0x12N",
         r#":note #inst "2026-11-23""#,
-        r#"#_ #inst "2026-11-23T01:02:03.456+01:00""#,
+        r#":note #inst "2026-11-23T01:02:03.456+01:00""#,
         r#":note #uuid "d9af1396-8889-4e6f-8995-023cf4bc11d2""#,
         ":note #queue [1 2]",
         ":note #js [1 2]",
         r#":note #js {"x" 1 :tag 2}"#,
         ":note #:ns{:value 1}",
+        r#":note "\uD800""#,
+        r#":note "\uDC00""#,
+        r#":note "\uD83D\uDE00""#,
+        r#":note #uuid "\uD800""#,
+        r#":note #js {"\uD800" "\uDC00"}"#,
     ] {
         let map = format!("{{:query {clause} {option}}}");
         let stream = format!("{clause} {option}");
@@ -338,6 +343,62 @@ fn advanced_query_reads_unused_edn_literals() {
         }
     }
     assert!(failures.is_empty(), "TODO row refused: {failures:?}");
+    for tag in [
+        r#"#inst "2026-11-23""#,
+        r#"#uuid "ABC""#,
+        "#queue []",
+        "#js []",
+        "#js {:a 1}",
+    ] {
+        let map = format!("{{:query {clause} #_ {tag}}}");
+        let stream = format!("{clause} #_ {tag}");
+        assert!(advanced_pred(&map, None, TODAY).0.is_none(), "{map}");
+        assert!(advanced_pred(&stream, None, TODAY).0.is_none(), "{stream}");
+        assert!(matches!(
+            crate::query_edn::inspect_begin_query(&map),
+            crate::query_edn::BeginQueryMatch::Unsupported { .. }
+        ));
+    }
+}
+
+#[test]
+fn advanced_rules_use_decoded_clauses_and_inputs() {
+    assert!(advanced_pred(
+        r#"[:find ?b :where (or (task ?b #{"TODO"}) (priority ?b #{:not-a-string}))]"#,
+        None,
+        TODAY,
+    )
+    .0
+    .is_none());
+    let expected = advanced_pred(r#"[:find ?b :where (task ?b #{"TODO"})]"#, None, TODAY)
+        .0
+        .unwrap()
+        .filter;
+    for source in [
+        r#"[:find ?b :where (task ?b #{"T\u004fDO" #_ "DONE"})]"#,
+        r#"[:find ?b :where (task ?b #{"TODO" ; "DONE"
+        })]"#,
+    ] {
+        assert_eq!(
+            advanced_pred(source, None, TODAY).0.unwrap().filter,
+            expected
+        );
+    }
+    let scheduled =
+        |arg| format!(r#"[:find ?b :in $ ?d :where [?b :block/scheduled ?d]] :inputs [{arg}]"#);
+    for arg in ["0x12", "022", "36/2", "18N"] {
+        assert_eq!(
+            advanced_pred(&scheduled(arg), None, TODAY)
+                .0
+                .unwrap()
+                .filter,
+            advanced_pred(&scheduled("18"), None, TODAY)
+                .0
+                .unwrap()
+                .filter,
+            "{arg}"
+        );
+    }
 }
 
 #[test]
@@ -371,6 +432,49 @@ fn advanced_lowering_reads_one_edn_tree() {
         advanced_pred(&format!(r#"{clause} :result-transform #"x""#), None, TODAY);
     assert_eq!(ignored, ["result-transform"]);
     assert_eq!(crate::edn::STREAM_READS.get(), 2);
+}
+
+#[test]
+fn declaration_reads_are_shared_by_each_entry_path() {
+    use super::wire_parse::{parse_query_pair, QueryTextDialect};
+    let vector = r#"[:find ?b :in $ ?p :where [?page :block/name ?p] [?b :block/page ?page]]"#;
+    let transform = "(fn [rows] (sort-by (fn [row] (get row :block/content)) rows))";
+    let map = format!("{{:query {vector} :inputs [:current-page] :result-transform {transform}}}");
+    let stream = format!("{vector} :inputs [:current-page] :result-transform {transform}");
+    let once = |label, operation: &mut dyn FnMut()| {
+        crate::edn::STREAM_READS.set(0);
+        operation();
+        assert_eq!(crate::edn::STREAM_READS.get(), 1, "{label}");
+    };
+    for (source, dialect) in [
+        (map.as_str(), QueryTextDialect::Advanced),
+        (map.as_str(), QueryTextDialect::MacroQuery),
+        (stream.as_str(), QueryTextDialect::MacroQuery),
+    ] {
+        once(
+            "wire parse, current-page classification and display sort",
+            &mut || {
+                let answer = parse_query_pair(source, dialect, &[], Registry::none());
+                assert!(answer.current_page_input);
+                assert_eq!(answer.view.sort.len(), 1);
+            },
+        );
+        let parsed = parse_query_pair(source, dialect, &[], Registry::none());
+        once("execution lowering, child policy and sort", &mut || {
+            let resolved =
+                resolve_for_execution(&parsed.query, &ExecutionContext::on_page("Focus"), TODAY);
+            assert!(resolved.is_executable());
+            assert!(resolved.advanced_sort().is_some());
+            assert!(!resolved.keeps_block_children());
+        });
+    }
+    once("standalone result sort", &mut || {
+        assert!(super::advanced_sort::advanced_result_sort(&map).is_some());
+    });
+    once("BEGIN_QUERY inspection", &mut || {
+        assert!(matches!(crate::query_edn::inspect_begin_query(&map),
+            crate::query_edn::BeginQueryMatch::Supported { query, .. } if query == map));
+    });
 }
 
 #[test]
@@ -429,7 +533,7 @@ fn advanced_typed_inputs_keep_date_bounds_numeric() {
     let source = r#"[:find (pull ?b [*])
                          :in $ ?start ?end
                          :where (between ?b ?start ?end)]
-                        :inputs [2026-06-01 2026-06-30]"#;
+                        :inputs [20260601 20260630]"#;
     let (lowered, ran, ignored) = advanced_pred(source, Some("Not a date"), TODAY);
 
     assert_eq!(
@@ -442,6 +546,8 @@ fn advanced_typed_inputs_keep_date_bounds_numeric() {
     );
     assert_eq!(ran, vec!["between"]);
     assert!(ignored.is_empty());
+    let invalid = source.replace("20260601", "2026-06-01");
+    assert!(advanced_pred(&invalid, None, TODAY).0.is_none());
 }
 
 #[test]
@@ -994,7 +1100,7 @@ fn resolve_for_execution_says_whether_the_answer_reads_today() {
         Advanced,
     ));
     assert!(reads(
-        "[:find (pull ?b [*]) :where (between ?b -7d today)]",
+        "[:find (pull ?b [*]) :where (between ?b :-7d :today)]",
         Advanced,
     ));
 

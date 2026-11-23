@@ -443,12 +443,28 @@ impl Config {
     pub fn parse(edn: &str) -> Config {
         let entries = crate::edn::config_entries(edn);
         let settings = Settings(entries.as_deref().unwrap_or_default());
-        let mut cfg = Config::default();
+        let mut cfg = Self::parse_settings(&settings);
         // An unreadable root must not silently discard an authored exclusion.
         if entries.is_none() && edn.contains(":hidden") {
             cfg.hidden_parse_failed_closed = true;
         }
-        let journal = parse_journal_settings(&settings);
+        cfg
+    }
+
+    /// The typed config from Logseq's first-form framing for publication.
+    /// Refuses a malformed form or a non-map. Empty source uses defaults.
+    /// This reads the entire admitted form once, within the config size limit.
+    pub fn parse_for_publication(source: &str) -> Option<Self> {
+        let Some(form) = crate::edn::first_form(source)? else {
+            return Some(Self::default());
+        };
+        let entries = crate::edn::map_entries(form)?;
+        Some(Self::parse_settings(&Settings(&entries)))
+    }
+
+    fn parse_settings(settings: &Settings<'_>) -> Self {
+        let mut cfg = Self::default();
+        let journal = parse_journal_settings(settings);
         cfg.default_journal_queries = journal.queries;
         cfg.disable_scheduled_and_deadline_query = journal.disable;
         cfg.scheduled_future_days = journal.future_days;
@@ -561,7 +577,7 @@ impl Config {
             Some("triple-lowbar") => FileNameFormat::TripleLowbar,
             _ => FileNameFormat::Legacy,
         };
-        cfg.macros = macro_entries(settings.get(":macros"), |_, _, value| value.to_owned());
+        cfg.macros = macro_entries(settings.get(":macros"));
         cfg.enable_timetracking = settings
             .boolean(":feature/enable-timetracking?")
             .unwrap_or(cfg.enable_timetracking);
@@ -611,171 +627,6 @@ impl Config {
 }
 
 // ---------------------------------------------------------------------------
-// Edit locations in authored text, including incomplete settings a setter can
-// repair. These helpers never supply effective values.
-// ---------------------------------------------------------------------------
-
-/// Index past the closing quote, or EOF for an unterminated string.
-pub fn edn_str_end(s: &str, open: usize) -> usize {
-    crate::edn::string_end(s, open).unwrap_or(s.len())
-}
-
-/// Matching close `}` for the map whose `{` is at byte `open`, EDN-aware: skips
-/// strings, character literals, `;` comments, and nesting. EOF if unbalanced.
-pub fn match_close_brace(s: &str, open: usize) -> usize {
-    match_close(s, open, b'{', b'}')
-}
-
-/// Matching close `]` for the vector whose `[` is at byte `open`, EDN-aware.
-pub fn match_close_bracket(s: &str, open: usize) -> usize {
-    match_close(s, open, b'[', b']')
-}
-
-fn match_close(s: &str, open: usize, openc: u8, closec: u8) -> usize {
-    let b = s.as_bytes();
-    let mut i = open + 1;
-    let mut depth = 1usize;
-    while i < b.len() {
-        let c = b[i];
-        if matches!(c, b'"' | b'\\') {
-            i = form_end(s, i);
-            continue;
-        }
-        if let Some(end) = crate::edn::comment_end(s, i, false) {
-            i = end;
-            continue;
-        }
-        if c == openc {
-            depth += 1;
-        } else if c == closec {
-            depth -= 1;
-            if depth == 0 {
-                return i;
-            }
-        }
-        i += 1;
-    }
-    s.len()
-}
-
-/// Byte index of `key` as a KEY of the map whose body is `s` (the text between
-/// its braces): a direct entry, never inside a nested map/vector/list/set,
-/// string or `;` comment, and never a VALUE that happens to spell the same
-/// keyword (`{:backup :favorites :private "keep"}` has no `:favorites` key;
-/// C5 L01-S1 spliced over it and the entry after it). The body is walked form
-/// by form, so keys sit at even form positions. A `#_` discard consumes the
-/// next form without counting it; a `#tag` prefix belongs to the form after it.
-/// Linear (every step advances), so arbitrary content cannot hang or mislead it.
-pub fn find_keyword_at_map_level(s: &str, key: &str) -> Option<usize> {
-    let b = s.as_bytes();
-    let (mut at, mut forms) = (skip_blank(s, 0), 0usize);
-    let mut discard = false;
-    let mut tagged = false;
-    while at < b.len() {
-        if b[at] == b'#' && b.get(at + 1) == Some(&b'_') {
-            discard = true;
-            at = skip_blank(s, at + 2);
-            continue;
-        }
-        let end = form_end(s, at);
-        if b[at] == b'#' && !matches!(b.get(at + 1), Some(b'{' | b'#')) {
-            tagged = true; // `#inst "…"`: the tag and its value are one form
-        } else {
-            if !discard && !tagged && forms % 2 == 0 && &s[at..end] == key {
-                return Some(at);
-            }
-            if !discard {
-                forms += 1;
-            }
-            discard = false;
-            tagged = false;
-        }
-        at = skip_blank(s, end);
-    }
-    None
-}
-
-/// End of the one EDN form starting at `at` (non-blank): a string, a balanced
-/// collection (`{}`/`[]`/`()`/`#{}`), or a token up to the next delimiter. A
-/// stray closer is a one-byte form so the walk always advances.
-fn form_end(s: &str, at: usize) -> usize {
-    let b = s.as_bytes();
-    let set = b[at] == b'#' && b.get(at + 1) == Some(&b'{');
-    let open = if set { at + 1 } else { at };
-    match b[open] {
-        b'"' => edn_str_end(s, open),
-        b'{' => (match_close_brace(s, open) + 1).min(s.len()),
-        b'[' => (match_close_bracket(s, open) + 1).min(s.len()),
-        b'(' => (match_close(s, open, b'(', b')') + 1).min(s.len()),
-        b'}' | b']' | b')' => open + 1,
-        _ => {
-            // `\(` and `\é`: the char after a backslash belongs to the literal.
-            let mut end = open + usize::from(b[open] == b'\\');
-            end += s[end..].chars().next().map_or(0, char::len_utf8);
-            // Compact EDN: a `#{` set may follow a token with no blank between.
-            while end < b.len()
-                && !crate::edn::is_delim(b[end])
-                && !(b[end] == b'#' && b.get(end + 1) == Some(&b'{'))
-            {
-                end += 1;
-            }
-            end
-        }
-    }
-}
-
-/// Span `[start, end)` of the value token following byte `from` (skipping leading
-/// whitespace/commas) within `..close`, plus whether it is an EDN string. None if
-/// there is no value before `close`. A string's end is escape-aware; a non-string
-/// token ends at the next whitespace/comma/brace/quote.
-pub fn next_value_span(s: &str, from: usize, close: usize) -> Option<(usize, usize, bool)> {
-    let s = s.get(..close)?;
-    let b = s.as_bytes();
-    let mut i = from;
-    loop {
-        while i < close && matches!(b[i], b' ' | b'\t' | b'\n' | b'\r' | b',') {
-            i += 1;
-        }
-        if let Some(end) = crate::edn::comment_end(s, i, false) {
-            i = end;
-            continue;
-        }
-        break;
-    }
-    if i >= close {
-        return None;
-    }
-    if matches!(b[i], b'"' | b'\\') {
-        return Some((i, form_end(s, i).min(close), b[i] == b'"'));
-    }
-    let start = i;
-    while i < close
-        && !matches!(
-            b[i],
-            b' ' | b'\t' | b'\n' | b'\r' | b',' | b'{' | b'}' | b'"'
-        )
-    {
-        i += 1;
-    }
-    Some((start, i, false))
-}
-
-/// First non-blank byte at/after `from`, skipping whitespace, commas and comments.
-pub fn skip_blank(s: &str, from: usize) -> usize {
-    let b = s.as_bytes();
-    let mut i = from;
-    loop {
-        while i < b.len() && matches!(b[i], b' ' | b'\t' | b'\n' | b'\r' | b',') {
-            i += 1;
-        }
-        let Some(end) = crate::edn::comment_end(s, i, false) else {
-            break;
-        };
-        i = end;
-    }
-    i
-}
-
 /// Decode one complete string token with the shared EDN value parser.
 fn journal_setting_value(settings: &Settings<'_>, key: &str) -> Option<Option<Edn>> {
     Some(settings.entry(key)?.as_ref().map(Form::value))
@@ -942,17 +793,20 @@ impl Settings<'_> {
     }
 
     fn integer(&self, key: &str) -> Option<u32> {
-        match self.get(key)?.leaf.as_ref()? {
-            Edn::Int(value) => (*value).try_into().ok(),
-            _ => None,
-        }
+        self.get(key)?
+            .leaf
+            .as_ref()?
+            .exact_integer()?
+            .try_into()
+            .ok()
     }
 
     fn signed(&self, key: &str) -> Option<i32> {
-        match self.get(key)?.leaf.as_ref()? {
-            Edn::Int(value) => Some((*value).clamp(i32::MIN.into(), i32::MAX.into()) as i32),
-            _ => None,
-        }
+        self.get(key)?
+            .leaf
+            .as_ref()?
+            .exact_integer()
+            .map(|value| value.clamp(i32::MIN.into(), i32::MAX.into()) as i32)
     }
 
     fn keyword_set(&self, key: &str) -> Vec<String> {
@@ -1028,30 +882,40 @@ fn strings_in_vector(form: Option<&Form>) -> Vec<String> {
         })
 }
 
-/// `(open, close)` of the balanced `{…}` map opening at byte `open`; `None`
-/// when there is no `{` there or it never closes.
-pub fn balanced_map_at(s: &str, open: usize) -> Option<(usize, usize)> {
-    if s.as_bytes().get(open) != Some(&b'{') {
-        return None;
-    }
-    let close = match_close_brace(s, open);
-    (close < s.len()).then_some((open, close))
-}
-
-/// `(open, close)` of the root map: the first form after blanks and `;`
-/// comments, when it is a balanced `{…}`.
-pub fn root_map_bounds(s: &str) -> Option<(usize, usize)> {
-    balanced_map_at(s, skip_blank(s, 0))
-}
-
 /// Byte index of `key` among the DIRECT entries of the root map, never inside
 /// a nested map, vector, comment or string. Every top-level config setter
 /// locates its key here: the depth-blind keyword search returned a nested
 /// shadow first and the setter spliced over it (master DUP-3, 4ae2f6f4f).
 /// `None` when the key is absent or there is no balanced root map.
 pub fn find_top_level_keyword(s: &str, key: &str) -> Option<usize> {
-    let (open, close) = root_map_bounds(s)?;
-    find_keyword_at_map_level(&s[open + 1..close], key).map(|at| open + 1 + at)
+    let map = read_for_edit(s)??;
+    edit_entry(&map, key).map(|(key, _)| key.span.start)
+}
+
+/// Config edit spans from the shared reader. Missing final values in a closed
+/// map are visible for repair. Blank input is valid without a map.
+pub fn read_for_edit(source: &str) -> Option<Option<Form>> {
+    crate::edn::read_config_edit(source)
+}
+
+/// A settings write must leave a complete EDN map within the config bound.
+pub fn edit_is_complete(source: &str) -> bool {
+    crate::edn::read(source, crate::edn::MAX_INPUT_BYTES, crate::edn::Mode::Edn)
+        .is_some_and(|form| form.kind == Kind::Map)
+}
+
+/// The keyword token and optional value at the effective key in this map.
+pub fn edit_entry<'a>(map: &'a Form, key: &str) -> Option<(&'a Form, Option<&'a Form>)> {
+    let key = key.strip_prefix(':').unwrap_or(key);
+    (map.kind == Kind::Map).then_some(())?;
+    map.children
+        .chunks(2)
+        .find_map(|pair| (pair[0].keyword() == Some(key)).then(|| (&pair[0], pair.get(1))))
+}
+
+/// The range of a value whose replacement preserves authored trivia.
+pub fn editable_value(form: &Form) -> Option<std::ops::Range<usize>> {
+    (!form.protected_trivia).then(|| form.span.clone())
 }
 
 /// The direct `:shortcuts` entries, with their supported binding shapes.
@@ -1083,36 +947,9 @@ fn parse_shortcuts(form: Option<&Form>) -> HashMap<String, ShortcutBinding> {
         .collect()
 }
 
-/// Effective macro definitions requested by name, in authored order, as
-/// exact key/value spans. Uses the same acceptance and precedence as `parse`.
-pub fn macro_definition_spans<'a>(
-    edn: &'a str,
-    names: &std::collections::HashSet<String>,
-) -> Vec<(&'a str, &'a str)> {
-    if names.is_empty() {
-        return Vec::new();
-    }
-    let entries = crate::edn::config_entries(edn);
-    let settings = Settings(entries.as_deref().unwrap_or_default());
-    let mut entries: Vec<_> = macro_entries(settings.get(":macros"), |key, value, _| {
-        (key.span.clone(), value.span.clone())
-    })
-    .into_iter()
-    .filter_map(|(name, span)| names.contains(&name).then_some(span))
-    .collect();
-    entries.sort_unstable_by_key(|(key, _)| key.start);
-    entries
-        .into_iter()
-        .map(|(key, value)| (&edn[key], &edn[value]))
-        .collect()
-}
-
 // Logseq looks up the string key before its keyword counterpart. The config
 // model stops at the first pair outside the supported name/template shapes.
-fn macro_entries<T>(
-    form: Option<&Form>,
-    entry: impl Fn(&Form, &Form, &str) -> T,
-) -> HashMap<String, T> {
+fn macro_entries(form: Option<&Form>) -> HashMap<String, String> {
     let mut map = HashMap::new();
     let Some(form) = form.filter(|form| form.kind == Kind::Map) else {
         return map;
@@ -1131,7 +968,7 @@ fn macro_entries<T>(
             string_keys.insert(key);
         }
         if !key.is_empty() && (!keyword || !string_keys.contains(key)) {
-            map.insert(key.clone(), entry(&pair[0], &pair[1], template));
+            map.insert(key.clone(), template.clone());
         }
     }
     map
@@ -1769,9 +1606,15 @@ mod tests {
         );
         assert_eq!(level("{:ref/default-open-blocks-level 5}\n"), 5);
         assert_eq!(level("{:ref/default-open-blocks-level ;; deeper\n 7}"), 7);
-        // Not integers: the default, never a prefix read.
+        for integer in ["5N", "5M", "5e0"] {
+            assert_eq!(
+                level(&format!("{{:ref/default-open-blocks-level {integer}}}")),
+                5
+            );
+        }
+        // A nonintegral number or nonnumeric value uses the default.
         for bad in [
-            "\"5\"", "5.5", "5N", "1e3", ":five", "nil", "[5]", "true", "-", "",
+            "\"5\"", "5.5", "1e-3", ":five", "nil", "[5]", "true", "-", "",
         ] {
             assert_eq!(
                 level(&format!("{{:ref/default-open-blocks-level {bad}}}")),
@@ -1851,7 +1694,7 @@ mod key_position_tests {
     use super::*;
 
     fn at(body: &str, key: &str) -> Option<usize> {
-        find_keyword_at_map_level(body, key)
+        find_top_level_keyword(&format!("{{{body}}}"), key).map(|at| at - 1)
     }
 
     /// C5 L01-S1: a keyword VALUE spelling the key is not the key, in every
@@ -1992,11 +1835,7 @@ mod non_ascii_scan_tests {
                 let edn = format!("{}{insert}{}", &base[..at], &base[at..]);
                 let _ = Config::parse(&edn);
                 for key in keys {
-                    let _ = find_keyword_at_map_level(&edn, key);
-                }
-                for from in (0..edn.len()).filter(|from| edn.is_char_boundary(*from)) {
-                    let _ = next_value_span(&edn, from, edn.len());
-                    let _ = skip_blank(&edn, from);
+                    let _ = find_top_level_keyword(&edn, key);
                 }
             }
         }

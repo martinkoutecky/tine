@@ -423,7 +423,7 @@ fn sidecar_form(source: &str) -> Option<edn::Form> {
 
 /// Read a bounded PDF sidecar, including its legacy CR-only comment lines.
 pub fn parse_sidecar(source: &str) -> Option<Edn> {
-    sidecar_form(source).map(|form| form.value())
+    sidecar_form(source).map(|form| form.value_with_tags(false))
 }
 
 // ----------------------------------------------------------------- hls__ page

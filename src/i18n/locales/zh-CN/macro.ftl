@@ -5,6 +5,7 @@ macro-query-read-only = 此块为只读，查询未更改。
 macro-query-rewrite = 正在重写图谱，查询未更改。
 
 macro-query-unchanged = 查询未更改：{ $detail }
+macro-query-title-edit-text = 请编辑查询文本以更改此标题。
 
 macro-query-load-failed = 无法加载查询：{ $detail }
 

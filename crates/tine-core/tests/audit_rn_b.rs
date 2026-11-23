@@ -81,8 +81,8 @@ fn audit_l7s1_01_character_literal_delimiters_do_not_end_collections() {
         );
         let vector = format!("[{literal} \"keep\"]");
         assert_eq!(
-            tine_core::config::match_close_bracket(&vector, 0),
-            vector.len() - 1,
+            tine_core::query_edn::read(&vector).unwrap().span.end,
+            vector.len(),
             "{literal}"
         );
     }

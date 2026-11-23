@@ -9,7 +9,7 @@
       },
       {
         "path": "logseq/config.edn",
-        "text": "{\n:file/name-format :triple-lowbar\n:start-of-week 1\n:macros {\n:greet \"Hello $1\"\n}\n:default-home {:page \"Configured\"}\n}\n"
+        "text": "{\n:file/name-format :triple-lowbar\n:start-of-week 1\n:macros {\n\"greet\" \"Hello $1\"\n}\n:default-home {:page \"Configured\"}\n}\n"
       }
     ],
     "name": "Configured",

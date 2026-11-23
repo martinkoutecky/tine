@@ -2,8 +2,16 @@
 //! The reader produces effective values with authored UTF-8 spans. Unknown or
 //! unsupported EDN refuses the form. Reading does no I/O or graph work.
 
+use std::collections::HashSet;
 use std::fmt::Write as _;
-use std::hash::{BuildHasher, Hash, Hasher};
+mod equality;
+use equality::FormKey;
+mod javascript;
+
+#[cfg(feature = "test-faults")]
+mod observation;
+#[cfg(feature = "test-faults")]
+pub use observation::observe;
 
 // A sidecar is user-controlled input opened by the native process. These limits
 // are intentionally far above any realistic highlight file, but keep malformed
@@ -20,11 +28,10 @@ pub enum Edn {
     Int(i64),
     Float(f64),
     Str(String),
+    /// A string containing an unpaired UTF-16 surrogate.
+    Utf16(Vec<u16>),
     Keyword(String), // without the leading ':'
-    /// A token this model does not interpret — a symbol (`foo/bar`), a
-    /// character literal (`\a`), a symbolic value (`##NaN`) or a number form
-    /// such as `1N`/`1.5M` — kept as its exact source text so a write-back
-    /// neither changes its type nor its spelling.
+    /// A symbol, or an opaque token belonging to an existing adapter.
     Symbol(String),
     Vec(Vec<Edn>),
     /// `#{...}`: kept in source order (EDN sets are unordered).
@@ -35,6 +42,41 @@ pub enum Edn {
 }
 
 impl Edn {
+    pub(crate) fn symbol(&self) -> Option<&str> {
+        match self {
+            Self::Symbol(name) => Some(name),
+            _ => None,
+        }
+    }
+
+    pub(crate) fn keyword(&self) -> Option<&str> {
+        match self {
+            Self::Keyword(name) => Some(name),
+            _ => None,
+        }
+    }
+
+    pub(crate) fn text(&self) -> Option<&str> {
+        match self {
+            Self::Str(value) => Some(value),
+            _ => None,
+        }
+    }
+
+    pub(crate) fn exact_integer(&self) -> Option<i64> {
+        let number = self.as_f64()?;
+        let integer = number as i64;
+        (number == integer as f64 && number < -(i64::MIN as f64)).then_some(integer)
+    }
+
+    fn string_units(&self) -> Vec<u16> {
+        match self {
+            Self::Str(text) => text.encode_utf16().collect(),
+            Self::Utf16(units) => units.clone(),
+            _ => unreachable!("string value"),
+        }
+    }
+
     /// Look up a keyword key in a map.
     pub fn get(&self, key: &str) -> Option<&Edn> {
         if let Edn::Map(pairs) = self {
@@ -88,6 +130,8 @@ pub struct Form {
     authored_start: usize,
     #[serde(skip)]
     pub(crate) leaf: Option<Edn>,
+    #[serde(skip)]
+    pub(crate) protected_trivia: bool,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, serde::Serialize)]
@@ -115,6 +159,11 @@ impl Form {
                 && !raw.starts_with(['\\', '#', '[']))
     }
 
+    pub(crate) fn symbol(&self) -> Option<&str> {
+        self.is_symbol()
+            .then(|| self.leaf.as_ref().unwrap().as_str().unwrap())
+    }
+
     pub(crate) fn keyword(&self) -> Option<&str> {
         match self.leaf.as_ref()? {
             Edn::Keyword(key) => Some(key),
@@ -130,22 +179,55 @@ impl Form {
         }
     }
 
+    fn sequence(&self) -> Option<&[Form]> {
+        match self.kind {
+            Kind::Vector | Kind::List => Some(&self.children),
+            Kind::Tagged if self.tag() == Some("queue") => Some(&self.children[0].children),
+            _ => None,
+        }
+    }
+
     pub(crate) fn value(&self) -> Edn {
-        let children = || self.children.iter().map(Form::value).collect();
+        self.value_with_tags(true)
+    }
+
+    pub(crate) fn value_with_tags(&self, decode_js: bool) -> Edn {
+        let children = || {
+            self.children
+                .iter()
+                .map(|form| form.value_with_tags(decode_js))
+                .collect()
+        };
         match self.kind {
             Kind::Map => Edn::Map(
                 self.children
                     .chunks_exact(2)
-                    .map(|pair| (pair[0].value(), pair[1].value()))
+                    .map(|pair| {
+                        (
+                            pair[0].value_with_tags(decode_js),
+                            pair[1].value_with_tags(decode_js),
+                        )
+                    })
                     .collect(),
             ),
             Kind::Vector => Edn::Vec(children()),
             Kind::List => Edn::List(children()),
             Kind::Set => Edn::Set(children()),
-            Kind::Tagged => Edn::Tagged(
-                self.leaf.as_ref().unwrap().as_str().unwrap().to_owned(),
-                Box::new(self.children[0].value()),
-            ),
+            Kind::Tagged => {
+                let tag = self.tag().unwrap();
+                let mut value = self.children[0].value_with_tags(decode_js);
+                if decode_js {
+                    value = match (tag, value) {
+                        ("js", Edn::Map(pairs)) => Edn::Map(javascript::properties(pairs)),
+                        ("uuid", value) => {
+                            let units = equality::lowercase_units(&value);
+                            String::from_utf16(&units).map_or_else(|_| Edn::Utf16(units), Edn::Str)
+                        }
+                        (_, value) => value,
+                    };
+                }
+                Edn::Tagged(tag.into(), Box::new(value))
+            }
             Kind::String | Kind::Atom => self.leaf.clone().unwrap(),
         }
     }
@@ -163,12 +245,16 @@ pub(crate) enum Mode {
     Macro,
     // Image braces admit unquoted CSS lengths and repeated top-level keys.
     ImageMetadata,
+    // The span-only JS string-codec adapter uses UTF-8 strings.
+    SpanCodec,
     // Existing PDF files and edits preserve CR-only comment lines and opaque
     // sidecar data. This dialect never supplies query or publication values.
     PdfSidecar,
     // Config settings recover only at a known next direct entry. Values whose
     // syntax was invalid are absent. A physically torn suffix keeps prior entries.
     Config,
+    // Settings can repair a missing final value in a closed map.
+    ConfigEdit,
 }
 
 pub(crate) const QUERY_BYTES: usize = 1024 * 1024;
@@ -178,13 +264,38 @@ pub(crate) fn js_whitespace(c: char) -> bool {
 }
 
 pub fn parse(input: &str) -> Option<Edn> {
-    Reader::new(input, MAX_INPUT_BYTES, Mode::Edn)?
-        .form(0)
-        .map(|form| form.value())
+    Some(first_form(input)?.map_or(Edn::Nil, |form| form.value()))
+}
+
+pub(crate) fn first_form(input: &str) -> Option<Option<Form>> {
+    let mut reader = Reader::new(input, MAX_INPUT_BYTES, Mode::Edn)?;
+    reader.trivia(0)?;
+    if reader.byte().is_none() {
+        return Some(None);
+    }
+    reader.form(0).map(Some)
+}
+
+pub(crate) fn read_config_edit(input: &str) -> Option<Option<Form>> {
+    let mut reader = Reader::new(input, MAX_INPUT_BYTES, Mode::ConfigEdit)?;
+    reader.trivia(0)?;
+    if reader.byte().is_none() {
+        return Some(None);
+    }
+    reader.one().filter(|form| form.kind == Kind::Map).map(Some)
 }
 
 pub fn parse_strict(input: &str) -> Option<Edn> {
     read(input, MAX_INPUT_BYTES, Mode::Edn).map(|form| form.value())
+}
+
+/// A single quoted string for the existing UTF-8 codec.
+pub fn read_string(input: &str) -> Option<String> {
+    let form = read(input, MAX_INPUT_BYTES, Mode::SpanCodec)?;
+    match (form.kind, form.leaf) {
+        (Kind::String, Some(Edn::Str(text))) => Some(text),
+        _ => None,
+    }
 }
 
 pub(crate) fn read(input: &str, limit: usize, mode: Mode) -> Option<Form> {
@@ -199,11 +310,21 @@ pub fn read_image_metadata(input: &str) -> Option<Form> {
 
 /// A BEGIN_QUERY read retains the duplicate root key for its refusal message.
 pub(crate) fn read_query_map(input: &str) -> Result<Form, Option<&str>> {
+    #[cfg(test)]
+    STREAM_READS.with(|count| count.set(count.get() + 1));
     let mut reader = Reader::new(input, QUERY_BYTES, Mode::Query).ok_or(None)?;
     reader.one().ok_or(reader.duplicate_root_key)
 }
 
 pub(crate) fn forms(input: &str, mode: Mode) -> Option<Vec<Form>> {
+    read_forms(input, mode, false)
+}
+
+pub(crate) fn query_macro_forms(input: &str) -> Option<Vec<Form>> {
+    read_forms(input, Mode::Query, true)
+}
+
+fn read_forms(input: &str, mode: Mode, macro_head: bool) -> Option<Vec<Form>> {
     #[cfg(test)]
     STREAM_READS.with(|count| count.set(count.get() + 1));
     let mut reader = Reader::new(input, QUERY_BYTES, mode)?;
@@ -212,6 +333,18 @@ pub(crate) fn forms(input: &str, mode: Mode) -> Option<Vec<Form>> {
         reader.trivia(0)?;
         if reader.i == input.len() {
             return Some(forms);
+        }
+        if macro_head && forms.is_empty() {
+            let rest = &input[reader.i..];
+            // Advanced macro bodies are map or vector EDN. The simple DSL
+            // also accepts bare [[page]] references and opaque forms.
+            if !rest.starts_with(['{', '^'])
+                && !rest.starts_with("#:")
+                && !rest.starts_with("#^")
+                && (!rest.starts_with('[') || rest.starts_with("[["))
+            {
+                reader.mode = Mode::Macro;
+            }
         }
         forms.push(reader.form(0)?);
     }
@@ -225,10 +358,11 @@ thread_local! {
 pub(crate) fn config_entries(input: &str) -> Option<Vec<(Form, Option<Form>)>> {
     let mut reader = Reader::new(input, MAX_INPUT_BYTES, Mode::Config)?;
     let mut entries = Vec::new();
-    let mut keys = std::collections::HashSet::new();
     reader.trivia(0)?;
     if reader.byte()? != b'{' {
-        return None;
+        reader.mode = Mode::Edn;
+        let form = reader.form(0)?;
+        return reader.safe_config_suffix().then(|| map_entries(form))?;
     }
     reader.i += 1;
     loop {
@@ -239,26 +373,40 @@ pub(crate) fn config_entries(input: &str) -> Option<Vec<(Form, Option<Form>)>> {
         match reader.byte() {
             Some(b'}') => {
                 reader.i += 1;
-                reader.trivia(0)?;
-                return (!reader.invalid && reader.i == input.len()).then_some(entries);
+                reader.safe_config_suffix().then_some(())?;
+                break;
             }
-            None => return Some(entries),
+            None => break,
             _ => (),
         }
         let key = reader.form(1)?;
-        if reader.invalid || !keys.insert(identity(&key, &reader.hash)) {
+        if reader.invalid {
             return None;
         }
         let value = match reader.form(1) {
             Some(value) => (!std::mem::take(&mut reader.invalid)).then_some(value),
             None if reader.i == input.len() => {
                 entries.push((key, None));
-                return Some(entries);
+                break;
             }
             None => return None,
         };
         entries.push((key, value));
     }
+    let mut keys = HashSet::new();
+    entries
+        .iter()
+        .all(|(key, _)| keys.insert(FormKey::new(key, &reader.hash)))
+        .then_some(())?;
+    Some(entries)
+}
+
+pub(crate) fn map_entries(form: Form) -> Option<Vec<(Form, Option<Form>)>> {
+    if form.kind != Kind::Map {
+        return None;
+    }
+    let mut children = form.children.into_iter();
+    Some(std::iter::from_fn(|| Some((children.next()?, children.next()))).collect())
 }
 
 struct Reader<'a> {
@@ -266,7 +414,9 @@ struct Reader<'a> {
     i: usize,
     src: &'a str,
     nodes: usize,
+    trivia_seen: usize,
     mode: Mode,
+    discarding: bool,
     invalid: bool,
     duplicate_root_key: Option<&'a str>,
     hash: std::collections::hash_map::RandomState,
@@ -279,7 +429,9 @@ impl<'a> Reader<'a> {
             i: 0,
             src,
             nodes: 0,
+            trivia_seen: 0,
             mode,
+            discarding: false,
             invalid: false,
             duplicate_root_key: None,
             hash: Default::default(),
@@ -288,6 +440,13 @@ impl<'a> Reader<'a> {
 
     fn byte(&self) -> Option<u8> {
         self.s.get(self.i).copied()
+    }
+
+    fn safe_config_suffix(&mut self) -> bool {
+        // Local config fails closed when an unreadable suffix could hide an
+        // authored exclusion. The publication framing reads the first form.
+        !self.src[self.i..].contains(":hidden")
+            || (self.trivia(0).is_some() && !self.invalid && self.i == self.src.len())
     }
 
     fn one(&mut self) -> Option<Form> {
@@ -304,10 +463,15 @@ impl<'a> Reader<'a> {
     fn trivia(&mut self, depth: usize) -> Option<()> {
         loop {
             if let Some(end) = comment_end(self.src, self.i, self.mode == Mode::PdfSidecar) {
+                self.trivia_seen += 1;
                 self.i = end;
             } else if self.s[self.i..].starts_with(b"#_") {
+                self.trivia_seen += 1;
                 self.i += 2;
-                self.form(depth + 1)?;
+                let outer = std::mem::replace(&mut self.discarding, true);
+                let discarded = self.form(depth + 1);
+                self.discarding = outer;
+                discarded?;
             } else {
                 match self.src[self.i..].chars().next() {
                     Some(c) if c == ',' || js_whitespace(c) => self.i += c.len_utf8(),
@@ -329,6 +493,7 @@ impl<'a> Reader<'a> {
         }
         self.trivia(depth)?;
         let start = self.i;
+        let trivia_before = self.trivia_seen;
         self.nodes += 1;
         let mut children = Vec::new();
         let mut leaf = None;
@@ -337,11 +502,15 @@ impl<'a> Reader<'a> {
                 if self.mode == Mode::PdfSidecar {
                     return None;
                 }
+                self.trivia_seen += 1;
                 self.i += if self.s[start] == b'^' { 1 } else { 2 };
                 let metadata = self.form(depth + 1)?;
                 let mut target = self.form(depth + 1)?;
                 if !(metadata.kind == Kind::Map
-                    || matches!(metadata.leaf, Some(Edn::Keyword(_) | Edn::Str(_)))
+                    || matches!(
+                        metadata.leaf,
+                        Some(Edn::Keyword(_) | Edn::Str(_) | Edn::Utf16(_))
+                    )
                     || metadata.is_symbol())
                     || !(matches!(
                         target.kind,
@@ -352,6 +521,7 @@ impl<'a> Reader<'a> {
                     self.invalid()?;
                 }
                 target.authored_start = start;
+                target.protected_trivia = true;
                 return Some(target);
             }
             b'[' if self.mode == Mode::Macro && self.s[start..].starts_with(b"[[") => {
@@ -389,10 +559,16 @@ impl<'a> Reader<'a> {
                     self.token(false);
                 }
                 let raw = &self.src[start..self.i];
-                if character(&raw[1..]).is_none() {
-                    self.invalid()?;
-                }
-                leaf = Some(Edn::Symbol(raw.into()));
+                leaf = match character(&raw[1..]) {
+                    Some(c) if !self.legacy_values() => Some(Edn::Str(c.into())),
+                    Some(c) if u32::from(c) <= 0xff || !raw.starts_with(r"\o") => {
+                        Some(Edn::Symbol(raw.into()))
+                    }
+                    _ => {
+                        self.invalid()?;
+                        None
+                    }
+                };
                 Kind::Atom
             }
             b'#' if self.s[start..].starts_with(b"#{") => {
@@ -449,7 +625,15 @@ impl<'a> Reader<'a> {
                     Some("-Inf") if symbol.is_symbol() => "##-Inf",
                     _ => return None,
                 };
-                leaf = Some(Edn::Symbol(raw.into()));
+                leaf = Some(if self.legacy_values() {
+                    Edn::Symbol(raw.into())
+                } else {
+                    Edn::Float(match raw {
+                        "##Inf" => f64::INFINITY,
+                        "##-Inf" => f64::NEG_INFINITY,
+                        _ => f64::NAN,
+                    })
+                });
                 Kind::Atom
             }
             b'#' if self.s[start..].starts_with(b"#<") => return None,
@@ -461,14 +645,15 @@ impl<'a> Reader<'a> {
                 }
                 let name = tag.leaf?.as_str()?.to_owned();
                 let value = self.form(depth + 1)?;
-                let supported = match name.as_str() {
-                    "uuid" => value.kind == Kind::String,
+                let supported = (!self.discarding || self.legacy_values()) && match name.as_str() {
+                        "uuid" => value.kind == Kind::String
+                            || !self.legacy_values() && matches!(value.leaf, Some(Edn::Str(_))),
                     "inst" => matches!(&value.leaf, Some(Edn::Str(text)) if instant(text).is_some()),
                     "queue" => value.kind == Kind::Vector,
                     "js" => match value.kind {
                         Kind::Vector => true,
                         Kind::Map => value.children.iter().step_by(2).all(|key| {
-                            matches!(&key.leaf, Some(Edn::Str(_) | Edn::Keyword(_)))
+                            matches!(&key.leaf, Some(Edn::Str(_) | Edn::Utf16(_) | Edn::Keyword(_)))
                                 || key.is_symbol()
                                 || matches!(&key.leaf, Some(Edn::Symbol(raw)) if raw.starts_with('\\'))
                         }),
@@ -510,7 +695,7 @@ impl<'a> Reader<'a> {
                         .map(|value| {
                             // Keep the established write-back spelling and
                             // typed settings behavior for suffix literals.
-                            if token.ends_with(['N', 'M']) {
+                            if self.legacy_values() && token.ends_with(['N', 'M']) {
                                 Edn::Symbol(token.into())
                             } else {
                                 value
@@ -518,11 +703,8 @@ impl<'a> Reader<'a> {
                         })
                         .or_else(|| {
                             (self.mode == Mode::ImageMetadata
-                                || (matches!(
-                                    self.mode,
-                                    Mode::Query | Mode::QuerySyntax | Mode::Macro
-                                ) && crate::query::date_token::DateToken::parse(token)
-                                    .is_some()))
+                                || (matches!(self.mode, Mode::QuerySyntax | Mode::Macro)
+                                    && crate::query::date_token::DateToken::parse(token).is_some()))
                             .then(|| Edn::Symbol(token.into()))
                         }),
                     _ if valid_name(token) || self.mode == Mode::Macro => {
@@ -542,6 +724,7 @@ impl<'a> Reader<'a> {
             children,
             authored_start: start,
             leaf,
+            protected_trivia: trivia_before != self.trivia_seen,
         })
     }
 
@@ -552,6 +735,13 @@ impl<'a> Reader<'a> {
             }
             self.i += c.len_utf8();
         }
+    }
+
+    fn legacy_values(&self) -> bool {
+        matches!(
+            self.mode,
+            Mode::PdfSidecar | Mode::ImageMetadata | Mode::SpanCodec
+        )
     }
 
     fn collection(
@@ -575,7 +765,7 @@ impl<'a> Reader<'a> {
         }
         let stride = match kind {
             Kind::Map => {
-                if children.len() % 2 != 0 {
+                if children.len() % 2 != 0 && self.mode != Mode::ConfigEdit {
                     self.invalid()?;
                 }
                 if let Some(namespace) = namespace {
@@ -597,11 +787,11 @@ impl<'a> Reader<'a> {
             Kind::Set => 1,
             _ => return Some(children),
         };
-        let mut seen = std::collections::HashSet::new();
+        let mut seen = HashSet::new();
         if let Some(duplicate) = children
             .iter()
             .step_by(stride)
-            .find(|child| !seen.insert(identity(child, &self.hash)))
+            .find(|child| !seen.insert(FormKey::new(child, &self.hash)))
         {
             if kind == Kind::Map && depth == 0 {
                 self.duplicate_root_key = self.src.get(duplicate.span.clone());
@@ -617,7 +807,14 @@ impl<'a> Reader<'a> {
     /// used to slice mid-character and panic on `"\é"`.
     fn string(&mut self) -> Option<Edn> {
         self.i += 1; // opening quote
-        let mut out = String::new();
+        let first = memchr::memchr2(b'"', b'\\', &self.s[self.i..])?;
+        let start = self.i;
+        self.i += first;
+        if self.byte()? == b'"' {
+            self.i += 1;
+            return Some(Edn::Str(self.src[start..self.i - 1].into()));
+        }
+        let mut out: Vec<u16> = self.src[start..self.i].encode_utf16().collect();
         while self.i < self.s.len() {
             let c = self.s[self.i];
             if c == b'\\' {
@@ -625,31 +822,13 @@ impl<'a> Reader<'a> {
                 let n = *self.s.get(self.i)?;
                 self.i += 1;
                 out.push(match n {
-                    b'n' => '\n',
-                    b't' => '\t',
-                    b'r' => '\r',
-                    b'b' => '\u{8}',
-                    b'f' => '\u{c}',
-                    b'"' => '"',
-                    b'\\' => '\\',
-                    b'u' => {
-                        let unit = self.hex4()?;
-                        match unit {
-                            0xD800..=0xDBFF => {
-                                // A high surrogate must pair with `\uDC00`–`\uDFFF`.
-                                if self.s.get(self.i..self.i + 2) != Some(b"\\u") {
-                                    return None;
-                                }
-                                self.i += 2;
-                                let low = self.hex4()?;
-                                if !(0xDC00..=0xDFFF).contains(&low) {
-                                    return None;
-                                }
-                                char::from_u32(0x10000 + ((unit - 0xD800) << 10) + (low - 0xDC00))?
-                            }
-                            _ => char::from_u32(unit)?,
-                        }
-                    }
+                    b'n' => u16::from(b'\n'),
+                    b't' => u16::from(b'\t'),
+                    b'r' => u16::from(b'\r'),
+                    b'b' => 8,
+                    b'f' => 12,
+                    b'"' | b'\\' => u16::from(n),
+                    b'u' => self.hex4()?,
                     b'0'..=b'7' => {
                         let mut value = u32::from(n - b'0');
                         for _ in 0..2 {
@@ -660,34 +839,38 @@ impl<'a> Reader<'a> {
                             value = value * 8 + c.to_digit(8)?;
                             self.i += 1;
                         }
-                        if value > 0o377 {
+                        if self.legacy_values() && value > 0o377 {
                             return None;
                         }
-                        char::from_u32(value)?
+                        value as u16
                     }
                     _ => return None,
                 });
             } else if c == b'"' {
                 self.i += 1;
-                return Some(Edn::Str(out));
+                return match String::from_utf16(&out) {
+                    Ok(text) => Some(Edn::Str(text)),
+                    Err(_) if self.legacy_values() => None,
+                    Err(_) => Some(Edn::Utf16(out)),
+                };
             } else {
                 // copy a full UTF-8 char; `self.i` is always on a char boundary
                 let ch = self.src.get(self.i..)?.chars().next()?;
-                out.push(ch);
+                out.extend_from_slice(ch.encode_utf16(&mut [0; 2]));
                 self.i += ch.len_utf8();
             }
         }
         None
     }
 
-    fn hex4(&mut self) -> Option<u32> {
+    fn hex4(&mut self) -> Option<u16> {
         let digits = self.s.get(self.i..self.i + 4)?;
         let text = std::str::from_utf8(digits).ok()?;
         if !digits.iter().all(u8::is_ascii_hexdigit) {
             return None;
         }
         self.i += 4;
-        u32::from_str_radix(text, 16).ok()
+        u16::from_str_radix(text, 16).ok()
     }
 }
 
@@ -753,7 +936,7 @@ fn character(token: &str) -> Option<char> {
                 .iter()
                 .all(|digit| matches!(digit, b'0'..=b'7')) =>
         {
-            char::from(u8::from_str_radix(&token[1..], 8).ok()?)
+            char::from_u32(u32::from_str_radix(&token[1..], 8).ok()?)?
         }
         _ => return None,
     })
@@ -817,7 +1000,9 @@ fn number(token: &str) -> Option<Edn> {
         let decimal = signed.strip_suffix('M').unwrap_or(signed);
         return decimal.parse::<f64>().ok().map(Edn::Float);
     }? * sign;
-    if integer.abs() < 9_007_199_254_740_992.0 {
+    if integer == 0.0 && plain != "0" && integer.is_sign_negative() {
+        Some(Edn::Float(integer))
+    } else if integer.abs() < 9_007_199_254_740_992.0 {
         Some(Edn::Int(integer as i64))
     } else {
         Some(Edn::Float(integer))
@@ -930,107 +1115,6 @@ fn instant(text: &str) -> Option<i64> {
     Some(minutes * 60_000 + i64::from(second * 1000 + millis))
 }
 
-// Equality for duplicate checks follows CLJS: lists and vectors compare as
-// sequences, map and set order is immaterial, and reader spelling is ignored.
-// A fingerprint collision refuses the form, so it cannot admit a duplicate.
-fn identity(form: &Form, hash: &impl BuildHasher) -> u64 {
-    let mut state = hash.build_hasher();
-    match (form.kind, form.leaf.as_ref()) {
-        (Kind::Map, _) => {
-            "map".hash(&mut state);
-            let sum = form.children.chunks_exact(2).fold(0u64, |sum, pair| {
-                sum.wrapping_add(
-                    hash.hash_one((identity(&pair[0], hash), identity(&pair[1], hash))),
-                )
-            });
-            sum.hash(&mut state);
-        }
-        (Kind::Set, _) => {
-            "set".hash(&mut state);
-            let sum = form
-                .children
-                .iter()
-                .fold(0u64, |sum, child| sum.wrapping_add(identity(child, hash)));
-            sum.hash(&mut state);
-        }
-        (Kind::Vector | Kind::List, _) => return sequence_identity(&form.children, hash),
-        (Kind::Tagged, _) if form.tag() == Some("queue") => {
-            return sequence_identity(&form.children[0].children, hash);
-        }
-        (Kind::Tagged, _) if form.tag() == Some("uuid") => {
-            "uuid".hash(&mut state);
-            form.children[0]
-                .leaf
-                .as_ref()
-                .and_then(Edn::as_str)
-                .map(str::to_lowercase)
-                .hash(&mut state);
-        }
-        (Kind::Tagged, _) if form.tag() == Some("inst") => {
-            (
-                "inst",
-                form.children[0]
-                    .leaf
-                    .as_ref()
-                    .and_then(Edn::as_str)
-                    .and_then(instant),
-            )
-                .hash(&mut state);
-        }
-        (Kind::Tagged, _) if form.tag() == Some("js") => {
-            // Each #js form constructs a distinct JavaScript object.
-            ("js", form.span.start).hash(&mut state);
-        }
-        (Kind::Tagged, _) => {
-            form.tag().hash(&mut state);
-            identity(&form.children[0], hash).hash(&mut state);
-        }
-        (_, Some(Edn::Int(n))) => return numeric_identity(*n as f64, hash),
-        (_, Some(Edn::Float(n))) if n.is_nan() => ("NaN", form.span.start).hash(&mut state),
-        (_, Some(Edn::Float(n))) => return numeric_identity(*n, hash),
-        (_, Some(Edn::Symbol(raw))) if raw.starts_with('\\') => {
-            "string".hash(&mut state);
-            let mut buf = [0; 4];
-            if let Some(c) = character(&raw[1..]) {
-                c.encode_utf8(&mut buf).hash(&mut state);
-            }
-        }
-        (_, Some(Edn::Symbol(raw))) if starts_numeric(raw) && raw.ends_with(['M', 'N']) => {
-            match number(raw) {
-                Some(Edn::Int(n)) => return numeric_identity(n as f64, hash),
-                Some(Edn::Float(n)) => return numeric_identity(n, hash),
-                _ => ("symbol", raw).hash(&mut state),
-            }
-        }
-        (_, Some(Edn::Symbol(raw))) if raw == "##Inf" => {
-            return numeric_identity(f64::INFINITY, hash)
-        }
-        (_, Some(Edn::Symbol(raw))) if raw == "##-Inf" => {
-            return numeric_identity(f64::NEG_INFINITY, hash)
-        }
-        (_, Some(Edn::Symbol(raw))) if raw == "##NaN" => ("NaN", form.span.start).hash(&mut state),
-        (_, Some(Edn::Symbol(raw))) => ("symbol", raw).hash(&mut state),
-        (_, Some(Edn::Keyword(raw))) => ("keyword", raw).hash(&mut state),
-        (_, Some(Edn::Str(text))) => ("string", text).hash(&mut state),
-        (_, Some(Edn::Bool(value))) => ("bool", value).hash(&mut state),
-        _ => "nil".hash(&mut state),
-    }
-    state.finish()
-}
-
-fn numeric_identity(n: f64, hash: &impl BuildHasher) -> u64 {
-    hash.hash_one(("number", if n == 0.0 { 0 } else { n.to_bits() }))
-}
-
-fn sequence_identity(items: &[Form], hash: &impl BuildHasher) -> u64 {
-    let mut state = hash.build_hasher();
-    "sequence".hash(&mut state);
-    for item in items {
-        identity(item, hash).hash(&mut state);
-    }
-    state.finish()
-}
-
 /// End of a line comment in the EDN string reader. CR terminates a comment
 /// only for the legacy PDF sidecar format.
 pub(crate) fn comment_end(source: &str, at: usize, pdf_sidecar: bool) -> Option<usize> {
@@ -1060,14 +1144,6 @@ fn starts_numeric(tok: &str) -> bool {
     digits.as_bytes().first().is_some_and(u8::is_ascii_digit)
 }
 
-pub(crate) fn is_delim(c: u8) -> bool {
-    c.is_ascii_whitespace()
-        || matches!(
-            c,
-            b'{' | b'}' | b'[' | b']' | b'(' | b')' | b'"' | b',' | b';'
-        )
-}
-
 /// Pretty-ish EDN writer. Logseq reads regardless of formatting; we emit a
 /// compact, stable form.
 pub fn to_string(e: &Edn) -> String {
@@ -1087,6 +1163,30 @@ fn write_seq(open: &str, items: &[Edn], close: char, out: &mut String) {
     out.push(close);
 }
 
+/// Quote one string without constructing an EDN tree.
+pub fn quote(text: &str) -> String {
+    let mut out = String::new();
+    write_string(text, &mut out);
+    out
+}
+
+fn write_string(s: &str, out: &mut String) {
+    out.push('"');
+    for ch in s.chars() {
+        match ch {
+            '"' => out.push_str("\\\""),
+            '\\' => out.push_str("\\\\"),
+            '\n' => out.push_str("\\n"),
+            '\t' => out.push_str("\\t"),
+            '\r' => out.push_str("\\r"),
+            '\u{8}' => out.push_str("\\b"),
+            '\u{c}' => out.push_str("\\f"),
+            _ => out.push(ch),
+        }
+    }
+    out.push('"');
+}
+
 fn write_edn(e: &Edn, out: &mut String) {
     match e {
         Edn::Nil => out.push_str("nil"),
@@ -1100,19 +1200,11 @@ fn write_edn(e: &Edn, out: &mut String) {
         Edn::Float(f) => {
             let _ = write!(out, "{f}");
         }
-        Edn::Str(s) => {
+        Edn::Str(s) => write_string(s, out),
+        Edn::Utf16(units) => {
             out.push('"');
-            for ch in s.chars() {
-                match ch {
-                    '"' => out.push_str("\\\""),
-                    '\\' => out.push_str("\\\\"),
-                    '\n' => out.push_str("\\n"),
-                    '\t' => out.push_str("\\t"),
-                    '\r' => out.push_str("\\r"),
-                    '\u{8}' => out.push_str("\\b"),
-                    '\u{c}' => out.push_str("\\f"),
-                    _ => out.push(ch),
-                }
+            for unit in units {
+                write!(out, "\\u{unit:04x}").unwrap();
             }
             out.push('"');
         }
@@ -1146,295 +1238,4 @@ fn write_edn(e: &Edn, out: &mut String) {
 }
 
 #[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn duplicate_detection_uses_values_and_ignores_authored_spelling() {
-        for source in [
-            r#"#{:k :k}"#,
-            r#"{[1 2] :a (1 2) :b}"#,
-            r#"#{^:private [1] (1.0)}"#,
-            r#"#{#queue [1] [1.0]}"#,
-            r#"#{#{1 2} #{2 1}}"#,
-            r#"{{:x 1 :y 2} :a {:y 2 :x 1} :b}"#,
-            r#"#{1N 1.0M}"#,
-            r#"#{0x12 18}"#,
-            r#"#{0x10000000000000801 18446744073709555712}"#,
-            r#"#{022 18.0M}"#,
-            r#"{2r10 0 4/2 1}"#,
-            r#"#{\o101 \u0041}"#,
-            r#"#{#inst "2020-02-29T00:30+01:00" #inst "2020-02-28T23:30Z"}"#,
-            r#"#{#uuid "ABC" #uuid "abc"}"#,
-            r#"#:ns{:a 1 :ns/a 2}"#,
-            r#"#{#:ns{:_/a 1 b 2} {:a 1 ns/b 2}}"#,
-            r#"#{\a "\u0061"}"#,
-            r#"#{#_ {:x 1 :x 2} :public}"#,
-        ] {
-            assert_eq!(parse_strict(source), None, "{source}");
-        }
-        assert_eq!(parse_strict("#{1 #_ 1 2}"), parse_strict("#{1 2}"));
-        let distinct_js = parse_strict("#{#js [1] #js [1] [1]}");
-        assert!(matches!(distinct_js, Some(Edn::Set(items)) if items.len() == 3));
-        assert!(parse_strict("#{0x10000000000000801 18446744073709551616}").is_some());
-    }
-
-    #[test]
-    fn reader_validates_restored_literals_and_decodes_their_values() {
-        for source in [
-            r"\u+000",
-            r"\u+041",
-            r"\u+FFF",
-            r"\uD800",
-            r"\u00000",
-            r"\o8",
-            r"\o400",
-            r"\o0000",
-            r"\o+01",
-            "08",
-            "0x+",
-            "2r2",
-            "2r",
-            "37r1",
-            "1.1N",
-            "1/-2",
-            r#"#inst "2025-02-29""#,
-            r#"#inst "2024-12-31T23:58:60Z""#,
-            r#"#inst "2024-01T12Z""#,
-            r#"#inst "2024-01-02T12:34.5Z""#,
-            r#"#inst "2024-01-02T12:34:56.""#,
-            "#inst :value",
-            "#js (:a)",
-            "#js {1 :a}",
-            "#uuid :bad",
-            "#:ns #{:a}",
-            "#:ns/name{:a 1}",
-            "#:ns{:a}",
-        ] {
-            assert_eq!(parse_strict(source), None, "{source}");
-        }
-        for (source, expected) in [
-            ("0x12N", 18.0),
-            ("-0X12", -18.0),
-            ("+022", 18.0),
-            ("00N", 0.0),
-            ("2R10z", 2.0),
-            ("16r0x12", 18.0),
-            ("36rN", 23.0),
-            ("+1/2", 0.5),
-            ("01M", 1.0),
-            ("08.5", 8.5),
-            ("01e2", 100.0),
-            ("2.e-1", 0.2),
-            ("1/0", f64::INFINITY),
-        ] {
-            assert_eq!(
-                number(source).and_then(|value| value.as_f64()),
-                Some(expected),
-                "{source}"
-            );
-        }
-        assert_eq!(
-            parse_strict("#:ns {:a 1 b 2 :_/c 3 :other/d 4}"),
-            parse_strict("{:ns/a 1 ns/b 2 :c 3 :other/d 4}")
-        );
-        for (left, right) in [
-            ("2024Z", "2024-01-01T00:00:00.000+00:00"),
-            ("2024-01:00", "2024-01-01T01Z"),
-            ("2024-12-31T23:59:60Z", "2025Z"),
-            ("2024-02-29T23:59:59.123456Z", "2024-02-29T23:59:59.123Z"),
-        ] {
-            let value = instant(left).expect(left);
-            assert_eq!(instant(right), Some(value));
-        }
-    }
-
-    #[test]
-    fn unsupported_dispatch_and_invalid_metadata_refuse_the_whole_form() {
-        for source in [
-            "[#unknown :value :public]",
-            "[#_ #unknown :value :public]",
-            "[#?(:cljs :private) :public]",
-            "[^:meta :keyword]",
-            "[^true []]",
-            "[bad/ns/name]",
-            "[#uuid :not-a-string]",
-        ] {
-            assert_eq!(parse_strict(source), None, "{source}");
-        }
-        assert_eq!(
-            parse_strict("#^:private ^{:doc :private} [1 #_ ^:private [] 2]"),
-            parse_strict("[1 2]")
-        );
-    }
-
-    #[test]
-    fn reader_discards_preserve_collection_membership_and_limits() {
-        assert_eq!(parse_strict("{#_ :ignored :a 1}"), parse_strict("{:a 1}"));
-        assert_eq!(
-            parse_strict("#_ [unused] {:a #_ 0 1}"),
-            parse_strict("{:a 1}")
-        );
-        assert_eq!(parse_strict("[#_ 0 1 #_ 2]"), parse_strict("[1]"));
-        assert_eq!(parse_strict("(1 #_ 2)"), parse_strict("(1)"));
-        assert_eq!(parse_strict("{:a #_}"), None);
-        assert_eq!(
-            parse_strict(&format!("{}nil", "#_ ".repeat(MAX_DEPTH + 1))),
-            None
-        );
-    }
-
-    #[test]
-    fn roundtrip_basic() {
-        let src = r#"{:highlights [{:id "abc" :page 42 :properties {:color "yellow"}}] :extra {}}"#;
-        let e = parse(src).unwrap();
-        let hl = e.get("highlights").unwrap().as_vec().unwrap();
-        assert_eq!(hl.len(), 1);
-        assert_eq!(hl[0].get("id").unwrap().as_str(), Some("abc"));
-        assert_eq!(hl[0].get("page").unwrap().as_i64(), Some(42));
-        // reparse our own output
-        let again = parse(&to_string(&e)).unwrap();
-        assert_eq!(again, e);
-    }
-
-    #[test]
-    fn parses_floats_and_nil() {
-        let e = parse(r#"{:top 100.5 :image nil}"#).unwrap();
-        assert_eq!(e.get("top").unwrap().as_f64(), Some(100.5));
-        assert_eq!(e.get("image"), Some(&Edn::Nil));
-    }
-
-    #[test]
-    fn parses_and_preserves_logseq_uuid_tags_and_rect_lists() {
-        let src = r#"{:id #uuid "6a5604f8-a337-4336-a711-2ba6bc14fbfd"
-            :rects ({:x1 10 :y1 20 :x2 30 :y2 40})}"#;
-        let parsed = parse_strict(src).unwrap();
-        assert_eq!(
-            parsed.get("id").and_then(Edn::as_str),
-            Some("6a5604f8-a337-4336-a711-2ba6bc14fbfd")
-        );
-        assert_eq!(parsed.get("rects").and_then(Edn::as_vec).unwrap().len(), 1);
-        assert_eq!(parse_strict(&to_string(&parsed)), Some(parsed));
-    }
-
-    #[test]
-    fn malformed_or_excessively_nested_collections_fail_closed() {
-        for src in ["(", "[1 2", "{:a 1", "(#uuid", "]", ")", "}", ":"] {
-            assert_eq!(parse_strict(src), None, "accepted malformed EDN: {src}");
-        }
-
-        let too_deep = format!(
-            "{}nil{}",
-            "[".repeat(MAX_DEPTH + 1),
-            "]".repeat(MAX_DEPTH + 1)
-        );
-        assert_eq!(parse_strict(&too_deep), None);
-    }
-
-    #[test]
-    fn every_escape_decodes_or_fails_closed_without_panicking() {
-        // `\` before every byte class, including multi-byte chars, at every
-        // position of a short string and at end of input (C3U / L01 H3).
-        let tails = [
-            "é",
-            "\u{1F600}",
-            "日本",
-            "a",
-            "z",
-            "0",
-            "7",
-            "8",
-            "u",
-            "u12",
-            "uD83D",
-            "uD83Dx",
-            "uD83D\\uDE00",
-            "uDE00",
-            "u00e9",
-            "400",
-            "377",
-            "\"",
-            "\\",
-            "b",
-            "f",
-            "t",
-            "r",
-            "n",
-            "",
-            " ",
-            "\n",
-        ];
-        for tail in tails {
-            for prefix in ["", "x", "é", "ab"] {
-                for close in ["\"", ""] {
-                    let src = format!("\"{prefix}\\{tail}{close}");
-                    let parsed = std::panic::catch_unwind(|| parse_strict(&src));
-                    let parsed = parsed.unwrap_or_else(|_| panic!("parser panicked on {src:?}"));
-                    if let Some(value) = parsed {
-                        assert_eq!(
-                            parse_strict(&to_string(&value)).as_ref(),
-                            Some(&value),
-                            "write-back changed {src:?}"
-                        );
-                    }
-                }
-            }
-        }
-        assert_eq!(parse_strict("\"\\é\""), None, "unknown escape is not EDN");
-        assert_eq!(parse_strict("\"\\a\""), None, "unknown escape is not EDN");
-    }
-
-    #[test]
-    fn every_prefix_of_a_mixed_document_parses_or_fails_without_panicking() {
-        let src = "{:a \"caf\\u00e9 \\t\\b\\f\\101 日本\" :b \\é :c #{1 2} :d ##NaN :e foo/bar :f 1N :g [\\( \\space]}";
-        for end in (0..=src.len()).filter(|end| src.is_char_boundary(*end)) {
-            let _ = std::panic::catch_unwind(|| parse_strict(&src[..end]))
-                .unwrap_or_else(|_| panic!("parser panicked on prefix {end}"));
-        }
-        // Byte-level truncations that are not char boundaries cannot reach
-        // the parser (it takes &str), so boundaries are the whole input space.
-        let parsed = parse_strict(src).expect("valid EDN");
-        assert_eq!(
-            parsed.get("a").and_then(Edn::as_str),
-            Some("café \t\u{8}\u{c}A 日本")
-        );
-    }
-
-    #[test]
-    fn escapes_decode_like_the_edn_reader() {
-        let cases = [
-            (r#""\b\f""#, "\u{8}\u{c}"),
-            (r#""\u00e9""#, "é"),
-            (r#""\uD83D\uDE00""#, "\u{1F600}"),
-            (r#""\101\0""#, "A\u{0}"),
-        ];
-        for (src, want) in cases {
-            assert_eq!(parse_strict(src), Some(Edn::Str(want.into())), "{src}");
-        }
-        for bad in [r#""\uD83D""#, r#""\uDE00""#, r#""\u12""#, r#""\400""#] {
-            assert_eq!(parse_strict(bad), None, "{bad}");
-        }
-    }
-
-    #[test]
-    fn uninterpreted_values_keep_their_type_and_spelling_on_write_back() {
-        let src = "{:sym foo.bar/baz :ch \\a :paren \\( :nan ##NaN :inf ##-Inf :big 1N :dec 1.5M :word inf :set #{1 :a} :t \"a\\tb\"}";
-        let parsed = parse_strict(src).unwrap();
-        let written = to_string(&parsed);
-        for token in [
-            ":sym foo.bar/baz",
-            ":ch \\a",
-            ":paren \\(",
-            ":nan ##NaN",
-            ":inf ##-Inf",
-            ":big 1N",
-            ":dec 1.5M",
-            ":word inf",
-            ":set #{1 :a}",
-            r#":t "a\tb""#,
-        ] {
-            assert!(written.contains(token), "{token} changed: {written}");
-        }
-        assert_eq!(parse_strict(&written), Some(parsed));
-    }
-}
+mod tests;

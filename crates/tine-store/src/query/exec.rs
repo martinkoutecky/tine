@@ -207,6 +207,7 @@ impl Plan {
         query: &Query,
         today: JournalDate,
         block_rows: bool,
+        top_level_only: bool,
         remove_accents: bool,
         registry: impl FnOnce() -> Arc<Registry>,
         tag_targets: impl FnOnce() -> Arc<HashSet<String>>,
@@ -232,7 +233,7 @@ impl Plan {
         Plan {
             anchor,
             page_property_rows: query.shows_header_rows(),
-            top_level_only: query.removes_block_children(),
+            top_level_only,
             compiled: CompiledLeaves::for_query(&filter),
             track: eval::uses_path_refs(&filter),
             filter,
@@ -782,31 +783,20 @@ fn cost(filter: &Filter) -> u8 {
     }
 }
 
-/// Execute one plan over the graph's current generation.
-pub(crate) fn execute(
-    graph: &ReadSnapshot,
-    plan: &Plan,
-    query: &Query,
-    view: &ViewSettings,
-    bounds: Bounds,
-) -> Result<QueryResult, StatisticsResourceLimit> {
-    execute_cancellable(graph, plan, query, view, bounds, &|| false)
-        .map(|result| result.expect("never cancelled"))
-}
-
-/// [`execute`], stopping cooperatively once `cancelled` reports true: `Ok(None)`
+/// Execute one plan over the graph's current generation. `Ok(None)`
 /// carries no partial result. The row scan checks it once per candidate page,
 /// and the link work (`links`, `linked_by`, `near`: table build, element and
 /// seed conditions, searches) at least once per page and per 1024 references
 /// or nodes.
-pub(crate) fn execute_cancellable(
+fn execute_cancellable(
     graph: &ReadSnapshot,
     plan: &Plan,
-    query: &Query,
+    resolved: &ResolvedQuery,
     view: &ViewSettings,
     bounds: Bounds,
     cancelled: &dyn Fn() -> bool,
 ) -> Result<Option<QueryResult>, StatisticsResourceLimit> {
+    let query = resolved.query();
     let mut result = QueryResult {
         rows: match plan.anchor {
             Anchor::Block => QueryRows::Block { groups: Vec::new() },
@@ -845,13 +835,9 @@ pub(crate) fn execute_cancellable(
         .collect();
     // Keep authored transform semantics separate from Display's normal text
     // folding and missing-last sentinels. A Display sort override still wins.
-    let transform_sort = match &query.source {
-        tine_core::query::ir::Source::Advanced { original, .. } => {
-            tine_core::query::advanced_sort::advanced_result_sort(original)
-                .filter(|sort| sort.view_sort() == view.sort)
-        }
-        _ => None,
-    };
+    let transform_sort = resolved
+        .advanced_sort()
+        .filter(|sort| sort.view_sort() == view.sort);
     let sample = view.sample.map(|n| n as usize);
     let mut fold = StatisticsFold::new(view, bounds.max_bytes)?;
     let mut stopped = false;
@@ -1151,11 +1137,13 @@ pub(crate) fn plan(
     query: &Query,
     today: JournalDate,
     block_rows: bool,
+    top_level_only: bool,
 ) -> Plan {
     let plan = Plan::new(
         query,
         today,
         block_rows,
+        top_level_only,
         graph.config().enable_search_remove_accents,
         || graph.with_pages(|pages| graph.query_index().registry(pages)),
         || graph.with_pages(|pages| Arc::new(graph.query_index().tag_targets(pages))),
@@ -1289,15 +1277,20 @@ fn run_resolved_cancellable(
     Arc<Plan>,
 ) {
     let view = statistics_execution_view(resolved.query(), view);
-    let plan = Arc::new(plan(graph, resolved.query(), resolved.today(), false));
-    let result = execute_cancellable(graph, &plan, resolved.query(), &view, bounds, cancelled).map(
-        |result| {
+    let plan = Arc::new(plan(
+        graph,
+        resolved.query(),
+        resolved.today(),
+        false,
+        !resolved.keeps_block_children(),
+    ));
+    let result =
+        execute_cancellable(graph, &plan, resolved, &view, bounds, cancelled).map(|result| {
             result.map(|mut result| {
                 result.report = resolved.report().clone();
                 result
             })
-        },
-    );
+        });
     (result, plan)
 }
 
@@ -1312,7 +1305,13 @@ pub(crate) fn explain_empty(
         .probes
         .iter()
         .map(|probe| {
-            let plan = plan(graph, probe, resolved.today(), false);
+            let plan = plan(
+                graph,
+                probe,
+                resolved.today(),
+                false,
+                !resolved.keeps_block_children(),
+            );
             count(graph, &plan, cancelled)
         })
         .collect::<Option<_>>()?;
@@ -1332,7 +1331,13 @@ pub(crate) fn run_block_groups(
     max_rows: usize,
     max_bytes: usize,
 ) -> (BoundedGroups, Arc<Plan>) {
-    let plan = Arc::new(plan(graph, resolved.query(), resolved.today(), true));
+    let plan = Arc::new(plan(
+        graph,
+        resolved.query(),
+        resolved.today(),
+        true,
+        !resolved.keeps_block_children(),
+    ));
     let view = ViewSettings {
         aggregates: Vec::new(),
         group_by: None,
@@ -1342,8 +1347,9 @@ pub(crate) fn run_block_groups(
         max_rows,
         max_bytes,
     };
-    let result = execute(graph, &plan, resolved.query(), &view, bounds)
-        .expect("no statistics were requested");
+    let result = execute_cancellable(graph, &plan, resolved, &view, bounds, &|| false)
+        .expect("no statistics were requested")
+        .expect("not cancelled");
     let groups = BoundedGroups {
         groups: match result.rows {
             QueryRows::Block { groups } => groups,

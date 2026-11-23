@@ -46,13 +46,13 @@ fn utf16(text: &str) -> SortDecor {
     SortDecor::Utf16(text.encode_utf16().collect())
 }
 
-#[derive(Debug)]
+#[derive(Clone, Debug)]
 enum DefaultValue {
     Literal(SortDecor),
     Get(Box<Get>),
 }
 
-#[derive(Debug)]
+#[derive(Clone, Debug)]
 struct Get {
     key: Key,
     default: DefaultValue,
@@ -81,7 +81,7 @@ pub struct AdvancedSortRow<'a> {
 }
 
 /// Recognised single-key or `juxt` sort. It changes only row order.
-#[derive(Debug)]
+#[derive(Clone, Debug)]
 pub struct AdvancedResultSort {
     keys: Vec<Get>,
 }
@@ -104,26 +104,22 @@ impl AdvancedResultSort {
     }
 }
 
-struct Reader<'a>(&'a str);
+struct Transform;
 
-impl<'a> Reader<'a> {
-    fn text(&self, form: &Form) -> &'a str {
-        &self.0[form.span.clone()]
-    }
-
+impl Transform {
     fn atom(&self, form: &Form, want: &str) -> bool {
-        form.kind == Kind::Atom && self.text(form) == want
+        form.symbol() == Some(want)
     }
 
-    fn lambda<'f>(&self, form: &'f Form) -> Option<(&'a str, &'f Form)> {
+    fn lambda<'f>(&self, form: &'f Form) -> Option<(&'f str, &'f Form)> {
         let [head, params, body] = &form.children[..] else {
             return None;
         };
         let [param] = &params.children[..] else {
             return None;
         };
-        let name = self.text(param);
-        let symbol = param.is_symbol() && !name.contains(['/', '\\', '#']) && name != "&";
+        let name = param.symbol()?;
+        let symbol = !name.contains(['/', '\\', '#']) && name != "&";
         (form.kind == Kind::List && self.atom(head, "fn") && params.kind == Kind::Vector && symbol)
             .then_some((name, body))
     }
@@ -139,11 +135,11 @@ impl<'a> Reader<'a> {
         {
             return None;
         }
-        let key = match self.text(attr) {
-            ":block/priority" if attr.kind == Kind::Atom => Key::Priority,
-            ":block/scheduled" if attr.kind == Kind::Atom => Key::Scheduled,
-            ":block/deadline" if attr.kind == Kind::Atom => Key::Deadline,
-            ":block/content" if attr.kind == Kind::Atom => Key::Content,
+        let key = match attr.keyword()? {
+            "block/priority" => Key::Priority,
+            "block/scheduled" => Key::Scheduled,
+            "block/deadline" => Key::Deadline,
+            "block/content" => Key::Content,
             _ => return None,
         };
         if numeric.is_some_and(|numeric| numeric != key.numeric()) {
@@ -157,6 +153,7 @@ impl<'a> Reader<'a> {
             Some(form) => DefaultValue::Literal(match form.leaf.as_ref()? {
                 Edn::Nil => SortDecor::Nil,
                 Edn::Str(value) if !key.numeric() => utf16(value),
+                Edn::Utf16(value) if !key.numeric() => SortDecor::Utf16(value.clone()),
                 // JS represents integers exactly only within this range.
                 Edn::Int(value)
                     if key.numeric() && value.unsigned_abs() <= 9_007_199_254_740_991 =>
@@ -177,11 +174,11 @@ impl<'a> Reader<'a> {
 /// `get` on that row. Unknown keys, code or comparators refuse the entire form.
 /// Cost O(source bytes), using the bounded, comment-aware EDN reader.
 pub fn advanced_result_sort(src: &str) -> Option<AdvancedResultSort> {
-    query_edn::read_option(src, ":result-transform", |form| result_sort_form(src, form))?
+    query_edn::read_option(src, ":result-transform", result_sort_form)?
 }
 
-pub(super) fn result_sort_form(src: &str, form: &Form) -> Option<AdvancedResultSort> {
-    let reader = Reader(src);
+pub(super) fn result_sort_form(form: &Form) -> Option<AdvancedResultSort> {
+    let reader = Transform;
     let (result, body) = reader.lambda(form)?;
     // These names would capture a function used inside the transform.
     if matches!(result, "sort-by" | "juxt" | "get") {

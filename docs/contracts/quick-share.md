@@ -56,9 +56,12 @@ open or worker failure displays a reader error. Reloading opens a new session.
 The viewer's CSP admits workers only from its own origin.
 
 The writer reads the published sources' page identities from their preambles
-under the reduced config. The EDN reader recognizes comments, discards and
-metadata before selecting effective values. Unreadable reading settings use
-their defaults. The writer checks the effective reading settings and the
+under the reduced config. The EDN reader consumes the first complete form,
+including a namespaced or metadata-wrapped map, before selecting reading
+settings. Each key contributes only its decoded, typed value. An unreadable
+form contributes no settings or macro definitions. The publication reports
+that it uses defaults and refuses if that would change page identities.
+The writer checks the effective reading settings and the
 path, name and kind of every selected page and the generated home. The share
 block count uses the private build's parsed pages and the parsed generated
 home. A mismatch refuses publication. Correct the source or configuration and

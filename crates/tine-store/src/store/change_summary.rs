@@ -124,8 +124,15 @@ impl QueryTarget {
             QuerySubscription::Query { query, context } => {
                 let today = tine_core::date::JournalDate::today();
                 let resolved = tine_core::query::resolve_for_execution(query, context, today);
-                (!resolved.query().is_invalid())
-                    .then(|| crate::query::exec::plan(graph, resolved.query(), today, false))
+                (!resolved.query().is_invalid()).then(|| {
+                    crate::query::exec::plan(
+                        graph,
+                        resolved.query(),
+                        today,
+                        false,
+                        !resolved.keeps_block_children(),
+                    )
+                })
             }
             QuerySubscription::Source { source, dialect } => {
                 let parsed = graph.with_pages(|pages| {

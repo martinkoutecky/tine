@@ -726,6 +726,7 @@ fn publish_at(
                 &home.name,
                 Some(home.source(&corpus.pages, query.as_deref())?),
                 false,
+                &mut warnings,
             )?;
             Ok((files, snap))
         },
@@ -899,6 +900,7 @@ fn live(
         .unwrap_or_default();
     // The static fallback and the snapshot both come from the build graph
     // (see `publish_at`).
+    let mut warnings = Vec::new();
     let (mut files, snap) = crate::build_graph::with_build_graph_text(
         &graph,
         &corpus.pages,
@@ -924,12 +926,15 @@ fn live(
                     &home,
                     None,
                     false,
+                    &mut warnings,
                 )?,
             ))
         },
     )?;
     app_files(&mut files, bundle, snap, name)?;
-    commit(store, parent, &slug(name), files, corpus.pages.len())
+    let mut receipt = commit(store, parent, &slug(name), files, corpus.pages.len())?;
+    receipt.warnings.extend(warnings);
+    Ok(receipt)
 }
 
 /// Publish a create-only static HTML site to an external, user-selected
@@ -1056,6 +1061,7 @@ mod snapshot_consistency_tests {
                     "Public",
                     None,
                     false,
+                    &mut Vec::new(),
                 )
             },
         )

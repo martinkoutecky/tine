@@ -20,6 +20,8 @@ wasm-opt = ["-Oz"]
 
 [features]
 core = ["dep:tine-store", "dep:tine-graph-features"]
+# The differential reader test adds decoded observations to query_edn_json.
+edn-oracle = ["tine-core/test-faults"]
 
 [dependencies]
 unicode-normalization = "0.1"

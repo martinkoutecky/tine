@@ -35,6 +35,7 @@ quick-share-connect-refused = GitHub 拒绝了连接。请稍后重试。
 quick-share-cancel = 取消
 quick-share-disclosure = 这些页面的全文都会被分享，包括它们的属性。
 quick-share-not-included = 不包含图片和其他文件；读者只能看到它们的文件名。
+quick-share-config-omitted = 无法将 config.edn 读取为 EDN 映射，因此此分享使用默认阅读设置。
 quick-share-size = 大小：{ $size }
 quick-share-size-bytes = { $bytes } 字节
 quick-share-size-kib = { $size } KB

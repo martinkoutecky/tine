@@ -375,6 +375,9 @@ function Dialog(props: { request: QueryPublicationRequest }): JSX.Element {
                 </div>
               </Show>
               <p class="quick-share-disclosure">{t("quick-share-disclosure")}</p>
+              <Show when={shown().configSettingsOmitted}>
+                <p class="query-export-note">{t("quick-share-config-omitted")}</p>
+              </Show>
               <p class="settings-hint">{t("quick-share-not-included")}</p>
               <p class="settings-hint quick-share-size">{t("quick-share-size", { size: quickShareSize(shown().envelopeBytes) })}</p>
               <Show when={!done()}>
