@@ -1,0 +1,645 @@
+tine-heavy: no slot free, waiting: npx vitest related --run --passWithNoTests --maxWorkers=4 --configLoader runner src/appBack.guard.test.ts src/appIdentity.guard.test.ts src/assetRefresh.test.tsx src/blockRegions.guard.test.ts src/clipboard.guard.test.ts src/clipboardSafety.test.ts src/cm6PassSelection.test.ts src/components/pageIconLiveBounds.test.tsx src/crossPageSaves.guard.test.ts src/dialogActions.guard.test.ts src/displayEpochWrites.guard.test.ts src/docComment.guard.test.ts src/document/boundary.guard.test.ts src/document/rawFunnel.guard.test.ts src/engineCheck.test.ts src/errorDispatch.guard.test.ts src/errorSwallow.guard.test.ts src/failedRead.guard.test.ts src/failureBoundarySeams.guard.test.ts src/graphResource.guard.test.ts src/graphScopedState.guard.test.ts src/i18n/i18n-b.test.ts src/i18n/literals.test.ts src/lateLanding.guard.test.ts src/logSinks.guard.test.ts src/mobileSafeArea.test.ts src/ogEnforcement.test.ts src/outsidePress.guard.test.ts src/pageIndex.guard.test.ts src/pageProperties.guard.test.ts src/platformIdentity.guard.test.ts src/portalBoundary.guard.test.ts src/queryMacroNameConsistency.test.ts src/queryPresentations.guard.test.ts src/queryResultsBoundary.guard.test.ts src/refusedReplacement.guard.test.ts src/repositoryPaths.test.ts src/scrollContainer.test.tsx src/scrollContainer.ts src/session.windows.test.ts src/styleKnobs.test.ts src/styles/interfaceZoomLayout.test.ts src/tests/editorDriver.guard.test.ts src/themeTokens.guard.test.ts src/tinePropertyKeys.ratchet.test.ts src/viteWatchIgnore.guard.test.ts src/windowRealm.guard.test.ts tests/ui-regressions/catalog.json
+tine-heavy: 2026-11-23T09:32:45Z slot 2 after 158s: npx vitest related --run --passWithNoTests --maxWorkers=4 --configLoader runner src/appBack.guard.test.ts src/appIdentity.guard.test.ts src/assetRefresh.test.tsx src/blockRegions.guard.test.ts src/clipboard.guard.test.ts src/clipboardSafety.test.ts src/cm6PassSelection.test.ts src/components/pageIconLiveBounds.test.tsx src/crossPageSaves.guard.test.ts src/dialogActions.guard.test.ts src/displayEpochWrites.guard.test.ts src/docComment.guard.test.ts src/document/boundary.guard.test.ts src/document/rawFunnel.guard.test.ts src/engineCheck.test.ts src/errorDispatch.guard.test.ts src/errorSwallow.guard.test.ts src/failedRead.guard.test.ts src/failureBoundarySeams.guard.test.ts src/graphResource.guard.test.ts src/graphScopedState.guard.test.ts src/i18n/i18n-b.test.ts src/i18n/literals.test.ts src/lateLanding.guard.test.ts src/logSinks.guard.test.ts src/mobileSafeArea.test.ts src/ogEnforcement.test.ts src/outsidePress.guard.test.ts src/pageIndex.guard.test.ts src/pageProperties.guard.test.ts src/platformIdentity.guard.test.ts src/portalBoundary.guard.test.ts src/queryMacroNameConsistency.test.ts src/queryPresentations.guard.test.ts src/queryResultsBoundary.guard.test.ts src/refusedReplacement.guard.test.ts src/repositoryPaths.test.ts src/scrollContainer.test.tsx src/scrollContainer.ts src/session.windows.test.ts src/styleKnobs.test.ts src/styles/interfaceZoomLayout.test.ts src/tests/editorDriver.guard.test.ts src/themeTokens.guard.test.ts src/tinePropertyKeys.ratchet.test.ts src/viteWatchIgnore.guard.test.ts src/windowRealm.guard.test.ts tests/ui-regressions/catalog.json
+
+ RUN  v3.2.7 /aux/koutecky/logseq/tine-agent-worktrees/batch-exp-impl-B-opus-med
+
+stdout | src/renameDayMove.test.ts > renaming a day moves its notes to a page > a 5,000-note day costs the same operations, and its move time is recorded
+KC2SE day move, 5,000 notes: median 244 ms (227, 244, 262)
+
+ ✓ src/renameDayMove.test.ts (85 tests) 6401ms
+   ✓ renaming a day moves its notes to a page > a 5,000-note day costs the same operations, and its move time is recorded  1238ms
+stdout | src/memoryLifecycle.test.ts > L10-01: 5,000 visits retain only loaded-node seeds and an evicted page reloads
+L10-01 visits { pages: [33m80[39m, nodes: [33m2400[39m, seeds: [33m2400[39m }
+
+ ✓ src/i18n/literals.test.ts (71 tests) 11119ms
+   ✓ the localization ratchet > finds no literal UI text outside the baseline, no stale baseline entry, and no module-level t()  6095ms
+   ✓ the localization ratchet > UI-site soundness > includes the real index.html in the scan  4872ms
+stdout | src/memoryLifecycle.test.ts > L10-01: 1,000 replacements release old seeds while a large loaded page stays all hits
+L10-01 reloads [33m60[39m
+
+ ✓ src/update.test.ts (76 tests) 4679ms
+stdout | src/memoryLifecycle.test.ts > L10-02: 1,000 64-KiB drafts have a byte bound and reset drops them eagerly
+L10-02 drafts { entries: [33m12[39m, bytes: [33m7908720[39m }
+
+ ✓ src/pageIndex.test.ts (21 tests) 3423ms
+   ✓ page index: the one frontend name answerer > answers from the backend target and refetches only inventory changes  308ms
+   ✓ page index: name-only inventory deltas > refetches when the change cannot be patched in order  312ms
+stdout | src/memoryLifecycle.test.ts > L10-04/L7-01: 4,000 32-KiB answers bound inactive bytes and reset releases answers and keys
+L10-04 answers { entries: [33m31[39m, bytes: [33m8161680[39m } keys [33m0[39m
+
+ ✓ src/memoryLifecycle.test.ts (11 tests) 15185ms
+   ✓ L10-01: 5,000 visits retain only loaded-node seeds and an evicted page reloads  10135ms
+   ✓ L10-01: 1,000 replacements release old seeds while a large loaded page stays all hits  1740ms
+   ✓ L10-02: 1,000 64-KiB drafts have a byte bound and reset drops them eagerly  2602ms
+ ✓ src/selectionColdCost.test.ts (17 tests) 15361ms
+   ✓ cold selection costs visible rows: 10000 'flat'  725ms
+   ✓ cold selection costs visible rows: 10000 'deep'  1204ms
+   ✓ cold selection costs visible rows: 10000 'folded'  353ms
+   ✓ cold selection costs visible rows: 50000 'flat'  3750ms
+   ✓ cold selection costs visible rows: 50000 'deep'  6008ms
+   ✓ cold selection costs visible rows: 50000 'folded'  1444ms
+   ✓ query notifies only changed membership among 10000 mounted readers  455ms
+   ✓ with no selection, mounted rows answer membership without reading ancestry  376ms
+   ✓ clearing a materialized full-page selection releases its topology  428ms
+ ❯ src/cm6PassSelection.test.ts (2 tests | 2 failed) 84ms
+   × CM6 pass file selection > selects exactly the tests whose runtime imports reach an overridden module, global or patched member 10ms
+     → default.globSync is not a function
+   × CM6 pass file selection > runs every editor-mounting render test of this repository and skips the rest 1ms
+     → default.globSync is not a function
+ ✓ src/components/Namespace.test.ts (13 tests) 4102ms
+   ✓ namespace identity and depth (OG-B-FRONT) > sorts a deep imported namespace without recursion and keeps every level  4041ms
+ ✓ src/editor/autocomplete.test.ts (354 tests) 3792ms
+   ✓ completion replacement (OG accept-range parity) > PICK-853c in org > bounds parser calls and bytes for [[pro gr_am]] before a 1 MiB "a/b " tail  369ms
+ ✓ src/i18n/preference.lifecycle.test.ts (9 tests) 2574ms
+   ✓ the UI language lifecycle > a fast read waits for the chosen catalog, however slow, before startup settles (F1)  851ms
+   ✓ the UI language lifecycle > an old startup read landing after a broadcast does not undo it (F2)  586ms
+   ✓ the UI language lifecycle > an old startup read failing after the user chose does not undo the choice (F2)  583ms
+ ✓ src/document/boundary.guard.test.ts (6 tests) 3793ms
+   ✓ I-11 document imports use the folder index  1353ms
+   ✓ I-1 backend page writes use the page host  1138ms
+   ✓ I-12 PageDto construction stays in convert  1004ms
+ ✓ src/lateLanding.guard.test.ts (7 tests) 3862ms
+   ✓ I-20 owned backend completion syntax > keeps production backend completions behind owned results  2443ms
+   ✓ I-20 owned backend completion syntax > keeps durable backend writes out of readOwned  1337ms
+ ✓ src/platformIdentity.guard.test.ts (5 tests) 2736ms
+   ✓ platform identity is an allowlist (D-20261018-W1) > every read of platform identity in src is listed with a reason and use count, and every entry is live  2644ms
+ ✓ src/document/publicationWalkCost.test.ts (5 tests) 4231ms
+   ✓ publication visits only the changed page and keeps navigation current  1269ms
+   ✓ external visits only the changed page and keeps navigation current  1372ms
+   ✓ host visits only the changed page and keeps navigation current  1331ms
+ ✓ src/graphScopedState.guard.test.ts (12 tests) 3895ms
+   ✓ graph-scoped UI state (I-20) > every reader of an app-root popup target proves a binding check or is classified  348ms
+   ✓ graph-scoped UI state (I-20) > the guard catches a planted aliased-type popup and a planted unbound writer in an unlisted file  324ms
+   ✓ graph-scoped UI state (I-20) > ratchets module-level Map/Set lifetimes after OG-B-LIFE  3079ms
+ ✓ src/pageIndex.guard.test.ts (4 tests) 2581ms
+   ✓ page index guard (Rule 3: one answerer, frontend included) > keeps page_inventory in pageIndex.ts and no other frontend name map  2513ms
+stdout | src/document/admissionBudgets.test.ts > admits a warm 2000-block page among 129 open pages within 16 ms
+warm admission ms: 3.731, 3.660, 3.551, 3.648, 9.057, 3.975, 3.720, 3.928; min=3.551
+
+ ✓ src/renameHelpers.interrupt.test.ts (7 tests) 1798ms
+   ✓ a crash at any write boundary of a rename helper loses nothing on reopen > tag union with a slow survivor save  1511ms
+ ✓ src/document/save/cadenceConflict.test.ts (6 tests) 1710ms
+   ✓ Use disk reloads the pinned file when another file has the same page name  407ms
+   ✓ Keep mine resolves against the disk state the banner showed; a later change conflicts again  405ms
+   ✓ a queued Keep mine cannot borrow a later conflict decision  811ms
+stdout | src/document/admissionBudgets.test.ts > delivers one 2000-block publication with 192 live views within 100 ms
+one-page publication ms: 92.214, 66.684, 80.962, 92.109, 76.910, 55.584, 59.704, 73.980; min=55.584
+
+ ✓ src/document/admissionBudgets.test.ts (2 tests) 2548ms
+   ✓ admits a warm 2000-block page among 129 open pages within 16 ms  884ms
+   ✓ delivers one 2000-block publication with 192 live views within 100 ms  1637ms
+ ✓ src/portalBoundary.guard.test.ts (3 tests) 2446ms
+   ✓ portal boundary guard (GH #619) > floats every surface through FloatingPortal, never Solid's bare Portal  2380ms
+ ✓ src/reloadOnFocus.test.ts (15 tests) 1674ms
+   ✓ reload on focus > a rescan slower than the notice delay says so, and clears the status when it ends  504ms
+   ✓ reload on focus > records how long the notice was visible, only when it showed  516ms
+ ✓ src/document/save/review964.test.ts (8 tests) 1614ms
+ ✓ src/windowRealm.guard.test.ts (4 tests) 2570ms
+   ✓ window realm guard (OG-MULTIWINDOW P2) > bans global-realm listeners, focus, selection, measurement, frames, observers and DOM instanceof  2501ms
+stdout | src/saveAnswerCost.test.ts > ordinary save IPC on 2000 pages
+{"pages":2000,"inventoryCalls":0,"inventoryResponseBytes":244693,"countCalls":0,"countResponseBytes":82001,"extraCalls":0,"extraBytes":0}
+
+ ✓ src/clipboard.guard.test.ts (3 tests) 1993ms
+   ✓ clipboard writer facade guard > has no application clipboard transport calls outside the facade/definitions/mocks  1912ms
+stdout | src/saveAnswerCost.test.ts > ordinary save IPC on 10000 pages
+{"pages":10000,"inventoryCalls":0,"inventoryResponseBytes":1236693,"countCalls":0,"countResponseBytes":410001,"extraCalls":0,"extraBytes":0}
+
+ ✓ src/saveAnswerCost.test.ts (2 tests) 1648ms
+   ✓ ordinary save IPC on 2000 pages  798ms
+   ✓ ordinary save IPC on 10000 pages  808ms
+ ✓ src/document/save/conflictBase.test.ts (10 tests) 1441ms
+ ✓ src/document/kernelReadSet.test.ts (2 tests) 2788ms
+   ✓ the read-set marshal > answers as whole pages do, without falling back  2118ms
+   ✓ the read-set marshal > answers as whole pages do for a selection merge, without falling back  635ms
+ ✓ src/keybindings.test.ts (86 tests) 1806ms
+   ✓ block-selection commands > Mod+C keeps the public write but records no payload when the selection exceeds the raw cap  305ms
+ ✓ src/pageProperties.guard.test.ts (3 tests) 2023ms
+   ✓ one page-property answerer (og 14 Q5) > no production file parses page properties outside the one answerer  1924ms
+ ✓ src/ogP10BigWire.test.ts (1 test) 410ms
+   ✓ the hosted Big fixture carries the same identity absence as native parser projections  377ms
+ ✓ src/document/rawFunnel.guard.test.ts (3 tests) 2217ms
+   ✓ block raw writes go through the raw-change funnel (BIGLOAD-090b) > production code writes raw only through setDoc's field form or writeRaw  2180ms
+ ✓ src/failedRead.guard.test.ts (7 tests) 1977ms
+   ✓ ratchets catches that fabricate empty answers in production TS  1881ms
+stdout | src/namespacesList.test.ts > cost on a 30k-page graph > indexes, filters and re-walks 30,000 namespaced pages
+namespaces 30k: 31230 entries; tree+index 671 ms; filter 2.5 ms (330 hits); expand-all walk 4.7 ms; 31230 rows; collapsed 30
+
+ ✓ src/namespacesList.test.ts (14 tests) 2172ms
+   ✓ indexNamespaces > is iterative: a thousand-level name does not overflow the stack  1435ms
+   ✓ cost on a 30k-page graph > indexes, filters and re-walks 30,000 namespaced pages  680ms
+ ✓ src/renameHelpers.test.ts (32 tests) 1633ms
+   ✓ 120 declaring pages not loaded are all edited, then renamed  331ms
+ ✓ src/queryPresentations.guard.test.ts (3 tests) 1672ms
+   ✓ query presentations have one list > only queryIr.ts spells them  1640ms
+ ✓ src/refusedReplacement.guard.test.ts (4 tests) 1778ms
+   ✓ every production caller consumes a page load's refusal  1648ms
+ ✓ src/frontendSplitPin.test.ts (29 tests) 1050ms
+ ✓ src/failureBoundarySeams.guard.test.ts (36 tests) 1478ms
+   ✓ failure-boundary seams (GH #490/#332) > requires a boundary for every top-level surface of every window root, including new mounts  992ms
+ ✓ src/store.test.ts (199 tests) 1195ms
+stdout | src/document/save/groups.test.ts > multi-page edits on the page host > unit cost: measures page bytes and request count for 1 and 60 block drag and carry
+page-host unit cost drag 1 blocks: 358 page bytes in 1 move request (2 pages)
+
+stdout | src/document/save/groups.test.ts > multi-page edits on the page host > unit cost: measures page bytes and request count for 1 and 60 block drag and carry
+page-host unit cost carry 1 blocks: 402 page bytes in 1 move request (2 pages)
+
+stdout | src/document/save/groups.test.ts > multi-page edits on the page host > unit cost: measures page bytes and request count for 1 and 60 block drag and carry
+page-host unit cost drag 60 blocks: 8672 page bytes in 1 move request (2 pages)
+
+stdout | src/document/save/groups.test.ts > multi-page edits on the page host > unit cost: measures page bytes and request count for 1 and 60 block drag and carry
+page-host unit cost carry 60 blocks: 8362 page bytes in 1 move request (2 pages)
+
+ ✓ src/document/save/groups.test.ts (14 tests) 964ms
+   ✓ multi-page edits on the page host > P2: a conflicted destination refuses a move before memory changes  405ms
+ ✓ src/pages.inventory.test.ts (5 tests) 1007ms
+ ✓ src/document/host/wiring.saveError.test.ts (2 tests) 847ms
+   ✓ shows the failed save's platform step and OS error in a sticky error toast  414ms
+   ✓ names no platform step when the notice carries none  405ms
+ ✓ src/backend.diagnostics.test.ts (14 tests) 1164ms
+ ✓ src/appQuit.platform.test.ts (5 tests) 1265ms
+   ✓ Quit's default on Linux x86_64 / desktop is mod+q  423ms
+ ✓ src/repositoryPaths.test.ts (3 tests) 1611ms
+   ✓ GH #579: tracked files use portable paths  1017ms
+   ✓ driver help honors overrides and portable fallback defaults  354ms
+ ✓ src/router.mobile-history.test.ts (7 tests) 1222ms
+   ✓ mobile History API bridge > does not touch browser history on desktop  304ms
+ ✓ src/document/deleteSemantics.test.ts (12 tests) 692ms
+ ✓ src/favorites.test.ts (20 tests) 758ms
+ ✓ src/document/ancestryBatch.test.ts (15 tests) 1023ms
+   ✓ projects 50 loaded reference chains of depth 128 with linear parent reads  528ms
+ ✓ src/tinePropertyKeys.ratchet.test.ts (3 tests) 1089ms
+   ✓ Tine writes only tine.* keys or OG-owned keys (D-20261102-PNS) > every literal or named key Tine writes is tine.* or OG-owned  334ms
+   ✓ Tine writes only tine.* keys or OG-owned keys (D-20261102-PNS) > every pass-through write site is reviewed  343ms
+   ✓ Tine writes only tine.* keys or OG-owned keys (D-20261102-PNS) > the scan sees the writers it guards (a stray write would fail)  336ms
+ ✓ src/clipboard.paste.test.ts (48 tests) 730ms
+ ✓ src/launcherRanking.broadcastWrite.test.ts (2 tests) 604ms
+ ✓ src/document/save/reviewFixes.test.ts (3 tests) 570ms
+   ✓ save review regressions on the page host > R-6: a twin refusal on a page with no file keeps its text and names the existing file  414ms
+ ✓ src/i18n/i18n-b.test.ts (2 tests) 697ms
+   ✓ editor, PDF and rendering UI text uses the catalog while graph syntax stays literal  613ms
+ ✓ src/document/deleteInput.test.ts (9 tests) 549ms
+ ✓ src/plugins/manager.test.ts (21 tests) 523ms
+ ✓ src/document/host/wiring.publicationDebt.test.ts (1 test) 528ms
+   ✓ R1: a taken, unpublished page stays loaded, listed and unreloadable under working-set pressure until it publishes  499ms
+ ✓ src/document/ownPublication.test.ts (15 tests) 471ms
+ ✓ src/backend.orderedWrites.test.ts (4 tests) 543ms
+ ✓ src/graphAnswers.test.ts (4 tests) 476ms
+ ✓ src/document/save/aliasDraftRetry.test.ts (2 tests) 451ms
+ ✓ src/routedPageSave.test.ts (1 test) 455ms
+   ✓ saves a page routed directly after startup, without first opening the journal feed  419ms
+ ✓ src/document/host/wiring.rootMoved.test.ts (1 test) 444ms
+   ✓ a detached-root save shows the sticky kept-edits and reopen instruction  416ms
+ ✓ src/document/feedRetirement.test.ts (4 tests) 620ms
+   ✓ bounds loaded nodes across hundreds of appended, measured offscreen days  421ms
+stderr | src/viteWatchIgnore.guard.test.ts > vite watcher > ignores target/ and toolchain build dirs
+failed to load config from /aux/koutecky/logseq/tine-agent-worktrees/batch-exp-impl-B-opus-med/vite.config.ts
+
+ ❯ src/viteWatchIgnore.guard.test.ts (2 tests | 2 failed) 151ms
+   × vite watcher > ignores target/ and toolchain build dirs 44ms
+     → EROFS: read-only file system, open '/aux/koutecky/logseq/tine-agent-worktrees/batch-exp-impl-B-opus-med/node_modules/.vite-temp/vite.config.ts.timestamp-1795426420351-dd0131b8893dd.mjs'
+   × vite watcher > does not acquire watches for journey artifacts, but still watches sources 17ms
+     → EROFS: read-only file system, open '/aux/koutecky/logseq/tine-agent-worktrees/batch-exp-impl-B-opus-med/node_modules/.vite-temp/vite.config.ts.timestamp-1795426420383-4bcc2e204c21.mjs'
+ ✓ src/pageIconBatch.test.ts (6 tests) 399ms
+ ✓ src/readFailure.test.ts (3 tests) 385ms
+ ✓ src/publishedAliasLink.test.ts (5 tests) 1433ms
+   ✓ published site: alias links use the core inventory > opens the owner of an ordinary page's alias, as on develop before CM step 2  466ms
+ ✓ src/editor/cm6Setting.test.ts (5 tests) 598ms
+ ✓ src/selectionSubtreeUnits.test.ts (33 tests) 643ms
+ ✓ src/document/save/displayEpoch.test.ts (6 tests) 364ms
+ ✓ src/backend.searchDisplay.test.ts (3 tests) 524ms
+ ✓ src/cmFavoritesRename.test.ts (1 test) 412ms
+   ✓ conceptual model: favorites after a rename (frontend) > records the frontend's answer against the target  369ms
+ ✓ src/graphResource.guard.test.ts (3 tests) 434ms
+   ✓ graph-owned resources are keyed on the graph epoch > every createResource reading through graphOwner is a createGraphResource or classified  315ms
+ ✓ src/document/save/aliasDraft.test.ts (3 tests) 352ms
+ ✓ src/sheet/matrix.test.ts (14 tests) 460ms
+   ✓ buildMatrix > does not retain tall row arrays after their last observers leave  383ms
+ ✓ src/backend.refreshReads.test.ts (3 tests) 409ms
+ ✓ src/sheet/queryHydration.test.ts (12 tests) 363ms
+ ✓ src/nativeChrome.test.ts (8 tests) 421ms
+ ✓ src/keyedRefresh.test.ts (3 tests) 345ms
+ ✓ src/appIdentity.guard.test.ts (8 tests) 435ms
+   ✓ app identity switch > no source outside the switch and its derived files spells an identity  325ms
+ ✓ src/cmConformanceNamespaces.test.ts (1 test) 445ms
+   ✓ conceptual model conformance: the frontend's namespace views > differ from the model exactly as expected-differences.json records  367ms
+ ✓ src/i18n/preference.windows.test.ts (1 test) 363ms
+ ✓ src/document/save/groupDeletion.test.ts (5 tests) 324ms
+ ✓ src/document/createPage.test.ts (8 tests) 314ms
+ ✓ src/components/pdfHighlightState.test.ts (22 tests) 300ms
+ ✓ src/document/graphRewrite.test.ts (12 tests) 306ms
+ ✓ src/document/edits/relativeMove.test.ts (11 tests) 295ms
+ ✓ src/sheet/formulaMemo.test.ts (7 tests | 1 skipped) 376ms
+   ✓ one live row edit evaluates F cells, not N × F  308ms
+ ✓ src/session.test.ts (25 tests) 331ms
+ ✓ src/androidBack.test.ts (13 tests) 307ms
+ ✓ src/clipboard.identityBatch.test.ts (3 tests) 462ms
+ ✓ src/systemTheme.test.ts (1 test) 276ms
+ ✓ src/queryExportBudget.test.ts (2 tests) 315ms
+ ✓ src/tabTree.test.ts (15 tests) 435ms
+   ✓ tab tree (pure) > random edit sequences keep T1/T2 (property-style, seeded)  315ms
+ ✓ src/clipboard.payload.test.ts (6 tests) 473ms
+   ✓ clipboard payload builder > rejects a forest over 10,000 blocks  402ms
+ ✓ src/queryMacroNameConsistency.test.ts (4 tests) 320ms
+ ✓ src/safeClose.test.ts (14 tests) 194ms
+ ✓ src/themeTokens.guard.test.ts (8 tests) 84ms
+ ✓ src/router.test.ts (29 tests) 59ms
+ ✓ src/selectionTaskCycle.test.ts (16 tests) 131ms
+ ✓ src/referenceAdmission.test.ts (5 tests) 93ms
+ ✓ src/resolveBatch.test.ts (7 tests) 47ms
+ ✓ src/launcherRanking.multiwindow.test.ts (1 test) 317ms
+ ✓ src/seen/pageSeen.test.ts (1 test) 390ms
+ ✓ src/backend.pdfRanges.test.ts (2 tests) 327ms
+ ✓ src/blockRegions.guard.test.ts (2 tests) 398ms
+   ✓ I-12: ask lsdoc through the block-region door; no regex over content structure. Exemplar: crates/tine-outline/src/block_regions.rs > ratchets native and frontend recognizers outside the door  314ms
+ ✓ src/cmConformanceNavigate.test.ts (1 test) 320ms
+ ✓ src/backend.titleIdentity.test.ts (3 tests) 314ms
+ ✓ src/launcherRanking.refreshRace.test.ts (1 test) 265ms
+ ✓ src/document/deferredReload.test.ts (8 tests) 256ms
+ ✓ src/backend.imageClipboard.test.ts (2 tests) 321ms
+ ✓ src/followLink.test.ts (13 tests) 242ms
+ ✓ src/editor/inlineLiteral.test.ts (9 tests) 291ms
+ ✓ src/editor/cm6Default.test.ts (4 tests) 292ms
+ ✓ src/plugins/startup.test.ts (11 tests) 240ms
+ ✓ src/document/externalFreshness.test.ts (11 tests) 227ms
+ ✓ src/editor/joinPropsBeforeParser.test.ts (1 test) 248ms
+ ✓ src/errorSwallow.guard.test.ts (3 tests) 309ms
+ ✓ src/backend.clipboard.test.ts (1 test) 255ms
+ ✓ src/currentPage.test.ts (14 tests) 193ms
+ ✓ src/document/host/wiring.ownerFlush.test.ts (4 tests) 207ms
+ ✓ src/dialogActions.guard.test.ts (12 tests) 269ms
+ ✓ src/document/host/client.notify.test.ts (3 tests) 196ms
+ ✓ src/backend.seenDrop.test.ts (1 test) 232ms
+ ✓ src/debug.test.ts (5 tests) 229ms
+ ✓ src/document/historyInstance.test.ts (5 tests) 210ms
+ ✓ src/document/replacementGate.test.ts (27 tests) 285ms
+ ✓ src/errorDispatch.guard.test.ts (2 tests) 244ms
+ ✓ src/queryResultsBoundary.guard.test.ts (1 test) 217ms
+ ✓ src/toolbarChoice.test.ts (4 tests) 220ms
+ ✓ src/backend.configUnreadable.test.ts (5 tests) 206ms
+ ✓ src/editor/propertySession.identityCost.test.ts (4 tests) 268ms
+ ✓ src/clipboardSafety.test.ts (2 tests) 220ms
+ ✓ src/backend.graphOwner.test.ts (1 test) 222ms
+ ✓ src/backend.rewriteRefusal.test.ts (9 tests) 227ms
+ ✓ src/engineCheck.test.ts (9 tests) 213ms
+ ✓ src/document/readAdmission.test.ts (18 tests) 169ms
+ ✓ src/document/outlineDepthCap.test.ts (9 tests) 257ms
+ ✓ src/crossPageSaves.guard.test.ts (3 tests) 189ms
+ ✓ src/document/conflictLift.test.ts (2 tests) 154ms
+ ✓ src/renameOrMerge.test.ts (13 tests) 153ms
+ ✓ src/document/c3wW6.test.ts (4 tests) 195ms
+ ✓ src/outsidePress.guard.test.ts (1 test) 187ms
+ ✓ src/document/host/wiring.resultsGate.test.ts (4 tests) 147ms
+ ✓ src/warmCache.test.ts (5 tests) 141ms
+ ✓ src/landingOwnership.test.ts (4 tests) 139ms
+ ✓ src/document/edits/kernelFixtures.test.ts (89 tests) 257ms
+ ✓ src/launcherRanking.test.ts (7 tests) 186ms
+ ✓ src/mobileSafeArea.test.ts (5 tests) 196ms
+ ✓ src/ogP12b.test.ts (13 tests) 241ms
+ ✓ src/mediaBlobFallback.ownership.test.ts (2 tests) 143ms
+ ✓ src/document/refusedReplacement.test.ts (21 tests) 180ms
+ ✓ src/document/edits/selectionBatch.test.ts (9 tests) 217ms
+ ✓ src/document/commentStructure.test.ts (60 tests) 243ms
+ ✓ src/assetCache.test.ts (12 tests) 179ms
+ ✓ src/logSinks.guard.test.ts (4 tests) 177ms
+ ✓ src/document/c3yDrop.test.ts (2 tests) 132ms
+ ✓ src/docComment.guard.test.ts (1 test) 170ms
+ ✓ src/assetCache.iconLimit.test.ts (2 tests) 79ms
+stdout | src/editor/review-gh741-r2-extra.test.ts > Org transport with id and previous history
+transport {"visible":"plain\n:PROPERTIES:\n:owner: Ada\n:END:","hidden":":id: 11111111-1111-4111-8111-111111111111\n:LOGBOOK:\nCLOCK: [2026-10-20 Tue 08:00:00]\n:END:"}
+
+stdout | src/editor/review-gh741-r2-extra.test.ts > Org transport with id and previous history
+transport {"visible":"plain","hidden":":id: 11111111-1111-4111-8111-111111111111\n:owner: Ada\n:LOGBOOK:\nCLOCK: [2026-10-20 Tue 08:00:00]\n:END:"}
+
+stdout | src/editor/review-gh741-r2-extra.test.ts > Org transport with id and previous history
+transport {"visible":"plain\n:PROPERTIES:\n:owner: Ada\n:END:","hidden":":id: 11111111-1111-4111-8111-111111111111\n:LOGBOOK:\nCLOCK: [2026-10-20 Tue 08:00:00]\n:END:"}
+
+stdout | src/editor/review-gh741-r2-extra.test.ts > replacement matrix checks accepted history, ownership and visible bytes
+matrix failures []
+
+stdout | src/editor/review-gh741-r2-extra.test.ts > hidden-property authoring matrix
+authoring failures []
+
+ ✓ src/editor/review-gh741-r2-extra.test.ts (5 tests) 239ms
+ ✓ src/sheet/conversions.test.ts (14 tests) 280ms
+ ✓ src/browsingNeverWrites.test.ts (8 tests) 173ms
+ ✓ src/document/createdPageFormat.test.ts (6 tests) 124ms
+ ✓ src/document/pageAdmissionFreshness.test.ts (7 tests) 102ms
+ ✓ src/workspaces.test.ts (15 tests) 121ms
+ ✓ src/document/edits/pageHeaderToast.test.ts (18 tests) 171ms
+ ✓ src/seen/seenState.test.ts (10 tests) 108ms
+ ✓ src/editor/codeFence.test.ts (136 tests) 131ms
+ ✓ src/pageCollapse.test.ts (6 tests) 145ms
+ ✓ src/backgroundFlush.test.ts (3 tests) 101ms
+ ✓ src/document/edits/pageHeaderHeadEnter.test.ts (12 tests) 149ms
+ ✓ src/mock.test.ts (10 tests) 133ms
+ ✓ src/render/facets.test.ts (8 tests) 158ms
+ ✓ src/appBack.guard.test.ts (2 tests) 91ms
+ ✓ src/tests/editorDriver.guard.test.ts (2 tests) 111ms
+ ✓ src/graphPreferences.test.ts (2 tests) 117ms
+ ✓ src/resolveBatch.supersede.test.ts (3 tests) 83ms
+ ✓ src/document/resetConflict.test.ts (1 test) 85ms
+ ✓ src/quickShare/definitions.test.ts (20 tests) 135ms
+ ✓ src/graphResource.test.ts (2 tests) 85ms
+ ✓ src/styles/interfaceZoomLayout.test.ts (4 tests) 88ms
+ ✓ src/defenderHint.test.ts (5 tests) 84ms
+ ✓ src/document/edits/referenceNotices.test.ts (13 tests) 89ms
+ ✓ src/components/graphRowMenu.test.ts (3 tests) 84ms
+ ✓ src/resolveBatch.ownership.test.ts (1 test) 84ms
+ ✓ src/seen/bulletHistory.test.ts (1 test) 88ms
+ ✓ src/document/commentSurfaces.test.ts (19 tests) 106ms
+ ✓ src/uiFailureDetails.test.ts (2 tests) 93ms
+ ✓ src/displayEpochWrites.guard.test.ts (3 tests) 120ms
+ ✓ src/components/settingsSearch.test.ts (9 tests) 160ms
+ ✓ src/pages.test.ts (6 tests) 159ms
+ ✓ src/editor/exportResolved.qd6.test.ts (8 tests) 116ms
+ ✓ src/publishedBackend.og.test.ts (13 tests) 757ms
+ ✓ src/carry.test.ts (4 tests) 76ms
+ ✓ src/i18n/commands.test.ts (2 tests) 95ms
+ ✓ src/document/host/transferNoHost.test.ts (8 tests) 125ms
+ ✓ src/document/edits/headerRootToast.test.ts (15 tests) 113ms
+ ✓ src/document/authoredIdentityIndex.test.ts (5 tests) 114ms
+ ✓ src/components/outlineWindowModel.test.ts (7 tests) 97ms
+ ✓ src/sheet/restructure.test.ts (8 tests) 74ms
+ ✓ src/zoomCommands.test.ts (6 tests) 84ms
+ ✓ src/sheet/formulaLocalDate.test.ts (20 tests) 81ms
+ ✓ src/publishedBackend.guard.og.test.ts (2 tests) 136ms
+ ✓ src/editor/queryBuilder.test.ts (121 tests) 110ms
+ ✓ src/editor/cm6Preview.test.ts (62 tests) 104ms
+ ✓ src/historyParity.test.ts (6 tests) 98ms
+ ✓ src/ogEnforcement.test.ts (8 tests) 91ms
+ ✓ src/sheet/fields.test.ts (20 tests) 103ms
+ ✓ src/themes/manager.test.ts (4 tests) 67ms
+ ✓ src/editingBoundary.regression.test.ts (17 tests) 114ms
+ ✓ src/document/host/client.test.ts (45 tests) 63ms
+ ✓ src/comments.test.ts (20 tests) 87ms
+ ✓ src/document/importCollapse.test.ts (8 tests) 135ms
+ ✓ src/document/host/l9Transfer.test.ts (3 tests) 102ms
+ ✓ src/sheet/formulaEval.test.ts (9 tests) 57ms
+ ✓ src/styleKnobs.test.ts (29 tests) 112ms
+ ✓ src/document/properties.roundtrip.test.ts (11 tests) 85ms
+ ✓ src/i12PageHeader.test.ts (5 tests) 66ms
+ ✓ src/document/historyMoveBurst.test.ts (6 tests) 114ms
+ ✓ src/sheet/renameField.test.ts (26 tests) 79ms
+ ✓ src/sheet/gridNeighbour.test.ts (17 tests) 69ms
+ ✓ src/sheet/selection.test.ts (16 tests) 80ms
+ ✓ src/editor/literalLines.test.ts (9 tests) 54ms
+ ✓ src/navModel.contract.test.ts (10 tests) 65ms
+ ✓ src/graph.ownerRename.test.ts (14 tests) 66ms
+ ✓ src/document/model.test.ts (6 tests) 85ms
+ ✓ src/margin.test.ts (15 tests) 80ms
+ ✓ src/guide.test.ts (12 tests) 68ms
+ ✓ src/document/outlineParserFault.test.ts (6 tests) 98ms
+ ✓ src/editor/propertyHiding.test.ts (12 tests) 78ms
+ ✓ src/editor/properties.test.ts (35 tests) 67ms
+ ✓ src/renameStuckPage.test.ts (8 tests) 54ms
+ ✓ src/document/deleteRouteRetirement.test.ts (11 tests) 63ms
+ ✓ src/outlineScope.nav.test.ts (5 tests) 56ms
+ ✓ src/document/visibleOrderCost.test.ts (2 tests) 48ms
+ ✓ src/document/host/wiring.refreshGuard.test.ts (5 tests) 59ms
+ ✓ src/plugins/registry.test.ts (10 tests) 65ms
+ ✓ src/seen/commands.test.ts (2 tests) 66ms
+ ✓ src/editor/ownProperties.test.ts (5 tests) 62ms
+ ✓ src/selectionExpand.test.ts (8 tests) 53ms
+ ✓ src/document/host/wiring.recovery.test.ts (2 tests) 44ms
+ ✓ src/panes.test.ts (28 tests) 63ms
+ ✓ src/editor/propertySession.logbook.test.ts (5 tests) 48ms
+ ✓ src/router.recent.test.ts (5 tests) 46ms
+ ✓ src/plugins/registry.cacheFailure.test.ts (1 test) 52ms
+ ✓ src/editor/repeat.test.ts (16 tests) 69ms
+ ✓ src/cmConformanceKeys.test.ts (1 test) 65ms
+ ✓ src/document/edits/crossDayMoveRace.test.ts (2 tests) 62ms
+ ✓ src/document/edits/pageProperties14q5.test.ts (12 tests) 53ms
+ ✓ src/sheet/review-regressions.test.ts (3 tests) 53ms
+ ✓ src/document/edits/selectionSurface.test.ts (6 tests) 39ms
+ ✓ src/editor/exportText.test.ts (17 tests) 42ms
+ ✓ src/guideResolve.test.ts (5 tests) 38ms
+ ✓ src/editor/leadingMarkerSplice.test.ts (5 tests) 44ms
+ ✓ src/graphConfigChange.test.ts (8 tests) 45ms
+ ✓ src/currentPage.authoredId.test.ts (4 tests) 43ms
+ ✓ src/document/host/settle.test.ts (17 tests) 45ms
+ ✓ src/editor/editablePropertyKeys.test.ts (3 tests) 48ms
+ ✓ src/changeKeys.test.ts (17 tests) 41ms
+ ✓ src/render/ogRTwins.test.ts (2 tests) 42ms
+ ✓ src/spellcheckLanguageName.test.ts (1 test) 38ms
+ ✓ src/conflictQueue.test.ts (6 tests) 45ms
+ ✓ src/markers.test.ts (45 tests) 51ms
+ ✓ src/sheet/config.test.ts (15 tests) 40ms
+ ✓ src/favoritesLayout.test.ts (10 tests) 50ms
+ ✓ src/cmConformanceRefs.test.ts (1 test) 57ms
+ ✓ src/commentReviewQuery.test.ts (13 tests) 36ms
+ ✓ src/document/seenSnapshot.test.ts (4 tests) 41ms
+ ✓ src/components/legacyQueryTable.test.ts (6 tests) 37ms
+ ✓ src/ui.writeFailures.test.ts (11 tests) 50ms
+ ✓ src/session.windows.test.ts (7 tests) 40ms
+ ✓ src/editor/review-gh741.test.ts (4 tests) 38ms
+ ✓ src/favoritesIdentity.test.ts (7 tests) 44ms
+ ✓ src/document/edits/propertyDeclaration.test.ts (4 tests) 50ms
+ ✓ src/document/ogDupal2.test.ts (1 test) 33ms
+ ✓ src/journalFeedDiagnostic.test.ts (5 tests) 35ms
+ ✓ src/render/block.test.ts (21 tests) 44ms
+ ✓ src/editor/annotation.test.ts (20 tests) 49ms
+ ✓ src/pageIconImage.test.ts (45 tests) 40ms
+ ✓ src/editor/nearestLink.test.ts (15 tests) 45ms
+ ✓ src/editor/marker.test.ts (9 tests) 32ms
+ ✓ src/render/pageRefs.test.ts (7 tests) 42ms
+ ✓ src/render/spans.test.ts (16 tests) 38ms
+ ✓ src/render/quoteHighlight.test.ts (1 test) 41ms
+ ✓ src/exportsPage.test.ts (6 tests) 42ms
+ ✓ src/document/host/reviewAncestorTiming.test.ts (12 tests) 45ms
+ ✓ src/owned.test.ts (10 tests) 40ms
+ ✓ src/copyImage.test.ts (12 tests) 48ms
+ ✓ src/render/facetsParity.test.ts (26 tests) 51ms
+ ✓ src/gitIgnoreNotice.test.ts (5 tests) 38ms
+ ✓ src/editor/exportOpml.test.ts (3 tests) 41ms
+ ✓ src/assetLanding.test.ts (2 tests) 32ms
+ ✓ src/changeSummary.test.ts (11 tests) 40ms
+ ✓ src/editor/exportHtml.test.ts (6 tests) 48ms
+ ✓ src/editor/exportRegions.test.ts (2 tests) 42ms
+ ✓ src/editor/format.test.ts (35 tests) 43ms
+ ✓ src/editor/regionRegression.test.ts (2 tests) 37ms
+stdout | src/navSettings.budget.test.ts > loads and toggles Workspaces with bounded frontend time and one IPC each
+preference load: median_ms=0.04460299999999506 samples_ms=[0.029334000000005744,0.02994499999999789,0.03326199999997925,0.033722000000011576,0.034154000000000906,0.034504000000026736,0.03824099999997088,0.03904299999999239,0.04460299999999506,0.04654699999997547,0.05239699999998493,0.05349899999998797,0.06788599999998723,0.07520999999997002,0.12380000000001701,0.17939400000000205]
+preference toggle: median_ms=0.010079000000018823 samples_ms=[0.005670000000009168,0.006862000000012358,0.00742400000001453,0.007734000000027663,0.007874000000015258,0.00799499999999398,0.008425999999985834,0.008776000000011663,0.010079000000018823,0.01034900000001926,0.010679999999979373,0.011370999999996911,0.011451000000022304,0.01336500000002161,0.016832000000022163,0.05536299999999983]
+
+ ✓ src/navSettings.budget.test.ts (1 test) 36ms
+ ✓ src/components/Sidebar.graphSwitcher.test.ts (5 tests) 40ms
+ ✓ src/media.test.ts (13 tests) 42ms
+ ✓ src/blockId.test.ts (7 tests) 38ms
+ ✓ src/components/blockSwipeWiring.refs.test.ts (3 tests) 32ms
+ ✓ src/editableEmojiFont.test.ts (5 tests) 79ms
+ ✓ src/keybindings.macHistory.test.ts (1 test) 41ms
+ ✓ src/cmConformanceFileNames.test.ts (1 test) 36ms
+ ✓ src/render/emoji.test.ts (9 tests) 73ms
+ ✓ src/ogP12Parser.test.ts (4 tests) 40ms
+ ✓ src/conflictRoute.test.ts (2 tests) 27ms
+ ✓ src/g6bFixture.test.ts (1 test) 37ms
+ ✓ src/ui.migrationOwnership.test.ts (3 tests) 36ms
+ ✓ src/mediaEditorSettings.ownership.test.ts (3 tests) 33ms
+ ✓ src/cmPreamble.test.ts (2 tests) 37ms
+ ✓ src/plugins/revocationFixture.test.ts (3 tests) 40ms
+ ✓ src/logbook.test.ts (1 test) 40ms
+ ✓ src/parserFailures.test.ts (5 tests) 39ms
+ ✓ src/edgeSwipe.test.ts (20 tests) 44ms
+ ✓ src/guideLevelColors.test.ts (5 tests) 37ms
+ ✓ src/editor/edn.test.ts (4 tests) 40ms
+ ✓ src/components/pdfDocumentShare.test.ts (6 tests) 33ms
+ ✓ src/paneMoveTab.test.ts (8 tests) 38ms
+ ✓ src/backend.externalLinks.test.ts (4 tests) 38ms
+ ✓ src/clipboard.test.ts (10 tests) 41ms
+ ✓ src/copySettings.test.ts (1 test) 31ms
+ ✓ src/components/settingsInventory.test.ts (1 test) 31ms
+ ✓ src/gpu.test.ts (4 tests) 35ms
+ ✓ src/document/host/planner.test.ts (3 tests) 35ms
+ ✓ src/render/PeekPopup.test.ts (2 tests) 36ms
+ ✓ src/sheet/boardColumns.cost.test.ts (1 test) 39ms
+ ✓ src/preferenceWrites.test.ts (8 tests) 34ms
+ ✓ src/editor/queryDisplayDraft.test.ts (33 tests) 41ms
+ ✓ src/editor/selectionActions.test.ts (11 tests) 31ms
+ ✓ src/sheet/exportSheets.test.ts (4 tests) 41ms
+ ✓ src/editor/linkDefault.test.ts (5 tests) 39ms
+ ✓ src/publishedPermalink.test.ts (6 tests) 1371ms
+   ✓ opens a page permalink with the link's canonical owner:  /CAFÉ/   347ms
+ ✓ src/ui.lateResults.test.ts (5 tests) 39ms
+ ✓ src/sheet/sheetRows.test.ts (2 tests) 32ms
+ ✓ src/graphSession.ownership.test.ts (4 tests) 37ms
+ ✓ src/mediaMime.test.ts (2 tests) 29ms
+ ✓ src/document/identityCollision.ogDupd1.test.ts (2 tests) 38ms
+ ✓ src/editorController.test.ts (6 tests) 31ms
+ ✓ src/gitLifecycle.test.ts (7 tests) 38ms
+ ✓ src/blockIdentity.test.ts (5 tests) 32ms
+ ✓ src/editor/queryViewProperties.test.ts (7 tests) 34ms
+ ✓ src/referenceFilters.test.ts (12 tests) 35ms
+ ✓ src/sheet/ogDupd3Codecs.test.ts (5 tests) 43ms
+ ✓ src/pageIconBatch.loaded.test.ts (2 tests) 33ms
+ ✓ src/logbook.rnCf.test.ts (4 tests) 36ms
+ ✓ src/pageSelect.test.ts (1 test) 33ms
+ ✓ src/settingsLayout.test.ts (1 test) 35ms
+ ✓ src/session.tabTree.test.ts (6 tests) 38ms
+ ✓ src/pdfRoutePersistence.test.ts (3 tests) 31ms
+ ✓ src/editor/propertyCompletionSession.test.ts (5 tests) 39ms
+ ✓ src/allPagesList.test.ts (14 tests) 32ms
+ ✓ src/tray.test.ts (2 tests) 32ms
+ ✓ src/i18n/laneA.test.ts (2 tests) 35ms
+ ✓ src/zoom.test.ts (6 tests) 47ms
+ ✓ src/components/queryMacroSupport.test.ts (4 tests) 26ms
+ ✓ src/persistence.test.ts (1 test) 47ms
+ ✓ src/plugins/ownership.test.ts (2 tests) 42ms
+ ✓ src/render/imageMeta.test.ts (4 tests) 28ms
+ ✓ src/components/authorRuns.test.ts (4 tests) 42ms
+ ✓ src/render/rnCf.test.ts (4 tests) 32ms
+ ✓ src/mediaEditors.test.ts (4 tests) 29ms
+ ✓ src/components/popoverFit.test.ts (9 tests) 31ms
+ ✓ src/components/pdfRenderQueue.test.ts (8 tests) 36ms
+ ✓ src/editor/queryListOptions.test.ts (8 tests) 33ms
+ ✓ src/exportComments.test.ts (3 tests) 37ms
+ ✓ src/styles/topbarTiers.test.ts (4 tests) 26ms
+ ✓ src/components/BlockList.partition.test.ts (6 tests) 36ms
+ ✓ src/sheet/tablePresentation.test.ts (2 tests) 23ms
+ ✓ src/pdfExportPlatform.test.ts (1 test) 31ms
+ ✓ src/mockTags.test.ts (3 tests) 22ms
+ ✓ src/captureSeed.test.ts (2 tests) 39ms
+ ✓ src/document/revealNode.test.ts (1 test) 37ms
+ ✓ src/systemInsets.test.ts (5 tests) 32ms
+ ✓ src/ogDupf05.test.ts (2 tests) 28ms
+ ✓ src/document/moveFlag.test.ts (1 test) 30ms
+ ↓ src/perfResidue.retention.test.ts (1 test | 1 skipped)
+ ↓ src/g6bProjection.test.ts (1 test | 1 skipped)
+ ✓ src/editKind.test.ts (2 tests) 32ms
+ ↓ src/propertyWriterCorpus.test.ts (1 test | 1 skipped)
+ ✓ src/autoPairDefault.test.ts (2 tests) 1331ms
+   ✓ auto-pairing default (GH #291) > is on for a device that never chose  557ms
+   ✓ auto-pairing default (GH #291) > keeps an explicit opt-out across a reload, and an opt-in back on  498ms
+ ✓ src/typographyDefault.test.ts (2 tests) 1585ms
+   ✓ typographic replacements default (GH #583) > is off for a device that never chose  566ms
+   ✓ typographic replacements default (GH #583) > keeps an explicit opt-in to either glyph mode across a reload, and an opt-out back off  726ms
+ ✓ src/shareIngest.test.ts (22 tests) 316ms
+ ✓ src/session.restoreDecision.test.ts (3 tests) 83ms
+ ✓ src/systemBars.test.ts (8 tests) 2686ms
+   ✓ Android system-bar theme synchronization > extracts the painted background and follows live stylesheet and mode changes  677ms
+   ✓ Android system-bar theme synchronization > reports soft-keyboard visibility to the page under the event the dock listens for  1560ms
+ ✓ src/router.restoreScroll.test.ts (21 tests) 97ms
+ ✓ src/inpageReplace.test.ts (14 tests) 233ms
+ ✓ src/inpageFind.test.ts (14 tests) 169ms
+ ✓ src/components/pdfTiles.test.ts (4 tests) 143ms
+ ✓ src/editor/caretReveal.test.ts (55 tests) 259ms
+ ✓ src/editor/cm6CaretReveal.test.ts (1 test) 215ms
+ ✓ src/ui.focusOwnership.test.ts (1 test) 65ms
+ ✓ src/zoomDesktop.test.ts (1 test) 124ms
+ ✓ src/sheet/mutations.test.ts (43 tests) 191ms
+ ✓ src/keybindings.multiple.test.ts (4 tests) 41ms
+ ✓ src/contentWidth.test.ts (5 tests) 28ms
+ ✓ src/router.scrollOwnership.test.ts (2 tests) 36ms
+ ✓ src/editor/historyViewport.test.ts (3 tests) 18ms
+ ✓ src/zoomIos.test.ts (1 test) 16ms
+ ✓ src/zoomPlatform.test.ts (2 tests) 15ms
+ ✓ src/keybindings.hidden.test.ts (1 test) 14ms
+
+⎯⎯⎯⎯⎯⎯⎯ Failed Tests 4 ⎯⎯⎯⎯⎯⎯⎯
+
+ FAIL  src/cm6PassSelection.test.ts > CM6 pass file selection > selects exactly the tests whose runtime imports reach an overridden module, global or patched member
+TypeError: default.globSync is not a function
+ ❯ scripts/lib/test-import-graph.mjs:109:59
+    107|  * `root`, with `/` separators (they are vitest globs). */
+    108| export function testFilesObservingSetup({ root, include, setupFile }) {
+    109|   const tests = [...new Set(include.flatMap(pattern => fs.globSync(pat…
+       |                                                           ^
+    110|     .filter(file => !file.split(path.sep).includes("node_modules"))
+    111|     .map(file => path.resolve(root, file));
+ ❯ Module.testFilesObservingSetup scripts/lib/test-import-graph.mjs:109:37
+ ❯ src/cm6PassSelection.test.ts:47:12
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[1/4]⎯
+
+ FAIL  src/cm6PassSelection.test.ts > CM6 pass file selection > runs every editor-mounting render test of this repository and skips the rest
+TypeError: default.globSync is not a function
+ ❯ scripts/lib/test-import-graph.mjs:109:59
+    107|  * `root`, with `/` separators (they are vitest globs). */
+    108| export function testFilesObservingSetup({ root, include, setupFile }) {
+    109|   const tests = [...new Set(include.flatMap(pattern => fs.globSync(pat…
+       |                                                           ^
+    110|     .filter(file => !file.split(path.sep).includes("node_modules"))
+    111|     .map(file => path.resolve(root, file));
+ ❯ Module.testFilesObservingSetup scripts/lib/test-import-graph.mjs:109:37
+ ❯ src/cm6PassSelection.test.ts:54:22
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[2/4]⎯
+
+ FAIL  src/viteWatchIgnore.guard.test.ts > vite watcher > ignores target/ and toolchain build dirs
+Error: EROFS: read-only file system, open '/aux/koutecky/logseq/tine-agent-worktrees/batch-exp-impl-B-opus-med/node_modules/.vite-temp/vite.config.ts.timestamp-1795426420351-dd0131b8893dd.mjs'
+ ❯ loadConfigFromBundledFile ../../tine-og/node_modules/vite/dist/node/chunks/dep-Dm0c1Wj2.js:49588:5
+ ❯ bundleAndLoadConfigFile ../../tine-og/node_modules/vite/dist/node/chunks/dep-Dm0c1Wj2.js:49433:22
+ ❯ loadConfigFromFile ../../tine-og/node_modules/vite/dist/node/chunks/dep-Dm0c1Wj2.js:49396:44
+ ❯ resolveConfig ../../tine-og/node_modules/vite/dist/node/chunks/dep-Dm0c1Wj2.js:48891:24
+ ❯ src/viteWatchIgnore.guard.test.ts:13:20
+     11| describe("vite watcher", () => {
+     12|   it("ignores target/ and toolchain build dirs", async () => {
+     13|     const config = await resolveConfig({ configFile: new URL("../vite.…
+       |                    ^
+     14|     const ignored = (config.server.watch?.ignored ?? []) as string[];
+     15|     for (const pattern of ["**/target/**", "**/.toolchain/**"]) {
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[3/4]⎯
+
+ FAIL  src/viteWatchIgnore.guard.test.ts > vite watcher > does not acquire watches for journey artifacts, but still watches sources
+Error: EROFS: read-only file system, open '/aux/koutecky/logseq/tine-agent-worktrees/batch-exp-impl-B-opus-med/node_modules/.vite-temp/vite.config.ts.timestamp-1795426420383-4bcc2e204c21.mjs'
+ ❯ loadConfigFromBundledFile ../../tine-og/node_modules/vite/dist/node/chunks/dep-Dm0c1Wj2.js:49588:5
+ ❯ bundleAndLoadConfigFile ../../tine-og/node_modules/vite/dist/node/chunks/dep-Dm0c1Wj2.js:49433:22
+ ❯ loadConfigFromFile ../../tine-og/node_modules/vite/dist/node/chunks/dep-Dm0c1Wj2.js:49396:44
+ ❯ resolveConfig ../../tine-og/node_modules/vite/dist/node/chunks/dep-Dm0c1Wj2.js:48891:24
+ ❯ _createServer ../../tine-og/node_modules/vite/dist/node/chunks/dep-Dm0c1Wj2.js:38478:66
+ ❯ src/viteWatchIgnore.guard.test.ts:26:20
+     24|     const fixture = mkdtempSync(path.join(artifacts, "vite-watch-"));
+     25|     mkdirSync(path.join(fixture, "graph", "pages"), { recursive: true …
+     26|     const server = await createServer({ root, server: { middlewareMode…
+       |                    ^
+     27|     try {
+     28|       await vi.waitFor(() => expect(Object.keys(server.watcher.getWatc…
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[4/4]⎯
+
+
+ Test Files  2 failed | 398 passed | 3 skipped (403)
+      Tests  4 failed | 4418 passed | 4 skipped (4426)
+   Start at  09:32:46
+   Duration  108.37s (transform 7.11s, setup 2.96s, collect 120.12s, tests 199.41s, environment 10.91s, prepare 22.87s)
+

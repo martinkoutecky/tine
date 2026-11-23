@@ -134,16 +134,29 @@ export function preserveAboveViewport(el: Element, change: () => void, root?: El
   // A containing spacer can absorb a nested group's growth. Its own bottom
   // moving then says nothing about the reader. Hit-test a stable visible row
   // instead; a bounded number of probes avoids scanning mounted/page rows.
-  let anchor: Element | null = null;
-  for (const inset of [2, 32, 64]) {
-    const hit = elementFromPointIn(root, viewport.left + viewport.width / 2, viewport.top + inset);
+  // GH #944: a probe that lands on something which cannot hold the reader
+  // continues just below it rather than at a fixed inset: below this box when
+  // it straddles the top (its own rows change), below a pinned ancestor header
+  // (it never moves with the content; three pins cover 90 px), and below
+  // another query (every mounted query reruns in the same turn, and this root
+  // shares one snapshot). A row of another query is kept only as a fallback.
+  let anchor: Element | null = null, fallback: Element | null = null;
+  const x = viewport.left + viewport.width / 2;
+  for (let probe = 0, y = viewport.top + 2; probe < 8 && !(y >= viewport.bottom); probe++) {
+    let next = y + (y < viewport.top + 32 ? 30 : 32);
+    if (y >= box.top && y < box.bottom) { y = box.bottom + 1; continue; }
+    const hit = elementFromPointIn(root, x, y);
     const candidate = hit?.closest(".block-main, h1, .query-header") ?? hit;
-    // A pinned ancestor header never moves with the content, so it measures nothing.
-    if (candidate && root.contains(candidate) && !candidate.contains(el) && !el.contains(candidate) && !candidate.closest(".sticky-ancestor")) {
-      anchor = candidate;
-      break;
+    if (candidate && root.contains(candidate) && !candidate.contains(el)) {
+      const skip = el.contains(candidate) ? el : candidate.closest(".sticky-ancestor, .query-block");
+      if (!skip) { anchor = candidate; break; }
+      if (skip !== el && !skip.matches(".sticky-ancestor")) fallback ??= candidate;
+      const edge = skip === el ? bottom : skip.getBoundingClientRect().bottom;
+      if (edge >= y) next = edge + 1;
     }
+    y = next;
   }
+  anchor ??= fallback;
   const anchorTop = anchor?.getBoundingClientRect().top;
   adjusting.add(root);
   try {

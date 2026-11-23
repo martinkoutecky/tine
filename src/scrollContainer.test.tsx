@@ -1,4 +1,4 @@
-import { afterEach, expect, it, vi } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import { batchViewportChanges, cachedScrollContainer, preserveAboveViewport, scrollContainer, trackViewportAnchor } from "./scrollContainer";
 import { observeNear, resetNearObserverForTests } from "./lazyObserve";
 import { createSignal, createRoot } from "solid-js";
@@ -245,4 +245,60 @@ it("anchors on flowing content, not on a pinned ancestor header at the top of th
     await Promise.resolve();
     expect(scroll).toBe(416);
   } finally { Reflect.deleteProperty(document, "elementFromPoint"); }
+});
+
+// GH #944 residual (review of 4ed1c2f7b, traced on WebKitGTK): fixed probes at 2, 32 and 64 px found no anchor when the
+// rerunning query straddled the view top (every probe hit its own rows) or when three pinned ancestors (30 px each)
+// covered all three probes, and an anchor inside a second query that reruns in the same turn moved with that query.
+// Geometry is stubbed (jsdom has no layout): view 0..600, pins stacked at the top, the queries, then the reader.
+describe("GH #944: the reader's text holds when a query above it reruns", () => {
+  const cases = [0, 1, 2, 3, 4].flatMap(pins => (["straddle", "above"] as const).flatMap(place => [1, 2].map(queries => ({ pins, place, queries }))));
+  it.each(cases)("$pins pins, the query $place the top, $queries queries changing", async ({ pins, place, queries }) => {
+    const root = document.createElement("div"), reader = document.createElement("div");
+    reader.className = "block-main";
+    const query = (): [HTMLElement, HTMLElement] => {
+      const host = document.createElement("div"), row = document.createElement("div");
+      host.className = "query-block"; row.className = "block-main"; host.append(row);
+      return [host, row];
+    };
+    const [a, aRow] = query(), [b, bRow] = query();
+    const headers = Array.from({ length: pins }, () => {
+      const sticky = document.createElement("div"), button = document.createElement("button");
+      sticky.className = "sticky-ancestor"; sticky.append(button);
+      return sticky;
+    });
+    root.append(...headers, a, ...(queries === 2 ? [b] : []), reader); document.body.append(root);
+    let scroll = 500, shrinkA = 0, shrinkB = 0;
+    Object.defineProperty(root, "scrollTop", { configurable: true, get: () => scroll, set: value => { scroll = value; } });
+    const pinned = pins * 30;
+    const geometry = () => {
+      const shift = scroll - 500;
+      const aTop = (place === "above" ? -400 : -200) - shift;
+      const aBottom = (place === "above" ? -100 : pinned + 100) - shrinkA - shift;
+      const bTop = (place === "above" ? pinned + 5 : pinned + 110) - shrinkA - shift, bBottom = bTop + 100 - shrinkB;
+      const reader = (place === "above" ? pinned + 10 : pinned + 110) + (queries === 2 ? 105 : 0) - shrinkA - shrinkB - shift;
+      return { aTop, aBottom, bTop, bBottom, reader };
+    };
+    vi.spyOn(root, "getBoundingClientRect").mockReturnValue({ top: 0, bottom: 600, left: 0, width: 400 } as DOMRect);
+    headers.forEach((sticky, i) => vi.spyOn(sticky, "getBoundingClientRect").mockReturnValue({ top: i * 30, bottom: i * 30 + 30 } as DOMRect));
+    vi.spyOn(a, "getBoundingClientRect").mockImplementation(() => ({ top: geometry().aTop, bottom: geometry().aBottom }) as DOMRect);
+    vi.spyOn(b, "getBoundingClientRect").mockImplementation(() => ({ top: geometry().bTop, bottom: geometry().bBottom }) as DOMRect);
+    vi.spyOn(reader, "getBoundingClientRect").mockImplementation(() => ({ top: geometry().reader }) as DOMRect);
+    for (const row of [aRow, bRow]) vi.spyOn(row, "getBoundingClientRect").mockImplementation(() => ({ top: (row === aRow ? geometry().aTop : geometry().bTop) }) as DOMRect);
+    Object.defineProperty(document, "elementFromPoint", { configurable: true, value: (_x: number, y: number) => {
+      const g = geometry();
+      if (y < pinned) return headers[Math.floor(y / 30)].firstElementChild;
+      if (y >= g.aTop && y < g.aBottom) return aRow;
+      if (queries === 2 && y >= g.bTop && y < g.bBottom) return bRow;
+      return y >= g.reader ? reader : root;
+    } });
+    try {
+      const before = geometry().reader;
+      expect(before).toBeLessThan(600);
+      preserveAboveViewport(a, () => { shrinkA = 84; }, root, true);
+      if (queries === 2) preserveAboveViewport(b, () => { shrinkB = 40; }, root, true);
+      await Promise.resolve();
+      expect(geometry().reader).toBe(before);
+    } finally { Reflect.deleteProperty(document, "elementFromPoint"); }
+  });
 });

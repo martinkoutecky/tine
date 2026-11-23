@@ -1,0 +1,17 @@
+failed to load config from /aux/koutecky/logseq/tine-agent-worktrees/batch-exp-impl-B-opus-med/vitest.cm6.config.ts
+
+⎯⎯⎯⎯⎯⎯⎯ Startup Error ⎯⎯⎯⎯⎯⎯⎯⎯
+TypeError: __vite_ssr_import_0__.default.globSync is not a function
+    at eval (/aux/koutecky/logseq/tine-agent-worktrees/batch-exp-impl-B-opus-med/scripts/lib/test-import-graph.mjs:112:86)
+    at Array.flatMap (<anonymous>)
+    at testFilesObservingSetup (/aux/koutecky/logseq/tine-agent-worktrees/batch-exp-impl-B-opus-med/scripts/lib/test-import-graph.mjs:112:37)
+    at eval (/aux/koutecky/logseq/tine-agent-worktrees/batch-exp-impl-B-opus-med/vitest.cm6.config.ts:15:63)
+    at async ESModulesEvaluator.runInlinedModule (file:///aux/koutecky/logseq/tine-og/node_modules/vite/dist/node/module-runner.js:1062:5)
+    at async ModuleRunner.directRequest (file:///aux/koutecky/logseq/tine-og/node_modules/vite/dist/node/module-runner.js:1284:61)
+    at async ModuleRunner.cachedRequest (file:///aux/koutecky/logseq/tine-og/node_modules/vite/dist/node/module-runner.js:1180:76)
+    at async ModuleRunner.import (file:///aux/koutecky/logseq/tine-og/node_modules/vite/dist/node/module-runner.js:1117:12)
+    at async runnerImport (file:///aux/koutecky/logseq/tine-og/node_modules/vite/dist/node/chunks/dep-Dm0c1Wj2.js:48558:20)
+    at async runnerImportConfigFile (file:///aux/koutecky/logseq/tine-og/node_modules/vite/dist/node/chunks/dep-Dm0c1Wj2.js:49424:36)
+
+
+
