@@ -320,3 +320,29 @@ it("the browser core refuses what the desktop open refuses", () => {
   expect(JSON.parse(icloud.config_problem_json())).toMatchObject({ kind: "config-read" });
   icloud.free();
 });
+
+// A browser edit (slice 5a): a submit serializes with the store's one page
+// serializer over the current text, replaces the file, and the next read is
+// the new text; the version it was typed on is then stale.
+it("a submitted page is read back as its new text", () => {
+  const graph = open([["pages/Note.md", "- first\n- second\n"]]);
+  try {
+    const page = JSON.parse(graph.get_page_json("Note", false));
+    page.blocks[0].raw = "edited";
+    const answer = JSON.parse(graph.submit_page_json("pages/Note.md", JSON.stringify(page), 1n));
+    expect(answer).toMatchObject({
+      written: { path: "pages/Note.md", text: "- edited\n- second\n", version: 2 },
+    });
+    expect(answer.written.pages).toEqual([
+      { path: "pages/Note.md", name: "Note", kind: "page", created: false, removed: false },
+    ]);
+    expect(JSON.parse(graph.get_page_json("Note", false))).toMatchObject({
+      id: "pages/Note.md",
+      blocks: [{ raw: "edited" }, { raw: "second" }],
+    });
+    const stale = JSON.parse(graph.submit_page_json("pages/Note.md", JSON.stringify(page), 1n));
+    expect(stale).toEqual({ refused: { reason: "not-admitted" } });
+  } finally {
+    graph.free();
+  }
+});

@@ -318,6 +318,7 @@ pub(super) fn snapshot_graph(snapshot: &Value) -> tine_store::WholeGraph {
                 )
             })
             .collect(),
+        Vec::new(),
     )
     .unwrap()
     .0

@@ -9,6 +9,7 @@
 use super::Graph;
 use indexmap::IndexMap;
 use std::borrow::Cow;
+use std::collections::HashSet;
 use std::fs;
 use std::io;
 use std::path::{Path, PathBuf};
@@ -20,6 +21,9 @@ use tine_core::date::JournalFormat;
 /// The root of every memory graph: an absolute path no read leaves (a read
 /// that bypassed the source would find nothing there).
 pub(crate) const MEMORY_ROOT: &str = "/tine-memory-graph";
+
+/// The graph-relative config file an open reads.
+pub(crate) const CONFIG_FILE: &str = "logseq/config.edn";
 
 #[derive(Clone, Default)]
 pub(crate) enum FileSource {
@@ -47,6 +51,10 @@ impl AsRef<[u8]> for SharedBytes {
 /// source file's, for an export), which recency queries read.
 pub(crate) type MemoryFile = (String, Content, Option<SystemTime>);
 
+/// One memory-file change ([`Files::replace`]): a key and the content and
+/// time it now holds, or `None` to delete the file.
+pub(crate) type MemoryChange = (String, Option<(Content, Option<SystemTime>)>);
+
 /// The longest file name the reference volume holds (POSIX `NAME_MAX`).
 const NAME_MAX: usize = 255;
 
@@ -55,6 +63,8 @@ const NAME_MAX: usize = 255;
 pub(crate) struct Files {
     root: PathBuf,
     nodes: Vec<Node>,
+    /// Nodes a deletion freed, reused before the arena grows.
+    free: Vec<usize>,
 }
 
 enum Node {
@@ -62,6 +72,14 @@ enum Node {
     /// Children by name, in the order they were given (the listing's); each
     /// name held once. Boxed, so a file's node stays small.
     Dir(Box<IndexMap<Box<str>, usize>>),
+}
+
+impl Node {
+    /// What a freed node holds until [`Files::add`] reuses it: no name
+    /// reaches it.
+    fn freed() -> Node {
+        Node::File(Content::Bytes(Arc::default()), None)
+    }
 }
 
 /// A memory file name: one the reference volume (case-sensitive POSIX)
@@ -92,6 +110,7 @@ impl Files {
         let mut out = Files {
             root: root.to_path_buf(),
             nodes: vec![Node::Dir(Box::default())],
+            free: Vec::new(),
         };
         let invalid = |rel: &str, why: &str| {
             io::Error::new(io::ErrorKind::InvalidInput, format!("{why}: {rel:?}"))
@@ -133,13 +152,119 @@ impl Files {
     }
 
     fn add(&mut self, at: usize, name: &str, node: Node) -> usize {
-        let id = self.nodes.len();
-        self.nodes.push(node);
+        let id = match self.free.pop() {
+            Some(id) => {
+                self.nodes[id] = node;
+                id
+            }
+            None => {
+                self.nodes.push(node);
+                self.nodes.len() - 1
+            }
+        };
         let Node::Dir(children) = &mut self.nodes[at] else {
             unreachable!("a child is added to a directory")
         };
         children.insert(name.into(), id);
         id
+    }
+
+    /// Apply `changes`, all or none, under Q1's key rules: a key is
+    /// canonical and named once; no key is another key's ancestor, in the
+    /// batch or in the tree (a write neither passes through a file nor
+    /// replaces a directory); a deleted key is a file (`NotFound`). Other
+    /// refusals are `InvalidInput`. A deleted file's directories that become
+    /// empty go: a reference listing holds no empty directory. Returns, per
+    /// change in order, its inverse (`None` where the key was absent):
+    /// applying them restores the files. O(changed key bytes, plus the
+    /// siblings of each removed name).
+    pub(crate) fn replace(&mut self, changes: Vec<MemoryChange>) -> io::Result<Vec<MemoryChange>> {
+        let invalid = |rel: &str, why: &str| {
+            io::Error::new(io::ErrorKind::InvalidInput, format!("{why}: {rel:?}"))
+        };
+        let both = "a path is both a file and a directory";
+        let (mut keys, mut dirs) = (HashSet::new(), HashSet::new());
+        for (rel, change) in &changes {
+            if !rel.split('/').all(canonical_name) {
+                return Err(invalid(rel, "not a graph-relative file path"));
+            }
+            if !keys.insert(rel.as_str()) {
+                return Err(invalid(rel, "a path is given twice"));
+            }
+            let (mut at, mut end) = (Some(0), 0);
+            let mut names = rel.split('/').peekable();
+            while let Some(name) = names.next() {
+                let last = names.peek().is_none();
+                at = at.and_then(|i| self.child(i, name));
+                if at.is_some_and(|i| self.is_dir(i) == last) {
+                    return Err(invalid(rel, both));
+                }
+                end += name.len();
+                if !last {
+                    dirs.insert(&rel[..end]);
+                    end += 1;
+                }
+            }
+            if at.is_none() && change.is_none() {
+                return Err(not_found(&self.root.join(rel)));
+            }
+        }
+        if let Some(rel) = keys.iter().find(|key| dirs.contains(*key)) {
+            return Err(invalid(rel, both));
+        }
+        Ok((changes.into_iter())
+            .map(|(rel, change)| {
+                let before = self.put(&rel, change);
+                (rel, before)
+            })
+            .collect())
+    }
+
+    /// Write or delete the file at a key [`Self::replace`] admitted; the
+    /// file it held.
+    fn put(
+        &mut self,
+        rel: &str,
+        change: Option<(Content, Option<SystemTime>)>,
+    ) -> Option<(Content, Option<SystemTime>)> {
+        let names: Vec<&str> = rel.split('/').collect();
+        let (mut dirs, mut at) = (Vec::with_capacity(names.len()), 0);
+        for (depth, name) in names.iter().enumerate() {
+            dirs.push(at);
+            at = match (self.child(at, name), depth + 1 == names.len()) {
+                (Some(i), _) => i,
+                (None, false) => self.add(at, name, Node::Dir(Box::default())),
+                (None, true) => {
+                    let (content, modified) = change.expect("a deleted key exists");
+                    self.add(at, name, Node::File(content, modified));
+                    return None;
+                }
+            };
+        }
+        let deleted = change.is_none();
+        let node = match change {
+            Some((content, modified)) => Node::File(content, modified),
+            None => Node::freed(),
+        };
+        let Node::File(content, modified) = std::mem::replace(&mut self.nodes[at], node) else {
+            unreachable!("an admitted key names a file")
+        };
+        if deleted {
+            self.free.push(at);
+            // Unlink the name, then each directory the deletion empties.
+            for (depth, &dir) in dirs.iter().enumerate().rev() {
+                let Node::Dir(children) = &mut self.nodes[dir] else {
+                    unreachable!("a key's ancestors are directories")
+                };
+                children.shift_remove(names[depth]);
+                if !children.is_empty() || dir == 0 {
+                    break;
+                }
+                self.nodes[dir] = Node::freed();
+                self.free.push(dir);
+            }
+        }
+        Some((content, modified))
     }
 
     /// The node `path` names, by one walk from the root, with the errors the
@@ -416,6 +541,69 @@ impl Graph {
         let graph = Self::open_from(root, FileSource::Memory(Arc::new(files)));
         graph.check_layout()?;
         Ok(graph)
+    }
+
+    /// Replace files of a graph [`Self::in_memory_with_config`] built
+    /// ([`Files::replace`]). With `logseq/config.edn` among them the config
+    /// is read again as an open reads it, and the layout is then checked as
+    /// an open checks it. All or none: a refusal restores the files and the
+    /// config. Returns each change's inverse (`None`: the key was absent)
+    /// and whether the config was read again. The page cache is not touched:
+    /// the caller reconciles the changed files.
+    pub(crate) fn replace_memory_files(
+        &mut self,
+        changes: Vec<MemoryChange>,
+    ) -> io::Result<(Vec<MemoryChange>, bool)> {
+        let reread = changes.iter().any(|(rel, _)| rel == CONFIG_FILE);
+        let undo = self.memory_files()?.replace(changes)?;
+        let before = reread.then(|| {
+            let path = self.root.join(CONFIG_FILE);
+            let read = super::read_config_in(&self.source, &path);
+            self.set_config_read(read)
+        });
+        if let Err(error) = self.check_layout() {
+            if let Some(before) = before {
+                self.set_config_read(before);
+            }
+            let mut inverse = undo;
+            inverse.reverse();
+            (self.memory_files()?.replace(inverse)).expect("an inverse change applies");
+            return Err(error);
+        }
+        if reread {
+            self.install_config(self.config.clone());
+        }
+        Ok((undo, reread))
+    }
+
+    fn memory_files(&mut self) -> io::Result<&mut Files> {
+        match &mut self.source {
+            FileSource::Memory(files) => Arc::get_mut(files)
+                .ok_or_else(|| io::Error::other("a memory graph's files are shared")),
+            FileSource::Disk => Err(io::Error::new(
+                io::ErrorKind::Unsupported,
+                "only a memory graph's files are replaced",
+            )),
+        }
+    }
+
+    /// The bytes a memory graph holds at `path` (a document serialized),
+    /// shared; `None` when no file is there. O(1) for held bytes.
+    pub(crate) fn memory_bytes(&self, path: &Path) -> io::Result<Option<Arc<Vec<u8>>>> {
+        let FileSource::Memory(files) = &self.source else {
+            return Err(io::Error::new(
+                io::ErrorKind::Unsupported,
+                "not a memory graph",
+            ));
+        };
+        match files.file(path) {
+            Ok((Content::Bytes(bytes), _)) => Ok(Some(Arc::clone(bytes))),
+            Ok((Content::Document(document), _)) => {
+                Ok(Some(Arc::new(serialized(document, path).into_bytes())))
+            }
+            Err(error) if error.kind() == io::ErrorKind::NotFound => Ok(None),
+            Err(error) => Err(error),
+        }
     }
 
     /// A graph of `files` (graph-relative path, document, modification time)

@@ -21,6 +21,16 @@ pub(super) fn counted_parse() {
     SAVE_WORK.with(|w| w.set((w.get().0 + 1, w.get().1)));
 }
 
+/// This thread's whole-document parses since the last call (tests).
+#[cfg(test)]
+pub(crate) fn take_parses() -> usize {
+    SAVE_WORK.with(|w| {
+        let (parses, serializations) = w.get();
+        w.set((0, serializations));
+        parses
+    })
+}
+
 /// Count one whole-document serialization (a layout-retaining render or a
 /// whole-page serializer run).
 pub(super) fn counted_serialization() {

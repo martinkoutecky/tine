@@ -368,10 +368,13 @@ mod tests {
             :journal/page-title-format false :date-formatter "dd.MM.yyyy"
             :preferred-format "ORG" :file/name-format :triple-lowbar
             :start-of-week 1}"#;
-        let (graph, _) = WholeGraph::from_files(vec![
-            ("pages/Source.md".into(), b"- body\n".to_vec()),
-            (CONFIG_PATH.into(), source.as_bytes().to_vec()),
-        ])
+        let (graph, _) = WholeGraph::from_files(
+            vec![
+                ("pages/Source.md".into(), b"- body\n".to_vec()),
+                (CONFIG_PATH.into(), source.as_bytes().to_vec()),
+            ],
+            Vec::new(),
+        )
         .unwrap();
         let corpus = graph.corpus(None, true);
         let mut leaks = Vec::new();
@@ -498,10 +501,13 @@ mod tests {
             for key in keys {
                 let source =
                     format!("{{:start-of-week 1 {key} {value} :property-pages/enabled? false}}");
-                let (graph, _) = WholeGraph::from_files(vec![
-                    ("pages/Source.md".into(), b"- body\n".to_vec()),
-                    (CONFIG_PATH.into(), source.into_bytes()),
-                ])
+                let (graph, _) = WholeGraph::from_files(
+                    vec![
+                        ("pages/Source.md".into(), b"- body\n".to_vec()),
+                        (CONFIG_PATH.into(), source.into_bytes()),
+                    ],
+                    Vec::new(),
+                )
                 .unwrap();
                 let corpus = graph.corpus(None, true);
                 for quick_share in [false, true] {
@@ -594,6 +600,7 @@ mod tests {
                     )
                 })
                 .collect(),
+            Vec::new(),
         )
         .unwrap();
         let corpus = graph.corpus(None, true);
@@ -634,6 +641,7 @@ mod tests {
             (0..200)
                 .map(|i| (format!("pages/Page {i:03}.md"), body.as_bytes().to_vec()))
                 .collect(),
+            Vec::new(),
         )
         .unwrap();
         let selected = graph.corpus(None, true);
@@ -682,6 +690,7 @@ mod tests {
                 ("pages/Org.org", "* {{tine-query @page}} {{org-outer}}"),
                 ("logseq/config.edn", r#"{:macros {"query" "Private Query" "embed" "Private Embed" "tine-query" "Private TQL" "outer" "{{inner}}" "inner" "nested Markdown" "org-outer" "{{org-inner}}" "org-inner" "nested Org"}}"#),
             ].map(|(path, text)| (path.to_owned(), text.as_bytes().to_vec())).to_vec(),
+            Vec::new(),
         ).unwrap();
         let corpus = graph.corpus(None, true);
         let (_, _, files) = graph
@@ -721,7 +730,7 @@ mod tests {
 
     #[test]
     fn generated_home_normalizes_line_breaks_and_preserves_the_display_name() {
-        let (graph, _) = WholeGraph::from_files::<Vec<u8>>(vec![]).unwrap();
+        let (graph, _) = WholeGraph::from_files::<Vec<u8>>(vec![], Vec::new()).unwrap();
         let corpus = graph.corpus(None, true);
         for display in ["One\nTwo", "One\r\nTwo", "One\rTwo"] {
             let home = HomePage::new(&graph, &[], display).unwrap();
@@ -748,7 +757,7 @@ mod tests {
 
     #[test]
     fn writer_checks_opened_blocks_and_admits_sources_with_live_queries() {
-        let (graph, _) = WholeGraph::from_files::<Vec<u8>>(vec![]).unwrap();
+        let (graph, _) = WholeGraph::from_files::<Vec<u8>>(vec![], Vec::new()).unwrap();
         for (text, too_many_blocks) in [
             ("- x\n".repeat(crate::share_admission::MAX_BLOCKS + 1), true),
             ("- {{query (task TODO)}}\n".repeat(257), false),
@@ -834,9 +843,11 @@ mod tests {
     #[test]
     fn macros_in_page_opening_and_property_values_are_calls() {
         let source = "description:: {{header}}\n\nOpening {{opening}}\n\n- `{{literal}}`\n  example:: {{property}}\n";
-        let (graph, _) =
-            WholeGraph::from_files(vec![("pages/Source.md".into(), source.as_bytes().to_vec())])
-                .unwrap();
+        let (graph, _) = WholeGraph::from_files(
+            vec![("pages/Source.md".into(), source.as_bytes().to_vec())],
+            Vec::new(),
+        )
+        .unwrap();
         let config =
             Config::parse(r#"{:macros {"header" "" "opening" "" "property" "" "literal" ""}}"#);
         let names = page_macros(&graph.corpus(None, true), &config);
@@ -865,16 +876,19 @@ mod tests {
           "ignored" "private unused" "query" "private built-in"}}"#,
         );
         let config = Config::parse(&source);
-        let (graph, _) = WholeGraph::from_files(vec![
-            (
-                "pages/Source.md".into(),
-                b"- {{m1}} {{choose inner}} {{query (task TODO)}}".to_vec(),
-            ),
-            (
-                "pages/Other.org".into(),
-                b"* {{choose inner}} {{dual}}".to_vec(),
-            ),
-        ])
+        let (graph, _) = WholeGraph::from_files(
+            vec![
+                (
+                    "pages/Source.md".into(),
+                    b"- {{m1}} {{choose inner}} {{query (task TODO)}}".to_vec(),
+                ),
+                (
+                    "pages/Other.org".into(),
+                    b"* {{choose inner}} {{dual}}".to_vec(),
+                ),
+            ],
+            Vec::new(),
+        )
         .unwrap();
         let names = page_macros(&graph.corpus(None, true), &config);
         let reduced = reduced_config(&config, "Source", &names);
@@ -958,9 +972,11 @@ mod tests {
 
     #[test]
     fn source_admission_refuses_an_unreviewed_file_even_when_home_reads_back() {
-        let (selecting, _) =
-            WholeGraph::from_files(vec![("pages/Reviewed.md".into(), b"- body\n".to_vec())])
-                .unwrap();
+        let (selecting, _) = WholeGraph::from_files(
+            vec![("pages/Reviewed.md".into(), b"- body\n".to_vec())],
+            Vec::new(),
+        )
+        .unwrap();
         let corpus = selecting.corpus(None, true);
         let home = HomePage::new(&selecting, &corpus.pages, "Home").unwrap();
         let reviewed = ("pages/Reviewed.md".into(), Arc::new(b"- body\n".to_vec()));

@@ -70,7 +70,7 @@ mod tests {
             files.iter().map(|(path, text)| (path.len(), text.len())),
         )
         .unwrap();
-        let (graph, _) = WholeGraph::from_files(files).unwrap();
+        let (graph, _) = WholeGraph::from_files(files, Vec::new()).unwrap();
         check_blocks(
             graph
                 .corpus(None, false)

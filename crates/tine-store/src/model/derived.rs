@@ -1237,7 +1237,8 @@ impl Graph {
             .write()
             .unwrap()
             .insert(path.clone(), disk.rev);
-        if let Ok(mtime) = fs::metadata(&path).and_then(|meta| meta.modified()) {
+        // Through the source: a memory file carries its own time.
+        if let Some(mtime) = self.source.modified(&path) {
             Arc::make_mut(&mut self.derived.observed_mtimes.write().unwrap())
                 .insert(rel.clone(), mtime);
         }

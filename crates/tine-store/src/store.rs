@@ -404,6 +404,8 @@ pub(crate) use first_view::{contain_index_publication, journal_ids_from_entries}
 mod fold_save_tests;
 mod inventory;
 mod memory;
+#[cfg(test)]
+mod memory_replace_tests;
 mod query_request;
 #[cfg(test)]
 mod subgraph_tests;
@@ -2223,6 +2225,7 @@ impl WholeGraph {
             list: Arc::clone(&snapshot.list),
             claimants: Arc::clone(&snapshot.claimants),
             _snapshot: snapshot,
+            memory: None,
         }
     }
 }
@@ -2832,6 +2835,9 @@ pub struct WholeGraph {
     journal_format: Arc<JournalFormat>,
     pub(crate) list: Arc<EntryList>,
     claimants: Arc<SharedMap<(bool, String), Vec<PageEntry>>>,
+    /// The graph a view built from files reads ([`WholeGraph::from_files`]),
+    /// which [`WholeGraph::replace_files`] edits; `None` for every other view.
+    memory: Option<memory::MemoryGraph>,
 }
 
 mod template_names;

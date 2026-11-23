@@ -2,14 +2,28 @@
 //! (`subgraph`, under a live view's config) and the browser's graph
 //! (`from_files`, under its own `config.edn`), both published as a store's
 //! first publication is.
-use super::{ConfigState, GraphRev, Snapshot, WholeGraph};
+use super::snapshot::PendingFiles;
+use super::{Change, ChangeKind, ConfigState, FileRev, GraphRev, Origin, Snapshot, WholeGraph};
 use crate::model::file_source::{serialized, Content};
 use crate::model::Graph;
+use crate::{FileId, PageId, PageRefusal};
 use std::collections::HashMap;
 use std::io;
 use std::path::Path;
 use std::sync::{Arc, RwLock};
+use std::time::SystemTime;
 use tine_core::date::JournalFormat;
+use tine_core::model::PageDto;
+
+/// The graph a view built from files reads. Readers share it through `&`
+/// (its caches sit behind locks); only [`WholeGraph::replace_files`], with
+/// the one reference, edits it. A reader's panic so leaves no half-made
+/// state another reader sees, as with the rest of a view.
+#[derive(Clone)]
+pub(super) struct MemoryGraph(Arc<Graph>);
+
+impl std::panic::RefUnwindSafe for MemoryGraph {}
+impl std::panic::UnwindSafe for MemoryGraph {}
 
 type MemoryFile = (String, Arc<Vec<u8>>);
 
@@ -59,29 +73,217 @@ impl WholeGraph {
     /// bytes, `logseq/config.edn` among them), held in memory: what
     /// `Store::open` of a directory holding exactly these files answers, with
     /// no page times. The browser's graph (a published export's pages). The
-    /// returned root spelling is `/tine-memory-graph`. Cost: one read and
+    /// returned root spelling is `/tine-memory-graph`. `times` gives files
+    /// their modification times (a file without one has none), which
+    /// `page_modified` and recency order answer from. Cost: one read and
     /// parse of each file and the initial index capture, as a store open has.
     /// Refuses what `Store::open` refuses for the configured directories'
     /// spelling, and (`InvalidInput`) a path that is not graph-relative or is
-    /// both a file and a directory; a config read problem is the view's
-    /// `config().problem`, as on disk.
+    /// both a file and a directory, and a time given twice or for no file; a
+    /// config read problem is the view's `config().problem`, as on disk.
     pub fn from_files<T: Into<Arc<Vec<u8>>>>(
         files: Vec<(String, T)>,
+        times: Vec<(String, SystemTime)>,
     ) -> io::Result<(WholeGraph, String)> {
-        let files = files
-            .into_iter()
-            .map(|(rel, bytes)| (rel, Content::Bytes(bytes.into()), None))
+        let refused = |message: String| io::Error::new(io::ErrorKind::InvalidInput, message);
+        let mut by_path = HashMap::with_capacity(times.len());
+        for (rel, time) in times {
+            if by_path.insert(rel.clone(), time).is_some() {
+                return Err(refused(format!("a time is given twice: {rel:?}")));
+            }
+        }
+        let files: Vec<_> = (files.into_iter())
+            .map(|(rel, bytes)| {
+                let modified = by_path.remove(&rel);
+                (rel, Content::Bytes(bytes.into()), modified)
+            })
             .collect();
+        if let Some(rel) = by_path.keys().next() {
+            return Err(refused(format!("a time for no file: {rel:?}")));
+        }
         let graph = Graph::in_memory_with_config(files)?;
-        Ok((Self::in_memory(&graph), graph.root.display().to_string()))
+        let root = graph.root.display().to_string();
+        let mut view = Self::in_memory(&graph);
+        view.memory = Some(MemoryGraph(Arc::new(graph)));
+        Ok((view, root))
+    }
+
+    /// Replace files of a view built by [`Self::from_files`] and make this
+    /// view the result: `Some(bytes)` writes a file, with the current time
+    /// as its modification time (a disk write's), and `None` deletes one.
+    /// Keys follow `from_files`'s rules (MEMORY-SOURCE-MODEL Q1): a new key
+    /// that is another key's ancestor or descendant is refused, and a deleted
+    /// file's emptied directories go. A page file's bytes must pass the parse
+    /// input checks (`InvalidData`), and the result must open as
+    /// `from_files` of the same files opens (layout). A refusal leaves the
+    /// view and its files unchanged. A change to `logseq/config.edn` reads
+    /// the config again as an open does. Returns the publication's
+    /// [`Change`], as the desktop's watcher publishes one for the same files
+    /// (`Origin::External`: its files, the active pages that moved and the
+    /// answer deltas), and makes its revision this view's. Cost: one parse of each changed page file
+    /// and the incremental capture of the changed paths, as the desktop
+    /// watcher's publication of the same files; a config change that moves
+    /// what the page build reads parses every page again, as on the desktop.
+    pub fn replace_files(&mut self, changes: Vec<(String, Option<Vec<u8>>)>) -> io::Result<Change> {
+        let graph = (self.memory.as_mut())
+            .and_then(|memory| Arc::get_mut(&mut memory.0))
+            .ok_or_else(|| {
+                io::Error::new(
+                    io::ErrorKind::Unsupported,
+                    "only an unshared graph built from files is replaced",
+                )
+            })?;
+        let now = tine_core::clock::system_now();
+        let (mut writes, mut written) = (Vec::new(), Vec::new());
+        for (rel, bytes) in changes {
+            let path = Path::new(&rel);
+            if let Some(bytes) = &bytes {
+                if crate::file_kind::is_graph_text_path(path) {
+                    crate::model::validate_parse_text(bytes, path)?;
+                }
+            }
+            let bytes = bytes.map(Arc::new);
+            let content = (bytes.clone()).map(|bytes| (Content::Bytes(bytes), Some(now)));
+            writes.push((rel, content));
+            written.push(bytes);
+        }
+        let (undo, reread) = graph.replace_memory_files(writes)?;
+        let graph: &Graph = graph;
+        let (mut files, mut published) = (Vec::with_capacity(undo.len()), HashMap::new());
+        for (bytes, (rel, before)) in written.into_iter().zip(undo) {
+            let path = graph.root.join(&rel);
+            let kind = match (&bytes, before) {
+                (None, _) => ChangeKind::Removed,
+                (Some(_), Some(_)) => ChangeKind::Modified,
+                (Some(_), None) => ChangeKind::Created,
+            };
+            // Published as the desktop publishes its own write: one parse of
+            // the page's text, its document installed with no comparison.
+            let bytes = bytes.as_deref().map(Vec::as_slice);
+            let document = (bytes.filter(|_| crate::file_kind::is_graph_text_path(&path)))
+                .and_then(|bytes| std::str::from_utf8(bytes).ok())
+                .map(|text| crate::model::parse_doc(&path, text));
+            let file_set_changed = kind != ChangeKind::Modified;
+            let id = FileId::from(rel);
+            let entry = graph.transaction_publish_page_inner(
+                &path,
+                bytes,
+                document.as_ref(),
+                file_set_changed,
+            );
+            if let Some(entry) = entry {
+                published.insert(id.clone(), entry);
+            }
+            files.push((id, kind, bytes.map(FileRev::from_bytes)));
+        }
+        let old = &self._snapshot;
+        let config = Self::config_of(graph);
+        // What the page build and indexes read moved (the desktop's rule).
+        let config_changed = reread
+            && super::checkpoint::config_key(&old.config.config)
+                != super::checkpoint::config_key(&config.config);
+        let snapshot = Snapshot::capture(
+            graph,
+            &RwLock::new(config),
+            Some(old),
+            &PendingFiles::of(&files, graph),
+            config_changed,
+            false,
+            GraphRev(old.rev.0 + 1),
+            &published,
+            &Default::default(),
+        );
+        let pages = snapshot.page_changes(Some(old), Origin::External, &files);
+        graph.adopt_name_index(
+            Some(old.cache_generation),
+            snapshot.cache_generation,
+            (&snapshot.list, &snapshot.claimants),
+        );
+        let change = Change {
+            graph_rev: snapshot.rev,
+            origin: Origin::External,
+            files,
+            pages,
+            answers: snapshot.answers.clone(),
+            watch: None,
+        };
+        let memory = self.memory.take();
+        *self = WholeGraph::of(Arc::new(snapshot));
+        self.memory = memory;
+        Ok(change)
+    }
+
+    /// Submit `dto` for the page file `id` of a view built by
+    /// [`Self::from_files`]: serialize it over the file's current bytes here
+    /// (none: a creation) with the store's one page serializer, as the
+    /// desktop page host does, then [`Self::replace_files`] it. Answers the
+    /// bytes written and the publication's change, or the page host's
+    /// refusal: its serializer's and page-target checks, `NotAdmitted` when
+    /// the caller's copy is not `current` (the host's answer to a stale
+    /// request), and `Failed` for a refused replace. A refusal writes
+    /// nothing. Cost: one serialization and the parse of the old and new
+    /// text, as a desktop submit, then the replace of one file.
+    pub fn submit_page(
+        &mut self,
+        id: &PageId,
+        dto: &PageDto,
+        current: bool,
+    ) -> Result<(Vec<u8>, Change), PageRefusal> {
+        let failed = |error: io::Error| PageRefusal::Failed {
+            message: error.to_string(),
+        };
+        if !current {
+            return Err(PageRefusal::NotAdmitted);
+        }
+        let graph = (self.memory.as_ref().map(|memory| &*memory.0)).ok_or_else(|| {
+            failed(io::Error::new(
+                io::ErrorKind::Unsupported,
+                "not a graph built from files",
+            ))
+        })?;
+        let file = id.file();
+        let is_page = || self.validated_page(id).is_ok();
+        crate::transaction::page_save_target(dto, is_page, &file)?;
+        let path = graph.root.join(id.as_str());
+        let old = graph.memory_bytes(&path).map_err(failed)?;
+        let old = old.as_deref().map(Vec::as_slice);
+        let (bytes, _) = crate::transaction::serialize_page_at(graph, &path, dto, old, false)?;
+        let change = (self.replace_files(vec![(id.as_str().to_owned(), Some(bytes.clone()))]))
+            .map_err(failed)?;
+        Ok((bytes, change))
+    }
+
+    /// This view without its memory graph: a read-only copy (tests keep
+    /// the previous view so).
+    #[cfg(test)]
+    pub(crate) fn clone_without_memory(&self) -> WholeGraph {
+        let mut view = self.clone();
+        view.memory = None;
+        view
+    }
+
+    /// A memory graph's current bytes of the file `id` (tests).
+    #[cfg(test)]
+    pub(crate) fn memory_page_bytes(&self, id: &PageId) -> Option<Vec<u8>> {
+        let graph = &self.memory.as_ref().unwrap().0;
+        let path = graph.root.join(id.as_str());
+        graph
+            .memory_bytes(&path)
+            .unwrap()
+            .map(|bytes| bytes.to_vec())
+    }
+
+    /// The config state a memory graph publishes: the config it read.
+    fn config_of(graph: &Graph) -> ConfigState {
+        let problem = graph.config_read_problem.clone();
+        ConfigState::of(graph, Arc::new(graph.config.clone()), problem)
     }
 
     /// A memory graph's view: the store's launch pass and first publication.
     fn in_memory(graph: &Graph) -> WholeGraph {
         graph.install_live_config();
         graph.warm_cache_cancellable(|| false);
-        let problem = graph.config_read_problem.clone();
-        let config = ConfigState::of(graph, Arc::new(graph.config.clone()), problem);
+        let config = Self::config_of(graph);
         let snapshot = Snapshot::capture(
             graph,
             &RwLock::new(config),

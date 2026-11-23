@@ -158,6 +158,24 @@ impl std::fmt::Display for ParserPanicked {
 
 impl std::error::Error for ParserPanicked {}
 
+/// A config read: the effective config, its read problem and its text.
+pub(crate) type ConfigRead = (Config, Option<crate::IoError>, Option<Arc<str>>);
+
+/// The config an open reads at `path` through `source`: the parsed text; a
+/// missing file is the defaults with [`missing_config_problem`]; another
+/// read error is the defaults with that error.
+pub(crate) fn read_config_in(source: &FileSource, path: &Path) -> ConfigRead {
+    match read_parse_input_in(source, path) {
+        Ok(text) => (Config::parse(&text), None, Some(Arc::from(text.as_ref()))),
+        Err(error) if error.kind() == io::ErrorKind::NotFound => (
+            Config::default(),
+            missing_config_problem(source, path),
+            None,
+        ),
+        Err(error) => (Config::default(), Some(error.into()), None),
+    }
+}
+
 /// Why a graph with no `logseq/config.edn` must not take the defaults, if it
 /// must not. An iCloud placeholder (`logseq/.config.edn.icloud`) means the
 /// file exists but is not downloaded: its settings are unknown, so the graph
@@ -2730,6 +2748,13 @@ impl Graph {
 
     pub(crate) fn reload_config(&self, config: Config) -> io::Result<()> {
         self.validate_config_layout(&config)?;
+        self.install_config(config);
+        Ok(())
+    }
+
+    /// Install `config` as the live config; a change to what the page build
+    /// and indexes read invalidates the page cache.
+    pub(crate) fn install_config(&self, config: Config) {
         // The checkpoint key covers exactly the settings the page build and
         // indexes read. Other settings still install and publish live state,
         // but cannot make the cached pages or their disk observations stale.
@@ -2741,7 +2766,6 @@ impl Graph {
         if rebuild {
             self.invalidate_cache();
         }
-        Ok(())
     }
 
     pub(crate) fn install_live_config(&self) {
@@ -2861,21 +2885,26 @@ impl Graph {
     /// A graph over `source` under the config it holds at
     /// `logseq/config.edn`: the one config read of a graph open.
     fn open_from(root: PathBuf, source: FileSource) -> Graph {
-        let path = root.join("logseq/config.edn");
-        let (config, problem, config_source) = match read_parse_input_in(&source, &path) {
-            Ok(text) => (Config::parse(&text), None, Some(Arc::from(text.as_ref()))),
-            Err(error) if error.kind() == io::ErrorKind::NotFound => (
-                Config::default(),
-                missing_config_problem(&source, &path),
-                None,
-            ),
-            Err(error) => (Config::default(), Some(error.into()), None),
-        };
+        let path = root.join(file_source::CONFIG_FILE);
+        let (config, problem, config_source) = read_config_in(&source, &path);
         let journal_format = config.journal_format();
         let mut graph = Self::empty_with_config(root, source, config, journal_format);
         graph.config_read_problem = problem;
         graph.config_source = config_source;
         graph
+    }
+
+    /// Install a config read ([`read_config_in`]) as the one this graph
+    /// opened with: the config, its journal formats, its problem and its
+    /// text. Returns the read it replaces.
+    pub(crate) fn set_config_read(&mut self, read: ConfigRead) -> ConfigRead {
+        let (config, problem, source) = read;
+        self.journal_format = Arc::new(config.journal_format());
+        (
+            std::mem::replace(&mut self.config, config),
+            std::mem::replace(&mut self.config_read_problem, problem),
+            std::mem::replace(&mut self.config_source, source),
+        )
     }
 
     fn empty_with_config(

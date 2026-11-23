@@ -8,9 +8,14 @@ export const root = resolve(fileURLToPath(new URL("..", import.meta.url)));
 // 4,631,781 bytes on 2026-11-22): wasm-opt's output differs by a few hundred
 // bytes between hosts (CI, F-Droid), and every build path applies the same
 // ceiling. Growth past one is a decision, not an automatic raise.
+// 2026-11-23, browser core slice 5a: the core ceiling moved to 4,768,000 for the
+// mock's edit API (measured: submit through the one page serializer 54.7k,
+// file replace 36.1k, five shared answers 20.3k; tine-agents
+// subagent-tasks/notes/browser-core-5a-size.md). No trim fits the old ceiling
+// without a second serializer.
 export const wasmArtifacts = [
   { dir: "src/render/wasm", feature: null, maxBytes: 1_560_000 },
-  { dir: "src/render/wasm-core", feature: "core", maxBytes: 4_655_000 },
+  { dir: "src/render/wasm-core", feature: "core", maxBytes: 4_768_000 },
 ];
 
 /** The one size check for a vendored module, used before regeneration writes

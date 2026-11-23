@@ -9,6 +9,10 @@ export class BrowserGraph {
      * The config read problem of the desktop `load_graph` answer, or null.
      */
     config_problem_json(): string;
+    /**
+     * The desktop `export_query_subtrees` answer for its `specs` JSON.
+     */
+    export_query_subtrees_json(specs_json: string): string;
     get_backlink_filter_context_json(name: string, targets_json: string): string;
     get_backlinks_json(name: string): string;
     get_block_ref_counts_json(): string;
@@ -23,11 +27,23 @@ export class BrowserGraph {
     journal_content_days_json(): string;
     journal_feed_page_json(limit: number, before_day: bigint | null | undefined, wait_for_references: boolean, through_day?: bigint | null): string;
     /**
+     * The desktop `list_template_names` answer.
+     */
+    list_template_names_json(): string;
+    /**
+     * The desktop `list_templates` answer: every template, or the first
+     * named `name`.
+     */
+    list_templates_json(name?: string | null): string;
+    /**
      * `files[i]` holds the bytes of the graph-relative `paths[i]`,
-     * `logseq/config.edn` among them. Throws (a string) what the desktop open
-     * refuses, and for arrays of different lengths; a config read problem is
-     * `config_problem_json`. Cost: one read and parse of each file and the
-     * initial index capture, as a desktop open has.
+     * `logseq/config.edn` among them. Options: `share` (a quick share's
+     * admission) and `times`, a modification time in Unix seconds per path
+     * (absent: no time), which `page_modified_json` and recency answer from.
+     * Throws (a string) what the desktop open refuses, for arrays of
+     * different lengths and for a time of no given path; a config read
+     * problem is `config_problem_json`. Cost: one read and parse of each
+     * file and the initial index capture, as a desktop open has.
      */
     constructor(paths: string[], files: Uint8Array[], options_json?: string | null);
     page_alias_group_json(name: string): string;
@@ -41,6 +57,11 @@ export class BrowserGraph {
     parse_query_json(text: string, dialect: string, block_properties_json?: string | null): string;
     preview_block_json(uuid: string, max_nodes: number): string;
     /**
+     * The desktop `query_explain_empty` answer; the view is accepted for
+     * its command shape and ignored, as there.
+     */
+    query_explain_empty_json(query_json: string, view_json: string, context_json?: string | null): string;
+    /**
      * `scope_json` is `{"keys":true}` or `{"key":"property name"}`.
      */
     query_facets_json(scope_json: string): string;
@@ -48,6 +69,17 @@ export class BrowserGraph {
      * Query, view and optional execution context use the desktop JSON shapes.
      */
     query_run_json(query_json: string, view_json: string, context_json?: string | null): string;
+    /**
+     * Replace files: `files[i]` (bytes, or null to delete) at the
+     * graph-relative `paths[i]`, under the constructor's path rules, then
+     * recapture the changed pages (`WholeGraph::replace_files`). Answers
+     * `{answers, pages}`: the publication's answer signal (the `answers`
+     * the desktop's publication events carry, the new `rev` among it) and
+     * the desktop `graph-changed` payloads of the pages that moved. Throws (a
+     * string) a refused change, which leaves the graph unchanged. Cost: one
+     * parse per changed page and the incremental capture of those paths.
+     */
+    replace_files(paths: string[], files: any[]): string;
     resolve_blocks_json(uuids_json: string): string;
     resolve_page_json(name: string, journal: boolean): string;
     /**
@@ -59,6 +91,22 @@ export class BrowserGraph {
      * Literal block search. Synchronous browser calls share no search lane.
      */
     search_json(query: string, limit: number): string;
+    /**
+     * Submit a page DTO (the desktop `PageDto` JSON) for the page file
+     * `key`, typed on `version` (a key starts at 1; each write moves it).
+     * Serializes over the file's current text with the store's one page
+     * serializer (the desktop page host's bytes), then replaces the file
+     * (`WholeGraph::submit_page`). Answers `{"written": {path, text,
+     * version, answers, pages}}` (the key's new version, and the payloads
+     * `replace_files` answers), or `{"refused": PageRefusal}` (the desktop
+     * host's refusal shape; a stale version is `not-admitted`). Writes
+     * nothing on a refusal.
+     */
+    submit_page_json(key: string, dto_json: string, version: bigint): string;
+    /**
+     * The desktop `tagged_pages` answer.
+     */
+    tagged_pages_json(name: string): string;
 }
 
 /**
@@ -453,6 +501,7 @@ export interface InitOutput {
     readonly block_reference_names: (a: number, b: number, c: number) => [number, number];
     readonly browsergraph_capture_quick_switch_json: (a: number, b: number, c: number, d: number, e: number) => [number, number, number, number];
     readonly browsergraph_config_problem_json: (a: number) => [number, number, number, number];
+    readonly browsergraph_export_query_subtrees_json: (a: number, b: number, c: number) => [number, number, number, number];
     readonly browsergraph_get_backlink_filter_context_json: (a: number, b: number, c: number, d: number, e: number) => [number, number, number, number];
     readonly browsergraph_get_backlinks_json: (a: number, b: number, c: number) => [number, number, number, number];
     readonly browsergraph_get_block_ref_counts_json: (a: number) => [number, number, number, number];
@@ -463,6 +512,8 @@ export interface InitOutput {
     readonly browsergraph_graph_meta_json: (a: number) => [number, number, number, number];
     readonly browsergraph_journal_content_days_json: (a: number) => [number, number, number, number];
     readonly browsergraph_journal_feed_page_json: (a: number, b: number, c: number, d: bigint, e: number, f: number, g: bigint) => [number, number, number, number];
+    readonly browsergraph_list_template_names_json: (a: number) => [number, number, number, number];
+    readonly browsergraph_list_templates_json: (a: number, b: number, c: number) => [number, number, number, number];
     readonly browsergraph_new: (a: number, b: number, c: number, d: number, e: number, f: number) => [number, number, number];
     readonly browsergraph_page_alias_group_json: (a: number, b: number, c: number) => [number, number, number, number];
     readonly browsergraph_page_backlink_counts_json: (a: number) => [number, number, number, number];
@@ -471,12 +522,16 @@ export interface InitOutput {
     readonly browsergraph_page_modified_json: (a: number) => [number, number, number, number];
     readonly browsergraph_parse_query_json: (a: number, b: number, c: number, d: number, e: number, f: number, g: number) => [number, number, number, number];
     readonly browsergraph_preview_block_json: (a: number, b: number, c: number, d: number) => [number, number, number, number];
+    readonly browsergraph_query_explain_empty_json: (a: number, b: number, c: number, d: number, e: number, f: number, g: number) => [number, number, number, number];
     readonly browsergraph_query_facets_json: (a: number, b: number, c: number) => [number, number, number, number];
     readonly browsergraph_query_run_json: (a: number, b: number, c: number, d: number, e: number, f: number, g: number) => [number, number, number, number];
+    readonly browsergraph_replace_files: (a: number, b: number, c: number, d: number, e: number) => [number, number, number, number];
     readonly browsergraph_resolve_blocks_json: (a: number, b: number, c: number) => [number, number, number, number];
     readonly browsergraph_resolve_page_json: (a: number, b: number, c: number, d: number) => [number, number, number, number];
     readonly browsergraph_run_graph_search_json: (a: number, b: number, c: number, d: number, e: number, f: number, g: number) => [number, number, number, number];
     readonly browsergraph_search_json: (a: number, b: number, c: number, d: number) => [number, number, number, number];
+    readonly browsergraph_submit_page_json: (a: number, b: number, c: number, d: number, e: number, f: bigint) => [number, number, number, number];
+    readonly browsergraph_tagged_pages_json: (a: number, b: number, c: number) => [number, number, number, number];
     readonly builtin_macro: (a: number, b: number) => [number, number];
     readonly canonical_group_field: (a: number, b: number) => [number, number];
     readonly comment_quote: (a: number, b: number) => [number, number, number, number];
