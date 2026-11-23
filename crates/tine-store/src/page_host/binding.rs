@@ -7,6 +7,7 @@ use super::driver::{Deadline, Driver, Owner, Sink, State, SystemClock, Unanswere
 use super::production::ProductionIo;
 use super::progress::{backoff, Clock, Notice, Progress, Stopping};
 use super::*;
+use crate::model::page_ids::SaveHandoff;
 use crate::model::{bytes_hold_block_id, content_rev};
 use crate::store::PublishedObservations;
 use crate::{ChangeKind, EditKind, FileId, FileRev, Origin, PageId, Store, Why};
@@ -348,7 +349,7 @@ pub struct PublishedRevision {
 /// they were serialized from (runtime block ids) and its edit kinds.
 struct Handoff {
     bytes: Text,
-    document: Document,
+    document: Arc<Document>,
     kinds: Vec<EditKind>,
 }
 
@@ -386,7 +387,7 @@ pub(super) struct Publication {
     pub bytes: Text,
     /// An own save's host version (the index watermark it reaches, §4.4)
     /// and the Document its bytes were serialized from (R8), if it matched.
-    pub own: Option<(u64, Option<Document>)>,
+    pub own: Option<(u64, Option<SaveHandoff>)>,
     /// The pre-read stamp of the read these bytes came from, if the host's
     /// I/O took one (`HostIo::take_stamp`, GH #623).
     pub stamp: Option<crate::watch::Stamp>,
@@ -556,8 +557,13 @@ impl Book {
                     let Some(handoff) = self.pending.remove(&(page.clone(), answer.id)) else {
                         continue;
                     };
-                    if answer.took {
+                    // A block the window sent without a key is keyed by the
+                    // store (`Graph::page_ids`): the answer is inexact, so the
+                    // window receives the page with its keys (phase A guard 2).
+                    if answer.took && handoff.document.fully_keyed() {
                         answered.insert((page.clone(), answer.id), handoff.bytes.clone());
+                    }
+                    if answer.took {
                         for kind in &handoff.kinds {
                             self.took([page.clone()], *kind);
                         }
@@ -586,6 +592,12 @@ impl Book {
                     }
                     let handoff = self.versions.get_mut(page).and_then(|v| v.remove(version));
                     let document = handoff.filter(|h| h.bytes == *bytes).map(|h| h.document);
+                    let document = document.and_then(|doc| {
+                        Some(SaveHandoff {
+                            bytes: bytes.clone()?,
+                            doc,
+                        })
+                    });
                     self.retry.remove(page);
                     delivery.publications.push(Publication {
                         key: page.clone(),
@@ -1071,7 +1083,7 @@ impl PageHost {
         let bytes: Text = Some(Arc::from(bytes));
         let handoff = Handoff {
             bytes: bytes.clone(),
-            document,
+            document: Arc::new(document),
             kinds: kinds.to_vec(),
         };
         Ok((bytes, handoff))
@@ -1130,6 +1142,17 @@ impl PageHost {
         let (spelling, old, ..) = self.source(receiver_key, receiver_version, None);
         let (receiver_text, receiver_handoff) =
             self.serialize(&spelling, receiver_dto, old.as_ref(), kinds)?;
+        // The moved blocks keep their keys (accepted as today): the keys
+        // the receiver now holds that another page held are registered to
+        // it, so no other page's allocation reuses them (guard 1, A3).
+        let receiver_path = self.store.graph.root.join(&spelling);
+        let mut moved = Vec::new();
+        receiver_handoff.document.for_each_uuid(&mut |key| {
+            let held = self.store.block_owner_path(&key.text());
+            if held.is_some_and(|held| held != receiver_path) {
+                moved.push(key.clone());
+            }
+        });
         let request = Request {
             id,
             generation: 0,
@@ -1149,7 +1172,9 @@ impl PageHost {
                 (source_key.into(), source_handoff),
                 (receiver_key.into(), receiver_handoff),
             ],
-        )
+        )?;
+        self.store.graph.ids.moved(moved, &receiver_path);
+        Ok(())
     }
 
     /// `page_discard` (§3.1): the window consumed its unsent input first.

@@ -2,6 +2,7 @@
 //! kinds sink (OG-RULES Rule 8), its claims, publications and evictions apply
 //! to the index under the store writer, then its page mail goes to the window.
 use super::*;
+use crate::model::page_ids::{Input, Trust};
 
 /// The driver's sink: the publication consumer (§5), then page mail to the
 /// window (§3.3).
@@ -140,10 +141,19 @@ pub(super) fn index(store: &Store, publication: &Publication) -> Indexing {
         (true, None) => Some(ChangeKind::Removed),
         (true, Some(_)) => Some(ChangeKind::Modified),
     };
-    let document = publication.own.as_ref().and_then(|(_, d)| d.as_ref());
+    let saved = publication
+        .own
+        .as_ref()
+        .and_then(|(_, saved)| saved.as_ref());
+    let document = saved.map(|saved| Arc::clone(&saved.doc));
     // The owner's bytes become the page's index and its row in one
-    // critical section (R1); an unchanged row is not touched.
-    let owned = graph.publish_owned(&publication.key, publication.bytes.clone(), document);
+    // critical section (R1); an unchanged row is not touched, unless the
+    // serializer's document moved a key among the same bytes' blocks (A1).
+    let owned = graph.publish_owned(&publication.key, publication.bytes.clone(), saved.cloned());
+    let kind = match (&owned, kind) {
+        (Ok(owned), None) if owned.identity => Some(ChangeKind::Modified),
+        (_, kind) => kind,
+    };
     // The read the bytes came from stamped the file first (GH #623).
     let stamps: HashMap<FileId, crate::watch::Stamp> = (publication.stamp.clone())
         .map(|stamp| (id.clone(), stamp))
@@ -157,11 +167,11 @@ pub(super) fn index(store: &Store, publication: &Publication) -> Indexing {
     };
     let before = graph.cache_generation();
     let entry = match &owned {
-        Ok(entry) => entry.clone(),
+        Ok(owned) => owned.entry.clone(),
         Err(()) => graph.transaction_publish_page_inner(
             &path,
             bytes,
-            document,
+            document.map(|saved| Input::Pair(saved, Trust::Window)),
             kind != ChangeKind::Modified,
         ),
     };

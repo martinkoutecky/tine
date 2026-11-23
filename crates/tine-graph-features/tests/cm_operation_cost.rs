@@ -568,8 +568,9 @@ fn a_namespace_rename_shares_its_map_and_matches_titles_in_constant_time() {
 /// A merge without renames: both pages read for the proposal and guarded,
 /// one certified survivor write, the source trashed. Lower bounds: two
 /// planning reads plus two guarded reads; one write; no reference walk (no
-/// name changes); one certificate check; two parses (both pages for the
-/// header split; the survivor's index parse may reuse one).
+/// name changes); one certificate check; one parse (the survivor's new
+/// text; both pages' proposal reads are served from their index rows at
+/// their revisions, runtime-id A9).
 #[test]
 fn a_plain_merge_costs_a_constant() {
     let _integration_guard = crate::exclusive_integration_lock();
@@ -589,7 +590,7 @@ fn a_plain_merge_costs_a_constant() {
     for (name, got, pinned, lower) in [
         ("reads", bill.reads(), 11, 4),
         ("certificate checks", bill.certificates, 4, 1),
-        ("parses", c.parses - c.model_check_parses, 3, 2),
+        ("parses", c.parses - c.model_check_parses, 1, 1),
         ("files written", c.files_written, 3, 1),
         ("file renames", c.file_renames, 4, 2),
         ("fsyncs", c.fsyncs, 16, 3),

@@ -263,6 +263,47 @@ impl BlockProjection {
 // Identity is metadata, not content: two blocks are equal iff their body and
 // subtree match, regardless of uuid. Store write guards compare raw FileRev;
 // content equality is useful for in-memory comparison and round-trip tests.
+impl Document {
+    /// Whether `other` is this document's keyed outline: the same content
+    /// (what `==` compares: pre-block, each block's raw text and its children,
+    /// runtime keys aside) and every block under the same runtime key. A
+    /// publication whose document differs only in which block holds which
+    /// key (two identical bullets swapped, say) changes the page's identity,
+    /// not its text. O(blocks), no allocation.
+    pub fn same_keyed_outline(&self, other: &Document) -> bool {
+        fn keys(a: &[DocBlock], b: &[DocBlock]) -> bool {
+            a.len() == b.len()
+                && a.iter()
+                    .zip(b)
+                    .all(|(a, b)| a.uuid == b.uuid && keys(&a.children, &b.children))
+        }
+        self == other && keys(&self.roots, &other.roots)
+    }
+
+    /// Whether every block carries a runtime key; stops at the first that
+    /// does not. O(blocks), no allocation.
+    pub fn fully_keyed(&self) -> bool {
+        fn walk(blocks: &[DocBlock]) -> bool {
+            (blocks.iter()).all(|block| !block.uuid.is_empty() && walk(&block.children))
+        }
+        walk(&self.roots)
+    }
+
+    /// Visit every block's runtime key, depth first; keyless blocks are
+    /// skipped. O(blocks), no allocation.
+    pub fn for_each_uuid(&self, visit: &mut dyn FnMut(&crate::block_id::BlockId)) {
+        fn walk(blocks: &[DocBlock], visit: &mut dyn FnMut(&crate::block_id::BlockId)) {
+            for block in blocks {
+                if !block.uuid.is_empty() {
+                    visit(&block.uuid);
+                }
+                walk(&block.children, visit);
+            }
+        }
+        walk(&self.roots, visit);
+    }
+}
+
 impl PartialEq for DocBlock {
     fn eq(&self, other: &Self) -> bool {
         self.raw == other.raw && self.children == other.children

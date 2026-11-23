@@ -234,7 +234,10 @@ impl Snapshot {
                 if before.is_some_and(|(previous, previous_doc)| {
                     previous.name == entry.name
                         && previous.kind == entry.kind
-                        && (Arc::ptr_eq(previous_doc, doc) || previous_doc == doc)
+                        // Keys count: a W move (which block holds which
+                        // key) is a page change even at the same text.
+                        && (Arc::ptr_eq(previous_doc, doc)
+                            || previous_doc.same_keyed_outline(doc))
                 }) {
                     continue;
                 }
@@ -862,6 +865,15 @@ impl Store {
     pub(crate) fn snapshot_knows(&self, path: &Path) -> bool {
         let snapshot = self.changes.snapshot.read().unwrap();
         (snapshot.as_ref()).is_some_and(|snapshot| snapshot.name_by_path.contains_key(path))
+    }
+
+    /// The page file the published snapshot finds block `key` on, if any
+    /// (one keyed lookup).
+    pub(crate) fn block_owner_path(&self, key: &str) -> Option<PathBuf> {
+        let snapshot = self.changes.snapshot.read().unwrap();
+        let snapshot = snapshot.as_ref()?;
+        let (_, (entry, _)) = snapshot.graph.block_owner_page(key, false)?;
+        Some(entry.path.clone())
     }
 
     pub(crate) fn publish_own(

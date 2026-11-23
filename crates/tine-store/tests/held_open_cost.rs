@@ -242,8 +242,8 @@ fn an_unchanged_held_open_reads_no_file_and_asks_no_owner() {
     eprintln!("I-25 GH #863 unchanged held open: {counts:?}");
     assert_eq!(first, "before");
     assert_eq!(
-        counts.parses, 1,
-        "the held row's one parse, as before GH #863"
+        counts.parses, 0,
+        "the held row at its revision is served with its keys, no parse (runtime-id A9)"
     );
     assert_eq!(
         io(&counts),

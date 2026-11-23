@@ -301,7 +301,8 @@ fn an_edits_publication_does_not_scale_with_the_unrelated_graph() {
         // under `driver::under_writer`, whose unwind containment adds no
         // read, write, stat, sync or parse. The exact path, from submit to
         // publication: the save reads the page and its base (2 full reads,
-        // 2 stamps), parses old and new text plus the index's parse (3),
+        // 2 stamps), parses old and new text (2; the index installs the
+        // serializer's keyed parse of exactly these bytes, R8/D4),
         // writes one temp file and syncs it and the directory (2).
         let io = |c: &Counts| {
             [
@@ -324,7 +325,7 @@ fn an_edits_publication_does_not_scale_with_the_unrelated_graph() {
             ("hash_reads", 0),
             ("stamps_by_path", 2),
             ("readdir", 0),
-            ("parses", 3),
+            ("parses", 2),
             ("store_reads", 0),
             ("watcher_reads", 0),
             ("observation_reads", 0),

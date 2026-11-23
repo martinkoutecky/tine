@@ -293,7 +293,7 @@ impl PageHost {
                 host.locks.insert(key.clone(), lock.clone());
                 store
                     .graph
-                    .respelled(&key, &store.graph.root.join(src.as_str()));
+                    .respelled(&key, &store.graph.root.join(src.as_str()), true);
                 // A clean, unopened page can belong to the watcher.
                 // Publish that entry's new path with its original bytes
                 // synchronously too, through the same final-file observation

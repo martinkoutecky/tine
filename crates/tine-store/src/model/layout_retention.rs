@@ -343,7 +343,7 @@ struct Matches {
 /// Which old block each new block is. Identity first: a new block whose
 /// runtime id names exactly one old block is that block (the save path gives
 /// the old blocks the ids the saved document uses for them, where it can tell:
-/// `model::page_parse::identify_old_blocks`). Text only for the rest, among
+/// `model::page_parse::Graph::key_save_base`). Text only for the rest, among
 /// the old blocks no identity kept: equal raw by an LCS over the changed middle, unpaired blocks by
 /// position inside each gap between matches (a changed block), then equal raw
 /// anywhere (a moved block). A text match is never identity, so it keeps its

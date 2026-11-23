@@ -68,6 +68,9 @@ impl Graph {
         mut cache: std::sync::RwLockWriteGuard<'_, InstalledCache>,
         path: &Path,
     ) {
+        // The row's S(P) stays as the path's claim (retirement by path): the
+        // next bytes that index are keyed against it.
+        self.claim_row(&cache, path);
         // A quiet retry must not erase an already reported launch error.
         self.retire_row(&mut cache, path, false);
         let rel = self.rel_path(path);

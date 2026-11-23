@@ -184,7 +184,10 @@ impl PagePlan<'_> {
                     let graph = &self.store.graph;
                     let owned = graph.held_key(&path).and_then(|key| {
                         let bytes = now.as_deref().map(std::sync::Arc::from);
-                        graph.publish_owned(&key, bytes, None).ok()
+                        graph
+                            .publish_owned(&key, bytes, None)
+                            .ok()
+                            .map(|owned| owned.entry)
                     });
                     let entry = match owned {
                         Some(entry) => entry,

@@ -65,8 +65,11 @@ Own and outside config writes retain parsed pages, their observations, the
 name index and every in-memory index when `checkpoint::config_key` is
 unchanged. That key covers the fields read by the page build and indexes
 (including file eligibility, names, journal formats and search folding),
-enforced by its scanning test. A changed key still discards parsed pages,
-rescans the graph files and rebuilds names and indexes before publication.
+enforced by its scanning test. A changed key still discards the built
+index, rescans and rereads the graph files and rebuilds names and indexes
+before publication; a file whose bytes kept their revision reuses its parsed
+row whole, with its runtime ids (a page's parse depends on its path and
+bytes alone; runtime-id model T10), so only changed files are parsed.
 Favorites, journal templates and display settings therefore cause no file
 listing, page read or parse, and their publication names no reader key: the
 frontend's settings readers read `graphMeta` reactively, and

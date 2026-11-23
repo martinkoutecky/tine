@@ -684,7 +684,10 @@ impl Snapshot {
             target.dirty |= dirty;
         }
         for (i, (entry, before, after)) in edits.iter().enumerate() {
-            if before == after && !moved(i) {
+            // The page key moves on W: a key that moved to another block of
+            // the same text changes the page (row 33), so its readers renew.
+            let same = Arc::ptr_eq(before, after) || before.same_keyed_outline(after);
+            if same && !moved(i) {
                 continue;
             }
             let key = page_key(&entry.name);

@@ -895,9 +895,18 @@ consumer is the page's only index writer
 cache document, revision, anchor, file time, error rows, listing entry and
 claimants, and the published snapshot's roots) comes from the bytes that
 writer last published, and its name and document come from those same bytes.
-A held page's row is installed only from those bytes, and only their parse:
-a Document the owner supplies contributes its runtime identities alone, and
-only when its content is exactly that parse (R8). One held but not yet
+A held page's row is installed only from those bytes, and only their parse
+(R8, amended 2026-11-23, RUNTIME-ID-MODEL D4): the serializer's keyed parse
+of exactly the bytes the owner published is installed whole, keys included,
+and the store checks the byte equality itself (no parse). Any other Document
+contributes nothing; bytes the owner did not save keep the page's previous
+keys only where their keyed outline equals the previous row's, and otherwise
+take positional keys that skip every key the store knows another page holds.
+Runtime ids are one owner's (`PageIds`, `crates/tine-store/src/model/page_ids.rs`):
+a read at the indexed revision serves the row's keys without parsing, a
+rebuild reuses the previous row for unchanged revisions, and a checkpoint's
+rows keep the keys already served when their revision and outline match.
+Nothing about runtime ids is persisted: a restart starts with no claims. One held but not yet
 published, published absent, or whose identity is unknown (B1) has no row,
 with one exception (amended 2026-10-11, PERF-FIXES D4): a page open's hold
 of a file that holds the bytes its installed row was derived from starts
@@ -1346,7 +1355,8 @@ answered before the save starts coalesce into that one save (five back-to-back
 submits on the 60-block page: 1 file, 541 B, 2 syncs). Measured by
 `crates/tine-store/tests/host_edit_cost.rs` with every host write, byte and
 sync counted at the `HostIo` seam. A save also costs 2 whole-file reads and
-3 parses (1 of the old source) per edit.
+2 parses (1 of the old source; the index installs the serializer's keyed
+parse of the written bytes, R8/D4) per edit.
 
 **Command-line block edit unit cost (I-25, card DuDHQ).** A `block.edit` of an
 existing page's block is one request and one reply, and one host operation,
@@ -1356,9 +1366,10 @@ five syncs (the page's temp file and directory; the draft's temp file,
 directory and retirement). It reads the whole file 5 times, each owed above:
 the owner's read (`PageHost::read`), the plan's staging, the host's admission,
 the save's base guard and the publication read after the rename (GH #623).
-It parses 4 times: the owner's parse of the bytes its
+It parses 3 times: the owner's parse of the bytes its
 revision guards (A-V4b), the serializer's parse of the old source and its
-round-trip parse of the new bytes, and the publication's row (R8). The owner
+round-trip parse of the new bytes, which the publication installs whole as
+the row (R8 as amended, D4; it was a fourth parse before). The owner
 checks and answers from the serializer's parse, which the plan hands it
 (`HostOp::saved`). It does not parse again. It reads a page's name once.
 Transport bytes are unchanged. Proof

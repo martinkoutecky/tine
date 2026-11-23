@@ -2,7 +2,6 @@
 //! their block vectors release growth capacity before publication.
 
 use super::*;
-use tine_core::BlockId;
 
 impl Graph {
     /// Publication eligibility shared by prepared saves and external parses.
@@ -29,7 +28,14 @@ impl Graph {
     /// Isolate lsdoc's deliberate parser panics to one page rather than the
     /// cache. The page is named and parsed from its file: a build leaves a
     /// held page out, and its row is its owner's (`install_built`, (G)).
-    pub(super) fn parse_page_entry_isolated(&self, mut e: PageEntry) -> PageParseResult {
+    /// With `prior`, the rows a whole-cache invalidation retired (T10): bytes
+    /// of the prior row's revision reuse its document whole, unparsed (a
+    /// page's parse reads no configuration; its entry is named again).
+    pub(super) fn parse_page_entry_isolated(
+        &self,
+        mut e: PageEntry,
+        prior: Option<&RebuildPrior>,
+    ) -> PageParseResult {
         let content = match self.read_parse_input(&e.path) {
             Ok(content) => content,
             Err(error) => {
@@ -41,7 +47,32 @@ impl Graph {
             }
         };
         let _ = self.name_from(&mut e, &content);
-        isolate_page_parse(e, |entry| Some(parse_page_content(entry, &content)))
+        // The path's seed (a read or save before the cache, S6), else the
+        // row the invalidation retired: bytes of its revision reuse it whole.
+        let seed = (self.held.claims.lock().unwrap().get(&e.path))
+            .map(|(_, doc, disk)| (Arc::clone(doc), disk.rev.clone()));
+        let disk = DiskObs::of(&content);
+        if let Some((doc, _)) = seed.as_ref().filter(|(_, rev)| *rev == disk.rev) {
+            return Ok(Some((e, Arc::clone(doc), disk)));
+        }
+        if let Some(row) = prior.and_then(|prior| prior.row_at(&e, &disk.rev)) {
+            return Ok(Some((e, row, disk)));
+        }
+        // Changed bytes keep the prior's keys when they hold its outline
+        // (Observed); a path with no prior takes positional keys (Fresh).
+        let retired = match &seed {
+            Some((doc, _)) => Some(doc),
+            None => prior.and_then(|prior| prior.doc(e.rel_path_str())),
+        };
+        isolate_page_parse(e, |entry| {
+            let (doc, disk) = parse_page_unkeyed(entry, &content);
+            let input = match retired {
+                Some(_) => page_ids::Input::Observed(doc),
+                None => page_ids::Input::Fresh(doc),
+            };
+            let doc = self.page_ids(&entry.path, entry.rel_path_str(), input, retired);
+            Some((doc, disk))
+        })
     }
 }
 
@@ -75,35 +106,6 @@ pub(super) fn key_page(doc: &mut Document, e: &PageEntry) {
     prime_projections(doc);
 }
 
-/// The one answer to whether a raw or external write of a page keeps the
-/// page's runtime ids, which the desktop's reconciliation of a disk write,
-/// an owner's adoption of bytes it did not save, and a memory graph's raw
-/// write all ask: it does when `parsed`, the written bytes' parse, holds the
-/// outline of `row`, the page's row document. That is the document equality
-/// (ids aside) a publication's page delta compares, so the write publishes
-/// no change of the page, and none of its block ids may move to another
-/// block: the row's document stays the page's (`Some`). Otherwise the
-/// written blocks take their positional ids and the page is published as
-/// changed. Bytes that differ only in line terminators, a final terminator
-/// or anything else the parse normalizes keep the ids. O(page blocks), with
-/// no parse.
-pub(super) fn kept_outline(
-    row: Option<&Arc<Document>>,
-    parsed: &Document,
-) -> Option<Arc<Document>> {
-    row.filter(|row| ***row == *parsed).cloned()
-}
-
-impl Graph {
-    /// [`kept_outline`] against the cached row of the page file at `path`
-    /// (taking the cache's read lock): `None` when no cache is built.
-    pub(crate) fn kept_row(&self, path: &Path, parsed: &Document) -> Option<Option<Arc<Document>>> {
-        self.with_cached(path, |row| {
-            kept_outline(row.map(|(_, document)| document), parsed)
-        })
-    }
-}
-
 /// Validate every projection a page's readers need: block bodies and the
 /// pre-blocks' page properties and prose. Publication, DTO reads and save-base
 /// validation share this answer inside their page-level panic boundaries.
@@ -129,12 +131,12 @@ fn shrink_blocks(blocks: &mut Vec<DocBlock>) {
     }
 }
 
-pub(super) fn isolate_page_parse(
+pub(super) fn isolate_page_parse<D: Into<Arc<Document>>>(
     e: PageEntry,
-    parse: impl FnOnce(&PageEntry) -> Option<(Document, DiskObs)>,
+    parse: impl FnOnce(&PageEntry) -> Option<(D, DiskObs)>,
 ) -> PageParseResult {
     match std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| parse(&e))) {
-        Ok(Some((doc, rev))) => Ok(Some((e, doc, rev))),
+        Ok(Some((doc, rev))) => Ok(Some((e, doc.into(), rev))),
         Ok(None) => Ok(None),
         Err(payload) => {
             let detail = payload
@@ -170,74 +172,34 @@ pub(super) fn carry_saved_runtime_ids(parsed: &mut [DocBlock], saved: &[DocBlock
     }
 }
 
-/// Give `old`, the fresh parse of the bytes a save replaces, the runtime ids
-/// that `new` (the document saved over it) uses for those blocks, so layout
-/// retention tells blocks apart by identity, not text (#960). A page read
-/// gives each block either its position-derived id (a fresh parse of the
-/// file at `owner`, graph-relative) or the cached row's id, which a save keeps
-/// from the saved document; after a structural save the two differ. `new`
-/// descends from one of them: the one holding every id of `new` that either
-/// holds. When both qualify, only blocks they agree on keep an id; when
-/// neither does, or `owner` is unknown, no block has one, and retention
-/// matches by text alone. O(blocks).
-pub(super) fn identify_old_blocks(
-    old: &mut Document,
-    owner: Option<&str>,
-    cached: Option<&Document>,
-    new: &Document,
-) {
-    fn ids<'a>(blocks: &'a [DocBlock], out: &mut Vec<&'a BlockId>) {
-        for block in blocks {
-            out.push(&block.uuid);
-            ids(&block.children, out);
-        }
-    }
-    fn set(blocks: &mut [DocBlock], ids: &mut impl Iterator<Item = BlockId>) {
-        for block in blocks {
-            block.uuid = ids.next().unwrap_or_default();
-            set(&mut block.children, ids);
-        }
-    }
-    let Some(owner) = owner.filter(|owner| !owner.is_empty()) else {
-        return;
-    };
-    assign_doc_runtime_ids(&mut old.roots, owner);
-    let Some(cached) = cached.filter(|cached| **cached == *old) else {
-        return;
-    };
-    let (mut kept, mut fresh, mut saving) = (Vec::new(), Vec::new(), Vec::new());
-    ids(&cached.roots, &mut kept);
-    ids(&old.roots, &mut fresh);
-    if kept == fresh {
-        return;
-    }
-    ids(&new.roots, &mut saving);
-    let (kept_ids, fresh_ids): (HashSet<_>, HashSet<_>) = (
-        kept.iter().copied().collect(),
-        fresh.iter().copied().collect(),
-    );
-    let holds = |space: &HashSet<&BlockId>, other: &HashSet<&BlockId>| {
-        saving
-            .iter()
-            .all(|id| space.contains(id) || !other.contains(id))
-    };
-    let chosen: Vec<BlockId> = match (holds(&kept_ids, &fresh_ids), holds(&fresh_ids, &kept_ids)) {
-        (true, false) => kept.into_iter().cloned().collect(),
-        (false, true) => return,
-        (true, true) => kept
-            .iter()
-            .zip(&fresh)
-            .map(|(k, f)| {
-                if k == f {
-                    (*k).clone()
-                } else {
-                    BlockId::default()
+impl Graph {
+    /// Give `old`, the fresh parse of `source` (the bytes a save of the page
+    /// file at `path` replaces), the keys its base provenance gives
+    /// (`RUNTIME-ID-MODEL.md`, provenance table), so layout retention tells
+    /// blocks apart by identity, not text (#960):
+    /// - Live: the path's row, or its claim or seed, holds `old`'s outline
+    ///   (as the owner's Observed rule keeps keys): its keys are carried.
+    /// - None at all (no row, claim or seed: a first read before any row):
+    ///   the positional keys that read was served, as the seed rule gives.
+    /// - Provisional (a row of another outline): no keys; retention matches
+    ///   by text alone.
+    ///
+    /// O(blocks); no hash of `source` (PC-4: a save hashes its bytes once).
+    pub(super) fn key_save_base(&self, old: &mut Document, path: &Path) {
+        let base = match self.cached_observation(path) {
+            Some((_, doc, _)) => Some(doc),
+            None => (self.held.claims.lock().unwrap().get(path)).map(|(_, doc, _)| Arc::clone(doc)),
+        };
+        match base {
+            Some(doc) if *doc == *old => carry_saved_runtime_ids(&mut old.roots, &doc.roots),
+            Some(_) => {}
+            None => {
+                if let Some(rel) = path.strip_prefix(&self.root).ok().and_then(Path::to_str) {
+                    assign_doc_runtime_ids(&mut old.roots, rel);
                 }
-            })
-            .collect(),
-        (false, false) => vec![BlockId::default(); kept.len()],
-    };
-    set(&mut old.roots, &mut chosen.into_iter());
+            }
+        }
+    }
 }
 
 /// Build a page DTO from a cached document. `read_only` is left false here (the
@@ -258,54 +220,29 @@ pub(crate) fn page_dto(entry: &PageEntry, doc: &Document) -> PageDto {
     }
 }
 
-#[cfg(test)]
-mod identify_old_blocks_tests {
-    use super::*;
+/// The complete visible S(P) a whole-cache invalidation retired (T10, D6):
+/// every row with its revision. The next build reuses a row whose bytes are
+/// unchanged and keeps the keys of one whose outline its bytes still hold;
+/// dropped when that build installs. Peak: these roots (shared Arcs) plus the
+/// rows rebuilt for changed paths.
+pub(crate) struct RebuildPrior {
+    pub(super) pages: Arc<Pages>,
+    pub(super) revs: HashMap<PathBuf, String>,
+}
 
-    fn with_ids(source: &str, ids: &[&BlockId]) -> Document {
-        let mut doc = parse_doc(Path::new("pages/p.md"), source);
-        for (block, id) in doc.roots.iter_mut().zip(ids) {
-            block.uuid = (*id).clone();
-        }
-        doc
+impl RebuildPrior {
+    /// The prior document of the page file `rel` (graph-relative).
+    pub(super) fn doc(&self, rel: &str) -> Option<&Arc<Document>> {
+        let slot = *self.pages.positions.get(rel)?;
+        self.pages.get(slot).map(|(_, doc)| doc)
     }
 
-    /// The saving document's lineage picks the id space: the cached row's
-    /// (an editor that saved keeps its ids) or the position-derived one (a
-    /// fresh read); where both are possible, only agreeing blocks keep an id.
-    #[test]
-    fn the_saving_documents_lineage_picks_the_old_ids() {
-        let source = "- p\n- p\n- r\n";
-        let mut fresh = parse_doc(Path::new("pages/p.md"), source);
-        assign_doc_runtime_ids(&mut fresh.roots, "pages/p.md");
-        let s: Vec<BlockId> = fresh.roots.iter().map(|b| b.uuid.clone()).collect();
-        let t = BlockId::from("kept-only");
-        let identify = |owner: Option<&str>, cached: &[&BlockId], saving: &[&BlockId]| {
-            let mut old = parse_doc(Path::new("pages/p.md"), source);
-            let cached = with_ids(source, cached);
-            identify_old_blocks(&mut old, owner, Some(&cached), &with_ids(source, saving));
-            old.roots.iter().map(|b| b.uuid.clone()).collect::<Vec<_>>()
-        };
-        let none = BlockId::default();
-        // After a save moved blocks, the cache keeps the saved ids.
-        let kept = [&s[1], &s[0], &t];
-        assert_eq!(
-            identify(Some("pages/p.md"), &kept, &kept),
-            [s[1].clone(), s[0].clone(), t.clone()]
-        );
-        assert_eq!(
-            identify(Some("pages/p.md"), &kept, &[&s[0], &s[1], &s[2]]),
-            s
-        );
-        // A permutation leaves both spaces possible: only `r` agrees.
-        let swapped = [&s[1], &s[0], &s[2]];
-        assert_eq!(
-            identify(Some("pages/p.md"), &swapped, &[&s[0], &s[1], &s[2]]),
-            [none.clone(), none.clone(), s[2].clone()]
-        );
-        assert_eq!(
-            identify(None, &kept, &kept),
-            [none.clone(), none.clone(), none]
-        );
+    /// The prior document of the page file `e` when `rev` is the revision
+    /// of the bytes it was parsed from.
+    fn row_at(&self, e: &PageEntry, rev: &str) -> Option<Arc<Document>> {
+        let at = self.revs.get(&e.path)?;
+        (at == rev)
+            .then(|| self.doc(e.rel_path_str()).cloned())
+            .flatten()
     }
 }

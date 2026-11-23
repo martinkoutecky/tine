@@ -21,6 +21,8 @@ use std::time::{Duration, Instant};
 
 #[path = "runtime_id_own_save_tests.rs"]
 mod runtime_id_own_save_tests;
+#[path = "runtime_id_phase_a_tests.rs"]
+mod runtime_id_phase_a_tests;
 #[path = "s36_creation_tests.rs"]
 mod s36_creation_tests;
 
@@ -62,11 +64,11 @@ impl Unit {
         let id = self.progress.host.last_admitted + 1;
         let handoff = Handoff {
             bytes: text(bytes),
-            document: Document {
+            document: Arc::new(Document {
                 pre_block: Some(mark.into()),
                 roots: vec![],
                 org: false,
-            },
+            }),
             kinds: vec![EditKind::SaveBlock],
         };
         self.book.pending.insert((key.clone(), id), handoff);
@@ -132,7 +134,7 @@ fn q8_a_conflict_loop_retains_only_live_handoffs_and_a_late_publication_gets_its
     let (published, document) = own[0].own.as_ref().unwrap();
     assert_eq!((own[0].key.as_str(), *published), ("a.md", version));
     assert_eq!(
-        document.as_ref().unwrap().pre_block.as_deref(),
+        document.as_ref().unwrap().doc.pre_block.as_deref(),
         Some("final"),
         "the published version's own Document (its runtime ids)"
     );
@@ -659,7 +661,7 @@ fn indexed_row(live: &Live, rel: &str, text: &str, case: &str) -> Vec<tine_core:
 /// an editor's structural save, bytes it did not save that hold the same
 /// outline (any line terminator, a final terminator added or removed) keep
 /// the index row's runtime ids, as the desktop's reconciliation of an
-/// unheld page and a memory graph's raw write do (`Graph::kept_outline`).
+/// unheld page and a memory graph's raw write do (`Graph::page_ids`, `Input::Observed`).
 #[test]
 fn an_owner_adoption_of_the_same_outline_keeps_runtime_ids() {
     use crate::store::memory_owner_tests::{assert_distinct, edits, equivalents, pages};
@@ -734,7 +736,7 @@ fn an_owner_adoption_of_the_same_outline_keeps_runtime_ids() {
 /// after the structural save, rewritten with the same outline while closed,
 /// and opened again. The reopening hold retires the disk row into a claim and
 /// publishes the bytes it did not save; the claim's document is the page's
-/// current row, so [`kept_outline`](crate::model::page_parse) keeps its ids.
+/// current row, so [`Graph::page_ids`](crate::model::page_ids) keeps its ids.
 #[test]
 fn a_reopened_page_rewritten_with_the_same_outline_keeps_runtime_ids() {
     use crate::store::memory_owner_tests::{edits, equivalents, pages};

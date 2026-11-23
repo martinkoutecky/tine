@@ -228,6 +228,9 @@ pub(crate) enum Fallback {
     CacheBuilt,
     /// A page was held (a page host opened it) before the install (R2).
     PageHeld,
+    /// A page was read or saved before the install, at bytes the
+    /// checkpoint's row does not hold: its seed's keys win (S6).
+    Seeded,
 }
 
 /// Prefix of the one line a launch that tried the checkpoint prints when it
@@ -255,6 +258,7 @@ impl Fallback {
             Self::Deferred => "tine launch checkpoint declined: deferred",
             Self::CacheBuilt => "tine launch checkpoint declined: cache_built",
             Self::PageHeld => "tine launch checkpoint declined: page_held",
+            Self::Seeded => "tine launch checkpoint declined: seeded",
         }
     }
 

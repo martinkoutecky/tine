@@ -187,6 +187,63 @@ const ALLOWED_GRAPH_UNIT_CALLS: &[(&str, &str, &str)] = &[
         "forget_file_evicts_only_the_deleted_duplicate_path",
         "forget_file_internal",
     ),
+    // Runtime-id phase A: the one owner's decisions at the watcher's and the
+    // rebuild's own entry points (T10, W, the registry), counted per call.
+    (
+        "crates/tine-store/src/model/page_ids_cost_tests.rs",
+        "a_rebuild_reuses_unchanged_rows_and_parses_only_changed_paths",
+        "invalidate_cache",
+    ),
+    (
+        "crates/tine-store/src/model/page_ids_cost_tests.rs",
+        "a1_a11_a_swap_advances_the_witness",
+        "sync_file_internal",
+    ),
+    (
+        "crates/tine-store/src/model/page_ids_cost_tests.rs",
+        "a12_a_metadata_only_org_change_keeps_w_and_flags_read_only",
+        "sync_file_internal",
+    ),
+    (
+        "crates/tine-store/src/model/page_ids_cost_tests.rs",
+        "a13_a_recreated_path_takes_a_new_witness",
+        "forget_file_internal",
+    ),
+    (
+        "crates/tine-store/src/model/page_ids_cost_tests.rs",
+        "a13_a_recreated_path_takes_a_new_witness",
+        "sync_file_internal",
+    ),
+    (
+        "crates/tine-store/src/model/page_ids_cost_tests.rs",
+        "a3_a_source_never_reallocates_a_moved_key",
+        "sync_file_internal",
+    ),
+    (
+        "crates/tine-store/src/model/page_ids_tests.rs",
+        "a4_a_config_rebuild_keeps_a_structurally_saved_pages_keys",
+        "sync_file_internal",
+    ),
+    (
+        "crates/tine-store/src/model/page_ids_tests.rs",
+        "a8_a_release_before_the_first_publication_keeps_the_keys",
+        "sync_file_internal",
+    ),
+    (
+        "crates/tine-store/src/model/page_ids_tests.rs",
+        "measure_cold_build_and_rebuild",
+        "invalidate_cache",
+    ),
+    (
+        "crates/tine-store/src/model/page_ids_tests.rs",
+        "t10_a_read_and_a_publication_before_the_rebuild_keep_the_saved_keys",
+        "invalidate_cache",
+    ),
+    (
+        "crates/tine-store/src/model/page_ids_tests.rs",
+        "t10_a_read_and_a_publication_before_the_rebuild_keep_the_saved_keys",
+        "sync_file_internal",
+    ),
 ];
 fn is_transaction_save(tokens: &[proc_macro2::TokenTree], dot: usize) -> bool {
     matches!(tokens.get(dot.wrapping_sub(1)), Some(proc_macro2::TokenTree::Ident(id)) if id == "tx")

@@ -135,12 +135,22 @@ impl Graph {
             });
         match authority {
             Authority::Disk if !absent => return (false, renamed),
-            Authority::Disk | Authority::Withheld => {
+            // Confirmed absent: the path's S(P) ends.
+            Authority::Disk => {
+                self.retire_row(cache, path, true);
+                self.end_path(path);
+            }
+            // Withheld (uncertain identity, a twin a hold withholds, an
+            // unindexed hold): the row's S(P) is kept as the path's claim,
+            // which its next publication or reconcile compares against (D5).
+            Authority::Withheld => {
+                self.claim_row(cache, path);
                 self.retire_row(cache, path, true);
             }
             Authority::Owner(key, bytes) => {
                 let at = self.root.join(self.held.spellings().spelling(&key));
                 if at != path {
+                    self.claim_row(cache, path);
                     self.retire_row(cache, path, true);
                 } else if let Some(pages) = cache.pages.as_mut() {
                     let rev = std::str::from_utf8(&bytes).ok().map(content_rev);
@@ -150,7 +160,8 @@ impl Graph {
                     {
                         return (false, renamed);
                     } else {
-                        match self.owned_row(&key, &bytes, None, None) {
+                        let prior = self.prior_in(pages, path);
+                        match self.owned_row(&key, &bytes, None, prior.as_ref()) {
                             Ok(Some(row)) => self.put_row(Arc::make_mut(pages), row),
                             Ok(None) => {
                                 self.retire_row(cache, path, true);
@@ -225,7 +236,7 @@ impl Graph {
                 return None;
             }
             if let Some(claim) = claim {
-                self.held.claims.lock().unwrap().insert(key.clone(), claim);
+                self.held.claims.lock().unwrap().insert(path.clone(), claim);
             }
             keys.insert(key, current.map(Some));
             Some(vec![path])
@@ -248,7 +259,8 @@ impl Graph {
         let mut reread = Vec::new();
         self.transition(|| {
             self.held.keys.write().unwrap().remove(key)?;
-            self.held.claims.lock().unwrap().remove(key);
+            // The path's claim stays for the reread's reconcile, which
+            // compares against it (T6, M2) and frees it.
             let withheld = self.held.withheld.lock().unwrap().remove(key);
             reread.push(path.clone());
             reread.extend(withheld.into_iter().flatten());
@@ -266,7 +278,7 @@ impl Graph {
             let keys: Vec<String> = (self.held.keys.write().unwrap().drain())
                 .map(|(key, _)| key)
                 .collect();
-            self.held.claims.lock().unwrap().clear();
+            // Claims stay for the rereads' reconciles (T6), by path.
             let spellings = std::mem::take(&mut *self.held.spellings.write().unwrap());
             reread.extend(
                 keys.iter()
@@ -288,45 +300,87 @@ impl Graph {
     /// The alias spelling move gave held `key` a new spelling (Q4), a
     /// transition: the rows at `from` go and the owner's bytes are
     /// installed at the new spelling. The caller holds the writer.
-    pub(crate) fn respelled(&self, key: &str, from: &Path) {
+    /// The caller confirmed it is one file (`same_file`: the host's
+    /// case-only spelling move and its launch recovery): its S(P) moves to
+    /// the new spelling with its keys, W advances there, and nothing stays
+    /// at `from` (S5). A move that is not confirmed as one file leaves the
+    /// new spelling to start from its own bytes.
+    pub(crate) fn respelled(&self, key: &str, from: &Path, same_file: bool) {
         let to = self.root.join(self.held.spellings().spelling(key));
+        let moved = (same_file && to != from)
+            .then(|| {
+                self.cached_observation(from)
+                    .or_else(|| self.held.claims.lock().unwrap().get(from).cloned())
+            })
+            .flatten();
         self.transition(|| {
-            self.held
-                .indexed_of(key)
-                .map(|_| vec![from.to_path_buf(), to])
+            self.held.indexed_of(key)?;
+            if let Some(row) = &moved {
+                self.ids.respelled(from, &to, &row.1);
+                self.held
+                    .claims
+                    .lock()
+                    .unwrap()
+                    .insert(to.clone(), (*row).clone());
+            }
+            Some(vec![from.to_path_buf(), to.clone()])
         });
+        if moved.is_some() {
+            // Nothing stays at the old spelling: the file lives at `to`.
+            self.held.claims.lock().unwrap().remove(from);
+        }
     }
 
     /// The owner's publication of held `key` (R1): its bytes (None: no
     /// file) become the page's index, and its row is derived from them, in
-    /// one critical section. `doc` is the Document the bytes were
-    /// serialized from, when the owner has it (R8, E104). Returns the entry
-    /// named from the bytes (the derived row's, when one was derived), None
-    /// when the page has no row. `Err` when no host holds `key`: the caller
-    /// publishes as for disk.
+    /// one critical section. `saved` is the serializer's keyed parse of a
+    /// save with the bytes it parsed (D4, E104): when those are these bytes,
+    /// it is installed whole, also
+    /// at an unchanged revision when it moves a key (A1). Bytes it did not
+    /// save keep the path's prior keys when they hold its outline. Before the
+    /// cache exists, the answer is kept as the path's seed, which the build
+    /// adopts (S6, A7). Returns the entry named from the bytes (the derived
+    /// row's, when one was derived; None when the page has no row) and
+    /// whether the page's keyed outline changed at an unchanged revision.
+    /// `Err` when no host holds `key`: the caller publishes as for disk.
     #[allow(clippy::result_unit_err)]
     pub(crate) fn publish_owned(
         &self,
         key: &str,
         bytes: Option<Arc<[u8]>>,
-        doc: Option<&Document>,
-    ) -> Result<Option<PageEntry>, ()> {
+        saved: Option<page_ids::SaveHandoff>,
+    ) -> Result<OwnerPublished, ()> {
+        let doc = saved.and_then(|saved| saved.of(bytes.as_ref()));
         let path = self.root.join(self.held.spellings().spelling(key));
         let rev = bytes
             .as_deref()
             .and_then(|bytes| std::str::from_utf8(bytes).ok())
             .map(content_rev);
         // Bytes the installed row was already derived from change nothing
-        // but the index (an owner's observation of its own save).
+        // but the index (an owner's observation of its own save), unless the
+        // serializer's document moves a key among them.
         let mut row = None;
         let mut named = None;
-        let mut claim = self.held.claims.lock().unwrap().remove(key);
-        if self.cache_built() && self.cached_rev(&path) != rev {
+        let mut claim = self.held.claims.lock().unwrap().remove(&path);
+        let built = self.cache_built();
+        if built && (self.cached_rev(&path) != rev || doc.is_some()) {
             let current =
                 (self.with_cached(&path, |row| row.map(|(_, doc)| Arc::clone(doc)))).flatten();
             row = (bytes.as_deref()).and_then(|bytes| {
-                self.claimed_row(key, bytes, doc, claim.take(), current.as_ref())
+                self.claimed_row(key, bytes, doc.clone(), claim.take(), current.as_ref())
+                    .ok()
+                    .flatten()
             });
+        } else if !built {
+            // The seed: this publication's S(P), for the build (S6).
+            let seed = (bytes.as_deref()).filter(|_| doc.is_some() || claim.is_some());
+            if let Some(seed) = seed.and_then(|bytes| {
+                self.claimed_row(key, bytes, doc.clone(), claim.take(), None)
+                    .ok()
+                    .flatten()
+            }) {
+                self.held.claims.lock().unwrap().insert(path.clone(), seed);
+            }
         }
         let mut guard = self.derived.cache.write().unwrap();
         #[cfg(test)]
@@ -334,6 +388,9 @@ impl Graph {
         {
             let mut keys = self.held.keys.write().unwrap();
             let Some(indexed) = keys.get_mut(key) else {
+                if let Some(claim) = claim {
+                    self.held.claims.lock().unwrap().insert(path.clone(), claim);
+                }
                 return Err(());
             };
             let same = match (indexed.as_ref(), &bytes) {
@@ -349,18 +406,30 @@ impl Graph {
         // Bytes with no revision (undecodable) have no row to be unchanged from.
         let unchanged = (rev.is_some() || bytes.is_none())
             && self.derived.disk_revs.read().unwrap().get(&path).cloned() == rev;
-        if !unchanged || guard.pages.is_none() {
+        let mut identity = false;
+        if let (true, Some(pages)) = (unchanged, guard.pages.as_ref()) {
+            // An unchanged revision: only a key move installs (A1).
+            let slot = self.cached_page_index_for_path(pages, &path);
+            let current = slot.and_then(|slot| pages.get(slot)).map(|(_, doc)| doc);
+            identity = row.as_ref().is_some_and(|(_, doc, _)| {
+                current.is_some_and(|current| !Arc::ptr_eq(current, doc))
+            });
+            if !identity {
+                row = None;
+            }
+        }
+        if !unchanged || identity || guard.pages.is_none() {
             let before = self.cache_gen.load(Ordering::Acquire);
             let mut renamed = true;
             if let Some(cache) = guard.pages.as_mut() {
                 // Derived before the lock unless the installed row changed
                 // since (the writer excludes that; this keeps it exact).
                 if row.is_none() {
-                    let slot = self.cached_page_index_for_path(cache, &path);
-                    let current = slot.and_then(|slot| cache.get(slot)).map(|(_, doc)| doc);
-                    let current = current.cloned();
+                    let prior = self.prior_in(cache, &path);
                     row = (bytes.as_deref()).and_then(|bytes| {
-                        self.claimed_row(key, bytes, doc, claim.take(), current.as_ref())
+                        self.claimed_row(key, bytes, doc.clone(), claim.take(), prior.as_ref())
+                            .ok()
+                            .flatten()
                     });
                 }
                 match row.take() {
@@ -392,6 +461,18 @@ impl Graph {
         self.recent_writes.lock().unwrap().remove(&path);
         // A derived row's entry is these bytes' naming: not named again.
         let named = named.or_else(|| row.map(|(entry, _, _)| entry));
-        Ok(bytes.and_then(|bytes| named.or_else(|| self.owned_entry(key, &bytes))))
+        Ok(OwnerPublished {
+            entry: bytes.and_then(|bytes| named.or_else(|| self.owned_entry(key, &bytes))),
+            identity,
+        })
     }
+}
+
+/// What an owner's publication installed ([`Graph::publish_owned`]).
+pub(crate) struct OwnerPublished {
+    /// The entry named from the bytes; None when the page has no row.
+    pub(crate) entry: Option<PageEntry>,
+    /// The page's keyed outline changed at an unchanged revision (A1): a
+    /// page change, though no byte changed.
+    pub(crate) identity: bool,
 }

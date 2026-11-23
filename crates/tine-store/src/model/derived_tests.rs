@@ -532,6 +532,14 @@ fn a_discovery_error_never_lands_after_a_hold() {
     store.close();
 }
 
+/// The serializer's document `doc` of `bytes` (D4), as the host hands it off.
+fn saved_of(bytes: &str, doc: tine_core::doc::Document) -> crate::model::page_ids::SaveHandoff {
+    crate::model::page_ids::SaveHandoff {
+        bytes: Arc::from(bytes.as_bytes()),
+        doc: Arc::new(doc),
+    }
+}
+
 /// REVIEW-3a4 #5: an owner publication installs what its bytes say; a
 /// Document of other content never reaches the row, and one of the same
 /// content keeps its runtime identities (R8).
@@ -559,7 +567,11 @@ fn an_owner_publication_installs_its_bytes_not_a_foreign_document() {
         let bytes = Some(Arc::from(owner.as_bytes()));
         assert!(store
             .graph
-            .publish_owned("pages/a.md", bytes, Some(&foreign))
+            .publish_owned(
+                "pages/a.md",
+                bytes,
+                Some(saved_of("- foreign document\n", foreign))
+            )
             .is_ok());
     }
     let installed: Vec<String> = bodies().into_iter().map(|(raw, _)| raw).collect();
@@ -577,7 +589,7 @@ fn an_owner_publication_installs_its_bytes_not_a_foreign_document() {
         let bytes = Some(Arc::from(saved_body.as_bytes()));
         assert!(store
             .graph
-            .publish_owned("pages/a.md", bytes, Some(&saved))
+            .publish_owned("pages/a.md", bytes, Some(saved_of(saved_body, saved)))
             .is_ok());
     }
     let child = store.graph.with_cached(&path, |row| {

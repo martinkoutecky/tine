@@ -2318,3 +2318,39 @@ fn a_warm_launch_rebuilds_claimant_paths_and_an_edited_day_stays_readable() {
     ));
     store.close();
 }
+
+/// A19 (`RUNTIME-ID-FINDINGS.md`, S6): a warm launch whose first page read
+/// runs before the checkpoint installs, of a page rewritten between the
+/// checkpoint and that read. The keys that read served stay the page's: the
+/// checkpoint takes the read's seed, or declines and the build adopts it;
+/// the checkpoint's row never gives the page other keys.
+#[test]
+fn a19_a_read_before_the_checkpoint_installs_keeps_its_keys() {
+    let root = graph();
+    let dir = tempfile::tempdir().unwrap();
+    let cp = dir.path().join("graph.bin");
+    write_checkpoint(root.path(), &cp);
+    // Rewritten while Tine was closed: a block prepended.
+    fs::write(root.path().join("pages/A.md"), "- new\n- links [[One]]\n").unwrap();
+    let bytes = fs::read(&cp).unwrap();
+    let len = u32::from_le_bytes(bytes[12..16].try_into().unwrap()) as usize;
+    let header: Header = postcard::from_bytes(&bytes[16..16 + len]).unwrap();
+    let graph = crate::model::Graph::open(&header.root);
+    let path = graph.root.join("pages/A.md");
+    let entry = graph.entry_for_path(&path).unwrap();
+    let ids = |blocks: &[tine_core::model::BlockDto]| -> Vec<String> {
+        blocks.iter().map(|block| block.id.clone()).collect()
+    };
+    let served = ids(&graph.load_page(&entry).unwrap().blocks);
+    let body = decode(&bytes, &header.root, &header.config_key, &|| None).unwrap();
+    let config = (*graph.current_config()).clone();
+    let installed = graph.checkpoint_install(body.graph, config).is_ok();
+    let row = graph.with_pages(|pages| {
+        let (_, doc) = (pages.iter().find(|(entry, _)| entry.path == path)).expect("A has a row");
+        doc.roots
+            .iter()
+            .map(|b| b.uuid.to_string())
+            .collect::<Vec<_>>()
+    });
+    assert_eq!(row, served, "installed={installed}: the served keys");
+}

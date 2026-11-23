@@ -242,9 +242,10 @@ fn the_creator_behind_in_line_writes_in_the_turn_it_holds() {
 /// What one `block.edit` of an existing page's block, or one `block.move` of a
 /// subtree within its page, spends below the owner
 /// (card DuDHQ), from the request to the host's quiescence, at every page
-/// size: the old bytes parsed once (by the serializer), the new bytes twice
-/// (the serializer's round-trip check, and the publication's row, R8), never
-/// a third time by the owner; one name read (the owner's read of the page),
+/// size: the old bytes parsed once (by the serializer), the new bytes once
+/// (the serializer's round-trip check, whose keyed parse of exactly these
+/// bytes the publication installs whole, R8 as amended by D4), never again
+/// by the owner or the publication; one name read (the owner's read of the page),
 /// not a second for the written bytes. The reads are the owner's read, the
 /// plan's staging, the host's admission, the save's base guard and the
 /// publication read (GH #623); the files and syncs are the page's temp file
@@ -354,7 +355,7 @@ fn a_block_edit_spends_its_lower_bound() {
         // edit already read (was 1 until CM leftovers C, item 2).
         assert_eq!(
             counts,
-            (4, 1, 4, 1, 0, 0),
+            (3, 1, 4, 1, 0, 0),
             "{label}: parses, old-source parses, full reads, store reads, name reads, listings"
         );
         assert_eq!((c.fsyncs, c.files_written), (5, 2), "{label}: syncs, files");

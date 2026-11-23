@@ -170,6 +170,13 @@ pub fn org_editable(content: &str) -> bool {
     org_round_trips(content)
 }
 
+/// [`org_editable`] for `content` whose parse is `doc` (a page row already
+/// parsed from these bytes): the round trip without parsing again. O(bytes).
+pub fn org_editable_parsed(doc: &Document, content: &str) -> bool {
+    let content = normalize_line_endings(content);
+    serialize_org_with(doc, trailing_newlines(&content)) == *content
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

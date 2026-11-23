@@ -192,7 +192,7 @@ fn id_map(case: &str, page: &PageDto) -> BTreeMap<String, String> {
 /// write of outline-equivalent bytes (the submitted bytes, any line
 /// terminator, a final terminator added or removed) publishes no page change,
 /// so it keeps every block's runtime id, as the desktop's reconciliation
-/// does (`Graph::kept_outline`), and takes the new bytes' revision and time.
+/// does (`Graph::page_ids`, `Input::Observed`), and takes the new bytes' revision and time.
 /// An edit through the ids the submit gave then writes the block it names.
 /// Markdown and Org; prepend a root, insert a child, append after
 /// reparenting; the original first block carries an authored id.

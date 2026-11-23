@@ -35,6 +35,13 @@ mod md_fidelity_corpus_tests;
 pub(crate) mod namespace_parents;
 mod page_icons;
 mod page_identity;
+pub(crate) mod page_ids;
+#[cfg(test)]
+mod page_ids_compat;
+#[cfg(test)]
+mod page_ids_cost_tests;
+#[cfg(test)]
+mod page_ids_tests;
 pub(crate) mod page_parse;
 mod parse_depth;
 pub(crate) use file_source::FileSource;
@@ -65,8 +72,8 @@ pub(crate) use page_identity::{
     graph_text_watch_relevant,
 };
 use page_parse::{
-    carry_saved_runtime_ids, identify_old_blocks, isolate_page_parse, kept_outline, key_page,
-    page_dto, parse_page_content, parse_page_unkeyed, prime_projections,
+    carry_saved_runtime_ids, isolate_page_parse, page_dto, parse_page_content, parse_page_unkeyed,
+    prime_projections,
 };
 
 use crate::path_identity::canonical_existing_path;
@@ -642,6 +649,9 @@ pub(crate) struct Graph {
     derived: derived::Derived,
     /// Pages a page host holds, and what their owner last published.
     pub(crate) held: derived::HeldPages,
+    /// The one owner of each page's runtime keys and their witness
+    /// (`page_ids.rs`).
+    pub(crate) ids: page_ids::PageIds,
     /// Bumped on every cache mutation (upsert/remove). The lock-free cache build
     /// captures this before reading disk and rebuilds if a mutation raced it
     /// (which would otherwise install stale content over a concurrent save).
@@ -2364,11 +2374,12 @@ struct PageCacheBuild {
     unreadable: Vec<(String, String)>,
 }
 
-type ParsedPage = (PageEntry, Document, DiskObs);
+type ParsedPage = (PageEntry, Arc<Document>, DiskObs);
 
 /// What the store observed in one page's bytes when it parsed them: the
 /// revision (the freshness key, see `disk_revs`) and whether the bytes carry a
 /// VCS anchor line (see `vcs_anchored`). Both come from the same bytes.
+#[derive(Clone)]
 pub(crate) struct DiskObs {
     pub(crate) rev: String,
     pub(crate) anchored: bool,
@@ -2410,7 +2421,7 @@ impl PageCacheBuild {
     fn collect(&mut self, parsed: PageParseResult) -> bool {
         match parsed {
             Ok(Some((entry, doc, obs))) => {
-                self.pages.push((entry, Arc::new(doc), obs));
+                self.pages.push((entry, doc, obs));
                 true
             }
             Ok(None) => false,
@@ -2990,6 +3001,7 @@ impl Graph {
             cache_gen: std::sync::atomic::AtomicU64::new(0),
             derived: Default::default(),
             held: Default::default(),
+            ids: Default::default(),
             build_lock: std::sync::Mutex::new(()),
             launch_observations: std::sync::Mutex::new(None),
             opened_at: tine_core::clock::system_now(),
@@ -3304,13 +3316,6 @@ impl Graph {
         Ok(None)
     }
 
-    /// A page DTO from the cache ONLY if the cache is already built — never
-    /// triggers a (synchronous, whole-graph) build. `None` on a cold cache or a
-    /// page not yet cached, so latency-path callers can parse just one file.
-    fn peek_cached_page(&self, entry: &PageEntry) -> Option<PageDto> {
-        self.with_cached(&entry.path, |row| row.map(|(e, d)| page_dto(e, d)))?
-    }
-
     /// Read and validate the current page file on every call, then reconcile a
     /// warm cache before returning its DTO. A cold cache or miss parses only this
     /// page and does not warm the whole cache. Missing files are evicted;
@@ -3359,16 +3364,17 @@ impl Graph {
         // uuids that may differ from the warm cache until the page is reloaded —
         // benign: id:: ref targets are stable, and live-ref views fall back to a
         // read-only render for an unmatched uuid, never losing edits.)
-        if cache_ready {
-            if let Some(mut dto) = self.peek_cached_page(entry) {
-                dto.read_only = read_only_org(&entry.path, &content);
-                dto.rev = Some(content_rev(&content));
-                return Ok(dto);
-            }
+        // A warm row at these bytes' revision is served whole (capture, no
+        // parse); a cache miss parses the bytes we already read. Before the
+        // cache exists, that answer is the path's seed, which the build or
+        // checkpoint adopts (S6, A7, A19).
+        let doc = self.keyed_of(entry, &content);
+        if !self.cache_built() && self.disk_sourced(&entry.path) {
+            let seed = (entry.clone(), Arc::clone(&doc), DiskObs::of(&content));
+            let mut claims = self.held.claims.lock().unwrap();
+            claims.entry(entry.path.clone()).or_insert(seed);
         }
-        // Cache miss: parse the bytes we already read (propagate the original read
-        // error if it failed).
-        Ok(Self::dto_of(entry, &content))
+        Ok(Self::dto_from(entry, &doc, &content))
     }
 
     /// Directly read the caller-selected file, including a duplicate-day stray;
@@ -3384,7 +3390,7 @@ impl Graph {
             Err(e) if e.kind() == io::ErrorKind::NotFound => return Ok(None),
             Err(e) => return Err(e),
         };
-        Ok(Some(Self::dto_of(&entry, &content)))
+        Ok(Some(self.dto_of(&entry, &content)))
     }
 
     /// The DTO of `bytes` as the page file at `abs`, as a read of that file
@@ -3407,17 +3413,55 @@ impl Graph {
         // other guard, and a parser or projection panic must reach it as an
         // unreadable page, never unwind through its driver (merge review F1).
         std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-            Self::dto_of(&entry, content)
+            self.dto_of(&entry, content)
         }))
         .map(Some)
         .map_err(|_| io::Error::new(io::ErrorKind::InvalidData, ParserPanicked))
     }
 
-    fn dto_of(entry: &PageEntry, content: &str) -> PageDto {
-        let (doc, observed) = parse_page_content(entry, content);
-        let mut dto = page_dto(entry, &doc);
-        dto.read_only = read_only_org(&entry.path, content);
-        dto.rev = Some(observed.rev);
+    /// The DTO of `content` as the page file `entry` (capture): at the
+    /// installed row's revision, that row, with its keys and no parse (a
+    /// mail or held read of indexed bytes answers what the index holds,
+    /// F7/F10); other bytes are parsed once and keyed as the owner would key
+    /// bytes it did not save (Observed against the path's prior), installing
+    /// nothing. The Org read-only flag is the round trip of the very
+    /// document served. Cost O(page bytes) at the row's revision (hash and,
+    /// for Org, one serialization); one parse otherwise.
+    fn dto_of(&self, entry: &PageEntry, content: &str) -> PageDto {
+        Self::dto_from(entry, &self.keyed_of(entry, content), content)
+    }
+
+    /// The keyed document [`Self::dto_of`] serves for `content`.
+    fn keyed_of(&self, entry: &PageEntry, content: &str) -> Arc<Document> {
+        let rev = content_rev(content);
+        let row = (self.cached_observation(&entry.path))
+            .filter(|(_, _, disk)| disk.rev == rev)
+            .map(|(_, doc, _)| doc)
+            .or_else(|| {
+                let claims = self.held.claims.lock().unwrap();
+                let claim = claims
+                    .get(&entry.path)
+                    .filter(|(_, _, disk)| disk.rev == rev);
+                claim.map(|(_, doc, _)| Arc::clone(doc))
+            });
+        row.unwrap_or_else(|| {
+            let (doc, _) = page_parse::parse_page_unkeyed(entry, content);
+            let prior = self.prior_doc(&entry.path);
+            let input = match prior {
+                Some(_) => page_ids::Input::Observed(doc),
+                None => page_ids::Input::Fresh(doc),
+            };
+            let rel = entry.rel_path_str();
+            self.page_ids(&entry.path, rel, input, prior.as_ref())
+        })
+    }
+
+    /// The DTO of `doc`, the keyed document of `content` as `entry`.
+    fn dto_from(entry: &PageEntry, doc: &Document, content: &str) -> PageDto {
+        let mut dto = page_dto(entry, doc);
+        dto.read_only = Format::from_path(&entry.path) == Format::Org
+            && !tine_core::org::org_editable_parsed(doc, content);
+        dto.rev = Some(content_rev(content));
         dto
     }
 
@@ -3435,9 +3479,14 @@ impl Graph {
             .cloned()
             .collect();
         let mut built = PageCacheBuild::with_capacity(entries.len());
-        let shards =
-            parse_pages_parallel(entries, &|| true, &|e| self.parse_page_entry_isolated(e))
-                .expect("an unstoppable parse always finishes");
+        // A rebuild (T10, D6): a path whose bytes are its prior row's reuses
+        // that row whole, with no parse; any other path is parsed and keeps
+        // the prior's keys where it holds its outline (`install_built`).
+        let prior = self.rebuild_prior();
+        let shards = parse_pages_parallel(entries, &|| true, &|e| {
+            self.parse_page_entry_isolated(e, prior.as_deref())
+        })
+        .expect("an unstoppable parse always finishes");
         for parsed in shards.into_iter().flatten() {
             built.collect(parsed);
         }
@@ -4119,32 +4168,26 @@ impl Graph {
         {
             panic!("injected external sync parser panic");
         }
-        let mut newdoc = parse_doc(path, content);
-        match self.kept_row(path, &newdoc) {
-            None => {
-                #[cfg(test)]
-                crate::store::pause_at_hook(&self.cold_cache_reconcile_pause);
-                // A builder can install between the look above and this
-                // bump; if it did, continue to cache_upsert below. Otherwise
-                // the generation moves under the lock install_built takes, so
-                // its pre-write candidate cannot be installed afterward.
-                if self.cold_reconcile_bump(path) {
-                    return None;
-                }
+        if !self.cache_built() {
+            #[cfg(test)]
+            crate::store::pause_at_hook(&self.cold_cache_reconcile_pause);
+            // A builder can install between the look above and this
+            // bump; if it did, continue to cache_upsert below. Otherwise
+            // the generation moves under the lock install_built takes, so
+            // its pre-write candidate cannot be installed afterward.
+            if self.cold_reconcile_bump(path) {
+                return None;
             }
-            // The same outline in other bytes (line endings, a final line
-            // break, a column-0 continuation line): the row keeps its ids
-            // and takes these bytes' revision and anchor, so a later hold
-            // of the page reuses it (its claim matches) instead of
-            // reparsing positionally.
-            Some(Some(kept)) => newdoc = Document::clone(&kept),
-            Some(_) => {}
         }
-        newdoc.roots.shrink_to_fit();
+        // Bytes the owner did not save (Observed): the same outline in other
+        // bytes (line endings, a final line break, a column-0 continuation
+        // line) keeps the row's keys and takes these bytes' revision and
+        // anchor, so a later hold reuses it instead of reparsing (D2).
+        let newdoc = parse_doc(path, content);
         let anchored = tine_core::concord_queue::has_vcs_anchor(content.as_bytes());
         self.cache_upsert(
             entry.clone(),
-            newdoc,
+            page_ids::Input::Observed(newdoc),
             DiskObs {
                 rev: disk_rev,
                 anchored,
@@ -4219,15 +4262,7 @@ impl Graph {
             #[cfg(feature = "test-faults")]
             crate::cost_counters::old_source_parse();
             let (mut old, opts) = parse_doc_with_opts(path, source);
-            let cached = self
-                .with_cached(path, |row| row.map(|(_, cached)| Arc::clone(cached)))
-                .flatten();
-            identify_old_blocks(
-                &mut old,
-                path.strip_prefix(&self.root).ok().and_then(Path::to_str),
-                cached.as_deref(),
-                &doc,
-            );
+            self.key_save_base(&mut old, path);
             prime_projections(&old);
             (old, opts)
         });
@@ -4566,18 +4601,6 @@ fn walk_page_files(dir: &Path, mut visit: impl FnMut(PathBuf)) {
             }
         }
     }
-}
-
-/// Whether a page should load read-only: an org file whose on-disk bytes don't
-/// round-trip through Tine's org parser/serializer, so Tine must never rewrite
-/// it (lest it corrupt the user's graph). Markdown pages are always editable.
-fn read_only_org(path: &Path, content: &str) -> bool {
-    if Format::from_path(path) != Format::Org {
-        return false;
-    }
-    #[cfg(feature = "test-faults")]
-    crate::cost_counters::parse();
-    !tine_core::org::org_editable(content)
 }
 
 /// Stable (deterministic, seed-free) content hash — FNV-1a/64 as hex. Used as a

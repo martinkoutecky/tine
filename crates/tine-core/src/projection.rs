@@ -156,19 +156,45 @@ fn assign_runtime_ids_rec(blocks: &mut [DocBlock], parent: Uuid) {
     }
 }
 
+/// What one id assignment of a page found, from the walk that assigned: a
+/// fresh parse (no block kept a key: the positional keys), a fully keyed tree
+/// (nothing assigned) or a mixed one (holes filled around the kept keys).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Assigned {
+    /// No block kept a key.
+    Fresh,
+    /// Every block kept its key.
+    Full,
+    /// Some blocks kept keys and the rest were filled.
+    Mixed,
+}
+
 /// Give each block of a graph-backed document that has no runtime key one,
-/// from its normalized, graph-relative physical owner: the one answer for a
-/// fresh load and for a saved page (the desktop's own save, a memory graph's
-/// submit, Concord's merged review, GH #800). Kept keys stay. A block without
-/// one gets its positional key, unless a kept block already holds it (a
-/// block moved there); then it gets the next free key derived from it
-/// (deterministic, still a runtime locator). A page whose keys repeat would
-/// collapse two blocks into one store node, and the next save would write one
-/// block's text twice. A fresh parse keeps no key, and its keys are the
-/// positional ones ([`visit_doc_runtime_ids`]). O(blocks) expected; a fully
-/// keyed document is only scanned, and one that keeps no key allocates no
-/// per-block set.
+/// from its normalized, graph-relative physical owner (the store's id owner,
+/// `PageIds`, decides which keys a page keeps and calls this for the rest;
+/// Guide, PDF, Concord review and query projections call it for their own
+/// documents). Kept keys stay. A block without one gets its positional key,
+/// unless a kept block already holds it (a block moved there); then it gets
+/// the next free key derived from it (deterministic, still a runtime
+/// locator). A page whose keys repeat would collapse two blocks into one store
+/// node, and the next save would write one block's text twice. A fresh parse
+/// keeps no key, and its keys are the positional ones
+/// ([`visit_doc_runtime_ids`]). O(blocks) expected; a fully keyed document is
+/// only scanned, and one that keeps no key allocates no per-block set.
 pub fn assign_doc_runtime_ids(roots: &mut [DocBlock], owner_rel_path: &str) {
+    assign_runtime_ids_reserving(roots, owner_rel_path, None);
+}
+
+/// [`assign_doc_runtime_ids`], where `reserved` names keys another page owns
+/// (the store's foreign-key registry: a block moved off this page keeps its
+/// key there): no positional or fill candidate takes one; it takes the next
+/// free key instead. `None` when nothing is reserved (every restart and cold
+/// build), which costs nothing. Reports what the walk found.
+pub fn assign_runtime_ids_reserving(
+    roots: &mut [DocBlock],
+    owner_rel_path: &str,
+    reserved: Option<&dyn Fn(&BlockId) -> bool>,
+) -> Assigned {
     fn kept(blocks: &[DocBlock], into: &mut HashSet<BlockId>) {
         for block in blocks {
             if !block.uuid.is_empty() {
@@ -177,18 +203,23 @@ pub fn assign_doc_runtime_ids(roots: &mut [DocBlock], owner_rel_path: &str) {
             kept(&block.children, into);
         }
     }
-    fn fill(blocks: &mut [DocBlock], parent: Uuid, taken: &mut HashSet<BlockId>) {
+    fn fill(
+        blocks: &mut [DocBlock],
+        parent: Uuid,
+        taken: &mut HashSet<BlockId>,
+        reserved: &dyn Fn(&BlockId) -> bool,
+    ) {
         for (sibling_index, block) in blocks.iter_mut().enumerate() {
             let structural = structural_child(parent, sibling_index);
             if block.uuid.is_empty() {
                 let mut key = structural;
-                while taken.contains(&key.into()) {
+                while taken.contains(&key.into()) || reserved(&key.into()) {
                     key = deterministic_runtime_uuid(key, b"taken");
                 }
                 block.uuid = key.into();
                 taken.insert(block.uuid.clone());
             }
-            fill(&mut block.children, structural, taken);
+            fill(&mut block.children, structural, taken, reserved);
         }
     }
     /// Whether the tree holds an unkeyed block and a kept one; stops once both are seen.
@@ -207,17 +238,53 @@ pub fn assign_doc_runtime_ids(roots: &mut [DocBlock], owner_rel_path: &str) {
     }
     let mut seen = (false, false);
     keys(roots, &mut seen);
-    match seen {
+    let namespace = || file_runtime_namespace(owner_rel_path);
+    match (seen, reserved) {
         // Every block is keyed (an ordinary own save): nothing to assign.
-        (false, _) => {}
+        ((false, _), _) => Assigned::Full,
         // A fresh parse keeps no key: the positional keys, nothing allocated.
-        (true, false) => assign_runtime_ids_rec(roots, file_runtime_namespace(owner_rel_path)),
-        (true, true) => {
+        ((true, false), None) => {
+            assign_runtime_ids_rec(roots, namespace());
+            Assigned::Fresh
+        }
+        ((true, false), Some(reserved)) => {
+            counted_fill_set();
+            fill(roots, namespace(), &mut HashSet::new(), reserved);
+            Assigned::Fresh
+        }
+        ((true, true), reserved) => {
+            counted_fill_set();
             let mut taken = HashSet::new();
             kept(roots, &mut taken);
-            fill(roots, file_runtime_namespace(owner_rel_path), &mut taken);
+            fill(
+                roots,
+                namespace(),
+                &mut taken,
+                reserved.unwrap_or(&|_| false),
+            );
+            Assigned::Mixed
         }
     }
+}
+
+#[cfg(any(test, feature = "test-counters"))]
+thread_local! {
+    static RUNTIME_ID_WORK: std::cell::Cell<(u64, u64)> = const { std::cell::Cell::new((0, 0)) };
+}
+
+/// This thread's positional key hashes and fill sets since the last take
+/// (cost pins of the store's id owner).
+#[cfg(any(test, feature = "test-counters"))]
+pub fn take_runtime_id_work() -> (u64, u64) {
+    RUNTIME_ID_WORK.with(|work| work.replace((0, 0)))
+}
+
+fn counted_fill_set() {
+    #[cfg(any(test, feature = "test-counters"))]
+    RUNTIME_ID_WORK.with(|work| {
+        let (hashes, sets) = work.get();
+        work.set((hashes, sets + 1));
+    });
 }
 
 /// Visit the structural ids a fresh load will assign, borrowing the original
@@ -244,6 +311,11 @@ fn file_runtime_namespace(owner_rel_path: &str) -> Uuid {
 }
 
 fn structural_child(parent: Uuid, sibling_index: usize) -> Uuid {
+    #[cfg(any(test, feature = "test-counters"))]
+    RUNTIME_ID_WORK.with(|work| {
+        let (hashes, sets) = work.get();
+        work.set((hashes + 1, sets));
+    });
     deterministic_runtime_uuid(parent, &(sibling_index as u64).to_be_bytes())
 }
 

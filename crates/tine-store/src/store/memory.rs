@@ -5,6 +5,7 @@
 use super::snapshot::PendingFiles;
 use super::{Change, ChangeKind, ConfigState, FileRev, GraphRev, Origin, Snapshot, WholeGraph};
 use crate::model::file_source::{serialized, Content};
+use crate::model::page_ids::{Input, Trust};
 use crate::model::Graph;
 use crate::{FileId, PageId, PageRefusal};
 use std::collections::HashMap;
@@ -191,24 +192,30 @@ impl WholeGraph {
             let id = FileId::from(replaced.rel);
             if replaced.page {
                 // A submit publishes its serializer's document, as the
-                // desktop publishes its own write. Raw bytes are parsed once
-                // and keep the page's runtime ids when the desktop's
-                // reconciliation would ([`Graph::kept_row`]): then the
-                // row's document is published again, under the new bytes'
-                // revision, and an id never moves to another block.
-                let document = prepared.or_else(|| {
-                    let text = std::str::from_utf8(bytes?).ok()?;
-                    let parsed = crate::model::parse_doc(&path, text);
-                    let kept = graph.kept_row(&path, &parsed).flatten();
-                    Some(kept.map_or(parsed, |row| tine_core::doc::Document::clone(&row)))
-                });
+                // desktop publishes its own write, but its keys are unproven
+                // (the browser's `submit_page`): a repeated key, or one
+                // another page owns, is filled anew (intake, A2). Raw bytes
+                // are parsed once and observed: they keep the page's runtime
+                // ids when they hold its outline, as the desktop's
+                // reconciliation of a disk write does (D2).
+                let old = &self._snapshot.graph;
+                let owned_elsewhere = |key: &tine_core::BlockId| {
+                    graph.ids.owner_of(key).is_some_and(|owner| owner != path)
+                        || old
+                            .block_owner_page(&key.text(), false)
+                            .is_some_and(|(_, (entry, _))| entry.path != path)
+                };
+                let input = match prepared {
+                    Some(document) => Some(Input::Pair(
+                        Arc::new(document),
+                        Trust::Untrusted(&owned_elsewhere),
+                    )),
+                    None => (bytes.and_then(|bytes| std::str::from_utf8(bytes).ok()))
+                        .map(|text| Input::Observed(crate::model::parse_doc(&path, text))),
+                };
                 let file_set_changed = kind != ChangeKind::Modified;
-                let entry = graph.transaction_publish_page_inner(
-                    &path,
-                    bytes,
-                    document.as_ref(),
-                    file_set_changed,
-                );
+                let entry =
+                    graph.transaction_publish_page_inner(&path, bytes, input, file_set_changed);
                 if let Some(entry) = entry {
                     published.insert(id.clone(), entry);
                 }

@@ -194,7 +194,10 @@ fn outside_settings_keep_parsed_pages_but_build_config_reparses() {
         "external hidden: page reads={}, parses={}",
         counts.full_reads, counts.parses
     );
-    assert!(counts.parses >= 11, "build-key change must rebuild pages");
+    // The rebuild re-derives every page's entry and indexes (the corpus
+    // above), and reuses each unchanged file's row whole: a page's parse
+    // depends on its path and bytes alone (runtime-id T10).
+    assert_eq!(counts.parses, 0, "the rebuild parses only changed files");
     store.close();
 }
 
@@ -214,7 +217,9 @@ fn own_build_config_change_still_reparses_pages() {
         counts.full_reads, counts.parses
     );
     assert!(counts.full_reads >= 12);
-    assert!(counts.parses >= 12, "build-key change must rebuild pages");
+    // Every page is reread and re-derived (the corpus above); unchanged
+    // files reuse their rows whole (runtime-id T10).
+    assert_eq!(counts.parses, 0, "the rebuild parses only changed files");
     store.close();
 }
 

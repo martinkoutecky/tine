@@ -316,6 +316,7 @@ fn the_checkpoint_section_is_closed_tokens_only() {
         "deferred",
         "cache_built",
         "page_held",
+        "seeded",
         "written",
         "failed",
         "loading",

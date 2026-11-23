@@ -7,19 +7,23 @@ impl Graph {
         &self,
         path: &Path,
         bytes: Option<&[u8]>,
-        saved: Option<&Document>,
+        saved: Option<page_ids::Input<'_>>,
         file_set_changed: bool,
     ) {
         self.transaction_publish_page_inner(path, bytes, saved, file_set_changed);
     }
-    /// Publish `path`'s observed `bytes`. For an own save or reference
-    /// rewrite, returns the cacheable entry named from those bytes (no
+    /// Publish `path`'s observed `bytes`. `saved`, when given, is what the
+    /// writer knows of them: the serializer's keyed parse of exactly these
+    /// bytes (D4, Pair) or their parse (Observed), keyed by
+    /// [`Graph::page_ids`]; with none, the bytes are reconciled from disk's
+    /// view (Observed). For an own
+    /// save or reference rewrite, returns the cacheable entry named from those bytes (no
     /// preamble reopen), which the snapshot's name index reuses.
     pub(crate) fn transaction_publish_page_inner(
         &self,
         path: &Path,
         bytes: Option<&[u8]>,
-        saved: Option<&Document>,
+        saved: Option<page_ids::Input<'_>>,
         file_set_changed: bool,
     ) -> Option<PageEntry> {
         let before_gen = self.cache_generation();
@@ -48,7 +52,7 @@ impl Graph {
                                     self.cacheable_page_entry_in(path, Some(content))
                                 {
                                     named = Some(entry.clone());
-                                    self.cache_upsert(entry, saved.clone(), DiskObs::of(content));
+                                    self.cache_upsert(entry, saved, DiskObs::of(content));
                                 }
                             } else {
                                 self.reconcile_page_content(path, content, false);
