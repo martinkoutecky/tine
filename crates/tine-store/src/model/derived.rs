@@ -256,16 +256,6 @@ pub(crate) enum Named {
     NotAPage,
 }
 
-/// Copy `saved`'s runtime identities onto `into`, a tree of equal content.
-fn keep_runtime_ids(into: &mut [DocBlock], saved: &[DocBlock]) {
-    for (block, saved) in into.iter_mut().zip(saved) {
-        if !saved.uuid.is_empty() {
-            block.uuid.clone_from(&saved.uuid);
-        }
-        keep_runtime_ids(&mut block.children, &saved.children);
-    }
-}
-
 impl Graph {
     /// The authority for `path`'s row now ((G) above), within the pass
     /// whose memo is `memo`.
@@ -358,7 +348,8 @@ impl Graph {
         }))
         .map_err(|_| io::Error::new(io::ErrorKind::InvalidData, ParserPanicked))?;
         if let Some(saved) = saved.filter(|saved| **saved == doc) {
-            keep_runtime_ids(&mut doc.roots, &saved.roots);
+            carry_saved_runtime_ids(&mut doc.roots, &saved.roots);
+            assign_doc_runtime_ids(&mut doc.roots, entry.rel_path_str());
         }
         Ok(Some((entry, Arc::new(doc), disk)))
     }

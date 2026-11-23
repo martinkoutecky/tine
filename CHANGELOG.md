@@ -9,6 +9,7 @@ The format follows [Keep a Changelog](https://keepachangelog.com/); versions use
 ## [Unreleased]
 
 ### Fixed
+- After you move a block, a line typed with Shift+Enter that starts with `- ` in another block of the same page no longer makes two blocks share one identity. Linked references and query results showed the wrong block, and after the page was reloaded the next edit could write one block twice and delete the other from the file (REG-OWN-SAVE-RUNTIME-ID-COLLISION).
 - **Ctrl/Cmd+A** on blank outline space, including row padding and the page gutter, selects the live blocks in the clicked group. Repeating the shortcut keeps the same group selected. Copy preserves child indentation in plain text and HTML. Shift-click, moving focus, and Delete clear the selection (#793).
 - **Ctrl/Cmd+A** on a Journals separator, query status row or group with no live blocks uses native select-all. Delete, Backspace and Cut from those hits leave the outline intact (#793).
 - Scrolling through an expanded query with nested results stutters less as new source pages load (#1001).

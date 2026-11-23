@@ -19,6 +19,8 @@ use std::path::PathBuf;
 use std::sync::mpsc;
 use std::time::{Duration, Instant};
 
+#[path = "runtime_id_own_save_tests.rs"]
+mod runtime_id_own_save_tests;
 #[path = "s36_creation_tests.rs"]
 mod s36_creation_tests;
 
