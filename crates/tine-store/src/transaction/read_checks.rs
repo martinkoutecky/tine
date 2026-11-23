@@ -1,5 +1,14 @@
 //! Read-dependent safety checks at the Store writer boundary.
 use super::*;
+
+/// The refusal of every page write while `config`'s read has a problem
+/// (`ConfigUnreadable`): the graph's settings are unknown, so no write may
+/// assume the defaults. The desktop transaction's admission and a memory
+/// graph's submit ([`crate::WholeGraph::submit_page`]) both ask here.
+pub(crate) fn config_write_failure(config: &crate::ConfigState) -> Option<Why> {
+    (config.problem.clone()).map(|problem| Why::Refused(Refusal::ConfigUnreadable(problem)))
+}
+
 impl PagePlan<'_> {
     // Initial parsing can need the writer; wait before commit acquires it.
     pub(super) fn await_reference_publication(&self) {
@@ -18,16 +27,13 @@ impl PagePlan<'_> {
         }
     }
     pub(super) fn config_write_failure(&self) -> Option<TxOutcome> {
-        self.store
-            .config()
-            .problem
-            .map(|problem| TxOutcome::NotCommitted {
-                step: 0,
-                why: Why::Refused(Refusal::ConfigUnreadable(problem)),
-                rollback: Rollback::default(),
-                publication_errors: Vec::new(),
-                graph_rev: self.store.changes.rev(),
-            })
+        config_write_failure(&self.store.config()).map(|why| TxOutcome::NotCommitted {
+            step: 0,
+            why,
+            rollback: Rollback::default(),
+            publication_errors: Vec::new(),
+            graph_rev: self.store.changes.rev(),
+        })
     }
     /// The [`Transaction::expect_view`] precondition, under the writer: a
     /// publication or a config delivery since the plan's view is a conflict

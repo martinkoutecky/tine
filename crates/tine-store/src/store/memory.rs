@@ -27,6 +27,9 @@ impl std::panic::UnwindSafe for MemoryGraph {}
 
 type MemoryFile = (String, Arc<Vec<u8>>);
 
+/// A file change and, for a write, the document its bytes serialize.
+type PreparedChange = (String, Option<Vec<u8>>, Option<tine_core::doc::Document>);
+
 impl WholeGraph {
     /// The whole-graph view of only `pages` under this view's effective config,
     /// journal formats and file times. The store's launch and first publication
@@ -81,9 +84,14 @@ impl WholeGraph {
     /// spelling, and (`InvalidInput`) a path that is not graph-relative or is
     /// both a file and a directory, and a time given twice or for no file; a
     /// config read problem is the view's `config().problem`, as on disk.
+    /// Only an `editable` view keeps its graph and the files' bytes, for
+    /// [`Self::replace_files`] and [`Self::submit_page`]; a read-only one (a
+    /// published export, a quick share) keeps the captured view alone and
+    /// refuses both.
     pub fn from_files<T: Into<Arc<Vec<u8>>>>(
         files: Vec<(String, T)>,
         times: Vec<(String, SystemTime)>,
+        editable: bool,
     ) -> io::Result<(WholeGraph, String)> {
         let refused = |message: String| io::Error::new(io::ErrorKind::InvalidInput, message);
         let mut by_path = HashMap::with_capacity(times.len());
@@ -104,7 +112,7 @@ impl WholeGraph {
         let graph = Graph::in_memory_with_config(files)?;
         let root = graph.root.display().to_string();
         let mut view = Self::in_memory(&graph);
-        view.memory = Some(MemoryGraph(Arc::new(graph)));
+        view.memory = editable.then(|| MemoryGraph(Arc::new(graph)));
         Ok((view, root))
     }
 
@@ -113,11 +121,16 @@ impl WholeGraph {
     /// as its modification time (a disk write's), and `None` deletes one.
     /// Keys follow `from_files`'s rules (MEMORY-SOURCE-MODEL Q1): a new key
     /// that is another key's ancestor or descendant is refused, and a deleted
-    /// file's emptied directories go. A page file's bytes must pass the parse
-    /// input checks (`InvalidData`), and the result must open as
-    /// `from_files` of the same files opens (layout). A refusal leaves the
-    /// view and its files unchanged. A change to `logseq/config.edn` reads
-    /// the config again as an open does. Returns the publication's
+    /// file's emptied directories go. A file that is graph text under the
+    /// resulting config (the open's eligibility check) must pass the parse
+    /// input checks (`InvalidData`); other bytes (assets, dotfiles, hidden
+    /// directories, conflict copies) are held as an open holds them. The
+    /// result must open as `from_files` of the same files opens (layout). A
+    /// refusal leaves the view and its files unchanged. A change that can
+    /// move what the config read finds (the config file or its iCloud
+    /// placeholder, anything under them, a `logseq` file) reads the config
+    /// again as an open does. This raw path writes under an unreadable
+    /// config too, so the config itself can be repaired. Returns the publication's
     /// [`Change`], as the desktop's watcher publishes one for the same files
     /// (`Origin::External`: its files, the active pages that moved and the
     /// answer deltas), and makes its revision this view's. Cost: one parse of each changed page file
@@ -125,44 +138,52 @@ impl WholeGraph {
     /// watcher's publication of the same files; a config change that moves
     /// what the page build reads parses every page again, as on the desktop.
     pub fn replace_files(&mut self, changes: Vec<(String, Option<Vec<u8>>)>) -> io::Result<Change> {
+        let changes = changes.into_iter().map(|(rel, bytes)| (rel, bytes, None));
+        self.replace_prepared(changes.collect())
+    }
+
+    /// [`Self::replace_files`], where a write may carry the document its
+    /// bytes were serialized from (a submit's): that document is published,
+    /// so its blocks keep their runtime ids, as the desktop publishes its
+    /// own save's. Any other graph-text write is parsed once.
+    fn replace_prepared(&mut self, changes: Vec<PreparedChange>) -> io::Result<Change> {
         let graph = (self.memory.as_mut())
             .and_then(|memory| Arc::get_mut(&mut memory.0))
             .ok_or_else(|| {
                 io::Error::new(
                     io::ErrorKind::Unsupported,
-                    "only an unshared graph built from files is replaced",
+                    "only an unshared, editable graph built from files is replaced",
                 )
             })?;
         let now = tine_core::clock::system_now();
         let (mut writes, mut written) = (Vec::new(), Vec::new());
-        for (rel, bytes) in changes {
-            let path = Path::new(&rel);
-            if let Some(bytes) = &bytes {
-                if crate::file_kind::is_graph_text_path(path) {
-                    crate::model::validate_parse_text(bytes, path)?;
-                }
-            }
+        for (rel, bytes, document) in changes {
             let bytes = bytes.map(Arc::new);
             let content = (bytes.clone()).map(|bytes| (Content::Bytes(bytes), Some(now)));
             writes.push((rel, content));
-            written.push(bytes);
+            written.push((bytes, document));
         }
         let (undo, reread) = graph.replace_memory_files(writes)?;
         let graph: &Graph = graph;
         let (mut files, mut published) = (Vec::with_capacity(undo.len()), HashMap::new());
-        for (bytes, (rel, before)) in written.into_iter().zip(undo) {
+        for ((bytes, prepared), (rel, before)) in written.into_iter().zip(undo) {
             let path = graph.root.join(&rel);
             let kind = match (&bytes, before) {
                 (None, _) => ChangeKind::Removed,
                 (Some(_), Some(_)) => ChangeKind::Modified,
                 (Some(_), None) => ChangeKind::Created,
             };
-            // Published as the desktop publishes its own write: one parse of
-            // the page's text, its document installed with no comparison.
+            // Published as the desktop publishes its own write: its document
+            // (the serializer's, or one parse of the page's text) installed
+            // with no comparison.
             let bytes = bytes.as_deref().map(Vec::as_slice);
-            let document = (bytes.filter(|_| crate::file_kind::is_graph_text_path(&path)))
-                .and_then(|bytes| std::str::from_utf8(bytes).ok())
-                .map(|text| crate::model::parse_doc(&path, text));
+            let page =
+                |_: &&[u8]| crate::model::graph_text_eligible(&graph.root, &path, &graph.config);
+            let document = prepared.or_else(|| {
+                (bytes.filter(page))
+                    .and_then(|bytes| std::str::from_utf8(bytes).ok())
+                    .map(|text| crate::model::parse_doc(&path, text))
+            });
             let file_set_changed = kind != ChangeKind::Modified;
             let id = FileId::from(rel);
             let entry = graph.transaction_publish_page_inner(
@@ -218,11 +239,15 @@ impl WholeGraph {
     /// (none: a creation) with the store's one page serializer, as the
     /// desktop page host does, then [`Self::replace_files`] it. Answers the
     /// bytes written and the publication's change, or the page host's
-    /// refusal: its serializer's and page-target checks, `NotAdmitted` when
-    /// the caller's copy is not `current` (the host's answer to a stale
-    /// request), and `Failed` for a refused replace. A refusal writes
-    /// nothing. Cost: one serialization and the parse of the old and new
-    /// text, as a desktop submit, then the replace of one file.
+    /// refusal: its serializer's and page-target checks, the desktop
+    /// transaction's refusal under an unreadable config (`ConfigUnreadable`,
+    /// as `InvalidTarget`, the host's mapping of it), `NotAdmitted` when the
+    /// caller's copy is not `current` (the host's answer to a stale
+    /// request), and `Failed` for a read-only view or a refused replace. A
+    /// refusal writes nothing. The serializer's document is published, so
+    /// each submitted block keeps its runtime id. Cost: one serialization
+    /// and the parse of the old and new text, as a desktop submit, then the
+    /// replace of one file with no further parse.
     pub fn submit_page(
         &mut self,
         id: &PageId,
@@ -238,18 +263,22 @@ impl WholeGraph {
         let graph = (self.memory.as_ref().map(|memory| &*memory.0)).ok_or_else(|| {
             failed(io::Error::new(
                 io::ErrorKind::Unsupported,
-                "not a graph built from files",
+                "not an editable graph built from files",
             ))
         })?;
+        if let Some(why) = crate::transaction::config_write_failure(self.config()) {
+            return Err(why.into());
+        }
         let file = id.file();
         let is_page = || self.validated_page(id).is_ok();
         crate::transaction::page_save_target(dto, is_page, &file)?;
         let path = graph.root.join(id.as_str());
         let old = graph.memory_bytes(&path).map_err(failed)?;
         let old = old.as_deref().map(Vec::as_slice);
-        let (bytes, _) = crate::transaction::serialize_page_at(graph, &path, dto, old, false)?;
-        let change = (self.replace_files(vec![(id.as_str().to_owned(), Some(bytes.clone()))]))
-            .map_err(failed)?;
+        let (bytes, document) =
+            crate::transaction::serialize_page_at(graph, &path, dto, old, false)?;
+        let change = vec![(id.as_str().to_owned(), Some(bytes.clone()), Some(document))];
+        let change = self.replace_prepared(change).map_err(failed)?;
         Ok((bytes, change))
     }
 

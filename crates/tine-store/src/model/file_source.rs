@@ -4,7 +4,8 @@
 //! graph. A browser graph holds file text ([`crate::WholeGraph::from_files`]). Only the read
 //! path goes through it (listing, naming, page reads, the parse); saves, transactions, the watcher and assets are
 //! disk-only, and a memory graph is never opened by a `Store`, so it never
-//! reaches them. The two sources answer the same calls with the same
+//! reaches them. An editable browser graph's files change only through
+//! [`Graph::replace_memory_files`], all or none. The two sources answer the same calls with the same
 //! errors, so every loader step above them is the one the disk load runs.
 use super::Graph;
 use indexmap::IndexMap;
@@ -24,6 +25,19 @@ pub(crate) const MEMORY_ROOT: &str = "/tine-memory-graph";
 
 /// The graph-relative config file an open reads.
 pub(crate) const CONFIG_FILE: &str = "logseq/config.edn";
+
+/// Whether a change at the key `rel` can move what an open's config read
+/// ([`super::read_config_in`]) answers: the key is a path that read looks up
+/// (the config file or its iCloud placeholder), lies under one (a child of a
+/// directory there), or is one's ancestor (a `logseq` file).
+pub(crate) fn affects_config_lookup(rel: &str) -> bool {
+    fn nested(inner: &str, outer: &str) -> bool {
+        (inner.strip_prefix(outer)).is_some_and(|rest| rest.is_empty() || rest.starts_with('/'))
+    }
+    let placeholder = super::config_placeholder(Path::new(CONFIG_FILE));
+    let lookups = [CONFIG_FILE, placeholder.to_str().expect("a UTF-8 constant")];
+    (lookups.iter()).any(|lookup| nested(rel, lookup) || nested(lookup, rel))
+}
 
 #[derive(Clone, Default)]
 pub(crate) enum FileSource {
@@ -176,8 +190,7 @@ impl Files {
     /// refusals are `InvalidInput`. A deleted file's directories that become
     /// empty go: a reference listing holds no empty directory. Returns, per
     /// change in order, its inverse (`None` where the key was absent):
-    /// applying them restores the files. O(changed key bytes, plus the
-    /// siblings of each removed name).
+    /// applying them restores the files. O(changed key bytes).
     pub(crate) fn replace(&mut self, changes: Vec<MemoryChange>) -> io::Result<Vec<MemoryChange>> {
         let invalid = |rel: &str, why: &str| {
             io::Error::new(io::ErrorKind::InvalidInput, format!("{why}: {rel:?}"))
@@ -256,7 +269,9 @@ impl Files {
                 let Node::Dir(children) = &mut self.nodes[dir] else {
                     unreachable!("a key's ancestors are directories")
                 };
-                children.shift_remove(names[depth]);
+                // O(1): the last sibling takes the slot. No answer reads the
+                // listing's order (a disk listing has none either).
+                children.swap_remove(names[depth]);
                 if !children.is_empty() || dir == 0 {
                     break;
                 }
@@ -544,24 +559,31 @@ impl Graph {
     }
 
     /// Replace files of a graph [`Self::in_memory_with_config`] built
-    /// ([`Files::replace`]). With `logseq/config.edn` among them the config
-    /// is read again as an open reads it, and the layout is then checked as
-    /// an open checks it. All or none: a refusal restores the files and the
-    /// config. Returns each change's inverse (`None`: the key was absent)
-    /// and whether the config was read again. The page cache is not touched:
-    /// the caller reconciles the changed files.
+    /// ([`Files::replace`]). When a change can move what the config read
+    /// finds ([`affects_config_lookup`]) the config is read again as an open
+    /// reads it. Each written file that is graph text under the resulting
+    /// config ([`super::graph_text_eligible`], the open's check) must pass
+    /// the parse input checks (`InvalidData`); other bytes are held as an
+    /// open holds them. The layout is then checked as an open checks it.
+    /// All or none: a refusal restores the files and the config. Returns
+    /// each change's inverse (`None`: the key was absent) and whether the
+    /// config was read again. The page cache is not touched: the caller
+    /// reconciles the changed files.
     pub(crate) fn replace_memory_files(
         &mut self,
         changes: Vec<MemoryChange>,
     ) -> io::Result<(Vec<MemoryChange>, bool)> {
-        let reread = changes.iter().any(|(rel, _)| rel == CONFIG_FILE);
+        let reread = changes.iter().any(|(rel, _)| affects_config_lookup(rel));
         let undo = self.memory_files()?.replace(changes)?;
         let before = reread.then(|| {
             let path = self.root.join(CONFIG_FILE);
             let read = super::read_config_in(&self.source, &path);
             self.set_config_read(read)
         });
-        if let Err(error) = self.check_layout() {
+        let checked = (undo.iter())
+            .try_for_each(|(rel, _)| self.check_written(rel))
+            .and_then(|()| self.check_layout());
+        if let Err(error) = checked {
             if let Some(before) = before {
                 self.set_config_read(before);
             }
@@ -574,6 +596,19 @@ impl Graph {
             self.install_config(self.config.clone());
         }
         Ok((undo, reread))
+    }
+
+    /// A replaced key's bytes, if it holds a file that is graph text under
+    /// this graph's config, pass the parse input checks.
+    fn check_written(&self, rel: &str) -> io::Result<()> {
+        let path = self.root.join(rel);
+        if !super::graph_text_eligible(&self.root, &path, &self.config) {
+            return Ok(());
+        }
+        match self.memory_bytes(&path)? {
+            Some(bytes) => super::validate_parse_text(&bytes, &path).map(drop),
+            None => Ok(()),
+        }
     }
 
     fn memory_files(&mut self) -> io::Result<&mut Files> {

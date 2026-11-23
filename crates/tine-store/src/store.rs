@@ -405,6 +405,8 @@ mod fold_save_tests;
 mod inventory;
 mod memory;
 #[cfg(test)]
+mod memory_edit_tests;
+#[cfg(test)]
 mod memory_replace_tests;
 mod query_request;
 #[cfg(test)]

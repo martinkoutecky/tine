@@ -13,10 +13,10 @@ use std::sync::Arc;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 use tine_core::model::PageKind;
 
-type Files = BTreeMap<String, Vec<u8>>;
+pub(super) type Files = BTreeMap<String, Vec<u8>>;
 
 /// A config and `pages` pages, each linking the next, plus one journal.
-fn graph_files(pages: usize) -> Files {
+pub(super) fn graph_files(pages: usize) -> Files {
     let mut files = Files::new();
     files.insert(
         "logseq/config.edn".into(),
@@ -33,15 +33,18 @@ fn graph_files(pages: usize) -> Files {
     files
 }
 
-fn open(files: &Files) -> WholeGraph {
+pub(super) fn open(files: &Files) -> WholeGraph {
     let files = (files.iter()).map(|(rel, bytes)| (rel.clone(), bytes.clone()));
-    WholeGraph::from_files(files.collect(), Vec::new())
+    WholeGraph::from_files(files.collect(), Vec::new(), true)
         .unwrap()
         .0
 }
 
 /// `changes` applied to `files`, as the browser hands them over.
-fn apply(files: &mut Files, changes: &[(&str, Option<&str>)]) -> Vec<(String, Option<Vec<u8>>)> {
+pub(super) fn apply(
+    files: &mut Files,
+    changes: &[(&str, Option<&str>)],
+) -> Vec<(String, Option<Vec<u8>>)> {
     (changes.iter())
         .map(|(rel, text)| {
             match text {
@@ -54,7 +57,7 @@ fn apply(files: &mut Files, changes: &[(&str, Option<&str>)]) -> Vec<(String, Op
 }
 
 /// The view answers as a fresh open of `files` answers.
-fn assert_opens_alike(view: &WholeGraph, files: &Files) {
+pub(super) fn assert_opens_alike(view: &WholeGraph, files: &Files) {
     let fresh = open(files);
     let (got, want) = (
         answers(view, MEMORY_ROOT, false),
@@ -303,13 +306,15 @@ fn file_times_answer_page_modified() {
         .map(|(rel, bytes)| (rel.clone(), bytes.clone()))
         .collect();
     let times = vec![("pages/P1.md".to_owned(), at(1_700_000_000))];
-    let (mut view, _) = WholeGraph::from_files(all.clone(), times.clone()).unwrap();
+    let (mut view, _) = WholeGraph::from_files(all.clone(), times.clone(), true).unwrap();
     // A time given twice, or for no file, is refused.
     for times in [
         vec![times[0].clone(), times[0].clone()],
         vec![("pages/None.md".to_owned(), at(1))],
     ] {
-        let error = WholeGraph::from_files(all.clone(), times).err().unwrap();
+        let error = WholeGraph::from_files(all.clone(), times, true)
+            .err()
+            .unwrap();
         assert_eq!(error.kind(), io::ErrorKind::InvalidInput, "{error}");
     }
     assert_eq!(
@@ -357,7 +362,7 @@ fn submit_bytes_equal_the_desktop_hosts() {
     let files = sources
         .iter()
         .map(|(rel, text)| (rel.to_string(), text.as_bytes().to_vec()));
-    let (mut memory, _) = WholeGraph::from_files(files.collect(), Vec::new()).unwrap();
+    let (mut memory, _) = WholeGraph::from_files(files.collect(), Vec::new(), true).unwrap();
     for (rel, old) in &sources[1..] {
         let id = PageId::from(*rel);
         let mut dto = memory.page(&id).unwrap();

@@ -27,8 +27,12 @@ pub struct BrowserGraph {
 impl BrowserGraph {
     /// `files[i]` holds the bytes of the graph-relative `paths[i]`,
     /// `logseq/config.edn` among them. Options: `share` (a quick share's
-    /// admission) and `times`, a modification time in Unix seconds per path
-    /// (absent: no time), which `page_modified_json` and recency answer from.
+    /// admission), `times`, a modification time in Unix seconds per path
+    /// (absent: no time), which `page_modified_json` and recency answer from,
+    /// and `editable` (default false). Only an editable graph keeps its files
+    /// for `replace_files` and `submit_page_json`; a read-only one (a
+    /// published export, a quick share) keeps its read view alone, and
+    /// `replace_files` throws and `submit_page_json` refuses (`failed`) there.
     /// Throws (a string) what the desktop open refuses, for arrays of
     /// different lengths and for a time of no given path; a config read
     /// problem is `config_problem_json`. Cost: one read and parse of each
@@ -49,7 +53,7 @@ impl BrowserGraph {
             )
             .map_err(|error| js_error(format!("share-too-large: {error}")))?;
         }
-        let graph = open(files, options.times)?;
+        let graph = open(files, options.times, options.editable)?;
         if options.share.is_some() {
             if !graph.view.unreadable_files().is_empty() {
                 return Err(js_error(
@@ -294,7 +298,9 @@ impl BrowserGraph {
         }
         let changes = (paths.into_iter().zip(files))
             .map(|(path, file)| {
-                if file.is_null() || file.is_undefined() {
+                // Only `null` deletes: `undefined` (and a sparse slot) is no
+                // file's bytes, so the byte check below refuses it.
+                if file.is_null() {
                     return Ok((path, None));
                 }
                 let bytes = file.dyn_into::<js_sys::Uint8Array>().map_err(|_| {
@@ -418,6 +424,9 @@ struct OpenOptions {
     share: Option<ShareMeta>,
     /// Modification time per path, in Unix seconds.
     times: Option<HashMap<String, i64>>,
+    /// Whether the graph takes edits.
+    #[serde(default)]
+    editable: bool,
 }
 
 #[derive(Deserialize)]
@@ -447,20 +456,32 @@ fn read_sources(
 fn open(
     files: Vec<(String, Vec<u8>)>,
     times: Option<HashMap<String, i64>>,
+    editable: bool,
 ) -> Result<BrowserGraph, JsValue> {
     let times = (times.unwrap_or_default().into_iter())
-        .map(|(path, secs)| {
-            let secs = std::time::Duration::from_secs(secs.max(0) as u64);
-            (path, std::time::UNIX_EPOCH + secs)
-        })
+        .filter_map(|(path, secs)| Some((path, unix_time(secs)?)))
         .collect();
-    let (view, root) = WholeGraph::from_files(files, times)
+    let (view, root) = WholeGraph::from_files(files, times, editable)
         .map_err(|error| js_error(format!("BrowserGraph: {error}")))?;
     Ok(BrowserGraph {
         view,
         root,
         versions: HashMap::new(),
     })
+}
+
+/// The time `secs` Unix seconds name, signed: a pre-epoch time stays before
+/// the epoch, so the shared answers treat it as they treat a disk file's
+/// (`page_modified` omits it). `None` where the target's clock cannot hold
+/// it (wasm32 holds no pre-epoch time): the file then has no time, which
+/// `page_modified` answers alike.
+fn unix_time(secs: i64) -> Option<std::time::SystemTime> {
+    let magnitude = std::time::Duration::from_secs(secs.unsigned_abs());
+    if secs < 0 {
+        std::time::UNIX_EPOCH.checked_sub(magnitude)
+    } else {
+        std::time::UNIX_EPOCH.checked_add(magnitude)
+    }
 }
 
 #[derive(Default, Deserialize)]

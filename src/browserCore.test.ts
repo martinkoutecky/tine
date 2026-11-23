@@ -324,8 +324,55 @@ it("the browser core refuses what the desktop open refuses", () => {
 // A browser edit (slice 5a): a submit serializes with the store's one page
 // serializer over the current text, replaces the file, and the next read is
 // the new text; the version it was typed on is then stale.
+const openWith = (files: [string, string][], options: string) =>
+  new core.BrowserGraph(
+    files.map(([path]) => path),
+    files.map(([, text]) => encode(text)),
+    options,
+  );
+const editable = (files: [string, string][]) => openWith(files, JSON.stringify({ editable: true }));
+
+it("a read-only graph takes no edit", () => {
+  const graph = open([["pages/Note.md", "- first\n"]]);
+  try {
+    expect(() => graph.replace_files(["pages/Note.md"], [encode("- changed\n")])).toThrow(/editable/);
+    const page = JSON.parse(graph.get_page_json("Note", false));
+    page.blocks[0].raw = "edited";
+    const answer = JSON.parse(graph.submit_page_json("pages/Note.md", JSON.stringify(page), 1n));
+    expect(answer).toMatchObject({ refused: { reason: "failed" } });
+    expect(JSON.parse(graph.get_page_json("Note", false))).toMatchObject({ blocks: [{ raw: "first" }] });
+  } finally {
+    graph.free();
+  }
+});
+
+it("only null deletes a replaced file", () => {
+  const graph = editable([["pages/Note.md", "- first\n"]]);
+  try {
+    expect(() => graph.replace_files(["pages/Note.md"], [undefined])).toThrow(/not bytes or null/);
+    expect(() => graph.replace_files(["pages/Note.md"], new Array(1))).toThrow(/not bytes or null/);
+    expect(names(graph)).toContain("Note");
+    JSON.parse(graph.replace_files(["pages/Note.md"], [null]));
+    expect(names(graph)).not.toContain("Note");
+  } finally {
+    graph.free();
+  }
+});
+
+it("a pre-epoch file time is no recency row", () => {
+  const graph = openWith(
+    [["pages/A.md", "- a\n"], ["pages/B.md", "- b\n"], ["pages/C.md", "- c\n"]],
+    '{"times":{"pages/A.md":-1,"pages/B.md":-9223372036854775808,"pages/C.md":5}}',
+  );
+  try {
+    expect(JSON.parse(graph.page_modified_json()).modified).toEqual([["pages/C.md", 5]]);
+  } finally {
+    graph.free();
+  }
+});
+
 it("a submitted page is read back as its new text", () => {
-  const graph = open([["pages/Note.md", "- first\n- second\n"]]);
+  const graph = editable([["pages/Note.md", "- first\n- second\n"]]);
   try {
     const page = JSON.parse(graph.get_page_json("Note", false));
     page.blocks[0].raw = "edited";

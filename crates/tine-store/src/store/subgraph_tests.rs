@@ -105,7 +105,7 @@ fn assert_same_answers(root: &Path, build: Build) -> Vec<String> {
             let (view, meta, _) = disk.subgraph(documents(files_under(root)), false).unwrap();
             (view, meta.root)
         }
-        Build::Files => WholeGraph::from_files(files_under(root), Vec::new()).unwrap(),
+        Build::Files => WholeGraph::from_files(files_under(root), Vec::new(), false).unwrap(),
     };
     assert_eq!(memory_root, crate::model::file_source::MEMORY_ROOT);
     let times = build == Build::Subgraph;
@@ -175,7 +175,7 @@ fn from_files_refuses_the_layouts_store_open_refuses() {
         let config = format!("{{:pages-directory \"{}\"}}\n", dir.replace('\\', "\\\\"));
         std::fs::write(temp.path().join("logseq/config.edn"), config).unwrap();
         assert!(open_disk(temp.path()).is_err(), "the disk refuses {dir:?}");
-        let memory = WholeGraph::from_files(files_under(temp.path()), Vec::new());
+        let memory = WholeGraph::from_files(files_under(temp.path()), Vec::new(), false);
         let kind = memory.err().map(|error| error.kind());
         assert_eq!(kind, Some(std::io::ErrorKind::InvalidInput), "{dir:?}");
     }
@@ -204,7 +204,8 @@ fn config_problems_answer_alike_from_files() {
         let (store, state) = open_disk(temp.path()).unwrap();
         let disk = state.problem.as_ref().map(|error| error.kind);
         store.close();
-        let (view, _) = WholeGraph::from_files(files_under(temp.path()), Vec::new()).unwrap();
+        let (view, _) =
+            WholeGraph::from_files(files_under(temp.path()), Vec::new(), false).unwrap();
         let memory = view.config().problem.as_ref().map(|error| error.kind);
         // Windows opens a directory as PermissionDenied: the problem is there,
         // its kind is the platform's.
@@ -237,7 +238,7 @@ fn from_files_refuses_paths_no_directory_holds() {
         vec![file("pages/a.md"), file("pages/a.md/.")],
     ];
     for files in sets {
-        let kind = WholeGraph::from_files(files.clone(), Vec::new())
+        let kind = WholeGraph::from_files(files.clone(), Vec::new(), false)
             .err()
             .map(|e| e.kind());
         assert_eq!(kind, Some(std::io::ErrorKind::InvalidInput), "{files:?}");
@@ -359,7 +360,7 @@ fn backslash_names_open_alike() {
     std::fs::write(root.join("pages/a.md"), "- a\n").unwrap();
     std::fs::write(root.join("assets/a\\b.bin"), "x").unwrap();
     open_disk(root).unwrap().0.close();
-    WholeGraph::from_files(files_under(root), Vec::new()).unwrap();
+    WholeGraph::from_files(files_under(root), Vec::new(), false).unwrap();
 }
 
 /// A key's directories are made by one walk of its names: a first key
@@ -505,7 +506,7 @@ fn layouts_open_or_refuse_alike() {
             std::fs::write(root.join("logseq/config.edn"), config).unwrap();
         }
         let disk = open_disk(root).map(|(store, _)| store.close()).is_ok();
-        let memory = WholeGraph::from_files(files_under(root), Vec::new()).is_ok();
+        let memory = WholeGraph::from_files(files_under(root), Vec::new(), false).is_ok();
         assert_eq!(disk, *opens, "{case}: the disk");
         assert_eq!(memory, disk, "{case}: memory against the disk");
     }

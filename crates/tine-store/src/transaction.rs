@@ -32,6 +32,7 @@ mod move_file;
 mod plan;
 mod preflight;
 pub(crate) use preflight::{page_save_target, serialize_page_at};
+pub(crate) use read_checks::config_write_failure;
 mod prepared;
 #[cfg(test)]
 mod prepared_move_tests;

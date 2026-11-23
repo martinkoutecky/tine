@@ -186,14 +186,23 @@ pub(crate) fn missing_config_problem(
     source: &FileSource,
     config_path: &Path,
 ) -> Option<crate::IoError> {
-    let placeholder = config_path.with_file_name(".config.edn.icloud");
-    source.lstat(&placeholder).is_ok().then(|| {
-        io::Error::other(
-            "config.edn is in iCloud but not downloaded yet; open the graph again once it is",
-        )
-        .into()
-    })
+    source
+        .lstat(&config_placeholder(config_path))
+        .is_ok()
+        .then(|| {
+            io::Error::other(
+                "config.edn is in iCloud but not downloaded yet; open the graph again once it is",
+            )
+            .into()
+        })
 }
+
+/// Where iCloud keeps a not-yet-downloaded `config_path`
+/// (`logseq/.config.edn.icloud`): the second path a config read looks up.
+pub(crate) fn config_placeholder(config_path: &Path) -> PathBuf {
+    config_path.with_file_name(".config.edn.icloud")
+}
+
 pub(crate) fn read_parse_input(path: &Path) -> io::Result<String> {
     read_parse_input_in(&FileSource::Disk, path).map(std::borrow::Cow::into_owned)
 }

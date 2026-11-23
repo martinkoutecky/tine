@@ -374,6 +374,7 @@ mod tests {
                 (CONFIG_PATH.into(), source.as_bytes().to_vec()),
             ],
             Vec::new(),
+            false,
         )
         .unwrap();
         let corpus = graph.corpus(None, true);
@@ -507,6 +508,7 @@ mod tests {
                         (CONFIG_PATH.into(), source.into_bytes()),
                     ],
                     Vec::new(),
+                    false,
                 )
                 .unwrap();
                 let corpus = graph.corpus(None, true);
@@ -601,6 +603,7 @@ mod tests {
                 })
                 .collect(),
             Vec::new(),
+            false,
         )
         .unwrap();
         let corpus = graph.corpus(None, true);
@@ -642,6 +645,7 @@ mod tests {
                 .map(|i| (format!("pages/Page {i:03}.md"), body.as_bytes().to_vec()))
                 .collect(),
             Vec::new(),
+            false,
         )
         .unwrap();
         let selected = graph.corpus(None, true);
@@ -691,6 +695,7 @@ mod tests {
                 ("logseq/config.edn", r#"{:macros {"query" "Private Query" "embed" "Private Embed" "tine-query" "Private TQL" "outer" "{{inner}}" "inner" "nested Markdown" "org-outer" "{{org-inner}}" "org-inner" "nested Org"}}"#),
             ].map(|(path, text)| (path.to_owned(), text.as_bytes().to_vec())).to_vec(),
             Vec::new(),
+            false,
         ).unwrap();
         let corpus = graph.corpus(None, true);
         let (_, _, files) = graph
@@ -730,7 +735,7 @@ mod tests {
 
     #[test]
     fn generated_home_normalizes_line_breaks_and_preserves_the_display_name() {
-        let (graph, _) = WholeGraph::from_files::<Vec<u8>>(vec![], Vec::new()).unwrap();
+        let (graph, _) = WholeGraph::from_files::<Vec<u8>>(vec![], Vec::new(), false).unwrap();
         let corpus = graph.corpus(None, true);
         for display in ["One\nTwo", "One\r\nTwo", "One\rTwo"] {
             let home = HomePage::new(&graph, &[], display).unwrap();
@@ -757,7 +762,7 @@ mod tests {
 
     #[test]
     fn writer_checks_opened_blocks_and_admits_sources_with_live_queries() {
-        let (graph, _) = WholeGraph::from_files::<Vec<u8>>(vec![], Vec::new()).unwrap();
+        let (graph, _) = WholeGraph::from_files::<Vec<u8>>(vec![], Vec::new(), false).unwrap();
         for (text, too_many_blocks) in [
             ("- x\n".repeat(crate::share_admission::MAX_BLOCKS + 1), true),
             ("- {{query (task TODO)}}\n".repeat(257), false),
@@ -846,6 +851,7 @@ mod tests {
         let (graph, _) = WholeGraph::from_files(
             vec![("pages/Source.md".into(), source.as_bytes().to_vec())],
             Vec::new(),
+            false,
         )
         .unwrap();
         let config =
@@ -888,6 +894,7 @@ mod tests {
                 ),
             ],
             Vec::new(),
+            false,
         )
         .unwrap();
         let names = page_macros(&graph.corpus(None, true), &config);
@@ -975,6 +982,7 @@ mod tests {
         let (selecting, _) = WholeGraph::from_files(
             vec![("pages/Reviewed.md".into(), b"- body\n".to_vec())],
             Vec::new(),
+            false,
         )
         .unwrap();
         let corpus = selecting.corpus(None, true);
