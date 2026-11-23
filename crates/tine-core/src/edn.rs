@@ -895,18 +895,18 @@ impl<'a> Reader<'a> {
                     return None;
                 }
                 let numeric = !keyword && starts_numeric(&self.src[start..]);
-                let invalid = self.token(numeric, !numeric && self.mode != Mode::Macro);
+                // The token scanner throws at a non-constituent; the number scanner reads past
+                // it, and query macro splitting keeps an opaque symbol whatever it holds.
+                let refusing = !numeric && (keyword || self.mode != Mode::Macro);
+                if self.token(numeric, refusing) {
+                    return None;
+                }
                 if self.i == start {
                     return None;
                 }
                 let token = &self.src[token_start..self.i];
-                // The token scanner throws at a non-constituent; the number scanner reads past it.
-                if !numeric && self.mode != Mode::Macro && invalid {
-                    return None;
-                }
                 leaf = match token {
                     _ if keyword
-                        && !invalid
                         && !token.starts_with(':')
                         && valid_name(token)
                         && !token.contains("::") =>
@@ -933,7 +933,7 @@ impl<'a> Reader<'a> {
                                     && crate::query::date_token::DateToken::parse(token).is_some()))
                             .then(|| Edn::Symbol(token.into()))
                         }),
-                    _ if (!invalid && valid_name(token)) || self.mode == Mode::Macro => {
+                    _ if valid_name(token) || self.mode == Mode::Macro => {
                         Some(Edn::Symbol(token.into()))
                     }
                     _ => None,
@@ -954,24 +954,21 @@ impl<'a> Reader<'a> {
         })
     }
 
-    /// Advances over one token and says whether it held a non-constituent, so no caller
-    /// walks the token a second time. Where the caller refuses such a token (upstream's
-    /// token scanner throws there), it stops at the first one: `refusing` is that answer.
+    /// Advances over one token. `refusing` is the caller's answer to whether a
+    /// non-constituent ends the read (upstream's token scanner throws there): then the
+    /// scanner stops at the first one and returns true. Otherwise (numbers, opaque macro
+    /// symbols) it does not look for them.
     fn token(&mut self, numeric: bool, refusing: bool) -> bool {
-        let mut invalid = false;
         while let Some(c) = self.src[self.i..].chars().next() {
             if macro_terminator(c, numeric) {
                 break;
             }
-            if invalid_constituent(c) {
-                if refusing {
-                    return true;
-                }
-                invalid = true;
+            if refusing && invalid_constituent(c) {
+                return true;
             }
             self.i += c.len_utf8();
         }
-        invalid
+        false
     }
 
     fn legacy_values(&self) -> bool {
