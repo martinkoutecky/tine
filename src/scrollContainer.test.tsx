@@ -310,3 +310,129 @@ describe("GH #944: the reader's text holds when a query above it reruns", () => 
     } finally { Reflect.deleteProperty(document, "elementFromPoint"); }
   });
 });
+
+// GH #944 round 3 (review of a305636c1, finding 1): the query box's 2 px margin belongs to the authored row hosting it,
+// so a probe 1 px below a skipped query lands on that host row. With two changing queries and the upper one publishing
+// first, the chooser anchored on the second query's host row, whose top does not move with that query (40 px drift);
+// with a short first host row near the bottom, the next 32 px step left the view while reader text was visible (84 px).
+// Geometry (jsdom has no layout): view 0..600, pins stacked at the top, then host row X (2 px margin, query A, 2 px
+// margin), host row Y (likewise, query B), then the reader. The hit in a query is the result shape named.
+describe("GH #944: a changing query's boundary includes its host row's margin", () => {
+  const shapes = {
+    list: () => Object.assign(document.createElement("div"), { className: "block-main" }),
+    table: () => { const table = document.createElement("table"), cell = document.createElement("td"); table.append(cell); return cell; },
+    board: () => Object.assign(document.createElement("div"), { className: "query-board-card" }),
+    page: () => Object.assign(document.createElement("a"), { className: "page-ref" }),
+    search: () => Object.assign(document.createElement("span"), { className: "search-result" }),
+    chrome: () => Object.assign(document.createElement("div"), { className: "query-header" }),
+  };
+  type Shape = keyof typeof shapes;
+  const occurrence = (shape: Shape) => {
+    const row = document.createElement("div"), content = document.createElement("div"), query = document.createElement("div");
+    const result = shapes[shape]();
+    row.className = "block-main"; content.className = "block-content-wrapper"; query.className = "query-block";
+    query.append(result.closest("table") ?? result); content.append(query); row.append(content);
+    return { row, content, query, result };
+  };
+  /** Builds the page and its stubbed layout; returns the reader's top and the counts of hit tests and rect reads. */
+  const page = (opts: { pins: number; place: "straddle" | "above"; shape: Shape }) => {
+    const root = document.createElement("div"), reader = document.createElement("div"), filler = document.createElement("div");
+    reader.className = "block-main"; filler.className = "block-main";
+    const A = occurrence("list"), B = occurrence(opts.shape);
+    const headers = Array.from({ length: opts.pins }, () => {
+      const sticky = document.createElement("div"), button = document.createElement("button");
+      sticky.className = "sticky-ancestor"; sticky.append(button);
+      return sticky;
+    });
+    root.append(...headers, A.row, filler, B.row, reader); document.body.append(root);
+    const state = { scroll: 500, shrinkA: 0, shrinkB: 0, hits: 0, writes: 0 };
+    Object.defineProperty(root, "scrollTop", { configurable: true, get: () => state.scroll, set: value => { state.writes++; state.scroll = value; } });
+    const P = opts.pins * 30;
+    const geometry = () => {
+      const shift = state.scroll - 500;
+      const aTop = (opts.place === "above" ? -400 : -200) - shift;
+      const aBottom = (opts.place === "above" ? -2 : P + 100) - state.shrinkA - shift;
+      const xBottom = aBottom + 2;
+      // Above: a plain row under the pins (never hit), so the second host row starts at the pins' edge.
+      const fillBottom = xBottom + (opts.place === "above" ? P : 0);
+      const bTop = fillBottom + 2, bBottom = bTop + 100 - state.shrinkB, yBottom = bBottom + 2;
+      return { aTop, aBottom, xBottom, fillBottom, bTop, bBottom, yBottom, reader: yBottom };
+    };
+    const rect = (el: Element, f: () => { top: number; bottom: number }) => vi.spyOn(el, "getBoundingClientRect").mockImplementation(() => f() as DOMRect);
+    const rects = [
+      vi.spyOn(root, "getBoundingClientRect").mockReturnValue({ top: 0, bottom: 600, left: 0, width: 400 } as DOMRect),
+      ...headers.map((sticky, i) => vi.spyOn(sticky, "getBoundingClientRect").mockReturnValue({ top: i * 30, bottom: i * 30 + 30 } as DOMRect)),
+      rect(A.query, () => ({ top: geometry().aTop, bottom: geometry().aBottom })),
+      rect(A.row, () => ({ top: geometry().aTop - 2, bottom: geometry().xBottom })),
+      rect(A.result, () => ({ top: geometry().aTop, bottom: geometry().aBottom })),
+      rect(filler, () => ({ top: geometry().xBottom, bottom: geometry().fillBottom })),
+      rect(B.query, () => ({ top: geometry().bTop, bottom: geometry().bBottom })),
+      rect(B.row, () => ({ top: geometry().bTop - 2, bottom: geometry().yBottom })),
+      rect(B.result, () => ({ top: geometry().bTop, bottom: geometry().bBottom })),
+      rect(reader, () => ({ top: geometry().reader, bottom: geometry().reader + 400 })),
+    ];
+    Object.defineProperty(document, "elementFromPoint", { configurable: true, value: (_x: number, y: number) => {
+      state.hits++;
+      const g = geometry();
+      if (y < P) return headers[Math.floor(y / 30)].firstElementChild;
+      if (y >= g.aTop && y < g.aBottom) return A.result;
+      if (y >= g.aTop - 2 && y < g.xBottom) return A.content;
+      if (y >= g.xBottom && y < g.fillBottom) return filler;
+      if (y >= g.bTop && y < g.bBottom) return B.result;
+      if (y >= g.bTop - 2 && y < g.yBottom) return B.content;
+      return y >= g.reader ? reader : root;
+    } });
+    const reads = () => rects.reduce((sum, spy) => sum + spy.mock.calls.length, 0);
+    return { root, A, B, state, geometry, reads, resetReads: () => rects.forEach(spy => spy.mockClear()) };
+  };
+  afterEach(() => { Reflect.deleteProperty(document, "elementFromPoint"); });
+
+  const cases = ([0, 3] as const).flatMap(pins => (["straddle", "above"] as const).flatMap(place =>
+    (Object.keys(shapes) as Shape[]).flatMap(shape => (["upper", "lower"] as const).map(first => ({ pins, place, shape, first })))));
+  it.each(cases)("$pins pins, the first query $place the top, the second a $shape, the $first one publishing first",
+    async ({ pins, place, shape, first }) => {
+      const { root, A, B, state, geometry } = page({ pins, place, shape });
+      const before = geometry().reader;
+      expect(before).toBeLessThan(600);
+      const publishA = () => preserveAboveViewport(A.query, () => { state.shrinkA = 84; }, root, true);
+      const publishB = () => preserveAboveViewport(B.query, () => { state.shrinkB = 40; }, root, true);
+      if (first === "upper") { publishA(); publishB(); } else { publishB(); publishA(); }
+      await Promise.resolve();
+      expect(geometry().reader).toBe(before);
+    });
+
+  it.each([0, 3])("a short host row near the bottom of the view still anchors the visible reader text below it (gap %s px)", async gap => {
+    const root = document.createElement("div"), reader = document.createElement("div");
+    reader.className = "block-main";
+    const A = occurrence("list");
+    root.append(A.row, reader); document.body.append(root);
+    let scroll = 500, shrink = 0;
+    Object.defineProperty(root, "scrollTop", { configurable: true, get: () => scroll, set: value => { scroll = value; } });
+    const aBottom = () => 575 - shrink - (scroll - 500), readerTop = () => aBottom() + 2 + gap;
+    vi.spyOn(root, "getBoundingClientRect").mockReturnValue({ top: 0, bottom: 600, left: 0, width: 400 } as DOMRect);
+    vi.spyOn(A.query, "getBoundingClientRect").mockImplementation(() => ({ top: -200, bottom: aBottom() }) as DOMRect);
+    vi.spyOn(A.row, "getBoundingClientRect").mockImplementation(() => ({ top: -202, bottom: aBottom() + 2 }) as DOMRect);
+    vi.spyOn(reader, "getBoundingClientRect").mockImplementation(() => ({ top: readerTop(), bottom: readerTop() + 400 }) as DOMRect);
+    Object.defineProperty(document, "elementFromPoint", { configurable: true, value: (_x: number, y: number) =>
+      y < aBottom() ? A.result : y < aBottom() + 2 ? A.content : y >= readerTop() ? reader : root });
+    const before = readerTop();
+    preserveAboveViewport(A.query, () => { shrink = 84; }, root, true);
+    await Promise.resolve();
+    expect(readerTop()).toBe(before);
+  });
+
+  // Review finding 2: cost scales with the obstructions crossed in the view, never with the page. Pinned for the
+  // two-query page (the first query just above the view): hit tests and rect reads (view, query box, each pin, the host row crossed, the anchor) in one snapshot, one
+  // scroll write.
+  it.each([[4, 6, 8], [8, 10, 12], [11, 13, 15]])("%s pins: %s hit tests and %s rect reads per snapshot", async (pins, hits, reads) => {
+    const p = page({ pins, place: "above", shape: "table" });
+    p.resetReads();
+    preserveAboveViewport(p.A.query, () => { p.state.shrinkA = 84; }, p.root, true);
+    expect(p.state.hits).toBe(hits);
+    expect(p.reads()).toBe(reads);
+    p.resetReads();
+    await Promise.resolve();
+    expect(p.reads()).toBe(1); // the restore reads the anchor only
+    expect(p.state.writes).toBe(1);
+  });
+});

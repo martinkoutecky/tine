@@ -109,10 +109,16 @@ export function batchViewportChanges(change: () => void): void {
   }
 }
 
+/** Rows that host a query occurrence: an authored block's row, or a Journals
+ * default-query or agenda wrapper. */
+const QUERY_HOST = ".block-main, .default-journal-query, .agenda-block";
+
 /** Lazy replacement can correct an arbitrarily bad estimate (embeds, tables,
- * wrapped text). Only a box wholly above the view can displace existing readers
- * below it. Compare its viewport edge across the synchronous replacement, so
- * native anchoring already performed by Chromium is not applied twice.
+ * wrapped text). A box wholly above the view displaces the readers below it;
+ * a deferred answer (a query rerun) may also straddle the top or sit inside the
+ * view. Compare a visible reader row (or, for a box wholly above, its own
+ * edge) across the replacement, so native anchoring already performed by
+ * Chromium is not applied twice.
  * IO callers supply observer geometry and batch all entries, so below-view
  * mounts read no layout and above-view mounts share one root snapshot. */
 export function preserveAboveViewport(el: Element, change: () => void, root?: Element | null, deferred = false,
@@ -142,12 +148,18 @@ export function preserveAboveViewport(el: Element, change: () => void, root?: El
   // snapshot). A row of another query is kept only as a fallback. The raw hit
   // is classified before promotion to its row: a table, board or page result
   // has no row of its own and would promote to the row hosting its query.
+  // A query occurrence ends at the bottom of the authored row hosting it: the
+  // query box's 2 px margin, and any chrome below it, sit on that row, whose
+  // top does not move with the query's change. A probe landing on a host row
+  // (of this box or of any query) continues below the row; another query's
+  // host row is kept only as a fallback.
   // Only misses spend the budget; each skip passes a whole obstruction, and
-  // the walk ends at the bottom of the view.
+  // the walk ends at the bottom of the view, whose last pixel row is probed.
   let anchor: Element | null = null, fallback: Element | null = null;
   const x = viewport.left + viewport.width / 2;
   for (let misses = 0, y = viewport.top + 2; misses < 8 && !(y >= viewport.bottom);) {
     let next = y + (y < viewport.top + 32 ? 30 : 32);
+    if (next >= viewport.bottom && y < viewport.bottom - 1) next = viewport.bottom - 1;
     if (y >= box.top && y < box.bottom) { y = box.bottom + 1; continue; }
     const hit = elementFromPointIn(root, x, y);
     const blocker: Element | null = !hit || !root.contains(hit) ? null : el.contains(hit) ? el : hit.closest(".sticky-ancestor, .query-block");
@@ -156,7 +168,14 @@ export function preserveAboveViewport(el: Element, change: () => void, root?: El
       if (blocker !== el && !blocker.matches(".sticky-ancestor")) fallback ??= candidate && blocker.contains(candidate) ? candidate : hit;
       const edge = blocker === el ? bottom : blocker.getBoundingClientRect().bottom;
       if (edge >= y) { y = edge + 1; continue; }
-    } else if (candidate && root.contains(candidate) && !candidate.contains(el)) { anchor = candidate; break; }
+    } else if (candidate && candidate !== root && root.contains(candidate)) {
+      const own = candidate.contains(el);
+      if (candidate.matches(QUERY_HOST) && (own || candidate.querySelector(".query-block"))) {
+        if (!own) fallback ??= candidate;
+        const edge = candidate.getBoundingClientRect().bottom;
+        if (edge >= y) { y = edge + 1; continue; }
+      } else if (!own) { anchor = candidate; break; }
+    }
     misses++;
     y = next;
   }

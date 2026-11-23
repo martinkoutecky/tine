@@ -64,6 +64,21 @@ fs.writeFileSync(path.join(graph, 'pages', `${residualPage}.md`), [
   `- TODO ${residualTask} [[Scroll Test Tasks]]`,
   ...Array.from({ length: 30 }, (_, i) => `- reader scroll room ${i}`),
 ].join('\n') + '\n');
+// Two changing queries above the reader, nested under eight ancestors so their pins stack over the top of the view
+// (review of a305636c1: the second query's host row margin, and snapshot cost with deep pins).
+const pairPage = 'Query Scroll Pair';
+const pairTask = 'tick the pair witness';
+const PAIR_DEPTH = 8;
+const nest = (depth, line) => `${'  '.repeat(depth)}- ${line}`;
+fs.writeFileSync(path.join(graph, 'pages', `${pairPage}.md`), [
+  ...Array.from({ length: PAIR_DEPTH }, (_, depth) => nest(depth, `pair ancestor ${depth}`)),
+  nest(PAIR_DEPTH, '{{query (and (task TODO) [[Scroll Test Tasks]])}}'),
+  nest(PAIR_DEPTH, '{{query (and (task TODO) [[Scroll Pair Tasks]])}}'),
+  nest(PAIR_DEPTH, `TODO ${pairTask} [[Scroll Test Tasks]] [[Scroll Pair Tasks]]`),
+  ...Array.from({ length: 30 }, (_, i) => nest(PAIR_DEPTH, `pair reader room ${i}`)),
+].join('\n') + '\n');
+fs.writeFileSync(path.join(graph, 'pages', 'Scroll Pair Tasks.md'),
+  Array.from({ length: 3 }, (_, i) => `- TODO pair result ${i} [[Scroll Pair Tasks]]\n`).join(''));
 fs.writeFileSync(path.join(graph, 'pages', 'Scroll Test Tasks.md'),
   Array.from({ length: 16 }, (_, i) => `- TODO scroll result ${i} [[Scroll Test Tasks]]\n`).join(''));
 // Every older day is referenced, so each day carries a Linked References section like a real graph.
@@ -233,6 +248,80 @@ async function tickBelowStraddlingQuery() {
   if (!after.witnessVisible || Math.abs(displacement) > 2) throw new Error(`reader moved ${displacement}px below the straddling query`);
 }
 
+// Both queries shrink by one row when the witness is ticked; whichever publishes first, the reader must stay put.
+// The page wraps document.elementFromPoint to count and time the anchor chooser's hit tests during the tick.
+async function tickBelowTwoQueries() {
+  await openPageByName(browser, pairPage);
+  let id;
+  await browser.waitUntil(async () => {
+    id = await blockId(pairTask);
+    return !!id;
+  }, { timeout: 20_000, timeoutMsg: 'pair witness task did not render' });
+  const measure = (place = false) => browser.execute((id, text, place) => {
+    const scroller = document.querySelector('.main-content');
+    const queries = [...scroller.querySelectorAll('.query-block')];
+    const row = [...scroller.querySelectorAll(`[data-block-id="${id}"]`)].find(el => !el.closest('.query-block'));
+    if (queries.length !== 2 || !row) return null;
+    const viewport = scroller.getBoundingClientRect();
+    if (place) scroller.scrollTop += queries[0].getBoundingClientRect().bottom - viewport.top - viewport.height * 0.4;
+    const [a, b] = queries.map(q => q.getBoundingClientRect()), witness = row.getBoundingClientRect();
+    const pins = [...scroller.querySelectorAll('.sticky-ancestor')].filter(pin => {
+      const box = pin.getBoundingClientRect();
+      return box.height > 0 && box.top < viewport.top + 2 + 30 * 12 && box.bottom > viewport.top;
+    }).length;
+    return { inQueries: queries.map(q => q.textContent.includes(text)), heights: [a.height, b.height], pins,
+      pinBottom: Math.max(0, ...[...scroller.querySelectorAll('.sticky-ancestor')].map(pin => pin.getBoundingClientRect().bottom - viewport.top)),
+      straddles: a.top < viewport.top && a.bottom > viewport.top, secondVisible: b.top >= viewport.top && b.bottom <= viewport.bottom,
+      witnessVisible: witness.top >= viewport.top && witness.bottom <= viewport.bottom, witnessTop: witness.top - viewport.top };
+  }, id, pairTask, place);
+  await browser.waitUntil(async () => (await measure())?.inQueries.every(Boolean), { timeout: 20_000, timeoutMsg: 'the witness never appeared in both queries' });
+  let before, after, previous;
+  // Lazy result rows mount and settle their measured heights after the first placement; tick only once two
+  // consecutive readings agree, so the measured movement is the tick's alone.
+  await browser.waitUntil(async () => {
+    before = await measure(true);
+    await sleep(400);
+    const settled = await measure();
+    const stable = previous && settled && JSON.stringify(settled) === JSON.stringify(before)
+      && JSON.stringify(previous.heights) === JSON.stringify(before.heights);
+    previous = before;
+    return stable && before.straddles && before.secondVisible && before.witnessVisible && before.pins >= PAIR_DEPTH;
+  }, { timeout: 30_000, interval: 200, timeoutMsg: 'could not place the reader below two settled queries with the ancestors pinned' });
+  await browser.execute(() => {
+    const scroller = document.querySelector('.main-content');
+    const probe = { hits: 0, ms: 0, order: [], observers: [] };
+    const original = Document.prototype.elementFromPoint;
+    document.elementFromPoint = function (x, y) {
+      const t = performance.now();
+      try { return original.call(this, x, y); } finally { probe.ms += performance.now() - t; probe.hits++; }
+    };
+    [...scroller.querySelectorAll('.query-block')].forEach((query, index) => {
+      const observer = new MutationObserver(() => { if (!probe.order.includes(index)) probe.order.push(index); });
+      observer.observe(query, { childList: true, subtree: true, characterData: true });
+      probe.observers.push(observer);
+    });
+    window.__gh944pair = probe;
+  });
+  await pointerClick(await clickEl(id, '.block-task-checkbox'));
+  await browser.waitUntil(async () => {
+    after = await measure();
+    return (await state(id)).done && after && !after.inQueries.some(Boolean)
+      && after.heights[0] < before.heights[0] && after.heights[1] < before.heights[1];
+  }, { timeout: 20_000, timeoutMsg: 'ticking the witness did not shorten both queries' });
+  const probe = await browser.execute(() => {
+    const probe = window.__gh944pair;
+    probe.observers.forEach(observer => observer.disconnect());
+    Reflect.deleteProperty(document, 'elementFromPoint');
+    return { hits: probe.hits, ms: probe.ms, order: probe.order };
+  });
+  const displacement = after.witnessTop - before.witnessTop;
+  const order = probe.order[0] === 0 ? 'upper-first' : probe.order[0] === 1 ? 'lower-first' : 'unobserved';
+  console.log(`GH944 two queries (${order}, ${before.pins} pins): heights ${before.heights} → ${after.heights}, reader displacement `
+    + `${displacement}px; ${probe.hits} hit tests, ${probe.ms.toFixed(2)} ms in hit tests during the tick`);
+  results.twoQueries = { before, after, displacement, order, hitTests: probe.hits, hitTestMs: probe.ms };
+  if (!after.witnessVisible || Math.abs(displacement) > 2) throw new Error(`reader moved ${displacement}px below two changing queries (${order})`);
+}
+
 try {
   target = await startWebdriverApplication(app, env, nativePort);
   log = fs.openSync(path.join(run, 'driver.log'), 'w');
@@ -301,7 +390,11 @@ try {
     stage = 'routed-straddling-query';
     await tickBelowStraddlingQuery();
   }
-  if (!measured.length && !results.routedQuery) throw new Error('no phase was measured');
+  if (!only || only.test('routed-two-queries')) {
+    stage = 'routed-two-queries';
+    await tickBelowTwoQueries();
+  }
+  if (!measured.length && !results.routedQuery && !results.twoQueries) throw new Error('no phase was measured');
   const moved = measured.filter(p => /^jump|^target-gone/.test(p.classification));
   if (moved.length) throw new Error(`the reader moved: ${moved.map(p => `${p.phase}=${p.classification} final=${p.summary.finalDisplacement?.toFixed(1)}`).join(', ')}`);
   results.semanticPassed = true;
