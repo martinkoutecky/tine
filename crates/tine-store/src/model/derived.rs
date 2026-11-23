@@ -104,6 +104,10 @@ pub(crate) struct HeldPages {
     /// first publication: reused when those bytes are the row's, so the
     /// claim parses nothing again (GH #623). Bounded by the held keys.
     claims: Mutex<HashMap<String, Row>>,
+    /// What each held key with no owner publication yet claims, by claim
+    /// (R-CREATE-TWIN): the create guard looks a proposed name up here.
+    /// A leaf lock.
+    names: Mutex<held_claims::HeldNames>,
 }
 
 impl HeldPages {
@@ -314,31 +318,6 @@ impl Graph {
             .filter(|(_, indexed)| indexed.is_none())
             .map(|(key, _)| key.clone())
             .collect()
-    }
-
-    /// The file of a held page with no owner publication yet (the launch
-    /// install) that claims `entry`'s name or day, other than `except`. Such
-    /// a page is in no name index, yet its file claims its name: a creation
-    /// must see it (R-CREATE-TWIN). O(unindexed held keys) preamble reads,
-    /// none when every held page is published.
-    pub(crate) fn unindexed_held_claimant(
-        &self,
-        entry: &PageEntry,
-        except: Option<&Path>,
-    ) -> Option<PathBuf> {
-        let claim = |e: &PageEntry| claimant_key(&(e.kind, tine_core::refs::page_key(&e.name)));
-        self.unindexed_held_keys().into_iter().find_map(|key| {
-            let path = self.root.join(self.held.spellings().spelling(&key));
-            if path == entry.path || except == Some(path.as_path()) {
-                return None;
-            }
-            let other = self.page_entry_in(&path, None)?;
-            let same = match (entry.date_key, other.date_key) {
-                (Some(day), Some(other_day)) => day == other_day,
-                _ => claim(entry) == claim(&other),
-            };
-            same.then_some(path)
-        })
     }
 
     /// [`Self::disk_sourced`] within the pass whose memo is `memo`.
@@ -1393,6 +1372,9 @@ mod owners;
 
 #[path = "derived_cold.rs"]
 mod cold;
+
+#[path = "derived_held_claims.rs"]
+mod held_claims;
 
 #[path = "derived_names.rs"]
 mod names;

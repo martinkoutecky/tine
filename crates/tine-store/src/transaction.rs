@@ -993,8 +993,9 @@ impl<'a> PagePlan<'a> {
 
     /// The one name/day claim guard. An absent destination claims its filename; a move
     /// exempts its source; a create also checks unreadable owners. Only a non-move
-    /// transaction create uses live discovery when its name memo is cold. At most one
-    /// preamble read per unindexed held key.
+    /// transaction create uses live discovery when its name memo is cold. A held page
+    /// with no owner publication yet is looked up by claim, its preamble read at most
+    /// once per hold ([`crate::model::Graph::unindexed_held_claimant`]).
     fn check_page_claim(
         &self,
         file: &FileId,

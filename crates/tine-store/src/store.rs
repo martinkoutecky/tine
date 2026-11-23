@@ -415,6 +415,8 @@ mod query_request;
 mod subgraph_tests;
 pub(crate) use inventory::InventoryDelta;
 pub use inventory::{Inventory, InventoryEntry, InventoryScope, LinkTarget};
+#[cfg(test)]
+mod claim_guard_tests;
 #[cfg(any(test, feature = "test-faults"))]
 mod link_oracle;
 #[cfg(test)]

@@ -12,6 +12,10 @@ impl Graph {
     pub(crate) fn attach_spellings(&self, spellings: Arc<Spellings>) {
         let _cache = self.derived.cache.write().unwrap();
         *self.held.spellings.write().unwrap() = spellings;
+        let mut names = self.held.names.lock().unwrap();
+        let keys: Vec<String> = names.named.keys().cloned().collect();
+        keys.iter().for_each(|key| names.unread(key));
+        drop(names);
         self.held.bump();
     }
 
@@ -224,6 +228,14 @@ impl Graph {
             if keys.contains_key(&key) {
                 return None;
             }
+            // The claim the create guard looks up while no owner published.
+            let mut names = self.held.names.lock().unwrap();
+            match (&current, &claim) {
+                (Some(_), _) => names.forget(&key),
+                (None, Some((entry, _, _))) => names.name(&key, Some(entry)),
+                (None, None) => names.unread(&key),
+            }
+            drop(names);
             if let Some(claim) = claim {
                 self.held.claims.lock().unwrap().insert(key.clone(), claim);
             }
@@ -249,6 +261,7 @@ impl Graph {
         self.transition(|| {
             self.held.keys.write().unwrap().remove(key)?;
             self.held.claims.lock().unwrap().remove(key);
+            self.held.names.lock().unwrap().forget(key);
             let withheld = self.held.withheld.lock().unwrap().remove(key);
             reread.push(path.clone());
             reread.extend(withheld.into_iter().flatten());
@@ -267,6 +280,7 @@ impl Graph {
                 .map(|(key, _)| key)
                 .collect();
             self.held.claims.lock().unwrap().clear();
+            *self.held.names.lock().unwrap() = Default::default();
             let spellings = std::mem::take(&mut *self.held.spellings.write().unwrap());
             reread.extend(
                 keys.iter()
@@ -291,9 +305,11 @@ impl Graph {
     pub(crate) fn respelled(&self, key: &str, from: &Path) {
         let to = self.root.join(self.held.spellings().spelling(key));
         self.transition(|| {
-            self.held
-                .indexed_of(key)
-                .map(|_| vec![from.to_path_buf(), to])
+            let moved = self.held.indexed_of(key)?;
+            if moved.is_none() {
+                self.held.names.lock().unwrap().unread(key);
+            }
+            Some(vec![from.to_path_buf(), to])
         });
     }
 
@@ -343,6 +359,9 @@ impl Graph {
             };
             if !same {
                 self.held.bump();
+            }
+            if indexed.is_none() {
+                self.held.names.lock().unwrap().forget(key);
             }
             *indexed = Some(bytes.clone());
         }

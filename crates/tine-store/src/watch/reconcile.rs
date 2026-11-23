@@ -575,6 +575,7 @@ impl Core {
             };
             if !owners.is_empty() {
                 self.graph.note_unsettled_read(&path, None);
+                self.graph.note_held_changed(&owners);
                 forwarded.extend(owners);
                 retry_baseline(&mut now, &path, before);
                 continue;
