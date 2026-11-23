@@ -69,6 +69,15 @@ pub(crate) type MemoryFile = (String, Content, Option<SystemTime>);
 /// time it now holds, or `None` to delete the file.
 pub(crate) type MemoryChange = (String, Option<(Content, Option<SystemTime>)>);
 
+/// One key a [`Graph::replace_memory_files`] changed: whether a file was there
+/// before, and whether the file there is graph text under the resulting config
+/// (the one answer its page validation and its publication read).
+pub(crate) struct Replaced {
+    pub(crate) rel: String,
+    pub(crate) existed: bool,
+    pub(crate) page: bool,
+}
+
 /// The longest file name the reference volume holds (POSIX `NAME_MAX`).
 const NAME_MAX: usize = 255;
 
@@ -559,29 +568,50 @@ impl Graph {
     }
 
     /// Replace files of a graph [`Self::in_memory_with_config`] built
-    /// ([`Files::replace`]). When a change can move what the config read
+    /// ([`Files::replace`]): `Some(bytes)` writes a file with the time `now`,
+    /// `None` deletes one. When a change can move what the config read
     /// finds ([`affects_config_lookup`]) the config is read again as an open
-    /// reads it. Each written file that is graph text under the resulting
-    /// config ([`super::graph_text_eligible`], the open's check) must pass
-    /// the parse input checks (`InvalidData`); other bytes are held as an
-    /// open holds them. The layout is then checked as an open checks it.
-    /// All or none: a refusal restores the files and the config. Returns
-    /// each change's inverse (`None`: the key was absent) and whether the
-    /// config was read again. The page cache is not touched: the caller
-    /// reconciles the changed files.
+    /// reads it. Each change is then decided once: graph text under the
+    /// resulting config ([`super::graph_text_eligible`], the open's check)
+    /// or not. A graph-text write must pass the parse input checks
+    /// (`InvalidData`), read from the given bytes; other bytes are held as an
+    /// open holds them and never reach the page validator. The layout is
+    /// then checked as an open checks it. All or none: a refusal restores
+    /// the files and the config. Returns each change's [`Replaced`] in order
+    /// and whether the config was read again. The page cache is not touched:
+    /// the caller publishes the graph-text changes.
     pub(crate) fn replace_memory_files(
         &mut self,
-        changes: Vec<MemoryChange>,
-    ) -> io::Result<(Vec<MemoryChange>, bool)> {
+        changes: Vec<(String, Option<Arc<Vec<u8>>>)>,
+        now: SystemTime,
+    ) -> io::Result<(Vec<Replaced>, bool)> {
         let reread = changes.iter().any(|(rel, _)| affects_config_lookup(rel));
+        let mut written = Vec::with_capacity(changes.len());
+        let changes = (changes.into_iter())
+            .map(|(rel, bytes)| {
+                written.push(bytes.clone());
+                (rel, bytes.map(|bytes| (Content::Bytes(bytes), Some(now))))
+            })
+            .collect();
         let undo = self.memory_files()?.replace(changes)?;
         let before = reread.then(|| {
             let path = self.root.join(CONFIG_FILE);
             let read = super::read_config_in(&self.source, &path);
             self.set_config_read(read)
         });
-        let checked = (undo.iter())
-            .try_for_each(|(rel, _)| self.check_written(rel))
+        let replaced: Vec<Replaced> = (undo.iter())
+            .map(|(rel, before)| Replaced {
+                rel: rel.clone(),
+                existed: before.is_some(),
+                page: super::graph_text_eligible(&self.root, &self.root.join(rel), &self.config),
+            })
+            .collect();
+        let checked = (replaced.iter().zip(&written))
+            .filter(|(replaced, _)| replaced.page)
+            .filter_map(|(replaced, bytes)| Some((&replaced.rel, bytes.as_ref()?)))
+            .try_for_each(|(rel, bytes)| {
+                super::validate_parse_text(bytes, &self.root.join(rel)).map(drop)
+            })
             .and_then(|()| self.check_layout());
         if let Err(error) = checked {
             if let Some(before) = before {
@@ -595,20 +625,7 @@ impl Graph {
         if reread {
             self.install_config(self.config.clone());
         }
-        Ok((undo, reread))
-    }
-
-    /// A replaced key's bytes, if it holds a file that is graph text under
-    /// this graph's config, pass the parse input checks.
-    fn check_written(&self, rel: &str) -> io::Result<()> {
-        let path = self.root.join(rel);
-        if !super::graph_text_eligible(&self.root, &path, &self.config) {
-            return Ok(());
-        }
-        match self.memory_bytes(&path)? {
-            Some(bytes) => super::validate_parse_text(&bytes, &path).map(drop),
-            None => Ok(()),
-        }
+        Ok((replaced, reread))
     }
 
     fn memory_files(&mut self) -> io::Result<&mut Files> {

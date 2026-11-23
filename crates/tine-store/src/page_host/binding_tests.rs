@@ -575,6 +575,62 @@ fn open_submit_and_mail_round_trip_through_a_real_store() {
     live.host.stop();
 }
 
+/// Browser core 5a round 3 (review finding 1): the desktop editor's save
+/// publishes its own document through the one runtime-id owner, so an
+/// unkeyed block never takes the id a kept block holds (prepend a root,
+/// insert a child, append after reparenting; Markdown and Org, LF and CRLF;
+/// the authored-id block among the kept ones).
+#[test]
+fn an_editor_save_holds_each_runtime_id_once() {
+    use crate::store::memory_owner_tests::{assert_distinct, edits, pages};
+    for (rel, crlf, text) in pages() {
+        for (edit, apply) in edits() {
+            let case = format!("{rel} crlf={crlf} {edit}");
+            let live = Live::new(&[(rel, &text)]);
+            let (key, page) = live.open(rel);
+            let MailText::Page { dto } = &page.text else {
+                panic!("{case}: an open answer carries the page");
+            };
+            let mut edited = dto.clone();
+            apply(&mut edited);
+            let (id, session) = (live.id(), live.host.session());
+            let kinds = [EditKind::SaveBlock];
+            (live
+                .host
+                .submit(session, id, &key, &edited, page.version, None, &kinds))
+            .unwrap();
+            assert!(live.answer(&key, id).answer.unwrap().took, "{case}");
+            // The index's row once it holds the save (what queries and
+            // references read; a read of a held page parses its bytes afresh).
+            let path = live.root.join(rel);
+            let deadline = Instant::now() + Duration::from_secs(20);
+            let roots: Vec<tine_core::model::BlockDto> = loop {
+                let roots = live.store.graph.with_pages(|pages| {
+                    let (_, doc) = pages.iter().find(|(entry, _)| entry.path == path).unwrap();
+                    doc.roots
+                        .iter()
+                        .map(tine_core::projection::block_to_dto)
+                        .collect()
+                });
+                if format!("{roots:?}").contains("omega") {
+                    break roots;
+                }
+                assert!(
+                    Instant::now() < deadline,
+                    "{case}: the save was never indexed"
+                );
+                std::thread::sleep(Duration::from_millis(20));
+            };
+            let after = PageDto {
+                blocks: roots,
+                ..PageDto::clone(dto)
+            };
+            assert_distinct(&case, dto, &after);
+            live.host.stop();
+        }
+    }
+}
+
 /// Q-P2b-3 (GH #538): the save-failure notice names the failed platform
 /// step and its OS error, and a later published save clears both.
 #[cfg(unix)]

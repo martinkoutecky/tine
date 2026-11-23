@@ -25,6 +25,22 @@ pub(super) struct MemoryGraph(Arc<Graph>);
 impl std::panic::RefUnwindSafe for MemoryGraph {}
 impl std::panic::UnwindSafe for MemoryGraph {}
 
+impl MemoryGraph {
+    /// The one answer to whether a view can change its graph, which every
+    /// edit asks: it was built editable ([`WholeGraph::from_files`]) and no
+    /// clone of it shares the graph.
+    fn editable(memory: &mut Option<Self>) -> io::Result<&mut Graph> {
+        (memory.as_mut())
+            .and_then(|memory| Arc::get_mut(&mut memory.0))
+            .ok_or_else(|| {
+                io::Error::new(
+                    io::ErrorKind::Unsupported,
+                    "only an unshared, editable graph built from files is changed",
+                )
+            })
+    }
+}
+
 type MemoryFile = (String, Arc<Vec<u8>>);
 
 /// A file change and, for a write, the document its bytes serialize.
@@ -78,8 +94,10 @@ impl WholeGraph {
     /// no page times. The browser's graph (a published export's pages). The
     /// returned root spelling is `/tine-memory-graph`. `times` gives files
     /// their modification times (a file without one has none), which
-    /// `page_modified` and recency order answer from. Cost: one read and
-    /// parse of each file and the initial index capture, as a store open has.
+    /// `page_modified` and recency order answer from; `None` is a time the
+    /// caller was given but cannot represent, admitted as any other and then
+    /// no time. Cost: one read and parse of each file and the initial index
+    /// capture, as a store open has.
     /// Refuses what `Store::open` refuses for the configured directories'
     /// spelling, and (`InvalidInput`) a path that is not graph-relative or is
     /// both a file and a directory, and a time given twice or for no file; a
@@ -90,7 +108,7 @@ impl WholeGraph {
     /// refuses both.
     pub fn from_files<T: Into<Arc<Vec<u8>>>>(
         files: Vec<(String, T)>,
-        times: Vec<(String, SystemTime)>,
+        times: Vec<(String, Option<SystemTime>)>,
         editable: bool,
     ) -> io::Result<(WholeGraph, String)> {
         let refused = |message: String| io::Error::new(io::ErrorKind::InvalidInput, message);
@@ -102,7 +120,7 @@ impl WholeGraph {
         }
         let files: Vec<_> = (files.into_iter())
             .map(|(rel, bytes)| {
-                let modified = by_path.remove(&rel);
+                let modified = by_path.remove(&rel).flatten();
                 (rel, Content::Bytes(bytes.into()), modified)
             })
             .collect();
@@ -145,55 +163,48 @@ impl WholeGraph {
     /// [`Self::replace_files`], where a write may carry the document its
     /// bytes were serialized from (a submit's): that document is published,
     /// so its blocks keep their runtime ids, as the desktop publishes its
-    /// own save's. Any other graph-text write is parsed once.
+    /// own save's. Any other graph-text write is parsed once. A change that
+    /// is not graph text keeps its file change and revision and is not
+    /// published as a page, as the desktop transaction publishes only pages.
     fn replace_prepared(&mut self, changes: Vec<PreparedChange>) -> io::Result<Change> {
-        let graph = (self.memory.as_mut())
-            .and_then(|memory| Arc::get_mut(&mut memory.0))
-            .ok_or_else(|| {
-                io::Error::new(
-                    io::ErrorKind::Unsupported,
-                    "only an unshared, editable graph built from files is replaced",
-                )
-            })?;
-        let now = tine_core::clock::system_now();
+        let graph = MemoryGraph::editable(&mut self.memory)?;
         let (mut writes, mut written) = (Vec::new(), Vec::new());
         for (rel, bytes, document) in changes {
             let bytes = bytes.map(Arc::new);
-            let content = (bytes.clone()).map(|bytes| (Content::Bytes(bytes), Some(now)));
-            writes.push((rel, content));
+            writes.push((rel, bytes.clone()));
             written.push((bytes, document));
         }
-        let (undo, reread) = graph.replace_memory_files(writes)?;
+        let now = tine_core::clock::system_now();
+        let (replaced, reread) = graph.replace_memory_files(writes, now)?;
         let graph: &Graph = graph;
-        let (mut files, mut published) = (Vec::with_capacity(undo.len()), HashMap::new());
-        for ((bytes, prepared), (rel, before)) in written.into_iter().zip(undo) {
-            let path = graph.root.join(&rel);
-            let kind = match (&bytes, before) {
+        let (mut files, mut published) = (Vec::with_capacity(replaced.len()), HashMap::new());
+        for ((bytes, prepared), replaced) in written.into_iter().zip(replaced) {
+            let path = graph.root.join(&replaced.rel);
+            let kind = match (&bytes, replaced.existed) {
                 (None, _) => ChangeKind::Removed,
-                (Some(_), Some(_)) => ChangeKind::Modified,
-                (Some(_), None) => ChangeKind::Created,
+                (Some(_), true) => ChangeKind::Modified,
+                (Some(_), false) => ChangeKind::Created,
             };
-            // Published as the desktop publishes its own write: its document
-            // (the serializer's, or one parse of the page's text) installed
-            // with no comparison.
             let bytes = bytes.as_deref().map(Vec::as_slice);
-            let page =
-                |_: &&[u8]| crate::model::graph_text_eligible(&graph.root, &path, &graph.config);
-            let document = prepared.or_else(|| {
-                (bytes.filter(page))
-                    .and_then(|bytes| std::str::from_utf8(bytes).ok())
-                    .map(|text| crate::model::parse_doc(&path, text))
-            });
-            let file_set_changed = kind != ChangeKind::Modified;
-            let id = FileId::from(rel);
-            let entry = graph.transaction_publish_page_inner(
-                &path,
-                bytes,
-                document.as_ref(),
-                file_set_changed,
-            );
-            if let Some(entry) = entry {
-                published.insert(id.clone(), entry);
+            let id = FileId::from(replaced.rel);
+            if replaced.page {
+                // Published as the desktop publishes its own write: its
+                // document (the serializer's, or one parse of the page's
+                // text) installed with no comparison.
+                let document = prepared.or_else(|| {
+                    (bytes.and_then(|bytes| std::str::from_utf8(bytes).ok()))
+                        .map(|text| crate::model::parse_doc(&path, text))
+                });
+                let file_set_changed = kind != ChangeKind::Modified;
+                let entry = graph.transaction_publish_page_inner(
+                    &path,
+                    bytes,
+                    document.as_ref(),
+                    file_set_changed,
+                );
+                if let Some(entry) = entry {
+                    published.insert(id.clone(), entry);
+                }
             }
             files.push((id, kind, bytes.map(FileRev::from_bytes)));
         }
@@ -260,18 +271,14 @@ impl WholeGraph {
         if !current {
             return Err(PageRefusal::NotAdmitted);
         }
-        let graph = (self.memory.as_ref().map(|memory| &*memory.0)).ok_or_else(|| {
-            failed(io::Error::new(
-                io::ErrorKind::Unsupported,
-                "not an editable graph built from files",
-            ))
-        })?;
+        MemoryGraph::editable(&mut self.memory).map_err(failed)?;
         if let Some(why) = crate::transaction::config_write_failure(self.config()) {
             return Err(why.into());
         }
         let file = id.file();
         let is_page = || self.validated_page(id).is_ok();
         crate::transaction::page_save_target(dto, is_page, &file)?;
+        let graph: &Graph = MemoryGraph::editable(&mut self.memory).map_err(failed)?;
         let path = graph.root.join(id.as_str());
         let old = graph.memory_bytes(&path).map_err(failed)?;
         let old = old.as_deref().map(Vec::as_slice);

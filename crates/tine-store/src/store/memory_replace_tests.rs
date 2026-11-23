@@ -301,22 +301,29 @@ fn only_a_graph_built_from_files_is_replaced() {
 #[test]
 fn file_times_answer_page_modified() {
     let files = graph_files(2);
-    let at = |secs| UNIX_EPOCH + Duration::from_secs(secs);
+    let at = |secs| Some(UNIX_EPOCH + Duration::from_secs(secs));
     let all: Vec<_> = (files.iter())
         .map(|(rel, bytes)| (rel.clone(), bytes.clone()))
         .collect();
     let times = vec![("pages/P1.md".to_owned(), at(1_700_000_000))];
     let (mut view, _) = WholeGraph::from_files(all.clone(), times.clone(), true).unwrap();
-    // A time given twice, or for no file, is refused.
+    // A time given twice, or for no file, is refused, whether or not the
+    // caller could represent it (round 3, finding 4).
     for times in [
         vec![times[0].clone(), times[0].clone()],
         vec![("pages/None.md".to_owned(), at(1))],
+        vec![("pages/None.md".to_owned(), None)],
+        vec![("pages/P1.md".to_owned(), None), times[0].clone()],
     ] {
         let error = WholeGraph::from_files(all.clone(), times, true)
             .err()
             .unwrap();
         assert_eq!(error.kind(), io::ErrorKind::InvalidInput, "{error}");
     }
+    // A time the caller cannot represent, for a file there, is no time.
+    let given = vec![("pages/P1.md".to_owned(), None)];
+    let (unrepresented, _) = WholeGraph::from_files(all.clone(), given, false).unwrap();
+    assert!(unrepresented.page_modified().is_empty());
     assert_eq!(
         view.page_modified(),
         vec![("pages/P1.md".to_owned(), 1_700_000_000)]

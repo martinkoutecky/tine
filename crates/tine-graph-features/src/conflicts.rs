@@ -16,7 +16,7 @@ use tine_core::doc::{self, Document};
 use tine_core::model::{
     decode_page_name, sync_conflict_base, Format, PageDto, PageKind, SyncConflict,
 };
-use tine_core::projection::{assign_doc_runtime_ids_unique, block_to_dto};
+use tine_core::projection::{assign_doc_runtime_ids, block_to_dto};
 use tine_core::sync_diff::{self, SyncConflictDiff};
 use tine_store::{Area, FileId, FileRev, Input, PageHost, PageId, SaveBase, Store};
 
@@ -672,7 +672,7 @@ pub(crate) fn merge_refused(refusal: sync_diff::MergeRefused) -> io::Error {
 pub(crate) fn dto(store: &Store, id: &PageId, mut doc: Document) -> PageDto {
     // A merge keeps the draft's live keys beside freshly parsed blocks: never
     // hand the window two blocks under one key (GH #800).
-    assign_doc_runtime_ids_unique(&mut doc.roots, id.as_str());
+    assign_doc_runtime_ids(&mut doc.roots, id.as_str());
     // The page is named and kinded as the store will once this document is
     // saved: both depend only on the path and the preamble (the `title::`),
     // so the store's answer reads them from the merged pre-block (census Q2,

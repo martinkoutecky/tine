@@ -29,12 +29,15 @@ impl BrowserGraph {
     /// `logseq/config.edn` among them. Options: `share` (a quick share's
     /// admission), `times`, a modification time in Unix seconds per path
     /// (absent: no time), which `page_modified_json` and recency answer from,
-    /// and `editable` (default false). Only an editable graph keeps its files
-    /// for `replace_files` and `submit_page_json`; a read-only one (a
-    /// published export, a quick share) keeps its read view alone, and
-    /// `replace_files` throws and `submit_page_json` refuses (`failed`) there.
+    /// and `editable` (default false). This constructor alone decides whether
+    /// the graph takes edits: a share never does, whatever `editable` says.
+    /// Only an editable graph keeps its files for `replace_files` and
+    /// `submit_page_json`; a read-only one (a published export, a quick
+    /// share) keeps its read view alone, and `replace_files` throws and
+    /// `submit_page_json` refuses (`failed`) there.
     /// Throws (a string) what the desktop open refuses, for arrays of
-    /// different lengths and for a time of no given path; a config read
+    /// different lengths and for a time of no given path (whatever the time;
+    /// a pre-epoch time is then no recency row, as on disk); a config read
     /// problem is `config_problem_json`. Cost: one read and parse of each
     /// file and the initial index capture, as a desktop open has.
     #[wasm_bindgen(constructor)]
@@ -53,7 +56,8 @@ impl BrowserGraph {
             )
             .map_err(|error| js_error(format!("share-too-large: {error}")))?;
         }
-        let graph = open(files, options.times, options.editable)?;
+        let editable = options.editable && options.share.is_none();
+        let graph = open(files, options.times, editable)?;
         if options.share.is_some() {
             if !graph.view.unreadable_files().is_empty() {
                 return Err(js_error(
@@ -459,7 +463,7 @@ fn open(
     editable: bool,
 ) -> Result<BrowserGraph, JsValue> {
     let times = (times.unwrap_or_default().into_iter())
-        .filter_map(|(path, secs)| Some((path, unix_time(secs)?)))
+        .map(|(path, secs)| (path, unix_time(secs)))
         .collect();
     let (view, root) = WholeGraph::from_files(files, times, editable)
         .map_err(|error| js_error(format!("BrowserGraph: {error}")))?;
@@ -473,8 +477,9 @@ fn open(
 /// The time `secs` Unix seconds name, signed: a pre-epoch time stays before
 /// the epoch, so the shared answers treat it as they treat a disk file's
 /// (`page_modified` omits it). `None` where the target's clock cannot hold
-/// it (wasm32 holds no pre-epoch time): the file then has no time, which
-/// `page_modified` answers alike.
+/// it (wasm32 holds no pre-epoch time): `WholeGraph::from_files` admits it
+/// as any given time, and the file then has no time, which `page_modified`
+/// answers alike.
 fn unix_time(secs: i64) -> Option<std::time::SystemTime> {
     let magnitude = std::time::Duration::from_secs(secs.unsigned_abs());
     if secs < 0 {

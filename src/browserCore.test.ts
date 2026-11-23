@@ -371,6 +371,30 @@ it("a pre-epoch file time is no recency row", () => {
   }
 });
 
+it("a share is never editable, whatever the options say", () => {
+  const share = { share: { name: "Shared", exported_at: "2026-11-23T00:00:00Z" }, editable: true };
+  const graph = openWith([["pages/Note.md", "- first\n"]], JSON.stringify(share));
+  try {
+    expect(() => graph.replace_files(["pages/Note.md"], [encode("- changed\n")])).toThrow(/editable/);
+    const page = JSON.parse(graph.get_page_json("Note", false));
+    page.blocks[0].raw = "edited";
+    const answer = JSON.parse(graph.submit_page_json("pages/Note.md", JSON.stringify(page), 1n));
+    expect(answer).toMatchObject({ refused: { reason: "failed" } });
+    expect(JSON.parse(graph.get_page_json("Note", false))).toMatchObject({ blocks: [{ raw: "first" }] });
+  } finally {
+    graph.free();
+  }
+});
+
+it("a time for no file is refused, whatever its sign", () => {
+  for (const path of ["pages/None.md", "assets/none.png", "logseq/config.edn"]) {
+    for (const time of ["-1", "-9223372036854775808", "0", "5"]) {
+      expect(() => openWith([["pages/A.md", "- a\n"]], `{"times":{"${path}":${time}}}`), `${path} ${time}`)
+        .toThrow(/a time for no file/);
+    }
+  }
+});
+
 it("a submitted page is read back as its new text", () => {
   const graph = editable([["pages/Note.md", "- first\n- second\n"]]);
   try {

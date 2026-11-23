@@ -374,12 +374,15 @@ class __tine_raw_BrowserGraph {
      * `logseq/config.edn` among them. Options: `share` (a quick share's
      * admission), `times`, a modification time in Unix seconds per path
      * (absent: no time), which `page_modified_json` and recency answer from,
-     * and `editable` (default false). Only an editable graph keeps its files
-     * for `replace_files` and `submit_page_json`; a read-only one (a
-     * published export, a quick share) keeps its read view alone, and
-     * `replace_files` throws and `submit_page_json` refuses (`failed`) there.
+     * and `editable` (default false). This constructor alone decides whether
+     * the graph takes edits: a share never does, whatever `editable` says.
+     * Only an editable graph keeps its files for `replace_files` and
+     * `submit_page_json`; a read-only one (a published export, a quick
+     * share) keeps its read view alone, and `replace_files` throws and
+     * `submit_page_json` refuses (`failed`) there.
      * Throws (a string) what the desktop open refuses, for arrays of
-     * different lengths and for a time of no given path; a config read
+     * different lengths and for a time of no given path (whatever the time;
+     * a pre-epoch time is then no recency row, as on disk); a config read
      * problem is `config_problem_json`. Cost: one read and parse of each
      * file and the initial index capture, as a desktop open has.
      * @param {string[]} paths

@@ -23,9 +23,7 @@ async function answer(request: GraphRequest): Promise<GraphReply> {
       : validateSnapshot(JSON.parse(new TextDecoder("utf-8", { fatal: true }).decode(bytes)));
     try {
       const { BrowserGraph } = await loadBrowserCore();
-      // Reads only: the published graph is read-only, so its one `_json` write is no read.
-      methods = new Set(Object.getOwnPropertyNames(BrowserGraph.prototype)
-        .filter(name => name.endsWith("_json") && name !== "submit_page_json"));
+      methods = new Set(Object.getOwnPropertyNames(BrowserGraph.prototype).filter(name => name.endsWith("_json")));
       const encode = new TextEncoder();
       const paths = files.map(file => file.path);
       const sources = files.map(file => encode.encode(file.text));

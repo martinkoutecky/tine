@@ -111,17 +111,18 @@ pub(super) fn isolate_page_parse(
 }
 
 /// A committed DTO save publishes parsed content with the live identities of
-/// blocks that survived serialization. Header promotion has already changed
-/// the saved tree, so corresponding nodes have the same structural position.
-/// When a parser changes the tree shape, leave that subtree's parsed ids alone.
+/// blocks that survived serialization: each parsed block takes its saved
+/// counterpart's id, or none where the saved block has none. Header promotion
+/// has already changed the saved tree, so corresponding nodes have the same
+/// structural position. When a parser changes the tree shape, leave that
+/// subtree's parsed ids alone. The publication then gives every block without
+/// an id one ([`assign_doc_runtime_ids`]).
 pub(super) fn carry_saved_runtime_ids(parsed: &mut [DocBlock], saved: &[DocBlock]) {
     if parsed.len() != saved.len() {
         return;
     }
     for (parsed, saved) in parsed.iter_mut().zip(saved) {
-        if !saved.uuid.is_empty() {
-            parsed.uuid.clone_from(&saved.uuid);
-        }
+        parsed.uuid.clone_from(&saved.uuid);
         carry_saved_runtime_ids(&mut parsed.children, &saved.children);
     }
 }

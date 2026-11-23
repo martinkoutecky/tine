@@ -407,6 +407,8 @@ mod memory;
 #[cfg(test)]
 mod memory_edit_tests;
 #[cfg(test)]
+pub(crate) mod memory_owner_tests;
+#[cfg(test)]
 mod memory_replace_tests;
 mod query_request;
 #[cfg(test)]
