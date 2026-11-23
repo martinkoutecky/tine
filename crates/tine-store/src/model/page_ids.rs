@@ -1,54 +1,35 @@
 //! `PageIds`, the one owner of which runtime key each block of a physical
-//! page file carries (`RUNTIME-ID-MODEL.md` v3, D-20261120-I12 and
-//! D-20261120-IDM; phase A, store side).
+//! page file carries (`RUNTIME-ID-MODEL.md` v3; phase A, store side). Every
+//! install of a page's keyed document asks [`Graph::page_ids`] with one
+//! [`Input`] and the path's prior S(P) (its row, else its claim or seed).
 //!
-//! **Writer.** Every place that installs a page's keyed document asks
-//! [`Graph::page_ids`] with one input and the path's prior S(P) (its visible
-//! row, else its claim or seed):
-//! - [`Input::Fresh`]: no prior (launch, cold build, discovery): positional keys.
-//! - [`Input::Pair`]: the serializer's keyed parse of exactly the published
-//!   bytes, for this target and version (D4): installed whole, its holes filled
-//!   collision-safe. A window submission is trusted (its keys come from one
-//!   `byId`, so no validation is allocated); an untrusted entrance (the
-//!   browser's `submit_page`) validates every key: a repeated key, or one
-//!   another page owns, becomes a hole and is filled (intake, A2).
-//! - [`Input::Observed`]: bytes the owner did not save: a keyed outline equal
-//!   to the prior's (keys aside) keeps the prior's document, keys and
-//!   witness; else positional keys, collision-safe against the registry.
+//! **Witness W**, one counter per session: it advances when a path is
+//! created again after it ended, and when an installed keyed outline differs
+//! from the prior's ([`Document::same_keyed_outline`]); a path unchanged
+//! this session has W 0. Phase A issues W; the window adopts it in phase B.
 //!
-//! **Witness W.** One monotonic counter per graph session. W advances when a
-//! path's row is created again after it ended, and whenever an installed
-//! keyed outline differs from the path's prior (tree, raw text, or which
-//! block holds which key: [`Document::same_keyed_outline`]); it stays when
-//! the prior is kept, whatever happens to the revision. A path never
-//! changed this session has the implicit W 0. Phase A issues W; the window
-//! adopts it in phase B.
-//!
-//! **Ownership.** A structural key is a hash of (path, position): two pages
-//! share one only when a block moved with its key. The foreign-key registry
-//! names the page each moved key lives on (accepted `move_blocks` transfers,
-//! the same-file spelling move), so positional and fill allocation on any
-//! other page skips it (A3). It is empty after a restart, and costs nothing
-//! while empty. Entries leave when their page no longer holds the key.
-//!
-//! Memory: one u64 per path changed this session, and O(moved keys).
+//! **Foreign-key registry**: the page each moved key lives on (`move_blocks`
+//! transfers, the same-file spelling move), so allocation on any other page
+//! skips it (A3). Empty after a restart, free while empty; an entry leaves
+//! when its page no longer holds the key. Memory: one u64 per changed path,
+//! O(moved keys).
 
 use super::*;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Mutex;
-use tine_core::projection::assign_runtime_ids_reserving;
-#[cfg(test)]
-use tine_core::projection::Assigned;
+use tine_core::projection::{assign_runtime_ids_reserving, for_each_runtime_key, key_census};
 use tine_core::BlockId;
 
 /// What a page's keys are decided from. Each carries the bytes' parse.
 pub(crate) enum Input<'a> {
-    /// No prior identity: positional keys.
-    Fresh(Document),
-    /// The serializer's keyed parse of exactly the published bytes (D4),
-    /// shared with the host's handoff: a fully keyed one is installed as is.
+    /// The serializer's keyed parse of exactly the published bytes (D4):
+    /// installed whole, its holes filled collision-safe. Untrusted keys are
+    /// validated first: a repeated key, or one another page owns, becomes a
+    /// hole (intake, A2).
     Pair(Arc<Document>, Trust<'a>),
-    /// Bytes the owner did not save, parsed without keys.
+    /// Bytes the owner did not save, parsed without keys: the prior is kept
+    /// when they hold its outline, else positional keys (also with no prior:
+    /// launch, cold build, discovery).
     Observed(Document),
 }
 
@@ -104,9 +85,7 @@ fn count_class(at: usize) {
 }
 
 impl PageIds {
-    /// The witness of `path`'s installed keyed outline (0: unchanged since
-    /// this session first installed it). Phase B's window reads it; phase A
-    /// issues it.
+    /// The witness of `path`'s installed keyed outline (module doc).
     #[cfg(test)]
     pub(crate) fn witness(&self, path: &Path) -> u64 {
         self.witness.lock().unwrap().get(path).copied().unwrap_or(0)
@@ -142,9 +121,7 @@ impl PageIds {
     pub(crate) fn ended(&self, path: &Path) {
         self.advance(path);
         let mut foreign = self.foreign.write().unwrap();
-        if !foreign.is_empty() {
-            foreign.retain(|_, owner| owner != path);
-        }
+        foreign.retain(|_, owner| owner != path);
     }
 
     /// The same file now lives at `to` (a confirmed same-file spelling move):
@@ -154,7 +131,7 @@ impl PageIds {
         self.advance(from);
         let mut foreign = self.foreign.write().unwrap();
         foreign.retain(|_, owner| owner != from);
-        doc.for_each_uuid(&mut |key| {
+        for_each_runtime_key(&doc.roots, &mut |key| {
             foreign.insert(key.clone(), to.to_path_buf());
         });
     }
@@ -170,11 +147,7 @@ impl PageIds {
 
     /// The page a moved `key` lives on, if one does.
     pub(crate) fn owner_of(&self, key: &BlockId) -> Option<PathBuf> {
-        let foreign = self.foreign.read().unwrap();
-        if foreign.is_empty() {
-            return None;
-        }
-        foreign.get(key).cloned()
+        self.foreign.read().unwrap().get(key).cloned()
     }
 
     #[cfg(test)]
@@ -189,17 +162,10 @@ impl PageIds {
             return;
         }
         let mut held = HashSet::new();
-        doc.for_each_uuid(&mut |key| {
+        for_each_runtime_key(&doc.roots, &mut |key| {
             held.insert(key.clone());
         });
         foreign.retain(|key, owner| owner != path || held.contains(key));
-    }
-}
-
-fn shrink(blocks: &mut Vec<DocBlock>) {
-    blocks.shrink_to_fit();
-    for block in blocks.iter_mut() {
-        shrink(&mut block.children);
     }
 }
 
@@ -226,7 +192,6 @@ impl Graph {
                 }
                 doc
             }
-            Input::Fresh(doc) => doc,
             Input::Pair(mut doc, trust) => {
                 if let Trust::Untrusted(owned_elsewhere) = trust {
                     validate_keys(&mut Arc::make_mut(&mut doc).roots, owned_elsewhere);
@@ -236,7 +201,7 @@ impl Graph {
                     count_class(3);
                     return Arc::clone(prior);
                 }
-                if doc.fully_keyed() {
+                if !key_census(&doc.roots).0 {
                     // Fully keyed (an ordinary own save): nothing assigned,
                     // nothing allocated, the handoff's document installed.
                     #[cfg(test)]
@@ -247,20 +212,20 @@ impl Graph {
                 Arc::unwrap_or_clone(doc)
             }
         };
-        shrink(&mut doc.roots);
-        let _class = {
+        page_parse::shrink_blocks(&mut doc.roots);
+        #[cfg(test)]
+        count_class(match key_census(&doc.roots) {
+            (false, _) => 1,
+            (true, false) => 0,
+            (true, true) => 2,
+        });
+        {
             let foreign = self.ids.foreign.read().unwrap();
             let reserved = |key: &BlockId| foreign.get(key).is_some_and(|owner| owner != path);
             let reserved: Option<&dyn Fn(&BlockId) -> bool> =
                 (!foreign.is_empty()).then_some(&reserved);
-            assign_runtime_ids_reserving(&mut doc.roots, rel, reserved)
-        };
-        #[cfg(test)]
-        count_class(match _class {
-            Assigned::Fresh => 0,
-            Assigned::Full => 1,
-            Assigned::Mixed => 2,
-        });
+            assign_runtime_ids_reserving(&mut doc.roots, rel, reserved);
+        }
         page_parse::prime_projections(&doc);
         Arc::new(doc)
     }

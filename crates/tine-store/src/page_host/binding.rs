@@ -15,6 +15,7 @@ use std::collections::HashMap;
 use std::path::Path;
 use tine_core::doc::Document;
 use tine_core::model::PageDto;
+use tine_core::projection::{for_each_runtime_key, key_census};
 
 /// The graph binding's page host. Every command carries the window
 /// generation and a strictly increasing request id (§3.1).
@@ -560,7 +561,7 @@ impl Book {
                     // A block the window sent without a key is keyed by the
                     // store (`Graph::page_ids`): the answer is inexact, so the
                     // window receives the page with its keys (phase A guard 2).
-                    if answer.took && handoff.document.fully_keyed() {
+                    if answer.took && !key_census(&handoff.document.roots).0 {
                         answered.insert((page.clone(), answer.id), handoff.bytes.clone());
                     }
                     if answer.took {
@@ -592,12 +593,8 @@ impl Book {
                     }
                     let handoff = self.versions.get_mut(page).and_then(|v| v.remove(version));
                     let document = handoff.filter(|h| h.bytes == *bytes).map(|h| h.document);
-                    let document = document.and_then(|doc| {
-                        Some(SaveHandoff {
-                            bytes: bytes.clone()?,
-                            doc,
-                        })
-                    });
+                    let document = (document.zip(bytes.clone()))
+                        .map(|(doc, bytes)| SaveHandoff { bytes, doc });
                     self.retry.remove(page);
                     delivery.publications.push(Publication {
                         key: page.clone(),
@@ -1147,7 +1144,7 @@ impl PageHost {
         // it, so no other page's allocation reuses them (guard 1, A3).
         let receiver_path = self.store.graph.root.join(&spelling);
         let mut moved = Vec::new();
-        receiver_handoff.document.for_each_uuid(&mut |key| {
+        for_each_runtime_key(&receiver_handoff.document.roots, &mut |key| {
             let held = self.store.block_owner_path(&key.text());
             if held.is_some_and(|held| held != receiver_path) {
                 moved.push(key.clone());

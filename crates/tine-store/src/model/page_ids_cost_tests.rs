@@ -29,7 +29,7 @@ fn doc_of(graph: &Graph, rel: &str) -> Arc<Document> {
 
 fn keys(doc: &Document) -> Vec<String> {
     let mut out = Vec::new();
-    doc.for_each_uuid(&mut |key| out.push(key.to_string()));
+    tine_core::projection::for_each_runtime_key(&doc.roots, &mut |key| out.push(key.to_string()));
     out
 }
 

@@ -156,19 +156,6 @@ fn assign_runtime_ids_rec(blocks: &mut [DocBlock], parent: Uuid) {
     }
 }
 
-/// What one id assignment of a page found, from the walk that assigned: a
-/// fresh parse (no block kept a key: the positional keys), a fully keyed tree
-/// (nothing assigned) or a mixed one (holes filled around the kept keys).
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum Assigned {
-    /// No block kept a key.
-    Fresh,
-    /// Every block kept its key.
-    Full,
-    /// Some blocks kept keys and the rest were filled.
-    Mixed,
-}
-
 /// Give each block of a graph-backed document that has no runtime key one,
 /// from its normalized, graph-relative physical owner (the store's id owner,
 /// `PageIds`, decides which keys a page keeps and calls this for the rest;
@@ -189,20 +176,12 @@ pub fn assign_doc_runtime_ids(roots: &mut [DocBlock], owner_rel_path: &str) {
 /// (the store's foreign-key registry: a block moved off this page keeps its
 /// key there): no positional or fill candidate takes one; it takes the next
 /// free key instead. `None` when nothing is reserved (every restart and cold
-/// build), which costs nothing. Reports what the walk found.
+/// build), which costs nothing.
 pub fn assign_runtime_ids_reserving(
     roots: &mut [DocBlock],
     owner_rel_path: &str,
     reserved: Option<&dyn Fn(&BlockId) -> bool>,
-) -> Assigned {
-    fn kept(blocks: &[DocBlock], into: &mut HashSet<BlockId>) {
-        for block in blocks {
-            if !block.uuid.is_empty() {
-                into.insert(block.uuid.clone());
-            }
-            kept(&block.children, into);
-        }
-    }
+) {
     fn fill(
         blocks: &mut [DocBlock],
         parent: Uuid,
@@ -222,8 +201,32 @@ pub fn assign_runtime_ids_reserving(
             fill(&mut block.children, structural, taken, reserved);
         }
     }
-    /// Whether the tree holds an unkeyed block and a kept one; stops once both are seen.
-    fn keys(blocks: &[DocBlock], seen: &mut (bool, bool)) {
+    match (key_census(roots), reserved) {
+        // Every block is keyed (an ordinary own save): nothing to assign.
+        ((false, _), _) => {}
+        // A fresh parse keeps no key: the positional keys, nothing allocated.
+        ((true, false), None) => {
+            assign_runtime_ids_rec(roots, file_runtime_namespace(owner_rel_path))
+        }
+        ((true, kept), reserved) => {
+            #[cfg(any(test, feature = "test-counters"))]
+            count_work(0, 1);
+            let mut taken = HashSet::new();
+            if kept {
+                for_each_runtime_key(roots, &mut |key| {
+                    taken.insert(key.clone());
+                });
+            }
+            let namespace = file_runtime_namespace(owner_rel_path);
+            fill(roots, namespace, &mut taken, reserved.unwrap_or(&|_| false));
+        }
+    }
+}
+
+/// Whether `blocks` hold a block without a runtime key, and one with a key;
+/// stops once both are seen. O(blocks), no allocation.
+pub fn key_census(blocks: &[DocBlock]) -> (bool, bool) {
+    fn walk(blocks: &[DocBlock], seen: &mut (bool, bool)) {
         for block in blocks {
             if block.uuid.is_empty() {
                 seen.0 = true;
@@ -233,37 +236,22 @@ pub fn assign_runtime_ids_reserving(
             if seen.0 && seen.1 {
                 return;
             }
-            keys(&block.children, seen);
+            walk(&block.children, seen);
         }
     }
     let mut seen = (false, false);
-    keys(roots, &mut seen);
-    let namespace = || file_runtime_namespace(owner_rel_path);
-    match (seen, reserved) {
-        // Every block is keyed (an ordinary own save): nothing to assign.
-        ((false, _), _) => Assigned::Full,
-        // A fresh parse keeps no key: the positional keys, nothing allocated.
-        ((true, false), None) => {
-            assign_runtime_ids_rec(roots, namespace());
-            Assigned::Fresh
+    walk(blocks, &mut seen);
+    seen
+}
+
+/// Visit every runtime key in `blocks`, depth first; keyless blocks are
+/// skipped. O(blocks), no allocation.
+pub fn for_each_runtime_key(blocks: &[DocBlock], visit: &mut dyn FnMut(&BlockId)) {
+    for block in blocks {
+        if !block.uuid.is_empty() {
+            visit(&block.uuid);
         }
-        ((true, false), Some(reserved)) => {
-            counted_fill_set();
-            fill(roots, namespace(), &mut HashSet::new(), reserved);
-            Assigned::Fresh
-        }
-        ((true, true), reserved) => {
-            counted_fill_set();
-            let mut taken = HashSet::new();
-            kept(roots, &mut taken);
-            fill(
-                roots,
-                namespace(),
-                &mut taken,
-                reserved.unwrap_or(&|_| false),
-            );
-            Assigned::Mixed
-        }
+        for_each_runtime_key(&block.children, visit);
     }
 }
 
@@ -279,11 +267,11 @@ pub fn take_runtime_id_work() -> (u64, u64) {
     RUNTIME_ID_WORK.with(|work| work.replace((0, 0)))
 }
 
-fn counted_fill_set() {
-    #[cfg(any(test, feature = "test-counters"))]
+#[cfg(any(test, feature = "test-counters"))]
+fn count_work(hashes: u64, sets: u64) {
     RUNTIME_ID_WORK.with(|work| {
-        let (hashes, sets) = work.get();
-        work.set((hashes, sets + 1));
+        let (h, s) = work.get();
+        work.set((h + hashes, s + sets));
     });
 }
 
@@ -312,10 +300,7 @@ fn file_runtime_namespace(owner_rel_path: &str) -> Uuid {
 
 fn structural_child(parent: Uuid, sibling_index: usize) -> Uuid {
     #[cfg(any(test, feature = "test-counters"))]
-    RUNTIME_ID_WORK.with(|work| {
-        let (hashes, sets) = work.get();
-        work.set((hashes + 1, sets));
-    });
+    count_work(1, 0);
     deterministic_runtime_uuid(parent, &(sibling_index as u64).to_be_bytes())
 }
 

@@ -59,7 +59,7 @@ impl PageHost {
                 state.progress.host.locks.insert(key.clone(), lock);
                 store
                     .graph
-                    .respelled(&key, &store.graph.root.join(from.as_str()), true);
+                    .respelled(&key, &store.graph.root.join(from.as_str()));
                 store.publish_retired();
             })
             .expect("live test host");

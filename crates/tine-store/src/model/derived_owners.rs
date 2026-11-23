@@ -299,15 +299,13 @@ impl Graph {
 
     /// The alias spelling move gave held `key` a new spelling (Q4), a
     /// transition: the rows at `from` go and the owner's bytes are
-    /// installed at the new spelling. The caller holds the writer.
-    /// The caller confirmed it is one file (`same_file`: the host's
-    /// case-only spelling move and its launch recovery): its S(P) moves to
-    /// the new spelling with its keys, W advances there, and nothing stays
-    /// at `from` (S5). A move that is not confirmed as one file leaves the
-    /// new spelling to start from its own bytes.
-    pub(crate) fn respelled(&self, key: &str, from: &Path, same_file: bool) {
+    /// installed at the new spelling. The caller holds the writer and
+    /// confirmed it is one file (the host's case-only spelling move and its
+    /// launch recovery): its S(P) moves to the new spelling with its keys,
+    /// W advances there, and nothing stays at `from` (S5).
+    pub(crate) fn respelled(&self, key: &str, from: &Path) {
         let to = self.root.join(self.held.spellings().spelling(key));
-        let moved = (same_file && to != from)
+        let moved = (to != from)
             .then(|| {
                 self.cached_observation(from)
                     .or_else(|| self.held.claims.lock().unwrap().get(from).cloned())
@@ -317,11 +315,8 @@ impl Graph {
             self.held.indexed_of(key)?;
             if let Some(row) = &moved {
                 self.ids.respelled(from, &to, &row.1);
-                self.held
-                    .claims
-                    .lock()
-                    .unwrap()
-                    .insert(to.clone(), (*row).clone());
+                let mut claims = self.held.claims.lock().unwrap();
+                claims.insert(to.clone(), row.clone());
             }
             Some(vec![from.to_path_buf(), to.clone()])
         });
@@ -362,23 +357,20 @@ impl Graph {
         let mut row = None;
         let mut named = None;
         let mut claim = self.held.claims.lock().unwrap().remove(&path);
+        // The row the bytes give against `prior` (the claim is taken only
+        // when there are bytes).
+        let derive = |claim: &mut Option<Row>, prior: Option<&Arc<Document>>| {
+            let bytes = bytes.as_deref()?;
+            (self.claimed_row(key, bytes, doc.clone(), claim.take(), prior)).ok()?
+        };
         let built = self.cache_built();
         if built && (self.cached_rev(&path) != rev || doc.is_some()) {
             let current =
                 (self.with_cached(&path, |row| row.map(|(_, doc)| Arc::clone(doc)))).flatten();
-            row = (bytes.as_deref()).and_then(|bytes| {
-                self.claimed_row(key, bytes, doc.clone(), claim.take(), current.as_ref())
-                    .ok()
-                    .flatten()
-            });
-        } else if !built {
+            row = derive(&mut claim, current.as_ref());
+        } else if !built && (doc.is_some() || claim.is_some()) {
             // The seed: this publication's S(P), for the build (S6).
-            let seed = (bytes.as_deref()).filter(|_| doc.is_some() || claim.is_some());
-            if let Some(seed) = seed.and_then(|bytes| {
-                self.claimed_row(key, bytes, doc.clone(), claim.take(), None)
-                    .ok()
-                    .flatten()
-            }) {
+            if let Some(seed) = derive(&mut claim, None) {
                 self.held.claims.lock().unwrap().insert(path.clone(), seed);
             }
         }
@@ -425,12 +417,7 @@ impl Graph {
                 // Derived before the lock unless the installed row changed
                 // since (the writer excludes that; this keeps it exact).
                 if row.is_none() {
-                    let prior = self.prior_in(cache, &path);
-                    row = (bytes.as_deref()).and_then(|bytes| {
-                        self.claimed_row(key, bytes, doc.clone(), claim.take(), prior.as_ref())
-                            .ok()
-                            .flatten()
-                    });
+                    row = derive(&mut claim, self.prior_in(cache, &path).as_ref());
                 }
                 match row.take() {
                     Some(row) => {

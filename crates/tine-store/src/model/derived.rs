@@ -629,7 +629,11 @@ impl Graph {
     /// rebuild's generation check binds it to the rest of the build.
     pub(super) fn cached_observation(&self, path: &Path) -> Option<Row> {
         let guard = self.derived.cache.read().unwrap();
-        let pages = guard.pages.as_ref()?;
+        self.observation_in(guard.pages.as_ref()?, path)
+    }
+
+    /// [`Self::cached_observation`] in `pages`, under the caller's cache lock.
+    fn observation_in(&self, pages: &Pages, path: &Path) -> Option<Row> {
         let (entry, doc) = pages.get(self.cached_page_index_for_path(pages, path)?)?;
         let rev = self.derived.disk_revs.read().unwrap().get(path)?.clone();
         let anchored = self.derived.vcs_anchored.read().unwrap().contains(path);
@@ -1196,23 +1200,11 @@ impl Graph {
     /// Keep `path`'s installed row as its claim before a withholding
     /// retires it (D5). The caller holds the cache lock.
     fn claim_row(&self, cache: &InstalledCache, path: &Path) {
-        let Some(pages) = cache.pages.as_deref() else {
-            return;
-        };
-        let Some(slot) = self.cached_page_index_for_path(pages, path) else {
-            return;
-        };
-        let Some(rev) = self.derived.disk_revs.read().unwrap().get(path).cloned() else {
-            return;
-        };
-        let (entry, doc) = &pages[slot];
-        let anchored = self.derived.vcs_anchored.read().unwrap().contains(path);
-        let row = (entry.clone(), Arc::clone(doc), DiskObs { rev, anchored });
-        self.held
-            .claims
-            .lock()
-            .unwrap()
-            .insert(path.to_path_buf(), row);
+        let row = (cache.pages.as_deref()).and_then(|pages| self.observation_in(pages, path));
+        if let Some(row) = row {
+            let mut claims = self.held.claims.lock().unwrap();
+            claims.insert(path.to_path_buf(), row);
+        }
     }
 
     /// `path`'s S(P) ended (a confirmed absence): its claim is freed and an
@@ -1230,11 +1222,8 @@ impl Graph {
         if !self.admits_row(&path, &disk.rev) {
             return;
         }
-        let claim = self.held.claims.lock().unwrap().remove(&path);
-        let before = (self.cached_page_index_for_path(pages, &path))
-            .and_then(|slot| pages.get(slot))
-            .map(|(_, doc)| Arc::clone(doc))
-            .or_else(|| claim.map(|(_, doc, _)| doc));
+        let before = self.prior_in(pages, &path);
+        self.held.claims.lock().unwrap().remove(&path);
         self.ids.installed(&path, before.as_ref(), &doc);
         self.derived.touched.lock().unwrap().insert(path.clone());
         let rel = entry.rel_path_str().to_owned();

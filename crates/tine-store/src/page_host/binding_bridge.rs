@@ -141,11 +141,7 @@ pub(super) fn index(store: &Store, publication: &Publication) -> Indexing {
         (true, None) => Some(ChangeKind::Removed),
         (true, Some(_)) => Some(ChangeKind::Modified),
     };
-    let saved = publication
-        .own
-        .as_ref()
-        .and_then(|(_, saved)| saved.as_ref());
-    let document = saved.map(|saved| Arc::clone(&saved.doc));
+    let saved = (publication.own.as_ref()).and_then(|(_, saved)| saved.as_ref());
     // The owner's bytes become the page's index and its row in one
     // critical section (R1); an unchanged row is not touched, unless the
     // serializer's document moved a key among the same bytes' blocks (A1).
@@ -171,7 +167,7 @@ pub(super) fn index(store: &Store, publication: &Publication) -> Indexing {
         Err(()) => graph.transaction_publish_page_inner(
             &path,
             bytes,
-            document.map(|saved| Input::Pair(saved, Trust::Window)),
+            saved.map(|saved| Input::Pair(Arc::clone(&saved.doc), Trust::Window)),
             kind != ChangeKind::Modified,
         ),
     };

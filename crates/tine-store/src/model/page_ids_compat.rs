@@ -18,5 +18,5 @@ pub(super) fn publish(graph: &Graph, key: &str, bytes: &str, doc: Option<Documen
 
 /// The host's confirmed same-file spelling move of `key` from `from`.
 pub(super) fn respelled(graph: &Graph, key: &str, from: &Path) {
-    graph.respelled(key, from, true);
+    graph.respelled(key, from);
 }

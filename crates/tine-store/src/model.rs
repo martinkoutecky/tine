@@ -3446,13 +3446,8 @@ impl Graph {
             });
         row.unwrap_or_else(|| {
             let (doc, _) = page_parse::parse_page_unkeyed(entry, content);
-            let prior = self.prior_doc(&entry.path);
-            let input = match prior {
-                Some(_) => page_ids::Input::Observed(doc),
-                None => page_ids::Input::Fresh(doc),
-            };
-            let rel = entry.rel_path_str();
-            self.page_ids(&entry.path, rel, input, prior.as_ref())
+            let (input, prior) = (page_ids::Input::Observed(doc), self.prior_doc(&entry.path));
+            self.page_ids(&entry.path, entry.rel_path_str(), input, prior.as_ref())
         })
     }
 

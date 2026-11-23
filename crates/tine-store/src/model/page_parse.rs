@@ -59,17 +59,14 @@ impl Graph {
             return Ok(Some((e, row, disk)));
         }
         // Changed bytes keep the prior's keys when they hold its outline
-        // (Observed); a path with no prior takes positional keys (Fresh).
+        // (Observed); a path with no prior takes positional keys.
         let retired = match &seed {
             Some((doc, _)) => Some(doc),
             None => prior.and_then(|prior| prior.doc(e.rel_path_str())),
         };
         isolate_page_parse(e, |entry| {
             let (doc, disk) = parse_page_unkeyed(entry, &content);
-            let input = match retired {
-                Some(_) => page_ids::Input::Observed(doc),
-                None => page_ids::Input::Fresh(doc),
-            };
+            let input = page_ids::Input::Observed(doc);
             let doc = self.page_ids(&entry.path, entry.rel_path_str(), input, retired);
             Some((doc, disk))
         })
@@ -124,7 +121,7 @@ pub(super) fn prime_projections(doc: &Document) {
     walk(&doc.roots);
 }
 
-fn shrink_blocks(blocks: &mut Vec<DocBlock>) {
+pub(super) fn shrink_blocks(blocks: &mut Vec<DocBlock>) {
     blocks.shrink_to_fit();
     for block in blocks.iter_mut() {
         shrink_blocks(&mut block.children);

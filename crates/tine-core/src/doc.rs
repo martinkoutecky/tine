@@ -279,29 +279,6 @@ impl Document {
         }
         self == other && keys(&self.roots, &other.roots)
     }
-
-    /// Whether every block carries a runtime key; stops at the first that
-    /// does not. O(blocks), no allocation.
-    pub fn fully_keyed(&self) -> bool {
-        fn walk(blocks: &[DocBlock]) -> bool {
-            (blocks.iter()).all(|block| !block.uuid.is_empty() && walk(&block.children))
-        }
-        walk(&self.roots)
-    }
-
-    /// Visit every block's runtime key, depth first; keyless blocks are
-    /// skipped. O(blocks), no allocation.
-    pub fn for_each_uuid(&self, visit: &mut dyn FnMut(&crate::block_id::BlockId)) {
-        fn walk(blocks: &[DocBlock], visit: &mut dyn FnMut(&crate::block_id::BlockId)) {
-            for block in blocks {
-                if !block.uuid.is_empty() {
-                    visit(&block.uuid);
-                }
-                walk(&block.children, visit);
-            }
-        }
-        walk(&self.roots, visit);
-    }
 }
 
 impl PartialEq for DocBlock {
