@@ -381,13 +381,18 @@ impl Graph {
     /// given, is the owner's Document for them (R8): only its runtime
     /// identities are kept, and only when its content is exactly what
     /// `bytes` parse to; its content never reaches the row (REVIEW-3a4 #5,
-    /// E126). `Ok(None)` when the path is no cacheable page; `Err` when it is
-    /// one and these bytes give no row, which the caller lists unreadable.
+    /// E126). With none, the bytes are ones the owner did not save, and
+    /// [`kept_outline`] answers whether `row`, the page's current row
+    /// document if the caller has it, keeps its ids. One parse, and one id
+    /// assignment. Takes no cache lock. `Ok(None)` when the path is no
+    /// cacheable page; `Err` when it is one and these bytes give no row,
+    /// which the caller lists unreadable.
     pub(super) fn owned_row(
         &self,
         key: &str,
         bytes: &[u8],
         saved: Option<&Document>,
+        row: Option<&Arc<Document>>,
     ) -> io::Result<Option<Row>> {
         let Some(mut entry) = self.owned_listing(key) else {
             return Ok(None);
@@ -396,15 +401,24 @@ impl Graph {
         let content = std::str::from_utf8(bytes)
             .map_err(|error| io::Error::new(io::ErrorKind::InvalidData, error))?;
         let _ = self.name_from(&mut entry, content);
-        let (mut doc, disk) = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-            parse_page_content(&entry, content)
+        let (doc, disk) = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            let (mut doc, disk) = parse_page_unkeyed(&entry, content);
+            match saved {
+                None => {
+                    if let Some(row) = kept_outline(row, &doc) {
+                        return (row, disk);
+                    }
+                }
+                Some(saved) if *saved == doc => {
+                    carry_saved_runtime_ids(&mut doc.roots, &saved.roots);
+                }
+                Some(_) => {}
+            }
+            key_page(&mut doc, &entry);
+            (Arc::new(doc), disk)
         }))
         .map_err(|_| io::Error::new(io::ErrorKind::InvalidData, ParserPanicked))?;
-        if let Some(saved) = saved.filter(|saved| **saved == doc) {
-            carry_saved_runtime_ids(&mut doc.roots, &saved.roots);
-            assign_doc_runtime_ids(&mut doc.roots, entry.rel_path_str());
-        }
-        Ok(Some((entry, Arc::new(doc), disk)))
+        Ok(Some((entry, doc, disk)))
     }
 
     // ---- reads ----------------------------------------------------------
@@ -451,8 +465,8 @@ impl Graph {
                 }
             }
             Source::Held(bytes) => {
-                let row =
-                    (self.held_key(&winner.path)).map(|key| self.owned_row(&key, &bytes, None));
+                let row = (self.held_key(&winner.path))
+                    .map(|key| self.owned_row(&key, &bytes, None, None));
                 let mut cache = self.derived.cache.write().unwrap();
                 match (row, cache.pages.as_mut()) {
                     (Some(Ok(Some(row))), Some(pages)) => {
@@ -836,14 +850,16 @@ impl Graph {
                 .published()
                 .into_iter()
                 .map(|(key, bytes)| {
-                    let row = self.owned_row(&key, &bytes, None).unwrap_or_else(|error| {
-                        let rel = self.held.spellings().spelling(&key).to_string();
-                        if contained::is_parser_panic(&error) {
-                            owned_failures.push(rel.clone());
-                        }
-                        owned_unreadable.push((rel, error.to_string()));
-                        None
-                    });
+                    let row = self
+                        .owned_row(&key, &bytes, None, None)
+                        .unwrap_or_else(|error| {
+                            let rel = self.held.spellings().spelling(&key).to_string();
+                            if contained::is_parser_panic(&error) {
+                                owned_failures.push(rel.clone());
+                            }
+                            owned_unreadable.push((rel, error.to_string()));
+                            None
+                        });
                     Owned { row, key, bytes }
                 })
                 .collect();

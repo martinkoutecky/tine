@@ -166,8 +166,11 @@ fn assign_runtime_ids_rec(blocks: &mut [DocBlock], parent: Uuid) {
 /// collapse two blocks into one store node, and the next save would write one
 /// block's text twice. A fresh parse keeps no key, and its keys are the
 /// positional ones ([`visit_doc_runtime_ids`]). O(blocks) expected; a
-/// document that keeps no key allocates nothing.
+/// document that keeps no key, or keeps every one, allocates nothing.
 pub fn assign_doc_runtime_ids(roots: &mut [DocBlock], owner_rel_path: &str) {
+    fn keyed(blocks: &[DocBlock]) -> bool {
+        (blocks.iter()).all(|block| !block.uuid.is_empty() && keyed(&block.children))
+    }
     fn kept(blocks: &[DocBlock], into: &mut HashSet<BlockId>) {
         for block in blocks {
             if !block.uuid.is_empty() {
@@ -189,6 +192,9 @@ pub fn assign_doc_runtime_ids(roots: &mut [DocBlock], owner_rel_path: &str) {
             }
             fill(&mut block.children, structural, taken);
         }
+    }
+    if keyed(roots) {
+        return;
     }
     let owner = file_runtime_namespace(owner_rel_path);
     let mut taken = HashSet::new();

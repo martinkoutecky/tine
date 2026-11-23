@@ -23,5 +23,7 @@ it("I-15: the model obtains document/layout together; exemplar doc::parse_with_o
   const model = source("crates/tine-store/src/model.rs");
   expect(model).not.toContain("SerializeOpts::detect(");
   expect(model).toContain("doc::parse_with_opts(source)");
-  expect(model).toContain("let (mut newdoc, opts) = parse_doc_with_opts(path, content)");
+  // The save's parse of the bytes it replaces (an external write's
+  // reconciliation compares documents alone and reads no layout).
+  expect(model).toContain("let (mut old, opts) = parse_doc_with_opts(path, source)");
 });

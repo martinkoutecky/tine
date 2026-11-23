@@ -151,7 +151,9 @@ impl WholeGraph {
     /// config too, so the config itself can be repaired. Returns the publication's
     /// [`Change`], as the desktop's watcher publishes one for the same files
     /// (`Origin::External`: its files, the active pages that moved and the
-    /// answer deltas), and makes its revision this view's. Cost: one parse of each changed page file
+    /// answer deltas), and makes its revision this view's. A page whose new
+    /// bytes hold its outline (line terminators aside, say) keeps every
+    /// block's runtime id, as on the desktop. Cost: one parse of each changed page file
     /// and the incremental capture of the changed paths, as the desktop
     /// watcher's publication of the same files; a config change that moves
     /// what the page build reads parses every page again, as on the desktop.
@@ -188,12 +190,17 @@ impl WholeGraph {
             let bytes = bytes.as_deref().map(Vec::as_slice);
             let id = FileId::from(replaced.rel);
             if replaced.page {
-                // Published as the desktop publishes its own write: its
-                // document (the serializer's, or one parse of the page's
-                // text) installed with no comparison.
+                // A submit publishes its serializer's document, as the
+                // desktop publishes its own write. Raw bytes are parsed once
+                // and keep the page's runtime ids when the desktop's
+                // reconciliation would ([`Graph::kept_row`]): then the
+                // row's document is published again, under the new bytes'
+                // revision, and an id never moves to another block.
                 let document = prepared.or_else(|| {
-                    (bytes.and_then(|bytes| std::str::from_utf8(bytes).ok()))
-                        .map(|text| crate::model::parse_doc(&path, text))
+                    let text = std::str::from_utf8(bytes?).ok()?;
+                    let parsed = crate::model::parse_doc(&path, text);
+                    let kept = graph.kept_row(&path, &parsed).flatten();
+                    Some(kept.map_or(parsed, |row| tine_core::doc::Document::clone(&row)))
                 });
                 let file_set_changed = kind != ChangeKind::Modified;
                 let entry = graph.transaction_publish_page_inner(

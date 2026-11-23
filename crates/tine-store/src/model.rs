@@ -65,8 +65,8 @@ pub(crate) use page_identity::{
     graph_text_watch_relevant,
 };
 use page_parse::{
-    carry_saved_runtime_ids, identify_old_blocks, isolate_page_parse, page_dto, parse_page_content,
-    prime_projections,
+    carry_saved_runtime_ids, identify_old_blocks, isolate_page_parse, kept_outline, key_page,
+    page_dto, parse_page_content, parse_page_unkeyed, prime_projections,
 };
 
 use crate::path_identity::canonical_existing_path;
@@ -4098,29 +4098,8 @@ impl Graph {
         {
             panic!("injected external sync parser panic");
         }
-        let (mut newdoc, opts) = parse_doc_with_opts(path, content);
-        // Compare CONTENT, not the in-memory uuids: cached blocks carry
-        // generated uuids (assigned at cache build / upsert), while a fresh
-        // `parse` leaves them empty for non-ref-target blocks, so a direct
-        // `cached == newdoc` would never match and would flag every one of
-        // Tine's own writes as an external change. Normalize the cached doc
-        // through the same serialize→parse round-trip the file went through
-        // (both sides then have empty uuids) and compare.
-        let compared = self.with_cached(path, |row| {
-            row.map(|(_, cached)| {
-                std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-                    match Format::from_path(path) {
-                        Format::Md => parse_doc(path, &doc::serialize_with(cached, &opts)),
-                        Format::Org => parse_doc(
-                            path,
-                            &tine_core::org::serialize_org_detect(cached, Some(content)),
-                        ),
-                    }
-                }))
-                .map(|cached_norm| cached_norm == newdoc)
-            })
-        });
-        match compared {
+        let mut newdoc = parse_doc(path, content);
+        match self.kept_row(path, &newdoc) {
             None => {
                 #[cfg(test)]
                 crate::store::pause_at_hook(&self.cold_cache_reconcile_pause);
@@ -4132,12 +4111,11 @@ impl Graph {
                     return None;
                 }
             }
-            Some(Some(Err(_))) => panic!("page parser panicked during cached comparison"),
-            Some(Some(Ok(true))) => {
-                // Unchanged document, but not necessarily unchanged bytes:
-                // parsing normalizes some lines (a column-0 continuation line
-                // parses like an indented one), so these bytes may carry an
-                // anchor line the cached bytes did not.
+            Some(Some(_)) => {
+                // The row keeps its outline and ids, but not necessarily
+                // its bytes: parsing normalizes some lines (a column-0
+                // continuation line parses like an indented one), so these
+                // bytes may carry an anchor line the cached bytes did not.
                 self.raise_vcs_anchor(path, content);
                 return None; // unchanged / our own write
             }

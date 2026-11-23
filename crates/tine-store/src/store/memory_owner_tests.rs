@@ -164,3 +164,90 @@ fn an_opaque_write_never_reaches_the_page_validator() {
     assert!(checks() > before, "a page write is checked");
     assert_opens_alike(&view, &files);
 }
+
+/// The submitted text in each line terminator, with and without a final
+/// one: outline-equivalent bytes, as a sync client or editor rewrites them.
+pub(crate) fn equivalents(text: &str) -> Vec<(String, String)> {
+    let lf = text.replace("\r\n", "\n").replace('\r', "\n");
+    let body = lf.strip_suffix('\n').unwrap_or(&lf);
+    let mut out = vec![("identical".to_owned(), text.to_owned())];
+    for (name, end) in [("LF", "\n"), ("CRLF", "\r\n"), ("lone CR", "\r")] {
+        let lines = body.replace('\n', end);
+        out.push((format!("{name}, final terminator"), format!("{lines}{end}")));
+        out.push((format!("{name}, no final terminator"), lines));
+    }
+    out
+}
+
+/// Every block's runtime id by label, each held once.
+fn id_map(case: &str, page: &PageDto) -> BTreeMap<String, String> {
+    let mut all = Vec::new();
+    ids(&page.blocks, &mut all);
+    let distinct: BTreeSet<_> = all.iter().map(|(_, id)| id).collect();
+    assert_eq!(distinct.len(), all.len(), "{case}: an id repeats: {all:?}");
+    all.into_iter().collect()
+}
+
+/// Round 4 (review 909240cc finding 1): after a structural submit, a raw
+/// write of outline-equivalent bytes (the submitted bytes, any line
+/// terminator, a final terminator added or removed) publishes no page change,
+/// so it keeps every block's runtime id, as the desktop's reconciliation
+/// does (`Graph::kept_outline`), and takes the new bytes' revision and time.
+/// An edit through the ids the submit gave then writes the block it names.
+/// Markdown and Org; prepend a root, insert a child, append after
+/// reparenting; the original first block carries an authored id.
+#[test]
+fn a_raw_write_of_the_same_outline_keeps_runtime_ids() {
+    for (rel, _, text) in pages().into_iter().filter(|(_, crlf, _)| !crlf) {
+        for (base, text) in equivalents(&text).into_iter().skip(1) {
+            for (edit, apply) in edits() {
+                let mut files = Files::new();
+                files.insert("logseq/config.edn".into(), b"{}\n".to_vec());
+                files.insert(rel.into(), text.clone().into_bytes());
+                let mut view = open(&files);
+                let id = PageId::from(rel);
+                let mut dto = view.page(&id).unwrap();
+                apply(&mut dto);
+                let (submitted, _) = view.submit_page(&id, &dto, true).unwrap();
+                let held = view.page(&id).unwrap();
+                let case = format!("{rel} ({base}) {edit}");
+                let kept = id_map(&case, &held);
+                let submitted = String::from_utf8(submitted).unwrap();
+                for (variant, bytes) in equivalents(&submitted) {
+                    let case = format!("{case}, then {variant}");
+                    let change = (view
+                        .replace_files(vec![(rel.into(), Some(bytes.clone().into()))]))
+                    .unwrap();
+                    assert_eq!(change.pages, vec![], "{case}: no page change");
+                    let rev = FileRev::from_bytes(bytes.as_bytes());
+                    assert_eq!(change.files[0].2.as_ref(), Some(&rev), "{case}");
+                    let now = view.page(&id).unwrap();
+                    assert_eq!(
+                        id_map(&case, &now),
+                        kept,
+                        "{case}: every block keeps its id"
+                    );
+                    let modified = view.page_modified();
+                    assert!(
+                        modified.iter().any(|(path, _)| path == rel),
+                        "{case}: a time"
+                    );
+                }
+                // The editor still holds the submit's ids: an edit of `alpha`
+                // through them writes `alpha` and nothing else.
+                let mut edited = held.clone();
+                let alpha = find(&mut edited.blocks, "alpha");
+                alpha.raw = alpha.raw.replacen("alpha", "alpha-edited", 1);
+                let (bytes, _) = view.submit_page(&id, &edited, true).unwrap();
+                let text = String::from_utf8(bytes).unwrap();
+                assert_each_once(&case, &text.replace("alpha-edited", "alpha"));
+                let mut labels = Vec::new();
+                ids(&edited.blocks, &mut labels);
+                let at = |label: &str| text.find(label).unwrap();
+                let written: Vec<_> = labels.iter().map(|(label, _)| at(label)).collect();
+                assert!(written.is_sorted(), "{case}: page order: {text:?}");
+                id_map(&case, &view.page(&id).unwrap());
+            }
+        }
+    }
+}

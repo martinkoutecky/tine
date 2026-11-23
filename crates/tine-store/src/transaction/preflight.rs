@@ -671,7 +671,7 @@ impl PagePlan<'_> {
 /// Whether a page save of `doc` is admitted at `file` (`is_page`: the file
 /// is a page path): a Guide page is ephemeral, and content nested beyond 128
 /// levels is refused. The one answer for the desktop's page saves and a
-/// memory graph's ([`crate::WholeGraph::serialize_page`]).
+/// memory graph's ([`crate::WholeGraph::submit_page`]).
 pub(crate) fn page_save_target(
     doc: &PageDto,
     is_page: impl FnOnce() -> bool,
